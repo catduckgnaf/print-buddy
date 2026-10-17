@@ -27,3 +27,8 @@ Contract delivered; runtime fallback integration and physical acceptance remain 
 - **Multi-plate capacity evaluation**: Orca plate capacity tests multi-plate projects per-plate rather than across the combined canvas. If any plate exceeds the bed, binary search evaluates the minimal uniform scale ladder (e.g. 94%, 75%, 50%).
 - **Plate boundary preservation**: Scaled multi-plate projects preserve plate separation during slicing, support per-plate scale overrides, and group parts by `(plate_id, slot)`.
 - **Conversational continuity**: Affirmative replies ("Let's do it", "Print it", "Go ahead") automatically recover the candidate model link from conversation history. Failure messages omit prompts to resend links.
+
+## Units, slicer fallback, and motion limits (1.10.0)
+- **Units**: STL input with a largest dimension under 10 mm is treated as inches and scaled 25.4x when it fits; otherwise the job fails with its measured size. Explicit user scale overrides this.
+- **Slicer order**: OrcaSlicer first; Bambu Studio CLI only after an Orca slicing failure. Both outputs pass the same post-slice and protected-settings gates. Bambu receives absolute line widths derived from nozzle diameter.
+- **Acceleration**: Process acceleration is capped at 4,500 mm/s² (outer wall 3,200), below the measured X input shaper recommendation of 4,747 mm/s².

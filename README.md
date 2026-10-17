@@ -55,6 +55,17 @@ When the print finishes, the bot posts completion stats and records the job deta
 
 ## Release history
 
+### 1.10.0 — Inch auto-scale, Bambu Studio fallback, faster motion, and reliability fixes
+
+- **Inch unit auto-scale**: STL files exported in inches (largest dimension under 10 mm) are scaled 25.4x automatically when the result fits the bed, then sliced without a prompt. The Discord slice summary states the original size, that it was treated as inches, and the final size; the job record keeps the same detail. An explicit user scale always wins, and a model that would not fit after 25.4x fails with its measured size instead of a guessed factor.
+- **Bambu Studio slicer fallback**: OrcaSlicer stays primary. If Orca fails to slice, Bambu Studio CLI retries the same job behind the same post-slice safety gates, records which slicer produced the G-code, and says so in Discord. Percent line widths are converted to millimeters against the nozzle diameter for Bambu, which otherwise rejects them as "too large line width".
+- **Faster print motion**: The Orca process profile now caps acceleration at 4,500 mm/s² (outer walls 3,200, top surface 3,000, first layer 500), under the AD5X X axis input shaper limit of about 4,747 mm/s². An offline slice of a large storage bin dropped from 14h 26m to 10h 38m.
+- **Clone placement**: Multi-copy jobs from a scaled or rotated STL are placed explicitly on the bed instead of trusting slicer auto-arrange, which could overlap clones.
+- **Status and cancel fixes**: Printer state settles before a job is reported as preparing or idle; cancel posts an immediate acknowledgement and no longer forces a firmware restart; completion and timelapse arrive as one message; reconnects no longer replay lifecycle notices.
+- **Color and naming fixes**: Explicit color choices resolve to the correct filament slot and Spoolman spool; more foreign part names translate correctly; Orca conflict failures explain the overlap instead of a bare error.
+- **Protected settings guard**: Slices are refused if start G-code, end G-code, or other protected machine settings drift from an approved baseline.
+- **Test validation**: 724 tests passing in the deployed suite.
+
 ### 1.9.1 — Hardware edge margin tuning, multi-plate fit scaling, and conversational link recovery
 
 - **Hardware edge margin relaxation**: Bed margins reduced to 1.0 mm (single-copy) and 3.0 mm (multi-copy), matching the FlashForge AD5X physical 235x235 mm build sheet and stepper bounds. Models up to ~218 mm fit and slice at 100% scale without artificial clipping or bed edge errors.

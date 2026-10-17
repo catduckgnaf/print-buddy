@@ -1,4 +1,70 @@
-# Print Buddy Internal Release Notes — Version 1.9.1
+# Print Buddy Internal Release Notes
+
+# Version 1.10.0
+
+**Release Date:** 2026-10-17  
+**Target Hardware:** FlashForge Adventurer 5X (AD5X) on ZMod Klipper + Moonraker with 4-slot IFS. OrcaSlicer 2.4.2 primary, Bambu Studio CLI fallback (both Flatpak).
+
+---
+
+## 1. Inch-Unit STL Detection and Auto-Scale
+
+### Problem Statement
+- An STL exported in inches (2.30 x 2.55 x 4.02 units) was read as millimeters, producing a 4 mm model. Orca returned `-100 Failed slicing the model`, which hid the cause. A direct-upload retry carried no `scale` in `JOB.json`, so it failed identically.
+
+### Implementation Details
+- **`model_job.py`**:
+  - Explicit scale now uses `scale if scale is not None else job.get("scale")`, so a falsy check can no longer drop a user value; non-positive scales raise.
+  - When no explicit scale is set, the source is `.stl`, and `max(sx, sy, sz) < 10.0`, the job is scaled by `25.4` if the result fits `bed_mm` and `max_print_height_mm`; otherwise it raises with the measured and would-be sizes.
+  - `job["auto_scale"] = {factor, reason: "inch units", original_mm, final_mm}`; the key is removed when no auto-scale applies.
+- **`orca_adapter.py`**: The `0 < scale <= 1` cap was removed (scale must only be `> 0`). Direct STL jobs with a scale or rotation transform vertices before slicing, so every slicer receives identical resolved geometry.
+- **`discord_print_summary.py`**: Slice summary adds `Auto-scale: <orig> mm treated as inches, scaled 25.4x -> <final> mm`.
+- **Field result:** the same ghost STL auto-scaled to 58.42 x 64.77 x 102.11 mm, sliced, and is printing.
+
+## 2. Bambu Studio Fallback and Percent Line Widths
+
+- Orca remains primary. Bambu Studio runs only after an Orca slicer failure or exhausted Orca conflict handling. Validation and placement refusals stay fail-closed and never invoke Bambu. Provenance records the producing slicer, and Discord is alerted on fallback.
+- Bambu Studio CLI reads Orca percent widths (`110%`) as millimeters and exits `-18` / `238` with `too large line width`. The fallback-only process copy now resolves `inner_wall`, `outer_wall`, `top_surface`, `sparse_infill`, and `support` line widths against the machine `nozzle_diameter` (0.4 mm: 110% → 0.44, 93.75% → 0.375). The Orca template is unchanged A malformed width fails closed instead of passing a percent value to Bambu.
+
+## 3. Acceleration Profile
+
+| Feature | Before | 1.10.0 (mm/s²) |
+|---|---:|---:|
+| Default | 1,000 | 4,500 |
+| Outer wall | 5,000 | 3,200 |
+| Inner wall | 5,000 | 4,500 |
+| Sparse / internal solid infill | 1,000 / 7,000 | 4,500 / 4,500 |
+| Top surface | 2,000 | 3,000 |
+| Travel | 10,000 | 4,500 |
+| Initial layer / initial travel | 500 | 500 / 500 |
+
+- Binding limit: X input shaper EI at 52.4 Hz recommends 4,747 mm/s². Moonraker reports `max_accel` 20,000, `minimum_cruise_ratio` 0.5, `square_corner_velocity` 9.0 (read only).
+- Offline Orca estimate, Raskog large bin: 14h 26m → 10h 38m (26% less). Physical quality is validated by subsequent real prints only.
+
+## 4. Multi-Copy Clone Placement
+
+- For transformed STL input with `copies > 1`, clones are laid out in a grid with 10 mm gaps and written to `clones.stl`; the slicer receives one pre-placed mesh. A job raises when the grid does not fit the bed.
+
+## 5. Reliability Fixes (Fast Track)
+
+- **State:** `require_idle_settled` rereads Moonraker and native state together (up to 90 s, 5 s interval) before reporting preparing or idle.
+- **Cancel:** listener posts a short acknowledgement first and collects the Klipper report asynchronously; bot-originated cancels no longer auto-restart firmware.
+- **Notifications:** completion and timelapse are coalesced into one post; lifecycle notices are deduplicated by job identity (history id or filename plus start time) persisted in profile state, so reconnects do not replay them.
+- **Color mapping:** explicit color decisions resolve to IFS slot and Spoolman spool identity, independent of the active spool.
+- **Translation:** part name dictionary extended (for example `peine` → `comb`), bound to the 3MF part key and extruder.
+- **Orca conflicts:** conflict logs map to overlap or intersection remediation; no redundant estimate slice.
+- **Slice guard:** pre- and post-slice checks pin `machine_start_gcode` (SHA256, mesh name normalized), `machine_end_gcode`, `post_process`, `host_type`, and `printer_technology` to an approved baseline.
+- **Service:** the Moonraker listener is `PartOf` the gateway, so a gateway restart always reloads listener code.
+
+## 6. Test Suite Verification
+
+- Deployed suite: **724 passed, 46 subtests passed** (2026-10-17 17:16 ET).
+- New regressions: inch STL auto-scales and Orca receives scaled geometry; explicit scale overrides; oversize after 25.4x fails with size message; auto-scaled two-copy STL exports distinct geometry; Bambu fallback converts percent widths to absolute mm.
+- Offline: auto-scaled ghost STL sliced with two copies; Bambu fallback produced G-code on the scaled model.
+
+---
+
+# Version 1.9.1
 
 **Release Date:** 2026-10-15  
 **Target Hardware:** FlashForge Adventurer 5X (AD5X / AD5M architecture) on ZMod Klipper + Moonraker (`192.168.250.51:7125`) with 4-slot IFS (Internal Filament System) multi-material feeder.

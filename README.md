@@ -1,5 +1,7 @@
 # Print Buddy
 
+[![CI](https://github.com/catduckgnaf/print-buddy/actions/workflows/ci.yml/badge.svg)](https://github.com/catduckgnaf/print-buddy/actions/workflows/ci.yml)
+
 Drop a link. Drop a file. Let Discord handle the rest.
 
 Print Buddy is an automated 3D printing pipeline designed for Discord. It removes the desktop slicer, manual SD card shuffling, and confusing printer menus from household printing. Anyone in the house can drop a MakerWorld link, a Printables link, or a raw 3MF or STL file into a Discord channel, and the bot handles downloading, multi plate packing, color matching, headless slicing, and print staging.
@@ -55,7 +57,7 @@ When the print finishes, the bot posts completion stats and records the job deta
 
 ## Release history
 
-### 2.0.2 — The core actually imports
+### Unreleased (2.0.1.x) — The core actually imports
 
 - **Package imports fixed**: `orca_adapter`, `color_geometry`, `source_colors`, and `approve_baseline` imported their siblings as flat top level modules, which only worked inside the old private folder. All of `print_buddy/core/` now uses relative imports and loads as `print_buddy.core`. Private modules that plug in here (`model_job`, `printer_state`) now belong inside `print_buddy/core/`, not beside it.
 - **Command line entry points**: approve a protected settings baseline with `python3 -m print_buddy.core.approve_baseline approve-baseline <artifact>`. Importing that module no longer runs it. `heavy_worker` loads its steps from the package and still works as a plain script path.
@@ -179,9 +181,10 @@ is_system_service: False
 
 ## Running Tests
 
-Run the test suite from the repository root with standard Python. Pillow and NumPy are needed for the preview modules:
+Run the test suite from the repository root. GitHub Actions runs the same command on every push and pull request:
 
 ```bash
+python3 -m pip install -r requirements-test.txt
 python3 -m unittest discover -s tests -v
 ```
 

@@ -1,5 +1,12 @@
 # Print Buddy Internal Release Notes
 
+# Version 2.0.0
+
+**Release Date:** 2026-10-18
+**What shipped:** The offline core under `print_buddy/core/`, example Orca templates, an MIT license, and one hardware-free test file. Discord, Moonraker, spool, and archive code stayed off the public tree. This number skips the 1.10 line so it is not read as version 10.
+
+---
+
 # Version 1.10.0
 
 **Release Date:** 2026-10-17  
@@ -67,7 +74,7 @@
 # Version 1.9.1
 
 **Release Date:** 2026-10-15  
-**Target Hardware:** FlashForge Adventurer 5X (AD5X / AD5M architecture) on ZMod Klipper + Moonraker (`192.168.250.51:7125`) with 4-slot IFS (Internal Filament System) multi-material feeder.
+**Target Hardware:** FlashForge Adventurer 5X (AD5X / AD5M architecture) on ZMod Klipper + Moonraker with a 4-slot IFS (Internal Filament System) multi-material feeder.
 
 ---
 

@@ -55,6 +55,17 @@ When the print finishes, the bot posts completion stats and records the job deta
 
 ## Release history
 
+### 2.0.0 — Shareable offline core
+
+The first release that contains runnable code, not only notes. Version 2.0.0 replaces the 1.10 line so the public number is not read as "version 10."
+
+- **`print_buddy/core/`**: the offline pipeline. It reads 3MF and STL files, maps colors to slots, packs plates, checks slice output, and translates foreign part names. It does not connect to a printer, Discord, or any home server.
+- **Orca templates**: machine, process, and filament JSON for a Flashforge AD5X style bed. Copy them and edit them for your own printer.
+- **Tests**: `tests/core/test_part_translator.py` runs with no printer. 11 checks passed on the release commit.
+- **Left private on purpose**: Discord intake, the Moonraker listener, spool sync, and job archive. Those bind one household's addresses and tokens. They are not in this tag.
+- **License**: MIT. `LICENSE` is new in this tag.
+- **Install pointer**: the Moonraker update example now uses this repository, `catduckgnaf/print-buddy`, instead of the old `print-bitch` name.
+
 ### 1.10.0 — Inch auto-scale, Bambu Studio fallback, faster motion, and reliability fixes
 
 - **Inch unit auto-scale**: STL files exported in inches (largest dimension under 10 mm) are scaled 25.4x automatically when the result fits the bed, then sliced without a prompt. The Discord slice summary states the original size, that it was treated as inches, and the final size; the job record keeps the same detail. An explicit user scale always wins, and a model that would not fit after 25.4x fails with its measured size instead of a guessed factor.
@@ -135,7 +146,7 @@ Moonraker update manager entry:
 [update_manager print-bitch]
 type: git_repo
 path: /root/printer_data/config/mod_data/plugins/print-bitch
-origin: https://github.com/catduckgnaf/print-bitch.git
+origin: https://github.com/catduckgnaf/print-buddy.git
 primary_branch: main
 managed_services: klipper
 channel: dev
@@ -144,8 +155,10 @@ is_system_service: False
 
 ## Repository Structure
 
-* `plugins/print-feedback/`: Hermes pre-tool execution guards that limit excessive clarify choices and block repeated terminal loops.
-* `print_bitch.cfg`: Klipper G-code macro for checking backup IFS slot matching.
+* `print_buddy/core/`: Offline 3MF and STL helpers. No printer connection.
+* `print_buddy/templates/orca/`: Example Orca machine, process, and filament JSON.
+* `plugins/print-feedback/`: Small guards that limit clarify choices and repeated terminal loops.
+* `print_bitch.cfg`: Klipper G-code macro for checking backup IFS slot matching. The macro name is historical. The project name is Print Buddy.
 * `install.sh` / `uninstall.sh` / `update.sh`: ZMod plugin lifecycle scripts.
 * `tests/`: Unit tests verifying macro logic and interaction guards without requiring physical hardware.
 * `docs/`: Technical specifications for AD5X integration and upstream tool research.

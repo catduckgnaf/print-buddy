@@ -1,5 +1,7 @@
 # Print Buddy
 
+[![CI](https://github.com/catduckgnaf/print-buddy/actions/workflows/ci.yml/badge.svg)](https://github.com/catduckgnaf/print-buddy/actions/workflows/ci.yml)
+
 Drop a link. Drop a file. Let Discord handle the rest.
 
 Print Buddy is an automated 3D printing pipeline designed for Discord. It removes the desktop slicer, manual SD card shuffling, and confusing printer menus from household printing. Anyone in the house can drop a MakerWorld link, a Printables link, or a raw 3MF or STL file into a Discord channel, and the bot handles downloading, multi plate packing, color matching, headless slicing, and print staging.
@@ -54,6 +56,14 @@ Once someone confirms the bed is clear by clicking the button, the print starts 
 When the print finishes, the bot posts completion stats and records the job details directly to an Obsidian archive note for maintenance tracking.
 
 ## Release history
+
+### Unreleased (2.0.1.x) — The core actually imports
+
+- **Package imports fixed**: `orca_adapter`, `color_geometry`, `source_colors`, and `approve_baseline` imported their siblings as flat top level modules, which only worked inside the old private folder. All of `print_buddy/core/` now uses relative imports and loads as `print_buddy.core`. Private modules that plug in here (`model_job`, `printer_state`) now belong inside `print_buddy/core/`, not beside it.
+- **Command line entry points**: approve a protected settings baseline with `python3 -m print_buddy.core.approve_baseline approve-baseline <artifact>`. Importing that module no longer runs it. `heavy_worker` loads its steps from the package and still works as a plain script path.
+- **Per color filament totals on multi-plate files**: when one filament fed several plates, its per color figure kept only the last plate while the job total added them all. They now agree.
+- **Settings file**: bed, height, nozzle, slot count, margins, and prime tower size moved out of code into `config/home.toml`, with a gitignored `config/local.toml` for per machine overrides. Part height in the plate merge check is now compared with the print height instead of the bed width.
+- **Tests that run**: the README test command skipped `tests/core/` entirely, so the 11 part translator checks never ran under it. They do now, along with new suites for imports, the slice guard, the protected settings baseline, scale and copy choices, and filament stats. 67 tests, no printer needed.
 
 ### 2.0.1 — Honest filament estimates and readable part names
 
@@ -160,28 +170,44 @@ channel: dev
 is_system_service: False
 ```
 
+## Settings
+
+Hardware and layout values live in `config/home.toml`, not in code: bed size, print height, nozzle, IFS slot count, edge margins, prime tower size, and the Orca template folder. That file is the home AD5X setup, and the test suite runs against it, including a check that it agrees with `templates/orca/machine.json`.
+
+For anything that belongs only on one machine, create `config/local.toml`. It is gitignored, so `git pull` never touches it, and any key in it overrides the same key in `home.toml`:
+
+```toml
+[printer]
+ifs_slots = 1
+```
+
+To use a different file instead, set `PRINT_BUDDY_CONFIG=/path/to/settings.toml`. A typo or a bad value stops the import with the offending key named, rather than slicing against the wrong bed. Requires Python 3.11 or newer.
+
 ## Repository Structure
 
+* `config/home.toml`: Printer and layout settings for the home setup. See Settings.
+* `print_buddy/settings.py`: Loads and validates the settings.
 * `print_buddy/core/`: Offline 3MF and STL helpers. No printer connection.
 * `print_buddy/templates/orca/`: Example Orca machine, process, and filament JSON.
 * `plugins/print-feedback/`: Small guards that limit clarify choices and repeated terminal loops.
 * `print_bitch.cfg`: Klipper G-code macro for checking backup IFS slot matching. The macro name is historical. The project name is Print Buddy.
 * `install.sh` / `uninstall.sh` / `update.sh`: ZMod plugin lifecycle scripts.
-* `tests/`: Unit tests verifying macro logic and interaction guards without requiring physical hardware.
+* `tests/`: Unit tests for the offline core, the Klipper macro, and interaction guards. No printer required.
 * `docs/`: Technical specifications for AD5X integration and upstream tool research.
 
 ## Running Tests
 
-Run the test suite with standard Python:
+Run the test suite from the repository root. GitHub Actions runs the same command on every push and pull request:
 
 ```bash
+python3 -m pip install -r requirements-test.txt
 python3 -m unittest discover -s tests -v
 ```
 
 ## Roadmap: Expanding to More Klipper Printers
 
 * **TODO: Generic Klipper printer support.** The pipeline currently targets a Flashforge AD5X on ZMod, but the core intake, slicing, and Moonraker dispatch are printer agnostic. Adding other Klipper printers (such as Sovol, Voron, or custom beds) is architecturally straightforward:
-  * Replace hardcoded bed dimensions (220x220) and nozzle parameters with configurable printer profiles.
+  * Bed size, height, nozzle, and slot count now come from `config/home.toml`. Per printer family profiles are tracked in #19.
   * Support single extruder workflows without multi spool IFS requirements.
   * Standardize start, cancel, and status calls using generic Klipper macros.
   * This is not difficult to implement, but requires thorough real world testing on physical hardware before claiming support.

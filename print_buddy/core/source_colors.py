@@ -8,7 +8,7 @@ import re
 import posixpath
 from pathlib import Path
 import xml.etree.ElementTree as ET
-from part_translator import display_name
+from .part_translator import display_name
 import zipfile
 import subprocess
 
@@ -317,14 +317,19 @@ def _append_filament_stats(path, manifest):
                             m = float(fil.get('used_m', 0))
                             ext_id = int(fil.get('id', 1))
                             if g > 0 or m > 0:
-                                stats['extruders'][ext_id] = {'g': round(g, 1), 'm': round(m, 1)}
+                                # One filament can feed several plates: add them, never keep only the last plate.
+                                ext = stats['extruders'].setdefault(ext_id, {'g': 0.0, 'm': 0.0})
+                                ext['g'] += g
+                                ext['m'] += m
                                 stats['total_g'] += g
                                 stats['total_m'] += m
+                    for ext in stats['extruders'].values():
+                        ext['g'], ext['m'] = round(ext['g'], 1), round(ext['m'], 1)
         except Exception:
             pass
     if stats['total_g'] == 0:
         try:
-            import model_job as _mj
+            from . import model_job as _mj
             info_out = _mj.model_info_output(path)
             vols = re.findall(r'volume\s*=\s*([0-9.]+)', info_out)
             if vols:
@@ -368,7 +373,7 @@ def _prompt_name(part):
     is useless when the CAD export calls half the model 'Cylinder'.
     """
     try:
-        import part_translator
+        from . import part_translator
         base = part_translator.translate_name(part.get('name') or '') if not part_translator.is_meaningless(part.get('name')) \
             else (part.get('object_name') or 'Main body')
         hint = part_translator.size_hint(part)
@@ -383,7 +388,7 @@ def _prompt_name(part):
         details.append(f"plate {part['plate']}")
     if part.get('author_color'):
         try:
-            import part_translator
+            from . import part_translator
             color = part_translator.named_color(part['author_color']).title()
         except Exception:
             color = str(part['author_color'])
@@ -408,7 +413,7 @@ def _palette_rows(manifest, canonical=False):
             raise ValueError('Painted source regions cannot be distinguished by their color/material labels; '
                              'preparation requires a source with identifiable regions or separate named parts')
         try:
-            import part_translator
+            from . import part_translator
             name = part_translator.named_color(color)
         except Exception:
             name = color or 'unknown color'
@@ -487,7 +492,7 @@ def _family_noun(key, count):
     head = key.split('#', 1)[0].strip(' -_') or key.split(' - ', 1)[0]
     head = re.sub(r'[_]+', ' ', head or 'parts').strip()
     try:
-        import part_translator
+        from . import part_translator
         head = part_translator.translate_name(head).split(' (', 1)[0].lower()
     except Exception:
         pass

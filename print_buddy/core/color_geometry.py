@@ -8,8 +8,10 @@ import posixpath
 import xml.etree.ElementTree as ET
 import zipfile
 
-from source_colors import inventory
-from orca_adapter import digest
+from .. import settings
+from . import source_colors
+from .source_colors import inventory
+from .orca_adapter import digest
 
 CORE = 'http://schemas.microsoft.com/3dmanufacturing/core/2015/02'
 IDENTITY = [1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0]
@@ -35,7 +37,7 @@ def export_color_geometry(source, target, decisions, item_shifts=None, object_id
     schema = decisions.get('schema')
     if schema not in (None, 'part_slots_v1'):
         raise RuntimeError('unknown color decision schema')
-    planner = __import__('source_colors').canonical_prompts if schema == 'part_slots_v1' else __import__('source_colors').prompts
+    planner = source_colors.canonical_prompts if schema == 'part_slots_v1' else source_colors.prompts
     expected = {row['key'] for row in planner(dict(manifest, parts=full_parts))}
     if set(choices) != expected:
         raise RuntimeError('incomplete part/source-filament decisions')
@@ -45,7 +47,7 @@ def export_color_geometry(source, target, decisions, item_shifts=None, object_id
         # Triangle paint: each painted state N is source filament N; unpainted
         # triangles and state 0 use the part's own extruder. Map every state
         # actually present to a contiguous tool for the chosen physical slot.
-        import painted_geometry
+        from . import painted_geometry
         used = set()
         base_state = {}
         for part in manifest['parts']:
@@ -186,7 +188,7 @@ def export_color_geometry(source, target, decisions, item_shifts=None, object_id
         for node in new_mesh.iter():
             node.tag = tag(node.tag.split('}')[-1])
         if painted:
-            import painted_geometry
+            from . import painted_geometry
             for tri in new_mesh.find(tag('triangles')):
                 code = tri.get('paint_color')
                 if code:
@@ -289,8 +291,8 @@ def export_volume_plate(source, target, scale=1.0, rotation=None):
     Z0) but cutters stay typed volumes so Orca subtracts them instead of
     printing them as a colliding solid.
     """
-    from orca_adapter import _check_rotation, _rotate
-    import source_colors
+    from .orca_adapter import _check_rotation, _rotate
+    from . import source_colors
     scale = float(scale) if scale is not None else 1.0
     if not 0 < scale <= 1:
         raise ValueError('scale must be greater than 0 and no more than 1')
@@ -429,7 +431,7 @@ def export_production_plate(source, target, decisions, slot_colors):
     if decisions.get('source_sha256') != manifest['source_sha256'] or decisions.get('mode') != 'per_part':
         raise RuntimeError('multicolor geometry requires exact-source per_part decisions')
     choices = decisions['choices']
-    expected = {row['key'] for row in __import__('source_colors').canonical_prompts(manifest)}
+    expected = {row['key'] for row in source_colors.canonical_prompts(manifest)}
     if set(choices) != expected:
         raise RuntimeError('incomplete part/source-filament decisions')
     chosen = {choices['part:' + part['key']]['slot'] for part in manifest['parts']}
@@ -479,10 +481,12 @@ def export_production_plate(source, target, decisions, slot_colors):
                                     'policy': 'production package copy; one filament colour byte patch'}
 
 
-BED_MM = 220
-TOWER_MM = 45
-TOWER_MARGIN_MM = 8
-TOWER_EDGE_MM = 10
+_S = settings.current()
+# Prime tower math assumes a square bed; use the short side so a rectangle stays safe.
+BED_MM = min(_S['printer']['bed_mm'])
+TOWER_MM = _S['prime_tower']['size_mm']
+TOWER_MARGIN_MM = _S['prime_tower']['part_clearance_mm']
+TOWER_EDGE_MM = _S['prime_tower']['edge_mm']
 
 
 def _compose(outer, inner):
@@ -510,7 +514,7 @@ def fit_transform(fit):
     """
     if not fit:
         return None
-    from orca_adapter import _check_rotation
+    from .orca_adapter import _check_rotation
     scale = float(fit.get('scale') or 1.0)
     if not 0 < scale <= 1:
         raise RuntimeError('fit scale must be greater than 0 and no more than 1')
@@ -613,7 +617,7 @@ def export_single_color_plate(source, target, decisions, part_keys, bed=BED_MM, 
         raise RuntimeError('single-color plate requires exact-source per_part decisions')
     if decisions.get('schema') not in (None, 'part_slots_v1'):
         raise RuntimeError('unknown color decision schema')
-    planner = __import__('source_colors').canonical_prompts if decisions.get('schema') == 'part_slots_v1' else __import__('source_colors').prompts
+    planner = source_colors.canonical_prompts if decisions.get('schema') == 'part_slots_v1' else source_colors.prompts
     if set(decisions['choices']) != {row['key'] for row in planner(manifest)}:
         raise RuntimeError('incomplete part/source-filament decisions')
     # Same rule as the multipart exporter: a part may not disagree with the
@@ -645,7 +649,7 @@ def export_single_color_plate(source, target, decisions, part_keys, bed=BED_MM, 
         payload = {name: archive.read(name) for name in names}
     minimum = [min(box[axis][0] for box in boxes) for axis in range(3)]
     maximum = [max(box[axis][1] for box in boxes) for axis in range(3)]
-    margin = 1.0
+    margin = _S['layout']['single_copy_edge_mm']
     if item_shifts is not None:
         if {str(k) for k in item_shifts} != set(selected):
             raise RuntimeError('item shifts must name exactly the selected objects')
@@ -961,7 +965,7 @@ def prime_tower_candidates(part_bounds, bed=BED_MM, tower=TOWER_MM, margin=TOWER
                      for x in range(edge, int(top) + 1, step) if not overlaps(x, y)),
                     key=lambda c: (-c[0], c[2], c[1]))
     if not scored:
-        raise RuntimeError('no prime tower position clears every part on the 220 mm bed')
+        raise RuntimeError(f'no prime tower position clears every part on the {bed:g} mm bed')
     picked = []
     for _score, x, y in scored:
         if all(abs(x - px) >= spread or abs(y - py) >= spread for px, py in picked):
@@ -977,7 +981,7 @@ def prime_tower_xy(part_bounds, bed=BED_MM, tower=TOWER_MM, margin=TOWER_MARGIN_
 
 
 def _identity_for_key(source, key):
-    from source_colors import component_parts
+    from .source_colors import component_parts
     with zipfile.ZipFile(source) as archive:
         leaf = next(p for p in component_parts(archive) if p['key'] == key)
     return leaf['model_path'], leaf['object_id']

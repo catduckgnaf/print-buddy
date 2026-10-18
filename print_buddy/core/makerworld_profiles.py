@@ -1,6 +1,8 @@
 """MakerWorld profile compatibility and selection helpers."""
+from .. import settings
 
-BED_MM = 220.0
+# A Bambu volume "fits" only if every axis fits the smaller of our bed and height.
+BED_MM = min(*settings.current()["printer"]["bed_mm"], settings.current()["printer"]["max_print_height_mm"])
 
 # MakerWorld product names mapped to Bambu nominal build volumes (XYZ mm).
 VOLUMES = {
@@ -41,7 +43,7 @@ def annotate(rows):
         row["bambu_profiles"] = candidates
         row["recommended_profile"] = candidates[0] if candidates else None
         # Source API geometry is often omitted (including the known 902337 profile).
-        # Never infer actual 220 mm fit from a Bambu model's larger nominal volume.
+        # Never infer actual fit on our bed from a Bambu model's larger nominal volume.
         row["bed_fit_220"] = "may need scaling"
     return rows
 

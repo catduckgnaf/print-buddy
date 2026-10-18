@@ -5,8 +5,10 @@ import subprocess
 import tempfile
 from pathlib import Path
 
+from .. import settings
 
-def render(path, scale=1.0, rotation=None, bed=(220, 220)):
+
+def render(path, scale=1.0, rotation=None, bed=None):
     """Render an STL through OpenSCAD in a headless subprocess; reject blank output."""
     from PIL import Image, ImageStat
     source = Path(path).resolve()
@@ -18,7 +20,7 @@ def render(path, scale=1.0, rotation=None, bed=(220, 220)):
     s = float(scale)
     if not math.isfinite(s) or s <= 0:
         raise ValueError('The selected scale is invalid.')
-    bedx, bedy = map(float, bed)
+    bedx, bedy = map(float, bed or settings.current()['printer']['bed_mm'])
     # Place the transformed mesh like a slicer would: centered on the bed, resting on Z0.
     import numpy as np
     import trimesh

@@ -28,12 +28,13 @@ def _plain(value):
 
 
 def main():
-    sys.path.insert(0, str(Path(__file__).resolve().parent))
+    # Works as `python3 -m print_buddy.core.heavy_worker` or as a plain script path.
+    sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
     request = json.loads(sys.stdin.read())
     key = (request['module'], request['func'])
     if key not in ALLOWED:
         raise SystemExit(f'not an offloadable step: {key}')
-    func = getattr(importlib.import_module(key[0]), key[1])
+    func = getattr(importlib.import_module(f'print_buddy.core.{key[0]}'), key[1])
     args = list(request.get('args', []))
     if key != ('model_job', 'slice_job') and args and isinstance(args[0], str):
         args[0] = Path(args[0])  # these take a Path source file; JSON carried it as a string

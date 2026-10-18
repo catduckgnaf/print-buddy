@@ -8,18 +8,22 @@ import re
 import zipfile
 import xml.etree.ElementTree as ET
 
-MAX_MERGED_S = 12 * 3600
+from .. import settings
+
+_S = settings.current()
+
+MAX_MERGED_S = _S['layout']['max_merged_hours'] * 3600
 
 
 class SplitNeeded(RuntimeError):
     """A merged slice turned out unsuitable; carry the reason to the caller."""
 
-EDGE_MARGIN_MM = 8.0
-SPACING_MM = 10.0
-TOWER_MM = 45.0
-TOWER_CLEARANCE_MM = 8.0
-TOWER_SLACK_MM = 5.0
-IFS_SLOTS = 4
+EDGE_MARGIN_MM = _S['layout']['merge_edge_margin_mm']
+SPACING_MM = _S['layout']['merge_spacing_mm']
+TOWER_MM = _S['prime_tower']['size_mm']
+TOWER_CLEARANCE_MM = _S['prime_tower']['part_clearance_mm']
+TOWER_SLACK_MM = _S['prime_tower']['merge_slack_mm']
+IFS_SLOTS = _S['printer']['ifs_slots']
 
 SEPARATE_RE = re.compile(
     r"(print(?:ed)?\s+(?:\w+\s+){0,3}(?:separately|individually|one\s+(?:plate\s+)?at\s+a\s+time|one\s+by\s+one)"
@@ -85,14 +89,15 @@ def pack(extents, bed, spacing=SPACING_MM, edge=EDGE_MARGIN_MM, reserve_y=0.0):
     return None
 
 
-def full_size_split_possible(source, manifest, bed=220, edge=EDGE_MARGIN_MM):
+def full_size_split_possible(source, manifest, bed=None, edge=EDGE_MARGIN_MM):
     """Whether source-assigned plate groups fit individually at authored size.
 
     This is an offline geometry check for the explicit full-size split option.
     It does not imply Orca acceptance; every derived plate is still sliced and
     validated by the normal offline G-code gates.
     """
-    import color_geometry
+    from . import color_geometry
+    bed = min(_S['printer']['bed_mm']) if bed is None else bed
     try:
         with zipfile.ZipFile(source) as archive:
             settings = ET.fromstring(archive.read('Metadata/model_settings.config'))
@@ -111,7 +116,7 @@ def full_size_split_possible(source, manifest, bed=220, edge=EDGE_MARGIN_MM):
                           for a in range(3)]
                 usable = float(bed) - 2 * float(edge)
                 if (max(bounds[a][1] - bounds[a][0] for a in (0, 1)) > usable
-                        or bounds[2][1] - bounds[2][0] > float(bed)):
+                        or bounds[2][1] - bounds[2][0] > _S['printer']['max_print_height_mm']):
                     return False
     except (RuntimeError, KeyError, zipfile.BadZipFile, ET.ParseError, ValueError):
         return False
@@ -124,7 +129,7 @@ def plan(source, manifest, plates, slots, state, bed=None, spacing=SPACING_MM, j
     manifest: source_colors.inventory(source); plates: model_job.plate_manifest(source)['plates'];
     slots: {part_key: slot}. Result keys: mode ('merge'|'split'), reason, shifts, ...
     """
-    import color_geometry
+    from . import color_geometry
     bed = int(bed or state['bed_mm'][0])
     out = {'mode': 'split', 'reason': None, 'plates_in': len(plates),
            'objects_in': sorted({p['object_id'] for p in manifest['parts']}, key=str),

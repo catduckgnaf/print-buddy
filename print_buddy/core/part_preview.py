@@ -157,7 +157,7 @@ def _transform(raw):
 
 def _display(name):
     try:
-        from part_translator import display_name
+        from .part_translator import display_name
         return display_name({'name': name})
     except Exception:
         return name

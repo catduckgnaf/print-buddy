@@ -5,6 +5,8 @@ import re
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from .. import settings
+
 @dataclass
 class Result:
     status: str = "ok"
@@ -18,10 +20,14 @@ class Result:
     def block(self, text): self.blocked.append(text); self.status = "blocked"
     def as_dict(self): return {"status":self.status,"ok":self.ok,"warnings":self.warnings,"blocked":self.blocked}
 
-def pre_slice(*, bounds=None, bed=(220,220), profile=None, required_keys=(), before_profile=None,
-              filaments=1, ifs_slots=4, tool_slots=None):
+def _printer(bed, ifs_slots):
+    printer = settings.current()['printer']
+    return tuple(bed or printer['bed_mm']), int(ifs_slots or printer['ifs_slots'])
+
+def pre_slice(*, bounds=None, bed=None, profile=None, required_keys=(), before_profile=None,
+              filaments=1, ifs_slots=None, tool_slots=None):
     """bounds is placed XY bbox (xmin,ymin,xmax,ymax); tools map T-index to 1-based IFS slot."""
-    r=Result(); profile=profile or {}; tool_slots=tool_slots or {}
+    r=Result(); profile=profile or {}; tool_slots=tool_slots or {}; bed,ifs_slots=_printer(bed,ifs_slots)
     missing=[k for k in required_keys if k not in profile or profile[k] in (None, "", [])]
     if missing: r.block("Required slicer profile settings are missing: "+", ".join(missing)+".")
     if before_profile is not None:
@@ -33,7 +39,7 @@ def pre_slice(*, bounds=None, bed=(220,220), profile=None, required_keys=(), bef
         r.warn("Placed mesh bounds are unavailable; bed-fit validation is advisory only.")
     if bounds is not None:
         x0,y0,x1,y1=map(float,bounds)
-        if x0<0 or y0<0 or x1>bed[0] or y1>bed[1]: r.block(f"Placed model bounds ({x0:g}..{x1:g} x, {y0:g}..{y1:g} mm) exceed the {bed[0]}x{bed[1]} mm bed.")
+        if x0<0 or y0<0 or x1>bed[0] or y1>bed[1]: r.block(f"Placed model bounds ({x0:g}..{x1:g} x, {y0:g}..{y1:g} mm) exceed the {bed[0]:g}x{bed[1]:g} mm bed.")
     if int(filaments)>int(ifs_slots): r.block(f"Profile has {filaments} filaments but only {ifs_slots} IFS slots are available.")
     if int(filaments)>1 and not tool_slots: r.block("Multi-filament job has no explicit T-index to physical IFS-slot mapping.")
     for t,slot in tool_slots.items():
@@ -45,8 +51,8 @@ def pre_slice(*, bounds=None, bed=(220,220), profile=None, required_keys=(), bef
 
 MOVE=re.compile(r"^\s*G[0-3]\b([^;]*)",re.I)
 WORD=re.compile(r"\b([XYZE])\s*(-?(?:\d+(?:\.\d*)?|\.\d+))",re.I)
-def post_slice(gcode, *, ifs_slots=4, tool_slots=None, bed=(220,220), result_json=None):
-    r=Result(); tool_slots=tool_slots or {}
+def post_slice(gcode, *, ifs_slots=None, tool_slots=None, bed=None, result_json=None):
+    r=Result(); tool_slots=tool_slots or {}; bed,ifs_slots=_printer(bed,ifs_slots)
     if isinstance(gcode, Path):
         text=gcode.read_text(errors="replace")
     elif isinstance(gcode, str) and "\\n" not in gcode and len(gcode)<4096 and Path(gcode).is_file():
@@ -70,7 +76,7 @@ def post_slice(gcode, *, ifs_slots=4, tool_slots=None, bed=(220,220), result_jso
         x=vals.get('X',x); y=vals.get('Y',y)
         if 'X' in vals or 'Y' in vals:
             coords.append((x,y))
-            if x<0 or y<0 or x>bed[0] or y>bed[1]: r.block(f"G-code move goes off the {bed[0]}x{bed[1]} mm bed at X{x:g} Y{y:g}."); break
+            if x<0 or y<0 or x>bed[0] or y>bed[1]: r.block(f"G-code move goes off the {bed[0]:g}x{bed[1]:g} mm bed at X{x:g} Y{y:g}."); break
     if not re.search(r"(?im)^;\s*(?:estimated printing time|estimated time|printing time)\s*=\s*\S|^;\s*time\s*:\s*\S",text):
         r.warn("G-code header has no estimated print-time metadata; estimate is unavailable offline.")
     if result_json:
@@ -138,7 +144,7 @@ def approve_baseline(config, path=BASELINE_PATH):
 def enforce_approved_baseline(artifact, path=BASELINE_PATH):
     r = Result()
     if not Path(path).exists():
-        r.warn(f"Protected-settings baseline missing; slicing allowed. Approve with: python3 {Path(__file__).name} approve-baseline")
+        r.warn("Protected-settings baseline missing; slicing allowed. Approve with: python3 -m print_buddy.core.approve_baseline approve-baseline <artifact>")
         return r
     if not isinstance(artifact, (str, Path)) or not Path(artifact).is_file():
         r.warn("Protected-settings artifact unavailable; slicing allowed pending baseline check.")
@@ -147,5 +153,5 @@ def enforce_approved_baseline(artifact, path=BASELINE_PATH):
     actual = _effective_config(artifact)
     for key, record in expected.items():
         if key not in actual or _baseline({key: actual[key]}).get(key, {}).get("sha256") != record.get("sha256"):
-            r.block(f"Protected printer setting {key} differs from the approved baseline. Re-approve deliberately with: python3 {Path(__file__).name} approve-baseline")
+            r.block(f"Protected printer setting {key} differs from the approved baseline. Re-approve deliberately with: python3 -m print_buddy.core.approve_baseline approve-baseline <artifact>")
     return r

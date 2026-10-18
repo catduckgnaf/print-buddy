@@ -81,7 +81,7 @@ def validate_materials(text, material, state, mapping=None):
     if mapping is None:
         if len(materials) != 1 or tools - {0}:
             raise RuntimeError('unknown tool mapping for multicolor material validation')
-        from printer_state import same_material
+        from .printer_state import same_material
         if not same_material(materials[0], state['spool']['material']):
             raise RuntimeError(f"G-code filament_type {material!r} != loaded {state['spool']['material']!r}")
         return None
@@ -103,7 +103,7 @@ def validate_materials(text, material, state, mapping=None):
             continue
         slot = mapping[index]
         actual = state['ifs_slots'][str(slot)]['material']
-        from printer_state import same_material
+        from .printer_state import same_material
         if not same_material(materials[int(index)], actual):
             raise RuntimeError(f'T{index} material {materials[int(index)]!r} != slot {slot} material {actual!r}')
     return mapping
@@ -123,7 +123,7 @@ def finalize(path, colors, state=None, mapping=None):
         if not sep or first.rstrip(b'\r') != b'; MD5:' + hashlib.md5(payload).hexdigest().encode():
             raise RuntimeError('refusing to replace invalid existing ZMod checksum')
         raw = payload
-    from native_startup import normalize
+    from .native_startup import normalize
     text = normalize(raw.decode('utf-8'))
     if mapping is not None:
         mapping = normalize_mapping(mapping, state)

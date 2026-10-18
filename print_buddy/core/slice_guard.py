@@ -138,7 +138,7 @@ def approve_baseline(config, path=BASELINE_PATH):
 def enforce_approved_baseline(artifact, path=BASELINE_PATH):
     r = Result()
     if not Path(path).exists():
-        r.warn(f"Protected-settings baseline missing; slicing allowed. Approve with: python3 {Path(__file__).name} approve-baseline")
+        r.warn("Protected-settings baseline missing; slicing allowed. Approve with: python3 -m print_buddy.core.approve_baseline approve-baseline <artifact>")
         return r
     if not isinstance(artifact, (str, Path)) or not Path(artifact).is_file():
         r.warn("Protected-settings artifact unavailable; slicing allowed pending baseline check.")
@@ -147,5 +147,5 @@ def enforce_approved_baseline(artifact, path=BASELINE_PATH):
     actual = _effective_config(artifact)
     for key, record in expected.items():
         if key not in actual or _baseline({key: actual[key]}).get(key, {}).get("sha256") != record.get("sha256"):
-            r.block(f"Protected printer setting {key} differs from the approved baseline. Re-approve deliberately with: python3 {Path(__file__).name} approve-baseline")
+            r.block(f"Protected printer setting {key} differs from the approved baseline. Re-approve deliberately with: python3 -m print_buddy.core.approve_baseline approve-baseline <artifact>")
     return r

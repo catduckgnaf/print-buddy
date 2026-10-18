@@ -92,7 +92,7 @@ def full_size_split_possible(source, manifest, bed=220, edge=EDGE_MARGIN_MM):
     It does not imply Orca acceptance; every derived plate is still sliced and
     validated by the normal offline G-code gates.
     """
-    import color_geometry
+    from . import color_geometry
     try:
         with zipfile.ZipFile(source) as archive:
             settings = ET.fromstring(archive.read('Metadata/model_settings.config'))
@@ -124,7 +124,7 @@ def plan(source, manifest, plates, slots, state, bed=None, spacing=SPACING_MM, j
     manifest: source_colors.inventory(source); plates: model_job.plate_manifest(source)['plates'];
     slots: {part_key: slot}. Result keys: mode ('merge'|'split'), reason, shifts, ...
     """
-    import color_geometry
+    from . import color_geometry
     bed = int(bed or state['bed_mm'][0])
     out = {'mode': 'split', 'reason': None, 'plates_in': len(plates),
            'objects_in': sorted({p['object_id'] for p in manifest['parts']}, key=str),

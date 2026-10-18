@@ -9,10 +9,10 @@ def split_plan_100(source, bed=220):
     are never combined. Geometry checks and packing use the printer's edge and
     spacing margins and do not slice or contact the printer.
     """
-    import color_geometry
-    import model_job
-    import plate_merge
-    from source_colors import inventory
+    from . import color_geometry
+    from . import model_job
+    from . import plate_merge
+    from .source_colors import inventory
 
     manifest = inventory(source)
     if not manifest.get('parts'):

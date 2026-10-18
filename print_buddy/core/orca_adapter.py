@@ -8,8 +8,8 @@ import struct
 import subprocess
 import xml.etree.ElementTree as ET
 import zipfile
-import slice_guard as sg
-from slice_guard import pre_slice, post_slice
+from . import slice_guard as sg
+from .slice_guard import pre_slice, post_slice
 
 TEMPLATES = Path(__file__).resolve().parent.parent / 'templates/orca'
 # Bed edge clearance. Multiple copies keep the historical 8 mm; a lone part only needs
@@ -40,7 +40,7 @@ def export_geometry(source, target, scale=1.0, rotation=None):
         # conflict) or drop it and fill the hole. Keep it as a negative volume.
         if Path(target).suffix.lower() != '.3mf':
             raise RuntimeError('source has negative/modifier volumes; export to .3mf, not STL')
-        from color_geometry import export_volume_plate
+        from .color_geometry import export_volume_plate
         return export_volume_plate(source, target, scale=scale, rotation=rotation)
     return _place_triangles(_3mf_triangles(source), target, scale, rotation)
 
@@ -49,7 +49,7 @@ def has_cutters(source):
     source = Path(source)
     if source.suffix.lower() != '.3mf':
         return False
-    from source_colors import cutter_ids
+    from .source_colors import cutter_ids
     with zipfile.ZipFile(source) as archive:
         return bool(cutter_ids(archive))
 
@@ -114,7 +114,7 @@ def _parse_3mf_triangles(source):
             for component in obj.findall('c:components/c:component', NS):
                 external = next((v for k, v in component.attrib.items() if k.endswith('}path')), name)
                 yield from triangles(external.lstrip('/'), component.get('objectid'), [transform(component)] + chain, active | {key})
-        from source_colors import cutter_ids
+        from .source_colors import cutter_ids
         cutters = cutter_ids(archive)
         root, objects = model('3D/3dmodel.model')
         result = []
@@ -372,7 +372,7 @@ def finalize_zmod(path, color, material):
     Source: ghzserg/zmod_preprocess zmod-preprocess.py, color insertion then
     first-line MD5 over all remaining bytes. Does not select a physical slot.
     """
-    from multicolor_contract import finalize
+    from .multicolor_contract import finalize
     return finalize(path, (color, material))
 
 
@@ -392,13 +392,13 @@ def slice_model(source, folder, state, brim=None, first_layer=False, color_decis
         raise RuntimeError('resolved AD5X profile requires installed 0.4 mm nozzle')
     author = {}
     geometry = {'policy': 'original STL unchanged', 'source_sha256': digest(source)}
-    from source_colors import inventory, validate_decisions
-    from model_job import resolve_filament_selection
+    from .source_colors import inventory, validate_decisions
+    from .model_job import resolve_filament_selection
     color_decisions = (validate_decisions(inventory(source), color_decisions, state, resolve_filament_selection)
                        if color_decisions else None)
     mapping = None
     if color_decisions and color_decisions.get('mode') == 'per_part':
-        from color_geometry import export_color_geometry
+        from .color_geometry import export_color_geometry
         input_path = folder / 'geometry.3mf'
         mapping, geometry = export_color_geometry(source, input_path, color_decisions, item_shifts=item_shifts,
                                                   object_ids=object_ids, scale=scale)
@@ -463,7 +463,7 @@ def slice_model(source, folder, state, brim=None, first_layer=False, color_decis
             spool_url = f"{state['spoolman_url']}/api/v1/spool/{slot['spoolman_id']}"
             with urllib.request.urlopen(spool_url, timeout=6) as response:
                 spool = json.load(response)
-            from printer_state import same_material
+            from .printer_state import same_material
             if spool.get('archived') or not same_material(spool.get('filament', {}).get('material'), slot['material']):
                 raise RuntimeError(f'IFS slot {filament_slot} maps to missing, archived, or mismatched Spoolman spool')
         color = slot.get('hex')
@@ -474,7 +474,7 @@ def slice_model(source, folder, state, brim=None, first_layer=False, color_decis
             if len(matching) != 1:
                 raise RuntimeError('selected spool must resolve to exactly one IFS slot')
             slot = matching[0]
-            from printer_state import same_material
+            from .printer_state import same_material
             if not same_material(slot.get('material'), state['spool']['material']) or not slot.get('physical_color_verified'):
                 raise RuntimeError('IFS slot color/material mapping is unverified')
             color = slot.get('hex')
@@ -506,7 +506,7 @@ def slice_model(source, folder, state, brim=None, first_layer=False, color_decis
         filament_paths = []
         for tool, physical_slot in mapping.items():
             slot = state['ifs_slots'][str(physical_slot)]
-            from printer_state import same_material
+            from .printer_state import same_material
             if not same_material(slot['material'], state['spool']['material']):
                 raise RuntimeError('mixed material requires independently calibrated per-slot temperatures/density')
             data = copy.deepcopy(filament)
@@ -714,7 +714,7 @@ def slice_model(source, folder, state, brim=None, first_layer=False, color_decis
     if generator is None:
         raise RuntimeError(f'output is not generated by {slicer}')
     if mapping:
-        from multicolor_contract import finalize
+        from .multicolor_contract import finalize
         finalize(output, None, state, mapping)
     else:
         finalize_zmod(output, filament['filament_colour'][0], state['spool']['material'])
@@ -808,8 +808,8 @@ def _source_plate_count(source) -> int:
 def _multi_plate_capacity(source: Path, state: dict, scale: float = 1.0, single_margin: float = 1.0) -> int:
     """Check if all plates in a multi-plate 3MF fit the bed bounds at `scale`."""
     try:
-        import model_job as mj
-        import color_geometry as cg
+        from . import model_job as mj
+        from . import color_geometry as cg
         bed = state.get('bed_mm', [220, 220])
         max_h = float(state.get('max_print_height_mm', 220))
         eff_w = float(bed[0]) - 2 * single_margin

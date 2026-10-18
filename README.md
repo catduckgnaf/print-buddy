@@ -55,6 +55,13 @@ When the print finishes, the bot posts completion stats and records the job deta
 
 ## Release history
 
+### 2.0.2 — The core actually imports
+
+- **Package imports fixed**: `orca_adapter`, `color_geometry`, `source_colors`, and `approve_baseline` imported their siblings as flat top level modules, which only worked inside the old private folder. All of `print_buddy/core/` now uses relative imports and loads as `print_buddy.core`. Private modules that plug in here (`model_job`, `printer_state`) now belong inside `print_buddy/core/`, not beside it.
+- **Command line entry points**: approve a protected settings baseline with `python3 -m print_buddy.core.approve_baseline approve-baseline <artifact>`. Importing that module no longer runs it. `heavy_worker` loads its steps from the package and still works as a plain script path.
+- **Per color filament totals on multi-plate files**: when one filament fed several plates, its per color figure kept only the last plate while the job total added them all. They now agree.
+- **Tests that run**: the README test command skipped `tests/core/` entirely, so the 11 part translator checks never ran under it. They do now, along with new suites for imports, the slice guard, the protected settings baseline, scale and copy choices, and filament stats. 67 tests, no printer needed.
+
 ### 2.0.1 — Honest filament estimates and readable part names
 
 - **Filament estimates no longer multiply**: when several parts share one filament, the total is split across them instead of charged to each part. A five part headphone stand reported 1,239 g; it now reports 160 g, matching its MakerWorld page.
@@ -167,12 +174,12 @@ is_system_service: False
 * `plugins/print-feedback/`: Small guards that limit clarify choices and repeated terminal loops.
 * `print_bitch.cfg`: Klipper G-code macro for checking backup IFS slot matching. The macro name is historical. The project name is Print Buddy.
 * `install.sh` / `uninstall.sh` / `update.sh`: ZMod plugin lifecycle scripts.
-* `tests/`: Unit tests verifying macro logic and interaction guards without requiring physical hardware.
+* `tests/`: Unit tests for the offline core, the Klipper macro, and interaction guards. No printer required.
 * `docs/`: Technical specifications for AD5X integration and upstream tool research.
 
 ## Running Tests
 
-Run the test suite with standard Python:
+Run the test suite from the repository root with standard Python. Pillow and NumPy are needed for the preview modules:
 
 ```bash
 python3 -m unittest discover -s tests -v

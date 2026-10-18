@@ -8,6 +8,7 @@ import posixpath
 import xml.etree.ElementTree as ET
 import zipfile
 
+from .. import settings
 from . import source_colors
 from .source_colors import inventory
 from .orca_adapter import digest
@@ -480,10 +481,12 @@ def export_production_plate(source, target, decisions, slot_colors):
                                     'policy': 'production package copy; one filament colour byte patch'}
 
 
-BED_MM = 220
-TOWER_MM = 45
-TOWER_MARGIN_MM = 8
-TOWER_EDGE_MM = 10
+_S = settings.current()
+# Prime tower math assumes a square bed; use the short side so a rectangle stays safe.
+BED_MM = min(_S['printer']['bed_mm'])
+TOWER_MM = _S['prime_tower']['size_mm']
+TOWER_MARGIN_MM = _S['prime_tower']['part_clearance_mm']
+TOWER_EDGE_MM = _S['prime_tower']['edge_mm']
 
 
 def _compose(outer, inner):
@@ -646,7 +649,7 @@ def export_single_color_plate(source, target, decisions, part_keys, bed=BED_MM, 
         payload = {name: archive.read(name) for name in names}
     minimum = [min(box[axis][0] for box in boxes) for axis in range(3)]
     maximum = [max(box[axis][1] for box in boxes) for axis in range(3)]
-    margin = 1.0
+    margin = _S['layout']['single_copy_edge_mm']
     if item_shifts is not None:
         if {str(k) for k in item_shifts} != set(selected):
             raise RuntimeError('item shifts must name exactly the selected objects')
@@ -962,7 +965,7 @@ def prime_tower_candidates(part_bounds, bed=BED_MM, tower=TOWER_MM, margin=TOWER
                      for x in range(edge, int(top) + 1, step) if not overlaps(x, y)),
                     key=lambda c: (-c[0], c[2], c[1]))
     if not scored:
-        raise RuntimeError('no prime tower position clears every part on the 220 mm bed')
+        raise RuntimeError(f'no prime tower position clears every part on the {bed:g} mm bed')
     picked = []
     for _score, x, y in scored:
         if all(abs(x - px) >= spread or abs(y - py) >= spread for px, py in picked):

@@ -49,9 +49,7 @@ def check_core(data):
 
 
 def check_orca(data):
-    command = data["orca"].get("command")
-    if not command:
-        return None
+    command = data["orca"]["command"]
     if not shutil.which(command[0]):
         raise RuntimeError(f"{command[0]} is not on PATH")
     run = subprocess.run([*command, "--help"], capture_output=True, text=True, timeout=120)

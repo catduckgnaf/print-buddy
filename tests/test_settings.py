@@ -22,6 +22,7 @@ class HomeSettingsTests(unittest.TestCase):
         self.assertEqual(printer["bed_mm"], [220.0, 220.0])
         self.assertEqual(printer["ifs_slots"], 4)
         self.assertEqual(printer["nozzle_diameter_mm"], 0.4)
+        self.assertEqual(self.home["orca"]["command"], ["flatpak", "run", "com.orcaslicer.OrcaSlicer"])
 
     def test_bed_matches_orca_printable_area(self):
         corners = [tuple(float(v) for v in c.split("x")) for c in self.machine["printable_area"]]
@@ -43,6 +44,7 @@ class HomeSettingsTests(unittest.TestCase):
         self.assertEqual(orca_adapter.SINGLE_COPY_EDGE_MM, current["layout"]["single_copy_edge_mm"])
         self.assertEqual(plate_merge.IFS_SLOTS, current["printer"]["ifs_slots"])
         self.assertTrue(slice_guard.pre_slice(bounds=(0, 0, 219, 219), tool_slots={0: 1}).ok)
+        self.assertEqual(orca_adapter.ORCA_COMMAND, current["orca"]["command"])
 
 
 class OverrideTests(unittest.TestCase):
@@ -79,6 +81,7 @@ class OverrideTests(unittest.TestCase):
                               ("[printer]\nifs_slots = 2.5\n", "whole number"),
                               ("[printer]\nnozzle_diameter_mm = true\n", "positive number"),
                               ("[layout]\nmulti_copy_edge_mm = 0\n", "positive number"),
+                              ('[orca]\ncommand = "flatpak run orca"\n', "list of strings"),
                               ("[printer\n", "local.toml")]:
             with self.subTest(text=text):
                 with self.assertRaisesRegex(settings.SettingsError, message):

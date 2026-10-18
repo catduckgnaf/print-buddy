@@ -173,7 +173,7 @@ is_system_service: False
 
 ## Settings
 
-Hardware and layout values live in `config/home.toml`, not in code: bed size, print height, nozzle, IFS slot count, edge margins, prime tower size, and the Orca template folder. That file is the home AD5X setup, and the test suite runs against it, including a check that it agrees with `templates/orca/machine.json`.
+Hardware and layout values live in `config/home.toml`, not in code: bed size, print height, nozzle, IFS slot count, edge margins, prime tower size, the Orca template folder, and the Orca and Bambu Studio commands. That file is the home AD5X setup, and the test suite runs against it, including a check that it agrees with `templates/orca/machine.json`.
 
 For anything that belongs only on one machine, create `config/local.toml`. It is gitignored, so `git pull` never touches it, and any key in it overrides the same key in `home.toml`:
 
@@ -201,12 +201,9 @@ Run the doctor on its own any time:
 python3 -m print_buddy.doctor
 ```
 
-It checks the settings, the Orca templates against the bed size, that every core module imports, and, when `config/local.toml` sets them, the Orca CLI, Moonraker, and Spoolman:
+It checks the settings, the Orca templates against the bed size, that every core module imports, that the Orca CLI starts, and, when `config/local.toml` sets them, Moonraker and Spoolman:
 
 ```toml
-[orca]
-command = ["flatpak", "run", "io.github.softfever.OrcaSlicer"]
-
 [services]
 moonraker_url = "http://192.168.x.x:7125"
 spoolman_url = "http://192.168.x.x:7912"
@@ -234,6 +231,8 @@ Run the test suite from the repository root. GitHub Actions runs the same comman
 python3 -m pip install -r requirements-test.txt
 python3 -m unittest discover -s tests -v
 ```
+
+A second CI job installs the Flathub OrcaSlicer the home box runs and slices small fixtures with the home templates, then runs the post slice guard and the protected settings baseline on the real output. Run it locally with `PRINT_BUDDY_REAL_SLICER=1 python3 -m unittest tests.slicer -v`.
 
 ## Roadmap: Expanding to More Klipper Printers
 

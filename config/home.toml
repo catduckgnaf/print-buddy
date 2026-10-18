@@ -39,3 +39,12 @@ merge_slack_mm = 5.0
 [orca]
 # Folder holding machine.json, process.json and filament.json. Relative to the repository root.
 templates = "print_buddy/templates/orca"
+
+# How the home box runs the Orca CLI. Machine specific, so set it in config/local.toml:
+#   [orca]
+#   command = ["flatpak", "run", "io.github.softfever.OrcaSlicer"]
+
+[services]
+# Addresses stay out of the repo. Set them in config/local.toml and the doctor will check them:
+#   moonraker_url = "http://192.168.x.x:7125"
+#   spoolman_url = "http://192.168.x.x:7912"

@@ -1,8 +1,10 @@
 """Offline full-size packing plan for splitting a 3MF into printable plates."""
 import zipfile
 
+from .. import settings
 
-def split_plan_100(source, bed=220):
+
+def split_plan_100(source, bed=None):
     """Return the fewest greedy full-size plates, or None if any object cannot fit.
 
     Source plate assignments are respected: objects from distinct authored plates
@@ -14,6 +16,7 @@ def split_plan_100(source, bed=220):
     from . import plate_merge
     from .source_colors import inventory
 
+    bed = min(settings.current()['printer']['bed_mm']) if bed is None else bed
     manifest = inventory(source)
     if not manifest.get('parts'):
         return None

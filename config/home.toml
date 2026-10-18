@@ -1,0 +1,41 @@
+# Print Buddy settings: catduck's home setup. Tests run against this exact file.
+#
+# Change hardware values here, not in code. For anything private or machine specific
+# (addresses, tokens, paths on the home box), create config/local.toml. It is gitignored
+# and its values override this file key by key. PRINT_BUDDY_CONFIG=/path/to/file.toml
+# overrides with that file instead of config/local.toml.
+
+[printer]
+name = "Flashforge AD5X"
+firmware = "ZMod Klipper"
+# Usable print area, matching printable_area in templates/orca/machine.json.
+# The physical sheet is 235 mm; Orca and the steppers allow 220.
+bed_mm = [220.0, 220.0]
+max_print_height_mm = 220.0
+# Orca templates are tuned for this nozzle. Slicing refuses any other size.
+nozzle_diameter_mm = 0.4
+# Filament slots in the IFS. 1 for a single extruder printer.
+ifs_slots = 4
+
+[layout]
+# Distance from the bed edge for a lone copy and for multi copy plates.
+single_copy_edge_mm = 1.0
+multi_copy_edge_mm = 3.0
+# Gaps when several source plates are merged onto one bed.
+merge_edge_margin_mm = 8.0
+merge_spacing_mm = 10.0
+# Merged plates longer than this are kept separate.
+max_merged_hours = 12
+
+[prime_tower]
+size_mm = 45.0
+# Clearance between the tower and any part.
+part_clearance_mm = 8.0
+# Closest the tower may sit to the bed edge.
+edge_mm = 10.0
+# Extra room reserved for the tower when merging plates.
+merge_slack_mm = 5.0
+
+[orca]
+# Folder holding machine.json, process.json and filament.json. Relative to the repository root.
+templates = "print_buddy/templates/orca"

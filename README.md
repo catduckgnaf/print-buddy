@@ -63,6 +63,7 @@ When the print finishes, the bot posts completion stats and records the job deta
 - **Command line entry points**: approve a protected settings baseline with `python3 -m print_buddy.core.approve_baseline approve-baseline <artifact>`. Importing that module no longer runs it. `heavy_worker` loads its steps from the package and still works as a plain script path.
 - **Per color filament totals on multi-plate files**: when one filament fed several plates, its per color figure kept only the last plate while the job total added them all. They now agree.
 - **Settings file**: bed, height, nozzle, slot count, margins, and prime tower size moved out of code into `config/home.toml`, with a gitignored `config/local.toml` for per machine overrides. Part height in the plate merge check is now compared with the print height instead of the bed width.
+- **Safe home updates**: `scripts/home-update.sh` fast-forwards, runs the tests and `python3 -m print_buddy.doctor`, and rolls back on any failure.
 - **Tests that run**: the README test command skipped `tests/core/` entirely, so the 11 part translator checks never ran under it. They do now, along with new suites for imports, the slice guard, the protected settings baseline, scale and copy choices, and filament stats. 67 tests, no printer needed.
 
 ### 2.0.1 — Honest filament estimates and readable part names
@@ -183,10 +184,40 @@ ifs_slots = 1
 
 To use a different file instead, set `PRINT_BUDDY_CONFIG=/path/to/settings.toml`. A typo or a bad value stops the import with the offending key named, rather than slicing against the wrong bed. Requires Python 3.11 or newer.
 
+## Updating the Home Box
+
+Only update from a commit that is green in CI. Then, on the home machine:
+
+```bash
+scripts/home-update.sh          # fast-forward to origin/main
+scripts/home-update.sh v2.0.2   # or a tag
+```
+
+The script refuses to run if tracked files were edited by hand, fast-forwards, then runs the offline tests and the doctor. If either fails it resets to the commit you were on and says so. `config/local.toml` is never touched. Put a restart command for the listener in `config/after-update.sh` (gitignored) and it runs after a good update.
+
+Run the doctor on its own any time:
+
+```bash
+python3 -m print_buddy.doctor
+```
+
+It checks the settings, the Orca templates against the bed size, that every core module imports, and, when `config/local.toml` sets them, the Orca CLI, Moonraker, and Spoolman:
+
+```toml
+[orca]
+command = ["flatpak", "run", "io.github.softfever.OrcaSlicer"]
+
+[services]
+moonraker_url = "http://192.168.x.x:7125"
+spoolman_url = "http://192.168.x.x:7912"
+```
+
 ## Repository Structure
 
 * `config/home.toml`: Printer and layout settings for the home setup. See Settings.
 * `print_buddy/settings.py`: Loads and validates the settings.
+* `print_buddy/doctor.py`: Checks that a machine can run Print Buddy.
+* `scripts/home-update.sh`: Updates the home checkout and rolls back if checks fail.
 * `print_buddy/core/`: Offline 3MF and STL helpers. No printer connection.
 * `print_buddy/templates/orca/`: Example Orca machine, process, and filament JSON.
 * `plugins/print-feedback/`: Small guards that limit clarify choices and repeated terminal loops.

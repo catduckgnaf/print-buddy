@@ -55,6 +55,13 @@ When the print finishes, the bot posts completion stats and records the job deta
 
 ## Release history
 
+### 2.0.1 — Honest filament estimates and readable part names
+
+- **Filament estimates no longer multiply**: when several parts share one filament, the total is split across them instead of charged to each part. A five part headphone stand reported 1,239 g; it now reports 160 g, matching its MakerWorld page.
+- **Model page estimates up front**: the first intake message shows the print time and grams from the MakerWorld page, labeled with the page's printer, instead of "unknown". The sliced numbers still replace them after slicing.
+- **Readable part names**: generic CAD names like "Cylinder" now become a shape description with size, plate, and the author's color, for example "Tall post, 60 x 60 x 165.3 mm, plate 4, author made it White". This change is in `print_buddy/core/source_colors.py`.
+- **Timelapse posts**: a completion timelapse too large for Discord is re-encoded under the limit, with a text post if it is still refused. That code lives in the private listener.
+
 ### 2.0.0 — Shareable offline core
 
 The first release that contains runnable code, not only notes. Version 2.0.0 replaces the 1.10 line so the public number is not read as "version 10."

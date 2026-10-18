@@ -1,5 +1,18 @@
 # Print Buddy Internal Release Notes
 
+# Version 2.0.1
+
+**Release Date:** 2026-10-18
+**What shipped:**
+- `model_job.filament_usage_by_selection` (private): extruder usage shared by several parts is split by part volume, and a volume guess is clamped to the scraped source plate total (`source_site_estimate`). Valentine's Headphones Stand: 5 x 247.8 g = 1,239 g before, 160 g after (MakerWorld: 160.03 g over 4 plates, 20,520 s).
+- `prepared_intake.preview_sentence` (private): uses plate `prediction_s` and `weight_g` from the scraped instance instead of "unknown".
+- `source_colors.py` (public): `_annotate_parts` and `_shape_word` read `3D/3dmodel.model` bounds and transforms to label generic primitives; volume guessed extruder stats carry `estimated: True`; the per part `[uses ~Ng]` suffix was removed.
+- Moonraker listener (private): oversized timelapses are re-encoded under the Discord limit, with a text fallback.
+- Tests: 797 passed in the deployed suite; 24 passed in this repository.
+- Known open: the duplicate clarify title in Discord is an upstream Hermes adapter change, tracked separately.
+
+---
+
 # Version 2.0.0
 
 **Release Date:** 2026-10-18

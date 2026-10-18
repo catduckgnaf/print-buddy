@@ -158,6 +158,71 @@ def _apply_plate_names(archive, names, parts):
             part['name'] = label
 
 
+def _annotate_parts(archive, names, parts, filaments):
+    """Give each part what a person needs to recognise it: real size, plate and the author's color.
+
+    Best effort and display only; a failure here never blocks intake.
+    """
+    try:
+        root = ET.fromstring(archive.read('3D/3dmodel.model'))
+        objects = {n.get('id'): n for n in root.iter() if n.tag.split('}')[-1] == 'object'}
+        items = {n.get('objectid'): n for n in root.iter() if n.tag.split('}')[-1] == 'item'}
+        cache = {}
+
+        def mat(node):
+            v = [float(x) for x in (node.get('transform') or '1 0 0 0 1 0 0 0 1 0 0 0').split()]
+            return v if len(v) == 12 else [1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0]
+
+        def apply(m, x, y, z):
+            return (x * m[0] + y * m[3] + z * m[6] + m[9], x * m[1] + y * m[4] + z * m[7] + m[10],
+                    x * m[2] + y * m[5] + z * m[8] + m[11])
+
+        for part in parts:
+            obj = objects.get(part.get('object_id'))
+            if obj is None:
+                continue
+            comps = [c for c in obj.iter() if c.tag.split('}')[-1] == 'component']
+            want = [c for c in comps if c.get('objectid') == part.get('part_id')] or comps
+            pts = []
+            for comp in want:
+                path_attr = next((v for k, v in comp.attrib.items() if k.split('}')[-1] == 'path'), None)
+                mpath = path_attr.lstrip('/') if path_attr else '3D/3dmodel.model'
+                if mpath not in cache:
+                    mroot = ET.fromstring(archive.read(mpath))
+                    cache[mpath] = {o.get('id'): [(float(v.get('x')), float(v.get('y')), float(v.get('z')))
+                                                  for v in o.iter() if v.tag.split('}')[-1] == 'vertex']
+                                    for o in mroot.iter() if o.tag.split('}')[-1] == 'object'}
+                m = mat(comp)
+                pts += [apply(m, *pt) for pt in cache[mpath].get(comp.get('objectid'), [])]
+            if pts:
+                item = items.get(part['object_id'])
+                if item is not None:
+                    m = mat(item)
+                    # Rotation/scale only: translation does not change size.
+                    m = m[:9] + [0, 0, 0]
+                    pts = [apply(m, *pt) for pt in pts]
+                part['bounds_mm'] = [round(max(p[i] for p in pts) - min(p[i] for p in pts), 1) for i in range(3)]
+        if 'Metadata/model_settings.config' in names:
+            settings = ET.fromstring(archive.read('Metadata/model_settings.config'))
+            plate_of = {}
+            for number, plate in enumerate(settings.findall('plate'), 1):
+                for inst in plate.findall('model_instance'):
+                    md = {m.get('key'): m.get('value') for m in inst.findall('metadata')}
+                    plate_of[md.get('object_id')] = number
+            if len(set(plate_of.values())) > 1:
+                for part in parts:
+                    if part.get('object_id') in plate_of:
+                        part['plate'] = plate_of[part['object_id']]
+        palette = {f.get('source_extruder'): f.get('color') for f in filaments}
+        if len({c for c in palette.values() if c}) > 1:
+            for part in parts:
+                color = palette.get(part.get('source_extruder'))
+                if color:
+                    part['author_color'] = color
+    except Exception:
+        pass
+
+
 def inventory(path):
     path = Path(path)
     if path.suffix.lower() != '.3mf':
@@ -225,6 +290,7 @@ def inventory(path):
             parts = mapped
         # Negative parts and modifiers are cutters/settings volumes, not printed
         # bodies: never a color question, never a separate printed object.
+        _annotate_parts(archive, names, parts, filaments)
         cutters = [p for p in parts if p.get('subtype', 'normal_part') != 'normal_part']
         parts = [p for p in parts if p.get('subtype', 'normal_part') == 'normal_part']
         if not parts:
@@ -267,6 +333,7 @@ def _append_filament_stats(path, manifest):
                 est_m = est_g / 2.98
                 stats['total_g'] = round(est_g, 1)
                 stats['total_m'] = round(est_m, 1)
+                stats['estimated'] = True  # volume guess, not a slicer figure
                 if manifest.get('filaments'):
                     stats['extruders'][1] = {'g': stats['total_g'], 'm': stats['total_m']}
         except Exception:
@@ -276,13 +343,52 @@ def _append_filament_stats(path, manifest):
     manifest['filament_stats'] = stats
 
 
+def _shape_word(bounds):
+    """Plain shape from a bounding box, for CAD primitive names that say nothing."""
+    try:
+        x, y, z = (float(v) for v in bounds[:3])
+    except Exception:
+        return ''
+    big, small = max(x, y, z), min(x, y, z)
+    if big <= 15:
+        return 'Small pin/peg'
+    if z == small and z < 0.2 * min(x, y):
+        return 'Flat round disc' if abs(x - y) < 0.1 * max(x, y) else 'Flat plate'
+    if z == big and z > 2 * max(x, y):
+        return 'Tall post'
+    if z == small:
+        return 'Low round piece' if abs(x - y) < 0.1 * max(x, y) else 'Low piece'
+    return 'Chunky piece'
+
+
 def _prompt_name(part):
-    """English display name for a question. Never used as a decision key."""
+    """English display name for a question. Never used as a decision key.
+
+    'Cylinder A (98 x 98 x 12 mm, plate 2, author made it White)': name alone
+    is useless when the CAD export calls half the model 'Cylinder'.
+    """
     try:
         import part_translator
-        return part_translator.display_name(part)
+        base = part_translator.translate_name(part.get('name') or '') if not part_translator.is_meaningless(part.get('name')) \
+            else (part.get('object_name') or 'Main body')
+        hint = part_translator.size_hint(part)
     except Exception:
-        return part.get('name') or ''
+        base, hint = part.get('name') or '', ''
+    base = re.sub(r'[_]+', ' ', str(base)).strip()
+    shape = _shape_word(part.get('bounds_mm'))
+    if shape and re.fullmatch(r'(?i)(cylinder|cube|box|sphere|cone|body|object|part|mesh|solid|extrude|torus)(\s*[a-z0-9]{0,3})?(\s*\d+)?', base):
+        base = f'{shape} ("{base}")'
+    details = [hint] if hint else []
+    if part.get('plate'):
+        details.append(f"plate {part['plate']}")
+    if part.get('author_color'):
+        try:
+            import part_translator
+            color = part_translator.named_color(part['author_color']).title()
+        except Exception:
+            color = str(part['author_color'])
+        details.append(f'author made it {color}')
+    return f"{base}, {', '.join(details)}" if details else base
 
 
 def _palette_rows(manifest, canonical=False):
@@ -345,10 +451,8 @@ def canonical_prompts(manifest):
     rows = []
     for p in manifest['parts']:
         ext = p.get('source_extruder')
+        # No per-part grams here: an extruder total shown on every part read as N x the real usage.
         stat_suffix = ''
-        if ext and ext in ext_stats:
-            s = ext_stats[ext]
-            stat_suffix = f" [uses ~{s['g']}g / {s['m']}m]"
         rows.append({'key': 'part:' + p['key'],
                      'question': f"Choose the color/material for {_prompt_name(p)}{stat_suffix}",
                      'source_extruder': p['source_extruder']})
@@ -381,7 +485,7 @@ def _family_key(name):
 
 def _family_noun(key, count):
     head = key.split('#', 1)[0].strip(' -_') or key.split(' - ', 1)[0]
-    head = head or 'parts'
+    head = re.sub(r'[_]+', ' ', head or 'parts').strip()
     try:
         import part_translator
         head = part_translator.translate_name(head).split(' (', 1)[0].lower()
@@ -421,8 +525,11 @@ def part_families(manifest):
         chunks = [members] if groupable else [[p] for p in members]
         for chunk in chunks:
             names = [_prompt_name(p) for p in chunk]
-            ext_suffix = f" (extruder {ext})" if ext is not None and len({p.get('source_extruder') for p in manifest['parts']}) > 1 else ""
-            label = (f"all {len(chunk)} {_family_noun(key, len(chunk))}{ext_suffix}" if len(chunk) > 1 else f"{names[0]}{ext_suffix}")
+            ext_suffix = ""  # 'extruder 2' means nothing to the person choosing; author color says it
+            noun = _family_noun(key, len(chunk))
+            if re.match(r'(?i)(cylinder|cube|box|sphere|cone|body|object|part|mesh|solid|extrude|torus)', noun):
+                noun = 'matching pieces'
+            label = (f"{'both' if len(chunk) == 2 else f'all {len(chunk)}'} {noun}{ext_suffix}" if len(chunk) > 1 else f"{names[0]}{ext_suffix}")
             out.append({'keys': [p['key'] for p in chunk], 'names': names, 'label': label})
     return out
 
@@ -444,7 +551,7 @@ def grouped_prompts(manifest):
             out.append({**by_key[keys[0]], 'keys': keys})
         else:
             out.append({'key': keys[0], 'keys': keys, 'source_extruder': by_key[keys[0]]['source_extruder'],
-                        'question': f"Choose one color/material for {fam['label']} ({', '.join(fam['names'])})"})
+                        'question': f"Choose one color/material for {fam['label']}: " + '; '.join(fam['names'])})
     out += [{**row, 'keys': [row['key']]} for row in rows if not row['key'].startswith('part:')]
     return out
 

@@ -45,9 +45,10 @@ def test_part_grams_are_shares_never_the_repeated_total(tmp_path):
 
 def _single(tmp_path, copies):
     """Single plate job: Orca clones the copies into the plate, so the G-code covers them."""
+    gcode = _gcode(tmp_path / 'one.gcode', '1h', 12.0)
     return {'title': 'Hook', 'copies': copies, 'filament_selection': {'slot': 1, 'color': 'Black', 'material': 'PLA'},
             'color_manifest': {'parts': [{'key': 'a', 'name': 'Hook.stl', 'source_extruder': 1}]},
-            'derived_plates': [{'gcode': _gcode(tmp_path / 'one.gcode', '1h', 12.0), 'plate_id': 1, 'part_keys': ['a']}]}
+            'gcode': gcode, 'sliced_copies': {'gcode': gcode, 'copies': copies}}
 
 
 def test_quantity_change_updates_totals(tmp_path):
@@ -62,6 +63,16 @@ def test_split_plates_never_claim_copies_their_gcode_lacks(tmp_path):
     text = summary.format_estimate_breakdown(_job(tmp_path, copies=2))
     assert "for 2 copies" not in text and "Stand x2" not in text
     assert "Total: ~4h 15m printing" in text
+
+
+def test_requested_copies_without_a_cloning_slice_count_as_one(tmp_path):
+    # Multi-plate single color (merged or per plate) slicing records no clone count.
+    job = _single(tmp_path, 3)
+    job.pop('sliced_copies')
+    assert "for 3 copies" not in summary.format_estimate_breakdown(job)
+    stale = _single(tmp_path, 3)
+    stale['sliced_copies']['gcode'] = str(tmp_path / 'older-slice.gcode')  # a resliced job
+    assert "for 3 copies" not in summary.format_estimate_breakdown(stale)
 
 
 def test_same_name_in_different_colors_stays_separate(tmp_path):
@@ -82,7 +93,7 @@ def test_unknown_estimates_are_labeled_not_zero(tmp_path):
 
 def test_model_page_estimate_fills_missing_plate_and_scales_with_copies(tmp_path):
     job = _single(tmp_path, 2)
-    job['derived_plates'][0]['gcode'] = str(tmp_path / 'missing.gcode')
+    job['gcode'] = job['sliced_copies']['gcode'] = str(tmp_path / 'missing.gcode')
     job['selected_source'] = {'plates': [{'prediction_s': 3600, 'weight_g': 8}]}
     plates = summary.plate_estimates(job)
     assert plates[0]['seconds'] == 7200 and plates[0]['basis'] == 'model page' and plates[0]['filament_g'] == 16.0

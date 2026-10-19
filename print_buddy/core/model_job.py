@@ -19,7 +19,7 @@ import argparse, hashlib, html, json, math, os, re, shutil, subprocess, sys, tim
 import xml.etree.ElementTree as ET
 from pathlib import Path
 
-from .. import settings
+from .. import printers, settings
 from . import _external, printer_state
 
 PROFILE = settings.current()["paths"]["hermes_home"]
@@ -720,6 +720,8 @@ def _stock_credentials():
 def read_stock_detail(state, *, post=None):
     """Read native status using profile credentials without logging them."""
     host = urllib.parse.urlsplit(state["moonraker_url"]).hostname
+    if printers.current().stock_api_url(host) is None:
+        raise RuntimeError(f"{printers.current().label} has no vendor status API")
     serial, code = _stock_credentials()
     post = post or (lambda url, body: request_json(url, data=body, headers={"Content-Type": "application/json"}, timeout=10))
     reply = post(f"http://{host}:{STOCK_DETAIL_PORT}/detail", {"serialNumber": serial, "checkCode": code})

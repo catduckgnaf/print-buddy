@@ -8,6 +8,11 @@
 [printer]
 name = "Flashforge AD5X"
 firmware = "ZMod Klipper"
+# Printer family adapter: flashforge_zmod, generic_klipper or sovol_klipper (see print_buddy/printers).
+family = "flashforge_zmod"
+# Start and end macros for the Klipper families. flashforge_zmod uses its own START_PRINT/END_PRINT template.
+start_macro = "PRINT_START"
+end_macro = "PRINT_END"
 # Usable print area, matching printable_area in templates/orca/machine.json.
 # The physical sheet is 235 mm; Orca and the steppers allow 220.
 bed_mm = [220.0, 220.0]

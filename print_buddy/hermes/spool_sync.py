@@ -19,6 +19,7 @@ import urllib.request
 from pathlib import Path
 from typing import Any, Callable
 
+from .. import printers
 from . import _config
 
 HARDWARE_STATE = _config.state_file("PRINTER_HARDWARE_STATE", "printer_hardware.json")
@@ -136,8 +137,10 @@ def push_screen(slot: int, material: str, hex_code: str, *, mr: Client = moonrak
                 pending_path: Path | None = None) -> str:
     """Tell the screen what Spoolman says. Deferred while printing; flushed when idle.
 
-    Returns 'pushed', 'deferred', or raises SpoolError for unmappable data.
+    Returns 'pushed', 'deferred', 'unsupported' (family has no screen), or raises SpoolError for unmappable data.
     """
+    if not printers.current().multi_slot:
+        return "unsupported"  # stock Klipper has no screen to tell
     command = screen_command(slot, material, hex_code)
     pending = Path(pending_path or PENDING_SCREEN)
     if printer_state(mr) in ("printing", "unknown"):

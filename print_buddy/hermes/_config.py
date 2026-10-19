@@ -46,6 +46,11 @@ def pinned_hermes_home() -> Path:
     return Path(_pinned["paths"]["hermes_home"])
 
 
+def bot_name() -> str:
+    """The name the bot uses for itself: [discord] bot_name."""
+    return str(cfg()["discord"]["bot_name"]).strip() or "Print Buddy"
+
+
 def state_dir() -> Path:
     return settings.state_dir(cfg())
 

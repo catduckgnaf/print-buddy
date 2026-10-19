@@ -38,7 +38,7 @@ Options: `--hermes-home DIR`, `--python PATH`, env `SYSTEMD_USER_DIR`.
 It symlinks the skills, `print-feedback` plugin and docs into the profile, renders templates only
 where the target is missing, applies the overlay, and installs the systemd user units.
 It also writes a `print_buddy.pth` into the Hermes venv's site-packages so `python -m print_buddy...`
-works from any directory, and copies old `~/.print_bitch_*.json` and `~/.moonraker_discord_announcements.json`
+works from any directory, and copies old `~/.print_bitch_*.json` (to the `print_buddy_*` names) and `~/.moonraker_discord_announcements.json`
 state files into `<hermes home>/state/` when the new copy is missing. An old private `scripts/` folder in the
 profile is moved aside. Anything replaced is moved to `<hermes home>/.install-backups/<time>/<path>` (units go under
 `<systemd dir>/.install-backups/`), never next to the original, so Hermes cannot load a backup as a duplicate

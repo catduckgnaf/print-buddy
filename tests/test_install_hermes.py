@@ -3,6 +3,7 @@ import os
 import shutil
 import stat
 import subprocess
+import sys
 import tempfile
 import unittest
 from pathlib import Path
@@ -25,8 +26,8 @@ class InstallerTests(unittest.TestCase):
         systemctl.write_text(f'#!/bin/sh\necho "$@" >> "{self.log}"\n')
         systemctl.chmod(systemctl.stat().st_mode | stat.S_IEXEC)
 
-    def run_installer(self, *args, overlay=True, python="/opt/venv/bin/python"):
-        env = dict(os.environ,
+    def run_installer(self, *args, overlay=True, python="/opt/venv/bin/python", **extra_env):
+        env = dict(os.environ, **extra_env,
                    HERMES_HOME=str(self.home), SYSTEMD_USER_DIR=str(self.units),
                    PRINT_BUDDY_OVERLAY=str(self.overlay if overlay else self.tmp / "no-overlay"),
                    PYTHON=python, HOME=str(self.tmp / "fakehome"),
@@ -158,15 +159,32 @@ class InstallerTests(unittest.TestCase):
         (fake_home / ".moonraker_discord_announcements.json").write_text("ann\n")
         state = self.home / "state"
         state.mkdir(parents=True)
-        (state / "print_bitch_start_claims.json").write_text("claims-new\n")
+        (state / "print_buddy_start_claims.json").write_text("claims-new\n")
         dry = self.run_installer("--dry-run")
         self.assertIn("would: copy", dry)
-        self.assertFalse((state / "print_bitch_context.json").exists())
+        self.assertFalse((state / "print_buddy_context.json").exists())
         self.run_installer()
-        self.assertEqual("ctx\n", (state / "print_bitch_context.json").read_text())
+        self.assertEqual("ctx\n", (state / "print_buddy_context.json").read_text())
         self.assertEqual("ann\n", (state / "moonraker_discord_announcements.json").read_text())
-        self.assertEqual("claims-new\n", (state / "print_bitch_start_claims.json").read_text())
+        self.assertEqual("claims-new\n", (state / "print_buddy_start_claims.json").read_text())
         self.assertTrue((fake_home / ".print_bitch_context.json").exists())
+
+    def test_stray_state_files_are_removed_after_install(self):
+        fake_home = self.tmp / "fakehome"
+        fake_home.mkdir()
+        (fake_home / ".print_bitch_context.json").write_text("ctx\n")
+        (fake_home / ".print_bitch_start_claims.json").write_text("claims-old\n")
+        (self.home / "state").mkdir(parents=True)
+        (self.home / "state" / "print_buddy_start_claims.json").write_text("claims-new\n")
+        dry = self.run_installer("--dry-run", python=sys.executable)
+        self.assertIn("would remove " + str(fake_home / ".print_bitch_start_claims.json"), dry)
+        self.assertTrue((fake_home / ".print_bitch_start_claims.json").exists())
+        out = self.run_installer(python=sys.executable)
+        self.assertIn("removed " + str(fake_home / ".print_bitch_start_claims.json"), out)
+        # The context file was copied into the profile first, so it is removed too.
+        self.assertEqual("ctx\n", (self.home / "state" / "print_buddy_context.json").read_text())
+        self.assertFalse((fake_home / ".print_bitch_context.json").exists())
+        self.assertFalse((fake_home / ".print_bitch_start_claims.json").exists())
 
     def test_old_private_scripts_dir_is_moved_aside(self):
         scripts = self.home / "scripts"
@@ -181,6 +199,14 @@ class InstallerTests(unittest.TestCase):
     def test_config_template_runs_terminal_from_the_repo(self):
         self.run_installer()
         self.assertIn(f"cwd: {ROOT}", (self.home / "config.yaml").read_text())
+
+    def test_bot_name_is_escaped_in_yaml_and_verbatim_in_markdown(self):
+        import yaml
+        name = 'Bob "The Bot" \\ Jr'
+        self.run_installer(BOT_NAME=name)
+        locale = yaml.safe_load((self.home / "locales" / "en.yaml").read_text())
+        self.assertEqual(f"{name} Needs Your Input", locale["platform"]["discord"]["prompt"]["clarify_title"])
+        self.assertIn(f"# {name}:", (self.home / "SOUL.md").read_text())
 
 
 if __name__ == "__main__":

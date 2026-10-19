@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
-"""Durable Print Bitch completion records and safe session cleanup.
+"""Durable Print Buddy completion records and safe session cleanup.
 
 The watcher supplies confirmed Moonraker data and, when available, a JSON
-context sidecar through PRINT_BITCH_CONTEXT_PATH. The sidecar is the only
+context sidecar through PRINT_BUDDY_CONTEXT_PATH. The sidecar is the only
 source for user confirmation, source selection, author-directed supports, and
 Discord session identity. Missing values stay blank or are marked unavailable.
 No slicing, support generation, printer control, or gateway operation happens
@@ -117,13 +117,13 @@ def _first(mapping: Mapping[str, Any], *keys: str) -> Any:
 
 
 def load_context(job_key: str, path: Path | None = None) -> dict[str, Any]:
-    """Load the optional Print Bitch confirmation context without guessing.
+    """Load the optional Print Buddy confirmation context without guessing.
 
     Supported sidecar shapes are either one job object, or
     ``{"jobs": {"gcode/path": {...}}}``. A nonmatching or malformed file is
     treated as absent so a bad sidecar cannot stop completion announcements.
     """
-    configured = path or _config.state_file("PRINT_BITCH_CONTEXT_PATH", "print_bitch_context.json")
+    configured = path or _config.state_file("PRINT_BUDDY_CONTEXT_PATH", "print_buddy_context.json")
     try:
         payload = json.loads(configured.read_text(encoding="utf-8"))
     except (FileNotFoundError, OSError, json.JSONDecodeError):

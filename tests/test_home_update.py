@@ -1,6 +1,7 @@
 """scripts/home-update.sh against throwaway git repos: a good update sticks, a bad one rolls back."""
 import os
 import shutil
+import site
 import subprocess
 import tempfile
 import unittest
@@ -51,10 +52,13 @@ class HomeUpdateTests(unittest.TestCase):
         git(self.upstream, "commit", "-qm", f"change {path}")
         return git(self.upstream, "rev-parse", "HEAD")
 
-    def update(self):
+    def update(self, home=None):
         # Environment overrides beat local.toml, so a caller's HERMES_HOME (or any other mapped
         # variable) would point the doctor at the real install instead of the throwaway profile.
         env = {k: v for k, v in os.environ.items() if k not in LEGACY_ENV}
+        if home:
+            env["PYTHONUSERBASE"] = site.getuserbase()  # keep user-installed packages after HOME moves
+            env["HOME"] = str(home)
         return subprocess.run(["sh", "scripts/home-update.sh"], cwd=self.home, capture_output=True, text=True,
                               env=env)
 
@@ -64,6 +68,23 @@ class HomeUpdateTests(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         self.assertEqual(git(self.home, "rev-parse", "HEAD"), head)
         self.assertIn("Home AD5X", (self.home / "config" / "local.toml").read_text())
+
+    def test_good_update_removes_strays_but_a_rollback_does_not(self):
+        fake_home = Path(self.tmp.name) / "fakehome"
+        fake_home.mkdir()
+        legacy = fake_home / ".print_bitch_context.json"
+        legacy.write_text('{"ctx": 1}')
+        profile = Path(self.tmp.name) / "profile"
+        (profile / "state" / "print_buddy_context.json").write_text('{"ctx": 1}')
+        self.commit_upstream("tests/test_broken.py",
+                             "import unittest\nclass T(unittest.TestCase):\n    def test_x(self):\n        self.fail('broken')\n")
+        self.assertEqual(self.update(home=fake_home).returncode, 1)
+        self.assertTrue(legacy.exists())
+        self.commit_upstream("tests/test_broken.py", "")
+        result = self.update(home=fake_home)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn(f"removed {legacy}", result.stdout)
+        self.assertFalse(legacy.exists())
 
     def test_breaking_update_rolls_back(self):
         before = git(self.home, "rev-parse", "HEAD")

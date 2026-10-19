@@ -406,7 +406,7 @@ def gcode_motion_bounds(text):
     return {axis.lower(): (low[axis], high[axis]) for axis in "XYZ"}
 
 
-BOUNDS_CACHE = Path(os.environ.get("PRINT_BITCH_BOUNDS_CACHE", settings.state_dir()/"gcode-bounds-cache"))
+BOUNDS_CACHE = Path(os.environ.get("PRINT_BUDDY_BOUNDS_CACHE", settings.state_dir()/"gcode-bounds-cache"))
 
 
 def cached_motion_bounds(raw, text=None):
@@ -1060,7 +1060,7 @@ def verify_gcode(gcode_path):
     return True
 
 
-CONTEXT = Path(os.environ.get("PRINT_BITCH_CONTEXT_PATH", settings.state_dir()/"print_bitch_context.json"))
+CONTEXT = Path(os.environ.get("PRINT_BUDDY_CONTEXT_PATH", settings.state_dir()/"print_buddy_context.json"))
 RECORD_KEYS = ("layer_height","first_layer_height","perimeters","fill_density","fill_pattern","support_material","brim_width","nozzle_diameter","filament_type","temperature","bed_temperature")
 
 def _job_for_gcode(g):
@@ -1138,7 +1138,7 @@ def record_start(gcode_path, moonraker_name=None, started_at=None):
 
 # Start announcement ownership. print_now claims the file before starting it so the
 # Moonraker listener skips its generic "Print started" post for that same job.
-START_CLAIMS = Path(os.environ.get("PRINT_BITCH_START_CLAIMS", settings.state_dir()/"print_bitch_start_claims.json"))
+START_CLAIMS = Path(os.environ.get("PRINT_BUDDY_START_CLAIMS", settings.state_dir()/"print_buddy_start_claims.json"))
 START_CLAIM_TTL_S = settings.current()["listener"]["start_claim_ttl_s"]
 
 

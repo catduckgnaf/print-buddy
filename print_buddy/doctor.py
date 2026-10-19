@@ -14,7 +14,7 @@ import sys
 import urllib.request
 from pathlib import Path
 
-from . import settings
+from . import settings, state_files
 
 # Moonraker and Spoolman endpoints that answer without auth when the service is up.
 SERVICE_PATHS = {"moonraker_url": "/printer/info", "spoolman_url": "/api/v1/health"}
@@ -72,6 +72,15 @@ def check_hardware(data):
     return f"{path.name}, {float(nozzle):g} mm nozzle"
 
 
+def check_strays(data):
+    """Print Buddy state files outside the profile state folder. Returns a warning, or None."""
+    strays = state_files.find_strays(data)
+    if not strays:
+        return None
+    return (f"{len(strays)} outside {settings.state_dir(data)}: {state_files.describe(strays)} "
+            "(python3 -m print_buddy.state_files --remove, or scripts/home-update.sh)")
+
+
 def check_core(data):
     core = Path(__file__).resolve().parent / "core"
     names = sorted(p.stem for p in core.glob("*.py") if p.stem != "__init__")
@@ -127,6 +136,11 @@ def run(out=sys.stdout):
     report("orca cli", check_orca, data)
     for key in SERVICE_PATHS:
         report(key.replace("_url", ""), check_service, data, key)
+    try:
+        warning = check_strays(data)
+    except Exception as exc:  # a scan problem is a warning, never a failed check
+        warning = f"could not scan: {exc}"
+    print(f"WARN  stray state files: {warning}" if warning else "ok    stray state files: none", file=out)
     return 1 if failed else 0
 
 

@@ -174,7 +174,7 @@ def test_watcher_records_mocked_moonraker_completion(tmp_path, monkeypatch):
         "discord_session_id": "session-1",
         "discord_chat_id": "100000000000000001",
     }}}))
-    monkeypatch.setenv("PRINT_BITCH_CONTEXT_PATH", str(context_path))
+    monkeypatch.setenv("PRINT_BUDDY_CONTEXT_PATH", str(context_path))
     responses = iter((
         {"job": {"file": {"path": "part.gcode", "display": "part.gcode"}}, "progress": {"completion": 25}, "state": "Printing", "stats": {"state": "printing"}},
         {"job": {"file": {"path": "part.gcode", "display": "part.gcode"}}, "progress": {"completion": 100}, "state": "Completed", "stats": {"state": "complete", "print_duration": 30}},
@@ -280,7 +280,7 @@ def test_cancel_to_standby_finalizes_note_from_history(tmp_path, monkeypatch):
     ctx["record_path"] = records.write_start_record(ctx)
     context_path = tmp_path / "context.json"
     context_path.write_text(json.dumps({"jobs": {"stand.gcode": ctx}}))
-    monkeypatch.setenv("PRINT_BITCH_CONTEXT_PATH", str(context_path))
+    monkeypatch.setenv("PRINT_BUDDY_CONTEXT_PATH", str(context_path))
     responses = iter((
         {"job": {"file": {"path": "stand.gcode", "display": "stand.gcode"}}, "progress": {"completion": 0.4}, "state": "Printing", "stats": {"state": "printing"}},
         {"job": {"file": {"path": "stand.gcode", "display": "stand.gcode"}}, "progress": {"completion": 0.4}, "state": "Printing", "stats": {"state": "printing"}},

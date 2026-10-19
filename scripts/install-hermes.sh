@@ -5,7 +5,8 @@
 #
 # Env: HERMES_HOME, PYTHON, SYSTEMD_USER_DIR (default ~/.config/systemd/user),
 #      PRINT_BUDDY_OVERLAY (default config/overlay), NO_SYSTEMCTL=1 to skip daemon-reload.
-#      Template values: LLM_PROVIDER LLM_MODEL LLM_BASE_URL TIMEZONE DISCORD_CHANNEL_ID DISPLAY_NAME.
+#      Template values: LLM_PROVIDER LLM_MODEL LLM_BASE_URL TIMEZONE DISCORD_CHANNEL_ID DISPLAY_NAME BOT_NAME
+#      (BOT_NAME defaults to [discord] bot_name in config/home.toml).
 #
 # Code folders are symlinked to this checkout. Templates are rendered only when the target is
 # missing, so your edited AGENTS.md, SOUL.md and config.yaml are never overwritten. Files under
@@ -21,7 +22,7 @@ while [ $# -gt 0 ]; do
         --dry-run) DRY=1 ;;
         --hermes-home) shift; HERMES_HOME=${1:?--hermes-home needs a directory} ;;
         --python) shift; PYTHON=${1:?--python needs a path} ;;
-        -h|--help) sed -n '2,12p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+        -h|--help) sed -n '2,13p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
         *) echo "unknown argument: $1" >&2; exit 2 ;;
     esac
     shift
@@ -30,6 +31,10 @@ done
 if [ -z "${HERMES_HOME:-}" ]; then
     HERMES_HOME=$(cd "$REPO" && python3 -m print_buddy.settings get paths.hermes_home 2>/dev/null) || HERMES_HOME=""
     [ -n "$HERMES_HOME" ] || HERMES_HOME="$HOME/.hermes/profiles/3dprinting"
+fi
+if [ -z "${BOT_NAME:-}" ]; then
+    BOT_NAME=$(cd "$REPO" && python3 -m print_buddy.settings get discord.bot_name 2>/dev/null) || BOT_NAME=""
+    [ -n "$BOT_NAME" ] || BOT_NAME="Print Buddy"
 fi
 if [ -z "${PYTHON:-}" ]; then
     if [ -x "$HOME/.hermes/hermes-agent/venv/bin/python" ]; then
@@ -89,14 +94,19 @@ link() {  # link SRC DST: DST becomes a symlink to SRC
 render() {  # render SRC DST: substitute ${NAME} and {{NAME}} placeholders
     LLM_PROVIDER=${LLM_PROVIDER:-} LLM_MODEL=${LLM_MODEL:-} LLM_BASE_URL=${LLM_BASE_URL:-} \
     DISCORD_CHANNEL_ID=${DISCORD_CHANNEL_ID:-} \
-    TIMEZONE=${TIMEZONE:-${TZ:-UTC}} DISPLAY_NAME=${DISPLAY_NAME:-3D Printing} \
+    TIMEZONE=${TIMEZONE:-${TZ:-UTC}} DISPLAY_NAME=${DISPLAY_NAME:-3D Printing} BOT_NAME="$BOT_NAME" \
     PROFILE_DIR="$HERMES_HOME" HERMES_HOME="$HERMES_HOME" REPO="$REPO" PYTHON="$PYTHON" \
     python3 - "$1" <<'PY'
-import os, re, sys
+import json, os, re, sys
 text = open(sys.argv[1]).read()
+yaml = sys.argv[1].endswith((".yaml", ".yml", ".yaml.template", ".yml.template"))
 def fill(match):
     name = match.group(1) or match.group(2)
-    return os.environ.get(name) or match.group(0)
+    value = os.environ.get(name)
+    if not value:
+        return match.group(0)
+    # Free text in YAML sits inside double quotes; JSON string escaping is valid YAML escaping.
+    return json.dumps(value)[1:-1] if yaml and name == "BOT_NAME" else value
 sys.stdout.write(re.sub(r"\$\{(\w+)\}|\{\{(\w+)\}\}", fill, text))
 PY
 }
@@ -165,8 +175,8 @@ if [ -d "$HERMES_HOME/scripts" ] && [ ! -L "$HERMES_HOME/scripts" ] \
     say "note    old private scripts/ dir found in the profile; moving it out of the way"
     backup "$HERMES_HOME/scripts"
 fi
-for pair in .print_bitch_context.json:print_bitch_context.json \
-            .print_bitch_start_claims.json:print_bitch_start_claims.json \
+for pair in .print_bitch_context.json:print_buddy_context.json \
+            .print_bitch_start_claims.json:print_buddy_start_claims.json \
             .moonraker_discord_announcements.json:moonraker_discord_announcements.json; do
     old="$HOME/${pair%%:*}"; new="$HERMES_HOME/state/${pair##*:}"
     [ -f "$old" ] || continue
@@ -180,7 +190,9 @@ done
 P="$REPO/hermes/profile"
 write_rendered "$P/config.yaml.template" "$HERMES_HOME/config.yaml" keep
 write_rendered "$P/profile.yaml.template" "$HERMES_HOME/profile.yaml" keep
-for f in AGENTS.md SOUL.md MEMORY.md status_phrases.yaml locales/en.yaml cron/jobs.json; do
+write_rendered "$P/SOUL.md" "$HERMES_HOME/SOUL.md" keep
+write_rendered "$P/locales/en.yaml" "$HERMES_HOME/locales/en.yaml" keep
+for f in AGENTS.md MEMORY.md status_phrases.yaml cron/jobs.json; do
     copy_if_missing "$P/$f" "$HERMES_HOME/$f"
 done
 
@@ -220,5 +232,12 @@ if [ "$LAST_CHANGED" = 1 ] && [ -z "${NO_SYSTEMCTL:-}" ] && command -v systemctl
     act "systemctl --user daemon-reload"
     [ "$DRY" = 1 ] || systemctl --user daemon-reload || say "warning: daemon-reload failed"
 fi
+
+# 5. Remove Print Buddy state files stranded outside the profile state folder (only when the
+# profile holds the real copy, or the stray is empty).
+if [ "$DRY" = 1 ]; then strays_flag="--dry-run --remove"; else strays_flag="--remove"; fi
+# shellcheck disable=SC2086
+PRINT_BUDDY__PATHS__HERMES_HOME="$HERMES_HOME" PYTHONPATH="$REPO${PYTHONPATH:+:$PYTHONPATH}" \
+    "$PYTHON" -m print_buddy.state_files $strays_flag || say "warning: could not check for stray state files"
 
 say "done. Enable the listener with: systemctl --user enable --now hermes-3dprinting-moonraker-listener.service"

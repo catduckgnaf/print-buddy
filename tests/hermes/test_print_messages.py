@@ -487,7 +487,7 @@ def test_announcer_completion_uses_model_title_not_hash(job, tmp_path, monkeypat
     context_path = tmp_path / "context.json"
     context_path.write_text(json.dumps({"jobs": {job.hashed: {"selected_option": records.NATIVE_PRINT_OPTIONS[0],
                                                               "discord_session_id": "s1", "discord_chat_id": "1"}}}))
-    monkeypatch.setenv("PRINT_BITCH_CONTEXT_PATH", str(context_path))
+    monkeypatch.setenv("PRINT_BUDDY_CONTEXT_PATH", str(context_path))
     file_row = {"path": job.hashed, "display": job.hashed}
     responses = iter((
         {"job": {"file": file_row}, "progress": {"completion": 25}, "state": "Printing", "stats": {"state": "printing"}},

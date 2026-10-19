@@ -9,7 +9,8 @@ from unittest import mock
 from print_buddy import doctor, settings
 
 
-HARDWARE = {"spool": {}, "temps_c": {"nozzle": 210, "bed": 60}, "nozzle": {"diameter_mm": 0.4}}
+HARDWARE = {"spool": {"material": "PLA", "density": 1.24}, "temps_c": {"nozzle": 210, "bed": 60},
+            "nozzle": {"diameter_mm": 0.4}}
 
 
 class DoctorTests(unittest.TestCase):
@@ -94,6 +95,11 @@ class DoctorTests(unittest.TestCase):
     def test_hardware_record_needs_its_sections(self):
         code, text = self.run_doctor(hardware={"nozzle": {"diameter_mm": 0.4}})
         self.assertIn("lacks spool, temps_c", text)
+
+    def test_hardware_record_needs_the_fields_slicing_reads(self):
+        code, text = self.run_doctor(hardware={**HARDWARE, "spool": {}, "temps_c": {"nozzle": "hot"}})
+        self.assertEqual(code, 1)
+        self.assertIn("lacks spool.material, spool.density, temps_c.nozzle, temps_c.bed", text)
 
     def test_bad_service_url_is_a_settings_error(self):
         with self.assertRaisesRegex(settings.SettingsError, "must be a URL"):

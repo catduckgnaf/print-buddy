@@ -35,7 +35,8 @@ class HomeUpdateTests(unittest.TestCase):
         profile = base / "profile"
         (profile / "state").mkdir(parents=True)
         (profile / "state" / "printer_hardware.json").write_text(
-            '{"spool": {}, "temps_c": {}, "nozzle": {"diameter_mm": 0.4}}')
+            '{"spool": {"material": "PLA", "density": 1.24}, "temps_c": {"nozzle": 210, "bed": 60}, '
+            '"nozzle": {"diameter_mm": 0.4}}')
         (self.home / "config" / "local.toml").write_text(
             f'[printer]\nname = "Home AD5X"\n\n[orca]\ncommand = ["true"]\n\n[paths]\nhermes_home = "{profile}"\n')
 

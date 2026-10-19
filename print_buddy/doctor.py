@@ -40,6 +40,11 @@ def check_templates(data):
     return str(folder)
 
 
+REQUIRED_HARDWARE = (("spool", "material", str), ("spool", "density", (int, float)),
+                     ("temps_c", "nozzle", (int, float)), ("temps_c", "bed", (int, float)),
+                     ("nozzle", "diameter_mm", (int, float)))
+
+
 def check_hardware(data):
     """The printer hardware record the pipeline reads with no fallback. A fresh install has none."""
     path = settings.state_dir(data) / "printer_hardware.json"
@@ -47,6 +52,11 @@ def check_hardware(data):
         raise RuntimeError(f"{path} is missing; copy it from the working install or create it before slicing")
     record = json.loads(path.read_text())
     missing = [key for key in ("spool", "temps_c", "nozzle") if not isinstance(record.get(key), dict)]
+    if missing:
+        raise RuntimeError(f"{path} lacks {', '.join(missing)}")
+    # The fields slicing reads directly; a section without them passes here but fails mid-slice.
+    missing = [f"{section}.{key}" for section, key, kind in REQUIRED_HARDWARE
+               if not isinstance(record[section].get(key), kind) or isinstance(record[section].get(key), bool)]
     if missing:
         raise RuntimeError(f"{path} lacks {', '.join(missing)}")
     nozzle = record["nozzle"].get("diameter_mm")

@@ -2,7 +2,7 @@
 
 [![CI](https://github.com/catduckgnaf/print-buddy/actions/workflows/ci.yml/badge.svg)](https://github.com/catduckgnaf/print-buddy/actions/workflows/ci.yml)
 
-Print Buddy is an automated 3D printing pipeline driven from a Discord channel, for Klipper printers and Flashforge printers running ZMod. Post a MakerWorld or Printables link, or a 3MF or STL file, and the bot downloads the model, merges multi plate parts, matches colors to loaded spools in Spoolman, and slices headless with OrcaSlicer. Once someone confirms the bed is clear, it sends the job to the printer through Moonraker, watches it through the camera, and posts the result.
+Print Buddy is an automated 3D printing pipeline driven from a Discord channel, for Sovol and other Klipper printers, and Flashforge printers running ZMod. Post a MakerWorld or Printables link, or a 3MF or STL file, and the bot downloads the model, merges multi plate parts, matches colors to loaded spools in Spoolman, and slices headless with OrcaSlicer. Once someone confirms the bed is clear, it sends the job to the printer through Moonraker, watches it through the camera, and posts the result.
 
 ## About
 
@@ -11,10 +11,10 @@ Print Buddy is almost entirely Python. Downloading, plate merging, color matchin
 The Discord conversation runs on [Hermes Agent](https://github.com/NousResearch/hermes-agent) using Luna at medium reasoning. Two optional extras also call a model: the camera watchdog asks a vision model to classify a print frame, and the "print started" post adds a one line roast. Leave `services.vision_chat_url` empty and neither runs.
 
 Supported printers:
-* **Klipper:** the Sovol SV06 on stock Klipper (`sovol_klipper`), where Print Buddy started, and any other Klipper printer with Moonraker (`generic_klipper`). Single extruder.
-* **ZMod (Flashforge):** Flashforge printers running ZMod firmware (`flashforge.ad5x`), built and run on the AD5X, including IFS multi color slots and the ZMod plugin below.
+* **Sovol** on stock Klipper, where Print Buddy started, plus any other Klipper printer with Moonraker. Single extruder.
+* **Flashforge (running ZMod)**, including IFS multi color slots and the ZMod plugin below.
 
-Pick one with `[printer] model`. The current printer is a Flashforge AD5X on ZMod; the SV06 came first. The offline core in `print_buddy/core/` runs with no printer.
+Pick one with `[printer] model` (see Settings). The offline core in `print_buddy/core/` runs with no printer.
 
 ## How it works
 
@@ -22,7 +22,7 @@ In the `#3d-printer` channel, someone posts a link. The bot replies with a job s
 
 > **Mrs catduck:** https://makerworld.com/en/models/931302-holder-for-post-it-notes
 >
-> **Print Buddy:** Model: Post it Note Holder with Stencils. Filament: Matte Black PLA (~48g). Estimated print time: 1 hour 14 minutes. Target printer: Flashforge AD5X (ZMod Klipper).
+> **Print Buddy:** Model: Post it Note Holder with Stencils. Filament: Matte Black PLA (~48g). Estimated print time: 1 hour 14 minutes. Target printer: Flashforge (ZMod).
 >
 > [Slice and print now (bed is clear)]
 >

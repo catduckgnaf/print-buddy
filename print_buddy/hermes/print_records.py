@@ -360,8 +360,19 @@ def _plan_parts(required_parts: Any) -> list[dict[str, Any]]:
     return result
 
 
-def format_multipart_summary(plan: Mapping[str, Any], completed_part_id: str | None = None) -> str | None:
-    """Render required-part progress by physical plate and run, without guessing estimates."""
+def remaining_plate_choices(plan: Mapping[str, Any]) -> list[dict[str, Any]]:
+    """Remaining required parts the plan can start exactly (recorded JOB.json and G-code path), in plan order."""
+    from .print_next import has_exact_start_target, remaining_parts
+
+    return [part for part, _done in remaining_parts(plan) if has_exact_start_target(part)]
+
+
+def format_multipart_summary(plan: Mapping[str, Any], completed_part_id: str | None = None,
+                             picker: bool = False) -> str | None:
+    """Render required-part progress by physical plate and run, without guessing estimates.
+
+    ``picker=True`` means the caller posts an interactive plate picker, so no command text is shown.
+    """
     raw_parts = plan.get("parts") if isinstance(plan, Mapping) else None
     parts = _plan_parts(raw_parts)
     if not parts:
@@ -484,7 +495,10 @@ def format_multipart_summary(plan: Mapping[str, Any], completed_part_id: str | N
         next_artifact = str(next_part.get("gcode_file") or "") if next_part else ""
         exact_target = bool(next_part and next_part.get("job_json") and next_part.get("gcode_path"))
         plan_id = plan.get("plan_id") if isinstance(plan, Mapping) else None
-        if exact_target and plan_id:
+        if exact_target and plan_id and picker:
+            lines.append("- Start option: choose the next plate from the picker below, then tap Confirm bed is clear & print. "
+                         "One tap starts that exact plate once. No automatic advance.")
+        elif exact_target and plan_id:
             lines.append(f"- Start option: type `/print-next {plan_id}` for a Start next plate · bed is clear button. "
                          "One tap starts this exact plate once. No automatic advance.")
         elif next_artifact and Path(next_artifact).name == next_artifact:

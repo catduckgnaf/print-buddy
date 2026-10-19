@@ -284,3 +284,270 @@ def test_hook_refused_start_offers_force_restart(tmp_path):
         tmp_path, '/print-next ghost', pick=0, start_result=(False, 'Refused: printer state is paused'),
         plugin_patch={'_offer_force_restart': offer})
     assert 'RESTART OFFERED' in adapter.sent[-1]['content']
+
+
+# Plate choice and interactive continuation (issue 16) ----------------------------------
+
+def three_plate_plan(tmp_path):
+    folder, rows = make_job(tmp_path, plates=3)
+    parts = [{'id': f'plate{n}', 'label': f'Part {n}', 'plate': n, 'quantity': 1, 'completed_quantity': 0,
+              'status': 'planned', 'gcode_file': f'plate_{n}.gcode', 'job_json': str(folder / 'JOB.json'),
+              'gcode_path': rows[n - 1]['gcode']} for n in (1, 2, 3)]
+    plans = tmp_path / 'Plans'
+    plans.mkdir(exist_ok=True)
+    (plans / 'trio.json').write_text(json.dumps({'plan_id': 'trio', 'parts': parts}))
+    return plans, rows
+
+
+def test_resolve_explicit_part_defaults_to_next_required(tmp_path):
+    plans, rows = three_plate_plan(tmp_path)
+    plan = print_next.load_plan('trio', plans)
+    archive = tmp_path / 'archive'
+    assert print_next.resolve_next(plan, archive)['part_id'] == 'plate1'
+    third = print_next.resolve_next(plan, archive, part_id='plate3')
+    assert third['part_id'] == 'plate3' and third['gcode'] == rows[2]['gcode']
+    with pytest.raises(print_next.NextPlateError, match='already complete or is not part'):
+        print_next.resolve_next(plan, archive, part_id='nope')
+    plan['parts'][2]['status'] = 'completed'
+    with pytest.raises(print_next.NextPlateError, match='already complete'):
+        print_next.resolve_next(plan, archive, part_id='plate3')
+
+
+def test_plate_choice_label_uses_plan_facts_and_says_unknown(tmp_path):
+    plans, rows = three_plate_plan(tmp_path)
+    part = print_next.load_plan('trio', plans)['parts'][1]
+    Path(rows[1]['gcode']).write_text('; estimated printing time (normal mode) = 2h 5m 0s\n')
+    with mock.patch('print_buddy.hermes.discord_print_summary.find_job', return_value=(None, None)):
+        assert print_next.plate_choice_label(part) == 'Plate 2: Part 2 · colors unknown · ~2h 5m'
+        Path(rows[1]['gcode']).write_text('G1 X1\n')
+        assert print_next.plate_choice_label(part) == 'Plate 2: Part 2 · colors unknown · time unknown'
+
+
+def test_summary_with_picker_has_no_command_text(tmp_path):
+    plans, _rows = three_plate_plan(tmp_path)
+    plan = print_next.load_plan('trio', plans)
+    text = print_records.format_multipart_summary(plan, 'plate1', picker=True)
+    assert '/print-next' not in text and 'picker below' in text
+    assert '/print-next trio' in print_records.format_multipart_summary(plan, 'plate1')
+    assert [p['id'] for p in print_records.remaining_plate_choices(plan)] == ['plate1', 'plate2', 'plate3']
+    plan['parts'][0]['status'] = 'completed'
+    assert [p['id'] for p in print_records.remaining_plate_choices(plan)] == ['plate2', 'plate3']
+
+
+def test_hook_accepts_explicit_part_id(tmp_path):
+    folder, rows = make_job(tmp_path)
+    plans = make_plan(tmp_path, folder, rows)
+    plan = json.loads((plans / 'ghost.json').read_text())
+    plan['parts'][0].update(status='planned', completed_quantity=0, job_json=str(folder / 'JOB.json'),
+                            gcode_path=rows[0]['gcode'])
+    (plans / 'ghost.json').write_text(json.dumps(plan))
+    mod = load_plugin()
+    adapter = Transport(0)
+    src = S(platform=S(value='discord'), profile='3dprinting', user_id='42', chat_id='c', thread_id=None)
+    gateway = S(_is_user_authorized_for_source=lambda s: True, _delivery_adapter_for=lambda s: adapter)
+    started = []
+
+    async def fake_start(target):
+        started.append(target['part_id'])
+        return True, 'START REQUEST ACCEPTED'
+    real_resolve, real_load = print_next.resolve_next, print_next.load_plan
+    with mock.patch.object(print_next, 'load_plan', lambda pid: real_load(pid, plans)), \
+            mock.patch.object(print_next, 'start', fake_start), \
+            mock.patch.object(print_next, 'resolve_next',
+                              lambda plan, part_id=None: real_resolve(plan, tmp_path / 'archive', part_id)):
+        asyncio.run(mod.print_next_dispatch(S(source=src, text='/print-next ghost tail', internal=False), gateway))
+        asyncio.run(mod.print_next_dispatch(S(source=src, text='/print-next ghost', internal=False), gateway))
+    assert started == ['tail', 'body']
+
+
+def run_announcer(monkeypatch, lines):
+    from print_buddy.hermes import moonraker_event_listener as mel
+    sent, pickers = [], []
+    monkeypatch.setattr(mel, 'log', lambda _: None)
+    monkeypatch.setattr(mel, 'post', lambda text: sent.append(text) or True)
+    monkeypatch.setattr(mel, 'post_plate_picker', lambda plan_id: pickers.append(plan_id) or True)
+    monkeypatch.setattr(mel.announcer, 'main', lambda: print(lines))
+    mel.run_announcer('completion')
+    return sent, pickers
+
+
+def test_completion_posts_picker_not_command_text(monkeypatch):
+    marker = '\n'.join(['Print complete: Job', '- Start option: choose the next plate from the picker below',
+                        'PLATE_PICKER:trio'])
+    sent, pickers = run_announcer(monkeypatch, marker)
+    assert pickers == ['trio']
+    assert len(sent) == 1 and '/print-next' not in sent[0] and 'PLATE_PICKER' not in sent[0]
+
+
+def test_picker_follows_timelapse_post(monkeypatch):
+    from print_buddy.hermes import moonraker_event_listener as mel
+    order = []
+    monkeypatch.setattr(mel, 'log', lambda _: None)
+    monkeypatch.setattr(mel, 'post', lambda text: order.append('post') or True)
+    monkeypatch.setattr(mel, 'post_plate_picker', lambda plan_id: order.append('picker') or True)
+    monkeypatch.setattr(mel.announcer, 'main', lambda: print('TIMELAPSE_POSTPROCESS:j.gcode\nDone\nPLATE_PICKER:trio'))
+    monkeypatch.setattr(mel.announcer, '_timelapse_job_key', lambda token: 'j.gcode')
+    monkeypatch.setattr(mel.announcer, 'archive_completed_timelapse', lambda key: None)
+
+    class Inline:
+        def __init__(self, target=None, args=(), **kw):
+            self.target, self.args = target, args
+
+        def start(self):
+            self.target(*self.args)
+    monkeypatch.setattr(mel.threading, 'Thread', Inline)
+    mel.run_announcer('completion')
+    assert order == ['post', 'picker']
+
+
+def test_post_plate_picker_posts_select_then_falls_back_to_command_text(tmp_path, monkeypatch):
+    from print_buddy.hermes import moonraker_event_listener as mel
+    from print_buddy.hermes import print_alert_buttons as pab
+    plans, _rows = three_plate_plan(tmp_path)
+    real_load = print_next.load_plan
+    monkeypatch.setattr(print_next, 'load_plan', lambda pid: real_load(pid, plans))
+    monkeypatch.setattr(mel, 'log', lambda _: None)
+    monkeypatch.setattr(mel, '_profile_env_value', lambda name: 'token')
+    monkeypatch.setattr(pab, 'STATE', tmp_path / 'alerts.json')
+    bodies, texts = [], []
+    monkeypatch.setattr(mel, 'post', lambda text: texts.append(text) or True)
+
+    class Response:
+        status = 200
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *a):
+            return False
+
+    def opener(request, timeout):
+        bodies.append(json.loads(request.data))
+        return Response()
+    monkeypatch.setattr(pab.urllib.request, 'urlopen', opener)
+    assert mel.post_plate_picker('trio') and texts == []
+    select = bodies[0]['components'][0]['components'][0]
+    assert select['type'] == 3 and select['custom_id'].startswith('pbplate:pick:')
+    assert [o['value'] for o in select['options']] == ['plate1', 'plate2', 'plate3']
+    assert select['options'][0]['label'].startswith('Plate 1: ')
+    assert pab.parse_plate_custom_id(select['custom_id'])[0] == 'pick'
+
+    def refuse(request, timeout):
+        raise OSError('no route')
+    monkeypatch.setattr(pab.urllib.request, 'urlopen', refuse)
+    mel.post_plate_picker('trio')
+    assert texts == ['To start the next plate, type `/print-next trio`.']
+    monkeypatch.setattr(mel, '_profile_env_value', lambda name: '')
+    texts.clear()
+    mel.post_plate_picker('trio')
+    assert texts == ['To start the next plate, type `/print-next trio`.']
+
+
+class Interaction:
+    def __init__(self, custom_id, values=None):
+        self.data = {'custom_id': custom_id, **({'values': values} if values else {})}
+        self.user = S(id=1, bot=False, display_name='op')
+        self.guild = None
+        self.channel_id = 'c'
+        self.out = []
+        interaction = self
+
+        class Response:
+            async def send_message(self, content, ephemeral=False, **kw):
+                interaction.out.append(('send', content))
+
+            async def edit_message(self, content=None, view=None, **kw):
+                interaction.out.append(('edit', content, view))
+        self.response = Response()
+        self.followup = S(send=self._followup)
+
+    async def _followup(self, content):
+        self.out.append(('followup', content))
+
+
+def plate_clicks(tmp_path, monkeypatch, starts, start_result=(True, 'START ACCEPTED')):
+    from print_buddy.hermes import print_alert_buttons as pab
+    plans, rows = three_plate_plan(tmp_path)
+    real_load, real_resolve = print_next.load_plan, print_next.resolve_next
+    monkeypatch.setattr(print_next, 'load_plan', lambda pid: real_load(pid, plans))
+    monkeypatch.setattr(print_next, 'resolve_next',
+                        lambda plan, archive=None, part_id=None: real_resolve(plan, tmp_path / 'archive', part_id))
+
+    async def fake_start(target):
+        starts.append(target['part_id'])
+        return start_result
+    monkeypatch.setattr(print_next, 'start', fake_start)
+    monkeypatch.setattr(pab, 'STATE', tmp_path / 'alerts.json')
+
+    class Button:
+        def __init__(self, **kw):
+            self.__dict__.update(kw)
+
+    class View:
+        def __init__(self, timeout=None):
+            self.items = []
+
+        def add_item(self, item):
+            self.items.append(item)
+    fake = S(ui=S(View=View, Button=Button), ButtonStyle=S(success=3))
+    monkeypatch.setitem(sys.modules, 'discord', fake)
+    handlers = {}
+    load_plugin().alert_button_handlers(S(add_listener=lambda fn, name: handlers.update({name: fn})), S())
+    picker = pab.record('plate-picker', '', plan_id='trio')
+    return handlers['on_interaction'], picker, plans
+
+
+def test_picker_click_offers_exactly_one_confirm_and_confirm_starts_once(tmp_path, monkeypatch):
+    starts = []
+    on_interaction, picker, _ = plate_clicks(tmp_path, monkeypatch, starts)
+    pick = Interaction(f'pbplate:pick:{picker}', ['plate3'])
+    asyncio.run(on_interaction(pick))
+    kind, content, view = pick.out[0]
+    assert kind == 'edit' and 'Part 3' in content and starts == []
+    assert len(view.items) == 1 and view.items[0].label == 'Confirm bed is clear & print'
+    go_id = view.items[0].custom_id
+    first, second = Interaction(go_id), Interaction(go_id)
+    asyncio.run(on_interaction(first))
+    asyncio.run(on_interaction(second))
+    assert starts == ['plate3']
+    assert 'already used' in second.out[0][1]
+    # The picker itself is single use as well.
+    again = Interaction(f'pbplate:pick:{picker}', ['plate2'])
+    asyncio.run(on_interaction(again))
+    assert 'old or was already used' in again.out[0][1] and starts == ['plate3']
+
+
+def test_stale_picker_for_finished_plate_starts_nothing(tmp_path, monkeypatch):
+    starts = []
+    on_interaction, picker, plans = plate_clicks(tmp_path, monkeypatch, starts)
+    plan = json.loads((plans / 'trio.json').read_text())
+    plan['parts'][1]['status'] = 'completed'
+    (plans / 'trio.json').write_text(json.dumps(plan))
+    pick = Interaction(f'pbplate:pick:{picker}', ['plate2'])
+    asyncio.run(on_interaction(pick))
+    assert 'Nothing started' in pick.out[0][1] and starts == []
+
+
+def test_confirm_for_plate_finished_after_pick_starts_nothing(tmp_path, monkeypatch):
+    starts = []
+    on_interaction, picker, plans = plate_clicks(tmp_path, monkeypatch, starts)
+    pick = Interaction(f'pbplate:pick:{picker}', ['plate2'])
+    asyncio.run(on_interaction(pick))
+    go_id = pick.out[0][2].items[0].custom_id
+    plan = json.loads((plans / 'trio.json').read_text())
+    plan['parts'][1]['status'] = 'completed'
+    (plans / 'trio.json').write_text(json.dumps(plan))
+    go = Interaction(go_id)
+    asyncio.run(on_interaction(go))
+    assert starts == [] and 'Nothing started' in go.out[0][1]
+
+
+def test_refused_start_reports_and_names_fresh_button_command(tmp_path, monkeypatch):
+    starts = []
+    on_interaction, picker, _ = plate_clicks(tmp_path, monkeypatch, starts, (False, 'REFUSED: printer is busy'))
+    pick = Interaction(f'pbplate:pick:{picker}', ['plate1'])
+    asyncio.run(on_interaction(pick))
+    go = Interaction(pick.out[0][2].items[0].custom_id)
+    asyncio.run(on_interaction(go))
+    assert starts == ['plate1']
+    assert go.out[-1][0] == 'followup' and 'REFUSED: printer is busy' in go.out[-1][1]

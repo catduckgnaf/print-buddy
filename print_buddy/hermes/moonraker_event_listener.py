@@ -85,6 +85,27 @@ def post_alert(message, kind, filename):
     return post(message)
 
 
+def post_plate_picker(plan_id):
+    """Post the interactive remaining-plate picker; name the command only when it cannot be delivered."""
+    try:
+        from . import print_alert_buttons as pab
+        from . import print_next
+        from .print_records import remaining_plate_choices
+        plan = print_next.load_plan(plan_id)
+        parts = remaining_plate_choices(plan)
+        if not parts:
+            return False
+        options = [{"label": print_next.plate_choice_label(part), "value": str(part["id"])} for part in parts]
+        if pab.post_plate_picker(_profile_env_value("DISCORD_BOT_TOKEN"), announcer.DISCORD_CHAT_ID,
+                                 "Which plate is next? Clear the bed, then choose a plate.", plan_id, options):
+            log(f"post plate picker plan={plan_id} plates={len(options)}")
+            return True
+        log(f"plate picker post failed plan={plan_id}; falling back to text")
+    except Exception as exc:
+        log(f"plate picker post error plan={plan_id}: {exc!r}")
+    return post(f"To start the next plate, type `/print-next {plan_id}`.")
+
+
 def post_insertion_confirmation(slot):
     """Offer an answer-only IFS insertion UI, then retain the command-text fallback."""
     try:
@@ -521,23 +542,39 @@ def run_announcer(reason):
         return
     lines = out.getvalue().splitlines()
     marker = next((line for line in lines if line.startswith("TIMELAPSE_POSTPROCESS:")), None)
-    message = "\n".join(line for line in lines if not line.startswith("TIMELAPSE_POSTPROCESS:")).strip()
+    picker = next((line for line in lines if line.startswith(announcer.PLATE_PICKER_MARKER)), None)
+    plan_id = picker.split(":", 1)[1].strip() if picker else None
+    message = "\n".join(line for line in lines
+                        if not line.startswith(("TIMELAPSE_POSTPROCESS:", announcer.PLATE_PICKER_MARKER))).strip()
     if not message:
         return
     if not marker:
         post(message)
+        if plan_id:
+            post_plate_picker(plan_id)
         return
     job_key = announcer._timelapse_job_key(marker.split(":", 1)[1].strip())
     if not job_key:
         log(f"timelapse postprocess has no matching active job for {marker!r}")
         post(message)
+        if plan_id:
+            post_plate_picker(plan_id)
         return
     # Rendering can take minutes; leave the websocket loop alone and post once when done.
-    threading.Thread(target=_timelapse_postprocess, args=(job_key, message), daemon=True,
+    threading.Thread(target=_timelapse_postprocess, args=(job_key, message, plan_id), daemon=True,
                      name="timelapse-postprocess").start()
 
 
-def _timelapse_postprocess(job_key, completion_message):
+def _timelapse_postprocess(job_key, completion_message, plan_id=None):
+    try:
+        _timelapse_post(job_key, completion_message)
+    finally:
+        # The picker follows the completion/timelapse post, whatever happened to the video.
+        if plan_id:
+            post_plate_picker(plan_id)
+
+
+def _timelapse_post(job_key, completion_message):
     try:
         archived = announcer.archive_completed_timelapse(job_key)
         if not archived:

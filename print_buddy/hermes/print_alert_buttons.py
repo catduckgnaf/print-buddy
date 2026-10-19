@@ -23,6 +23,8 @@ BASE = _config.moonraker_url()
 PREFIX = "pbalert"
 INSERTION_PREFIX = "pbinsert"
 SPOOL_QUESTION_PREFIX = "pbspool"
+PLATE_PREFIX = "pbplate"
+CONFIRM_LABEL = "Confirm bed is clear & print"
 TTL = 24 * 3600
 _LOCK = threading.Lock()
 
@@ -89,6 +91,14 @@ def record(kind: str, filename: str, now: float | None = None, **extra: Any) -> 
     return aid
 
 
+def peek(aid: str) -> dict[str, Any] | None:
+    """Read an alert without claiming it, so a bad choice can be refused and the prompt stays usable."""
+    alert = _load().get(aid)
+    if alert and time.time() - float(alert.get("at", 0)) < TTL:
+        return alert
+    return None
+
+
 def take(aid: str) -> dict[str, Any] | None:
     """Claim an alert once. A second click on the same alert gets None."""
     with _LOCK:
@@ -135,6 +145,42 @@ def spool_question_components(aid: str, prior_spool_id: int | None = None) -> li
          "custom_id": f"{SPOOL_QUESTION_PREFIX}:new:{aid}"},
     ])
     return [{"type": 1, "components": buttons}]
+
+
+def plate_picker_components(aid: str, options: list[dict[str, str]]) -> list[dict[str, Any]]:
+    """One select menu listing the remaining plates; choosing one only prepares a Confirm button."""
+    return [{"type": 1, "components": [
+        {"type": 3, "custom_id": f"{PLATE_PREFIX}:pick:{aid}", "placeholder": "Choose the next plate",
+         "min_values": 1, "max_values": 1,
+         "options": [{"label": o["label"][:100], "value": o["value"][:100]} for o in options[:25]]}]}]
+
+
+def parse_plate_custom_id(custom_id: str) -> tuple[str, str] | None:
+    """Return ('pick' | 'go', alert id) for plate picker controls, or None for unrelated ones."""
+    parts = str(custom_id or "").split(":")
+    if len(parts) == 3 and parts[0] == PLATE_PREFIX and parts[1] in ("pick", "go") and parts[2]:
+        return parts[1], parts[2]
+    return None
+
+
+def post_plate_picker(token: str, channel_id: str, content: str, plan_id: str,
+                      options: list[dict[str, str]]) -> bool:
+    """Post the remaining-plate picker. False means the caller should fall back to a plain-text line."""
+    if not token or not channel_id or not plan_id or not options:
+        return False
+    aid = record("plate-picker", "", plan_id=plan_id)
+    body = json.dumps({"content": content[:1990], "components": plate_picker_components(aid, options),
+                       "allowed_mentions": {"parse": []}}).encode()
+    req = urllib.request.Request(f"https://discord.com/api/v10/channels/{channel_id}/messages", data=body,
+                                 method="POST", headers={"Authorization": f"Bot {token}",
+                                                         "Content-Type": "application/json",
+                                                         "User-Agent": "DiscordBot (hermes-3dprinting, 1.0)"})
+    try:
+        with urllib.request.urlopen(req, timeout=15) as resp:
+            return 200 <= resp.status < 300
+    except Exception:
+        take(aid)
+        return False
 
 
 def post_spool_question(token: str, channel_id: str, content: str, context: dict[str, Any],

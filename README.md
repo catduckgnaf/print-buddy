@@ -2,7 +2,15 @@
 
 [![CI](https://github.com/catduckgnaf/print-buddy/actions/workflows/ci.yml/badge.svg)](https://github.com/catduckgnaf/print-buddy/actions/workflows/ci.yml)
 
-Print Buddy is an automated 3D printing pipeline driven from a Discord channel. Post a MakerWorld or Printables link, or a 3MF or STL file, and the bot downloads the model, merges multi plate parts, matches colors to loaded spools in Spoolman, and slices headless with OrcaSlicer. Once someone confirms the bed is clear, it sends the job to Moonraker on a Klipper printer. The Discord side runs on Hermes Agent. The live setup is a Flashforge AD5X on ZMod Klipper firmware. The offline core in `print_buddy/core/` runs with no printer.
+Print Buddy is an automated 3D printing pipeline driven from a Discord channel. Post a MakerWorld or Printables link, or a 3MF or STL file, and the bot downloads the model, merges multi plate parts, matches colors to loaded spools in Spoolman, and slices headless with OrcaSlicer. Once someone confirms the bed is clear, it sends the job to Moonraker on a Klipper printer, watches it through the camera, and posts the result.
+
+## About
+
+Print Buddy is almost entirely Python. Downloading, plate merging, color matching, slicing, job start, printer monitoring, spool sync, timelapses, and print records are all plain scripts with fixed rules, so they are fast and make no LLM calls.
+
+The Discord conversation runs on [Hermes Agent](https://github.com/NousResearch/hermes-agent) using Luna at medium reasoning. Two optional extras also call a model: the camera watchdog asks a vision model to classify a print frame, and the "print started" post adds a one line roast. Leave `services.vision_chat_url` empty and neither runs.
+
+The live setup is a Flashforge AD5X on ZMod Klipper firmware. The offline core in `print_buddy/core/` runs with no printer.
 
 ## How it works
 
@@ -18,40 +26,128 @@ In the `#3d-printer` channel, someone posts a link. The bot replies with a job s
 
 The print starts only when someone clicks the button. On completion, the bot posts stats and writes the job to an Obsidian archive note.
 
+## Features
+
+**Intake and slicing**
+* MakerWorld and Printables links, or uploaded 3MF and STL files.
+* Print time and grams from the model page in the first reply.
+* Multi plate models merged onto one bed when they fit; plates that would run longer than `layout.max_merged_hours` stay separate.
+* Oversized models split across plates, tracked as one plan.
+* Copy counts offered only where the G-code will actually contain the copies.
+* Headless OrcaSlicer with versioned machine, process, and filament templates; Bambu Studio as a fallback slicer with its network cut.
+* Readable part names: generic CAD names like "Cylinder" become a shape, size, plate, and color description.
+
+**Filament and spools**
+* Colors matched to loaded IFS slots from Spoolman. PLA+ is accepted in a PLA slot.
+* Filament estimates split across parts that share a spool, never multiplied.
+* `/spool` lists, changes, creates, and syncs spools without moving the printer.
+* A swapped spool can finish a job sliced for the old one, by explicit choice.
+* `PRINT_BITCH` Klipper macro confirms ZMod can fall back to a matching backup slot.
+
+**Printing**
+* Nothing starts without a bed clear button press.
+* Multi plate plans: `/print-next` offers the exact next plate, and finishing a plate advances the plan.
+* `/print-again` reprints an archived job exactly, with no re-slice.
+* `/print-stop` and `/print-resume` each send at most one Moonraker command behind a confirm button.
+* `/print-reboot` uses the safe ZMod reboot flow.
+* Printer families: `flashforge_zmod`, `generic_klipper`, `sovol_klipper`. Each job records the family it was sliced for and refuses another.
+
+**Monitoring**
+* Event driven Moonraker listener: start, pause, error, and completion posts with stats.
+* Camera watchdog checks layer 2, layer 5, and periodic frames for empty bed, spaghetti, a detached part, or a stalled print. Stall sensitivity is adjustable from 1 to 5.
+* Stop and pause alerts carry Resume and Cancel buttons.
+* Klipper report posted when a print is cancelled.
+* Timelapse per print, or one combined video for a multi plate plan, sized to fit Discord.
+
+**Records and upkeep**
+* Every finished job written to an Obsidian vault and the job archive.
+* Nightly catch up against Moonraker job history so nothing is missed.
+* `/print-maintenance` guided checklist and reminders by print hours and days.
+* `/print-coldpull` runs an operator confirmed cold pull at configured temperatures.
+
 ## Settings
 
-`config/home.toml` holds the home AD5X setup: bed size, print height, nozzle, IFS slot count, margins, prime tower, Orca templates, and slicer commands.
+`config/home.toml` holds the defaults for the AD5X setup. `config/local.toml` overrides any key for one machine; it is gitignored, so `git pull` never touches it. An environment variable named `PRINT_BUDDY__SECTION__KEY` overrides a key too, and the older names the services already use (`MOONRAKER_URL`, `SPOOLMAN_URL`, `HERMES_HOME`, ...) still work. `PRINT_BUDDY_CONFIG=/path/to/settings.toml` loads a different file.
 
-`config/local.toml` overrides any key in it for one machine. It is gitignored, so `git pull` never touches it. Environment variables named `PRINT_BUDDY__SECTION__KEY` override a key too, and the names the home services already use (`MOONRAKER_URL`, `SPOOLMAN_URL`, `HERMES_HOME`, ...) still work. `PRINT_BUDDY_CONFIG=/path/to/settings.toml` loads a different file.
-
-A typo or bad value stops the import and names the key. Requires Python 3.11 or newer.
-
-`[visual_watch] sensitivity` sets how readily the camera watchdog posts a "stalled layers" alert, on a scale of 1 (quietest) to 5 (most alerts). 3 is the original behavior. Lower levels need a larger unchanged stretch before calling a stall and check the camera less often. At 1 and 2 a stall alerts only when the vision model does not also report the print as `ok`/`safe`. Empty-bed, spaghetti, detached-part, uncertain, and vision-failure alerts fire at every level. Example in `config/local.toml`:
+A typo or bad value stops the import and names the key. Requires Python 3.11 or newer. Restart the Moonraker listener after changing a setting.
 
 ```toml
+# config/local.toml example
+[services]
+moonraker_url = "http://192.168.x.x:7125"
+spoolman_url = "http://192.168.x.x:7912"
+
 [visual_watch]
 sensitivity = 2
 ```
 
-Restart the Moonraker listener after changing it.
+### Camera stall sensitivity
 
-`[printer] family` picks the printer adapter (`flashforge_zmod` by default, `generic_klipper`, `sovol_klipper`). The single-extruder families skip every ZMod/AD5X step (IFS slots, screen offsets, MD5 gcode) and refuse multi-color jobs. Each sliced job records its family in `JOB.json`; `print-now` refuses a job prepared for a different family, and `model_job fetch|slice --printer <family>` prepares a job for another one. See `print_buddy/printers/base.py`.
+`[visual_watch] sensitivity` sets how readily the camera watchdog posts a "stalled layers" alert, from 1 (quietest) to 5 (most alerts). Default is 3.
 
-## Updating the home box
+| Level | Frame counts as unchanged if diff below | Stall alert after | Periodic camera check | Vision "ok" cancels a stall |
+|---|---|---|---|---|
+| 1 | 1.5 | 8 layers | 30 min | yes |
+| 2 | 2.0 | 5 layers | 20 min | yes |
+| 3 | 3.0 | 3 layers | 15 min | no |
+| 4 | 4.0 | 3 layers | 10 min | no |
+| 5 | 5.0 | 2 layers | 7.5 min | no |
 
-Update only from a commit that is green in CI. On the home machine:
+Empty bed, spaghetti, detached part, uncertain, and vision failure alerts fire at every level.
+
+### All settings
+
+| Section | Key | Default | What it does |
+|---|---|---|---|
+| `printer` | `name`, `firmware` | Flashforge AD5X, ZMod Klipper | Shown in job summaries |
+| | `family` | `flashforge_zmod` | Printer adapter: `flashforge_zmod`, `generic_klipper`, `sovol_klipper` |
+| | `start_macro`, `end_macro` | `PRINT_START`, `PRINT_END` | Start and end macros for the Klipper families |
+| | `bed_mm` | `[220, 220]` | Usable print area |
+| | `max_print_height_mm` | `220` | Tallest allowed print |
+| | `nozzle_diameter_mm` | `0.4` | Slicing refuses any other nozzle |
+| | `ifs_slots` | `4` | Filament slots; 1 for a single extruder |
+| `layout` | `single_copy_edge_mm`, `multi_copy_edge_mm` | `1`, `3` | Distance from the bed edge |
+| | `merge_edge_margin_mm`, `merge_spacing_mm` | `8`, `10` | Gaps when merging plates |
+| | `max_merged_hours` | `12` | Longer merged plates stay separate |
+| `prime_tower` | `size_mm`, `part_clearance_mm`, `edge_mm`, `merge_slack_mm` | `45`, `8`, `10`, `5` | Prime tower size and clearances |
+| `orca` | `templates` | `print_buddy/templates/orca` | Orca machine, process, and filament JSON |
+| | `command` | Flathub OrcaSlicer | How to start the Orca CLI |
+| `bambu` | `command` | Flathub Bambu Studio, no network | Fallback slicer |
+| `paths` | `hermes_home` | `~/.hermes/profiles/3dprinting` | Hermes profile the bot runs in |
+| | `archive`, `records_vault`, `cache` | `~/3d-prints`, `~/Documents/3D Printing Records`, `~/.hermes/cache` | Job archive, Obsidian records, cache |
+| | `hermes_bin`, `hermes_agent`, `hermes_restart_helper`, `ffmpeg` | | Tool locations |
+| `services` | `moonraker_url`, `moonraker_ws_url`, `camera_snapshot_url` | empty | Printer and camera; websocket is derived when empty |
+| | `spoolman_url`, `openviking_url` | empty | Spoolman and optional memory store |
+| | `vision_chat_url` | empty | OpenAI compatible endpoint for vision checks and roasts; empty disables both |
+| | `stock_api_port` | `8898` | Flashforge stock API for IFS presence |
+| `discord` | `chat_id`, `approval_user_id` | empty | Channel and approver IDs |
+| | `upload_max_bytes` | `9500000` | Largest upload before video is shrunk |
+| | `post_print_quiet_s` | `7200` | Quiet time before a chat session resets |
+| | `daily_reset_hour`, `timezone` | `4`, `America/New_York` | Daily session reset |
+| `listener` | `tick_s` | `600` | Listener housekeeping interval |
+| | `ifs_presence_poll_s` | `15` | IFS spool presence poll |
+| | `spool_nag_s` | `600` | Reminder interval for an unanswered spool question |
+| | `start_claim_ttl_s` | `1800` | How long a start button stays claimed |
+| `vision` | `model`, `roast_model` | `gemini-latest`, `luna-latest` | Models for camera checks and roasts |
+| `visual_watch` | `sensitivity` | `3` | Camera stall sensitivity, 1 to 5 |
+| `timelapse` | `archive_host`, `archive_dir`, `ssh_key` | empty | Remote timelapse copy; empty host disables it |
+| | `render_wait_s`, `render_poll_s` | `900`, `10` | Wait for the printer to render the timelapse |
+| | `max_bytes`, `local_retention_days`, `plan_clip_retention_days` | 200 MiB, `1`, `14` | Size cap and retention |
+| `maintenance` | `quick_hours`, `full_hours`, `full_days` | `25`, `75`, `30` | When maintenance reminders come due |
+| `cold_pull` | profile name | `pla_trial = [220, 90]`, `petg = [245, 100]` | Hot and cold temperatures in C |
+
+## Install and update
+
+See [docs/INSTALL.md](docs/INSTALL.md) to install into a Hermes profile.
+
+Update only from a commit that is green in CI. On the machine running Print Buddy:
 ```bash
 scripts/home-update.sh          # fast-forward to origin/main
-scripts/home-update.sh v2.0.3   # or a tag
+scripts/home-update.sh <tag>    # or a release tag
 ```
 The script refuses to run if tracked files were edited by hand. It runs the offline tests and the doctor after the update, and resets to the previous commit if either fails. `config/local.toml` is never touched. A listener restart command can go in `config/after-update.sh` (gitignored), which runs after a good update.
 
-Check the setup any time with `python3 -m print_buddy.doctor`. It also checks Moonraker and Spoolman when `config/local.toml` sets them:
-```toml
-[services]
-moonraker_url = "http://192.168.x.x:7125"
-spoolman_url = "http://192.168.x.x:7912"
-```
+Check the setup any time with `python3 -m print_buddy.doctor`. It also checks Moonraker and Spoolman when they are set in `[services]`.
 
 ## Running tests
 
@@ -60,7 +156,7 @@ From the repository root, CI runs this on every push and pull request:
 python3 -m pip install -r requirements-test.txt
 python3 -m pytest tests
 ```
-A second CI job installs the Flathub OrcaSlicer the home box runs, slices small test models with the home templates, and runs the slice guards on the real G-code. Run it locally with `PRINT_BUDDY_REAL_SLICER=1 python3 -m pytest -s tests/slicer`.
+A second CI job installs the Flathub OrcaSlicer, slices small test models with the templates, and runs the slice guards on the real G-code. Run it locally with `PRINT_BUDDY_REAL_SLICER=1 python3 -m pytest -s tests/slicer`.
 
 ## ZMod plugin and spool matching
 
@@ -92,19 +188,19 @@ is_system_service: False
 
 ## Repository structure
 
-* `config/home.toml`: home setup settings. See Settings.
+* `config/home.toml`: default settings. See Settings.
 * `print_buddy/settings.py`: loads and validates settings.
 * `print_buddy/doctor.py`: checks that a machine can run Print Buddy.
-* `scripts/home-update.sh`: updates the checkout and rolls back if checks fail.
-* `print_buddy/core/`: offline 3MF and STL helpers. No printer connection.
-* `print_buddy/templates/orca/`: example Orca machine, process, and filament JSON.
-* `plugins/print-feedback/`: guards that limit clarify choices and repeated terminal loops.
-* `print_bitch.cfg`: Klipper macro for backup IFS slot matching. The name is historical.
-* `install.sh`, `uninstall.sh`, `update.sh`: ZMod plugin lifecycle scripts.
-* `tests/`: unit tests for the offline core, the Klipper macro, and interaction guards.
-* `docs/`: AD5X integration specs and upstream tool research.
-
-Printer families live in `print_buddy/printers/`; see `base.py` for what each one owns.
+* `print_buddy/core/`: offline 3MF and STL pipeline. No printer connection.
+* `print_buddy/hermes/`: Moonraker listener, Discord posts, spool sync, print control, and records.
+* `print_buddy/printers/`: printer family adapters; see `base.py` for what each one owns.
+* `print_buddy/templates/orca/`: Orca machine, process, and filament JSON.
+* `plugins/print-feedback/`: Hermes plugin with the Discord slash commands and interaction guards.
+* `hermes/`: profile templates and skills installed by `scripts/install-hermes.sh`.
+* `scripts/`: `install-hermes.sh` and `home-update.sh`.
+* `print_bitch.cfg`, `install.sh`, `uninstall.sh`, `update.sh`: ZMod plugin macro and lifecycle scripts.
+* `tests/`: offline suite, real slicer checks, and the Klipper macro tests.
+* `docs/`: install guide and AD5X integration specs.
 
 ## Links
 
@@ -112,32 +208,4 @@ Printer families live in `print_buddy/printers/`; see `base.py` for what each on
 * ZMod firmware project: [ghzserg/zmod](https://github.com/ghzserg/zmod)
 * ZMod plugin guide: [wiki.zmod.link/Plugin](https://wiki.zmod.link/Plugin/)
 * OrcaSlicer CLI documentation: [CLI mode](https://github.com/OrcaSlicer/OrcaSlicer/wiki/cli_mode)
-
-## Release history
-
-### 2.0.3: Split plates track their plan, honest copy counts
-* **Split plates advance their plan**: plates 2 and later of a split job now start with the plan ID and part, so finishing them updates the plan and `/print-next` offers the right next plate (#48).
-* **Copies only where they print**: split, multi-plate and per-part jobs no longer offer a copy count they would ignore. Intake says it is printing one copy, and the job record stays at 1 (#37).
-* **PLA+ in a PLA slot**: native multicolor accepts a PLA+ spool in a slot the printer labels PLA.
-* **Home update**: `scripts/home-update.sh` uses the Hermes agent venv when `$PYTHON` is unset, and its test no longer inherits the caller's `HERMES_HOME`.
-
-### 2.0.2: Whole stack public, other Klipper printers
-* **Full runtime in the repo**: the Discord intake, Moonraker listener, Hermes plugin, spool sync and job archive now live here, installed into a Hermes profile with `scripts/install-hermes.sh` (symlinks plus a gitignored personal overlay).
-* **Settings file**: `config/home.toml` with `config/local.toml` overrides. `scripts/home-update.sh` updates and rolls back on failed checks.
-* **Printer families**: `[printer] family` selects `flashforge_zmod` (default), `generic_klipper` or `sovol_klipper`. Stock Klipper families print single color with no ZMod steps; jobs record the family they were sliced for.
-* **Multi-plate jobs**: pick the next plate from a Discord picker, confirm the bed once, and get one combined timelapse at the end.
-* **Spool swap mid-job**: a swapped spool can finish a job sliced for the old one, by explicit choice.
-* **Estimates**: per plate and per part figures that count only the copies the G-code contains.
-* **Tests**: CI runs the offline suite, a real Orca slice, and a real Spoolman on every push.
-
-### 2.0.1: Honest filament estimates and readable part names
-* **Filament estimates**: when parts share one filament, the total is split across them instead of multiplied.
-* **Model page estimates**: the first intake message shows print time and grams from the MakerWorld page.
-* **Readable part names**: generic CAD names like "Cylinder" become a shape description with size, plate, and color.
-
-### 2.0.0: Shareable offline core
-* **`print_buddy/core/`**: the offline pipeline for 3MF and STL files. It does not connect to a printer, Discord, or any home server.
-* **Orca templates and license**: machine, process, and filament JSON for a Flashforge AD5X style bed. MIT license.
-* **Left private on purpose**: Discord intake, the Moonraker listener, spool sync, and job archive.
-
-Older releases: see git history and tags.
+* Releases: [GitHub releases](https://github.com/catduckgnaf/print-buddy/releases)

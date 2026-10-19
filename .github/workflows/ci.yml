@@ -25,7 +25,7 @@ jobs:
         run: python -m pytest -q tests
 
   real-slicer:
-    # Slices fixtures with the Flathub Orca the home box runs, using the home templates.
+    # Slices fixtures and the Discord flow corpus with the Flathub Orca the home box runs, using the home templates.
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
@@ -55,6 +55,10 @@ jobs:
         env:
           PRINT_BUDDY_REAL_SLICER: "1"
         run: xvfb-run -a python -m pytest -v -s tests/slicer
+      - name: Discord flow corpus with real Orca
+        env:
+          PRINT_BUDDY_REAL_SLICER: "1"
+        run: xvfb-run -a python -m pytest -v -s tests/corpus
 
   spoolman:
     # spool_sync against a real, throwaway Spoolman.

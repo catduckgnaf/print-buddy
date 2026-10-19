@@ -810,24 +810,6 @@ def _vision_chat_url():
     return _config.require(_config.service_url("vision_chat_url"), "services.vision_chat_url")
 
 
-def _camera_snapshot_bytes():
-    request = urllib.request.Request(_camera_url())
-    with urllib.request.urlopen(request, timeout=8) as response:
-        image = response.read(8 * 1024 * 1024 + 1)
-    if len(image) > 8 * 1024 * 1024 or not image.startswith(bytes((0xff, 0xd8))):
-        raise ValueError("camera response is not a bounded JPEG snapshot")
-    return image
-
-
-def _frame_changed(before, after):
-    """Cheap whole-frame perceptual difference; false means visually unchanged."""
-    from PIL import Image, ImageChops, ImageStat
-    import io as _io
-    a = Image.open(_io.BytesIO(before)).convert("L").resize((64, 48))
-    b = Image.open(_io.BytesIO(after)).convert("L").resize((64, 48))
-    return ImageStat.Stat(ImageChops.difference(a, b)).mean[0] >= 3.0
-
-
 VISUAL_VERDICTS = {"ok", "air", "spaghetti", "detached", "empty_idle", "uncertain"}
 VISUAL_ALERT_VERDICTS = {"air", "spaghetti", "detached", "uncertain"}
 _VISION_BASE = _config.service_url("vision_chat_url")
@@ -845,91 +827,6 @@ _VISION_CONTEXT = (
 
 
 _VISION_CONTEXT = "Printer: Flashforge AD5X, enclosed, smooth PEI plate. Reply JSON verdict ok|air|spaghetti|detached|empty_idle|uncertain. "
-
-
-def _strip_json_fence(text):
-    raw = str(text or "").strip()
-    if raw.startswith("```"):
-        raw = raw.split("\n", 1)[-1]
-        raw = raw.rsplit("```", 1)[0]
-    return raw.strip()
-
-
-def _profile_vision_verdict(image, prompt):
-    """In-process adapter for the profile auxiliary.vision route. No new service."""
-    key = _profile_env_value("CLIPROXY_API_KEY")
-    if not key:
-        return "uncertain", "vision key is not configured"
-    encoded = __import__("base64").b64encode(image).decode()
-    body = {
-        "model": _VISION_MODEL,
-        "temperature": 0,
-        "max_tokens": 200,
-        "messages": [{
-            "role": "user",
-            "content": [
-                {"type": "text", "text": _VISION_CONTEXT + " " + str(prompt or "")},
-                {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{encoded}"}},
-            ],
-        }],
-    }
-    endpoint = _vision_chat_url()
-    req = urllib.request.Request(
-        endpoint,
-        data=json.dumps(body).encode(),
-        headers={"Authorization": f"Bearer {key}", "Content-Type": "application/json"},
-    )
-    with urllib.request.urlopen(req, timeout=60) as response:
-        payload = json.loads(response.read())
-    content = payload["choices"][0]["message"]["content"]
-    parsed = json.loads(_strip_json_fence(content))
-    verdict = str(parsed.get("verdict", "uncertain")).casefold()
-    if verdict not in VISUAL_VERDICTS:
-        return "uncertain", f"unrecognized verdict: {verdict}"[:300]
-    return verdict, str(parsed.get("reason", ""))[:300]
-
-
-def _visual_verdict(image, prompt):
-    """Classify a camera frame. PRINT_VISION_URL wins; otherwise use the profile vision route."""
-    endpoint = os.environ.get("PRINT_VISION_URL")
-    try:
-        if endpoint:
-            payload = json.dumps({"image": __import__("base64").b64encode(image).decode(), "prompt": prompt}).encode()
-            req = urllib.request.Request(endpoint, data=payload, headers={"Content-Type": "application/json"})
-            with urllib.request.urlopen(req, timeout=30) as response:
-                result = json.loads(response.read())
-            verdict = str(result.get("verdict", "uncertain")).casefold()
-            return verdict, str(result.get("reason", ""))[:300]
-        return _profile_vision_verdict(image, prompt)
-    except Exception as exc:
-        return "uncertain", f"vision check failed: {exc!r}"
-
-
-def _visual_layer(stats):
-    info = stats.get("info") if isinstance(stats, dict) else None
-    if not isinstance(info, dict):
-        return None
-    value = info.get("current_layer") or info.get("layer")
-    return value if isinstance(value, int) else None
-
-
-def _visual_alert(filename, image, reason):
-    target = Path(os.environ.get("PRINT_WATCH_FRAME_DIR") or _config.cache_dir() / "print-watch")
-    target.mkdir(parents=True, exist_ok=True)
-    path = target / f"{int(time.time())}-{Path(filename or 'print').stem}.jpg"
-    path.write_bytes(image)
-    text = f"Print camera check: {clean(filename)}\n{reason}"
-    try:
-        from . import print_alert_buttons as pab
-        if pab.post_visual_alert(_profile_env_value("DISCORD_BOT_TOKEN"), announcer.DISCORD_CHAT_ID,
-                                 text, filename, path):
-            log(f"post visual alert {clean(filename)!r}")
-            return path
-        log("visual button post failed; falling back to text")
-    except Exception as exc:
-        log(f"visual button post error: {exc!r}")
-    post(text + f"\n{path}\nMEDIA:{path}")
-    return path
 
 
 def _camera_snapshot_bytes():
@@ -1068,54 +965,6 @@ class VisualPrintWatch:
             self.last_layer = layer
         self.last_check_at = now
         self.last_snapshot = snapshot
-
-
-class VisualPrintWatch:
-    """Pure trigger policy for periodic visual checks; never controls the printer."""
-    def __init__(self):
-        self.reset()
-
-    def reset(self):
-        self.last_layer = None
-        self.last_check_at = 0.0
-        self.last_snapshot = None
-        self.last_snapshot_layer = 0
-        self.progress_seen_layer = 0
-        self.alerted_stall_layer = None
-        self.layer2_checked = False
-        self.layer5_checked = False
-        self.last_alert_at = 0.0
-
-    def due(self, layer, now, *, snapshot_changed=None):
-        if not isinstance(layer, int) or layer < 1:
-            return None
-        if layer >= 2 and not self.layer2_checked:
-            self.layer2_checked = True
-            self.last_check_at = now
-            return "layer2"
-        if layer >= 5 and not self.layer5_checked:
-            self.layer5_checked = True
-            self.last_check_at = now
-            return "layer5"
-        if now - self.last_check_at >= 900:
-            self.last_check_at = now
-            reason = "stalled_layers" if snapshot_changed is False and self.last_layer is not None and layer - self.last_layer >= 3 else "periodic"
-            return reason
-        if snapshot_changed is False and self.last_snapshot_layer and layer - self.last_snapshot_layer >= 3 and self.alerted_stall_layer is None:
-            self.alerted_stall_layer = layer
-            self.last_layer = layer
-            self.last_check_at = now
-            return "stalled_layers"
-        if snapshot_changed is None and layer >= 5 and self.alerted_stall_layer is None and self.last_snapshot_layer and layer - self.last_snapshot_layer >= 3:
-            self.last_layer = layer
-            return "layer_progress"
-        return None
-
-    def record(self, layer, now, snapshot=None):
-        if isinstance(layer, int):
-            self.last_layer = layer
-        self.last_check_at = now
-        self.last_snapshot = snapshot
         if isinstance(layer, int): self.last_snapshot_layer = layer
 
 
@@ -1162,49 +1011,6 @@ def _mapped_spool(slot):
     except (OSError, ValueError):
         return None
     return ((state.get("ifs_slots") or {}).get(str(slot)) or {}).get("spoolman_id")
-
-
-def _maintenance_history_totals():
-    payload = print_control._call('/server/history/totals')
-    result = payload.get('result') or {}
-    seconds = result.get('total_time', result.get('print_time'))
-    if seconds is None:
-        raise RuntimeError('Moonraker history totals did not include total_time or print_time')
-    return float(seconds) / 3600.0
-
-
-async def maintenance_reminder_tick(listener):
-    """Post due maintenance only when an explicit idle state is known."""
-    from . import maintenance
-    try:
-        st = await asyncio.to_thread(print_control.status)
-        if st.get('state') != 'standby':
-            return
-        hours = await asyncio.to_thread(_maintenance_history_totals)
-        state = maintenance.load()
-        message = maintenance.reminder_text(state, hours, idle=True)
-        if message:
-            signature = message.partition('(')[0]
-            if state.get('last_reminder') != signature:
-                if await asyncio.to_thread(post, message):
-                    state['last_reminder'] = signature
-                    maintenance.save(state)
-    except Exception as exc:
-        log(f"maintenance reminder check failed: {exc!r}")
-
-
-async def maintenance_cancel_reminder():
-    try:
-        st = await asyncio.to_thread(print_control.status)
-        if st.get('state') == 'standby':
-            await asyncio.to_thread(post, 'A print was cancelled. When the printer is idle, check the filament path and consider a maintenance quick check.')
-    except Exception as exc:
-        log(f"cancel maintenance reminder failed: {exc!r}")
-
-
-async def maintenance_airprint_reminder():
-    # TODO: t_16bad84c signal contract is not available here.
-    return None
 
 
 def _maintenance_history_totals():

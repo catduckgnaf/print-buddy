@@ -97,11 +97,16 @@ render() {  # render SRC DST: substitute ${NAME} and {{NAME}} placeholders
     TIMEZONE=${TIMEZONE:-${TZ:-UTC}} DISPLAY_NAME=${DISPLAY_NAME:-3D Printing} BOT_NAME="$BOT_NAME" \
     PROFILE_DIR="$HERMES_HOME" HERMES_HOME="$HERMES_HOME" REPO="$REPO" PYTHON="$PYTHON" \
     python3 - "$1" <<'PY'
-import os, re, sys
+import json, os, re, sys
 text = open(sys.argv[1]).read()
+yaml = sys.argv[1].endswith((".yaml", ".yml", ".yaml.template", ".yml.template"))
 def fill(match):
     name = match.group(1) or match.group(2)
-    return os.environ.get(name) or match.group(0)
+    value = os.environ.get(name)
+    if not value:
+        return match.group(0)
+    # Free text in YAML sits inside double quotes; JSON string escaping is valid YAML escaping.
+    return json.dumps(value)[1:-1] if yaml and name == "BOT_NAME" else value
 sys.stdout.write(re.sub(r"\$\{(\w+)\}|\{\{(\w+)\}\}", fill, text))
 PY
 }

@@ -56,7 +56,7 @@ rename_tree() {  # rename_tree DIR
         if [ -e "$new" ] || [ -L "$new" ]; then say "skipped $path (target $new exists)"; continue; fi
         act "rename $path -> $new"
         [ "$DRY" = 1 ] || mv "$path" "$new"
-    done < <(find "$root" -depth -name '*print_bitch*' -print0)
+    done < <(find "$root" -mindepth 1 -depth -name '*print_bitch*' -print0)  # never the root itself
     [ "$found" = 1 ] || say "ok      $root (nothing to rename)"
 }
 rename_tree "$HERMES_HOME/state"
@@ -88,11 +88,11 @@ cat <<'TXT'
 Printer steps (cannot be done from here; do them while the printer is idle). Details in
 docs/RENAME-MIGRATION.md.
   1. Printer console: DISABLE_PLUGIN name=print-bitch
-     (if that is not available, delete mod_data/plugins/print-bitch by hand)
-  2. Printer console: ENABLE_PLUGIN name=print-buddy
-  3. In mod_data/user.cfg rename [gcode_macro _PRINT_BITCH_VARS] to [gcode_macro _PRINT_BUDDY_VARS].
-  4. In moonraker.conf replace [update_manager print-bitch] with [update_manager print-buddy]
-     and set its path to .../mod_data/plugins/print-buddy.
+  2. In mod_data/user.moonraker.conf replace [update_manager print-bitch] with
+     [update_manager print-buddy], path .../mod_data/plugins/print-buddy. Restart Moonraker so it
+     clones the plugin, then delete mod_data/plugins/print-bitch.
+  3. Printer console: ENABLE_PLUGIN name=print-buddy
+  4. In mod_data/user.cfg rename [gcode_macro _PRINT_BITCH_VARS] to [gcode_macro _PRINT_BUDDY_VARS].
   5. FIRMWARE_RESTART, then run PRINT_BUDDY SLOT=1 to check.
 Then on this machine, restart the listener:
   systemctl --user daemon-reload && systemctl --user restart hermes-3dprinting-moonraker-listener.service

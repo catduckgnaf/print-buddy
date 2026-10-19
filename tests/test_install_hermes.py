@@ -25,8 +25,8 @@ class InstallerTests(unittest.TestCase):
         systemctl.write_text(f'#!/bin/sh\necho "$@" >> "{self.log}"\n')
         systemctl.chmod(systemctl.stat().st_mode | stat.S_IEXEC)
 
-    def run_installer(self, *args, overlay=True, python="/opt/venv/bin/python"):
-        env = dict(os.environ,
+    def run_installer(self, *args, overlay=True, python="/opt/venv/bin/python", **extra_env):
+        env = dict(os.environ, **extra_env,
                    HERMES_HOME=str(self.home), SYSTEMD_USER_DIR=str(self.units),
                    PRINT_BUDDY_OVERLAY=str(self.overlay if overlay else self.tmp / "no-overlay"),
                    PYTHON=python, HOME=str(self.tmp / "fakehome"),
@@ -181,6 +181,14 @@ class InstallerTests(unittest.TestCase):
     def test_config_template_runs_terminal_from_the_repo(self):
         self.run_installer()
         self.assertIn(f"cwd: {ROOT}", (self.home / "config.yaml").read_text())
+
+    def test_bot_name_is_escaped_in_yaml_and_verbatim_in_markdown(self):
+        import yaml
+        name = 'Bob "The Bot" \\ Jr'
+        self.run_installer(BOT_NAME=name)
+        locale = yaml.safe_load((self.home / "locales" / "en.yaml").read_text())
+        self.assertEqual(f"{name} Needs Your Input", locale["platform"]["discord"]["prompt"]["clarify_title"])
+        self.assertIn(f"# {name}:", (self.home / "SOUL.md").read_text())
 
 
 if __name__ == "__main__":

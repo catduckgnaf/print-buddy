@@ -73,6 +73,19 @@ class MigrateNamesTests(unittest.TestCase):
         self.run_script()
         self.assertEqual(after_first, self.snapshot())
 
+    def test_archive_root_itself_is_never_renamed(self):
+        root = self.tmp / "print_bitch_archive"
+        (root / "job").mkdir(parents=True)
+        (root / "job" / "print_bitch_x.txt").write_text("x\n")
+        self.archive = root
+        self.run_script()
+        self.assertTrue(root.is_dir())
+        self.assertTrue((root / "job" / "print_buddy_x.txt").exists())
+
+    def test_printer_steps_configure_the_plugin_before_enabling_it(self):
+        out = self.run_script("--dry-run")
+        self.assertLess(out.index("user.moonraker.conf"), out.index("ENABLE_PLUGIN name=print-buddy"))
+
 
 if __name__ == "__main__":
     unittest.main()

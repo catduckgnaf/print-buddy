@@ -99,7 +99,7 @@ def classify_orca_failure(text, return_code=None):
 
 
 PROTECTED_KEYS = ("machine_start_gcode", "machine_end_gcode", "post_process", "print_host", "print_host_webui", "host_type", "printer_agent", "printer_technology")
-BASELINE_PATH = Path(__file__).with_name("protected-settings-baseline.json")
+BASELINE_PATH = settings.ROOT / "config" / "protected-settings-baseline.json"
 
 def _canonical(value):
     return json.dumps(value, sort_keys=True, separators=(",", ":"), ensure_ascii=False)

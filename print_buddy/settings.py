@@ -66,10 +66,10 @@ def validate(data):
     data["layout"]["max_merged_hours"] = _positive(data, "layout", "max_merged_hours")
     for key in ("size_mm", "part_clearance_mm", "edge_mm", "merge_slack_mm"):
         data["prime_tower"][key] = _positive(data, "prime_tower", key)
-    command = data["orca"].get("command")
-    if command is not None and (not isinstance(command, list) or not command
-                                or not all(isinstance(v, str) and v for v in command)):
-        raise SettingsError("[orca] command must be a list of strings, like [\"flatpak\", \"run\", \"io.github.softfever.OrcaSlicer\"]")
+    for section in ("orca", "bambu"):
+        command = data.get(section, {}).get("command")
+        if not isinstance(command, list) or not command or not all(isinstance(v, str) and v for v in command):
+            raise SettingsError(f"[{section}] command must be a list of strings, like [\"flatpak\", \"run\", \"com.orcaslicer.OrcaSlicer\"]")
     for key, value in data.get("services", {}).items():
         if value is not None and not (isinstance(value, str) and value.startswith(("http://", "https://"))):
             raise SettingsError(f"[services] {key} must be an http(s) URL, got {value!r}")

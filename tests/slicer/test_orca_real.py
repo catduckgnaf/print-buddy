@@ -1,0 +1,97 @@
+"""Slice with the real Orca CLI and the home templates, then run the guards on what it produced.
+
+Skipped unless PRINT_BUDDY_REAL_SLICER=1. CI runs these in the real-slicer job with the same Flathub
+Orca the home box uses. Locally: PRINT_BUDDY_REAL_SLICER=1 python3 -m unittest tests.slicer -v
+"""
+import os
+import subprocess
+import tempfile
+import unittest
+from pathlib import Path
+
+from print_buddy import settings
+from print_buddy.core import slice_guard as sg
+
+REAL = os.environ.get("PRINT_BUDDY_REAL_SLICER") == "1"
+# Flatpak Orca has a private /tmp and cannot read host temp files. Work inside the checkout,
+# which sits under $HOME on the home box and the CI runner, where the sandbox can see it.
+WORK = settings.ROOT / ".slicer-work"
+
+
+def write_cube(path, size):
+    """ASCII STL cube, size mm per side, corner at the origin."""
+    s = float(size)
+    v = [(x, y, z) for x in (0, s) for y in (0, s) for z in (0, s)]
+    faces = [(0, 2, 3), (0, 3, 1), (4, 5, 7), (4, 7, 6), (0, 1, 5), (0, 5, 4),
+             (2, 6, 7), (2, 7, 3), (0, 4, 6), (0, 6, 2), (1, 3, 7), (1, 7, 5)]
+    lines = ["solid cube"]
+    for a, b, c in faces:
+        lines += ["facet normal 0 0 0", " outer loop"]
+        lines += [f"  vertex {v[i][0]} {v[i][1]} {v[i][2]}" for i in (a, b, c)]
+        lines += [" endloop", "endfacet"]
+    path.write_text("\n".join(lines + ["endsolid cube"]) + "\n")
+    return path
+
+
+@unittest.skipUnless(REAL, "set PRINT_BUDDY_REAL_SLICER=1 to slice with the real Orca CLI")
+class OrcaRealSliceTests(unittest.TestCase):
+    def setUp(self):
+        WORK.mkdir(exist_ok=True)
+        self.tmp = tempfile.TemporaryDirectory(dir=WORK)
+        self.dir = Path(self.tmp.name)
+        self.settings = settings.current()
+        templates = self.settings["orca"]["templates"]
+        self.machine, self.process, self.filament = (templates / f"{n}.json" for n in ("machine", "process", "filament"))
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def slice(self, stl, *extra):
+        """Same flags the adapter uses for a plain single color STL."""
+        out = self.dir / f"out_{stl.stem}"
+        out.mkdir()
+        command = [*self.settings["orca"]["command"],
+                   "--load-settings", f"{self.machine};{self.process}", "--load-filaments", str(self.filament),
+                   "--arrange", "1", "--orient", "0", "--ensure-on-bed", *extra,
+                   "--allow-newer-file", "--slice", "0", "--outputdir", str(out), str(stl)]
+        result = subprocess.run(command, capture_output=True, text=True, timeout=600)
+        log = result.stdout + result.stderr
+        print(f"\n$ {' '.join(command)}\nexit {result.returncode}\n{log[-3000:]}")
+        self.assertNotIn("No such file", log, "Orca could not read the input; the sandbox cannot see this path")
+        return result, out
+
+    def guard(self, out):
+        gcode = out / "plate_1.gcode"
+        result_json = out / "result.json"
+        r = sg.post_slice(gcode, tool_slots={0: 1}, result_json=result_json if result_json.is_file() else None)
+        print(f"post_slice: {r.as_dict()}")
+        return r
+
+    def test_cube_slices_and_passes_the_guard(self):
+        result, out = self.slice(write_cube(self.dir / "cube.stl", 20))
+        self.assertEqual(result.returncode, 0)
+        r = self.guard(out)
+        self.assertNotEqual(r.status, "blocked", r.blocked)
+        self.assertEqual(r.warnings, [], "real Orca output should carry a print time header the guard recognizes")
+
+    def test_four_copies_stay_on_the_bed(self):
+        result, out = self.slice(write_cube(self.dir / "copies.stl", 30), "--clone-objects", "4")
+        self.assertEqual(result.returncode, 0)
+        self.assertNotEqual(self.guard(out).status, "blocked")
+
+    def test_model_bigger_than_the_bed_is_never_accepted(self):
+        bed = self.settings["printer"]["bed_mm"][0]
+        result, out = self.slice(write_cube(self.dir / "huge.stl", bed + 10))
+        gcode = out / "plate_1.gcode"
+        accepted = result.returncode == 0 and gcode.is_file() and self.guard(out).status != "blocked"
+        self.assertFalse(accepted, "an oversized model produced G-code the guard accepted")
+
+    def test_protected_settings_baseline_round_trips_on_real_output(self):
+        result, out = self.slice(write_cube(self.dir / "baseline.stl", 20))
+        self.assertEqual(result.returncode, 0)
+        gcode = out / "plate_1.gcode"
+        found = sg._effective_config(gcode)
+        self.assertIn("machine_start_gcode", found, "Orca output no longer carries the protected settings block")
+        baseline = self.dir / "baseline.json"
+        sg.approve_baseline(gcode, path=baseline)
+        self.assertTrue(sg.enforce_approved_baseline(gcode, path=baseline).ok)

@@ -18,6 +18,8 @@ BED = _S['printer']['bed_mm']
 MAX_HEIGHT_MM = _S['printer']['max_print_height_mm']
 IFS_SLOTS = _S['printer']['ifs_slots']
 NOZZLE_MM = _S['printer']['nozzle_diameter_mm']
+ORCA_COMMAND = list(_S['orca']['command'])
+BAMBU_COMMAND = list(_S['bambu']['command'])
 # Bed edge clearance. Multiple copies keep the historical 8 mm; a lone part only needs
 # room for the purge/skirt path (brim and skirt are off in the AD5X process template).
 MULTI_COPY_EDGE_MM = _S['layout']['multi_copy_edge_mm']
@@ -552,7 +554,7 @@ def slice_model(source, folder, state, brim=None, first_layer=False, color_decis
         copies = None
     output = folder / 'plate_1.gcode'
     prepositioned_scale = (scale is not None or rotation is not None) and input_path != source and not preserve_layout
-    command = ['flatpak', 'run', 'com.orcaslicer.OrcaSlicer', '--load-settings', f'{configs[0]};{configs[1]}',
+    command = [*ORCA_COMMAND, '--load-settings', f'{configs[0]};{configs[1]}',
                '--load-filaments', ';'.join(map(str, filament_paths)),
                # Mapped (multicolor) geometry is already placed and the prime tower
                # computed around it; Orca's default auto-arrange would move parts
@@ -691,8 +693,7 @@ def slice_model(source, folder, state, brim=None, first_layer=False, color_decis
             bambu_filaments.append(path)
         output.unlink(missing_ok=True)
         bambu_command = [
-            'flatpak', 'run', '--unshare=network', '--command=bambu-studio',
-            'com.bambulab.BambuStudio', '--datadir', str(bambu_dir / 'datadir'),
+            *BAMBU_COMMAND, '--datadir', str(bambu_dir / 'datadir'),
             '--load-settings', f'{bambu_machine};{bambu_process}',
             '--load-filaments', ';'.join(map(str, bambu_filaments)),
             *(['--arrange', '0', '--orient', '0'] if (preserve_layout or item_shifts or prepositioned_scale or mapping)
@@ -957,7 +958,7 @@ def orca_plate_capacity(source: Path, state: dict, spacing_mm: float = 10.0, edg
             probe_dir = tmp / f'probe_{tag}_{copies}'
             probe_dir.mkdir(exist_ok=True)
             cmd = [
-                'flatpak', 'run', 'com.orcaslicer.OrcaSlicer',
+                *ORCA_COMMAND,
                 '--load-settings', f'{machine_for(edge)};{ppath}',
                 '--load-filaments', str(fpath),
                 '--allow-newer-file', '--clone-objects', str(copies),

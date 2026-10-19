@@ -39,10 +39,12 @@ merge_slack_mm = 5.0
 [orca]
 # Folder holding machine.json, process.json and filament.json. Relative to the repository root.
 templates = "print_buddy/templates/orca"
+# How to start the Orca CLI. The home box and the CI slicer job both use the Flathub build.
+command = ["flatpak", "run", "com.orcaslicer.OrcaSlicer"]
 
-# How the home box runs the Orca CLI. Machine specific, so set it in config/local.toml:
-#   [orca]
-#   command = ["flatpak", "run", "io.github.softfever.OrcaSlicer"]
+[bambu]
+# Fallback slicer when Orca fails. Network is cut so it never phones home.
+command = ["flatpak", "run", "--unshare=network", "--command=bambu-studio", "com.bambulab.BambuStudio"]
 
 [services]
 # Addresses stay out of the repo. Set them in config/local.toml and the doctor will check them:

@@ -30,7 +30,8 @@ class HomeUpdateTests(unittest.TestCase):
         git(self.upstream, "add", "-A")
         git(self.upstream, "commit", "-qm", "base")
         git(base, "clone", "-q", str(self.upstream), str(self.home))
-        (self.home / "config" / "local.toml").write_text("[printer]\nname = \"Home AD5X\"\n")
+        # `true --help` exits 0: a stand-in Orca so the doctor passes on machines without flatpak.
+        (self.home / "config" / "local.toml").write_text('[printer]\nname = "Home AD5X"\n\n[orca]\ncommand = ["true"]\n')
 
     def tearDown(self):
         self.tmp.cleanup()

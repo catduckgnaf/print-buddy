@@ -15,16 +15,22 @@ class DoctorTests(unittest.TestCase):
             path.write_text(local_toml)
             data = settings.load(local=path)
         out = io.StringIO()
-        with mock.patch.object(doctor.settings, "load", return_value=data):
+        with mock.patch.object(doctor.settings, "load", return_value=data), \
+                mock.patch.object(doctor.shutil, "which", side_effect=self.which), \
+                mock.patch.object(doctor.subprocess, "run", return_value=mock.MagicMock(returncode=self.orca_code)):
             code = doctor.run(out)
         return code, out.getvalue()
+
+    def setUp(self):
+        self.orca_code = 0  # what the stubbed `orca --help` exits with
+        self.which = lambda name: f"/usr/bin/{name}" if name == "flatpak" else None
 
     def test_home_setup_passes_and_skips_unset_services(self):
         code, text = self.run_doctor()
         self.assertEqual(code, 0, text)
         self.assertIn("ok    settings: Flashforge AD5X, bed 220x220 mm, 4 slot(s), 0.4 mm nozzle", text)
         self.assertIn("skip  moonraker", text)
-        self.assertIn("skip  orca cli", text)
+        self.assertIn("ok    orca cli: flatpak run com.orcaslicer.OrcaSlicer", text)
 
     def test_bad_settings_fail_and_name_the_key(self):
         out = io.StringIO()
@@ -56,6 +62,12 @@ class DoctorTests(unittest.TestCase):
         code, text = self.run_doctor('[orca]\ncommand = ["definitely-not-orca-xyz"]\n')
         self.assertEqual(code, 1)
         self.assertIn("FAIL  orca cli: definitely-not-orca-xyz is not on PATH", text)
+
+    def test_orca_that_will_not_start_fails(self):
+        self.orca_code = 1
+        code, text = self.run_doctor()
+        self.assertEqual(code, 1)
+        self.assertIn("FAIL  orca cli: flatpak run com.orcaslicer.OrcaSlicer --help exited 1", text)
 
     def test_bad_service_url_is_a_settings_error(self):
         with self.assertRaisesRegex(settings.SettingsError, "http"):

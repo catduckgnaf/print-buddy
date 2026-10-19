@@ -1,6 +1,6 @@
 """Drive a corpus model through the Discord intake the way the gateway does, with a fake Discord.
 
-A case is a folder with model.3mf and case.toml. The driver loads the real print-feedback plugin and
+A case is a folder with one model file (`.3mf`, `.stl`, `.obj`, `.step`, `.stp`) and case.toml. The driver loads the real print-feedback plugin and
 calls its model_link_dispatch hook with a dropped-file event, the same entry point the gateway uses.
 The fake adapter answers every button question from the case's [[click]] rules. Nothing contacts
 Moonraker, Spoolman or a printer: the start step runs the real print_next gates against a stub
@@ -41,6 +41,17 @@ PLUGIN = settings.ROOT / "plugins" / "print-feedback" / "__init__.py"
 WORK = settings.ROOT / ".slicer-work"
 FIXTURE_STATE = settings.ROOT / "tests" / "pipeline" / "fixtures" / "printer_hardware.json"
 SUPPORT_FEATURE = re.compile(r"^;\s*(?:FEATURE|TYPE):\s*Support", re.I | re.M)
+MODEL_FILE_EXTS = {".3mf", ".stl", ".obj", ".step", ".stp"}
+
+
+def find_model(case_dir):
+    """The one model file in a case folder. model.3mf still wins when several exist."""
+    found = [p for p in Path(case_dir).iterdir() if p.is_file() and p.suffix.lower() in MODEL_FILE_EXTS]
+    if not found:
+        raise FileNotFoundError(
+            f"{case_dir} has no model file ({', '.join(sorted(MODEL_FILE_EXTS))})")
+    preferred = [p for p in found if p.name == "model.3mf"]
+    return preferred[0] if preferred else found[0]
 
 
 class UnansweredPrompt(AssertionError):
@@ -54,7 +65,7 @@ def case_dirs():
 def load_case(folder):
     folder = Path(folder)
     data = tomllib.loads((folder / "case.toml").read_text())
-    return S(name=folder.name, dir=folder, model=folder / "model.3mf", data=data,
+    return S(name=folder.name, dir=folder, model=find_model(folder), data=data,
              clicks=data.get("click", []), expect=data.get("expect", {}))
 
 
@@ -245,7 +256,7 @@ def run_case(case, work, *, real_slicer=False, state_file=FIXTURE_STATE, in_gate
     work = Path(work)
     work.mkdir(parents=True, exist_ok=True)
     stub = _stub_print_now(work)
-    model_copy = work / "model.3mf"
+    model_copy = work / case.model.name
     model_copy.write_bytes(case.model.read_bytes())
     adapter = FakeAdapter(case.clicks)
     starts = []

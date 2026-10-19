@@ -75,6 +75,15 @@ def _scratch_root_is_not_an_ancestor(tmp_path_factory, monkeypatch):
 
 
 @pytest.fixture(autouse=True)
+def _no_leftover_background_slice():
+    """A background slice is per intake. No test inherits one from the test before it."""
+    from print_buddy.core.background_slice import _RUNNERS
+    _RUNNERS.clear()
+    yield
+    _RUNNERS.clear()
+
+
+@pytest.fixture(autouse=True)
 def _scratch_state(tmp_path, monkeypatch):
     """Job archives, claims and context sidecars default to a temp dir, never the home profile."""
     from print_buddy.core import model_job

@@ -1851,6 +1851,7 @@ def _slice_per_plate(job, job_path, src, manifest, decisions, view, plates, st, 
     source_sha = file_sha256(src); decision_sha = decisions_digest(decisions)
     single_plate = len({plate for plate, _ in groups}) == 1
     artifacts = []
+    refused = []
     plate_scales = job.get('plate_scales') or {}
     for (plate_id, slot), keys in sorted(groups.items()):
         current_fit = fit
@@ -1858,24 +1859,39 @@ def _slice_per_plate(job, job_path, src, manifest, decisions, view, plates, st, 
             psc = float(plate_scales[str(plate_id)])
             current_fit = {'scale': psc} if psc < 1.0 else None
         plate = derived / f'plate{plate_id}_slot{slot}.3mf'
-        report = export_single_color_plate(src, plate, view, keys, bed=int(st['bed_mm'][0]), slot_colors=st.get('ifs_slots') or {}, **({'fit': current_fit} if current_fit is not None else {}))
-        slice_dir = work / 'sliced' / 'orca' / uuid.uuid4().hex
-        out, provenance, configs = slice_model(plate, slice_dir, st, brim_override, preserve_layout=True, filament_slot=slot, **({'supports': supports} if supports is not None else {}))
-        if not st.get('ifs_slots', {}).get(str(slot), {}).get('material'):
-            raise RuntimeError(f'derived plate physical IFS slot {slot} has no verified material')
-        finalize_multicolor(out, None, st, {'0': slot})
-        check = verify_gcode_offline(out, st)
+        try:
+            if not st.get('ifs_slots', {}).get(str(slot), {}).get('material'):
+                raise RuntimeError(f'derived plate physical IFS slot {slot} has no verified material')
+            report = export_single_color_plate(src, plate, view, keys, bed=int(st['bed_mm'][0]), slot_colors=st.get('ifs_slots') or {}, **({'fit': current_fit} if current_fit is not None else {}))
+            slice_dir = work / 'sliced' / 'orca' / uuid.uuid4().hex
+            out, provenance, configs = slice_model(plate, slice_dir, st, brim_override, preserve_layout=True, filament_slot=slot, **({'supports': supports} if supports is not None else {}))
+            finalize_multicolor(out, None, st, {'0': slot})
+            check = verify_gcode_offline(out, st)
+        except RuntimeError as exc:
+            # One plate failing a safety guard (e.g. an off-bed move) must not discard the
+            # other plates that sliced and verified cleanly. The failed plate is recorded,
+            # never published, and never launchable; it needs its own fix and reslice.
+            refused.append({'slot': slot, 'plate_id': plate_id, 'binding_key': f'{plate_id}:{slot}',
+                            'part_keys': keys, 'reason': ' '.join(str(exc).split())[:500]})
+            print(f'REFUSED plate {plate_id} slot {slot}: {" ".join(str(exc).split())[:300]}')
+            continue
         artifacts.append({'slot': slot, 'plate_id': plate_id, 'binding_key': f'{plate_id}:{slot}', 'part_keys': keys,
                           'plate': str(plate), 'gcode': str(out), 'offline_check': check, 'plate_report': report,
                           'provenance': provenance, 'slice_config': [str(path) for path in configs]})
-    covered = sorted(k for row in artifacts for k in row['part_keys'])
+    if not artifacts:
+        raise RuntimeError('every derived plate was refused: ' + '; '.join(
+            f"plate {r['plate_id']} slot {r['slot']}: {r['reason']}" for r in refused))
+    covered = sorted(k for row in artifacts + refused for k in row['part_keys'])
     if covered != sorted(p['key'] for p in manifest['parts']):
         raise RuntimeError('per-plate output does not account for every source part')
     latest = json.loads(Path(job_path).read_text())
     if file_sha256(src) != source_sha or decisions_digest(latest.get('color_decisions')) != decision_sha:
         raise RuntimeError('source or decisions changed during slicing; artifacts not made ready')
     job['derived_plates'] = artifacts
-    job.pop('refused_plates', None)
+    if refused:
+        job['refused_plates'] = refused
+    else:
+        job.pop('refused_plates', None)
     job['artifact_binding'] = {'source_sha256': source_sha, 'decisions_sha256': decision_sha,
                                'gcode_sha256': {row['binding_key']: file_sha256(row['gcode']) for row in artifacts}}
     job.update({'gcode': artifacts[0]['gcode'], 'gcode_verified': True,

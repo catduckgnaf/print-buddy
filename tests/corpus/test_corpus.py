@@ -62,6 +62,34 @@ def test_checked_in_models_match_the_generator(tmp_path, monkeypatch):
             f"{committed} differs from make_models.py output; rerun python3 tests/corpus/make_models.py")
 
 
+def test_case_accepts_any_model_extension(tmp_path):
+    """A folder with one .stl and no model.3mf is a case, not an error."""
+    folder = tmp_path / "renamed"
+    folder.mkdir()
+    (folder / "bracket.stl").write_bytes(b"solid")
+    (folder / "case.toml").write_text('description = "renamed"\n[expect]\nstatus = "STARTED"\n')
+    assert harness.find_model(folder).name == "bracket.stl"
+    loaded = harness.load_case(folder)
+    assert loaded.model.name == "bracket.stl"
+
+
+def test_case_prefers_model_3mf(tmp_path):
+    """model.3mf stays the file under test when a folder also holds a source export."""
+    folder = tmp_path / "both"
+    folder.mkdir()
+    (folder / "model.3mf").write_bytes(b"zip")
+    (folder / "export.stl").write_bytes(b"solid")
+    assert harness.find_model(folder).name == "model.3mf"
+
+
+def test_case_rejects_a_folder_without_a_model(tmp_path):
+    folder = tmp_path / "empty"
+    folder.mkdir()
+    (folder / "notes.txt").write_text("not a model")
+    with pytest.raises(FileNotFoundError):
+        harness.find_model(folder)
+
+
 def test_a_missing_click_rule_fails_with_the_question(tmp_path):
     case = harness.load_case(harness.CASES / "single-part")
     case.clicks[:] = [rule for rule in case.clicks if rule["button"] != "White"]

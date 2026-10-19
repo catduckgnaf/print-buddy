@@ -1212,6 +1212,7 @@ class Listener:
         self.native_poll_inflight = False
         self.prev_native = None
         self.screen_reboot_task = None
+        self.background_tasks = set()  # strong refs: an unreferenced task can be collected mid-run
         self.maintenance_last_check = 0.0
         self.last_pause_was_runout = False
         self.pause_context = None
@@ -1424,7 +1425,9 @@ class Listener:
             if new_state == "cancelled":
                 # Acknowledge promptly; collecting the full Klipper report may block.
                 await asyncio.to_thread(post, print_summary.format_event("cancelled", self.filename))
-                asyncio.create_task(asyncio.to_thread(post_cancel_report, self.filename))
+                task = asyncio.create_task(asyncio.to_thread(post_cancel_report, self.filename))
+                self.background_tasks.add(task)
+                task.add_done_callback(self.background_tasks.discard)
                 from . import klipper_report
                 if not klipper_report.cancelled_by_bot():
                     self.start_screen_cancel_reboot("moonraker cancelled")

@@ -93,7 +93,7 @@ def env(tmp_path, monkeypatch):
         gcode.write_text('; estimated printing time (normal mode) = 1h 0m 0s\nG1 X1\n')
         data = json.loads(Path(job_path).read_text())
         data['derived_plates'] = [{'gcode': str(gcode), 'plate_id': 1, 'slot': 1}]
-        Path(job_path).write_text(json.dumps(data))
+        model_job.write_job(Path(job_path).parent, data)
         try:
             return [gcode]
         finally:
@@ -491,7 +491,7 @@ def test_quantity_buttons_choose_midpoint_and_answer_duration(env, monkeypatch):
         # The real single plate path: Orca clones the copies and records how many.
         data['gcode'] = str(gcode)
         data['sliced_copies'] = {'gcode': str(gcode), 'copies': copies or 1}
-        Path(job_path).write_text(json.dumps(data))
+        model_job.write_job(Path(job_path).parent, data)
         return [gcode]
 
     monkeypatch.setattr(model_job, 'slice_job', fake_slice)
@@ -568,7 +568,7 @@ def test_capacity_zero_full_size_split_saves_separate_mode_before_slice(env, mon
             gcodes.append(gcode)
             rows.append({'gcode': str(gcode), 'plate_id': index, 'slot': 1, 'part_keys': keys})
         data['derived_plates'] = rows
-        job_path.write_text(json.dumps(data))
+        model_job.write_job(Path(job_path).parent, data)
         env.sliced.extend(map(str, gcodes))
         return gcodes
 
@@ -903,7 +903,7 @@ def _split_env(env, monkeypatch, tag):
             gcodes.append(gcode)
             rows.append({'gcode': str(gcode), 'plate_id': index, 'slot': 1, 'part_keys': keys})
         data['derived_plates'] = rows
-        job_path.write_text(json.dumps(data))
+        model_job.write_job(Path(job_path).parent, data)
         env.sliced.extend(map(str, gcodes))
         return gcodes
     monkeypatch.setattr(model_job, 'slice_job', fake_split_slice)

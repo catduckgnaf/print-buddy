@@ -1,6 +1,7 @@
 """Checksum-bound per-tool material contract, shared by finalization and launch."""
 import hashlib
 import json
+import os
 from pathlib import Path
 import re
 
@@ -37,7 +38,10 @@ def normalize_mapping(mapping, state):
         if not configured.get('material') or not configured.get('physical_color_verified'):
             raise RuntimeError(f'unknown or unverified mapping for physical slot {slot}')
         if embedded_spool_id is not None and embedded_spool_id != configured.get('spoolman_id'):
-            raise RuntimeError(f'slot {slot} spool changed since slicing (was {embedded_spool_id}, now {configured.get("spoolman_id")}); reslice or confirm')
+            # print-now --accept-spool-change: the operator confirmed the swap. Material family, live slot
+            # material and live RGB checks still apply; only the slice-time spool id is waived.
+            if os.environ.get('PRINT_ACCEPT_SPOOL_CHANGE') != '1':
+                raise RuntimeError(f'slot {slot} spool changed since slicing (was {embedded_spool_id}, now {configured.get("spoolman_id")}); reslice or confirm')
         result[str(key)] = slot
     if set(map(int, result)) != set(range(len(result))):
         raise RuntimeError('tool mapping must be contiguous from T0')

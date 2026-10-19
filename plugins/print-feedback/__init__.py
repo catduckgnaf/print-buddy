@@ -351,6 +351,42 @@ async def color_selection_dispatch(event, gateway, **kwargs):
     return {'action': 'skip', 'reason': 'deterministic color selection handled'}
 
 
+USE_LOADED_SPOOL = 'Use the loaded spool · bed is clear'
+SPOOL_CHANGED = 'spool changed since slicing'
+
+
+def _spool_change_text(target, detail):
+    found = re.search(r'slot (\d+) spool changed since slicing \(was (\d+), now (\d+)\)', str(detail))
+    where = f"Slot {found.group(1)} now holds spool #{found.group(3)} (it was #{found.group(2)} at slicing). " if found else ''
+    return (f"{where}Print {target['label']} with the spool that is loaded now? "
+            "Same material family is still required.")
+
+
+async def _offer_spool_change(adapter, source, metadata, print_next, target, detail):
+    """A slot's spool was swapped after slicing (ran out, changed color). Ask once; on yes, start with it.
+
+    Only the slice-time spool id is waived; material family and live slot checks still run.
+    """
+    import uuid
+    from tools import clarify_gateway as cm
+    question = _spool_change_text(target, detail)
+    choices = [USE_LOADED_SPOOL, print_next.CANCEL_LABEL]
+    cid = uuid.uuid4().hex
+    session_key = f'print-next-spool:{source.chat_id}:{source.thread_id}'
+    cm.register(cid, session_key, question, choices)
+    try:
+        sent = await adapter.send_clarify(chat_id=str(source.chat_id), question=question, choices=choices,
+                                          clarify_id=cid, session_key=session_key, metadata=metadata)
+        if not getattr(sent, 'success', False):
+            return False, detail
+        answer = await asyncio.to_thread(cm.wait_for_response, cid, 300)
+    finally:
+        cm.resolve_gateway_clarify(cid, cm.CANCELLED)
+    if answer != USE_LOADED_SPOOL:
+        return False, 'Cancelled. Nothing uploaded or started.'
+    return await print_next.start({**target, 'accept_spool_change': True})
+
+
 async def print_next_dispatch(event, gateway, **kwargs):
     """/print-next <plan_id> [part_id]: one bed-clear button for the exact next (or named) plate. One start per tap."""
     source = getattr(event, 'source', None)
@@ -413,6 +449,8 @@ async def print_next_dispatch(event, gateway, **kwargs):
             await adapter.send(chat_id=source.chat_id, metadata=metadata,
                                content=f"Preparing to start {target['label']}. {target.get('estimate_text', 'estimated print time unknown')}.")
             ok, detail = await print_next.start(target)
+            if not ok and SPOOL_CHANGED in str(detail):
+                ok, detail = await _offer_spool_change(adapter, source, metadata, print_next, target, detail)
             message = (None if ok
                        else f"Did not start {target['label']}. Not retrying.\n{detail}")
             if not ok and _start_refused_needs_restart(detail):
@@ -1456,15 +1494,44 @@ def alert_button_handlers(bot, adapter):
             await interaction.response.edit_message(content=f'Cannot start that plate: {exc}. Nothing started.', view=None)
             return
         await interaction.response.edit_message(content=f"Preparing to start {target['label']}.", view=None)
+        await run_plate_start(interaction, target, alert)
+
+    async def run_plate_start(interaction, target, alert, accept_spool_change=False):
+        """Start the plate once. A spool swapped since slicing gets one extra single-use button, not a retry."""
+        import discord
+        from print_buddy.hermes import print_next
+        view = None
         try:
-            ok, detail = await print_next.start(target)
+            ok, detail = await print_next.start({**target, 'accept_spool_change': True} if accept_spool_change else target)
             message = None if ok else (f"Did not start {target['label']}. Not retrying. "
                                        f"`/print-next {alert['plan_id']} {alert['part_id']}` offers a fresh button.\n{detail}")
+            if not ok and not accept_spool_change and SPOOL_CHANGED in str(detail):
+                spool_aid = await asyncio.to_thread(pab.record, 'plate-spool', '',
+                                                    plan_id=alert['plan_id'], part_id=alert['part_id'])
+                view = discord.ui.View(timeout=300)
+                view.add_item(discord.ui.Button(label=USE_LOADED_SPOOL, style=discord.ButtonStyle.success,
+                                                custom_id=f'{pab.PLATE_PREFIX}:spool:{spool_aid}'))
+                message = f"Did not start {target['label']}.\n{_spool_change_text(target, detail)}"
         except Exception as exc:
             logger.exception('plate picker start failed')
             message = f'Next plate failed: {exc}. Check the printer screen before retrying.'
         if message:  # None: start accepted, printer preparing; the listener posts "Print started".
-            await interaction.followup.send(message)
+            await (interaction.followup.send(message, view=view) if view else interaction.followup.send(message))
+
+    async def handle_plate_spool(interaction, aid):
+        """Single-use 'use the loaded spool' tap. start() still re-checks the printer, claim and live slot."""
+        from print_buddy.hermes import print_next
+        alert = await asyncio.to_thread(pab.take, aid)
+        if not alert or alert.get('kind') != 'plate-spool':
+            await interaction.response.send_message('That spool confirmation is old or was already used. Nothing started.', ephemeral=True)
+            return
+        try:
+            target = print_next.resolve_next(print_next.load_plan(alert['plan_id']), part_id=alert['part_id'])
+        except Exception as exc:
+            await interaction.response.edit_message(content=f'Cannot start that plate: {exc}. Nothing started.', view=None)
+            return
+        await interaction.response.edit_message(content=f"Preparing to start {target['label']} with the loaded spool.", view=None)
+        await run_plate_start(interaction, target, alert, accept_spool_change=True)
 
     async def on_interaction(interaction):
         data = getattr(interaction, 'data', None) or {}
@@ -1474,7 +1541,8 @@ def alert_button_handlers(bot, adapter):
             if not allowed(interaction):
                 await reject(interaction)
                 return
-            await (handle_plate_pick if plate[0] == 'pick' else handle_plate_go)(interaction, plate[1])
+            await {'pick': handle_plate_pick, 'go': handle_plate_go,
+                   'spool': handle_plate_spool}[plate[0]](interaction, plate[1])
             return
         parsed = pab.parse_custom_id(custom_id)
         insertion = pab.parse_insertion_custom_id(custom_id)

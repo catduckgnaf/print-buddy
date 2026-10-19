@@ -16,13 +16,21 @@ Where printer-family specifics live, and which responsibilities sit behind Print
   native status API              stock /detail on stock_api_port         none (returns None)
   telemetry normalization        Moonraker + zmod_color                  plain Moonraker objects
 
-Wired through the adapter today: Orca start/end G-code (orca_adapter), screen sync (spool_sync.push_screen),
-the stock /detail call (model_job.read_stock_detail), settings validation and the doctor line.
+Runtime decisions that follow the adapter (core/model_job, printer_state, orca_adapter, the listener):
+  - multi_slot False (generic/sovol): no IFS selection or spool-slot validation, no multicolor finalization,
+    no native_startup/native_idle, no mapped-native launch; slicing refuses multicolor and multi-plate sources
+    with MultiColorUnsupported (a REFUSED line).
+  - has_native_screen False: no display_off/LOAD_ZOFFSET/Adventurer5M offset authority, no ZMod MD5, no stock
+    /detail polling, no screen-cancel firmware restart, no mesh-profile readiness (the printer owns its mesh).
+  - readiness (readiness_problems), the start request (moonraker_start_commands) and the multicolor refusal
+    (normalize_tool_mapping) are adapter calls on every family; flashforge_zmod delegates to the old functions.
+  - JOB.json records `printer_family` when sliced; print-now refuses a job whose family differs from
+    [printer] family. A job without the field is a flashforge_zmod job.
 
-Still entangled in core and left in place behind the adapter (not rewritten): ifs_slots state handling
-(spool_lifecycle, prepared_intake, plate_merge, slice_guard), native_startup/native_idle/multicolor_contract
-finalization, display_off/LOAD_ZOFFSET offset authority (model_job, printer_state), the AD5X wording in
-user messages. They run only on the flashforge_zmod path; a second multi-slot family would start there.
+Still AD5X-only code, left in place and reached only when multi_slot / has_native_screen: ifs_slots state
+(spool_lifecycle, prepared_intake, plate_merge, slice_guard IFS bounds), native_startup/native_idle/
+multicolor_contract finalization, print_mapped_native, the Discord IFS prompts and the "AD5X" wording in
+those paths. A second multi-slot family would start there.
 """
 from __future__ import annotations
 
@@ -50,6 +58,8 @@ class PrinterAdapter(ABC):
     family: str = ""
     label: str = ""
     multi_slot: bool = False
+    # ZMod-style native screen: display_off modes, saved/screen Z offset authority, MD5 gcode, stock /detail.
+    has_native_screen: bool = False
 
     def __init__(self, config: dict[str, Any] | None = None):
         if config is None:

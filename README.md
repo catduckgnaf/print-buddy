@@ -26,6 +26,8 @@ The print starts only when someone clicks the button. On completion, the bot pos
 
 A typo or bad value stops the import and names the key. Requires Python 3.11 or newer.
 
+`[printer] family` picks the printer adapter (`flashforge_zmod` by default, `generic_klipper`, `sovol_klipper`). The single-extruder families skip every ZMod/AD5X step (IFS slots, screen offsets, MD5 gcode) and refuse multi-color jobs. Each sliced job records its family in `JOB.json`; `print-now` refuses a job prepared for a different family, and `model_job fetch|slice --printer <family>` prepares a job for another one. See `print_buddy/printers/base.py`.
+
 ## Updating the home box
 
 Update only from a commit that is green in CI. On the home machine:
@@ -93,7 +95,7 @@ is_system_service: False
 * `tests/`: unit tests for the offline core, the Klipper macro, and interaction guards.
 * `docs/`: AD5X integration specs and upstream tool research.
 
-Support for other Klipper printers is tracked in issue #19.
+Printer families live in `print_buddy/printers/`; see `base.py` for what each one owns.
 
 ## Links
 
@@ -104,11 +106,14 @@ Support for other Klipper printers is tracked in issue #19.
 
 ## Release history
 
-### Unreleased (2.0.1.x): The core actually imports
-* **Package imports fixed**: `print_buddy/core/` uses relative imports and loads as `print_buddy.core`. Its approval CLI is `python3 -m print_buddy.core.approve_baseline approve-baseline <artifact>`.
-* **Multi-plate filament totals**: per color figures on multi-plate files now match the job total.
-* **Settings file**: settings live in `config/home.toml`, with `config/local.toml` for overrides. `scripts/home-update.sh` rolls back on failed checks.
-* **Tests**: CI runs the offline suite with pytest on every push, plus a real Orca slicing job.
+### 2.0.2: Whole stack public, other Klipper printers
+* **Full runtime in the repo**: the Discord intake, Moonraker listener, Hermes plugin, spool sync and job archive now live here, installed into a Hermes profile with `scripts/install-hermes.sh` (symlinks plus a gitignored personal overlay).
+* **Settings file**: `config/home.toml` with `config/local.toml` overrides. `scripts/home-update.sh` updates and rolls back on failed checks.
+* **Printer families**: `[printer] family` selects `flashforge_zmod` (default), `generic_klipper` or `sovol_klipper`. Stock Klipper families print single color with no ZMod steps; jobs record the family they were sliced for.
+* **Multi-plate jobs**: pick the next plate from a Discord picker, confirm the bed once, and get one combined timelapse at the end.
+* **Spool swap mid-job**: a swapped spool can finish a job sliced for the old one, by explicit choice.
+* **Estimates**: per plate and per part figures that count only the copies the G-code contains.
+* **Tests**: CI runs the offline suite, a real Orca slice, and a real Spoolman on every push.
 
 ### 2.0.1: Honest filament estimates and readable part names
 * **Filament estimates**: when parts share one filament, the total is split across them instead of multiplied.

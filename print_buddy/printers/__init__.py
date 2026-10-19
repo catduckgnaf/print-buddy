@@ -29,3 +29,21 @@ def current(config=None):
     from .. import settings
     config = config or settings.current()
     return get(config["printer"]["family"], config)
+
+
+class JobFamilyMismatch(RuntimeError):
+    """A job was prepared for a different printer family than the one configured."""
+
+
+def job_family(job):
+    """Family a JOB.json was prepared for. Jobs written before the field existed are flashforge_zmod."""
+    family = job.get("printer_family") if isinstance(job, dict) else None
+    return family or DEFAULT_FAMILY
+
+
+def check_job_family(job, config=None):
+    """Raise JobFamilyMismatch unless the job's family is the configured one."""
+    want = current(config).family
+    have = job_family(job)
+    if have != want:
+        raise JobFamilyMismatch(f"this job was prepared for {have}, but the configured printer family is {want}")

@@ -18,7 +18,7 @@ marked verified just because a config number was readable.
 """
 import argparse, datetime, json, os, re, sys, urllib.request
 
-from .. import settings
+from .. import printers, settings
 
 STATE = str(settings.state_dir() / "printer_hardware.json")
 
@@ -156,6 +156,7 @@ def check(st=None):
     """Return (ok, problems, facts). Never raises on network errors; reports them."""
     st = st or load()
     probs, facts = [], {}
+    native = printers.current().has_native_screen  # offset authority is a ZMod screen concept
     mr, sm = st["moonraker_url"], st["spoolman_url"]
     try:
         s = _get(f"{mr}/printer/objects/query?configfile=settings")["result"]["status"]["configfile"]["settings"]
@@ -163,7 +164,7 @@ def check(st=None):
         facts["klipper_probe_z_offset"] = float(s.get("probe", {}).get("z_offset", "nan"))
         probs.extend(pressure_advance_problems(st, s["extruder"].get("pressure_advance")))
         recorded_probe = (st.get("calibration_baseline") or {}).get("probe_z_offset", st.get("z_offset_mm"))
-        if abs(facts["klipper_probe_z_offset"] - float(recorded_probe)) > 1e-3:
+        if native and abs(facts["klipper_probe_z_offset"] - float(recorded_probe)) > 1e-3:
             probs.append(
                 f"Klipper probe.z_offset {facts['klipper_probe_z_offset']} != recorded probe offset {recorded_probe}. "
                 "This is the probe trigger, not the user offset; do not copy it into gcode_offsets.z or zProbeOffset"
@@ -190,6 +191,8 @@ def check(st=None):
     except Exception as e:
         probs.append(f"Spoolman lookup failed: {e}")
     try:
+        if not native:
+            return (not probs), probs, facts
         variables = _get(f"{mr}/printer/objects/query?save_variables")["result"]["status"]["save_variables"]["variables"]
         native = _get(f"{mr}/server/files/config/Adventurer5M.json") if variables.get("display_off") == 0 else {}
         calibration_problems = offset_authority_problems(st, variables, native)
@@ -202,6 +205,10 @@ def check(st=None):
 
 
 def summary(st, calibration_owner="unknown", calibration_valid=None):
+    if not printers.current().has_native_screen:
+        return (f"{st['nozzle']['diameter_mm']} mm {st['nozzle']['type']} nozzle, "
+                f"Spoolman #{st['spool']['spoolman_id']} {st['spool']['name']} ({st['spool']['material']}), "
+                f"{st['temps_c']['nozzle']}/{st['temps_c']['bed']} C")
     if calibration_owner == "native":
         offset = (st.get("calibration_baseline") or {}).get("native_zProbeOffset", "unknown")
         calibration = f"native zProbeOffset {offset} (screenless user offset not applicable)"

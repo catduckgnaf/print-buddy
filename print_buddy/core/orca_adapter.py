@@ -384,8 +384,11 @@ def finalize_zmod(path, color, material):
     return finalize(path, (color, material))
 
 
-def slice_model(source, folder, state, brim=None, first_layer=False, color_decisions=None, preserve_layout=False, filament_slot=None, item_shifts=None, copies=None, scale=None, rotation=None, supports=None, object_ids=None):
+def slice_model(source, folder, state, brim=None, first_layer=False, color_decisions=None, preserve_layout=False, filament_slot=None, item_shifts=None, copies=None, scale=None, rotation=None, supports=None, object_ids=None, adapter=None):
     source, folder = Path(source), Path(folder)
+    # An explicit adapter (a job prepared for another family) brings its own templates; the default keeps TEMPLATES.
+    printer = adapter or printers.current()
+    templates = printer.templates_dir() if adapter is not None else TEMPLATES
     if scale is not None:
         scale = float(scale)
         if not scale > 0:
@@ -395,7 +398,7 @@ def slice_model(source, folder, state, brim=None, first_layer=False, color_decis
                                  (color_decisions and color_decisions.get('mode') == 'per_part')):
         raise ValueError('rotation is only supported for whole-model single-color slicing')
     folder.mkdir(parents=True, exist_ok=True)
-    machine, process, filament = [json.loads((TEMPLATES / f'{name}.json').read_text()) for name in ('machine', 'process', 'filament')]
+    machine, process, filament = [json.loads((templates / f'{name}.json').read_text()) for name in ('machine', 'process', 'filament')]
     if float(state['nozzle']['diameter_mm']) != NOZZLE_MM:
         raise RuntimeError(f'Orca templates are tuned for a {NOZZLE_MM:g} mm nozzle; the printer reports {state["nozzle"]["diameter_mm"]} mm')
     author = {}
@@ -449,7 +452,6 @@ def slice_model(source, folder, state, brim=None, first_layer=False, color_decis
     mesh = baseline.get('native_mesh', 'auto')
     if not isinstance(mesh, str) or not re.fullmatch(r'[A-Za-z0-9_]+', mesh):
         raise RuntimeError('invalid calibration baseline mesh')
-    printer = printers.current()
     machine['machine_start_gcode'] = printer.machine_start_gcode(machine['machine_start_gcode'], mesh)
     machine['machine_end_gcode'] = printer.machine_end_gcode(machine.get('machine_end_gcode', ''))
     machine['default_print_profile'] = process['name']
@@ -571,9 +573,9 @@ def slice_model(source, folder, state, brim=None, first_layer=False, color_decis
     sanitized = {}
     # Keep the untouched base templates for protected-setting comparison; gate the
     # final effective configs immediately before invoking Orca.
-    base_profile = {**json.loads((TEMPLATES / 'machine.json').read_text()),
-                    **json.loads((TEMPLATES / 'process.json').read_text()),
-                    **json.loads((TEMPLATES / 'filament.json').read_text())}
+    base_profile = {**json.loads((templates / 'machine.json').read_text()),
+                    **json.loads((templates / 'process.json').read_text()),
+                    **json.loads((templates / 'filament.json').read_text())}
     effective_profile = {**machine, **process, **filament}
     placed_bounds = geometry.get('placed_bounds_mm')
     if placed_bounds and len(placed_bounds) >= 2:
@@ -722,12 +724,15 @@ def slice_model(source, folder, state, brim=None, first_layer=False, color_decis
     if mapping:
         from .multicolor_contract import finalize
         finalize(output, None, state, mapping)
-    else:
+    elif printer.has_native_screen:
         finalize_zmod(output, filament['filament_colour'][0], state['spool']['material'])
     result_path = folder / 'result.json'
     post_gate = post_slice(output, result_json=None if fallback else (result_path if result_path.is_file() else None),
                            bed=bed, ifs_slots=IFS_SLOTS, tool_slots=tool_slots)
-    baseline_gate = (sg.enforce_approved_baseline(output)
+    # Each family approves its own protected settings; the default family keeps the shared baseline file.
+    baseline_kw = {} if printer.family == printers.DEFAULT_FAMILY else {
+        'path': sg.BASELINE_PATH.with_name(f'protected-settings-baseline.{printer.family}.json')}
+    baseline_gate = (sg.enforce_approved_baseline(output, **baseline_kw)
                      if output.stat().st_size > 1000 else sg.Result())
     if baseline_gate.status == 'blocked':
         raise RuntimeError('Post-slice protected-settings guard blocked: ' + '; '.join(baseline_gate.blocked))

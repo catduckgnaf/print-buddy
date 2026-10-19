@@ -389,6 +389,13 @@ async def _ask(adapter, source, key, question, choices, timeout=300, **kwargs):
     return await ask(adapter, source, key, question, list(choices), timeout, live_key=live_key, **kwargs)
 
 
+async def _pick_plate(adapter, source, key, parts, timeout=300):
+    """One picker for a split job: index of the plate to print first, or None for Cancel."""
+    labels = [print_next.plate_choice_label(part, part.get('plate')) for part in parts]
+    picked = await _ask(adapter, source, key, 'Which plate prints first?', labels + ['Cancel'], timeout)
+    return picked if picked < len(parts) else None
+
+
 async def _send_render_preview(adapter, source, path, scale=1.0, rotation=None, bed=tuple(BED)):
     from .render_preview import render
     image_path = await asyncio.to_thread(render, path, scale, rotation, bed)
@@ -820,8 +827,8 @@ async def prepare_link(event, adapter, state, root, timeout=300, reuse=None):
         # Never promise "together" before slicing: the planner may still split with a stated reason.
         print_label = 'Slice and print now (bed is clear)'
         cancel_label = 'Cancel print request'
-        caveat = (' Parts go on one multicolor bed when they fit; if they must split I will say why and ask '
-                  'before starting each plate.' if multi and decisions['mode'] == 'per_part' else '')
+        caveat = (' Parts go on one multicolor bed when they fit; if they must split I will say why and '
+                  'let you choose which plate prints first.' if multi and decisions['mode'] == 'per_part' else '')
         spool_text = await _spool_projection_text(mj, latest, manifest, state, chosen_quantity)
         source_estimate = _preview_estimate(latest.get('selected_source'))
         estimate_s = source_estimate[0] * chosen_quantity if source_estimate else None
@@ -884,7 +891,28 @@ async def prepare_link(event, adapter, state, root, timeout=300, reuse=None):
             # Every plate counts: a split job is the sum of its plates, not plate 1.
             await adapter.send(chat_id=source.chat_id, metadata=metadata,
                                content=f"Estimated duration for {chosen_quantity} {'copy' if chosen_quantity == 1 else 'copies'}:\n" + breakdown)
-        first = Path(gcodes[0])
+        plan_id = 'intake-' + iid[:16]
+        parts = []
+        split = len(gcodes) > 1
+        picked_plate = 0
+        if split:
+            plan = write_split_plan(jp, sliced, manifest, gcodes, plan_id)
+            parts = plan['parts']
+            listing = '\n'.join(f"- Plate {p['plate']}: {p['label']}" for p in parts)
+            notice = (f"These print as {len(parts)} separate plates because {plan['split_reason']}.\n{listing}\n{breakdown}\n"
+                      "Choose which plate prints first. When it finishes, a picker lists the rest.")
+            receipt.update(split_plan=plan_id, split_reason=plan['split_reason'])
+            receipt_path.write_text(json.dumps(receipt, indent=2) + '\n')
+            await adapter.send(chat_id=source.chat_id, content=notice, metadata=metadata)
+            picked_plate = await _pick_plate(adapter, source, key, parts, timeout)
+            if picked_plate is None:
+                receipt['status'] = 'SLICED_NOT_STARTED'
+                receipt_path.write_text(json.dumps(receipt, indent=2) + '\n')
+                await adapter.send(chat_id=source.chat_id, metadata=metadata,
+                                   content=f'Sliced. Nothing uploaded or started. Plates stay ready: `/print-next {plan_id}`.')
+                return {'action': 'skip', 'reason': 'operator did not start the sliced plate'}
+            receipt['first_plate'] = parts[picked_plate]['id']
+        first = Path(gcodes[picked_plate])
         exact_job, exact_plate = print_summary.find_job(str(first))
         if exact_job is None or exact_plate is None:
             raise ValueError('sliced artifact has no exact JOB.json record; refusing preparation message and start')
@@ -899,26 +927,14 @@ async def prepare_link(event, adapter, state, root, timeout=300, reuse=None):
             slot_lines = f'Slot map problem: {exc}'
         estimate_text = (f"~{mj.human_dur(actual_estimate)} printing, ~{mj.human_dur(actual_estimate + 300)} total "
                          "including ~5 min warmup" if actual_estimate is not None else 'estimate unknown')
-        plan_id = 'intake-' + iid[:16]
-        target = {'plan_id': plan_id, 'part_id': 'plate1', 'copy': 1, 'gcode': str(first),
-                  'gcode_sha256': mj.file_sha256(first), 'reprint': False}
-        later = ''
-        parts = []
-        split = len(gcodes) > 1
-        if split:
-            plan = write_split_plan(jp, sliced, manifest, gcodes, plan_id)
-            parts = plan['parts']
-            listing = '\n'.join(f"- Plate {p['plate']}: {p['label']}" for p in parts)
-            notice = (f"These print as {len(parts)} separate plates because {plan['split_reason']}.\n{listing}\n{breakdown}\n"
-                      f"Only plate 1 starts from the next button. When it finishes and the bed is clear, type "
-                      f"`/print-next {plan_id}` for a Start next plate button.")
-            receipt.update(split_plan=plan_id, split_reason=plan['split_reason'])
-            receipt_path.write_text(json.dumps(receipt, indent=2) + '\n')
-            await adapter.send(chat_id=source.chat_id, content=notice, metadata=metadata)
-            later = f" Plate 1 of {len(parts)} only; then `/print-next {plan_id}` for the rest."
-        if choice == 1 or split:
-            # A start button bound to this exact plate, same machinery as /print-next.
-            question = (f"Start plate 1 of {len(gcodes)} ({parts[0]['label']}) now? Starting uploads and prints immediately."
+        target = {'plan_id': plan_id, 'part_id': parts[picked_plate]['id'] if split else 'plate1', 'copy': 1,
+                  'gcode': str(first), 'gcode_sha256': mj.file_sha256(first), 'reprint': False}
+        later = (f" Plate {picked_plate + 1} of {len(parts)} only; a picker for the rest follows when it finishes."
+                 if split else '')
+        if choice == 1:
+            # Slice only never confirmed the bed. One start button for the exact plate, same machinery as /print-next.
+            question = (f"Start plate {picked_plate + 1} of {len(gcodes)} ({parts[picked_plate]['label']}) now? "
+                        'Starting uploads and prints immediately.'
                         if split else 'Start this exact plate? Starting uploads and prints immediately.')
             if not split:
                 question = breakdown + '\n' + question

@@ -1,5 +1,6 @@
 """The doctor reports every check and fails on any problem. Network and slicer are mocked."""
 import io
+import json
 import tempfile
 import unittest
 from pathlib import Path
@@ -8,12 +9,20 @@ from unittest import mock
 from print_buddy import doctor, settings
 
 
+HARDWARE = {"spool": {"material": "PLA", "density": 1.24}, "temps_c": {"nozzle": 210, "bed": 60},
+            "nozzle": {"diameter_mm": 0.4}}
+
+
 class DoctorTests(unittest.TestCase):
-    def run_doctor(self, local_toml=""):
+    def run_doctor(self, local_toml="", hardware=None):
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "local.toml"
             path.write_text(local_toml)
-            data = settings.load(local=path)
+            data = settings.load(local=path, environ={"HERMES_HOME": str(self.profile)})
+        state = settings.state_dir(data)
+        state.mkdir(parents=True, exist_ok=True)
+        if hardware is not False:
+            (state / "printer_hardware.json").write_text(json.dumps(hardware or HARDWARE))
         out = io.StringIO()
         with mock.patch.object(doctor.settings, "load", return_value=data), \
                 mock.patch.object(doctor.shutil, "which", side_effect=self.which), \
@@ -22,6 +31,9 @@ class DoctorTests(unittest.TestCase):
         return code, out.getvalue()
 
     def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.profile = Path(self.tmp.name) / "profile"
         self.orca_code = 0  # what the stubbed `orca --help` exits with
         self.which = lambda name: f"/usr/bin/{name}" if name == "flatpak" else None
 
@@ -68,6 +80,26 @@ class DoctorTests(unittest.TestCase):
         code, text = self.run_doctor()
         self.assertEqual(code, 1)
         self.assertIn("FAIL  orca cli: flatpak run com.orcaslicer.OrcaSlicer --help exited 1", text)
+
+    def test_missing_hardware_record_fails_with_the_path(self):
+        code, text = self.run_doctor(hardware=False)
+        self.assertEqual(code, 1)
+        self.assertIn("FAIL  hardware record:", text)
+        self.assertIn("printer_hardware.json is missing", text)
+
+    def test_hardware_record_nozzle_must_match_settings(self):
+        code, text = self.run_doctor(hardware={**HARDWARE, "nozzle": {"diameter_mm": 0.6}})
+        self.assertEqual(code, 1)
+        self.assertIn("recorded nozzle 0.6 mm does not match settings 0.4 mm", text)
+
+    def test_hardware_record_needs_its_sections(self):
+        code, text = self.run_doctor(hardware={"nozzle": {"diameter_mm": 0.4}})
+        self.assertIn("lacks spool, temps_c", text)
+
+    def test_hardware_record_needs_the_fields_slicing_reads(self):
+        code, text = self.run_doctor(hardware={**HARDWARE, "spool": {}, "temps_c": {"nozzle": "hot"}})
+        self.assertEqual(code, 1)
+        self.assertIn("lacks spool.material, spool.density, temps_c.nozzle, temps_c.bed", text)
 
     def test_bad_service_url_is_a_settings_error(self):
         with self.assertRaisesRegex(settings.SettingsError, "must be a URL"):

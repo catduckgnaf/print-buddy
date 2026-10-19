@@ -44,10 +44,11 @@ def _sha256(path: Path) -> str:
     return digest.hexdigest()
 
 
-def next_required_part(plan: Mapping[str, Any]) -> tuple[dict[str, Any], int] | None:
-    """Same ordering as the completion summary: first required part with copies left."""
+def remaining_parts(plan: Mapping[str, Any]) -> list[tuple[dict[str, Any], int]]:
+    """Required parts with copies left, in plan order, each with its completed copy count."""
     from .print_records import _plan_parts
 
+    rows = []
     for part in _plan_parts(plan.get("parts")):
         if part.get("optional") is True or part.get("required") is False:
             continue
@@ -56,8 +57,19 @@ def next_required_part(plan: Mapping[str, Any]) -> tuple[dict[str, Any], int] | 
         quantity = part["quantity"]
         done = quantity if part.get("status") == "completed" else part["completed_quantity"]
         if done < quantity:
-            return part, done
-    return None
+            rows.append((part, done))
+    return rows
+
+
+def next_required_part(plan: Mapping[str, Any], part_id: str | None = None) -> tuple[dict[str, Any], int] | None:
+    """First required part with copies left (same ordering as the completion summary).
+
+    With ``part_id`` only that exact remaining part qualifies; a completed or unknown id gives None.
+    """
+    rows = remaining_parts(plan)
+    if part_id is None:
+        return rows[0] if rows else None
+    return next((row for row in rows if str(row[0].get("id")) == str(part_id)), None)
 
 
 def has_exact_start_target(part: Mapping[str, Any] | None) -> bool:
@@ -84,11 +96,13 @@ def load_plan(plan_id: str, plans_dir: Path | None = None) -> dict[str, Any]:
     return plan
 
 
-def resolve_next(plan: Mapping[str, Any], archive: Path | None = None) -> dict[str, Any]:
-    """Return the exact next artifact, or raise NextPlateError. Read only."""
+def resolve_next(plan: Mapping[str, Any], archive: Path | None = None, part_id: str | None = None) -> dict[str, Any]:
+    """Return the exact artifact (the next required plate, or ``part_id``), or raise NextPlateError. Read only."""
     archive = (archive or ARCHIVE).resolve()
-    found = next_required_part(plan)
+    found = next_required_part(plan, part_id)
     if found is None:
+        if part_id is not None:
+            raise NextPlateError(f"plate {part_id} is already complete or is not part of this plan")
         raise NextPlateError("every required part is already complete")
     part, done = found
     if not has_exact_start_target(part):
@@ -117,6 +131,37 @@ def resolve_next(plan: Mapping[str, Any], archive: Path | None = None) -> dict[s
             "where": where, "title": job.get("title") or job_path.parent.name,
             "copy": done + 1, "quantity": part["quantity"], "reprint": done > 0,
             "job_json": str(job_path), "gcode": str(gcode), "gcode_sha256": _sha256(gcode)}
+
+
+def describe_plate(part: Mapping[str, Any]) -> dict[str, Any]:
+    """Display facts for one plate: parts, colors, duration. Read only; unknowns stay unknown."""
+    from . import discord_print_summary as summary
+
+    gcode = str(part.get("gcode_path") or "")
+    plate: dict[str, Any] = {}
+    try:
+        if gcode:
+            plate = summary.find_job(gcode)[1] or {}
+    except Exception:
+        plate = {}
+    seconds = plate.get("seconds")
+    if not isinstance(seconds, (int, float)) or isinstance(seconds, bool) or seconds < 0:
+        try:
+            seconds = summary.gcode_metadata(gcode)[0] if gcode else None
+        except Exception:
+            seconds = None
+    parts = ", ".join(str(x) for x in plate.get("parts") or []) or str(part.get("label") or part.get("id"))
+    color = " ".join(str(x) for x in (plate.get("color"), plate.get("material")) if x)
+    return {"parts": parts, "colors": color or "colors unknown",
+            "duration": f"~{summary.human(seconds)}" if isinstance(seconds, (int, float)) and seconds >= 0 else "time unknown"}
+
+
+def plate_choice_label(part: Mapping[str, Any], number: int | None = None) -> str:
+    """'Plate N: <parts> · <colors> · ~<duration>' for pickers. Discord caps option labels at 100."""
+    info = describe_plate(part)
+    number = number if number is not None else part.get("plate")
+    head = f"Plate {number}" if number is not None else str(part.get("label") or part.get("id"))
+    return f"{head}: {info['parts']} · {info['colors']} · {info['duration']}"[:100]
 
 
 PREPARING_MARK = "PREPARATION STILL RUNNING"

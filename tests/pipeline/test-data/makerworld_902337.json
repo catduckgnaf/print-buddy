@@ -1,0 +1,628 @@
+{
+  "id": 902337,
+  "titleTranslated": "",
+  "slug": "raskog-ikea-large-bin",
+  "license": "Standard Digital File License",
+  "instances": [
+    {
+      "id": 861646,
+      "profileId": 183237143,
+      "profile2dId": "",
+      "status": 1,
+      "title": "0.2mm layer, 2 walls, 10% infill",
+      "titleTranslated": "",
+      "summary": "",
+      "summaryTranslated": "",
+      "createTime": "2024-12-22T04:10:01Z",
+      "updateTime": "2026-10-11T16:40:56Z",
+      "extention": {
+        "modelInfo": {
+          "auxiliaryPictures": [],
+          "auxiliaryBom": [],
+          "auxiliaryGuide": [],
+          "auxiliaryOther": [],
+          "compatibility": {
+            "devModelName": "BL-P001",
+            "devProductName": "X1 Carbon",
+            "nozzleDiameter": 0.4
+          },
+          "otherCompatibility": [
+            {
+              "devModelName": "C12",
+              "devProductName": "P1S",
+              "nozzleDiameter": 0.4
+            },
+            {
+              "devModelName": "C11",
+              "devProductName": "P1P",
+              "nozzleDiameter": 0.4
+            },
+            {
+              "devModelName": "BL-P002",
+              "devProductName": "X1",
+              "nozzleDiameter": 0.4
+            },
+            {
+              "devModelName": "C13",
+              "devProductName": "X1E",
+              "nozzleDiameter": 0.4
+            },
+            {
+              "devModelName": "N2S",
+              "devProductName": "A1",
+              "nozzleDiameter": 0.4
+            },
+            {
+              "devModelName": "O1D",
+              "devProductName": "H2D",
+              "nozzleDiameter": 0.4
+            },
+            {
+              "devModelName": "O1E",
+              "devProductName": "H2D Pro",
+              "nozzleDiameter": 0.4
+            },
+            {
+              "devModelName": "O1S",
+              "devProductName": "H2S",
+              "nozzleDiameter": 0.4
+            },
+            {
+              "devModelName": "N7",
+              "devProductName": "P2S",
+              "nozzleDiameter": 0.4
+            },
+            {
+              "devModelName": "O1C2",
+              "devProductName": "H2C",
+              "nozzleDiameter": 0.4
+            },
+            {
+              "devModelName": "N6",
+              "devProductName": "X2D",
+              "nozzleDiameter": 0.4
+            },
+            {
+              "devModelName": "N9",
+              "devProductName": "A2L",
+              "nozzleDiameter": 0.4
+            }
+          ],
+          "plates": [
+            {
+              "index": 1,
+              "name": "",
+              "thumbnail": {
+                "name": "plate_1.png",
+                "url": "https://makerworld.bblmw.com/makerworld/model/US9a8e68b37e6e19/183237143/instance/plate_1.png"
+              },
+              "top_picture": {
+                "name": "plate_1.png",
+                "dir": "",
+                "url": "https://makerworld.bblmw.com/makerworld/model/US9a8e68b37e6e19/183237143/instance/plate_1.png"
+              },
+              "pick_picture": {
+                "name": "plate_1.png",
+                "dir": "",
+                "url": "https://makerworld.bblmw.com/makerworld/model/US9a8e68b37e6e19/183237143/instance/plate_1.png"
+              },
+              "objects": [],
+              "skipped_objects": [],
+              "label_object_enabled": false,
+              "prediction": 30852,
+              "weight": 395,
+              "filaments": [
+                {
+                  "id": "1",
+                  "type": "PLA",
+                  "color": "#808080",
+                  "usedM": "130.23",
+                  "usedG": "395"
+                }
+              ],
+              "warning": []
+            }
+          ],
+          "projectSettings": {
+            "layerHeight": "0.2",
+            "wallLoops": "2",
+            "sparseInfillDensity": "15%"
+          },
+          "hasAssemblyPic": false,
+          "hasFilamentMixed": false
+        },
+        "instanceSetting": {
+          "submitAsPrivate": false,
+          "isPrinterPresetChanged": false,
+          "isPrinterTested": true,
+          "isDonateToAuthor": false,
+          "instanceCustomizedByMakerLab": false,
+          "authorsChoice": false,
+          "makerLab": "",
+          "makerLabVersion": ""
+        },
+        "otherCompatibilityModelInfo": [
+          {
+            "devModelName": "C12",
+            "devProductName": "P1S",
+            "profileId": 861967712,
+            "modelInfo": {
+              "auxiliaryPictures": [],
+              "auxiliaryBom": [],
+              "auxiliaryGuide": [],
+              "auxiliaryOther": [],
+              "compatibility": {
+                "devModelName": "C12",
+                "devProductName": "P1S",
+                "nozzleDiameter": 0.4
+              },
+              "otherCompatibility": [
+                {
+                  "devModelName": "BL-P001",
+                  "devProductName": "X1 Carbon",
+                  "nozzleDiameter": 0.4
+                },
+                {
+                  "devModelName": "C11",
+                  "devProductName": "P1P",
+                  "nozzleDiameter": 0.4
+                },
+                {
+                  "devModelName": "BL-P002",
+                  "devProductName": "X1",
+                  "nozzleDiameter": 0.4
+                },
+                {
+                  "devModelName": "C13",
+                  "devProductName": "X1E",
+                  "nozzleDiameter": 0.4
+                },
+                {
+                  "devModelName": "N2S",
+                  "devProductName": "A1",
+                  "nozzleDiameter": 0.4
+                },
+                {
+                  "devModelName": "O1D",
+                  "devProductName": "H2D",
+                  "nozzleDiameter": 0.4
+                },
+                {
+                  "devModelName": "O1E",
+                  "devProductName": "H2D Pro",
+                  "nozzleDiameter": 0.4
+                },
+                {
+                  "devModelName": "O1S",
+                  "devProductName": "H2S",
+                  "nozzleDiameter": 0.4
+                },
+                {
+                  "devModelName": "N7",
+                  "devProductName": "P2S",
+                  "nozzleDiameter": 0.4
+                },
+                {
+                  "devModelName": "O1C2",
+                  "devProductName": "H2C",
+                  "nozzleDiameter": 0.4
+                },
+                {
+                  "devModelName": "N6",
+                  "devProductName": "X2D",
+                  "nozzleDiameter": 0.4
+                },
+                {
+                  "devModelName": "N9",
+                  "devProductName": "A2L",
+                  "nozzleDiameter": 0.4
+                }
+              ],
+              "plates": [
+                {
+                  "index": 1,
+                  "name": "",
+                  "thumbnail": {
+                    "name": "plate_1.png",
+                    "url": "https://makerworld.bblmw.com/makerworld/model/US9a8e68b37e6e19/861967712/instance/plate_1.png"
+                  },
+                  "top_picture": {
+                    "name": "plate_1.png",
+                    "dir": "",
+                    "url": "https://makerworld.bblmw.com/makerworld/model/US9a8e68b37e6e19/861967712/instance/plate_1.png"
+                  },
+                  "pick_picture": {
+                    "name": "plate_1.png",
+                    "dir": "",
+                    "url": "https://makerworld.bblmw.com/makerworld/model/US9a8e68b37e6e19/861967712/instance/plate_1.png"
+                  },
+                  "objects": [],
+                  "skipped_objects": [],
+                  "label_object_enabled": false,
+                  "prediction": 30830,
+                  "weight": 392,
+                  "filaments": [
+                    {
+                      "id": "1",
+                      "type": "PLA",
+                      "color": "#808080",
+                      "usedM": "129.13",
+                      "usedG": "392"
+                    }
+                  ],
+                  "warning": []
+                }
+              ],
+              "projectSettings": {
+                "layerHeight": "",
+                "wallLoops": "",
+                "sparseInfillDensity": ""
+              },
+              "hasAssemblyPic": false,
+              "hasFilamentMixed": false
+            },
+            "instanceFilaments": [
+              {
+                "type": "PLA",
+                "color": "#808080",
+                "usedM": "129.13",
+                "usedG": "392"
+              }
+            ],
+            "prediction": 30830,
+            "weight": 392,
+            "autoArrangeStrategy": 0
+          },
+          {
+            "devModelName": "N2S",
+            "devProductName": "A1",
+            "profileId": 873270424,
+            "modelInfo": {
+              "auxiliaryPictures": [],
+              "auxiliaryBom": [],
+              "auxiliaryGuide": [],
+              "auxiliaryOther": [],
+              "compatibility": {
+                "devModelName": "N2S",
+                "devProductName": "A1",
+                "nozzleDiameter": 0.4
+              },
+              "otherCompatibility": [
+                {
+                  "devModelName": "BL-P001",
+                  "devProductName": "X1 Carbon",
+                  "nozzleDiameter": 0.4
+                },
+                {
+                  "devModelName": "C12",
+                  "devProductName": "P1S",
+                  "nozzleDiameter": 0.4
+                },
+                {
+                  "devModelName": "C11",
+                  "devProductName": "P1P",
+                  "nozzleDiameter": 0.4
+                },
+                {
+                  "devModelName": "BL-P002",
+                  "devProductName": "X1",
+                  "nozzleDiameter": 0.4
+                },
+                {
+                  "devModelName": "C13",
+                  "devProductName": "X1E",
+                  "nozzleDiameter": 0.4
+                },
+                {
+                  "devModelName": "O1D",
+                  "devProductName": "H2D",
+                  "nozzleDiameter": 0.4
+                },
+                {
+                  "devModelName": "O1E",
+                  "devProductName": "H2D Pro",
+                  "nozzleDiameter": 0.4
+                },
+                {
+                  "devModelName": "O1S",
+                  "devProductName": "H2S",
+                  "nozzleDiameter": 0.4
+                },
+                {
+                  "devModelName": "N7",
+                  "devProductName": "P2S",
+                  "nozzleDiameter": 0.4
+                },
+                {
+                  "devModelName": "O1C2",
+                  "devProductName": "H2C",
+                  "nozzleDiameter": 0.4
+                },
+                {
+                  "devModelName": "N6",
+                  "devProductName": "X2D",
+                  "nozzleDiameter": 0.4
+                },
+                {
+                  "devModelName": "N9",
+                  "devProductName": "A2L",
+                  "nozzleDiameter": 0.4
+                }
+              ],
+              "plates": [
+                {
+                  "index": 1,
+                  "name": "",
+                  "thumbnail": {
+                    "name": "plate_1.png",
+                    "url": "https://makerworld.bblmw.com/makerworld/model/US9a8e68b37e6e19/873270424/instance/plate_1.png"
+                  },
+                  "top_picture": {
+                    "name": "plate_1.png",
+                    "dir": "",
+                    "url": "https://makerworld.bblmw.com/makerworld/model/US9a8e68b37e6e19/873270424/instance/plate_1.png"
+                  },
+                  "pick_picture": {
+                    "name": "plate_1.png",
+                    "dir": "",
+                    "url": "https://makerworld.bblmw.com/makerworld/model/US9a8e68b37e6e19/873270424/instance/plate_1.png"
+                  },
+                  "objects": [],
+                  "skipped_objects": [],
+                  "label_object_enabled": false,
+                  "prediction": 37285,
+                  "weight": 392,
+                  "filaments": [
+                    {
+                      "id": "1",
+                      "type": "PLA",
+                      "color": "#808080",
+                      "usedM": "129.12",
+                      "usedG": "392"
+                    }
+                  ],
+                  "warning": []
+                }
+              ],
+              "projectSettings": {
+                "layerHeight": "",
+                "wallLoops": "",
+                "sparseInfillDensity": ""
+              },
+              "hasAssemblyPic": false,
+              "hasFilamentMixed": false
+            },
+            "instanceFilaments": [
+              {
+                "type": "PLA",
+                "color": "#808080",
+                "usedM": "129.12",
+                "usedG": "392"
+              }
+            ],
+            "prediction": 37285,
+            "weight": 392,
+            "autoArrangeStrategy": 0
+          },
+          {
+            "devModelName": "C11",
+            "devProductName": "P1P",
+            "profileId": 985585698,
+            "modelInfo": {
+              "auxiliaryPictures": [],
+              "auxiliaryBom": [],
+              "auxiliaryGuide": [],
+              "auxiliaryOther": [],
+              "compatibility": {
+                "devModelName": "C11",
+                "devProductName": "P1P",
+                "nozzleDiameter": 0.4
+              },
+              "otherCompatibility": [
+                {
+                  "devModelName": "BL-P001",
+                  "devProductName": "X1 Carbon",
+                  "nozzleDiameter": 0.4
+                },
+                {
+                  "devModelName": "C12",
+                  "devProductName": "P1S",
+                  "nozzleDiameter": 0.4
+                },
+                {
+                  "devModelName": "BL-P002",
+                  "devProductName": "X1",
+                  "nozzleDiameter": 0.4
+                },
+                {
+                  "devModelName": "C13",
+                  "devProductName": "X1E",
+                  "nozzleDiameter": 0.4
+                },
+                {
+                  "devModelName": "N2S",
+                  "devProductName": "A1",
+                  "nozzleDiameter": 0.4
+                },
+                {
+                  "devModelName": "O1D",
+                  "devProductName": "H2D",
+                  "nozzleDiameter": 0.4
+                },
+                {
+                  "devModelName": "O1E",
+                  "devProductName": "H2D Pro",
+                  "nozzleDiameter": 0.4
+                },
+                {
+                  "devModelName": "O1S",
+                  "devProductName": "H2S",
+                  "nozzleDiameter": 0.4
+                },
+                {
+                  "devModelName": "N7",
+                  "devProductName": "P2S",
+                  "nozzleDiameter": 0.4
+                },
+                {
+                  "devModelName": "O1C2",
+                  "devProductName": "H2C",
+                  "nozzleDiameter": 0.4
+                },
+                {
+                  "devModelName": "N6",
+                  "devProductName": "X2D",
+                  "nozzleDiameter": 0.4
+                },
+                {
+                  "devModelName": "N9",
+                  "devProductName": "A2L",
+                  "nozzleDiameter": 0.4
+                }
+              ],
+              "plates": [
+                {
+                  "index": 1,
+                  "name": "",
+                  "thumbnail": {
+                    "name": "plate_1.png",
+                    "url": "https://makerworld.bblmw.com/makerworld/model/US9a8e68b37e6e19/985585698/instance/plate_1.png"
+                  },
+                  "top_picture": {
+                    "name": "plate_1.png",
+                    "dir": "",
+                    "url": "https://makerworld.bblmw.com/makerworld/model/US9a8e68b37e6e19/985585698/instance/plate_1.png"
+                  },
+                  "pick_picture": {
+                    "name": "plate_1.png",
+                    "dir": "",
+                    "url": "https://makerworld.bblmw.com/makerworld/model/US9a8e68b37e6e19/985585698/instance/plate_1.png"
+                  },
+                  "objects": [],
+                  "skipped_objects": [],
+                  "label_object_enabled": false,
+                  "prediction": 30875,
+                  "weight": 392,
+                  "filaments": [
+                    {
+                      "id": "1",
+                      "type": "PLA",
+                      "color": "#808080",
+                      "usedM": "129.15",
+                      "usedG": "392"
+                    }
+                  ],
+                  "warning": []
+                }
+              ],
+              "projectSettings": {
+                "layerHeight": "0.2",
+                "wallLoops": "2",
+                "sparseInfillDensity": "15%"
+              },
+              "hasAssemblyPic": false,
+              "hasFilamentMixed": false
+            },
+            "instanceFilaments": [
+              {
+                "type": "PLA",
+                "color": "#808080",
+                "usedM": "129.15",
+                "usedG": "392"
+              }
+            ],
+            "prediction": 30875,
+            "weight": 392,
+            "autoArrangeStrategy": 0
+          }
+        ],
+        "extensionModelFileList": [],
+        "autoArrangeInfo": [],
+        "supportAutoArrange": false
+      },
+      "prediction": 30852,
+      "weight": 395,
+      "instanceCreator": {
+        "uid": 220119969,
+        "name": "VwFix",
+        "avatar": "https://public-cdn.bblmw.com/avatar/220119969/2025-01-01_f67068b184436.webp",
+        "fanCount": 334,
+        "followCount": 13,
+        "isFollowed": false,
+        "isBlacklist": false,
+        "certificated": false,
+        "handle": "vwfix",
+        "level": 25,
+        "gradeType": 4,
+        "canBeSubscribed": true,
+        "availableCreatorMembershipLevelCnt": 0,
+        "gotoPersonalHomepage": true,
+        "socialPreferenceMainSwitch": 1,
+        "blockUserChat": 1,
+        "blockUserCommentOrRatingOnModelOrProfile": 0,
+        "blockUserCommentOnPost": 0,
+        "blockUserMentionMe": 0
+      },
+      "cover": "https://makerworld.bblmw.com/makerworld/model/US9a8e68b37e6e19/183237143/instance/2024-12-21_09579b56c56e4.jpg",
+      "materialCnt": 1,
+      "isDefault": false,
+      "materialColorCnt": 1,
+      "needAms": false,
+      "instanceFilaments": [
+        {
+          "type": "PLA",
+          "color": "#808080",
+          "usedM": "130.23",
+          "usedG": "395"
+        }
+      ],
+      "ratingScoreTotal": 99,
+      "ratingCount": 20,
+      "score": 0.9354851089960085,
+      "publishTime": "2024-12-22T04:09:59Z",
+      "downloadCount": 596,
+      "printCount": 260,
+      "isOfficial": false,
+      "appCanPrint": true,
+      "hasZipStl": true,
+      "pictures": [
+        {
+          "name": "2024-12-21_09579b56c56e4.jpg",
+          "url": "https://makerworld.bblmw.com/makerworld/model/US9a8e68b37e6e19/183237143/instance/2024-12-21_09579b56c56e4.jpg",
+          "isRealLifePhoto": 0,
+          "isCompression": 0
+        }
+      ],
+      "lacInfo": {
+        "machineName": "",
+        "processTypes": null,
+        "processModes": null,
+        "materialIds": null,
+        "plates": [],
+        "customMaterials": []
+      },
+      "lacCustomInfo": {
+        "otherTools": "",
+        "compatibleDevicesSelected": null
+      },
+      "model2DInfo": {
+        "processGroup": [],
+        "processModes": [],
+        "deviceType": {
+          "id": "",
+          "image": "",
+          "display": ""
+        },
+        "compatibleDevices": [],
+        "laserModules": [],
+        "cuttingModules": [],
+        "materials": [],
+        "customMaterials": []
+      },
+      "labelList": [
+        "good_rate",
+        "download_count"
+      ]
+    }
+  ]
+}

@@ -1,0 +1,21 @@
+{
+  "printer": "Flashforge AD5X",
+  "moonraker_url": "http://moonraker.test:7125",
+  "spoolman_url": "http://spoolman.test:7912",
+  "bed_mm": [220, 220],
+  "max_print_height_mm": 250,
+  "nozzle": {"diameter_mm": 0.4, "type": "stock", "installed": "2026-01-01T00:00:00"},
+  "z_offset_mm": 0.025,
+  "z_offset_verified": true,
+  "temps_c": {"nozzle": 210, "bed": 60},
+  "spool": {"spoolman_id": 10, "name": "white", "material": "PLA", "density": 1.24, "diameter_mm": 1.75, "color_code": "FFFFFF"},
+  "ifs_slots": {
+    "1": {"spoolman_id": 10, "color": "white", "material": "PLA", "hex": "FFFFFF", "physical_color_verified": true},
+    "2": {"spoolman_id": 11, "color": "pink", "material": "PLA", "hex": "FF00FF", "physical_color_verified": true},
+    "3": {"spoolman_id": 13, "color": "black", "material": "PLA", "hex": "000000", "physical_color_verified": true},
+    "4": {"spoolman_id": 12, "color": "dark green", "material": "PLA", "hex": "067749", "physical_color_verified": true}
+  },
+  "axis_limits_mm": {"x": [0, 223], "y": [0, 223], "z": [0, 250]},
+  "calibration_baseline": {"native_mesh": "MESH_DATA", "native_zProbeOffset": 0.025, "probe_z_offset": 0.025},
+  "calibration_authority": {"mode": "native", "operator_confirmed": true}
+}

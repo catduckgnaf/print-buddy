@@ -152,7 +152,7 @@ scripts/home-update.sh <tag>    # or a release tag
 ```
 The script refuses to run if tracked files were edited by hand. It runs the offline tests and the doctor after the update, and resets to the previous commit if either fails. `config/local.toml` is never touched. A listener restart command can go in `config/after-update.sh` (gitignored), which runs after a good update.
 
-Check the setup any time with `python3 -m print_buddy.doctor`. It also checks Moonraker and Spoolman when they are set in `[services]`.
+Check the setup any time with `python3 -m print_buddy.doctor`. It also checks Moonraker and Spoolman when they are set in `[services]`, and warns about Print Buddy state files stranded outside the profile `state` folder. The update and install scripts remove those strays when the profile holds the real copy (or the stray is empty); `python3 -m print_buddy.state_files [--dry-run] [--remove]` does the same by hand.
 
 ## Running tests
 

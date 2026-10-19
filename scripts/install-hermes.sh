@@ -228,4 +228,11 @@ if [ "$LAST_CHANGED" = 1 ] && [ -z "${NO_SYSTEMCTL:-}" ] && command -v systemctl
     [ "$DRY" = 1 ] || systemctl --user daemon-reload || say "warning: daemon-reload failed"
 fi
 
+# 5. Remove Print Buddy state files stranded outside the profile state folder (only when the
+# profile holds the real copy, or the stray is empty).
+if [ "$DRY" = 1 ]; then strays_flag="--dry-run --remove"; else strays_flag="--remove"; fi
+# shellcheck disable=SC2086
+PRINT_BUDDY__PATHS__HERMES_HOME="$HERMES_HOME" PYTHONPATH="$REPO${PYTHONPATH:+:$PYTHONPATH}" \
+    "$PYTHON" -m print_buddy.state_files $strays_flag || say "warning: could not check for stray state files"
+
 say "done. Enable the listener with: systemctl --user enable --now hermes-3dprinting-moonraker-listener.service"

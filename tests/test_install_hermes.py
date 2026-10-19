@@ -3,6 +3,7 @@ import os
 import shutil
 import stat
 import subprocess
+import sys
 import tempfile
 import unittest
 from pathlib import Path
@@ -167,6 +168,23 @@ class InstallerTests(unittest.TestCase):
         self.assertEqual("ann\n", (state / "moonraker_discord_announcements.json").read_text())
         self.assertEqual("claims-new\n", (state / "print_buddy_start_claims.json").read_text())
         self.assertTrue((fake_home / ".print_bitch_context.json").exists())
+
+    def test_stray_state_files_are_removed_after_install(self):
+        fake_home = self.tmp / "fakehome"
+        fake_home.mkdir()
+        (fake_home / ".print_bitch_context.json").write_text("ctx\n")
+        (fake_home / ".print_bitch_start_claims.json").write_text("claims-old\n")
+        (self.home / "state").mkdir(parents=True)
+        (self.home / "state" / "print_buddy_start_claims.json").write_text("claims-new\n")
+        dry = self.run_installer("--dry-run", python=sys.executable)
+        self.assertIn("would remove " + str(fake_home / ".print_bitch_start_claims.json"), dry)
+        self.assertTrue((fake_home / ".print_bitch_start_claims.json").exists())
+        out = self.run_installer(python=sys.executable)
+        self.assertIn("removed " + str(fake_home / ".print_bitch_start_claims.json"), out)
+        # The context file was copied into the profile first, so it is removed too.
+        self.assertEqual("ctx\n", (self.home / "state" / "print_buddy_context.json").read_text())
+        self.assertFalse((fake_home / ".print_bitch_context.json").exists())
+        self.assertFalse((fake_home / ".print_bitch_start_claims.json").exists())
 
     def test_old_private_scripts_dir_is_moved_aside(self):
         scripts = self.home / "scripts"

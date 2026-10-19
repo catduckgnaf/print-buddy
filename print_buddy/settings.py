@@ -49,6 +49,7 @@ LEGACY_ENV = {
     "PRINT_TIMELAPSE_RENDER_POLL_SECONDS": ("timelapse", "render_poll_s"),
     "PRINT_TIMELAPSE_MAX_BYTES": ("timelapse", "max_bytes"),
     "PRINT_TIMELAPSE_LOCAL_RETENTION_DAYS": ("timelapse", "local_retention_days"),
+    "PRINT_TIMELAPSE_PLAN_CLIP_RETENTION_DAYS": ("timelapse", "plan_clip_retention_days"),
     "MAINTENANCE_QUICK_HOURS": ("maintenance", "quick_hours"),
     "MAINTENANCE_FULL_HOURS": ("maintenance", "full_hours"),
     "MAINTENANCE_FULL_DAYS": ("maintenance", "full_days"),

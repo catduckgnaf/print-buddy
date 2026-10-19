@@ -162,6 +162,43 @@ python3 -m pytest tests
 ```
 A second CI job installs the Flathub OrcaSlicer, slices small test models with the templates, and runs the slice guards on the real G-code. Run it locally with `PRINT_BUDDY_REAL_SLICER=1 python3 -m pytest -s tests/slicer`.
 
+### Discord flow corpus
+
+`tests/corpus/cases/` holds 3MF models that are run end to end through the Discord intake: a dropped file, the color questions, the fit check and resize or split offer, plate planning, slicing, and the offline G-code checks. A fake Discord answers every question with the buttons listed in the case, and nothing contacts a printer (the start step runs the real gates against a stub `print-now`). The offline job runs every case on every pull request with the Orca CLI replaced by a small fake that writes valid G-code, so the questions, plate planning and fit logic are exercised for real. The real-slicer job runs the same cases with the Flathub Orca. A separate test runs the intake with the gateway's real environment (`HERMES_HOME=~/.hermes`, multiplexed profiles) and checks that state stays in the print profile.
+
+#### Adding a failing 3MF
+
+When a model misbehaves in Discord, add it as a case, watch it fail in CI, then fix the code.
+
+1. Make a folder `tests/corpus/cases/<short-name>/` holding the model as `model.3mf`.
+2. Only commit a model whose license lets this public repo redistribute it: your own work, CC0, public domain, or a license that allows redistribution with attribution. Put the license and source in `case.toml` as `license = "..."` (or an `ATTRIBUTION` file). Never commit a model you cannot redistribute; generate a stand-in shape instead. `tests/corpus/make_models.py` writes the built in models and is a good starting point. Keep each file well under 1 MB.
+3. Write `case.toml` with the buttons you pressed, in the words the bot uses, and what you expect:
+   ```toml
+   license = "CC0 1.0: my own model"
+   description = "what went wrong in Discord"
+
+   [[click]]                      # answers any question containing this text...
+   question = "Choose the color for"
+   button = "White"               # ...by pressing the first button containing this text
+
+   [[click]]
+   question = "·"                 # the final "Slice and print" question
+   button = "Slice and print"
+
+   [expect]
+   status = "STARTED"             # receipt status the flow should end with
+   parts = ["Cube"]               # also: source_plates, colors, gcodes, plate_mode, scale or scale_range, supports, slots, prompts
+   ```
+   If the bot asks a question no rule answers, the test fails and prints the question and its buttons, so copy them into a new `[[click]]`.
+4. Run it, then open the pull request. The case must fail first, then pass once the fix lands.
+
+Run it locally:
+```bash
+python3 -m pytest -q tests/corpus                                # no Orca needed: fake Orca, modelled fit probe
+PRINT_BUDDY_REAL_SLICER=1 python3 -m pytest -q -s tests/corpus   # real Orca (Flathub flatpak, under xvfb on a headless box)
+```
+The real tier slices under `.slicer-work/` in the repository, because the Flatpak sandbox cannot see `/tmp`.
+
 ## ZMod plugin and spool matching
 
 ZMod switches to a backup spool mid-print only when another slot holds the exact same color and material. The `print_bitch.cfg` macro checks that before a job starts:
@@ -203,7 +240,7 @@ is_system_service: False
 * `hermes/`: profile templates and skills installed by `scripts/install-hermes.sh`.
 * `scripts/`: `install-hermes.sh` and `home-update.sh`.
 * `print_bitch.cfg`, `install.sh`, `uninstall.sh`, `update.sh`: ZMod plugin macro and lifecycle scripts.
-* `tests/`: offline suite, real slicer checks, and the Klipper macro tests.
+* `tests/`: offline suite, real slicer checks, the Discord flow corpus (`tests/corpus/`), and the Klipper macro tests.
 * `docs/`: install guide and AD5X integration specs.
 
 ## Links

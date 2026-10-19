@@ -536,7 +536,7 @@ def test_capacity_zero_full_size_split_saves_separate_mode_before_slice(env, mon
     monkeypatch.setattr(model_job, 'slice_job', fake_split_slice)
     event = S(source=S(profile='3dprinting', chat_id='c1', thread_id=None, user_id='u'),
               message_id='too-large', text='https://www.printables.com/model/1-ghost')
-    adapter = Adapter([1, 0, 0, 1, 1])
+    adapter = Adapter([1, 0, 0, 1, 2])  # ..., slice only, then Cancel in the plate picker
     result = asyncio.run(prepared_intake.prepare_link(event, adapter, state(), env.root, timeout=1))
     scale_prompt = next(q for q in adapter.questions if 'does not fit the AD5X bed' in q['question'])
     assert scale_prompt['choices'][0] == '100% · split 2 plates'
@@ -836,3 +836,94 @@ def test_declined_reprint_does_nothing(env):
     assert result['reason'] == 'reprint declined' and len(env.sliced) == 1 and len(env.starts) == 1
     assert 'Nothing was sliced or started' in adapter.sent[-1]
 
+
+
+# Issue 16: plate choice and one bed-clear confirmation per plate -------------------------
+
+def _split_env(env, monkeypatch, tag):
+    """Two-plate full-size split with distinct per-plate durations."""
+    from print_buddy.core import orca_adapter
+    from .test_plate_merge import _source
+    path = env.tmp / f'{tag}.3mf'
+    _source(path, {'1': (150, 150, 10), '2': (150, 150, 10)}, [['1', '2']])
+    monkeypatch.setattr(model_job, 'printables_download', lambda job, chosen, dest: _copy(path, dest))
+    monkeypatch.setattr(orca_adapter, 'orca_plate_capacity',
+                        lambda path, st, scale=1.0, copy_limit=16, **kw: 0 if scale == 1.0 else 1)
+    monkeypatch.setattr(orca_adapter, 'fit_options',
+                        lambda path, st: {'scales': [0.98, 0.75, 0.5], 'rotations': []})
+
+    def fake_split_slice(job_path, copies=None):
+        job_path = Path(job_path)
+        data = json.loads(job_path.read_text())
+        gcodes, rows = [], []
+        for index, keys in enumerate(data['full_size_split_plan']['plates'], 1):
+            gcode = job_path.parent / 'sliced' / f'plate_{index}.gcode'
+            gcode.parent.mkdir(parents=True, exist_ok=True)
+            gcode.write_text(f'; estimated printing time (normal mode) = {index}h 0m 0s\nG1 X1\n')
+            gcodes.append(gcode)
+            rows.append({'gcode': str(gcode), 'plate_id': index, 'slot': 1, 'part_keys': keys})
+        data['derived_plates'] = rows
+        job_path.write_text(json.dumps(data))
+        env.sliced.extend(map(str, gcodes))
+        return gcodes
+    monkeypatch.setattr(model_job, 'slice_job', fake_split_slice)
+    monkeypatch.setattr(prepared_intake.print_summary, 'find_job',
+                        lambda filename, *a: (json.loads(Path(filename).parents[1].joinpath('JOB.json').read_text()),
+                                              {'gcode': str(filename), 'plate': int(Path(filename).stem[-1]),
+                                               'parts': [f'Part {Path(filename).stem[-1]}'], 'slot': 1,
+                                               'color': 'white', 'material': 'PLA',
+                                               'filament_g': None, 'seconds': 3600 * int(Path(filename).stem[-1])}))
+    return S(source=S(profile='3dprinting', chat_id='c1', thread_id=None, user_id='u'),
+             message_id=tag, text='https://www.printables.com/model/1-ghost')
+
+
+def _plate_prompts(adapter):
+    return [q for q in adapter.questions if q['question'] == 'Which plate prints first?']
+
+
+def test_split_print_now_picker_choice_honored_and_bed_asked_once(env, monkeypatch):
+    event = _split_env(env, monkeypatch, 'pick-second')
+    adapter = Adapter([1, 0, 0, 0, 1])  # color, slot, 100% split, Slice and print now, picker -> plate 2
+    asyncio.run(prepared_intake.prepare_link(event, adapter, state(), env.root, timeout=1))
+    picker = _plate_prompts(adapter)
+    assert len(picker) == 1
+    assert picker[0]['choices'][0] == 'Plate 1: Part 1 · white PLA · ~1h 0m'
+    assert picker[0]['choices'][1] == 'Plate 2: Part 2 · white PLA · ~2h 0m'
+    assert picker[0]['choices'][2] == 'Cancel'
+    assert len(env.starts) == 1 and env.starts[0]['part_id'] == 'plate2'
+    assert Path(env.starts[0]['gcode']).name == 'plate_2.gcode'
+    # The only bed-clear wording is the single "Slice and print now (bed is clear)" choice.
+    assert not any(print_next.START_LABEL in q['choices'] for q in adapter.questions)
+    assert sum('bed is clear' in c for q in adapter.questions for c in q['choices']) == 1
+    assert not any('/print-next' in m for m in adapter.sent)
+
+
+def test_split_print_now_first_plate_default_order(env, monkeypatch):
+    event = _split_env(env, monkeypatch, 'pick-first')
+    adapter = Adapter([1, 0, 0, 0, 0])
+    asyncio.run(prepared_intake.prepare_link(event, adapter, state(), env.root, timeout=1))
+    assert [t['part_id'] for t in env.starts] == ['plate1']
+
+
+def test_split_slice_only_starts_nothing_until_pick_and_one_confirm(env, monkeypatch):
+    event = _split_env(env, monkeypatch, 'slice-only-split')
+    adapter = Adapter([1, 0, 0, 1, 1, 1])  # slice only, plate 2, then Cancel at the single confirm
+    result = asyncio.run(prepared_intake.prepare_link(event, adapter, state(), env.root, timeout=1))
+    assert env.starts == [] and result['reason'] == 'operator did not start the sliced plate'
+    confirms = [q for q in adapter.questions if q['choices'] == [print_next.START_LABEL, print_next.CANCEL_LABEL]]
+    assert len(confirms) == 1 and 'plate 2 of 2' in confirms[0]['question']
+    receipt = json.loads(next(env.root.glob('*.json')).read_text())
+    assert receipt['status'] == 'SLICED_NOT_STARTED' and receipt['first_plate'] == 'plate2'
+
+
+def test_split_slice_only_picker_cancel_starts_nothing(env, monkeypatch):
+    event = _split_env(env, monkeypatch, 'slice-only-cancel')
+    adapter = Adapter([1, 0, 0, 1, 2])
+    asyncio.run(prepared_intake.prepare_link(event, adapter, state(), env.root, timeout=1))
+    assert env.starts == []
+    assert not any(q['choices'] == [print_next.START_LABEL, print_next.CANCEL_LABEL] for q in adapter.questions)
+
+
+def test_single_plate_has_no_picker(env):
+    adapter, _result, _receipt = run_flow(env, [1, 0, 0])
+    assert _plate_prompts(adapter) == [] and len(env.starts) == 1

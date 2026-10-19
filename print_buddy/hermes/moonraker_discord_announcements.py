@@ -52,9 +52,13 @@ from .print_records import (
     utc_now,
     write_completed_record,
     format_multipart_summary,
+    remaining_plate_choices,
     PLANS_DIR,
     _safe_slug,
 )
+
+# Stdout line telling the listener to post the interactive plate picker for this plan after the completion post.
+PLATE_PICKER_MARKER = "PLATE_PICKER:"
 
 BASE = _config.moonraker_url()
 SPOOLMAN_BASE = _config.service_url("spoolman_url")
@@ -842,9 +846,12 @@ def main():
             try:
                 plan_path = PLANS_DIR / f"{_safe_slug(str(multipart_id))}.json"
                 plan = json.loads(plan_path.read_text(encoding="utf-8"))
-                summary = format_multipart_summary(plan, context.get("part_id"))
+                summary = format_multipart_summary(plan, context.get("part_id"), picker=True)
                 if summary:
                     message += "\n" + summary
+                    if remaining_plate_choices(plan):
+                        # The listener posts the interactive picker after this completion message.
+                        print(f"{PLATE_PICKER_MARKER}{plan.get('plan_id') or _safe_slug(str(multipart_id))}")
             except (OSError, ValueError, json.JSONDecodeError) as exc:
                 print(f"Multipart continuation summary unavailable: {exc}", file=sys.stderr)
         batch_complete = _batch_fully_complete(context)

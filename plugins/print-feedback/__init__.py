@@ -352,7 +352,7 @@ async def color_selection_dispatch(event, gateway, **kwargs):
 
 
 async def print_next_dispatch(event, gateway, **kwargs):
-    """/print-next <plan_id>: one bed-clear button for the exact next plate. One start per tap."""
+    """/print-next <plan_id> [part_id]: one bed-clear button for the exact next (or named) plate. One start per tap."""
     source = getattr(event, 'source', None)
     text = str(getattr(event, 'text', '')).strip()
     if not (text == '/print-next' or text.startswith('/print-next ')):
@@ -370,7 +370,9 @@ async def print_next_dispatch(event, gateway, **kwargs):
     import uuid
     from print_buddy.hermes import print_next
     metadata = {'thread_id': source.thread_id} if source.thread_id else None
-    plan_id = text[len('/print-next'):].strip()
+    args = text[len('/print-next'):].split()
+    plan_id = args[0] if args else ''
+    part_id = args[1] if len(args) > 1 else None
     key = ('print-next', plan_id)
     if key in _seen:
         await adapter.send(chat_id=source.chat_id, metadata=metadata,
@@ -379,8 +381,9 @@ async def print_next_dispatch(event, gateway, **kwargs):
     _seen[key] = time.monotonic()
     try:
         if not plan_id:
-            raise print_next.NextPlateError('usage: /print-next <plan_id>')
-        target = print_next.resolve_next(print_next.load_plan(plan_id))
+            raise print_next.NextPlateError('usage: /print-next <plan_id> [part_id]')
+        plan = print_next.load_plan(plan_id)
+        target = print_next.resolve_next(plan) if part_id is None else print_next.resolve_next(plan, part_id=part_id)
         from print_buddy.hermes import discord_print_summary as print_summary
         job, plate = print_summary.find_job(target['gcode'])
         seconds = (plate or {}).get('seconds')
@@ -1417,9 +1420,62 @@ def alert_button_handlers(bot, adapter):
             return
         await interaction.response.edit_message(content=result, view=None)
 
+    async def handle_plate_pick(interaction, aid):
+        """Choosing a plate only prepares one Confirm button; nothing starts here."""
+        import discord
+        from print_buddy.hermes import print_next
+        alert = await asyncio.to_thread(pab.peek, aid)
+        if not alert or alert.get('kind') != 'plate-picker':
+            await interaction.response.send_message('That plate picker is old or was already used. Nothing started.', ephemeral=True)
+            return
+        try:
+            part_id = str((getattr(interaction, 'data', {}) or {}).get('values', [None])[0])
+            target = print_next.resolve_next(print_next.load_plan(alert['plan_id']), part_id=part_id)
+        except Exception as exc:
+            await interaction.response.send_message(f'Cannot start that plate: {exc}. Nothing started.', ephemeral=True)
+            return
+        if not await asyncio.to_thread(pab.take, aid):  # a parallel pick got there first
+            await interaction.response.send_message('That plate picker is old or was already used. Nothing started.', ephemeral=True)
+            return
+        confirm_aid = await asyncio.to_thread(pab.record, 'plate-confirm', '', plan_id=alert['plan_id'], part_id=part_id)
+        view = discord.ui.View(timeout=300)
+        view.add_item(discord.ui.Button(label=pab.CONFIRM_LABEL, style=discord.ButtonStyle.success,
+                                        custom_id=f'{pab.PLATE_PREFIX}:go:{confirm_aid}'))
+        await interaction.response.edit_message(content=print_next.question_text(target), view=view)
+
+    async def handle_plate_go(interaction, aid):
+        """The one Confirm tap. The alert is single use and print_next.start re-checks the printer and claim."""
+        from print_buddy.hermes import print_next
+        alert = await asyncio.to_thread(pab.take, aid)
+        if not alert or alert.get('kind') != 'plate-confirm':
+            await interaction.response.send_message('That confirmation is old or was already used. Nothing started.', ephemeral=True)
+            return
+        try:
+            target = print_next.resolve_next(print_next.load_plan(alert['plan_id']), part_id=alert['part_id'])
+        except Exception as exc:
+            await interaction.response.edit_message(content=f'Cannot start that plate: {exc}. Nothing started.', view=None)
+            return
+        await interaction.response.edit_message(content=f"Preparing to start {target['label']}.", view=None)
+        try:
+            ok, detail = await print_next.start(target)
+            message = None if ok else (f"Did not start {target['label']}. Not retrying. "
+                                       f"`/print-next {alert['plan_id']} {alert['part_id']}` offers a fresh button.\n{detail}")
+        except Exception as exc:
+            logger.exception('plate picker start failed')
+            message = f'Next plate failed: {exc}. Check the printer screen before retrying.'
+        if message:  # None: start accepted, printer preparing; the listener posts "Print started".
+            await interaction.followup.send(message)
+
     async def on_interaction(interaction):
         data = getattr(interaction, 'data', None) or {}
         custom_id = data.get('custom_id', '')
+        plate = pab.parse_plate_custom_id(custom_id)
+        if plate:
+            if not allowed(interaction):
+                await reject(interaction)
+                return
+            await (handle_plate_pick if plate[0] == 'pick' else handle_plate_go)(interaction, plate[1])
+            return
         parsed = pab.parse_custom_id(custom_id)
         insertion = pab.parse_insertion_custom_id(custom_id)
         spool_question = pab.parse_spool_question_custom_id(custom_id)

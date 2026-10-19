@@ -1,0 +1,571 @@
+"""Integration tests for print naming (B), deterministic confirmations (C) and the receipt send fix (D).
+
+Each test drives a real entry point: Listener.on_status, the announcer main(), and the print-feedback
+plugin hook. The adapter mirrors DiscordAdapter.send(chat_id, content, reply_to, metadata) exactly.
+"""
+import asyncio
+import hashlib
+import importlib.util
+import json
+import os
+import re
+import sys
+import time
+from pathlib import Path
+from types import SimpleNamespace as S
+
+import pytest
+
+HERE = Path(__file__).resolve().parent
+from print_buddy.hermes import discord_print_summary as summary
+from print_buddy.hermes import moonraker_event_listener as mel
+
+HEX = re.compile(r"[0-9a-f]{32,}", re.I)
+TITLE = "Stand for iPad with thick case"
+
+
+def _load(name, path):
+    spec = importlib.util.spec_from_file_location(name, path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+from print_buddy.hermes import print_records as records  # noqa: E402
+from print_buddy.hermes import moonraker_discord_announcements as watcher  # noqa: E402
+PLUGIN = HERE.parents[1] / "plugins/print-feedback/__init__.py"
+
+
+@pytest.fixture
+def job(tmp_path, monkeypatch):
+    """Archive with a sliced two plate job, plus the hashed name Moonraker would report."""
+    folder = tmp_path / "archive" / "stand--abc"
+    out = folder / "sliced" / "orca" / "run1"
+    out.mkdir(parents=True)
+    rows = []
+    for n, (parts, slot, est) in enumerate((("Stand", 1, "1h 30m 0s"), ("Clip", 2, "40m 0s")), 1):
+        gcode = out / f"plate_{n}.gcode"
+        gcode.write_text(f"; estimated printing time (normal mode) = {est}\n; total filament used [g] = 12.3\nG1 X1\n")
+        rows.append({"gcode": str(gcode), "plate_id": n, "slot": slot, "part_keys": [f"k{n}"]})
+    data = {"title": TITLE, "gcode": rows[0]["gcode"], "derived_plates": rows,
+            "color_manifest": {"parts": [{"key": "k1", "name": "Stand"}, {"key": "k2", "name": "Clip"}]},
+            "color_decisions": {"mode": "per_part", "choices": {
+                "k1": {"slot": 1, "color": "Black", "material": "PLA"},
+                "k2": {"slot": 2, "color": "White", "material": "PLA"}}}}
+    (folder / "JOB.json").write_text(json.dumps(data))
+    monkeypatch.setattr(summary, "ARCHIVE", tmp_path / "archive")
+    monkeypatch.setattr(summary, "CONTEXT_PATH", tmp_path / "no-context.json")
+    first = Path(rows[0]["gcode"])
+    digest = hashlib.sha256(first.read_bytes()).hexdigest()
+    return S(hashed=f"plate_1_{digest}.gcode", data=data, rows=rows)
+
+
+def _drive_listener(monkeypatch, filename, transitions, *, claimed=False):
+    posted = []
+    monkeypatch.setattr(mel, "post", lambda message: posted.append(message) or True)
+    monkeypatch.setattr(mel, "run_announcer", lambda reason: None)
+    monkeypatch.setattr(mel, "start_claimed", lambda name: claimed)
+    monkeypatch.setattr(mel, "log", lambda line: None)
+    from print_buddy.hermes import klipper_report
+    monkeypatch.setattr(klipper_report, "report", lambda filename: "Klipper report stub")
+    listener = mel.Listener()
+
+    async def run():
+        for state in transitions:
+            await listener.on_status({"state": state, "filename": filename}, "test")
+    asyncio.run(run())
+    return posted
+
+
+def test_start_claim_matches_exact_moonraker_filename(tmp_path, monkeypatch, job):
+    claims = tmp_path / "claims.json"
+    claims.write_text(json.dumps({job.hashed: 1000}))
+    monkeypatch.setattr(mel, "START_CLAIMS", claims)
+    assert mel.start_claimed(f"gcodes/{job.hashed}", now=1001)
+    assert not mel.start_claimed("other_" + "a" * 64 + ".gcode", now=1001)
+
+
+def test_print_now_start_claim_normalizes_moonraker_filename(tmp_path, monkeypatch):
+    from print_buddy.core import model_job
+    claims = tmp_path / "claims.json"
+    monkeypatch.setattr(model_job, "START_CLAIMS", claims)
+    remote = "plate_1_" + "a" * 64 + ".gcode"
+    model_job.claim_start_announcement(remote, now=1000)
+    assert json.loads(claims.read_text()) == {remote: 1000}
+    monkeypatch.setattr(mel, "START_CLAIMS", claims)
+    assert mel.start_claimed("gcodes/" + remote, now=1001)
+
+
+def test_find_job_accepts_title_prefixed_moonraker_name(job):
+    job_row, plate = summary.find_job("My-Stand_" + job.hashed)
+    assert job_row["title"] == TITLE and plate["gcode"] == job.rows[0]["gcode"]
+    assert summary.find_job("My-Stand_" + job.hashed.replace(job.hashed[9], "f" if job.hashed[9] != "f" else "e", 1))[0] is None
+
+
+def test_find_job_uses_exact_local_gcode_not_another_jobs_same_plate_name(tmp_path, monkeypatch):
+    archive = tmp_path / "archive"
+    stale = archive / "a-stale" / "sliced" / "orca" / "run"
+    current = archive / "z-current" / "sliced" / "orca" / "run"
+    for folder, title in ((stale, "Barista Buddy"), (current, "FUNKO Honeycomb Shelf")):
+        folder.mkdir(parents=True)
+        gcode = folder / "plate_1.gcode"
+        gcode.write_text("; estimated printing time (normal mode) = 1h 0m\n")
+        (folder.parents[2] / "JOB.json").write_text(json.dumps({"title": title, "gcode": str(gcode)}))
+    monkeypatch.setattr(summary, "ARCHIVE", archive)
+    job_row, plate = summary.find_job(str(current / "plate_1.gcode"))
+    assert job_row["title"] == "FUNKO Honeycomb Shelf"
+    assert plate["gcode"] == str(current / "plate_1.gcode")
+    # Preparation must use the already-bound job/plate, never repeat a lookup by
+    # generic `plate_1.gcode` and resurrect a prior model's Discord details.
+    preparing = summary.format_preparation(job_row, plate)
+    assert "FUNKO Honeycomb Shelf" in preparing
+    assert "Barista Buddy" not in preparing
+
+
+def test_listener_start_uses_model_title_not_hash(job, monkeypatch):
+    posted = _drive_listener(monkeypatch, job.hashed, ["standby", "printing"])
+    assert len(posted) == 1
+    text = posted[0]
+    assert TITLE in text
+    assert "Parts: Stand" in text and "Plate 1 of 2" in text
+    assert "Slot 1: Black PLA" in text
+    assert f"Estimated total: ~1h 35m (printing: 1h 30m)" in text and "Approx. finish:" in text and "ET" in text
+    assert not HEX.search(text)
+
+
+def test_listener_start_roast_is_appended_after_canonical_details(job, monkeypatch):
+    monkeypatch.setattr(mel, "generate_roast", lambda title: f"Roast for {title}")
+    posted = _drive_listener(monkeypatch, job.hashed, ["standby", "printing"])
+    assert len(posted) == 1
+    assert posted[0].endswith(f"\n\nRoast for {TITLE}")
+
+
+def test_print_now_start_claim_does_not_suppress_rich_start_announcement(job, monkeypatch):
+    posted = _drive_listener(monkeypatch, job.hashed, ["standby", "printing"], claimed=True)
+    assert len(posted) == 1
+    text = posted[0]
+    assert text.startswith("Print started:")
+    assert TITLE in text
+    assert "Parts: Stand" in text and "Plate 1 of 2" in text
+    assert "Slot 1: Black PLA" in text
+    assert f"Estimated total: ~1h 35m (printing: 1h 30m)" in text
+    assert "Approx. finish:" in text and "ET" in text
+    assert not HEX.search(text)
+
+
+def test_timelapse_selection_requires_plugin_filename_and_orders_newest(monkeypatch):
+    job = "stand.gcode"
+    remote = "Slim-12oz-Can-Holder-Red-Bull_plate_1_" + "ab" * 32 + ".gcode"
+    plugin = f"timelapse_{job}_20261011_1230.mp4"
+    older = f"timelapse_{job}_20261011_1200.mp4"
+    remote_video = f"timelapse_{remote}_20261011_1356.mp4"
+    monkeypatch.setattr(watcher, "get_json", lambda path, **kw: {"result": [
+        {"path": "other.mp4", "modified": 99},
+        {"path": "stand.mp4", "modified": 50},
+        {"path": plugin, "modified": 5},
+        {"path": older, "modified": 2},
+        {"path": f"timelapse_{Path(job).stem}_20261011_1230.mp4", "modified": 6},
+        {"path": "timelapse_stand_extra_20261011_1300.mp4", "modified": 8},
+        {"path": f"../{plugin}", "modified": 9},
+        {"path": "timelapse_standing.gcode_20261011_1500.mp4", "modified": 7},
+        {"path": remote_video, "modified": 4},
+    ]})
+    assert watcher._timelapse_matches_job(plugin, job)
+    assert not watcher._timelapse_matches_job(f"timelapse_{Path(job).stem}_20261011_1230.mp4", job)
+    assert watcher._timelapse_matches_job(remote_video, remote)
+    assert not watcher._timelapse_matches_job(f"timelapse_{Path(remote).stem}_20261011_1356.mp4", remote)
+    assert watcher._timelapse_candidates(job) == [plugin, older]
+
+
+def test_timelapse_archive_name_is_collision_resistant_and_job_bound():
+    source = "timelapse_stand.gcode_20261011_1230.mp4"
+    one = watcher.timelapse_archive_name("stand.gcode", source, "2026-10-11T12:30:00Z")
+    two = watcher.timelapse_archive_name("stand.gcode", "timelapse_stand.gcode_20261011_1245.mp4", "2026-10-11T12:30:00Z")
+    assert one.endswith(".mp4") and one != two and "stand" in one
+    assert "20261011-083000-0400" in one
+
+
+def test_archive_timelapse_rejects_wrong_job_before_any_copy(monkeypatch):
+    called = []
+    monkeypatch.setattr(watcher, "_timelapse_matches_job", lambda video, job: False)
+    monkeypatch.setattr(watcher.subprocess, "run", lambda *args, **kwargs: called.append(args))
+    monkeypatch.setattr(watcher.urllib.request, "urlopen", lambda *args, **kwargs: called.append("http"))
+    with pytest.raises(ValueError):
+        watcher.archive_timelapse("stand.gcode", "other.mp4")
+    with pytest.raises(ValueError):
+        watcher.archive_timelapse("stand.gcode", "../timelapse_stand.gcode_20261011_1230.mp4")
+    assert called == []
+
+
+def test_archive_timelapse_downloads_http_then_publishes_local_file(tmp_path, monkeypatch):
+    calls = []
+    source = "timelapse_stand.gcode_20261011_1230.mp4"
+    monkeypatch.setattr(watcher, "MEDIA_DIR", tmp_path / "cache")
+    monkeypatch.setattr(watcher, "TIMELAPSE_SSH_KEY", "")
+    monkeypatch.setattr(watcher, "TIMELAPSE_ARCHIVE_HOST", "archive.test")
+    monkeypatch.setattr(watcher.shutil, "which", lambda name: name)
+
+    class Response:
+        def read(self, size):
+            if self._done:
+                return b""
+            self._done = True
+            return b"mp4"
+        def __enter__(self):
+            self._done = False
+            return self
+        def __exit__(self, *args):
+            return False
+
+    def fake_urlopen(request, timeout=None):
+        calls.append(("http", request.full_url))
+        return Response()
+
+    monkeypatch.setattr(watcher.urllib.request, "urlopen", fake_urlopen)
+    monkeypatch.setattr(watcher, "TIMELAPSE_ARCHIVE_DIR", "/archive/timelapses")
+    monkeypatch.setattr(watcher.subprocess, "run", lambda cmd, **kwargs: calls.append(tuple(cmd)))
+    result = watcher.archive_timelapse("stand.gcode", source, "2026-10-11T12:30:00Z")
+    assert calls[0][0] == "http"
+    assert calls[0][1].endswith("/server/files/timelapse/" + source)
+    assert calls[1][0] == "ssh" and calls[1][-2] == "archive.test"
+    assert "cat > " in calls[1][-1] and "printer.test" not in " ".join(calls[1])
+    assert calls[2][-2] == "archive.test" and " mv " in calls[2][-1]
+    assert result.startswith("/archive/timelapses/")
+    assert not result.endswith(".partial")
+    assert not list((tmp_path / "cache").glob("source-*.mp4"))
+
+
+def test_timelapse_wait_retries_then_archives(monkeypatch):
+    attempts = iter(([], ["timelapse_stand.gcode_20261011_1230.mp4"]))
+    monkeypatch.setattr(watcher, "_timelapse_candidates", lambda key: next(attempts))
+    monkeypatch.setattr(watcher, "archive_timelapse", lambda key, path, completed: "/archive/stand.mp4")
+    monkeypatch.setattr(watcher, "TIMELAPSE_RENDER_WAIT_SECONDS", 2)
+    monkeypatch.setattr(watcher, "TIMELAPSE_RENDER_POLL_SECONDS", 0.1)
+    assert watcher.archive_completed_timelapse("stand.gcode") == "/archive/stand.mp4"
+
+
+def test_timelapse_wait_is_bounded_and_failure_safe(monkeypatch):
+    archived = []
+    monkeypatch.setattr(watcher, "_timelapse_candidates", lambda key: [])
+    monkeypatch.setattr(watcher, "archive_timelapse", lambda *a: archived.append(a))
+    monkeypatch.setattr(watcher, "TIMELAPSE_RENDER_WAIT_SECONDS", 0.3)
+    monkeypatch.setattr(watcher, "TIMELAPSE_RENDER_POLL_SECONDS", 0.1)
+    started = time.monotonic()
+    assert watcher.archive_completed_timelapse("stand.gcode") is None
+    assert time.monotonic() - started < 2
+    assert archived == []
+
+    def broken(key):
+        raise OSError("moonraker down")
+
+    monkeypatch.setattr(watcher, "_timelapse_candidates", broken)
+    monkeypatch.setattr(watcher, "TIMELAPSE_RENDER_WAIT_SECONDS", 0.3)
+    started = time.monotonic()
+    assert watcher.archive_completed_timelapse("stand.gcode") is None
+    assert time.monotonic() - started < 2
+
+
+def test_format_event_includes_persistent_print_number(tmp_path, monkeypatch):
+    from print_buddy.hermes import print_control
+    archive = tmp_path / 'archive'
+    job_dir = archive / 'ghost'
+    job_dir.mkdir(parents=True)
+    gcode = job_dir / 'plate.gcode'
+    gcode.write_text('; estimated printing time (normal mode) = 1h 0m\n; total filament used [g] = 12\n')
+    job_path = job_dir / 'JOB.json'
+    job_path.write_text(json.dumps({'title': 'Ghost Stand', 'gcode': str(gcode),
+                                    'filament_selection': {'slot': 1, 'color': 'white', 'material': 'PLA'}}))
+    numbers = tmp_path / 'print_numbers.json'
+    numbers.write_text(json.dumps({'numbers': {str(job_path.resolve()): 7}}))
+    monkeypatch.setattr(print_control, 'PRINT_NUMBERS', numbers)
+    assert 'Print #7' in summary.format_event('complete', gcode.name, archive=archive)
+
+
+def test_timelapse_lookup_error_retries_instead_of_giving_up(monkeypatch):
+    attempts = iter((OSError("timed out"), ["timelapse_stand.gcode_20261011_1230.mp4"]))
+
+    def flaky(key):
+        value = next(attempts)
+        if isinstance(value, Exception):
+            raise value
+        return value
+
+    monkeypatch.setattr(watcher, "_timelapse_candidates", flaky)
+    monkeypatch.setattr(watcher, "archive_timelapse", lambda key, path, completed: "/archive/stand.mp4")
+    monkeypatch.setattr(watcher, "TIMELAPSE_RENDER_WAIT_SECONDS", 2)
+    monkeypatch.setattr(watcher, "TIMELAPSE_RENDER_POLL_SECONDS", 0.1)
+    assert watcher.archive_completed_timelapse("stand.gcode") == "/archive/stand.mp4"
+
+
+def test_local_timelapse_cache_retention_keeps_recent_and_non_video(tmp_path, monkeypatch):
+    cache = tmp_path / "cache"
+    cache.mkdir()
+    monkeypatch.setattr(watcher, "MEDIA_DIR", cache)
+    monkeypatch.setattr(watcher, "TIMELAPSE_LOCAL_RETENTION_DAYS", 14)
+    now = 1_800_000_000
+    old, fresh, photo = cache / "old.mp4", cache / "fresh.mp4", cache / "print-complete-x.jpg"
+    for path in (old, fresh, photo):
+        path.write_bytes(b"x")
+    os.utime(old, (now - 15 * 86400,) * 2)
+    os.utime(fresh, (now - 86400,) * 2)
+    os.utime(photo, (now - 90 * 86400,) * 2)
+    assert watcher.prune_local_timelapses(now=now) == [old]
+    assert not old.exists() and fresh.exists() and photo.exists()
+    monkeypatch.setattr(watcher, "TIMELAPSE_LOCAL_RETENTION_DAYS", 0)
+    os.utime(fresh, (now - 900 * 86400,) * 2)
+    assert watcher.prune_local_timelapses(now=now) == []
+
+
+def test_timelapse_marker_carries_exact_job_key(tmp_path, monkeypatch):
+    remote = "Slim-12oz-Can-Holder-Red-Bull_plate_1_" + "ab" * 32 + ".gcode"
+    monkeypatch.setattr(watcher, "STATE_PATH", tmp_path / "state.json")
+    watcher.save_state({"job_key": f"gcodes/{remote}"})
+    marker = watcher._timelapse_marker(f"gcodes/{remote}")
+    assert marker == remote
+    assert "_" in marker and " " not in marker
+    assert watcher._timelapse_job_key(marker) == f"gcodes/{remote}"
+    assert watcher._timelapse_job_key(Path(remote).stem) == ""
+    assert watcher._timelapse_job_key("stand") == ""
+
+
+class _InlineThread:
+    def __init__(self, target=None, args=(), **kwargs):
+        self._target, self._args = target, args
+
+    def start(self):
+        self._target(*self._args)
+
+
+def test_listener_attaches_local_timelapse_only_when_available(monkeypatch):
+    posted = []
+    monkeypatch.setattr(mel, "log", lambda line: None)
+    monkeypatch.setattr(mel, "post", lambda message: posted.append(message) or True)
+    monkeypatch.setattr(mel.announcer, "main", lambda: print("TIMELAPSE_POSTPROCESS:stand.gcode\nPrint complete: Stand"))
+    monkeypatch.setattr(mel.announcer, "_timelapse_job_key", lambda token: "stand.gcode" if token == "stand.gcode" else "")
+    monkeypatch.setattr(mel.announcer, "archive_completed_timelapse", lambda key: "/archive/timelapses/stand.mp4")
+    monkeypatch.setattr(mel.threading, "Thread", _InlineThread)
+    monkeypatch.setattr(mel.announcer, "materialize_archived_timelapse", lambda path: "/cache/stand.mp4")
+    mel.run_announcer("test")
+    assert posted == ["Print complete: Stand\nMEDIA:/cache/stand.mp4"]
+    assert "MEDIA:/volume1" not in posted[0]
+    posted.clear()
+    monkeypatch.setattr(mel.announcer, "archive_completed_timelapse", lambda key: None)
+    mel.run_announcer("test")
+    assert posted == ["Print complete: Stand"]
+
+
+def test_listener_combines_completion_and_timelapse(monkeypatch):
+    posted = []
+    monkeypatch.setattr(mel, "log", lambda line: None)
+    monkeypatch.setattr(mel, "post", lambda message: posted.append(message) or True)
+    monkeypatch.setattr(mel.announcer, "main", lambda: print("TIMELAPSE_POSTPROCESS:stand.gcode\nPrint complete: Stand"))
+    monkeypatch.setattr(mel.announcer, "_timelapse_job_key", lambda token: "stand.gcode" if token == "stand.gcode" else "")
+    monkeypatch.setattr(mel.announcer, "archive_completed_timelapse", lambda key: "/archive/timelapses/stand.mp4")
+    monkeypatch.setattr(mel.threading, "Thread", _InlineThread)
+    monkeypatch.setattr(mel.announcer, "materialize_archived_timelapse", lambda path: "/cache/stand.mp4")
+    mel.run_announcer("test")
+    assert posted == ["Print complete: Stand\nMEDIA:/cache/stand.mp4"]
+
+
+def test_listener_shrinks_video_and_never_drops_completion_on_rejected_upload(monkeypatch):
+    posted, results = [], [False, True]
+    monkeypatch.setattr(mel, "log", lambda line: None)
+    monkeypatch.setattr(mel, "post", lambda message: posted.append(message) or results.pop(0))
+    monkeypatch.setattr(mel.announcer, "main", lambda: print("TIMELAPSE_POSTPROCESS:stand.gcode\nPrint complete: Stand"))
+    monkeypatch.setattr(mel.announcer, "_timelapse_job_key", lambda token: "stand.gcode")
+    monkeypatch.setattr(mel.announcer, "archive_completed_timelapse", lambda key: "/volume1/x/stand.mp4")
+    monkeypatch.setattr(mel.threading, "Thread", _InlineThread)
+    monkeypatch.setattr(mel.announcer, "materialize_archived_timelapse", lambda path: "/cache/stand.mp4")
+    monkeypatch.setattr(mel, "discord_sized_video", lambda path: "/cache/stand.discord.mp4")
+    mel.run_announcer("test")
+    assert posted[0] == "Print complete: Stand\nMEDIA:/cache/stand.discord.mp4"
+    assert posted[1].startswith("Print complete: Stand\n") and "MEDIA:" not in posted[1]
+
+
+def test_discord_sized_video_passes_small_files_through(tmp_path):
+    small = tmp_path / "a.mp4"
+    small.write_bytes(b"x" * 10)
+    assert mel.discord_sized_video(small, max_bytes=100) == small
+
+
+def test_materialize_archived_timelapse_uses_local_media_cache(tmp_path, monkeypatch):
+    calls = []
+    monkeypatch.setattr(watcher, "MEDIA_DIR", tmp_path / "cache")
+    monkeypatch.setattr(watcher, "TIMELAPSE_ARCHIVE_DIR", "/archive/timelapses")
+    monkeypatch.setattr(watcher, "TIMELAPSE_SSH_KEY", "")
+    monkeypatch.setattr(watcher, "TIMELAPSE_ARCHIVE_HOST", "archive.test")
+    monkeypatch.setattr(watcher.shutil, "which", lambda name: name)
+
+    def fake_run(command, **kwargs):
+        calls.append(command)
+        kwargs["stdout"].write(b"mp4")
+
+    monkeypatch.setattr(watcher.subprocess, "run", fake_run)
+    result = watcher.materialize_archived_timelapse("/archive/timelapses/stand.mp4")
+    assert result == tmp_path / "cache" / "stand.mp4"
+    assert result.read_bytes() == b"mp4"
+    assert calls[0][-2] == "archive.test"
+    assert calls[0][-1] == "cat /archive/timelapses/stand.mp4"
+    with pytest.raises(ValueError):
+        watcher.materialize_archived_timelapse("/other/stand.mp4")
+
+
+@pytest.mark.parametrize("final,verb", [("cancelled", "Print cancelled"), ("error", "Print stopped with an error"), ("complete", "Print complete")])
+def test_listener_terminal_event_has_single_notification_owner(job, monkeypatch, final, verb):
+    posted = _drive_listener(monkeypatch, job.hashed, ["standby", "printing", final])
+    # The separate cancel maintenance nudge is not a terminal notification.
+    posted = [p for p in posted if not p.startswith("A print was cancelled.")]
+    if final == "complete":
+        assert len(posted) == 1 and posted[0].startswith("Print started:")
+    # Cancellation is acknowledged immediately, then the detailed Klipper report
+    # arrives separately once diagnostics finish. The maintenance nudge is distinct.
+    elif final == "cancelled":
+        # Cancellation is acknowledged immediately, then detailed Klipper diagnostics
+        # arrive separately once collection finishes.
+        assert len(posted) == 3 and verb in posted[1] and verb in posted[2] and TITLE in posted[2]
+    else:
+        assert len(posted) == 2 and verb in posted[1] and TITLE in posted[1]
+    assert not any(HEX.search(p) for p in posted)
+
+
+def test_listener_unknown_file_still_never_posts_hash(tmp_path, monkeypatch):
+    monkeypatch.setattr(summary, "ARCHIVE", tmp_path / "empty")
+    monkeypatch.setattr(summary, "CONTEXT_PATH", tmp_path / "none.json")
+    name = "mystery_part_" + "ab" * 32 + ".gcode"
+    posted = _drive_listener(monkeypatch, name, ["standby", "printing"])
+    assert posted and not HEX.search(posted[0]) and "mystery part" in posted[0]
+
+
+def test_announcer_completion_uses_model_title_not_hash(job, tmp_path, monkeypatch, capsys):
+    monkeypatch.setattr(records, "PRINTS_DIR", tmp_path / "Prints")
+    monkeypatch.setattr(records, "PLANS_DIR", tmp_path / "Plans")
+    monkeypatch.setattr(watcher, "STATE_PATH", tmp_path / "state.json")
+    monkeypatch.setattr(watcher, "PROFILE_HOME", tmp_path / "profile")
+    context_path = tmp_path / "context.json"
+    context_path.write_text(json.dumps({"jobs": {job.hashed: {"selected_option": records.NATIVE_PRINT_OPTIONS[0],
+                                                              "discord_session_id": "s1", "discord_chat_id": "1"}}}))
+    monkeypatch.setenv("PRINT_BITCH_CONTEXT_PATH", str(context_path))
+    file_row = {"path": job.hashed, "display": job.hashed}
+    responses = iter((
+        {"job": {"file": file_row}, "progress": {"completion": 25}, "state": "Printing", "stats": {"state": "printing"}},
+        {"job": {"file": file_row}, "progress": {"completion": 100}, "state": "Completed",
+         "stats": {"state": "complete", "print_duration": 30}},
+    ))
+    monkeypatch.setattr(watcher, "get_job", lambda: next(responses))
+    monkeypatch.setattr(watcher, "_queued_jobs", lambda: [])  # the original asked the live printer's queue
+    monkeypatch.setattr(watcher, "get_file_metadata", lambda filename: {"slicer_settings": {"layer_height": 0.2}})
+    monkeypatch.setattr(watcher, "get_active_spool", lambda: {})
+    monkeypatch.setattr(watcher, "write_and_verify_print_memory", lambda *args: (True, "memory recorded"))
+    monkeypatch.setattr(watcher.time, "time", lambda: 12345.0)
+    assert watcher.main() == 0
+    capsys.readouterr()
+    assert watcher.main() == 0
+    out = capsys.readouterr().out
+    posted = "\n".join(line for line in out.splitlines() if not line.startswith("TIMELAPSE_POSTPROCESS:"))
+    marker = next(line for line in out.splitlines() if line.startswith("TIMELAPSE_POSTPROCESS:"))
+    assert marker == f"TIMELAPSE_POSTPROCESS:{job.hashed}"
+    assert "Print complete" in posted and TITLE in posted
+    assert "Print timelapse archived" not in posted
+    assert "MEDIA:" not in posted and "Expected model" not in posted
+    state = json.loads((tmp_path / "state.json").read_text())
+    assert state["reset_armed_at"] == 12345.0
+    assert state["memory_verified"] is True
+    assert not HEX.search(posted)
+    record = next((tmp_path / "Prints").glob("*.md")).read_text()
+    assert TITLE in record
+
+
+def test_print_record_title_resolves_from_hashed_name(job, monkeypatch):
+    assert records._resolved_title(job.hashed) == TITLE
+
+
+def test_slice_summary_is_deterministic_and_complete(job):
+    from datetime import datetime
+    now = datetime(2026, 10, 6, 21, 0, tzinfo=summary.ET)
+    first = summary.format_slice_summary(job.data, now=now)
+    assert first == summary.format_slice_summary(job.data, now=now)
+    lines = first.splitlines()
+    assert lines[0] == f"Sliced: {TITLE}"
+    assert lines[1] == "Plate 1: Stand | Black PLA, slot 1 | 12.3 g | 1h 30m"
+    assert lines[2] == "Plate 2: Clip | White PLA, slot 2 | 12.3 g | 40m"
+    assert lines[3] == "Total filament: 24.6 g"
+    assert lines[4] == "Estimated total: ~2h 15m (printing: 2h 10m)"
+    assert lines[5] == "Approx. finish if started now: 11:15 PM Tue ET"
+    assert not HEX.search(first)
+    assert summary.plate_payload("started", job.hashed) == {
+        "model": TITLE, "plate": 1, "parts": ["Stand"], "slot": 1,
+        "color": "Black", "material": "PLA", "filament_g": 12.3,
+        "estimated_seconds": 5400,
+    }
+
+
+def test_slice_summary_includes_auto_scale(job):
+    job.data['auto_scale'] = {'factor': 25.4, 'reason': 'inch units',
+                              'original_mm': [2, 3, 4], 'final_mm': [50.8, 76.2, 101.6]}
+    text = summary.format_slice_summary(job.data)
+    assert 'Auto-scale: 2 x 3 x 4 mm treated as inches, scaled 25.4x -> 50.8 x 76.2 x 101.6 mm' in text
+
+
+# ---- D: the print-feedback plugin against the real DiscordAdapter.send signature ----
+
+class StrictAdapter:
+    def __init__(self):
+        self.sent = []
+
+    async def send(self, chat_id, content, reply_to=None, metadata=None):
+        self.sent.append(content)
+        return S(success=True)
+
+
+def test_receipt_hook_sends_with_content_keyword(monkeypatch):
+    plugin = _load("print_feedback_msgs", HERE.parents[1] / "plugins/print-feedback/__init__.py")
+    adapter = StrictAdapter()
+    src = S(platform=S(value="discord"), profile="3dprinting", user_id="42", chat_id="c", thread_id=None)
+    gateway = S(_is_user_authorized_for_source=lambda s: True, _delivery_adapter_for=lambda s: adapter)
+    event = S(source=src, text="Approved. Bed is clear.", message_id="m1", internal=False)
+    errors = []
+    monkeypatch.setattr(plugin.logger, "exception", lambda *a, **k: errors.append(a))
+    asyncio.run(plugin.receive_ack(event, gateway))
+    assert errors == []
+    assert adapter.sent and "bed-clear" in adapter.sent[0]
+
+
+def test_every_plugin_and_intake_send_uses_content_keyword():
+    """Static guard on the real sources: no adapter.send(text=...) anywhere in the call paths."""
+    core = HERE.parents[1] / "print_buddy/core"
+    for path in (PLUGIN, core / "link_intake.py", core / "prepared_intake.py"):
+        source = path.read_text()
+        for call in re.findall(r"adapter\.send\((?:[^()]|\([^()]*\))*\)", source):
+            assert "text=" not in call, f"{path.name}: {call[:80]}"
+
+
+def test_model_link_receipt_is_sent_before_slow_intake(monkeypatch):
+    """A dropped link gets its 'Got the link' reply before download/inventory starts."""
+    import types
+    plugin = _load("print_feedback_ackfirst", HERE.parents[1] / "plugins/print-feedback/__init__.py")
+    adapter = StrictAdapter()
+    order = []
+
+    async def fake_prepare(event, adapter_, state, root, reuse=None):
+        order.append(("intake", list(adapter_.sent)))
+        return {"action": "skip", "reason": "test"}
+
+    fake = types.ModuleType("prepared_intake")
+    fake.prepare_link = fake_prepare
+    fake.model_file = lambda e: None
+    fake.reprint_request = lambda t: False
+    fake.last_job = lambda: None
+    import print_buddy.core as core_pkg
+    monkeypatch.setitem(sys.modules, "print_buddy.core.prepared_intake", fake)
+    monkeypatch.setattr(core_pkg, "prepared_intake", fake, raising=False)
+    monkeypatch.setattr(core_pkg, "printer_state", types.SimpleNamespace(load=lambda: {}), raising=False)
+    src = S(platform=S(value="discord"), profile="3dprinting", user_id="42", chat_id="c", thread_id=None)
+    gateway = S(_is_user_authorized_for_source=lambda s: True, _delivery_adapter_for=lambda s: adapter,
+                _session_key_for_source=lambda s: "k")
+    event = S(source=src, text="https://makerworld.com/en/models/123", message_id="m9", internal=False, metadata={})
+    asyncio.run(plugin.model_link_dispatch(event, gateway))
+    assert order and order[0][1], "receipt must be delivered before intake starts"
+    assert order[0][1][0].startswith("Got the link")
+    # receive_ack must not double-send for the same handled message.
+    asyncio.run(plugin.receive_ack(event, gateway))
+    assert len(adapter.sent) == 1

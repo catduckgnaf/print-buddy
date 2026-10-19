@@ -62,12 +62,12 @@ class InstallerTests(unittest.TestCase):
         self.assertIn(str(self.home), config)
         for name in ("AGENTS.md", "SOUL.md", "MEMORY.md", "profile.yaml", "status_phrases.yaml"):
             self.assertTrue((self.home / name).is_file(), name)
-        unit = (self.units / "hermes-print-buddy-listener.service").read_text()
+        unit = (self.units / "hermes-3dprinting-moonraker-listener.service").read_text()
         self.assertIn(f"WorkingDirectory={ROOT}", unit)
         self.assertIn("ExecStart=/opt/venv/bin/python -m print_buddy.hermes.moonraker_event_listener", unit)
         self.assertIn(f"HERMES_HOME={self.home}", unit)
         self.assertNotIn("{{", unit)
-        self.assertTrue((self.units / "hermes-print-buddy-listener.service.d/10-restart-with-gateway.conf").is_file())
+        self.assertTrue((self.units / "hermes-3dprinting-moonraker-listener.service.d/10-restart-with-gateway.conf").is_file())
         self.assertEqual("--user daemon-reload", self.log.read_text().strip())
 
     def test_second_run_is_idempotent(self):
@@ -91,17 +91,17 @@ class InstallerTests(unittest.TestCase):
 
     def test_overlay_is_layered_over_profile_and_units(self):
         self.run_installer()
-        (self.overlay / "systemd/hermes-print-buddy-listener.service.d").mkdir(parents=True)
+        (self.overlay / "systemd/hermes-3dprinting-moonraker-listener.service.d").mkdir(parents=True)
         (self.overlay / "SOUL.md").write_text("my private soul\n")
         (self.overlay / "README.md").write_text("not installed\n")
         (self.overlay / ".env").write_text("TOKEN=x\n")
-        (self.overlay / "systemd/hermes-print-buddy-listener.service.d/90-local.conf").write_text("[Service]\nEnvironment=X=1\n")
+        (self.overlay / "systemd/hermes-3dprinting-moonraker-listener.service.d/90-local.conf").write_text("[Service]\nEnvironment=X=1\n")
         self.run_installer()
         self.assertEqual("my private soul\n", (self.home / "SOUL.md").read_text())
         self.assertEqual("TOKEN=x\n", (self.home / ".env").read_text())
         self.assertFalse((self.home / "README.md").exists())
         self.assertTrue(list(self.home.glob("SOUL.md.bak-*")), "generic SOUL.md is backed up, not lost")
-        self.assertIn("Environment=X=1", (self.units / "hermes-print-buddy-listener.service.d/90-local.conf").read_text())
+        self.assertIn("Environment=X=1", (self.units / "hermes-3dprinting-moonraker-listener.service.d/90-local.conf").read_text())
         before = self.tree()
         self.run_installer()
         self.assertEqual(before, self.tree(), "overlay reapplied without new backups")

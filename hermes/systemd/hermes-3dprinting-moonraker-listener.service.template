@@ -1,5 +1,5 @@
 [Unit]
-Description=Print Buddy Moonraker event listener (no AI, replaces polling)
+Description=Hermes 3dprinting Moonraker event listener (no AI, replaces polling; Print Buddy)
 After=network-online.target
 Wants=network-online.target
 

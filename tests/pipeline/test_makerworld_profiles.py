@@ -1,0 +1,44 @@
+import json
+import sys
+from pathlib import Path
+
+HERE = Path(__file__).resolve().parent
+
+from print_buddy.core import makerworld_profiles as profiles
+from print_buddy.core import model_job
+
+
+def test_902337_one_profile_one_plate_not_23_designs(monkeypatch):
+    fixture = json.loads((HERE / 'test-data/makerworld_902337.json').read_text())
+    monkeypatch.setattr(model_job, 'maker_headers', lambda: {})
+    monkeypatch.setattr(model_job, 'request_json', lambda *args, **kwargs: fixture)
+    job = model_job.maker_inventory('https://makerworld.com/en/models/902337-raskog-ikea-large-bin')
+    assert len(job['sources']) == 1
+    row = job['sources'][0]
+    assert row['instance_id'] == 861646
+    assert len(row['plates']) == 1
+    assert sum(plate['objects'] for plate in row['plates']) == 0
+    assert row['recommended_profile']['printer'] == 'A1'
+    assert row['recommended_profile']['nozzle_mm'] == 0.4
+
+
+def test_profile_fragment_selects_exact_instance():
+    rows = [
+        {'instance_id': 1, 'title': 'small', 'plates': [], 'compatibility': {'devProductName': 'A1 mini', 'nozzleDiameter': 0.4}},
+        {'instance_id': 861646, 'title': 'linked profile', 'plates': [{'name': 'plate 1'}], 'compatibility': {'devProductName': 'X1 Carbon', 'nozzleDiameter': 0.4}},
+    ]
+    profiles.annotate(rows)
+    selected = profiles.choose(rows, '861646')
+    assert selected is rows[1]
+    assert profiles.selection_summary(selected) == 'linked profile | X1 Carbon | 1 plate(s)'
+
+
+def test_a1_mini_first_and_nozzle_and_plate_penalties():
+    rows = [
+        {'instance_id': 1, 'title': 'large nozzle', 'plates': [{'name': 'a'}, {'name': 'b'}],
+         'compatibility': {'devProductName': 'A1', 'nozzleDiameter': 0.8}},
+        {'instance_id': 2, 'title': 'mini', 'plates': [{'name': 'a'}],
+         'compatibility': {'devProductName': 'A1 mini', 'nozzleDiameter': 0.4}},
+    ]
+    profiles.annotate(rows)
+    assert profiles.choose(rows) is rows[1]

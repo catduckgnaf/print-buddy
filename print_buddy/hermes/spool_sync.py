@@ -184,12 +184,16 @@ def _slot_record(slot: int, spool: dict[str, Any], old: dict[str, Any] | None, n
     display_name = " ".join(x for x in (color, material) if x)
     # An exact material name has no color token. Do not store the material as the color.
     stored_color = color.lower() if color else (old or {}).get("color") or ""
+    # A null/invalid Spoolman color is not permission to reuse cached color: that
+    # can silently assign another spool's swatch to the physical slot.
+    hex_code = screen_hex(filament.get("color_hex") or filament.get("multi_color_hexes"))
+    if hex_code is None:
+        raise SpoolError(f"slot {slot} spool #{spool.get('id')} has no valid Spoolman color_hex; correct it in Spoolman, then run /spool sync")
     return {
         "slot": slot,
         "material": material,
         "color": stored_color,
-        "hex": screen_hex(filament.get("color_hex") or filament.get("multi_color_hexes"))
-        or (old or {}).get("hex") or "FFFFFF",
+        "hex": hex_code,
         "spoolman_id": int(spool["id"]),
         "name": display_name or f"Spool #{spool['id']}",
         "remaining_grams": round(float(remaining), 1) if isinstance(remaining, (int, float)) else None,

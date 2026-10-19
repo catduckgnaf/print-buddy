@@ -90,3 +90,9 @@ def test_split_count_copies():
         pc.split_count("part x50")
     # Normal title ending in number is NOT parsed as count
     assert pc.split_count("funko shelf v2") == ("funko shelf v2", 1)
+
+
+def test_slot_record_missing_color_fails_closed_instead_of_reusing_old_color():
+    import pytest
+    with pytest.raises(spool_sync.SpoolError, match=r"slot 2 spool #7.*correct it in Spoolman.*run /spool sync"):
+        spool_sync._slot_record(2, {"id": 7, "filament": {"name": "Coffee PLA+", "material": "PLA+", "color_hex": None}}, {"hex": "F95D73"}, "test")

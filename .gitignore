@@ -4,3 +4,4 @@ __pycache__/
 .pytest_cache/
 config/local.toml
 config/after-update.sh
+.slicer-work/

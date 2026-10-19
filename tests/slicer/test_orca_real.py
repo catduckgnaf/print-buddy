@@ -13,6 +13,9 @@ from print_buddy import settings
 from print_buddy.core import slice_guard as sg
 
 REAL = os.environ.get("PRINT_BUDDY_REAL_SLICER") == "1"
+# Flatpak Orca has a private /tmp and cannot read host temp files. Work inside the checkout,
+# which sits under $HOME on the home box and the CI runner, where the sandbox can see it.
+WORK = settings.ROOT / ".slicer-work"
 
 
 def write_cube(path, size):
@@ -33,7 +36,8 @@ def write_cube(path, size):
 @unittest.skipUnless(REAL, "set PRINT_BUDDY_REAL_SLICER=1 to slice with the real Orca CLI")
 class OrcaRealSliceTests(unittest.TestCase):
     def setUp(self):
-        self.tmp = tempfile.TemporaryDirectory()
+        WORK.mkdir(exist_ok=True)
+        self.tmp = tempfile.TemporaryDirectory(dir=WORK)
         self.dir = Path(self.tmp.name)
         self.settings = settings.current()
         templates = self.settings["orca"]["templates"]
@@ -51,7 +55,9 @@ class OrcaRealSliceTests(unittest.TestCase):
                    "--arrange", "1", "--orient", "0", "--ensure-on-bed", *extra,
                    "--allow-newer-file", "--slice", "0", "--outputdir", str(out), str(stl)]
         result = subprocess.run(command, capture_output=True, text=True, timeout=600)
-        print(f"\n$ {' '.join(command)}\nexit {result.returncode}\n{(result.stdout + result.stderr)[-3000:]}")
+        log = result.stdout + result.stderr
+        print(f"\n$ {' '.join(command)}\nexit {result.returncode}\n{log[-3000:]}")
+        self.assertNotIn("No such file", log, "Orca could not read the input; the sandbox cannot see this path")
         return result, out
 
     def guard(self, out):

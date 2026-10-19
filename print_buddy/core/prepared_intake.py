@@ -68,14 +68,26 @@ def write_split_plan(job_path, job, manifest, gcodes, plan_id, plans_dir=None):
     names = {p['key']: re.sub(r'\.(stl|3mf)$', '', p['name'], flags=re.I) for p in manifest['parts']}
     rows = {str(Path(r['gcode']).resolve()): r for r in job.get('derived_plates') or [] if r.get('gcode')}
     parts = []
+    # Per-plate estimates in derived_plates order (plates_of keeps that order), keyed by G-code.
+    by_gcode = {}
+    derived = [r for r in job.get('derived_plates') or []]
+    for r, est in zip(derived, _external.load('discord_print_summary').plate_estimates(job)):
+        if r.get('gcode'):
+            by_gcode[str(Path(r['gcode']).resolve())] = est
     for n, g in enumerate(gcodes, 1):
         row = rows.get(str(Path(g).resolve()), {})
+        est = by_gcode.get(str(Path(g).resolve())) or {}
         label = ', '.join(names.get(k, k) for k in row.get('part_keys') or []) or Path(g).stem
         if row.get('slot') is not None:
             label += f" (slot {row['slot']})"
         parts.append({'id': f'plate{n}', 'label': label, 'plate': n, 'quantity': 1, 'completed_quantity': 0,
                       'status': 'planned', 'gcode_file': Path(g).name, 'job_json': str(Path(job_path).resolve()),
                       'gcode_path': str(Path(g).resolve())})
+        # One part per plate, so the part and its plate share the plate's G-code time; unknown stays absent.
+        if est.get('seconds') is not None:
+            parts[-1]['estimated_part_seconds'] = parts[-1]['plate_estimate_seconds'] = est['seconds']
+        if est.get('filament_g') is not None:
+            parts[-1]['estimated_filament_g'] = est['filament_g']
     merge = job.get('plate_merge') or {}
     reason = merge.get('reason') or ('the chosen slots were sliced as separate single-color plates'
                                      if not merge else 'the merge planner could not place them on one bed')
@@ -867,14 +879,11 @@ async def prepare_link(event, adapter, state, root, timeout=300, reuse=None):
                                content=f'Bambu Studio sliced it because OrcaSlicer failed: {reason}.',
                                metadata=metadata)
         has_dur_q = has_duration_question(getattr(event, 'text', ''))
+        breakdown = print_summary.format_estimate_breakdown(sliced)
         if has_dur_q and gcodes:
-            first_gcode = Path(gcodes[0])
-            if first_gcode.is_file():
-                dur_s = mj.gcode_estimate_s(first_gcode.read_text())
-                if dur_s is not None:
-                    dur_ans = (f"Estimated duration for {chosen_quantity} {'copy' if chosen_quantity == 1 else 'copies'}: "
-                               f"{mj.human_dur(dur_s)} printing (warmup ~5 min separate). Total: ~{mj.human_dur(dur_s + 300)}.")
-                    await adapter.send(chat_id=source.chat_id, content=dur_ans, metadata=metadata)
+            # Every plate counts: a split job is the sum of its plates, not plate 1.
+            await adapter.send(chat_id=source.chat_id, metadata=metadata,
+                               content=f"Estimated duration for {chosen_quantity} {'copy' if chosen_quantity == 1 else 'copies'}:\n" + breakdown)
         first = Path(gcodes[0])
         exact_job, exact_plate = print_summary.find_job(str(first))
         if exact_job is None or exact_plate is None:
@@ -900,7 +909,7 @@ async def prepare_link(event, adapter, state, root, timeout=300, reuse=None):
             plan = write_split_plan(jp, sliced, manifest, gcodes, plan_id)
             parts = plan['parts']
             listing = '\n'.join(f"- Plate {p['plate']}: {p['label']}" for p in parts)
-            notice = (f"These print as {len(parts)} separate plates because {plan['split_reason']}.\n{listing}\n"
+            notice = (f"These print as {len(parts)} separate plates because {plan['split_reason']}.\n{listing}\n{breakdown}\n"
                       f"Only plate 1 starts from the next button. When it finishes and the bed is clear, type "
                       f"`/print-next {plan_id}` for a Start next plate button.")
             receipt.update(split_plan=plan_id, split_reason=plan['split_reason'])
@@ -911,6 +920,8 @@ async def prepare_link(event, adapter, state, root, timeout=300, reuse=None):
             # A start button bound to this exact plate, same machinery as /print-next.
             question = (f"Start plate 1 of {len(gcodes)} ({parts[0]['label']}) now? Starting uploads and prints immediately."
                         if split else 'Start this exact plate? Starting uploads and prints immediately.')
+            if not split:
+                question = breakdown + '\n' + question
             if slot_lines:
                 question = slot_lines + '\n' + question
             go = await _ask(adapter, source, key, question, [print_next.START_LABEL, print_next.CANCEL_LABEL], timeout)

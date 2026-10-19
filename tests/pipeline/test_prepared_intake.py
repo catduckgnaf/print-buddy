@@ -468,7 +468,7 @@ def test_quantity_buttons_choose_midpoint_and_answer_duration(env, monkeypatch):
     final = next(q for q in adapter.questions if q['choices'] and q['choices'][0].startswith('Slice and print'))
     assert '2 copies' in final['question'] and final['choices'][0].startswith('Slice and print')
     assert calls == [2]
-    assert any('2 copies' in text and '2h 11m' in text and 'warmup ~5 min' in text
+    assert any('2 copies' in text and '~2h 11m printing' in text and '+~5 min warmup' in text
                for text in adapter.sent)
     assert env.starts == []
 

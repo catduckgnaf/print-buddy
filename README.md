@@ -179,7 +179,7 @@ To install, run this on the printer console:
 ```gcode
 ENABLE_PLUGIN name=print-buddy
 ```
-Then add your slot assignments to `mod_data/user.cfg` in a `[gcode_macro _PRINT_BUDDY_VARS]` block and run `FIRMWARE_RESTART`. Moonraker update manager entry:
+Then add your slot assignments to `mod_data/user.cfg` in a `[gcode_macro _PRINT_BUDDY_VARS]` block and run `FIRMWARE_RESTART`. Moonraker update manager entry, in `mod_data/user.moonraker.conf`:
 ```ini
 [update_manager print-buddy]
 type: git_repo

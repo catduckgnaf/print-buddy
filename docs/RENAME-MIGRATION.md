@@ -24,10 +24,23 @@ To keep the old bot name in Discord and in the roast persona, set `[discord] bot
 
 Do this while the printer is idle. These steps run on the printer, so the script cannot do them.
 
-1. Disable the old plugin: `DISABLE_PLUGIN name=print-bitch`. ZMod runs the plugin's `uninstall.sh` and removes the plugin directory. If your ZMod has no such command, delete `mod_data/plugins/print-bitch` by hand.
-2. Enable the new one: `ENABLE_PLUGIN name=print-buddy`. `install.sh` prints the reminder to copy the slot values.
-3. In `mod_data/user.cfg`, rename `[gcode_macro _PRINT_BITCH_VARS]` to `[gcode_macro _PRINT_BUDDY_VARS]`. The values stay as they are.
-4. In `moonraker.conf`, replace `[update_manager print-bitch]` with `[update_manager print-buddy]` and set `path: /root/printer_data/config/mod_data/plugins/print-buddy`.
+1. Disable the old plugin: `DISABLE_PLUGIN name=print-bitch` (ZMod runs its `uninstall.sh`).
+2. In `mod_data/user.moonraker.conf`, replace the `[update_manager print-bitch]` section with:
+   ```ini
+   [update_manager print-buddy]
+   type: git_repo
+   channel: dev
+   path: /root/printer_data/config/mod_data/plugins/print-buddy
+   origin: https://github.com/catduckgnaf/print-buddy.git
+   is_system_service: False
+   primary_branch: main
+   managed_services: klipper
+   ```
+   Restart Moonraker so it clones the repo into `plugins/print-buddy`, then delete the old `plugins/print-bitch` folder.
+3. Enable the new one: `ENABLE_PLUGIN name=print-buddy`.
+4. In `mod_data/user.cfg`, rename `[gcode_macro _PRINT_BITCH_VARS]` to `[gcode_macro _PRINT_BUDDY_VARS]`. The values stay as they are.
 5. Run `FIRMWARE_RESTART`, then `PRINT_BUDDY SLOT=1` to check the macro answers.
+
+ZMod's external plugin list links this repo; if it registered the plugin as `print-bitch`, ask for the entry to become `print-buddy` so fresh installs get the new name.
 
 The macro is now `PRINT_BUDDY`; update any gcode or slicer start macros that call `PRINT_BITCH`.

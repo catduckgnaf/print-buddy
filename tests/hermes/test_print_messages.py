@@ -140,17 +140,59 @@ def test_listener_start_roast_is_appended_after_canonical_details(job, monkeypat
     assert posted[0].endswith(f"\n\nRoast for {TITLE}")
 
 
-def test_print_now_start_claim_does_not_suppress_rich_start_announcement(job, monkeypatch):
+def _claimed_listener(monkeypatch, tmp_path, job, *, message_id="777", edit_ok=True, claim_ts=1000):
+    from print_buddy.hermes import print_alert_buttons as pab, print_next
+    monkeypatch.setattr(print_next, "START_MESSAGES", tmp_path / "start_messages.json")
+    if message_id:
+        print_next.record_start_message(job.hashed, message_id)
+    monkeypatch.setattr(mel, "start_claim_time", lambda name, now=None: claim_ts)
+    monkeypatch.setattr(mel, "NOTIFICATION_STATE", tmp_path / "notifications.json")
+    monkeypatch.setattr(mel, "_profile_env_value", lambda name: "bot-token")
+    monkeypatch.setattr(mel.announcer, "DISCORD_CHAT_ID", "chan1")
+    edits = []
+    monkeypatch.setattr(pab, "edit_message", lambda token, chan, mid, text: edits.append((mid, text)) or edit_ok)
+    return edits
+
+
+def test_claimed_start_edits_existing_message_and_posts_no_second_start(job, tmp_path, monkeypatch):
+    edits = _claimed_listener(monkeypatch, tmp_path, job)
     posted = _drive_listener(monkeypatch, job.hashed, ["standby", "printing"], claimed=True)
-    assert len(posted) == 1
-    text = posted[0]
-    assert text.startswith("Print started:")
-    assert TITLE in text
-    assert "Parts: Stand" in text and "Plate 1 of 2" in text
-    assert "Slot 1: Black PLA" in text
-    assert f"Estimated total: ~1h 35m (printing: 1h 30m)" in text
-    assert "Approx. finish:" in text and "ET" in text
+    assert posted == []
+    assert len(edits) == 1 and edits[0][0] == "777"
+    text = edits[0][1]
+    assert TITLE in text and "Approx. finish:" in text and "Warmup complete, now printing." in text
     assert not HEX.search(text)
+
+
+def test_claimed_start_edit_failure_posts_distinct_short_line(job, tmp_path, monkeypatch):
+    edits = _claimed_listener(monkeypatch, tmp_path, job, edit_ok=False)
+    posted = _drive_listener(monkeypatch, job.hashed, ["standby", "printing"], claimed=True)
+    assert len(edits) == 1 and len(posted) == 1
+    assert posted[0].startswith("Warmup done, now printing") and TITLE in posted[0]
+    assert "Print started" not in posted[0] and "\n" not in posted[0]
+
+
+def test_claimed_start_without_message_id_posts_short_line_not_second_start(job, tmp_path, monkeypatch):
+    edits = _claimed_listener(monkeypatch, tmp_path, job, message_id=None)
+    posted = _drive_listener(monkeypatch, job.hashed, ["standby", "printing"], claimed=True)
+    assert edits == [] and len(posted) == 1
+    assert posted[0].startswith("Warmup done, now printing") and "Print started" not in posted[0]
+
+
+def test_unclaimed_start_still_gets_the_normal_post(job, tmp_path, monkeypatch):
+    edits = _claimed_listener(monkeypatch, tmp_path, job)
+    monkeypatch.setattr(mel, "start_claim_time", lambda name, now=None: None)
+    posted = _drive_listener(monkeypatch, job.hashed, ["standby", "printing"], claimed=False)
+    assert edits == [] and len(posted) == 1 and posted[0].startswith("Print started:")
+    assert "Parts: Stand" in posted[0] and "Approx. finish:" in posted[0]
+
+
+def test_reconnect_replay_of_claimed_start_does_not_repost_or_reedit(job, tmp_path, monkeypatch):
+    edits = _claimed_listener(monkeypatch, tmp_path, job)
+    first = _drive_listener(monkeypatch, job.hashed, ["standby", "printing"], claimed=True)
+    # A fresh listener after a websocket reconnect replays standby -> printing for the same job.
+    replay = _drive_listener(monkeypatch, job.hashed, ["standby", "printing"], claimed=True)
+    assert first == [] and replay == [] and len(edits) == 1
 
 
 def test_timelapse_selection_requires_plugin_filename_and_orders_newest(monkeypatch):

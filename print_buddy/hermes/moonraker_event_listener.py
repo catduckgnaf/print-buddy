@@ -732,18 +732,50 @@ class FilamentInsertionMonitor:
         return stable
 
 
-def start_claimed(filename, now=None):
-    """True when model_job.py print-now already owns this job's start announcement."""
+def start_claim_time(filename, now=None):
+    """When print-now claimed this job's start announcement, or None when unclaimed/expired."""
     now = time.time() if now is None else now
     try:
         claims = json.loads(START_CLAIMS.read_text())
     except (OSError, ValueError):
-        return False
+        return None
     if not isinstance(claims, dict):
-        return False
-    name = Path(str(filename or "")).name
-    ts = claims.get(name)
-    return isinstance(ts, (int, float)) and 0 <= now - ts < START_CLAIM_TTL_S
+        return None
+    ts = claims.get(Path(str(filename or "")).name)
+    return ts if isinstance(ts, (int, float)) and 0 <= now - ts < START_CLAIM_TTL_S else None
+
+
+def start_claimed(filename, now=None):
+    """True when model_job.py print-now already owns this job's start announcement."""
+    return start_claim_time(filename, now) is not None
+
+
+def announce_warmup_done(filename):
+    """A claimed start already has its one "Print started" post: edit it, never post another.
+
+    Edits the intake's message in place when its id was recorded; otherwise (or if Discord
+    refuses the edit) posts one short, distinct line that is not a second "Print started".
+    """
+    text = print_summary.format_event("started", filename)
+    text += "\nWarmup complete, now printing."
+    message_id = None
+    try:
+        from . import print_next
+        message_id = print_next.take_start_message(filename)
+    except Exception as exc:
+        log(f"start message lookup failed file={filename!r}: {exc!r}")
+    if message_id:
+        try:
+            from . import print_alert_buttons as pab
+            if pab.edit_message(_profile_env_value("DISCORD_BOT_TOKEN"), announcer.DISCORD_CHAT_ID,
+                                message_id, text):
+                log(f"start message edited id={message_id} file={filename!r}")
+                return True
+        except Exception as exc:
+            log(f"start message edit error id={message_id}: {exc!r}")
+        log(f"start message edit failed id={message_id}; posting short line")
+    title = print_summary.safe_label(((print_summary.find_job(filename)[0] or {}).get("title")) or filename, "print")
+    return post(f"Warmup done, now printing: {title}")
 
 
 SUBSCRIBE = json.dumps({
@@ -1423,7 +1455,8 @@ class Listener:
         if new_state is None or new_state == self.state:
             return
         old = self.state
-        identity = _notification_identity({**self.last_stats, "filename": self.filename})
+        identity = _notification_identity({"start_time": start_claim_time(self.filename),
+                                           **self.last_stats, "filename": self.filename})
         phase = "start" if new_state == "printing" and old != "paused" else ("terminal" if old in ("printing", "paused") and new_state in TERMINAL else None)
         if phase and not _claim_notification(identity, phase):
             log(f"suppressed duplicate {phase} notice identity={identity!r}")
@@ -1437,8 +1470,8 @@ class Listener:
             if reason_due:
                 self.last_visual_task = asyncio.create_task(self.visual_check(reason_due, layer))
         if old is not None and old != "printing" and new_state == "printing":
-            # print-now claims suppress its plain acceptance text, not this canonical
-            # rich listener announcement. There is exactly one lifecycle post here.
+            # Claimed starts already have the intake's one post; unclaimed starts (printer screen,
+            # other tools) get exactly one canonical post here.
             if old == "paused":
                 log(f"resume, no start post: {self.filename!r}")
                 self.last_pause_was_runout = False
@@ -1446,8 +1479,10 @@ class Listener:
                 self.slot_tracker.reset()
                 self.visual_watch.reset()
                 if start_claimed(self.filename):
-                    log(f"start claimed by print-now; suppressing duplicate plain start: {self.filename!r}")
-                await asyncio.to_thread(post, start_message_with_roast(self.filename))
+                    log(f"start claimed by print-now; updating its message, no second start post: {self.filename!r}")
+                    await asyncio.to_thread(announce_warmup_done, self.filename)
+                else:
+                    await asyncio.to_thread(post, start_message_with_roast(self.filename))
         elif old == "printing" and new_state == "paused":
             self.last_pause_was_runout, slot = await self.classify_runout()
             if self.last_pause_was_runout:

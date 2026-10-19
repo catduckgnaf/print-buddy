@@ -164,6 +164,22 @@ def post_spool_question(token: str, channel_id: str, content: str, context: dict
         return None
 
 
+def edit_message(token: str, channel_id: str, message_id: str, content: str) -> bool:
+    """Replace the text of one bot message in place. False on any failure."""
+    if not (token and channel_id and message_id):
+        return False
+    req = urllib.request.Request(
+        f"https://discord.com/api/v10/channels/{channel_id}/messages/{message_id}",
+        data=json.dumps({"content": content[:1990], "allowed_mentions": {"parse": []}}).encode(),
+        method="PATCH", headers={"Authorization": f"Bot {token}", "Content-Type": "application/json",
+                                 "User-Agent": "DiscordBot (hermes-3dprinting, 1.0)"})
+    try:
+        with urllib.request.urlopen(req, timeout=15) as resp:
+            return 200 <= resp.status < 300
+    except Exception:
+        return False
+
+
 def post_insertion_confirmation(token: str, channel_id: str, content: str, slot: int) -> bool:
     """Post an answer-only IFS insertion UI. It has no printer or inventory side effect."""
     if not token or not channel_id or slot not in (1, 2, 3, 4):

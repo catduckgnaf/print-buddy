@@ -201,3 +201,97 @@ def test_visual_check_promotes_unchanged_layers_and_ignores_motion(monkeypatch):
 
     asyncio.run(moving())
     assert alerts == []
+
+
+def test_sensitivity_three_is_the_original_behavior():
+    profile = mel.VISUAL_SENSITIVITY[3]
+    assert profile == {"diff": 3.0, "stall_layers": 3, "periodic_s": 900, "vision_veto": False}
+    assert mel.VisualPrintWatch().sensitivity == 3  # home.toml default
+
+
+def test_sensitivity_scales_stall_layers():
+    for level, needed in ((1, 8), (2, 5), (3, 3), (4, 3), (5, 2)):
+        watch = mel.VisualPrintWatch(level)
+        watch.layer2_checked = watch.layer5_checked = True
+        watch.record(5, 100, b"frame")
+        assert watch.due(5 + needed - 1, 101, snapshot_changed=False) is None, level
+        assert watch.due(5 + needed, 102, snapshot_changed=False) == "stalled_layers", level
+
+
+def test_sensitivity_scales_periodic_interval():
+    for level, seconds in ((1, 1800), (3, 900), (5, 450)):
+        watch = mel.VisualPrintWatch(level)
+        watch.layer2_checked = watch.layer5_checked = True
+        watch.record(5, 0, b"frame")
+        assert watch.due(6, seconds - 1, snapshot_changed=True) is None, level
+        assert watch.due(6, seconds, snapshot_changed=True) == "periodic", level
+
+
+def test_sensitivity_rejects_out_of_range():
+    import pytest
+    for bad in (0, 6):
+        with pytest.raises(ValueError):
+            mel.VisualPrintWatch(bad)
+
+
+def test_frame_change_threshold_follows_sensitivity(monkeypatch):
+    import io
+    from PIL import Image
+
+    def frame(gray):
+        buf = io.BytesIO()
+        Image.new("L", (64, 48), gray).save(buf, "JPEG", quality=100)
+        return buf.getvalue()
+
+    before, after = frame(100), frame(103)  # mean difference of about 3
+    assert mel._frame_changed(before, after, threshold=mel.VISUAL_SENSITIVITY[1]["diff"]) is True
+    assert mel._frame_changed(before, after, threshold=mel.VISUAL_SENSITIVITY[5]["diff"]) is False
+
+
+def _stall_alerts(monkeypatch, level, verdict):
+    import asyncio
+
+    alerts = []
+    monkeypatch.setattr(mel, "_camera_snapshot_bytes", lambda: _jpeg() + b"x")
+    monkeypatch.setattr(mel, "_visual_alert", lambda filename, image, reason: alerts.append(reason))
+    monkeypatch.setattr(mel, "_frame_changed", lambda before, after: False)
+    if isinstance(verdict, Exception):
+        def failing(image, prompt):
+            raise verdict
+        monkeypatch.setattr(mel, "_visual_verdict", failing)
+    else:
+        monkeypatch.setattr(mel, "_visual_verdict", lambda image, prompt: verdict)
+
+    async def run():
+        listener = mel.Listener()
+        listener.visual_watch = mel.VisualPrintWatch(level)
+        listener.filename = "still.gcode"
+        listener.visual_watch.layer2_checked = listener.visual_watch.layer5_checked = True
+        listener.visual_frames["still.gcode"] = _jpeg()
+        listener.visual_watch.record(5, 100, _jpeg())
+        layer = 5 + listener.visual_watch.profile["stall_layers"]
+        await listener.visual_check(listener.visual_watch.due(layer, 200), layer)
+
+    asyncio.run(run())
+    return alerts
+
+
+def test_low_sensitivity_trusts_healthy_vision_on_a_stall(monkeypatch):
+    for level in (1, 2):
+        assert _stall_alerts(monkeypatch, level, ("ok", "")) == [], level
+        assert _stall_alerts(monkeypatch, level, ("safe", "plastic present")) == [], level
+
+
+def test_low_sensitivity_still_alerts_on_a_bad_stall(monkeypatch):
+    for level in (1, 2):
+        for verdict in (("air", "empty"), ("spaghetti", "mess"), ("uncertain", "dark")):
+            alerts = _stall_alerts(monkeypatch, level, verdict)
+            assert alerts and "stalled_layers" in alerts[0] and verdict[0] in alerts[0], (level, verdict)
+        alerts = _stall_alerts(monkeypatch, level, OSError("vision down"))
+        assert alerts and "vision check failed" in alerts[0], level
+
+
+def test_default_and_higher_sensitivity_alert_on_every_stall(monkeypatch):
+    for level in (3, 4, 5):
+        alerts = _stall_alerts(monkeypatch, level, ("ok", ""))
+        assert alerts and "stalled_layers" in alerts[0], level

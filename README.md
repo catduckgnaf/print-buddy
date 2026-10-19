@@ -26,6 +26,15 @@ The print starts only when someone clicks the button. On completion, the bot pos
 
 A typo or bad value stops the import and names the key. Requires Python 3.11 or newer.
 
+`[visual_watch] sensitivity` sets how readily the camera watchdog posts a "stalled layers" alert, on a scale of 1 (quietest) to 5 (most alerts). 3 is the original behavior. Lower levels need a larger unchanged stretch before calling a stall and check the camera less often. At 1 and 2 a stall alerts only when the vision model does not also report the print as `ok`/`safe`. Empty-bed, spaghetti, detached-part, uncertain, and vision-failure alerts fire at every level. Example in `config/local.toml`:
+
+```toml
+[visual_watch]
+sensitivity = 2
+```
+
+Restart the Moonraker listener after changing it.
+
 `[printer] family` picks the printer adapter (`flashforge_zmod` by default, `generic_klipper`, `sovol_klipper`). The single-extruder families skip every ZMod/AD5X step (IFS slots, screen offsets, MD5 gcode) and refuse multi-color jobs. Each sliced job records its family in `JOB.json`; `print-now` refuses a job prepared for a different family, and `model_job fetch|slice --printer <family>` prepares a job for another one. See `print_buddy/printers/base.py`.
 
 ## Updating the home box

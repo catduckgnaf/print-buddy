@@ -115,6 +115,19 @@ class RuntimeSettingsTests(unittest.TestCase):
         data = settings.load(local=False, environ={"PRINT_BUDDY__MAINTENANCE__FULL_DAYS": "45"})
         self.assertEqual(data["maintenance"]["full_days"], 45)
 
+    def test_visual_watch_sensitivity_is_one_to_five(self):
+        self.assertEqual(settings.load(local=False, environ={})["visual_watch"]["sensitivity"], 3)
+        data = settings.load(local=False, environ={"PRINT_BUDDY__VISUAL_WATCH__SENSITIVITY": "1"})
+        self.assertEqual(data["visual_watch"]["sensitivity"], 1)
+        for bad in ("0", "6"):
+            with self.subTest(value=bad), self.assertRaisesRegex(settings.SettingsError, "1 to 5"):
+                settings.load(local=False, environ={"PRINT_BUDDY__VISUAL_WATCH__SENSITIVITY": bad})
+        with tempfile.TemporaryDirectory() as tmp:
+            local = Path(tmp) / "local.toml"
+            local.write_text("[visual_watch]\nsensitivity = 2.5\n")
+            with self.assertRaisesRegex(settings.SettingsError, "1 to 5"):
+                settings.load(local=local, environ={})
+
     def test_env_typos_and_bad_numbers_fail(self):
         for env, message in [({"PRINT_BUDDY__LISTENER__TICKS": "5"}, "unknown setting"),
                              ({"SPOOL_NAG_SECONDS": "ten"}, "should be a number"),

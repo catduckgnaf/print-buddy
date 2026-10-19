@@ -167,7 +167,7 @@ def plate_choice_label(part: Mapping[str, Any], number: int | None = None) -> st
 
 PREPARING_MARK = "PREPARATION STILL RUNNING"
 SUBMITTED_MARK = "START SUBMITTED; AWAITING CONFIRMATION"  # what model_job print-now really prints
-START_MESSAGES = _config.state_file("PRINT_BITCH_START_MESSAGES", "print_bitch_start_messages.json")
+START_MESSAGES = _config.state_file("PRINT_BUDDY_START_MESSAGES", "print_buddy_start_messages.json")
 START_MESSAGE_TTL_S = float(_config.cfg()["listener"]["start_claim_ttl_s"])
 
 

@@ -55,7 +55,7 @@ LEGACY_ENV = {
     "MAINTENANCE_FULL_DAYS": ("maintenance", "full_days"),
     "HERMES_BIN": ("paths", "hermes_bin"),
     "FFMPEG_BIN": ("paths", "ffmpeg"),
-    "PRINT_BITCH_ARCHIVE": ("paths", "archive"),
+    "PRINT_BUDDY_ARCHIVE": ("paths", "archive"),
     "PRINT_RECORDS_VAULT": ("paths", "records_vault"),
 }
 # Sections whose keys are names you choose, not a fixed set.

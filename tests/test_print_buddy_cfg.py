@@ -1,4 +1,4 @@
-"""Render PRINT_BITCH the way Klipper's Jinja2 does.
+"""Render PRINT_BUDDY the way Klipper's Jinja2 does.
 
 No printer, no Moonraker, no network. Klipper's environment uses {% %} for
 blocks and a single { } for expressions, including action_respond_info.
@@ -13,11 +13,11 @@ import jinja2
 
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
-CFG = (ROOT / "print_bitch.cfg").read_text()
+CFG = (ROOT / "print_buddy.cfg").read_text()
 
 
 def macro_body() -> str:
-    marker = "[gcode_macro PRINT_BITCH]\n"
+    marker = "[gcode_macro PRINT_BUDDY]\n"
     start = CFG.index(marker)
     body = CFG[start:]
     gcode_at = body.index("gcode:\n")
@@ -29,7 +29,7 @@ class Printer:
         self.slots = slots
 
     def __getitem__(self, key):
-        if key != "gcode_macro _PRINT_BITCH_VARS":
+        if key != "gcode_macro _PRINT_BUDDY_VARS":
             raise KeyError(key)
         return self
 
@@ -66,7 +66,7 @@ BASE = {
 }
 
 
-class PrintBitchReportTest(unittest.TestCase):
+class PrintBuddyReportTest(unittest.TestCase):
     def test_same_color_and_material_is_reported(self):
         messages = render({"SLOT": "1"}, BASE)
         self.assertEqual(len(messages), 1)

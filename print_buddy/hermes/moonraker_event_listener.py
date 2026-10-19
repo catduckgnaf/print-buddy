@@ -209,7 +209,7 @@ def _profile_env_value(name):
 
 
 def generate_roast(title, summary=""):
-    """Generate a quick 1-sentence roast via Luna LLM for Print Bitch persona. Best-effort."""
+    """Generate a quick 1-sentence roast via Luna LLM for the bot persona. Best-effort."""
     title = str(title or "").strip()
     if not title:
         return ""
@@ -229,7 +229,7 @@ def generate_roast(title, summary=""):
         data=json.dumps({
             "model": str(_config.cfg()["vision"]["roast_model"]),
             "messages": [
-                {"role": "system", "content": "You are Print Bitch, a witty 3D printer assistant who gently roasts 3D prints. Give ONE short funny sentence roasting this model. Keep it under 20 words. No quotes, no hashtags, no introductory filler."},
+                {"role": "system", "content": f"You are {_config.bot_name()}, a witty 3D printer assistant who gently roasts 3D prints. Give ONE short funny sentence roasting this model. Keep it under 20 words. No quotes, no hashtags, no introductory filler."},
                 {"role": "user", "content": prompt}
             ],
             "max_tokens": 50,
@@ -718,7 +718,7 @@ def discord_sized_video(path, max_bytes=None):
 
 
 
-NOTIFICATION_STATE = _config.state_file("PRINT_BITCH_NOTIFICATION_STATE", "lifecycle_notifications.json")
+NOTIFICATION_STATE = _config.state_file("PRINT_BUDDY_NOTIFICATION_STATE", "lifecycle_notifications.json")
 
 
 def _notification_identity(stats):
@@ -752,7 +752,7 @@ def clean(filename):
     return print_summary.safe_label(filename, "print")
 
 
-START_CLAIMS = _config.state_file("PRINT_BITCH_START_CLAIMS", "print_bitch_start_claims.json")
+START_CLAIMS = _config.state_file("PRINT_BUDDY_START_CLAIMS", "print_buddy_start_claims.json")
 START_CLAIM_TTL_S = float(_LISTENER["start_claim_ttl_s"])
 NATIVE_POLL_SECONDS = float(_LISTENER["ifs_presence_poll_s"])
 IFS_EDGE_STATE = _config.state_file("IFS_EDGE_STATE", "ifs_presence_edges.json")

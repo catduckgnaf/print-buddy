@@ -158,14 +158,14 @@ class InstallerTests(unittest.TestCase):
         (fake_home / ".moonraker_discord_announcements.json").write_text("ann\n")
         state = self.home / "state"
         state.mkdir(parents=True)
-        (state / "print_bitch_start_claims.json").write_text("claims-new\n")
+        (state / "print_buddy_start_claims.json").write_text("claims-new\n")
         dry = self.run_installer("--dry-run")
         self.assertIn("would: copy", dry)
-        self.assertFalse((state / "print_bitch_context.json").exists())
+        self.assertFalse((state / "print_buddy_context.json").exists())
         self.run_installer()
-        self.assertEqual("ctx\n", (state / "print_bitch_context.json").read_text())
+        self.assertEqual("ctx\n", (state / "print_buddy_context.json").read_text())
         self.assertEqual("ann\n", (state / "moonraker_discord_announcements.json").read_text())
-        self.assertEqual("claims-new\n", (state / "print_bitch_start_claims.json").read_text())
+        self.assertEqual("claims-new\n", (state / "print_buddy_start_claims.json").read_text())
         self.assertTrue((fake_home / ".print_bitch_context.json").exists())
 
     def test_old_private_scripts_dir_is_moved_aside(self):

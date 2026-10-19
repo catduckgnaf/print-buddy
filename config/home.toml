@@ -84,6 +84,8 @@ upload_max_bytes = 9500000
 post_print_quiet_s = 7200
 daily_reset_hour = 4
 timezone = "America/New_York"
+# Name the bot uses for itself in the roast persona and the profile templates the installer renders.
+bot_name = "Print Buddy"
 
 [listener]
 tick_s = 600

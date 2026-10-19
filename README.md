@@ -46,7 +46,7 @@ The print starts only when someone clicks the button. On completion, the bot pos
 * Filament estimates split across parts that share a spool, never multiplied.
 * `/spool` lists, changes, creates, and syncs spools without moving the printer.
 * A swapped spool can finish a job sliced for the old one, by explicit choice.
-* `PRINT_BITCH` Klipper macro confirms ZMod can fall back to a matching backup slot.
+* `PRINT_BUDDY` Klipper macro confirms ZMod can fall back to a matching backup slot.
 
 **Printing**
 * Nothing starts without a bed clear button press.
@@ -128,6 +128,7 @@ Empty bed, spaghetti, detached part, uncertain, and vision failure alerts fire a
 | | `upload_max_bytes` | `9500000` | Largest upload before video is shrunk |
 | | `post_print_quiet_s` | `7200` | Quiet time before a chat session resets |
 | | `daily_reset_hour`, `timezone` | `4`, `America/New_York` | Daily session reset |
+| | `bot_name` | `Print Buddy` | Name the bot uses in the roast persona and the rendered profile templates (`SOUL.md`, locale strings). Set it to anything, for example your old name |
 | `listener` | `tick_s` | `600` | Listener housekeeping interval |
 | | `ifs_presence_poll_s` | `15` | IFS spool presence poll |
 | | `spool_nag_s` | `600` | Reminder interval for an unanswered spool question |
@@ -164,25 +165,25 @@ A second CI job installs the Flathub OrcaSlicer, slices small test models with t
 
 ## ZMod plugin and spool matching
 
-ZMod switches to a backup spool mid-print only when another slot holds the exact same color and material. The `print_bitch.cfg` macro checks that before a job starts:
+ZMod switches to a backup spool mid-print only when another slot holds the exact same color and material. The `print_buddy.cfg` macro checks that before a job starts:
 ```gcode
-PRINT_BITCH SLOT=1
+PRINT_BUDDY SLOT=1
 ```
 If slot 1 and slot 3 are both black PETG, it confirms:
 ```
-PRINT_BITCH: black / PETG also on slot 3. ZMod can switch. This macro does not.
+PRINT_BUDDY: black / PETG also on slot 3. ZMod can switch. This macro does not.
 ```
-`PRINT_BITCH COLOR=black MATERIAL=PETG` checks all four slots without assuming an active toolhead.
+`PRINT_BUDDY COLOR=black MATERIAL=PETG` checks all four slots without assuming an active toolhead.
 
 To install, run this on the printer console:
 ```gcode
-ENABLE_PLUGIN name=print-bitch
+ENABLE_PLUGIN name=print-buddy
 ```
-Then add your slot assignments to `mod_data/user.cfg` in a `[gcode_macro _PRINT_BITCH_VARS]` block and run `FIRMWARE_RESTART`. Moonraker update manager entry:
+Then add your slot assignments to `mod_data/user.cfg` in a `[gcode_macro _PRINT_BUDDY_VARS]` block and run `FIRMWARE_RESTART`. Moonraker update manager entry:
 ```ini
-[update_manager print-bitch]
+[update_manager print-buddy]
 type: git_repo
-path: /root/printer_data/config/mod_data/plugins/print-bitch
+path: /root/printer_data/config/mod_data/plugins/print-buddy
 origin: https://github.com/catduckgnaf/print-buddy.git
 primary_branch: main
 managed_services: klipper
@@ -201,8 +202,8 @@ is_system_service: False
 * `print_buddy/templates/orca/`: Orca machine, process, and filament JSON.
 * `plugins/print-feedback/`: Hermes plugin with the Discord slash commands and interaction guards.
 * `hermes/`: profile templates and skills installed by `scripts/install-hermes.sh`.
-* `scripts/`: `install-hermes.sh` and `home-update.sh`.
-* `print_bitch.cfg`, `install.sh`, `uninstall.sh`, `update.sh`: ZMod plugin macro and lifecycle scripts.
+* `scripts/`: `install-hermes.sh`, `home-update.sh`, and `migrate-names.sh` (one-shot, see `docs/RENAME-MIGRATION.md`).
+* `print_buddy.cfg`, `install.sh`, `uninstall.sh`, `update.sh`: ZMod plugin macro and lifecycle scripts.
 * `tests/`: offline suite, real slicer checks, and the Klipper macro tests.
 * `docs/`: install guide and AD5X integration specs.
 

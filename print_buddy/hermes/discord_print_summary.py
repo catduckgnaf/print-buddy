@@ -16,7 +16,7 @@ from . import _config
 _HASH = re.compile(r"[0-9a-f]{32,}", re.I)
 _TIME = re.compile(r"^; estimated printing time \(normal mode\) = (.+)$", re.M)
 ARCHIVE = _config.archive_dir()
-CONTEXT_PATH = _config.state_file("PRINT_BITCH_CONTEXT_PATH", "print_bitch_context.json")
+CONTEXT_PATH = _config.state_file("PRINT_BUDDY_CONTEXT_PATH", "print_buddy_context.json")
 WARMUP_S = 5 * 60
 ET = _config.tz()  # the configured display timezone (discord.timezone); the name is historical
 VERBS = {"started": "Print started", "slice": "Print preparing", "complete": "Print complete", "cancelled": "Print cancelled",

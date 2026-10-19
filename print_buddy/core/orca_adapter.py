@@ -646,12 +646,12 @@ def slice_model(source, folder, state, brim=None, first_layer=False, color_decis
     slicer = 'OrcaSlicer'
     fallback = None
     if result.returncode or not output.is_file() or output.stat().st_size == 0:
-        # Only an actual Orca execution failure reaches this branch. All Print Bitch
+        # Only an actual Orca execution failure reaches this branch. All Print Buddy
         # validation and placement refusals above remain fail-closed and never invoke Bambu.
         details = _orca_failure_details(folder)
         log_text = (result.stdout + '\n' + result.stderr).strip()
         if re.search(r'G-code conflicts detected', log_text, re.I):
-            # A conflict is a slicer failure, not a Print Bitch refusal. Bambu gets
+            # A conflict is a slicer failure, not a Print Buddy refusal. Bambu gets
             # one isolated attempt after Orca's own retry/candidate logic is exhausted.
             orca_failure = ('Orca detected G-code conflicts: inspect the model for '
                             'overlapping/intersecting parts, separate or reposition them, then retry; '

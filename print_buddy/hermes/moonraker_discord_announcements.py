@@ -723,7 +723,7 @@ def process_pending_cleanups(state, now=None):
     if not isinstance(pending, list):
         pending = []
     remaining = []
-    dry_run = os.environ.get("PRINT_BITCH_CLEANUP_DRY_RUN") == "1"
+    dry_run = os.environ.get("PRINT_BUDDY_CLEANUP_DRY_RUN") == "1"
     for item in pending:
         if not isinstance(item, dict):
             continue

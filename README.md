@@ -175,7 +175,7 @@ A second CI job installs the Flathub OrcaSlicer, slices small test models with t
 
 `tests/corpus/cases/` holds 3MF models run end to end through the Discord intake with fake button clicks: color questions, fit check and resize or split offer, plate planning, slicing, and G-code checks. Nothing contacts a printer. Every PR runs it with a fake Orca; the real-slicer job runs it with Flathub Orca. One test also runs the intake with the gateway's `HERMES_HOME` to keep state in the profile.
 
-To add a model that broke Discord: make `tests/corpus/cases/<name>/` with `model.3mf` (only models you may redistribute: your own, CC0, or attribution licenses; note it as `license = "..."`) and a `case.toml` listing the buttons pressed and what you expect. An unanswered question fails the test and prints its buttons, so copy them in. `tests/corpus/make_models.py` writes the built-in models; see any existing `case.toml` for the format.
+To add a model that broke Discord: make `tests/corpus/cases/<name>/` with one model file (`.3mf`, `.stl`, `.obj`, `.step`, or `.stp`; `model.3mf` wins if the folder has more than one) and a `case.toml` listing the buttons pressed and what you expect. Only models you may redistribute: your own, CC0, or attribution licenses; note it as `license = "..."`. An unanswered question fails the test and prints its buttons, so copy them in. `tests/corpus/make_models.py` writes the built-in models; see any existing `case.toml` for the format.
 
 ```bash
 python3 -m pytest -q tests/corpus                                # fake Orca

@@ -2,6 +2,7 @@
 
 Printing starts only from a button click that confirms the bed is clear. No typed approval is required."""
 import asyncio
+import contextlib
 import contextvars
 import hashlib
 import json
@@ -20,6 +21,7 @@ print_summary = _external.lazy('discord_print_summary')
 print_next = _external.lazy('print_next')
 from .link_intake import ask, model_link, has_duration_question  # noqa: E402
 from .quantity_selection import quantity_options, parse_quantity  # noqa: E402
+from .background_slice import drop_runner, runner_for, slice_binding  # noqa: E402
 
 
 _OFFLOAD = {('model_job', 'audit'), ('model_job', 'slice_job'), ('source_colors', 'inventory'),
@@ -386,6 +388,9 @@ async def _spool_projection_text(mj, job, manifest, state, copies):
 async def _ask(adapter, source, key, question, choices, timeout=300, **kwargs):
     """ask() registered under the live chat session so typed replies reach the prompt."""
     live_key = kwargs.pop('live_key', None) or _LIVE_KEY.get() or key
+    on_shown = kwargs.pop('on_shown', None)
+    if on_shown is not None:  # fire as the question goes up, before the operator answers
+        on_shown()
     return await ask(adapter, source, key, question, list(choices), timeout, live_key=live_key, **kwargs)
 
 
@@ -466,6 +471,7 @@ async def prepare_link(event, adapter, state, root, timeout=300, reuse=None):
     event_metadata = getattr(event, 'metadata', None) or {}
     live_token = _LIVE_KEY.set(event_metadata.get('live_session_key') or key)
     metadata = {'thread_id': source.thread_id} if source.thread_id else None
+    jp = None
     try:
         if reuse:
             done = reuse.get('sliced_at') and (reuse.get('filament_selection') or {}).get('color')
@@ -819,6 +825,14 @@ async def prepare_link(event, adapter, state, root, timeout=300, reuse=None):
         mj.write_job(folder, latest)
         receipt.update(status='COLORS_SAVED', color_decisions=validated, copies=chosen_quantity)
         receipt_path.write_text(json.dumps(receipt, indent=2) + '\n')
+        # Slice while the confirm question is on screen. Stop and Cancel below discard it,
+        # so a job that never asked for G-code keeps none.
+        early = runner_for(jp)
+        binding = slice_binding(latest, decisions['source_sha256'])
+        await early.start(jp, binding, lambda job_path, work, runner, copies=chosen_quantity:
+                          _heavy(mj.slice_job, str(job_path), **(
+                              {'copies': copies} if copies and int(copies) > 1 else {})))
+        await early.started.wait()  # armed before the question goes up
         multi = len(manifest['parts']) > 1
         def _color_of(sel):
             sel = sel or {}
@@ -845,8 +859,10 @@ async def prepare_link(event, adapter, state, root, timeout=300, reuse=None):
         choice = await _ask(adapter, source, key,
             f'{names} · {estimate_text}'
             + ('\n' + spool_text if spool_text else '') + caveat,
-            [print_label, 'Slice only', 'Stop with colors saved', cancel_label], timeout)
+            [print_label, 'Slice only', 'Stop with colors saved', cancel_label], timeout,
+            on_shown=early.release.set)
         if choice in (2, 3):
+            await early.discard()  # the early slice was for a job that will not print
             receipt['status'] = 'CANCELLED' if choice == 3 else 'COLORS_SAVED_STOPPED'
             receipt_path.write_text(json.dumps(receipt, indent=2) + '\n')
             message = ('Cancelled. Nothing was sliced, uploaded, or started.' if choice == 3
@@ -855,7 +871,9 @@ async def prepare_link(event, adapter, state, root, timeout=300, reuse=None):
             return {'action': 'skip', 'reason': 'operator cancelled print request' if choice == 3 else 'operator stopped before slicing'}
         latest = json.loads(jp.read_text())
         if (latest.get('intake_id') != iid or latest.get('color_decisions') != validated
-                or mj.file_sha256(latest['downloaded_file']) != decisions['source_sha256']):
+                or mj.file_sha256(latest['downloaded_file']) != decisions['source_sha256']
+                or slice_binding(latest, decisions['source_sha256']) != binding):
+            await early.discard()  # the slice was for decisions that no longer match
             raise ValueError('source/job changed before slice approval; no handoff')
         receipt.update(status='SLICE_APPROVED', slice_approval={'intake_id': iid, 'source_sha256': decisions['source_sha256'],
                                                               'decisions_sha256': mj.decisions_digest(validated)})
@@ -873,10 +891,12 @@ async def prepare_link(event, adapter, state, root, timeout=300, reuse=None):
                                content=' · '.join(['Preparing to start'] + ([f'Print #{pre_no}'] if pre_no else [])
                                                   + [pre_total]))
             prep_sent = True
-        if chosen_quantity and chosen_quantity > 1:
-            out = await _heavy(mj.slice_job, str(jp), copies=chosen_quantity)
-        else:
-            out = await _heavy(mj.slice_job, str(jp))
+        out = await early.take(binding)  # finished while the question was up, or still running
+        if out is None:
+            if chosen_quantity and chosen_quantity > 1:
+                out = await _heavy(mj.slice_job, str(jp), copies=chosen_quantity)
+            else:
+                out = await _heavy(mj.slice_job, str(jp))
         mj._timing(jp, 'intake_slice_returned')
         gcodes = [str(g) for g in (out if isinstance(out, list) else [out])]
         sliced = json.loads(jp.read_text())
@@ -989,6 +1009,9 @@ async def prepare_link(event, adapter, state, root, timeout=300, reuse=None):
                 pass  # the listener then posts a short distinct follow-up instead of editing
         return {'action': 'skip', 'reason': 'sliced and start handled by button flow'}
     except IntakeCancelled:
+        if jp is not None:
+            with contextlib.suppress(Exception):
+                await runner_for(jp).discard()
         receipt.update(status='CANCELLED', sliced=False, uploaded=False, started=False)
         receipt_path.write_text(json.dumps(receipt, indent=2) + '\n')
         await adapter.send(chat_id=source.chat_id,
@@ -1000,4 +1023,6 @@ async def prepare_link(event, adapter, state, root, timeout=300, reuse=None):
         await adapter.send(chat_id=source.chat_id, content=f'New model preparation stopped: {exc}. Nothing sliced, uploaded or started.', metadata=metadata)
         return {'action': 'skip', 'reason': 'source-first intake failed closed'}
     finally:
+        if jp is not None:
+            drop_runner(jp)
         _LIVE_KEY.reset(live_token)

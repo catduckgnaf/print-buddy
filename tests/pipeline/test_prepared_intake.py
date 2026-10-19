@@ -39,6 +39,37 @@ class Adapter:
         return S(success=True)
 
 
+class _Kept:
+    """Slice paths that are still on disk. A discarded early slice drops out of the list."""
+
+    def __init__(self, raw):
+        self.raw = raw
+
+    def _live(self):
+        return [p for p in self.raw if Path(p).exists()]
+
+    def __len__(self):
+        return len(self._live())
+
+    def __getitem__(self, item):
+        return self._live()[item]
+
+    def __iter__(self):
+        return iter(self._live())
+
+    def __eq__(self, other):
+        return self._live() == other
+
+    def __bool__(self):
+        return bool(self._live())
+
+    def append(self, item):
+        self.raw.append(item)
+
+    def extend(self, items):
+        self.raw.extend(items)
+
+
 @pytest.fixture
 def env(tmp_path, monkeypatch):
     src = source(tmp_path)
@@ -54,6 +85,7 @@ def env(tmp_path, monkeypatch):
     from print_buddy.core import orca_adapter
     monkeypatch.setattr(orca_adapter, 'orca_plate_capacity', lambda path, st: 1)
     sliced = []
+    kept = _Kept(sliced)
 
     def fake_slice(job_path):
         gcode = Path(job_path).parent / 'sliced' / 'plate_1.gcode'
@@ -62,8 +94,11 @@ def env(tmp_path, monkeypatch):
         data = json.loads(Path(job_path).read_text())
         data['derived_plates'] = [{'gcode': str(gcode), 'plate_id': 1, 'slot': 1}]
         Path(job_path).write_text(json.dumps(data))
-        sliced.append(str(gcode))
-        return [gcode]
+        try:
+            return [gcode]
+        finally:
+            if gcode.exists():  # a discarded early slice removes it before this returns
+                sliced.append(str(gcode))
     monkeypatch.setattr(model_job, 'slice_job', fake_slice)
     stub = tmp_path / 'print-now-stub'
     stub.write_text('#!/bin/sh\necho "started $2"\n')
@@ -81,7 +116,7 @@ def env(tmp_path, monkeypatch):
                                           {'gcode': str(Path(filename)), 'plate': 1, 'parts': ['Ghost Stand'],
                                            'slot': 1, 'color': 'white', 'material': 'PLA',
                                            'filament_g': None, 'seconds': 3600}))
-    return S(root=tmp_path / 'receipts', sliced=sliced, starts=starts, tmp=tmp_path)
+    return S(root=tmp_path / 'receipts', sliced=kept, starts=starts, tmp=tmp_path)
 
 
 def _copy(src, dest):
@@ -151,9 +186,11 @@ def test_slice_only_then_cancel_never_starts(env):
     assert env.starts == [] and receipt['status'] == 'SLICED_NOT_STARTED' and receipt['started'] is False
 
 
-def test_stop_choice_never_slices_or_starts(env):
+def test_stop_choice_discards_the_early_slice_and_never_starts(env):
     adapter, result, receipt = run_flow(env, [1, 0, 2])
-    assert env.sliced == [] and env.starts == [] and receipt['status'] == 'COLORS_SAVED_STOPPED'
+    # Issue 63 starts the slice while the confirm question is up. Stop throws it away.
+    assert env.starts == [] and receipt['status'] == 'COLORS_SAVED_STOPPED'
+    assert not any(env.root.parent.glob('archive/*/sliced/*.gcode'))
 
 
 def test_changed_gcode_after_slice_is_refused_by_existing_gate(env, monkeypatch):
@@ -430,12 +467,12 @@ def test_linked_maker_profile_is_selected_automatically(env, monkeypatch):
     event = S(source=S(profile='3dprinting', chat_id='c1', thread_id=None, user_id='u'),
               message_id='profiles', text=url)
     # Contract (2026-10-12): the URL profileId is used directly; no profile button.
-    # one color, slot 1, then stop before slicing
+    # one color, slot 1, then stop. The early slice starts during the question and is discarded.
     adapter = Adapter([1, 0, 2])
     asyncio.run(prepared_intake.prepare_link(event, adapter, state(), env.root, timeout=1))
     assert not any('print profiles' in q['question'] for q in adapter.questions)
     assert selected == [3848581]
-    assert env.sliced == [] and env.starts == []
+    assert env.starts == [] and not any(env.root.parent.glob('archive/*/sliced/*.gcode'))
 
 
 def test_quantity_buttons_choose_midpoint_and_answer_duration(env, monkeypatch):
@@ -738,7 +775,8 @@ def test_multipart_inspection_runs_off_event_loop_and_loop_stays_responsive(env,
     assert seen['threads'], 'inventory was never invoked'
     assert all(t is not threading.main_thread() for t in seen['threads'])
     assert seen['ticks'] >= 10  # a 0.3 s blocking call on the loop would leave ~1 tick
-    assert env.sliced == [] and env.starts == []
+    # The flow stops at the confirm question, so the early slice is discarded and nothing starts.
+    assert env.starts == [] and not any(env.root.parent.glob('archive/*/sliced/*.gcode'))
 
 
 def test_multipart_first_prompt_states_part_count_and_asks_color_choice(env, monkeypatch):

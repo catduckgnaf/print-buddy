@@ -406,6 +406,7 @@ def slice_model(source, folder, state, brim=None, first_layer=False, color_decis
     color_decisions = (validate_decisions(inventory(source), color_decisions, state, resolve_filament_selection)
                        if color_decisions else None)
     mapping = None
+    mapped_profile = False
     if color_decisions and color_decisions.get('mode') == 'per_part':
         from .color_geometry import export_color_geometry
         input_path = folder / 'geometry.3mf'
@@ -525,8 +526,15 @@ def slice_model(source, folder, state, brim=None, first_layer=False, color_decis
             path.write_text(json.dumps(data, indent=2) + '\n')
             filament_paths.append(path)
         configs.extend(filament_paths)
+        mapped_profile = True
+    elif filament_slot is not None:
+        # A derived single-color plate is still T0. Record the already selected
+        # physical slot for finalization and provenance. Do not enter the
+        # multicolor profile path: that requires prime-tower geometry this
+        # plate does not have, and the filament list stays one entry.
+        mapping = {'0': int(filament_slot)}
     prepositioned_scale = (scale is not None or rotation is not None) and input_path != source and not preserve_layout
-    if copies and int(copies) > 1 and not (preserve_layout or item_shifts or mapping):
+    if copies and int(copies) > 1 and not (preserve_layout or item_shifts or mapped_profile):
         # Clone placement must be explicit: slicer auto-arrange can overlap clones on
         # transformed STL input, producing a self-conflicting G-code path.
         points = _unique_points(source_triangles(input_path))
@@ -558,10 +566,10 @@ def slice_model(source, folder, state, brim=None, first_layer=False, color_decis
                # Mapped (multicolor) geometry is already placed and the prime tower
                # computed around it; Orca's default auto-arrange would move parts
                # into the tower lane (-101 G-code conflict), so disable it explicitly.
-               *(['--arrange', '0', '--orient', '0'] if (preserve_layout or item_shifts or prepositioned_scale or mapping) else ['--arrange', '1', '--orient', '0', '--ensure-on-bed']),
+               *(['--arrange', '0', '--orient', '0'] if (preserve_layout or item_shifts or prepositioned_scale or mapped_profile) else ['--arrange', '1', '--orient', '0', '--ensure-on-bed']),
                *(['--clone-objects', str(copies)] if (copies and int(copies) > 1) else []),
                '--allow-newer-file', '--slice', '0', '--outputdir', str(folder), str(input_path)]
-    if scale is not None and not mapping:
+    if scale is not None and not mapped_profile:
         if input_path.suffix.lower() == '.3mf':
             raise ValueError('uniform scale must be applied to exported geometry before slicing a 3MF')
         # Normal 3MF intake (and any rotated input) was already scaled during export.
@@ -589,8 +597,11 @@ def slice_model(source, folder, state, brim=None, first_layer=False, color_decis
                    max(p[1] for p in points) - min(p[1] for p in points))
     except (TypeError, ValueError):
         pass
+    # A single-color plate records T0 for provenance only. The pre-slice guard
+    # compares map size with filament count, so it must not see that one-tool map.
+    guard_mapping = mapping if mapped_profile else None
     selected_slot = filament_slot or 1
-    tool_slots = {int(tool): int(slot) for tool, slot in mapping.items()} if mapping else {0: int(selected_slot)}
+    tool_slots = {int(tool): int(slot) for tool, slot in guard_mapping.items()} if guard_mapping else {0: int(selected_slot)}
     # Protected-key differences here include adapter-sanctioned profile assembly
     # (for example the resolved start-G-code template), not untrusted overrides.
     # Only block on geometric/tooling findings that this adapter can establish.
@@ -624,7 +635,7 @@ def slice_model(source, folder, state, brim=None, first_layer=False, color_decis
             sanitized.update(fixed)
             result = subprocess.run(command, capture_output=True, text=True, timeout=600)
             (folder / 'orca.log').write_text(result.stdout + result.stderr)
-    if mapping and result.returncode and _orca_conflict(folder):
+    if mapped_profile and result.returncode and _orca_conflict(folder):
         # Tower placement clears mesh bounds, but tree supports and brims can
         # still reach it. Retry the precomputed alternate tower origins only;
         # never relax Orca's conflict check.
@@ -695,7 +706,7 @@ def slice_model(source, folder, state, brim=None, first_layer=False, color_decis
             *BAMBU_COMMAND, '--datadir', str(bambu_dir / 'datadir'),
             '--load-settings', f'{bambu_machine};{bambu_process}',
             '--load-filaments', ';'.join(map(str, bambu_filaments)),
-            *(['--arrange', '0', '--orient', '0'] if (preserve_layout or item_shifts or prepositioned_scale or mapping)
+            *(['--arrange', '0', '--orient', '0'] if (preserve_layout or item_shifts or prepositioned_scale or mapped_profile)
               else ['--arrange', '1', '--orient', '0', '--ensure-on-bed']),
             *(['--clone-objects', str(copies)] if (copies and int(copies) > 1) else []),
             '--allow-newer-file', '--slice', '0', '--outputdir', str(folder), str(input_path),
@@ -719,7 +730,11 @@ def slice_model(source, folder, state, brim=None, first_layer=False, color_decis
     generator = re.search(r'^; generated by ((?:OrcaSlicer|BambuStudio).+)$', text, re.M)
     if generator is None:
         raise RuntimeError(f'output is not generated by {slicer}')
-    if mapping:
+    if mapped_profile or mapping:
+        # Explicit T0 (one physical slot) and per-part maps share the mapped
+        # finalizer: one slot record, one zmod_color_data line, one checksum.
+        # mapped_profile stays the prime-tower flag; this branch does not
+        # build a tower or a second filament profile.
         printer.native.finalize(output, None, state, mapping)
     elif printer.has_native_screen:
         finalize_zmod(output, filament['filament_colour'][0], state['spool']['material'], printer)

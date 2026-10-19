@@ -8,14 +8,14 @@ on:
 
 jobs:
   offline-tests:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04  # pinned: ubuntu-latest moves to 26 on 2026-10-19
     strategy:
       fail-fast: false
       matrix:
         python-version: ["3.12", "3.14"]
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
         with:
           python-version: ${{ matrix.python-version }}
           cache: pip
@@ -26,11 +26,11 @@ jobs:
 
   real-slicer:
     # Slices fixtures and the Discord flow corpus with the Flathub Orca the home box runs, using the home templates.
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04  # pinned: ubuntu-latest moves to 26 on 2026-10-19
     timeout-minutes: 30
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
         with:
           python-version: "3.12"
           cache: pip
@@ -41,7 +41,7 @@ jobs:
           sudo apt-get update -q
           sudo apt-get install -y -q flatpak xvfb
       - name: Cache Flathub Orca
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: ~/.local/share/flatpak
           # Bump v1 to pick up a newer Flathub Orca; until then CI keeps slicing with the same build.
@@ -62,7 +62,7 @@ jobs:
 
   spoolman:
     # spool_sync against a real, throwaway Spoolman.
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04  # pinned: ubuntu-latest moves to 26 on 2026-10-19
     timeout-minutes: 10
     services:
       spoolman:
@@ -70,8 +70,8 @@ jobs:
         ports:
           - 7912:8000
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
         with:
           python-version: "3.12"
           cache: pip

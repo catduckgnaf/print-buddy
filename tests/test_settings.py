@@ -111,6 +111,14 @@ class RuntimeSettingsTests(unittest.TestCase):
         self.assertEqual(data["listener"]["spool_nag_s"], 300)
         self.assertEqual(data["discord"]["chat_id"], "123")
 
+    def test_hermes_home_env_does_not_move_state(self):
+        # The multiplexed gateway runs with HERMES_HOME=~/.hermes for every profile. Reading it
+        # sent the print plugin to ~/.hermes/state, where printer_hardware.json does not exist.
+        data = settings.load(local=False, environ={"HERMES_HOME": "/somewhere/else/.hermes"})
+        self.assertEqual(data["paths"]["hermes_home"], Path("~/.hermes/profiles/3dprinting").expanduser())
+        data = settings.load(local=False, environ={"PRINT_BUDDY__PATHS__HERMES_HOME": "/tmp/pb-profile"})
+        self.assertEqual(data["paths"]["hermes_home"], Path("/tmp/pb-profile"))
+
     def test_generic_env_override(self):
         data = settings.load(local=False, environ={"PRINT_BUDDY__MAINTENANCE__FULL_DAYS": "45"})
         self.assertEqual(data["maintenance"]["full_days"], 45)

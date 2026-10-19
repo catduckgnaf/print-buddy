@@ -920,7 +920,7 @@ class EnglishAndPrintNowTests(unittest.TestCase):
             result = model_job.subprocess.run([
                 *CLI, "filament-select", str(job_path),
                 "--slot", "4", "--color", "dark green", "--material", "PLA", "--spoolman-id", "12",
-            ], capture_output=True, text=True, timeout=15, env={**CLI_ENV, "HERMES_HOME": str(home)})
+            ], capture_output=True, text=True, timeout=15, env={**CLI_ENV, "PRINT_BUDDY__PATHS__HERMES_HOME": str(home)})
             self.assertEqual(result.returncode, 0, result.stderr)
             self.assertEqual(json.loads(job_path.read_text())["filament_selection"]["slot"], 4)
 

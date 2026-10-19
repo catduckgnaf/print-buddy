@@ -188,7 +188,10 @@ def _slot_record(slot: int, spool: dict[str, Any], old: dict[str, Any] | None, n
     # can silently assign another spool's swatch to the physical slot.
     hex_code = screen_hex(filament.get("color_hex") or filament.get("multi_color_hexes"))
     if hex_code is None:
-        raise SpoolError(f"slot {slot} spool #{spool.get('id')} has no valid Spoolman color_hex; correct it in Spoolman, then run /spool sync")
+        # Intake/sync may encounter incomplete catalog entries; keep the spool
+        # identity but never inherit a stale screen swatch. Start preflight must
+        # block until a valid live color can be synchronized.
+        hex_code = ""
     return {
         "slot": slot,
         "material": material,

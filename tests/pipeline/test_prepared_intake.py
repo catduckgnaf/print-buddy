@@ -929,3 +929,26 @@ def test_split_slice_only_picker_cancel_starts_nothing(env, monkeypatch):
 def test_single_plate_has_no_picker(env):
     adapter, _result, _receipt = run_flow(env, [1, 0, 0])
     assert _plate_prompts(adapter) == [] and len(env.starts) == 1
+
+
+@pytest.mark.parametrize('job, expected', [
+    ({}, True),
+    ({'audit': {'plates': 1}, 'color_decisions': {'mode': 'single_color'}}, True),
+    ({'audit': {'plates': 2}}, False),
+    ({'color_decisions': {'mode': 'per_part'}}, False),
+    ({'plate_mode': 'separate'}, False),
+    ({'full_size_split_plan': {'plates': [['a'], ['b']]}}, False),
+])
+def test_copies_supported_only_for_single_plate_jobs(job, expected):
+    assert model_job.copies_supported(job) is expected
+
+
+def test_per_part_job_is_never_offered_copies(env, monkeypatch):
+    """#37: only the single plate path clones copies, so per-part intake must not ask for a count."""
+    from print_buddy.core import orca_adapter
+    monkeypatch.setattr(orca_adapter, 'orca_plate_capacity', lambda path, st, **kw: 3)
+    # Per-part mode, both parts on the first slot, slice only, then decline start.
+    adapter, result, receipt = run_flow(env, [0, 0, 0, 1, 1], mid='per-part-copies')
+    assert not any('How many copies' in q['question'] for q in adapter.questions)
+    assert any(text.startswith('Printing one copy.') for text in adapter.sent)
+    assert receipt['copies'] == 1

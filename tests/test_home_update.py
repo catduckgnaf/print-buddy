@@ -6,6 +6,8 @@ import tempfile
 import unittest
 from pathlib import Path
 
+from print_buddy.settings import LEGACY_ENV
+
 ROOT = Path(__file__).resolve().parents[1]
 
 
@@ -50,7 +52,11 @@ class HomeUpdateTests(unittest.TestCase):
         return git(self.upstream, "rev-parse", "HEAD")
 
     def update(self):
-        return subprocess.run(["sh", "scripts/home-update.sh"], cwd=self.home, capture_output=True, text=True)
+        # Environment overrides beat local.toml, so a caller's HERMES_HOME (or any other mapped
+        # variable) would point the doctor at the real install instead of the throwaway profile.
+        env = {k: v for k, v in os.environ.items() if k not in LEGACY_ENV}
+        return subprocess.run(["sh", "scripts/home-update.sh"], cwd=self.home, capture_output=True, text=True,
+                              env=env)
 
     def test_good_update_sticks_and_keeps_local_settings(self):
         head = self.commit_upstream("NOTES.txt", "harmless\n")

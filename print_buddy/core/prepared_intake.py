@@ -788,6 +788,12 @@ async def prepare_link(event, adapter, state, root, timeout=300, reuse=None):
                 latest['orientation'] = orientation
                 receipt['orientation'] = orientation
             mj.write_job(folder, latest)
+        if capacity > 1 and not mj.copies_supported(latest):
+            # Only single plate jobs clone copies into the G-code (#37); never offer a count it would lack.
+            capacity = 1
+            await adapter.send(chat_id=source.chat_id,
+                               content='Printing one copy. Extra copies only work for jobs that print on one '
+                                       'plate in one color right now.', metadata=metadata)
         quantities = orca_adapter.quantity_buttons(capacity)
         chosen_quantity = 1
         if len(quantities) > 1:

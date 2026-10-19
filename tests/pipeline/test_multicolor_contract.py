@@ -357,3 +357,38 @@ def test_slot_commands_do_not_enable_infinite_spool():
         assert verdict['enables_infinite_spool'] is False
     with pytest.raises(RuntimeError, match='unknown IFS action'):
         contract.classify_ifs_action('SAVE_ZMOD_DATA')
+
+
+def test_live_slot_label_pla_accepts_pla_plus_spool(tmp_path):
+    # zmod_color labels a PLA+ spool's slot as plain PLA. The live check must use the material
+    # family rule (same_material), not an exact string, or a correctly loaded PLA+ spool is refused.
+    st = state()
+    for slot in st['ifs_slots'].values():
+        slot['material'] = 'PLA+'
+    path = tmp_path/'coupon.gcode'; path.write_text(artifact(3))
+    mapping = {'0': 1, '1': 2, '2': 4}
+    mapfile = tmp_path/'map.json'; mapfile.write_text(json.dumps(mapping))
+    submissions = []
+    live = transport(st, submissions)
+    def coarse(st_, route, data=None, **kwargs):
+        reply = live(st_, route, data, **kwargs)
+        slots = (reply.get('result') or {}).get('status', {}) if isinstance(reply.get('result'), dict) else {}
+        for item in slots.get('zmod_color', {}).get('slots', []):
+            item['Material'] = 'PLA'
+        return reply
+    def upload(cmd, **kwargs):
+        return type('R', (), {'returncode': 0, 'stdout': json.dumps({'result': {'item': {'root': 'gcodes', 'path': cmd[3]}}}), 'stderr': ''})()
+    with patch.object(job.printer_state, 'load', return_value=st), \
+         patch.object(job.printer_state, 'check', return_value=(True, [], {})), \
+         patch.object(job, '_mr', side_effect=coarse), \
+         patch.object(job, 'request_json', side_effect=spoolman), \
+         patch.object(job, '_printer_phase', return_value=('standby', '', 'Ready')), \
+         patch.object(job, 'mesh_readiness', return_value={'display_off': 0, 'profile': 'MESH_DATA', 'problem': None}), \
+         patch.object(job, 'read_stock_detail', return_value=detail(st)), \
+         patch.object(job.subprocess, 'run', side_effect=upload), \
+         patch.object(job, '_fetch_remote_gcode_sha256', side_effect=lambda *a: job.file_sha256(path)), \
+         patch.object(job, '_wait_printing', return_value='printing'), \
+         patch.object(job, 'record_start', return_value=tmp_path/'record.md'):
+        cli(['finalize-gcode', str(path), '--tool-map', str(mapfile)])
+        cli(['print-now', str(path)])
+    assert len(submissions) == 1

@@ -9,7 +9,15 @@
 set -eu
 cd "$(dirname "$0")/.."
 target="${1:-origin/main}"
-python="${PYTHON:-python3}"
+# Same interpreter choice as install-hermes.sh: an explicit $PYTHON wins, then the Hermes agent
+# venv (bare python3 on a Hermes host is a stripped tools interpreter without pytest), then python3.
+if [ -n "${PYTHON:-}" ]; then
+    python=$PYTHON
+elif [ -x "$HOME/.hermes/hermes-agent/venv/bin/python" ]; then
+    python="$HOME/.hermes/hermes-agent/venv/bin/python"
+else
+    python=python3
+fi
 
 if ! git diff --quiet || ! git diff --cached --quiet; then
     echo "Tracked files have local edits. Move machine settings into config/local.toml, or commit, then retry."

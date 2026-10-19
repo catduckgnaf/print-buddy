@@ -33,7 +33,7 @@ A typo or bad value stops the import and names the key. Requires Python 3.11 or 
 Update only from a commit that is green in CI. On the home machine:
 ```bash
 scripts/home-update.sh          # fast-forward to origin/main
-scripts/home-update.sh v2.0.2   # or a tag
+scripts/home-update.sh v2.0.3   # or a tag
 ```
 The script refuses to run if tracked files were edited by hand. It runs the offline tests and the doctor after the update, and resets to the previous commit if either fails. `config/local.toml` is never touched. A listener restart command can go in `config/after-update.sh` (gitignored), which runs after a good update.
 
@@ -105,6 +105,12 @@ Printer families live in `print_buddy/printers/`; see `base.py` for what each on
 * OrcaSlicer CLI documentation: [CLI mode](https://github.com/OrcaSlicer/OrcaSlicer/wiki/cli_mode)
 
 ## Release history
+
+### 2.0.3: Split plates track their plan, honest copy counts
+* **Split plates advance their plan**: plates 2 and later of a split job now start with the plan ID and part, so finishing them updates the plan and `/print-next` offers the right next plate (#48).
+* **Copies only where they print**: split, multi-plate and per-part jobs no longer offer a copy count they would ignore. Intake says it is printing one copy, and the job record stays at 1 (#37).
+* **PLA+ in a PLA slot**: native multicolor accepts a PLA+ spool in a slot the printer labels PLA.
+* **Home update**: `scripts/home-update.sh` uses the Hermes agent venv when `$PYTHON` is unset, and its test no longer inherits the caller's `HERMES_HOME`.
 
 ### 2.0.2: Whole stack public, other Klipper printers
 * **Full runtime in the repo**: the Discord intake, Moonraker listener, Hermes plugin, spool sync and job archive now live here, installed into a Hermes profile with `scripts/install-hermes.sh` (symlinks plus a gitignored personal overlay).

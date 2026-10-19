@@ -1063,17 +1063,43 @@ def verify_gcode(gcode_path):
 CONTEXT = Path(os.environ.get("PRINT_BITCH_CONTEXT_PATH", settings.state_dir()/"print_bitch_context.json"))
 RECORD_KEYS = ("layer_height","first_layer_height","perimeters","fill_density","fill_pattern","support_material","brim_width","nozzle_diameter","filament_type","temperature","bed_temperature")
 
+def _job_for_gcode(g):
+    """The archived JOB.json that produced G-code g.
+
+    A split job keeps only plate 1 in JOB.json["gcode"]; plates 2..N live in
+    derived_plates and multipart_plan.parts, so match those too (#48).
+    """
+    for jp in ARCHIVE.glob("*/JOB.json"):
+        try: j=json.loads(jp.read_text())
+        except (OSError, ValueError): continue
+        if not isinstance(j, dict): continue
+        paths=[j.get("gcode")]
+        paths+=[r.get("gcode") for r in j.get("derived_plates") or [] if isinstance(r, dict)]
+        paths+=[p.get("gcode_path") for p in (j.get("multipart_plan") or {}).get("parts") or [] if isinstance(p, dict)]
+        if any(p and Path(p).resolve()==g for p in paths): return j
+    return None
+
+
+def copies_supported(job, multi_plate=None):
+    """Whether slicing this job clones copies into its G-code (#37).
+
+    Only the single plate path passes copies to Orca. Multi-plate, split and
+    per-part jobs slice one copy per plate, so they must never be offered more.
+    """
+    if multi_plate is None:
+        try: multi_plate = int((job.get('audit') or {}).get('plates') or 0) > 1
+        except (TypeError, ValueError): multi_plate = False
+    return not (multi_plate or job.get('full_size_split_plan') or job.get('plate_mode') == 'separate'
+                or (job.get('color_decisions') or {}).get('mode') == 'per_part')
+
+
 def record_start(gcode_path, moonraker_name=None, started_at=None):
     """Write the Obsidian start note plus the completion sidecar for a started print."""
     print_records = _external.load("print_records")
     st=printer_state.load(); g=Path(gcode_path).expanduser().resolve(); text=g.read_text(errors="ignore")
     def cfg(key):
         m=re.search(rf'^; {re.escape(key)} = (.+)$', text, re.M); return m.group(1).strip() if m else None
-    job=None
-    for jp in ARCHIVE.glob("*/JOB.json"):
-        try: j=json.loads(jp.read_text())
-        except (OSError, ValueError): continue
-        if j.get("gcode") and Path(j["gcode"]).resolve()==g: job=j; break
+    job=_job_for_gcode(g)
     key=moonraker_name or g.name
     src=(job or {}).get("selected_source") or {}
     ctx={"job_key":key,"title":(job or {}).get("title") or g.stem,"source_url":(job or {}).get("url"),
@@ -2041,6 +2067,11 @@ def slice_job(job_path, brim_override=None, copies=None, scale=None):
         decisions = validate_decisions(manifest, decisions, st, resolve_filament_selection)
     if manifest['requires_choices'] and not decisions:
         raise RuntimeError('part/color choices required; run color-plan and color-select before slicing')
+    if copies and int(copies) > 1 and not generic and not copies_supported(job, multi_plate):
+        # Split, multi-plate and per-part paths never clone copies (#37); keep JOB.json truthful.
+        print(f'NOTE: {int(copies)} copies requested, but split and per-part jobs slice one copy per plate')
+        copies = 1
+        job['copies'] = 1
     if job.get('full_size_split_plan'):
         result = _slice_full_size_split(job, job_path, src, manifest, decisions, st)
         _timing(job_path, 'slice_done', path='full_size_split')
@@ -2683,7 +2714,9 @@ def print_mapped_native(g, st, mesh, mapping, job, job_path, wait_s, reprint):
     for tool, slot in mapped.items():
         expected = st['ifs_slots'][str(slot)]
         matches = [item for item in configured if str(item.get('ID')) == str(slot)]
-        if len(matches) != 1 or matches[0].get('Material') != expected['material']:
+        # Family match (PLA == PLA+): the native slot label is coarser than Spoolman's material,
+        # so an exact compare refused a correctly loaded PLA+ spool.
+        if len(matches) != 1 or not printer_state.same_material(matches[0].get('Material'), expected['material']):
             raise RuntimeError(f'T{tool} slot {slot} live material mapping mismatch or unknown')
         if str(matches[0].get('HEX', '')).lstrip('#').upper() != expected['hex'].lstrip('#').upper():
             raise RuntimeError(f'T{tool} slot {slot} live RGB mapping mismatch or unknown')

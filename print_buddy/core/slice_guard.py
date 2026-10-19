@@ -49,6 +49,10 @@ def pre_slice(*, bounds=None, bed=None, profile=None, required_keys=(), before_p
     if tool_slots and len(tool_slots)!=int(filaments): r.block("Explicit T-index mapping count does not match the profile filament count.")
     return r
 
+# Prusa style "; estimated printing time (normal mode) = 1h 2m" and Orca/Bambu style
+# "; model printing time: 1h 2m; total estimated time: 1h 5m", plus older "; TIME:123".
+TIME_HEADER=re.compile(r"(?im)^;\s*(?:estimated printing time(?:\s*\([^)]*\))?|estimated time|printing time)\s*=\s*\S"
+                       r"|^;.*\b(?:model printing time|total estimated time)\s*:\s*\S|^;\s*time\s*:\s*\S")
 MOVE=re.compile(r"^\s*G[0-3]\b([^;]*)",re.I)
 WORD=re.compile(r"\b([XYZE])\s*(-?(?:\d+(?:\.\d*)?|\.\d+))",re.I)
 def post_slice(gcode, *, ifs_slots=None, tool_slots=None, bed=None, result_json=None):
@@ -77,7 +81,7 @@ def post_slice(gcode, *, ifs_slots=None, tool_slots=None, bed=None, result_json=
         if 'X' in vals or 'Y' in vals:
             coords.append((x,y))
             if x<0 or y<0 or x>bed[0] or y>bed[1]: r.block(f"G-code move goes off the {bed[0]:g}x{bed[1]:g} mm bed at X{x:g} Y{y:g}."); break
-    if not re.search(r"(?im)^;\s*(?:estimated printing time|estimated time|printing time)\s*=\s*\S|^;\s*time\s*:\s*\S",text):
+    if not TIME_HEADER.search(text):
         r.warn("G-code header has no estimated print-time metadata; estimate is unavailable offline.")
     if result_json:
         try:

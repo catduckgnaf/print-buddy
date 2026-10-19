@@ -5,3 +5,4 @@ __pycache__/
 config/local.toml
 config/after-update.sh
 .slicer-work/
+.claude/worktrees/

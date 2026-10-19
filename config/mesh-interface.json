@@ -1,0 +1,14 @@
+{
+  "confirmed": true,
+  "display_off": 1,
+  "bed_target": 60,
+  "hotend_target": 220,
+  "home": "macro-owned",
+  "probe": "AUTO_FULL_BED_LEVEL EXTRUDER_TEMP=220 BED_TEMP=60 PROFILE=auto SAVE=0",
+  "persist": "SAVE_CONFIG",
+  "native_screen_compatible": false,
+  "load_zoffset": 1,
+  "z_offset": -0.005,
+  "source_commit": "75bcec539196aa022243c56397eba9a17e0577cc",
+  "evidence": "Reviewed ZMod AD5X screenless documentation and upstream base.cfg at source_commit. Macro owns heating, cleaning, homing and load-cell preparation; SAVE=0 leaves persistence to verified runner. Offline tests pass. Physical validation remains pending."
+}

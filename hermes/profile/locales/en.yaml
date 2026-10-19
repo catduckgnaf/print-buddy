@@ -1,0 +1,7 @@
+gateway:
+  clarify:
+    skip_hint: ''
+platform:
+  discord:
+    prompt:
+      clarify_title: "Print Buddy Needs Your Input"

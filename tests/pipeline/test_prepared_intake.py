@@ -1,0 +1,819 @@
+"""A: one-click 'slice and print (bed is clear)' through the real prepare_link flow.
+
+Buttons are answered via the real clarify gateway. Slicing is stubbed (offline, no Orca); the start goes
+through the real print_next.start gates with a stub print-now executable and a temp claim dir.
+"""
+import asyncio
+import json
+import stat
+import sys
+from functools import partial
+from pathlib import Path
+from types import SimpleNamespace as S
+
+import pytest
+
+from print_buddy.core import model_job  # noqa: E402
+from print_buddy.core import prepared_intake  # noqa: E402
+from .helpers import external  # noqa: E402
+print_next = external("print_next")
+from .test_color_intake import source, state  # noqa: E402
+
+
+class Adapter:
+    def __init__(self, picks):
+        self.picks = iter(picks)
+        self.questions = []
+        self.sent = []
+
+    async def send_clarify(self, **kw):
+        self.questions.append(kw)
+        answer = kw['choices'][next(self.picks)]
+        import tools.clarify_gateway as cm
+        cm.resolve_gateway_clarify(kw['clarify_id'], answer)
+        return S(success=True)
+
+    # Exactly the production DiscordAdapter.send signature: a stray text= raises TypeError.
+    async def send(self, chat_id, content, reply_to=None, metadata=None):
+        self.sent.append(content)
+        return S(success=True)
+
+
+@pytest.fixture
+def env(tmp_path, monkeypatch):
+    src = source(tmp_path)
+    folder_root = tmp_path / 'archive'
+    monkeypatch.setattr(model_job, 'ARCHIVE', folder_root)
+    monkeypatch.setattr(model_job, 'printables_inventory', lambda url: {
+        'site': 'printables', 'slug': 'ghost', 'title': 'Ghost Stand',
+        'sources': [{'name': 'ghost.3mf', 'instance_id': 1}]})
+    monkeypatch.setattr(model_job, 'printables_download', lambda job, chosen, dest: _copy(src, dest))
+    monkeypatch.setattr(model_job, 'audit', lambda path: {'plates': 1})
+    # This fixture's synthetic 3MF intentionally lacks triangles; these intake tests
+    # exercise approvals/lifecycle, so model a separately verified one-copy fit.
+    from print_buddy.core import orca_adapter
+    monkeypatch.setattr(orca_adapter, 'orca_plate_capacity', lambda path, st: 1)
+    sliced = []
+
+    def fake_slice(job_path):
+        gcode = Path(job_path).parent / 'sliced' / 'plate_1.gcode'
+        gcode.parent.mkdir(parents=True, exist_ok=True)
+        gcode.write_text('; estimated printing time (normal mode) = 1h 0m 0s\nG1 X1\n')
+        data = json.loads(Path(job_path).read_text())
+        data['derived_plates'] = [{'gcode': str(gcode), 'plate_id': 1, 'slot': 1}]
+        Path(job_path).write_text(json.dumps(data))
+        sliced.append(str(gcode))
+        return [gcode]
+    monkeypatch.setattr(model_job, 'slice_job', fake_slice)
+    stub = tmp_path / 'print-now-stub'
+    stub.write_text('#!/bin/sh\necho "started $2"\n')
+    stub.chmod(stub.stat().st_mode | stat.S_IEXEC)
+    starts = []
+    real = print_next.start
+
+    async def start(target):
+        starts.append(target)
+        return await real(target, model_job=stub, idle_check=lambda: None, timeout=1,
+                          claims_dir=tmp_path / 'claims')
+    monkeypatch.setattr(print_next, 'start', start)
+    monkeypatch.setattr(prepared_intake.print_summary, 'find_job',
+                        lambda filename, *args: (json.loads(Path(filename).parents[1].joinpath('JOB.json').read_text()),
+                                          {'gcode': str(Path(filename)), 'plate': 1, 'parts': ['Ghost Stand'],
+                                           'slot': 1, 'color': 'white', 'material': 'PLA',
+                                           'filament_g': None, 'seconds': 3600}))
+    return S(root=tmp_path / 'receipts', sliced=sliced, starts=starts, tmp=tmp_path)
+
+
+def _copy(src, dest):
+    dest = Path(dest)
+    dest.mkdir(parents=True, exist_ok=True)
+    out = dest / 'ghost.3mf'
+    out.write_bytes(Path(src).read_bytes())
+    return out
+
+
+def run_flow(env, picks, mid='m1'):
+    event = S(source=S(profile='3dprinting', chat_id='c1', thread_id=None, user_id='u'), message_id=mid,
+              text='https://www.printables.com/model/1-ghost')
+    adapter = Adapter(picks)
+    result = asyncio.run(prepared_intake.prepare_link(event, adapter, state(), env.root, timeout=1))
+    receipt = json.loads(next(env.root.glob('*.json')).read_text())
+    return adapter, result, receipt
+
+
+def final_choices(adapter):
+    return adapter.questions[-1]['choices'] if adapter.questions[-1]['choices'][0].startswith('Slice') else None
+
+
+def test_fit_choice_rows_are_four_or_fewer_and_never_offer_preview():
+    rows = prepared_intake.fit_choice_rows({'scales': [0.98, 0.75, 0.5], 'rotations': [],
+                                            'full_size_split': True})
+    assert [row['label'] for row in rows] == ['Split plates at 100%', 'Shrink to 98%', 'Cancel']
+    assert len(rows) <= 4
+    packed = prepared_intake.fit_choice_rows({'split_plan': {'plates': [['a'], ['b']]},
+                                              'scales': [0.98], 'rotations': []})
+    assert packed[0]['label'] == '100% · split 2 plates' and packed[0]['plates'] == [['a'], ['b']]
+    assert prepared_intake._fit_choice_reply('split', packed) == 0
+    assert len(packed) <= 4
+    assert prepared_intake._fit_choice_reply('100%', rows) == 0
+    assert prepared_intake._fit_choice_reply('split', rows) == 0
+    assert prepared_intake._fit_choice_reply('98%', rows) == 1
+    assert prepared_intake._fit_choice_reply('98', rows) == 1
+    assert prepared_intake._fit_choice_reply('cancel', rows) == 2
+    with pytest.raises(ValueError, match='not available'):
+        prepared_intake._fit_choice_reply('100%', rows[1:])
+
+
+def test_one_click_slice_and_print_needs_no_typed_approval(env):
+    # picks: one color for everything, slot 1, then choice 1 "Slice and print ... (bed is clear)"
+    adapter, result, receipt = run_flow(env, [1, 0, 0])
+    last = adapter.questions[-1]['choices']
+    assert last[0].startswith('Slice and print') and 'bed is clear' in last[0]
+    assert last[1] == 'Slice only' and last[2] == 'Stop with colors saved' and last[3] == 'Cancel print request'
+    assert 'does not authorize printing' not in adapter.questions[-1]['question']
+    assert len(env.sliced) == 1 and len(env.starts) == 1
+    assert receipt['status'] == 'STARTED' and receipt['started'] is True
+    approval = receipt['bed_clear_approval']
+    assert approval['via'] == 'button' and approval['gcode'] == env.sliced[0]
+    assert approval['gcode_sha256'] == env.starts[0]['gcode_sha256']
+    assert approval['job_json'].endswith('JOB.json')
+    assert not any('Approved' in q['question'] for q in adapter.questions)
+
+
+def test_slice_only_posts_start_button_bound_to_exact_plate(env):
+    adapter, result, receipt = run_flow(env, [1, 0, 1, 0])  # slice only, then START button
+    assert adapter.questions[-1]['choices'] == [print_next.START_LABEL, print_next.CANCEL_LABEL]
+    assert len(env.starts) == 1 and receipt['status'] == 'STARTED'
+
+
+def test_slice_only_then_cancel_never_starts(env):
+    adapter, result, receipt = run_flow(env, [1, 0, 1, 1])
+    assert env.starts == [] and receipt['status'] == 'SLICED_NOT_STARTED' and receipt['started'] is False
+
+
+def test_stop_choice_never_slices_or_starts(env):
+    adapter, result, receipt = run_flow(env, [1, 0, 2])
+    assert env.sliced == [] and env.starts == [] and receipt['status'] == 'COLORS_SAVED_STOPPED'
+
+
+def test_changed_gcode_after_slice_is_refused_by_existing_gate(env, monkeypatch):
+    real_slice = model_job.slice_job
+
+    def tamper(job_path):
+        out = real_slice(job_path)
+        starts_target = Path(out[0])
+        # change the bytes after the sha is taken by prepare_link? simulate via start wrapper below
+        return out
+    monkeypatch.setattr(model_job, 'slice_job', tamper)
+    original = print_next.start
+
+    async def tampered(target):
+        Path(target['gcode']).write_text('; tampered\n')
+        return await original(target)
+    monkeypatch.setattr(print_next, 'start', tampered)
+    adapter, result, receipt = run_flow(env, [1, 0, 0])
+    assert receipt['status'] == 'START_REFUSED' and receipt['started'] is False
+    assert any('REFUSED' in m for m in adapter.sent)
+
+
+def test_start_still_preparing_posts_no_second_print_started(env, monkeypatch):
+    # print-now exits 0 while native heating runs; the listener then posts the one "Print started".
+    async def preparing(target):
+        env.starts.append(target)
+        return True, 'START ACCEPTED; PREPARATION STILL RUNNING {"started": false}'
+    monkeypatch.setattr(print_next, 'start', preparing)
+    adapter, result, receipt = run_flow(env, [1, 0, 0])
+    assert receipt['status'] == 'STARTED' and len(env.starts) == 1
+    assert adapter.sent[-1].startswith('Preparing to start')
+    assert not any(m.startswith('Print started') for m in adapter.sent)
+
+
+def test_preparation_metadata_mismatch_never_blocks_start(env, monkeypatch):
+    """A Discord summary defect must not veto the exact already-approved print."""
+    async def preparing(target):
+        env.starts.append(target)
+        return True, 'START ACCEPTED; PREPARATION STILL RUNNING {"started": false}'
+    monkeypatch.setattr(print_next, 'start', preparing)
+    monkeypatch.setattr(prepared_intake.print_summary, 'format_preparation',
+                        lambda *_args, **_kw: 'Print preparing: stale metadata unavailable')
+    adapter, _result, receipt = run_flow(env, [1, 0, 0])
+    assert receipt['status'] == 'STARTED' and len(env.starts) == 1
+    assert any(msg.startswith('Preparing to start') and '#unknown' not in msg for msg in adapter.sent)
+
+
+def test_duplicate_event_does_not_start_twice(env):
+    run_flow(env, [1, 0, 0], mid='dup')
+    adapter = Adapter([])
+    event = S(source=S(profile='3dprinting', chat_id='c1', thread_id=None, user_id='u'), message_id='dup',
+              text='https://www.printables.com/model/1-ghost')
+    result = asyncio.run(prepared_intake.prepare_link(event, adapter, state(), env.root, timeout=1))
+    assert result['reason'] == 'duplicate model-link event' and len(env.starts) == 1
+
+
+def test_message_identity_is_a_sha256_not_the_raw_discord_snowflake(env, monkeypatch):
+    """A Discord snowflake stays event metadata, never a --intake-id value."""
+    mid = '1000000000000000001'
+    expected = model_job.intake_id_from_message(
+        S(profile='3dprinting', chat_id='c1', thread_id=None), mid)
+    assert len(expected) == 64 and expected == expected.lower()
+    assert expected != mid
+    monkeypatch.setattr(model_job, 'printables_inventory', lambda url: {
+        'site': 'printables', 'slug': 'identity', 'title': 'Identity',
+        'sources': [{'name': 'identity.3mf', 'instance_id': 1}]})
+    event = S(source=S(profile='3dprinting', chat_id='c1', thread_id=None, user_id='u'),
+              message_id=mid, text='https://www.printables.com/model/1-identity')
+    result = asyncio.run(prepared_intake.prepare_link(event, Adapter([1, 0, 1]), state(), env.root, timeout=1))
+    assert result['action'] == 'skip'
+    receipt = json.loads((env.root / f'{expected}.json').read_text())
+    assert receipt['intake_id'] == expected
+    assert receipt['intake_id'] != mid
+
+
+# ---- Phase 1.7: concise AD5X preview before color selection (offline, display only) ----
+AD5X_ROW = {'name': 'ghost.3mf', 'instance_id': 1, 'site_printer': 'Flashforge Adventurer 5X', 'plates': [
+    {'name': 'p1', 'prediction_s': 3600, 'weight_g': 12.4}, {'name': 'p2', 'prediction_s': 1800, 'weight_g': 7.2}]}
+
+
+def run_preview(env, monkeypatch, summary, row, picks=(2,), send_fails=False):
+    monkeypatch.setattr(model_job, 'printables_inventory', lambda url: {
+        'site': 'printables', 'slug': 'ghost', 'title': 'Ghost Stand', 'summary': summary, 'sources': [row]})
+    log = []
+
+    class Ordered(Adapter):
+        async def send_clarify(self, **kw):
+            log.append(('ask', kw['question']))
+            return await super().send_clarify(**kw)
+
+        async def send(self, chat_id, content, reply_to=None, metadata=None):
+            log.append(('send', content))
+            if send_fails and content.startswith('That looks like'):
+                raise RuntimeError('discord down')
+            return await super().send(chat_id, content, reply_to, metadata)
+    event = S(source=S(profile='3dprinting', chat_id='c1', thread_id=None, user_id='u'), message_id='pv1',
+              text='https://www.printables.com/model/1-ghost')
+    adapter = Ordered([1, 0, *picks])
+    asyncio.run(prepared_intake.prepare_link(event, adapter, state(), env.root, timeout=1))
+    return log, adapter
+
+
+def test_intake_spool_projection_uses_total_once_for_a_single_color_job():
+    job = {'color_decisions': {'mode': 'single_color', 'selection':
+           {'slot': 1, 'color': 'white', 'material': 'PLA', 'spoolman_id': 10}}}
+    manifest = {'filament_stats': {'total_g': 18.5, 'extruders': {1: {'g': 11}, 2: {'g': 7.5}}}}
+    assert model_job.intake_spool_projection(job, {10: 250}, manifest) == [{
+        'slot': 1, 'color': 'white', 'material': 'PLA', 'spoolman_id': 10,
+        'estimated_used_g': 18.5, 'remaining_g': 250.0, 'projected_remaining_g': 231.5}]
+
+
+def test_intake_spool_projection_groups_multicolor_choices_by_spool():
+    white = {'slot': 1, 'color': 'white', 'material': 'PLA', 'spoolman_id': 10}
+    black = {'slot': 3, 'color': 'black', 'material': 'PLA', 'spoolman_id': 12}
+    job = {'color_decisions': {'mode': 'per_part', 'choices': {
+        'part:1': white, 'filament:1': white, 'filament:2': black}}}
+    manifest = {'filament_stats': {'total_g': 13, 'extruders': {1: {'g': 5}, 2: {'g': 8}}}}
+    assert model_job.intake_spool_projection(job, {10: 50, 12: 30}, manifest) == [
+        {'slot': 1, 'color': 'white', 'material': 'PLA', 'spoolman_id': 10,
+         'estimated_used_g': 5.0, 'remaining_g': 50.0, 'projected_remaining_g': 45.0},
+        {'slot': 3, 'color': 'black', 'material': 'PLA', 'spoolman_id': 12,
+         'estimated_used_g': 8.0, 'remaining_g': 30.0, 'projected_remaining_g': 22.0}]
+
+
+def test_intake_spool_projection_scales_by_copies_and_flags_shortfall():
+    job = {'color_decisions': {'mode': 'single_color', 'selection':
+           {'slot': 1, 'color': 'white', 'material': 'PLA', 'spoolman_id': 10}}}
+    manifest = {'filament_stats': {'total_g': 40}}
+    rows = model_job.intake_spool_projection(job, {10: 100}, manifest, copies=3)
+    assert rows[0]['estimated_used_g'] == 120.0 and rows[0]['projected_remaining_g'] == -20.0
+    assert model_job.format_spool_projection(rows) == (
+        'Slot 1 white PLA: needs about 120 g; spool has 100 g, short by about 20 g.')
+
+
+def test_intake_spool_weights_prefers_spoolman_then_slot_record_never_guesses():
+    st = {'ifs_slots': {'1': {'spoolman_id': 10, 'remaining_grams': 500},
+                        '3': {'spoolman_id': 12}}}
+    assert model_job.intake_spool_weights(st, [10, 12]) == {10: 500.0}
+    assert model_job.intake_spool_weights(st, [10, 12], lambda sid: {'remaining_weight': 321.5}) == {
+        10: 321.5, 12: 321.5}
+
+    def down(sid):
+        raise OSError('spoolman down')
+    assert model_job.intake_spool_weights(st, [10, 12], down) == {10: 500.0}
+    rows = model_job.intake_spool_projection(
+        {'color_decisions': {'mode': 'single_color', 'selection': {'slot': 3, 'color': 'black',
+                                                                    'material': 'PLA', 'spoolman_id': 12}}},
+        {}, {'filament_stats': {'total_g': 9}})
+    assert model_job.format_spool_projection(rows) == 'Slot 3 black PLA: needs about 9 g; spool weight unknown.'
+
+
+def test_color_save_prompt_shows_spool_projection_and_estimate_before_print_choice(env, monkeypatch):
+    from print_buddy.core import source_colors
+    real = source_colors.inventory
+    monkeypatch.setattr(source_colors, 'inventory',
+                        lambda path: {**real(path), 'filament_stats': {'total_g': 25, 'total_m': 8, 'extruders': {}}})
+    st = state()
+    st['ifs_slots']['1']['remaining_grams'] = 200
+    adapter = Adapter([1, 0, 2])  # one color, slot 1, stop with colors saved
+    event = S(source=S(profile='3dprinting', chat_id='c1', thread_id=None, user_id='u'), message_id='spool1',
+              text='https://www.printables.com/model/1-ghost')
+    asyncio.run(prepared_intake.prepare_link(event, adapter, st, env.root, timeout=1))
+    saved = [q['question'] for q in adapter.questions if q['choices'] and q['choices'][0].startswith('Slice and print')]
+    assert len(saved) == 1
+    assert saved[0].startswith('White PLA · ')
+    assert 'Slot 1 white PLA: needs about 25 g; spool has 200 g, about 175 g left after.' in saved[0]
+    assert 'AD5X' not in saved[0]
+    assert env.starts == []
+
+
+def test_preview_precedes_first_color_prompt_with_validated_estimate(env, monkeypatch):
+    log, adapter = run_preview(env, monkeypatch, 'A sturdy stand for a ghost figure. Print upright. https://x.io/a.3mf', AD5X_ROW)
+    assert 'estimated print time about 1h 30m' in log[0][1]
+    assert '1h 35m total' in log[0][1]
+    assert '20 g of filament before color selection.' in log[0][1]
+    assert [k for k, _ in log].index('ask') > 0
+    assert 'http' not in log[0][1] and '.3mf' not in log[0][1]
+    assert sum(1 for k, t in log if k == 'send' and t.startswith('That looks like')) == 1
+    assert env.sliced == [] and env.starts == []  # preview never slices, uploads or starts
+
+
+@pytest.mark.parametrize('extra', [
+    {}, {'site_printer': 'Bambu X1C'},
+    {'plates': [{'prediction_s': 3600, 'weight_g': None}]},
+    {'plates': [{'prediction_s': 'soon', 'weight_g': 5}]},
+    {'plates': [{'prediction_s': 3600, 'weight_g': 5}, {'prediction_s': 60}]},
+    {'plates': [{'prediction_s': True, 'weight_g': 5}]},
+])
+def test_preview_omits_estimate_when_incomplete_but_keeps_description(env, monkeypatch, extra):
+    row = {**AD5X_ROW, **extra}
+    if extra == {}:
+        row = {'name': 'ghost.3mf', 'instance_id': 1}
+    log, _ = run_preview(env, monkeypatch, 'A sturdy stand.', row)
+    tail = ('Model page estimate (for Bambu X1C): about 1h 30m and 20 g of filament over 2 plates. '
+            'The AD5X figure after slicing will differ somewhat.' if extra.get('site_printer')
+            else 'The model page gives no time or filament estimate; I will report both after slicing.')
+    assert log[0] == ('send', 'That looks like Ghost Stand, A sturdy stand. I will use the selected profile: ghost. ' + tail)
+
+
+def test_preview_names_a_selected_profile_without_a_description(env, monkeypatch):
+    row = {'name': 'ghost.3mf', 'title': 'Fine 0.16 mm profile', 'instance_id': 1}
+    log, _ = run_preview(env, monkeypatch, '', row)
+    assert log[0] == ('send', 'That looks like Ghost Stand. I will use the selected profile: Fine 0.16 mm profile. The model page gives no time or filament estimate; I will report both after slicing.')
+
+
+def test_preview_hides_an_opaque_download_filename(env, monkeypatch):
+    row = {'name': 'model_7f3c1a8e.3mf', 'instance_id': 1}
+    log, _ = run_preview(env, monkeypatch, '', row)
+    assert log[0][0] == 'ask'
+
+
+def test_no_preview_when_nothing_to_say_and_color_flow_unchanged(env, monkeypatch):
+    log, adapter = run_preview(env, monkeypatch, '', {'name': 'ghost.3mf', 'instance_id': 1})
+    assert log[0][0] == 'ask' and not any(t.startswith('That looks like') for _, t in log)
+
+
+def test_preview_delivery_failure_never_blocks_color_selection(env, monkeypatch):
+    log, adapter = run_preview(env, monkeypatch, 'A sturdy stand.', AD5X_ROW, send_fails=True)
+    assert [k for k, _ in log].count('ask') == 3 and env.starts == []
+
+
+def test_preview_does_no_printer_or_network_io(env, monkeypatch):
+    import socket
+    import subprocess
+    monkeypatch.setattr(socket, 'socket', lambda *a, **k: pytest.fail('network I/O'))
+    monkeypatch.setattr(subprocess, 'run', lambda *a, **k: pytest.fail('subprocess'))
+    monkeypatch.setattr(subprocess, 'Popen', lambda *a, **k: pytest.fail('subprocess'))
+    assert prepared_intake.preview_sentence({'title': 'T', 'summary': 'Nice.'}, AD5X_ROW).startswith('That looks like T, Nice.')
+
+
+@pytest.mark.parametrize('text', [
+    'https://makerworld.com/en/models/3382409-miniature-baroque-frame#profileId-3848581 how long would this take?',
+    'How many fit? https://makerworld.com/en/models/3382409-miniature-baroque-frame#profileId-3848581',
+])
+def test_model_question_link_is_still_recognized(text):
+    from print_buddy.core.link_intake import model_link
+    assert model_link(text) == 'https://makerworld.com/en/models/3382409-miniature-baroque-frame#profileId-3848581'
+
+
+def test_linked_maker_profile_is_selected_automatically(env, monkeypatch):
+    url = 'https://makerworld.com/en/models/3382409-miniature-baroque-frame#profileId-3848581'
+    rows = [
+        {'instance_id': 3848581, 'title': '0.2 mm layer'},
+        {'instance_id': 3873478, 'title': 'Optimized parameters'},
+    ]
+    monkeypatch.setattr(model_job, 'maker_inventory', lambda _url: {
+        'site': 'makerworld', 'slug': 'frame', 'title': 'Frame', 'sources': rows})
+    selected = []
+
+    def download(job, chosen, dest):
+        selected.append(chosen['instance_id'])
+        return _copy(env.tmp / 'source.3mf', dest)
+
+    monkeypatch.setattr(model_job, 'maker_download', download)
+    event = S(source=S(profile='3dprinting', chat_id='c1', thread_id=None, user_id='u'),
+              message_id='profiles', text=url)
+    # Contract (2026-10-12): the URL profileId is used directly; no profile button.
+    # one color, slot 1, then stop before slicing
+    adapter = Adapter([1, 0, 2])
+    asyncio.run(prepared_intake.prepare_link(event, adapter, state(), env.root, timeout=1))
+    assert not any('print profiles' in q['question'] for q in adapter.questions)
+    assert selected == [3848581]
+    assert env.sliced == [] and env.starts == []
+
+
+def test_quantity_buttons_choose_midpoint_and_answer_duration(env, monkeypatch):
+    from print_buddy.core import orca_adapter
+    assert orca_adapter.quantity_buttons(0) == [1]
+    assert orca_adapter.quantity_buttons(4) == [1, 2, 4]
+    monkeypatch.setattr(orca_adapter, 'orca_plate_capacity', lambda path, st: 3)
+    calls = []
+
+    def fake_slice(job_path, copies=None):
+        calls.append(copies)
+        gcode = Path(job_path).parent / 'sliced' / 'plate_1.gcode'
+        gcode.parent.mkdir(parents=True, exist_ok=True)
+        gcode.write_text('; estimated printing time (normal mode) = 2h 11m 12s\nG1 X1\n')
+        data = json.loads(Path(job_path).read_text())
+        data['derived_plates'] = [{'gcode': str(gcode), 'plate_id': 1, 'slot': 1}]
+        Path(job_path).write_text(json.dumps(data))
+        return [gcode]
+
+    monkeypatch.setattr(model_job, 'slice_job', fake_slice)
+    monkeypatch.setattr(prepared_intake, '_preview_estimate', lambda _row: None)
+    event = S(source=S(profile='3dprinting', chat_id='c1', thread_id=None, user_id='u'),
+              message_id='duration', text='https://www.printables.com/model/1-ghost how long would this take?')
+    # one color, slot 1, choose 2 copies, slice only, then decline start
+    adapter = Adapter([1, 0, 1, 1, 1])
+    asyncio.run(prepared_intake.prepare_link(event, adapter, state(), env.root, timeout=1))
+    quantity = next(q for q in adapter.questions if 'copies' in q['question'].lower())
+    assert quantity['choices'] == ['One copy', 'Two copies', 'Max (3 copies)']
+    assert not any(q['question'].startswith('Confirm: slice exactly 2 copies') for q in adapter.questions)
+    final = next(q for q in adapter.questions if q['choices'] and q['choices'][0].startswith('Slice and print'))
+    assert '2 copies' in final['question'] and final['choices'][0].startswith('Slice and print')
+    assert calls == [2]
+    assert any('2 copies' in text and '2h 11m' in text and 'warmup ~5 min' in text
+               for text in adapter.sent)
+    assert env.starts == []
+
+
+def test_typed_quantity_uses_value_not_button_position(env, monkeypatch):
+    from print_buddy.core import orca_adapter
+    monkeypatch.setattr(orca_adapter, 'orca_plate_capacity', lambda path, st: 6)
+    calls = []
+
+    def fake_slice(job_path, copies=None):
+        calls.append(copies)
+        return []
+
+    monkeypatch.setattr(model_job, 'slice_job', fake_slice)
+    monkeypatch.setattr(prepared_intake, '_preview_estimate', lambda _row: None)
+    event = S(source=S(profile='3dprinting', chat_id='c1', thread_id=None, user_id='u'),
+              message_id='typed-quantity', text='https://www.printables.com/model/1-ghost')
+
+    class TypedQuantity(Adapter):
+        async def send_clarify(self, **kw):
+            self.questions.append(kw)
+            import tools.clarify_gateway as cm
+            from print_buddy.core import link_intake
+            if 'How many copies' in kw['question']:
+                assert 'will not fit' in link_intake.typed_reply(event.source, '9')
+                assert link_intake.typed_reply(event.source, '4') == ''
+            else:
+                cm.resolve_gateway_clarify(kw['clarify_id'], kw['choices'][next(self.picks)])
+            return S(success=True)
+
+    # one color, slot 1, (typed 4 copies), slice only, then decline start
+    adapter = TypedQuantity([1, 0, 1, 1])
+    asyncio.run(prepared_intake.prepare_link(event, adapter, state(), env.root, timeout=1))
+    assert calls == [4]
+    quantity = next(q for q in adapter.questions if 'How many copies' in q['question'])
+    assert quantity['choices'] == ['One copy', 'Two copies', 'Max (6 copies)']
+
+
+def test_capacity_zero_full_size_split_saves_separate_mode_before_slice(env, monkeypatch):
+    from print_buddy.core import orca_adapter
+    from .test_plate_merge import _source
+    path = env.tmp / 'two-large-parts.3mf'
+    _source(path, {'1': (150, 150, 10), '2': (150, 150, 10)}, [['1', '2']])
+    monkeypatch.setattr(model_job, 'printables_download', lambda job, chosen, dest: _copy(path, dest))
+    monkeypatch.setattr(orca_adapter, 'orca_plate_capacity',
+                        lambda path, st, scale=1.0, copy_limit=16, **kw: 0 if scale == 1.0 else 1)
+    monkeypatch.setattr(orca_adapter, 'fit_options',
+                        lambda path, st: {'scales': [0.98, 0.75, 0.5], 'rotations': []})
+
+    def fake_split_slice(job_path, copies=None):
+        job_path = Path(job_path)
+        data = json.loads(job_path.read_text())
+        gcodes, rows = [], []
+        for index, keys in enumerate(data['full_size_split_plan']['plates'], 1):
+            gcode = job_path.parent / 'sliced' / f'plate_{index}.gcode'
+            gcode.parent.mkdir(parents=True, exist_ok=True)
+            gcode.write_text(f'; plate {index} at 100%\\nG1 X1\\n')
+            gcodes.append(gcode)
+            rows.append({'gcode': str(gcode), 'plate_id': index, 'slot': 1, 'part_keys': keys})
+        data['derived_plates'] = rows
+        job_path.write_text(json.dumps(data))
+        env.sliced.extend(map(str, gcodes))
+        return gcodes
+
+    monkeypatch.setattr(model_job, 'slice_job', fake_split_slice)
+    event = S(source=S(profile='3dprinting', chat_id='c1', thread_id=None, user_id='u'),
+              message_id='too-large', text='https://www.printables.com/model/1-ghost')
+    adapter = Adapter([1, 0, 0, 1, 1])
+    result = asyncio.run(prepared_intake.prepare_link(event, adapter, state(), env.root, timeout=1))
+    scale_prompt = next(q for q in adapter.questions if 'does not fit the AD5X bed' in q['question'])
+    assert scale_prompt['choices'][0] == '100% · split 2 plates'
+    assert 'Part 1 on plate 1' in scale_prompt['question'] and 'Part 2 on plate 2' in scale_prompt['question']
+    job_data = json.loads(next(env.root.parent.glob('archive/*/JOB.json')).read_text())
+    assert job_data['scale'] == 1.0
+    assert job_data['plate_mode'] == 'separate'
+    assert job_data['full_size_split_plan']['plates'] == [['1:1'], ['2:1']]
+    assert result['reason'] == 'operator did not start the sliced plate'
+    assert len(env.sliced) == 2 and env.starts == []
+    plan_id = job_data['multipart_plan']['plan_id']
+    plan = print_next.load_plan(plan_id)
+    assert [part['plate'] for part in plan['parts']] == [1, 2]
+    assert [part['status'] for part in plan['parts']] == ['planned', 'planned']
+    assert [part['part_keys'] for part in job_data['derived_plates']] == [['1:1'], ['2:1']]
+
+
+def test_capacity_zero_offers_rotation_alternative(env, monkeypatch):
+    from print_buddy.core import orca_adapter
+    monkeypatch.setattr(orca_adapter, 'orca_plate_capacity',
+                        lambda path, st, scale=1.0, copy_limit=16, **kw: 0 if scale == 1.0 and not kw.get('rotation') else 1)
+    rot = {'axis': '+Y', 'name': 'Rotate 90° on X', 'scale': 1.0, 'dims_mm': [126.5, 209.8, 219.8],
+           'dims_full_mm': [128.4, 213.0, 223.1], 'rotation': [1, 0, 0, 0, 0, -1, 0, 1, 0],
+           'supports': True, 'brim': True, 'label': 'Rotate 90° on X, full size (needs supports + brim)'}
+    monkeypatch.setattr(orca_adapter, 'fit_options',
+                        lambda path, st: {'scales': [0.89, 0.75, 0.5], 'rotations': [rot]})
+    event = S(source=S(profile='3dprinting', chat_id='c1', thread_id=None, user_id='u'),
+              message_id='too-large-rot', text='https://www.printables.com/model/1-ghost')
+    # One color, slot 1, pick choice 0 (the rotated alternative), slice only, decline start.
+    adapter = Adapter([1, 0, 0, 1, 1])
+    result = asyncio.run(prepared_intake.prepare_link(event, adapter, state(), env.root, timeout=1))
+    scale_prompt = next(q for q in adapter.questions if 'does not fit the AD5X bed' in q['question'])
+    assert scale_prompt['choices'][0] == '100% + supports'
+    assert 'needs supports' in scale_prompt['question']
+    job_data = json.loads(next(env.root.parent.glob('archive/*/JOB.json')).read_text())
+    assert job_data.get('scale', 1.0) == 1.0
+    assert job_data['orientation']['axis'] == '+Y'
+    assert job_data['orientation']['brim'] is True
+    assert result['reason'] == 'operator did not start the sliced plate'
+
+
+def test_capacity_zero_cancel_stops_without_slice(env, monkeypatch):
+    from print_buddy.core import orca_adapter
+    monkeypatch.setattr(orca_adapter, 'orca_plate_capacity', lambda path, st, **kw: 0)
+    monkeypatch.setattr(orca_adapter, 'fit_options',
+                        lambda path, st: {'scales': [0.98, 0.75, 0.5], 'rotations': []})
+    event = S(source=S(profile='3dprinting', chat_id='c1', thread_id=None, user_id='u'),
+              message_id='too-large-cancel', text='https://www.printables.com/model/1-ghost')
+    adapter = Adapter([1, 0, 1])  # shrink, slot, then Cancel
+    result = asyncio.run(prepared_intake.prepare_link(event, adapter, state(), env.root, timeout=1))
+    assert result['reason'] == 'cancelled oversized model'
+    assert any('Print cancelled' in text for text in adapter.sent)
+    assert env.sliced == [] and env.starts == []
+
+
+def _per_part_oversized(env, monkeypatch, honored, answers):
+    from print_buddy.core import orca_adapter
+    monkeypatch.setattr(orca_adapter, 'orca_plate_capacity', lambda path, st, **kw: 0 if not kw else 1)
+    monkeypatch.setattr(orca_adapter, 'fit_options',
+                        lambda path, st: {'scales': [0.882, 0.5], 'rotations': [
+                            {'label': 'Rotate 90° on Y, 94.4%', 'scale': 0.944, 'axis': '+Y'}]})
+    seen = []
+
+    def per_part(path, decisions, options, bed):
+        seen.append((decisions['mode'], bed, options))
+        return {**options, 'scales': [s for s in options['scales'] if s in honored], 'rotations': []}
+    monkeypatch.setattr(model_job, 'per_part_fit_options', per_part)
+    event = S(source=S(profile='3dprinting', chat_id='c1', thread_id=None, user_id='u'),
+              message_id='per-part-too-large', text='https://www.printables.com/model/1-ghost')
+    adapter = Adapter(answers)
+    result = asyncio.run(prepared_intake.prepare_link(event, adapter, state(), env.root, timeout=1))
+    return adapter, result, seen
+
+
+def test_per_part_offers_only_fits_every_slot_plate_honors(env, monkeypatch):
+    # Per-part mode, both parts on the first slot, then pick the first fit row.
+    adapter, result, seen = _per_part_oversized(env, monkeypatch, {0.5}, [0, 0, 0, 0])
+    assert seen and seen[0][0] == 'per_part'
+    fit_question = next(q for q in adapter.questions if 'does not fit the AD5X bed' in q['question'])
+    assert not any('88' in c or '94' in c for c in fit_question['choices'])
+    assert any('50%' in c for c in fit_question['choices'])
+    receipt = json.loads(next(env.root.glob('*.json')).read_text())
+    assert receipt['fit_options'] == {'scales': [0.5], 'rotations': []}
+    assert receipt['scale'] == 0.5
+    assert env.starts == []
+
+
+def test_per_part_with_no_honored_fit_explains_single_color_resend(env, monkeypatch):
+    adapter, result, _ = _per_part_oversized(env, monkeypatch, set(), [0, 0, 0, 0])
+    assert adapter.questions[-1]['choices'] == ['Do not print (Cancel)']
+    assert 'none of the resize options work with these per-part colors' in adapter.questions[-1]['question']
+    assert 'Cancel, then resend the link and choose single color to resize it.' in adapter.questions[-1]['question']
+    receipt = json.loads(next(env.root.glob('*.json')).read_text())
+    assert receipt['fit_options'] == {'scales': [], 'rotations': []}
+    assert result['reason'] == 'cancelled oversized model'
+    assert env.sliced == [] and env.starts == []
+
+
+def _many_profiles(env, monkeypatch, answers):
+    url = 'https://makerworld.com/en/models/386963-build-plate-cleaner#profileId-287445'
+    rows = [{'instance_id': 287440 + i, 'title': f'Profile {i}'} for i in range(1, 8)]
+    monkeypatch.setattr(model_job, 'maker_inventory', lambda _url: {
+        'site': 'makerworld', 'slug': 'cleaner', 'title': 'Cleaner', 'sources': rows})
+    selected = []
+
+    def download(job, chosen, dest):
+        selected.append(chosen['instance_id'])
+        return _copy(env.tmp / 'source.3mf', dest)
+    monkeypatch.setattr(model_job, 'maker_download', download)
+
+    class Typed(Adapter):
+        async def send_clarify(self, **kw):
+            self.questions.append(kw)
+            first = not hasattr(self, 'done')
+            self.done = True
+            import tools.clarify_gateway as cm
+            cm.resolve_gateway_clarify(kw['clarify_id'], answers if first else kw['choices'][next(self.picks)])
+            return S(success=True)
+    adapter = Typed([1, 0, 2])
+    event = S(source=S(profile='3dprinting', chat_id='c1', thread_id=None, user_id='u'), message_id='many', text=url)
+    result = asyncio.run(prepared_intake.prepare_link(event, adapter, state(), env.root, timeout=1))
+    return adapter, result, selected
+
+
+def test_url_profile_id_wins_even_with_many_profiles(env, monkeypatch):
+    # Contract (2026-10-12): a profileId fragment selects that exact profile automatically.
+    adapter, _, selected = _many_profiles(env, monkeypatch, '6')
+    assert not any('print profiles' in q['question'] for q in adapter.questions)
+    assert selected == [287445]
+
+
+def test_many_profiles_without_fragment_still_require_a_button(env, monkeypatch):
+    url = 'https://makerworld.com/en/models/386963-build-plate-cleaner'
+    rows = [{'instance_id': 287440 + i, 'title': f'Profile {i}'} for i in range(1, 8)]
+    monkeypatch.setattr(model_job, 'maker_inventory', lambda _url: {
+        'site': 'makerworld', 'slug': 'cleaner', 'title': 'Cleaner', 'sources': rows})
+    selected = []
+    monkeypatch.setattr(model_job, 'maker_download',
+                        lambda job, chosen, dest: selected.append(chosen['instance_id']) or _copy(env.tmp / 'source.3mf', dest))
+    adapter = Adapter([7])  # last button is Cancel
+    event = S(source=S(profile='3dprinting', chat_id='c1', thread_id=None, user_id='u'), message_id='many2', text=url)
+    asyncio.run(prepared_intake.prepare_link(event, adapter, state(), env.root, timeout=1))
+    assert 'print profiles' in adapter.questions[0]['question']
+    assert selected == [] and env.sliced == [] and env.starts == []
+
+
+# --- multipart intake freeze: source inspection must be off-loop, and the part count must be announced ---
+
+def _slow_inventory_flow(env, monkeypatch, audit_manifest=None):
+    """Run a multipart (Shell/Eyes) intake with a slow inventory; return what ran where."""
+    import threading
+    from print_buddy.core import source_colors
+    real_inventory = source_colors.inventory
+    seen = {'threads': [], 'ticks': 0}
+
+    def slow_inventory(path):
+        seen['threads'].append(threading.current_thread())
+        import time
+        time.sleep(0.3)
+        return real_inventory(path)
+    monkeypatch.setattr(source_colors, 'inventory', slow_inventory)
+    if audit_manifest is not None:
+        monkeypatch.setattr(model_job, 'audit', lambda path: {'plates': 1, 'color_manifest': audit_manifest(path)})
+
+    order = []
+
+    class Ordered(Adapter):
+        async def send_clarify(self, **kw):
+            order.append(('ask', kw['question']))
+            return await super().send_clarify(**kw)
+
+        async def send(self, chat_id, content, reply_to=None, metadata=None):
+            order.append(('say', content))
+            return await super().send(chat_id, content, reply_to, metadata)
+
+    async def main():
+        async def ticker():
+            while True:
+                seen['ticks'] += 1
+                await asyncio.sleep(0.01)
+        task = asyncio.create_task(ticker())
+        event = S(source=S(profile='3dprinting', chat_id='c1', thread_id=None, user_id='u'),
+                  message_id=__import__('uuid').uuid4().hex, text='https://www.printables.com/model/1-ghost')
+        adapter = Ordered([0, 0, 1, 2])  # per-part mode, Shell->slot1, Eyes->slot2, stop
+        try:
+            await prepared_intake.prepare_link(event, adapter, state(), env.root, timeout=1)
+        finally:
+            task.cancel()
+        return adapter
+    adapter = asyncio.run(main())
+    return adapter, order, seen, real_inventory
+
+
+def test_multipart_inspection_runs_off_event_loop_and_loop_stays_responsive(env, monkeypatch):
+    import threading
+    adapter, order, seen, _ = _slow_inventory_flow(env, monkeypatch)
+    assert seen['threads'], 'inventory was never invoked'
+    assert all(t is not threading.main_thread() for t in seen['threads'])
+    assert seen['ticks'] >= 10  # a 0.3 s blocking call on the loop would leave ~1 tick
+    assert env.sliced == [] and env.starts == []
+
+
+def test_multipart_first_prompt_states_part_count_and_asks_color_choice(env, monkeypatch):
+    adapter, order, _, _ = _slow_inventory_flow(env, monkeypatch)
+    assert order[0][0] == 'ask'  # no separate message precedes the prompt
+    first = adapter.questions[0]
+    assert first['question'].startswith('Inspected 2 parts: Shell, Eyes.')
+    assert 'Choose colors for these parts or one color for everything?' in first['question']
+    assert len(first['choices']) == 2
+    # Per-part answers continue to the per-part prompts instead of stalling.
+    assert [q['question'] for q in adapter.questions[1:3]] == [
+        'Choose the color/material for Shell, author made it White',
+        'Choose the color/material for Eyes, author made it Black']
+
+
+def test_audit_manifest_reused_only_when_bound_to_current_source_bytes(env, monkeypatch):
+    from print_buddy.core import source_colors
+    real = source_colors.inventory  # captured before the helper patches it
+    # Matching hash: the audit's manifest is reused, so no second inspection happens.
+    _, _, seen, _ = _slow_inventory_flow(env, monkeypatch, audit_manifest=real)
+    assert seen['threads'] == []
+    # Stale hash: the audit manifest is ignored and the file is re-inspected (off-loop).
+    for f in env.root.glob('*.json'):
+        f.unlink()
+    _, _, seen, _ = _slow_inventory_flow(env, monkeypatch, audit_manifest=lambda p: {**real(p), 'source_sha256': 'stale'})
+    assert len(seen['threads']) == 1
+
+
+def test_dropped_3mf_runs_same_intake_without_any_site(env, monkeypatch):
+    def boom(*a, **k):
+        raise AssertionError('no site may be contacted for a dropped file')
+    for name in ('maker_inventory', 'maker_download', 'printables_inventory', 'printables_download'):
+        monkeypatch.setattr(model_job, name, boom)
+    src = next(Path(model_job.ARCHIVE).parent.rglob('*.3mf'), None) or env.tmp / 'x'
+    drop = env.tmp / 'doc_0123456789ab_Can Holder.3mf'
+    drop.write_bytes(Path(src).read_bytes() if Path(src).is_file() else b'')
+    event = S(source=S(profile='3dprinting', chat_id='c1', thread_id=None, user_id='u'), message_id='m9',
+              text='', media_urls=[str(drop)])
+    assert prepared_intake.model_file(event) == drop
+    assert prepared_intake.model_file(S(media_urls=[str(drop), str(drop)])) is None
+    adapter = Adapter([1, 0, 0])
+    asyncio.run(prepared_intake.prepare_link(event, adapter, state(), env.root, timeout=1))
+    receipt = json.loads(next(env.root.glob('*.json')).read_text())
+    job = json.loads(Path(receipt['job_json']).read_text())
+    assert receipt['url'] == 'upload:Can Holder.3mf' and job['site'] == 'upload'
+    assert Path(job['downloaded_file']).name == 'Can Holder.3mf'
+    assert receipt['status'] == 'STARTED' and len(env.starts) == 1
+
+
+def test_upload_title_reads_3mf_designer_title(tmp_path):
+    import zipfile
+    f = tmp_path / 'CanHolder3MF.3mf'
+    with zipfile.ZipFile(f, 'w') as z:
+        z.writestr('3D/3dmodel.model', '<model><metadata name="Title">Slim 12oz Can Holder, Bubbl&#8217;r</metadata></model>')
+    assert prepared_intake.upload_title(f) == 'Slim 12oz Can Holder, Bubbl\u2019r'
+    stl = tmp_path / 'x.stl'
+    stl.write_bytes(b'solid x')
+    assert prepared_intake.upload_title(stl) is None
+
+
+@pytest.mark.parametrize('text,hit', [
+    ('print the previous print in black', True), ('reprint that', True), ('print it again in white', True),
+    ('print the last one', True), ('print another', True), ('how is the print going', False),
+    ('reprint https://www.printables.com/model/1-ghost', False)])
+def test_reprint_request_detection(text, hit):
+    assert prepared_intake.reprint_request(text) is hit
+
+
+def test_reprint_offers_last_model_and_never_downloads(env, monkeypatch):
+    run_flow(env, [1, 0, 0], mid='first')
+    def boom(*a, **k):
+        raise AssertionError('reprint must not contact any site')
+    for name in ('maker_inventory', 'maker_download', 'printables_inventory', 'printables_download'):
+        monkeypatch.setattr(model_job, name, boom)
+    prev = prepared_intake.last_job()
+    assert prev and prev['title'] == 'Ghost Stand'
+    event = S(source=S(profile='3dprinting', chat_id='c1', thread_id=None, user_id='u'), message_id='again',
+              text='print the previous print in black')
+    adapter = Adapter([0, 1, 0, 0])  # yes reprint, slot 2, slice and print
+    asyncio.run(prepared_intake.prepare_link(event, adapter, state(), env.root, timeout=1, reuse=prev))
+    assert adapter.questions[0]['question'].startswith('Did you mean Ghost Stand')
+    receipt = json.loads((env.root / (prepared_intake.hashlib.sha256(json.dumps(
+        ['3dprinting', 'c1', '', 'again']).encode()).hexdigest() + '.json')).read_text())
+    job = json.loads(Path(receipt['job_json']).read_text())
+    assert receipt['url'].startswith('reprint:') and job['reused_from'] == prev['intake_id']
+    assert Path(job['downloaded_file']).read_bytes() == Path(prev['downloaded_file']).read_bytes()
+    assert len(env.starts) == 2
+
+
+def test_declined_reprint_does_nothing(env):
+    run_flow(env, [1, 0, 0], mid='first')
+    prev = prepared_intake.last_job()
+    event = S(source=S(profile='3dprinting', chat_id='c1', thread_id=None, user_id='u'), message_id='no',
+              text='reprint that')
+    adapter = Adapter([1])
+    result = asyncio.run(prepared_intake.prepare_link(event, adapter, state(), env.root, timeout=1, reuse=prev))
+    assert result['reason'] == 'reprint declined' and len(env.sliced) == 1 and len(env.starts) == 1
+    assert 'Nothing was sliced or started' in adapter.sent[-1]
+

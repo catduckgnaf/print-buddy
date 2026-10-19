@@ -1,0 +1,133 @@
+import asyncio
+import json
+import sys
+from pathlib import Path
+from types import SimpleNamespace as S
+import pytest
+from print_buddy.core import source_colors, model_job
+from print_buddy.core.discord_color_intake import collect
+from .test_color_intake import source, state
+
+class Adapter:
+    def __init__(self, picks):
+        self.picks = iter(picks)
+        self.questions = []
+        self.sent = []
+    async def send_clarify(self, **kwargs):
+        self.questions.append(kwargs)
+        answer = kwargs['choices'][next(self.picks)]
+        import tools.clarify_gateway as cm
+        cm.resolve_gateway_clarify(kwargs['clarify_id'], answer)
+        return S(success=True)
+    async def send(self, **kwargs):
+        self.sent.append(kwargs)
+        return S(success=True)
+
+Transport = Adapter
+
+def test_canonical_part_rows_save_distinct_slot_mapping(tmp_path):
+    async def run():
+        p = source(tmp_path)
+        jp = tmp_path / 'JOB.json'
+        jp.write_text(json.dumps({'downloaded_file': str(p), 'color_schema': 'part_slots_v1',
+                                  'color_manifest': source_colors.inventory(p)}))
+        adapter = Adapter([0, 1, 0, 0])
+        result = await collect(jp, state(), adapter, 'offline', 'colors-offline', timeout=1)
+        saved = json.loads(jp.read_text())['color_decisions']
+        keys = list(saved['choices'])
+        assert [saved['choices'][key]['slot'] for key in keys] == [3, 1]
+        assert result['decisions'] == saved
+        assert len(adapter.questions) == 3
+        assert all('source filament' not in q['question'] for q in adapter.questions)
+    asyncio.run(run())
+
+def test_build_slot_labels_formats_cleanly_and_handles_duplicates():
+    selections = [
+        {'slot': 1, 'color': 'white', 'material': 'PLA'},
+        {'slot': 2, 'color': 'pink', 'material': 'PLA'},
+        {'slot': 3, 'color': 'black', 'material': 'PLA'},
+        {'slot': 4, 'color': 'dark green', 'material': 'PLA'},
+    ]
+    labels = model_job.build_slot_labels(selections)
+    assert labels == ['White PLA', 'Pink PLA', 'Black PLA', 'Dark Green PLA']
+    assert model_job.build_slot_labels([{'slot': 2, 'color': 'Pink PLA', 'material': 'pla'}]) == ['Pink PLA']
+
+    dup_selections = [
+        {'slot': 1, 'color': 'black', 'material': 'PLA'},
+        {'slot': 2, 'color': 'pink', 'material': 'PLA'},
+        {'slot': 3, 'color': 'black', 'material': 'PLA'},
+        {'slot': 4, 'color': 'dark green', 'material': 'PLA'},
+    ]
+    dup_labels = model_job.build_slot_labels(dup_selections)
+    assert dup_labels == ['Black PLA (Slot 1)', 'Pink PLA', 'Black PLA (Slot 3)', 'Dark Green PLA']
+
+
+def test_format_color_title_preserves_materials_and_capitalizes_words():
+    assert model_job.format_color_title('white') == 'White'
+    assert model_job.format_color_title('dark green') == 'Dark Green'
+    assert model_job.format_color_title('shiny silk rainbow') == 'Shiny Silk Rainbow'
+
+
+def test_all_stencils_same_color_uses_existing_single_color_collect_api(tmp_path):
+
+    async def run():
+        p = source(tmp_path)
+        jp = tmp_path / 'JOB.json'
+        jp.write_text(json.dumps({'downloaded_file': str(p), 'color_manifest': source_colors.inventory(p)}))
+        adapter = Adapter([1, 0])  # one-color mode, then the selected configured slot
+        result = await collect(jp, state(), adapter, 'offline', 'colors-all-stencils-one', timeout=1)
+        saved = json.loads(jp.read_text())['color_decisions']
+        source_colors.validate_decisions(source_colors.inventory(p), saved, state(), model_job.resolve_filament_selection)
+        assert result['mode'] == 'single_color'
+        assert result['slots'] == [1]
+        assert saved['mode'] == 'single_color'
+        assert saved['selection']['slot'] == 1
+        assert len(adapter.questions) == 2
+        assert adapter.questions[0]['choices'] == [
+            'Preserve colors per stencil/source region', 'All stencils same color']
+        assert adapter.questions[1]['question'] == 'Choose the one color for all stencils'
+    asyncio.run(run())
+
+
+def test_legacy_prompts_preserve_existing_valid_round_trip(tmp_path):
+    async def run():
+        p = source(tmp_path)
+        jp = tmp_path / 'JOB.json'
+        jp.write_text(json.dumps({'downloaded_file': str(p), 'color_manifest': source_colors.inventory(p)}))
+        adapter = Adapter([0, 0, 0, 1, 0])
+        result = await collect(jp, state(), adapter, 'offline', 'colors-legacy', timeout=1)
+        source_colors.validate_decisions(source_colors.inventory(p), result['decisions'], state(), model_job.resolve_filament_selection)
+        assert result['mode'] == 'per_part'
+        assert len(adapter.questions) == 5
+    asyncio.run(run())
+
+def test_existing_decisions_are_not_reasked_or_replayed(tmp_path):
+    async def run():
+        p = source(tmp_path)
+        manifest = source_colors.inventory(p)
+        selection = {'slot': 1, 'color': 'white', 'material': 'PLA', 'spoolman_id': 10}
+        decisions = {'source_sha256': manifest['source_sha256'], 'mode': 'single_color', 'selection': selection}
+        jp = tmp_path / 'JOB.json'
+        jp.write_text(json.dumps({'downloaded_file': str(p), 'color_manifest': manifest, 'color_decisions': decisions}))
+        adapter = Adapter([])
+        with pytest.raises(ValueError, match='already exist'):
+            await collect(jp, state(), adapter, 'offline', 'colors-replay', timeout=1)
+        assert not adapter.questions
+        assert json.loads(jp.read_text())['color_decisions'] == decisions
+    asyncio.run(run())
+
+def test_source_change_during_callback_refused(tmp_path):
+    async def run():
+        p = source(tmp_path)
+        jp = tmp_path / 'JOB.json'
+        jp.write_text(json.dumps({'downloaded_file': str(p), 'color_schema': 'part_slots_v1',
+                                  'color_manifest': source_colors.inventory(p)}))
+        class MutatingAdapter(Adapter):
+            async def send_clarify(self, **kwargs):
+                result = await super().send_clarify(**kwargs)
+                p.write_bytes(p.read_bytes() + b'changed')
+                return result
+        with pytest.raises(ValueError, match='source changed'):
+            await collect(jp, state(), MutatingAdapter([0, 0, 0]), 'offline', 'colors-changed', timeout=1)
+        assert 'color_decisions' not in json.loads(jp.read_text())
+    asyncio.run(run())

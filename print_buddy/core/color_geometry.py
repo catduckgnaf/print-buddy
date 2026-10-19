@@ -958,7 +958,7 @@ def prime_tower_candidates(part_bounds, bed=BED_MM, tower=TOWER_MM, margin=TOWER
     step = 5
     # Orca grows the tower past its nominal width (brim plus purge depth); a
     # tower flush with the bed edge slices to G-code in the unprintable area.
-    edge = TOWER_EDGE_MM
+    edge = int(TOWER_EDGE_MM)
     top = bed - tower - edge
     scored = sorted(((clearance(x, y), x, y)
                      for y in range(edge, int(top) + 1, step)

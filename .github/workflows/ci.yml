@@ -22,7 +22,7 @@ jobs:
           cache-dependency-path: requirements-test.txt
       - run: python -m pip install -r requirements-test.txt
       - name: Offline tests (no printer, no slicer, no network)
-        run: python -m unittest discover -s tests -v
+        run: python -m pytest -q tests
 
   real-slicer:
     # Slices fixtures with the Flathub Orca the home box runs, using the home templates.
@@ -54,4 +54,7 @@ jobs:
       - name: Real slicer tests
         env:
           PRINT_BUDDY_REAL_SLICER: "1"
-        run: xvfb-run -a python -m unittest tests.slicer.test_orca_real -v
+        # Flatpak Orca cannot see the host /tmp, so pytest temp folders live in the workspace.
+        run: |
+          mkdir -p .slicer-work
+          xvfb-run -a python -m pytest -q -rs --basetemp "$GITHUB_WORKSPACE/.slicer-work/pytest" tests

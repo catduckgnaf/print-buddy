@@ -43,7 +43,9 @@ class HomeUpdateTests(unittest.TestCase):
         return git(self.upstream, "rev-parse", "HEAD")
 
     def update(self):
-        return subprocess.run(["sh", "scripts/home-update.sh"], cwd=self.home, capture_output=True, text=True)
+        # The nested suite uses a stand-in Orca, so it must never run the real-slicer tests.
+        env = {k: v for k, v in os.environ.items() if k != "PRINT_BUDDY_REAL_SLICER"}
+        return subprocess.run(["sh", "scripts/home-update.sh"], cwd=self.home, capture_output=True, text=True, env=env)
 
     def test_good_update_sticks_and_keeps_local_settings(self):
         head = self.commit_upstream("NOTES.txt", "harmless\n")

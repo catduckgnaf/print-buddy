@@ -46,7 +46,61 @@ command = ["flatpak", "run", "com.orcaslicer.OrcaSlicer"]
 # Fallback slicer when Orca fails. Network is cut so it never phones home.
 command = ["flatpak", "run", "--unshare=network", "--command=bambu-studio", "com.bambulab.BambuStudio"]
 
+[paths]
+# Hermes profile the bot runs in. State files live in <hermes_home>/state.
+hermes_home = "~/.hermes/profiles/3dprinting"
+archive = "~/3d-prints"
+records_vault = "~/Documents/3D Printing Records"
+cache = "~/.hermes/cache"
+hermes_bin = "~/.local/bin/hermes"
+ffmpeg = "ffmpeg"
+
 [services]
-# Addresses stay out of the repo. Set them in config/local.toml and the doctor will check them:
-#   moonraker_url = "http://192.168.x.x:7125"
-#   spoolman_url = "http://192.168.x.x:7912"
+# Addresses are machine specific: set them in config/local.toml. Empty means not configured.
+moonraker_url = ""
+# Derived from moonraker_url when empty.
+moonraker_ws_url = ""
+camera_snapshot_url = ""
+spoolman_url = ""
+openviking_url = ""
+vision_chat_url = ""
+# Flashforge stock API port for IFS presence. Serial and check code stay in the profile .env.
+stock_api_port = 8898
+
+[discord]
+# Channel and approver IDs go in config/local.toml.
+chat_id = ""
+approval_user_id = ""
+upload_max_bytes = 9500000
+post_print_quiet_s = 7200
+daily_reset_hour = 4
+timezone = "America/New_York"
+
+[listener]
+tick_s = 600
+ifs_presence_poll_s = 15
+spool_nag_s = 600
+start_claim_ttl_s = 1800
+
+[vision]
+model = "gemini-latest"
+
+[timelapse]
+# Remote archive over ssh. Empty host disables the copy.
+archive_host = ""
+archive_dir = ""
+ssh_key = ""
+render_wait_s = 900
+render_poll_s = 10
+max_bytes = 209715200
+local_retention_days = 1
+
+[maintenance]
+quick_hours = 25
+full_hours = 75
+full_days = 30
+
+[cold_pull]
+# Profile name = [hot C, cold C]
+pla_trial = [220, 90]
+petg = [245, 100]

@@ -1,0 +1,306 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# Fast, dependency-light Moonraker CLI for the 3D Printer specialist.
+# It intentionally replaces the retired Klipper MCP transport with direct REST calls.
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+setting() { PYTHONPATH="$ROOT${PYTHONPATH:+:$PYTHONPATH}" python3 -m print_buddy.settings get "$1"; }
+M="${MOONRAKER_URL:-$(setting services.moonraker_url)}"
+CAMERA_SNAPSHOT_URL="${PRINTER_CAMERA_SNAPSHOT_URL:-$(setting services.camera_snapshot_url)}"
+SPOOLMAN_URL="${SPOOLMAN_URL:-$(setting services.spoolman_url)}"
+TIMEOUT="${MOONRAKER_TIMEOUT:-15}"
+GCODE_TIMEOUT="${MOONRAKER_GCODE_TIMEOUT:-300}"
+
+have() { command -v "$1" >/dev/null 2>&1; }
+need_jq() { have jq || { printf 'error: jq is required\n' >&2; exit 127; }; }
+urlencode() { jq -rn --arg v "$1" '$v|@uri'; }
+json() { jq -cn "$@"; }
+
+request() {
+  local method="$1" endpoint="$2" data="${3:-}" max_time="${4:-$TIMEOUT}" tmp code
+  [[ -n "$M" ]] || { printf 'error: services.moonraker_url is not set; add it to config/local.toml or export MOONRAKER_URL\n' >&2; return 1; }
+  tmp="$(mktemp)"
+  if [[ -n "$data" ]]; then
+    code="$(curl -sS --max-time "$max_time" -o "$tmp" -w '%{http_code}' -X "$method" -H 'Content-Type: application/json' --data "$data" "$M$endpoint")" || {
+      printf 'error: Moonraker request failed: %s %s\n' "$method" "$endpoint" >&2
+      rm -f "$tmp"
+      return 1
+    }
+  else
+    code="$(curl -sS --max-time "$max_time" -o "$tmp" -w '%{http_code}' -X "$method" "$M$endpoint")" || {
+      printf 'error: Moonraker request failed: %s %s\n' "$method" "$endpoint" >&2
+      rm -f "$tmp"
+      return 1
+    }
+  fi
+  if [[ ! "$code" =~ ^2 ]]; then
+    printf 'error: Moonraker returned HTTP %s for %s %s\n' "$code" "$method" "$endpoint" >&2
+    cat "$tmp" >&2
+    printf '\n' >&2
+    rm -f "$tmp"
+    return 1
+  fi
+  cat "$tmp"
+  rm -f "$tmp"
+}
+
+get() { request GET "$1"; }
+post() { request POST "$1" "${2:-}" "${3:-$TIMEOUT}"; }
+delete() { request DELETE "$1"; }
+
+gcode() {
+  local script="$1"
+  post '/printer/gcode/script' "$(json --arg script "$script" '{script:$script}')" "$GCODE_TIMEOUT"
+}
+
+status() {
+  need_jq
+  get '/printer/objects/query?webhooks&print_stats&virtual_sdcard&toolhead&gcode_move&extruder&heater_bed&fan&probe&bed_mesh&filament_switch_sensor%20filament_sensor&system_stats' |
+    jq '{state:.result.status.webhooks.state,state_message:.result.status.webhooks.state_message,print:.result.status.print_stats,progress:.result.status.virtual_sdcard.progress,homed_axes:.result.status.toolhead.homed_axes,position:.result.status.gcode_move.gcode_position,extruder:.result.status.extruder,bed:.result.status.heater_bed,fan:.result.status.fan,probe:.result.status.probe,mesh_profile:.result.status.bed_mesh.profile_name,filament_sensor:.result.status["filament_switch_sensor filament_sensor"],system:.result.status.system_stats}'
+}
+
+temps() {
+  need_jq
+  get '/printer/objects/query?extruder&heater_bed' |
+    jq '{extruder:.result.status.extruder,bed:.result.status.heater_bed}'
+}
+
+set_temp() {
+  need_jq
+  local heater="${1:?heater required}" target="${2:?target required}" cmd object
+  [[ "$target" =~ ^[0-9]+([.][0-9]+)?$ ]] || { printf 'error: target must be numeric\n' >&2; exit 2; }
+  case "$heater" in
+    hotend|extruder|nozzle)
+      awk -v t="$target" 'BEGIN{exit !(t>=0 && t<=300)}' || { printf 'error: hotend target must be 0..300 C\n' >&2; exit 2; }
+      cmd="M104 S$target"; object=extruder ;;
+    bed|heater_bed)
+      awk -v t="$target" 'BEGIN{exit !(t>=0 && t<=120)}' || { printf 'error: bed target must be 0..120 C\n' >&2; exit 2; }
+      cmd="M140 S$target"; object=heater_bed ;;
+    *) printf 'error: heater must be hotend or bed\n' >&2; exit 2 ;;
+  esac
+  gcode "$cmd" >/dev/null
+  get "/printer/objects/query?$object" | jq --arg heater "$heater" --argjson requested "$target" '{ok:true,heater:$heater,requested:$requested,readback:.result.status}'
+}
+
+wait_temp() {
+  need_jq
+  local heater="${1:?heater required}" target="${2:?target required}" tolerance="${3:-2}" timeout="${4:-600}" object start now actual
+  case "$heater" in hotend|extruder|nozzle) object=extruder ;; bed|heater_bed) object=heater_bed ;; *) printf 'error: heater must be hotend or bed\n' >&2; exit 2 ;; esac
+  start="$(date +%s)"
+  while :; do
+    actual="$(get "/printer/objects/query?$object" | jq -r --arg o "$object" '.result.status[$o].temperature')"
+    if awk -v a="$actual" -v t="$target" -v e="$tolerance" 'BEGIN{d=a-t;if(d<0)d=-d;exit !(d<=e)}'; then
+      json --arg heater "$heater" --argjson target "$target" --argjson actual "$actual" '{ok:true,heater:$heater,target:$target,actual:$actual}'
+      return
+    fi
+    now="$(date +%s)"
+    if (( now - start >= timeout )); then
+      json --arg heater "$heater" --argjson target "$target" --argjson actual "$actual" '{ok:false,error:"timeout",heater:$heater,target:$target,actual:$actual}' >&2
+      return 1
+    fi
+    sleep 2
+  done
+}
+
+history() {
+  need_jq
+  local limit="${1:-20}"
+  get "/server/history/list?limit=$(urlencode "$limit")&order=desc" | jq '.result'
+}
+
+files() {
+  need_jq
+  get '/server/files/list?root=gcodes' | jq '.result | sort_by(.modified) | reverse'
+}
+
+metadata() {
+  need_jq
+  local file="${1:?filename required}"
+  get "/server/files/metadata?filename=$(urlencode "$file")" | jq '.result'
+}
+
+objects() {
+  need_jq
+  get '/printer/objects/list' | jq '.result.objects'
+}
+
+tmc_status() {
+  need_jq
+  local stepper="${1:-}" all query
+  all="$(get '/printer/objects/list')"
+  query="$(jq -r --arg s "$stepper" '[.result.objects[]|select(startswith("tmc"))|select(($s=="") or contains($s))|@uri]|join("&")' <<<"$all")"
+  [[ -n "$query" ]] || { printf 'error: no matching TMC driver found\n' >&2; exit 1; }
+  get "/printer/objects/query?$query" | jq '.result.status'
+}
+
+bed_mesh() {
+  need_jq
+  get '/printer/objects/query?bed_mesh' | jq '.result.status.bed_mesh'
+}
+
+home_axes() {
+  need_jq
+  local axes="${1:-}" script required
+  case "$axes" in
+    x|X) script='G28 X'; required='x' ;;
+    y|Y) script='G28 Y'; required='y' ;;
+    z|Z) script='G28 Z'; required='z' ;;
+    xy|XY|yx|YX) script='G28 X Y'; required='xy' ;;
+    xyz|XYZ|all|ALL) script='G28'; required='xyz' ;;
+    *) printf 'error: axes must be x, y, z, xy, xyz, or all\n' >&2; exit 2 ;;
+  esac
+  gcode "$script" >/dev/null
+  get '/printer/objects/query?webhooks&toolhead&gcode_move' |
+    jq --arg required "$required" '
+      .result.status as $s
+      | ($s.toolhead.homed_axes // "") as $homed
+      | {
+          ok: ([($required | split("")[]) as $axis | ($homed | contains($axis))] | all),
+          requested_axes: $required,
+          homed_axes: $homed,
+          physical_position: $s.toolhead.position,
+          gcode_position: $s.gcode_move.gcode_position,
+          state: $s.webhooks.state,
+          state_message: $s.webhooks.state_message
+        }'
+}
+
+spool() {
+  need_jq
+  local id
+  id="$(get '/server/spoolman/spool_id' | jq -r '.result.spool_id // empty')"
+  [[ -n "$id" ]] || { json '{active_spool:null}'; return; }
+  if curl -fsS --max-time "$TIMEOUT" "$SPOOLMAN_URL/api/v1/spool/$id" >/dev/null 2>&1; then
+    curl -fsS --max-time "$TIMEOUT" "$SPOOLMAN_URL/api/v1/spool/$id" | jq '{active_spool:.}'
+  else
+    json --argjson id "$id" '{active_spool:{id:$id},note:"Spoolman detail endpoint unavailable; Moonraker active spool ID retained"}'
+  fi
+}
+
+system_info() { need_jq; get '/machine/system_info' | jq '.result.system_info // .result'; }
+proc_stats() { need_jq; get '/machine/proc_stats' | jq '.result'; }
+updates() { need_jq; get '/machine/update/status' | jq '.result'; }
+webcams() { need_jq; get '/server/webcams/list' | jq '.result.webcams'; }
+timelapse() { need_jq; get '/machine/timelapse/settings' | jq '.result.settings // .result'; }
+gcode_store() { need_jq; get "/server/gcode_store?count=$(urlencode "${1:-100}")" | jq '.result'; }
+
+usage() {
+  cat <<'EOF'
+Usage: moonrakerctl COMMAND [ARGS]
+
+Fast paths
+  status                         One-call printer, job, position, heater and sensor summary
+  temps                          Current hotend and bed temperatures
+  heat-hotend TEMP               Set hotend target, nonblocking
+  heat-bed TEMP                  Set bed target, nonblocking
+  heat PLA|PLA_PLUS|PETG|ABS     Set conservative material targets, nonblocking
+  cool                           Set hotend and bed targets to zero
+  wait-temp HEATER TEMP [TOL] [TIMEOUT]
+  gcode COMMAND...               Run arbitrary G-code or a Klipper macro
+
+Jobs and files
+  files                          List G-code files
+  metadata FILE                  Show Moonraker G-code metadata
+  upload LOCAL [REMOTE] [SHA256] Upload G-code (server verifies SHA256), do not start
+  start FILE                     Start a verified file after required human safety gates
+  pause | resume | cancel        Control active job; cancel also forces heaters off
+  history [LIMIT]                Recent Moonraker print history
+
+Printer and diagnostics
+  home AXES                      AXES: x, y, z, xy, xyz, all; requires bed-clear approval
+  raise-z MM                     Relative positive Z move only; no homing
+  mesh-run --state-dir DIR ...    Supervised checkpointed AD5X mesh; see bed-mesh-routine reference
+  mesh | mesh-load NAME | mesh-clear | mesh-calibrate | mesh-save NAME
+  tmc [STEPPER]                  Read TMC objects
+  tmc-dump STEPPER               Run DUMP_TMC and show recent G-code messages
+  objects | gcode-store [COUNT]
+  klipper-restart | firmware-restart | emergency-stop
+  system-info | proc-stats | updates | webcams | timelapse | spool
+  camera-snapshot FILE           Save a snapshot
+  backup-config DIR              Download config root to a timestamped archive
+
+Destructive or high-risk commands intentionally require explicit typed confirmations.
+EOF
+}
+
+cmd="${1:-help}"; shift || true
+case "$cmd" in
+  help|-h|--help) usage ;;
+  status) status ;;
+  temps) temps ;;
+  heat-hotend) set_temp hotend "${1:?temperature required}" ;;
+  heat-bed) set_temp bed "${1:?temperature required}" ;;
+  heat)
+    case "${1^^}" in
+      PLA|PLA_PLUS|PLA+) set_temp bed 60 >/dev/null; set_temp hotend 210 ;;
+      PETG) set_temp bed 80 >/dev/null; set_temp hotend 240 ;;
+      ABS|ASA) set_temp bed 100 >/dev/null; set_temp hotend 250 ;;
+      *) printf 'error: preset must be PLA, PLA_PLUS, PETG, ABS, or ASA\n' >&2; exit 2 ;;
+    esac ;;
+  cool) set_temp hotend 0 >/dev/null; set_temp bed 0 ;;
+  wait-temp) wait_temp "$@" ;;
+  gcode) gcode "$*" ;;
+  home)
+    home_axes "${1:-}" ;;
+  raise-z)
+    mm="${1:?positive millimeters required}"; awk -v n="$mm" 'BEGIN{exit !(n>0 && n<=100)}' || { printf 'error: raise-z must be >0 and <=100 mm\n' >&2; exit 2; }
+    gcode "$(printf 'G91\nG1 Z%s F600\nG90\nM400' "$mm")" ;;
+  files) files ;;
+  metadata) metadata "$@" ;;
+  upload)
+    local_file="${1:?local file required}"; remote="${2:-$(basename "$local_file")}"; sha="${3:-}"; [[ -f "$local_file" ]] || { printf 'error: file not found: %s\n' "$local_file" >&2; exit 1; }
+    # Optional SHA256: Moonraker verifies it server side and rejects (HTTP 400, file not kept) on mismatch.
+    if [[ -n "$sha" ]]; then [[ "$sha" =~ ^[0-9a-f]{64}$ ]] || { printf 'error: checksum must be 64 lowercase hex\n' >&2; exit 2; }
+      curl -fsS --max-time 120 -F "file=@$local_file;filename=$remote" -F root=gcodes -F "checksum=$sha" "$M/server/files/upload"
+    else curl -fsS --max-time 120 -F "file=@$local_file;filename=$remote" -F root=gcodes "$M/server/files/upload"; fi ;;
+  start) post '/printer/print/start' "$(json --arg filename "${1:?filename required}" '{filename:$filename}')" ;;
+  pause) post '/printer/print/pause' ;;
+  resume) post '/printer/print/resume' ;;
+  cancel) post '/printer/print/cancel' >/dev/null; set_temp hotend 0 >/dev/null || true; set_temp bed 0 ;;
+  history) history "$@" ;;
+  mesh-run)
+    script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+    source "$script_dir/mesh-routine.sh"
+    mesh_run "$@" ;;
+  mesh) bed_mesh ;;
+  mesh-load) gcode "BED_MESH_PROFILE LOAD=${1:?profile required}" ;;
+  mesh-clear) gcode 'BED_MESH_CLEAR' ;;
+  mesh-calibrate) gcode 'BED_MESH_CALIBRATE' ;;
+  mesh-save) gcode "BED_MESH_PROFILE SAVE=${1:?profile required}" ;;
+  tmc) tmc_status "$@" ;;
+  tmc-dump) gcode "DUMP_TMC STEPPER=${1:?stepper required}" >/dev/null; sleep 1; gcode_store 100 ;;
+  objects) objects ;;
+  gcode-store) gcode_store "$@" ;;
+  klipper-restart) post '/printer/restart' ;;
+  firmware-restart) post '/printer/firmware_restart' ;;
+  emergency-stop) post '/printer/emergency_stop' ;;
+  system-info) system_info ;;
+  proc-stats) proc_stats ;;
+  updates) updates ;;
+  webcams) webcams ;;
+  timelapse) timelapse ;;
+  spool) spool ;;
+  camera-snapshot) curl -fsS --max-time "$TIMEOUT" -o "${1:?output file required}" "$CAMERA_SNAPSHOT_URL" ;;
+  backup-config)
+    need_jq
+    dir="${1:?destination directory required}"; mkdir -p "$dir"; stamp="$(date +%Y%m%d-%H%M%S)"; archive="$dir/klipper-config-$stamp.tar.gz"
+    tmp="$(mktemp -d)"; trap 'rm -rf "$tmp"' EXIT
+    get '/server/files/list?root=config' | jq -r '.result[] | select(.path|endswith(".cfg") or endswith(".conf") or endswith(".json")) | .path' | while IFS= read -r path; do
+      mkdir -p "$tmp/$(dirname "$path")"
+      curl -fsS --max-time "$TIMEOUT" -o "$tmp/$path" "$M/server/files/config/$path"
+    done
+    tar -C "$tmp" -czf "$archive" .; printf '%s\n' "$archive" ;;
+  delete-file)
+    [[ "${2:-}" == DELETE ]] || { printf 'error: append literal DELETE to confirm file deletion\n' >&2; exit 2; }
+    delete "/server/files/gcodes/$(urlencode "${1:?filename required}")" ;;
+  reboot|shutdown)
+    printf 'error: host reboot and shutdown are disabled; use the Discord /print-reboot button flow for a printer restart\n' >&2; exit 2 ;;
+  update)
+    [[ "${2:-}" == UPDATE ]] || { printf 'error: use update COMPONENT UPDATE to confirm\n' >&2; exit 2; }
+    post '/machine/update/upgrade' "$(json --arg name "${1:?component required}" '{name:$name}')" ;;
+  service-restart)
+    [[ "${2:-}" == RESTART ]] || { printf 'error: use service-restart SERVICE RESTART to confirm\n' >&2; exit 2; }
+    post '/machine/services/restart' "$(json --arg service "${1:?service required}" '{service:$service}')" ;;
+  *) printf 'error: unknown command: %s\n\n' "$cmd" >&2; usage >&2; exit 2 ;;
+esac

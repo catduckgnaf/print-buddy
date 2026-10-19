@@ -890,7 +890,7 @@ async def prepare_link(event, adapter, state, root, timeout=300, reuse=None):
         if has_dur_q and gcodes:
             # Every plate counts: a split job is the sum of its plates, not plate 1.
             await adapter.send(chat_id=source.chat_id, metadata=metadata,
-                               content=f"Estimated duration for {chosen_quantity} {'copy' if chosen_quantity == 1 else 'copies'}:\n" + breakdown)
+                               content="Estimated duration:\n" + breakdown)
         plan_id = 'intake-' + iid[:16]
         parts = []
         split = len(gcodes) > 1

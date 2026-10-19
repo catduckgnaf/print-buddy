@@ -43,11 +43,34 @@ def test_part_grams_are_shares_never_the_repeated_total(tmp_path):
     assert "Clip (Crimson PLA, ~10 g)" in text and "Stand (Black PLA, ~30 g)" in text  # author color kept
 
 
+def _single(tmp_path, copies):
+    """Single plate job: Orca clones the copies into the plate, so the G-code covers them."""
+    return {'title': 'Hook', 'copies': copies, 'filament_selection': {'slot': 1, 'color': 'Black', 'material': 'PLA'},
+            'color_manifest': {'parts': [{'key': 'a', 'name': 'Hook.stl', 'source_extruder': 1}]},
+            'derived_plates': [{'gcode': _gcode(tmp_path / 'one.gcode', '1h', 12.0), 'plate_id': 1, 'part_keys': ['a']}]}
+
+
 def test_quantity_change_updates_totals(tmp_path):
-    one = summary.format_estimate_breakdown(_job(tmp_path, copies=1))
-    two = summary.format_estimate_breakdown(_job(tmp_path, copies=2))
+    one = summary.format_estimate_breakdown(_single(tmp_path, 1))
+    two = summary.format_estimate_breakdown(_single(tmp_path, 2))
     assert "for 2 copies" in two and "for 2 copies" not in one
-    assert "Stand x2" in two and "Stand x2" not in one
+    assert "Hook x2" in two and "Hook x2" not in one
+
+
+def test_split_plates_never_claim_copies_their_gcode_lacks(tmp_path):
+    # Per part slicing makes one copy per plate whatever was requested; do not promise two.
+    text = summary.format_estimate_breakdown(_job(tmp_path, copies=2))
+    assert "for 2 copies" not in text and "Stand x2" not in text
+    assert "Total: ~4h 15m printing" in text
+
+
+def test_same_name_in_different_colors_stays_separate(tmp_path):
+    job = _job(tmp_path)
+    job['color_manifest']['parts'][1]['name'] = 'Stand.stl'  # second part on plate 1 shares the name
+    job['color_manifest']['parts'][1].pop('author_color')
+    job['color_decisions']['choices']['b']['color'] = 'Red'
+    rows = {(p['name'], p['color']): p['filament_g'] for p in summary.plate_estimates(job)[0]['parts']}
+    assert rows == {('Stand', 'Black'): 30.0, ('Stand', 'Red'): 10.0}
 
 
 def test_unknown_estimates_are_labeled_not_zero(tmp_path):
@@ -58,10 +81,11 @@ def test_unknown_estimates_are_labeled_not_zero(tmp_path):
 
 
 def test_model_page_estimate_fills_missing_plate_and_scales_with_copies(tmp_path):
-    job = _job(tmp_path, copies=2, third_known=False)
-    job['selected_source'] = {'plates': [{}, {}, {'prediction_s': 3600, 'weight_g': 8}]}
+    job = _single(tmp_path, 2)
+    job['derived_plates'][0]['gcode'] = str(tmp_path / 'missing.gcode')
+    job['selected_source'] = {'plates': [{'prediction_s': 3600, 'weight_g': 8}]}
     plates = summary.plate_estimates(job)
-    assert plates[2]['seconds'] == 7200 and plates[2]['basis'] == 'model page' and plates[2]['filament_g'] == 16.0
+    assert plates[0]['seconds'] == 7200 and plates[0]['basis'] == 'model page' and plates[0]['filament_g'] == 16.0
 
 
 def test_many_plates_stay_short(tmp_path):

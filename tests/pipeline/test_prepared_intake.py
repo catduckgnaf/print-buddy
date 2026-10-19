@@ -451,7 +451,9 @@ def test_quantity_buttons_choose_midpoint_and_answer_duration(env, monkeypatch):
         gcode.parent.mkdir(parents=True, exist_ok=True)
         gcode.write_text('; estimated printing time (normal mode) = 2h 11m 12s\nG1 X1\n')
         data = json.loads(Path(job_path).read_text())
-        data['derived_plates'] = [{'gcode': str(gcode), 'plate_id': 1, 'slot': 1}]
+        # The real single plate path: Orca clones the copies and records how many.
+        data['gcode'] = str(gcode)
+        data['sliced_copies'] = {'gcode': str(gcode), 'copies': copies or 1}
         Path(job_path).write_text(json.dumps(data))
         return [gcode]
 

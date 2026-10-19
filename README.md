@@ -11,10 +11,10 @@ Print Buddy is almost entirely Python. Downloading, plate merging, color matchin
 The Discord conversation runs on [Hermes Agent](https://github.com/NousResearch/hermes-agent) using Luna at medium reasoning. Two optional extras also call a model: the camera watchdog asks a vision model to classify a print frame, and the "print started" post adds a one line roast. Leave `services.vision_chat_url` empty and neither runs.
 
 Supported printers:
-* **Klipper:** any printer running Klipper with Moonraker (`generic_klipper`), plus a Sovol preset (`sovol_klipper`).
-* **ZMod (Flashforge):** Flashforge printers running ZMod firmware (`flashforge_zmod`), including IFS multi color slots and the ZMod plugin below.
+* **Klipper:** the Sovol SV06 on stock Klipper (`sovol_klipper`), where Print Buddy started, and any other Klipper printer with Moonraker (`generic_klipper`). Single extruder.
+* **ZMod (Flashforge):** Flashforge printers running ZMod firmware (`flashforge_zmod`), built and run on the AD5X, including IFS multi color slots and the ZMod plugin below.
 
-Pick one with `[printer] family`. The live setup is a Flashforge AD5X on ZMod. The offline core in `print_buddy/core/` runs with no printer.
+Pick one with `[printer] family`. The current printer is a Flashforge AD5X on ZMod; the SV06 came first. The offline core in `print_buddy/core/` runs with no printer.
 
 ## How it works
 

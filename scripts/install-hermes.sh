@@ -9,7 +9,9 @@
 #
 # Code folders are symlinked to this checkout. Templates are rendered only when the target is
 # missing, so your edited AGENTS.md, SOUL.md and config.yaml are never overwritten. Files under
-# config/overlay/ are then copied over the profile. Anything replaced is moved to <name>.bak-<time>.
+# config/overlay/ are then copied over the profile. Anything replaced is moved to
+# <hermes home>/.install-backups/<time>/<relative path> (units: <systemd dir>/.install-backups/<time>/...),
+# never next to the original, so Hermes never discovers a backup as a second plugin or skill.
 set -eu
 
 REPO=$(cd "$(dirname "$0")/.." && pwd)
@@ -44,16 +46,24 @@ LAST_CHANGED=0
 say() { printf '%s\n' "$*"; }
 act() { if [ "$DRY" = 1 ]; then say "would: $*"; else say "$*"; fi; }
 
-backup_path() {  # print a free <path>.bak-<stamp> name
-    local b="$1.bak-$STAMP" n=1
-    while [ -e "$b" ] || [ -L "$b" ]; do b="$1.bak-$STAMP-$n"; n=$((n + 1)); done
+backup_path() {  # print a free backup name under <root>/.install-backups/<stamp>/<relative path>
+    local p="$1" root rel b n=1
+    case "$p" in
+        "$HERMES_HOME"/*) root=$HERMES_HOME ;;
+        "$SYSTEMD_USER_DIR"/*) root=$SYSTEMD_USER_DIR ;;
+        *) root=$(dirname "$p") ;;
+    esac
+    rel=${p#"$root"/}
+    [ "$root" != "$(dirname "$p")" ] || rel=$(basename "$p")
+    b="$root/.install-backups/$STAMP/$rel"
+    while [ -e "$b" ] || [ -L "$b" ]; do b="$root/.install-backups/$STAMP/$rel.$n"; n=$((n + 1)); done
     printf '%s' "$b"
 }
 
 backup() {  # move a path aside
     local b; b=$(backup_path "$1")
     act "backup $1 -> $b"
-    [ "$DRY" = 1 ] || mv "$1" "$b"
+    [ "$DRY" = 1 ] || { mkdir -p "$(dirname "$b")" && mv "$1" "$b"; }
 }
 
 ensure_dir() {
@@ -137,6 +147,34 @@ link "$REPO/hermes/skills/klipper-3d-printing" "$HERMES_HOME/skills/smart-home/k
 link "$REPO/hermes/skills/ad5x-multicolor-slicing" "$HERMES_HOME/skills/smart-home/ad5x-multicolor-slicing"
 link "$REPO/plugins/print-feedback" "$HERMES_HOME/plugins/print-feedback"
 link "$REPO/hermes/profile/docs" "$HERMES_HOME/docs"
+
+# 1b. Make `python -m print_buddy` importable from any cwd for the Hermes interpreter only.
+purelib=$("$PYTHON" -c 'import sysconfig; print(sysconfig.get_paths()["purelib"])' 2>/dev/null) || purelib=""
+if [ -z "$purelib" ] || [ ! -d "$purelib" ]; then
+    say "warning: cannot find site-packages for $PYTHON; skipped print_buddy.pth (run the agent from $REPO instead)"
+elif [ -f "$purelib/print_buddy.pth" ] && [ "$(cat "$purelib/print_buddy.pth")" = "$REPO" ]; then
+    say "ok      $purelib/print_buddy.pth"
+else
+    act "write  $purelib/print_buddy.pth -> $REPO"
+    [ "$DRY" = 1 ] || printf '%s\n' "$REPO" > "$purelib/print_buddy.pth" || say "warning: could not write print_buddy.pth"
+fi
+
+# 1c. Old private layout: stale scripts dir and state files kept in $HOME.
+if [ -d "$HERMES_HOME/scripts" ] && [ ! -L "$HERMES_HOME/scripts" ] \
+        && [ -e "$HERMES_HOME/scripts/moonraker_event_listener.py" ]; then
+    say "note    old private scripts/ dir found in the profile; moving it out of the way"
+    backup "$HERMES_HOME/scripts"
+fi
+for pair in .print_bitch_context.json:print_bitch_context.json \
+            .print_bitch_start_claims.json:print_bitch_start_claims.json \
+            .moonraker_discord_announcements.json:moonraker_discord_announcements.json; do
+    old="$HOME/${pair%%:*}"; new="$HERMES_HOME/state/${pair##*:}"
+    [ -f "$old" ] || continue
+    if [ -e "$new" ]; then say "skipped $new (exists, legacy $old left as is)"; continue; fi
+    ensure_dir "$HERMES_HOME/state"
+    act "copy   $old -> $new"
+    [ "$DRY" = 1 ] || cp "$old" "$new"
+done
 
 # 2. Templates: rendered or copied only when the target is missing.
 P="$REPO/hermes/profile"

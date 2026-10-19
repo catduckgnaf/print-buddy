@@ -21,6 +21,7 @@ import time
 from pathlib import Path
 from typing import Any, Callable, Mapping
 
+from .. import settings
 from . import _config
 
 ARCHIVE = _config.archive_dir()
@@ -312,7 +313,8 @@ async def start(target: Mapping[str, Any], model_job: Path | None = None,
         argv.append("--reprint")
     try:
         proc = await asyncio.create_subprocess_exec(*argv, stdout=asyncio.subprocess.PIPE,
-                                                    stderr=asyncio.subprocess.STDOUT)
+                                                    stderr=asyncio.subprocess.STDOUT,
+                                                    cwd=str(settings.ROOT))
     except OSError as exc:
         _settle_claim(claim, "spawn_failed", release=True)
         return False, f"REFUSED: could not run print-now: {exc}. Nothing uploaded or started."

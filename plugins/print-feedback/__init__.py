@@ -240,7 +240,7 @@ def clarify_ack(tool_name=None, result=None, tool_call_id=None, **kwargs):
         return None
     if tool_name == 'terminal':
         command = (kwargs.get('args') or {}).get('command', '')
-        if 'model_job.py' not in command:
+        if 'model_job' not in command:
             return None
     text = clarify_receipt(result) if tool_name == 'clarify' else workflow_receipt(result)
     chat = _session('HERMES_SESSION_CHAT_ID')

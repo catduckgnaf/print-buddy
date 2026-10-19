@@ -176,23 +176,42 @@ def test_changed_gcode_after_slice_is_refused_by_existing_gate(env, monkeypatch)
     assert any('REFUSED' in m for m in adapter.sent)
 
 
-def test_start_still_preparing_posts_no_second_print_started(env, monkeypatch):
-    # print-now exits 0 while native heating runs; the listener then posts the one "Print started".
+REAL_AWAITING = ('START REQUEST ACCEPTED {"file": "ghost_plate_1_abc.gcode", "printing_confirmed": false}\n'
+                 'START SUBMITTED; AWAITING CONFIRMATION {"started": false, "accepted": true, "phase": "preparing", '
+                 '"file": "ghost_plate_1_abc.gcode", "message": "submitted, awaiting confirmation"}')
+
+
+def test_intake_recognizes_real_print_now_output():
+    assert print_next.still_preparing(REAL_AWAITING)
+    assert print_next.still_preparing('START ACCEPTED; PREPARATION STILL RUNNING {"started": false}')
+    assert not print_next.still_preparing('START OK {"started": true}')
+    assert print_next.started_file(REAL_AWAITING) == 'ghost_plate_1_abc.gcode'
+
+
+def test_start_still_preparing_posts_one_warming_up_start_and_records_its_id(env, monkeypatch, tmp_path):
+    monkeypatch.setattr(print_next, 'START_MESSAGES', tmp_path / 'start_messages.json')
+
     async def preparing(target):
         env.starts.append(target)
-        return True, 'START ACCEPTED; PREPARATION STILL RUNNING {"started": false}'
+        return True, REAL_AWAITING
     monkeypatch.setattr(print_next, 'start', preparing)
+
+    async def send(self, chat_id, content, reply_to=None, metadata=None):
+        self.sent.append(content)
+        return S(success=True, message_id=f'm{len(self.sent)}')
+    monkeypatch.setattr(Adapter, 'send', send)
     adapter, result, receipt = run_flow(env, [1, 0, 0])
     assert receipt['status'] == 'STARTED' and len(env.starts) == 1
-    assert adapter.sent[-1].startswith('Preparing to start')
-    assert not any(m.startswith('Print started') for m in adapter.sent)
+    starts = [m for m in adapter.sent if m.startswith('Print started')]
+    assert len(starts) == 1 and 'Warming up' in starts[0]
+    assert print_next.take_start_message('ghost_plate_1_abc.gcode') == f'm{len(adapter.sent)}'
 
 
 def test_preparation_metadata_mismatch_never_blocks_start(env, monkeypatch):
     """A Discord summary defect must not veto the exact already-approved print."""
     async def preparing(target):
         env.starts.append(target)
-        return True, 'START ACCEPTED; PREPARATION STILL RUNNING {"started": false}'
+        return True, REAL_AWAITING
     monkeypatch.setattr(print_next, 'start', preparing)
     monkeypatch.setattr(prepared_intake.print_summary, 'format_preparation',
                         lambda *_args, **_kw: 'Print preparing: stale metadata unavailable')

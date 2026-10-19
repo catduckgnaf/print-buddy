@@ -120,15 +120,68 @@ def resolve_next(plan: Mapping[str, Any], archive: Path | None = None) -> dict[s
 
 
 PREPARING_MARK = "PREPARATION STILL RUNNING"
+SUBMITTED_MARK = "START SUBMITTED; AWAITING CONFIRMATION"  # what model_job print-now really prints
+START_MESSAGES = _config.state_file("PRINT_BITCH_START_MESSAGES", "print_bitch_start_messages.json")
+START_MESSAGE_TTL_S = float(_config.cfg()["listener"]["start_claim_ttl_s"])
 
 
 def still_preparing(detail: str) -> bool:
     """print-now accepted the start but native heating/leveling is still running.
 
-    It released its start claim, so the Moonraker listener posts the one "Print started"
-    when print_stats really reaches printing. Callers must not post their own start then.
+    It kept its start claim, so the listener will not post a second "Print started" when
+    print_stats reaches printing; it edits (or follows up on) the intake's one message.
     """
-    return PREPARING_MARK in str(detail or "")
+    text = str(detail or "")
+    return PREPARING_MARK in text or SUBMITTED_MARK in text
+
+
+def started_file(detail: str) -> str | None:
+    """The Moonraker file name print-now reports in its START SUBMITTED / ACCEPTED JSON line."""
+    for line in reversed(str(detail or "").splitlines()):
+        start = line.find("{")
+        if start < 0:
+            continue
+        try:
+            value = json.loads(line[start:])
+        except ValueError:
+            continue
+        name = value.get("file") if isinstance(value, dict) else None
+        if name:
+            return Path(str(name)).name
+    return None
+
+
+def _read_start_messages() -> dict[str, Any]:
+    try:
+        value = json.loads(START_MESSAGES.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+    return value if isinstance(value, dict) else {}
+
+
+def record_start_message(filename: str, message_id: str, now: float | None = None) -> None:
+    """Remember the one Discord start message so the listener can edit it after warmup."""
+    now = time.time() if now is None else now
+    rows = {k: v for k, v in _read_start_messages().items()
+            if isinstance(v, dict) and now - float(v.get("ts") or 0) < START_MESSAGE_TTL_S}
+    rows[Path(str(filename)).name] = {"message_id": str(message_id), "ts": now}
+    START_MESSAGES.parent.mkdir(parents=True, exist_ok=True)
+    tmp = START_MESSAGES.with_suffix(".tmp")
+    tmp.write_text(json.dumps(rows), encoding="utf-8")
+    os.replace(tmp, START_MESSAGES)
+
+
+def take_start_message(filename: str, now: float | None = None) -> str | None:
+    """The recorded start message id for this file, consumed so a replay cannot edit it twice."""
+    now = time.time() if now is None else now
+    rows = _read_start_messages()
+    row = rows.pop(Path(str(filename or "")).name, None)
+    if not isinstance(row, dict) or not 0 <= now - float(row.get("ts") or 0) < START_MESSAGE_TTL_S:
+        return None
+    tmp = START_MESSAGES.with_suffix(".tmp")
+    tmp.write_text(json.dumps(rows), encoding="utf-8")
+    os.replace(tmp, START_MESSAGES)
+    return str(row.get("message_id") or "") or None
 
 
 def question_text(target: Mapping[str, Any]) -> str:

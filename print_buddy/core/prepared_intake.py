@@ -938,14 +938,21 @@ async def prepare_link(event, adapter, state, root, timeout=300, reuse=None):
         mj._timing(jp, 'intake_start_returned', ok=bool(ok))
         receipt.update(status='STARTED' if ok else 'START_REFUSED', started=bool(ok))
         receipt_path.write_text(json.dumps(receipt, indent=2) + '\n')
-        if ok and print_next.still_preparing(tail):
-            # "Preparing to start" is already posted; the listener posts the single "Print started".
-            return {'action': 'skip', 'reason': 'sliced and start handled by button flow'}
+        warming = ok and print_next.still_preparing(tail)
         if ok:
             message = print_summary.format_started(exact_job, exact_plate) + later
+            if warming:
+                message += '\nWarming up; this message updates when printing begins.'
         else:
             message = print_summary.scrub(tail)
-        await adapter.send(chat_id=source.chat_id, content=message, metadata=metadata)
+        sent = await adapter.send(chat_id=source.chat_id, content=message, metadata=metadata)
+        remote = print_next.started_file(tail) if warming else None
+        message_id = getattr(sent, 'message_id', None)
+        if remote and message_id:
+            try:
+                print_next.record_start_message(remote, message_id)
+            except OSError:
+                pass  # the listener then posts a short distinct follow-up instead of editing
         return {'action': 'skip', 'reason': 'sliced and start handled by button flow'}
     except IntakeCancelled:
         receipt.update(status='CANCELLED', sliced=False, uploaded=False, started=False)

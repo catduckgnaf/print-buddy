@@ -31,7 +31,14 @@ class HomeUpdateTests(unittest.TestCase):
         git(self.upstream, "commit", "-qm", "base")
         git(base, "clone", "-q", str(self.upstream), str(self.home))
         # `true --help` exits 0: a stand-in Orca so the doctor passes on machines without flatpak.
-        (self.home / "config" / "local.toml").write_text('[printer]\nname = "Home AD5X"\n\n[orca]\ncommand = ["true"]\n')
+        # A profile with a hardware record, so the doctor's checks match a working install.
+        profile = base / "profile"
+        (profile / "state").mkdir(parents=True)
+        (profile / "state" / "printer_hardware.json").write_text(
+            '{"spool": {"material": "PLA", "density": 1.24}, "temps_c": {"nozzle": 210, "bed": 60}, '
+            '"nozzle": {"diameter_mm": 0.4}}')
+        (self.home / "config" / "local.toml").write_text(
+            f'[printer]\nname = "Home AD5X"\n\n[orca]\ncommand = ["true"]\n\n[paths]\nhermes_home = "{profile}"\n')
 
     def tearDown(self):
         self.tmp.cleanup()

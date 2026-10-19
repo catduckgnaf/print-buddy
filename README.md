@@ -2,7 +2,7 @@
 
 [![CI](https://github.com/catduckgnaf/print-buddy/actions/workflows/ci.yml/badge.svg)](https://github.com/catduckgnaf/print-buddy/actions/workflows/ci.yml)
 
-Print Buddy is an automated 3D printing pipeline driven from a Discord channel. Post a MakerWorld or Printables link, or a 3MF or STL file, and the bot downloads the model, merges multi plate parts, matches colors to loaded spools in Spoolman, and slices headless with OrcaSlicer. Once someone confirms the bed is clear, it sends the job to Moonraker on a Klipper printer, watches it through the camera, and posts the result.
+Print Buddy is an automated 3D printing pipeline driven from a Discord channel, for Klipper printers and Flashforge printers running ZMod. Post a MakerWorld or Printables link, or a 3MF or STL file, and the bot downloads the model, merges multi plate parts, matches colors to loaded spools in Spoolman, and slices headless with OrcaSlicer. Once someone confirms the bed is clear, it sends the job to the printer through Moonraker, watches it through the camera, and posts the result.
 
 ## About
 
@@ -10,7 +10,11 @@ Print Buddy is almost entirely Python. Downloading, plate merging, color matchin
 
 The Discord conversation runs on [Hermes Agent](https://github.com/NousResearch/hermes-agent) using Luna at medium reasoning. Two optional extras also call a model: the camera watchdog asks a vision model to classify a print frame, and the "print started" post adds a one line roast. Leave `services.vision_chat_url` empty and neither runs.
 
-The live setup is a Flashforge AD5X on ZMod Klipper firmware. The offline core in `print_buddy/core/` runs with no printer.
+Supported printers:
+* **Klipper:** any printer running Klipper with Moonraker (`generic_klipper`), plus a Sovol preset (`sovol_klipper`).
+* **ZMod (Flashforge):** Flashforge printers running ZMod firmware (`flashforge_zmod`), including IFS multi color slots and the ZMod plugin below.
+
+Pick one with `[printer] family`. The live setup is a Flashforge AD5X on ZMod. The offline core in `print_buddy/core/` runs with no printer.
 
 ## How it works
 

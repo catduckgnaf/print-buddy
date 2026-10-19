@@ -301,6 +301,14 @@ def _copies(job):
         return 1
 
 
+def _sliced_copies(job):
+    """Copies the G-code really contains. Only the single plate path clones copies; per part and
+    full size split slicing produce one copy per plate whatever was requested."""
+    if (job.get("color_decisions") or {}).get("mode") == "per_part" or job.get("full_size_split_plan"):
+        return 1
+    return _copies(job)
+
+
 def _site_plate(job, plate):
     """The model page's own per-plate (seconds, grams) for plate `plate`, or (None, None)."""
     plates = (job.get("selected_source") or {}).get("plates")
@@ -330,9 +338,11 @@ def _part_rows(job, keys, plate_g):
         name = re.sub(r"\.(stl|3mf|obj|step|stp)$", "", safe_label(part.get("name"), ""), flags=re.I) or "Part"
         sel = (choices.get(part.get("key")) or choices.get("part:" + str(part.get("key")))
                or job.get("filament_selection") or dec.get("selection") or {})
-        row = rows.setdefault(name, {"name": name, "qty": 0, "weight": 0.0,
-                                     "color": safe_label(part.get("author_color") or sel.get("color"), "") or None,
-                                     "material": safe_label(sel.get("material"), "") or None})
+        color = safe_label(part.get("author_color") or sel.get("color"), "") or None
+        material = safe_label(sel.get("material"), "") or None
+        # Same name in different colors or materials stays separate rows.
+        row = rows.setdefault((name, color, material), {"name": name, "qty": 0, "weight": 0.0,
+                                                        "color": color, "material": material})
         row["qty"] += 1
         row["weight"] += float(vol) if by_volume else 1.0
     total = sum(r["weight"] for r in rows.values())
@@ -348,7 +358,7 @@ def plate_estimates(job):
     Copies are cloned into the sliced plate, so G-code figures already cover them; page figures
     are per single copy and are multiplied here.
     """
-    copies = _copies(job)
+    copies = _sliced_copies(job)
     derived = job.get("derived_plates") or []
     result = []
     for number, row in enumerate(plates_of(job), 1):
@@ -373,7 +383,7 @@ def format_estimate_breakdown(job):
     if not plates:
         return "Estimate unknown"
     many = len(plates) > 1
-    copies = _copies(job)
+    copies = _sliced_copies(job)
     lines = []
     for row in plates:
         if row["seconds"] is not None:

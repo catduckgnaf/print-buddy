@@ -77,6 +77,13 @@ class PostSliceTests(unittest.TestCase):
         r = sg.post_slice(GOOD_GCODE + "; G-code conflicts detected\n", tool_slots={0: 1})
         self.assertTrue(any("conflict" in b for b in r.blocked))
 
+    def test_real_slicer_time_headers_are_recognized(self):
+        for header in ("; estimated printing time (normal mode) = 1h 2m 3s",
+                       "; model printing time: 1h 2m; total estimated time: 1h 5m",
+                       "; estimated printing time = 12m", ";TIME:3720"):
+            with self.subTest(header=header):
+                self.assertEqual(sg.post_slice(header + "\nG1 X10 Y10\n").warnings, [])
+
     def test_missing_time_header_warns(self):
         r = sg.post_slice("G1 X10 Y10\n")
         self.assertEqual(r.status, "warnings")

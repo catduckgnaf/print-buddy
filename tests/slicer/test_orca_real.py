@@ -72,7 +72,8 @@ class OrcaRealSliceTests(unittest.TestCase):
         self.assertEqual(result.returncode, 0)
         r = self.guard(out)
         self.assertNotEqual(r.status, "blocked", r.blocked)
-        self.assertEqual(r.warnings, [], "real Orca output should carry a print time header the guard recognizes")
+        times = [l for l in (out / "plate_1.gcode").read_text(errors="replace").splitlines() if l.startswith(";") and "time" in l.lower()]
+        self.assertEqual(r.warnings, [], f"guard missed Orca's print time header; time lines: {times[:10]}")
 
     def test_four_copies_stay_on_the_bed(self):
         result, out = self.slice(write_cube(self.dir / "copies.stl", 30), "--clone-objects", "4")

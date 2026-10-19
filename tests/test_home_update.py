@@ -3,6 +3,7 @@ import os
 import shutil
 import site
 import subprocess
+import sys
 import tempfile
 import unittest
 from pathlib import Path
@@ -56,6 +57,9 @@ class HomeUpdateTests(unittest.TestCase):
         # Environment overrides beat local.toml, so a caller's HERMES_HOME (or any other mapped
         # variable) would point the doctor at the real install instead of the throwaway profile.
         env = {k: v for k, v in os.environ.items() if k not in LEGACY_ENV}
+        # Run the update's checks with this interpreter. With HOME moved, the script cannot find
+        # the agent venv and would fall back to whatever python3 is first on PATH.
+        env.setdefault("PYTHON", sys.executable)
         if home:
             env["PYTHONUSERBASE"] = site.getuserbase()  # keep user-installed packages after HOME moves
             env["HOME"] = str(home)

@@ -28,7 +28,7 @@ class InstallerTests(unittest.TestCase):
 
     def run_installer(self, *args, overlay=True, python="/opt/venv/bin/python", **extra_env):
         env = dict(os.environ, **extra_env,
-                   HERMES_HOME=str(self.home), SYSTEMD_USER_DIR=str(self.units),
+                   PRINT_BUDDY__PATHS__HERMES_HOME=str(self.home), HERMES_HOME=str(self.tmp / "gateway-root"), SYSTEMD_USER_DIR=str(self.units),
                    PRINT_BUDDY_OVERLAY=str(self.overlay if overlay else self.tmp / "no-overlay"),
                    PYTHON=python, HOME=str(self.tmp / "fakehome"),
                    PATH=f"{self.fakebin}:{os.environ['PATH']}",

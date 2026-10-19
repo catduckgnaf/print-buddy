@@ -1,4 +1,5 @@
 """scripts/migrate-names.sh against temporary directories. Never touches a real install."""
+import os
 import shutil
 import subprocess
 import tempfile
@@ -38,6 +39,19 @@ class MigrateNamesTests(unittest.TestCase):
             capture_output=True, text=True, cwd=self.tmp)
         self.assertEqual(0, result.returncode, result.stdout + result.stderr)
         return result.stdout
+
+    def test_gateway_hermes_home_is_ignored(self):
+        # The gateway exports HERMES_HOME=~/.hermes; the migration must still use the profile.
+        (self.home / "state" / "print_bitch_start_claims.json").write_text("old\n")
+        result = subprocess.run(
+            ["bash", str(SCRIPT), "--archive", str(self.archive), "--systemd-dir", str(self.units),
+             "--config", str(self.config)],
+            capture_output=True, text=True, cwd=self.tmp,
+            env=dict(os.environ, HERMES_HOME=str(self.tmp / "gateway-root"),
+                     PRINT_BUDDY__PATHS__HERMES_HOME=str(self.home)))
+        self.assertEqual(0, result.returncode, result.stdout + result.stderr)
+        self.assertIn(f"profile:  {self.home}", result.stdout)
+        self.assertTrue((self.home / "state" / "print_buddy_start_claims.json").exists())
 
     def snapshot(self):
         return {str(p.relative_to(self.tmp)): (p.read_text() if p.is_file() else None)

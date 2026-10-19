@@ -17,6 +17,8 @@ set -eu
 
 REPO=$(cd "$(dirname "$0")/.." && pwd)
 DRY=0
+# Not read from the environment: the Hermes gateway exports HERMES_HOME=~/.hermes for every profile.
+HERMES_HOME=""
 while [ $# -gt 0 ]; do
     case "$1" in
         --dry-run) DRY=1 ;;

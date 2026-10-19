@@ -1,0 +1,39 @@
+services:
+  print-buddy:
+    build: .
+    image: print-buddy:local
+    container_name: print-buddy
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      # Image sets PRINT_BUDDY_CONFIG=/app/config/docker.toml
+      # All scalar settings can be overridden with PRINT_BUDDY__SECTION__KEY
+      # Example (also in .env.example):
+      # PRINT_BUDDY__SERVICES__MOONRAKER_URL: http://192.168.1.10:7125
+      # PRINT_BUDDY__SERVICES__SPOOLMAN_URL: http://spoolman:8000
+      # PRINT_BUDDY__PRINTER__MODEL: flashforge.ad5x
+    volumes:
+      - ./data/hermes:/data/hermes
+      - ./data/archive:/data/archive
+      - ./data/records:/data/records
+      - ./data/cache:/data/cache
+      # Optional: mount a full override config
+      # - ./config/local.toml:/app/config/local.toml:ro
+    depends_on:
+      - spoolman
+    shm_size: "1gb"
+    # Uncomment for host networking if Moonraker is on the host and you prefer not to publish ports
+    # network_mode: host
+
+  spoolman:
+    image: ghcr.io/donkie/spoolman:0.27.0
+    container_name: spoolman
+    restart: unless-stopped
+    ports:
+      - "7912:8000"
+    volumes:
+      - ./data/spoolman:/home/app/.local/share/spoolman
+    environment:
+      - TZ=Etc/UTC
+    # Spoolman data dir must be writable by uid 1000

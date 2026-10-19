@@ -9,6 +9,7 @@ class FlashforgeZmodAdapter(PrinterAdapter):
     family = "flashforge_zmod"
     label = "Flashforge AD5X (ZMod)"
     multi_slot = True
+    has_native_screen = True
 
     @property
     def slot_count(self):

@@ -26,6 +26,8 @@ The print starts only when someone clicks the button. On completion, the bot pos
 
 A typo or bad value stops the import and names the key. Requires Python 3.11 or newer.
 
+`[printer] family` picks the printer adapter (`flashforge_zmod` by default, `generic_klipper`, `sovol_klipper`). The single-extruder families skip every ZMod/AD5X step (IFS slots, screen offsets, MD5 gcode) and refuse multi-color jobs. Each sliced job records its family in `JOB.json`; `print-now` refuses a job prepared for a different family, and `model_job fetch|slice --printer <family>` prepares a job for another one. See `print_buddy/printers/base.py`.
+
 ## Updating the home box
 
 Update only from a commit that is green in CI. On the home machine:

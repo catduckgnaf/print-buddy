@@ -28,6 +28,7 @@ from pathlib import Path
 
 import websockets
 
+from .. import printers
 from . import _config
 from . import moonraker_discord_announcements as announcer
 from . import discord_print_summary as print_summary
@@ -1254,6 +1255,8 @@ class Listener:
 
     async def poll_native_presence(self):
         """Read authenticated stock detail while idle and send only a one-way prompt."""
+        if not printers.current().has_native_screen:
+            return  # no vendor status API, no IFS presence to watch
         if self.native_poll_inflight:
             return
         self.native_poll_inflight = True
@@ -1294,6 +1297,8 @@ class Listener:
 
     async def classify_runout(self):
         """Pause cause from the alert text plus a fresh slot read. Returns (is_runout, slot)."""
+        if not printers.current().has_native_screen:
+            return False, None  # no slot telemetry: a pause is a plain pause
         slots = self.last_slots
         try:
             _detail, slots = await self.read_slots()
@@ -1442,6 +1447,8 @@ class Listener:
     def start_screen_cancel_reboot(self, why):
         """Fire once per cancel, in the background, and only when the bot did not cancel it."""
         from . import klipper_report
+        if not printers.current().has_native_screen:
+            return False  # the screen-cancel firmware restart is a stock-screen workaround
         if klipper_report.cancelled_by_bot():
             log(f"cancel was the bot's ({why}); no auto restart")
             return False

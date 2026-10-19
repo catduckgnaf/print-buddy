@@ -20,6 +20,7 @@ import xml.etree.ElementTree as ET
 from pathlib import Path
 
 from .. import printers, settings
+from ..printers.base import MultiColorUnsupported
 from . import _external, printer_state
 
 PROFILE = settings.current()["paths"]["hermes_home"]
@@ -523,6 +524,24 @@ def save_filament_selection(job_path, selection):
 READINESS_MAX_AGE_SECONDS = 15
 
 
+def _native():
+    """True when the configured family has the ZMod native-screen runtime (display_off, offsets, stock API)."""
+    return printers.current().has_native_screen
+
+
+def _gcode_tools(text):
+    """Tool indexes a G-code selects with a bare Tn line."""
+    return {int(m.group(1)) for line in text.splitlines()
+            if (m := re.fullmatch(r"T(\d+)(?:\s*;.*)?", line.strip()))}
+
+
+def _refuse_multicolor(text):
+    """Non-multi-slot families refuse a G-code that selects any tool but T0, through the adapter."""
+    adapter = printers.current()
+    adapter.normalize_tool_mapping({str(t): t + 1 for t in sorted(_gcode_tools(text) | {0})}, {})
+    return adapter
+
+
 def telemetry_state(value):
     """Classify raw telemetry without coercing strings, numbers, or null to booleans."""
     if value is True:
@@ -846,8 +865,23 @@ def _sync_active_spool(st, slot):
     return {'spool_id': sid, 'previous': current, 'changed': True}
 
 
+def _verify_readiness_adapter(adapter, state, selection=None):
+    """Families without IFS: one Moonraker sample judged by the adapter's own readiness check."""
+    try:
+        objects = urllib.parse.quote("&".join(adapter.moonraker_objects()), safe="&")
+        status = request_json(f"{state['moonraker_url']}/printer/objects/query?{objects}")["result"]["status"]
+        problems = adapter.readiness_problems(state, status, selection)
+        if problems:
+            raise RuntimeError("; ".join(problems))
+    except Exception as exc:
+        raise RuntimeError(f"{adapter.label} readiness unavailable; print refused: {exc}") from exc
+
+
 def _verify_filament_readiness(state, selection=None):
     """Read current mode, then obtain one freshness-bounded sensor/occupancy sample."""
+    adapter = printers.current()
+    if not adapter.multi_slot:
+        return _verify_readiness_adapter(adapter, state, selection)
     try:
         selection = resolve_filament_selection(state, selection)
         _validate_slot_selection(state, selection)
@@ -929,8 +963,11 @@ def verify_gcode(gcode_path):
     # Screenless files remain accepted without it, but any present checksum is validated.
     if raw.startswith(b"; MD5:") and not zmod_md5_valid(p):
         errors.append("invalid ZMod MD5 checksum")
-    mode = _mr(st, "/printer/objects/query?save_variables")["result"]["status"]["save_variables"]["variables"].get("display_off")
-    if mode == 0:
+    native = _native()
+    mode = _mr(st, "/printer/objects/query?save_variables")["result"]["status"]["save_variables"]["variables"].get("display_off") if native else None
+    if not native:
+        pass  # no native screen: no MD5 or startup-heater contract
+    elif mode == 0:
         if not zmod_md5_valid(p):
             errors.append("native screen requires valid ZMod MD5 checksum")
         if not native_heater_lines_valid(text, st["temps_c"]["bed"], st["temps_c"]["nozzle"]):
@@ -953,15 +990,25 @@ def verify_gcode(gcode_path):
             if abs(nozzle_value-st["nozzle"]["diameter_mm"])>1e-3:
                 errors.append(f"G-code nozzle {nozzle} != live {st['nozzle']['diameter_mm']}")
     material=config("filament_type")
-    from .multicolor_contract import validate_materials
-    try:
-        validate_materials(text, material, st)
-    except RuntimeError as exc:
-        errors.append(str(exc))
+    if native:
+        from .multicolor_contract import validate_materials
+        try:
+            validate_materials(text, material, st)
+        except RuntimeError as exc:
+            errors.append(str(exc))
+    else:
+        _refuse_multicolor(text)
+        if not printer_state.same_material(material, st["spool"]["material"]):
+            errors.append(f"G-code filament_type {material!r} != loaded {st['spool']['material']!r}")
     hotend,bed=st["temps_c"]["nozzle"],st["temps_c"]["bed"]
-    if not (re.search(rf'PRINT_START BED={bed} HOTEND={hotend}(?:\s|$)',text) or re.search(rf'START_PRINT BED_TEMP={bed} EXTRUDER_TEMP={hotend}(?:\s|$)',text)):
+    if not native:
+        macro = printers.current().start_macro
+        if not re.search(rf'^{re.escape(macro)} BED={bed} HOTEND={hotend}(?:\s|$)',text,re.M):
+            errors.append(f"missing {macro} matching bed {bed} and hotend {hotend}")
+    elif not (re.search(rf'PRINT_START BED={bed} HOTEND={hotend}(?:\s|$)',text) or re.search(rf'START_PRINT BED_TEMP={bed} EXTRUDER_TEMP={hotend}(?:\s|$)',text)):
         errors.append(f"missing START_PRINT/PRINT_START matching bed {bed} and hotend {hotend}")
-    if not (re.search(r'^PRINT_END(?:\s|$)',text,re.M) or re.search(r'^END_PRINT(?:\s|$)',text,re.M)):
+    if not (re.search(r'^PRINT_END(?:\s|$)',text,re.M) or re.search(r'^END_PRINT(?:\s|$)',text,re.M)
+            or (not native and re.search(rf'^{re.escape(printers.current().end_macro)}(?:\s|$)',text,re.M))):
         errors.append("missing END_PRINT/PRINT_END safe end sequence")
     try:
         bounds=cached_motion_bounds(raw, text)
@@ -1132,6 +1179,7 @@ def screen_z_offset(st):
     The captured schema stores it at leftExtruderOffset.zProbeOffset. A top-level or level.zProbeOffset
     is accepted only when the nested field is absent. Non-finite values fail closed as unreadable.
     """
+    if not _native(): return None
     try:
         d=_mr(st,"/server/files/config/Adventurer5M.json",timeout=8)
     except Exception: return None
@@ -1155,6 +1203,10 @@ def screen_z_offset(st):
 def mesh_readiness(st):
     """Read-only bed mesh check before upload. Returns dict; problem is None when the saved mesh is usable."""
     info: dict = {"profile":None,"saved_at":None,"print_leveling":None,"problem":None,"stale":None}
+    if not _native():
+        # The printer owns its mesh and offset; there is no saved-mesh contract to enforce.
+        info.update(display_off=None, z_offset_mm=None, offset_source=None)
+        return info
     try:
         q=_mr(st,"/printer/objects/query?bed_mesh=profiles&save_variables",timeout=8)["result"]["status"]
     except Exception as e:
@@ -1269,7 +1321,7 @@ def _maintenance_detail_line():
 
 
 def job_details(out, *, hardware=None, selection=None, settings=None, record_path=None, z_notice=None, live=None,
-                screen_z=None, mesh=None, printer=None, nozzle_mm=None):
+                screen_z=None, mesh=None, printer=None, nozzle_mm=None, calibration=True):
     """Compact public summary; accounting, telemetry and paths stay in structured records."""
     def u(v): return v if v not in (None, "") else "unknown"
     args = (settings or {}).get("args") or {}
@@ -1290,7 +1342,7 @@ def job_details(out, *, hardware=None, selection=None, settings=None, record_pat
         f"- Filament: {f'{grams} g' if grams is not None else 'unknown'}; {u(chan)}",
         f"- Printer: {u(printer)}",
         f"- Stock nozzle: {u(nozzle_mm)} mm; targets nozzle {u(hot)} C, bed {u(bed)} C",
-        f"- Calibration: Z offset {z}; {mesh_line(mesh)}",
+        *([f"- Calibration: Z offset {z}; {mesh_line(mesh)}"] if calibration else []),
         _maintenance_detail_line(),
     ])
 
@@ -1402,6 +1454,14 @@ def require_current_artifact(job, gcode):
         raise RuntimeError('stale color artifact: source, decisions or G-code changed; reslice before launch')
 
 
+def _job_adapter(job):
+    """Adapter for the family a job is prepared for: its recorded override, else the configured family."""
+    family = job.get("printer_family") if isinstance(job, dict) else None
+    if not family or family == printers.current().family:
+        return printers.current()
+    return printers.get(family)
+
+
 def intake_color_choices(job_path, state, mode=None, slots=None, interactive=False):
     """Normal intake gate: ask per part/palette and persist exact-source choices.
 
@@ -1414,6 +1474,13 @@ def intake_color_choices(job_path, state, mode=None, slots=None, interactive=Fal
     manifest = inventory(job['downloaded_file'])
     if not manifest.get('source_sha256'):
         manifest['source_sha256'] = file_sha256(job['downloaded_file'])
+    adapter = _job_adapter(job)
+    if not adapter.multi_slot:
+        if manifest['requires_choices']:
+            raise MultiColorUnsupported(
+                f"{adapter.label} has a single extruder; this source has several parts or colors that need a "
+                "slot choice. Slice a single-color model or use a multi-slot printer family")
+        return True
     questions = canonical_prompts(manifest) if job.get('color_schema') == 'part_slots_v1' else prompts(manifest)
     available = []
     for slot, label in sorted(state.get('ifs_slots', {}).items()):
@@ -1919,12 +1986,15 @@ def slice_job(job_path, brim_override=None, copies=None, scale=None):
     # Disk only. Launch still runs printer_state.check inside print_now and
     # verify_gcode. A file that never leaves disk does not need Moonraker or Spoolman.
     job = json.loads(Path(job_path).read_text()); st = printer_state.load()
+    adapter = _job_adapter(job)
+    generic = not adapter.multi_slot
+    job["printer_family"] = adapter.family  # print-now refuses a job sliced for another family
     _timing(job_path, 'slice_start')
     if copies is None:
         copies = job.get('copies')
     if copies:
         job['copies'] = int(copies)
-    if job.get("filament_selection") is not None and (job.get('color_decisions') or {}).get('mode') != 'per_part':
+    if not generic and job.get("filament_selection") is not None and (job.get('color_decisions') or {}).get('mode') != 'per_part':
         selection = resolve_filament_selection(st, job["filament_selection"])
         _validate_slot_selection(st, selection)
         job["filament_selection"] = selection
@@ -1956,13 +2026,17 @@ def slice_job(job_path, brim_override=None, copies=None, scale=None):
         if multi_plate:
             raise RuntimeError(f'multi-plate 3MF cannot be merged or split: {exc}; no slicing attempted') from exc
         raise
+    if generic and (multi_plate or manifest['requires_choices'] or job.get('full_size_split_plan')):
+        raise MultiColorUnsupported(
+            f"{adapter.label} has a single extruder; multi-plate, multi-part or multi-color sources need a "
+            "multi-slot printer family. Slice one single-color plate instead")
     # STL has no source palette; bind decisions to the exact file bytes, as intake does.
     if not manifest.get('source_sha256'):
         manifest['source_sha256'] = file_sha256(src)
     job['color_manifest'], job['color_prompts'] = manifest, prompts(manifest)
     write_job(Path(job_path).parent, job)
     _timing(job_path, 'inventory_done')
-    decisions = job.get('color_decisions')
+    decisions = None if generic else job.get('color_decisions')
     if decisions is not None:
         decisions = validate_decisions(manifest, decisions, st, resolve_filament_selection)
     if manifest['requires_choices'] and not decisions:
@@ -2078,8 +2152,10 @@ def slice_job(job_path, brim_override=None, copies=None, scale=None):
     slice_dir = work / "sliced" / "orca" / uuid.uuid4().hex
     source_sha = file_sha256(src)
     decision_sha = decisions_digest(decisions)
-    selected_slot = (job.get("filament_selection") or {}).get("slot")
+    selected_slot = None if generic else (job.get("filament_selection") or {}).get("slot")
     scale_kw = {'scale': scale} if scale is not None else {}
+    if adapter.family != printers.current().family:
+        scale_kw['adapter'] = adapter
     if rotation:
         scale_kw.update(rotation=rotation, supports=bool(orientation.get("supports")))
     _timing(job_path, 'orca_begin')
@@ -2095,7 +2171,8 @@ def slice_job(job_path, brim_override=None, copies=None, scale=None):
         out, provenance, configs = slice_model(src, slice_dir, st, brim_override,
                                               color_decisions=decisions, copies=copies, **scale_kw)
     _timing(job_path, 'orca_finalize_done')
-    verify_gcode(out)
+    if adapter.family == printers.current().family:
+        verify_gcode(out)
     latest = json.loads(Path(job_path).read_text())
     _timing(job_path, 'verify_done')
     if file_sha256(src) != source_sha or decisions_digest(latest.get("color_decisions")) != decision_sha:
@@ -2106,7 +2183,7 @@ def slice_job(job_path, brim_override=None, copies=None, scale=None):
         job['auto_scale'] = auto_scale
     else:
         job.pop('auto_scale', None)
-    job.update({"slice_config": [str(p) for p in configs], "gcode": str(out),
+    job.update({"printer_family": adapter.family, "slice_config": [str(p) for p in configs], "gcode": str(out),
                 "provenance": provenance, "gcode_verified": True,
                 # Only this path clones copies into the G-code; estimates read it, never the request.
                 "sliced_copies": {"gcode": str(out), "copies": max(1, int(copies or 1))},
@@ -2456,10 +2533,11 @@ def _fetch_remote_gcode_sha256(moonraker_url, remote_name, timeout=60):
 
 def _printer_phase(st):
     """Return a single adapter's reported phase; native 'printing' needs corroboration."""
-    q=_mr(st,"/printer/objects/query?save_variables&print_stats&idle_timeout&virtual_sdcard&webhooks")["result"]["status"]
+    native=_native()
+    q=_mr(st,"/printer/objects/query?"+("save_variables&" if native else "")+"print_stats&idle_timeout&virtual_sdcard&webhooks")["result"]["status"]
     variables=(q.get("save_variables") or {}).get("variables") or {}
     mode=variables.get("display_off")
-    if mode not in (0,1):
+    if native and mode not in (0,1):
         raise RuntimeError(f"live display_off mode is {mode!r}; refusing ambiguous hardware behavior")
     st["display_off"]=mode
     st["force_md5"]=variables.get("force_md5")
@@ -2512,6 +2590,7 @@ def live_snapshot(st):
         snap["nozzle_c"]=q.get("extruder",{}).get("temperature")
         snap["bed_c"]=q.get("heater_bed",{}).get("temperature")
     except Exception: pass
+    if not _native(): return snap
     try:
         tel=read_filament_telemetry(st); palette=tel.get("configured_palette")
         presence={}
@@ -2732,6 +2811,11 @@ def print_now(target, wait_s=25, accept_default_z_offset=False, reprint=False):
                          f"run print-now {job_path} instead. Nothing uploaded or started.")
     require_current_artifact(job, g)
     if not g.is_file(): raise SystemExit(f"REFUSED: no G-code at {g}")
+    try:
+        if isinstance(job, dict): printers.check_job_family(job)
+    except printers.JobFamilyMismatch as exc:
+        raise SystemExit(f"REFUSED: {exc}. Reslice it for the configured printer; nothing uploaded or started.")
+    adapter = printers.current()
     _timing(job_path, 'print_now_start')
     # accept_default_z_offset is kept for CLI compatibility only. With display_off=0 ZMod applies the
     # native screen zProbeOffset, which is the correct calibrated value; no Z_OFFSET in START_PRINT is fine.
@@ -2750,14 +2834,22 @@ def print_now(target, wait_s=25, accept_default_z_offset=False, reprint=False):
         verify_gcode(g)
         selection = job.get("filament_selection") if isinstance(job, dict) else None
         _timing(job_path, 'preflight_verify_done')
-        from .multicolor_contract import embedded_mapping, normalize_mapping
-        raw_mapping = embedded_mapping(g.read_text(), st)
-        mapping = normalize_mapping(raw_mapping, st) if raw_mapping is not None else None
-    except RuntimeError as exc:
+        if adapter.multi_slot:
+            from .multicolor_contract import embedded_mapping, normalize_mapping
+            raw_mapping = embedded_mapping(g.read_text(), st)
+            mapping = normalize_mapping(raw_mapping, st) if raw_mapping is not None else None
+        else:
+            _refuse_multicolor(g.read_text())
+            mapping = None
+    except (RuntimeError, MultiColorUnsupported) as exc:
         raise SystemExit("REFUSED: " + " ".join(str(exc).split()) + ". Nothing uploaded or started.")
     if mapping is not None:
         return print_mapped_native(g, st, mesh, mapping, job, job_path, wait_s, reprint)
-    _verify_filament_readiness(st, selection)
+    try:
+        _verify_filament_readiness(st, selection)
+    except RuntimeError as exc:
+        if adapter.multi_slot: raise
+        raise SystemExit("REFUSED: " + " ".join(str(exc).split()) + ". Nothing uploaded or started.")
     sha=file_sha256(g); remote=remote_name(g, sha, job)
     text=g.read_text(errors="ignore")
     if mesh.get('display_off') in (0, 1):
@@ -2788,7 +2880,8 @@ def print_now(target, wait_s=25, accept_default_z_offset=False, reprint=False):
     except OSError as e: print(f"WARNING: start announcement claim failed, listener may also post: {e}")
     _announce_print_name(st, job, gcode=g)
     _publish_job_card(st, job, remote, text)
-    _mr(st,"/printer/print/start",data={"filename":remote})
+    for command in adapter.moonraker_start_commands(remote):
+        _mr(st, command["path"], data=command["body"])
     _timing(job_path, 'start_submitted')
     print("START REQUEST ACCEPTED " + json.dumps({"file": remote, "printing_confirmed": False}), flush=True)
     method="print/start"; state=_wait_printing(st,remote,wait_s)
@@ -2834,14 +2927,21 @@ def print_now(target, wait_s=25, accept_default_z_offset=False, reprint=False):
     screen_z=mesh.get("z_offset_mm"); out["screen_z_offset_mm"]=screen_z; out["native_screen_z_offset_mm"]=screen_z_offset(st); out["bed_mesh"]=mesh
     out["details"]=job_details(out, hardware=hardware, selection=selection, settings=settings,
                                record_path=record_path, z_notice=z_notice, live=live,
-                               screen_z=screen_z, mesh=mesh, printer=st.get("printer"),
-                               nozzle_mm=(st.get("nozzle") or {}).get("diameter_mm"))
+                               screen_z=screen_z, mesh=mesh, printer=st.get("printer") or (None if adapter.multi_slot else adapter.label),
+                               nozzle_mm=(st.get("nozzle") or {}).get("diameter_mm"), calibration=adapter.has_native_screen)
     print("PRINT STARTED " + json.dumps(out))
     print(out["details"])
     return out
 
 
 def main():
+    try:
+        _main()
+    except MultiColorUnsupported as exc:
+        raise SystemExit("REFUSED: " + " ".join(str(exc).split()) + ". Nothing sliced, uploaded or started.")
+
+
+def _main():
     ap = argparse.ArgumentParser()
     sub = ap.add_subparsers(dest="cmd", required=True)
     f = sub.add_parser("fetch")
@@ -2851,6 +2951,7 @@ def main():
     f.add_argument("--select", type=int)
     f.add_argument("--approved", action="store_true", help="the operator approved exactly the selected source and any supports")
     f.add_argument("--brim", type=int, default=None, help="override brim width mm (e.g. 0 to disable)")
+    f.add_argument("--printer", choices=printers.FAMILIES, help="printer family this job is prepared for (default: [printer] family)")
     f.add_argument("--filament-slot", type=int, help="AD5X IFS feeder slot (1-4)")
     f.add_argument("--filament-color", type=str, help="filament color matching IFS slot")
     f.add_argument("--filament-material", type=str, help="filament material matching IFS slot")
@@ -2858,6 +2959,7 @@ def main():
     s = sub.add_parser("slice")
     s.add_argument("job_json")
     s.add_argument("--approved", action="store_true")
+    s.add_argument("--printer", choices=printers.FAMILIES, help="printer family to slice this job for (recorded on the job)")
     s.add_argument("--brim", type=int, default=None, help="override brim width mm (e.g. 0 to disable)")
     s.add_argument("--separate", action="store_true", help="multi-plate source: slice one G-code per plate instead of merging all parts onto one bed")
     filament_select=sub.add_parser("filament-select", help="record a user-confirmed slot/color choice in a model JOB.json")
@@ -2954,6 +3056,9 @@ def main():
     st=printer_state.load()
     if a.cmd=="slice":
         if not a.approved: raise SystemExit("REFUSED: explicit slicing approval required")
+        if a.printer:
+            _job = json.loads(Path(a.job_json).read_text()); _job["printer_family"] = a.printer
+            write_job(Path(a.job_json).parent, _job)
         if not intake_color_choices(a.job_json, st, a.color_mode, a.color_slot, sys.stdin.isatty()):
             return
         if a.separate:
@@ -2979,6 +3084,7 @@ def main():
     if not job.get("sources"):
         raise SystemExit("REFUSED: source inventory contains no selectable files or profiles")
     job["url"],job["hardware"],job["fetched_at"]=a.url,st,time.strftime("%Y-%m-%dT%H:%M:%S%z")
+    if a.printer: job["printer_family"]=a.printer
     for n,x in enumerate(job["sources"],1): x["n"]=n
     if selection is not None:
         job["filament_selection"] = selection
@@ -2998,7 +3104,7 @@ def main():
         raise SystemExit('REFUSED: inspect-only cannot approve slicing or printing')
     if not a.approved and not a.inspect_only: raise SystemExit("REFUSED: --select requires the operator's explicit --approved slicing authorization; use --inspect-only for preparation")
     if a.select<1 or a.select>len(job["sources"]): raise SystemExit("invalid --select")
-    if a.print_now and not job.get("filament_selection"):
+    if a.print_now and printers.get(job.get("printer_family") or printers.current().family).multi_slot and not job.get("filament_selection"):
         raise SystemExit("REFUSED: --print-now requires explicit filament selection (--filament-slot, --filament-color, --filament-material, or use 'filament-select' command)")
     chosen=job["sources"][a.select-1]
     # Site profile settings are never imported. The selected 3MF/STL supplies geometry

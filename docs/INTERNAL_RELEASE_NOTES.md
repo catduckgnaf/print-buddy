@@ -1,6 +1,6 @@
 # Print Buddy Internal Release Notes
 
-# Version 2.1.0
+# Version 2.0.4
 
 **Release Date:** 2026-10-19
 **Needs a migration on the box:** run `scripts/migrate-names.sh --dry-run`, then without it, then restart the listener; printer steps in `docs/RENAME-MIGRATION.md`.

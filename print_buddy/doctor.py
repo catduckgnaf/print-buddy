@@ -40,6 +40,21 @@ def check_templates(data):
     return str(folder)
 
 
+def check_hardware(data):
+    """The printer hardware record the pipeline reads with no fallback. A fresh install has none."""
+    path = settings.state_dir(data) / "printer_hardware.json"
+    if not path.is_file():
+        raise RuntimeError(f"{path} is missing; copy it from the working install or create it before slicing")
+    record = json.loads(path.read_text())
+    missing = [key for key in ("spool", "temps_c", "nozzle") if not isinstance(record.get(key), dict)]
+    if missing:
+        raise RuntimeError(f"{path} lacks {', '.join(missing)}")
+    nozzle = record["nozzle"].get("diameter_mm")
+    if nozzle is None or float(nozzle) != data["printer"]["nozzle_diameter_mm"]:
+        raise RuntimeError(f"recorded nozzle {nozzle} mm does not match settings {data['printer']['nozzle_diameter_mm']:g} mm")
+    return f"{path.name}, {float(nozzle):g} mm nozzle"
+
+
 def check_core(data):
     core = Path(__file__).resolve().parent / "core"
     names = sorted(p.stem for p in core.glob("*.py") if p.stem != "__init__")
@@ -90,6 +105,7 @@ def run(out=sys.stdout):
     report("settings", check_settings, data)
     report("orca templates", check_templates, data)
     report("core", check_core, data)
+    report("hardware record", check_hardware, data)
     report("orca cli", check_orca, data)
     for key in SERVICE_PATHS:
         report(key.replace("_url", ""), check_service, data, key)

@@ -2,6 +2,7 @@
 
 Skipped unless PRINT_BUDDY_SPOOLMAN_TEST_URL points at a throwaway Spoolman; never aim it at the home server.
 """
+import json
 import os
 
 import pytest
@@ -36,8 +37,15 @@ def test_new_spool_lands_on_the_shelf_and_reuses_its_filament_type():
     assert spool["filament"]["color_hex"].upper() == "2E8B57"
 
 
+def hardware_record(tmp_path):
+    """Every working install has this record; printer_state owns it and spool_sync updates slots in it."""
+    path = tmp_path / "printer_hardware.json"
+    path.write_text(json.dumps({"ifs_slots": {}}))
+    return path
+
+
 def test_binding_a_slot_moves_the_old_spool_back_to_the_shelf(tmp_path):
-    state = tmp_path / "printer_hardware.json"
+    state = hardware_record(tmp_path)
     old = new_spool("Testbrand, PETG, Night Black, 1000, 111111")["spool_id"]
     new = new_spool("Testbrand, PETG, Snow White, 1000, FFFFFF")["spool_id"]
     spool_sync.bind_slot(3, old, client=client, mr=printer, state_path=state, push_screen_update=False)
@@ -55,5 +63,5 @@ def test_archived_spool_is_refused(tmp_path):
     sid = new_spool("Testbrand, PLA, Used Up, 1000")["spool_id"]
     client("PATCH", f"/api/v1/spool/{sid}", {"archived": True})
     with pytest.raises(spool_sync.SpoolError, match="archived"):
-        spool_sync.bind_slot(1, sid, client=client, mr=printer, state_path=tmp_path / "s.json",
+        spool_sync.bind_slot(1, sid, client=client, mr=printer, state_path=hardware_record(tmp_path),
                              push_screen_update=False)

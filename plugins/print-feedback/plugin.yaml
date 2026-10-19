@@ -1,0 +1,5 @@
+name: print-feedback
+version: 1.1.0
+description: Interaction guards for the print channel (capped clarify buttons, repeated terminal command block)
+provides_hooks:
+  - pre_tool_call

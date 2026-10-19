@@ -1,0 +1,20 @@
+[Unit]
+Description=Print Buddy Moonraker event listener (no AI, replaces polling)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+Environment=PYTHONUNBUFFERED=1
+Environment=HERMES_HOME={{HERMES_HOME}}
+# Secrets and personal settings (chat targets, tokens) live in the profile .env or in an overlay drop-in.
+EnvironmentFile=-{{HERMES_HOME}}/.env
+WorkingDirectory={{REPO}}
+ExecStart={{PYTHON}} -m print_buddy.hermes.moonraker_event_listener
+Restart=always
+RestartSec=10
+MemoryMax=256M
+Nice=5
+
+[Install]
+WantedBy=default.target

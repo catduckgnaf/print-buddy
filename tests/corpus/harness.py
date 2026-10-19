@@ -426,6 +426,7 @@ def run_in_gateway_env(case, work, gateway_home, home, real_slicer=False):
     import subprocess
     env = {k: v for k, v in os.environ.items() if not k.startswith(("PRINT_BUDDY__", "HERMES_"))}
     env.pop("PRINT_BUDDY_CONFIG", None)
+    env.pop("PRINT_BUDDY_REAL_SLICER", None)  # set again below only when asked; the CI real tier exports it
     Path(work).mkdir(parents=True, exist_ok=True)
     empty = Path(work) / "empty.toml"
     empty.write_text("")

@@ -124,3 +124,25 @@ def test_print_context_carries_multipart_plan_for_split_plate(tmp_path):
     assert second['id'] == 'plate2' and second['label'].endswith('(slot 2)')
     src = Path(model_job.__file__).read_text()
     assert "ctx.update(multipart_plan_id=plan['plan_id'], part_id=part['id'], required_parts=plan['parts'])" in src
+
+
+def test_record_start_binds_plate_two_of_a_split_job_to_its_plan(tmp_path, monkeypatch):
+    """#48: JOB.json["gcode"] is plate 1 only; plate 2 must still reach the plan and advance it."""
+    print_records = external("print_records")
+    jp, job, m, gcodes = _split_job(tmp_path)
+    plans = tmp_path / 'Plans'
+    prepared_intake.write_split_plan(jp, job, m, gcodes, 'intake-abc', plans_dir=plans)
+    monkeypatch.setattr(model_job, 'ARCHIVE', tmp_path)
+    monkeypatch.setattr(model_job, 'CONTEXT', tmp_path / 'context.json')
+    monkeypatch.setattr(print_records, 'PLANS_DIR', plans)
+    monkeypatch.setattr(print_records, 'write_start_record', lambda ctx: str(tmp_path / 'start.md'))
+    model_job.record_start(gcodes[1], moonraker_name='slot2.gcode')
+    ctx = json.loads((tmp_path / 'context.json').read_text())['jobs']['slot2.gcode']
+    assert ctx['multipart_plan_id'] == 'intake-abc' and ctx['part_id'] == 'plate2'
+    assert ctx['title'] == 'Post-it'
+    plan_id, complete = print_records.update_multipart_plan(
+        {**ctx, 'gcode_file': 'slot2.gcode', 'completed_at': '2026-10-19T05:00:00Z'})
+    saved = json.loads((plans / 'intake-abc.json').read_text())
+    status = {p['id']: p['status'] for p in saved['parts']}
+    assert plan_id == 'intake-abc' and not complete
+    assert status == {'plate1': 'planned', 'plate2': 'completed'}

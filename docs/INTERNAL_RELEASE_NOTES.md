@@ -1,5 +1,17 @@
 # Print Buddy Internal Release Notes
 
+# Version 2.0.3
+
+**Release Date:** 2026-10-19
+**What shipped:**
+- `model_job._job_for_gcode`: `record_start` matches the started G-code against `JOB.json["gcode"]`, `derived_plates[].gcode` and `multipart_plan.parts[].gcode_path`. Before, only plate 1 resolved, so plates 2+ started with no `multipart_plan_id` and completions never advanced the plan (Valentine's Headphones Stand plates 2 and 3 were reconciled by hand). Closes #48.
+- `model_job.copies_supported`: false for multi-plate audits, `full_size_split_plan`, `plate_mode == "separate"` and per-part colors. `prepared_intake` caps the quantity picker at 1 for those jobs and says so; `slice_job` clamps `copies` to 1 and records it. Closes #37.
+- `print_mapped_native`: slot material check uses `printer_state.same_material` (PLA == PLA+).
+- `scripts/home-update.sh`: interpreter order `$PYTHON`, Hermes agent venv, `python3`. `tests/test_home_update.py` strips `settings.LEGACY_ENV` from the subprocess environment.
+- Tests: regression tests for #37 and #48 fail on 2.0.2 and pass here.
+
+---
+
 # Version 2.0.2
 
 **Release Date:** 2026-10-19

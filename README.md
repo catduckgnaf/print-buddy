@@ -162,6 +162,17 @@ python3 -m pytest tests
 ```
 A second CI job installs the Flathub OrcaSlicer, slices small test models with the templates, and runs the slice guards on the real G-code. Run it locally with `PRINT_BUDDY_REAL_SLICER=1 python3 -m pytest -s tests/slicer`.
 
+### Discord flow corpus
+
+`tests/corpus/cases/` holds 3MF models run end to end through the Discord intake with fake button clicks: color questions, fit check and resize or split offer, plate planning, slicing, and G-code checks. Nothing contacts a printer. Every PR runs it with a fake Orca; the real-slicer job runs it with Flathub Orca. One test also runs the intake with the gateway's `HERMES_HOME` to keep state in the profile.
+
+To add a model that broke Discord: make `tests/corpus/cases/<name>/` with `model.3mf` (only models you may redistribute: your own, CC0, or attribution licenses; note it as `license = "..."`) and a `case.toml` listing the buttons pressed and what you expect. An unanswered question fails the test and prints its buttons, so copy them in. `tests/corpus/make_models.py` writes the built-in models; see any existing `case.toml` for the format.
+
+```bash
+python3 -m pytest -q tests/corpus                                # fake Orca
+PRINT_BUDDY_REAL_SLICER=1 python3 -m pytest -q -s tests/corpus   # real Orca, slices under .slicer-work/
+```
+
 ## ZMod plugin and spool matching
 
 ZMod switches to a backup spool mid-print only when another slot holds the exact same color and material. The `print_bitch.cfg` macro checks that before a job starts:
@@ -203,7 +214,7 @@ is_system_service: False
 * `hermes/`: profile templates and skills installed by `scripts/install-hermes.sh`.
 * `scripts/`: `install-hermes.sh` and `home-update.sh`.
 * `print_bitch.cfg`, `install.sh`, `uninstall.sh`, `update.sh`: ZMod plugin macro and lifecycle scripts.
-* `tests/`: offline suite, real slicer checks, and the Klipper macro tests.
+* `tests/`: offline suite, real slicer checks, the Discord flow corpus (`tests/corpus/`), and the Klipper macro tests.
 * `docs/`: install guide and AD5X integration specs.
 
 ## Links

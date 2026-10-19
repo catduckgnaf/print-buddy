@@ -164,40 +164,14 @@ A second CI job installs the Flathub OrcaSlicer, slices small test models with t
 
 ### Discord flow corpus
 
-`tests/corpus/cases/` holds 3MF models that are run end to end through the Discord intake: a dropped file, the color questions, the fit check and resize or split offer, plate planning, slicing, and the offline G-code checks. A fake Discord answers every question with the buttons listed in the case, and nothing contacts a printer (the start step runs the real gates against a stub `print-now`). The offline job runs every case on every pull request with the Orca CLI replaced by a small fake that writes valid G-code, so the questions, plate planning and fit logic are exercised for real. The real-slicer job runs the same cases with the Flathub Orca. A separate test runs the intake with the gateway's real environment (`HERMES_HOME=~/.hermes`, multiplexed profiles) and checks that state stays in the print profile.
+`tests/corpus/cases/` holds 3MF models run end to end through the Discord intake with fake button clicks: color questions, fit check and resize or split offer, plate planning, slicing, and G-code checks. Nothing contacts a printer. Every PR runs it with a fake Orca; the real-slicer job runs it with Flathub Orca. One test also runs the intake with the gateway's `HERMES_HOME` to keep state in the profile.
 
-#### Adding a failing 3MF
+To add a model that broke Discord: make `tests/corpus/cases/<name>/` with `model.3mf` (only models you may redistribute: your own, CC0, or attribution licenses; note it as `license = "..."`) and a `case.toml` listing the buttons pressed and what you expect. An unanswered question fails the test and prints its buttons, so copy them in. `tests/corpus/make_models.py` writes the built-in models; see any existing `case.toml` for the format.
 
-When a model misbehaves in Discord, add it as a case, watch it fail in CI, then fix the code.
-
-1. Make a folder `tests/corpus/cases/<short-name>/` holding the model as `model.3mf`.
-2. Only commit a model whose license lets this public repo redistribute it: your own work, CC0, public domain, or a license that allows redistribution with attribution. Put the license and source in `case.toml` as `license = "..."` (or an `ATTRIBUTION` file). Never commit a model you cannot redistribute; generate a stand-in shape instead. `tests/corpus/make_models.py` writes the built in models and is a good starting point. Keep each file well under 1 MB.
-3. Write `case.toml` with the buttons you pressed, in the words the bot uses, and what you expect:
-   ```toml
-   license = "CC0 1.0: my own model"
-   description = "what went wrong in Discord"
-
-   [[click]]                      # answers any question containing this text...
-   question = "Choose the color for"
-   button = "White"               # ...by pressing the first button containing this text
-
-   [[click]]
-   question = "·"                 # the final "Slice and print" question
-   button = "Slice and print"
-
-   [expect]
-   status = "STARTED"             # receipt status the flow should end with
-   parts = ["Cube"]               # also: source_plates, colors, gcodes, plate_mode, scale or scale_range, supports, slots, prompts
-   ```
-   If the bot asks a question no rule answers, the test fails and prints the question and its buttons, so copy them into a new `[[click]]`.
-4. Run it, then open the pull request. The case must fail first, then pass once the fix lands.
-
-Run it locally:
 ```bash
-python3 -m pytest -q tests/corpus                                # no Orca needed: fake Orca, modelled fit probe
-PRINT_BUDDY_REAL_SLICER=1 python3 -m pytest -q -s tests/corpus   # real Orca (Flathub flatpak, under xvfb on a headless box)
+python3 -m pytest -q tests/corpus                                # fake Orca
+PRINT_BUDDY_REAL_SLICER=1 python3 -m pytest -q -s tests/corpus   # real Orca, slices under .slicer-work/
 ```
-The real tier slices under `.slicer-work/` in the repository, because the Flatpak sandbox cannot see `/tmp`.
 
 ## ZMod plugin and spool matching
 

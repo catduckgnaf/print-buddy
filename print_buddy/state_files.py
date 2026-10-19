@@ -60,6 +60,7 @@ class Stray:
     reason: str
     canonical: Path
     shared: bool = False  # in a folder another profile may own: only empty or identical copies are deleted
+    report_only: bool = False  # another profile's own state: never deleted, only reported
 
 
 def _present(path):
@@ -76,14 +77,14 @@ def _contained(path, folder):
     return real == base or base in real.parents
 
 
-def _scan(folder, state, reason):
+def _scan(folder, state, reason, report_only=False):
     """Known names directly inside folder, unless folder is the configured state folder."""
     if not folder.is_dir() or _contained(folder, state):
         return
     for name in KNOWN:
         path = folder / name
         if _present(path) and not _contained(path, state):
-            yield Stray(path, reason, state / name, shared=True)
+            yield Stray(path, reason, state / name, shared=True, report_only=report_only)
 
 
 def find_strays(config=None):
@@ -97,7 +98,8 @@ def find_strays(config=None):
         found += _scan(root / "state", state, "Hermes root state folder")
         for profile in sorted(hermes_home.parent.iterdir()):
             if profile.is_dir() and not profile.is_symlink() and profile.resolve() != hermes_home.resolve():
-                found += _scan(profile / "state", state, f"state folder of profile {profile.name}")
+                # A sibling may be another Print Buddy install with its own state: report, never delete.
+                found += _scan(profile / "state", state, f"state folder of profile {profile.name}", report_only=True)
     # Legacy dotfiles in $HOME that the cutover moved into the profile.
     home = Path.home()
     for old, new in LEGACY_HOME.items():
@@ -147,6 +149,9 @@ def remove_strays(strays, dry_run=False):
     """Delete strays that are safe to drop. Returns (removed, kept) lists of (Stray, note)."""
     removed, kept = [], []
     for stray in strays:
+        if stray.report_only:
+            kept.append((stray, "kept: another profile's state; check by hand"))
+            continue
         if _empty(stray.path):
             note = "empty"
         elif stray.shared and _identical(stray.path, stray.canonical):

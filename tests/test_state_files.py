@@ -91,27 +91,37 @@ class StrayTests(unittest.TestCase):
         (self.state / "print_alert_buttons.json").write_text('{"real": 2}')
         lonely = self.sibling / "state" / "printer_hardware.json"
         lonely.write_text('{"only": "copy"}')
-        trivial = self.sibling / "state" / "maintenance.json"
+        trivial = self.root / "state" / "maintenance.json"
         trivial.write_text("{}")
-        empty_dir = self.sibling / "state" / "timelapse_plans"
+        empty_dir = self.root / "state" / "timelapse_plans"
         empty_dir.mkdir()
         removed, kept = state_files.remove_strays(state_files.find_strays(self.config))
         self.assertEqual({covered, trivial, empty_dir}, self.paths(s for s, _ in removed))
         self.assertEqual({lonely}, self.paths(s for s, _ in kept))
-        self.assertIn("kept: no profile copy", kept[0][1])
+        self.assertIn("another profile", kept[0][1])
         self.assertFalse(covered.exists() or trivial.exists() or empty_dir.exists())
         self.assertEqual('{"only": "copy"}', lonely.read_text())
         self.assertEqual('{"real": 2}', (self.state / "print_alert_buttons.json").read_text())
 
-    def test_other_profiles_differing_file_is_kept(self):
-        # Another profile may use a generic name like maintenance.json for its own data.
-        theirs = self.sibling / "state" / "maintenance.json"
+    def test_other_profiles_state_is_never_deleted(self):
+        # A sibling may be another Print Buddy install: even an empty or identical copy stays.
+        identical = self.sibling / "state" / "printer_hardware.json"
+        identical.write_text('{"same": 1}')
+        (self.state / "printer_hardware.json").write_text('{"same": 1}')
+        empty = self.sibling / "state" / "maintenance.json"
+        empty.write_text("{}")
+        removed, kept = state_files.remove_strays(state_files.find_strays(self.config))
+        self.assertEqual([], removed)
+        self.assertEqual({identical, empty}, self.paths(s for s, _ in kept))
+        self.assertTrue(identical.exists() and empty.exists())
+
+    def test_root_state_differing_file_is_kept(self):
+        theirs = self.root / "state" / "maintenance.json"
         theirs.write_text('{"their": "data"}')
         (self.state / "maintenance.json").write_text('{"ours": 1}')
         removed, kept = state_files.remove_strays(state_files.find_strays(self.config))
         self.assertEqual([], removed)
         self.assertIn("differs", kept[0][1])
-        self.assertEqual('{"their": "data"}', theirs.read_text())
 
     def test_legacy_and_old_name_removed_once_new_copy_exists(self):
         (self.home / ".moonraker_discord_announcements.json").write_text('{"m": 1}')

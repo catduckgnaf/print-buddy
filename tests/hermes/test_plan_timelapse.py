@@ -163,3 +163,33 @@ def test_stale_plan_clips_are_pruned(world):
     days = _config.cfg()["timelapse"]["plan_clip_retention_days"]
     assert plan_timelapse.prune(now=__import__("time").time() + (days + 1) * 86400) == ["trio"]
     assert plan_timelapse.clips("trio") == []
+
+
+def test_final_video_is_partial_when_an_earlier_plate_clip_is_missing(world, monkeypatch):
+    monkeypatch.setattr(plan_timelapse, "_load_plan", lambda plan_id: plan(1, 1, 1))
+    world.render("one.mp4")
+    world.announce("TIMELAPSE_POSTPROCESS:plate.gcode", "TIMELAPSE_PLAN:trio:more:0", "Plate 1 done")
+    monkeypatch.setattr(announcer, "archive_completed_timelapse", lambda key: None)  # plate 2 never rendered
+    world.announce("TIMELAPSE_POSTPROCESS:plate.gcode", "TIMELAPSE_PLAN:trio:more:1000", "Plate 2 done")
+    world.render("three.mp4")
+    world.sent.clear()
+    world.announce("TIMELAPSE_POSTPROCESS:plate.gcode", "TIMELAPSE_PLAN:trio:final:2000", "Job complete")
+    assert len(world.sent) == 1 and "Partial timelapse: 2 plate(s)" in world.sent[0]
+
+
+def test_complete_plan_with_every_clip_is_not_partial(world, monkeypatch):
+    monkeypatch.setattr(plan_timelapse, "_load_plan", lambda plan_id: plan(1, 1))
+    world.render("one.mp4")
+    world.announce("TIMELAPSE_POSTPROCESS:plate.gcode", "TIMELAPSE_PLAN:trio:more:0", "Plate 1 done")
+    world.render("two.mp4")
+    world.sent.clear()
+    world.announce("TIMELAPSE_POSTPROCESS:plate.gcode", "TIMELAPSE_PLAN:trio:final:1000", "Job complete")
+    assert "Partial" not in world.sent[0] and "MEDIA:" in world.sent[0]
+
+
+def test_non_final_plates_prune_stale_plan_stores(world, monkeypatch):
+    pruned = []
+    monkeypatch.setattr(plan_timelapse, "prune", lambda now=None: pruned.append(True))
+    world.render("one.mp4")
+    world.announce("TIMELAPSE_POSTPROCESS:plate.gcode", "TIMELAPSE_PLAN:trio:more:0", "Plate 1 done")
+    assert pruned == [True]

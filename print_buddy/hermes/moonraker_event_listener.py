@@ -619,9 +619,13 @@ def _plan_timelapse_post(job_key, completion_message, tl_plan):
             clip = None
     if stage == "more":
         post(completion_message)
+        with contextlib.suppress(Exception):
+            plan_timelapse.prune()  # abandoned plans never reach a final post
         return
-    partial = stage == "partial" or clip is None
     stored = plan_timelapse.clips(plan)
+    expected = plan_timelapse.expected_clips(plan)
+    # Partial when any plate's clip is missing, not only the final plate's.
+    partial = stage == "partial" or clip is None or (expected is not None and len(stored) < expected)
     try:
         if not stored:
             post(completion_message)

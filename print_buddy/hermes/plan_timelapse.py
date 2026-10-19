@@ -65,6 +65,19 @@ def plan_stage(plan, part_id=None):
     return ("more" if remaining_parts(plan) else "final"), order
 
 
+def _load_plan(plan_id):
+    from .print_next import load_plan
+    return load_plan(plan_id)
+
+
+def expected_clips(plan_id):
+    """How many plate clips a complete plan video has (copies count), or None when the plan is unreadable."""
+    try:
+        return sum(int(p["quantity"]) for p in required_parts(_load_plan(plan_id)))
+    except Exception:
+        return None
+
+
 def _read(plan_id):
     path, _ = _paths(plan_id)
     try:

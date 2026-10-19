@@ -1,6 +1,6 @@
 # Generic Hermes profile config for Print Buddy.
-# ${NAME} values are filled by scripts/install-hermes.sh from the environment (see docs/INSTALL.md).
-# Anything it cannot fill stays as ${NAME}; set it in config/overlay/config.yaml, which replaces this file.
+# Dollar-brace placeholders are filled by scripts/install-hermes.sh from the environment (see docs/INSTALL.md).
+# Anything it cannot fill stays as a placeholder; set it in config/overlay/config.yaml, which replaces this file.
 # Never put tokens here. Secrets belong in the profile .env.
 
 model:

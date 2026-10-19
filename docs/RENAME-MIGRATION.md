@@ -44,3 +44,7 @@ Do this while the printer is idle. These steps run on the printer, so the script
 ZMod's external plugin list links this repo; if it registered the plugin as `print-bitch`, ask for the entry to become `print-buddy` so fresh installs get the new name.
 
 The macro is now `PRINT_BUDDY`; update any gcode or slicer start macros that call `PRINT_BITCH`.
+
+## Printer model setting
+
+`[printer] family` is gone. `scripts/migrate-names.sh` rewrites it in `config/local.toml` (backup `local.toml.pre-model`). To do it by hand, replace it with `model = "flashforge.ad5x"` (or `sovol.sv06`, `klipper.generic`), or the import stops and names the key. Printer defaults now come from the model file under `print_buddy/printers/`. JOB.json files record `printer_model` instead of `printer_family`; a job without it is an AD5X job.

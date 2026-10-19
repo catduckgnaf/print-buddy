@@ -6,44 +6,18 @@
 # overrides with that file instead of config/local.toml.
 
 [printer]
-name = "Flashforge AD5X"
-firmware = "ZMod Klipper"
-# Printer family adapter: flashforge_zmod, generic_klipper or sovol_klipper (see print_buddy/printers).
-family = "flashforge_zmod"
-# Start and end macros for the Klipper families. flashforge_zmod uses its own START_PRINT/END_PRINT template.
-start_macro = "PRINT_START"
-end_macro = "PRINT_END"
-# Usable print area, matching printable_area in templates/orca/machine.json.
-# The physical sheet is 235 mm; Orca and the steppers allow 220.
-bed_mm = [220.0, 220.0]
-max_print_height_mm = 220.0
-# Orca templates are tuned for this nozzle. Slicing refuses any other size.
-nozzle_diameter_mm = 0.4
-# Filament slots in the IFS. 1 for a single extruder printer.
-ifs_slots = 4
+# Which printer this install drives, "brand.model": flashforge.ad5x, sovol.sv06 or klipper.generic.
+# The model's own file under print_buddy/printers/ supplies the bed, height, nozzle, slots, start and end
+# macros, edge margins, prime tower and cold pull defaults. Override any of them in config/local.toml.
+model = "flashforge.ad5x"
 
 [layout]
-# Distance from the bed edge for a lone copy and for multi copy plates.
-single_copy_edge_mm = 1.0
-multi_copy_edge_mm = 3.0
-# Gaps when several source plates are merged onto one bed.
-merge_edge_margin_mm = 8.0
-merge_spacing_mm = 10.0
-# Merged plates longer than this are kept separate.
+# Merged plates longer than this are kept separate. The edge margins and merge gaps come from the printer model.
 max_merged_hours = 12
 
-[prime_tower]
-size_mm = 45.0
-# Clearance between the tower and any part.
-part_clearance_mm = 8.0
-# Closest the tower may sit to the bed edge.
-edge_mm = 10.0
-# Extra room reserved for the tower when merging plates.
-merge_slack_mm = 5.0
-
 [orca]
-# Folder holding machine.json, process.json and filament.json. Relative to the repository root.
-templates = "print_buddy/templates/orca"
+# The Orca template folder (machine.json, process.json, filament.json) comes from the printer model; set
+# templates = "path" in config/local.toml to use another folder, relative to the repository root.
 # How to start the Orca CLI. The home box and the CI slicer job both use the Flathub build.
 command = ["flatpak", "run", "com.orcaslicer.OrcaSlicer"]
 
@@ -124,8 +98,3 @@ plan_clip_retention_days = 14
 quick_hours = 25
 full_hours = 75
 full_days = 30
-
-[cold_pull]
-# Profile name = [hot C, cold C]
-pla_trial = [220, 90]
-petg = [245, 100]

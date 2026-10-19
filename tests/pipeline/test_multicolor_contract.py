@@ -10,7 +10,7 @@ from unittest.mock import patch
 
 import pytest
 from print_buddy.core import model_job as job
-from print_buddy.core import multicolor_contract as contract
+from print_buddy.printers.flashforge.zmod import multicolor_contract as contract
 from print_buddy.core import orca_adapter
 
 
@@ -119,7 +119,7 @@ def test_public_prepare_verify_launch(tmp_path, n, mapping, bare_upload, source)
         cli(['finalize-gcode',str(path),'--tool-map',str(mapfile)])
         assert path.read_bytes()==finalized
         assert job.zmod_md5_valid(path)
-        from print_buddy.core.native_startup import commands
+        from print_buddy.printers.flashforge.zmod.native_startup import commands
         expected_body = original
         if source == 'reviewed-orca':
             expected_body = original.replace('START_PRINT BED_TEMP=60 EXTRUDER_TEMP=210 MESH=MESH_DATA',
@@ -271,7 +271,7 @@ def test_startup_controls_normal_cli(tmp_path, n, initial, header):
         finalized = path.read_bytes()
         cli(['finalize-gcode',str(path),'--tool-map',str(mapfile)])
         assert path.read_bytes() == finalized
-        from print_buddy.core.native_startup import commands
+        from print_buddy.printers.flashforge.zmod.native_startup import commands
         expected_body = original.replace(start, 'M190 S60\nM104 S210 T0\n'+start, 1) if variant == 'bare' else original
         assert commands(path.read_text()) == commands(expected_body)
         assert job.zmod_md5_valid(path)

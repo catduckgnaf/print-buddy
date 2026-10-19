@@ -1,6 +1,6 @@
 """Runtime path for non-ZMod printer families: intake -> slice -> print-now -> Moonraker start, offline.
 
-With [printer] family = generic_klipper nothing on the path may touch the ZMod/AD5X machinery:
+With [printer] model = klipper.generic nothing on the path may touch the ZMod/AD5X machinery:
 no START_PRINT/SET_EXTRUDER_SLOT/CHANGE_ZCOLOR/LOAD_ZOFFSET/M8xx, no display_off, no stock /detail.
 """
 import asyncio
@@ -42,11 +42,8 @@ STATE = {"moonraker_url": "http://printer.test:7125", "printer": "Test Klipper",
          "spool": {"spoolman_id": 7, "name": "Black PLA", "material": "PLA"}}
 
 
-def use_family(monkeypatch, family):
-    data = settings.load(local=False, environ={})
-    data["printer"]["family"] = family
-    if family != "flashforge_zmod":
-        data["printer"]["ifs_slots"] = 1
+def use_model(monkeypatch, family):
+    data = settings.load(local=False, environ={"PRINT_BUDDY__PRINTER__MODEL": family})
     adapter = printers.get(family, data)
     monkeypatch.setattr(printers, "current", lambda config=None: adapter)
     return adapter
@@ -107,9 +104,9 @@ def write_job(tmp_path, gcode, **extra):
 
 
 def test_generic_print_now_runs_no_zmod_step(monkeypatch, rig, tmp_path):
-    adapter = use_family(monkeypatch, "generic_klipper")
+    adapter = use_model(monkeypatch, "klipper.generic")
     fake, gcode = rig
-    out = model_job.print_now(write_job(tmp_path, gcode, printer_family="generic_klipper"))
+    out = model_job.print_now(write_job(tmp_path, gcode, printer_model="klipper.generic"))
     assert out["started"] is True
     starts = [r for r in fake.requests if r["path"] == "/printer/print/start"]
     assert [r["body"]["filename"] for r in starts] == [fake.started]
@@ -123,7 +120,7 @@ def test_generic_print_now_runs_no_zmod_step(monkeypatch, rig, tmp_path):
 
 
 def test_generic_readiness_comes_from_the_adapter(monkeypatch, rig, tmp_path):
-    use_family(monkeypatch, "generic_klipper")
+    use_model(monkeypatch, "klipper.generic")
     fake, gcode = rig
     fake.print_state = "printing"
     with mock.patch.object(model_job, "_printer_phase", return_value=("standby", "", "Ready")):
@@ -134,7 +131,7 @@ def test_generic_readiness_comes_from_the_adapter(monkeypatch, rig, tmp_path):
 
 
 def test_generic_refuses_multicolor_gcode_cleanly(monkeypatch, rig, tmp_path):
-    use_family(monkeypatch, "generic_klipper")
+    use_model(monkeypatch, "klipper.generic")
     fake, gcode = rig
     gcode.write_text(GCODE + "T1\nG1 X5\n")
     with pytest.raises(SystemExit, match=r"REFUSED: .*single extruder.*Nothing uploaded or started"):
@@ -143,7 +140,7 @@ def test_generic_refuses_multicolor_gcode_cleanly(monkeypatch, rig, tmp_path):
 
 
 def test_generic_verify_gcode_needs_its_own_start_macro(monkeypatch, rig):
-    use_family(monkeypatch, "generic_klipper")
+    use_model(monkeypatch, "klipper.generic")
     fake, gcode = rig
     assert model_job.verify_gcode(gcode) is True
     gcode.write_text(GCODE.replace("PRINT_START BED=60", "PRINT_START BED=70"))
@@ -152,40 +149,40 @@ def test_generic_verify_gcode_needs_its_own_start_macro(monkeypatch, rig):
     assert not [r for r in fake.requests if ZMOD_STEPS.search(json.dumps(r))]
 
 
-@pytest.mark.parametrize("configured,recorded", [("generic_klipper", "flashforge_zmod"),
-                                                 ("generic_klipper", None),
-                                                 ("flashforge_zmod", "generic_klipper"),
-                                                 ("sovol_klipper", "generic_klipper")])
-def test_family_mismatch_refuses_before_upload(monkeypatch, rig, tmp_path, configured, recorded):
-    use_family(monkeypatch, configured)
+@pytest.mark.parametrize("configured,recorded", [("klipper.generic", "flashforge.ad5x"),
+                                                 ("klipper.generic", None),
+                                                 ("flashforge.ad5x", "klipper.generic"),
+                                                 ("sovol.sv06", "klipper.generic")])
+def test_model_mismatch_refuses_before_upload(monkeypatch, rig, tmp_path, configured, recorded):
+    use_model(monkeypatch, configured)
     fake, gcode = rig
-    extra = {"printer_family": recorded} if recorded else {}
-    with pytest.raises(SystemExit, match=r"REFUSED: this job was prepared for .*configured printer family is "
+    extra = {"printer_model": recorded} if recorded else {}
+    with pytest.raises(SystemExit, match=r"REFUSED: this job was prepared for .*configured printer model is "
                                          + configured + r".*nothing uploaded"):
         model_job.print_now(write_job(tmp_path, gcode, **extra))
     assert not uploads and not fake.requests
 
 
 def test_job_without_the_field_is_a_flashforge_job(monkeypatch):
-    assert printers.job_family({"title": "old"}) == "flashforge_zmod"
-    assert printers.job_family(None) == "flashforge_zmod"
-    use_family(monkeypatch, "flashforge_zmod")
-    printers.check_job_family({"title": "old"})
-    use_family(monkeypatch, "generic_klipper")
-    with pytest.raises(printers.JobFamilyMismatch):
-        printers.check_job_family({"title": "old"})
+    assert printers.job_model({"title": "old"}) == "flashforge.ad5x"
+    assert printers.job_model(None) == "flashforge.ad5x"
+    use_model(monkeypatch, "flashforge.ad5x")
+    printers.check_job_model({"title": "old"})
+    use_model(monkeypatch, "klipper.generic")
+    with pytest.raises(printers.JobModelMismatch):
+        printers.check_job_model({"title": "old"})
 
 
 def test_printer_override_is_recorded_on_the_job(monkeypatch, tmp_path):
-    use_family(monkeypatch, "flashforge_zmod")
+    use_model(monkeypatch, "flashforge.ad5x")
     job = write_job(tmp_path, tmp_path / "x.gcode")
-    argv = ["model_job.py", "slice", str(job), "--approved", "--printer", "sovol_klipper"]
+    argv = ["model_job.py", "slice", str(job), "--approved", "--printer", "sovol.sv06"]
     with mock.patch.object(sys, "argv", argv), \
          mock.patch.object(model_job.printer_state, "load", return_value=dict(STATE)), \
          mock.patch.object(model_job, "intake_color_choices", return_value=True), \
          mock.patch.object(model_job, "slice_job", return_value="x.gcode") as sliced:
         model_job.main()
-    assert json.loads(job.read_text())["printer_family"] == "sovol_klipper"
+    assert json.loads(job.read_text())["printer_model"] == "sovol.sv06"
     sliced.assert_called_once()
     with mock.patch.object(sys, "argv", argv[:-1] + ["prusa"]), pytest.raises(SystemExit) as bad:
         model_job.main()
@@ -198,7 +195,7 @@ def stl(path):
 
 
 def slice_job_rig(monkeypatch, tmp_path, family):
-    use_family(monkeypatch, family)
+    use_model(monkeypatch, family)
     src = stl(tmp_path / "cube.stl")
     job = write_job(tmp_path, tmp_path / "none.gcode", downloaded_file=str(src),
                     audit={"plates": 1, "size_x": "20", "size_y": "20", "size_z": "20"})
@@ -210,22 +207,23 @@ def slice_job_rig(monkeypatch, tmp_path, family):
     return job, out
 
 
-def test_generic_slice_records_family_and_skips_zmod_finalize(monkeypatch, tmp_path):
-    job, out = slice_job_rig(monkeypatch, tmp_path, "generic_klipper")
+def test_generic_slice_records_model_and_skips_zmod_finalize(monkeypatch, tmp_path):
+    job, out = slice_job_rig(monkeypatch, tmp_path, "klipper.generic")
     forbid = mock.Mock(side_effect=AssertionError("ZMod finalization ran"))
-    with mock.patch("print_buddy.core.multicolor_contract.finalize", forbid), \
+    with mock.patch("print_buddy.printers.flashforge.zmod.multicolor_contract.finalize", forbid), \
+         mock.patch("print_buddy.printers.flashforge.zmod.finalize", forbid), \
          mock.patch.object(orca_adapter, "slice_model", return_value=(out, {}, [])) as sliced, \
          mock.patch.object(model_job, "verify_gcode") as verify:
         assert model_job.slice_job(job) == out
     recorded = json.loads(job.read_text())
-    assert recorded["printer_family"] == "generic_klipper"
+    assert recorded["printer_model"] == "klipper.generic"
     assert "filament_slot" not in sliced.call_args.kwargs
     verify.assert_called_once_with(out)
     forbid.assert_not_called()
 
 
 def test_generic_slice_refuses_multicolor_source(monkeypatch, tmp_path):
-    job, out = slice_job_rig(monkeypatch, tmp_path, "generic_klipper")
+    job, out = slice_job_rig(monkeypatch, tmp_path, "klipper.generic")
     manifest = {"requires_choices": True, "source_sha256": "abc"}
     with mock.patch("print_buddy.core.source_colors.inventory", return_value=manifest), \
          mock.patch.object(orca_adapter, "slice_model") as sliced:
@@ -243,14 +241,14 @@ def test_generic_slice_refuses_multicolor_source(monkeypatch, tmp_path):
 
 
 def test_orca_adapter_skips_zmod_md5_for_generic(monkeypatch):
-    adapter = use_family(monkeypatch, "generic_klipper")
+    adapter = use_model(monkeypatch, "klipper.generic")
     assert adapter.has_native_screen is False
-    assert printers.get("flashforge_zmod").has_native_screen is True
+    assert printers.get("flashforge.ad5x").has_native_screen is True
 
 
 def test_listener_skips_screen_machinery_for_generic(monkeypatch):
     from print_buddy.hermes import moonraker_event_listener as listener
-    use_family(monkeypatch, "generic_klipper")
+    use_model(monkeypatch, "klipper.generic")
     boom = mock.AsyncMock(side_effect=AssertionError("stock detail read"))
     obj = listener.Listener()
     with mock.patch.object(listener.Listener, "read_slots", boom):
@@ -261,7 +259,7 @@ def test_listener_skips_screen_machinery_for_generic(monkeypatch):
 
 
 def test_printer_state_check_skips_calibration_authority_for_generic(monkeypatch):
-    use_family(monkeypatch, "generic_klipper")
+    use_model(monkeypatch, "klipper.generic")
     urls = []
 
     def get(url, data=None, method=None, timeout=6):

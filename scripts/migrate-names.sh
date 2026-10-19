@@ -10,7 +10,9 @@
 # 2. Replaces PRINT_BITCH_ with PRINT_BUDDY_ in config/local.toml, the profile .env and
 #    config.yaml, and the listener systemd unit and drop-ins. Each edited file is first copied
 #    to <file>.pre-rename.
-# 3. Prints the steps that have to be done by hand on the printer.
+# 3. Rewrites [printer] family = "flashforge_zmod" (or generic_klipper, sovol_klipper) in config/local.toml
+#    to model = "flashforge.ad5x" (klipper.generic, sovol.sv06). The file is first copied to <file>.pre-model.
+# 4. Prints the steps that have to be done by hand on the printer.
 set -eu
 
 REPO=$(cd "$(dirname "$0")/.." && pwd)
@@ -22,7 +24,7 @@ while [ $# -gt 0 ]; do
         --archive) shift; ARCHIVE=${1:?--archive needs a directory} ;;
         --systemd-dir) shift; SYSTEMD_USER_DIR=${1:?--systemd-dir needs a directory} ;;
         --config) shift; LOCAL_CONFIG=${1:?--config needs a file} ;;
-        -h|--help) sed -n '2,13p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+        -h|--help) sed -n '2,15p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
         *) echo "unknown argument: $1" >&2; exit 2 ;;
     esac
     shift
@@ -82,7 +84,25 @@ for f in "$SYSTEMD_USER_DIR"/hermes-3dprinting-moonraker-listener.service \
     edit_file "$f"
 done
 
-# 3. Printer side.
+# 3. [printer] family became model.
+FAMILY_RE='^[[:space:]]*family[[:space:]]*=[[:space:]]*"(flashforge_zmod|generic_klipper|sovol_klipper)"'
+if [ -f "$LOCAL_CONFIG" ] && grep -Eq "$FAMILY_RE" "$LOCAL_CONFIG"; then
+    if [ -e "$LOCAL_CONFIG.pre-model" ]; then
+        say "skipped $LOCAL_CONFIG (backup $LOCAL_CONFIG.pre-model already exists; set [printer] model by hand)"
+    else
+        act "backup $LOCAL_CONFIG -> $LOCAL_CONFIG.pre-model"
+        [ "$DRY" = 1 ] || cp -p "$LOCAL_CONFIG" "$LOCAL_CONFIG.pre-model"
+        act "edit   $LOCAL_CONFIG: [printer] family -> model"
+        [ "$DRY" = 1 ] || sed -E -i \
+            -e 's/^([[:space:]]*)family[[:space:]]*=[[:space:]]*"flashforge_zmod"/\1model = "flashforge.ad5x"/' \
+            -e 's/^([[:space:]]*)family[[:space:]]*=[[:space:]]*"generic_klipper"/\1model = "klipper.generic"/' \
+            -e 's/^([[:space:]]*)family[[:space:]]*=[[:space:]]*"sovol_klipper"/\1model = "sovol.sv06"/' "$LOCAL_CONFIG"
+    fi
+else
+    say "ok      $LOCAL_CONFIG (no [printer] family)"
+fi
+
+# 4. Printer side.
 cat <<'TXT'
 
 Printer steps (cannot be done from here; do them while the printer is idle). Details in

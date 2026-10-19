@@ -1,11 +1,13 @@
 """Printer and layout settings, read from config/home.toml with optional local overrides.
 
 Load order, later wins key by key:
-  1. config/home.toml (committed, the home setup; tests use it)
-  2. $PRINT_BUDDY_CONFIG if set, otherwise config/local.toml if it exists (never committed)
-  3. Environment: PRINT_BUDDY__SECTION__KEY, or a legacy name from LEGACY_ENV
+  1. The printer model's defaults (print_buddy/printers/<brand>/<model>.py), chosen by [printer] model
+  2. config/home.toml (committed, the home setup; tests use it)
+  3. $PRINT_BUDDY_CONFIG if set, otherwise config/local.toml if it exists (never committed)
+  4. Environment: PRINT_BUDDY__SECTION__KEY, or a legacy name from LEGACY_ENV
 
-Every key must already exist in home.toml with the same type, so a typo fails loudly.
+The model comes from the last of home.toml, local.toml and PRINT_BUDDY__PRINTER__MODEL that sets it.
+Every key must already exist in the model defaults or home.toml with the same type, so a typo fails loudly.
 """
 from __future__ import annotations
 
@@ -16,7 +18,7 @@ import tomllib
 from functools import lru_cache
 from pathlib import Path
 
-from .printers.families import DEFAULT_FAMILY, FAMILIES, TEMPLATE_SUBDIR
+from . import printers
 
 ROOT = Path(__file__).resolve().parent.parent
 HOME = ROOT / "config" / "home.toml"
@@ -88,6 +90,13 @@ def _same_type(expected, value):
     return type(expected) is type(value)
 
 
+def _unknown(source, section, key):
+    hint = ""
+    if (section, key) == ("printer", "family"):
+        hint = ' ([printer] family was replaced by model, e.g. model = "flashforge.ad5x"; see README "Printer models")'
+    return SettingsError(f"{source}: unknown setting [{section}] {key}{hint}")
+
+
 def _check_keys(home, extra, source):
     """Reject keys home.toml does not define, and values of the wrong type."""
     for section, values in extra.items():
@@ -97,7 +106,7 @@ def _check_keys(home, extra, source):
             if key not in home[section]:
                 if section in OPEN_SECTIONS:
                     continue
-                raise SettingsError(f"{source}: unknown setting [{section}] {key}")
+                raise _unknown(source, section, key)
             if not _same_type(home[section][key], value):
                 raise SettingsError(f"{source}: [{section}] {key} should be like {home[section][key]!r}, got {value!r}")
 
@@ -130,7 +139,7 @@ def _from_env(home, environ):
         else:
             continue
         if key not in home.get(section, {}):
-            raise SettingsError(f"${name}: unknown setting [{section}] {key}")
+            raise _unknown(f"${name}", section, key)
         out.setdefault(section, {})[key] = _coerce(home[section][key], raw, name)
     return out
 
@@ -157,12 +166,11 @@ def validate(data):
     for key in ("max_print_height_mm", "nozzle_diameter_mm"):
         data["printer"][key] = _positive(data, "printer", key)
     data["printer"]["ifs_slots"] = _positive(data, "printer", "ifs_slots", int)
-    family = data["printer"].get("family", DEFAULT_FAMILY)
-    if family not in FAMILIES:
-        raise SettingsError(f"[printer] family must be one of {', '.join(FAMILIES)}, got {family!r}")
-    data["printer"]["family"] = family
-    if family != DEFAULT_FAMILY and data["printer"]["ifs_slots"] != 1:
-        raise SettingsError(f"[printer] ifs_slots must be 1 for family {family!r} (single extruder)")
+    key = data["printer"].get("model")
+    if key not in printers.MODELS:
+        raise SettingsError(f"[printer] model must be one of {', '.join(printers.MODELS)}, got {key!r}")
+    if not printers.MODELS[key].adapter.multi_slot and data["printer"]["ifs_slots"] != 1:
+        raise SettingsError(f"[printer] ifs_slots must be 1 for model {key!r} (single extruder)")
     for key, default in (("start_macro", "PRINT_START"), ("end_macro", "PRINT_END")):
         macro = data["printer"].setdefault(key, default)
         if not isinstance(macro, str) or not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", macro):
@@ -199,9 +207,6 @@ def validate(data):
         raise SettingsError("[orca] templates must be a folder path")
     path = Path(templates).expanduser()
     data["orca"]["templates"] = path if path.is_absolute() else ROOT / path
-    subdir = TEMPLATE_SUBDIR[family]
-    if subdir and data["orca"]["templates"] == ROOT / "print_buddy" / "templates" / "orca":
-        data["orca"]["templates"] = data["orca"]["templates"] / subdir  # family default, unless overridden
     return data
 
 
@@ -210,8 +215,8 @@ def load(home=HOME, local=None, environ=None):
 
     environ defaults to os.environ; pass {} to ignore the environment.
     """
-    data = _read(home)
-    base = copy.deepcopy(data)
+    home_data = _read(home)
+    environ = os.environ if environ is None else environ
     if local is None:
         env = os.environ.get("PRINT_BUDDY_CONFIG")
         if env:
@@ -220,11 +225,17 @@ def load(home=HOME, local=None, environ=None):
                 raise SettingsError(f"PRINT_BUDDY_CONFIG points to a missing file: {local}")
         elif LOCAL.is_file():
             local = LOCAL
+    extra = _read(local) if local else {}
+    key = (environ.get("PRINT_BUDDY__PRINTER__MODEL") or extra.get("printer", {}).get("model")
+           or home_data.get("printer", {}).get("model"))
+    if key not in printers.MODELS:
+        raise SettingsError(f"[printer] model must be one of {', '.join(printers.MODELS)}, got {key!r}")
+    data = _merge(printers.MODELS[key].defaults(), home_data)
+    base = copy.deepcopy(data)
     if local:
-        extra = _read(local)
         _check_keys(base, extra, local)
         data = _merge(data, extra)
-    data = _merge(data, _from_env(base, os.environ if environ is None else environ))
+    data = _merge(data, _from_env(base, environ))
     return validate(data)
 
 

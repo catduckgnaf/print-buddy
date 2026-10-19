@@ -11,7 +11,7 @@ import sys
 import time
 from urllib.parse import urlsplit
 
-from .. import settings
+from .. import printers, settings
 from . import _external, split_fit
 
 BED = settings.current()['printer']['bed_mm']
@@ -925,10 +925,11 @@ async def prepare_link(event, adapter, state, root, timeout=300, reuse=None):
         actual_estimate = mj.gcode_estimate_s(first.read_text())
         slot_lines = ''
         try:
-            from .multicolor_contract import describe_mapping, embedded_mapping
-            _map = embedded_mapping(first.read_text(), state)
-            if _map:
-                slot_lines = describe_mapping(_map, state)
+            if printers.current().multi_slot:  # a single extruder printer has no slot map
+                native = printers.current().native
+                _map = native.embedded_mapping(first.read_text(), state)
+                if _map:
+                    slot_lines = native.describe_mapping(_map, state)
         except Exception as exc:  # a bad map is refused later by print-now; show why now
             slot_lines = f'Slot map problem: {exc}'
         estimate_text = (f"~{mj.human_dur(actual_estimate)} printing, ~{mj.human_dur(actual_estimate + 300)} total "

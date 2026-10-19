@@ -18,7 +18,7 @@ def _native_zero(value):
 
 def _idle_failures(moonraker, native):
     """Return failed idle predicates and observed values, failing closed on malformed data."""
-    from .clear_job import IDLE_NATIVE
+    from ....core.clear_job import IDLE_NATIVE
 
     moonraker = moonraker if isinstance(moonraker, dict) else {}
     native = native if isinstance(native, dict) else {}

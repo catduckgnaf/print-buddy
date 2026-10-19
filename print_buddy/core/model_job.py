@@ -203,9 +203,14 @@ def zmod_md5_valid(path):
     return hashlib.md5(payload).hexdigest().encode("ascii") == match.group(1).lower()
 
 
+def finalize_multicolor(*args, **kwargs):
+    """ZMod color/slot-map insertion and MD5, through the printer adapter."""
+    return printers.current().native.finalize(*args, **kwargs)
+
+
 def native_heater_lines_valid(text, bed, hotend):
     """Require the documented native startup prefix, not later layer heaters."""
-    from .native_startup import valid
+    valid = printers.current().native.native_startup_valid
     return valid(text, bed, hotend)
 
 
@@ -525,7 +530,7 @@ READINESS_MAX_AGE_SECONDS = 15
 
 
 def _native():
-    """True when the configured family has the ZMod native-screen runtime (display_off, offsets, stock API)."""
+    """True when the configured printer has the ZMod native-screen runtime (display_off, offsets, stock API)."""
     return printers.current().has_native_screen
 
 
@@ -716,84 +721,20 @@ def read_filament_telemetry(state):
     }
 
 
-STOCK_DETAIL_PORT = settings.current()["services"]["stock_api_port"]
-STOCK_CRED_KEYS = ("AD5X_SERIAL", "AD5X_CHECK_CODE")
-
-
-def _stock_credentials():
-    """Serial + LAN check code from env, else the 3dprinting profile .env. Never logged."""
-    found = {k: os.environ.get(k, "").strip() for k in STOCK_CRED_KEYS}
-    env_file = PROFILE/".env"
-    if not all(found.values()) and env_file.is_file():
-        for line in env_file.read_text(errors="ignore").splitlines():
-            key, sep, value = line.partition("=")
-            key = key.strip().removeprefix("export ").strip()
-            if sep and key in found and not found[key]:
-                found[key] = value.strip().strip("'\"")
-    if not all(found.values()):
-        missing = ", ".join(k for k, v in found.items() if not v)
-        raise RuntimeError(f"stock IFS credentials missing ({missing}); set them in {env_file}")
-    return found["AD5X_SERIAL"], found["AD5X_CHECK_CODE"]
-
-
+# Stock firmware /detail readers live with the ZMod code; these delegate through the printer adapter.
 def read_stock_detail(state, *, post=None):
     """Read native status using profile credentials without logging them."""
-    host = urllib.parse.urlsplit(state["moonraker_url"]).hostname
-    if printers.current().stock_api_url(host) is None:
-        raise RuntimeError(f"{printers.current().label} has no vendor status API")
-    serial, code = _stock_credentials()
-    post = post or (lambda url, body: request_json(url, data=body, headers={"Content-Type": "application/json"}, timeout=10))
-    reply = post(f"http://{host}:{STOCK_DETAIL_PORT}/detail", {"serialNumber": serial, "checkCode": code})
-    if not isinstance(reply, dict) or reply.get("code") != 0:
-        msg = reply.get("message") if isinstance(reply, dict) else "invalid reply"
-        raise RuntimeError(f"stock IFS status refused: {msg}")
-    detail = reply.get("detail")
-    if not isinstance(detail, dict):
-        raise RuntimeError("stock firmware detail unavailable")
-    return detail
+    return printers.current().native.read_stock_detail(state, post=post)
 
 
 def validate_native_start(detail, selection):
     """Require native ready and an explicit physical-slot route, not stale feeder state."""
-    if detail.get('status') != 'ready':
-        raise RuntimeError(f"native printer is not ready ({detail.get('status')!r})")
-    slot = selection.get('slot') if isinstance(selection, dict) else None
-    if type(slot) is not int or not 1 <= slot <= IFS_SLOTS:
-        raise RuntimeError(f"selected physical slot is invalid ({slot!r})")
-    if detail.get('hasMatlStation') is not True:
-        raise RuntimeError("native IFS attachment state is unknown or absent")
-    station = detail.get('matlStationInfo')
-    slots = station.get('slotInfos') if isinstance(station, dict) else None
-    matches = [item for item in slots if isinstance(item, dict) and item.get('slotId') == slot] if isinstance(slots, list) else []
-    if len(matches) != 1 or matches[0].get('hasFilament') is not True:
-        raise RuntimeError(f"native physical slot {slot} presence is unknown or empty")
-    # currentLoadSlot is telemetry about the presently engaged feeder. The
-    # generated single-tool marker does not command a physical feeder change.
-    # Until a verified native selector exists, mismatch cannot be started safely.
-    loaded = station.get('currentLoadSlot')
-    if type(loaded) is not int or not 1 <= loaded <= IFS_SLOTS:
-        raise RuntimeError(f"native current physical slot is unknown ({loaded!r})")
-    if loaded != slot:
-        raise RuntimeError(f"native physical slot {loaded} is engaged; selected slot {slot} has no verified automatic route")
+    return printers.current().native.validate_native_start(detail, selection)
 
 
 def read_stock_ifs_slots_from_detail(detail):
     """Extract native slot presence from one already-fetched authenticated detail sample."""
-    if detail.get("hasMatlStation") is not True:
-        raise RuntimeError("stock firmware does not report an attached IFS")
-    slots = (detail.get("matlStationInfo") or {}).get("slotInfos")
-    if not isinstance(slots, list):
-        raise RuntimeError("stock IFS slot list unavailable")
-    result = {}
-    for item in slots:
-        raw = item.get("slotId") if isinstance(item, dict) else None
-        sid = int(raw) if isinstance(raw, (int, str)) and str(raw).isdigit() else None
-        if sid is None or not 1 <= sid <= IFS_SLOTS or sid in result:
-            raise RuntimeError("stock IFS slot list malformed")
-        result[sid] = item.get("hasFilament") if isinstance(item.get("hasFilament"), bool) else None
-    if not result:
-        raise RuntimeError("stock IFS slot list empty")
-    return result
+    return printers.current().native.read_stock_ifs_slots_from_detail(detail)
 
 
 def read_stock_ifs_slots(state, *, post=None):
@@ -803,16 +744,7 @@ def read_stock_ifs_slots(state, *, post=None):
 
 def apply_stock_presence(status, stock):
     """Replace zmod_color hasFilament with stock presence; unknown stays unknown."""
-    color = status.get("zmod_color") if isinstance(status, dict) else None
-    slots = color.get("slots") if isinstance(color, dict) else None
-    if not isinstance(slots, list):
-        return status
-    for item in slots:
-        raw = item.get("ID") if isinstance(item, dict) else None
-        sid = int(raw) if isinstance(raw, (int, str)) and str(raw).isdigit() else None
-        item["hasFilament"] = stock.get(sid)
-        item["presence_source"] = "stock /detail"
-    return status
+    return printers.current().native.apply_stock_presence(status, stock)
 
 
 def _validate_slot_selection(state, selection):
@@ -991,7 +923,7 @@ def verify_gcode(gcode_path):
                 errors.append(f"G-code nozzle {nozzle} != live {st['nozzle']['diameter_mm']}")
     material=config("filament_type")
     if native:
-        from .multicolor_contract import validate_materials
+        validate_materials = printers.current().native.validate_materials
         try:
             validate_materials(text, material, st)
         except RuntimeError as exc:
@@ -1111,14 +1043,13 @@ def record_start(gcode_path, moonraker_name=None, started_at=None):
          "slicer_settings":{**{k:cfg(k) for k in RECORD_KEYS if cfg(k) is not None},
                             "source_profile":src.get("title"),"source_file":(job or {}).get("downloaded_file"),"local_gcode":str(g)},
          "active_spool":{"id":st["spool"]["spoolman_id"],"material":st["spool"]["material"],"color":st["spool"]["name"]}}
-    from .multicolor_contract import embedded_mapping
     plan = (job or {}).get('multipart_plan') or {}
     for part in plan.get('parts') or []:
         if part.get('gcode_path') and Path(part['gcode_path']).resolve() == g:
             # Split plates advance the same plan that /print-next reads.
             ctx.update(multipart_plan_id=plan['plan_id'], part_id=part['id'], required_parts=plan['parts'])
             break
-    mapped = embedded_mapping(text, st)
+    mapped = printers.current().native.embedded_mapping(text, st) if printers.current().multi_slot else None
     if mapped is not None:
         ctx['tool_to_physical_slot'] = mapped
         ctx['active_spool']['accounting_only_not_job_color'] = True
@@ -1481,11 +1412,11 @@ def require_current_artifact(job, gcode):
 
 
 def _job_adapter(job):
-    """Adapter for the family a job is prepared for: its recorded override, else the configured family."""
-    family = job.get("printer_family") if isinstance(job, dict) else None
-    if not family or family == printers.current().family:
+    """Adapter for the model a job is prepared for: its recorded override, else the configured model."""
+    key = job.get("printer_model") if isinstance(job, dict) else None
+    if not key or key == printers.current().key:
         return printers.current()
-    return printers.get(family)
+    return printers.get(key)
 
 
 def intake_color_choices(job_path, state, mode=None, slots=None, interactive=False):
@@ -1505,7 +1436,7 @@ def intake_color_choices(job_path, state, mode=None, slots=None, interactive=Fal
         if manifest['requires_choices']:
             raise MultiColorUnsupported(
                 f"{adapter.label} has a single extruder; this source has several parts or colors that need a "
-                "slot choice. Slice a single-color model or use a multi-slot printer family")
+                "slot choice. Slice a single-color model or use a multi-slot printer")
         return True
     questions = canonical_prompts(manifest) if job.get('color_schema') == 'part_slots_v1' else prompts(manifest)
     available = []
@@ -1845,7 +1776,6 @@ def _slice_merged(job, job_path, src, manifest, decisions, view, verdict, st, br
     import uuid
     from . import plate_merge
     from .orca_adapter import slice_model
-    from .multicolor_contract import finalize as finalize_multicolor
     source_sha = file_sha256(src); decision_sha = decisions_digest(decisions)
     slice_dir = work / 'sliced' / 'orca' / uuid.uuid4().hex
     slots = sorted(set(_part_slots(view, manifest).values()))
@@ -1908,7 +1838,6 @@ def _slice_per_plate(job, job_path, src, manifest, decisions, view, plates, st, 
     fit, supports, brim_override = _job_fit(job, brim_override)
     from .color_geometry import export_single_color_plate
     from .orca_adapter import slice_model
-    from .multicolor_contract import finalize as finalize_multicolor
     object_plate = {str(o): plate['id'] for plate in plates for o in plate['object_ids']}
     if fit is not None and len(plates) <= 1:
         # The chosen fit was verified for the whole model on one bed, so the
@@ -1961,7 +1890,6 @@ def _slice_full_size_split(job, job_path, src, manifest, decisions, st):
     import uuid
     from .color_geometry import export_single_color_plate
     from .orca_adapter import slice_model
-    from .multicolor_contract import finalize as finalize_multicolor
     plan = job.get('full_size_split_plan') or {}
     plates = plan.get('plates') or []
     expected = {part['key'] for part in manifest.get('parts') or []}
@@ -2014,7 +1942,7 @@ def slice_job(job_path, brim_override=None, copies=None, scale=None):
     job = json.loads(Path(job_path).read_text()); st = printer_state.load()
     adapter = _job_adapter(job)
     generic = not adapter.multi_slot
-    job["printer_family"] = adapter.family  # print-now refuses a job sliced for another family
+    job["printer_model"] = adapter.key  # print-now refuses a job sliced for another model
     _timing(job_path, 'slice_start')
     if copies is None:
         copies = job.get('copies')
@@ -2055,7 +1983,7 @@ def slice_job(job_path, brim_override=None, copies=None, scale=None):
     if generic and (multi_plate or manifest['requires_choices'] or job.get('full_size_split_plan')):
         raise MultiColorUnsupported(
             f"{adapter.label} has a single extruder; multi-plate, multi-part or multi-color sources need a "
-            "multi-slot printer family. Slice one single-color plate instead")
+            "multi-slot printer. Slice one single-color plate instead")
     # STL has no source palette; bind decisions to the exact file bytes, as intake does.
     if not manifest.get('source_sha256'):
         manifest['source_sha256'] = file_sha256(src)
@@ -2119,7 +2047,6 @@ def slice_job(job_path, brim_override=None, copies=None, scale=None):
             # Keep the plate's physical IFS slot explicit. Orca may retain
             # project-wide unused filament_type entries although all geometry
             # is remapped to logical T0 on this single-color derivative.
-            from .multicolor_contract import finalize as finalize_multicolor
             material = st.get('ifs_slots', {}).get(str(group['slot']), {}).get('material')
             if not material:
                 raise RuntimeError(f"derived plate physical IFS slot {group['slot']} has no verified material")
@@ -2185,7 +2112,7 @@ def slice_job(job_path, brim_override=None, copies=None, scale=None):
     decision_sha = decisions_digest(decisions)
     selected_slot = None if generic else (job.get("filament_selection") or {}).get("slot")
     scale_kw = {'scale': scale} if scale is not None else {}
-    if adapter.family != printers.current().family:
+    if adapter.key != printers.current().key:
         scale_kw['adapter'] = adapter
     if rotation:
         scale_kw.update(rotation=rotation, supports=bool(orientation.get("supports")))
@@ -2196,13 +2123,12 @@ def slice_job(job_path, brim_override=None, copies=None, scale=None):
         out, provenance, configs = slice_model(src, slice_dir, st, brim_override,
                                               color_decisions=decisions, filament_slot=selected_slot,
                                               copies=copies, **scale_kw)
-        from .multicolor_contract import finalize as finalize_multicolor
         finalize_multicolor(out, None, st, {"0": selected_slot})
     else:
         out, provenance, configs = slice_model(src, slice_dir, st, brim_override,
                                               color_decisions=decisions, copies=copies, **scale_kw)
     _timing(job_path, 'orca_finalize_done')
-    if adapter.family == printers.current().family:
+    if adapter.key == printers.current().key:
         verify_gcode(out)
     latest = json.loads(Path(job_path).read_text())
     _timing(job_path, 'verify_done')
@@ -2214,7 +2140,7 @@ def slice_job(job_path, brim_override=None, copies=None, scale=None):
         job['auto_scale'] = auto_scale
     else:
         job.pop('auto_scale', None)
-    job.update({"printer_family": adapter.family, "slice_config": [str(p) for p in configs], "gcode": str(out),
+    job.update({"printer_model": adapter.key, "slice_config": [str(p) for p in configs], "gcode": str(out),
                 "provenance": provenance, "gcode_verified": True,
                 # Only this path clones copies into the G-code; estimates read it, never the request.
                 "sliced_copies": {"gcode": str(out), "copies": max(1, int(copies or 1))},
@@ -2683,12 +2609,12 @@ def _consume_approval(job_path, job, gcode, reprint=False):
 
 def print_mapped_native(g, st, mesh, mapping, job, job_path, wait_s, reprint):
     """Native explicit mapping route; exactly one SET_ZCOLOR submission, no fallback."""
-    from .native_idle import require_idle_settled
+    require_idle_settled = printers.current().native.require_idle_settled
     require_current_artifact(job, g)
     if mesh.get('display_off') != 0:
         raise RuntimeError('explicit mapped launch currently requires native screen mode')
     text = g.read_text()
-    from .multicolor_contract import embedded_mapping as _embedded
+    _embedded = printers.current().native.embedded_mapping
     _embedded(text, st)  # refuses a spool swapped since slicing, before any printer I/O
     validate_saved_mesh_start(text, mesh)
     response = _mr(st, '/printer/objects/query?webhooks&print_stats&extruder&heater_bed&zmod_color&filament_switch_sensor%20head_switch_sensor')
@@ -2709,7 +2635,7 @@ def print_mapped_native(g, st, mesh, mapping, job, job_path, wait_s, reprint):
     # installed runout/jam protections stay intact; do not actuate sensor overrides.
     configured = status.get('zmod_color', {}).get('slots', [])
     occupancy = read_stock_ifs_slots_from_detail(detail)
-    from .multicolor_contract import normalize_mapping
+    normalize_mapping = printers.current().native.normalize_mapping
     mapped = normalize_mapping(mapping, st)
     for tool, slot in mapped.items():
         expected = st['ifs_slots'][str(slot)]
@@ -2845,8 +2771,8 @@ def print_now(target, wait_s=25, accept_default_z_offset=False, reprint=False):
     require_current_artifact(job, g)
     if not g.is_file(): raise SystemExit(f"REFUSED: no G-code at {g}")
     try:
-        if isinstance(job, dict): printers.check_job_family(job)
-    except printers.JobFamilyMismatch as exc:
+        if isinstance(job, dict): printers.check_job_model(job)
+    except printers.JobModelMismatch as exc:
         raise SystemExit(f"REFUSED: {exc}. Reslice it for the configured printer; nothing uploaded or started.")
     adapter = printers.current()
     _timing(job_path, 'print_now_start')
@@ -2868,7 +2794,8 @@ def print_now(target, wait_s=25, accept_default_z_offset=False, reprint=False):
         selection = job.get("filament_selection") if isinstance(job, dict) else None
         _timing(job_path, 'preflight_verify_done')
         if adapter.multi_slot:
-            from .multicolor_contract import embedded_mapping, normalize_mapping
+            embedded_mapping = printers.current().native.embedded_mapping
+            normalize_mapping = printers.current().native.normalize_mapping
             raw_mapping = embedded_mapping(g.read_text(), st)
             mapping = normalize_mapping(raw_mapping, st) if raw_mapping is not None else None
         else:
@@ -2984,7 +2911,7 @@ def _main():
     f.add_argument("--select", type=int)
     f.add_argument("--approved", action="store_true", help="the operator approved exactly the selected source and any supports")
     f.add_argument("--brim", type=int, default=None, help="override brim width mm (e.g. 0 to disable)")
-    f.add_argument("--printer", choices=printers.FAMILIES, help="printer family this job is prepared for (default: [printer] family)")
+    f.add_argument("--printer", choices=printers.MODELS, help="printer model this job is prepared for (default: [printer] model)")
     f.add_argument("--filament-slot", type=int, help="AD5X IFS feeder slot (1-4)")
     f.add_argument("--filament-color", type=str, help="filament color matching IFS slot")
     f.add_argument("--filament-material", type=str, help="filament material matching IFS slot")
@@ -2992,7 +2919,7 @@ def _main():
     s = sub.add_parser("slice")
     s.add_argument("job_json")
     s.add_argument("--approved", action="store_true")
-    s.add_argument("--printer", choices=printers.FAMILIES, help="printer family to slice this job for (recorded on the job)")
+    s.add_argument("--printer", choices=printers.MODELS, help="printer model to slice this job for (recorded on the job)")
     s.add_argument("--brim", type=int, default=None, help="override brim width mm (e.g. 0 to disable)")
     s.add_argument("--separate", action="store_true", help="multi-plate source: slice one G-code per plate instead of merging all parts onto one bed")
     filament_select=sub.add_parser("filament-select", help="record a user-confirmed slot/color choice in a model JOB.json")
@@ -3057,7 +2984,7 @@ def _main():
         print("FILAMENT SELECTION RECORDED " + json.dumps(selection))
         return
     if a.cmd=="finalize-gcode":
-        from .multicolor_contract import finalize
+        finalize = printers.current().native.finalize
         st = printer_state.load()
         ok, probs, _ = printer_state.check(st)
         if not ok:
@@ -3090,7 +3017,7 @@ def _main():
     if a.cmd=="slice":
         if not a.approved: raise SystemExit("REFUSED: explicit slicing approval required")
         if a.printer:
-            _job = json.loads(Path(a.job_json).read_text()); _job["printer_family"] = a.printer
+            _job = json.loads(Path(a.job_json).read_text()); _job["printer_model"] = a.printer
             write_job(Path(a.job_json).parent, _job)
         if not intake_color_choices(a.job_json, st, a.color_mode, a.color_slot, sys.stdin.isatty()):
             return
@@ -3117,7 +3044,7 @@ def _main():
     if not job.get("sources"):
         raise SystemExit("REFUSED: source inventory contains no selectable files or profiles")
     job["url"],job["hardware"],job["fetched_at"]=a.url,st,time.strftime("%Y-%m-%dT%H:%M:%S%z")
-    if a.printer: job["printer_family"]=a.printer
+    if a.printer: job["printer_model"]=a.printer
     for n,x in enumerate(job["sources"],1): x["n"]=n
     if selection is not None:
         job["filament_selection"] = selection
@@ -3137,7 +3064,7 @@ def _main():
         raise SystemExit('REFUSED: inspect-only cannot approve slicing or printing')
     if not a.approved and not a.inspect_only: raise SystemExit("REFUSED: --select requires the operator's explicit --approved slicing authorization; use --inspect-only for preparation")
     if a.select<1 or a.select>len(job["sources"]): raise SystemExit("invalid --select")
-    if a.print_now and printers.get(job.get("printer_family") or printers.current().family).multi_slot and not job.get("filament_selection"):
+    if a.print_now and printers.get(job.get("printer_model") or printers.current().key).multi_slot and not job.get("filament_selection"):
         raise SystemExit("REFUSED: --print-now requires explicit filament selection (--filament-slot, --filament-color, --filament-material, or use 'filament-select' command)")
     chosen=job["sources"][a.select-1]
     # Site profile settings are never imported. The selected 3MF/STL supplies geometry

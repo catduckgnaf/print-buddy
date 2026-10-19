@@ -26,11 +26,11 @@ def check_settings(data):
                   f"{printer['ifs_slots']} slot(s), {printer['nozzle_diameter_mm']:g} mm nozzle")
 
 
-def check_family(data):
+def check_model(data):
     from . import printers
-    adapter = printers.get(data["printer"]["family"], data)
+    adapter = printers.get(data["printer"]["model"], data)
     kind = f"{adapter.slot_count} slots (multi-slot)" if adapter.multi_slot else "single extruder"
-    return f"{adapter.family} ({adapter.label}), {kind}"
+    return f"{adapter.key} ({adapter.label}), {kind}"
 
 
 def check_templates(data):
@@ -129,7 +129,7 @@ def run(out=sys.stdout):
         print(f"FAIL  settings: {exc}", file=out)
         return 1
     report("settings", check_settings, data)
-    report("printer family", check_family, data)
+    report("printer model", check_model, data)
     report("orca templates", check_templates, data)
     report("core", check_core, data)
     report("hardware record", check_hardware, data)

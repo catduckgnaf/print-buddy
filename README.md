@@ -12,9 +12,9 @@ The Discord conversation runs on [Hermes Agent](https://github.com/NousResearch/
 
 Supported printers:
 * **Klipper:** the Sovol SV06 on stock Klipper (`sovol_klipper`), where Print Buddy started, and any other Klipper printer with Moonraker (`generic_klipper`). Single extruder.
-* **ZMod (Flashforge):** Flashforge printers running ZMod firmware (`flashforge_zmod`), built and run on the AD5X, including IFS multi color slots and the ZMod plugin below.
+* **ZMod (Flashforge):** Flashforge printers running ZMod firmware (`flashforge.ad5x`), built and run on the AD5X, including IFS multi color slots and the ZMod plugin below.
 
-Pick one with `[printer] family`. The current printer is a Flashforge AD5X on ZMod; the SV06 came first. The offline core in `print_buddy/core/` runs with no printer.
+Pick one with `[printer] model`. The current printer is a Flashforge AD5X on ZMod; the SV06 came first. The offline core in `print_buddy/core/` runs with no printer.
 
 ## How it works
 
@@ -54,7 +54,7 @@ The print starts only when someone clicks the button. On completion, the bot pos
 * `/print-again` reprints an archived job exactly, with no re-slice.
 * `/print-stop` and `/print-resume` each send at most one Moonraker command behind a confirm button.
 * `/print-reboot` uses the safe ZMod reboot flow.
-* Printer families: `flashforge_zmod`, `generic_klipper`, `sovol_klipper`. Each job records the family it was sliced for and refuses another.
+* Printer models: `flashforge.ad5x`, `sovol.sv06`, `klipper.generic`. Each job records the model it was sliced for and refuses another.
 
 **Monitoring**
 * Event driven Moonraker listener: start, pause, error, and completion posts with stats.
@@ -71,7 +71,7 @@ The print starts only when someone clicks the button. On completion, the bot pos
 
 ## Settings
 
-`config/home.toml` holds the defaults for the AD5X setup. `config/local.toml` overrides any key for one machine; it is gitignored, so `git pull` never touches it. An environment variable named `PRINT_BUDDY__SECTION__KEY` overrides a key too, and the older names the services already use (`MOONRAKER_URL`, `SPOOLMAN_URL`, `HERMES_HOME`, ...) still work. `PRINT_BUDDY_CONFIG=/path/to/settings.toml` loads a different file.
+`config/home.toml` holds the shared defaults and picks the printer. The printer's own settings (bed, height, nozzle, slots, margins, prime tower, macros) come from its model file, see Printer models. `config/local.toml` overrides any key for one machine; it is gitignored, so `git pull` never touches it. An environment variable named `PRINT_BUDDY__SECTION__KEY` overrides a key too, and the older names the services already use (`MOONRAKER_URL`, `SPOOLMAN_URL`, `HERMES_HOME`, ...) still work. `PRINT_BUDDY_CONFIG=/path/to/settings.toml` loads a different file.
 
 A typo or bad value stops the import and names the key. Requires Python 3.11 or newer. Restart the Moonraker listener after changing a setting.
 
@@ -84,6 +84,14 @@ spoolman_url = "http://192.168.x.x:7912"
 [visual_watch]
 sensitivity = 2
 ```
+
+### Printer models
+
+One package per brand under `print_buddy/printers/`, one file per printer inside it: `flashforge/ad5x.py`, `sovol/sv06.py`, `klipper/generic.py`. A model file holds the printer's defaults, its adapter and the name of its Orca template folder (`print_buddy/templates/orca/<folder>`). `config/home.toml` picks one with `[printer] model = "flashforge.ad5x"`. Settings merge in this order, later wins: model defaults, `config/home.toml`, `config/local.toml`, environment.
+
+Adding a printer is one new file in its brand package plus its templates; nothing in `core/` changes. The AD5X and ZMod code lives in `print_buddy/printers/flashforge/zmod/`, and `base.py` lists what core still shares with it.
+
+Upgrading from `[printer] family`: replace it in `config/local.toml` with `model = "flashforge.ad5x"` (or `sovol.sv06`, `klipper.generic`). A leftover `family` stops the import and names the key.
 
 ### Camera stall sensitivity
 
@@ -103,9 +111,9 @@ Empty bed, spaghetti, detached part, uncertain, and vision failure alerts fire a
 
 | Section | Key | Default | What it does |
 |---|---|---|---|
-| `printer` | `name`, `firmware` | Flashforge AD5X, ZMod Klipper | Shown in job summaries |
-| | `family` | `flashforge_zmod` | Printer adapter: `flashforge_zmod`, `generic_klipper`, `sovol_klipper` |
-| | `start_macro`, `end_macro` | `PRINT_START`, `PRINT_END` | Start and end macros for the Klipper families |
+| `printer` | `name`, `firmware` | from the model | Shown in job summaries |
+| | `model` | `flashforge.ad5x` | Printer model: `flashforge.ad5x`, `sovol.sv06`, `klipper.generic`. Sets every default below |
+| | `start_macro`, `end_macro` | `PRINT_START`, `PRINT_END` | Start and end macros for stock Klipper models |
 | | `bed_mm` | `[220, 220]` | Usable print area |
 | | `max_print_height_mm` | `220` | Tallest allowed print |
 | | `nozzle_diameter_mm` | `0.4` | Slicing refuses any other nozzle |
@@ -114,7 +122,7 @@ Empty bed, spaghetti, detached part, uncertain, and vision failure alerts fire a
 | | `merge_edge_margin_mm`, `merge_spacing_mm` | `8`, `10` | Gaps when merging plates |
 | | `max_merged_hours` | `12` | Longer merged plates stay separate |
 | `prime_tower` | `size_mm`, `part_clearance_mm`, `edge_mm`, `merge_slack_mm` | `45`, `8`, `10`, `5` | Prime tower size and clearances |
-| `orca` | `templates` | `print_buddy/templates/orca` | Orca machine, process, and filament JSON |
+| `orca` | `templates` | the model's folder under `print_buddy/templates/orca` | Orca machine, process, and filament JSON |
 | | `command` | Flathub OrcaSlicer | How to start the Orca CLI |
 | `bambu` | `command` | Flathub Bambu Studio, no network | Fallback slicer |
 | `paths` | `hermes_home` | `~/.hermes/profiles/3dprinting` | Hermes profile the bot runs in |
@@ -209,8 +217,8 @@ is_system_service: False
 * `print_buddy/doctor.py`: checks that a machine can run Print Buddy.
 * `print_buddy/core/`: offline 3MF and STL pipeline. No printer connection.
 * `print_buddy/hermes/`: Moonraker listener, Discord posts, spool sync, print control, and records.
-* `print_buddy/printers/`: printer family adapters; see `base.py` for what each one owns.
-* `print_buddy/templates/orca/`: Orca machine, process, and filament JSON.
+* `print_buddy/printers/`: one package per brand, one file per printer model; see `base.py` for what each one owns.
+* `print_buddy/templates/orca/<model folder>/`: Orca machine, process, and filament JSON per printer.
 * `plugins/print-feedback/`: Hermes plugin with the Discord slash commands and interaction guards.
 * `hermes/`: profile templates and skills installed by `scripts/install-hermes.sh`.
 * `scripts/`: `install-hermes.sh`, `home-update.sh`, and `migrate-names.sh` (one-shot, see `docs/RENAME-MIGRATION.md`).

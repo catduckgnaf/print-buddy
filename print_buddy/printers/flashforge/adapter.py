@@ -1,13 +1,10 @@
-"""Flashforge AD5X on ZMod: wraps the existing IFS/ZMod code paths."""
+"""Flashforge AD5X on ZMod: wraps the ZMod/IFS code paths (printers.flashforge.zmod)."""
 import re
-from pathlib import Path
 
 from ..base import PrinterAdapter, basic_status
 
 
-class FlashforgeZmodAdapter(PrinterAdapter):
-    family = "flashforge_zmod"
-    label = "Flashforge AD5X (ZMod)"
+class ZmodAdapter(PrinterAdapter):
     multi_slot = True
     has_native_screen = True
 
@@ -15,8 +12,10 @@ class FlashforgeZmodAdapter(PrinterAdapter):
     def slot_count(self):
         return int(self.config["printer"]["ifs_slots"])
 
-    def templates_dir(self):
-        return Path(self.config["orca"]["templates"])
+    @property
+    def native(self):
+        from . import zmod
+        return zmod
 
     def machine_start_gcode(self, template_start, mesh="auto"):
         # Exactly what orca_adapter built inline before the adapter existed.
@@ -35,16 +34,14 @@ class FlashforgeZmodAdapter(PrinterAdapter):
         return [{"method": "POST", "path": "/printer/print/start", "body": {"filename": remote_filename}}]
 
     def normalize_tool_mapping(self, mapping, state):
-        from ...core.multicolor_contract import normalize_mapping
-        return normalize_mapping(mapping, state)
+        return self.native.normalize_mapping(mapping, state)
 
     def readiness_problems(self, state, status, selection=None, **kw):
         from ...core import model_job
         return list(model_job.check_filament_readiness(state, status, selection, **kw))
 
     def screen_command(self, slot, material, hex_code):
-        from ...hermes import spool_sync
-        return spool_sync.screen_command(slot, material, hex_code)
+        return self.native.screen.screen_command(slot, material, hex_code)
 
     def stock_api_url(self, host):
         return f"http://{host}:{self.config['services']['stock_api_port']}/detail"

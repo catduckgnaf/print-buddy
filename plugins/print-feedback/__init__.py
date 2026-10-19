@@ -413,6 +413,7 @@ async def print_next_dispatch(event, gateway, **kwargs):
             message = (None if ok
                        else f"Did not start {target['label']}. Not retrying.\n{detail}")
             if not ok and _start_refused_needs_restart(detail):
+                from print_buddy.hermes import print_control as pc
                 message += '\n' + await _offer_force_restart(adapter, source, metadata, pc, detail)
     except print_next.NextPlateError as exc:
         message = f'No next plate: {exc}. Nothing uploaded or started.'

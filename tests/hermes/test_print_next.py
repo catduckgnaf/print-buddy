@@ -277,8 +277,6 @@ def test_hook_ignores_other_text(tmp_path):
     assert result is None and adapter.sent == []
 
 
-@pytest.mark.xfail(strict=True, reason="plugin print_next_dispatch passes `pc` to _offer_force_restart but never imports "
-                                       "print_control, so a refused start that should offer a restart raises NameError")
 def test_hook_refused_start_offers_force_restart(tmp_path):
     async def offer(adapter, source, metadata, pc, reason):
         return 'RESTART OFFERED'

@@ -53,7 +53,6 @@ LEGACY_ENV = {
     "MAINTENANCE_QUICK_HOURS": ("maintenance", "quick_hours"),
     "MAINTENANCE_FULL_HOURS": ("maintenance", "full_hours"),
     "MAINTENANCE_FULL_DAYS": ("maintenance", "full_days"),
-    "HERMES_HOME": ("paths", "hermes_home"),
     "HERMES_BIN": ("paths", "hermes_bin"),
     "FFMPEG_BIN": ("paths", "ffmpeg"),
     "PRINT_BITCH_ARCHIVE": ("paths", "archive"),

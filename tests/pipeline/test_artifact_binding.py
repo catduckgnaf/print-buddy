@@ -24,7 +24,7 @@ def setup_job(tmp_path, monkeypatch):
         return out,{'offline_test':True},[]
     monkeypatch.setattr(orca_adapter,'slice_model',slice_fake)
     monkeypatch.setattr(mj,'verify_gcode',lambda _:None)
-    from print_buddy.core import multicolor_contract
+    from print_buddy.printers.flashforge.zmod import multicolor_contract
     monkeypatch.setattr(multicolor_contract,'finalize',lambda *a,**k:None)
     old=mj.slice_job(jp)
     return jp,st,Path(old)

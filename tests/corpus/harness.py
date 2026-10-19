@@ -348,7 +348,8 @@ def slice_support_setting(run):
 
 def gcode_checks(run):
     """The offline G-code checks the pipeline itself runs, applied again to each final file."""
-    from print_buddy.core import multicolor_contract, slice_guard
+    from print_buddy.core import slice_guard
+    from print_buddy.printers.flashforge.zmod import multicolor_contract
     rows = []
     for path in run.gcodes:
         text = path.read_text(errors="replace")

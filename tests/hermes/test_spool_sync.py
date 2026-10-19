@@ -4,6 +4,7 @@ from unittest import mock
 import pytest
 
 from print_buddy.hermes import spool_sync
+from print_buddy.printers.flashforge.zmod import screen
 from print_buddy.hermes.moonraker_event_listener import MidPrintSlotTracker, load_runout_pause
 from print_buddy.hermes.print_next import NextPlateError
 
@@ -29,11 +30,11 @@ def test_slot_record_strips_repeated_trailing_material_case_insensitively():
 
 
 def test_screen_material_coercion():
-    assert spool_sync.screen_type("PLA+") == "PLA"
-    assert spool_sync.screen_type("pla") == "PLA"
-    assert spool_sync.screen_type("PETG-CF") == "PETG-CF"
-    assert spool_sync.screen_type("UnknownType") is None
-    assert spool_sync.screen_type("") is None
+    assert screen.screen_type("PLA+") == "PLA"
+    assert screen.screen_type("pla") == "PLA"
+    assert screen.screen_type("PETG-CF") == "PETG-CF"
+    assert screen.screen_type("UnknownType") is None
+    assert screen.screen_type("") is None
 
 
 def test_screen_hex_format():

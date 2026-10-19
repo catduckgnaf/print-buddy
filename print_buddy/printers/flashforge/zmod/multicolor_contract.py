@@ -85,7 +85,7 @@ def validate_materials(text, material, state, mapping=None):
     if mapping is None:
         if len(materials) != 1 or tools - {0}:
             raise RuntimeError('unknown tool mapping for multicolor material validation')
-        from .printer_state import same_material
+        from ....core.printer_state import same_material
         if not same_material(materials[0], state['spool']['material']):
             raise RuntimeError(f"G-code filament_type {material!r} != loaded {state['spool']['material']!r}")
         return None
@@ -107,7 +107,7 @@ def validate_materials(text, material, state, mapping=None):
             continue
         slot = mapping[index]
         actual = state['ifs_slots'][str(slot)]['material']
-        from .printer_state import same_material
+        from ....core.printer_state import same_material
         if not same_material(materials[int(index)], actual):
             raise RuntimeError(f'T{index} material {materials[int(index)]!r} != slot {slot} material {actual!r}')
     return mapping

@@ -1,26 +1,26 @@
-"""Contract tests for every registered printer adapter, plus the stock Klipper no-AD5X guarantees."""
+"""Contract tests for every registered printer model, plus the stock Klipper no-AD5X guarantees."""
 import json
 import re
 import subprocess
 import sys
+import tempfile
 import unittest
 from pathlib import Path
 
 from print_buddy import printers, settings
 from print_buddy.printers.base import BuildVolume, MultiColorUnsupported, PrinterAdapter
-from print_buddy.printers.families import FAMILIES
 
 AD5X_ARTIFACTS = re.compile(
     r"SET_EXTRUDER_SLOT|\bIFS\b|zmod|ZMOD|CHANGE_ZCOLOR|display_off|LOAD_ZOFFSET|START_PRINT|MESH=|8898|AD5X|/detail",
     re.I)
 
 
+MODELS = tuple(printers.MODELS)
+AD5X, GENERIC, SV06 = "flashforge.ad5x", "klipper.generic", "sovol.sv06"
+
+
 def config_for(family):
-    data = settings.load(local=False, environ={})
-    data["printer"]["family"] = family
-    if family != "flashforge_zmod":
-        data["printer"]["ifs_slots"] = 1
-    return data
+    return settings.load(local=False, environ={"PRINT_BUDDY__PRINTER__MODEL": family})
 
 
 def adapter_for(family):
@@ -28,15 +28,22 @@ def adapter_for(family):
 
 
 class ContractTests(unittest.TestCase):
+    def test_registry_finds_every_model_file(self):
+        self.assertEqual(set(MODELS), {AD5X, GENERIC, SV06})
+        for key, model in printers.MODELS.items():
+            self.assertEqual(model.key, key)
+            self.assertTrue((settings.ROOT / "print_buddy" / "templates" / "orca" / model.templates).is_dir())
+            self.assertTrue(issubclass(model.adapter, PrinterAdapter))
+
     def test_every_family_has_an_adapter(self):
-        for family in FAMILIES:
+        for family in MODELS:
             with self.subTest(family=family):
                 adapter = adapter_for(family)
                 self.assertIsInstance(adapter, PrinterAdapter)
-                self.assertEqual(adapter.family, family)
+                self.assertEqual(adapter.key, family)
 
     def test_contract_for_every_adapter(self):
-        for family in FAMILIES:
+        for family in MODELS:
             with self.subTest(family=family):
                 a = adapter_for(family)
                 vol = a.build_volume()
@@ -59,19 +66,19 @@ class ContractTests(unittest.TestCase):
                 self.assertEqual((status["state"], status["filename"], status["hotend_c"]), ("standby", "a.gcode", 21.5))
                 self.assertEqual(a.normalize_status({})["state"], "unknown")
 
-    def test_default_family_is_the_ad5x_and_current_returns_it(self):
+    def test_default_model_is_the_ad5x_and_current_returns_it(self):
         home = settings.load(local=False, environ={})
-        self.assertEqual(home["printer"]["family"], "flashforge_zmod")
-        self.assertEqual(printers.current(home).family, "flashforge_zmod")
+        self.assertEqual(home["printer"]["model"], AD5X)
+        self.assertEqual(printers.current(home).key, AD5X)
 
-    def test_unknown_family_is_rejected(self):
+    def test_unknown_model_is_rejected(self):
         with self.assertRaises(ValueError):
-            printers.get("prusa")
+            printers.get("prusa.mk4")
 
 
 class ZmodTests(unittest.TestCase):
     def setUp(self):
-        self.a = adapter_for("flashforge_zmod")
+        self.a = adapter_for(AD5X)
 
     def test_ad5x_start_matches_the_template(self):
         home = settings.load(local=False, environ={})
@@ -90,7 +97,7 @@ class ZmodTests(unittest.TestCase):
 
 
 class GenericKlipperTests(unittest.TestCase):
-    FAMILIES = ("generic_klipper", "sovol_klipper")
+    FAMILIES = (GENERIC, SV06)
 
     def test_start_plan_and_commands_have_no_ad5x_artifacts(self):
         for family in self.FAMILIES:
@@ -113,9 +120,9 @@ class GenericKlipperTests(unittest.TestCase):
                 self.assertNotIn("TIMELAPSE", text)
 
     def test_macro_names_come_from_settings(self):
-        cfg = config_for("generic_klipper")
+        cfg = config_for(GENERIC)
         cfg["printer"].update(start_macro="START_MY_PRINT", end_macro="END_MY_PRINT")
-        a = printers.get("generic_klipper", cfg)
+        a = printers.get(GENERIC, cfg)
         self.assertEqual(a.start_plan(70, 240)[0], "START_MY_PRINT BED=70 HOTEND=240")
         self.assertEqual(a.machine_end_gcode(""), "END_MY_PRINT")
 
@@ -127,27 +134,27 @@ class GenericKlipperTests(unittest.TestCase):
             self.assertEqual((a.slot_count, a.multi_slot), (1, False))
 
     def test_multicolor_is_refused_and_single_is_accepted(self):
-        a = adapter_for("generic_klipper")
+        a = adapter_for(GENERIC)
         self.assertEqual(a.normalize_tool_mapping({"0": 1}, {}), {"0": 1})
         with self.assertRaises(MultiColorUnsupported):
             a.normalize_tool_mapping({"0": 1, "1": 2}, {})
 
     def test_readiness(self):
-        a = adapter_for("generic_klipper")
+        a = adapter_for(GENERIC)
         self.assertEqual(a.readiness_problems({}, {"print_stats": {"state": "standby"}, "webhooks": {"state": "ready"}}), [])
         self.assertTrue(a.readiness_problems({}, {"print_stats": {"state": "printing"}}))
         self.assertTrue(a.readiness_problems({}, {}))
 
     def test_sovol_has_its_own_templates(self):
-        self.assertNotEqual(adapter_for("sovol_klipper").templates_dir(), adapter_for("generic_klipper").templates_dir())
-        machine = json.loads((adapter_for("sovol_klipper").templates_dir() / "machine.json").read_text())
+        self.assertNotEqual(adapter_for(SV06).templates_dir(), adapter_for(GENERIC).templates_dir())
+        machine = json.loads((adapter_for(SV06).templates_dir() / "machine.json").read_text())
         self.assertIn("SV06", machine["name"])
 
-    def test_generic_package_does_not_import_zmod_code(self):
+    def test_stock_klipper_does_not_import_zmod_code(self):
         code = (f"import sys\nsys.path.insert(0, {str(settings.ROOT)!r})\nfrom print_buddy import printers\n"
-                "printers.get('generic_klipper'); printers.get('sovol_klipper')\n"
-                "bad=[m for m in sys.modules if m.startswith(('print_buddy.core.multicolor_contract',"
-                "'print_buddy.core.native_','print_buddy.hermes.spool_sync','print_buddy.printers.flashforge_zmod'))]\n"
+                "printers.get('klipper.generic'); printers.get('sovol.sv06')\n"
+                "bad=[m for m in sys.modules if m.startswith(('print_buddy.printers.flashforge.zmod',"
+                "'print_buddy.hermes.spool_sync'))]\n"
                 "print(bad)\n")
         root = Path(settings.ROOT)
         out = subprocess.run([sys.executable, "-c", code], cwd=root, capture_output=True, text=True,
@@ -156,37 +163,69 @@ class GenericKlipperTests(unittest.TestCase):
         self.assertEqual(out.stdout.strip(), "[]")
 
 
-class SettingsFamilyTests(unittest.TestCase):
+class SettingsModelTests(unittest.TestCase):
     def load(self, **printer):
         env = {f"PRINT_BUDDY__PRINTER__{k.upper()}": str(v) for k, v in printer.items()}
         return settings.load(local=False, environ=env)
 
-    def test_selection_accepts_registered_families(self):
-        for family in FAMILIES:
-            data = self.load(family=family, ifs_slots=4 if family == "flashforge_zmod" else 1)
-            self.assertEqual(printers.current(data).family, family)
+    def test_selection_accepts_registered_models(self):
+        for key in MODELS:
+            self.assertEqual(printers.current(self.load(model=key)).key, key)
 
-    def test_unknown_family_rejected(self):
-        with self.assertRaisesRegex(settings.SettingsError, "family must be one of"):
-            self.load(family="prusa")
+    def test_unknown_model_rejected(self):
+        with self.assertRaisesRegex(settings.SettingsError, "model must be one of"):
+            self.load(model="prusa.mk4")
 
-    def test_klipper_family_needs_one_slot(self):
+    def test_family_key_is_rejected_by_name(self):
+        with self.assertRaisesRegex(settings.SettingsError, r"unknown setting \[printer\] family .*model"):
+            self.load(family="flashforge_zmod")
+        local = Path(tempfile.mkdtemp()) / "local.toml"
+        local.write_text('[printer]\nfamily = "flashforge_zmod"\n')
+        with self.assertRaisesRegex(settings.SettingsError, r"unknown setting \[printer\] family"):
+            settings.load(local=local, environ={})
+
+    def test_model_defaults_come_from_the_model_file(self):
+        for key, model in printers.MODELS.items():
+            data = self.load(model=key)
+            for section, values in model.settings.items():
+                for name, value in values.items():
+                    self.assertEqual(data[section][name], value, (key, section, name))
+
+    def test_local_toml_overrides_the_model_defaults_with_type_checks(self):
+        folder = Path(tempfile.mkdtemp())
+        good = folder / "good.toml"
+        good.write_text('[printer]\nbed_mm = [250.0, 250.0]\n[layout]\nsingle_copy_edge_mm = 2.5\n')
+        data = settings.load(local=good, environ={})
+        self.assertEqual((data["printer"]["bed_mm"], data["layout"]["single_copy_edge_mm"]), ([250.0, 250.0], 2.5))
+        self.assertEqual(data["printer"]["model"], AD5X)
+        bad = folder / "bad.toml"
+        bad.write_text('[printer]\nnozzle_diameter_mm = "big"\n')
+        with self.assertRaisesRegex(settings.SettingsError, "nozzle_diameter_mm should be like"):
+            settings.load(local=bad, environ={})
+
+    def test_local_toml_can_pick_the_model(self):
+        local = Path(tempfile.mkdtemp()) / "local.toml"
+        local.write_text('[printer]\nmodel = "sovol.sv06"\n')
+        data = settings.load(local=local, environ={})
+        self.assertEqual((data["printer"]["model"], data["printer"]["ifs_slots"]), (SV06, 1))
+        self.assertEqual(data["orca"]["templates"].name, "sovol_sv06")
+
+    def test_klipper_models_need_one_slot(self):
         with self.assertRaisesRegex(settings.SettingsError, "ifs_slots must be 1"):
-            self.load(family="generic_klipper", ifs_slots=4)
+            self.load(model=GENERIC, ifs_slots=4)
 
-    def test_klipper_family_uses_its_template_folder_by_default(self):
-        data = settings.load(local=False, environ={"PRINT_BUDDY__PRINTER__FAMILY": "sovol_klipper",
-                                                   "PRINT_BUDDY__PRINTER__IFS_SLOTS": "1"})
-        self.assertEqual(data["orca"]["templates"].name, "sovol_klipper")
+    def test_each_model_uses_its_template_folder_by_default(self):
+        for key, model in printers.MODELS.items():
+            self.assertEqual(self.load(model=key)["orca"]["templates"].name, model.templates)
 
     def test_bad_macro_name_rejected(self):
         with self.assertRaisesRegex(settings.SettingsError, "start_macro"):
             self.load(start_macro="PRINT START; M112")
 
-    def test_doctor_reports_the_family(self):
+    def test_doctor_reports_the_model(self):
         from print_buddy import doctor
-        self.assertEqual(doctor.check_family(self.load()), "flashforge_zmod (Flashforge AD5X (ZMod)), 4 slots (multi-slot)")
-        self.assertIn("single extruder", doctor.check_family(self.load(family="sovol_klipper", ifs_slots=1)))
+        self.assertEqual(doctor.check_model(self.load()), "flashforge.ad5x (Flashforge AD5X (ZMod)), 4 slots (multi-slot)")
+        self.assertIn("single extruder", doctor.check_model(self.load(model=SV06)))
 
 
 if __name__ == "__main__":

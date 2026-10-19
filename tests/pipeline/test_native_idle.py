@@ -1,6 +1,6 @@
 import unittest
 from copy import deepcopy
-from print_buddy.core.native_idle import require_idle
+from print_buddy.printers.flashforge.zmod.native_idle import require_idle
 
 class NativeIdleTests(unittest.TestCase):
     def setUp(self):

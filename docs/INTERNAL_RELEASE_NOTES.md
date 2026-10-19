@@ -1,5 +1,19 @@
 # Print Buddy Internal Release Notes
 
+# Version 2.0.4
+
+**Release Date:** 2026-10-19
+**Needs a migration on the box:** run `scripts/migrate-names.sh --dry-run`, then without it, then restart the listener; printer steps in `docs/RENAME-MIGRATION.md`.
+**What shipped:**
+- Rename: Print Bitch is Print Buddy everywhere (Klipper macro `PRINT_BUDDY`, plugin `print-buddy`, `print_buddy_*` state files, `PRINT_BUDDY_*` env vars). `[discord] bot_name` sets the bot's name. Closes #53.
+- Printer models: one file per printer under `print_buddy/printers/<brand>/` (`flashforge.ad5x`, `sovol.sv06`, `klipper.generic`); `[printer] model` replaces `family`; printer defaults come from the model file; ZMod code moved to `printers/flashforge/zmod/`. Orca inputs for the AD5X and SV06 are unchanged (golden test). Closes #56.
+- Stray state files: doctor warns, update and install remove empty or duplicate strays; other profiles are report-only. Closes #60.
+- Discord flow corpus: six models run through the intake with fake clicks on every PR, and through real Orca in CI; a gateway `HERMES_HOME` regression test. Closes #58.
+- State stays in the Print Buddy profile when the gateway sets `HERMES_HOME` (#57). Camera stall alert sensitivity 1 to 5 (#50).
+- CI: Node 24 actions, runner pinned to Ubuntu 24.04.
+
+---
+
 # Version 2.0.3
 
 **Release Date:** 2026-10-19

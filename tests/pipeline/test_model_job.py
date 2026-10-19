@@ -14,6 +14,7 @@ from pathlib import Path
 from unittest import mock
 
 from print_buddy import settings
+from print_buddy.printers.flashforge.zmod import stock
 from print_buddy.core import _external, model_job
 
 from .helpers import external
@@ -1282,7 +1283,7 @@ class StockIfsPresenceTests(unittest.TestCase):
             "hasMatlStation": True, "matlStationInfo": {"slotInfos": slots}}}
 
     def _read(self, reply):
-        with mock.patch.object(model_job, "_stock_credentials", return_value=("SN", "CC")):
+        with mock.patch.object(stock, "_stock_credentials", return_value=("SN", "CC")):
             return model_job.read_stock_ifs_slots(self.STATE, post=lambda url, body: reply)
 
     def test_stock_presence_overrides_hardcoded_false(self):
@@ -1319,9 +1320,9 @@ class StockIfsPresenceTests(unittest.TestCase):
 
     def test_missing_credentials_refuse(self):
         with mock.patch.dict(model_job.os.environ, {}, clear=True), \
-             mock.patch.object(model_job, "PROFILE", Path("/nonexistent")):
+             mock.patch.object(stock.settings, "current", return_value={"paths": {"hermes_home": Path("/nonexistent")}}):
             with self.assertRaisesRegex(RuntimeError, "credentials missing"):
-                model_job._stock_credentials()
+                stock._stock_credentials()
 
 
 class TaskT0b676477Tests(unittest.TestCase):

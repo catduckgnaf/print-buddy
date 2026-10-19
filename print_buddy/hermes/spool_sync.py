@@ -263,7 +263,15 @@ def bind_slot(slot: int, spool_id: int, *, client: Client = spoolman, mr: Client
     record = _slot_record(slot, spool, old, note)
     slots[str(slot)] = record
     if (state.get("spool") or {}).get("spoolman_id") == prior and prior is not None:
-        state["spool"] = {**state["spool"], "spoolman_id": int(spool_id)}
+        # The live hardware check compares this name with Spoolman: carry the new spool's facts,
+        # not just its id, or a swapped spool reads as "Spoolman #7 is 'Coffee PLA+', state says 'Pink PLA'".
+        filament = spool.get("filament") or {}
+        old_spool = state["spool"]
+        state["spool"] = {**old_spool, "spoolman_id": int(spool_id),
+                          "name": filament.get("name") or old_spool.get("name"),
+                          "material": filament.get("material") or old_spool.get("material"),
+                          "density": filament.get("density") or old_spool.get("density"),
+                          "diameter_mm": filament.get("diameter") or old_spool.get("diameter_mm")}
     save_state(state, state_path)
     usage = "unchanged"
     try:

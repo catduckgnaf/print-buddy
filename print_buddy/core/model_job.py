@@ -2744,12 +2744,17 @@ def print_now(target, wait_s=25, accept_default_z_offset=False, reprint=False):
     mesh=mesh_readiness(st)
     if mesh["problem"]:
         raise SystemExit(f"REFUSED: {mesh['problem']}. Nothing uploaded or started.")
-    verify_gcode(g)
-    selection = job.get("filament_selection") if isinstance(job, dict) else None
-    _timing(job_path, 'preflight_verify_done')
-    from .multicolor_contract import embedded_mapping, normalize_mapping
-    raw_mapping = embedded_mapping(g.read_text(), st)
-    mapping = normalize_mapping(raw_mapping, st) if raw_mapping is not None else None
+    try:
+        # Pre-upload checks. Report them as one REFUSED line so print_next releases the plate's
+        # claim and the operator can retry after fixing the cause (a traceback kept it held).
+        verify_gcode(g)
+        selection = job.get("filament_selection") if isinstance(job, dict) else None
+        _timing(job_path, 'preflight_verify_done')
+        from .multicolor_contract import embedded_mapping, normalize_mapping
+        raw_mapping = embedded_mapping(g.read_text(), st)
+        mapping = normalize_mapping(raw_mapping, st) if raw_mapping is not None else None
+    except RuntimeError as exc:
+        raise SystemExit("REFUSED: " + " ".join(str(exc).split()) + ". Nothing uploaded or started.")
     if mapping is not None:
         return print_mapped_native(g, st, mesh, mapping, job, job_path, wait_s, reprint)
     _verify_filament_readiness(st, selection)
@@ -2872,6 +2877,7 @@ def main():
     final.add_argument("--tool-map", required=True, help="JSON tool-to-physical-slot mapping")
     v=sub.add_parser("verify-gcode"); v.add_argument("gcode")
     pn=sub.add_parser("print-now",help="bed confirmed clear: verify, upload, start, confirm, record (G-code or JOB.json)"); pn.add_argument("target")
+    pn.add_argument("--accept-spool-change",action="store_true",help="operator confirmed printing with the spool now in a slot that changed since slicing (same material family only)")
     for x in (pn,f,s):
         x.add_argument("--accept-default-z-offset",action="store_true",help="the operator accepted the printer default Z offset for this start")
         x.add_argument("--reprint",action="store_true",help="the operator gave a NEW bed-clear approval to reprint the same G-code")
@@ -2941,6 +2947,9 @@ def main():
         print(routine_phase(printer_state.load())); return
     pn_kw=dict(accept_default_z_offset=getattr(a,"accept_default_z_offset",False),reprint=getattr(a,"reprint",False))
     if a.cmd=="print-now":
+        if a.accept_spool_change:
+            os.environ["PRINT_ACCEPT_SPOOL_CHANGE"] = "1"
+            print("SPOOL CHANGE ACCEPTED: slots may hold a different spool than at slicing (same material family)", flush=True)
         print_now(a.target, **pn_kw); return
     st=printer_state.load()
     if a.cmd=="slice":

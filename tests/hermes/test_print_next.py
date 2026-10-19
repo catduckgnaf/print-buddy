@@ -461,8 +461,8 @@ class Interaction:
         self.response = Response()
         self.followup = S(send=self._followup)
 
-    async def _followup(self, content):
-        self.out.append(('followup', content))
+    async def _followup(self, content, view=None):
+        self.out.append(('followup', content) if view is None else ('followup', content, view))
 
 
 def plate_clicks(tmp_path, monkeypatch, starts, start_result=(True, 'START ACCEPTED')):
@@ -551,3 +551,57 @@ def test_refused_start_reports_and_names_fresh_button_command(tmp_path, monkeypa
     asyncio.run(on_interaction(go))
     assert starts == ['plate1']
     assert go.out[-1][0] == 'followup' and 'REFUSED: printer is busy' in go.out[-1][1]
+
+
+SWAPPED = ('REFUSED: slot 2 spool changed since slicing (was 3, now 7); reslice or confirm. '
+           'Nothing uploaded or started.')
+
+
+def test_picker_spool_change_offers_one_single_use_loaded_spool_button(tmp_path, monkeypatch):
+    on_interaction, picker, _ = plate_clicks(tmp_path, monkeypatch, [])
+    calls = []
+
+    async def start(target):
+        calls.append((target['part_id'], bool(target.get('accept_spool_change'))))
+        return (True, 'START ACCEPTED') if target.get('accept_spool_change') else (False, SWAPPED)
+    monkeypatch.setattr(print_next, 'start', start)
+    pick = Interaction(f'pbplate:pick:{picker}', ['plate2'])
+    asyncio.run(on_interaction(pick))
+    go = Interaction(pick.out[0][2].items[0].custom_id)
+    asyncio.run(on_interaction(go))
+    kind, content, view = go.out[-1]
+    assert kind == 'followup' and calls == [('plate2', False)]
+    assert 'Slot 2 now holds spool #7 (it was #3 at slicing)' in content and 'Same material family' in content
+    assert len(view.items) == 1 and view.items[0].label == 'Use the loaded spool \u00b7 bed is clear'
+    spool_id = view.items[0].custom_id
+    assert spool_id.startswith('pbplate:spool:')
+    first, second = Interaction(spool_id), Interaction(spool_id)
+    asyncio.run(on_interaction(first))
+    asyncio.run(on_interaction(second))
+    assert calls == [('plate2', False), ('plate2', True)]
+    assert 'already used' in second.out[0][1]
+    assert not any(row[0] == 'followup' for row in first.out)  # accepted: the listener posts "Print started"
+
+
+def test_picker_spool_button_refusal_does_not_offer_another(tmp_path, monkeypatch):
+    on_interaction, picker, _ = plate_clicks(tmp_path, monkeypatch, [])
+
+    async def start(target):
+        return False, SWAPPED
+    monkeypatch.setattr(print_next, 'start', start)
+    pick = Interaction(f'pbplate:pick:{picker}', ['plate2'])
+    asyncio.run(on_interaction(pick))
+    go = Interaction(pick.out[0][2].items[0].custom_id)
+    asyncio.run(on_interaction(go))
+    again = Interaction(go.out[-1][2].items[0].custom_id)
+    asyncio.run(on_interaction(again))
+    assert again.out[-1][0] == 'followup' and len(again.out[-1]) == 2 and 'Not retrying' in again.out[-1][1]
+
+
+def test_picker_other_refusal_offers_no_spool_button(tmp_path, monkeypatch):
+    on_interaction, picker, _ = plate_clicks(tmp_path, monkeypatch, [], (False, 'REFUSED: printer is busy'))
+    pick = Interaction(f'pbplate:pick:{picker}', ['plate1'])
+    asyncio.run(on_interaction(pick))
+    go = Interaction(pick.out[0][2].items[0].custom_id)
+    asyncio.run(on_interaction(go))
+    assert len(go.out[-1]) == 2

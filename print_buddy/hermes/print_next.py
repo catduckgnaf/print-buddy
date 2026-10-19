@@ -306,6 +306,8 @@ async def start(target: Mapping[str, Any], model_job: Path | None = None,
         return False, refused
     runner = [str(model_job)] if model_job else [sys.executable, "-m", MODEL_JOB_MODULE]
     argv = [*runner, "print-now", str(gcode)]
+    if target.get("accept_spool_change"):
+        argv.append("--accept-spool-change")
     if target.get("reprint"):
         argv.append("--reprint")
     try:

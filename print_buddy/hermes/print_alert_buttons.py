@@ -156,9 +156,9 @@ def plate_picker_components(aid: str, options: list[dict[str, str]]) -> list[dic
 
 
 def parse_plate_custom_id(custom_id: str) -> tuple[str, str] | None:
-    """Return ('pick' | 'go', alert id) for plate picker controls, or None for unrelated ones."""
+    """Return ('pick' | 'go' | 'spool', alert id) for plate picker controls, or None for unrelated ones."""
     parts = str(custom_id or "").split(":")
-    if len(parts) == 3 and parts[0] == PLATE_PREFIX and parts[1] in ("pick", "go") and parts[2]:
+    if len(parts) == 3 and parts[0] == PLATE_PREFIX and parts[1] in ("pick", "go", "spool") and parts[2]:
         return parts[1], parts[2]
     return None
 

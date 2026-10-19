@@ -1,4 +1,8 @@
-"""Offline tests for the portable Print Bitch interaction guards."""
+"""Offline tests for the print-feedback plugin's clarify cap, repeat guard and hook registration.
+
+The fuller guard, dispatch and workflow tests live in tests/hermes/. This file keeps the original small
+guard assertions, now against the live plugin API.
+"""
 import importlib.util
 from pathlib import Path
 import unittest
@@ -11,14 +15,19 @@ plugin = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(plugin)
 
 
+def session(profile="3dprinting", platform="discord"):
+    values = {"HERMES_SESSION_PROFILE": profile, "HERMES_SESSION_PLATFORM": platform}
+    return mock.patch.object(plugin, "_session", side_effect=lambda key: values.get(key, ""))
+
+
 class GuardTests(unittest.TestCase):
     def setUp(self):
-        plugin.reset_state()
+        plugin._tool_turns.clear()
 
-    def invoke(self, command="status", *, profile="3dprinting", session="s", turn="t"):
-        return plugin.guard_repeated_terminal(
-            tool_name="terminal", args={"command": command}, profile=profile,
-            session_id=session, turn_id=turn)
+    def invoke(self, command="status", *, profile="3dprinting", session_id="s", turn="t"):
+        with session(profile):
+            return plugin.guard_terminal_loop(
+                tool_name="terminal", args={"command": command}, session_id=session_id, turn_id=turn)
 
     def test_third_duplicate_command_is_blocked_per_turn(self):
         self.assertIsNone(self.invoke())
@@ -28,7 +37,7 @@ class GuardTests(unittest.TestCase):
     def test_distinct_commands_and_new_turn_are_not_blocked(self):
         for i in range(50):
             self.assertIsNone(self.invoke(f"command-{i}"))
-        self.assertIsNone(self.invoke(session="s", turn="next"))
+        self.assertIsNone(self.invoke(session_id="s", turn="next"))
 
     def test_other_profile_and_missing_identity_are_ignored(self):
         self.assertIsNone(self.invoke(profile="default"))
@@ -37,8 +46,8 @@ class GuardTests(unittest.TestCase):
     def test_clarify_choices_are_capped_without_losing_other_path(self):
         args = {"questions": [{"question": "Pick", "choices": list("abcdef")}],
                 "other": "preserved"}
-        result = plugin.cap_clarifications(
-            tool_name="clarify", args=args, platform="discord", profile="3dprinting")
+        with session():
+            result = plugin.cap_discord_clarifications(tool_name="clarify", args=args)
         self.assertEqual("modify", result["action"])
         self.assertEqual(list("abcd"), result["args"]["questions"][0]["choices"])
         self.assertIn("Other", result["args"]["questions"][0]["question"])
@@ -46,21 +55,23 @@ class GuardTests(unittest.TestCase):
 
     def test_small_choice_list_and_non_discord_are_unchanged(self):
         args = {"questions": [{"question": "Pick", "choices": ["yes", "no"]}]}
-        self.assertIsNone(plugin.cap_clarifications(
-            tool_name="clarify", args=args, platform="discord", profile="3dprinting"))
-        with mock.patch.dict("os.environ", {"PRINT_BITCH_PROFILE": "printer"}):
-            self.assertIsNone(plugin.cap_clarifications(
-                tool_name="clarify", args=args, platform="discord", profile="3dprinting"))
-        self.assertIsNone(plugin.cap_clarifications(
-            tool_name="clarify", args=args, platform="matrix", profile="3dprinting"))
+        with session():
+            self.assertIsNone(plugin.cap_discord_clarifications(tool_name="clarify", args=args))
+        with session(profile="printer"):
+            self.assertIsNone(plugin.cap_discord_clarifications(tool_name="clarify", args=args))
+        with session(platform="matrix"):
+            self.assertIsNone(plugin.cap_discord_clarifications(tool_name="clarify", args=args))
 
-    def test_registers_only_non_operational_hooks(self):
+    def test_registers_the_hooks_declared_in_plugin_yaml(self):
         ctx = mock.Mock()
         plugin.register(ctx)
-        self.assertEqual(
-            [("pre_tool_call", plugin.cap_clarifications),
-             ("pre_tool_call", plugin.guard_repeated_terminal)],
-            [call.args for call in ctx.register_hook.call_args_list])
+        hooks = {call.args[0] for call in ctx.register_hook.call_args_list}
+        declared = {line.split("- ", 1)[1].strip() for line in
+                    PLUGIN_PATH.with_name("plugin.yaml").read_text().splitlines() if line.startswith("  - ")}
+        self.assertEqual(declared, hooks)
+        pre_tool = [call.args[1] for call in ctx.register_hook.call_args_list if call.args[0] == "pre_tool_call"]
+        self.assertEqual([plugin.cap_discord_clarifications, plugin.guard_terminal_loop], pre_tool)
+        self.assertEqual("discord", ctx.register_platform_handler.call_args.args[0])
 
 
 if __name__ == "__main__":

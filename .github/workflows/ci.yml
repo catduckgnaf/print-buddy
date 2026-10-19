@@ -54,7 +54,4 @@ jobs:
       - name: Real slicer tests
         env:
           PRINT_BUDDY_REAL_SLICER: "1"
-        # Flatpak Orca cannot see the host /tmp, so pytest temp folders live in the workspace.
-        run: |
-          mkdir -p .slicer-work
-          xvfb-run -a python -m pytest -q -rs --basetemp "$GITHUB_WORKSPACE/.slicer-work/pytest" tests
+        run: xvfb-run -a python -m pytest -v -s tests/slicer

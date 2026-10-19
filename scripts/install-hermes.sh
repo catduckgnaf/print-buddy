@@ -183,4 +183,4 @@ if [ "$LAST_CHANGED" = 1 ] && [ -z "${NO_SYSTEMCTL:-}" ] && command -v systemctl
     [ "$DRY" = 1 ] || systemctl --user daemon-reload || say "warning: daemon-reload failed"
 fi
 
-say "done. Enable the listener with: systemctl --user enable --now hermes-print-buddy-listener.service"
+say "done. Enable the listener with: systemctl --user enable --now hermes-3dprinting-moonraker-listener.service"

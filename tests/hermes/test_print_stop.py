@@ -1,0 +1,190 @@
+"""Offline tests for Phase 3a (paused alert) and 3b (/print-stop)."""
+import asyncio
+import importlib.util
+import sys
+import threading
+from pathlib import Path
+from types import SimpleNamespace as S
+from unittest import mock
+
+HERE = Path(__file__).resolve().parent
+from print_buddy.hermes import print_stop
+from print_buddy.hermes import moonraker_event_listener as mel
+
+SPEC = importlib.util.spec_from_file_location("pf_stop", HERE.parents[1] / "plugins/print-feedback/__init__.py")
+plugin = importlib.util.module_from_spec(SPEC)
+SPEC.loader.exec_module(plugin)
+
+
+def st(state, filename="a.gcode", **kw):
+    return {"state": state, "filename": filename, "layer": kw.get("layer"), "total_layer": kw.get("total"),
+            "progress": kw.get("progress"), "print_duration": None}
+
+
+def test_cancel_refuses_when_idle():
+    with mock.patch.object(print_stop, "status", return_value=st("standby", "")), \
+            mock.patch.object(print_stop, "_call") as call:
+        sent, text = print_stop.cancel("a.gcode")
+    assert not sent and "Nothing sent" in text
+    call.assert_not_called()
+
+
+def test_cancel_refuses_when_file_changed():
+    with mock.patch.object(print_stop, "status", return_value=st("printing", "b.gcode")), \
+            mock.patch.object(print_stop, "_call") as call:
+        sent, text = print_stop.cancel("a.gcode")
+    assert not sent and "different print" in text
+    call.assert_not_called()
+
+
+def test_cancel_sends_once_and_reports_real_state():
+    seq = [st("printing"), st("printing"), st("cancelled")]
+    with mock.patch.object(print_stop, "status", side_effect=seq), \
+            mock.patch.object(print_stop, "_call") as call, mock.patch.object(print_stop.time, "sleep"):
+        sent, text = print_stop.cancel("a.gcode", wait_s=5)
+    assert sent and text == "Stopped. Printer now reports cancelled."
+    call.assert_called_once_with("/printer/print/cancel", method="POST", timeout=15)
+
+
+def test_cancel_never_retries_when_state_sticks():
+    with mock.patch.object(print_stop, "status", return_value=st("paused")), \
+            mock.patch.object(print_stop, "_call") as call, mock.patch.object(print_stop.time, "sleep"), \
+            mock.patch.object(print_stop.time, "monotonic", side_effect=[0, 1, 99]):
+        sent, text = print_stop.cancel("a.gcode", wait_s=5)
+    assert sent and "Not retrying" in text
+    assert call.call_count == 1
+
+
+def test_where_text():
+    assert print_stop.where_text(st("paused", layer=12, total=80, progress=0.25)) == "layer 12/80, 25% done"
+    assert print_stop.where_text(st("paused")) == ""
+
+
+def test_listener_cancel_posts_simple_report_before_slow_diagnostics(monkeypatch):
+    lis = mel.Listener()
+    lis.state, lis.filename = "printing", "a.gcode"
+    posted = []
+    diagnostic_started = threading.Event()
+    release_diagnostic = threading.Event()
+
+    def slow_report(filename):
+        diagnostic_started.set()
+        assert release_diagnostic.wait(timeout=2)
+        return True
+
+    with mock.patch.object(mel, "post") as post, \
+            mock.patch.object(mel, "run_announcer"), \
+            mock.patch.object(mel, "maintenance_cancel_reminder", new=lambda: asyncio.sleep(0)), \
+            mock.patch.object(mel, "post_cancel_report", side_effect=slow_report), \
+            mock.patch.object(lis, "after_print", new=lambda state: asyncio.sleep(0)):
+        post.side_effect = lambda message: posted.append(message) or True
+
+        async def exercise():
+            transition = asyncio.create_task(lis.on_status({"state": "cancelled"}, "event"))
+            try:
+                await asyncio.wait_for(asyncio.to_thread(diagnostic_started.wait, 0.5), timeout=0.75)
+                assert posted, "no lifecycle report arrived while diagnostics were running"
+                assert any("Print cancelled" in message for message in posted)
+            finally:
+                release_diagnostic.set()
+                await transition
+
+        asyncio.run(exercise())
+
+
+def test_listener_cancel_does_not_auto_restart_firmware(monkeypatch):
+    lis = mel.Listener()
+    lis.state, lis.filename = "printing", "a.gcode"
+    with mock.patch.object(mel, "post"), mock.patch.object(mel, "run_announcer"), \
+            mock.patch.object(mel, "maintenance_cancel_reminder", new=lambda: asyncio.sleep(0)), \
+            mock.patch.object(mel, "post_cancel_report"), \
+            mock.patch.object(lis, "start_screen_cancel_reboot") as reboot, \
+            mock.patch.object(lis, "after_print", new=lambda state: asyncio.sleep(0)):
+        asyncio.run(lis.on_status({"state": "cancelled"}, "event"))
+    reboot.assert_not_called()
+
+
+def test_listener_posts_once_on_pause_only():
+    lis = mel.Listener()
+    lis.state, lis.filename = "printing", "a.gcode"
+    with mock.patch.object(mel, "post") as post, mock.patch.object(mel, "run_announcer"), \
+            mock.patch.object(mel, "paused_message", return_value="Print paused: X") as pm, \
+            mock.patch.object(lis, "classify_runout", return_value=(False, None)):
+        asyncio.run(lis.on_status({"state": "paused"}, "event"))
+        asyncio.run(lis.on_status({"state": "printing"}, "event"))
+    pm.assert_called_once_with("a.gcode")
+    post.assert_called_once_with("Print paused: X")
+
+
+def test_listener_posts_tracking_prompt_on_runout_pause():
+    lis = mel.Listener()
+    lis.state, lis.filename = "printing", "a.gcode"
+    with mock.patch.object(mel, "post") as post, mock.patch.object(mel, "run_announcer"), \
+            mock.patch.object(mel, "paused_message", return_value="Print paused: X"), \
+            mock.patch.object(lis, "classify_runout", return_value=(True, 2)), \
+            mock.patch.object(lis, "open_question", return_value={"slot": 2}) as oq:
+        asyncio.run(lis.on_status({"state": "paused"}, "event"))
+    oq.assert_called_once_with(2, "runout")
+    post.assert_called_once_with("Print paused: X")
+
+
+def test_paused_message_text():
+    with mock.patch.object(print_stop, "status", return_value=st("paused", layer=3, total=9, progress=0.3)):
+        msg = mel.paused_message("unknown_file.gcode")
+    assert msg.startswith("Print paused:") and "layer 3/9" in msg and "/print-stop" in msg
+
+
+class FakeAdapter:
+    def __init__(self):
+        self.sent = []
+
+    async def send(self, chat_id=None, content=None, metadata=None):
+        self.sent.append(content)
+
+    async def send_clarify(self, **kw):
+        return S(success=True)
+
+
+def _event(text="/print-stop"):
+    src = S(platform=S(value="discord"), profile="3dprinting", is_bot=False, profile_route_rejected=False,
+            user_id="u", chat_id="c", thread_id=None)
+    return S(source=src, text=text, internal=False)
+
+
+def _gateway(adapter):
+    return S(_is_user_authorized_for_source=lambda s: True, _delivery_adapter_for=lambda s: adapter)
+
+
+def test_stop_command_idle_sends_nothing():
+    ad = FakeAdapter()
+    with mock.patch.object(print_stop, "status", return_value=st("standby", "")), \
+            mock.patch.object(print_stop, "cancel") as cancel:
+        out = asyncio.run(plugin.print_stop_dispatch(_event(), _gateway(ad)))
+    assert out["action"] == "skip" and "Nothing to stop" in ad.sent[-1]
+    cancel.assert_not_called()
+
+
+def test_stop_command_confirmed_cancels_confirmed_file():
+    ad = FakeAdapter()
+    from tools import clarify_gateway as cm
+    with mock.patch.object(print_stop, "status", return_value=st("printing", "a.gcode")), \
+            mock.patch.object(print_stop, "cancel", return_value=(True, "Stopped. Printer now reports cancelled.")) as cancel, \
+            mock.patch.object(cm, "wait_for_response", return_value=print_stop.STOP_LABEL):
+        asyncio.run(plugin.print_stop_dispatch(_event(), _gateway(ad)))
+    cancel.assert_called_once_with("a.gcode")
+    assert ad.sent[-1] == "Stopped. Printer now reports cancelled."
+
+
+def test_stop_command_declined_sends_nothing():
+    ad = FakeAdapter()
+    from tools import clarify_gateway as cm
+    with mock.patch.object(print_stop, "status", return_value=st("printing", "a.gcode")), \
+            mock.patch.object(print_stop, "cancel") as cancel, \
+            mock.patch.object(cm, "wait_for_response", return_value=print_stop.KEEP_LABEL):
+        asyncio.run(plugin.print_stop_dispatch(_event(), _gateway(ad)))
+    cancel.assert_not_called()
+    assert ad.sent[-1] == "Kept printing. Nothing sent."
+
+
+def test_other_text_ignored():
+    assert asyncio.run(plugin.print_stop_dispatch(_event("/print-stopx"), _gateway(FakeAdapter()))) is None

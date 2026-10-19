@@ -1,0 +1,239 @@
+"""Resolve and start the next required plate of a multipart plan.
+
+Used by the ``/print-next <plan_id>`` Discord command in the print-feedback
+plugin. Resolution is exact: the plan part must record the archived
+``job_json`` and absolute ``gcode_path`` written when the plate was sliced.
+Bare filenames are never searched for, because names like ``plate_1.gcode``
+repeat across jobs and a guess could start the wrong plate.
+
+Starting always goes through ``python3 -m print_buddy.core.model_job print-now`` in a subprocess, so the
+existing busy, mesh, filament, artifact binding, approval and upload gates stay
+authoritative. This module never uploads or starts anything itself.
+"""
+from __future__ import annotations
+
+import asyncio
+import hashlib
+import json
+import os
+import sys
+import time
+from pathlib import Path
+from typing import Any, Callable, Mapping
+
+from . import _config
+
+ARCHIVE = _config.archive_dir()
+CLAIMS_DIR = _config.state_dir() / "print-next-claims"
+# print-now runs as a module in a subprocess: python3 -m print_buddy.core.model_job print-now ...
+MODEL_JOB_MODULE = "print_buddy.core.model_job"
+START_LABEL = "Start next plate · bed is clear"
+CANCEL_LABEL = "Cancel"
+START_TIMEOUT_S = 420
+
+
+class NextPlateError(ValueError):
+    """The plan cannot name one exact, current artifact. Nothing was started."""
+
+
+def _sha256(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for block in iter(lambda: handle.read(1 << 20), b""):
+            digest.update(block)
+    return digest.hexdigest()
+
+
+def next_required_part(plan: Mapping[str, Any]) -> tuple[dict[str, Any], int] | None:
+    """Same ordering as the completion summary: first required part with copies left."""
+    from .print_records import _plan_parts
+
+    for part in _plan_parts(plan.get("parts")):
+        if part.get("optional") is True or part.get("required") is False:
+            continue
+        if part.get("alternative_group") and part.get("selected") is not True:
+            continue
+        quantity = part["quantity"]
+        done = quantity if part.get("status") == "completed" else part["completed_quantity"]
+        if done < quantity:
+            return part, done
+    return None
+
+
+def has_exact_start_target(part: Mapping[str, Any] | None) -> bool:
+    return bool(part and part.get("job_json") and part.get("gcode_path"))
+
+
+def load_plan(plan_id: str, plans_dir: Path | None = None) -> dict[str, Any]:
+    from .print_records import PLANS_DIR, _safe_slug
+
+    raw = str(plan_id or "").strip()
+    slug = _safe_slug(raw, "")
+    if not slug or slug != raw:
+        raise NextPlateError("unknown plan id")
+    path = (plans_dir or PLANS_DIR) / f"{slug}.json"
+    try:
+        plan = json.loads(path.read_text(encoding="utf-8"))
+    except FileNotFoundError as exc:
+        raise NextPlateError(f"no plan named {slug}") from exc
+    except (OSError, json.JSONDecodeError) as exc:
+        raise NextPlateError(f"plan {slug} is unreadable") from exc
+    if not isinstance(plan, dict):
+        raise NextPlateError(f"plan {slug} is malformed")
+    plan.setdefault("plan_id", slug)
+    return plan
+
+
+def resolve_next(plan: Mapping[str, Any], archive: Path | None = None) -> dict[str, Any]:
+    """Return the exact next artifact, or raise NextPlateError. Read only."""
+    archive = (archive or ARCHIVE).resolve()
+    found = next_required_part(plan)
+    if found is None:
+        raise NextPlateError("every required part is already complete")
+    part, done = found
+    if not has_exact_start_target(part):
+        raise NextPlateError(f"the plan does not record the exact sliced file for {part['label']}")
+    job_path = Path(str(part["job_json"])).expanduser().resolve()
+    gcode = Path(str(part["gcode_path"])).expanduser().resolve()
+    if job_path.name != "JOB.json" or not job_path.is_relative_to(archive) or not job_path.is_file():
+        raise NextPlateError("recorded job is not an archived JOB.json")
+    if not gcode.is_relative_to(job_path.parent) or gcode.suffix != ".gcode" or not gcode.is_file():
+        raise NextPlateError("recorded G-code is missing or outside its job folder")
+    if part.get("gcode_file") and Path(str(part["gcode_file"])).name != gcode.name:
+        raise NextPlateError("recorded G-code name does not match the plan part")
+    try:
+        job = json.loads(job_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise NextPlateError("recorded JOB.json is unreadable") from exc
+    known = {Path(str(job.get("gcode"))).resolve()} if job.get("gcode") else set()
+    known |= {Path(str(row["gcode"])).resolve() for row in job.get("derived_plates") or []
+              if isinstance(row, dict) and row.get("gcode")}
+    if gcode not in known:
+        raise NextPlateError("recorded G-code is not a current artifact of its JOB.json")
+    run, plate = part.get("run", part.get("run_id")), part.get("plate", part.get("plate_id"))
+    where = ", ".join(x for x in (f"Run {run}" if run is not None else "",
+                                  f"Plate {plate}" if plate is not None else "") if x)
+    return {"plan_id": plan.get("plan_id"), "part_id": part["id"], "label": part["label"],
+            "where": where, "title": job.get("title") or job_path.parent.name,
+            "copy": done + 1, "quantity": part["quantity"], "reprint": done > 0,
+            "job_json": str(job_path), "gcode": str(gcode), "gcode_sha256": _sha256(gcode)}
+
+
+PREPARING_MARK = "PREPARATION STILL RUNNING"
+
+
+def still_preparing(detail: str) -> bool:
+    """print-now accepted the start but native heating/leveling is still running.
+
+    It released its start claim, so the Moonraker listener posts the one "Print started"
+    when print_stats really reaches printing. Callers must not post their own start then.
+    """
+    return PREPARING_MARK in str(detail or "")
+
+
+def question_text(target: Mapping[str, Any]) -> str:
+    copy = f" (copy {target['copy']} of {target['quantity']})" if target["quantity"] > 1 else ""
+    where = f", {target['where']}" if target["where"] else ""
+    return (f"Next plate for {target['title']}: {target['label']}{copy}{where}.\n"
+            "Starting uploads and prints immediately. Confirm the bed is clear.")
+
+
+def live_idle_check() -> None:
+    """Fresh read-only printer state query. Raises unless the printer is provably idle."""
+    from print_buddy.core import printer_state
+    from print_buddy.core.model_job import _printer_phase
+
+    state, filename, busy = _printer_phase(printer_state.load())
+    if state not in ("standby", "complete", "cancelled") or busy == "Printing":
+        raise RuntimeError(f"printer is not idle ({state}, {filename}, {busy})")
+
+
+def claim_path(target: Mapping[str, Any], claims_dir: Path | None = None) -> Path:
+    """One durable claim per plan, part, copy and exact artifact."""
+    from .print_records import _safe_slug
+
+    name = "--".join((_safe_slug(str(target["plan_id"]), "plan"), _safe_slug(str(target["part_id"]), "part"),
+                      f"copy{int(target['copy'])}", str(target["gcode_sha256"])[:16]))
+    return (claims_dir or CLAIMS_DIR) / f"{name}.json"
+
+
+def _take_claim(path: Path, target: Mapping[str, Any]) -> str | None:
+    """Atomically create the claim. Returns an error string if it already exists."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o644)
+    except FileExistsError:
+        try:
+            when = json.loads(path.read_text(encoding="utf-8")).get("claimed_at", "earlier")
+        except (OSError, json.JSONDecodeError):
+            when = "earlier"
+        return (f"REFUSED: this exact plate (copy {target['copy']}) was already started from a button at {when}. "
+                f"Nothing uploaded or started. If that start really failed, check the printer, then delete {path} to allow one new try.")
+    with os.fdopen(fd, "w", encoding="utf-8") as handle:
+        json.dump({"claimed_at": time.strftime("%Y-%m-%dT%H:%M:%S%z"), "outcome": "pending",
+                   **{k: target[k] for k in ("plan_id", "part_id", "copy", "gcode", "gcode_sha256")}}, handle)
+        handle.flush()
+        os.fsync(handle.fileno())
+    return None
+
+
+def _settle_claim(path: Path, outcome: str, release: bool) -> None:
+    if release:
+        path.unlink(missing_ok=True)
+        return
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        data = {}
+    data["outcome"] = outcome
+    tmp = path.with_suffix(".tmp")
+    tmp.write_text(json.dumps(data), encoding="utf-8")
+    os.replace(tmp, path)
+
+
+async def start(target: Mapping[str, Any], model_job: Path | None = None,
+                timeout: float = START_TIMEOUT_S, idle_check: Callable[[], None] | None = None,
+                claims_dir: Path | None = None) -> tuple[bool, str]:
+    """Run print-now once for the exact artifact. Never retried, never replayed."""
+    gcode = Path(target["gcode"])
+    if not gcode.is_file() or _sha256(gcode) != target["gcode_sha256"]:
+        return False, "REFUSED: the next plate's G-code changed after the prompt. Nothing uploaded or started."
+    try:
+        await asyncio.to_thread(idle_check or live_idle_check)
+    except Exception as exc:  # fail closed on any read error
+        return False, f"REFUSED: fresh printer check failed: {exc}. Nothing uploaded or started."
+    claim = claim_path(target, claims_dir)
+    refused = _take_claim(claim, target)
+    if refused:
+        return False, refused
+    runner = [str(model_job)] if model_job else [sys.executable, "-m", MODEL_JOB_MODULE]
+    argv = [*runner, "print-now", str(gcode)]
+    if target.get("reprint"):
+        argv.append("--reprint")
+    try:
+        proc = await asyncio.create_subprocess_exec(*argv, stdout=asyncio.subprocess.PIPE,
+                                                    stderr=asyncio.subprocess.STDOUT)
+    except OSError as exc:
+        _settle_claim(claim, "spawn_failed", release=True)
+        return False, f"REFUSED: could not run print-now: {exc}. Nothing uploaded or started."
+    try:
+        out, _ = await asyncio.wait_for(proc.communicate(), timeout)
+    except asyncio.TimeoutError:
+        # Stop print-now so it cannot start a plate after we report uncertainty, then reap it.
+        proc.terminate()
+        try:
+            await asyncio.wait_for(proc.wait(), 15)
+        except asyncio.TimeoutError:
+            proc.kill()
+            await proc.wait()
+        _settle_claim(claim, "uncertain_timeout", release=False)
+        return False, ("UNCERTAIN: print-now did not finish in time and was stopped. The plate may or may not "
+                       "have started. Check the printer screen before doing anything else. Not retrying.")
+    text = out.decode(errors="replace").strip()
+    tail = "\n".join(text.splitlines()[-6:])[-1500:]
+    ok = proc.returncode == 0
+    # A clean pre-upload refusal releases the claim so a fixed problem can be retried with a new tap.
+    safe_refusal = not ok and text.splitlines()[-1:] and text.splitlines()[-1].startswith("REFUSED:")
+    _settle_claim(claim, "started" if ok else ("refused" if safe_refusal else "failed_uncertain"),
+                  release=bool(safe_refusal))
+    return ok, tail or f"print-now exited {proc.returncode} with no output"

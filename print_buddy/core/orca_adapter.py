@@ -8,7 +8,7 @@ import struct
 import subprocess
 import xml.etree.ElementTree as ET
 import zipfile
-from .. import settings
+from .. import printers, settings
 from . import slice_guard as sg
 from .slice_guard import pre_slice, post_slice
 
@@ -449,10 +449,9 @@ def slice_model(source, folder, state, brim=None, first_layer=False, color_decis
     mesh = baseline.get('native_mesh', 'auto')
     if not isinstance(mesh, str) or not re.fullmatch(r'[A-Za-z0-9_]+', mesh):
         raise RuntimeError('invalid calibration baseline mesh')
-    machine['machine_start_gcode'] = re.sub(r'\bMESH=\S+', 'MESH=' + mesh, machine['machine_start_gcode'])
-    machine['machine_start_gcode'] = ("M190 S[bed_temperature_initial_layer_single]\n"
-                                     "M104 S[nozzle_temperature_initial_layer] T0\n" +
-                                     machine['machine_start_gcode'])
+    printer = printers.current()
+    machine['machine_start_gcode'] = printer.machine_start_gcode(machine['machine_start_gcode'], mesh)
+    machine['machine_end_gcode'] = printer.machine_end_gcode(machine.get('machine_end_gcode', ''))
     machine['default_print_profile'] = process['name']
     slots = state.get('ifs_slots') or {}
     if filament_slot is not None:

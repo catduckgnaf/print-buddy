@@ -11,9 +11,12 @@ from __future__ import annotations
 
 import copy
 import os
+import re
 import tomllib
 from functools import lru_cache
 from pathlib import Path
+
+from .printers.families import DEFAULT_FAMILY, FAMILIES, TEMPLATE_SUBDIR
 
 ROOT = Path(__file__).resolve().parent.parent
 HOME = ROOT / "config" / "home.toml"
@@ -154,6 +157,16 @@ def validate(data):
     for key in ("max_print_height_mm", "nozzle_diameter_mm"):
         data["printer"][key] = _positive(data, "printer", key)
     data["printer"]["ifs_slots"] = _positive(data, "printer", "ifs_slots", int)
+    family = data["printer"].get("family", DEFAULT_FAMILY)
+    if family not in FAMILIES:
+        raise SettingsError(f"[printer] family must be one of {', '.join(FAMILIES)}, got {family!r}")
+    data["printer"]["family"] = family
+    if family != DEFAULT_FAMILY and data["printer"]["ifs_slots"] != 1:
+        raise SettingsError(f"[printer] ifs_slots must be 1 for family {family!r} (single extruder)")
+    for key, default in (("start_macro", "PRINT_START"), ("end_macro", "PRINT_END")):
+        macro = data["printer"].setdefault(key, default)
+        if not isinstance(macro, str) or not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", macro):
+            raise SettingsError(f"[printer] {key} must be a Klipper macro name, got {macro!r}")
     for key in ("single_copy_edge_mm", "multi_copy_edge_mm", "merge_edge_margin_mm", "merge_spacing_mm"):
         data["layout"][key] = _positive(data, "layout", key)
     data["layout"]["max_merged_hours"] = _positive(data, "layout", "max_merged_hours")
@@ -182,6 +195,9 @@ def validate(data):
         raise SettingsError("[orca] templates must be a folder path")
     path = Path(templates).expanduser()
     data["orca"]["templates"] = path if path.is_absolute() else ROOT / path
+    subdir = TEMPLATE_SUBDIR[family]
+    if subdir and data["orca"]["templates"] == ROOT / "print_buddy" / "templates" / "orca":
+        data["orca"]["templates"] = data["orca"]["templates"] / subdir  # family default, unless overridden
     return data
 
 

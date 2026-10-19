@@ -73,6 +73,7 @@ def _drive_listener(monkeypatch, filename, transitions, *, claimed=False):
     async def run():
         for state in transitions:
             await listener.on_status({"state": state, "filename": filename}, "test")
+        await asyncio.gather(*listener.background_tasks)  # the cancel report posts in the background
     asyncio.run(run())
     return posted
 

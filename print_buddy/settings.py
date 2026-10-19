@@ -217,3 +217,20 @@ def current():
 def state_dir(data=None):
     """Where runtime state files live: <hermes_home>/state."""
     return (data or current())["paths"]["hermes_home"] / "state"
+
+
+def _main(argv):
+    """python3 -m print_buddy.settings get services.moonraker_url  (for shell scripts)"""
+    if len(argv) != 2 or argv[0] != "get" or argv[1].count(".") != 1:
+        raise SystemExit("usage: python3 -m print_buddy.settings get SECTION.KEY")
+    section, key = argv[1].split(".")
+    try:
+        value = current()[section][key]
+    except KeyError:
+        raise SystemExit(f"unknown setting {argv[1]}") from None
+    print(" ".join(map(str, value)) if isinstance(value, list) else value)
+
+
+if __name__ == "__main__":
+    import sys
+    _main(sys.argv[1:])

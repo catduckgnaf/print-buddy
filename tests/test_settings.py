@@ -137,3 +137,16 @@ class RuntimeSettingsTests(unittest.TestCase):
         data = settings.load(local=False, environ={})
         self.assertTrue(all(not v for k, v in data["services"].items() if k.endswith("_url")))
         self.assertEqual((data["discord"]["chat_id"], data["discord"]["approval_user_id"]), ("", ""))
+
+
+class SettingsCliTests(unittest.TestCase):
+    def run_cli(self, *args, env=None):
+        return subprocess.run([sys.executable, "-m", "print_buddy.settings", *args], cwd=settings.ROOT,
+                              capture_output=True, text=True, env={**os.environ, **(env or {})})
+
+    def test_get_prints_the_value(self):
+        out = self.run_cli("get", "services.moonraker_ws_url", env={"MOONRAKER_URL": "http://ad5x.lan:7125"})
+        self.assertEqual(out.stdout.strip(), "ws://ad5x.lan:7125/websocket")
+
+    def test_unknown_key_fails(self):
+        self.assertNotEqual(self.run_cli("get", "services.nope").returncode, 0)

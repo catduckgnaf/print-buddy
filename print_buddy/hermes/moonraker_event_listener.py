@@ -31,6 +31,7 @@ import websockets
 from . import _config
 from . import moonraker_discord_announcements as announcer
 from . import discord_print_summary as print_summary
+from . import plan_timelapse
 from . import print_control
 INTERRUPTED_HINT = print_control.INTERRUPTED_HINT
 try:
@@ -544,34 +545,114 @@ def run_announcer(reason):
     marker = next((line for line in lines if line.startswith("TIMELAPSE_POSTPROCESS:")), None)
     picker = next((line for line in lines if line.startswith(announcer.PLATE_PICKER_MARKER)), None)
     plan_id = picker.split(":", 1)[1].strip() if picker else None
+    tl_line = next((line for line in lines if line.startswith(plan_timelapse.PLAN_MARKER)), None)
     message = "\n".join(line for line in lines
-                        if not line.startswith(("TIMELAPSE_POSTPROCESS:", announcer.PLATE_PICKER_MARKER))).strip()
+                        if not line.startswith(("TIMELAPSE_POSTPROCESS:", announcer.PLATE_PICKER_MARKER,
+                                                plan_timelapse.PLAN_MARKER))).strip()
     if not message:
         return
+    tl_plan = None
+    if tl_line:
+        try:
+            tl_id, tl_stage, tl_order = tl_line[len(plan_timelapse.PLAN_MARKER):].strip().split(":")
+            tl_plan = (tl_id, tl_stage, int(tl_order))
+        except ValueError:
+            log(f"ignoring malformed timelapse plan marker {tl_line!r}")
+    if tl_plan and tl_plan[1] == "partial":
+        # Plan stopped midway: post what exists so far, labeled partial. No picker.
+        threading.Thread(target=_plan_timelapse_post, args=(None, message, tl_plan), daemon=True,
+                         name="timelapse-partial").start()
+        return
     if not marker:
-        post(message)
+        if tl_plan and tl_plan[1] == "final":
+            _plan_timelapse_post(None, message, tl_plan)
+        else:
+            post(message)
         if plan_id:
             post_plate_picker(plan_id)
         return
     job_key = announcer._timelapse_job_key(marker.split(":", 1)[1].strip())
     if not job_key:
         log(f"timelapse postprocess has no matching active job for {marker!r}")
-        post(message)
+        if tl_plan and tl_plan[1] == "final":
+            _plan_timelapse_post(None, message, tl_plan)
+        else:
+            post(message)
         if plan_id:
             post_plate_picker(plan_id)
         return
     # Rendering can take minutes; leave the websocket loop alone and post once when done.
-    threading.Thread(target=_timelapse_postprocess, args=(job_key, message, plan_id), daemon=True,
+    threading.Thread(target=_timelapse_postprocess, args=(job_key, message, plan_id, tl_plan), daemon=True,
                      name="timelapse-postprocess").start()
 
 
-def _timelapse_postprocess(job_key, completion_message, plan_id=None):
+def _timelapse_postprocess(job_key, completion_message, plan_id=None, tl_plan=None):
     try:
-        _timelapse_post(job_key, completion_message)
+        if tl_plan:
+            _plan_timelapse_post(job_key, completion_message, tl_plan)
+        else:
+            _timelapse_post(job_key, completion_message)
     finally:
         # The picker follows the completion/timelapse post, whatever happened to the video.
         if plan_id:
             post_plate_picker(plan_id)
+
+
+def _plan_timelapse_post(job_key, completion_message, tl_plan):
+    """A plate of a multi-plate plan: keep its clip, post video only once, after the last plate or on cancel.
+
+    Non-final plates post the completion text alone (the caller adds the picker). The final plate,
+    or a stopped plan ("partial"), posts one video of every stored clip in plate order.
+    """
+    plan, stage, order = tl_plan
+    clip = None
+    if job_key and stage in ("more", "final"):
+        try:
+            archived = announcer.archive_completed_timelapse(job_key)
+            if archived:
+                clip = Path(str(announcer.materialize_archived_timelapse(archived)))
+                plan_timelapse.add_clip(plan, order, clip)
+            else:
+                log(f"timelapse not rendered for {job_key!r} within the wait")
+        except Exception as exc:
+            log(f"plan timelapse clip for {job_key!r} unavailable: {exc!r}")
+            clip = None
+    if stage == "more":
+        post(completion_message)
+        with contextlib.suppress(Exception):
+            plan_timelapse.prune()  # abandoned plans never reach a final post
+        return
+    stored = plan_timelapse.clips(plan)
+    expected = plan_timelapse.expected_clips(plan)
+    # Partial when any plate's clip is missing, not only the final plate's.
+    partial = stage == "partial" or clip is None or (expected is not None and len(stored) < expected)
+    try:
+        if not stored:
+            post(completion_message)
+            return
+        note = f"{completion_message}\nPartial timelapse: {len(stored)} plate(s) so far." if partial else completion_message
+        try:
+            combined = plan_timelapse.combine(plan)
+        except Exception as exc:
+            log(f"timelapse combine failed for plan {plan!r}: {exc!r}")
+            post(completion_message)
+            return
+        try:
+            announcer.archive_local_timelapse(plan, combined)
+        except Exception as exc:
+            log(f"combined timelapse archive failed for plan {plan!r}: {exc!r}")
+        video = combined
+        try:
+            video = discord_sized_video(combined)
+        except Exception as exc:
+            log(f"combined timelapse shrink failed for plan {plan!r}: {exc!r}")
+        if not post(f"{note}\nMEDIA:{video}"):
+            log(f"combined timelapse attach failed for plan {plan!r}; posting text only")
+            post(f"{note}\nCombined timelapse too big for Discord.")
+    finally:
+        plan_timelapse.clear(plan)
+        with contextlib.suppress(Exception):
+            plan_timelapse.prune()
 
 
 def _timelapse_post(job_key, completion_message):

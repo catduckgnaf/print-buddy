@@ -18,6 +18,7 @@ from pathlib import Path
 
 from . import _config
 from . import discord_print_summary as print_summary
+from . import plan_timelapse
 
 OPENVIKING_URL = _config.service_url("openviking_url")
 
@@ -59,6 +60,8 @@ from .print_records import (
 
 # Stdout line telling the listener to post the interactive plate picker for this plan after the completion post.
 PLATE_PICKER_MARKER = "PLATE_PICKER:"
+# Stdout line for a plate of a multi-plate plan: the listener keeps or combines clips instead of posting one.
+TIMELAPSE_PLAN_MARKER = plan_timelapse.PLAN_MARKER
 
 BASE = _config.moonraker_url()
 SPOOLMAN_BASE = _config.service_url("spoolman_url")
@@ -468,6 +471,21 @@ def archive_timelapse(job_key, video_path, completed_at=None):
     _config.require(TIMELAPSE_ARCHIVE_DIR, "timelapse.archive_dir")
     local = download_timelapse(video_path, job_key)
     remote_name = timelapse_archive_name(job_key, video_path, completed_at)
+    remote_final = _upload_to_archive(local, remote_name)
+    # The archive host now holds the durable copy; the HTTP staging copy is redundant.
+    Path(local).unlink(missing_ok=True)
+    return remote_final
+
+
+def archive_local_timelapse(plan_id, local, completed_at=None):
+    """Copy an already local MP4 (a plan's combined timelapse) to the archive host; None when the archive is off."""
+    if not TIMELAPSE_ARCHIVE_HOST or not TIMELAPSE_ARCHIVE_DIR:
+        return None
+    name = timelapse_archive_name(f"{plan_id}.gcode", f"combined-{Path(str(local)).name}", completed_at)
+    return _upload_to_archive(local, name)
+
+
+def _upload_to_archive(local, remote_name):
     remote_tmp = f"{TIMELAPSE_ARCHIVE_DIR}/.{remote_name}.partial"
     remote_final = f"{TIMELAPSE_ARCHIVE_DIR}/{remote_name}"
     with open(local, "rb") as source:
@@ -479,8 +497,6 @@ def archive_timelapse(job_key, video_path, completed_at=None):
         _archive_ssh(f"test -s {shlex.quote(remote_tmp)} && mv {shlex.quote(remote_tmp)} {shlex.quote(remote_final)}"),
         check=True, capture_output=True, timeout=30,
     )
-    # The archive host now holds the durable copy; the HTTP staging copy is redundant.
-    Path(local).unlink(missing_ok=True)
     return remote_final
 
 
@@ -534,7 +550,7 @@ def materialize_archived_timelapse(remote_path):
             temporary.unlink()
 
 
-def archive_completed_timelapse(job_key, completed_at=None):
+def archive_completed_timelapse(job_key, completed_at=None, wait=None):
     """Wait a bounded interval for the completed job's MP4, then archive if available.
 
     With no timelapse.archive_host configured the archive, and the posted video, are off.
@@ -542,7 +558,7 @@ def archive_completed_timelapse(job_key, completed_at=None):
     if not TIMELAPSE_ARCHIVE_HOST or not TIMELAPSE_ARCHIVE_DIR:
         print("Timelapse archive is off (timelapse.archive_host / archive_dir not configured)", file=sys.stderr)
         return None
-    deadline = time.monotonic() + max(0, TIMELAPSE_RENDER_WAIT_SECONDS)
+    deadline = time.monotonic() + max(0, TIMELAPSE_RENDER_WAIT_SECONDS if wait is None else wait)
     while True:
         try:
             candidates = _timelapse_candidates(job_key)
@@ -558,6 +574,14 @@ def archive_completed_timelapse(job_key, completed_at=None):
         if time.monotonic() >= deadline:
             return None
         time.sleep(max(0.1, TIMELAPSE_RENDER_POLL_SECONDS))
+
+
+def partial_timelapse_notice(plan_id, filename):
+    """For a stopped print of a plan: the notice text, plus the marker line, when plate clips exist so far."""
+    if not plan_id or not plan_timelapse.clips(plan_id):
+        return None
+    print(f"{TIMELAPSE_PLAN_MARKER}{plan_id}:partial:0")
+    return f"Print stopped: {print_summary.safe_label(filename)}. Plan cancelled partway; partial timelapse of the plates finished so far."
 
 
 def _timelapse_marker(job_key):
@@ -646,7 +670,9 @@ def finalize_from_history(job_key):
              "filament_used": job.get("filament_used")}
     ended = job.get("end_time")
     completed_at = datetime.fromtimestamp(ended, timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ") if ended else None
-    return record_completion(job_key, job_key, stats, completed_at=completed_at)
+    result = record_completion(job_key, job_key, stats, completed_at=completed_at)
+    result["state"] = stats["state"]
+    return result
 
 
 def record_completion(job_key, filename, stats, completed_at=None):
@@ -792,7 +818,11 @@ def main():
 
     if job_key != previous_key and previous.get("printing") and previous_key and not previous.get("record_written"):
         try:
-            finalize_from_history(previous_key)
+            stopped = finalize_from_history(previous_key)
+            if stopped and stopped.get("state") in ("cancelled", "error"):
+                notice = partial_timelapse_notice(stopped.get("plan_id"), previous_key)
+                if notice:
+                    print(notice)
         except Exception as exc:
             print(f"Stopped print record unavailable: {exc}", file=sys.stderr)
 
@@ -846,6 +876,9 @@ def main():
             try:
                 plan_path = PLANS_DIR / f"{_safe_slug(str(multipart_id))}.json"
                 plan = json.loads(plan_path.read_text(encoding="utf-8"))
+                stage = plan_timelapse.plan_stage(plan, context.get("part_id"))
+                if stage:
+                    print(f"{TIMELAPSE_PLAN_MARKER}{plan.get('plan_id') or _safe_slug(str(multipart_id))}:{stage[0]}:{stage[1]}")
                 summary = format_multipart_summary(plan, context.get("part_id"), picker=True)
                 if summary:
                     message += "\n" + summary
@@ -876,6 +909,8 @@ def main():
         try:
             record = record_completion(job_key, filename, payload.get("stats") or {})
             previous["record_written"] = True
+            if message is None:
+                message = partial_timelapse_notice(record.get("plan_id"), filename)
             previous["record_path"] = record.get("record_path")
             previous.pop("record_error", None)
         except Exception as exc:

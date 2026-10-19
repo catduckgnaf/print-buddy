@@ -105,6 +105,8 @@ render_wait_s = 900
 render_poll_s = 10
 max_bytes = 209715200
 local_retention_days = 1
+# Clips held for a multi-plate plan that never finishes (abandoned) are dropped after this many days.
+plan_clip_retention_days = 14
 
 [maintenance]
 quick_hours = 25

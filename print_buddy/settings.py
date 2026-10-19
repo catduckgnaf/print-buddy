@@ -191,6 +191,10 @@ def validate(data):
             continue  # a bare name is looked up on PATH
         path = Path(value).expanduser()
         data["paths"][key] = path if path.is_absolute() else ROOT / path
+    level = data["visual_watch"]["sensitivity"]
+    if isinstance(level, bool) or not isinstance(level, (int, float)) or level != int(level) or not 1 <= level <= 5:
+        raise SettingsError(f"[visual_watch] sensitivity must be a whole number from 1 to 5, got {level!r}")
+    data["visual_watch"]["sensitivity"] = int(level)
     templates = data.get("orca", {}).get("templates")
     if not isinstance(templates, str) or not templates:
         raise SettingsError("[orca] templates must be a folder path")

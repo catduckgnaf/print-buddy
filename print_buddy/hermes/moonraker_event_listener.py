@@ -957,13 +957,43 @@ def _camera_snapshot_bytes():
     return image
 
 
-def _frame_changed(before, after):
+# Camera stall alert presets for [visual_watch] sensitivity, 1 (quietest) to 5 (loudest).
+# Level 3 is the original hard-coded behavior. diff is the mean 64x48 grayscale difference a
+# frame needs to count as changed; stall_layers is how many layers an unchanged frame may span;
+# vision_veto lets an "ok" or "safe" vision verdict cancel a pixel-diff stall alert.
+VISUAL_SENSITIVITY = {
+    1: {"diff": 1.5, "stall_layers": 8, "periodic_s": 1800, "vision_veto": True},
+    2: {"diff": 2.0, "stall_layers": 5, "periodic_s": 1200, "vision_veto": True},
+    3: {"diff": 3.0, "stall_layers": 3, "periodic_s": 900, "vision_veto": False},
+    4: {"diff": 4.0, "stall_layers": 3, "periodic_s": 600, "vision_veto": False},
+    5: {"diff": 5.0, "stall_layers": 2, "periodic_s": 450, "vision_veto": False},
+}
+VISUAL_HEALTHY_VERDICTS = {"ok", "safe"}
+
+
+def _visual_level(level=None):
+    """The configured sensitivity level, 1 to 5 (3 when unset)."""
+    if level is None:
+        level = _config.cfg().get("visual_watch", {}).get("sensitivity", 3)
+    level = int(level)
+    if level not in VISUAL_SENSITIVITY:
+        raise ValueError(f"visual_watch sensitivity must be 1 to 5, got {level!r}")
+    return level
+
+
+def _visual_profile(level=None):
+    return VISUAL_SENSITIVITY[_visual_level(level)]
+
+
+def _frame_changed(before, after, threshold=None):
     """Cheap whole-frame perceptual difference; false means visually unchanged."""
     from PIL import Image, ImageChops, ImageStat
     import io as _io
     a = Image.open(_io.BytesIO(before)).convert("L").resize((64, 48))
     b = Image.open(_io.BytesIO(after)).convert("L").resize((64, 48))
-    return ImageStat.Stat(ImageChops.difference(a, b)).mean[0] >= 3.0
+    if threshold is None:
+        threshold = _visual_profile()["diff"]
+    return ImageStat.Stat(ImageChops.difference(a, b)).mean[0] >= threshold
 
 
 _VISION_CONTEXT = "Printer: Flashforge AD5X, enclosed, smooth PEI plate. Reply JSON verdict ok|air|spaghetti|detached|empty_idle|uncertain. "
@@ -1040,7 +1070,9 @@ def _slot_bools(slots):
 
 class VisualPrintWatch:
     """Pure trigger policy for periodic visual checks; never controls the printer."""
-    def __init__(self):
+    def __init__(self, sensitivity=None):
+        self.sensitivity = _visual_level(sensitivity)
+        self.profile = VISUAL_SENSITIVITY[self.sensitivity]
         self.reset()
 
     def reset(self):
@@ -1065,16 +1097,17 @@ class VisualPrintWatch:
             self.layer5_checked = True
             self.last_check_at = now
             return "layer5"
-        if now - self.last_check_at >= 900:
+        stall_layers = self.profile["stall_layers"]
+        if now - self.last_check_at >= self.profile["periodic_s"]:
             self.last_check_at = now
-            reason = "stalled_layers" if snapshot_changed is False and self.last_layer is not None and layer - self.last_layer >= 3 else "periodic"
+            reason = "stalled_layers" if snapshot_changed is False and self.last_layer is not None and layer - self.last_layer >= stall_layers else "periodic"
             return reason
-        if snapshot_changed is False and self.last_snapshot_layer and layer - self.last_snapshot_layer >= 3 and self.alerted_stall_layer is None:
+        if snapshot_changed is False and self.last_snapshot_layer and layer - self.last_snapshot_layer >= stall_layers and self.alerted_stall_layer is None:
             self.alerted_stall_layer = layer
             self.last_layer = layer
             self.last_check_at = now
             return "stalled_layers"
-        if snapshot_changed is None and layer >= 5 and self.alerted_stall_layer is None and self.last_snapshot_layer and layer - self.last_snapshot_layer >= 3:
+        if snapshot_changed is None and layer >= 5 and self.alerted_stall_layer is None and self.last_snapshot_layer and layer - self.last_snapshot_layer >= stall_layers:
             self.last_layer = layer
             return "layer_progress"
         return None
@@ -1319,6 +1352,8 @@ class Listener:
         vision failure, alerts. Missing plastic, spaghetti, and a detached part
         alert. Layers that advanced with an unchanged frame are promoted to a
         stall here, because the scheduler cannot see the camera before capture.
+        At [visual_watch] sensitivity 1 or 2 a stall alerts only when the vision
+        verdict is not ok/safe; at 3 to 5 every stall alerts.
         """
         image = None
         try:
@@ -1328,7 +1363,7 @@ class Listener:
             snapshot_before = self.visual_watch.last_snapshot_layer
             stall = (reason in {"layer_progress", "periodic"} and changed is False
                      and isinstance(layer, int) and layer >= 5
-                     and snapshot_before and layer - snapshot_before >= 3
+                     and snapshot_before and layer - snapshot_before >= self.visual_watch.profile["stall_layers"]
                      and self.visual_watch.alerted_stall_layer is None)
             if stall:
                 reason = "stalled_layers"
@@ -1354,7 +1389,8 @@ class Listener:
             verdict, detail = await asyncio.to_thread(_visual_verdict, image, prompt)
             suspicious = verdict in {"air", "spaghetti", "detached", "uncertain", "no", "unsafe"}
             if reason == "stalled_layers" and changed is False:
-                suspicious = True
+                # Levels 1 and 2 trust a healthy vision verdict over the pixel diff.
+                suspicious = not (self.visual_watch.profile["vision_veto"] and verdict in VISUAL_HEALTHY_VERDICTS)
             if verdict == "uncertain":
                 suspicious = True
             log(f"visual check file={self.filename!r} reason={reason} layer={layer} changed={changed} verdict={verdict} detail={detail!r}")

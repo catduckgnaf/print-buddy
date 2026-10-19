@@ -1,0 +1,36 @@
+# Docker defaults for Print Buddy.
+# Loaded when PRINT_BUDDY_CONFIG=/app/config/docker.toml (set in the image).
+# Environment variables PRINT_BUDDY__SECTION__KEY override any key here (scalars only).
+# Mount a replacement file at the same path to change lists such as orca.command or bed_mm.
+
+[orca]
+# Extracted AppImage AppRun from the pinned v2.4.2 release
+command = ["/opt/orcaslicer/AppRun"]
+
+[bambu]
+# Not installed by default; override if you add the Bambu Studio binary
+command = ["true"]
+
+[paths]
+hermes_home = "/data/hermes"
+archive = "/data/archive"
+records_vault = "/data/records"
+cache = "/data/cache"
+hermes_bin = "/usr/local/bin/hermes"
+ffmpeg = "ffmpeg"
+hermes_agent = "/data/hermes/hermes-agent"
+hermes_restart_helper = "/data/hermes/restart_hermes.py"
+
+[services]
+# Set via env or mount a local.toml / override this file
+moonraker_url = ""
+moonraker_ws_url = ""
+camera_snapshot_url = ""
+spoolman_url = "http://spoolman:8000"
+openviking_url = ""
+vision_chat_url = ""
+stock_api_port = 8898
+
+[printer]
+# Override with PRINT_BUDDY__PRINTER__MODEL=sovol.sv06 etc.
+model = "flashforge.ad5x"

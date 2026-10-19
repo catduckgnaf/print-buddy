@@ -1,5 +1,12 @@
 # Print Buddy Internal Release Notes
 
+# Version 2.0.2
+
+**Release Date:** 2026-10-19
+**What shipped:** the full runtime moved into this repo with a symlink installer and a personal overlay; settings file and update script with rollback; printer families (flashforge_zmod, generic_klipper, sovol_klipper) routed through the adapter on the print-now path; plate picker and combined multi-plate timelapse; spool swap override; per plate estimates; CI with real Orca and Spoolman. Closes #19.
+
+---
+
 # Version 2.0.1
 
 **Release Date:** 2026-10-18

@@ -54,4 +54,4 @@ jobs:
       - name: Real slicer tests
         env:
           PRINT_BUDDY_REAL_SLICER: "1"
-        run: xvfb-run -a python -m pytest -v -s tests/slicer
+        run: xvfb-run -a python -m pytest -q -rs tests

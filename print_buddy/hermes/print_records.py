@@ -351,7 +351,7 @@ def _plan_parts(required_parts: Any) -> list[dict[str, Any]]:
                         "completed_quantity": completed_quantity}
                 for key in ("plate_id", "plate", "run_id", "run", "optional", "required",
                             "alternative_group", "selected", "estimated_part_seconds",
-                            "plate_estimate_seconds", "gcode_file", "job_json", "gcode_path"):
+                            "plate_estimate_seconds", "estimated_filament_g", "gcode_file", "job_json", "gcode_path"):
                     if key in item:
                         part[key] = item[key]
                 if part["status"] == "completed":

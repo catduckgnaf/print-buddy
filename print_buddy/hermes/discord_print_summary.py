@@ -294,6 +294,123 @@ def format_event(kind, filename, now=None, archive=None, context_path=None, extr
     return scrub(message)
 
 
+def _copies(job):
+    try:
+        return max(1, int(job.get("copies") or 1))
+    except (TypeError, ValueError):
+        return 1
+
+
+def _site_plate(job, plate):
+    """The model page's own per-plate (seconds, grams) for plate `plate`, or (None, None)."""
+    plates = (job.get("selected_source") or {}).get("plates")
+    if not isinstance(plates, list) or not isinstance(plate, int) or not 1 <= plate <= len(plates):
+        return None, None
+    row = plates[plate - 1] if isinstance(plates[plate - 1], dict) else {}
+
+    def num(value):
+        ok = isinstance(value, (int, float)) and not isinstance(value, bool) and 0 < value < 1e7
+        return float(value) if ok else None
+    return num(row.get("prediction_s")), num(row.get("weight_g"))
+
+
+def _part_rows(job, keys, plate_g):
+    """Parts on one plate with their own share of the plate's grams (volume split, else equal).
+
+    Never the extruder or plate total repeated on every part: shares always sum to `plate_g`.
+    """
+    parts = [p for p in (job.get("color_manifest") or {}).get("parts") or []
+             if keys is None or p.get("key") in keys]
+    dec = job.get("color_decisions") or {}
+    choices = dec.get("choices") if isinstance(dec.get("choices"), dict) else {}
+    vols = [p.get("volume_mm3") for p in parts]
+    by_volume = bool(parts) and all(isinstance(v, (int, float)) and not isinstance(v, bool) and v > 0 for v in vols)
+    rows = {}
+    for part, vol in zip(parts, vols):
+        name = re.sub(r"\.(stl|3mf|obj|step|stp)$", "", safe_label(part.get("name"), ""), flags=re.I) or "Part"
+        sel = (choices.get(part.get("key")) or choices.get("part:" + str(part.get("key")))
+               or job.get("filament_selection") or dec.get("selection") or {})
+        row = rows.setdefault(name, {"name": name, "qty": 0, "weight": 0.0,
+                                     "color": safe_label(part.get("author_color") or sel.get("color"), "") or None,
+                                     "material": safe_label(sel.get("material"), "") or None})
+        row["qty"] += 1
+        row["weight"] += float(vol) if by_volume else 1.0
+    total = sum(r["weight"] for r in rows.values())
+    for row in rows.values():
+        row["filament_g"] = round(plate_g * row.pop("weight") / total, 1) if plate_g is not None and total else None
+    return list(rows.values())
+
+
+def plate_estimates(job):
+    """One estimate per plate: time and grams from the sliced G-code, else the model page's plate
+    estimate, else None (unknown, never zero). Parts carry their own gram share and quantity.
+
+    Copies are cloned into the sliced plate, so G-code figures already cover them; page figures
+    are per single copy and are multiplied here.
+    """
+    copies = _copies(job)
+    derived = job.get("derived_plates") or []
+    result = []
+    for number, row in enumerate(plates_of(job), 1):
+        keys = set(derived[number - 1].get("part_keys") or []) or None if derived else None
+        seconds, grams, basis = row.get("seconds"), row.get("filament_g"), "sliced"
+        site_s, site_g = _site_plate(job, row.get("plate") or number)
+        if seconds is None and site_s is not None:
+            seconds, basis = site_s * copies, "model page"
+        if grams is None and site_g is not None:
+            grams = site_g * copies
+        parts = _part_rows(job, keys, grams)
+        for part in parts:
+            part["qty"] *= copies
+        result.append({"plate": row.get("plate") or number, "seconds": seconds, "filament_g": grams,
+                       "basis": basis if seconds is not None else "unknown", "parts": parts})
+    return result
+
+
+def format_estimate_breakdown(job):
+    """Per-plate time, per-part grams and quantity, then aggregate totals. Warmup is noted separately."""
+    plates = plate_estimates(job)
+    if not plates:
+        return "Estimate unknown"
+    many = len(plates) > 1
+    copies = _copies(job)
+    lines = []
+    for row in plates:
+        if row["seconds"] is not None:
+            time_text = f"~{human(row['seconds'])}" + (" (model page estimate)" if row["basis"] == "model page" else "")
+        else:
+            time_text = "time unknown"
+        parts = []
+        for part in row["parts"]:
+            look = " ".join(v for v in (part["color"], part["material"]) if v)
+            grams = f"~{part['filament_g']:g} g" if part["filament_g"] is not None else "grams unknown"
+            qty = f" x{part['qty']}" if part["qty"] > 1 else ""
+            parts.append(f"{part['name']}{qty} ({', '.join(v for v in (look, grams) if v)})")
+        shown = "; ".join(parts[:4]) + (f"; +{len(parts) - 4} more" if len(parts) > 4 else "")
+        if not parts and row["filament_g"] is not None:
+            shown = f"~{row['filament_g']:g} g"
+        lines.append(f"{'Plate ' + str(row['plate']) if many else 'Plate'}: {time_text}" + (f" · {shown}" if shown else ""))
+    if len(lines) > 10:  # many plates: keep Discord short; the totals below still cover every plate
+        lines = lines[:10] + [f"+{len(lines) - 10} more plates"]
+    known = [r["seconds"] for r in plates if r["seconds"] is not None]
+    grams = [r["filament_g"] for r in plates if r["filament_g"] is not None]
+    unknown = len(plates) - len(known)
+    total = sum(known)
+    warm = f"+~{WARMUP_S // 60} min warmup" + (" per plate" if many else "")
+    if not known:
+        head = f"Total: time unknown ({warm})"
+    elif unknown:
+        head = f"Total: at least ~{human(total)} printing, {unknown} plate{'s' if unknown > 1 else ''} unknown ({warm})"
+    else:
+        head = f"Total: ~{human(total)} printing ({warm})"
+    head += (f", {'at least ' if len(grams) < len(plates) else '~'}{sum(grams):g} g filament"
+             if grams else ", filament unknown")
+    if copies > 1:
+        head += f" for {copies} copies"
+    lines.append(head)
+    return scrub("\n".join(lines))
+
+
 def format_slice_summary(job, now=None):
     """Post slice summary straight from JOB.json: model, parts per plate, filament, estimates."""
     rows = plates_of(job)

@@ -86,7 +86,9 @@ def test_intake_flow_quantity_prompt_and_duration_answer(env, monkeypatch):
         # 2 copies slice is ~2h 11m
         gcode.write_text('; estimated printing time (normal mode) = 2h 11m 12s\nG1 X1\n')
         data = json.loads(Path(job_path).read_text())
-        data['derived_plates'] = [{'gcode': str(gcode), 'plate_id': 1, 'slot': 1}]
+        # The real single plate path: Orca clones the copies and records how many.
+        data['gcode'] = str(gcode)
+        data['sliced_copies'] = {'gcode': str(gcode), 'copies': copies or 1}
         data['copies'] = copies
         Path(job_path).write_text(json.dumps(data))
         env.sliced.append(str(gcode))

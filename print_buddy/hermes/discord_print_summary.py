@@ -302,11 +302,18 @@ def _copies(job):
 
 
 def _sliced_copies(job):
-    """Copies the G-code really contains. Only the single plate path clones copies; per part and
-    full size split slicing produce one copy per plate whatever was requested."""
-    if (job.get("color_decisions") or {}).get("mode") == "per_part" or job.get("full_size_split_plan"):
+    """Copies the G-code really contains, as recorded by the slicer path that cloned them.
+
+    Merged, per plate, per part and split slicing never clone copies and record nothing; a record
+    from an earlier slice no longer matches the job's current G-code, so it counts as one copy.
+    """
+    record = job.get("sliced_copies")
+    if job.get("derived_plates") or not isinstance(record, dict) or record.get("gcode") != job.get("gcode"):
         return 1
-    return _copies(job)
+    try:
+        return max(1, int(record.get("copies") or 1))
+    except (TypeError, ValueError):
+        return 1
 
 
 def _site_plate(job, plate):

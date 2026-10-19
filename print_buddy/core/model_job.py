@@ -2108,6 +2108,8 @@ def slice_job(job_path, brim_override=None, copies=None, scale=None):
         job.pop('auto_scale', None)
     job.update({"slice_config": [str(p) for p in configs], "gcode": str(out),
                 "provenance": provenance, "gcode_verified": True,
+                # Only this path clones copies into the G-code; estimates read it, never the request.
+                "sliced_copies": {"gcode": str(out), "copies": max(1, int(copies or 1))},
                 "sliced_at": time.strftime("%Y-%m-%dT%H:%M:%S%z")})
     write_job(work, job)
     print(f"SLICED (not uploaded): {out}")

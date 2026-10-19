@@ -3,7 +3,7 @@
 #
 #   scripts/install-hermes.sh [--dry-run] [--hermes-home DIR] [--python PATH]
 #
-# Env: HERMES_HOME, PYTHON, SYSTEMD_USER_DIR (default ~/.config/systemd/user),
+# Env: PYTHON, SYSTEMD_USER_DIR (default ~/.config/systemd/user),
 #      PRINT_BUDDY_OVERLAY (default config/overlay), NO_SYSTEMCTL=1 to skip daemon-reload.
 #      Template values: LLM_PROVIDER LLM_MODEL LLM_BASE_URL TIMEZONE DISCORD_CHANNEL_ID DISPLAY_NAME BOT_NAME
 #      (BOT_NAME defaults to [discord] bot_name in config/home.toml).
@@ -17,6 +17,9 @@ set -eu
 
 REPO=$(cd "$(dirname "$0")/.." && pwd)
 DRY=0
+# Not read from the environment: the Hermes gateway exports HERMES_HOME=~/.hermes for every profile.
+# Use --hermes-home, PRINT_BUDDY__PATHS__HERMES_HOME or [paths] hermes_home.
+HERMES_HOME=""
 while [ $# -gt 0 ]; do
     case "$1" in
         --dry-run) DRY=1 ;;

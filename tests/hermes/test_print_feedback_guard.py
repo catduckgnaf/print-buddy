@@ -326,3 +326,17 @@ def test_actual_dispatcher_enforces_duplicate_guard():
             assert message is None
         message, _ = _dispatch_pre_tool_call_hooks('terminal', {'command': 'status'}, session_id='s', turn_id='t')
         assert message is not None and 'repeat' in message
+
+
+@pytest.mark.parametrize('command, expected', [
+    ('python3 -m print_buddy.core.model_job slice JOB.json --approved', True),
+    ('python3 /x/model_job.py slice JOB.json', True),
+    ('ls -la', False),
+])
+def test_terminal_receipt_matches_module_and_script_invocations(command, expected):
+    session = {'HERMES_SESSION_PLATFORM': 'discord', 'HERMES_SESSION_PROFILE': '3dprinting',
+               'HERMES_SESSION_CHAT_ID': 'chat-ack-test'}
+    with mock.patch.object(plugin, '_session', side_effect=lambda key: session.get(key, '')), \
+            mock.patch.object(plugin, 'workflow_receipt', return_value='ok') as receipt:
+        plugin.clarify_ack(tool_name='terminal', args={'command': command}, result={}, tool_call_id=command)
+    assert receipt.called is expected

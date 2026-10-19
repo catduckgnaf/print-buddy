@@ -37,7 +37,12 @@ systemctl --user enable --now hermes-3dprinting-moonraker-listener.service
 Options: `--hermes-home DIR`, `--python PATH`, env `SYSTEMD_USER_DIR`.
 It symlinks the skills, `print-feedback` plugin and docs into the profile, renders templates only
 where the target is missing, applies the overlay, and installs the systemd user units.
-Anything replaced is moved to `<name>.bak-<time>`. Rerunning is safe.
+It also writes a `print_buddy.pth` into the Hermes venv's site-packages so `python -m print_buddy...`
+works from any directory, and copies old `~/.print_bitch_*.json` and `~/.moonraker_discord_announcements.json`
+state files into `<hermes home>/state/` when the new copy is missing. An old private `scripts/` folder in the
+profile is moved aside. Anything replaced is moved to `<hermes home>/.install-backups/<time>/<path>` (units go under
+`<systemd dir>/.install-backups/`), never next to the original, so Hermes cannot load a backup as a duplicate
+plugin or skill. Rerunning is safe.
 
 The listener unit is named `hermes-3dprinting-moonraker-listener.service`, the same as the private
 setup used, so installing it replaces the old unit instead of running a second listener.

@@ -80,7 +80,7 @@ platform_toolsets:
   - vision
   - web
 terminal:
-  cwd: ${PROFILE_DIR}
+  cwd: ${REPO}
 session_reset:
   mode: daily
   at_hour: 4

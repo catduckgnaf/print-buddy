@@ -25,11 +25,11 @@ class InstallerTests(unittest.TestCase):
         systemctl.write_text(f'#!/bin/sh\necho "$@" >> "{self.log}"\n')
         systemctl.chmod(systemctl.stat().st_mode | stat.S_IEXEC)
 
-    def run_installer(self, *args, overlay=True):
+    def run_installer(self, *args, overlay=True, python="/opt/venv/bin/python"):
         env = dict(os.environ,
                    HERMES_HOME=str(self.home), SYSTEMD_USER_DIR=str(self.units),
                    PRINT_BUDDY_OVERLAY=str(self.overlay if overlay else self.tmp / "no-overlay"),
-                   PYTHON="/opt/venv/bin/python", HOME=str(self.tmp / "fakehome"),
+                   PYTHON=python, HOME=str(self.tmp / "fakehome"),
                    PATH=f"{self.fakebin}:{os.environ['PATH']}",
                    DISCORD_CHANNEL_ID="12345", TIMEZONE="Europe/Paris")
         result = subprocess.run(["bash", str(SCRIPT), *args], capture_output=True, text=True, env=env, cwd=self.tmp)
@@ -59,7 +59,7 @@ class InstallerTests(unittest.TestCase):
         config = (self.home / "config.yaml").read_text()
         self.assertIn("'12345'", config)
         self.assertIn("timezone: Europe/Paris", config)
-        self.assertIn(str(self.home), config)
+        self.assertIn(str(ROOT), config)
         for name in ("AGENTS.md", "SOUL.md", "MEMORY.md", "profile.yaml", "status_phrases.yaml"):
             self.assertTrue((self.home / name).is_file(), name)
         unit = (self.units / "hermes-3dprinting-moonraker-listener.service").read_text()
@@ -100,7 +100,8 @@ class InstallerTests(unittest.TestCase):
         self.assertEqual("my private soul\n", (self.home / "SOUL.md").read_text())
         self.assertEqual("TOKEN=x\n", (self.home / ".env").read_text())
         self.assertFalse((self.home / "README.md").exists())
-        self.assertTrue(list(self.home.glob("SOUL.md.bak-*")), "generic SOUL.md is backed up, not lost")
+        [backup] = (self.home / ".install-backups").glob("*/SOUL.md")
+        self.assertNotEqual("my private soul\n", backup.read_text(), "generic SOUL.md is backed up, not lost")
         self.assertIn("Environment=X=1", (self.units / "hermes-3dprinting-moonraker-listener.service.d/90-local.conf").read_text())
         before = self.tree()
         self.run_installer()
@@ -116,10 +117,11 @@ class InstallerTests(unittest.TestCase):
         self.run_installer()
         self.assertTrue(skill.is_symlink())
         self.assertTrue(plugin.is_symlink())
-        [backup] = list(skill.parent.glob("klipper-3d-printing.bak-*"))
+        [backup] = (self.home / ".install-backups").glob("*/skills/smart-home/klipper-3d-printing")
         self.assertEqual("old copy\n", (backup / "old.txt").read_text())
-        [backup] = list(plugin.parent.glob("print-feedback.bak-*"))
+        [backup] = (self.home / ".install-backups").glob("*/plugins/print-feedback")
         self.assertEqual("# old\n", (backup / "__init__.py").read_text())
+        self.assertFalse(list(self.home.rglob("*.bak-*")), "no backups next to the originals")
 
     def test_stale_symlink_is_repointed(self):
         skill = self.home / "skills/smart-home/klipper-3d-printing"
@@ -127,6 +129,58 @@ class InstallerTests(unittest.TestCase):
         skill.symlink_to(self.tmp)
         self.run_installer()
         self.assertEqual(ROOT / "hermes/skills/klipper-3d-printing", Path(os.readlink(skill)))
+
+    def make_venv(self):
+        venv = self.tmp / "venv"
+        subprocess.run(["python3", "-m", "venv", "--without-pip", str(venv)], check=True, capture_output=True)
+        py = venv / "bin/python"
+        purelib = subprocess.run([str(py), "-c", 'import sysconfig; print(sysconfig.get_paths()["purelib"])'],
+                                 check=True, capture_output=True, text=True).stdout.strip()
+        return py, Path(purelib)
+
+    def test_pth_written_to_venv_site_packages(self):
+        py, purelib = self.make_venv()
+        dry = self.run_installer("--dry-run", python=str(py))
+        self.assertIn("would: write", dry)
+        self.assertFalse((purelib / "print_buddy.pth").exists())
+        self.run_installer(python=str(py))
+        self.assertEqual(f"{ROOT}\n", (purelib / "print_buddy.pth").read_text())
+        self.assertIn("ok      " + str(purelib / "print_buddy.pth"), self.run_installer(python=str(py)))
+
+    def test_unusable_python_skips_pth_with_warning(self):
+        self.assertIn("skipped print_buddy.pth", self.run_installer())
+
+    def test_legacy_state_files_are_copied_not_moved(self):
+        fake_home = self.tmp / "fakehome"
+        fake_home.mkdir()
+        (fake_home / ".print_bitch_context.json").write_text("ctx\n")
+        (fake_home / ".print_bitch_start_claims.json").write_text("claims-old\n")
+        (fake_home / ".moonraker_discord_announcements.json").write_text("ann\n")
+        state = self.home / "state"
+        state.mkdir(parents=True)
+        (state / "print_bitch_start_claims.json").write_text("claims-new\n")
+        dry = self.run_installer("--dry-run")
+        self.assertIn("would: copy", dry)
+        self.assertFalse((state / "print_bitch_context.json").exists())
+        self.run_installer()
+        self.assertEqual("ctx\n", (state / "print_bitch_context.json").read_text())
+        self.assertEqual("ann\n", (state / "moonraker_discord_announcements.json").read_text())
+        self.assertEqual("claims-new\n", (state / "print_bitch_start_claims.json").read_text())
+        self.assertTrue((fake_home / ".print_bitch_context.json").exists())
+
+    def test_old_private_scripts_dir_is_moved_aside(self):
+        scripts = self.home / "scripts"
+        scripts.mkdir(parents=True)
+        (scripts / "moonraker_event_listener.py").write_text("# old\n")
+        out = self.run_installer()
+        self.assertIn("old private scripts/", out)
+        self.assertFalse(scripts.exists())
+        [moved] = (self.home / ".install-backups").glob("*/scripts")
+        self.assertTrue((moved / "moonraker_event_listener.py").is_file())
+
+    def test_config_template_runs_terminal_from_the_repo(self):
+        self.run_installer()
+        self.assertIn(f"cwd: {ROOT}", (self.home / "config.yaml").read_text())
 
 
 if __name__ == "__main__":

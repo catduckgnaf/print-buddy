@@ -605,3 +605,21 @@ def test_picker_other_refusal_offers_no_spool_button(tmp_path, monkeypatch):
     go = Interaction(pick.out[0][2].items[0].custom_id)
     asyncio.run(on_interaction(go))
     assert len(go.out[-1]) == 2
+
+
+def test_start_spawns_print_now_from_the_repo_root(tmp_path):
+    from print_buddy import settings
+    folder, rows = make_job(tmp_path)
+    plans = make_plan(tmp_path, folder, rows)
+    target = print_next.resolve_next(print_next.load_plan('ghost', plans), tmp_path / 'archive')
+    seen = {}
+
+    async def fake_spawn(*argv, **kwargs):
+        seen.update(argv=argv, kwargs=kwargs)
+        raise OSError('stop here')
+
+    with mock.patch('asyncio.create_subprocess_exec', fake_spawn):
+        ok, _ = asyncio.run(print_next.start(target, idle_check=lambda: None, claims_dir=tmp_path / 'claims'))
+    assert not ok
+    assert seen['kwargs']['cwd'] == str(settings.ROOT)
+    assert seen['argv'][1:3] == ('-m', print_next.MODEL_JOB_MODULE)

@@ -79,9 +79,12 @@ class OverrideTests(unittest.TestCase):
         for text, message in [("[printer]\nbed_mm = [220]\n", "bed_mm"),
                               ("[printer]\nbed_mm = [220, -1]\n", "bed_mm"),
                               ("[printer]\nifs_slots = 2.5\n", "whole number"),
-                              ("[printer]\nnozzle_diameter_mm = true\n", "positive number"),
+                              ("[printer]\nnozzle_diameter_mm = true\n", "should be like 0.4"),
                               ("[layout]\nmulti_copy_edge_mm = 0\n", "positive number"),
-                              ('[orca]\ncommand = "flatpak run orca"\n', "list of strings"),
+                              ('[orca]\ncommand = "flatpak run orca"\n', "should be like"),
+                              ("[printer]\nbed_size = 220\n", "unknown setting \\[printer\\] bed_size"),
+                              ("[pritner]\nifs_slots = 1\n", "unknown section"),
+                              ('[services]\nspoolman_url = "spoolman.lan"\n', "must be a URL"),
                               ("[printer\n", "local.toml")]:
             with self.subTest(text=text):
                 with self.assertRaisesRegex(settings.SettingsError, message):
@@ -98,3 +101,39 @@ class OverrideTests(unittest.TestCase):
         out = subprocess.run([sys.executable, "-c", code], cwd=settings.ROOT, capture_output=True, text=True,
                              env={**os.environ, "PRINT_BUDDY_CONFIG": str(path)}, check=True).stdout
         self.assertEqual(out.strip(), "True [300.0, 300.0]")
+
+
+class RuntimeSettingsTests(unittest.TestCase):
+    def test_legacy_env_names_still_work(self):
+        data = settings.load(local=False, environ={"MOONRAKER_URL": "http://ad5x.lan:7125", "SPOOL_NAG_SECONDS": "300",
+                                                   "PRINT_DISCORD_CHAT_ID": "123"})
+        self.assertEqual(data["services"]["moonraker_url"], "http://ad5x.lan:7125")
+        self.assertEqual(data["listener"]["spool_nag_s"], 300)
+        self.assertEqual(data["discord"]["chat_id"], "123")
+
+    def test_generic_env_override(self):
+        data = settings.load(local=False, environ={"PRINT_BUDDY__MAINTENANCE__FULL_DAYS": "45"})
+        self.assertEqual(data["maintenance"]["full_days"], 45)
+
+    def test_env_typos_and_bad_numbers_fail(self):
+        for env, message in [({"PRINT_BUDDY__LISTENER__TICKS": "5"}, "unknown setting"),
+                             ({"SPOOL_NAG_SECONDS": "ten"}, "should be a number"),
+                             ({"PRINT_BUDDY__COLD_PULL__PETG": "1"}, "list")]:
+            with self.subTest(env=env), self.assertRaisesRegex(settings.SettingsError, message):
+                settings.load(local=False, environ=env)
+
+    def test_moonraker_url_derives_websocket_and_camera(self):
+        data = settings.load(local=False, environ={"MOONRAKER_URL": "http://ad5x.lan:7125/"})
+        self.assertEqual(data["services"]["moonraker_ws_url"], "ws://ad5x.lan:7125/websocket")
+        self.assertEqual(data["services"]["camera_snapshot_url"], "http://ad5x.lan/webcam/?action=snapshot")
+
+    def test_paths_expand_and_state_lives_in_the_profile(self):
+        data = settings.load(local=False, environ={})
+        self.assertEqual(data["paths"]["hermes_home"], Path.home() / ".hermes/profiles/3dprinting")
+        self.assertEqual(settings.state_dir(data), Path.home() / ".hermes/profiles/3dprinting/state")
+        self.assertEqual(data["paths"]["ffmpeg"], "ffmpeg")
+
+    def test_home_file_has_no_addresses_or_ids(self):
+        data = settings.load(local=False, environ={})
+        self.assertTrue(all(not v for k, v in data["services"].items() if k.endswith("_url")))
+        self.assertEqual((data["discord"]["chat_id"], data["discord"]["approval_user_id"]), ("", ""))

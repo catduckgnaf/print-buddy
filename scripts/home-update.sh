@@ -29,7 +29,7 @@ if [ "$(git rev-parse HEAD)" = "$previous" ]; then
 fi
 
 echo "Updated $(git rev-parse --short "$previous") -> $(git rev-parse --short HEAD). Checking..."
-if PRINT_BUDDY_UPDATE_CHECK=1 "$python" -m unittest discover -s tests -q && "$python" -m print_buddy.doctor; then
+if PRINT_BUDDY_UPDATE_CHECK=1 "$python" -m pytest -q -p no:cacheprovider tests && "$python" -m print_buddy.doctor; then
     if [ -x config/after-update.sh ]; then
         config/after-update.sh
     fi

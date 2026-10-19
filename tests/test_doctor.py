@@ -70,5 +70,5 @@ class DoctorTests(unittest.TestCase):
         self.assertIn("FAIL  orca cli: flatpak run com.orcaslicer.OrcaSlicer --help exited 1", text)
 
     def test_bad_service_url_is_a_settings_error(self):
-        with self.assertRaisesRegex(settings.SettingsError, "http"):
+        with self.assertRaisesRegex(settings.SettingsError, "must be a URL"):
             self.run_doctor('[services]\nspoolman_url = "spoolman.lan"\n')

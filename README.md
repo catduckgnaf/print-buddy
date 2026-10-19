@@ -229,7 +229,7 @@ Run the test suite from the repository root. GitHub Actions runs the same comman
 
 ```bash
 python3 -m pip install -r requirements-test.txt
-python3 -m unittest discover -s tests -v
+python3 -m pytest tests
 ```
 
 A second CI job installs the Flathub OrcaSlicer the home box runs and slices small fixtures with the home templates, then runs the post slice guard and the protected settings baseline on the real output. Run it locally with `PRINT_BUDDY_REAL_SLICER=1 python3 -m unittest tests.slicer -v`.

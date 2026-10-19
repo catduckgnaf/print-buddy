@@ -3,6 +3,9 @@
 Load order, later wins key by key:
   1. config/home.toml (committed, the home setup; tests use it)
   2. $PRINT_BUDDY_CONFIG if set, otherwise config/local.toml if it exists (never committed)
+  3. Environment: PRINT_BUDDY__SECTION__KEY, or a legacy name from LEGACY_ENV
+
+Every key must already exist in home.toml with the same type, so a typo fails loudly.
 """
 from __future__ import annotations
 
@@ -21,6 +24,41 @@ class SettingsError(ValueError):
     pass
 
 
+# Environment names the running home services already set. They keep working unchanged.
+LEGACY_ENV = {
+    "MOONRAKER_URL": ("services", "moonraker_url"),
+    "MOONRAKER_WS_URL": ("services", "moonraker_ws_url"),
+    "SPOOLMAN_URL": ("services", "spoolman_url"),
+    "OPENVIKING_URL": ("services", "openviking_url"),
+    "PRINT_VISION_CHAT_URL": ("services", "vision_chat_url"),
+    "PRINT_DISCORD_CHAT_ID": ("discord", "chat_id"),
+    "DISCORD_UPLOAD_MAX_BYTES": ("discord", "upload_max_bytes"),
+    "DISCORD_POST_PRINT_QUIET_SECONDS": ("discord", "post_print_quiet_s"),
+    "DISCORD_DAILY_RESET_HOUR": ("discord", "daily_reset_hour"),
+    "MOONRAKER_LISTENER_TICK_SECONDS": ("listener", "tick_s"),
+    "IFS_PRESENCE_POLL_SECONDS": ("listener", "ifs_presence_poll_s"),
+    "SPOOL_NAG_SECONDS": ("listener", "spool_nag_s"),
+    "PRINT_VISION_MODEL": ("vision", "model"),
+    "PRINT_TIMELAPSE_ARCHIVE_HOST": ("timelapse", "archive_host"),
+    "PRINT_TIMELAPSE_ARCHIVE_DIR": ("timelapse", "archive_dir"),
+    "PRINT_TIMELAPSE_SSH_KEY": ("timelapse", "ssh_key"),
+    "PRINT_TIMELAPSE_RENDER_WAIT_SECONDS": ("timelapse", "render_wait_s"),
+    "PRINT_TIMELAPSE_RENDER_POLL_SECONDS": ("timelapse", "render_poll_s"),
+    "PRINT_TIMELAPSE_MAX_BYTES": ("timelapse", "max_bytes"),
+    "PRINT_TIMELAPSE_LOCAL_RETENTION_DAYS": ("timelapse", "local_retention_days"),
+    "MAINTENANCE_QUICK_HOURS": ("maintenance", "quick_hours"),
+    "MAINTENANCE_FULL_HOURS": ("maintenance", "full_hours"),
+    "MAINTENANCE_FULL_DAYS": ("maintenance", "full_days"),
+    "HERMES_HOME": ("paths", "hermes_home"),
+    "HERMES_BIN": ("paths", "hermes_bin"),
+    "FFMPEG_BIN": ("paths", "ffmpeg"),
+    "PRINT_BITCH_ARCHIVE": ("paths", "archive"),
+    "PRINT_RECORDS_VAULT": ("paths", "records_vault"),
+}
+# Sections whose keys are names you choose, not a fixed set.
+OPEN_SECTIONS = {"cold_pull"}
+
+
 def _merge(base, extra):
     out = copy.deepcopy(base)
     for key, value in extra.items():
@@ -37,6 +75,61 @@ def _read(path):
             return tomllib.load(f)
     except tomllib.TOMLDecodeError as exc:
         raise SettingsError(f"{path}: {exc}") from None
+
+
+def _same_type(expected, value):
+    if isinstance(expected, bool) or isinstance(value, bool):
+        return isinstance(expected, bool) and isinstance(value, bool)
+    if isinstance(expected, (int, float)):
+        return isinstance(value, (int, float))
+    return type(expected) is type(value)
+
+
+def _check_keys(home, extra, source):
+    """Reject keys home.toml does not define, and values of the wrong type."""
+    for section, values in extra.items():
+        if section not in home or not isinstance(values, dict):
+            raise SettingsError(f"{source}: unknown section [{section}]")
+        for key, value in values.items():
+            if key not in home[section]:
+                if section in OPEN_SECTIONS:
+                    continue
+                raise SettingsError(f"{source}: unknown setting [{section}] {key}")
+            if not _same_type(home[section][key], value):
+                raise SettingsError(f"{source}: [{section}] {key} should be like {home[section][key]!r}, got {value!r}")
+
+
+def _coerce(expected, raw, name):
+    try:
+        if isinstance(expected, bool):
+            return raw.strip().lower() in ("1", "true", "yes", "on")
+        if isinstance(expected, int):
+            return int(raw)
+        if isinstance(expected, float):
+            return float(raw)
+    except ValueError:
+        raise SettingsError(f"${name} should be a number, got {raw!r}") from None
+    if isinstance(expected, str):
+        return raw
+    raise SettingsError(f"${name}: [list] settings cannot come from the environment")
+
+
+def _from_env(home, environ):
+    out = {}
+    for name, raw in environ.items():
+        if name.startswith("PRINT_BUDDY__"):
+            parts = name[len("PRINT_BUDDY__"):].lower().split("__")
+            if len(parts) != 2:
+                raise SettingsError(f"${name} must look like PRINT_BUDDY__SECTION__KEY")
+            section, key = parts
+        elif name in LEGACY_ENV:
+            section, key = LEGACY_ENV[name]
+        else:
+            continue
+        if key not in home.get(section, {}):
+            raise SettingsError(f"${name}: unknown setting [{section}] {key}")
+        out.setdefault(section, {})[key] = _coerce(home[section][key], raw, name)
+    return out
 
 
 def _positive(data, section, key, kind=float):
@@ -70,9 +163,20 @@ def validate(data):
         command = data.get(section, {}).get("command")
         if not isinstance(command, list) or not command or not all(isinstance(v, str) and v for v in command):
             raise SettingsError(f"[{section}] command must be a list of strings, like [\"flatpak\", \"run\", \"com.orcaslicer.OrcaSlicer\"]")
-    for key, value in data.get("services", {}).items():
-        if value is not None and not (isinstance(value, str) and value.startswith(("http://", "https://"))):
-            raise SettingsError(f"[services] {key} must be an http(s) URL, got {value!r}")
+    services = data["services"]
+    for key, value in services.items():
+        if key.endswith("_url") and value and not value.startswith(("ws://", "wss://") if key == "moonraker_ws_url" else ("http://", "https://")):
+            raise SettingsError(f"[services] {key} must be a URL, got {value!r}")
+    if services["moonraker_url"]:
+        base = services["moonraker_url"].rstrip("/")
+        host = base.split("://", 1)[1].split("/", 1)[0].rsplit(":", 1)[0]
+        services["moonraker_ws_url"] = services["moonraker_ws_url"] or base.replace("http", "ws", 1) + "/websocket"
+        services["camera_snapshot_url"] = services["camera_snapshot_url"] or f"http://{host}/webcam/?action=snapshot"
+    for key, value in data["paths"].items():
+        if key == "ffmpeg" and "/" not in value:
+            continue  # a bare name is looked up on PATH
+        path = Path(value).expanduser()
+        data["paths"][key] = path if path.is_absolute() else ROOT / path
     templates = data.get("orca", {}).get("templates")
     if not isinstance(templates, str) or not templates:
         raise SettingsError("[orca] templates must be a folder path")
@@ -81,9 +185,13 @@ def validate(data):
     return data
 
 
-def load(home=HOME, local=None):
-    """Read and validate settings. local=None means $PRINT_BUDDY_CONFIG or config/local.toml."""
+def load(home=HOME, local=None, environ=None):
+    """Read and validate settings. local=None means $PRINT_BUDDY_CONFIG or config/local.toml.
+
+    environ defaults to os.environ; pass {} to ignore the environment.
+    """
     data = _read(home)
+    base = copy.deepcopy(data)
     if local is None:
         env = os.environ.get("PRINT_BUDDY_CONFIG")
         if env:
@@ -93,7 +201,10 @@ def load(home=HOME, local=None):
         elif LOCAL.is_file():
             local = LOCAL
     if local:
-        data = _merge(data, _read(local))
+        extra = _read(local)
+        _check_keys(base, extra, local)
+        data = _merge(data, extra)
+    data = _merge(data, _from_env(base, os.environ if environ is None else environ))
     return validate(data)
 
 
@@ -101,3 +212,8 @@ def load(home=HOME, local=None):
 def current():
     """Settings for this process, read once."""
     return load()
+
+
+def state_dir(data=None):
+    """Where runtime state files live: <hermes_home>/state."""
+    return (data or current())["paths"]["hermes_home"] / "state"

@@ -87,7 +87,7 @@ class StrayTests(unittest.TestCase):
 
     def test_removal_needs_a_profile_copy_or_empty_content(self):
         covered = self.root / "state" / "print_alert_buttons.json"
-        covered.write_text('{"real": 1}')
+        covered.write_text('{"real": 2}')
         (self.state / "print_alert_buttons.json").write_text('{"real": 2}')
         lonely = self.sibling / "state" / "printer_hardware.json"
         lonely.write_text('{"only": "copy"}')
@@ -102,6 +102,16 @@ class StrayTests(unittest.TestCase):
         self.assertFalse(covered.exists() or trivial.exists() or empty_dir.exists())
         self.assertEqual('{"only": "copy"}', lonely.read_text())
         self.assertEqual('{"real": 2}', (self.state / "print_alert_buttons.json").read_text())
+
+    def test_other_profiles_differing_file_is_kept(self):
+        # Another profile may use a generic name like maintenance.json for its own data.
+        theirs = self.sibling / "state" / "maintenance.json"
+        theirs.write_text('{"their": "data"}')
+        (self.state / "maintenance.json").write_text('{"ours": 1}')
+        removed, kept = state_files.remove_strays(state_files.find_strays(self.config))
+        self.assertEqual([], removed)
+        self.assertIn("differs", kept[0][1])
+        self.assertEqual('{"their": "data"}', theirs.read_text())
 
     def test_legacy_and_old_name_removed_once_new_copy_exists(self):
         (self.home / ".moonraker_discord_announcements.json").write_text('{"m": 1}')

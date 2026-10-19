@@ -59,6 +59,7 @@ class Stray:
     path: Path
     reason: str
     canonical: Path
+    shared: bool = False  # in a folder another profile may own: only empty or identical copies are deleted
 
 
 def _present(path):
@@ -82,7 +83,7 @@ def _scan(folder, state, reason):
     for name in KNOWN:
         path = folder / name
         if _present(path) and not _contained(path, state):
-            yield Stray(path, reason, state / name)
+            yield Stray(path, reason, state / name, shared=True)
 
 
 def find_strays(config=None):
@@ -125,6 +126,16 @@ def _empty(path):
         return False
 
 
+def _identical(path, canonical):
+    """Same bytes as the profile copy (files only; a folder never counts)."""
+    if path.is_symlink() or not path.is_file() or not canonical.is_file():
+        return False
+    try:
+        return path.read_bytes() == canonical.read_bytes()
+    except OSError:
+        return False
+
+
 def _delete(path):
     if path.is_symlink() or path.is_file():
         path.unlink()  # a symlink is unlinked, never followed
@@ -136,10 +147,18 @@ def remove_strays(strays, dry_run=False):
     """Delete strays that are safe to drop. Returns (removed, kept) lists of (Stray, note)."""
     removed, kept = [], []
     for stray in strays:
-        if _present(stray.canonical) and not _contained(stray.path, stray.canonical.parent):
-            note = "profile copy exists"
-        elif _empty(stray.path):
+        if _empty(stray.path):
             note = "empty"
+        elif stray.shared and _identical(stray.path, stray.canonical):
+            note = "same as profile copy"
+        elif stray.shared and stray.path.is_symlink() and _present(stray.canonical):
+            note = "symlink; profile copy exists"  # unlinking a link loses no data
+        elif stray.shared:
+            why = "differs from the profile copy" if _present(stray.canonical) else "no profile copy"
+            kept.append((stray, f"kept: {why}; another profile may own it, check by hand"))
+            continue
+        elif _present(stray.canonical) and not _contained(stray.path, stray.canonical.parent):
+            note = "profile copy exists"
         else:
             kept.append((stray, "kept: no profile copy"))
             continue

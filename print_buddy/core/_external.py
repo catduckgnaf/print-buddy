@@ -1,14 +1,14 @@
 """Runtime modules that live next to the Hermes profile rather than in the offline core.
 
 print_records, print_control, maintenance, print_next and discord_print_summary are found as
-print_buddy.core.<name> when packaged, otherwise as a top level module on the Hermes path.
+print_buddy.hermes.<name> when packaged, otherwise as a top level module on the Hermes path.
 """
 import importlib
 
 
 def load(name):
     last = None
-    for qualified in (f"{__package__}.{name}", name):
+    for qualified in (f"print_buddy.hermes.{name}", name):
         try:
             return importlib.import_module(qualified)
         except ModuleNotFoundError as exc:

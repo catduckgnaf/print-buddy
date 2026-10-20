@@ -614,7 +614,10 @@ class EnglishAndPrintNowTests(unittest.TestCase):
              mock.patch.object(model_job, "record_start"):
             with self.assertRaisesRegex(SystemExit, "START FAILED.*Not retrying; check the printer screen"):
                 model_job.print_now(self._gcode(d))
-        self.assertEqual(mr.call_count, 1)
+        # One start POST, then the #84 status readback. Not a second start.
+        self.assertEqual(mr.call_count, 2)
+        self.assertEqual(mr.call_args_list[0].args[1], "/printer/print/start")
+        self.assertIn("/printer/objects/query", mr.call_args_list[1].args[1])
 
     def test_printer_phase_accepts_print_start_preparation_signals(self):
         payload = {'result': {'status': {
@@ -644,7 +647,10 @@ class EnglishAndPrintNowTests(unittest.TestCase):
                 out = model_job.print_now(self._gcode(d))
                 self.assertEqual(out['phase'], 'awaiting_confirmation')
                 self.assertEqual(out['message'], 'submitted, awaiting confirmation')
-                self.assertEqual(mr.call_count, 1)
+                # One start POST, then the #84 status readback. Not a second start.
+                self.assertEqual(mr.call_count, 2)
+                self.assertEqual(mr.call_args_list[0].args[1], "/printer/print/start")
+                self.assertIn("/printer/objects/query", mr.call_args_list[1].args[1])
 
     def test_z_offset_notice_only_when_start_print_lacks_z_offset(self):
         plain = "START_PRINT EXTRUDER_TEMP=220 BED_TEMP=60\n"
@@ -772,7 +778,11 @@ class EnglishAndPrintNowTests(unittest.TestCase):
                 out = model_job.print_now(g, accept_default_z_offset=True)
                 mock_run.assert_called_once()
                 self.assertEqual(mock_run.call_args[0][0][3], expected_remote)
-                mock_mr.assert_called_once_with(mock.ANY, "/printer/print/start", data={"filename": expected_remote})
+                start_calls = [c for c in mock_mr.call_args_list if c.args[1] == "/printer/print/start"]
+                self.assertEqual(len(start_calls), 1)
+                self.assertEqual(start_calls[0], mock.call(mock.ANY, "/printer/print/start", data={"filename": expected_remote}))
+                query_calls = [c for c in mock_mr.call_args_list if "/printer/objects/query" in c.args[1]]
+                self.assertEqual(len(query_calls), 1)
                 self.assertEqual(out["file"], expected_remote)
 
     def test_print_now_rejects_upload_target_mismatch(self):
@@ -1105,7 +1115,10 @@ class EnglishAndPrintNowTests(unittest.TestCase):
              mock.patch.object(model_job, "_wait_printing", return_value="standby"):
             with self.assertRaisesRegex(SystemExit, "START FAILED"):
                 model_job.print_now(self._gcode(d))
-        self.assertEqual(mr.call_count, 1)
+        # One start POST, then the #84 status readback. Not a second start.
+        self.assertEqual(mr.call_count, 2)
+        self.assertEqual(mr.call_args_list[0].args[1], "/printer/print/start")
+        self.assertIn("/printer/objects/query", mr.call_args_list[1].args[1])
 
     def test_fetch_print_now_without_filament_selection_fails_closed_naming_command(self):
         source_job = {"slug": "offline-test", "site": "makerworld", "model_id": "123", "title": "Offline Test", "sources": [{"filename": "test.3mf", "title": "Test source", "site_nozzle_mm": 0.4, "plates": [], "materials": ["PLA"]}]}

@@ -91,12 +91,11 @@ jobs:
           "$RUNNER_TEMP/spoolman-venv/bin/python" -m pip install -r requirements.txt
           echo "SPOOLMAN_APP_DIR=$PWD" >> "$GITHUB_ENV"
           echo "SPOOLMAN_PYTHON=$RUNNER_TEMP/spoolman-venv/bin/python" >> "$GITHUB_ENV"
-          echo "$RUNNER_TEMP/spoolman-venv/bin" >> "$GITHUB_PATH"
       - name: Start isolated Spoolman server
         run: |
           mkdir -p "$RUNNER_TEMP/spoolman-data"
           cd "$SPOOLMAN_APP_DIR"
-          SPOOLMAN_DIR_DATA="$RUNNER_TEMP/spoolman-data" SPOOLMAN_PORT=7912 SPOOLMAN_HOST=127.0.0.1 \
+          PATH="$RUNNER_TEMP/spoolman-venv/bin:$PATH" SPOOLMAN_DIR_DATA="$RUNNER_TEMP/spoolman-data" SPOOLMAN_PORT=7912 SPOOLMAN_HOST=127.0.0.1 \
             "$SPOOLMAN_PYTHON" -m uvicorn spoolman.main:app --host 127.0.0.1 --port 7912 \
             > "$RUNNER_TEMP/spoolman.log" 2>&1 &
           echo $! > "$RUNNER_TEMP/spoolman.pid"

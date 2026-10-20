@@ -379,6 +379,7 @@ _LIVE_KEY = contextvars.ContextVar('prepared_intake_live_key', default=None)
 
 
 from .link_intake import PromptCancelled as IntakeCancelled  # noqa: E402  typed Cancel/Stop at any prompt
+from .link_intake import PromptExpired as IntakeExpired  # noqa: E402  button question reached its timeout
 
 
 async def _spool_projection_text(mj, job, manifest, state, copies):
@@ -401,7 +402,7 @@ async def _spool_projection_text(mj, job, manifest, state, copies):
         return ''
 
 
-async def _ask(adapter, source, key, question, choices, timeout=300, **kwargs):
+async def _ask(adapter, source, key, question, choices, timeout=None, **kwargs):
     """ask() registered under the live chat session so typed replies reach the prompt."""
     live_key = kwargs.pop('live_key', None) or _LIVE_KEY.get() or key
     on_shown = kwargs.pop('on_shown', None)
@@ -410,7 +411,7 @@ async def _ask(adapter, source, key, question, choices, timeout=300, **kwargs):
     return await ask(adapter, source, key, question, list(choices), timeout, live_key=live_key, **kwargs)
 
 
-async def _pick_plate(adapter, source, key, parts, timeout=300):
+async def _pick_plate(adapter, source, key, parts, timeout=None):
     """One picker for a split job: index of the plate to print first, or None for Cancel."""
     labels = [print_next.plate_choice_label(part, part.get('plate')) for part in parts]
     picked = await _ask(adapter, source, key, 'Which plate prints first?', labels + ['Cancel'], timeout)
@@ -461,7 +462,7 @@ async def _send_source_thumbnail(adapter, source, path, target):
         pass
 
 
-async def prepare_link(event, adapter, state, root, timeout=300, reuse=None):
+async def prepare_link(event, adapter, state, root, timeout=None, reuse=None):
     from . import model_job as mj
     from .source_colors import inventory, canonical_prompts, grouped_prompts, validate_decisions
     source = event.source
@@ -1054,6 +1055,29 @@ async def prepare_link(event, adapter, state, root, timeout=300, reuse=None):
         await adapter.send(chat_id=source.chat_id,
             content='Cancelled. Nothing sliced, uploaded or started.', metadata=metadata)
         return {'action': 'skip', 'reason': 'cancelled by operator'}
+    except IntakeExpired:
+        # The receipt and JOB.json written before this question stay on disk. Resume
+        # re-reads them instead of asking for the link again.
+        receipt.update(status='EXPIRED', sliced=False, uploaded=False, started=False)
+        receipt_path.write_text(json.dumps(receipt, indent=2) + '\n')
+        resumed = await _ask(adapter, source, key,
+                             'This question expired. Nothing was sliced, uploaded or started.',
+                             ['Resume'], timeout)
+        saved = receipt.get('job_json')
+        if resumed == 0 and saved and Path(saved).is_file():
+            job = json.loads(Path(saved).read_text())
+            receipt.update(status='RESUMED')
+            receipt_path.write_text(json.dumps(receipt, indent=2) + '\n')
+            await adapter.send(chat_id=source.chat_id,
+                               content=f"Resumed {job.get('title') or 'the saved model'} from the saved intake. "
+                                       'Nothing was sliced, uploaded or started.',
+                               metadata=metadata)
+            return {'action': 'resume', 'reason': 'resumed saved intake', 'job_json': saved}
+        await adapter.send(chat_id=source.chat_id,
+                           content='Expired before any choice was saved. Send the link again. '
+                                   'Nothing was sliced, uploaded or started.',
+                           metadata=metadata)
+        return {'action': 'skip', 'reason': 'expired before a choice'}
     except Exception as exc:
         receipt.update(status='FAILED', error=str(exc))
         receipt_path.write_text(json.dumps(receipt, indent=2) + '\n')

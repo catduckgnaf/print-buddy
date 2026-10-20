@@ -137,6 +137,10 @@ Empty bed, spaghetti, detached part, uncertain, and vision failure alerts fire a
 | | `post_print_quiet_s` | `7200` | Quiet time before a chat session resets |
 | | `daily_reset_hour`, `timezone` | `4`, `America/New_York` | Daily session reset |
 | | `bot_name` | `Print Buddy` | Name the bot uses in the roast persona and the rendered profile templates (`SOUL.md`, locale strings). Set it to anything, for example your old name |
+| | `question_timeout_s` | `1800` | How long a Discord question waits for a button press |
+| | `safety_confirm_timeout_s` | `600` | How long a safety confirmation (stop, resume, reboot, cold-pull go-ahead) waits |
+| | `upload_wait_s` | `3600` | How long an upload-wait freeze stays active |
+| | `cold_pull_outcome_s` | `1800` | How long a cold-pull outcome prompt stays open |
 | `listener` | `tick_s` | `600` | Listener housekeeping interval |
 | | `ifs_presence_poll_s` | `15` | IFS spool presence poll |
 | | `spool_nag_s` | `600` | Reminder interval for an unanswered spool question |

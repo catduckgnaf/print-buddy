@@ -123,6 +123,19 @@ class RuntimeSettingsTests(unittest.TestCase):
         data = settings.load(local=False, environ={"PRINT_BUDDY__MAINTENANCE__FULL_DAYS": "45"})
         self.assertEqual(data["maintenance"]["full_days"], 45)
 
+    def test_discord_timeouts_are_positive_whole_seconds(self):
+        data = settings.load(local=False, environ={})
+        self.assertEqual(data["discord"]["question_timeout_s"], 1800)
+        self.assertEqual(data["discord"]["safety_confirm_timeout_s"], 600)
+        self.assertEqual(data["discord"]["upload_wait_s"], 3600)
+        self.assertEqual(data["discord"]["cold_pull_outcome_s"], 1800)
+        data = settings.load(local=False, environ={"PRINT_BUDDY__DISCORD__QUESTION_TIMEOUT_S": "2400"})
+        self.assertEqual(data["discord"]["question_timeout_s"], 2400)
+        for key, raw in [("question_timeout_s", "0"), ("upload_wait_s", "-10"),
+                         ("safety_confirm_timeout_s", "1.5"), ("cold_pull_outcome_s", "nope")]:
+            with self.subTest(key=key), self.assertRaises(settings.SettingsError):
+                settings.load(local=False, environ={f"PRINT_BUDDY__DISCORD__{key.upper()}": raw})
+
     def test_visual_watch_sensitivity_is_one_to_five(self):
         self.assertEqual(settings.load(local=False, environ={})["visual_watch"]["sensitivity"], 3)
         data = settings.load(local=False, environ={"PRINT_BUDDY__VISUAL_WATCH__SENSITIVITY": "1"})

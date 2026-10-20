@@ -202,6 +202,8 @@ def validate(data):
     if isinstance(level, bool) or not isinstance(level, (int, float)) or level != int(level) or not 1 <= level <= 5:
         raise SettingsError(f"[visual_watch] sensitivity must be a whole number from 1 to 5, got {level!r}")
     data["visual_watch"]["sensitivity"] = int(level)
+    for key in ("question_timeout_s", "safety_confirm_timeout_s", "upload_wait_s", "cold_pull_outcome_s"):
+        data["discord"][key] = _positive(data, "discord", key, int)
     templates = data.get("orca", {}).get("templates")
     if not isinstance(templates, str) or not templates:
         raise SettingsError("[orca] templates must be a folder path")

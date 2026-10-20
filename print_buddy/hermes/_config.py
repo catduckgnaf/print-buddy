@@ -120,6 +120,26 @@ def discord_chat_id() -> str:
     return str(cfg()["discord"]["chat_id"] or "")
 
 
+def question_timeout_s() -> int:
+    """How long a Discord question waits for a button press."""
+    return int(cfg()["discord"]["question_timeout_s"])
+
+
+def safety_confirm_timeout_s() -> int:
+    """How long a safety confirmation (stop, resume, reboot, cold-pull go-ahead) waits."""
+    return int(cfg()["discord"]["safety_confirm_timeout_s"])
+
+
+def upload_wait_s() -> int:
+    """How long an upload-wait freeze stays active before it expires."""
+    return int(cfg()["discord"]["upload_wait_s"])
+
+
+def cold_pull_outcome_s() -> int:
+    """How long a cold-pull outcome prompt stays open."""
+    return int(cfg()["discord"]["cold_pull_outcome_s"])
+
+
 def add_hermes_agent_to_path() -> None:
     """Make hermes_state / hermes_cli importable, using [paths] hermes_agent."""
     agent = str(Path(cfg()["paths"]["hermes_agent"]).expanduser())

@@ -28,6 +28,9 @@ class Adapter:
 
     async def send_clarify(self, **kw):
         self.questions.append(kw)
+        if getattr(self, 'expire_once', False):
+            self.expire_once = False
+            return S(success=True)
         answer = kw['choices'][next(self.picks)]
         import tools.clarify_gateway as cm
         cm.resolve_gateway_clarify(kw['clarify_id'], answer)
@@ -191,6 +194,23 @@ def test_stop_choice_discards_the_early_slice_and_never_starts(env):
     # Issue 63 starts the slice while the confirm question is up. Stop throws it away.
     assert env.starts == [] and receipt['status'] == 'COLORS_SAVED_STOPPED'
     assert not any(env.root.parent.glob('archive/*/sliced/*.gcode'))
+
+
+def test_expired_question_offers_one_resume_and_keeps_the_saved_intake(env):
+    adapter = Adapter([0])
+    adapter.expire_once = True
+    event = S(source=S(profile='3dprinting', chat_id='c1', thread_id=None, user_id='u'), message_id='m1',
+              text='https://www.printables.com/model/1-ghost')
+    result = asyncio.run(prepared_intake.prepare_link(event, adapter, state(), env.root, timeout=1))
+    receipt = json.loads(next(env.root.glob('*.json')).read_text())
+    assert receipt['sliced'] is False and receipt['started'] is False
+    assert adapter.questions[-1]['choices'] == ['Resume']
+    assert 'expired' in adapter.questions[-1]['question'].lower()
+    assert result['action'] == 'resume' and Path(result['job_json']).is_file()
+    kept = json.loads(next(env.root.glob('*.json')).read_text())
+    assert kept['status'] == 'RESUMED' and Path(kept['job_json']).is_file()
+    assert 'Resumed' in adapter.sent[-1] and 'Nothing was sliced' in adapter.sent[-1]
+    assert env.sliced == [] and env.starts == []
 
 
 def test_changed_gcode_after_slice_is_refused_by_existing_gate(env, monkeypatch):

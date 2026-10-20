@@ -26,13 +26,74 @@ def test_the_starting_cases_exist():
     assert {"parts-one-plate", "plates-multicolor", "needs-supports", "must-shrink", "split-plan", "single-part"} <= set(IDS)
 
 
+def test_private_corpus_is_explicitly_opt_in(tmp_path, monkeypatch):
+    private_root = tmp_path / "private-cases"
+    case_dir = private_root / "personal-model"
+    case_dir.mkdir(parents=True)
+    (case_dir / "case.toml").write_text('description = "private"\n')
+    monkeypatch.delenv("CI", raising=False)
+    monkeypatch.delenv("PRINT_BUDDY_PRIVATE_CORPUS", raising=False)
+    assert case_dir.resolve() not in harness.case_dirs()
+    monkeypatch.setenv("PRINT_BUDDY_PRIVATE_CORPUS", str(private_root))
+    assert case_dir.resolve() in harness.case_dirs()
+    assert harness.is_private_case(case_dir)
+
+
+def test_private_corpus_is_refused_in_ci(tmp_path, monkeypatch):
+    private_root = tmp_path / "private-cases"
+    private_root.mkdir()
+    monkeypatch.setenv("PRINT_BUDDY_PRIVATE_CORPUS", str(private_root))
+    monkeypatch.setenv("CI", "true")
+    with pytest.raises(RuntimeError, match="local-only"):
+        harness.case_dirs()
+
+
+def test_private_corpus_must_be_outside_repository(monkeypatch):
+    monkeypatch.delenv("CI", raising=False)
+    monkeypatch.setenv("PRINT_BUDDY_PRIVATE_CORPUS", str(settings.ROOT))
+    with pytest.raises(ValueError, match="outside the repository"):
+        harness.case_dirs()
+
+
+def test_private_case_does_not_need_redistribution_license(tmp_path, monkeypatch):
+    private_root = tmp_path / "private-cases"
+    case_dir = private_root / "personal-model"
+    case_dir.mkdir(parents=True)
+    (case_dir / "model.3mf").write_bytes(b"local test model")
+    (case_dir / "case.toml").write_text(
+        'description = "private"\n'
+        '[[click]]\nquestion = "Choose the color"\nbutton = "White"\n'
+        '[expect]\nstatus = "STARTED"\n')
+    monkeypatch.delenv("CI", raising=False)
+    monkeypatch.setenv("PRINT_BUDDY_PRIVATE_CORPUS", str(private_root))
+    case = harness.load_case(case_dir)
+    _assert_case_license(case)
+
+
+def test_public_case_still_needs_redistribution_license(tmp_path, monkeypatch):
+    public_case = tmp_path / "public-case"
+    public_case.mkdir()
+    (public_case / "model.3mf").write_bytes(b"public test model")
+    (public_case / "case.toml").write_text('description = "public"\n')
+    monkeypatch.delenv("PRINT_BUDDY_PRIVATE_CORPUS", raising=False)
+    case = harness.load_case(public_case)
+    with pytest.raises(AssertionError, match="allows redistribution"):
+        _assert_case_license(case)
+
+
 @pytest.mark.parametrize("case", CASES, ids=IDS)
 def test_case_folder_is_complete(case):
     assert case.model.is_file() and case.model.stat().st_size < 1 << 20
     assert case.clicks and case.expect, "case.toml needs [[click]] rules and an [expect] table"
     for rule in case.clicks:
         assert rule.get("question") and rule.get("button"), rule
-    # The repo is public: every model must say where it came from and that it may be redistributed.
+    _assert_case_license(case)
+
+
+def _assert_case_license(case):
+    if harness.is_private_case(case.dir):
+        return
+    # Public fixtures must name a license that permits redistribution.
     text = case.data.get("license", "")
     attribution = case.dir / "ATTRIBUTION"
     if attribution.is_file():

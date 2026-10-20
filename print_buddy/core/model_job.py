@@ -448,6 +448,7 @@ def cached_motion_bounds(raw, text=None):
 
 
 FILAMENT_SENSOR_OBJECTS = ("filament_switch_sensor head_switch_sensor", "zmod_color", "zmod_ifs", "print_stats", "save_variables")
+MAP_PREFIX = "; hermes_tool_slots = "
 
 
 def format_color_title(c):
@@ -511,6 +512,9 @@ def resolve_filament_selection(state, selection):
         if mapped_id is None:
             raise ValueError(f"slot {slot} requires an explicit Spoolman spool ID; no configured mapping")
         selection["spoolman_id"] = mapped_id
+    for key in ("color", "material"):
+        if selection.get(key) is None and configured.get(key) is not None:
+            selection[key] = configured[key]
     selection = validate_filament_selection(selection)
     if mapped_id is not None and selection["spoolman_id"] != mapped_id:
         raise ValueError(f"slot {slot} spool mismatch: requested #{selection['spoolman_id']}, configured #{mapped_id}")
@@ -2951,8 +2955,96 @@ def resolve_print_target(target, archive=None):
                      "file with that name. Pass the job's JOB.json instead. Nothing uploaded or started.")
 
 
-def print_now(target, wait_s=25, accept_default_z_offset=False, reprint=False):
+def remap_slot(target, new_slot, tool="0", state=None):
+    """Remap a single-color job or G-code to a different physical IFS slot.
+
+    Rewrites tool mapping metadata and checksum, updating job filament_selection
+    when given a JOB.json, allowing printing with a different physical spool
+    without physical changes or screen interaction.
+    """
+    st = state or printer_state.load()
+    resolved = resolve_print_target(target)
+    target_path = Path(resolved).expanduser().resolve()
+
+    job = None
+    job_path = None
+    if target_path.name == "JOB.json":
+        job_path = target_path
+        job = json.loads(job_path.read_text())
+        if not job.get("gcode"):
+            raise RuntimeError("stale color artifact: job has no sliced gcode")
+        gcode_path = Path(job["gcode"]).expanduser().resolve()
+    else:
+        gcode_path = target_path
+        temp_root = Path(os.environ.get("TMPDIR") or "/tmp").resolve()
+        for parent in list(gcode_path.parents)[:5]:
+            if parent in (Path("/"), temp_root) or temp_root in parent.parents:
+                break
+            if (parent / "JOB.json").is_file():
+                job_path = parent / "JOB.json"
+                job = json.loads(job_path.read_text())
+                break
+
+    slot_int = int(new_slot)
+    if slot_int not in range(1, IFS_SLOTS + 1):
+        raise ValueError(f"physical IFS slot must be an integer from 1 through {IFS_SLOTS}")
+
+    selection = resolve_filament_selection(st, {"slot": slot_int})
+
+    raw_tools = {}
+    if gcode_path.is_file():
+        for line in gcode_path.read_text().splitlines():
+            if line.startswith(MAP_PREFIX):
+                try:
+                    data = json.loads(line[len(MAP_PREFIX):])
+                    for t, v in data.items():
+                        raw_tools[str(t)] = v.get("physical_slot") if isinstance(v, dict) else v
+                except Exception:
+                    pass
+                break
+    mapping = dict(raw_tools) if raw_tools else {}
+    mapping[str(tool)] = slot_int
+    normalize_mapping = printers.current().native.normalize_mapping
+    mapping = normalize_mapping(mapping, st)
+
+    new_sha = None
+    if gcode_path.is_file():
+        finalize = printers.current().native.finalize
+        new_sha = finalize(gcode_path, None, st, mapping)
+        try:
+            verify_gcode(gcode_path)
+        except Exception:
+            offline_st = dict(st)
+            offline_st.setdefault("temps_c", {"bed": 60, "nozzle": 210})
+            verify_gcode_offline(gcode_path, offline_st)
+
+    if job is not None and job_path is not None:
+        job["filament_selection"] = selection
+        if new_sha:
+            job["gcode_sha256"] = new_sha
+            job["gcode_verified"] = True
+            if "artifact_binding" in job and isinstance(job["artifact_binding"], dict):
+                job["artifact_binding"]["gcode_sha256"] = new_sha
+                job["artifact_binding"]["decisions_sha256"] = decisions_digest(job.get("color_decisions"))
+        write_job(job_path.parent, job)
+
+    return {
+        "ok": True,
+        "slot": slot_int,
+        "tool": str(tool),
+        "mapping": mapping,
+        "selection": selection,
+        "gcode": str(gcode_path) if gcode_path.is_file() else None,
+        "gcode_sha256": new_sha,
+        "job_json": str(job_path) if job_path else None,
+    }
+
+
+def print_now(target, wait_s=25, accept_default_z_offset=False, reprint=False, remap_slot_num=None):
     """Bed is confirmed clear: verify, upload, start, confirm, record. One command."""
+    if remap_slot_num is not None:
+        remap_res = remap_slot(target, remap_slot_num, tool="0")
+        print(f"SLOT REMAPPED: T0 -> slot {remap_res['slot']} ({remap_res['selection']['color']} {remap_res['selection']['material']})", flush=True)
     g=Path(resolve_print_target(target)).expanduser().resolve()
     job=None; job_path=None
     if g.name=="JOB.json":
@@ -3161,8 +3253,13 @@ def _main():
     final.add_argument("gcode")
     final.add_argument("--tool-map", required=True, help="JSON tool-to-physical-slot mapping")
     v=sub.add_parser("verify-gcode"); v.add_argument("gcode")
+    remap=sub.add_parser("remap-slot", help="remap single-color job or G-code tool to another physical IFS slot")
+    remap.add_argument("target", help="JOB.json or plate.gcode")
+    remap.add_argument("--slot", type=int, required=True, help="physical IFS slot (1-4)")
+    remap.add_argument("--tool", type=str, default="0", help="logical tool index (default: 0)")
     pn=sub.add_parser("print-now",help="bed confirmed clear: verify, upload, start, confirm, record (G-code or JOB.json)"); pn.add_argument("target")
     pn.add_argument("--accept-spool-change",action="store_true",help="operator confirmed printing with the spool now in a slot that changed since slicing (same material family only)")
+    pn.add_argument("--remap-slot", "--slot", dest="remap_slot", type=int, default=None, help="remap T0 to another physical IFS slot (1-4) without physical spool changes")
     for x in (pn,f,s):
         x.add_argument("--accept-default-z-offset",action="store_true",help="the operator accepted the printer default Z offset for this start")
         x.add_argument("--reprint",action="store_true",help="the operator gave a NEW bed-clear approval to reprint the same G-code")
@@ -3230,7 +3327,11 @@ def _main():
         print(routine_receipt(a.routine)); return
     if a.cmd=="routine-status":
         print(routine_phase(printer_state.load())); return
-    pn_kw=dict(accept_default_z_offset=getattr(a,"accept_default_z_offset",False),reprint=getattr(a,"reprint",False))
+    pn_kw=dict(accept_default_z_offset=getattr(a,"accept_default_z_offset",False),reprint=getattr(a,"reprint",False),remap_slot_num=getattr(a,"remap_slot",None))
+    if a.cmd=="remap-slot":
+        res = remap_slot(a.target, a.slot, a.tool)
+        print("SLOT REMAPPED " + json.dumps(res, indent=2))
+        return
     if a.cmd=="print-now":
         if a.accept_spool_change:
             os.environ["PRINT_ACCEPT_SPOOL_CHANGE"] = "1"

@@ -1,0 +1,41 @@
+#!/usr/bin/env python3
+"""CLI entrypoint for guarded idle slot loading."""
+import argparse
+import json
+import sys
+from pathlib import Path
+
+# Run from a checkout without install: put the repo root on sys.path,
+# matching how the bash entrypoints set PYTHONPATH="$ROOT".
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+
+from print_buddy.hermes.slot_load import load_slot  # noqa: E402
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser(
+        description="Guarded idle-only IFS slot loader for AD5X (wraps ZMod macros; offline/idle only)",
+    )
+    parser.add_argument("slot", help="IFS physical slot number (1-4)")
+    parser.add_argument(
+        "--json",
+        action="store_true",
+        help="Always output JSON",
+    )
+    args = parser.parse_args()
+
+    result = load_slot(args.slot)
+
+    if args.json or not sys.stdout.isatty():
+        print(json.dumps(result, indent=2))
+    else:
+        if result.get("ok"):
+            print(result.get("message", "OK"))
+        else:
+            print(f"FAILED: {result.get('error', 'Unknown error')}", file=sys.stderr)
+
+    sys.exit(0 if result.get("ok") else 1)
+
+
+if __name__ == "__main__":
+    main()

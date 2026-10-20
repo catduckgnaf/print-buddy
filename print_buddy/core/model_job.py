@@ -18,6 +18,7 @@ already sliced job the same way.
 import argparse, hashlib, html, json, math, os, re, shutil, subprocess, sys, time, urllib.parse, urllib.request, zipfile
 import xml.etree.ElementTree as ET
 from pathlib import Path
+from typing import Any, NamedTuple
 
 from .. import printers, settings
 from ..printers.base import MultiColorUnsupported
@@ -2560,6 +2561,157 @@ def _printer_phase(st):
     return state, filename, "Printing" if accepted else idle
 
 
+class StartReadback(NamedTuple):
+    outcome: str
+    evidence: Any
+    message: str
+
+
+def classify_start_readback(status_snapshot) -> StartReadback:
+    """Pure function classifying printer status after submission.
+
+    Outcomes:
+    - 'preparing': accepted, with heating, homing or prep evidence.
+    - 'printing': state printing.
+    - 'failed': error or cancelled.
+    - 'unconfirmed': no evidence.
+    """
+    if not isinstance(status_snapshot, dict):
+        status = {}
+    elif "result" in status_snapshot and isinstance(status_snapshot["result"], dict) and "status" in status_snapshot["result"]:
+        status = status_snapshot["result"]["status"]
+    elif "status" in status_snapshot and isinstance(status_snapshot["status"], dict):
+        status = status_snapshot["status"]
+    else:
+        status = status_snapshot
+
+    ps = status.get("print_stats") if isinstance(status.get("print_stats"), dict) else {}
+    ext = status.get("extruder") if isinstance(status.get("extruder"), dict) else {}
+    bed = status.get("heater_bed") if isinstance(status.get("heater_bed"), dict) else {}
+    vsd = status.get("virtual_sdcard") if isinstance(status.get("virtual_sdcard"), dict) else {}
+    idle = status.get("idle_timeout") if isinstance(status.get("idle_timeout"), dict) else {}
+    hooks = status.get("webhooks") if isinstance(status.get("webhooks"), dict) else {}
+    toolhead = status.get("toolhead") if isinstance(status.get("toolhead"), dict) else {}
+
+    raw_state = ps.get("state") or status.get("state")
+    state = raw_state.lower() if isinstance(raw_state, str) else None
+
+    # 1. Failed
+    hook_state = (hooks.get("state") or "").lower() if isinstance(hooks.get("state"), str) else ""
+    if state in ("error", "cancelled") or hook_state in ("error", "shutdown"):
+        fail_state = state or hook_state or "error"
+        return StartReadback(
+            outcome="failed",
+            evidence={"state": fail_state},
+            message=f"print failed: state is {fail_state}",
+        )
+
+    # 2. Printing
+    if state == "printing":
+        filament_used = None
+        for k in ("filament_used", "filament_used_mm", "filament_length"):
+            if k in ps:
+                filament_used = ps[k]
+                break
+            if k in status:
+                filament_used = status[k]
+                break
+
+        extruder_delta = None
+        for candidate in (
+            status.get("extruder_position_delta"),
+            status.get("extruder_delta"),
+            ext.get("position_delta"),
+            ext.get("delta"),
+            toolhead.get("extruder_position_delta"),
+            toolhead.get("extruder_delta"),
+        ):
+            if candidate is not None:
+                extruder_delta = candidate
+                break
+
+        extrusion_confirmed = False
+        if filament_used is not None:
+            try:
+                if float(filament_used) > 0:
+                    extrusion_confirmed = True
+            except (ValueError, TypeError):
+                pass
+        if extruder_delta is not None:
+            try:
+                if float(extruder_delta) > 0:
+                    extrusion_confirmed = True
+            except (ValueError, TypeError):
+                pass
+
+        msg = "printing" if extrusion_confirmed else "printing (extrusion not yet confirmed)"
+        evidence = {
+            "state": "printing",
+            "filament_used": filament_used,
+            "extruder_position_delta": extruder_delta,
+            "extrusion_confirmed": extrusion_confirmed,
+            "info": ps.get("info") or status.get("info"),
+        }
+        return StartReadback(outcome="printing", evidence=evidence, message=msg)
+
+    # 3. Preparing
+    prep_evidence = {}
+    heater_targets = {}
+    for name, obj in (("extruder", ext), ("heater_bed", bed)):
+        t = obj.get("target")
+        if t is not None:
+            try:
+                if float(t) > 0:
+                    heater_targets[name] = float(t)
+            except (ValueError, TypeError):
+                pass
+    for name, key in (("extruder", "extruder_target"), ("heater_bed", "heater_bed_target")):
+        if key in status:
+            try:
+                if float(status[key]) > 0:
+                    heater_targets[name] = float(status[key])
+            except (ValueError, TypeError):
+                pass
+    if heater_targets:
+        prep_evidence["heating"] = heater_targets
+
+    homed = toolhead.get("homed_axes") or status.get("homed_axes")
+    if homed:
+        prep_evidence["homing"] = homed
+    elif toolhead.get("homing") or status.get("homing"):
+        prep_evidence["homing"] = True
+
+    if vsd.get("is_active") is True or vsd.get("file_path"):
+        prep_evidence["virtual_sdcard"] = vsd.get("file_path") or True
+    if idle.get("state") == "Printing" or status.get("idle_state") == "Printing":
+        prep_evidence["idle_timeout"] = "Printing"
+    if hook_state == "printing":
+        prep_evidence["webhooks"] = "Printing"
+    if ps.get("filename"):
+        prep_evidence["filename"] = ps.get("filename")
+    if status.get("preparation_evidence") is True or status.get("prep") is True:
+        prep_evidence["preparation_evidence"] = True
+    if status.get("ifs_loading") or status.get("ifs_load"):
+        prep_evidence["ifs_loading"] = True
+    ifs_obj = status.get("zmod_ifs") if isinstance(status.get("zmod_ifs"), dict) else {}
+    if ifs_obj.get("state") or ifs_obj.get("feed") or ifs_obj.get("action"):
+        prep_evidence["zmod_ifs"] = ifs_obj
+
+    if prep_evidence:
+        return StartReadback(
+            outcome="preparing",
+            evidence=prep_evidence,
+            message="printer accepted the job and is preparing (heating/loading); not a failure; do not resubmit",
+        )
+
+    # 4. Unconfirmed
+    return StartReadback(
+        outcome="unconfirmed",
+        evidence=None,
+        message="submitted, awaiting confirmation",
+    )
+
+
 def _preparation_evidence(st):
     """True when a heater target is set (native start preparation), False when all are 0,
     None when unreadable. Read-only; used only after exactly one submission."""
@@ -2748,16 +2900,28 @@ def print_mapped_native(g, st, mesh, mapping, job, job_path, wait_s, reprint):
     # Record immediately so a long native preparation cannot lose its dated note.
     out['record_path'] = str(record_start(g, remote))
     state = _wait_printing(st, remote, wait_s)
-    if state == 'printing':
-        out.update(accepted=True, started=True, phase='executing', moonraker_state=state)
+    readback = None
+    try:
+        snap = _mr(st, "/printer/objects/query?print_stats&extruder&heater_bed&virtual_sdcard&idle_timeout&webhooks&toolhead")
+        readback = classify_start_readback(snap)
+    except Exception:
+        pass
+
+    if state == 'printing' or (readback and readback.outcome == 'printing'):
+        out.update(accepted=True, started=True, phase='executing', moonraker_state='printing',
+                   outcome='printing', message=(readback.message if readback else 'printing'))
     else:
         # The AD5X native route heats and loads the IFS slot for several minutes before
         # print_stats reports printing (2026-10-16: ~7 min). Heater targets set by that
         # preparation prove acceptance; report preparing, never a failure, never retry.
         preparing = _preparation_evidence(st)
-        out.update(accepted=preparing is True, started=False, moonraker_state=state,
-                   phase='preparing' if preparing else 'preparing_or_unresolved',
-                   message='submitted, awaiting confirmation', preparation_evidence=preparing)
+        is_prep = preparing is True or (readback and readback.outcome == 'preparing')
+        outcome_val = 'preparing' if is_prep else (readback.outcome if readback else 'unconfirmed')
+        msg = readback.message if readback else 'submitted, awaiting confirmation'
+        out.update(accepted=is_prep, started=is_prep, moonraker_state=state,
+                   phase='preparing' if is_prep else 'preparing_or_unresolved',
+                   outcome=outcome_val,
+                   message=msg, preparation_evidence=preparing)
     checkpoint.write_text(json.dumps(out, indent=2) + '\n')
     print('MAPPED START READBACK ' + json.dumps(out), flush=True)
     return out
@@ -2889,26 +3053,38 @@ def print_now(target, wait_s=25, accept_default_z_offset=False, reprint=False):
     _timing(job_path, 'start_submitted')
     print("START REQUEST ACCEPTED " + json.dumps({"file": remote, "printing_confirmed": False}), flush=True)
     method="print/start"; state=_wait_printing(st,remote,wait_s)
-    if state!="printing":
+    readback = None
+    try:
+        snap = _mr(st, "/printer/objects/query?print_stats&extruder&heater_bed&virtual_sdcard&idle_timeout&webhooks&toolhead")
+        readback = classify_start_readback(snap)
+    except Exception:
+        pass
+    if state!="printing" and not (readback and readback.outcome == "printing"):
+        if readback and readback.outcome == "preparing":
+            out = {"started": True, "accepted": True, "phase": "preparing", "outcome": "preparing", "file": remote,
+                   "message": readback.message}
+            print("START SUBMITTED; AWAITING CONFIRMATION " + json.dumps(out), flush=True)
+            return out
         # Do not retry a still-running preparation sequence or call it a failure.
         pending_state,pending_file,pending_busy=_printer_phase(st)
         if pending_busy == "Printing" and pending_state not in ("error", "cancelled"):
             # Keep the claim: the start card is already posted and the listener would
             # otherwise post a duplicate when preparation reaches "printing".
-            out = {"started": False, "accepted": True, "phase": "preparing", "file": remote,
-                   "message": "submitted, awaiting confirmation"}
+            out = {"started": True, "accepted": True, "phase": "preparing", "outcome": "preparing", "file": remote,
+                   "message": "printer accepted the job and is preparing (heating/loading); not a failure; do not resubmit"}
             print("START SUBMITTED; AWAITING CONFIRMATION " + json.dumps(out), flush=True)
             return out
         # An unreadable/ambiguous delayed readback after the one start request is
         # not evidence of rejection. Preserve the claim and report uncertainty.
         if pending_state not in ("error", "cancelled") and pending_file in (None, ""):
-            out = {"started": False, "accepted": True, "phase": "awaiting_confirmation", "file": remote,
+            out = {"started": False, "accepted": True, "phase": "awaiting_confirmation", "outcome": "unconfirmed", "file": remote,
                    "message": "submitted, awaiting confirmation"}
             print("START SUBMITTED; AWAITING CONFIRMATION " + json.dumps(out), flush=True)
             return out
-    if state!="printing":
+    if state!="printing" and not (readback and readback.outcome == "printing"):
         release_start_announcement(remote)
-        raise SystemExit(f"START FAILED: printer state is {state!r} after {method}. Not retrying; check the printer screen.")
+        fail_msg = readback.message if (readback and readback.outcome == "failed") else f"printer state is {state!r} after {method}"
+        raise SystemExit(f"START FAILED: {fail_msg}. Not retrying; check the printer screen.")
     record_path=None
     try: record_path=record_start(g, remote)
     except Exception as e: print(f"WARNING: Obsidian start note failed: {e}")
@@ -2921,6 +3097,7 @@ def print_now(target, wait_s=25, accept_default_z_offset=False, reprint=False):
     title=(job or {}).get("title") or g.stem
     print_no=_assign_print_number(job_path)
     out={"started":True,"title":title,"print_number":print_no,"file":remote,"method":method,
+         "phase":"executing","outcome":"printing","message":(readback.message if readback else "printing"),
          "print_time":human_dur(est) if est else None,"filament_g":round(float(m.group(1))) if m else None,
          "finish_et":(now+timedelta(seconds=(est or 0)+warm)).strftime("%-I:%M %p %a") if est else None}
     settings=start_print_settings(text); z_notice=z_offset_notice(text)

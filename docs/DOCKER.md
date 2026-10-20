@@ -2,7 +2,7 @@
 
 Run Print Buddy + OrcaSlicer CLI + Spoolman as containers. Settings come from environment variables (`PRINT_BUDDY__SECTION__KEY`) or a mounted TOML.
 
-Pinned OrcaSlicer v2.4.2 AppImage (matches the generation used by the Flathub CI job). Spoolman is the official image.
+Pinned OrcaSlicer v2.4.2 AppImage (matches the generation used by the Flathub CI job). The Compose file runs Spoolman as a separate service.
 
 ## Quick start
 
@@ -15,7 +15,11 @@ sudo chown 1000:1000 data/spoolman
 docker compose up -d
 ```
 
-Open Spoolman at http://localhost:7912. Print Buddy listens on Moonraker and posts to Discord via the mounted Hermes profile at `data/hermes`.
+Open Spoolman at http://localhost:7912. Print Buddy connects to Moonraker and posts to Discord using the Hermes profile mounted at `data/hermes`. The Compose file publishes Spoolman on host port 7912; it does not publish a Print Buddy port.
+
+## Updating and stopping
+
+Pull the desired source revision, then rebuild and recreate the services with `docker compose up -d --build`. Stop the stack with `docker compose down`; bind-mounted data remains in `./data/`.
 
 ## Volumes
 

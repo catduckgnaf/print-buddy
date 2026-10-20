@@ -34,8 +34,9 @@ def _orca_command():
 
 ORCA_COMMAND = _orca_command()
 BAMBU_COMMAND = list(_S['bambu']['command'])
-# Bed edge clearance. Multiple copies keep the historical 8 mm; a lone part only needs
-# room for the purge/skirt path (brim and skirt are off in the AD5X process template).
+# Margin semantics: this is bed-edge clearance only; object-to-object spacing
+# is a separate packing gap. Apply edge clearance once by shrinking the usable bed,
+# never by also dilating each object's footprint. Feature clearance is added below.
 MULTI_COPY_EDGE_MM = _S['layout']['multi_copy_edge_mm']
 SINGLE_COPY_EDGE_MM = _S['layout']['single_copy_edge_mm']
 NS = {'c': 'http://schemas.microsoft.com/3dmanufacturing/core/2015/02'}
@@ -396,7 +397,7 @@ def finalize_zmod(path, color, material, printer=None):
     return (printer or printers.current()).native.finalize(path, (color, material))
 
 
-def slice_model(source, folder, state, brim=None, first_layer=False, color_decisions=None, preserve_layout=False, filament_slot=None, item_shifts=None, copies=None, scale=None, rotation=None, supports=None, object_ids=None, adapter=None):
+def slice_model(source, folder, state, brim=None, first_layer=False, color_decisions=None, preserve_layout=False, filament_slot=None, item_shifts=None, copies=None, scale=None, rotation=None, supports=None, object_ids=None, adapter=None, brim_policy=None):
     source, folder = Path(source), Path(folder)
     # An explicit adapter (a job prepared for another model) brings its own templates; the default keeps TEMPLATES.
     printer = adapter or printers.current()
@@ -449,10 +450,15 @@ def slice_model(source, folder, state, brim=None, first_layer=False, color_decis
                     author = json.loads(archive.read('Metadata/project_settings.config'))
         input_path = source
         geometry = {'policy': 'derived plate; documented translation preserved; no arrange', 'source_sha256': digest(source)}
+    if brim_policy is not None:
+        geometry['fit_brim_policy'] = json.dumps(brim_policy, sort_keys=True)
     # Preserve author structural intent, not P1S motion/material calibration.
     process.update({k: author[k] for k in PROCESS_KEYS if k in author})
     process.update({'filter_out_gap_fill': '0', 'gap_fill_target': author.get('gap_fill_target', 'everywhere'),
                     'enable_support': author.get('enable_support', '0'), 'brim_width': str(brim) if brim is not None else author.get('brim_width', '0')})
+    if brim_policy is not None:
+        process['brim_type'] = brim_policy.get('type', 'no_brim')
+        process['brim_width'] = str(brim_policy.get('width_mm', 0))
     if supports is not None:
         process.update({'enable_support': '1' if supports else '0'})
         if supports:
@@ -880,7 +886,7 @@ def _multi_plate_capacity(source: Path, state: dict, scale: float = 1.0, single_
 
 def orca_plate_capacity(source: Path, state: dict, spacing_mm: float = 10.0, edge_margin_mm: float | None = None,
                         scale: float = 1.0, copy_limit: int = 16, allow_rotations: bool = True,
-                        rotation=None, supports: bool | None = None) -> int:
+                        rotation=None, supports: bool | None = None, brim_policy=None) -> int:
     """Return the Orca-confirmed copy count; probe failures raise and are never treated as no-fit.
 
     Copies keep ``MULTI_COPY_EDGE_MM`` from the bed edge; a lone copy only needs
@@ -903,6 +909,11 @@ def orca_plate_capacity(source: Path, state: dict, spacing_mm: float = 10.0, edg
     max_h = float(state.get('max_print_height_mm', MAX_HEIGHT_MM))
     multi_margin = MULTI_COPY_EDGE_MM if edge_margin_mm is None else float(edge_margin_mm)
     single_margin = SINGLE_COPY_EDGE_MM if edge_margin_mm is None else float(edge_margin_mm)
+    if brim_policy is not None:
+        state = {**state, 'brim_policy': brim_policy}
+    feature_edge = required_feature_edge(state)
+    multi_margin += feature_edge
+    single_margin += feature_edge
 
     rotation = _check_rotation(rotation)
     if rotation is not None:
@@ -1033,16 +1044,25 @@ def orca_plate_capacity(source: Path, state: dict, spacing_mm: float = 10.0, edg
                 float(y_bounds[1]) <= bed_y - edge + tolerance
             )
 
-        eff_edge = max(0.0, multi_margin - expand_mm)
+        expected_sweep = resolved_travel_sweep(state)
+        policy = brim_policy or state.get('brim_policy')
+        expected_brim = float(policy.get('width_mm', 0)) if policy and policy.get('type') == 'outer_only' else 0.0
+        required = expected_brim + expected_sweep
+        edge = SINGLE_COPY_EDGE_MM + required
         if copy_limit == 1:
-            return 1 if probe(single_stl, 1, single_margin, 'single') else 0
-        eff_w = bed_x - 2 * multi_margin
-        eff_d = bed_y - 2 * multi_margin
+            m_base['printable_area'] = [f"{edge}x{edge}", f"{bed_x - edge}x{edge}",
+                                        f"{bed_x - edge}x{bed_y - edge}", f"{edge}x{bed_y - edge}"]
+            return 1 if probe(single_stl, 1, edge, 'single') else 0
+        # Multi-copy uses the independent 3 mm layout margin plus only feature extent.
+        multi_edge = MULTI_COPY_EDGE_MM + required
+        eff_edge = max(0.0, multi_edge - expand_mm)
+        eff_w = bed_x - 2 * multi_edge
+        eff_d = bed_y - 2 * multi_edge
         max_possible = max(1, min(copy_limit, int(
             (eff_w * eff_d) / max(1.0, (scaled_w + spacing_mm) * (scaled_d + spacing_mm)) * 1.5
         ) + 1))
         if not probe(dilated_stl, 1, eff_edge, 'multi'):
-            return 1 if probe(single_stl, 1, single_margin, 'single') else 0
+            return 1 if probe(single_stl, 1, edge, 'single') else 0
         best = 1
         for c in range(2, max_possible + 1):
             if probe(dilated_stl, c, eff_edge, 'multi'):
@@ -1052,7 +1072,7 @@ def orca_plate_capacity(source: Path, state: dict, spacing_mm: float = 10.0, edg
         return best
 
 
-def verified_scale_choices(source: Path, state: dict) -> list[float]:
+def verified_scale_choices(source: Path, state: dict, brim_policy=None) -> list[float]:
     """Return three verified uniform scales, led by the smallest reduction that fits.
 
     Fast path: the analytic footprint/height bound for the authored orientation gives a
@@ -1060,40 +1080,36 @@ def verified_scale_choices(source: Path, state: dict) -> list[float]:
     probes). Unreadable geometry falls back to the whole-percent Orca binary search.
     """
     source = Path(source)
-    if source.suffix.lower() == '.3mf' and _source_plate_count(source) > 1:
-        if orca_plate_capacity(source, state, scale=1.0, copy_limit=1) > 0:
-            return [1.0]
-        if orca_plate_capacity(source, state, scale=0.5, copy_limit=1) < 1:
-            return []
-        low, high = 50, 99
-        while low < high:
-            middle = (low + high + 1) // 2
-            if orca_plate_capacity(source, state, scale=middle / 100.0, copy_limit=1) > 0:
-                low = middle
-            else:
-                high = middle - 1
-        return _scale_ladder(low / 100.0)
     try:
         tris = source_triangles(source)
     except Exception:
         tris = None
+    if source.suffix.lower() == '.3mf':
+        count = _source_plate_count(source)
+        if count > 1:
+            if not tris:
+                return []  # Painted multi-plate fine fit search is deferred; keep intake probe budget bounded.
+            if count > 4:
+                return []  # Avoid quadratic per-plate export/probe work for large projects.
+    if brim_policy is not None:
+        state = {**state, 'brim_policy': brim_policy}
     if tris:
         bound = _orientation_bound(_unique_points(tris), state, IDENTITY_ROT, yaw_search=False)[0]
-        if bound >= 1.0 and orca_plate_capacity(source, state, scale=1.0, copy_limit=1) > 0:
+        if bound >= 1.0 and orca_plate_capacity(source, state, scale=1.0, copy_limit=1, brim_policy=brim_policy) > 0:
             return [1.0]
-        maximum = _confirm_scale(lambda s: orca_plate_capacity(source, state, scale=s, copy_limit=1) > 0,
+        maximum = _confirm_scale(lambda s: orca_plate_capacity(source, state, scale=s, copy_limit=1, brim_policy=brim_policy) > 0,
                                  min(bound, 0.999))
         if maximum is not None:
             return _scale_ladder(maximum)
-    if orca_plate_capacity(source, state, scale=1.0, copy_limit=1) > 0:
+    if orca_plate_capacity(source, state, scale=1.0, copy_limit=1, brim_policy=brim_policy) > 0:
         return [1.0]
-    if orca_plate_capacity(source, state, scale=0.5, copy_limit=1) < 1:
+    if orca_plate_capacity(source, state, scale=0.5, copy_limit=1, brim_policy=brim_policy) < 1:
         return []
 
     low, high = 50, 99
     while low < high:
         middle = (low + high + 1) // 2
-        if orca_plate_capacity(source, state, scale=middle / 100.0, copy_limit=1) > 0:
+        if orca_plate_capacity(source, state, scale=middle / 100.0, copy_limit=1, brim_policy=brim_policy) > 0:
             low = middle
         else:
             high = middle - 1
@@ -1204,10 +1220,44 @@ def _hull(points):
     return lower[:-1] + upper[:-1]
 
 
+def resolved_travel_sweep(state):
+    """Conservative XY radius for resolved hop settings; Normal Lift sweeps zero."""
+    resolved = state.get('resolved_hop_types') or state.get('filament_z_hop_types') or state.get('z_hop_types')
+    if not resolved:
+        # AD5X/stock machine templates resolve to Normal Lift; retain safe behavior
+        # if the runtime state does not carry per-slot resolved settings yet.
+        try:
+            machine = json.loads((printers.current().templates_dir() / 'machine.json').read_text())
+        except Exception:
+            machine = {}
+        resolved = machine.get('z_hop_types') or ['Normal Lift']
+    if isinstance(resolved, dict):
+        resolved = list(resolved.values())
+    elif not isinstance(resolved, (list, tuple)):
+        resolved = [resolved] if resolved else ['Normal Lift']
+    if all(str(kind).strip().lower() in ('normal lift', 'normal') for kind in resolved):
+        return 0.0
+    try:
+        machine = json.loads((printers.current().templates_dir() / 'machine.json').read_text())
+    except Exception:
+        machine = {}
+    z_hop = float(state.get('z_hop', (machine.get('z_hop') or [0.4])[0]))
+    slope = float(state.get('travel_slope', (machine.get('travel_slope') or [3.0])[0]))
+    return z_hop / math.tan(math.radians(slope)) / (2 * math.pi)
+
+
+def required_feature_edge(state, brim_policy=None):
+    """Edge budget = explicit brim extent + resolved travel sweep."""
+    policy = brim_policy or state.get('brim_policy') or {}
+    brim = float(policy.get('width_mm', 0)) if policy.get('type') in ('outer_only', 'brim_ears') else 0.0
+    return brim + resolved_travel_sweep(state)
+
+
 def _usable(state, single=True):
     bed = state.get('bed_mm', BED)
     margin = SINGLE_COPY_EDGE_MM if single else MULTI_COPY_EDGE_MM
-    return (float(bed[0]) - 2 * margin, float(bed[1]) - 2 * margin,
+    edge = margin + required_feature_edge(state)
+    return (float(bed[0]) - 2 * edge, float(bed[1]) - 2 * edge,
             float(state.get('max_print_height_mm', MAX_HEIGHT_MM)))
 
 
@@ -1348,16 +1398,49 @@ def rotation_alternatives(source: Path, state: dict, authored_max: float = 0.0, 
     return results[:limit]
 
 
-def fit_options(source: Path, state: dict) -> dict:
+def fit_options(source: Path, state: dict, brim_override=None) -> dict:
     """Everything the intake needs after a no-fit, in one worker call.
 
     ``scales``: verified authored-orientation ladder (may be empty).
     ``rotations``: Orca-verified rotated orientations that print larger than the
     best authored scale (stood upright etc.), each with supports/brim warnings.
     """
-    scales = verified_scale_choices(source, state)
+    source = Path(source)
+    # Tight fits must not inherit auto_brim: choose a fitting explicit policy.
+    # An operator override is authoritative and its width is included in clearance.
+    requested = brim_override if brim_override is not None else state.get('brim_override')
+    policies = ([{'type': 'outer_only', 'width_mm': float(requested), 'label': f'Outer-only brim, {float(requested):g} mm'}]
+                if requested is not None else
+                [{'type': 'outer_only', 'width_mm': w, 'label': f'Outer-only brim, {w:g} mm'} for w in (3.0, 2.0, 1.0)]
+                + [{'type': 'no_brim', 'width_mm': 0.0, 'label': 'No brim'}])
+    policy = policies[-1]
+    scales = []
+    for candidate in policies:
+        candidate_scales = verified_scale_choices(source, state, brim_policy=candidate)
+        if candidate_scales:
+            policy, scales = candidate, candidate_scales
+            break
     try:
         rotations = rotation_alternatives(source, state, authored_max=scales[0] if scales else 0.0)
     except (RuntimeError, ValueError, OSError) as exc:
         return {'scales': scales, 'rotations': [], 'rotation_error': str(exc)}
-    return {'scales': scales, 'rotations': rotations}
+    result = {'scales': scales, 'rotations': rotations,
+              'brim_policy': policy if scales and scales[0] < 0.97 else None,
+              'fit_search_deferred': bool(source.suffix.lower() == '.3mf' and _source_plate_count(source) > 1)}
+    if source.suffix.lower() == '.3mf':
+        try:
+            from . import color_geometry
+            from .source_colors import inventory
+            manifest = inventory(source)
+            details = []
+            checked = ['authored XY']
+            with zipfile.ZipFile(source) as archive:
+                for part in manifest.get('parts', []):
+                    box = color_geometry._world_bounds(archive, {str(part['object_id'])})[0]
+                    dims = [round(box[i][1] - box[i][0], 1) for i in range(3)]
+                    details.append({'name': part.get('name') or f"Object {part['object_id']}",
+                                    'extent_mm': dims, 'orientations_checked': checked})
+            result['parts'] = details
+        except (RuntimeError, OSError, zipfile.BadZipFile, KeyError, ValueError):
+            result['parts'] = []
+    return result

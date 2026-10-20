@@ -45,12 +45,17 @@ def test_changed_binding_discards_old_slice_before_starting_new_one(tmp_path):
         entered = asyncio.Event()
         release = asyncio.Event()
         finished = []
+        invocation = 0
 
         async def slice_func(path, work, _runner):
+            nonlocal invocation
+            invocation += 1
+            current = invocation
             entered.set()
-            await release.wait()
+            if current == 1:
+                await release.wait()
             work.mkdir(parents=True, exist_ok=True)
-            output = work / 'plate.gcode'
+            output = work / f'plate-{current}.gcode'
             output.write_text(path)
             finished.append(output)
             return [output]
@@ -58,15 +63,18 @@ def test_changed_binding_discards_old_slice_before_starting_new_one(tmp_path):
         await runner.start(job_path, 'old decisions', slice_func)
         await entered.wait()
         old_work = runner.work
+        async def unblock():
+            await asyncio.sleep(0.02)
+            release.set()
+        asyncio.create_task(unblock())
         await runner.start(job_path, 'new decisions', slice_func)
         assert runner.binding == 'new decisions'
-        assert old_work is not None and not old_work.exists()
+        assert old_work is not None and list(old_work.glob('*.gcode')) == []
         assert runner.running()
-        release.set()
         await runner.discard()
         assert not runner.running()
         assert not (folder / 'sliced').exists()
-        assert finished == []
+        assert finished  # cancellation waits for the writer, then deletes its output
 
     asyncio.run(run())
 

@@ -46,11 +46,16 @@ jobs:
           path: ~/.local/share/flatpak
           # Bump v1 to pick up a newer Flathub Orca; until then CI keeps slicing with the same build.
           key: flatpak-orca-${{ runner.os }}-v1
-      - name: Install OrcaSlicer from Flathub
+      - name: Install pinned OrcaSlicer from Flathub
         run: |
           flatpak remote-add --user --if-not-exists flathub https://dl.flathub.org/repo/flathub.flatpakrepo
           flatpak install --user -y --noninteractive flathub com.orcaslicer.OrcaSlicer
-          flatpak info --user com.orcaslicer.OrcaSlicer
+          flatpak info --user com.orcaslicer.OrcaSlicer | tee "$RUNNER_TEMP/orca-info.txt"
+          commit=$(awk '/Commit:/ {print $2}' "$RUNNER_TEMP/orca-info.txt")
+          test -n "$commit"
+          flatpak update --user -y --noninteractive --commit="$commit" com.orcaslicer.OrcaSlicer
+          echo "ORCA_FLATPAK_COMMIT=$commit" >> "$GITHUB_ENV"
+          echo "Pinned Orca commit: $commit"
       - name: Real slicer tests
         env:
           PRINT_BUDDY_REAL_SLICER: "1"
@@ -64,11 +69,6 @@ jobs:
     # spool_sync against a real, throwaway Spoolman.
     runs-on: ubuntu-24.04  # pinned: ubuntu-latest moves to 26 on 2026-10-19
     timeout-minutes: 10
-    services:
-      spoolman:
-        image: ghcr.io/donkie/spoolman:0.27.0
-        ports:
-          - 7912:8000
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-python@v7
@@ -77,9 +77,35 @@ jobs:
           cache: pip
           cache-dependency-path: requirements-test.txt
       - run: python -m pip install -r requirements-test.txt
+      - name: Install pinned Spoolman server natively
+        run: |
+          set -euo pipefail
+          archive="$RUNNER_TEMP/spoolman.zip"
+          curl -fL --retry 3 https://github.com/Donkie/Spoolman/releases/download/v0.27.0/spoolman.zip -o "$archive"
+          echo 'bcc961af4c20d7ad7f1740f5609cd3efd94c4556baafaeba5036122dd7e46704  '"$archive" | sha256sum -c -
+          mkdir -p "$RUNNER_TEMP/spoolman-src"
+          unzip -q "$archive" -d "$RUNNER_TEMP/spoolman-src"
+          cd "$RUNNER_TEMP/spoolman-src"
+          python -m venv "$RUNNER_TEMP/spoolman-venv"
+          "$RUNNER_TEMP/spoolman-venv/bin/python" -m pip install uvicorn~=0.34
+          "$RUNNER_TEMP/spoolman-venv/bin/python" -m pip install -r requirements.txt
+          echo "SPOOLMAN_APP_DIR=$PWD" >> "$GITHUB_ENV"
+          echo "SPOOLMAN_PYTHON=$RUNNER_TEMP/spoolman-venv/bin/python" >> "$GITHUB_ENV"
+      - name: Start isolated Spoolman server
+        run: |
+          mkdir -p "$RUNNER_TEMP/spoolman-data"
+          cd "$SPOOLMAN_APP_DIR"
+          PATH="$RUNNER_TEMP/spoolman-venv/bin:$PATH" SPOOLMAN_DIR_DATA="$RUNNER_TEMP/spoolman-data" SPOOLMAN_PORT=7912 SPOOLMAN_HOST=127.0.0.1 \
+            "$SPOOLMAN_PYTHON" -m uvicorn spoolman.main:app --host 127.0.0.1 --port 7912 \
+            > "$RUNNER_TEMP/spoolman.log" 2>&1 &
+          echo $! > "$RUNNER_TEMP/spoolman.pid"
       - name: Wait for Spoolman
         run: |
-          for i in $(seq 60); do curl -fs http://localhost:7912/api/v1/health && exit 0; sleep 2; done
+          for i in $(seq 60); do
+            if curl -fsS -o /dev/null http://localhost:7912/api/v1/health; then exit 0; fi
+            sleep 1
+          done
+          cat "$RUNNER_TEMP/spoolman.log"
           echo "Spoolman did not come up"; exit 1
       - name: Spoolman tests
         env:

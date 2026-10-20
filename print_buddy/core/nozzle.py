@@ -30,6 +30,7 @@ NOZZLE_TYPE_ALIASES: dict[str, str] = {
     "stainless": "stainless_steel",
     "stainless_steel": "stainless_steel",
     "stainless steel": "stainless_steel",
+    "stock": "stainless_steel",
     "ruby": "ruby",
     "ruby_tipped": "ruby",
     "ruby tipped": "ruby",

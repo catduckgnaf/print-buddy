@@ -17,6 +17,7 @@ def test_normalize_nozzle_type_canonical():
     assert normalize_nozzle_type("hardened_steel") == "hardened_steel"
     assert normalize_nozzle_type("hardened steel") == "hardened_steel"
     assert normalize_nozzle_type("Hardened-Steel") == "hardened_steel"
+    assert normalize_nozzle_type("stock") == "stainless_steel"
     assert normalize_nozzle_type("ruby") == "ruby"
     assert normalize_nozzle_type("ruby tipped") == "ruby"
     assert normalize_nozzle_type("tungsten carbide") == "tungsten_carbide"

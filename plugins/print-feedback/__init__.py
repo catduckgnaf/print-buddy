@@ -1262,6 +1262,34 @@ def alert_button_handlers(bot, adapter):
     async def reject(interaction):
         await interaction.response.send_message('Not allowed. Nothing changed.', ephemeral=True)
 
+    from print_buddy.core import prepared_intake as _pi
+    STOP_PREFIX = _pi.STOP_CUSTOM_ID
+
+    async def send_stop(source, text, clarify_id):
+        """Status step: one Stop button, no 'Other (type answer)'. Returns the sent message."""
+        import discord
+        target = getattr(source, 'thread_id', None) or getattr(source, 'chat_id', None)
+        channel = bot.get_channel(int(target)) if target else None
+        if channel is None and target:
+            channel = await bot.fetch_channel(int(target))
+        if channel is None:
+            return None
+        view = discord.ui.View(timeout=3600)
+        view.add_item(discord.ui.Button(label=_pi.STOP_LABEL, style=discord.ButtonStyle.danger,
+                                        custom_id=f'{STOP_PREFIX}{clarify_id}'))
+        return await channel.send(text, view=view)
+
+    async def handle_stop(interaction, clarify_id):
+        from tools import clarify_gateway as cm
+        resolved = cm.resolve_gateway_clarify(clarify_id, _pi.STOP_LABEL)
+        note = 'Stopping.' if resolved else 'That step already finished. Nothing to stop.'
+        try:
+            await interaction.response.edit_message(view=None)
+            await interaction.followup.send(note)
+        except Exception:
+            logger.debug('could not acknowledge Stop', exc_info=True)
+
+    _pi.STOP_SENDER = send_stop
     async def insertion_select(interaction, aid, alert):
         import discord
         from print_buddy.hermes import spool_sync
@@ -1546,6 +1574,12 @@ def alert_button_handlers(bot, adapter):
     async def on_interaction(interaction):
         data = getattr(interaction, 'data', None) or {}
         custom_id = data.get('custom_id', '')
+        if str(custom_id).startswith(STOP_PREFIX):
+            if not allowed(interaction):
+                await reject(interaction)
+                return
+            await handle_stop(interaction, str(custom_id)[len(STOP_PREFIX):])
+            return
         plate = pab.parse_plate_custom_id(custom_id)
         if plate:
             if not allowed(interaction):

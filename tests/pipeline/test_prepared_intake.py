@@ -1069,3 +1069,50 @@ def test_stop_during_a_long_step_cancels_it_and_leaves_nothing_running():
     asyncio.run(run())
     assert started.is_set()
     assert finished.wait(2), 'the cancelled step was still running'
+
+
+def test_finished_step_returns_without_anyone_pressing_stop():
+    """2.0.6: the fit check froze until Stop was pressed because the button was awaited before the
+    work. A step that finishes must return its result with no button press at all."""
+    import time as _time
+
+    class Live:
+        def __init__(self):
+            self.cid = None
+
+        async def send_clarify(self, **kw):
+            self.cid = kw['clarify_id']
+            return S(success=True)
+
+    async def quick():
+        await asyncio.sleep(0.01)
+        return {'fits': True, 'copies': 1}
+
+    adapter = Live()
+
+    async def run():
+        return await asyncio.wait_for(prepared_intake._with_stop(
+            adapter, S(chat_id='no-press'), 'no-press', None,
+            'Checking whether it fits the bed. Press Stop to cancel.', quick()), 5)
+
+    started = _time.monotonic()
+    assert asyncio.run(run()) == {'fits': True, 'copies': 1}
+    assert adapter.cid, 'the Stop button was never shown'
+    assert _time.monotonic() - started < 5
+
+
+def test_work_error_surfaces_without_a_stop_press():
+    """A failing step must raise its own error promptly, not hang behind the Stop button."""
+    class Live:
+        async def send_clarify(self, **kw):
+            return S(success=True)
+
+    async def boom():
+        raise ValueError('model is larger than the bed')
+
+    async def run():
+        return await asyncio.wait_for(prepared_intake._with_stop(
+            Live(), S(chat_id='no-press-err'), 'no-press-err', None, 'Checking. Press Stop to cancel.', boom()), 5)
+
+    with pytest.raises(ValueError, match='larger than the bed'):
+        asyncio.run(run())

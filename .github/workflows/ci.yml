@@ -80,13 +80,14 @@ jobs:
       - name: Install pinned Spoolman server natively
         run: |
           set -euo pipefail
-          archive="$RUNNER_TEMP/spoolman-v0.27.0.zip"
-          curl -fL --retry 3 https://codeload.github.com/Donkie/Spoolman/zip/refs/tags/v0.27.0 -o "$archive"
-          echo '9ceead75734683b8d5f92cb6f7b9cc0d83acaf2418f72d48736d7f995d583f42  '"$archive" | sha256sum -c -
+          archive="$RUNNER_TEMP/spoolman.zip"
+          curl -fL --retry 3 https://github.com/Donkie/Spoolman/releases/download/v0.27.0/spoolman.zip -o "$archive"
+          echo 'bcc961af4c20d7ad7f1740f5609cd3efd94c4556baafaeba5036122dd7e46704  '"$archive" | sha256sum -c -
           mkdir -p "$RUNNER_TEMP/spoolman-src"
           unzip -q "$archive" -d "$RUNNER_TEMP/spoolman-src"
-          cd "$RUNNER_TEMP/spoolman-src/Spoolman-0.27.0"
+          cd "$RUNNER_TEMP/spoolman-src"
           python -m venv "$RUNNER_TEMP/spoolman-venv"
+          "$RUNNER_TEMP/spoolman-venv/bin/python" -m pip install uvicorn~=0.34
           "$RUNNER_TEMP/spoolman-venv/bin/python" -m pip install -r requirements.txt
           echo "SPOOLMAN_APP_DIR=$PWD" >> "$GITHUB_ENV"
           echo "SPOOLMAN_PYTHON=$RUNNER_TEMP/spoolman-venv/bin/python" >> "$GITHUB_ENV"

@@ -11,7 +11,7 @@ def main() -> None:
     parser = argparse.ArgumentParser(
         description="Guarded idle-only IFS slot loader for AD5X (wraps ZMod macros; offline/idle only)",
     )
-    parser.add_argument("slot", type=int, help="IFS physical slot number (1-4)")
+    parser.add_argument("slot", help="IFS physical slot number (1-4)")
     parser.add_argument(
         "--json",
         action="store_true",

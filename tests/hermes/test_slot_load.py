@@ -119,7 +119,8 @@ def test_pb_load_slot_cli_script_invocations():
     bin_path = Path(__file__).resolve().parents[2] / "bin" / "pb-load-slot"
     assert bin_path.is_file()
 
-    # Test invalid slot CLI
+    # Test invalid slot CLI. Parsing leaves validation to load_slot so failures
+    # retain the stable JSON contract used by Home Assistant callers.
     run_invalid = subprocess.run(
         [sys.executable, str(bin_path), "5", "--json"],
         capture_output=True,

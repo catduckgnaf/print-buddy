@@ -144,6 +144,14 @@ def test_cli_remap_slot_subcommand(tmp_path):
     gcode.write_text(_artifact())
     contract.finalize(gcode, None, st, {"0": 1})
 
+    test_config = tmp_path / "config.toml"
+    test_config.write_text(
+        "[paths]\nhermes_home = " + json.dumps(str(tmp_path / "hermes")) + "\n"
+    )
+    state_path = tmp_path / "hermes" / "state" / "printer_hardware.json"
+    state_path.parent.mkdir(parents=True)
+    state_path.write_text(json.dumps(st))
+
     run = subprocess.run(
         [
             sys.executable,
@@ -157,7 +165,10 @@ def test_cli_remap_slot_subcommand(tmp_path):
         cwd=str(Path(__file__).resolve().parents[2]),
         capture_output=True,
         text=True,
-        env={"PYTHONPATH": str(Path(__file__).resolve().parents[2])},
+        env={
+            "PYTHONPATH": str(Path(__file__).resolve().parents[2]),
+            "PRINT_BUDDY_CONFIG": str(test_config),
+        },
     )
     assert run.returncode == 0
     assert "SLOT REMAPPED" in run.stdout

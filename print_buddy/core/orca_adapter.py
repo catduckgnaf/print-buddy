@@ -412,8 +412,10 @@ def slice_model(source, folder, state, brim=None, first_layer=False, color_decis
         raise ValueError('rotation is only supported for whole-model single-color slicing')
     folder.mkdir(parents=True, exist_ok=True)
     machine, process, filament = [json.loads((templates / f'{name}.json').read_text()) for name in ('machine', 'process', 'filament')]
-    if float(state['nozzle']['diameter_mm']) != NOZZLE_MM:
-        raise RuntimeError(f'Orca templates are tuned for a {NOZZLE_MM:g} mm nozzle; the printer reports {state["nozzle"]["diameter_mm"]} mm')
+    nozzle_dia = float(state['nozzle']['diameter_mm'])
+    if nozzle_dia != NOZZLE_MM:
+        from .nozzle import UntunedNozzleError
+        raise UntunedNozzleError(f'Orca templates are tuned for a {NOZZLE_MM:g} mm nozzle; no tuned profile exists for {nozzle_dia:g} mm on printer {printer.label!r}')
     author = {}
     geometry = {'policy': 'original STL unchanged', 'source_sha256': digest(source)}
     from .source_colors import inventory, validate_decisions
@@ -625,9 +627,12 @@ def slice_model(source, folder, state, brim=None, first_layer=False, color_decis
     # Protected-key differences here include adapter-sanctioned profile assembly
     # (for example the resolved start-G-code template), not untrusted overrides.
     # Only block on geometric/tooling findings that this adapter can establish.
+    nozzle_type = (state.get('nozzle') or {}).get('type', 'hardened_steel')
+    used_materials = filament.get('filament_type') or [state.get('spool', {}).get('material')]
     gate = pre_slice(bounds=bounds_xy, bed=bed, profile=effective_profile,
                      before_profile=None, filaments=len(filament_paths),
-                     ifs_slots=IFS_SLOTS, tool_slots=tool_slots)
+                     ifs_slots=IFS_SLOTS, tool_slots=tool_slots,
+                     nozzle_type=nozzle_type, materials=used_materials)
     if gate.status == 'blocked':
         raise RuntimeError('Pre-slice guard blocked: ' + '; '.join(gate.blocked))
     # Unknown placement is advisory, never a false block.

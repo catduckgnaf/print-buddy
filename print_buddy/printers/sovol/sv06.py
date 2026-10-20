@@ -12,6 +12,8 @@ MODEL = PrinterModel(
     adapter=KlipperAdapter,
     templates="sovol_sv06",
     baseline="protected-settings-baseline.sovol.sv06.json",
+    supported_nozzle_sizes=(0.2, 0.4, 0.6, 0.8),
+    supported_nozzle_types=("brass", "hardened_steel", "ruby", "tungsten_carbide", "diamond"),
     settings={
         "printer": {
             "name": "Sovol SV06",

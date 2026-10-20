@@ -25,9 +25,17 @@ def _printer(bed, ifs_slots):
     return tuple(bed or printer['bed_mm']), int(ifs_slots or printer['ifs_slots'])
 
 def pre_slice(*, bounds=None, bed=None, profile=None, required_keys=(), before_profile=None,
-              filaments=1, ifs_slots=None, tool_slots=None):
+              filaments=1, ifs_slots=None, tool_slots=None, nozzle_type=None, materials=None):
     """bounds is placed XY bbox (xmin,ymin,xmax,ymax); tools map T-index to 1-based IFS slot."""
     r=Result(); profile=profile or {}; tool_slots=tool_slots or {}; bed,ifs_slots=_printer(bed,ifs_slots)
+    if nozzle_type:
+        from .nozzle import check_nozzle_material_safety, AbrasiveNozzleError
+        mats = [materials] if isinstance(materials, str) else (materials or [])
+        for mat in mats:
+            try:
+                check_nozzle_material_safety(nozzle_type, mat)
+            except AbrasiveNozzleError as exc:
+                r.block(str(exc))
     missing=[k for k in required_keys if k not in profile or profile[k] in (None, "", [])]
     if missing: r.block("Required slicer profile settings are missing: "+", ".join(missing)+".")
     if before_profile is not None:

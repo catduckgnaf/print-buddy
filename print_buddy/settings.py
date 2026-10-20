@@ -62,6 +62,8 @@ LEGACY_ENV = {
 }
 # Sections whose keys are names you choose, not a fixed set.
 OPEN_SECTIONS = {"cold_pull"}
+# Keys that can be optionally specified even if absent from base home.toml.
+OPTIONAL_KEYS = {("printer", "nozzle_type"): str}
 
 
 def _merge(base, extra):
@@ -106,6 +108,11 @@ def _check_keys(home, extra, source):
             if key not in home[section]:
                 if section in OPEN_SECTIONS:
                     continue
+                if (section, key) in OPTIONAL_KEYS:
+                    expected_type = OPTIONAL_KEYS[(section, key)]
+                    if not isinstance(value, expected_type):
+                        raise SettingsError(f"{source}: [{section}] {key} should be {expected_type.__name__}, got {value!r}")
+                    continue
                 raise _unknown(source, section, key)
             if not _same_type(home[section][key], value):
                 raise SettingsError(f"{source}: [{section}] {key} should be like {home[section][key]!r}, got {value!r}")
@@ -139,6 +146,9 @@ def _from_env(home, environ):
         else:
             continue
         if key not in home.get(section, {}):
+            if (section, key) in OPTIONAL_KEYS:
+                out.setdefault(section, {})[key] = raw
+                continue
             raise _unknown(f"${name}", section, key)
         out.setdefault(section, {})[key] = _coerce(home[section][key], raw, name)
     return out
@@ -169,7 +179,23 @@ def validate(data):
     key = data["printer"].get("model")
     if key not in printers.MODELS:
         raise SettingsError(f"[printer] model must be one of {', '.join(printers.MODELS)}, got {key!r}")
-    if not printers.MODELS[key].adapter.multi_slot and data["printer"]["ifs_slots"] != 1:
+    model = printers.MODELS[key]
+    nozzle_size = data["printer"]["nozzle_diameter_mm"]
+    if nozzle_size not in model.supported_nozzle_sizes:
+        supported = ", ".join(f"{s:g}" for s in sorted(model.supported_nozzle_sizes))
+        raise SettingsError(f"[printer] nozzle_diameter_mm {nozzle_size:g} is not supported by model {key!r} (supported: {supported})")
+    nozzle_type = data["printer"].get("nozzle_type")
+    if nozzle_type is not None:
+        from .core.nozzle import NozzleError, normalize_nozzle_type
+        try:
+            norm_type = normalize_nozzle_type(nozzle_type)
+        except NozzleError as exc:
+            raise SettingsError(f"[printer] nozzle_type: {exc}") from None
+        if norm_type not in model.supported_nozzle_types:
+            supported_types = ", ".join(sorted(model.supported_nozzle_types))
+            raise SettingsError(f"[printer] nozzle_type {nozzle_type!r} is not supported by model {key!r} (supported: {supported_types})")
+        data["printer"]["nozzle_type"] = norm_type
+    if not model.adapter.multi_slot and data["printer"]["ifs_slots"] != 1:
         raise SettingsError(f"[printer] ifs_slots must be 1 for model {key!r} (single extruder)")
     for key, default in (("start_macro", "PRINT_START"), ("end_macro", "PRINT_END")):
         macro = data["printer"].setdefault(key, default)

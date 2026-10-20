@@ -197,20 +197,35 @@ def test_stop_choice_discards_the_early_slice_and_never_starts(env):
 
 
 def test_expired_question_offers_one_resume_and_keeps_the_saved_intake(env):
-    adapter = Adapter([0])
+    # Expire the first question, then continue: mode, two part colors, stop.
+    adapter = Adapter([0, 0, 0, 0, 2])
     adapter.expire_once = True
     event = S(source=S(profile='3dprinting', chat_id='c1', thread_id=None, user_id='u'), message_id='m1',
               text='https://www.printables.com/model/1-ghost')
     result = asyncio.run(prepared_intake.prepare_link(event, adapter, state(), env.root, timeout=1))
-    receipt = json.loads(next(env.root.glob('*.json')).read_text())
-    assert receipt['sliced'] is False and receipt['started'] is False
-    assert adapter.questions[-1]['choices'] == ['Resume']
-    assert 'expired' in adapter.questions[-1]['question'].lower()
-    assert result['action'] == 'resume' and Path(result['job_json']).is_file()
-    kept = json.loads(next(env.root.glob('*.json')).read_text())
-    assert kept['status'] == 'RESUMED' and Path(kept['job_json']).is_file()
-    assert 'Resumed' in adapter.sent[-1] and 'Nothing was sliced' in adapter.sent[-1]
+    questions = adapter.questions
+    resume = next(q for q in questions if q['choices'] == ['Resume'])
+    assert 'expired' in resume['question'].lower()
+    assert any('color' in q['question'].lower() for q in questions)
+    assert result['action'] == 'skip'
     assert env.sliced == [] and env.starts == []
+    assert any('Nothing was sliced' in line for line in adapter.sent)
+
+
+def test_resume_continues_the_saved_intake_instead_of_stopping_at_the_marker(env):
+    # First color question expires. Resume must ask the next saved question
+    # (the color choice), not stop after the action marker.
+    # Picks: Resume, per-part mode, two part colors, then stop with colors saved.
+    adapter = Adapter([0, 0, 0, 0, 2])
+    adapter.expire_once = True
+    event = S(source=S(profile='3dprinting', chat_id='c1', thread_id=None, user_id='u'), message_id='m1',
+              text='https://www.printables.com/model/1-ghost')
+    result = asyncio.run(prepared_intake.prepare_link(event, adapter, state(), env.root, timeout=1))
+    questions = [q['question'] for q in adapter.questions]
+    assert any('expired' in q.lower() for q in questions)
+    assert any('color' in q.lower() for q in questions), questions
+    assert result['action'] == 'skip'
+    assert env.starts == [] and env.sliced == []
 
 
 def test_changed_gcode_after_slice_is_refused_by_existing_gate(env, monkeypatch):

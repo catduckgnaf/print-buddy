@@ -21,6 +21,7 @@ import asyncio
 import contextlib
 import importlib.util
 import json
+import os
 import re
 import stat
 import sys
@@ -58,8 +59,44 @@ class UnansweredPrompt(AssertionError):
     """The case has no [[click]] rule for a question the bot asked."""
 
 
+def private_corpus_root():
+    """Return the opted-in local corpus root, refusing repository paths and CI use."""
+    configured = os.environ.get("PRINT_BUDDY_PRIVATE_CORPUS")
+    if not configured:
+        return None
+    if os.environ.get("CI", "").strip().casefold() in {"1", "true", "yes"}:
+        raise RuntimeError("private corpus is local-only and cannot be selected in CI")
+    root = Path(configured).expanduser().resolve()
+    if root.is_relative_to(settings.ROOT.resolve()):
+        raise ValueError("private corpus root must be outside the repository")
+    if not root.is_dir():
+        raise FileNotFoundError(f"private corpus root does not exist or is not a directory: {root}")
+    return root
+
+
+def is_private_case(folder):
+    """Whether a case resolves under the explicitly configured local corpus."""
+    root = private_corpus_root()
+    return root is not None and Path(folder).resolve().is_relative_to(root)
+
+
 def case_dirs():
-    return sorted(p.parent for p in CASES.glob("*/case.toml"))
+    public = sorted(p.parent for p in CASES.glob("*/case.toml"))
+    root = private_corpus_root()
+    if root is None:
+        return public
+    public_paths = {folder.resolve() for folder in public}
+    private = []
+    for manifest in root.glob("*/case.toml"):
+        folder = manifest.parent.resolve()
+        if not folder.is_relative_to(root):
+            raise ValueError("private corpus cases must remain under their root")
+        if folder in public_paths:
+            raise ValueError("private corpus overlaps public cases")
+        private.append(folder)
+    if not private:
+        raise ValueError(f"private corpus has no case.toml files: {root}")
+    return public + sorted(private)
 
 
 def load_case(folder):

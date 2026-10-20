@@ -201,6 +201,18 @@ python3 -m pytest -q tests/corpus                                # fake Orca
 PRINT_BUDDY_REAL_SLICER=1 python3 -m pytest -q -s tests/corpus   # real Orca, slices under .slicer-work/
 ```
 
+#### Local private corpus
+
+Personal or non-redistributable models must stay outside the checkout. Create one folder per case under a private directory, with the model and a `case.toml` copied from a public example. The private corpus is selected only when explicitly configured:
+
+```bash
+export PRINT_BUDDY_PRIVATE_CORPUS="$HOME/.local/share/print-buddy/private-cases"
+python3 -m pytest -q tests/corpus
+unset PRINT_BUDDY_PRIVATE_CORPUS
+```
+
+Private cases use the same offline flow and skip only the public redistribution-license check. The configured directory must exist outside the repository and contain at least one case. Private-corpus opt-in fails when `CI=true`; never set it in CI. The private model is not added to the checkout, public diff, or CI artifacts. Real-slicer output is temporary local scratch under the ignored `.slicer-work/` directory; do not commit or upload it.
+
 ## ZMod plugin and spool matching
 
 ZMod switches to a backup spool mid-print only when another slot holds the exact same color and material. The `print_buddy.cfg` macro checks that before a job starts:

@@ -85,8 +85,9 @@ def _read_json(path: Path) -> dict[str, Any]:
 
 def screen_hex(value: Any) -> str | None:
     text = str(value or "").strip().lstrip("#").upper()
-    if "," in text:  # multi-color spools: the screen shows one swatch, use the first
-        text = text.split(",", 1)[0].strip().lstrip("#")
+    text = str(value or "").strip().lstrip("#").upper()
+    if "," in text:
+        return None
     return text if re.fullmatch(r"[0-9A-F]{6}", text) else None
 
 
@@ -171,8 +172,11 @@ def resume_usage(spool_id: int, mr: Client = moonraker) -> None:
 def _slot_record(slot: int, spool: dict[str, Any], old: dict[str, Any] | None, note: str) -> dict[str, Any]:
     filament = spool.get("filament") or {}
     remaining = spool.get("remaining_weight")
-    raw_name = str(filament.get("name") or (old or {}).get("color") or "unknown").strip()
-    material = str(filament.get("material") or (old or {}).get("material") or "unknown").strip()
+    raw_multi = filament.get("multi_color_hexes")
+    multi_color = isinstance(raw_multi, str) and "," in raw_multi
+    same_spool = (old or {}).get("spoolman_id") == spool.get("id")
+    raw_name = str(filament.get("name") or ((old or {}).get("color") if same_spool else None) or "unknown").strip()
+    material = str(filament.get("material") or ((old or {}).get("material") if same_spool else None) or "unknown").strip()
     # A trailing material token, or a name that is only that token, is not a color.
     # "Pink PLA" + PLA -> Pink; "PLA" + PLA stays one PLA, not "PLA PLA".
     if material and raw_name.casefold() == material.casefold():
@@ -183,10 +187,10 @@ def _slot_record(slot: int, spool: dict[str, Any], old: dict[str, Any] | None, n
         color = raw_name
     display_name = " ".join(x for x in (color, material) if x)
     # An exact material name has no color token. Do not store the material as the color.
-    stored_color = color.lower() if color else (old or {}).get("color") or ""
+    stored_color = color.lower() if color else ((old or {}).get("color") if same_spool else "") or ""
     # A null/invalid Spoolman color is not permission to reuse cached color: that
     # can silently assign another spool's swatch to the physical slot.
-    hex_code = screen_hex(filament.get("color_hex") or filament.get("multi_color_hexes"))
+    hex_code = "" if multi_color else screen_hex(filament.get("color_hex") or filament.get("multi_color_hexes"))
     if hex_code is None:
         # Intake/sync may encounter incomplete catalog entries; keep the spool
         # identity but never inherit a stale screen swatch. Start preflight must
@@ -202,7 +206,9 @@ def _slot_record(slot: int, spool: dict[str, Any], old: dict[str, Any] | None, n
         "remaining_grams": round(float(remaining), 1) if isinstance(remaining, (int, float)) else None,
         "quantity_status": "spoolman",
         "weight_confidence": "spoolman",
-        "physical_color_verified": True,
+        "physical_color_verified": not multi_color and bool(hex_code),
+        "multi_color": multi_color,
+        "representative_swatch": False,
         "physical_loading_verified": True,
         "updated_at": time.strftime("%Y-%m-%dT%H:%M:%S%z"),
         "verification_note": note,

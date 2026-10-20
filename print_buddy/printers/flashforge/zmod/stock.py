@@ -92,6 +92,9 @@ def read_stock_ifs_slots_from_detail(detail):
         result[sid] = item.get("hasFilament") if isinstance(item.get("hasFilament"), bool) else None
     if not result:
         raise RuntimeError("stock IFS slot list empty")
+    expected = set(range(1, _slots() + 1))
+    if set(result) != expected:
+        raise RuntimeError("stock IFS slot list incomplete")
     return result
 
 
@@ -103,6 +106,8 @@ def read_stock_ifs_slots(state, *, post=None):
 def apply_stock_presence(status, stock):
     """Replace zmod_color hasFilament with stock presence; unknown stays unknown."""
     color = status.get("zmod_color") if isinstance(status, dict) else None
+    if isinstance(stock, dict) and stock.get("_incomplete") is True:
+        raise RuntimeError("stock IFS detail sample is incomplete; refusing authoritative presence")
     slots = color.get("slots") if isinstance(color, dict) else None
     if not isinstance(slots, list):
         return status

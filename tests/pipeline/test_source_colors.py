@@ -101,7 +101,7 @@ def test_verify_readiness_pipeline_idle_with_native_presence_fake_transport():
               'filament_switch_sensor head_switch_sensor': {'enabled': True, 'filament_detected': False},
               'zmod_color': {'slots': [{'ID': '1', 'Material': 'PLA', 'Color': 'white', 'hasFilament': False}]}}
     detail = {'status': 'ready', 'hasMatlStation': True,
-              'matlStationInfo': {'slotInfos': [{'slotId': 1, 'hasFilament': True}]}}
+              'matlStationInfo': {'slotInfos': [{'slotId': i, 'hasFilament': i == 1} for i in (1, 2, 3, 4)]}}
     with patch.object(job, '_mr', return_value={'result': {'status': {'save_variables': {'variables': {'display_off': 0}}}}}), patch.object(job, 'request_json', return_value={'result': {'status': status}}) as request, patch.object(job, 'read_stock_detail', return_value=detail), patch.object(job, '_printer_phase', return_value=('standby', '', 'Ready')):
         job._verify_filament_readiness(st, selection)
         assert all(call.kwargs.get('data') is None for call in request.call_args_list)

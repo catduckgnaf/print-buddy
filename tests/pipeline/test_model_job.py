@@ -1287,7 +1287,8 @@ class StockIfsPresenceTests(unittest.TestCase):
             return model_job.read_stock_ifs_slots(self.STATE, post=lambda url, body: reply)
 
     def test_stock_presence_overrides_hardcoded_false(self):
-        stock = self._read(self._reply([{"slotId": 1, "hasFilament": True}, {"slotId": 2, "hasFilament": False}]))
+        stock = self._read(self._reply([{"slotId": 1, "hasFilament": True}, {"slotId": 2, "hasFilament": False},
+                                        {"slotId": 3, "hasFilament": False}, {"slotId": 4, "hasFilament": False}]))
         status = {
             "filament_switch_sensor head_switch_sensor": {"filament_detected": True, "enabled": True},
             "zmod_color": {"display": True, "slots": [
@@ -1312,11 +1313,17 @@ class StockIfsPresenceTests(unittest.TestCase):
             with self.subTest(reply=reply), self.assertRaises(RuntimeError):
                 self._read(reply)
 
-    def test_missing_slot_or_nonbool_stays_unknown(self):
-        stock = self._read(self._reply([{"slotId": 1, "hasFilament": "yes"}]))
+    def test_nonbool_stays_unknown(self):
+        stock = self._read(self._reply([{"slotId": 1, "hasFilament": "yes"}, {"slotId": 2, "hasFilament": True},
+                                        {"slotId": 3}, {"slotId": 4, "hasFilament": False}]))
         status = {"zmod_color": {"slots": [{"ID": "1"}, {"ID": "3"}]}}
         model_job.apply_stock_presence(status, stock)
         self.assertEqual([s["hasFilament"] for s in status["zmod_color"]["slots"]], [None, None])
+
+    def test_missing_slot_refuses(self):
+        # A partial slot list is not an authoritative sample (spool/IFS audit finding 4).
+        with self.assertRaisesRegex(RuntimeError, "incomplete"):
+            self._read(self._reply([{"slotId": 1, "hasFilament": True}]))
 
     def test_missing_credentials_refuse(self):
         with mock.patch.dict(model_job.os.environ, {}, clear=True), \

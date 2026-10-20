@@ -30,6 +30,45 @@ _OFFLOAD = {('model_job', 'audit'), ('model_job', 'slice_job'), ('source_colors'
             ('model_job', 'per_part_fit_options'), ('plate_merge', 'full_size_split_possible')}
 
 
+STOP_LABEL = "Stop"
+
+
+class Stopped(BaseException):
+    """The operator pressed Stop on a progress message. BaseException, not Exception, so a broad 'except Exception' around a fit or slice call cannot swallow it and report a fake failure."""
+
+
+async def _with_stop(adapter, source, key, metadata, text, work):
+    """Run ``work`` while a Stop button is up. Pressing it cancels the work.
+
+    Test adapters answer a prompt instantly from a scripted list, so they get no Stop
+    button: it would eat the next scripted answer and cancel every step.
+    """
+    adapter_state = getattr(adapter, "__dict__", {})
+    if "picks" in adapter_state or "clicks" in adapter_state:
+        return await work
+    import uuid
+    from tools import clarify_gateway as cm
+    cid = uuid.uuid4().hex
+    cm.register(cid, key, text, [STOP_LABEL])
+    sent = await adapter.send_clarify(chat_id=str(source.chat_id), question=text, choices=[STOP_LABEL],
+                                      clarify_id=cid, session_key=key, metadata=metadata)
+    if not getattr(sent, "success", True):
+        cm.resolve_gateway_clarify(cid, cm.CANCELLED)
+        return await work
+    task = asyncio.ensure_future(work)
+    try:
+        answer = await asyncio.to_thread(cm.wait_for_response, cid, 3600)
+        if answer == STOP_LABEL and not task.done():
+            task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await task
+            raise Stopped(text)
+        return await task
+    finally:
+        cm.resolve_gateway_clarify(cid, cm.CANCELLED)
+        cm.wait_for_response(cid, 0.001)
+
+
 async def _heavy(func, *args, **kwargs):
     """Run CPU-heavy intake work in a child process (own GIL) so Discord buttons answer in time.
 
@@ -585,7 +624,9 @@ async def prepare_link(event, adapter, state, root, timeout=None, reuse=None):
         job.update(url=url, intake_id=iid, hardware=state, selected_source=chosen)
         fetch = copy_upload if (reuse or job['site'] == 'upload') else {'makerworld': mj.maker_download}.get(
             job['site'], mj.printables_download)
-        path = await asyncio.to_thread(fetch, job, chosen, folder / 'source')
+        path = await _with_stop(
+            adapter, source, key, metadata, "Downloading the model. Press Stop to cancel.",
+            asyncio.to_thread(fetch, job, chosen, folder / 'source'))
         job['downloaded_file'] = str(path)
         if job['site'] == 'upload':
             job['title'] = await asyncio.to_thread(upload_title, path) or job['title']
@@ -596,7 +637,9 @@ async def prepare_link(event, adapter, state, root, timeout=None, reuse=None):
         manifest = (job['audit'] or {}).get('color_manifest') if isinstance(job['audit'], dict) else None
         actual_sha = await asyncio.to_thread(mj.file_sha256, path)
         if not (isinstance(manifest, dict) and manifest.get('source_sha256') == actual_sha):
-            manifest = await _heavy(inventory, path)
+            manifest = await _with_stop(
+                adapter, source, key, metadata, "Checking the model. Press Stop to cancel.",
+                _heavy(inventory, path))
         # STL has no source palette, but still needs an exact-source color decision.
         if not manifest.get('source_sha256'):
             manifest.update(source_sha256=await asyncio.to_thread(mj.file_sha256, path))
@@ -665,7 +708,8 @@ async def prepare_link(event, adapter, state, root, timeout=None, reuse=None):
             latest['filament_selection'] = validated['selection']
         from . import orca_adapter
         try:
-            capacity = await _heavy(orca_adapter.orca_plate_capacity, path, state)
+            capacity = await _with_stop(adapter, source, key, metadata, "Checking whether it fits the bed. Press Stop to cancel.",
+                                        _heavy(orca_adapter.orca_plate_capacity, path, state))
         except Exception as exc:
             receipt['status'] = 'FIT_UNKNOWN'
             receipt['fit_error'] = str(exc)
@@ -720,7 +764,8 @@ async def prepare_link(event, adapter, state, root, timeout=None, reuse=None):
             capacity = 1
         if capacity < 1:
             try:
-                options = await _heavy(orca_adapter.fit_options, path, state)
+                options = await _with_stop(adapter, source, key, metadata, "Checking resize options. Press Stop to cancel.",
+                                           _heavy(orca_adapter.fit_options, path, state))
             except Exception as exc:
                 receipt['status'] = 'FIT_UNKNOWN'
                 receipt['fit_error'] = str(exc)
@@ -735,8 +780,9 @@ async def prepare_link(event, adapter, state, root, timeout=None, reuse=None):
             # Per-part slicing applies the chosen fit to every slot plate. Offer
             # only the options every slot plate was verified to honor.
             if (latest.get('color_decisions') or {}).get('mode') == 'per_part':
-                options = await _heavy(mj.per_part_fit_options, path, latest['color_decisions'], options,
-                                       int((state.get('bed_mm') or BED)[0]))
+                options = await _with_stop(adapter, source, key, metadata, "Checking resize options. Press Stop to cancel.",
+                                           _heavy(mj.per_part_fit_options, path, latest['color_decisions'], options,
+                                                  int((state.get('bed_mm') or BED)[0])))
             if options.get('parts'):
                 failing = [part for part in options['parts']
                            if max(part['extent_mm'][:2]) > min(state.get('bed_mm') or BED)]
@@ -746,13 +792,15 @@ async def prepare_link(event, adapter, state, root, timeout=None, reuse=None):
                     options['orientations_checked'] = ['authored XY (measured)'] + [r.get('label', 'rotation') for r in options.get('rotations') or []]
             full_size_split = False
             try:
-                full_size_split = await _heavy(plate_merge.full_size_split_possible, path, manifest,
-                                               int((state.get('bed_mm') or BED)[0]))
+                full_size_split = await _with_stop(adapter, source, key, metadata, "Checking whether it splits at full size. Press Stop to cancel.",
+                                                   _heavy(plate_merge.full_size_split_possible, path, manifest,
+                                                          int((state.get('bed_mm') or BED)[0])))
             except Exception:
                 full_size_split = False
             try:
-                split_plan = await _heavy(split_fit.split_plan_100, path,
-                                          int((state.get('bed_mm') or BED)[0]))
+                split_plan = await _with_stop(adapter, source, key, metadata, "Checking whether it splits at full size. Press Stop to cancel.",
+                                             _heavy(split_fit.split_plan_100, path,
+                                                    int((state.get('bed_mm') or BED)[0])))
             except Exception:
                 split_plan = None
             if split_plan:
@@ -841,10 +889,11 @@ async def prepare_link(event, adapter, state, root, timeout=None, reuse=None):
                 # source plate was independently checked at authored size.
                 capacity = 1
             else:
-                capacity = await _heavy(orca_adapter.orca_plate_capacity, path, state,
-                                        scale=selected_scale,
-                                        **({'rotation': rotation, 'supports': bool(row.get('supports'))}
-                                           if rotation else {}))
+                capacity = await _with_stop(adapter, source, key, metadata, "Checking whether it fits the bed. Press Stop to cancel.",
+                                            _heavy(orca_adapter.orca_plate_capacity, path, state,
+                                                   scale=selected_scale,
+                                                   **({'rotation': rotation, 'supports': bool(row.get('supports'))}
+                                                      if rotation else {})))
                 if capacity < 1:
                     raise RuntimeError(f'Orca no longer verifies a fit for {row["label"]}')
             if selected_scale < 1.0:
@@ -955,9 +1004,11 @@ async def prepare_link(event, adapter, state, root, timeout=None, reuse=None):
         out = await early.take(binding)  # finished while the question was up, or still running
         if out is None:
             if chosen_quantity and chosen_quantity > 1:
-                out = await _heavy(mj.slice_job, str(jp), copies=chosen_quantity)
+                out = await _with_stop(adapter, source, key, metadata, "Slicing. Press Stop to cancel.",
+                                       _heavy(mj.slice_job, str(jp), copies=chosen_quantity))
             else:
-                out = await _heavy(mj.slice_job, str(jp))
+                out = await _with_stop(adapter, source, key, metadata, "Slicing. Press Stop to cancel.",
+                                       _heavy(mj.slice_job, str(jp)))
         mj._timing(jp, 'intake_slice_returned')
         gcodes = [str(g) for g in (out if isinstance(out, list) else [out])]
         sliced = json.loads(jp.read_text())
@@ -1049,7 +1100,9 @@ async def prepare_link(event, adapter, state, root, timeout=None, reuse=None):
         if not prep_sent:
             await adapter.send(chat_id=source.chat_id, content=prep_msg, metadata=metadata)
         mj._timing(jp, 'intake_start_tapped')
-        ok, tail = await print_next.start(target)
+        ok, tail = await _with_stop(adapter, source, key, metadata,
+                                    "Uploading to the printer. Press Stop to cancel before it starts.",
+                                    print_next.start(target))
         mj._timing(jp, 'intake_start_returned', ok=bool(ok))
         receipt.update(status='STARTED' if ok else 'START_REFUSED', started=bool(ok))
         receipt_path.write_text(json.dumps(receipt, indent=2) + '\n')
@@ -1069,7 +1122,7 @@ async def prepare_link(event, adapter, state, root, timeout=None, reuse=None):
             except OSError:
                 pass  # the listener then posts a short distinct follow-up instead of editing
         return {'action': 'skip', 'reason': 'sliced and start handled by button flow'}
-    except IntakeCancelled:
+    except (IntakeCancelled, Stopped):
         if jp is not None:
             with contextlib.suppress(Exception):
                 await runner_for(jp).discard()

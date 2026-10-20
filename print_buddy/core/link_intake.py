@@ -94,11 +94,14 @@ def _typed_choice(text, choices):
 
 
 class PromptCancelled(RuntimeError):
-    """The operator typed a cancel word at a prompt that has no Cancel button."""
+    """The operator cancelled a prompt. Nothing after this point should run."""
 
 
 class PromptExpired(RuntimeError):
     """A button question reached its timeout with no choice and no decision saved."""
+
+
+CANCEL_LABEL = "Cancel"
 
 
 async def ask(adapter, source, session_key, question, choices, timeout=None, allow_other=False, parser=None,
@@ -108,22 +111,27 @@ async def ask(adapter, source, session_key, question, choices, timeout=None, all
     instead of queueing it as a new agent turn."""
     from tools import clarify_gateway as cm
     registration_key = live_key or session_key
-    timeout = settings.current()["discord"]["question_timeout_s"] if timeout is None else timeout
+    # Every question offers Cancel. Callers that already end on a cancel choice keep theirs.
+    cancel_added = not choices or not any(term in str(choices[-1]).casefold()
+                                          for term in ("cancel", "don't print", "do not print"))
+    shown = list(choices) + ([CANCEL_LABEL] if cancel_added else [])
     cid = None
     try:
         for attempt in range(2):
             # Register BEFORE sending: a fast click can resolve the prompt inside send_clarify,
             # and re-registering afterwards would discard that answer.
             cid = uuid.uuid4().hex
-            cm.register(cid, registration_key, question, choices)
+            cm.register(cid, registration_key, question, shown)
             if parser is not None:
                 _typed_prompts[_scope(source)] = (cid, parser)
             result = await adapter.send_clarify(chat_id=str(source.chat_id), question=question,
-                choices=choices, clarify_id=cid, session_key=session_key,
+                choices=shown, clarify_id=cid, session_key=session_key,
                 metadata={'thread_id': source.thread_id} if source.thread_id else None)
             if not result.success:
                 raise RuntimeError('color prompt delivery failed')
             answer = await asyncio.to_thread(cm.wait_for_response, cid, timeout)
+            if cancel_added and answer == CANCEL_LABEL:
+                raise PromptCancelled('cancelled')
             if answer in choices:
                 return choices.index(answer)
             if isinstance(answer, str) and parser is not None:
@@ -161,7 +169,7 @@ async def ask(adapter, source, session_key, question, choices, timeout=None, all
         cm.wait_for_response(cid, 0.001)
 
 
-async def collect_link(event, adapter, state, root, timeout=None):
+async def collect_link(event, adapter, state, root, timeout=300):
     from .model_job import resolve_filament_selection, build_slot_labels
     source = event.source
     url = model_link(event.text)

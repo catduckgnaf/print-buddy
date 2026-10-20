@@ -84,7 +84,7 @@ def test_all_stencils_same_color_uses_existing_single_color_collect_api(tmp_path
         assert saved['selection']['slot'] == 1
         assert len(adapter.questions) == 2
         assert adapter.questions[0]['choices'] == [
-            'Preserve colors per stencil/source region', 'All stencils same color']
+            'Preserve colors per stencil/source region', 'All stencils same color', 'Cancel']
         assert adapter.questions[1]['question'] == 'Choose the one color for all stencils'
     asyncio.run(run())
 
@@ -130,4 +130,19 @@ def test_source_change_during_callback_refused(tmp_path):
         with pytest.raises(ValueError, match='source changed'):
             await collect(jp, state(), MutatingAdapter([0, 0, 0]), 'offline', 'colors-changed', timeout=1)
         assert 'color_decisions' not in json.loads(jp.read_text())
+    asyncio.run(run())
+
+
+def test_cancel_on_first_question_saves_nothing(tmp_path):
+    async def run():
+        p = source(tmp_path)
+        jp = tmp_path / 'JOB.json'
+        jp.write_text(json.dumps({'downloaded_file': str(p), 'color_manifest': source_colors.inventory(p)}))
+        before = jp.read_text()
+        adapter = Adapter([2])  # the Cancel button appended after the two color choices
+        from print_buddy.core.link_intake import PromptCancelled
+        with pytest.raises(PromptCancelled):
+            await collect(jp, state(), adapter, 'offline', 'colors-cancel', timeout=1)
+        assert jp.read_text() == before
+        assert adapter.questions[0]['choices'][-1] == 'Cancel'
     asyncio.run(run())

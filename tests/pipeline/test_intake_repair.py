@@ -108,7 +108,7 @@ def test_intake_flow_quantity_prompt_and_duration_answer(env, monkeypatch):
     # Check quantity question was asked with 3 choices: 1 copy, 2 copies, 3 copies
     qty_q = [q for q in adapter.questions if 'how many copies' in q['question'].lower()]
     assert len(qty_q) == 1
-    assert qty_q[0]['choices'] == ['One copy', 'Two copies', 'Max (3 copies)']
+    assert qty_q[0]['choices'] == ['One copy', 'Two copies', 'Max (3 copies)', 'Cancel']
 
     # Slicing called with chosen quantity = 2
     assert slice_calls == [2]

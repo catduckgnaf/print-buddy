@@ -329,6 +329,7 @@ async def color_selection_dispatch(event, gateway, **kwargs):
         return {'action': 'skip', 'reason': 'color UI delivery unavailable'}
     from print_buddy.core import printer_state
     from print_buddy.core.discord_color_intake import collect
+    from print_buddy.core.link_intake import PromptCancelled
     from print_buddy.core import model_job
     ARCHIVE = model_job.ARCHIVE
     path = Path(text[len('/print-colors '):]).expanduser().resolve()
@@ -343,6 +344,8 @@ async def color_selection_dispatch(event, gateway, **kwargs):
         result = await collect(path, printer_state.load(), adapter, source.chat_id,
                                f'print-colors:{source.chat_id}:{source.thread_id}', metadata)
         message = json.dumps(result)
+    except PromptCancelled:
+        message = 'Cancelled. No colors changed, nothing sliced, nothing started.'
     except Exception as exc:
         message = f'Color selection failed: {exc}. No slicing, upload or print started.'
     finally:
@@ -1215,9 +1218,16 @@ async def model_link_dispatch(event, gateway, **kwargs):
         if ack:
             await _deliver_receipt(source, adapter, mid, ack)
     from print_buddy.core import printer_state
+    from print_buddy.core.link_intake import PromptCancelled
     root = _state_dir() / 'model-link-intakes'
     try:
         return await collect_link(event, adapter, printer_state.load(), root, reuse=reuse)
+    except PromptCancelled:
+        await adapter.send(chat_id=source.chat_id,
+            content='Cancelled. Nothing sliced, nothing uploaded, nothing started. '
+                    'The colors and job are saved if you want to resume.',
+            metadata={'thread_id': source.thread_id} if source.thread_id else None)
+        return {'action': 'skip', 'reason': 'operator cancelled intake'}
     except Exception:
         logger.exception('New model intake failed; original event must not reach stale agent context')
         try:

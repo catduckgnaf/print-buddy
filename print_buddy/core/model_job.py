@@ -513,9 +513,14 @@ def resolve_filament_selection(state, selection):
     selection = validate_filament_selection(selection)
     if mapped_id is not None and selection["spoolman_id"] != mapped_id:
         raise ValueError(f"slot {slot} spool mismatch: requested #{selection['spoolman_id']}, configured #{mapped_id}")
+    def canonical_color(value):
+        text = value.strip().casefold().lstrip("#")
+        return text.upper() if re.fullmatch(r"[0-9a-fA-F]{6}", text) else " ".join(text.split())
     for key in ("color", "material"):
         value = configured.get(key)
-        if value is not None and (not isinstance(value, str) or value.strip().casefold() != selection[key].casefold()):
+        if value is not None and (not isinstance(value, str) or
+                                   (canonical_color(value) if key == "color" else value.strip().casefold()) !=
+                                   (canonical_color(selection[key]) if key == "color" else selection[key].strip().casefold())):
             raise ValueError(f"slot {slot} {key} does not match the configured selection")
     return selection
 
@@ -2679,10 +2684,10 @@ def print_mapped_native(g, st, mesh, mapping, job, job_path, wait_s, reprint):
     if job_path is not None:
         _consume_approval(job_path, job, g, reprint=reprint)
     slots_used = sorted(set(mapped.values()))
-    if len(slots_used) == 1:
-        _sync_active_spool(st, slots_used[0])
+    if len(slots_used) > 1:
+        print('WARNING: MULTI-SLOT JOB: automatic Spoolman usage deduction disabled; aggregate usage cannot be safely apportioned to selected spools.', flush=True)
     else:
-        print('ACTIVE SPOOL UNCHANGED: multi-slot job; Spoolman accounting is approximate until Phase 2', flush=True)
+        _sync_active_spool(st, slots_used[0])
     _timing(job_path, 'upload_begin')
     uploaded = subprocess.run([str(MOONRAKERCTL), 'upload', str(g), remote, sha],
                               text=True, capture_output=True, timeout=300)

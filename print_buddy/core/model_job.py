@@ -2909,7 +2909,8 @@ def print_mapped_native(g, st, mesh, mapping, job, job_path, wait_s, reprint):
 
     if state == 'printing' or (readback and readback.outcome == 'printing'):
         out.update(accepted=True, started=True, phase='executing', moonraker_state='printing',
-                   outcome='printing', message=(readback.message if readback else 'printing'))
+                   outcome='printing', message=(readback.message if readback else 'printing'),
+                   extrusion_confirmed=bool(readback and (readback.evidence or {}).get('extrusion_confirmed')))
     else:
         # The AD5X native route heats and loads the IFS slot for several minutes before
         # print_stats reports printing (2026-10-16: ~7 min). Heater targets set by that
@@ -3098,6 +3099,7 @@ def print_now(target, wait_s=25, accept_default_z_offset=False, reprint=False):
     print_no=_assign_print_number(job_path)
     out={"started":True,"title":title,"print_number":print_no,"file":remote,"method":method,
          "phase":"executing","outcome":"printing","message":(readback.message if readback else "printing"),
+         "extrusion_confirmed":bool(readback and (readback.evidence or {}).get("extrusion_confirmed")),
          "print_time":human_dur(est) if est else None,"filament_g":round(float(m.group(1))) if m else None,
          "finish_et":(now+timedelta(seconds=(est or 0)+warm)).strftime("%-I:%M %p %a") if est else None}
     settings=start_print_settings(text); z_notice=z_offset_notice(text)

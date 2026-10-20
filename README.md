@@ -233,3 +233,7 @@ is_system_service: False
 * ZMod plugin guide: [wiki.zmod.link/Plugin](https://wiki.zmod.link/Plugin/)
 * OrcaSlicer CLI documentation: [CLI mode](https://github.com/OrcaSlicer/OrcaSlicer/wiki/cli_mode)
 * Releases: [GitHub releases](https://github.com/catduckgnaf/print-buddy/releases)
+
+## Spool / IFS source of truth
+
+Spoolman is authoritative for spool identity, filament material/color, and location (`IFS Slot N` versus `Shelf`). `printer_hardware.json` caches verified slot-to-Spoolman-ID bindings; it is not authoritative when Spoolman is available. Physical feeder slots are 1-based (1–4); G-code tools are zero-based (T0–T3), and mappings explicitly translate between them. G-code/job snapshots are provenance, not permission to override newer Spoolman facts. Normalize screen colors to six-digit RGB; never infer missing color from another spool or slot. Correct missing/invalid Spoolman color before binding. Screen updates are immediate when idle or persisted pending while printing; deferred/failed updates require explicit sync after printing. Moonraker active spool is usage accounting only: single-slot launch repoints it; multi-slot launch leaves it unchanged, so usage can be approximate. Selected physical slot determines identity/readiness, not the global accounting pointer.

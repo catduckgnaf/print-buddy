@@ -98,7 +98,8 @@ def write_split_plan(job_path, job, manifest, gcodes, plan_id, plans_dir=None):
     print_records._atomic_write(target, json.dumps(plan, indent=2) + '\n')
     latest = json.loads(Path(job_path).read_text())
     latest['multipart_plan'] = {'plan_id': plan_id, 'split_reason': reason, 'parts': parts}
-    Path(job_path).write_text(json.dumps(latest, indent=2) + '\n')
+    from . import model_job as mj
+    mj.write_job(Path(job_path).parent, latest)  # atomic; JOB.json is read concurrently
     return plan
 
 

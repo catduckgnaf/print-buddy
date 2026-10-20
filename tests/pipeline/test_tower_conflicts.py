@@ -41,7 +41,7 @@ def test_tower_candidates_clear_parts_and_are_spread():
 def test_mapped_slice_never_auto_arranges_and_retries_tower_on_conflict():
     body = inspect.getsource(orca_adapter.slice_model)
     arrange = re.search(r"\['--arrange', '0', '--orient', '0'\] if \((.*?)\) else", body).group(1)
-    assert 'mapping' in arrange
+    assert 'mapped_profile' in arrange  # #77 renamed the multi-tool flag
     assert "_orca_conflict(folder)" in body and "prime_tower_candidates_mm" in body
     assert '--no-check' not in body
 

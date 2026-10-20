@@ -401,7 +401,7 @@ async def _spool_projection_text(mj, job, manifest, state, copies):
         return ''
 
 
-async def _ask(adapter, source, key, question, choices, timeout=300, **kwargs):
+async def _ask(adapter, source, key, question, choices, timeout=None, **kwargs):
     """ask() registered under the live chat session so typed replies reach the prompt."""
     live_key = kwargs.pop('live_key', None) or _LIVE_KEY.get() or key
     on_shown = kwargs.pop('on_shown', None)
@@ -410,7 +410,7 @@ async def _ask(adapter, source, key, question, choices, timeout=300, **kwargs):
     return await ask(adapter, source, key, question, list(choices), timeout, live_key=live_key, **kwargs)
 
 
-async def _pick_plate(adapter, source, key, parts, timeout=300):
+async def _pick_plate(adapter, source, key, parts, timeout=None):
     """One picker for a split job: index of the plate to print first, or None for Cancel."""
     labels = [print_next.plate_choice_label(part, part.get('plate')) for part in parts]
     picked = await _ask(adapter, source, key, 'Which plate prints first?', labels + ['Cancel'], timeout)
@@ -461,7 +461,7 @@ async def _send_source_thumbnail(adapter, source, path, target):
         pass
 
 
-async def prepare_link(event, adapter, state, root, timeout=300, reuse=None):
+async def prepare_link(event, adapter, state, root, timeout=None, reuse=None):
     from . import model_job as mj
     from .source_colors import inventory, canonical_prompts, grouped_prompts, validate_decisions
     source = event.source

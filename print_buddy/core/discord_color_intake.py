@@ -19,11 +19,12 @@ def _visible_choices(question, choices):
     return prompt, visible
 
 
-async def collect(job_path, state, adapter, chat_id, session_key, metadata=None, timeout=300):
+async def collect(job_path, state, adapter, chat_id, session_key, metadata=None, timeout=None):
     from tools import clarify_gateway as cm
     from .model_job import intake_color_choices, set_color_decisions, resolve_filament_selection, write_job, decisions_digest, build_slot_labels
     from .source_colors import inventory, prompts, canonical_prompts, grouped_prompts, validate_decisions
     path = Path(job_path)
+    timeout = settings.current()["discord"]["question_timeout_s"] if timeout is None else timeout
     job = json.loads(path.read_text())
     manifest = inventory(job['downloaded_file'])
     source_hash = manifest['source_sha256']

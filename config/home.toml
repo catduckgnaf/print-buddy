@@ -60,6 +60,14 @@ daily_reset_hour = 4
 timezone = "America/New_York"
 # Name the bot uses for itself in the roast persona and the profile templates the installer renders.
 bot_name = "Print Buddy"
+# How long a Discord question waits for a button press, in seconds.
+question_timeout_s = 1800
+# How long a safety confirmation (bed clear, destructive start) waits.
+safety_confirm_timeout_s = 600
+# How long an uploaded file stays valid before the start step expires.
+upload_wait_s = 3600
+# How long a cold-pull outcome prompt stays open.
+cold_pull_outcome_s = 1800
 
 [listener]
 tick_s = 600

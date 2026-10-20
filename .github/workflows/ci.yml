@@ -79,19 +79,30 @@ jobs:
       - run: python -m pip install -r requirements-test.txt
       - name: Install pinned Spoolman server natively
         run: |
-          python -m pip install 'vendor/spoolman-0.27.0.tar.gz'
+          set -euo pipefail
+          archive="$RUNNER_TEMP/spoolman-v0.27.0.zip"
+          curl -fL --retry 3 https://codeload.github.com/Donkie/Spoolman/zip/refs/tags/v0.27.0 -o "$archive"
+          echo '9ceead75734683b8d5f92cb6f7b9cc0d83acaf2418f72d48736d7f995d583f42  '"$archive" | sha256sum -c -
+          mkdir -p "$RUNNER_TEMP/spoolman-src"
+          unzip -q "$archive" -d "$RUNNER_TEMP/spoolman-src"
+          cd "$RUNNER_TEMP/spoolman-src/Spoolman-0.27.0"
+          python -m venv "$RUNNER_TEMP/spoolman-venv"
+          "$RUNNER_TEMP/spoolman-venv/bin/python" -m pip install -r requirements.txt
+          echo "SPOOLMAN_APP_DIR=$PWD" >> "$GITHUB_ENV"
+          echo "SPOOLMAN_PYTHON=$RUNNER_TEMP/spoolman-venv/bin/python" >> "$GITHUB_ENV"
       - name: Start isolated Spoolman server
         run: |
           mkdir -p "$RUNNER_TEMP/spoolman-data"
-          SPOOLMAN_DIR_DATA="$RUNNER_TEMP/spoolman-data" SPOOLMAN_PORT=7912 \
-            python -m uvicorn spoolman.main:app --host 127.0.0.1 --port 7912 \
+          cd "$SPOOLMAN_APP_DIR"
+          SPOOLMAN_DIR_DATA="$RUNNER_TEMP/spoolman-data" SPOOLMAN_PORT=7912 SPOOLMAN_HOST=127.0.0.1 \
+            "$SPOOLMAN_PYTHON" -m uvicorn spoolman.main:app --host 127.0.0.1 --port 7912 \
             > "$RUNNER_TEMP/spoolman.log" 2>&1 &
           echo $! > "$RUNNER_TEMP/spoolman.pid"
       - name: Wait for Spoolman
         run: |
           for i in $(seq 60); do
-            if curl -fs http://localhost:7912/api/v1/health; then exit 0; fi
-            sleep 2
+            if curl -fsS -o /dev/null http://localhost:7912/api/v1/health; then exit 0; fi
+            sleep 1
           done
           cat "$RUNNER_TEMP/spoolman.log"
           echo "Spoolman did not come up"; exit 1

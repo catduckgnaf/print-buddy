@@ -162,6 +162,21 @@ The script refuses to run if tracked files were edited by hand. It runs the offl
 
 Check the setup any time with `python3 -m print_buddy.doctor`. It also checks Moonraker and Spoolman when they are set in `[services]`, and warns about Print Buddy state files stranded outside the profile `state` folder. The update and install scripts remove those strays when the profile holds the real copy (or the stray is empty); files in other profiles are only reported; `python3 -m print_buddy.state_files [--dry-run] [--remove]` does the same by hand.
 
+## Run with Docker
+
+Prerequisites: Docker Engine with the Docker Compose plugin, and Git. From the repository root, copy `.env.example` to `.env` and set `PRINT_BUDDY__SERVICES__MOONRAKER_URL` to your printer's Moonraker URL. Set other scalar settings with `PRINT_BUDDY__SECTION__KEY` variables in `.env`; `config/docker.toml` supplies Docker defaults. Lists such as `orca.command` belong in TOML, not environment variables. To replace the full config, mount your file at `/app/config/docker.toml` in `docker-compose.yml`.
+
+Compose stores persistent data in `./data/hermes`, `./data/archive`, `./data/records`, and `./data/cache`; Spoolman uses `./data/spoolman`. Create these directories before starting. Spoolman is published on host port `7912`; Print Buddy has no published host port and connects to Moonraker and Spoolman over the Compose network.
+
+```bash
+cp .env.example .env
+mkdir -p data/hermes data/archive data/records data/cache data/spoolman
+docker compose up -d
+docker compose logs -f print-buddy
+```
+
+To update a checkout, pull the desired source revision and rebuild/recreate the services with `docker compose up -d --build`. Stop the stack with `docker compose down`; the bind-mounted data directories remain. See [Docker details](docs/DOCKER.md) for the full configuration notes.
+
 ## Running tests
 
 From the repository root, CI runs this on every push and pull request:

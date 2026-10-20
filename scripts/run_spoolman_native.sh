@@ -14,5 +14,6 @@ echo 'bcc961af4c20d7ad7f1740f5609cd3efd94c4556baafaeba5036122dd7e46704  '"$archi
 if [[ ! -f "$app_dir/spoolman/main.py" ]]; then unzip -oq "$archive" -d "$cache_dir"; fi
 if [[ ! -x "$venv_dir/bin/python" ]]; then "$python_bin" -m venv "$venv_dir"; "$venv_dir/bin/python" -m pip install uvicorn~=0.34 -r "$app_dir/requirements.txt"; fi
 export SPOOLMAN_DIR_DATA="$data_dir" SPOOLMAN_PORT="$port" SPOOLMAN_HOST=127.0.0.1
+export PATH="$venv_dir/bin:$PATH"
 cd "$app_dir"
 exec "$venv_dir/bin/python" -m uvicorn spoolman.main:app --host 127.0.0.1 --port "$port"

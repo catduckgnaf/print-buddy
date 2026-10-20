@@ -91,6 +91,7 @@ jobs:
           "$RUNNER_TEMP/spoolman-venv/bin/python" -m pip install -r requirements.txt
           echo "SPOOLMAN_APP_DIR=$PWD" >> "$GITHUB_ENV"
           echo "SPOOLMAN_PYTHON=$RUNNER_TEMP/spoolman-venv/bin/python" >> "$GITHUB_ENV"
+          echo "$RUNNER_TEMP/spoolman-venv/bin" >> "$GITHUB_PATH"
       - name: Start isolated Spoolman server
         run: |
           mkdir -p "$RUNNER_TEMP/spoolman-data"

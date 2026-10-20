@@ -536,8 +536,9 @@ def slice_model(source, folder, state, brim=None, first_layer=False, color_decis
         if not isinstance(color, str) or not re.fullmatch(r'#?[0-9A-Fa-f]{6}', color):
             raise RuntimeError('filament color must be an explicit six-digit RGB value')
         color = '#' + color.lstrip('#').upper()
+    from .nozzle import effective_nozzle_temperature
     base_nozzle_temp = float(state['temps_c']['nozzle'])
-    effective_nozzle_temp = min(base_nozzle_temp + adj['temp_offset_c'], adj['max_temperature_c'])
+    effective_nozzle_temp = effective_nozzle_temperature(nozzle_type, base_nozzle_temp)
     filament.update({'filament_type': [state['spool']['material']], 'filament_density': [str(state['spool']['density'])],
                      'filament_colour': [color or filament['filament_colour'][0]],
                      'nozzle_temperature': [str(int(effective_nozzle_temp))],
@@ -674,7 +675,7 @@ def slice_model(source, folder, state, brim=None, first_layer=False, color_decis
                      before_profile=None, filaments=len(filament_paths),
                      ifs_slots=IFS_SLOTS, tool_slots=tool_slots,
                      nozzle_type=nozzle_type, materials=used_materials,
-                     nozzle_temp=state.get('temps_c', {}).get('nozzle'))
+                     nozzle_temp=effective_nozzle_temp, nozzle_temp_is_effective=True)
     if gate.status == 'blocked':
         raise RuntimeError('Pre-slice guard blocked: ' + '; '.join(gate.blocked))
     # Unknown placement is advisory, never a false block.

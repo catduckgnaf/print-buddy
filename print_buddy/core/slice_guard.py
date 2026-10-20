@@ -26,7 +26,7 @@ def _printer(bed, ifs_slots):
 
 def pre_slice(*, bounds=None, bed=None, profile=None, required_keys=(), before_profile=None,
               filaments=1, ifs_slots=None, tool_slots=None, nozzle_type=None, materials=None,
-              nozzle_temp=None):
+              nozzle_temp=None, nozzle_temp_is_effective=False):
     """bounds is placed XY bbox (xmin,ymin,xmax,ymax); tools map T-index to 1-based IFS slot."""
     r=Result(); profile=profile or {}; tool_slots=tool_slots or {}; bed,ifs_slots=_printer(bed,ifs_slots)
     if nozzle_type:
@@ -39,7 +39,11 @@ def pre_slice(*, bounds=None, bed=None, profile=None, required_keys=(), before_p
                 r.block(str(exc))
         if nozzle_temp is not None:
             try:
-                check_nozzle_temperature_safety(nozzle_type, nozzle_temp)
+                if nozzle_temp_is_effective:
+                    check_nozzle_temperature_safety(nozzle_type, nozzle_temp)
+                else:
+                    from .nozzle import effective_nozzle_temperature
+                    effective_nozzle_temperature(nozzle_type, nozzle_temp)
             except NozzleError as exc:
                 r.block(str(exc))
     missing=[k for k in required_keys if k not in profile or profile[k] in (None, "", [])]

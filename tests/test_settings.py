@@ -76,6 +76,7 @@ class OverrideTests(unittest.TestCase):
                 settings.load()
 
     def test_bad_values_are_rejected(self):
+        from print_buddy.settings import validate
         for text, message in [("[printer]\nbed_mm = [220]\n", "bed_mm"),
                               ("[printer]\nbed_mm = [220, -1]\n", "bed_mm"),
                               ("[printer]\nifs_slots = 2.5\n", "whole number"),
@@ -85,10 +86,20 @@ class OverrideTests(unittest.TestCase):
                               ("[printer]\nbed_size = 220\n", "unknown setting \\[printer\\] bed_size"),
                               ("[pritner]\nifs_slots = 1\n", "unknown section"),
                               ('[services]\nspoolman_url = "spoolman.lan"\n', "must be a URL"),
+                              ("[nozzle_temp_offsets]\nbrass = 16\n", "between -10 and \\+15"),
+                              ("[nozzle_temp_offsets]\nmystery = 2\n", "unknown nozzle type"),
                               ("[printer\n", "local.toml")]:
+
             with self.subTest(text=text):
                 with self.assertRaisesRegex(settings.SettingsError, message):
                     settings.load(local=self.toml(text))
+
+        base = settings.load(local=False, environ={})
+        for bad in ({"mystery": 1}, {"brass": 16}, {"brass": True}):
+            with self.subTest(offsets=bad), self.assertRaises(settings.SettingsError):
+                validate({**base, "nozzle_temp_offsets": bad})
+        valid = settings.load(local=self.toml("[nozzle_temp_offsets]\nhardened_steel = 5\n"))
+        self.assertEqual(valid["nozzle_temp_offsets"]["hardened_steel"], 5.0)
 
     def test_relative_templates_resolve_from_the_repo(self):
         data = settings.load(local=self.toml('[orca]\ntemplates = "my/profiles"\n'))

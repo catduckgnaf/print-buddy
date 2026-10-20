@@ -192,71 +192,62 @@ def get_tuned_nozzle_profile(diameter_mm: float | int) -> NozzleProfile | None:
     return None
 
 
-# Thermal, flow, and maximum safe temperature characteristics per nozzle type
-NOZZLE_TYPE_CHARACTERISTICS: dict[str, dict[str, float]] = {
-    "brass": {
-        "max_temperature_c": 300.0,
-        "temp_offset_c": 0.0,
-        "flow_multiplier": 1.0,
-    },
-    "copper": {
-        "max_temperature_c": 300.0,
-        "temp_offset_c": 0.0,
-        "flow_multiplier": 1.0,
-    },
-    "stainless_steel": {
-        "max_temperature_c": 300.0,
-        "temp_offset_c": 5.0,
-        "flow_multiplier": 0.95,
-    },
-    "hardened_steel": {
-        "max_temperature_c": 450.0,
-        "temp_offset_c": 5.0,
-        "flow_multiplier": 0.95,
-    },
-    "ruby": {
-        "max_temperature_c": 500.0,
-        "temp_offset_c": 0.0,
-        "flow_multiplier": 1.0,
-    },
-    "tungsten_carbide": {
-        "max_temperature_c": 500.0,
-        "temp_offset_c": 0.0,
-        "flow_multiplier": 1.05,
-    },
-    "diamond": {
-        "max_temperature_c": 500.0,
-        "temp_offset_c": 0.0,
-        "flow_multiplier": 1.05,
-    },
-}
+# Thermal and flow defaults are typed in print_buddy/data/nozzles.toml.
+# Runtime temperature offsets are separately configurable per nozzle type.
+def _nozzle_type_defaults() -> dict[str, dict[str, float]]:
+    from pathlib import Path
+    import tomllib
+
+    path = Path(__file__).resolve().parent.parent / "data" / "nozzles.toml"
+    try:
+        with path.open("rb") as source:
+            data = tomllib.load(source)
+        rows = data.get("types", {})
+        result = {}
+        for name in CANONICAL_NOZZLE_TYPES:
+            row = rows[name]
+            maximum = float(row["max_temperature_c"])
+            offset = float(row.get("temp_offset_c", 0.0))
+            flow = float(row["flow_multiplier"])
+            if not 0 < maximum <= 550 or not -10 <= offset <= 15 or not 0 < flow <= 2:
+                raise ValueError(f"invalid nozzle type profile {name!r}")
+            result[name] = {"max_temperature_c": maximum, "temp_offset_c": offset,
+                            "flow_multiplier": flow}
+        return result
+    except (OSError, KeyError, TypeError, ValueError) as exc:
+        raise NozzleError(f"invalid nozzle type configuration in {path}: {exc}") from exc
 
 
 def get_nozzle_type_adjustments(nozzle_type: str | None) -> dict[str, float]:
-    """Return thermal and flow characteristics for the given nozzle type.
+    """Return validated thermal and flow characteristics for a nozzle type.
 
-    Returns dict with keys:
-      - max_temperature_c: maximum safe printing temperature
-      - temp_offset_c: thermal compensation offset in °C
-      - flow_multiplier: adjustment multiplier on filament flow ratio
+    A per-type offset in ``[nozzle_temp_offsets]`` overrides the data-file default.
+    Offsets are bounded to -10..+15 °C; every type defaults to zero.
     """
-    if not nozzle_type:
-        norm = "hardened_steel"
-    else:
-        norm = normalize_nozzle_type(nozzle_type)
-    return NOZZLE_TYPE_CHARACTERISTICS.get(
-        norm,
-        {
-            "max_temperature_c": 300.0,
-            "temp_offset_c": 0.0,
-            "flow_multiplier": 1.0,
-        },
-    )
+    norm = normalize_nozzle_type(nozzle_type) if nozzle_type else "hardened_steel"
+    values = _nozzle_type_defaults()[norm].copy()
+    try:
+        from .. import settings
+        override = settings.current().get("nozzle_temp_offsets", {}).get(norm, values["temp_offset_c"])
+    except (ImportError, AttributeError):
+        override = values["temp_offset_c"]
+    if isinstance(override, bool) or not isinstance(override, (int, float)) or not -10 <= override <= 15:
+        raise NozzleError(f"temperature offset for {norm} must be between -10 and +15 °C, got {override!r}")
+    values["temp_offset_c"] = float(override)
+    return values
+
+
+def effective_nozzle_temperature(nozzle_type: str | None, base_temperature_c: float | int) -> float:
+    """Resolve requested temperature plus offset, refusing rather than clamping above max."""
+    adjustments = get_nozzle_type_adjustments(nozzle_type)
+    effective = float(base_temperature_c) + adjustments["temp_offset_c"]
+    check_nozzle_temperature_safety(nozzle_type or "hardened_steel", effective)
+    return effective
 
 
 def check_nozzle_temperature_safety(nozzle_type: str, temperature_c: float | int) -> None:
-    """Validate that requested temperature does not exceed the nozzle type's safe limit."""
-    adj = get_nozzle_type_adjustments(nozzle_type)
+    """Validate the effective requested temperature against the nozzle's safe limit."""
+    adj = _nozzle_type_defaults()[normalize_nozzle_type(nozzle_type)]
     max_temp = adj["max_temperature_c"]
     if float(temperature_c) > max_temp:
         raise NozzleTemperatureError(

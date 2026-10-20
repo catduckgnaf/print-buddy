@@ -1,5 +1,36 @@
 # Tuned slicing profile parameters per nozzle diameter (mm)
 # Used by orca_adapter to generate per-size machine and process configuration overrides.
+# Type-specific thermal and flow defaults are validated by nozzle.py; temperature
+# offsets can be overridden in config/home.toml under [nozzle_temp_offsets].
+[types.brass]
+max_temperature_c = 300.0
+temp_offset_c = 0.0
+flow_multiplier = 1.0
+
+[types.stainless_steel]
+max_temperature_c = 300.0
+temp_offset_c = 0.0
+flow_multiplier = 0.95
+
+[types.hardened_steel]
+max_temperature_c = 450.0
+temp_offset_c = 0.0
+flow_multiplier = 0.95
+
+[types.ruby]
+max_temperature_c = 500.0
+temp_offset_c = 0.0
+flow_multiplier = 1.0
+
+[types.tungsten_carbide]
+max_temperature_c = 500.0
+temp_offset_c = 0.0
+flow_multiplier = 1.05
+
+[types.diamond]
+max_temperature_c = 500.0
+temp_offset_c = 0.0
+flow_multiplier = 1.05
 
 [0.2]
 diameter_mm = 0.2

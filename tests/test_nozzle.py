@@ -9,6 +9,7 @@ from print_buddy.core.nozzle import (
     check_nozzle_material_safety,
     check_nozzle_temperature_safety,
     get_nozzle_type_adjustments,
+    effective_nozzle_temperature,
     is_abrasive_material,
     normalize_nozzle_type,
     validate_nozzle_setting,
@@ -277,20 +278,29 @@ def test_printer_state_cli_persistence(tmp_path, monkeypatch):
     assert loaded_st2["nozzle"]["type"] == "hardened_steel"
 
 
-def test_nozzle_type_characteristics_and_adjustments():
+def test_nozzle_type_characteristics_and_adjustments(monkeypatch):
+    monkeypatch.setattr(settings, "current", lambda: {"nozzle_temp_offsets": {}})
     brass = get_nozzle_type_adjustments("brass")
     assert brass["max_temperature_c"] == 300.0
-    assert brass["temp_offset_c"] == 0.0
+    assert get_nozzle_type_adjustments("brass")["temp_offset_c"] == 0.0
+    for nozzle_type in ("hardened_steel", "stainless_steel", "ruby", "tungsten_carbide", "diamond"):
+        assert get_nozzle_type_adjustments(nozzle_type)["temp_offset_c"] == 0.0
     assert brass["flow_multiplier"] == 1.0
 
     hardened = get_nozzle_type_adjustments("hardened steel")
     assert hardened["max_temperature_c"] == 450.0
-    assert hardened["temp_offset_c"] == 5.0
+    assert hardened["temp_offset_c"] == 0.0
     assert hardened["flow_multiplier"] == 0.95
+    monkeypatch.setattr(settings, "current", lambda: {"nozzle_temp_offsets": {"hardened_steel": 5}})
+    assert get_nozzle_type_adjustments("hardened_steel")["temp_offset_c"] == 5.0
+    assert effective_nozzle_temperature("hardened_steel", 220) == 225.0
+    with pytest.raises(NozzleTemperatureError, match="exceeds maximum safe limit of 450"):
+        effective_nozzle_temperature("hardened_steel", 446)
+    monkeypatch.setattr(settings, "current", lambda: {"nozzle_temp_offsets": {}})
 
     stainless = get_nozzle_type_adjustments("stock")  # alias to stainless_steel
     assert stainless["max_temperature_c"] == 300.0
-    assert stainless["temp_offset_c"] == 5.0
+    assert stainless["temp_offset_c"] == 0.0
     assert stainless["flow_multiplier"] == 0.95
 
     ruby = get_nozzle_type_adjustments("ruby")
@@ -302,7 +312,9 @@ def test_nozzle_type_characteristics_and_adjustments():
     assert carbide["flow_multiplier"] == 1.05
 
 
-def test_nozzle_temperature_safety():
+def test_nozzle_temperature_safety(monkeypatch):
+    base = settings.load(local=__import__("pathlib").Path(__import__("os").devnull), environ={})
+    monkeypatch.setattr(settings, "current", lambda: {**base, "nozzle_temp_offsets": {}})
     # Brass nozzle within limit
     check_nozzle_temperature_safety("brass", 220)
     check_nozzle_temperature_safety("brass", 300)
@@ -313,8 +325,10 @@ def test_nozzle_temperature_safety():
     # Hardened steel within limit
     check_nozzle_temperature_safety("hardened_steel", 400)
     # Hardened steel exceeding limit
+    base_config = settings.current()
+    monkeypatch.setattr(settings, "current", lambda: {**base_config, "nozzle_temp_offsets": {"hardened_steel": 5}})
     with pytest.raises(NozzleTemperatureError, match="exceeds maximum safe limit of 450"):
-        check_nozzle_temperature_safety("hardened_steel", 460)
+        effective_nozzle_temperature("hardened_steel", 446)
 
 
 def test_pre_slice_guard_nozzle_temperature():
@@ -360,6 +374,8 @@ def test_orca_adapter_thermal_and_flow_adjustments(tmp_path, monkeypatch):
         "ifs_slots": {"1": {"slot": 1, "spoolman_id": 1, "material": "PLA", "physical_color_verified": True, "hex": "FFFFFF"}},
     }
 
+    base_config = settings.current()
+    monkeypatch.setattr(settings, "current", lambda: {**base_config, "nozzle_temp_offsets": {"hardened_steel": 5}})
     _output, _provenance, configs = orca_adapter.slice_model(dummy_stl, tmp_path / "out", state)
 
     machine_cfg = json.loads(configs[0].read_text())
@@ -373,6 +389,11 @@ def test_orca_adapter_thermal_and_flow_adjustments(tmp_path, monkeypatch):
     # 220 base + 5 temp offset = 225
     assert filament_cfg["nozzle_temperature"] == ["225"]
     assert filament_cfg["nozzle_temperature_initial_layer"] == ["225"]
+    # max nozzle temperature guard must reject an offset that pushes above 450 °C
+    monkeypatch.setattr(settings, "current", lambda: {**base_config, "nozzle_temp_offsets": {"hardened_steel": 10}})
+    from print_buddy.core.nozzle import NozzleTemperatureError
+    with pytest.raises(NozzleTemperatureError, match="exceeds maximum safe limit of 450"):
+        orca_adapter.slice_model(dummy_stl, tmp_path / "too_hot", {**state, "temps_c": {"nozzle": 445, "bed": 60}})
     # flow ratio 1.0 * 0.95 = 0.95
     assert filament_cfg["filament_flow_ratio"] == ["0.95"]
 

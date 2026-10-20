@@ -61,7 +61,7 @@ LEGACY_ENV = {
     "PRINT_RECORDS_VAULT": ("paths", "records_vault"),
 }
 # Sections whose keys are names you choose, not a fixed set.
-OPEN_SECTIONS = {"cold_pull"}
+OPEN_SECTIONS = {"cold_pull", "nozzle_temp_offsets"}
 # Keys that can be optionally specified even if absent from base home.toml.
 OPTIONAL_KEYS = {("printer", "nozzle_type"): str}
 
@@ -176,6 +176,12 @@ def validate(data):
     for key in ("max_print_height_mm", "nozzle_diameter_mm"):
         data["printer"][key] = _positive(data, "printer", key)
     data["printer"]["ifs_slots"] = _positive(data, "printer", "ifs_slots", int)
+    for name, raw_offset in data.get("nozzle_temp_offsets", {}).items():
+        if name not in ("brass", "hardened_steel", "stainless_steel", "ruby", "tungsten_carbide", "diamond"):
+            raise SettingsError(f"[nozzle_temp_offsets] unknown nozzle type {name!r}")
+        if isinstance(raw_offset, bool) or not isinstance(raw_offset, (int, float)) or not -10 <= raw_offset <= 15:
+            raise SettingsError(f"[nozzle_temp_offsets] {name} must be between -10 and +15 °C, got {raw_offset!r}")
+        data["nozzle_temp_offsets"][name] = float(raw_offset)
     key = data["printer"].get("model")
     if key not in printers.MODELS:
         raise SettingsError(f"[printer] model must be one of {', '.join(printers.MODELS)}, got {key!r}")

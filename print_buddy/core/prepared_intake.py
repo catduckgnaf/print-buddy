@@ -10,6 +10,7 @@ import re
 from pathlib import Path
 import sys
 import time
+from types import SimpleNamespace
 from urllib.parse import urlsplit
 
 from .. import printers, settings
@@ -413,6 +414,17 @@ def reuse_job(prev):
     return dict({k: prev.get(k) for k in keep}, sources=[row], reused_from=prev.get('intake_id'))
 
 
+def resume_job(saved):
+    """Same source as an expired intake, plus any color decisions already written to JOB.json."""
+    job = reuse_job(saved)
+    job['resumed_from'] = saved.get('intake_id')
+    if saved.get('color_decisions'):
+        job['color_decisions'] = saved['color_decisions']
+        if saved.get('filament_selection'):
+            job['filament_selection'] = saved['filament_selection']
+    return job
+
+
 _LIVE_KEY = contextvars.ContextVar('prepared_intake_live_key', default=None)
 
 
@@ -529,19 +541,23 @@ async def prepare_link(event, adapter, state, root, timeout=None, reuse=None):
     jp = None
     try:
         if reuse:
-            done = reuse.get('sliced_at') and (reuse.get('filament_selection') or {}).get('color')
-            when = f" (last sliced in {reuse['filament_selection']['color']})" if done else ''
-            pick = await _ask(adapter, source, key, f"Did you mean {reuse.get('title') or 'the last model'}{when}? "
-                             'I will slice it again from the saved file, no download.',
-                             ['Yes, slice it again', "No, I'll send a link"], timeout)
-            if pick != 0:
-                receipt.update(status='DECLINED_REPRINT')
-                receipt_path.write_text(json.dumps(receipt, indent=2) + '\n')
-                await adapter.send(chat_id=source.chat_id, metadata=metadata,
-                                   content='OK. Send the link or drop the file. Nothing was sliced or started.')
-                return {'action': 'skip', 'reason': 'reprint declined'}
-            job = reuse_job(reuse)
-            url = reuse.get('url')
+            if reuse.get('resumed_from'):
+                job = reuse
+                url = reuse.get('url')
+            else:
+                done = reuse.get('sliced_at') and (reuse.get('filament_selection') or {}).get('color')
+                when = f" (last sliced in {reuse['filament_selection']['color']})" if done else ''
+                pick = await _ask(adapter, source, key, f"Did you mean {reuse.get('title') or 'the last model'}{when}? "
+                                 'I will slice it again from the saved file, no download.',
+                                 ['Yes, slice it again', "No, I'll send a link"], timeout)
+                if pick != 0:
+                    receipt.update(status='DECLINED_REPRINT')
+                    receipt_path.write_text(json.dumps(receipt, indent=2) + '\n')
+                    await adapter.send(chat_id=source.chat_id, metadata=metadata,
+                                       content='OK. Send the link or drop the file. Nothing was sliced or started.')
+                    return {'action': 'skip', 'reason': 'reprint declined'}
+                job = reuse_job(reuse)
+                url = reuse.get('url')
         elif upload:
             job = upload_job(upload)
         else:
@@ -645,7 +661,10 @@ async def prepare_link(event, adapter, state, root, timeout=None, reuse=None):
             label = re.sub(r'\.(stl|3mf|obj|step|stp)$', '', p['name'], flags=re.I)
             tally[label] = tally.get(label, 0) + 1
         names = ', '.join(f'{n}× {k}' if n > 1 else k for k, n in tally.items()) or Path(path).name
-        if questions and (len(manifest['parts']) > 1 or manifest['painted']):
+        saved_decisions = job.get('color_decisions') if job.get('resumed_from') else None
+        if saved_decisions:
+            decisions = saved_decisions
+        elif questions and (len(manifest['parts']) > 1 or manifest['painted']):
             options = ['Keep distinct source regions' if manifest['painted'] else 'Choose colors for these parts',
                        'One color for everything']
             if families:
@@ -675,7 +694,11 @@ async def prepare_link(event, adapter, state, root, timeout=None, reuse=None):
         else:
             decisions['selection'] = selections[await _ask(adapter, source, key, f'Choose the color for {names}', labels, timeout)]
         latest = json.loads(jp.read_text())
-        if (latest.get('intake_id') != iid or latest.get('color_decisions')
+        if saved_decisions:
+            if (latest.get('intake_id') != iid
+                    or mj.file_sha256(latest['downloaded_file']) != decisions['source_sha256']):
+                raise ValueError('source/job changed during resume; decisions not saved')
+        elif (latest.get('intake_id') != iid or latest.get('color_decisions')
                 or mj.file_sha256(latest['downloaded_file']) != decisions['source_sha256']):
             raise ValueError('source/job changed during selection; decisions not saved')
         validated = validate_decisions(manifest, decisions, state, mj.resolve_filament_selection)
@@ -1124,7 +1147,17 @@ async def prepare_link(event, adapter, state, root, timeout=None, reuse=None):
                                content=f"Resumed {job.get('title') or 'the saved model'} from the saved intake. "
                                        'Nothing was sliced, uploaded or started.',
                                metadata=metadata)
-            return {'action': 'resume', 'reason': 'resumed saved intake', 'job_json': saved}
+            continued_event = SimpleNamespace(
+                source=source,
+                message_id=str(mid) + ':resume',
+                text=getattr(event, 'text', ''),
+                metadata=getattr(event, 'metadata', None))
+            continued = await prepare_link(
+                continued_event, adapter, state, root, timeout,
+                reuse=resume_job(job))
+            if continued.get('action') == 'skip' and continued.get('reason') == 'duplicate model-link event':
+                return {'action': 'skip', 'reason': 'resume could not continue the saved intake'}
+            return continued
         await adapter.send(chat_id=source.chat_id,
                            content='Expired before any choice was saved. Send the link again. '
                                    'Nothing was sliced, uploaded or started.',

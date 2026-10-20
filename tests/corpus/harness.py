@@ -208,7 +208,7 @@ def fake_orca_run(real_run, orca_command):
 def model_capacity(real_multi_plate, source_triangles, plate_count):
     """Python stand-in for orca_plate_capacity: how many copies fit the bed, 0 when none."""
     def capacity(source, state, spacing_mm=10.0, edge_margin_mm=None, scale=1.0, copy_limit=16,
-                 allow_rotations=True, rotation=None, supports=None):
+                 allow_rotations=True, rotation=None, supports=None, brim_policy=None):
         source = Path(source)
         if source.suffix.lower() == ".3mf" and rotation is None and plate_count(source) > 1:
             return real_multi_plate(source, state, scale=float(scale))

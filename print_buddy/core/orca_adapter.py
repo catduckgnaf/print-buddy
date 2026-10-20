@@ -1228,8 +1228,10 @@ def resolved_travel_sweep(state):
     if not resolved:
         # AD5X/stock machine templates resolve to Normal Lift; retain safe behavior
         # if the runtime state does not carry per-slot resolved settings yet.
-        machine_path = TEMPLATES / printers.current().templates / 'machine.json'
-        machine = json.loads(machine_path.read_text())
+        try:
+            machine = json.loads((printers.current().templates_dir() / 'machine.json').read_text())
+        except Exception:
+            machine = {}
         resolved = machine.get('z_hop_types') or ['Normal Lift']
     if isinstance(resolved, dict):
         resolved = list(resolved.values())
@@ -1238,8 +1240,7 @@ def resolved_travel_sweep(state):
     if all(str(kind).strip().lower() in ('normal lift', 'normal') for kind in resolved):
         return 0.0
     try:
-        model = printers.current()
-        machine = json.loads((TEMPLATES / model.templates / 'machine.json').read_text())
+        machine = json.loads((printers.current().templates_dir() / 'machine.json').read_text())
     except Exception:
         machine = {}
     z_hop = float(state.get('z_hop', (machine.get('z_hop') or [0.4])[0]))

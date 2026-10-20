@@ -58,6 +58,19 @@ TIME_HEADER=re.compile(r"(?im)^;\s*(?:estimated printing time(?:\s*\([^)]*\))?|e
                        r"|^;.*\b(?:model printing time|total estimated time)\s*:\s*\S|^;\s*time\s*:\s*\S")
 MOVE=re.compile(r"^\s*G[0-3]\b([^;]*)",re.I)
 WORD=re.compile(r"\b([XYZE])\s*(-?(?:\d+(?:\.\d*)?|\.\d+))",re.I)
+HERMES_SLOT_PATTERN = re.compile(r"^Hermes slot \d+(?:\s+\S.*)?$", re.I)
+
+
+def is_allowed_filament_id(value, own_ids=None):
+    """Check if a filament profile ID is an allowed template ID or Print Buddy generated Hermes slot."""
+    if not value or not isinstance(value, str):
+        return False
+    v = value.strip().strip('"')
+    if own_ids and v in own_ids:
+        return True
+    return bool(HERMES_SLOT_PATTERN.match(v))
+
+
 def post_slice(gcode, *, ifs_slots=None, tool_slots=None, bed=None, result_json=None,
                templates=None, profile_paths=()):
     """Check bounds + effective motion/profile settings and capture provenance."""
@@ -112,7 +125,8 @@ def post_slice(gcode, *, ifs_slots=None, tool_slots=None, bed=None, result_json=
             own_ids = {str(value).strip().strip('"') for value in (raw_ids if isinstance(raw_ids, (list, set, tuple)) else [raw_ids])}
             for slot, entry in enumerate(entries, 1):
                 value = entry.strip().strip('"')
-                if not value or value not in own_ids:
+                is_allowed = is_allowed_filament_id(value, own_ids) if key == 'filament_settings_id' else (value in own_ids)
+                if not value or not is_allowed:
                     r.block(f"Foreign effective setting {match.group(1)} slot {slot}: {value!r}.")
         match = re.match(r"^;\s*enable_arc_fitting\s*=\s*(.*)$", line, re.I)
         if match and match.group(1).strip() == '1':

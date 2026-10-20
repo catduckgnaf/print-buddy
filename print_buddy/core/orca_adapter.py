@@ -354,7 +354,7 @@ def _sanitize_imported_settings(path, templates, slot_count, filament_profiles=(
             changed[key] = [previous, replacement]
     slot_count = max(1, min(int(slot_count), IFS_SLOTS))
     template_filament = json.loads((templates / 'filament.json').read_text())
-    per_slot_filament = tuple(key for key in template_filament if key.startswith('filament_'))
+    per_slot_filament = tuple(key for key in template_filament if key.startswith('filament_') and not key.endswith('_settings_id'))
     for key in ('filament_z_hop_types', 'filament_wipe', 'filament_wipe_distance'):
         if key not in settings or key not in template_filament:
             continue
@@ -387,7 +387,15 @@ def _sanitize_imported_settings(path, templates, slot_count, filament_profiles=(
         if key == 'filament_settings_id':
             template_id = value[0] if isinstance(value, list) else value
             count = len(settings[key]) if isinstance(settings[key], list) else slot_count
-            replacement = [template_id] * count
+            existing = settings[key] if isinstance(settings[key], list) else [settings[key]]
+            replacement = [
+                item if sg.is_allowed_filament_id(item, {template_id}) else template_id
+                for item in existing
+            ]
+            if len(replacement) < count:
+                replacement.extend([template_id] * (count - len(replacement)))
+            elif len(replacement) > count and count > 0:
+                replacement = replacement[:count]
         else:
             replacement = value
         previous = settings[key]

@@ -102,3 +102,59 @@ def test_ad5x_filament_template_resolves_to_normal_lift():
     data = json.loads(filament_path.read_text())
     assert "filament_z_hop_types" in data
     assert data["filament_z_hop_types"] == ["Normal Lift"]
+
+
+def test_is_allowed_filament_id_allowlist():
+    """Verify that Print Buddy generated Hermes slot IDs and own template IDs pass the allowlist."""
+    own = {"Flashforge Generic PLA"}
+    assert slice_guard.is_allowed_filament_id("Flashforge Generic PLA", own)
+    assert slice_guard.is_allowed_filament_id('"Flashforge Generic PLA"', own)
+    assert slice_guard.is_allowed_filament_id("Hermes slot 1 PLA", own)
+    assert slice_guard.is_allowed_filament_id('"Hermes slot 2 PETG"', own)
+    assert slice_guard.is_allowed_filament_id("Hermes slot 4 TPU-95A", own)
+
+    # Foreign or arbitrary IDs are rejected
+    assert not slice_guard.is_allowed_filament_id("Bambu Generic PLA", own)
+    assert not slice_guard.is_allowed_filament_id("Prusament PLA", own)
+    assert not slice_guard.is_allowed_filament_id("Custom Profile", own)
+    assert not slice_guard.is_allowed_filament_id("", own)
+    assert not slice_guard.is_allowed_filament_id(None, own)
+
+
+def test_slice_guard_accepts_hermes_slot_filament_id():
+    """slice_guard permits synthesized Hermes slot IDs in filament_settings_id header/footer."""
+    gcode = GOOD_GCODE + '; filament_settings_id = "Hermes slot 1 PLA";"Hermes slot 2 PLA"\n'
+    result = slice_guard.post_slice(gcode, tool_slots={0: 1, 1: 2})
+    assert result.status == "ok"
+    assert not result.blocked
+
+
+def test_slice_guard_blocks_foreign_filament_id():
+    """slice_guard blocks unrecognized third-party filament profiles in filament_settings_id."""
+    gcode = GOOD_GCODE + '; filament_settings_id = "Bambu Lab Generic PLA"\n'
+    result = slice_guard.post_slice(gcode, tool_slots={0: 1})
+    assert result.status == "blocked"
+    assert any("Foreign effective setting filament_settings_id" in msg for msg in result.blocked)
+
+
+def test_sanitizer_preserves_hermes_slot_filament_ids(tmp_path: Path):
+    """Sanitizer retains generated Hermes slot names while replacing unknown foreign IDs with template default."""
+    t3mf = tmp_path / "mixed_filaments.3mf"
+    project_settings = {
+        "filament_settings_id": ["Hermes slot 1 PLA", "Alien Profiler Extraordinaire", "Hermes slot 3 PETG"],
+        "filament_type": ["PLA", "PLA", "PETG"],
+        "filament_colour": ["#FFFFFF", "#000000", "#FF0000"],
+    }
+    with zipfile.ZipFile(t3mf, "w") as z:
+        z.writestr("Metadata/project_settings.config", json.dumps(project_settings))
+
+    orca_adapter.sanitize_project_settings(t3mf)
+
+    with zipfile.ZipFile(t3mf, "r") as z:
+        after = json.loads(z.read("Metadata/project_settings.config"))
+
+    # Slot 1 and Slot 3 are preserved, Slot 2 is replaced by template default ("Flashforge Generic PLA")
+    assert after["filament_settings_id"][0] == "Hermes slot 1 PLA"
+    assert after["filament_settings_id"][1] == "Flashforge Generic PLA"
+    assert after["filament_settings_id"][2] == "Hermes slot 3 PETG"
+

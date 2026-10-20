@@ -11,6 +11,7 @@ from pathlib import Path
 
 from print_buddy import settings
 from print_buddy.core import slice_guard as sg
+import pytest
 
 REAL = os.environ.get("PRINT_BUDDY_REAL_SLICER") == "1"
 # Flatpak Orca has a private /tmp and cannot read host temp files. Work inside the checkout,
@@ -96,3 +97,43 @@ class OrcaRealSliceTests(unittest.TestCase):
         baseline = self.dir / "baseline.json"
         sg.approve_baseline(gcode, path=baseline)
         self.assertTrue(sg.enforce_approved_baseline(gcode, path=baseline).ok)
+
+
+@pytest.mark.skipif(not REAL, reason="set PRINT_BUDDY_REAL_SLICER=1 to slice with the real Orca CLI")
+@pytest.mark.parametrize("size", [0.25, 0.4, 0.6, 0.8])
+def test_real_slicer_supported_nozzle_sizes(size):
+    from print_buddy import printers
+    from print_buddy.core import orca_adapter, nozzle
+
+    WORK.mkdir(exist_ok=True)
+    with tempfile.TemporaryDirectory(dir=WORK) as tmp_dir:
+        dir_path = Path(tmp_dir)
+        stl = write_cube(dir_path / f"cube_{size}.stl", 15)
+        out = dir_path / f"out_{size}"
+        out.mkdir()
+        st = settings.current()
+        printer_adapter = printers.get("flashforge.ad5x", st)
+        state = {
+            "moonraker_url": "http://127.0.0.1:7125",
+            "spoolman_url": "http://127.0.0.1:7912",
+            "nozzle": {"diameter_mm": size, "type": "hardened_steel"},
+            "spool": {"spoolman_id": 1, "material": "PLA", "density": 1.24},
+            "temps_c": {"nozzle": 220, "bed": 60},
+            "calibration_baseline": {"native_mesh": "auto"},
+            "ifs_slots": {
+                "1": {
+                    "slot": 1,
+                    "spoolman_id": 1,
+                    "material": "PLA",
+                    "physical_color_verified": True,
+                    "hex": "FFFFFF",
+                }
+            },
+        }
+        gcode, _prov, _cfgs = orca_adapter.slice_model(stl, out, state, adapter=printer_adapter)
+        assert gcode.is_file()
+        content = gcode.read_text(errors="replace")
+        assert f"; nozzle_diameter = {size}" in content
+        tuned = nozzle.get_tuned_nozzle_profile(size)
+        assert tuned is not None
+        assert f"; line_width = {tuned.line_width}" in content

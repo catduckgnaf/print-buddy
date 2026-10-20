@@ -261,19 +261,32 @@ def main():
         if f.get("settings_bed_temp"): st["temps_c"]["bed"] = f["settings_bed_temp"]
         _get(f"{st['moonraker_url']}/server/spoolman/spool_id", {"spool_id": a.spool}, "POST")
     if a.nozzle is not None or a.nozzle_type is not None:
-        from .nozzle import CANONICAL_NOZZLE_SIZES, NozzleError, normalize_nozzle_type
+        from .nozzle import CANONICAL_NOZZLE_SIZES, NozzleError, normalize_nozzle_type, validate_nozzle_setting
         current_nozzle = st.get("nozzle") or {}
-        dia = a.nozzle if a.nozzle is not None else float(current_nozzle.get("diameter_mm", 0.4))
+        dia_in = a.nozzle if a.nozzle is not None else current_nozzle.get("diameter_mm", 0.4)
         raw_type = a.nozzle_type if a.nozzle_type is not None else current_nozzle.get("type", "hardened_steel")
+        
+        # Check against active printer capabilities if available
+        supported_sizes = None
+        supported_types = None
         try:
-            norm_type = normalize_nozzle_type(raw_type)
+            cur_p = printers.current()
+            supported_sizes = cur_p.supported_nozzle_sizes
+            supported_types = cur_p.supported_nozzle_types
+        except Exception:
+            pass
+
+        try:
+            dia, norm_type = validate_nozzle_setting(
+                dia_in,
+                raw_type,
+                supported_sizes=supported_sizes,
+                supported_types=supported_types,
+            )
         except NozzleError as exc:
             print(f"Error: {exc}", file=sys.stderr)
             sys.exit(1)
-        if dia not in CANONICAL_NOZZLE_SIZES:
-            sizes_str = ", ".join(f"{s:g}" for s in CANONICAL_NOZZLE_SIZES)
-            print(f"Error: nozzle diameter {dia:g} mm is not supported (supported: {sizes_str})", file=sys.stderr)
-            sys.exit(1)
+
         st["nozzle"] = {
             "diameter_mm": dia,
             "type": norm_type,

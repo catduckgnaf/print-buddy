@@ -1,0 +1,57 @@
+# Tuned slicing profile parameters per nozzle diameter (mm)
+# Used by orca_adapter to generate per-size machine and process configuration overrides.
+
+[0.2]
+diameter_mm = 0.2
+min_layer_height = 0.04
+max_layer_height = 0.14
+default_layer_height = 0.10
+default_initial_layer_height = 0.12
+retraction_length = 1.0
+line_width = 0.21
+initial_layer_line_width = 0.25
+prime_tower_width = 30
+
+[0.25]
+diameter_mm = 0.25
+min_layer_height = 0.05
+max_layer_height = 0.18
+default_layer_height = 0.14
+default_initial_layer_height = 0.16
+retraction_length = 1.0
+line_width = 0.26
+initial_layer_line_width = 0.31
+prime_tower_width = 35
+
+[0.4]
+diameter_mm = 0.4
+min_layer_height = 0.08
+max_layer_height = 0.28
+default_layer_height = 0.24
+default_initial_layer_height = 0.24
+retraction_length = 0.8
+line_width = 0.42
+initial_layer_line_width = 0.50
+prime_tower_width = 45
+
+[0.6]
+diameter_mm = 0.6
+min_layer_height = 0.15
+max_layer_height = 0.42
+default_layer_height = 0.32
+default_initial_layer_height = 0.32
+retraction_length = 1.2
+line_width = 0.63
+initial_layer_line_width = 0.75
+prime_tower_width = 60
+
+[0.8]
+diameter_mm = 0.8
+min_layer_height = 0.24
+max_layer_height = 0.56
+default_layer_height = 0.40
+default_initial_layer_height = 0.40
+retraction_length = 1.5
+line_width = 0.84
+initial_layer_line_width = 1.00
+prime_tower_width = 75

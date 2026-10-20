@@ -78,7 +78,7 @@
       ""
     ],
     "filament_flow_ratio": [
-      "1"
+      "0.95"
     ],
     "filament_id": "FFG01",
     "filament_max_volumetric_speed": [
@@ -143,10 +143,10 @@
     "instantiation": "true",
     "name": "Sovol SV06 Generic PLA",
     "nozzle_temperature": [
-      "210"
+      "215"
     ],
     "nozzle_temperature_initial_layer": [
-      "210"
+      "215"
     ],
     "nozzle_temperature_range_high": [
       "230"
@@ -330,7 +330,10 @@
     ],
     "nozzle_height": "4",
     "nozzle_hrc": "0",
-    "nozzle_type": "hardened_steel",
+    "nozzle_temperature_range_high": [
+      "300"
+    ],
+    "nozzle_type": "stainless_steel",
     "nozzle_volume": "0",
     "parking_pos_retraction": "0",
     "pellet_modded_printer": "0",
@@ -460,7 +463,7 @@
     "infill_wall_overlap": "50%",
     "initial_layer_acceleration": "500",
     "initial_layer_infill_speed": "80",
-    "initial_layer_line_width": "0.50",
+    "initial_layer_line_width": "0.5",
     "initial_layer_print_height": "0.24",
     "initial_layer_speed": "50",
     "initial_layer_travel_acceleration": "500",

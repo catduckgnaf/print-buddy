@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import re
 from typing import Sequence
+from dataclasses import dataclass
 
 CANONICAL_NOZZLE_SIZES: tuple[float, ...] = (0.2, 0.25, 0.4, 0.6, 0.8)
 
@@ -63,8 +64,205 @@ class AbrasiveNozzleError(NozzleError):
     """Refusal when abrasive filament is paired with a non-abrasive-rated nozzle (e.g. brass)."""
 
 
+class NozzleTemperatureError(NozzleError):
+    """Refusal when printing temperature exceeds nozzle thermal limits."""
+
+
 class UntunedNozzleError(RuntimeError, NozzleError):
     """Refusal when slicing with a nozzle size lacking a tuned profile."""
+
+
+@dataclass(frozen=True)
+class NozzleProfile:
+    """Tuned slicing profile parameters for a specific nozzle diameter."""
+
+    diameter_mm: float
+    min_layer_height: float
+    max_layer_height: float
+    default_layer_height: float
+    default_initial_layer_height: float
+    retraction_length: float
+    line_width: float
+    initial_layer_line_width: float
+    prime_tower_width: int
+
+
+TUNED_NOZZLE_PROFILES: dict[float, NozzleProfile] = {
+    0.2: NozzleProfile(
+        diameter_mm=0.2,
+        min_layer_height=0.04,
+        max_layer_height=0.14,
+        default_layer_height=0.10,
+        default_initial_layer_height=0.12,
+        retraction_length=1.0,
+        line_width=0.21,
+        initial_layer_line_width=0.25,
+        prime_tower_width=30,
+    ),
+    0.25: NozzleProfile(
+        diameter_mm=0.25,
+        min_layer_height=0.05,
+        max_layer_height=0.18,
+        default_layer_height=0.14,
+        default_initial_layer_height=0.16,
+        retraction_length=1.0,
+        line_width=0.26,
+        initial_layer_line_width=0.31,
+        prime_tower_width=35,
+    ),
+    0.4: NozzleProfile(
+        diameter_mm=0.4,
+        min_layer_height=0.08,
+        max_layer_height=0.28,
+        default_layer_height=0.24,
+        default_initial_layer_height=0.24,
+        retraction_length=0.8,
+        line_width=0.42,
+        initial_layer_line_width=0.50,
+        prime_tower_width=45,
+    ),
+    0.6: NozzleProfile(
+        diameter_mm=0.6,
+        min_layer_height=0.15,
+        max_layer_height=0.42,
+        default_layer_height=0.32,
+        default_initial_layer_height=0.32,
+        retraction_length=1.2,
+        line_width=0.63,
+        initial_layer_line_width=0.75,
+        prime_tower_width=60,
+    ),
+    0.8: NozzleProfile(
+        diameter_mm=0.8,
+        min_layer_height=0.24,
+        max_layer_height=0.56,
+        default_layer_height=0.40,
+        default_initial_layer_height=0.40,
+        retraction_length=1.5,
+        line_width=0.84,
+        initial_layer_line_width=1.00,
+        prime_tower_width=75,
+    ),
+}
+
+
+def _load_nozzle_profiles() -> dict[float, NozzleProfile]:
+    from pathlib import Path
+    try:
+        import tomllib
+    except ImportError:
+        import tomli as tomllib  # type: ignore
+
+    toml_path = Path(__file__).resolve().parent.parent / "data" / "nozzles.toml"
+    profiles: dict[float, NozzleProfile] = {}
+    if toml_path.is_file():
+        try:
+            with open(toml_path, "rb") as f:
+                data = tomllib.load(f)
+            for k, v in data.items():
+                try:
+                    d = float(k)
+                    profiles[d] = NozzleProfile(
+                        diameter_mm=float(v.get("diameter_mm", d)),
+                        min_layer_height=float(v["min_layer_height"]),
+                        max_layer_height=float(v["max_layer_height"]),
+                        default_layer_height=float(v["default_layer_height"]),
+                        default_initial_layer_height=float(v["default_initial_layer_height"]),
+                        retraction_length=float(v["retraction_length"]),
+                        line_width=float(v["line_width"]),
+                        initial_layer_line_width=float(v["initial_layer_line_width"]),
+                        prime_tower_width=int(v.get("prime_tower_width", 45)),
+                    )
+                except (ValueError, KeyError):
+                    continue
+        except Exception:
+            pass
+    if not profiles:
+        profiles = TUNED_NOZZLE_PROFILES
+    return profiles
+
+
+def get_tuned_nozzle_profile(diameter_mm: float | int) -> NozzleProfile | None:
+    """Return tuned nozzle profile if available for the given diameter."""
+    val = float(diameter_mm)
+    profiles = _load_nozzle_profiles()
+    for d, profile in profiles.items():
+        if abs(d - val) < 0.01:
+            return profile
+    return None
+
+
+# Thermal, flow, and maximum safe temperature characteristics per nozzle type
+NOZZLE_TYPE_CHARACTERISTICS: dict[str, dict[str, float]] = {
+    "brass": {
+        "max_temperature_c": 300.0,
+        "temp_offset_c": 0.0,
+        "flow_multiplier": 1.0,
+    },
+    "copper": {
+        "max_temperature_c": 300.0,
+        "temp_offset_c": 0.0,
+        "flow_multiplier": 1.0,
+    },
+    "stainless_steel": {
+        "max_temperature_c": 300.0,
+        "temp_offset_c": 5.0,
+        "flow_multiplier": 0.95,
+    },
+    "hardened_steel": {
+        "max_temperature_c": 450.0,
+        "temp_offset_c": 5.0,
+        "flow_multiplier": 0.95,
+    },
+    "ruby": {
+        "max_temperature_c": 500.0,
+        "temp_offset_c": 0.0,
+        "flow_multiplier": 1.0,
+    },
+    "tungsten_carbide": {
+        "max_temperature_c": 500.0,
+        "temp_offset_c": 0.0,
+        "flow_multiplier": 1.05,
+    },
+    "diamond": {
+        "max_temperature_c": 500.0,
+        "temp_offset_c": 0.0,
+        "flow_multiplier": 1.05,
+    },
+}
+
+
+def get_nozzle_type_adjustments(nozzle_type: str | None) -> dict[str, float]:
+    """Return thermal and flow characteristics for the given nozzle type.
+
+    Returns dict with keys:
+      - max_temperature_c: maximum safe printing temperature
+      - temp_offset_c: thermal compensation offset in °C
+      - flow_multiplier: adjustment multiplier on filament flow ratio
+    """
+    if not nozzle_type:
+        norm = "hardened_steel"
+    else:
+        norm = normalize_nozzle_type(nozzle_type)
+    return NOZZLE_TYPE_CHARACTERISTICS.get(
+        norm,
+        {
+            "max_temperature_c": 300.0,
+            "temp_offset_c": 0.0,
+            "flow_multiplier": 1.0,
+        },
+    )
+
+
+def check_nozzle_temperature_safety(nozzle_type: str, temperature_c: float | int) -> None:
+    """Validate that requested temperature does not exceed the nozzle type's safe limit."""
+    adj = get_nozzle_type_adjustments(nozzle_type)
+    max_temp = adj["max_temperature_c"]
+    if float(temperature_c) > max_temp:
+        raise NozzleTemperatureError(
+            f"Requested temperature {temperature_c}°C exceeds maximum safe limit of "
+            f"{max_temp:g}°C for {nozzle_type} nozzle."
+        )
 
 
 def normalize_nozzle_type(raw: str) -> str:
@@ -104,6 +302,8 @@ def check_nozzle_material_safety(nozzle_type: str, material: str | None) -> None
     Brass nozzles wear out rapidly with carbon fiber, glass fiber, glow-in-the-dark,
     wood, and metal-fill filaments, destroying dimensional accuracy.
     """
+    if not material:
+        return
     norm_type = normalize_nozzle_type(nozzle_type)
     if norm_type == "brass" and is_abrasive_material(material):
         raise AbrasiveNozzleError(

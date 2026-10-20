@@ -558,12 +558,11 @@ def slice_model(source, folder, state, brim=None, first_layer=False, color_decis
     machine['machine_start_gcode'] = printer.machine_start_gcode(machine['machine_start_gcode'], mesh)
     machine['machine_end_gcode'] = printer.machine_end_gcode(machine.get('machine_end_gcode', ''))
     machine['default_print_profile'] = process['name']
-    raw_nozzle_type = (state.get('nozzle') or {}).get('type', 'hardened_steel')
+    raw_nozzle_type = ((state.get('nozzle') or {}).get('type')
+                       or settings.current().get('printer', {}).get('nozzle_type')
+                       or 'hardened_steel')
     from .nozzle import normalize_nozzle_type
-    try:
-        nozzle_type = normalize_nozzle_type(raw_nozzle_type) if raw_nozzle_type else 'hardened_steel'
-    except Exception:
-        nozzle_type = raw_nozzle_type
+    nozzle_type = normalize_nozzle_type(raw_nozzle_type)
     machine['nozzle_type'] = nozzle_type
     machine['nozzle_diameter'] = [str(nozzle_dia)]
     if tuned_profile is not None:
@@ -741,7 +740,9 @@ def slice_model(source, folder, state, brim=None, first_layer=False, color_decis
     # Protected-key differences here include adapter-sanctioned profile assembly
     # (for example the resolved start-G-code template), not untrusted overrides.
     # Only block on geometric/tooling findings that this adapter can establish.
-    nozzle_type = (state.get('nozzle') or {}).get('type', 'hardened_steel')
+    nozzle_type = ((state.get('nozzle') or {}).get('type')
+                   or settings.current().get('printer', {}).get('nozzle_type')
+                   or 'hardened_steel')
     used_materials = []
     if mapped_profile and mapping:
         for tool, physical_slot in mapping.items():

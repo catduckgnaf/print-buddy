@@ -397,4 +397,13 @@ def test_orca_adapter_thermal_and_flow_adjustments(tmp_path, monkeypatch):
     # flow ratio 1.0 * 0.95 = 0.95
     assert filament_cfg["filament_flow_ratio"] == ["0.95"]
 
+    # Missing state type falls back to the configured printer setting.
+    configured = {**base_config, "printer": {**base_config["printer"], "nozzle_type": "stainless_steel"}}
+    monkeypatch.setattr(settings, "current", lambda: configured)
+    state_without_type = {**state, "nozzle": {"diameter_mm": 0.4}}
+    _output, _provenance, fallback_configs = orca_adapter.slice_model(
+        dummy_stl, tmp_path / "settings-nozzle-type", state_without_type)
+    fallback_machine = json.loads(fallback_configs[0].read_text())
+    assert fallback_machine["nozzle_type"] == "stainless_steel"
+
 

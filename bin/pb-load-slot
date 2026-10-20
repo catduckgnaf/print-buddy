@@ -3,8 +3,13 @@
 import argparse
 import json
 import sys
+from pathlib import Path
 
-from print_buddy.hermes.slot_load import load_slot
+# Run from a checkout without install: put the repo root on sys.path,
+# matching how the bash entrypoints set PYTHONPATH="$ROOT".
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+
+from print_buddy.hermes.slot_load import load_slot  # noqa: E402
 
 
 def main() -> None:

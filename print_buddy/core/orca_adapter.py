@@ -2,6 +2,7 @@
 import hashlib
 import json
 import math
+import os
 from pathlib import Path
 import re
 import struct
@@ -18,7 +19,20 @@ BED = _S['printer']['bed_mm']
 MAX_HEIGHT_MM = _S['printer']['max_print_height_mm']
 IFS_SLOTS = _S['printer']['ifs_slots']
 NOZZLE_MM = _S['printer']['nozzle_diameter_mm']
-ORCA_COMMAND = list(_S['orca']['command'])
+# PB_ORCA_CMD selects a native OrcaSlicer binary without changing the home Flatpak default.
+def _orca_command():
+    override = os.environ.get('PB_ORCA_CMD')
+    if override:
+        return [override]
+    command = list(_S['orca']['command'])
+    if command and Path(command[0]).name == 'flatpak' and len(command) > 2 and command[1] == 'run' and command[2] == 'com.orcaslicer.OrcaSlicer':
+        commit = os.environ.get('ORCA_FLATPAK_COMMIT')
+        if commit:
+            return [command[0], 'run', f'--commit={commit}', *command[2:]]
+    return command
+
+
+ORCA_COMMAND = _orca_command()
 BAMBU_COMMAND = list(_S['bambu']['command'])
 # Bed edge clearance. Multiple copies keep the historical 8 mm; a lone part only needs
 # room for the purge/skirt path (brim and skirt are off in the AD5X process template).

@@ -1044,9 +1044,7 @@ def orca_plate_capacity(source: Path, state: dict, spacing_mm: float = 10.0, edg
                 float(y_bounds[1]) <= bed_y - edge + tolerance
             )
 
-        import math
-        expected_sweep = (0.0 if all(t == 'Normal Lift' for t in state['resolved_hop_types'])
-                           else float(state['z_hop']) / math.tan(math.radians(float(state['travel_slope']))) / (2 * math.pi))
+        expected_sweep = resolved_travel_sweep(state)
         policy = brim_policy or state.get('brim_policy')
         expected_brim = float(policy.get('width_mm', 0)) if policy and policy.get('type') == 'outer_only' else 0.0
         required = expected_brim + expected_sweep

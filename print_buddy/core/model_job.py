@@ -877,17 +877,28 @@ def verify_gcode_offline(gcode_path, state):
     errors = []
     if raw.startswith(b'; MD5:') and not zmod_md5_valid(p):
         errors.append('invalid ZMod MD5 checksum')
-    if not native_heater_lines_valid(text, state['temps_c']['bed'], state['temps_c']['nozzle']):
-        errors.append('startup heater prefix does not match the recorded bed and nozzle')
+    from .nozzle import effective_nozzle_temperature
+    nozzle_type = (state.get('nozzle') or {}).get('type') or settings.current().get('printer', {}).get('nozzle_type') or 'hardened_steel'
+    try:
+        hotend = effective_nozzle_temperature(nozzle_type, float(state['temps_c']['nozzle']))
+    except Exception as exc:
+        raise RuntimeError("offline G-code verification failed: invalid effective nozzle temperature: " + str(exc)) from exc
+    if not native_heater_lines_valid(text, state['temps_c']['bed'], hotend):
+        errors.append('startup heater prefix does not match the recorded bed and effective nozzle temperature')
     def config(key):
         match = re.search(rf'^; {re.escape(key)} = (.+)$', text, re.M)
         return match.group(1).strip() if match else None
     nozzle = config('nozzle_diameter')
     if nozzle is None or abs(float(nozzle) - state['nozzle']['diameter_mm']) > 1e-3:
         errors.append(f"nozzle {nozzle} != recorded {state['nozzle']['diameter_mm']}")
-    hotend, bed = state['temps_c']['nozzle'], state['temps_c']['bed']
-    if not re.search(rf'START_PRINT BED_TEMP={bed} EXTRUDER_TEMP={hotend}(?:\s|$)', text):
-        errors.append(f'missing START_PRINT matching bed {bed} and hotend {hotend}')
+    hotend, bed = effective_nozzle_temperature(nozzle_type, float(state['temps_c']['nozzle'])), state['temps_c']['bed']
+    start_match = re.search(r'^START_PRINT\s+([^;]*)', text, re.M)
+    start_args = dict(re.findall(r'([A-Z_]+)=([+-]?(?:\d+(?:\.\d*)?|\.\d+))', start_match.group(1))) if start_match else {}
+    start_matches = (start_match is not None and
+                     math.isclose(float(start_args.get('BED_TEMP', 'nan')), float(bed), abs_tol=1e-3) and
+                     math.isclose(float(start_args.get('EXTRUDER_TEMP', 'nan')), float(hotend), abs_tol=1e-3))
+    if not start_matches:
+        errors.append(f'missing START_PRINT matching bed {bed} and effective hotend {hotend}')
     if not re.search(r'^END_PRINT(?:\s|$)', text, re.M):
         errors.append('missing END_PRINT')
     bounds = cached_motion_bounds(raw, text)
@@ -914,12 +925,15 @@ def verify_gcode(gcode_path):
         errors.append("invalid ZMod MD5 checksum")
     native = _native()
     mode = _mr(st, "/printer/objects/query?save_variables")["result"]["status"]["save_variables"]["variables"].get("display_off") if native else None
+    nozzle_type = (st.get("nozzle") or {}).get("type") or settings.current().get("printer", {}).get("nozzle_type") or "hardened_steel"
+    from .nozzle import effective_nozzle_temperature
+    effective_hotend = effective_nozzle_temperature(nozzle_type, st["temps_c"]["nozzle"])
     if not native:
         pass  # no native screen: no MD5 or startup-heater contract
     elif mode == 0:
         if not zmod_md5_valid(p):
             errors.append("native screen requires valid ZMod MD5 checksum")
-        if not native_heater_lines_valid(text, st["temps_c"]["bed"], st["temps_c"]["nozzle"]):
+        if not native_heater_lines_valid(text, st["temps_c"]["bed"], effective_hotend):
             errors.append("native screen requires immediate startup M190 Sbed / M104 Snozzle T0 consistent with START_PRINT; later heaters do not count")
     elif mode != 1:
         errors.append(f"unknown display_off mode {mode!r}; refusing hardware-dependent G-code validation")
@@ -949,13 +963,23 @@ def verify_gcode(gcode_path):
         _refuse_multicolor(text)
         if not printer_state.same_material(material, st["spool"]["material"]):
             errors.append(f"G-code filament_type {material!r} != loaded {st['spool']['material']!r}")
-    hotend,bed=st["temps_c"]["nozzle"],st["temps_c"]["bed"]
+    hotend,bed=effective_hotend,st["temps_c"]["bed"]
+    def numeric_macro_match(pattern, bed_key, hotend_key):
+        match = re.search(pattern, text, re.M)
+        args = dict(re.findall(r'([A-Z_]+)=([+-]?(?:\d+(?:\.\d*)?|\.\d+))', match.group(1))) if match else {}
+        try:
+            return (match is not None and
+                    math.isclose(float(args.get(bed_key, 'nan')), float(bed), abs_tol=1e-3) and
+                    math.isclose(float(args.get(hotend_key, 'nan')), float(hotend), abs_tol=1e-3))
+        except ValueError:
+            return False
     if not native:
         macro = printers.current().start_macro
-        if not re.search(rf'^{re.escape(macro)} BED={bed} HOTEND={hotend}(?:\s|$)',text,re.M):
-            errors.append(f"missing {macro} matching bed {bed} and hotend {hotend}")
-    elif not (re.search(rf'PRINT_START BED={bed} HOTEND={hotend}(?:\s|$)',text) or re.search(rf'START_PRINT BED_TEMP={bed} EXTRUDER_TEMP={hotend}(?:\s|$)',text)):
-        errors.append(f"missing START_PRINT/PRINT_START matching bed {bed} and hotend {hotend}")
+        if not numeric_macro_match(rf'^{re.escape(macro)}\s+([^;]*)', 'BED', 'HOTEND'):
+            errors.append(f"missing {macro} matching bed {bed} and effective hotend {hotend}")
+    elif not (numeric_macro_match(r'^PRINT_START\s+([^;]*)', 'BED', 'HOTEND') or
+              numeric_macro_match(r'^START_PRINT\s+([^;]*)', 'BED_TEMP', 'EXTRUDER_TEMP')):
+        errors.append(f"missing START_PRINT/PRINT_START matching bed {bed} and effective hotend {hotend}")
     if not (re.search(r'^PRINT_END(?:\s|$)',text,re.M) or re.search(r'^END_PRINT(?:\s|$)',text,re.M)
             or (not native and re.search(rf'^{re.escape(printers.current().end_macro)}(?:\s|$)',text,re.M))):
         errors.append("missing END_PRINT/PRINT_END safe end sequence")

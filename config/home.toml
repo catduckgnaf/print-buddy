@@ -11,6 +11,16 @@
 # macros, edge margins, prime tower and cold pull defaults. Override any of them in config/local.toml.
 model = "flashforge.ad5x"
 
+# Type-specific thermal and flow defaults are validated in data/nozzles.toml.
+# Opt-in compensation offsets; every nozzle type defaults to 0 °C.
+[nozzle_temp_offsets]
+brass = 0.0
+hardened_steel = 0.0
+stainless_steel = 0.0
+ruby = 0.0
+tungsten_carbide = 0.0
+diamond = 0.0
+
 [layout]
 # Merged plates longer than this are kept separate. The edge margins and merge gaps come from the printer model.
 max_merged_hours = 12

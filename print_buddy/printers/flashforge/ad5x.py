@@ -12,6 +12,8 @@ MODEL = PrinterModel(
     label="Flashforge AD5X (ZMod)",
     adapter=ZmodAdapter,
     templates="flashforge_ad5x",
+    supported_nozzle_sizes=(0.25, 0.4, 0.6, 0.8),
+    supported_nozzle_types=("stainless_steel", "hardened_steel"),
     settings={
         "printer": {
             "name": "Flashforge AD5X",

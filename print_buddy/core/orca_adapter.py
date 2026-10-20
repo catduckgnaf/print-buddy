@@ -488,8 +488,13 @@ def slice_model(source, folder, state, brim=None, first_layer=False, color_decis
         raise ValueError('rotation is only supported for whole-model single-color slicing')
     folder.mkdir(parents=True, exist_ok=True)
     machine, process, filament = [json.loads((templates / f'{name}.json').read_text()) for name in ('machine', 'process', 'filament')]
-    if float(state['nozzle']['diameter_mm']) != NOZZLE_MM:
-        raise RuntimeError(f'Orca templates are tuned for a {NOZZLE_MM:g} mm nozzle; the printer reports {state["nozzle"]["diameter_mm"]} mm')
+    template_nozzle_dia = float(machine.get('nozzle_diameter', [NOZZLE_MM])[0] if isinstance(machine.get('nozzle_diameter'), list) else machine.get('nozzle_diameter', NOZZLE_MM))
+    nozzle_dia = float(state['nozzle']['diameter_mm'])
+    from .nozzle import UntunedNozzleError, get_tuned_nozzle_profile
+    tuned_profile = get_tuned_nozzle_profile(nozzle_dia)
+    supported_sizes = getattr(printer.model, 'supported_nozzle_sizes', (NOZZLE_MM,))
+    if nozzle_dia not in supported_sizes or tuned_profile is None:
+        raise UntunedNozzleError(f'Orca templates are tuned for a {template_nozzle_dia:g} mm nozzle; no tuned profile exists for {nozzle_dia:g} mm on printer {printer.label!r}')
     author = {}
     geometry = {'policy': 'original STL unchanged', 'source_sha256': digest(source)}
     from .source_colors import inventory, validate_decisions
@@ -553,6 +558,27 @@ def slice_model(source, folder, state, brim=None, first_layer=False, color_decis
     machine['machine_start_gcode'] = printer.machine_start_gcode(machine['machine_start_gcode'], mesh)
     machine['machine_end_gcode'] = printer.machine_end_gcode(machine.get('machine_end_gcode', ''))
     machine['default_print_profile'] = process['name']
+    raw_nozzle_type = (state.get('nozzle') or {}).get('type', 'hardened_steel')
+    from .nozzle import normalize_nozzle_type
+    try:
+        nozzle_type = normalize_nozzle_type(raw_nozzle_type) if raw_nozzle_type else 'hardened_steel'
+    except Exception:
+        nozzle_type = raw_nozzle_type
+    machine['nozzle_type'] = nozzle_type
+    machine['nozzle_diameter'] = [str(nozzle_dia)]
+    if tuned_profile is not None:
+        machine['printer_variant'] = str(tuned_profile.diameter_mm)
+        machine['min_layer_height'] = [str(tuned_profile.min_layer_height)]
+        machine['max_layer_height'] = [str(tuned_profile.max_layer_height)]
+        machine['retraction_length'] = [str(tuned_profile.retraction_length)]
+        process['layer_height'] = str(tuned_profile.default_layer_height)
+        process['initial_layer_print_height'] = str(tuned_profile.default_initial_layer_height)
+        process['line_width'] = str(tuned_profile.line_width)
+        process['initial_layer_line_width'] = str(tuned_profile.initial_layer_line_width)
+        process['internal_solid_infill_line_width'] = str(tuned_profile.line_width)
+    from .nozzle import get_nozzle_type_adjustments
+    adj = get_nozzle_type_adjustments(nozzle_type)
+    machine['nozzle_temperature_range_high'] = [str(int(adj['max_temperature_c']))]
     slots = state.get('ifs_slots') or {}
     if filament_slot is not None:
         slot = slots.get(str(filament_slot)) or slots.get(filament_slot)
@@ -589,10 +615,20 @@ def slice_model(source, folder, state, brim=None, first_layer=False, color_decis
         if not isinstance(color, str) or not re.fullmatch(r'#?[0-9A-Fa-f]{6}', color):
             raise RuntimeError('filament color must be an explicit six-digit RGB value')
         color = '#' + color.lstrip('#').upper()
+    from .nozzle import effective_nozzle_temperature
+    base_nozzle_temp = float(state['temps_c']['nozzle'])
+    effective_nozzle_temp = effective_nozzle_temperature(nozzle_type, base_nozzle_temp)
     filament.update({'filament_type': [state['spool']['material']], 'filament_density': [str(state['spool']['density'])],
                      'filament_colour': [color or filament['filament_colour'][0]],
-                     'nozzle_temperature': [str(state['temps_c']['nozzle'])],
-                     'nozzle_temperature_initial_layer': [str(state['temps_c']['nozzle'])]})
+                     'nozzle_temperature': [str(int(effective_nozzle_temp))],
+                     'nozzle_temperature_initial_layer': [str(int(effective_nozzle_temp))]})
+    if 'filament_flow_ratio' in filament and filament['filament_flow_ratio']:
+        try:
+            base_flow = float(filament['filament_flow_ratio'][0])
+            adj_flow = round(base_flow * adj['flow_multiplier'], 4)
+            filament['filament_flow_ratio'] = [str(adj_flow)]
+        except (ValueError, TypeError):
+            pass
     for key in ('cool_plate_temp', 'eng_plate_temp', 'hot_plate_temp', 'textured_plate_temp'):
         filament[key] = filament[key + '_initial_layer'] = [str(state['temps_c']['bed'])]
     configs = []
@@ -605,7 +641,8 @@ def slice_model(source, folder, state, brim=None, first_layer=False, color_decis
         import copy
         machine.update({'single_extruder_multi_material': '1', 'change_filament_gcode': ''})
         tower_x, tower_y = geometry['prime_tower_xy_mm']
-        process.update({'enable_prime_tower': '1', 'prime_tower_width': '45',
+        tower_width = str(tuned_profile.prime_tower_width if tuned_profile else 45)
+        process.update({'enable_prime_tower': '1', 'prime_tower_width': tower_width,
                         'wipe_tower_x': str(tower_x), 'wipe_tower_y': str(tower_y),
                         'purge_in_prime_tower': '0'})
         configs[0].write_text(json.dumps(machine, indent=2) + '\n')
@@ -704,9 +741,20 @@ def slice_model(source, folder, state, brim=None, first_layer=False, color_decis
     # Protected-key differences here include adapter-sanctioned profile assembly
     # (for example the resolved start-G-code template), not untrusted overrides.
     # Only block on geometric/tooling findings that this adapter can establish.
+    nozzle_type = (state.get('nozzle') or {}).get('type', 'hardened_steel')
+    used_materials = []
+    if mapped_profile and mapping:
+        for tool, physical_slot in mapping.items():
+            slot = state.get('ifs_slots', {}).get(str(physical_slot))
+            if slot and slot.get('material'):
+                used_materials.append(slot['material'])
+    if not used_materials:
+        used_materials = filament.get('filament_type') or [state.get('spool', {}).get('material')]
     gate = pre_slice(bounds=bounds_xy, bed=bed, profile=effective_profile,
                      before_profile=None, filaments=len(filament_paths),
-                     ifs_slots=IFS_SLOTS, tool_slots=tool_slots)
+                     ifs_slots=IFS_SLOTS, tool_slots=tool_slots,
+                     nozzle_type=nozzle_type, materials=used_materials,
+                     nozzle_temp=effective_nozzle_temp, nozzle_temp_is_effective=True)
     if gate.status == 'blocked':
         raise RuntimeError('Pre-slice guard blocked: ' + '; '.join(gate.blocked))
     # Unknown placement is advisory, never a false block.

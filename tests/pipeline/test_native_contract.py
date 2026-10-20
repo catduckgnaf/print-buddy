@@ -27,14 +27,38 @@ def fake_slice(cmd, **kwargs):
     return type('Result', (), {'returncode': 0, 'stdout': '', 'stderr': ''})()
 
 
+def test_offline_verification_requires_effective_nozzle_temperature(tmp_path, monkeypatch):
+    from print_buddy import settings
+    state_data = state()
+    state_data["nozzle"]["type"] = "hardened_steel"
+    state_data["temps_c"]["nozzle"] = 220
+    base_config = settings.current()
+    monkeypatch.setattr(settings, "current", lambda: {**base_config, "nozzle_temp_offsets": {"hardened_steel": 5}})
+    content = (
+        '; nozzle_diameter = 0.4\n; filament_type = PLA\n'
+        'M190 S60\nM104 S225 T0\nSTART_PRINT BED_TEMP=60 EXTRUDER_TEMP=225.0 MESH=MESH_DATA\n'
+        'G1 X10 Y10 Z0.2\nEND_PRINT\n'
+    )
+    artifact = tmp_path / "effective.gcode"
+    artifact.write_text(content)
+    with patch.object(job, "cached_motion_bounds", return_value={"x": (10, 10), "y": (10, 10), "z": (0.2, 0.2)}):
+        job.verify_gcode_offline(artifact, state_data)
+    artifact.write_text(content.replace("S225", "S220").replace("EXTRUDER_TEMP=225.0", "EXTRUDER_TEMP=220.0"))
+    with patch.object(job, "cached_motion_bounds", return_value={"x": (10, 10), "y": (10, 10), "z": (0.2, 0.2)}):
+        with pytest.raises(RuntimeError, match="effective nozzle temperature"):
+            job.verify_gcode_offline(artifact, state_data)
+
+
 def test_native_slice_uses_baseline_mesh(tmp_path):
     source = tmp_path / 'part.stl'
-    source.write_text('solid x\nendsolid x\n')
+    source.write_text('solid x\\nendsolid x\\n')
     with patch.object(adapter.subprocess, 'run', side_effect=fake_slice):
-        adapter.slice_model(source, tmp_path / 'out', state())
-    machine = json.loads((tmp_path / 'out/machine.json').read_text())
-    assert 'MESH=MESH_DATA' in machine['machine_start_gcode']
-    assert '\\n' not in machine['machine_start_gcode']
+        output, _, _ = adapter.slice_model(source, tmp_path / 'out', state())
+        assert output.exists()
+        machine = json.loads((tmp_path / 'out/machine.json').read_text())
+        assert 'MESH=MESH_DATA' in machine['machine_start_gcode']
+        assert '\\n' not in machine['machine_start_gcode']
+
 
 
 def test_slice_resolves_green_from_matching_slot(tmp_path):

@@ -12,6 +12,8 @@ MODEL = PrinterModel(
     adapter=KlipperAdapter,
     templates="klipper_generic",
     baseline="protected-settings-baseline.klipper.generic.json",
+    supported_nozzle_sizes=(0.2, 0.25, 0.4, 0.6, 0.8),
+    supported_nozzle_types=("brass", "hardened_steel", "stainless_steel", "ruby", "tungsten_carbide", "diamond"),
     settings={
         "printer": {
             "name": "Generic Klipper",

@@ -91,6 +91,17 @@ class PrinterModel:
     settings: dict
     # Protected-settings baseline file under config/; None uses the shared protected-settings-baseline.json.
     baseline: str | None = None
+    # Supported nozzle diameters in mm (e.g. 0.25, 0.4, 0.6, 0.8)
+    supported_nozzle_sizes: tuple[float, ...] = (0.2, 0.25, 0.4, 0.6, 0.8)
+    # Supported nozzle types (e.g. brass, hardened_steel, ruby, tungsten_carbide, diamond)
+    supported_nozzle_types: tuple[str, ...] = (
+        "brass",
+        "hardened_steel",
+        "stainless_steel",
+        "ruby",
+        "tungsten_carbide",
+        "diamond",
+    )
 
     def defaults(self) -> dict[str, Any]:
         """Settings this model contributes, including its Orca template folder."""
@@ -137,6 +148,14 @@ class PrinterAdapter(ABC):
     def native(self):
         """ZMod/native helpers (printers.flashforge.zmod); stock Klipper has none."""
         raise MultiColorUnsupported(f"{self.label} has no ZMod/native support")
+
+    @property
+    def supported_nozzle_sizes(self) -> tuple[float, ...]:
+        return self.model.supported_nozzle_sizes
+
+    @property
+    def supported_nozzle_types(self) -> tuple[str, ...]:
+        return self.model.supported_nozzle_types
 
     # geometry and slots
     def build_volume(self) -> BuildVolume:

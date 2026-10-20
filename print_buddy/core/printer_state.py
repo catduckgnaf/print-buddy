@@ -260,23 +260,53 @@ def main():
         if f.get("settings_extruder_temp"): st["temps_c"]["nozzle"] = f["settings_extruder_temp"]
         if f.get("settings_bed_temp"): st["temps_c"]["bed"] = f["settings_bed_temp"]
         _get(f"{st['moonraker_url']}/server/spoolman/spool_id", {"spool_id": a.spool}, "POST")
-    if a.nozzle is not None:
-        st["nozzle"] = {"diameter_mm": a.nozzle, "type": a.nozzle_type or "unspecified",
-                        "installed": datetime.date.today().isoformat()}
-        st["z_offset_verified"] = False
-        st["z_offset_mm"] = None
-        st["calibration_authority"] = {"mode": None, "operator_confirmed": False, "reason": "Nozzle changed; previous calibration is historical only"}
-        st["z_offset_note"] = "Nozzle changed; calibration needs a measured confirmation for the active mode. --sync-z only records the probe trigger."
-        if st.get("pressure_advance"):
-            st["pressure_advance"]["stale"] = True
-        if not a.no_sync_klipper:
-            try:
-                if sync_klipper_nozzle(st["moonraker_url"], a.nozzle):
-                    print(f"Klipper printer.cfg updated to {a.nozzle:.3f} mm and Klipper restarted.")
-                else:
-                    print(f"Klipper printer.cfg already matches {a.nozzle:.3f} mm.")
-            except Exception as e:
-                print(f"Warning: Failed to sync nozzle to Klipper printer.cfg: {e}")
+    if a.nozzle is not None or a.nozzle_type is not None:
+        from .nozzle import CANONICAL_NOZZLE_SIZES, NozzleError, normalize_nozzle_type, validate_nozzle_setting
+        current_nozzle = st.get("nozzle") or {}
+        dia_in = a.nozzle if a.nozzle is not None else current_nozzle.get("diameter_mm", 0.4)
+        raw_type = a.nozzle_type if a.nozzle_type is not None else current_nozzle.get("type", "hardened_steel")
+        
+        # Check against active printer capabilities if available
+        supported_sizes = None
+        supported_types = None
+        try:
+            cur_p = printers.current()
+            supported_sizes = cur_p.supported_nozzle_sizes
+            supported_types = cur_p.supported_nozzle_types
+        except Exception:
+            pass
+
+        try:
+            dia, norm_type = validate_nozzle_setting(
+                dia_in,
+                raw_type,
+                supported_sizes=supported_sizes,
+                supported_types=supported_types,
+            )
+        except NozzleError as exc:
+            print(f"Error: {exc}", file=sys.stderr)
+            sys.exit(1)
+
+        st["nozzle"] = {
+            "diameter_mm": dia,
+            "type": norm_type,
+            "installed": datetime.date.today().isoformat() if a.nozzle is not None else current_nozzle.get("installed", datetime.date.today().isoformat()),
+        }
+        if a.nozzle is not None:
+            st["z_offset_verified"] = False
+            st["z_offset_mm"] = None
+            st["calibration_authority"] = {"mode": None, "operator_confirmed": False, "reason": "Nozzle changed; previous calibration is historical only"}
+            st["z_offset_note"] = "Nozzle changed; calibration needs a measured confirmation for the active mode. --sync-z only records the probe trigger."
+            if st.get("pressure_advance"):
+                st["pressure_advance"]["stale"] = True
+            if not a.no_sync_klipper:
+                try:
+                    if sync_klipper_nozzle(st["moonraker_url"], a.nozzle):
+                        print(f"Klipper printer.cfg updated to {a.nozzle:.3f} mm and Klipper restarted.")
+                    else:
+                        print(f"Klipper printer.cfg already matches {a.nozzle:.3f} mm.")
+                except Exception as e:
+                    print(f"Warning: Failed to sync nozzle to Klipper printer.cfg: {e}")
     if getattr(a, "sync_z", False):
         try:
             s = _get(f"{st['moonraker_url']}/printer/objects/query?configfile=settings")["result"]["status"]["configfile"]["settings"]

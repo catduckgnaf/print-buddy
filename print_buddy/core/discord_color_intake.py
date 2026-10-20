@@ -41,15 +41,19 @@ async def collect(job_path, state, adapter, chat_id, session_key, metadata=None,
         raise ValueError('Discord requires one to four distinct configured slots')
 
     async def ask(question, choices):
+        from .link_intake import CANCEL_LABEL, PromptCancelled
         prompt, visible = _visible_choices(question, choices)
+        offered = visible + [CANCEL_LABEL]
         cid = uuid.uuid4().hex
-        cm.register(cid, session_key, prompt, visible)
+        cm.register(cid, session_key, prompt, offered)
         try:
             result = await adapter.send_clarify(chat_id=str(chat_id), question=prompt,
-                choices=visible, clarify_id=cid, session_key=session_key, metadata=metadata)
+                choices=offered, clarify_id=cid, session_key=session_key, metadata=metadata)
             if not result.success:
                 raise RuntimeError('Discord color prompt delivery failed')
             answer = await asyncio.to_thread(cm.wait_for_response, cid, timeout)
+            if answer == CANCEL_LABEL:
+                raise PromptCancelled('cancelled')
             if answer not in choices:
                 raise RuntimeError('Discord color choice cancelled, expired or noncanonical; no decisions saved')
             return choices.index(answer)

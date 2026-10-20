@@ -204,7 +204,7 @@ def test_expired_question_offers_one_resume_and_keeps_the_saved_intake(env):
     result = asyncio.run(prepared_intake.prepare_link(event, adapter, state(), env.root, timeout=1))
     receipt = json.loads(next(env.root.glob('*.json')).read_text())
     assert receipt['sliced'] is False and receipt['started'] is False
-    assert adapter.questions[-1]['choices'] == ['Resume']
+    assert adapter.questions[-1]['choices'] == ['Resume', 'Cancel']
     assert 'expired' in adapter.questions[-1]['question'].lower()
     assert result['action'] == 'resume' and Path(result['job_json']).is_file()
     kept = json.loads(next(env.root.glob('*.json')).read_text())
@@ -522,7 +522,7 @@ def test_quantity_buttons_choose_midpoint_and_answer_duration(env, monkeypatch):
     adapter = Adapter([1, 0, 1, 1, 1])
     asyncio.run(prepared_intake.prepare_link(event, adapter, state(), env.root, timeout=1))
     quantity = next(q for q in adapter.questions if 'copies' in q['question'].lower())
-    assert quantity['choices'] == ['One copy', 'Two copies', 'Max (3 copies)']
+    assert quantity['choices'] == ['One copy', 'Two copies', 'Max (3 copies)', 'Cancel']
     assert not any(q['question'].startswith('Confirm: slice exactly 2 copies') for q in adapter.questions)
     final = next(q for q in adapter.questions if q['choices'] and q['choices'][0].startswith('Slice and print'))
     assert '2 copies' in final['question'] and final['choices'][0].startswith('Slice and print')
@@ -563,7 +563,7 @@ def test_typed_quantity_uses_value_not_button_position(env, monkeypatch):
     asyncio.run(prepared_intake.prepare_link(event, adapter, state(), env.root, timeout=1))
     assert calls == [4]
     quantity = next(q for q in adapter.questions if 'How many copies' in q['question'])
-    assert quantity['choices'] == ['One copy', 'Two copies', 'Max (6 copies)']
+    assert quantity['choices'] == ['One copy', 'Two copies', 'Max (6 copies)', 'Cancel']
 
 
 def test_capacity_zero_full_size_split_saves_separate_mode_before_slice(env, monkeypatch):
@@ -805,7 +805,8 @@ def test_multipart_first_prompt_states_part_count_and_asks_color_choice(env, mon
     first = adapter.questions[0]
     assert first['question'].startswith('Inspected 2 parts: Shell, Eyes.')
     assert 'Choose colors for these parts or one color for everything?' in first['question']
-    assert len(first['choices']) == 2
+    assert len(first['choices']) == 3
+    assert first['choices'][-1] == 'Cancel'
     # Per-part answers continue to the per-part prompts instead of stalling.
     assert [q['question'] for q in adapter.questions[1:3]] == [
         'Choose the color/material for Shell, author made it White',
@@ -1010,3 +1011,46 @@ def test_per_part_job_is_never_offered_copies(env, monkeypatch):
     assert not any('How many copies' in q['question'] for q in adapter.questions)
     assert any(text.startswith('Printing one copy.') for text in adapter.sent)
     assert receipt['copies'] == 1
+
+
+def test_stop_during_a_long_step_cancels_it_and_leaves_nothing_running():
+    """#61: Stop on a progress message cancels the running step and raises Stopped."""
+    import threading
+    from tools import clarify_gateway as cm
+
+    class Live:
+        def __init__(self):
+            self.cid = None
+
+        async def send_clarify(self, **kw):
+            self.cid = kw['clarify_id']
+            return S(success=True)
+
+    started = threading.Event()
+    finished = threading.Event()
+
+    async def slow():
+        started.set()
+        try:
+            await asyncio.sleep(30)
+        finally:
+            finished.set()
+
+    adapter = Live()
+
+    async def run():
+        task = asyncio.ensure_future(prepared_intake._with_stop(
+            adapter, S(chat_id='stop-mid-step'), 'stop-mid-step', None,
+            'Uploading to the printer. Press Stop to cancel before it starts.', slow()))
+        for _ in range(200):
+            if started.is_set() and adapter.cid:
+                break
+            await asyncio.sleep(0.01)
+        assert adapter.cid, 'the Stop button was never registered'
+        assert cm.resolve_gateway_clarify(adapter.cid, prepared_intake.STOP_LABEL)
+        with pytest.raises(prepared_intake.Stopped):
+            await task
+
+    asyncio.run(run())
+    assert started.is_set()
+    assert finished.wait(2), 'the cancelled step was still running'

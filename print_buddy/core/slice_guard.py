@@ -12,13 +12,16 @@ class Result:
     status: str = "ok"
     warnings: list[str] = field(default_factory=list)
     blocked: list[str] = field(default_factory=list)
+    effective_settings: dict = field(default_factory=dict)
     @property
     def ok(self): return self.status == "ok"
     def warn(self, text):
         self.warnings.append(text)
         if self.status == "ok": self.status = "warnings"
     def block(self, text): self.blocked.append(text); self.status = "blocked"
-    def as_dict(self): return {"status":self.status,"ok":self.ok,"warnings":self.warnings,"blocked":self.blocked}
+    def as_dict(self):
+        return {"status": self.status, "ok": self.ok, "warnings": self.warnings,
+                "blocked": self.blocked, "effective_settings": self.effective_settings}
 
 def _printer(bed, ifs_slots):
     printer = settings.current()['printer']
@@ -55,7 +58,9 @@ TIME_HEADER=re.compile(r"(?im)^;\s*(?:estimated printing time(?:\s*\([^)]*\))?|e
                        r"|^;.*\b(?:model printing time|total estimated time)\s*:\s*\S|^;\s*time\s*:\s*\S")
 MOVE=re.compile(r"^\s*G[0-3]\b([^;]*)",re.I)
 WORD=re.compile(r"\b([XYZE])\s*(-?(?:\d+(?:\.\d*)?|\.\d+))",re.I)
-def post_slice(gcode, *, ifs_slots=None, tool_slots=None, bed=None, result_json=None):
+def post_slice(gcode, *, ifs_slots=None, tool_slots=None, bed=None, result_json=None,
+               templates=None, profile_paths=()):
+    """Check bounds + effective motion/profile settings and capture provenance."""
     r=Result(); tool_slots=tool_slots or {}; bed,ifs_slots=_printer(bed,ifs_slots)
     if isinstance(gcode, Path):
         text=gcode.read_text(errors="replace")
@@ -65,6 +70,53 @@ def post_slice(gcode, *, ifs_slots=None, tool_slots=None, bed=None, result_json=
         text=str(gcode or "")
     low=text.lower()
     if not text.strip(): r.block("Orca produced no G-code; inspect its return code and error log."); return r
+    # Auto can resolve to Spiral on overhang-crossing travels in Orca; permit only Normal Lift.
+    template_root = Path(templates or settings.current()['orca']['templates'])
+    own_settings = {}
+    for filename in ('machine.json', 'process.json', 'filament.json'):
+        path = template_root / filename
+        if path.is_file():
+            own_settings.update(json.loads(path.read_text()))
+    own_filament_ids = set()
+    for path in (Path(p) for p in profile_paths):
+        if path.is_file():
+            data = json.loads(path.read_text())
+            values = data.get('filament_settings_id', [])
+            own_filament_ids.update(str(value).strip().strip('"') for value in (values if isinstance(values, list) else [values]))
+    if not own_filament_ids:
+        values = own_settings.get('filament_settings_id', [])
+        own_filament_ids.update(str(value).strip().strip('"') for value in (values if isinstance(values, list) else [values]))
+    if re.search(r"(?m)^;\s*filament_settings_id\s*=", text, re.I) and not own_filament_ids:
+        r.block("Cannot verify filament_settings_id slots: no active template filament IDs are available.")
+    for line in text.splitlines():
+        match_brim = re.match(r"^;\s*brim_type\s*=\s*(.*)$", line, re.I)
+        if match_brim:
+            val = match_brim.group(1).strip().strip('"')
+            allowed_brim = own_settings.get('brim_type')
+            if allowed_brim is not None and val.lower() != str(allowed_brim).strip().lower():
+                r.block(f"Foreign effective setting brim_type: {val!r}; expected {allowed_brim!r}.")
+        match = re.match(r"^;\s*(filament_z_hop_types|z_hop_types)\s*=\s*(.*)$", line, re.I)
+        if match:
+            key, value = match.group(1), match.group(2)
+            for slot, entry in enumerate(value.split(','), 1):
+                raw = entry.strip().strip('"')
+                if not raw:
+                    continue
+                if raw.lower() != 'normal lift':
+                    r.block(f"Unsafe effective setting {key} slot {slot}: {raw!r}; only Normal Lift is permitted.")
+        match = re.match(r"^;\s*((?:filament|printer|print)_settings_id)\s*=\s*(.*)$", line, re.I)
+        if match:
+            key = match.group(1).lower()
+            entries = match.group(2).split(';') if key == 'filament_settings_id' else [match.group(2)]
+            raw_ids = own_filament_ids if key == 'filament_settings_id' else own_settings.get(key, [])
+            own_ids = {str(value).strip().strip('"') for value in (raw_ids if isinstance(raw_ids, (list, set, tuple)) else [raw_ids])}
+            for slot, entry in enumerate(entries, 1):
+                value = entry.strip().strip('"')
+                if not value or value not in own_ids:
+                    r.block(f"Foreign effective setting {match.group(1)} slot {slot}: {value!r}.")
+        match = re.match(r"^;\s*enable_arc_fitting\s*=\s*(.*)$", line, re.I)
+        if match and match.group(1).strip() == '1':
+            r.block("Unsafe effective setting enable_arc_fitting=1.")
     if "g-code conflicts detected" in low or "slicing result conflict" in low or "gcode path conflicts" in low:
         r.block("Orca reported a G-code conflict; the slice cannot be used. Inspect overlapping geometry/wipe-tower placement (see Orca adapter diagnostic).")
     tools={int(n) for n in re.findall(r"(?im)^\s*T(\d+)\s*(?:;.*)?$",text)}
@@ -81,6 +133,28 @@ def post_slice(gcode, *, ifs_slots=None, tool_slots=None, bed=None, result_json=
         if 'X' in vals or 'Y' in vals:
             coords.append((x,y))
             if x<0 or y<0 or x>bed[0] or y>bed[1]: r.block(f"G-code move goes off the {bed[0]:g}x{bed[1]:g} mm bed at X{x:g} Y{y:g}."); break
+    effective = {}
+    for line in text.splitlines():
+        match = re.match(
+            r"^;\s*(filament_z_hop_types|z_hop_types|filament_wipe|"
+            r"filament_wipe_distance|filament_settings_id|printer_settings_id|"
+            r"print_settings_id|brim_type)\s*=\s*(.*)$", line, re.I)
+        if match:
+            effective[match.group(1)] = match.group(2).strip()
+    slot_details = []
+    per_slot = {key: value.split(',') for key, value in effective.items()
+                if key in ('filament_z_hop_types', 'filament_wipe', 'filament_wipe_distance')}
+    ids = effective.get('filament_settings_id', '').split(';')
+    for index in range(max([len(v) for v in per_slot.values()] + [len(ids)])):
+        item = {'slot': index + 1}
+        for key, values in per_slot.items():
+            if index < len(values):
+                item[key] = values[index].strip()
+        if index < len(ids):
+            item['filament_settings_id'] = ids[index].strip().strip('"')
+        slot_details.append(item)
+    effective['filament_slots'] = slot_details
+    r.effective_settings = effective
     if not TIME_HEADER.search(text):
         r.warn("G-code header has no estimated print-time metadata; estimate is unavailable offline.")
     if result_json:

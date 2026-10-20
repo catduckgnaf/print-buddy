@@ -1,5 +1,30 @@
 # Print Buddy Internal Release Notes
 
+# Version 2.0.5
+
+**Release Date:** 2026-10-20
+**What users can do now:**
+- Control an intake from Discord with Cancel or Stop at supported stages; resume a saved intake after a prompt timeout; and continue an intake after confirming its saved decisions while a background slice is safely reused. Closes #61, #62, and #63.
+- Configure supported nozzle diameter and material, with validation, abrasive-on-brass safety refusal, and refusal when no tuned nozzle profile exists. Closes #59.
+- Recover from supported printer-side emergencies with guarded panic utilities; load IFS slots while idle; and remap a single-color print to another loaded slot. These controls are software capabilities; they do not imply physical validation here. #88.
+- Set Discord prompt timeout values in configuration. #89.
+- See clearer start readback that distinguishes preparing, printing, and confirmed extrusion. #87.
+
+**Fixes and reliability:**
+- Preserve verified plates when a derived plate fails a safety guard, and bind background slicing to the confirmed source and decisions. #77, #93.
+- Harden Spoolman and IFS color/identity synchronization and prevent direct raw stock API requests. #78, #81.
+- Make JOB.json writes atomic to prevent concurrent readers from seeing truncated data; repair related offline CI regressions. #79.
+- Sanitize foreign 3MF settings and gate unsupported z-hop settings. #86.
+- Correct fit margin accounting and feature-aware clearance, including explicit brim handling for tight fits. #85.
+- Make Print Buddy scripts ignore the gateway's `HERMES_HOME`; make prompt timeouts configurable. #72, #89.
+
+**Technical and packaging changes:**
+- Add a Docker image and setup documentation, plus native Spoolman and configurable Orca runner support in CI. #75, #80, #82.
+- Update printer naming in the README. #71.
+- Pull request references: [#71](https://github.com/catduckgnaf/print-buddy/pull/71), [#72](https://github.com/catduckgnaf/print-buddy/pull/72), [#75](https://github.com/catduckgnaf/print-buddy/pull/75), [#77](https://github.com/catduckgnaf/print-buddy/pull/77), [#78](https://github.com/catduckgnaf/print-buddy/pull/78), [#79](https://github.com/catduckgnaf/print-buddy/pull/79), [#80](https://github.com/catduckgnaf/print-buddy/pull/80), [#81](https://github.com/catduckgnaf/print-buddy/pull/81), [#82](https://github.com/catduckgnaf/print-buddy/pull/82), [#85](https://github.com/catduckgnaf/print-buddy/pull/85), [#86](https://github.com/catduckgnaf/print-buddy/pull/86), [#87](https://github.com/catduckgnaf/print-buddy/pull/87), [#88](https://github.com/catduckgnaf/print-buddy/pull/88), [#89](https://github.com/catduckgnaf/print-buddy/pull/89), [#90](https://github.com/catduckgnaf/print-buddy/pull/90), [#91](https://github.com/catduckgnaf/print-buddy/pull/91), [#92](https://github.com/catduckgnaf/print-buddy/pull/92), [#93](https://github.com/catduckgnaf/print-buddy/pull/93).
+
+---
+
 # Version 2.0.4
 
 **Release Date:** 2026-10-19

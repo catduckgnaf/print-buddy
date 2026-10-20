@@ -1572,9 +1572,13 @@ def _job_fit(job, brim_override):
     orientation = job.get('orientation') or {}
     rotation = orientation.get('rotation')
     if not rotation and (scale is None or float(scale) >= 1.0):
+        if brim_override is None and job.get('fit_brim_policy'):
+            brim_override = job['fit_brim_policy'].get('width_mm', 0)
         return None, None, brim_override
     fit = {'scale': float(scale) if scale is not None else 1.0, 'rotation': rotation}
     supports = bool(orientation.get('supports')) if rotation else None
+    if brim_override is None and job.get('fit_brim_policy'):
+        brim_override = job['fit_brim_policy'].get('width_mm', 0)
     if rotation and brim_override is None and orientation.get('brim'):
         brim_override = 5
     return fit, supports, brim_override
@@ -1613,7 +1617,17 @@ def per_part_fit_options(source, decisions, options, bed=BED_MM):
     scales = [s for s in options.get('scales') or [] if honored({'scale': s})]
     rotations = [r for r in options.get('rotations') or []
                  if r.get('rotation') and honored({'scale': r.get('scale'), 'rotation': r['rotation']})]
-    return {**options, 'scales': scales, 'rotations': rotations}
+    details = []
+    try:
+        with zipfile.ZipFile(source) as archive:
+            for part in manifest.get('parts', []):
+                box = __import__('print_buddy.core.color_geometry', fromlist=['_world_bounds'])._world_bounds(
+                    archive, {str(part['object_id'])})[0]
+                details.append({'name': part.get('name') or f"Object {part['object_id']}",
+                                'extent_mm': [round(box[i][1] - box[i][0], 1) for i in range(3)]})
+    except (OSError, zipfile.BadZipFile, RuntimeError, KeyError):
+        details = []
+    return {**options, 'scales': scales, 'rotations': rotations, 'parts': details}
 
 
 def _gcode_object_count(text):
@@ -2128,6 +2142,8 @@ def slice_job(job_path, brim_override=None, copies=None, scale=None):
                       'original_mm': [sx, sy, sz], 'final_mm': list(inch_dims)}
     eff_sx, eff_sy, eff_sz = sx * (float(scale) if scale else 1.0), sy * (float(scale) if scale else 1.0), sz * (float(scale) if scale else 1.0)
     if eff_sx>st["bed_mm"][0] or eff_sy>st["bed_mm"][1] or eff_sz>st["max_print_height_mm"]: raise RuntimeError(f"model {sx}x{sy}x{sz} mm exceeds printer volume")
+    if brim_override is None and job.get('fit_brim_policy'):
+        brim_override = job['fit_brim_policy'].get('width_mm', 0)
     if rotation and brim_override is None and orientation.get("brim"):
         brim_override = 5
     # Canonical slicing is Orca only.

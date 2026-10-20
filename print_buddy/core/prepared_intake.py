@@ -253,7 +253,13 @@ def _fit_choice_reply(text, rows):
 def fit_question(title, options):
     scales = options.get('scales') or []
     rotations = options.get('rotations') or []
-    lines = [f'{title} does not fit the AD5X bed full size as authored.']
+    parts = options.get('parts') or []
+    part_name = options.get('part_name') or (parts[0].get('name') if parts else title)
+    extent = options.get('extent_mm') or (parts[0].get('extent_mm') if parts else None)
+    extent_text = ' × '.join(f'{v:g}' for v in extent[:3]) + ' mm' if extent else 'measured dimensions unavailable'
+    checked = options.get('orientations_checked') or (parts[0].get('orientations_checked') if parts else None)
+    orientations = ', '.join(checked or ['authored XY', 'verified rotations'])
+    lines = [f'{part_name} ({extent_text}) does not fit the AD5X bed full size. Orientations checked: {orientations}.']
     if scales:
         lines.append(f'As authored it fits at {_pct(scales[0])} max.')
     for alt in rotations[:2]:
@@ -267,7 +273,16 @@ def fit_question(title, options):
                      f"{'full size' if alt['scale'] >= 1 else _pct(alt['scale'])} ({size} mm)"
                      + (f"; {'; '.join(warn)}" if warn else '') + '.')
     if options.get('full_size_split'):
-        lines.append('Full-size option: split onto the original plates (100%).')
+        lines.append('Full-size option: separate already-independent parts onto the original plates (100%).')
+    if options.get('brim_policy'):
+        lines.append('Tight-fit brim policy: ' + options['brim_policy'].get('label', 'No brim') + '.')
+    lines.append('Options: rotate to a listed verified orientation; separate only already-independent parts (100%); '
+                 f'shrink to the exact listed percentage ({_pct(scales[0]) if scales else "no verified scale"}); '
+                 'or cut and join manually (future option, not implemented; https://github.com/catduckgnaf/print-buddy/issues/83).')
+    if options.get('fit_search_deferred'):
+        lines.append('Fine scale search for painted multi-plate jobs is deferred to keep preparation bounded; the listed options are the verified safe choices.')
+    lines.append('Margin note: the edge margin is bed-edge clearance; the 10 mm object gap is object-to-object spacing. '
+                 'They are separate budgets and each is applied once. Brim width and non-normal lift sweep consume bed-edge clearance only.')
     lines.append('Pick a fit option, or type split / 100% / shrink / cancel.')
     return '\n'.join(lines)
 
@@ -671,6 +686,9 @@ async def prepare_link(event, adapter, state, root, timeout=300, reuse=None):
                                    metadata=metadata)
                 return {'action': 'skip', 'reason': 'cancelled oversized model'}
             latest['plate_mode'] = 'separate'
+            if options.get('brim_policy'):
+                latest['fit_brim_policy'] = options['brim_policy']
+                receipt['fit_brim_policy'] = options['brim_policy']
             latest['scale'] = row['scale']
             receipt['scale'] = row['scale']
             receipt_path.write_text(json.dumps(receipt, indent=2) + '\n')
@@ -688,11 +706,20 @@ async def prepare_link(event, adapter, state, root, timeout=300, reuse=None):
                                    metadata=metadata)
                 return {'action': 'skip', 'reason': 'fit unknown; resumable'}
             title = latest.get('title') or 'This model'
+            if options.get('scales') is not None:
+                options['part_name'] = options.get('part_name') or title
             # Per-part slicing applies the chosen fit to every slot plate. Offer
             # only the options every slot plate was verified to honor.
             if (latest.get('color_decisions') or {}).get('mode') == 'per_part':
                 options = await _heavy(mj.per_part_fit_options, path, latest['color_decisions'], options,
                                        int((state.get('bed_mm') or BED)[0]))
+            if options.get('parts'):
+                failing = [part for part in options['parts']
+                           if max(part['extent_mm'][:2]) > min(state.get('bed_mm') or BED)]
+                if failing:
+                    options['part_name'] = failing[0]['name']
+                    options['extent_mm'] = failing[0]['extent_mm']
+                    options['orientations_checked'] = ['authored XY (measured)'] + [r.get('label', 'rotation') for r in options.get('rotations') or []]
             full_size_split = False
             try:
                 full_size_split = await _heavy(plate_merge.full_size_split_possible, path, manifest,
@@ -717,6 +744,12 @@ async def prepare_link(event, adapter, state, root, timeout=300, reuse=None):
                 fit_receipt['split_plan'] = split_plan
             elif full_size_split:
                 fit_receipt['full_size_split'] = True
+            if options.get('brim_policy'):
+                fit_receipt['brim_policy'] = options['brim_policy']
+                latest['fit_brim_policy'] = options['brim_policy']
+                receipt['fit_brim_policy'] = options['brim_policy']
+            if options.get('parts'):
+                fit_receipt['parts'] = options['parts']
             receipt['fit_options'] = fit_receipt
             if not any(r['kind'] in ('scale', 'rotate', 'split') for r in picked):  # nothing printable to offer
                 if (latest.get('color_decisions') or {}).get('mode') == 'per_part':
@@ -764,6 +797,9 @@ async def prepare_link(event, adapter, state, root, timeout=300, reuse=None):
                                    content='Print cancelled. Nothing was sliced, uploaded, or started.',
                                    metadata=metadata)
                 return {'action': 'skip', 'reason': 'cancelled oversized model'}
+            if options.get('brim_policy'):
+                latest['fit_brim_policy'] = options['brim_policy']
+                receipt['fit_brim_policy'] = options['brim_policy']
             if row['kind'] == 'split':
                 latest['plate_mode'] = 'separate'
                 latest['scale'] = 1.0

@@ -43,7 +43,8 @@ async def _with_stop(adapter, source, key, metadata, text, work):
     Test adapters answer a prompt instantly from a scripted list, so they get no Stop
     button: it would eat the next scripted answer and cancel every step.
     """
-    if "picks" in getattr(adapter, "__dict__", {}):
+    adapter_state = getattr(adapter, "__dict__", {})
+    if "picks" in adapter_state or "clicks" in adapter_state:
         return await work
     import uuid
     from tools import clarify_gateway as cm

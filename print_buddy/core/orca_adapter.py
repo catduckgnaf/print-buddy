@@ -311,6 +311,15 @@ def _clamp(value, low, high):
     return ','.join(one(v) for v in str(value).split(','))
 
 
+def _template_settings(template_root):
+    settings = {}
+    for name in ('machine.json', 'process.json', 'filament.json'):
+        path = Path(template_root) / name
+        if path.is_file():
+            settings.update(json.loads(path.read_text()))
+    return settings
+
+
 IMPORTED_AUTO_SENTINELS = {
     'raft_first_layer_expansion': '-1',
     'tree_support_wall_count': '-1',
@@ -325,41 +334,108 @@ def _rewrite_project_settings(path, settings, name):
     tmp.replace(path)
 
 
-def sanitize_project_settings(path, log_text=''):
-    """Normalize only the known Bambu auto sentinels rejected by Orca.
-
-    The source of record is never passed here: slice_model creates a private 3MF
-    copy first. Returns {key: [old, new]} for audit provenance. Orca reports only
-    its first invalid imported setting, so normalize either known sentinel on that
-    private copy before the normal slice attempt. log_text is ignored; other
-    negative settings stay untouched.
-    """
-    del log_text
+def _sanitize_imported_settings(path, templates, slot_count, filament_profiles=()):
     name = 'Metadata/project_settings.config'
-    if Path(path).suffix.lower() != '.3mf':
-        return {}
     with zipfile.ZipFile(path) as archive:
         if name not in archive.namelist():
             return {}
         settings = json.loads(archive.read(name))
+    own = _template_settings(templates)
     changed = {}
     for key, sentinel in IMPORTED_AUTO_SENTINELS.items():
-        if key not in settings:
-            continue
-        value = settings[key]
-        if isinstance(value, list):
-            normalized = ['0' if str(v) == sentinel else v for v in value]
-        elif isinstance(value, (str, int, float)) and str(value) == sentinel:
-            normalized = '0'
+        previous = settings.get(key)
+        if isinstance(previous, list):
+            replacement = ['0' if str(value) == sentinel else value for value in previous]
+        elif str(previous) == sentinel:
+            replacement = '0'
         else:
             continue
-        if normalized != value:
-            settings[key] = normalized
-            changed[key] = [value, '0']
-    if not changed:
-        return {}
-    _rewrite_project_settings(path, settings, name)
+        if replacement != previous:
+            settings[key] = replacement
+            changed[key] = [previous, replacement]
+    slot_count = max(1, min(int(slot_count), IFS_SLOTS))
+    template_filament = json.loads((templates / 'filament.json').read_text())
+    per_slot_filament = tuple(key for key in template_filament if key.startswith('filament_') and not key.endswith('_settings_id'))
+    for key in ('filament_z_hop_types', 'filament_wipe', 'filament_wipe_distance'):
+        if key not in settings or key not in template_filament:
+            continue
+        template_values = template_filament[key]
+        value = template_values[0] if isinstance(template_values, list) else template_values
+        count = len(settings[key]) if isinstance(settings[key], list) else slot_count
+        replacement = [value] * count if isinstance(settings[key], list) else value
+        previous = settings[key]
+        if previous != replacement:
+            settings[key] = replacement
+            changed[key] = [previous, replacement]
+    for key in per_slot_filament:
+        if key in settings and isinstance(template_filament[key], list) and template_filament[key]:
+            template_values = template_filament[key]
+            count = len(settings[key]) if isinstance(settings[key], list) else slot_count
+            replacement = [template_values[0]] * count
+            previous = settings[key]
+            if previous != replacement:
+                settings[key] = replacement
+                changed[key] = [previous, replacement]
+    for key in ('z_hop', 'z_hop_types', 'travel_slope', 'wipe', 'wipe_distance',
+                'retract_lift_above', 'retract_lift_below', 'enable_arc_fitting', 'brim_type'):
+        if key in settings and key in own and settings[key] != own[key]:
+            previous = settings[key]
+            settings[key] = own[key]
+            changed[key] = [previous, own[key]]
+    for key, value in own.items():
+        if not key.endswith('_settings_id') or key not in settings:
+            continue
+        if key == 'filament_settings_id':
+            template_id = value[0] if isinstance(value, list) else value
+            count = len(settings[key]) if isinstance(settings[key], list) else slot_count
+            existing = settings[key] if isinstance(settings[key], list) else [settings[key]]
+            replacement = [
+                item if sg.is_allowed_filament_id(item, {template_id}) else template_id
+                for item in existing
+            ]
+            if len(replacement) < count:
+                replacement.extend([template_id] * (count - len(replacement)))
+            elif len(replacement) > count and count > 0:
+                replacement = replacement[:count]
+        else:
+            replacement = value
+        previous = settings[key]
+        if previous != replacement:
+            settings[key] = replacement
+            changed[key] = [previous, replacement]
+    area = own.get('printable_area', [])
+    points = [tuple(map(float, point.split('x'))) for point in area]
+    min_x, max_x = min(p[0] for p in points), max(p[0] for p in points)
+    min_y, max_y = min(p[1] for p in points), max(p[1] for p in points)
+    width = float(own.get('prime_tower_width', 0))
+    for key, low, high in (('wipe_tower_x', min_x, max_x-width),
+                           ('wipe_tower_y', min_y, max_y-width)):
+        if key in settings:
+            replacement = _clamp(settings[key], low, high)
+            if replacement != settings[key]:
+                changed[key] = [settings[key], replacement]
+                settings[key] = replacement
+    if changed:
+        _rewrite_project_settings(path, settings, name)
     return changed
+
+
+def sanitize_project_settings(path, log_text='', templates=None, slot_count=None):
+    """Normalize Orca sentinels and foreign motion/profile data on private 3MF copies."""
+    del log_text
+    if Path(path).suffix.lower() != '.3mf':
+        return {}
+    templates = Path(templates or TEMPLATES)
+    with zipfile.ZipFile(path) as archive:
+        name = 'Metadata/project_settings.config'
+        if name not in archive.namelist():
+            return {}
+        imported = json.loads(archive.read(name))
+    if slot_count is None:
+        slot_count = max((len(imported[key]) if isinstance(imported.get(key), list) else 1
+                          for key in ('filament_settings_id', 'filament_type', 'filament_colour')
+                          if imported.get(key) is not None), default=1)
+    return _sanitize_imported_settings(path, templates, slot_count)
 
 
 def clamp_rejected_settings(path, log_text):
@@ -454,6 +530,9 @@ def slice_model(source, folder, state, brim=None, first_layer=False, color_decis
         geometry['fit_brim_policy'] = json.dumps(brim_policy, sort_keys=True)
     # Preserve author structural intent, not P1S motion/material calibration.
     process.update({k: author[k] for k in PROCESS_KEYS if k in author})
+    # The active printer template, not imported project settings, defines the
+    # brim mode; an explicit operator width may still control its extent.
+    process['brim_type'] = json.loads((templates / 'process.json').read_text())['brim_type']
     process.update({'filter_out_gap_fill': '0', 'gap_fill_target': author.get('gap_fill_target', 'everywhere'),
                     'enable_support': author.get('enable_support', '0'), 'brim_width': str(brim) if brim is not None else author.get('brim_width', '0')})
     if brim_policy is not None:
@@ -640,9 +719,12 @@ def slice_model(source, folder, state, brim=None, first_layer=False, color_decis
         input_path = private
         command[-1] = str(private)
     if input_path.suffix.lower() == '.3mf':
-        # Bambu's -1 auto sentinels are invalid in Orca 2.4. Normalize only these
-        # two known settings on the private preparation copy; preserve source bytes.
-        sanitized.update(sanitize_project_settings(input_path))
+        # Bambu's -1 auto sentinels are invalid in Orca 2.4. Normalize these
+        # two known compatibility keys plus foreign motion provenance only on
+        # the private working copy, never the original source.
+        sanitized.update(sanitize_project_settings(
+            input_path, templates=templates,
+            slot_count=len(filament_paths) if mapped_profile else 1))
     # Never accept stale output if a failed slicer leaves the preceding artifact behind.
     output.unlink(missing_ok=True)
     result = subprocess.run(command, capture_output=True, text=True, timeout=600)
@@ -760,7 +842,8 @@ def slice_model(source, folder, state, brim=None, first_layer=False, color_decis
         finalize_zmod(output, filament['filament_colour'][0], state['spool']['material'], printer)
     result_path = folder / 'result.json'
     post_gate = post_slice(output, result_json=None if fallback else (result_path if result_path.is_file() else None),
-                           bed=bed, ifs_slots=IFS_SLOTS, tool_slots=tool_slots)
+                           bed=bed, ifs_slots=IFS_SLOTS, tool_slots=tool_slots,
+                           templates=templates, profile_paths=filament_paths)
     # Each model approves its own protected settings; a model without a baseline file keeps the shared one.
     baseline_kw = {} if printer.baseline_path is None else {'path': printer.baseline_path}
     baseline_gate = (sg.enforce_approved_baseline(output, **baseline_kw)
@@ -774,7 +857,8 @@ def slice_model(source, folder, state, brim=None, first_layer=False, color_decis
     warnings = gate.warnings + post_gate.warnings + baseline_gate.warnings
     return output, {'tool_mapping': mapping, 'source_sha256': digest(source), 'gcode_sha256': digest(output),
                     'config_sha256': {str(p): digest(p) for p in configs}, 'geometry': geometry,
-                    'slice_guard': {'status': 'warnings' if warnings else 'ok', 'warnings': warnings},
+                    'slice_guard': {'status': 'warnings' if warnings else 'ok', 'warnings': warnings,
+                                    'effective_settings': post_gate.effective_settings},
                     "slicer_command": command, "generator": generator.group(1), "slicer": slicer,
                     'fallback': fallback,
                     'author_process': {k: author[k] for k in PROCESS_KEYS if k in author},

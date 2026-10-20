@@ -1,5 +1,15 @@
 # Print Buddy Internal Release Notes
 
+# Version 2.0.6
+
+**Release Date:** 2026-10-20
+**What users can do now:**
+- Status steps such as "Checking whether it fits the bed" and slicing now show a single Stop button. The "Other (type answer)" button no longer appears on these steps.
+
+**Fixes and reliability:**
+- Fix intake freezing at the fit check and other Stop-guarded steps. The step's result is now returned as soon as the work finishes, instead of waiting up to an hour for someone to press Stop. Stop still cancels a step that is still running. The fit geometry itself was never at fault.
+- Remove the Stop button from the message once its step finishes, so a stale Stop cannot be pressed.
+
 # Version 2.0.5
 
 **Release Date:** 2026-10-20

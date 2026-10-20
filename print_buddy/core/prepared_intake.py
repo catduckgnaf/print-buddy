@@ -31,6 +31,10 @@ _OFFLOAD = {('model_job', 'audit'), ('model_job', 'slice_job'), ('source_colors'
 
 
 STOP_LABEL = "Stop"
+STOP_CUSTOM_ID = "pbstop:"
+# Set by the print-feedback plugin: async (source, text, clarify_id) -> sent message with a single
+# Stop button. None (tests, no Discord bot) falls back to the gateway clarify prompt.
+STOP_SENDER = None
 
 
 class Stopped(BaseException):
@@ -50,23 +54,45 @@ async def _with_stop(adapter, source, key, metadata, text, work):
     from tools import clarify_gateway as cm
     cid = uuid.uuid4().hex
     cm.register(cid, key, text, [STOP_LABEL])
-    sent = await adapter.send_clarify(chat_id=str(source.chat_id), question=text, choices=[STOP_LABEL],
-                                      clarify_id=cid, session_key=key, metadata=metadata)
+    stop_msg = None
+    if STOP_SENDER is not None:
+        # Plugin-owned one-button view: a status step offers Stop only, never "Other (type answer)".
+        try:
+            stop_msg = await STOP_SENDER(source, text, cid)
+        except Exception:
+            stop_msg = None
+    if stop_msg is not None:
+        sent = SimpleNamespace(success=True)
+    else:
+        sent = await adapter.send_clarify(chat_id=str(source.chat_id), question=text, choices=[STOP_LABEL],
+                                          clarify_id=cid, session_key=key, metadata=metadata)
     if not getattr(sent, "success", True):
         cm.resolve_gateway_clarify(cid, cm.CANCELLED)
         return await work
     task = asyncio.ensure_future(work)
+    waiter = asyncio.ensure_future(asyncio.to_thread(cm.wait_for_response, cid, 3600))
     try:
-        answer = await asyncio.to_thread(cm.wait_for_response, cid, 3600)
-        if answer == STOP_LABEL and not task.done():
+        # Race the work against the Stop button. The work finishing must never wait on a press:
+        # awaiting the button first froze every fit check until someone pressed Stop (2.0.6).
+        await asyncio.wait({task, waiter}, return_when=asyncio.FIRST_COMPLETED)
+        if not task.done() and waiter.done() and waiter.result() == STOP_LABEL:
             task.cancel()
             with contextlib.suppress(asyncio.CancelledError):
                 await task
             raise Stopped(text)
         return await task
     finally:
+        if not task.done():
+            task.cancel()
+            with contextlib.suppress(asyncio.CancelledError, Exception):
+                await task
         cm.resolve_gateway_clarify(cid, cm.CANCELLED)
+        with contextlib.suppress(Exception):
+            await asyncio.wait_for(waiter, 5)
         cm.wait_for_response(cid, 0.001)
+        if stop_msg is not None:
+            with contextlib.suppress(Exception):
+                await stop_msg.edit(view=None)
 
 
 async def _heavy(func, *args, **kwargs):

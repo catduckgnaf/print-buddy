@@ -340,7 +340,14 @@ def intake_folder(archive, slug, intake_id=None):
     return Path(archive) / (safe_slug(slug) + ('--' + intake_id if intake_id else ''))
 
 
-def write_job(folder, job): (folder/"JOB.json").write_text(json.dumps(job,indent=2)+"\n")
+def write_job(folder, job):
+    # Atomic replace: the background slice and the intake flow read JOB.json
+    # concurrently; a plain write_text truncates first, so a reader could see
+    # an empty file and fail with "Expecting value: line 1 column 1".
+    target = Path(folder) / "JOB.json"
+    tmp = target.with_name(f".JOB.json.{os.getpid()}.{time.monotonic_ns()}.tmp")
+    tmp.write_text(json.dumps(job, indent=2) + "\n")
+    os.replace(tmp, target)
 def show(job):
     print(f"{job['title']} [{job['site']} {job['model_id']}]\nHardware: {printer_state.summary(job['hardware'])}")
     print("Sources:")

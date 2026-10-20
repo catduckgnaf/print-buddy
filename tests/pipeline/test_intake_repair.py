@@ -90,7 +90,7 @@ def test_intake_flow_quantity_prompt_and_duration_answer(env, monkeypatch):
         data['gcode'] = str(gcode)
         data['sliced_copies'] = {'gcode': str(gcode), 'copies': copies or 1}
         data['copies'] = copies
-        Path(job_path).write_text(json.dumps(data))
+        model_job.write_job(Path(job_path).parent, data)
         env.sliced.append(str(gcode))
         return [gcode]
 

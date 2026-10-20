@@ -260,3 +260,47 @@ def test_two_dirty_results_suggest_nozzle_swap(monkeypatch):
     assert saved[-1]["cold_pull"]["suggest_nozzle_swap"] is True
     assert saved[-1]["cold_pull"]["offer_repeat"] is False
     assert saved[-1]["source"] == "coldpull"
+
+
+def test_cold_pull_prompts_use_their_configured_timeouts(monkeypatch):
+    """The go-ahead uses the safety window; the tip result uses the outcome window.
+
+    The recorded seconds come from the configured accessors rather than a literal.
+    """
+    import asyncio
+
+    plugin = _load_coldpull_plugin()
+    recorded = []
+
+    async def confirm(adapter, source, metadata, key, prompt, choices, timeout):
+        recorded.append((key, timeout))
+        if key.endswith("-actuate"):
+            return "Confirm cold pull"
+        if key.endswith("-tip"):
+            return "Clean"
+        return None
+
+    monkeypatch.setattr(plugin, "_confirm", confirm)
+    monkeypatch.setattr(plugin, "_maintenance_hours_now", lambda: 0.0)
+    monkeypatch.setattr("print_buddy.hermes.maintenance.load", lambda *args, **kwargs: {"runs": []})
+    monkeypatch.setattr("print_buddy.hermes.maintenance.append_run", lambda record, **kwargs: record)
+
+    class Adapter:
+        async def send(self, **kwargs):
+            return None
+
+    def fake_coldpull(got_temp, got_cold, *, confirmed_at, gcode_sender=None, reader=None):
+        return True, "Cold pull finished; heater target is 0."
+
+    from print_buddy.hermes import _config
+    from print_buddy.hermes import print_control as pc
+    monkeypatch.setattr(pc, "coldpull", fake_coldpull)
+    source = MagicMock()
+    source.chat_id = "c"
+    asyncio.run(plugin._coldpull_workflow(
+        Adapter(), source, None, source_tag="coldpull",
+        selected_material="PLA (trial) 220/90"))
+    by_key = {key.rsplit("-", 1)[-1]: timeout for key, timeout in recorded}
+    assert by_key["actuate"] == _config.safety_confirm_timeout_s()
+    assert by_key["tip"] == _config.cold_pull_outcome_s()
+    assert by_key["actuate"] != _config.question_timeout_s()

@@ -540,7 +540,7 @@ async def _coldpull_workflow(adapter, source, metadata, *, source_tag, initial_c
     await adapter.send(chat_id=source.chat_id, metadata=metadata,
         content='Bed must be clear; it homes. Screen may look frozen for a few minutes. Confirm only at the printer.')
     confirmed = await _confirm(adapter, source, metadata, f'{source_tag}-actuate',
-        'I am present, the bed is clear, and authorize one cold pull.', ['Confirm cold pull', 'Cancel'], (globals().get('_config').question_timeout_s() if globals().get('_config') else 1800))
+        'I am present, the bed is clear, and authorize one cold pull.', ['Confirm cold pull', 'Cancel'], (globals().get('_config').safety_confirm_timeout_s() if globals().get('_config') else 600))
     if confirmed != 'Confirm cold pull':
         return None, 'Cancelled or expired. Nothing sent.'
     import time as _time
@@ -554,7 +554,7 @@ async def _coldpull_workflow(adapter, source, metadata, *, source_tag, initial_c
         maintenance.append_run(record)
         return record, detail
     tip = await _confirm(adapter, source, metadata, f'{source_tag}-tip', 'How did the pulled tip look?',
-                         ['Clean', 'Dirty', 'Snapped', "Didn't release"], (globals().get('_config').question_timeout_s() if globals().get('_config') else 1800))
+                         ['Clean', 'Dirty', 'Snapped', "Didn't release"], (globals().get('_config').cold_pull_outcome_s() if globals().get('_config') else 1800))
     result = {'Clean': 'clean', 'Dirty': 'dirty', 'Snapped': 'snapped', "Didn't release": 'didnt_release'}.get(tip)
     if not result:
         record['hours_total'] = await asyncio.to_thread(_maintenance_hours_now)
@@ -646,7 +646,7 @@ async def maintenance_dispatch(event, gateway, **kwargs):
                 if i < len(session['steps']) and session['steps'][i] is not None:
                     continue
                 answer = await _confirm(adapter, source, metadata, f'maintenance-{i}',
-                                        f'{instruction} Choose an outcome.', buttons, (globals().get('_config').cold_pull_outcome_s() if globals().get('_config') else 1800))
+                                        f'{instruction} Choose an outcome.', buttons, (globals().get('_config').question_timeout_s() if globals().get('_config') else 1800))
                 action = 'problem' if answer == 'Problem found' else 'done' if answer == 'Done' else 'skip'
                 session['steps'][i] = action
                 if action == 'problem':

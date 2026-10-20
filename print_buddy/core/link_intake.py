@@ -97,6 +97,10 @@ class PromptCancelled(RuntimeError):
     """The operator typed a cancel word at a prompt that has no Cancel button."""
 
 
+class PromptExpired(RuntimeError):
+    """A button question reached its timeout with no choice and no decision saved."""
+
+
 async def ask(adapter, source, session_key, question, choices, timeout=None, allow_other=False, parser=None,
               live_key=None):
     """Ask a button question. With ``parser``, a typed reply in the same chat is also accepted;
@@ -131,7 +135,9 @@ async def ask(adapter, source, session_key, question, choices, timeout=None, all
                     # The live gateway can replay the original request text into an
                     # active prompt. Ignore non-answers and keep the prompt available.
                     pass
-            if answer is None or answer == cm.CANCELLED:
+            if answer is None:
+                raise PromptExpired('this question expired before a button was pressed; no decision saved')
+            if answer == cm.CANCELLED:
                 break
             if isinstance(answer, str):
                 picked = _typed_choice(answer, choices)

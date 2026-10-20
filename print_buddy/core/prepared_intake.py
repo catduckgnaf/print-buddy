@@ -379,6 +379,7 @@ _LIVE_KEY = contextvars.ContextVar('prepared_intake_live_key', default=None)
 
 
 from .link_intake import PromptCancelled as IntakeCancelled  # noqa: E402  typed Cancel/Stop at any prompt
+from .link_intake import PromptExpired as IntakeExpired  # noqa: E402  button question reached its timeout
 
 
 async def _spool_projection_text(mj, job, manifest, state, copies):
@@ -1054,6 +1055,29 @@ async def prepare_link(event, adapter, state, root, timeout=None, reuse=None):
         await adapter.send(chat_id=source.chat_id,
             content='Cancelled. Nothing sliced, uploaded or started.', metadata=metadata)
         return {'action': 'skip', 'reason': 'cancelled by operator'}
+    except IntakeExpired:
+        # The receipt and JOB.json written before this question stay on disk. Resume
+        # re-reads them instead of asking for the link again.
+        receipt.update(status='EXPIRED', sliced=False, uploaded=False, started=False)
+        receipt_path.write_text(json.dumps(receipt, indent=2) + '\n')
+        resumed = await _ask(adapter, source, key,
+                             'This question expired. Nothing was sliced, uploaded or started.',
+                             ['Resume'], timeout)
+        saved = receipt.get('job_json')
+        if resumed == 0 and saved and Path(saved).is_file():
+            job = json.loads(Path(saved).read_text())
+            receipt.update(status='RESUMED')
+            receipt_path.write_text(json.dumps(receipt, indent=2) + '\n')
+            await adapter.send(chat_id=source.chat_id,
+                               content=f"Resumed {job.get('title') or 'the saved model'} from the saved intake. "
+                                       'Nothing was sliced, uploaded or started.',
+                               metadata=metadata)
+            return {'action': 'resume', 'reason': 'resumed saved intake', 'job_json': saved}
+        await adapter.send(chat_id=source.chat_id,
+                           content='Expired before any choice was saved. Send the link again. '
+                                   'Nothing was sliced, uploaded or started.',
+                           metadata=metadata)
+        return {'action': 'skip', 'reason': 'expired before a choice'}
     except Exception as exc:
         receipt.update(status='FAILED', error=str(exc))
         receipt_path.write_text(json.dumps(receipt, indent=2) + '\n')

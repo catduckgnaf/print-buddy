@@ -33,7 +33,7 @@ def adapter_for(name):
 
 def capture(name, case, tmp_path, monkeypatch, **kw):
     baselines = []
-    # A machine's config/local.toml may point at another slicer; the golden argv is the home command.
+    # A machine's YAML or TOML local config may point at another slicer; the golden argv is the home command.
     monkeypatch.setattr(orca_adapter, "ORCA_COMMAND", list(settings.load(local=False, environ={})["orca"]["command"]))
     monkeypatch.setattr(orca_adapter, "pre_slice", lambda **k: slice_guard.Result())
     monkeypatch.setattr(orca_adapter, "post_slice", lambda *a, **k: slice_guard.Result())

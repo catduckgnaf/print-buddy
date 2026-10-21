@@ -10,13 +10,13 @@ python3 -m pip install -r requirements-test.txt
 
 Needs Python 3.11+, Hermes (`~/.hermes/hermes-agent`), and OrcaSlicer as a Flatpak.
 
-## 2. Settings: `config/local.toml` (gitignored)
+## 2. Settings: YAML preferred, TOML supported during migration
 
-Defaults live in `config/home.toml`. Override only what differs:
+Defaults live in `config/home.yaml`. Put machine-specific overrides in the gitignored `config/local.yaml`; existing `config/home.toml` and `config/local.toml` files remain supported. YAML takes precedence when both formats are present. See [the configuration guide](CONFIGURATION-YAML.md) for precedence, validation and migration details.
 
-- `[services]` `moonraker_url`, `spoolman_url`
-- `[paths]` `hermes_home`, `archive`, `records_vault`, `cache`, `hermes_bin`
-- `[printer]` anything that is not an AD5X with a 0.4 mm nozzle
+- `services.moonraker_url` and `services.spoolman_url`
+- `paths.hermes_home`, `archive`, `records_vault`, `cache` and `hermes_bin`
+- `printer.model` and supported printer-specific overrides
 
 ## 3. Overlay: `config/overlay/` (gitignored)
 

@@ -39,7 +39,7 @@ def _neutral_printer_hardware(monkeypatch):
 
 @pytest.fixture(autouse=True)
 def _home_slicer_commands(monkeypatch):
-    """A machine's config/local.toml may point at another slicer; these tests assert the home commands."""
+    """A machine's YAML or TOML local config may point at another slicer; these tests assert the home commands."""
     from print_buddy.core import orca_adapter
     home = settings.load(local=False, environ={})
     monkeypatch.setattr(orca_adapter, "ORCA_COMMAND", list(home["orca"]["command"]))

@@ -6,7 +6,7 @@
 # Env: PYTHON, SYSTEMD_USER_DIR (default ~/.config/systemd/user),
 #      PRINT_BUDDY_OVERLAY (default config/overlay), NO_SYSTEMCTL=1 to skip daemon-reload.
 #      Template values: LLM_PROVIDER LLM_MODEL LLM_BASE_URL TIMEZONE DISCORD_CHANNEL_ID DISPLAY_NAME BOT_NAME
-#      (BOT_NAME defaults to [discord] bot_name in config/home.toml).
+#      (BOT_NAME defaults to [discord] bot_name in config/home.yaml).
 #
 # Code folders are symlinked to this checkout. Templates are rendered only when the target is
 # missing, so your edited AGENTS.md, SOUL.md and config.yaml are never overwritten. Files under

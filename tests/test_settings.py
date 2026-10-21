@@ -1,4 +1,4 @@
-"""config/home.toml is the real home setup. These tests keep it valid and in step with the Orca templates."""
+"""The checked-in home config is kept valid and in step with the Orca templates."""
 import json
 import os
 import subprocess
@@ -23,6 +23,7 @@ class HomeSettingsTests(unittest.TestCase):
         self.assertEqual(printer["ifs_slots"], 4)
         self.assertEqual(printer["nozzle_diameter_mm"], 0.4)
         self.assertEqual(self.home["orca"]["command"], ["flatpak", "run", "com.orcaslicer.OrcaSlicer"])
+        self.assertTrue(self.home["visual_watch"]["enabled"])
 
     def test_bed_matches_orca_printable_area(self):
         corners = [tuple(float(v) for v in c.split("x")) for c in self.machine["printable_area"]]
@@ -76,6 +77,156 @@ class OverrideTests(unittest.TestCase):
         path = self.dir / name
         path.write_text(text)
         return path
+
+    def test_yaml_local_file_overrides_key_by_key(self):
+        path = self.toml("printer:\n  ifs_slots: 2\nlayout:\n  multi_copy_edge_mm: 4\n", "local.yaml")
+        data = settings.load(local=path, environ={})
+        self.assertEqual(data["printer"]["ifs_slots"], 2)
+        self.assertEqual(data["layout"]["multi_copy_edge_mm"], 4)
+        self.assertEqual(data["layout"]["single_copy_edge_mm"], 1)
+
+    def test_yaml_rejects_unknown_keys(self):
+        path = self.toml("services:\n  moonraker_urll: http://printer.test\n", "local.yaml")
+        with self.assertRaisesRegex(settings.SettingsError, "unknown setting"):
+            settings.load(local=path, environ={})
+
+    def test_yaml_parse_error_names_file(self):
+        path = self.toml("printer: [\n", "broken.yaml")
+        with self.assertRaisesRegex(settings.SettingsError, "broken.yaml"):
+            settings.load(local=path, environ={})
+
+    def test_yaml_and_legacy_toml_local_precedence_is_yaml_first(self):
+        toml_path = self.toml("[layout]\nmulti_copy_edge_mm = 4\n", "local.toml")
+        yaml_path = self.toml("layout:\n  multi_copy_edge_mm: 6\n", "local.yaml")
+        with mock.patch.object(settings, "LOCAL", yaml_path), mock.patch.object(settings, "LEGACY_LOCAL", toml_path):
+            data = settings.load(local=None, environ={})
+        self.assertEqual(data["layout"]["multi_copy_edge_mm"], 6)
+
+    def test_explicit_config_path_selects_yaml(self):
+        path = self.toml("visual_watch:\n  enabled: false\n", "selected.yaml")
+        data = settings.load(local=None, environ={"PRINT_BUDDY_CONFIG": str(path)})
+        self.assertFalse(data["visual_watch"]["enabled"])
+
+    def test_environment_overrides_yaml(self):
+        path = self.toml("visual_watch:\n  sensitivity: 2\n", "local.yaml")
+        data = settings.load(local=path, environ={"PRINT_BUDDY__VISUAL_WATCH__SENSITIVITY": "4"})
+        self.assertEqual(data["visual_watch"]["sensitivity"], 4)
+
+    def test_yaml_boolean_enabled_defaults_to_legacy_behavior(self):
+        path = self.toml("visual_watch:\n  sensitivity: 3\n", "local.yaml")
+        data = settings.load(local=path, environ={})
+        self.assertIs(data["visual_watch"]["enabled"], True)
+
+    def test_yaml_boolean_enabled_false_is_preserved(self):
+        path = self.toml("visual_watch:\n  enabled: false\n", "local.yaml")
+        data = settings.load(local=path, environ={})
+        self.assertIs(data["visual_watch"]["enabled"], False)
+
+    def test_yaml_boolean_enabled_can_be_opted_in(self):
+        path = self.toml("visual_watch:\n  enabled: true\n", "local.yaml")
+        data = settings.load(local=path, environ={})
+        self.assertIs(data["visual_watch"]["enabled"], True)
+
+    def test_yaml_home_preserves_effective_legacy_toml_values(self):
+        yaml_data = settings.load(home=settings.HOME, local=False, environ={})
+        toml_data = settings.load(home=settings.LEGACY_HOME, local=False, environ={})
+        self.assertEqual(yaml_data, toml_data)
+
+    def test_legacy_home_toml_is_used_when_yaml_is_absent(self):
+        home = self.toml(Path(settings.LEGACY_HOME).read_text(), "home.toml")
+        yaml_home = self.dir / "home.yaml"
+        with mock.patch.object(settings, "HOME", yaml_home), mock.patch.object(settings, "LEGACY_HOME", home):
+            data = settings.load(home=None, local=False, environ={})
+        self.assertEqual(data["printer"]["model"], "flashforge.ad5x")
+        self.assertIs(data["visual_watch"]["enabled"], True)
+
+    def test_legacy_local_toml_is_used_when_yaml_is_absent(self):
+        home = self.toml(Path(settings.HOME).read_text(), "home.yaml")
+        local = self.toml("[layout]\nmulti_copy_edge_mm = 6\n", "local.toml")
+        missing_yaml = self.dir / "local.yaml"
+        with mock.patch.object(settings, "HOME", home), mock.patch.object(settings, "LOCAL", missing_yaml), mock.patch.object(settings, "LEGACY_LOCAL", local):
+            data = settings.load(home=home, local=None, environ={})
+        self.assertEqual(data["layout"]["multi_copy_edge_mm"], 6.0)
+
+    def test_yaml_can_enable_visual_watch_with_legacy_home_toml(self):
+        home = self.toml(Path(settings.LEGACY_HOME).read_text(), "legacy-home.toml")
+        local = self.toml("visual_watch:\n  enabled: true\n", "local.yaml")
+        data = settings.load(home=home, local=local, environ={})
+        self.assertIs(data["visual_watch"]["enabled"], True)
+
+    def test_env_can_enable_visual_watch_with_legacy_home_toml(self):
+        home = self.toml(Path(settings.LEGACY_HOME).read_text(), "legacy-home.toml")
+        data = settings.load(home=home, local=False, environ={"PRINT_BUDDY__VISUAL_WATCH__ENABLED": "true"})
+        self.assertIs(data["visual_watch"]["enabled"], True)
+        disabled = settings.load(home=home, local=False, environ={"PRINT_BUDDY__VISUAL_WATCH__ENABLED": "false"})
+        self.assertIs(disabled["visual_watch"]["enabled"], False)
+        with self.assertRaisesRegex(settings.SettingsError, "must be true or false"):
+            settings.load(home=home, local=False, environ={"PRINT_BUDDY__VISUAL_WATCH__ENABLED": "sometimes"})
+
+    def test_settings_inventory_covers_every_model_default_key(self):
+        inventory = settings.load(home=settings.HOME, local=False, environ={})
+        expected = {
+            "printer": {"name", "firmware", "start_macro", "end_macro", "bed_mm",
+                        "max_print_height_mm", "nozzle_diameter_mm", "ifs_slots", "model"},
+            "layout": {"single_copy_edge_mm", "multi_copy_edge_mm", "merge_edge_margin_mm", "merge_spacing_mm", "max_merged_hours"},
+            "prime_tower": {"size_mm", "part_clearance_mm", "edge_mm", "merge_slack_mm"},
+            "cold_pull": {"pla_trial", "petg"},
+            "orca": {"templates", "command"},
+            "bambu": {"command"},
+            "paths": {"hermes_home", "archive", "records_vault", "cache", "hermes_bin", "ffmpeg",
+                      "hermes_agent", "hermes_restart_helper"},
+            "services": {"moonraker_url", "moonraker_ws_url", "camera_snapshot_url", "spoolman_url",
+                         "openviking_url", "vision_chat_url", "stock_api_port"},
+            "discord": {"chat_id", "approval_user_id", "upload_max_bytes", "post_print_quiet_s",
+                        "daily_reset_hour", "timezone", "bot_name", "question_timeout_s",
+                        "safety_confirm_timeout_s", "upload_wait_s", "cold_pull_outcome_s"},
+            "listener": {"tick_s", "ifs_presence_poll_s", "spool_nag_s", "start_claim_ttl_s"},
+            "vision": {"model", "roast_model"},
+            "visual_watch": {"enabled", "sensitivity"},
+            "timelapse": {"archive_host", "archive_dir", "ssh_key", "render_wait_s", "render_poll_s",
+                          "max_bytes", "local_retention_days", "plan_clip_retention_days"},
+            "maintenance": {"quick_hours", "full_hours", "full_days"},
+            "nozzle_temp_offsets": {"brass", "hardened_steel", "stainless_steel", "ruby", "tungsten_carbide", "diamond"},
+        }
+        self.assertEqual(set(inventory), set(expected))
+        for section, keys in expected.items():
+            with self.subTest(section=section):
+                self.assertEqual(set(inventory[section]), keys)
+        self.assertTrue(all("security" not in key and "safety" not in key for key in inventory))
+
+    def test_docker_yaml_matches_legacy_toml_effective_settings(self):
+        docker_yaml = settings.ROOT / "config" / "docker.yaml"
+        docker_toml = settings.ROOT / "config" / "docker.toml"
+        yaml_data = settings.load(home=settings.HOME, local=docker_yaml, environ={})
+        toml_data = settings.load(home=settings.LEGACY_HOME, local=docker_toml, environ={})
+        self.assertEqual(yaml_data, toml_data)
+
+    def test_docker_default_selects_yaml_and_explicit_legacy_mount_selects_toml(self):
+        import yaml
+        import tomllib
+
+        dockerfile = (settings.ROOT / "Dockerfile").read_text()
+        compose = (settings.ROOT / "docker-compose.yml").read_text()
+        self.assertIn("ENV PRINT_BUDDY_CONFIG=/app/config/docker.yaml", dockerfile)
+        self.assertIn("PRINT_BUDDY_CONFIG: ${PRINT_BUDDY_CONFIG:-/app/config/docker.yaml}", compose)
+        self.assertIn("/app/config/docker.toml", compose)
+        env = (settings.ROOT / ".env.example").read_text()
+        self.assertIn("PRINT_BUDDY_CONFIG=/app/config/docker.toml", env)
+        yaml_data = yaml.safe_load((settings.ROOT / "config/docker.yaml").read_text())
+        toml_data = tomllib.loads((settings.ROOT / "config/docker.toml").read_text())
+        self.assertEqual(yaml_data["orca"], toml_data["orca"])
+        self.assertEqual(yaml_data["paths"], toml_data["paths"])
+        self.assertEqual(yaml_data["services"], toml_data["services"])
+        self.assertEqual(yaml_data["printer"], toml_data["printer"])
+
+    def test_gitignore_preserves_yaml_and_legacy_local_configuration(self):
+        result = subprocess.run(
+            ["git", "check-ignore", "-v", "config/local.yaml", "config/local.toml"],
+            cwd=settings.ROOT, text=True, capture_output=True, check=False,
+        )
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn("config/local.yaml", result.stdout)
+        self.assertIn("config/local.toml", result.stdout)
 
     def test_local_file_overrides_key_by_key(self):
         data = settings.load(local=self.toml("[printer]\nifs_slots = 1\n"))

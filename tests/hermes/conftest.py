@@ -1,6 +1,6 @@
 """Hermes helper tests never touch a live printer, the LAN, Discord, Spoolman, or the real profile.
 
-The settings the helpers read are replaced, at import time, by a test copy of config/home.toml with
+The settings the helpers read are replaced, at import time, by a test copy of the checked-in home config with
 fake `.test` hosts and temp directories. Per test guards then refuse non-GET calls to Moonraker, stub
 the screen cancel reboot, and make sockets raise for any private-range IP or configured service host.
 """

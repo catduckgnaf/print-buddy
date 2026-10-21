@@ -17,7 +17,7 @@ def _never_write_live_printer_state(monkeypatch):
 
 @pytest.fixture(autouse=True)
 def _home_slicer_commands(monkeypatch):
-    """A machine's config/local.toml may point at another slicer; the corpus runs the home commands."""
+    """A machine's YAML or TOML local config may point at another slicer; the corpus runs the home commands."""
     from print_buddy import settings
     from print_buddy.core import orca_adapter
     home = settings.load(local=False, environ={})

@@ -41,7 +41,7 @@ class SpoolError(RuntimeError):
 def _http(base: str, method: str, path: str, body: Any = None, timeout: float = 8) -> Any:
     if not base:
         raise SpoolError("the service for this request is not configured "
-                         "(services.moonraker_url / services.spoolman_url in config/local.toml)")
+                         "(services.moonraker_url / services.spoolman_url in config/local.yaml or config/local.toml)")
     data = None if body is None else json.dumps(body).encode()
     req = urllib.request.Request(base + path, data=data, method=method,
                                  headers={"Content-Type": "application/json"})

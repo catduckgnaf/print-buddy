@@ -7,7 +7,7 @@ services:
     env_file:
       - .env
     environment:
-      # Image sets PRINT_BUDDY_CONFIG=/app/config/docker.toml
+      PRINT_BUDDY_CONFIG: ${PRINT_BUDDY_CONFIG:-/app/config/docker.yaml}
       # All scalar settings can be overridden with PRINT_BUDDY__SECTION__KEY
       # Example (also in .env.example):
       # PRINT_BUDDY__SERVICES__MOONRAKER_URL: http://192.168.1.10:7125
@@ -18,8 +18,10 @@ services:
       - ./data/archive:/data/archive
       - ./data/records:/data/records
       - ./data/cache:/data/cache
-      # Optional: mount a full override config
-      # - ./config/local.toml:/app/config/local.toml:ro
+      # Optional YAML override (set PRINT_BUDDY_CONFIG=/app/config/local.yaml in .env)
+      # - ./config/local.yaml:/app/config/local.yaml:ro
+      # Legacy TOML override: set PRINT_BUDDY_CONFIG=/app/config/docker.toml in .env
+      # - ./config/docker.toml:/app/config/docker.toml:ro
     depends_on:
       - spoolman
     shm_size: "1gb"

@@ -1,6 +1,6 @@
 """Shared access to Print Buddy settings, state files and secrets for the Hermes helpers.
 
-Every hardcoded host, path and interval of the original scripts is a setting in config/home.toml.
+Every hardcoded host, path and interval of the original scripts is a setting in the home configuration.
 Tests install an override with set_override() so no code path reads a live setup.
 """
 from __future__ import annotations
@@ -70,7 +70,7 @@ def service_url(key: str) -> str:
 def require(url: str, setting: str) -> str:
     """Return url, or fail clearly when the setting is empty."""
     if not url:
-        raise RuntimeError(f"{setting} is not configured. Set it in config/local.toml.")
+        raise RuntimeError(f"{setting} is not configured. Set it in config/local.yaml (or legacy config/local.toml).")
     return url
 
 

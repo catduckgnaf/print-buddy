@@ -2,7 +2,7 @@
 # One-shot: wait until the printer is no longer printing/paused, give post-print
 # Discord prompts a grace period, then restart the gateway via the safe-restart helper.
 #
-# Moonraker comes from `services.moonraker_url` (config/local.toml). The helper path comes from
+# Moonraker comes from `services.moonraker_url` (config/local.yaml or legacy config/local.toml). The helper path comes from
 # $HERMES_RESTART_HELPER or `paths.hermes_restart_helper`. $GRACE (seconds, default 900) is the wait.
 set -u
 REPO=$(cd "$(dirname "$0")/.." && pwd)
@@ -10,7 +10,7 @@ cd "$REPO" || exit 1
 MR=$(python3 -m print_buddy.settings get services.moonraker_url)
 MR=${MR%/}
 if [ -z "$MR" ]; then
-  echo "services.moonraker_url is not configured; set it in config/local.toml" >&2
+  echo "services.moonraker_url is not configured; set it in config/local.yaml or config/local.toml" >&2
   exit 2
 fi
 HELPER=${HERMES_RESTART_HELPER:-$(python3 -m print_buddy.settings get paths.hermes_restart_helper)}

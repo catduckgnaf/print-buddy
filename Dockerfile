@@ -44,8 +44,8 @@ COPY . .
 
 # Docker-specific defaults (Orca binary path, container paths).
 # Scalars can be overridden with PRINT_BUDDY__SECTION__KEY.
-# Lists (orca.command, bed_mm) stay in the TOML; mount a full config to change them.
-ENV PRINT_BUDDY_CONFIG=/app/config/docker.toml \
+# YAML is the default; the legacy TOML file remains selectable with PRINT_BUDDY_CONFIG.
+ENV PRINT_BUDDY_CONFIG=/app/config/docker.yaml \
     HOME=/data
 
 # Ensure data dirs exist at runtime

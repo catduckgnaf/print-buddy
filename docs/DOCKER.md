@@ -1,6 +1,6 @@
 # Docker
 
-Run Print Buddy + OrcaSlicer CLI + Spoolman as containers. Settings come from environment variables (`PRINT_BUDDY__SECTION__KEY`) or a mounted TOML.
+Run Print Buddy + OrcaSlicer CLI + Spoolman as containers. Settings come from environment variables (`PRINT_BUDDY__SECTION__KEY`) or a mounted YAML config. The image defaults to `config/docker.yaml`; `config/docker.toml` remains supported for existing mounts.
 
 Pinned OrcaSlicer v2.4.2 AppImage (matches the generation used by the Flathub CI job). The Compose file runs Spoolman as a separate service.
 
@@ -33,11 +33,22 @@ Pull the desired source revision, then rebuild and recreate the services with `d
 
 Every scalar setting can be set with `PRINT_BUDDY__SECTION__KEY`. See `.env.example` and the README settings table.
 
-Lists (`[orca] command`, `[printer] bed_mm`) cannot come from the environment. They live in `config/docker.toml` (used when `PRINT_BUDDY_CONFIG` is set). Mount a replacement file to change them:
+Lists (`orca.command`, `printer.bed_mm`) cannot come from the environment. They are supplied by `config/docker.yaml`. Mount a YAML replacement and set `PRINT_BUDDY_CONFIG` to its container path:
 
 ```yaml
+environment:
+  PRINT_BUDDY_CONFIG: /app/config/local.yaml
 volumes:
-  - ./my-config.toml:/app/config/docker.toml:ro
+  - ./config/local.yaml:/app/config/local.yaml:ro
+```
+
+For a legacy TOML mount, keep the existing target path and explicitly select it; this preserves the old file format and `/app/config/docker.toml` mount location:
+
+```yaml
+environment:
+  PRINT_BUDDY_CONFIG: /app/config/docker.toml
+volumes:
+  - ./config/docker.toml:/app/config/docker.toml:ro
 ```
 
 Legacy names (`MOONRAKER_URL`, `SPOOLMAN_URL`, …) still work.

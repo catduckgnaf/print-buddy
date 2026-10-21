@@ -23,13 +23,22 @@ PUBLIC_LICENSE = re.compile(
     r"|cc[- ]by(?:[- ]sa)?(?:[- ]\d+(?:\.\d+)?(?:\s+international)?)?"
     r"|creative commons attribution(?:[- ]sharealike)?"
     r"(?:[- ]\d+(?:\.\d+)?(?:\s+international)?)?"
-    r"|own work)(?:\s*[:;,].*)?", re.I)
+    r"|own work"
+    r"|mit(?:[- ]license)?"
+    r"|apache(?:[- ]license)?(?:[- ,]+(?:version[- ]?)?(?:1(?:\.0|\.1)?|2(?:\.0)?))?"
+    r"|public domain(?:[- ]dedication)?)(?:\s*[:;,].*)?", re.I)
 CASES = [harness.load_case(folder) for folder in harness.case_dirs()]
 IDS = [case.name for case in CASES]
 
 
 def _allows_public_license(value):
-    return bool(PUBLIC_LICENSE.fullmatch(str(value).strip()))
+    label = str(value).strip()
+    if re.search(
+            r"\b(?:non[- ]?commercial|not for commercial use|commercial use prohibited|no derivatives|restricted|"
+            r"non[- ]redistributable|not for redistribution|NC|ND)\b",
+            label, re.I):
+        return False
+    return bool(PUBLIC_LICENSE.fullmatch(label))
 
 
 def test_the_corpus_covers_formats_and_slicing_scenarios():
@@ -44,7 +53,7 @@ def test_the_corpus_covers_formats_and_slicing_scenarios():
         assert case.model.stat().st_size <= 5 * 1024 * 1024, f"{case.model} exceeds 5 MB"
         license_text = case.data.get("license", "").strip()
         assert _allows_public_license(license_text), (
-            f"{case.name}: public fixtures must be CC0, CC BY, CC BY-SA, or own work; "
+            f"{case.name}: public fixtures must use an approved redistributable license; "
             f"found {license_text!r}")
     assert {"single-part", "stl-single-part"} <= public_ids
     assert {"must-shrink", "stl-must-shrink"} <= public_ids
@@ -79,8 +88,25 @@ def test_the_corpus_covers_formats_and_slicing_scenarios():
     ("Creative Commons Attribution 4.0 International", True),
     ("Creative Commons Attribution-ShareAlike 3.0 International", True),
     ("own work: generated locally", True),
+    ("MIT", True),
+    ("MIT License", True),
+    ("Apache", True),
+    ("Apache-2.0", True),
+    ("Apache 1.0", True),
+    ("Apache License, Version 1.0", True),
+    ("Apache 2.0", True),
+    ("Apache License, Version 2.0", True),
+    ("Apache License 1.1", True),
+    ("public domain", True),
+    ("public domain dedication", True),
     ("CC BY-NC 4.0", False),
     ("CC BY-ND 4.0", False),
+    ("CC BY 4.0: non-commercial exception", False),
+    ("MIT: not for commercial use", False),
+    ("MIT: no derivatives", False),
+    ("public domain: restricted", False),
+    ("MIT-inspired", False),
+    ("Apache 3.0", False),
     ("restricted", False),
     ("", False),
 ])

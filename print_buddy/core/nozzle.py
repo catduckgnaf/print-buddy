@@ -21,6 +21,8 @@ CANONICAL_NOZZLE_TYPES: tuple[str, ...] = (
 )
 
 # Known aliases mapped to canonical types
+# The installed DUROZZLE label includes size and plating, but its material is tungsten carbide.
+# Keep this as an exact alias rather than accepting arbitrary vendor labels.
 NOZZLE_TYPE_ALIASES: dict[str, str] = {
     "brass": "brass",
     "copper": "brass",
@@ -38,6 +40,7 @@ NOZZLE_TYPE_ALIASES: dict[str, str] = {
     "tungsten": "tungsten_carbide",
     "tungsten_carbide": "tungsten_carbide",
     "tungsten carbide": "tungsten_carbide",
+    "durozzle tungsten carbide 0.4 (nickel_plated copper)": "tungsten_carbide",
     "diamond": "diamond",
     "diamond_pcd": "diamond",
     "diamond (pcd)": "diamond",

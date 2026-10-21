@@ -16,6 +16,12 @@ from print_buddy.core.nozzle import (
 )
 
 
+def test_normalize_durozzle_installed_label_and_reject_unknown():
+    assert normalize_nozzle_type("DUROZZLE tungsten carbide 0.4 (nickel-plated copper)") == "tungsten_carbide"
+    with pytest.raises(NozzleError, match="unknown nozzle type"):
+        normalize_nozzle_type("unlisted printer nozzle")
+
+
 def test_normalize_nozzle_type_canonical():
     assert normalize_nozzle_type("brass") == "brass"
     assert normalize_nozzle_type("hardened_steel") == "hardened_steel"

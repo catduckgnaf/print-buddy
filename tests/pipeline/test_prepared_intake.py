@@ -189,6 +189,90 @@ def test_slice_only_then_cancel_never_starts(env):
     assert env.starts == [] and receipt['status'] == 'SLICED_NOT_STARTED' and receipt['started'] is False
 
 
+def test_stop_during_live_start_reaps_child_and_reports_uncertain_outcome(env, monkeypatch, tmp_path):
+    # The pipeline conftest provides the in-memory clarify gateway stand-in.
+    started = tmp_path / 'print_now_started'
+    late = tmp_path / 'print_now_late'
+    stub = env.tmp / 'print-now-stub'
+    stub.write_text(
+        f'#!{sys.executable}\n'
+        'import signal, time\n'
+        'from pathlib import Path\n'
+        'signal.signal(signal.SIGTERM, signal.SIG_IGN)\n'
+        f'Path({str(started)!r}).write_text("running")\n'
+        'time.sleep(30)\n'
+        f'Path({str(late)!r}).write_text("continued")\n'
+    )
+    stub.chmod(stub.stat().st_mode | stat.S_IEXEC)
+    monkeypatch.setattr(print_next, 'STOP_GRACE_S', 0.1)
+    real_spawn = asyncio.create_subprocess_exec
+    spawned = []
+
+    async def capture_spawn(*args, **kwargs):
+        proc = await real_spawn(*args, **kwargs)
+        if args and args[0] == str(stub):
+            spawned.append(proc)
+        return proc
+    monkeypatch.setattr(asyncio, 'create_subprocess_exec', capture_spawn)
+
+    class InteractiveAdapter(Adapter):
+        def __init__(self, answers):
+            self.answers = iter(answers)
+            self.questions = []
+            self.sent = []
+
+        async def send_clarify(self, **kw):
+            self.questions.append(kw)
+            answer = kw['choices'][next(self.answers)]
+            import tools.clarify_gateway as cm
+            cm.resolve_gateway_clarify(kw['clarify_id'], answer)
+            return S(success=True)
+
+    class StopMessage:
+        async def edit(self, **kwargs):
+            return None
+
+    press_tasks = []
+
+    async def stop_sender(_source, _text, clarify_id):
+        import tools.clarify_gateway as cm
+
+        async def press_after_spawn():
+            for _ in range(500):
+                if started.exists():
+                    cm.resolve_gateway_clarify(clarify_id, prepared_intake.STOP_LABEL)
+                    return
+                await asyncio.sleep(0.01)
+            raise AssertionError('print-now subprocess did not start')
+
+        press_tasks.append(asyncio.create_task(press_after_spawn()))
+        return StopMessage()
+
+    monkeypatch.setattr(prepared_intake, 'STOP_SENDER', stop_sender)
+    event = S(source=S(profile='3dprinting', chat_id='c1', thread_id=None, user_id='u'),
+              message_id='stop-live-start', text='https://www.printables.com/model/1-ghost')
+    adapter = InteractiveAdapter([1, 0, 0])
+
+    async def run():
+        result = await prepared_intake.prepare_link(event, adapter, state(), env.root, timeout=3)
+        await asyncio.gather(*press_tasks)
+        await asyncio.sleep(0.1)
+        return result
+
+    result = asyncio.run(run())
+    assert result['reason'] == 'start outcome uncertain after cancellation'
+    assert started.exists() and not late.exists()
+    assert len(spawned) == 1 and spawned[0].returncode is not None
+    receipt = json.loads(next(env.root.glob('*.json')).read_text())
+    assert receipt['status'] == 'START_UNCERTAIN'
+    assert receipt['sliced'] is True and receipt['uploaded'] is None and receipt['started'] is None
+    assert len(list((env.tmp / 'claims').glob('*.json'))) == 1
+    claim = json.loads(next((env.tmp / 'claims').glob('*.json')).read_text())
+    assert claim['outcome'] == 'uncertain_cancelled'
+    assert any('UNCERTAIN:' in line and 'Not retrying' in line for line in adapter.sent)
+    assert not any('Nothing sliced, uploaded or started.' in line for line in adapter.sent)
+
+
 def test_stop_choice_discards_the_early_slice_and_never_starts(env):
     adapter, result, receipt = run_flow(env, [1, 0, 2])
     # Issue 63 starts the slice while the confirm question is up. Stop throws it away.

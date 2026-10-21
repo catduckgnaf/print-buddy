@@ -38,7 +38,11 @@ STOP_SENDER = None
 
 
 class Stopped(BaseException):
-    """The operator pressed Stop on a progress message. BaseException, not Exception, so a broad 'except Exception' around a fit or slice call cannot swallow it and report a fake failure."""
+    """The operator pressed Stop on a progress message."""
+
+    def __init__(self, message, *, uncertain=False):
+        super().__init__(message)
+        self.uncertain = uncertain
 
 
 async def _with_stop(adapter, source, key, metadata, text, work, *, allow_stop=False):
@@ -84,9 +88,16 @@ async def _with_stop(adapter, source, key, metadata, text, work, *, allow_stop=F
         await asyncio.wait({task, waiter}, return_when=asyncio.FIRST_COMPLETED)
         if not task.done() and waiter.done() and waiter.result() == STOP_LABEL:
             task.cancel()
-            with contextlib.suppress(asyncio.CancelledError):
-                await task
-            raise Stopped(text)
+            try:
+                result = await task
+            except asyncio.CancelledError:
+                raise Stopped(text)
+            if isinstance(result, tuple) and len(result) >= 2 and isinstance(result[1], str):
+                if result[1].startswith("UNCERTAIN:"):
+                    raise Stopped(result[1], uncertain=True)
+            # A coroutine that suppresses cancellation and returns has completed with a
+            # definitive outcome. Preserve it instead of claiming a false cancellation.
+            return result
         return await task
     finally:
         if not task.done():
@@ -1134,7 +1145,7 @@ async def prepare_link(event, adapter, state, root, timeout=None, reuse=None):
             await adapter.send(chat_id=source.chat_id, content=prep_msg, metadata=metadata)
         mj._timing(jp, 'intake_start_tapped')
         ok, tail = await _with_stop(adapter, source, key, metadata,
-                                    "Uploading to the printer. Press Stop to cancel before it starts.",
+                                    "Uploading to the printer. Press Stop to request cancellation.",
                                     print_next.start(target), allow_stop=True)
         mj._timing(jp, 'intake_start_returned', ok=bool(ok))
         receipt.update(status='STARTED' if ok else 'START_REFUSED', started=bool(ok))
@@ -1155,15 +1166,23 @@ async def prepare_link(event, adapter, state, root, timeout=None, reuse=None):
             except OSError:
                 pass  # the listener then posts a short distinct follow-up instead of editing
         return {'action': 'skip', 'reason': 'sliced and start handled by button flow'}
-    except (IntakeCancelled, Stopped):
-        if jp is not None:
+    except (IntakeCancelled, Stopped) as exc:
+        uncertain_start = isinstance(exc, Stopped) and exc.uncertain
+        if jp is not None and not uncertain_start:
             with contextlib.suppress(Exception):
                 await runner_for(jp).discard()
-        receipt.update(status='CANCELLED', sliced=False, uploaded=False, started=False)
+        if uncertain_start:
+            receipt.update(status='START_UNCERTAIN', sliced=True, uploaded=None, started=None,
+                           start_outcome='uncertain', start_error=str(exc))
+            message = print_summary.scrub(str(exc))
+            reason = 'start outcome uncertain after cancellation'
+        else:
+            receipt.update(status='CANCELLED', sliced=False, uploaded=False, started=False)
+            message = 'Cancelled. Nothing sliced, uploaded or started.'
+            reason = 'cancelled by operator'
         receipt_path.write_text(json.dumps(receipt, indent=2) + '\n')
-        await adapter.send(chat_id=source.chat_id,
-            content='Cancelled. Nothing sliced, uploaded or started.', metadata=metadata)
-        return {'action': 'skip', 'reason': 'cancelled by operator'}
+        await adapter.send(chat_id=source.chat_id, content=message, metadata=metadata)
+        return {'action': 'skip', 'reason': reason}
     except IntakeExpired:
         # The receipt and JOB.json written before this question stay on disk. Resume
         # re-reads them instead of asking for the link again.

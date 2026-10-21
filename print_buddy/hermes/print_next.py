@@ -31,6 +31,8 @@ MODEL_JOB_MODULE = "print_buddy.core.model_job"
 START_LABEL = "Start next plate · bed is clear"
 CANCEL_LABEL = "Cancel"
 START_TIMEOUT_S = 420
+STOP_GRACE_S = 2.0
+STOP_REAP_TIMEOUT_S = 15.0
 
 
 class NextPlateError(ValueError):
@@ -290,6 +292,50 @@ def _settle_claim(path: Path, outcome: str, release: bool) -> None:
     os.replace(tmp, path)
 
 
+async def _stop_and_reap(proc, communication=None) -> bool:
+    """Stop the exact print-now child, escalate if needed, and reap it within bounded waits."""
+    if proc.returncode is None:
+        try:
+            proc.terminate()
+        except (ProcessLookupError, PermissionError, OSError):
+            pass
+        try:
+            await asyncio.wait_for(proc.wait(), STOP_GRACE_S)
+        except asyncio.TimeoutError:
+            try:
+                proc.kill()
+            except (ProcessLookupError, PermissionError, OSError):
+                pass
+            try:
+                await asyncio.wait_for(proc.wait(), STOP_REAP_TIMEOUT_S)
+            except asyncio.TimeoutError:
+                pass
+        except Exception:
+            pass
+    reaped = proc.returncode is not None
+    if communication is not None:
+        if reaped and not communication.done():
+            try:
+                await asyncio.wait_for(asyncio.shield(communication), 5.0)
+            except asyncio.TimeoutError:
+                communication.cancel()
+            except Exception:
+                pass
+        if communication.done():
+            try:
+                communication.result()
+            except (asyncio.CancelledError, Exception):
+                pass
+    return reaped
+
+
+def _uncertain_stop_detail(reason: str, reaped: bool) -> str:
+    stopped = ('The print-now process was stopped and reaped.' if reaped else
+               'The print-now process could not be confirmed stopped.')
+    return (f"UNCERTAIN: {reason} {stopped} The plate may already have uploaded or started. "
+            "Check the printer before doing anything else. Not retrying.")
+
+
 async def start(target: Mapping[str, Any], model_job: Path | None = None,
                 timeout: float = START_TIMEOUT_S, idle_check: Callable[[], None] | None = None,
                 claims_dir: Path | None = None) -> tuple[bool, str]:
@@ -311,26 +357,35 @@ async def start(target: Mapping[str, Any], model_job: Path | None = None,
         argv.append("--accept-spool-change")
     if target.get("reprint"):
         argv.append("--reprint")
+    spawn = asyncio.create_task(asyncio.create_subprocess_exec(
+        *argv, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.STDOUT,
+        cwd=str(settings.ROOT)))
     try:
-        proc = await asyncio.create_subprocess_exec(*argv, stdout=asyncio.subprocess.PIPE,
-                                                    stderr=asyncio.subprocess.STDOUT,
-                                                    cwd=str(settings.ROOT))
+        proc = await asyncio.shield(spawn)
+    except asyncio.CancelledError:
+        # Shield spawn too: cancellation must not orphan a child whose handle was never returned.
+        try:
+            proc = await asyncio.shield(spawn)
+        except OSError:
+            _settle_claim(claim, "spawn_failed", release=True)
+            return False, "REFUSED: print-now could not be spawned. Nothing uploaded or started."
+        reaped = await _stop_and_reap(proc)
+        _settle_claim(claim, "uncertain_cancelled", release=False)
+        return False, _uncertain_stop_detail("Cancellation arrived while print-now was starting.", reaped)
     except OSError as exc:
         _settle_claim(claim, "spawn_failed", release=True)
         return False, f"REFUSED: could not run print-now: {exc}. Nothing uploaded or started."
+    communication = asyncio.create_task(proc.communicate())
     try:
-        out, _ = await asyncio.wait_for(proc.communicate(), timeout)
+        out, _ = await asyncio.wait_for(asyncio.shield(communication), timeout)
     except asyncio.TimeoutError:
-        # Stop print-now so it cannot start a plate after we report uncertainty, then reap it.
-        proc.terminate()
-        try:
-            await asyncio.wait_for(proc.wait(), 15)
-        except asyncio.TimeoutError:
-            proc.kill()
-            await proc.wait()
+        reaped = await _stop_and_reap(proc, communication)
         _settle_claim(claim, "uncertain_timeout", release=False)
-        return False, ("UNCERTAIN: print-now did not finish in time and was stopped. The plate may or may not "
-                       "have started. Check the printer screen before doing anything else. Not retrying.")
+        return False, _uncertain_stop_detail("print-now timed out.", reaped)
+    except asyncio.CancelledError:
+        reaped = await _stop_and_reap(proc, communication)
+        _settle_claim(claim, "uncertain_cancelled", release=False)
+        return False, _uncertain_stop_detail("Stop was requested after print-now launched.", reaped)
     text = out.decode(errors="replace").strip()
     tail = "\n".join(text.splitlines()[-6:])[-1500:]
     ok = proc.returncode == 0

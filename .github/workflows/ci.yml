@@ -103,8 +103,9 @@ jobs:
       - name: Run slicer tests (2.5.0 alpha)
         run: xvfb-run -a python -m pytest -v -s tests/slicer
       - name: Run representative Discord fixtures (2.5.0 alpha only)
-        run: xvfb-run -a python -m pytest -v -s \
-          tests/corpus/test_corpus.py::test_discord_flow[single-part] \
+        run: >-
+          xvfb-run -a python -m pytest -v -s
+          tests/corpus/test_corpus.py::test_discord_flow[single-part]
           tests/corpus/test_corpus.py::test_discord_flow[plates-multicolor]
 
   spoolman:

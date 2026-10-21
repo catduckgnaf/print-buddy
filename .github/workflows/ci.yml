@@ -97,7 +97,10 @@ jobs:
           set -euo pipefail
           flatpak remote-add --user --if-not-exists flathub https://dl.flathub.org/repo/flathub.flatpakrepo
           flatpak install --user -y --noninteractive flathub org.gnome.Platform//50
-          flatpak install --user --bundle -y --noninteractive "$ORCA_ALPHA_BUNDLE"
+          # The restored cache may already contain the app; do not reinstall its bundle.
+          if ! flatpak info --user --show-ref "$ORCA_FLATPAK_APP_ID" >/dev/null 2>&1; then
+            flatpak install --user --bundle -y --noninteractive "$ORCA_ALPHA_BUNDLE"
+          fi
           flatpak info --user --show-ref "$ORCA_FLATPAK_APP_ID"
           flatpak info --user --show-commit "$ORCA_FLATPAK_APP_ID"
       - name: Run slicer tests (2.5.0 alpha)

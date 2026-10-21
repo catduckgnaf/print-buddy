@@ -1,7 +1,7 @@
 """Drive a corpus model through the Discord intake the way the gateway does, with a fake Discord.
 
-A case is a folder with one model file (`.3mf`, `.stl`, `.obj`, `.step`, `.stp`) and case.toml. The driver loads the real print-feedback plugin and
-calls its model_link_dispatch hook with a dropped-file event, the same entry point the gateway uses.
+A case is a folder with one supported model file (`.3mf` or `.stl`) and case.toml. The driver loads the real print-feedback plugin and calls
+its model_link_dispatch hook with a dropped-file event, the same entry point the gateway uses.
 The fake adapter answers every button question from the case's [[click]] rules. Nothing contacts
 Moonraker, Spoolman or a printer: the start step runs the real print_next gates against a stub
 print-now script.
@@ -42,7 +42,7 @@ PLUGIN = settings.ROOT / "plugins" / "print-feedback" / "__init__.py"
 WORK = settings.ROOT / ".slicer-work"
 FIXTURE_STATE = settings.ROOT / "tests" / "pipeline" / "fixtures" / "printer_hardware.json"
 SUPPORT_FEATURE = re.compile(r"^;\s*(?:FEATURE|TYPE):\s*Support", re.I | re.M)
-MODEL_FILE_EXTS = {".3mf", ".stl", ".obj", ".step", ".stp"}
+MODEL_FILE_EXTS = {".3mf", ".stl"}
 
 
 def find_model(case_dir):
@@ -192,10 +192,10 @@ def load_plugin(name="corpus_print_feedback"):
 
 
 def drop_event(model, case_name, message_id="corpus-message-1"):
-    """What the gateway hands the hook for one dropped 3MF: a cached file path in media_urls."""
+    """What the gateway hands the hook for one dropped model: a cached path preserving its file type."""
     cache = Path(model).parent / "discord-cache"
     cache.mkdir(exist_ok=True)
-    dropped = cache / f"doc_0123456789ab_{case_name}.3mf"
+    dropped = cache / f"doc_0123456789ab_{case_name}{Path(model).suffix.lower()}"
     dropped.write_bytes(Path(model).read_bytes())
     source = S(platform=S(value="discord"), profile="3dprinting", user_id="corpus-user", chat_id="corpus-chat",
                thread_id=None, is_bot=False, profile_route_rejected=False)
@@ -424,6 +424,11 @@ def check_expectations(case, run):
         assert sorted(part_names(run)) == sorted(want["parts"])
     if "source_plates" in want:
         assert int(run.job["audit"]["plates"]) == want["source_plates"]
+    if "source_kind" in want:
+        assert run.job["audit"]["kind"] == want["source_kind"]
+    if "source_size_mm" in want:
+        actual = [float(run.job["audit"][axis]) for axis in ("size_x", "size_y", "size_z")]
+        assert all(abs(got - expected) <= 0.01 for got, expected in zip(actual, want["source_size_mm"])), actual
     if "colors" in want:
         got = {k: v.casefold() for k, v in colors_by_part(run).items()}
         assert got == {k: v.casefold() for k, v in want["colors"].items()}, got

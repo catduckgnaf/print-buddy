@@ -64,10 +64,16 @@ class JobModelMismatch(RuntimeError):
     """A job was prepared for a different printer model than the one configured."""
 
 
+# JOB.json written by 2.0.2 and 2.0.3 records printer_family instead of printer_model.
+LEGACY_FAMILY = {"flashforge_zmod": "flashforge.ad5x", "sovol_klipper": "sovol.sv06",
+                 "generic_klipper": "klipper.generic"}
+
+
 def job_model(job):
-    """Model a JOB.json was prepared for. Jobs written before the field existed are flashforge.ad5x."""
-    key = job.get("printer_model") if isinstance(job, dict) else None
-    return key or DEFAULT_MODEL
+    """Model a JOB.json was prepared for. Jobs older than either field are flashforge.ad5x."""
+    if not isinstance(job, dict):
+        return DEFAULT_MODEL
+    return job.get("printer_model") or LEGACY_FAMILY.get(job.get("printer_family")) or DEFAULT_MODEL
 
 
 def check_job_model(job, config=None):

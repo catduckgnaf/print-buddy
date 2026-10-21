@@ -36,26 +36,12 @@ jobs:
           cache: pip
           cache-dependency-path: requirements-test.txt
       - run: python -m pip install -r requirements-test.txt
-      - name: Install flatpak and xvfb
+      - name: Install Flathub OrcaSlicer 2.4.2 and xvfb
         run: |
           sudo apt-get update -q
           sudo apt-get install -y -q flatpak xvfb
-      - name: Install pinned OrcaSlicer 2.4.2 upstream bundle and runtime
-        run: |
-          set -euo pipefail
-          bundle="$HOME/.cache/orcaslicer-v2.4.2.flatpak"
-          mkdir -p "$(dirname "$bundle")"
-          if [ -f "$bundle" ] && ! echo '21f6042968b38bd193a95a3d3f8d21d48c4d592994d299fb10ddaa42b83b10a9  '"$bundle" | sha256sum --check --status; then
-            rm "$bundle"
-          fi
-          if [ ! -f "$bundle" ]; then
-            curl --fail --location --retry 3 --output "$bundle" \\
-              https://github.com/OrcaSlicer/OrcaSlicer/releases/download/v2.4.2/OrcaSlicer-Linux-flatpak_V2.4.2_x86_64.flatpak
-          fi
-          echo '21f6042968b38bd193a95a3d3f8d21d48c4d592994d299fb10ddaa42b83b10a9  '"$bundle" | sha256sum --check
           flatpak remote-add --user --if-not-exists flathub https://dl.flathub.org/repo/flathub.flatpakrepo
-          flatpak install --user -y --noninteractive flathub org.gnome.Platform//47
-          flatpak install --user --bundle -y --noninteractive "$bundle"
+          flatpak install --user -y --noninteractive flathub org.gnome.Platform//47 com.orcaslicer.OrcaSlicer
           flatpak info --user com.orcaslicer.OrcaSlicer
       - name: Run real-slicer tests (2.4.2)
         env:
@@ -101,7 +87,7 @@ jobs:
             rm "$bundle"
           fi
           if [ ! -f "$bundle" ]; then
-            curl --fail --location --retry 3 --output "$bundle" \\
+            curl --fail --location --retry 3 --output "$bundle" \
               https://github.com/OrcaSlicer/OrcaSlicer/releases/download/v2.5.0-alpha/OrcaSlicer-Linux-flatpak_V2.5.0-alpha_x86_64.flatpak
           fi
           echo '2caa907e75ca1cd499568d7940d1fe787b795b3deff1d5dcf4cda31f1a4b6d32  '"$bundle" | sha256sum --check

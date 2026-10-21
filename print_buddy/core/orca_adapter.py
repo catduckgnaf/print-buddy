@@ -27,13 +27,16 @@ def _orca_command():
     if override:
         return [override]
     command = list(_S['orca']['command'])
-    if command and Path(command[0]).name == 'flatpak' and len(command) > 2 and command[1] == 'run' and command[2] == 'com.orcaslicer.OrcaSlicer':
-        app_id = os.environ.get('ORCA_FLATPAK_APP_ID')
+    app_id = os.environ.get('ORCA_FLATPAK_APP_ID')
+    if command and Path(command[0]).name == 'flatpak' and len(command) > 2 and command[1] == 'run':
         if app_id:
+            if command[2].startswith('--'):
+                return [command[0], 'run', command[2], app_id, *command[3:]]
             return [command[0], 'run', app_id, *command[3:]]
-        commit = os.environ.get('ORCA_FLATPAK_COMMIT')
-        if commit:
-            return [command[0], 'run', f'--commit={commit}', *command[2:]]
+        if command[2] == 'com.orcaslicer.OrcaSlicer':
+            commit = os.environ.get('ORCA_FLATPAK_COMMIT')
+            if commit:
+                return [command[0], 'run', f'--commit={commit}', *command[2:]]
     return command
 
 

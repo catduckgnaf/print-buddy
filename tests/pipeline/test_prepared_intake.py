@@ -332,6 +332,48 @@ def test_changed_gcode_after_slice_is_refused_by_existing_gate(env, monkeypatch)
     assert any('REFUSED' in m for m in adapter.sent)
 
 
+def test_failed_slice_retry_needs_fresh_approval_and_start_button(env, monkeypatch):
+    real_slice = model_job.slice_job
+    calls = []
+
+    def fail_once(job_path, *args, **kwargs):
+        calls.append(str(job_path))
+        if len(calls) == 1:
+            raise RuntimeError('synthetic slice failure')
+        return real_slice(job_path, *args, **kwargs)
+
+    monkeypatch.setattr(model_job, 'slice_job', fail_once)
+    adapter, result, receipt = run_flow(env, [1, 0, 0, 0, 0], mid='retry-approved')
+
+    retry = [q for q in adapter.questions if q['choices'][0] == 'Retry slice once (no print)']
+    starts = [q for q in adapter.questions if q['choices'] == [print_next.START_LABEL, print_next.CANCEL_LABEL]]
+    assert len(calls) == 2 and len(retry) == 1 and len(starts) == 1
+    assert receipt['slice_attempt'] == receipt['slice_approval']['attempt'] == 2
+    assert receipt['status'] == 'STARTED' and receipt['started'] is True
+    assert len(env.starts) == 1
+    assert receipt['bed_clear_approval']['gcode'] == env.starts[0]['gcode']
+
+
+def test_cancelled_slice_retry_cannot_be_replayed(env, monkeypatch):
+    calls = []
+
+    def always_fail(job_path, *args, **kwargs):
+        calls.append(str(job_path))
+        raise RuntimeError('synthetic slice failure')
+
+    monkeypatch.setattr(model_job, 'slice_job', always_fail)
+    adapter, _result, receipt = run_flow(env, [1, 0, 0, 1], mid='retry-cancelled')
+    assert len(calls) == 1 and env.starts == []
+    assert receipt['status'] == 'CANCELLED' and receipt['sliced'] is False
+    assert 'slice_approval' not in receipt
+
+    event = S(source=S(profile='3dprinting', chat_id='c1', thread_id=None, user_id='u'),
+              message_id='retry-cancelled', text='https://www.printables.com/model/1-ghost')
+    result = asyncio.run(prepared_intake.prepare_link(event, Adapter([]), state(), env.root, timeout=1))
+    assert result['reason'] == 'duplicate model-link event'
+    assert len(calls) == 1 and env.starts == []
+
+
 REAL_AWAITING = ('START REQUEST ACCEPTED {"file": "ghost_plate_1_abc.gcode", "printing_confirmed": false}\n'
                  'START SUBMITTED; AWAITING CONFIRMATION {"started": false, "accepted": true, "phase": "preparing", '
                  '"file": "ghost_plate_1_abc.gcode", "message": "submitted, awaiting confirmation"}')

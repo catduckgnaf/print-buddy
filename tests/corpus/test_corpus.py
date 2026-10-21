@@ -18,23 +18,32 @@ from print_buddy import settings
 from . import harness
 
 REAL = os.environ.get("PRINT_BUDDY_REAL_SLICER") == "1"
+PUBLIC_LICENSE = re.compile(
+    r"(?:cc0(?:[- ]1\.0(?:\s+universal)?)?"
+    r"|cc[- ]by(?:[- ]sa)?(?:[- ]\d+(?:\.\d+)?(?:\s+international)?)?"
+    r"|creative commons attribution(?:[- ]sharealike)?"
+    r"(?:[- ]\d+(?:\.\d+)?(?:\s+international)?)?"
+    r"|own work)(?:\s*[:;,].*)?", re.I)
 CASES = [harness.load_case(folder) for folder in harness.case_dirs()]
 IDS = [case.name for case in CASES]
+
+
+def _allows_public_license(value):
+    return bool(PUBLIC_LICENSE.fullmatch(str(value).strip()))
 
 
 def test_the_corpus_covers_formats_and_slicing_scenarios():
     """Pin intended format and behavior coverage so it cannot quietly disappear."""
     public_cases = [case for case in CASES if not harness.is_private_case(case.dir)]
     public_ids = {case.name for case in public_cases}
-    assert len(public_cases) == 10
-    assert sum(case.model.suffix.lower() == ".3mf" for case in public_cases) == 6
-    assert sum(case.model.suffix.lower() == ".stl" for case in public_cases) == 4
-    allowed_license = re.compile(
-        r"^(?:cc0(?:\s+1\.0)?|cc[- ]by(?:-sa)?(?:\s+4\.0)?|own work)(?:\s*[:;,].*)?$", re.I)
+    assert len(public_cases) >= 10
+    assert sum(case.model.suffix.lower() == ".3mf" for case in public_cases) >= 6
+    assert sum(case.model.suffix.lower() == ".stl" for case in public_cases) >= 4
+    assert {case.model.suffix.lower() for case in public_cases} <= {".3mf", ".stl"}
     for case in public_cases:
         assert case.model.stat().st_size <= 5 * 1024 * 1024, f"{case.model} exceeds 5 MB"
         license_text = case.data.get("license", "").strip()
-        assert allowed_license.search(license_text), (
+        assert _allows_public_license(license_text), (
             f"{case.name}: public fixtures must be CC0, CC BY, CC BY-SA, or own work; "
             f"found {license_text!r}")
     assert {"single-part", "stl-single-part"} <= public_ids
@@ -58,6 +67,25 @@ def test_the_corpus_covers_formats_and_slicing_scenarios():
     assert harness.load_case(harness.CASES / "stl-must-shrink").expect["scale_range"] == [0.78, 0.84]
     assert harness.load_case(harness.CASES / "stl-needs-supports").expect["supports"] is False
     assert harness.load_case(harness.CASES / "stl-thin-footprint").expect["source_size_mm"] == [8, 8, 180]
+
+
+@pytest.mark.parametrize(("license_text", "allowed"), [
+    ("CC0 1.0 Universal", True),
+    ("CC0-1.0", True),
+    ("CC BY 3.0", True),
+    ("CC-BY-4.0", True),
+    ("CC BY-SA 4.0", True),
+    ("CC-BY-SA-3.0", True),
+    ("Creative Commons Attribution 4.0 International", True),
+    ("Creative Commons Attribution-ShareAlike 3.0 International", True),
+    ("own work: generated locally", True),
+    ("CC BY-NC 4.0", False),
+    ("CC BY-ND 4.0", False),
+    ("restricted", False),
+    ("", False),
+])
+def test_public_license_allowlist(license_text, allowed):
+    assert _allows_public_license(license_text) is allowed
 
 
 def test_private_corpus_is_explicitly_opt_in(tmp_path, monkeypatch):
@@ -130,12 +158,13 @@ def _assert_case_license(case):
     if harness.is_private_case(case.dir):
         return
     # Public fixtures must name a license that permits redistribution.
-    text = case.data.get("license", "")
+    license_text = str(case.data.get("license", "")).strip()
     attribution = case.dir / "ATTRIBUTION"
+    candidates = [license_text] if license_text else []
     if attribution.is_file():
-        text += attribution.read_text()
-    assert re.search(r"CC0|public domain|CC[- ]BY|MIT|Apache", text, re.I), (
-        "put license = \"...\" in case.toml (or an ATTRIBUTION file) naming a license that allows redistribution")
+        candidates.extend(line.strip() for line in attribution.read_text().splitlines() if line.strip())
+    assert any(_allows_public_license(candidate) for candidate in candidates), (
+        "put license = \"...\" in case.toml (or an ATTRIBUTION line) naming a license that allows redistribution")
 
 
 @pytest.mark.parametrize("case", CASES, ids=IDS)
@@ -156,9 +185,20 @@ def test_checked_in_models_match_the_generator(tmp_path, monkeypatch):
     import zipfile
     generated = {path.relative_to(tmp_path / "cases") for suffix in (".3mf", ".stl")
                  for path in (tmp_path / "cases").glob(f"*/model{suffix}")}
+    expected_generated = {
+        Path(case) / f"model{suffix}"
+        for case, suffix in (
+            ("must-shrink", ".3mf"), ("needs-supports", ".3mf"),
+            ("parts-one-plate", ".3mf"), ("plates-multicolor", ".3mf"),
+            ("single-part", ".3mf"), ("split-plan", ".3mf"),
+            ("stl-must-shrink", ".stl"), ("stl-needs-supports", ".stl"),
+            ("stl-single-part", ".stl"), ("stl-thin-footprint", ".stl"),
+        )
+    }
     checked_in = {Path(case.name) / case.model.name for case in CASES
                   if not harness.is_private_case(case.dir)}
-    assert generated == checked_in, f"generator inventory differs: {generated ^ checked_in}"
+    assert generated == expected_generated, f"generator inventory differs: {generated ^ expected_generated}"
+    assert generated <= checked_in, f"generated fixtures missing from public corpus: {generated - checked_in}"
     for suffix in (".3mf", ".stl"):
         for fresh in sorted((tmp_path / "cases").glob(f"*/model{suffix}")):
             committed = harness.CASES / fresh.parent.name / fresh.name

@@ -25,9 +25,40 @@ jobs:
         run: python -m pytest -q tests
 
   real-slicer:
-    # Slices fixtures and the Discord flow corpus with the Flathub Orca the home box runs, using the home templates.
+    # Full corpus and slicer fixtures stay on the production-default OrcaSlicer 2.4.2 track.
     runs-on: ubuntu-24.04  # pinned: ubuntu-latest moves to 26 on 2026-10-19
     timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: requirements-test.txt
+      - run: python -m pip install -r requirements-test.txt
+      - name: Install Flathub OrcaSlicer 2.4.2 and xvfb
+        run: |
+          sudo apt-get update -q
+          sudo apt-get install -y -q flatpak xvfb
+          flatpak remote-add --user --if-not-exists flathub https://dl.flathub.org/repo/flathub.flatpakrepo
+          flatpak install --user -y --noninteractive flathub com.orcaslicer.OrcaSlicer
+          flatpak info --user com.orcaslicer.OrcaSlicer
+      - name: Run real-slicer tests (2.4.2)
+        env:
+          PRINT_BUDDY_REAL_SLICER: "1"
+        run: xvfb-run -a python -m pytest -v -s tests/slicer
+      - name: Discord flow corpus with real Orca
+        env:
+          PRINT_BUDDY_REAL_SLICER: "1"
+        run: xvfb-run -a python -m pytest -v -s tests/corpus
+
+  real-slicer-alpha:
+    # Alpha validation is intentionally limited; full Discord corpus remains on the 2.4.2 job.
+    runs-on: ubuntu-24.04  # pinned: ubuntu-latest moves to 26 on 2026-10-19
+    timeout-minutes: 30
+    env:
+      ORCA_FLATPAK_APP_ID: com.orcaslicer.OrcaSlicer
+      PRINT_BUDDY_REAL_SLICER: "1"
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-python@v7
@@ -40,30 +71,42 @@ jobs:
         run: |
           sudo apt-get update -q
           sudo apt-get install -y -q flatpak xvfb
-      - name: Cache Flathub Orca
+      - name: Cache OrcaSlicer 2.5.0 alpha bundle and runtime
         uses: actions/cache@v6
         with:
-          path: ~/.local/share/flatpak
-          # Bump v1 to pick up a newer Flathub Orca; until then CI keeps slicing with the same build.
-          key: flatpak-orca-${{ runner.os }}-v1
-      - name: Install pinned OrcaSlicer from Flathub
+          path: |
+            ~/.cache/orcaslicer-v2.5.0-alpha.flatpak
+            ~/.local/share/flatpak
+          key: orcaslicer-flatpak-v2.5.0-alpha-${{ runner.os }}-x86_64
+      - name: Download and verify upstream OrcaSlicer v2.5.0-alpha bundle
         run: |
+          set -euo pipefail
+          bundle="$HOME/.cache/orcaslicer-v2.5.0-alpha.flatpak"
+          mkdir -p "$(dirname "$bundle")"
+          if [ -f "$bundle" ] && ! echo '2caa907e75ca1cd499568d7940d1fe787b795b3deff1d5dcf4cda31f1a4b6d32  '"$bundle" | sha256sum --check --status; then
+            rm "$bundle"
+          fi
+          if [ ! -f "$bundle" ]; then
+            curl --fail --location --retry 3 --output "$bundle" \
+              https://github.com/OrcaSlicer/OrcaSlicer/releases/download/v2.5.0-alpha/OrcaSlicer-Linux-flatpak_V2.5.0-alpha_x86_64.flatpak
+          fi
+          echo '2caa907e75ca1cd499568d7940d1fe787b795b3deff1d5dcf4cda31f1a4b6d32  '"$bundle" | sha256sum --check
+          echo "ORCA_ALPHA_BUNDLE=$bundle" >> "$GITHUB_ENV"
+      - name: Install OrcaSlicer app bundle and runtime
+        run: |
+          set -euo pipefail
           flatpak remote-add --user --if-not-exists flathub https://dl.flathub.org/repo/flathub.flatpakrepo
-          flatpak install --user -y --noninteractive flathub com.orcaslicer.OrcaSlicer
-          flatpak info --user com.orcaslicer.OrcaSlicer | tee "$RUNNER_TEMP/orca-info.txt"
-          commit=$(awk '/Commit:/ {print $2}' "$RUNNER_TEMP/orca-info.txt")
-          test -n "$commit"
-          flatpak update --user -y --noninteractive --commit="$commit" com.orcaslicer.OrcaSlicer
-          echo "ORCA_FLATPAK_COMMIT=$commit" >> "$GITHUB_ENV"
-          echo "Pinned Orca commit: $commit"
-      - name: Real slicer tests
-        env:
-          PRINT_BUDDY_REAL_SLICER: "1"
+          flatpak install --user -y --noninteractive flathub org.gnome.Platform//50
+          flatpak install --user --bundle -y --noninteractive "$ORCA_ALPHA_BUNDLE"
+          flatpak info --user --show-ref "$ORCA_FLATPAK_APP_ID"
+          flatpak info --user --show-commit "$ORCA_FLATPAK_APP_ID"
+      - name: Run slicer tests (2.5.0 alpha)
         run: xvfb-run -a python -m pytest -v -s tests/slicer
-      - name: Discord flow corpus with real Orca
-        env:
-          PRINT_BUDDY_REAL_SLICER: "1"
-        run: xvfb-run -a python -m pytest -v -s tests/corpus
+      - name: Run representative Discord fixtures (2.5.0 alpha only)
+        run: >-
+          xvfb-run -a python -m pytest -v -s
+          tests/corpus/test_corpus.py::test_discord_flow[single-part]
+          tests/corpus/test_corpus.py::test_discord_flow[plates-multicolor]
 
   spoolman:
     # spool_sync against a real, throwaway Spoolman.

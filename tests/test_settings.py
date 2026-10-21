@@ -38,6 +38,23 @@ class HomeSettingsTests(unittest.TestCase):
         for name in ("machine", "process", "filament"):
             self.assertTrue((self.home["orca"]["templates"] / f"{name}.json").is_file(), name)
 
+    def test_alpha_app_id_override_preserves_stable_default(self):
+        stable_settings = settings.load(local=False, environ={})
+        with mock.patch.object(orca_adapter, "_S", stable_settings):
+            with mock.patch.dict(os.environ, {"ORCA_FLATPAK_APP_ID": "org.orcaslicer.OrcaSlicer.Alpha"}, clear=True):
+                self.assertEqual(orca_adapter._orca_command(),
+                                 ["flatpak", "run", "org.orcaslicer.OrcaSlicer.Alpha"])
+            with mock.patch.dict(os.environ, {}, clear=True):
+                self.assertEqual(orca_adapter._orca_command(),
+                                 ["flatpak", "run", "com.orcaslicer.OrcaSlicer"])
+
+    def test_pinned_commit_keeps_stable_app_id(self):
+        stable_settings = settings.load(local=False, environ={})
+        with mock.patch.object(orca_adapter, "_S", stable_settings):
+            with mock.patch.dict(os.environ, {"ORCA_FLATPAK_COMMIT": "a" * 64}, clear=True):
+                self.assertEqual(orca_adapter._orca_command(),
+                                 ["flatpak", "run", f"--commit={'a' * 64}", "com.orcaslicer.OrcaSlicer"])
+
     def test_core_uses_the_settings(self):
         current = settings.current()
         self.assertEqual(orca_adapter.BED, current["printer"]["bed_mm"])

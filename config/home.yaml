@@ -1,0 +1,76 @@
+printer:
+  model: flashforge.ad5x
+nozzle_temp_offsets:
+  brass: 0.0
+  hardened_steel: 0.0
+  stainless_steel: 0.0
+  ruby: 0.0
+  tungsten_carbide: 0.0
+  diamond: 0.0
+layout:
+  max_merged_hours: 12
+orca:
+  command:
+  - flatpak
+  - run
+  - com.orcaslicer.OrcaSlicer
+bambu:
+  command:
+  - flatpak
+  - run
+  - --unshare=network
+  - --command=bambu-studio
+  - com.bambulab.BambuStudio
+paths:
+  hermes_home: ~/.hermes/profiles/3dprinting
+  archive: ~/3d-prints
+  records_vault: ~/Documents/3D Printing Records
+  cache: ~/.hermes/cache
+  hermes_bin: ~/.local/bin/hermes
+  ffmpeg: ffmpeg
+  hermes_agent: ~/.hermes/hermes-agent
+  hermes_restart_helper: ~/.hermes/skills/autonomous-ai-agents/hermes-safe-restart/scripts/restart_hermes.py
+services:
+  moonraker_url: ''
+  moonraker_ws_url: ''
+  camera_snapshot_url: ''
+  spoolman_url: ''
+  openviking_url: ''
+  vision_chat_url: ''
+  stock_api_port: 8898
+discord:
+  chat_id: ''
+  approval_user_id: ''
+  upload_max_bytes: 9500000
+  post_print_quiet_s: 7200
+  daily_reset_hour: 4
+  timezone: America/New_York
+  bot_name: Print Buddy
+  question_timeout_s: 1800
+  safety_confirm_timeout_s: 600
+  upload_wait_s: 3600
+  cold_pull_outcome_s: 1800
+listener:
+  tick_s: 600
+  ifs_presence_poll_s: 15
+  spool_nag_s: 600
+  start_claim_ttl_s: 1800
+vision:
+  model: gemini-latest
+  roast_model: luna-latest
+visual_watch:
+  sensitivity: 3
+  enabled: true
+timelapse:
+  archive_host: ''
+  archive_dir: ''
+  ssh_key: ''
+  render_wait_s: 900
+  render_poll_s: 10
+  max_bytes: 209715200
+  local_retention_days: 1
+  plan_clip_retention_days: 14
+maintenance:
+  quick_hours: 25
+  full_hours: 75
+  full_days: 30

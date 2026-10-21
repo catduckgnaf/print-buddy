@@ -11,8 +11,8 @@ margins, prime tower, start/end macros, cold pull), the adapter class, and the O
 templates/orca. printers/__init__ finds every module with a MODEL, so adding a printer is one file plus
 templates. Brand code that is not a model lives in helper modules without a MODEL or in a subpackage.
 
-Settings merge, later wins key by key: model defaults, config/home.toml, config/local.toml, environment.
-config/home.toml picks the model with [printer] model = "flashforge.ad5x".
+Settings merge, later wins key by key: model defaults, YAML home config, selected YAML/TOML local config, environment.
+config/home.yaml picks the model with printer.model: flashforge.ad5x.
 
 Where printer specifics live, and which responsibilities sit behind PrinterAdapter:
 

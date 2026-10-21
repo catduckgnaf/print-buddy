@@ -71,23 +71,23 @@ The print starts only when someone clicks the button. On completion, the bot pos
 
 ## Settings
 
-`config/home.toml` holds the shared defaults and picks the printer. The printer's own settings (bed, height, nozzle, slots, margins, prime tower, macros) come from its model file, see Printer models. `config/local.toml` overrides any key for one machine; it is gitignored, so `git pull` never touches it. An environment variable named `PRINT_BUDDY__SECTION__KEY` overrides a key too, and the older names the services already use (`MOONRAKER_URL`, `SPOOLMAN_URL`, `HERMES_HOME`, ...) still work. `PRINT_BUDDY_CONFIG=/path/to/settings.toml` loads a different file.
+`config/home.yaml` holds the shared defaults and picks the printer. Printer-specific defaults (bed, height, nozzle, slots, margins, prime tower and macros) come from the selected model and can be overridden in YAML. Put machine-specific overrides in the gitignored `config/local.yaml`; YAML is preferred for new configuration. Existing `config/home.toml` and `config/local.toml` remain supported during migration. When both formats are present, YAML wins; TOML is used when the corresponding YAML file is absent. `PRINT_BUDDY_CONFIG=/path/to/settings.yaml` selects one YAML file, and `.toml` paths remain supported. Environment variables (`PRINT_BUDDY__SECTION__KEY` and the existing legacy names) override file settings.
 
-A typo or bad value stops the import and names the key. Requires Python 3.11 or newer. Restart the Moonraker listener after changing a setting.
+Settings merge in this order: printer-model defaults, home configuration, the selected local or explicit configuration, then environment. A typo or invalid value stops startup and identifies the setting. Python 3.11 or newer is required. Changes require restarting the relevant process; settings are loaded once at process startup. See [YAML configuration and TOML migration](docs/CONFIGURATION-YAML.md) for schema, precedence, safety limits and migration guidance.
 
-```toml
-# config/local.toml example
-[services]
-moonraker_url = "http://192.168.x.x:7125"
-spoolman_url = "http://192.168.x.x:7912"
-
-[visual_watch]
-sensitivity = 2
+```yaml
+# config/local.yaml example
+services:
+  moonraker_url: "http://192.168.x.x:7125"
+  spoolman_url: "http://192.168.x.x:7912"
+visual_watch:
+  enabled: false
+  sensitivity: 2
 ```
 
 ### Printer models
 
-One package per brand under `print_buddy/printers/`, one file per printer inside it: `flashforge/ad5x.py`, `sovol/sv06.py`, `klipper/generic.py`. A model file holds the printer's defaults, its adapter and the name of its Orca template folder (`print_buddy/templates/orca/<folder>`). `config/home.toml` picks one with `[printer] model = "flashforge.ad5x"`. Settings merge in this order, later wins: model defaults, `config/home.toml`, `config/local.toml`, environment.
+One package per brand under `print_buddy/printers/`, one file per printer inside it: `flashforge/ad5x.py`, `sovol/sv06.py`, `klipper/generic.py`. A model file holds the printer's defaults, its adapter and the name of its Orca template folder (`print_buddy/templates/orca/<folder>`). Its user-adjustable keys are `printer.name`, `printer.firmware`, `printer.start_macro`, `printer.end_macro`, `printer.bed_mm`, `printer.max_print_height_mm`, `printer.nozzle_diameter_mm`, `printer.ifs_slots`, `layout.single_copy_edge_mm`, `layout.multi_copy_edge_mm`, `layout.merge_edge_margin_mm`, `layout.merge_spacing_mm`, `prime_tower.size_mm`, `prime_tower.part_clearance_mm`, `prime_tower.edge_mm`, `prime_tower.merge_slack_mm`, `cold_pull` profile names and values, and `orca.templates`. `config/home.yaml` picks one with `printer.model: flashforge.ad5x`; settings merge in this order, later wins: model defaults, home configuration, selected local or explicit configuration, environment.
 
 Adding a printer is one new file in its brand package plus its templates; nothing in `core/` changes. The AD5X and ZMod code lives in `print_buddy/printers/flashforge/zmod/`, and `base.py` lists what core still shares with it.
 
@@ -95,7 +95,7 @@ Upgrading from `[printer] family`: replace it in `config/local.toml` with `model
 
 ### Camera stall sensitivity
 
-`[visual_watch] sensitivity` sets how readily the camera watchdog posts a "stalled layers" alert, from 1 (quietest) to 5 (most alerts). Default is 3.
+`visual_watch.enabled` independently enables camera monitoring; it defaults to `true`, preserving the historical behavior for existing TOML users. `visual_watch.sensitivity` sets how readily the camera watchdog posts a "stalled layers" alert, from 1 (quietest) to 5 (most alerts). Default sensitivity is 3.
 
 | Level | Frame counts as unchanged if diff below | Stall alert after | Periodic camera check | Vision "ok" cancels a stall |
 |---|---|---|---|---|
@@ -112,6 +112,7 @@ Empty bed, spaghetti, detached part, uncertain, and vision failure alerts fire a
 | Section | Key | Default | What it does |
 |---|---|---|---|
 | `printer` | `name`, `firmware` | from the model | Shown in job summaries |
+| | `nozzle_type` | from the model or unset | Optional nozzle material; use a type supported by the selected printer model |
 | | `model` | `flashforge.ad5x` | Printer model: `flashforge.ad5x`, `sovol.sv06`, `klipper.generic`. Sets every default below |
 | | `start_macro`, `end_macro` | `PRINT_START`, `PRINT_END` | Start and end macros for stock Klipper models |
 | | `bed_mm` | `[220, 220]` | Usable print area |
@@ -146,12 +147,13 @@ Empty bed, spaghetti, detached part, uncertain, and vision failure alerts fire a
 | | `spool_nag_s` | `600` | Reminder interval for an unanswered spool question |
 | | `start_claim_ttl_s` | `1800` | How long a start button stays claimed |
 | `vision` | `model`, `roast_model` | `gemini-latest`, `luna-latest` | Models for camera checks and roasts |
-| `visual_watch` | `sensitivity` | `3` | Camera stall sensitivity, 1 to 5 |
+| `visual_watch` | `enabled`, `sensitivity` | `true`, `3` | Camera monitoring switch; sensitivity from 1 to 5 |
 | `timelapse` | `archive_host`, `archive_dir`, `ssh_key` | empty | Remote timelapse copy; empty host disables it |
 | | `render_wait_s`, `render_poll_s` | `900`, `10` | Wait for the printer to render the timelapse |
 | | `max_bytes`, `local_retention_days`, `plan_clip_retention_days` | 200 MiB, `1`, `14` | Size cap and retention |
 | `maintenance` | `quick_hours`, `full_hours`, `full_days` | `25`, `75`, `30` | When maintenance reminders come due |
-| `cold_pull` | profile name | `pla_trial = [220, 90]`, `petg = [245, 100]` | Hot and cold temperatures in C |
+| `nozzle_temp_offsets` | supported nozzle type | `0.0` | Optional temperature compensation from −10 to +15 °C for a known nozzle type |
+| `cold_pull` | profile name | `pla_trial = [220, 90]`, `petg = [245, 100]` | Hot and cold temperatures in °C; profile names are configurable |
 
 ## Install and update
 
@@ -162,13 +164,13 @@ Update only from a commit that is green in CI. On the machine running Print Budd
 scripts/home-update.sh          # fast-forward to origin/main
 scripts/home-update.sh <tag>    # or a release tag
 ```
-The script refuses to run if tracked files were edited by hand. It runs the offline tests and the doctor after the update, and resets to the previous commit if either fails. `config/local.toml` is never touched. A listener restart command can go in `config/after-update.sh` (gitignored), which runs after a good update.
+The script refuses to run if tracked files were edited by hand. It runs the offline tests and the doctor after the update, and resets to the previous commit if either fails. `config/local.yaml` and legacy `config/local.toml` are never touched. A listener restart command can go in `config/after-update.sh` (gitignored), which runs after a good update.
 
 Check the setup any time with `python3 -m print_buddy.doctor`. It also checks Moonraker and Spoolman when they are set in `[services]`, and warns about Print Buddy state files stranded outside the profile `state` folder. The update and install scripts remove those strays when the profile holds the real copy (or the stray is empty); files in other profiles are only reported; `python3 -m print_buddy.state_files [--dry-run] [--remove]` does the same by hand.
 
 ## Run with Docker
 
-Prerequisites: Docker Engine with the Docker Compose plugin, and Git. From the repository root, copy `.env.example` to `.env` and set `PRINT_BUDDY__SERVICES__MOONRAKER_URL` to your printer's Moonraker URL. Set other scalar settings with `PRINT_BUDDY__SECTION__KEY` variables in `.env`; `config/docker.toml` supplies Docker defaults. Lists such as `orca.command` belong in TOML, not environment variables. To replace the full config, mount your file at `/app/config/docker.toml` in `docker-compose.yml`.
+Prerequisites: Docker Engine with the Docker Compose plugin, and Git. From the repository root, copy `.env.example` to `.env` and set `PRINT_BUDDY__SERVICES__MOONRAKER_URL` to your printer's Moonraker URL. Set other scalar settings with `PRINT_BUDDY__SECTION__KEY` variables in `.env`; `config/docker.yaml` supplies Docker defaults. Lists such as `orca.command` belong in a config file, not environment variables. To replace the full config, mount YAML and set `PRINT_BUDDY_CONFIG` to its container path. Existing TOML mounts remain compatible by mounting at `/app/config/docker.toml` and setting `PRINT_BUDDY_CONFIG=/app/config/docker.toml` in `.env`.
 
 Compose stores persistent data in `./data/hermes`, `./data/archive`, `./data/records`, and `./data/cache`; Spoolman uses `./data/spoolman`. Create these directories before starting. Spoolman is published on host port `7912`; Print Buddy has no published host port and connects to Moonraker and Spoolman over the Compose network.
 
@@ -254,7 +256,7 @@ is_system_service: False
 
 ## Repository structure
 
-* `config/home.toml`: default settings. See Settings.
+* `config/home.yaml`: default settings. Legacy TOML remains supported during migration. See Settings.
 * `print_buddy/settings.py`: loads and validates settings.
 * `print_buddy/doctor.py`: checks that a machine can run Print Buddy.
 * `print_buddy/core/`: offline 3MF and STL pipeline. No printer connection.

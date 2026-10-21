@@ -4,7 +4,7 @@
 #   scripts/home-update.sh            fast-forward to origin/main
 #   scripts/home-update.sh v2.0.2     fast-forward to a tag or branch
 #
-# Never touches config/local.toml. If config/after-update.sh exists (gitignored), it runs after a
+# Never touches config/local.yaml or config/local.toml. If config/after-update.sh exists (gitignored), it runs after a
 # good update, for example to restart the Discord listener. A good update also removes Print Buddy
 # state files stranded outside the profile state folder (python3 -m print_buddy.state_files).
 set -eu
@@ -21,7 +21,7 @@ else
 fi
 
 if ! git diff --quiet || ! git diff --cached --quiet; then
-    echo "Tracked files have local edits. Move machine settings into config/local.toml, or commit, then retry."
+    echo "Tracked files have local edits. Move machine settings into config/local.yaml or config/local.toml, then retry."
     exit 1
 fi
 

@@ -37,7 +37,7 @@ AGAIN_CANCEL_LABEL = "Cancel"
 REBOOT_LABEL = "Force restart AD5X now"
 CANCEL_REBOOT_LABEL = "Cancel restart"
 _CONTROL_LOCK = __import__('threading').Lock()
-# Profile name -> (hot C, cold C), from [cold_pull] in config/home.toml.
+# Profile name -> (hot C, cold C), from [cold_pull] in the home configuration.
 COLD_PULL_PROFILES = {name: (int(pair[0]), int(pair[1])) for name, pair in _config.cfg()["cold_pull"].items()}
 
 

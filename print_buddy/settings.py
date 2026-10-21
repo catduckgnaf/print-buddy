@@ -1,13 +1,13 @@
-"""Printer and layout settings, read from config/home.toml with optional local overrides.
+"""Settings load from YAML, with TOML compatibility during migration.
 
 Load order, later wins key by key:
-  1. The printer model's defaults (print_buddy/printers/<brand>/<model>.py), chosen by [printer] model
-  2. config/home.toml (committed, the home setup; tests use it)
-  3. $PRINT_BUDDY_CONFIG if set, otherwise config/local.toml if it exists (never committed)
+  1. The printer model's defaults (print_buddy/printers/<brand>/<model>.py)
+  2. config/home.yaml, falling back to config/home.toml
+  3. $PRINT_BUDDY_CONFIG, else config/local.yaml, falling back to config/local.toml
   4. Environment: PRINT_BUDDY__SECTION__KEY, or a legacy name from LEGACY_ENV
 
-The model comes from the last of home.toml, local.toml and PRINT_BUDDY__PRINTER__MODEL that sets it.
-Every key must already exist in the model defaults or home.toml with the same type, so a typo fails loudly.
+The model comes from environment, selected local configuration, then home configuration.
+Unknown local keys and values with mismatched types fail loudly.
 """
 from __future__ import annotations
 
@@ -15,14 +15,17 @@ import copy
 import os
 import re
 import tomllib
+import yaml
 from functools import lru_cache
 from pathlib import Path
 
 from . import printers
 
 ROOT = Path(__file__).resolve().parent.parent
-HOME = ROOT / "config" / "home.toml"
-LOCAL = ROOT / "config" / "local.toml"
+HOME = ROOT / "config" / "home.yaml"
+LEGACY_HOME = ROOT / "config" / "home.toml"
+LOCAL = ROOT / "config" / "local.yaml"
+LEGACY_LOCAL = ROOT / "config" / "local.toml"
 
 
 class SettingsError(ValueError):
@@ -63,7 +66,7 @@ LEGACY_ENV = {
 # Sections whose keys are names you choose, not a fixed set.
 OPEN_SECTIONS = {"cold_pull", "nozzle_temp_offsets"}
 # Keys that can be optionally specified even if absent from base home.toml.
-OPTIONAL_KEYS = {("printer", "nozzle_type"): str}
+OPTIONAL_KEYS = {("printer", "nozzle_type"): str, ("visual_watch", "enabled"): bool}
 
 
 def _merge(base, extra):
@@ -77,10 +80,20 @@ def _merge(base, extra):
 
 
 def _read(path):
+    """Read YAML or a legacy TOML configuration file."""
+    path = Path(path)
     try:
-        with open(path, "rb") as f:
-            return tomllib.load(f)
-    except tomllib.TOMLDecodeError as exc:
+        if path.suffix.lower() == ".toml":
+            with open(path, "rb") as f:
+                return tomllib.load(f)
+        with open(path, encoding="utf-8") as f:
+            data = yaml.safe_load(f)
+        if data is None:
+            return {}
+        if not isinstance(data, dict):
+            raise SettingsError(f"{path}: top-level config must be a mapping")
+        return data
+    except (tomllib.TOMLDecodeError, yaml.YAMLError, OSError) as exc:
         raise SettingsError(f"{path}: {exc}") from None
 
 
@@ -121,11 +134,18 @@ def _check_keys(home, extra, source):
 def _coerce(expected, raw, name):
     try:
         if isinstance(expected, bool):
-            return raw.strip().lower() in ("1", "true", "yes", "on")
+            value = raw.strip().lower()
+            if value in ("1", "true", "yes", "on"):
+                return True
+            if value in ("0", "false", "no", "off"):
+                return False
+            raise SettingsError(f"${name} must be true or false, got {raw!r}")
         if isinstance(expected, int):
             return int(raw)
         if isinstance(expected, float):
             return float(raw)
+    except SettingsError:
+        raise
     except ValueError:
         raise SettingsError(f"${name} should be a number, got {raw!r}") from None
     if isinstance(expected, str):
@@ -147,7 +167,9 @@ def _from_env(home, environ):
             continue
         if key not in home.get(section, {}):
             if (section, key) in OPTIONAL_KEYS:
-                out.setdefault(section, {})[key] = raw
+                expected_type = OPTIONAL_KEYS[(section, key)]
+                expected = expected_type() if expected_type is bool else ""
+                out.setdefault(section, {})[key] = _coerce(expected, raw, name)
                 continue
             raise _unknown(f"${name}", section, key)
         out.setdefault(section, {})[key] = _coerce(home[section][key], raw, name)
@@ -230,6 +252,10 @@ def validate(data):
             continue  # a bare name is looked up on PATH
         path = Path(value).expanduser()
         data["paths"][key] = path if path.is_absolute() else ROOT / path
+    enabled = data["visual_watch"].get("enabled", True)
+    if not isinstance(enabled, bool):
+        raise SettingsError("[visual_watch] enabled must be true or false")
+    data["visual_watch"]["enabled"] = enabled
     level = data["visual_watch"]["sensitivity"]
     if isinstance(level, bool) or not isinstance(level, (int, float)) or level != int(level) or not 1 <= level <= 5:
         raise SettingsError(f"[visual_watch] sensitivity must be a whole number from 1 to 5, got {level!r}")
@@ -244,21 +270,28 @@ def validate(data):
     return data
 
 
-def load(home=HOME, local=None, environ=None):
-    """Read and validate settings. local=None means $PRINT_BUDDY_CONFIG or config/local.toml.
+def load(home=None, local=None, environ=None):
+    """Read and validate settings. Prefer YAML and retain TOML during migration.
 
-    environ defaults to os.environ; pass {} to ignore the environment.
+    Load order: model defaults, home configuration, explicit PRINT_BUDDY_CONFIG (or
+    local YAML/TOML), then environment. If home.yaml is absent, home.toml is used.
+    If local.yaml is absent, local.toml is used. PRINT_BUDDY_CONFIG selects one file.
+    Pass environ={} to ignore the process environment.
     """
-    home_data = _read(home)
     environ = os.environ if environ is None else environ
+    if home is None:
+        home = HOME if HOME.is_file() else LEGACY_HOME
+    home_data = _read(home)
     if local is None:
-        env = os.environ.get("PRINT_BUDDY_CONFIG")
+        env = environ.get("PRINT_BUDDY_CONFIG")
         if env:
             local = Path(env)
             if not local.is_file():
                 raise SettingsError(f"PRINT_BUDDY_CONFIG points to a missing file: {local}")
         elif LOCAL.is_file():
             local = LOCAL
+        elif LEGACY_LOCAL.is_file():
+            local = LEGACY_LOCAL
     extra = _read(local) if local else {}
     key = (environ.get("PRINT_BUDDY__PRINTER__MODEL") or extra.get("printer", {}).get("model")
            or home_data.get("printer", {}).get("model"))

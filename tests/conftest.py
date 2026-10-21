@@ -1,7 +1,7 @@
 """Test settings for the Hermes helpers, installed before any test module imports them.
 
 print_buddy.hermes reads its hosts and paths through print_buddy.hermes._config. Here that is replaced by
-a copy of config/home.toml with fake `.test` hosts and temp directories, so no suite (hermes or pipeline)
+a copy of the checked-in home config with fake `.test` hosts and temp directories, so no suite (hermes or pipeline)
 can read a live profile or reach a live service through those modules.
 """
 import os

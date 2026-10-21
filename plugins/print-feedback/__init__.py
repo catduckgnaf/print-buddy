@@ -2,7 +2,7 @@
 
 The gateway loads this folder through a symlink into the Hermes profile. Everything it needs lives in
 the Print Buddy package: print_buddy.hermes (listener helpers, print control) and print_buddy.core
-(the slicing and print pipeline). Hosts, paths and temperatures come from config/home.toml.
+(the slicing and print pipeline). Hosts, paths and temperatures come from the home configuration.
 """
 import asyncio
 import json
@@ -495,7 +495,7 @@ def _maintenance_hours_now():
 
 
 def _cold_pull_temps():
-    """(pla_hot, pla_cold, petg_hot, petg_cold, pla_retry_cold) from [cold_pull] in config/home.toml."""
+    """(pla_hot, pla_cold, petg_hot, petg_cold, pla_retry_cold) from [cold_pull] in the home configuration."""
     from print_buddy.hermes import print_control as pc
     pla_hot, pla_cold = pc.COLD_PULL_PROFILES['pla_trial']
     petg_hot, petg_cold = pc.COLD_PULL_PROFILES['petg']

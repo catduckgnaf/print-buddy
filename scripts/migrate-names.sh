@@ -7,10 +7,10 @@
 #
 # 1. Renames files and folders whose name contains print_bitch to print_buddy in the profile
 #    state dir and in the archive dir. A target that already exists is skipped.
-# 2. Replaces PRINT_BITCH_ with PRINT_BUDDY_ in config/local.toml, the profile .env and
+# 2. Replaces PRINT_BITCH_ with PRINT_BUDDY_ in the selected config/local.yaml or config/local.toml, the profile .env and
 #    config.yaml, and the listener systemd unit and drop-ins. Each edited file is first copied
 #    to <file>.pre-rename.
-# 3. Rewrites [printer] family = "flashforge_zmod" (or generic_klipper, sovol_klipper) in config/local.toml
+# 3. Rewrites [printer] family = "flashforge_zmod" (or generic_klipper, sovol_klipper) in config/local.yaml or config/local.toml
 #    to model = "flashforge.ad5x" (klipper.generic, sovol.sv06). The file is first copied to <file>.pre-model.
 # 4. Prints the steps that have to be done by hand on the printer.
 set -eu
@@ -39,7 +39,7 @@ HERMES_HOME=${HERMES_HOME:-$(setting paths.hermes_home)}
 HERMES_HOME=${HERMES_HOME:-$HOME/.hermes/profiles/3dprinting}
 ARCHIVE=${ARCHIVE:-$(setting paths.archive)}
 SYSTEMD_USER_DIR=${SYSTEMD_USER_DIR:-$HOME/.config/systemd/user}
-LOCAL_CONFIG=${LOCAL_CONFIG:-${PRINT_BUDDY_CONFIG:-$REPO/config/local.toml}}
+LOCAL_CONFIG=${LOCAL_CONFIG:-${PRINT_BUDDY_CONFIG:-$REPO/config/local.yaml}}
 
 say() { printf '%s\n' "$*"; }
 act() { if [ "$DRY" = 1 ]; then say "would: $*"; else say "$*"; fi; }

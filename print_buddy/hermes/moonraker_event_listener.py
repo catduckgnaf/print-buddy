@@ -1430,7 +1430,7 @@ class Listener:
             return
         self.state = new_state
         log(f"state {old} -> {new_state} file={self.filename!r} ({reason})")
-        if new_state == "printing":
+        if new_state == "printing" and _config.cfg()["visual_watch"]["enabled"]:
             layer = _visual_layer(self.last_stats)
             reason_due = self.visual_watch.due(layer, time.time(), snapshot_changed=None)
             if reason_due:
@@ -1537,7 +1537,7 @@ class Listener:
                         ps = (msg.get("params") or [{}])[0].get("print_stats")
                         if ps:
                             await self.on_status(ps, "event")
-                            if self.state == "printing":
+                            if self.state == "printing" and _config.cfg()["visual_watch"]["enabled"]:
                                 layer = _visual_layer(self.last_stats)
                                 reason_due = self.visual_watch.due(layer, time.time())
                                 if reason_due:
@@ -1583,7 +1583,7 @@ class Listener:
 def main():
     if not WS_URL:
         raise SystemExit("services.moonraker_url is not configured (or services.moonraker_ws_url). "
-                         "Set it in config/local.toml; the listener has nothing to connect to.")
+                         "Set it in config/local.yaml or config/local.toml; the listener has nothing to connect to.")
     route = "PRINT_VISION_URL" if os.environ.get("PRINT_VISION_URL") else (_VISION_BASE or "not configured")
     log(f"listener starting; camera watchdog initialized route={route} model={_VISION_MODEL}")
     asyncio.run(Listener().forever())

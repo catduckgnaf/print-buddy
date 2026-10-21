@@ -173,6 +173,16 @@ def test_job_without_the_field_is_a_flashforge_job(monkeypatch):
         printers.check_job_model({"title": "old"})
 
 
+@pytest.mark.parametrize("family,model", [("flashforge_zmod", "flashforge.ad5x"), ("sovol_klipper", "sovol.sv06"),
+                                          ("generic_klipper", "klipper.generic")])
+def test_job_from_2_0_2_or_2_0_3_keeps_its_printer(monkeypatch, family, model):
+    # Those versions wrote printer_family; /print-again on a Sovol must not read it as an AD5X job.
+    assert printers.job_model({"printer_family": family}) == model
+    use_model(monkeypatch, model)
+    printers.check_job_model({"printer_family": family})
+    assert printers.job_model({"printer_model": "sovol.sv06", "printer_family": "flashforge_zmod"}) == "sovol.sv06"
+
+
 def test_printer_override_is_recorded_on_the_job(monkeypatch, tmp_path):
     use_model(monkeypatch, "flashforge.ad5x")
     job = write_job(tmp_path, tmp_path / "x.gcode")

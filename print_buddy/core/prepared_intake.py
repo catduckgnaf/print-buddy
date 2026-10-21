@@ -41,14 +41,21 @@ class Stopped(BaseException):
     """The operator pressed Stop on a progress message. BaseException, not Exception, so a broad 'except Exception' around a fit or slice call cannot swallow it and report a fake failure."""
 
 
-async def _with_stop(adapter, source, key, metadata, text, work):
-    """Run ``work`` while a Stop button is up. Pressing it cancels the work.
-
-    Test adapters answer a prompt instantly from a scripted list, so they get no Stop
-    button: it would eat the next scripted answer and cancel every step.
-    """
+async def _with_stop(adapter, source, key, metadata, text, work, *, allow_stop=False):
+    """Run work with plain progress by default; opt in to Stop only when cancellation is safe."""
     adapter_state = getattr(adapter, "__dict__", {})
     if "picks" in adapter_state or "clicks" in adapter_state:
+        return await work
+    if not allow_stop:
+        status = text
+        for suffix in (" Press Stop to cancel before it starts.", " Press Stop to cancel."):
+            if status.endswith(suffix):
+                status = status[:-len(suffix)]
+                break
+        try:
+            await adapter.send(chat_id=str(source.chat_id), content=status, metadata=metadata)
+        except Exception:
+            pass  # progress delivery must not block offline work
         return await work
     import uuid
     from tools import clarify_gateway as cm
@@ -1128,7 +1135,7 @@ async def prepare_link(event, adapter, state, root, timeout=None, reuse=None):
         mj._timing(jp, 'intake_start_tapped')
         ok, tail = await _with_stop(adapter, source, key, metadata,
                                     "Uploading to the printer. Press Stop to cancel before it starts.",
-                                    print_next.start(target))
+                                    print_next.start(target), allow_stop=True)
         mj._timing(jp, 'intake_start_returned', ok=bool(ok))
         receipt.update(status='STARTED' if ok else 'START_REFUSED', started=bool(ok))
         receipt_path.write_text(json.dumps(receipt, indent=2) + '\n')

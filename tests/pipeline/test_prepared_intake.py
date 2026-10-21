@@ -1041,6 +1041,10 @@ def test_stop_during_a_long_step_cancels_it_and_leaves_nothing_running():
             self.cid = kw['clarify_id']
             return S(success=True)
 
+        async def send(self, **kw):
+            self.status = kw['content']
+            return S(success=True)
+
     started = threading.Event()
     finished = threading.Event()
 
@@ -1056,7 +1060,7 @@ def test_stop_during_a_long_step_cancels_it_and_leaves_nothing_running():
     async def run():
         task = asyncio.ensure_future(prepared_intake._with_stop(
             adapter, S(chat_id='stop-mid-step'), 'stop-mid-step', None,
-            'Uploading to the printer. Press Stop to cancel before it starts.', slow()))
+            'Uploading to the printer. Press Stop to cancel before it starts.', slow(), allow_stop=True))
         for _ in range(200):
             if started.is_set() and adapter.cid:
                 break
@@ -1071,17 +1075,21 @@ def test_stop_during_a_long_step_cancels_it_and_leaves_nothing_running():
     assert finished.wait(2), 'the cancelled step was still running'
 
 
-def test_finished_step_returns_without_anyone_pressing_stop():
-    """2.0.6: the fit check froze until Stop was pressed because the button was awaited before the
-    work. A step that finishes must return its result with no button press at all."""
+def test_status_only_work_returns_without_registering_a_stop_prompt():
+    """Status-only fit work must not create an interactive Stop prompt."""
     import time as _time
 
     class Live:
         def __init__(self):
             self.cid = None
+            self.status = None
 
         async def send_clarify(self, **kw):
             self.cid = kw['clarify_id']
+            return S(success=True)
+
+        async def send(self, **kw):
+            self.status = kw['content']
             return S(success=True)
 
     async def quick():
@@ -1097,7 +1105,8 @@ def test_finished_step_returns_without_anyone_pressing_stop():
 
     started = _time.monotonic()
     assert asyncio.run(run()) == {'fits': True, 'copies': 1}
-    assert adapter.cid, 'the Stop button was never shown'
+    assert adapter.cid is None, 'status-only work must not register a Stop prompt'
+    assert adapter.status == 'Checking whether it fits the bed.'
     assert _time.monotonic() - started < 5
 
 

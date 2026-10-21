@@ -19,6 +19,12 @@ REAL = os.environ.get("PRINT_BUDDY_REAL_SLICER") == "1"
 WORK = settings.ROOT / ".slicer-work"
 
 
+def _orca_command():
+    """Return the configured Orca command with the adapter's runtime overrides applied."""
+    from print_buddy.core import orca_adapter
+    return orca_adapter._orca_command()
+
+
 def write_cube(path, size):
     """ASCII STL cube, size mm per side, corner at the origin."""
     s = float(size)
@@ -51,7 +57,7 @@ class OrcaRealSliceTests(unittest.TestCase):
         """Same flags the adapter uses for a plain single color STL."""
         out = self.dir / f"out_{stl.stem}"
         out.mkdir()
-        command = [*self.settings["orca"]["command"],
+        command = [*_orca_command(),
                    "--load-settings", f"{self.machine};{self.process}", "--load-filaments", str(self.filament),
                    "--arrange", "1", "--orient", "0", "--ensure-on-bed", *extra,
                    "--allow-newer-file", "--slice", "0", "--outputdir", str(out), str(stl)]
@@ -75,6 +81,12 @@ class OrcaRealSliceTests(unittest.TestCase):
         self.assertNotEqual(r.status, "blocked", r.blocked)
         times = [l for l in (out / "plate_1.gcode").read_text(errors="replace").splitlines() if l.startswith(";") and "time" in l.lower()]
         self.assertEqual(r.warnings, [], f"guard missed Orca's print time header; time lines: {times[:10]}")
+
+    def test_fixture_stl_slices_and_passes_the_guard(self):
+        fixture = Path(__file__).parent / "fixtures" / "cube.stl"
+        result, out = self.slice(fixture)
+        self.assertEqual(result.returncode, 0)
+        self.assertNotEqual(self.guard(out).status, "blocked")
 
     def test_four_copies_stay_on_the_bed(self):
         result, out = self.slice(write_cube(self.dir / "copies.stl", 30), "--clone-objects", "4")

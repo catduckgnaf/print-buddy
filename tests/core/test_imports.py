@@ -1,5 +1,6 @@
 """Every core module imports as part of the package. Catches flat sibling imports."""
 import importlib
+import trimesh
 import unittest
 from pathlib import Path
 

@@ -1029,8 +1029,9 @@ async def prepare_link(event, adapter, state, root, timeout=None, reuse=None):
                 or slice_binding(latest, decisions['source_sha256']) != binding):
             await early.discard()  # the slice was for decisions that no longer match
             raise ValueError('source/job changed before slice approval; no handoff')
-        receipt.update(status='SLICE_APPROVED', slice_approval={'intake_id': iid, 'source_sha256': decisions['source_sha256'],
-                                                              'decisions_sha256': mj.decisions_digest(validated)})
+        receipt.update(status='SLICE_APPROVED', slice_attempt=1,
+                       slice_approval={'intake_id': iid, 'source_sha256': decisions['source_sha256'],
+                                       'decisions_sha256': mj.decisions_digest(validated), 'attempt': 1})
         receipt_path.write_text(json.dumps(receipt, indent=2) + '\n')
         mj._timing(jp, 'intake_slice_requested')
         prep_sent = False
@@ -1045,14 +1046,66 @@ async def prepare_link(event, adapter, state, root, timeout=None, reuse=None):
                                content=' · '.join(['Preparing to start'] + ([f'Print #{pre_no}'] if pre_no else [])
                                                   + [pre_total]))
             prep_sent = True
-        out = await early.take(binding)  # finished while the question was up, or still running
-        if out is None:
-            if chosen_quantity and chosen_quantity > 1:
-                out = await _with_stop(adapter, source, key, metadata, "Slicing. Press Stop to cancel.",
-                                       _heavy(mj.slice_job, str(jp), copies=chosen_quantity))
-            else:
-                out = await _with_stop(adapter, source, key, metadata, "Slicing. Press Stop to cancel.",
-                                       _heavy(mj.slice_job, str(jp)))
+        try:
+            out = await early.take(binding)  # finished while the question was up, or still running
+            if out is None and early.error is not None:
+                raise early.error
+            if out is None:
+                if chosen_quantity and chosen_quantity > 1:
+                    out = await _with_stop(adapter, source, key, metadata, "Slicing. Press Stop to cancel.",
+                                           _heavy(mj.slice_job, str(jp), copies=chosen_quantity))
+                else:
+                    out = await _with_stop(adapter, source, key, metadata, "Slicing. Press Stop to cancel.",
+                                           _heavy(mj.slice_job, str(jp)))
+        except Exception as slice_error:
+            # A failed attempt has no reusable slice approval or G-code. Retry is a
+            # separate button action, and its output still needs a fresh start button.
+            await early.discard()
+            receipt.update(status='SLICE_FAILED', sliced=False, uploaded=False, started=False,
+                           slice_error=str(slice_error))
+            for stale in ('slice_approval', 'bed_clear_approval', 'gcodes'):
+                receipt.pop(stale, None)
+            receipt_path.write_text(json.dumps(receipt, indent=2) + '\n')
+            retry = await _ask(adapter, source, key,
+                f'Slicing failed: {slice_error}. No G-code was retained. Retry once from the saved model?',
+                ['Retry slice once (no print)', 'Cancel'], timeout)
+            if retry != 0:
+                receipt.update(status='CANCELLED', sliced=False, uploaded=False, started=False)
+                receipt_path.write_text(json.dumps(receipt, indent=2) + '\n')
+                await adapter.send(chat_id=source.chat_id, content='Slice retry cancelled. Nothing was uploaded or started.',
+                                   metadata=metadata)
+                return {'action': 'skip', 'reason': 'slice retry cancelled'}
+            latest = json.loads(jp.read_text())
+            if (latest.get('intake_id') != iid or latest.get('color_decisions') != validated
+                    or mj.file_sha256(latest['downloaded_file']) != decisions['source_sha256']
+                    or slice_binding(latest, decisions['source_sha256']) != binding):
+                raise ValueError('saved job changed before retry; no slice started')
+            attempt = int(receipt.get('slice_attempt') or 1) + 1
+            receipt.update(status='SLICE_APPROVED', slice_attempt=attempt,
+                           slice_approval={'intake_id': iid, 'source_sha256': decisions['source_sha256'],
+                                           'decisions_sha256': mj.decisions_digest(validated), 'attempt': attempt})
+            receipt.pop('slice_error', None)
+            receipt_path.write_text(json.dumps(receipt, indent=2) + '\n')
+            # A prior "slice and print" choice applies only to the failed output.
+            # The retry is slice-only; starting the new artifact requires a fresh button.
+            choice = 1
+            try:
+                if chosen_quantity and chosen_quantity > 1:
+                    out = await _with_stop(adapter, source, key, metadata, "Retrying the slice. Press Stop to cancel.",
+                                           _heavy(mj.slice_job, str(jp), copies=chosen_quantity))
+                else:
+                    out = await _with_stop(adapter, source, key, metadata, "Retrying the slice. Press Stop to cancel.",
+                                           _heavy(mj.slice_job, str(jp)))
+            except Exception as retry_error:
+                await early.discard()
+                receipt.update(status='SLICE_FAILED', sliced=False, uploaded=False, started=False,
+                               slice_error=str(retry_error))
+                receipt.pop('slice_approval', None)
+                receipt_path.write_text(json.dumps(receipt, indent=2) + '\n')
+                await adapter.send(chat_id=source.chat_id,
+                    content='The one retry also failed. No G-code was retained; nothing was uploaded or started.',
+                    metadata=metadata)
+                return {'action': 'skip', 'reason': 'slice retry failed'}
         mj._timing(jp, 'intake_slice_returned')
         gcodes = [str(g) for g in (out if isinstance(out, list) else [out])]
         sliced = json.loads(jp.read_text())

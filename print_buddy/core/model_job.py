@@ -2831,6 +2831,17 @@ def _consume_approval(job_path, job, gcode, reprint=False):
     write_job(Path(job_path).parent, job)
 
 
+def _require_idle_before_mapped_launch(require_idle_settled, read_moonraker, read_native):
+    """Report only an explicit idle-guard refusal as a clean pre-upload refusal."""
+    try:
+        require_idle_settled(read_moonraker, read_native)
+    except RuntimeError as exc:
+        message = str(exc)
+        if not message.startswith("REFUSED: idle guard failed:"):
+            raise
+        raise SystemExit(message + ". Nothing uploaded or started.") from None
+
+
 def print_mapped_native(g, st, mesh, mapping, job, job_path, wait_s, reprint):
     """Native explicit mapping route; exactly one SET_ZCOLOR submission, no fallback."""
     require_idle_settled = printers.current().native.require_idle_settled
@@ -2849,7 +2860,7 @@ def print_mapped_native(g, st, mesh, mapping, job, job_path, wait_s, reprint):
                 'extruder': current['extruder'], 'bed': current['heater_bed']}
     def read_native():
         return read_stock_detail(st)
-    require_idle_settled(read_moonraker, read_native)
+    _require_idle_before_mapped_launch(require_idle_settled, read_moonraker, read_native)
     detail = read_native()
     status = response['result']['status']
     sensor = status.get('filament_switch_sensor head_switch_sensor', {})

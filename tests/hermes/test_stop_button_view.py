@@ -1,4 +1,4 @@
-"""2.0.6: status steps show one Stop button from the plugin view, never 'Other (type answer)'."""
+"""Status-only progress has no Stop view; final pre-start work keeps cancellation."""
 import asyncio
 import sys
 from types import SimpleNamespace as S
@@ -45,12 +45,20 @@ def _install(monkeypatch):
 
 
 class _NoClarify:
+    def __init__(self):
+        self.status = []
+
     async def send_clarify(self, **kw):
-        raise AssertionError('status step must not use the gateway clarify prompt (it adds Other)')
+        raise AssertionError('status-only progress must not create an interactive prompt')
+
+    async def send(self, **kw):
+        self.status.append(kw['content'])
+        return S(success=True)
 
 
-def test_status_step_shows_only_stop_and_finishes_without_a_press(monkeypatch):
+def test_status_step_sends_plain_progress_without_a_stop_view(monkeypatch):
     sent, _ = _install(monkeypatch)
+    adapter = _NoClarify()
 
     async def work():
         await asyncio.sleep(0.01)
@@ -58,16 +66,15 @@ def test_status_step_shows_only_stop_and_finishes_without_a_press(monkeypatch):
 
     async def run():
         return await asyncio.wait_for(prepared_intake._with_stop(
-            _NoClarify(), S(chat_id='123', thread_id=None), 'k-view', None,
+            adapter, S(chat_id='123', thread_id=None), 'k-view', None,
             'Checking whether it fits the bed. Press Stop to cancel.', work()), 5)
 
     assert asyncio.run(run()) == 'fits'
-    labels = [item.label for item in sent[0].view.items]
-    assert labels == ['Stop']
-    assert sent[0].edits == [{'view': None}], 'the Stop button must be removed once the step finishes'
+    assert adapter.status == ['Checking whether it fits the bed.']
+    assert sent == []
 
 
-def test_pressing_plugin_stop_cancels_the_step(monkeypatch):
+def test_pressing_plugin_stop_cancels_the_final_start_step(monkeypatch):
     sent, on_interaction = _install(monkeypatch)
 
     async def slow():
@@ -76,7 +83,8 @@ def test_pressing_plugin_stop_cancels_the_step(monkeypatch):
 
     async def run():
         step = asyncio.ensure_future(prepared_intake._with_stop(
-            _NoClarify(), S(chat_id='123', thread_id=None), 'k-press', None, 'Slicing. Press Stop to cancel.', slow()))
+            _NoClarify(), S(chat_id='123', thread_id=None), 'k-press', None,
+            'Uploading to the printer. Press Stop to cancel before it starts.', slow(), allow_stop=True))
         while not sent:
             await asyncio.sleep(0.01)
         press = Interaction(sent[0].view.items[0].custom_id)

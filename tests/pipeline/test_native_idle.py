@@ -1,8 +1,27 @@
 import unittest
 from copy import deepcopy
 from print_buddy.printers.flashforge.zmod.native_idle import require_idle
+from print_buddy.core.model_job import _require_idle_before_mapped_launch
 
 class NativeIdleTests(unittest.TestCase):
+    def test_mapped_launch_guard_refusal_is_clean_pre_upload_exit(self):
+        refusal = "REFUSED: idle guard failed: Moonraker bed.target == 0 (observed 60.0)"
+
+        def reject(_moonraker, _native):
+            raise RuntimeError(refusal)
+
+        with self.assertRaises(SystemExit) as caught:
+            _require_idle_before_mapped_launch(reject, lambda: {}, lambda: {})
+        self.assertEqual(str(caught.exception), refusal + ". Nothing uploaded or started.")
+        self.assertIsNone(caught.exception.__cause__)
+
+    def test_mapped_launch_guard_does_not_reclassify_other_runtime_errors(self):
+        def fail(_moonraker, _native):
+            raise RuntimeError("telemetry unavailable")
+
+        with self.assertRaisesRegex(RuntimeError, "telemetry unavailable"):
+            _require_idle_before_mapped_launch(fail, lambda: {}, lambda: {})
+
     def setUp(self):
         self.m = dict(state='ready', print=dict(state='standby'), extruder=dict(target=0), bed=dict(target=0))
         self.n = dict(status='cancel', leftTargetTemp=0, rightTargetTemp=0, platTargetTemp=0, chamberTargetTemp=0, errorCode='', printProgress=0, printDuration=0)

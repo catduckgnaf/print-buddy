@@ -192,9 +192,20 @@ A second CI job installs the Flathub OrcaSlicer, slices small test models with t
 
 ### Discord flow corpus
 
-`tests/corpus/cases/` holds 3MF models run end to end through the Discord intake with fake button clicks: color questions, fit check and resize or split offer, plate planning, slicing, and G-code checks. Nothing contacts a printer. Every PR runs it with a fake Orca; the real-slicer job runs it with Flathub Orca. One test also runs the intake with the gateway's `HERMES_HOME` to keep state in the profile.
+`tests/corpus/cases/` holds generated, redistributable 3MF projects and STL meshes run end to end through the Discord intake with fake button clicks. Nothing contacts a printer. Every PR runs the corpus with fake Orca; a separate real-slicer CI job runs the same cases with Flathub Orca.
 
-To add a model that broke Discord: make `tests/corpus/cases/<name>/` with one model file (`.3mf`, `.stl`, `.obj`, `.step`, or `.stp`; `model.3mf` wins if the folder has more than one) and a `case.toml` listing the buttons pressed and what you expect. Only models you may redistribute: your own, CC0, or attribution licenses; note it as `license = "..."`. An unanswered question fails the test and prints its buttons, so copy them in. `tests/corpus/make_models.py` writes the built-in models; see any existing `case.toml` for the format.
+| Coverage | Cases | Behavior asserted |
+| --- | --- | --- |
+| Native STL intake and color selection | `stl-single-part` | Source kind and 30 × 30 × 20 mm bounds, one G-code, support off |
+| Fit and operator-selected shrink | `must-shrink`, `stl-must-shrink` | 3MF and STL trigger fit prompt, scale range, one G-code |
+| STL overhang and tall narrow geometry | `stl-needs-supports`, `stl-thin-footprint` | Source bounds, default support-off behavior, successful guarded slice |
+| Named parts and single-plate multicolor | `parts-one-plate` | Exact part names/colors, merge mode, three tool slots, one G-code |
+| Multiplate merge and split planning | `plates-multicolor`, `split-plan` | Source plate count, merged colors/tool slots, split mode and expected G-code counts |
+| Supports-on geometry and baseline 3MF | `needs-supports`, `single-part` | Support-enabled profile plus support G-code, ordinary single-part intake |
+
+All ten current models are generated locally by `tests/corpus/make_models.py`, have CC0 provenance in their manifests, and are under 5 MB. A future hand-authored regression fixture is also allowed when its redistribution license is documented and the public size limit is met; generator checks pin the built-in fixtures without requiring every public case to be generated. The corpus contains no private or license-restricted source files. Current scenario gaps include painted multicolor meshes, partial-plate selection, non-English part-name translation, rotation-only fit, archived-job reprints, and a near-5 MB timeout case. Generated STL covers shrink-to-fit but not split planning; split planning remains covered by 3MF.
+
+To add a model that broke Discord: make `tests/corpus/cases/<name>/` with one supported model file (`.3mf` or `.stl`; `model.3mf` wins if a folder has more than one) and a `case.toml` listing the buttons pressed and what you expect. Only include models you may redistribute: your own work, CC0, CC BY, CC BY-SA, MIT, Apache (unversioned, 1.0, 1.1, or 2.0), or public domain. Use a recognized license label; NC, ND, restricted, and ambiguous labels are rejected. Record the exact provenance in `license = "..."`. Public models must be 5 MB or smaller. An unanswered question fails the test and prints its buttons, so copy them in. `tests/corpus/make_models.py` writes the built-in models; see any existing `case.toml` for the format.
 
 ```bash
 python3 -m pytest -q tests/corpus                                # fake Orca

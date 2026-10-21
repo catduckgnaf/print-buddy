@@ -18,12 +18,100 @@ from print_buddy import settings
 from . import harness
 
 REAL = os.environ.get("PRINT_BUDDY_REAL_SLICER") == "1"
+PUBLIC_LICENSE = re.compile(
+    r"(?:cc0(?:[- ]1\.0(?:\s+universal)?)?"
+    r"|cc[- ]by(?:[- ]sa)?(?:[- ]\d+(?:\.\d+)?(?:\s+international)?)?"
+    r"|creative commons attribution(?:[- ]sharealike)?"
+    r"(?:[- ]\d+(?:\.\d+)?(?:\s+international)?)?"
+    r"|own work"
+    r"|mit(?:[- ]license)?"
+    r"|apache(?:[- ]license)?(?:[- ,]+(?:version[- ]?)?(?:1(?:\.0|\.1)?|2(?:\.0)?))?"
+    r"|public domain(?:[- ]dedication)?)(?:\s*[:;,].*)?", re.I)
 CASES = [harness.load_case(folder) for folder in harness.case_dirs()]
 IDS = [case.name for case in CASES]
 
 
-def test_the_starting_cases_exist():
-    assert {"parts-one-plate", "plates-multicolor", "needs-supports", "must-shrink", "split-plan", "single-part"} <= set(IDS)
+def _allows_public_license(value):
+    label = str(value).strip()
+    if re.search(
+            r"\b(?:non[- ]?commercial|not for commercial use|commercial use prohibited|no derivatives|restricted|"
+            r"non[- ]redistributable|not for redistribution|NC|ND)\b",
+            label, re.I):
+        return False
+    return bool(PUBLIC_LICENSE.fullmatch(label))
+
+
+def test_the_corpus_covers_formats_and_slicing_scenarios():
+    """Pin intended format and behavior coverage so it cannot quietly disappear."""
+    public_cases = [case for case in CASES if not harness.is_private_case(case.dir)]
+    public_ids = {case.name for case in public_cases}
+    assert len(public_cases) >= 10
+    assert sum(case.model.suffix.lower() == ".3mf" for case in public_cases) >= 6
+    assert sum(case.model.suffix.lower() == ".stl" for case in public_cases) >= 4
+    assert {case.model.suffix.lower() for case in public_cases} <= {".3mf", ".stl"}
+    for case in public_cases:
+        assert case.model.stat().st_size <= 5 * 1024 * 1024, f"{case.model} exceeds 5 MB"
+        license_text = case.data.get("license", "").strip()
+        assert _allows_public_license(license_text), (
+            f"{case.name}: public fixtures must use an approved redistributable license; "
+            f"found {license_text!r}")
+    assert {"single-part", "stl-single-part"} <= public_ids
+    assert {"must-shrink", "stl-must-shrink"} <= public_ids
+    assert {"stl-needs-supports", "stl-thin-footprint"} <= public_ids
+    assert {"parts-one-plate", "plates-multicolor", "needs-supports", "split-plan"} <= public_ids
+
+    one_plate = harness.load_case(harness.CASES / "parts-one-plate").expect
+    assert one_plate["parts"] == ["Base", "Post", "Tab"]
+    assert one_plate["colors"] == {"Base": "white", "Post": "black", "Tab": "dark green"}
+    assert one_plate["gcodes"] == 1 and one_plate["slots"] == 3
+
+    multiple_plates = harness.load_case(harness.CASES / "plates-multicolor").expect
+    assert multiple_plates["source_plates"] == 2 and multiple_plates["plate_mode"] == "merge"
+    assert multiple_plates["colors"] == {"Body": "white", "Lid": "black", "Knob": "pink"}
+    assert multiple_plates["gcodes"] == 1 and multiple_plates["slots"] == 3
+
+    assert harness.load_case(harness.CASES / "split-plan").expect["gcodes"] == 2
+    assert harness.load_case(harness.CASES / "needs-supports").expect["supports"] is True
+    assert harness.load_case(harness.CASES / "must-shrink").expect["scale_range"] == [0.78, 0.84]
+    assert harness.load_case(harness.CASES / "stl-must-shrink").expect["scale_range"] == [0.78, 0.84]
+    assert harness.load_case(harness.CASES / "stl-needs-supports").expect["supports"] is False
+    assert harness.load_case(harness.CASES / "stl-thin-footprint").expect["source_size_mm"] == [8, 8, 180]
+
+
+@pytest.mark.parametrize(("license_text", "allowed"), [
+    ("CC0 1.0 Universal", True),
+    ("CC0-1.0", True),
+    ("CC BY 3.0", True),
+    ("CC-BY-4.0", True),
+    ("CC BY-SA 4.0", True),
+    ("CC-BY-SA-3.0", True),
+    ("Creative Commons Attribution 4.0 International", True),
+    ("Creative Commons Attribution-ShareAlike 3.0 International", True),
+    ("own work: generated locally", True),
+    ("MIT", True),
+    ("MIT License", True),
+    ("Apache", True),
+    ("Apache-2.0", True),
+    ("Apache 1.0", True),
+    ("Apache License, Version 1.0", True),
+    ("Apache 2.0", True),
+    ("Apache License, Version 2.0", True),
+    ("Apache License 1.1", True),
+    ("public domain", True),
+    ("public domain dedication", True),
+    ("CC BY-NC 4.0", False),
+    ("CC BY-ND 4.0", False),
+    ("CC BY 4.0: non-commercial exception", False),
+    ("MIT: not for commercial use", False),
+    ("MIT: no derivatives", False),
+    ("public domain: restricted", False),
+    ("MIT-inspired", False),
+    ("Apache 3.0", False),
+    ("restricted", False),
+    ("", False),
+])
+def test_public_license_allowlist(license_text, allowed):
+    assert _allows_public_license(license_text) is allowed
 
 
 def test_private_corpus_is_explicitly_opt_in(tmp_path, monkeypatch):
@@ -83,7 +171,9 @@ def test_public_case_still_needs_redistribution_license(tmp_path, monkeypatch):
 
 @pytest.mark.parametrize("case", CASES, ids=IDS)
 def test_case_folder_is_complete(case):
-    assert case.model.is_file() and case.model.stat().st_size < 1 << 20
+    assert case.model.is_file()
+    if not harness.is_private_case(case.dir):
+        assert case.model.stat().st_size <= 5 * 1024 * 1024
     assert case.clicks and case.expect, "case.toml needs [[click]] rules and an [expect] table"
     for rule in case.clicks:
         assert rule.get("question") and rule.get("button"), rule
@@ -94,12 +184,13 @@ def _assert_case_license(case):
     if harness.is_private_case(case.dir):
         return
     # Public fixtures must name a license that permits redistribution.
-    text = case.data.get("license", "")
+    license_text = str(case.data.get("license", "")).strip()
     attribution = case.dir / "ATTRIBUTION"
+    candidates = [license_text] if license_text else []
     if attribution.is_file():
-        text += attribution.read_text()
-    assert re.search(r"CC0|public domain|CC[- ]BY|MIT|Apache", text, re.I), (
-        "put license = \"...\" in case.toml (or an ATTRIBUTION file) naming a license that allows redistribution")
+        candidates.extend(line.strip() for line in attribution.read_text().splitlines() if line.strip())
+    assert any(_allows_public_license(candidate) for candidate in candidates), (
+        "put license = \"...\" in case.toml (or an ATTRIBUTION line) naming a license that allows redistribution")
 
 
 @pytest.mark.parametrize("case", CASES, ids=IDS)
@@ -113,17 +204,42 @@ def test_discord_flow(case, tmp_path):
 
 
 def test_checked_in_models_match_the_generator(tmp_path, monkeypatch):
-    """make_models.py is the source of truth; a hand edited model.3mf would drift from it."""
+    """Generated fixture content matches the source of truth, independent of ZIP compression."""
     from . import make_models
     monkeypatch.setattr(make_models, "HERE", tmp_path)
     make_models.build()
-    for fresh in sorted((tmp_path / "cases").glob("*/model.3mf")):
-        committed = harness.CASES / fresh.parent.name / "model.3mf"
-        assert committed.read_bytes() == fresh.read_bytes(), (
-            f"{committed} differs from make_models.py output; rerun python3 tests/corpus/make_models.py")
+    import zipfile
+    generated = {path.relative_to(tmp_path / "cases") for suffix in (".3mf", ".stl")
+                 for path in (tmp_path / "cases").glob(f"*/model{suffix}")}
+    expected_generated = {
+        Path(case) / f"model{suffix}"
+        for case, suffix in (
+            ("must-shrink", ".3mf"), ("needs-supports", ".3mf"),
+            ("parts-one-plate", ".3mf"), ("plates-multicolor", ".3mf"),
+            ("single-part", ".3mf"), ("split-plan", ".3mf"),
+            ("stl-must-shrink", ".stl"), ("stl-needs-supports", ".stl"),
+            ("stl-single-part", ".stl"), ("stl-thin-footprint", ".stl"),
+        )
+    }
+    checked_in = {Path(case.name) / case.model.name for case in CASES
+                  if not harness.is_private_case(case.dir)}
+    assert generated == expected_generated, f"generator inventory differs: {generated ^ expected_generated}"
+    assert generated <= checked_in, f"generated fixtures missing from public corpus: {generated - checked_in}"
+    for suffix in (".3mf", ".stl"):
+        for fresh in sorted((tmp_path / "cases").glob(f"*/model{suffix}")):
+            committed = harness.CASES / fresh.parent.name / fresh.name
+            if suffix == ".3mf":
+                # DEFLATE bytes can vary across Python/zlib versions even when all fixture members match.
+                with zipfile.ZipFile(committed) as checked_in, zipfile.ZipFile(fresh) as generated:
+                    assert checked_in.namelist() == generated.namelist(), committed
+                    assert {name: checked_in.read(name) for name in checked_in.namelist()} == {
+                        name: generated.read(name) for name in generated.namelist()}, committed
+            else:
+                assert committed.read_bytes() == fresh.read_bytes(), (
+                    f"{committed} differs from make_models.py output; rerun python3 tests/corpus/make_models.py")
 
 
-def test_case_accepts_any_model_extension(tmp_path):
+def test_case_accepts_supported_model_extension(tmp_path):
     """A folder with one .stl and no model.3mf is a case, not an error."""
     folder = tmp_path / "renamed"
     folder.mkdir()
@@ -132,6 +248,8 @@ def test_case_accepts_any_model_extension(tmp_path):
     assert harness.find_model(folder).name == "bracket.stl"
     loaded = harness.load_case(folder)
     assert loaded.model.name == "bracket.stl"
+    event = harness.drop_event(loaded.model, "suffix-check")
+    assert event.media_urls[0].endswith("suffix-check.stl")
 
 
 def test_case_prefers_model_3mf(tmp_path):

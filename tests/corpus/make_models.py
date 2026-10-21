@@ -1,11 +1,12 @@
-"""Write the corpus models. Run `python3 tests/corpus/make_models.py` to regenerate every model.3mf.
+"""Write the corpus models. Run `python3 tests/corpus/make_models.py` to regenerate every model fixture.
 
 The shapes are generated here, not copied from anyone, so each one is CC0 and safe to commit.
-Output is deterministic (fixed zip timestamps, sorted entries): rerunning leaves git clean.
+Fixture content is deterministic (fixed ZIP timestamps and sorted entries); compressed ZIP bytes may vary by zlib version.
 Only the standard library is used.
 """
 import json
 import math
+import struct
 import sys
 import zipfile
 from pathlib import Path
@@ -55,6 +56,23 @@ def t_shape(bar_w, stem_w, height, bar_t, depth):
                (bar_w, height), (0, height), (0, height - bar_t), (s0, height - bar_t)]
     triangles = [(0, 1, 2), (0, 2, 7), (5, 6, 7), (5, 7, 2), (5, 2, 3), (5, 3, 4)]
     return extrude_y(profile, triangles, depth)
+
+
+def write_stl(path, mesh):
+    """Write a deterministic binary STL from generated CC0 triangles."""
+    vertices, faces = mesh
+    rows = [b"Print Buddy generated corpus model (CC0)".ljust(80, b"\0"), struct.pack("<I", len(faces))]
+    for face in faces:
+        a, b, c = (vertices[index] for index in face)
+        ux, uy, uz = (b[i] - a[i] for i in range(3))
+        vx, vy, vz = (c[i] - a[i] for i in range(3))
+        normal = (uy * vz - uz * vy, uz * vx - ux * vz, ux * vy - uy * vx)
+        length = math.sqrt(sum(value * value for value in normal)) or 1.0
+        normal = tuple(value / length for value in normal)
+        rows.append(struct.pack("<12fH", *normal, *a, *b, *c, 0))
+    target = Path(path)
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_bytes(b"".join(rows))
 
 
 def _xml(objects, items):
@@ -160,8 +178,16 @@ def build():
     write_3mf(cases / "single-part/model.3mf",
               [("Cube", 1, box(30, 30, 20), (90, 90))],
               [("Plate 1", [0])], [WHITE])
+    # Native STL has no project metadata, so its corpus covers geometry ingestion and fit outcomes.
+    write_stl(cases / "stl-single-part/model.stl", box(30, 30, 20))
+    write_stl(cases / "stl-must-shrink/model.stl", box(260, 260, 8))
+    write_stl(cases / "stl-needs-supports/model.stl", t_shape(60, 12, 40, 6, 30))
+    write_stl(cases / "stl-thin-footprint/model.stl", box(8, 8, 180))
 
 
 if __name__ == "__main__":
     build()
-    print("wrote", len(list((HERE / "cases").glob("*/model.3mf"))), "models", file=sys.stderr)
+    cases = HERE / "cases"
+    counts = {suffix: sum(path.suffix.lower() == suffix for case in cases.iterdir() for path in case.iterdir())
+              for suffix in (".3mf", ".stl")}
+    print(f"wrote {counts['.3mf']} 3MF projects and {counts['.stl']} STL meshes", file=sys.stderr)

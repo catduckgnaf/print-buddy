@@ -207,7 +207,7 @@ def test_idle_guard_refusal_happens_before_approval_upload_and_start(tmp_path):
          patch.object(job, 'read_stock_detail', return_value=native), \
          patch.object(job.subprocess, 'run', side_effect=upload):
         with patch.object(sys, 'argv', ['model_job.py', 'print-now', str(job_path)]):
-            with pytest.raises(RuntimeError, match='native rightTargetTemp == 0'):
+            with pytest.raises(SystemExit, match='REFUSED: idle guard failed.*Nothing uploaded or started'):
                 job.main()
     assert json.loads(job_path.read_text())['approvals'] == []
     assert mapped_job['approvals'] == []

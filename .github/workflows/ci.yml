@@ -91,12 +91,13 @@ jobs:
               https://github.com/OrcaSlicer/OrcaSlicer/releases/download/v2.5.0-alpha/OrcaSlicer-Linux-flatpak_V2.5.0-alpha_x86_64.flatpak
           fi
           echo '2caa907e75ca1cd499568d7940d1fe787b795b3deff1d5dcf4cda31f1a4b6d32  '"$bundle" | sha256sum --check
+          echo "ORCA_ALPHA_BUNDLE=$bundle" >> "$GITHUB_ENV"
       - name: Install OrcaSlicer app bundle and runtime
         run: |
           set -euo pipefail
           flatpak remote-add --user --if-not-exists flathub https://dl.flathub.org/repo/flathub.flatpakrepo
           flatpak install --user -y --noninteractive flathub org.gnome.Platform//50
-          flatpak install --user --bundle -y --noninteractive "$bundle"
+          flatpak install --user --bundle -y --noninteractive "$ORCA_ALPHA_BUNDLE"
           flatpak info --user --show-ref "$ORCA_FLATPAK_APP_ID"
           flatpak info --user --show-commit "$ORCA_FLATPAK_APP_ID"
       - name: Run slicer tests (2.5.0 alpha)

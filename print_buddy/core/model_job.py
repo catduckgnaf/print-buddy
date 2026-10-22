@@ -926,6 +926,11 @@ def verify_gcode(gcode_path):
     native = _native()
     mode = _mr(st, "/printer/objects/query?save_variables")["result"]["status"]["save_variables"]["variables"].get("display_off") if native else None
     nozzle_type = (st.get("nozzle") or {}).get("type") or settings.current().get("printer", {}).get("nozzle_type") or "hardened_steel"
+    from .printer_state import _material_temperature_contract
+    try:
+        _material_temperature_contract(st)
+    except RuntimeError as exc:
+        errors.append(str(exc))
     from .nozzle import effective_nozzle_temperature
     effective_hotend = effective_nozzle_temperature(nozzle_type, st["temps_c"]["nozzle"])
     if not native:
@@ -1340,6 +1345,7 @@ def job_details(out, *, hardware=None, selection=None, settings=None, record_pat
         f"- Filament: {f'{grams} g' if grams is not None else 'unknown'}; {u(chan)}",
         f"- Printer: {u(printer)}",
         f"- Stock nozzle: {u(nozzle_mm)} mm; targets nozzle {u(hot)} C, bed {u(bed)} C",
+        *([f"- Temperature material: {u((hardware or {}).get('spool', {}).get('material'))}; source: {u((hardware or {}).get('temperature_resolution', {}).get('source'))}"] if hardware else []),
         *([f"- Calibration: Z offset {z}; {mesh_line(mesh)}"] if calibration else []),
         _maintenance_detail_line(),
     ])
@@ -3235,7 +3241,7 @@ def print_now(target, wait_s=25, accept_default_z_offset=False, reprint=False, r
     out["z_offset_notice"]=z_notice; out["record_path"]=record_path
     live=live_snapshot(st); out["live"]=live
     screen_z=mesh.get("z_offset_mm"); out["screen_z_offset_mm"]=screen_z; out["native_screen_z_offset_mm"]=screen_z_offset(st); out["bed_mesh"]=mesh
-    out["details"]=job_details(out, hardware=hardware, selection=selection, settings=settings,
+    out["details"]=job_details(out, hardware=st, selection=selection, settings=settings,
                                record_path=record_path, z_notice=z_notice, live=live,
                                screen_z=screen_z, mesh=mesh, printer=st.get("printer") or (None if adapter.multi_slot else adapter.label),
                                nozzle_mm=(st.get("nozzle") or {}).get("diameter_mm"), calibration=adapter.has_native_screen)

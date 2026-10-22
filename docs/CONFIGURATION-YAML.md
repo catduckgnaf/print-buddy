@@ -6,7 +6,20 @@ Settings are merged key by key in this order: printer model defaults, home confi
 
 The checked-in `config/home.yaml`, the README's [All settings table](../README.md#all-settings), and the selected printer model's defaults form the supported settings inventory. Model IDs are `flashforge.ad5x`, `sovol.sv06` and `klipper.generic`. Optional `printer.nozzle_type` values are limited to the selected model's supported set: `brass`, `hardened_steel`, `stainless_steel`, `ruby`, `tungsten_carbide` or `diamond`. `nozzle_temp_offsets` accepts those known names with values from −10 to +15 °C. `visual_watch.sensitivity` is an integer from 1 to 5; `visual_watch.enabled` is a YAML boolean and defaults to `true` in `home.yaml`, preserving the behavior of existing TOML configurations, which had no toggle and always ran camera checks.
 
-Types, supported ranges, printer capabilities, nozzle limits and operational guards are validated before use. Unknown keys in local overrides fail with an error that names the section and key. Safety invariants are not configuration settings: model-supported nozzle/slot limits, protected G-code checks, slice validation, and operator confirmations remain enforced by code and cannot be disabled or relaxed through YAML. Monitoring stays enabled by default for backward compatibility and can be explicitly disabled; changing settings does not start a print or contact a printer during configuration validation.
+Defaults are documented representative targets, not universal material guarantees. The selected Spoolman filament's explicit temperatures take precedence; missing targets use the matching profile below. Unknown materials fail closed. Local overrides may replace nozzle and bed values for a recognized profile.
+
+```yaml
+material_temps:
+  PLA: {nozzle: 210, bed: 60}
+  PETG: {nozzle: 240, bed: 85}
+  ABS: {nozzle: 245, bed: 100}
+  ASA: {nozzle: 260, bed: 105}
+  TPU: {nozzle: 230, bed: 50}
+  PA: {nozzle: 260, bed: 90}
+  PC: {nozzle: 275, bed: 110}
+```
+
+The targets use representative points within the documented manufacturer/profile ranges: PLA 185–235/50–60 °C, PETG 215–270/70–90 °C, ABS 230–255/95–110 °C, ASA 220–275/90–110 °C, TPU 220–260/40–85 °C, PA 240–285/70–115 °C, and PC 270–275/100–115 °C. Brand, formulation, printer capability, and enclosure affect the correct settings. Every resolved nozzle target still passes the active nozzle type's safety limit, and the existing printer start/slice validation remains authoritative.
 
 Example:
 

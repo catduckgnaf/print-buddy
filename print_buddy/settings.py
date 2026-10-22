@@ -64,9 +64,15 @@ LEGACY_ENV = {
     "PRINT_RECORDS_VAULT": ("paths", "records_vault"),
 }
 # Sections whose keys are names you choose, not a fixed set.
-OPEN_SECTIONS = {"cold_pull", "nozzle_temp_offsets"}
+OPEN_SECTIONS = {"cold_pull", "nozzle_temp_offsets", "material_temps"}
 # Keys that can be optionally specified even if absent from base home.toml.
 OPTIONAL_KEYS = {("printer", "nozzle_type"): str, ("visual_watch", "enabled"): bool}
+DEFAULT_MATERIAL_TEMPS = {
+    "PLA": {"nozzle": 210, "bed": 60}, "PETG": {"nozzle": 240, "bed": 85},
+    "ABS": {"nozzle": 245, "bed": 100}, "ASA": {"nozzle": 260, "bed": 105},
+    "TPU": {"nozzle": 230, "bed": 50}, "PA": {"nozzle": 260, "bed": 90},
+    "PC": {"nozzle": 275, "bed": 110},
+}
 
 
 def _merge(base, extra):
@@ -190,6 +196,14 @@ def _positive(data, section, key, kind=float):
 
 def validate(data):
     """Normalize types and fail loudly on a typo instead of slicing with a bad bed."""
+    material_temps = data.setdefault("material_temps", {})
+    for family, defaults in DEFAULT_MATERIAL_TEMPS.items():
+        profile = material_temps.setdefault(family, defaults.copy())
+        if not isinstance(profile, dict) or set(profile) != {"nozzle", "bed"}:
+            raise SettingsError(f"[material_temps] {family} must define exactly nozzle and bed")
+        for key, value in profile.items():
+            if isinstance(value, bool) or not isinstance(value, (int, float)) or not 0 < value <= 300:
+                raise SettingsError(f"[material_temps] {family}.{key} must be between 1 and 300 °C, got {value!r}")
     bed = data.get("printer", {}).get("bed_mm")
     if (not isinstance(bed, list) or len(bed) != 2
             or not all(isinstance(v, (int, float)) and not isinstance(v, bool) and v > 0 for v in bed)):

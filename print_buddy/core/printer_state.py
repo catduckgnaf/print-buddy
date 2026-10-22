@@ -23,7 +23,20 @@ from .. import printers, settings
 STATE = str(settings.state_dir() / "printer_hardware.json")
 
 
-_FAMILY_BASES = ("PETG", "PLA", "ABS", "ASA", "TPU")
+_FAMILY_BASES = ("PETG", "PLA", "ABS", "ASA", "TPU", "PA", "PC")
+
+
+# Conservative documented fallback targets, configurable in [material_temps].
+# Values reflect representative material profiles, not universal guarantees.
+DEFAULT_MATERIAL_TEMPS = {
+    "PLA": {"nozzle": 210, "bed": 60},
+    "PETG": {"nozzle": 240, "bed": 85},
+    "ABS": {"nozzle": 245, "bed": 100},
+    "ASA": {"nozzle": 260, "bed": 105},
+    "TPU": {"nozzle": 230, "bed": 50},
+    "PA": {"nozzle": 260, "bed": 90},
+    "PC": {"nozzle": 275, "bed": 110},
+}
 
 
 def material_family(material):
@@ -33,9 +46,21 @@ def material_family(material):
     normalized label, so PETG never matches PLA.
     """
     m = re.sub(r"[\s_+\-]+", "", str(material or "").upper())
+    # Labels may place the polymer name before or after a descriptor (Matte PLA).
+    # Match only complete known base tokens, never a substring like PETG inside another label.
     for base in _FAMILY_BASES:
-        if base in m:
-            return f"{base}-CF" if "CF" in m.replace(base, "", 1) else base
+        if m == base:
+            return base
+        if m.startswith(base):
+            suffix = m[len(base):]
+            if suffix in {"PRO", "PLUS", "MATTE", "SILK", "FLEX", "TOUGH"}:
+                return base
+            if suffix in {"CF", "GF", "CARBONFIBER", "GLASSFIBER"}:
+                return f"{base}-{suffix}"
+        if m.endswith(base) and m[:-len(base)] in {"MATTE", "SILK", "TOUGH", "PRO"}:
+            return base
+    if m in {"FLEXIBLE", "NYLON", "POLYAMIDE"}:
+        return {"FLEXIBLE": "TPU", "NYLON": "PA", "POLYAMIDE": "PA"}[m]
     return m
 
 
@@ -43,6 +68,60 @@ def same_material(a, b):
     """True when two material labels slice as the same family."""
     fa, fb = material_family(a), material_family(b)
     return bool(fa) and fa == fb
+
+
+def resolve_material_temperatures(material, filament, config=None):
+    """Resolve validated nozzle/bed targets and provenance from a Spoolman filament."""
+    import math
+    family = material_family(material)
+    aliases = {"FLEXIBLE": "TPU", "NYLON": "PA", "POLYAMIDE": "PA"}
+    # Abrasive reinforced variants retain their distinct family for nozzle
+    # safety checks, but inherit their base polymer's thermal profile.
+    thermal_family = family.split("-", 1)[0] if family.endswith(("-CF", "-GF", "-CARBONFIBER", "-GLASSFIBER")) else family
+    thermal_family = aliases.get(thermal_family, thermal_family)
+    defaults = DEFAULT_MATERIAL_TEMPS.copy()
+    if config is None:
+        config = settings.current()
+    defaults.update(config.get("material_temps", {}))
+    if thermal_family not in defaults:
+        raise ValueError(f"Unsupported filament material {material!r}; configure a recognized material profile, no PLA fallback is allowed")
+    base = defaults[thermal_family]
+    for key in ("nozzle", "bed"):
+        value = base.get(key)
+        if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(float(value)) or not 0 < float(value) <= 300:
+            raise ValueError(f"Invalid configured {thermal_family} {key} temperature {value!r} °C")
+    result, sources = {}, {}
+    for key, field in (("nozzle", "settings_extruder_temp"), ("bed", "settings_bed_temp")):
+        value = filament.get(field)
+        if value is None:
+            value = base[key]
+            sources[key] = "material default"
+        else:
+            sources[key] = "Spoolman filament"
+        if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(float(value)) or not 0 < float(value) <= 300:
+            raise ValueError(f"Invalid {key} temperature {value!r} °C for {material}; expected a finite value from 1 to 300 °C")
+        result[key] = float(value) if not float(value).is_integer() else int(value)
+    return family, result, sources
+
+
+def _material_temperature_contract(state):
+    """Validate selected material temperatures and retain compatibility with old state files."""
+    material = (state.get("spool") or {}).get("material")
+    if not material:
+        raise RuntimeError("selected spool has no material; cannot determine safe temperatures")
+    resolution = state.get("temperature_resolution")
+    if resolution:
+        if resolution.get("material_family") != material_family(material):
+            raise RuntimeError("stored temperature material does not match selected spool")
+        return
+    # Existing explicitly selected runtime temperatures remain valid for legacy state.
+    # This only validates material recognition; it never substitutes PLA for another family.
+    family = material_family(material)
+    aliases = {"FLEXIBLE": "TPU", "NYLON": "PA", "POLYAMIDE": "PA"}
+    family = aliases.get(family, family)
+    config = settings.current()
+    if family not in config.get("material_temps", DEFAULT_MATERIAL_TEMPS):
+        raise RuntimeError(f"Unsupported filament material {material!r}; no PLA fallback is allowed")
 
 
 def load():
@@ -205,10 +284,14 @@ def check(st=None):
 
 
 def summary(st, calibration_owner="unknown", calibration_valid=None):
+    resolution = st.get("temperature_resolution") or {}
+    material = (st.get("spool") or {}).get("material", "unknown")
+    source = resolution.get("source", "explicit/legacy state")
+    temp_summary = f"{material} nozzle {st['temps_c']['nozzle']}°C, bed {st['temps_c']['bed']}°C ({source})"
     if not printers.current().has_native_screen:
         return (f"{st['nozzle']['diameter_mm']} mm {st['nozzle']['type']} nozzle, "
-                f"Spoolman #{st['spool']['spoolman_id']} {st['spool']['name']} ({st['spool']['material']}), "
-                f"{st['temps_c']['nozzle']}/{st['temps_c']['bed']} C")
+                f"Spoolman #{st['spool']['spoolman_id']} {st['spool']['name']} ({material}), "
+                f"{temp_summary}")
     if calibration_owner == "native":
         offset = (st.get("calibration_baseline") or {}).get("native_zProbeOffset", "unknown")
         calibration = f"native zProbeOffset {offset} (screenless user offset not applicable)"
@@ -257,8 +340,13 @@ def main():
         f = sp["filament"]
         st["spool"] = {"spoolman_id": a.spool, "name": f["name"], "material": f.get("material"),
                        "diameter_mm": f.get("diameter", 1.75), "density": f.get("density", 1.24)}
-        if f.get("settings_extruder_temp"): st["temps_c"]["nozzle"] = f["settings_extruder_temp"]
-        if f.get("settings_bed_temp"): st["temps_c"]["bed"] = f["settings_bed_temp"]
+        family, targets, sources = resolve_material_temperatures(f.get("material"), f)
+        from .nozzle import effective_nozzle_temperature
+        nozzle_type = (st.get("nozzle") or {}).get("type", "hardened_steel")
+        effective_nozzle_temperature(nozzle_type, targets["nozzle"])
+        st["temps_c"] = {"nozzle": targets["nozzle"], "bed": targets["bed"]}
+        st["temperature_resolution"] = {"material_family": family, "sources": sources,
+                                         "source": "Spoolman filament" if all(v == "Spoolman filament" for v in sources.values()) else "material default / Spoolman filament" if len(set(sources.values())) > 1 else "material default"}
         _get(f"{st['moonraker_url']}/server/spoolman/spool_id", {"spool_id": a.spool}, "POST")
     if a.nozzle is not None or a.nozzle_type is not None:
         from .nozzle import CANONICAL_NOZZLE_SIZES, NozzleError, normalize_nozzle_type, validate_nozzle_setting

@@ -187,6 +187,7 @@ class OverrideTests(unittest.TestCase):
                           "max_bytes", "local_retention_days", "plan_clip_retention_days"},
             "maintenance": {"quick_hours", "full_hours", "full_days"},
             "nozzle_temp_offsets": {"brass", "hardened_steel", "stainless_steel", "ruby", "tungsten_carbide", "diamond"},
+            "material_temps": {"PLA", "PETG", "ABS", "ASA", "TPU", "PA", "PC"},
         }
         self.assertEqual(set(inventory), set(expected))
         for section, keys in expected.items():

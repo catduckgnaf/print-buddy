@@ -7,6 +7,14 @@ nozzle_temp_offsets:
   ruby: 0.0
   tungsten_carbide: 0.0
   diamond: 0.0
+material_temps:
+  PLA: {nozzle: 210, bed: 60}
+  PETG: {nozzle: 240, bed: 85}
+  ABS: {nozzle: 245, bed: 100}
+  ASA: {nozzle: 260, bed: 105}
+  TPU: {nozzle: 230, bed: 50}
+  PA: {nozzle: 260, bed: 90}
+  PC: {nozzle: 275, bed: 110}
 layout:
   max_merged_hours: 12
 orca:

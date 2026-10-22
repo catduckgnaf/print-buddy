@@ -622,6 +622,8 @@ def slice_model(source, folder, state, brim=None, first_layer=False, color_decis
         if not isinstance(color, str) or not re.fullmatch(r'#?[0-9A-Fa-f]{6}', color):
             raise RuntimeError('filament color must be an explicit six-digit RGB value')
         color = '#' + color.lstrip('#').upper()
+    from .printer_state import _material_temperature_contract
+    _material_temperature_contract(state)
     from .nozzle import effective_nozzle_temperature
     base_nozzle_temp = float(state['temps_c']['nozzle'])
     effective_nozzle_temp = effective_nozzle_temperature(nozzle_type, base_nozzle_temp)

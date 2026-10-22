@@ -900,7 +900,8 @@ def main():
         if batch_complete:
             # No immediate reset: arm the 2h quiet timer instead.
             previous["reset_armed_at"] = time.time()
-        previous["announced_completion"] = True
+        # Keep the completion retryable until the listener confirms Discord delivery.
+        previous["pending_completion_message"] = message
 
     # A cancel or error also finalizes the Obsidian note, without an announcement
     # or session cleanup, so every started print ends with a dated outcome.

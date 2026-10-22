@@ -533,9 +533,24 @@ def manual_resume_tracking_message(filename, slot=None, compatible_spools=None):
     )
 
 
+def _post_completion(message, completion_message):
+    """Acknowledge only a matching pending notice after transport success."""
+    delivered = post(message)
+    if delivered:
+        state = announcer.load_state()
+        if state.get("pending_completion_message") == completion_message:
+            state.pop("pending_completion_message", None)
+            state["announced_completion"] = True
+            announcer.save_state(state)
+    return delivered
+
+
 def run_announcer(reason):
     """Run announcer once; wait to make completion and its video one Discord message."""
     out = io.StringIO()
+    pending = announcer.load_state().get("pending_completion_message")
+    if pending:
+        _post_completion(pending, pending)
     try:
         with contextlib.redirect_stdout(out):
             announcer.main()
@@ -568,7 +583,7 @@ def run_announcer(reason):
         if tl_plan and tl_plan[1] == "final":
             _plan_timelapse_post(None, message, tl_plan)
         else:
-            post(message)
+            _post_completion(message, message)
         if plan_id:
             post_plate_picker(plan_id)
         return
@@ -578,7 +593,7 @@ def run_announcer(reason):
         if tl_plan and tl_plan[1] == "final":
             _plan_timelapse_post(None, message, tl_plan)
         else:
-            post(message)
+            _post_completion(message, message)
         if plan_id:
             post_plate_picker(plan_id)
         return
@@ -619,7 +634,7 @@ def _plan_timelapse_post(job_key, completion_message, tl_plan):
             log(f"plan timelapse clip for {job_key!r} unavailable: {exc!r}")
             clip = None
     if stage == "more":
-        post(completion_message)
+        _post_completion(completion_message, completion_message)
         with contextlib.suppress(Exception):
             plan_timelapse.prune()  # abandoned plans never reach a final post
         return
@@ -629,14 +644,14 @@ def _plan_timelapse_post(job_key, completion_message, tl_plan):
     partial = stage == "partial" or clip is None or (expected is not None and len(stored) < expected)
     try:
         if not stored:
-            post(completion_message)
+            _post_completion(completion_message, completion_message)
             return
         note = f"{completion_message}\nPartial timelapse: {len(stored)} plate(s) so far." if partial else completion_message
         try:
             combined = plan_timelapse.combine(plan)
         except Exception as exc:
             log(f"timelapse combine failed for plan {plan!r}: {exc!r}")
-            post(completion_message)
+            _post_completion(completion_message, completion_message)
             return
         try:
             announcer.archive_local_timelapse(plan, combined)
@@ -647,9 +662,9 @@ def _plan_timelapse_post(job_key, completion_message, tl_plan):
             video = discord_sized_video(combined)
         except Exception as exc:
             log(f"combined timelapse shrink failed for plan {plan!r}: {exc!r}")
-        if not post(f"{note}\nMEDIA:{video}"):
+        if not _post_completion(f"{note}\nMEDIA:{video}", completion_message):
             log(f"combined timelapse attach failed for plan {plan!r}; posting text only")
-            post(f"{note}\nCombined timelapse too big for Discord.")
+            _post_completion(f"{note}\nCombined timelapse too big for Discord.", completion_message)
     finally:
         plan_timelapse.clear(plan)
         with contextlib.suppress(Exception):
@@ -661,20 +676,20 @@ def _timelapse_post(job_key, completion_message):
         archived = announcer.archive_completed_timelapse(job_key)
         if not archived:
             log(f"timelapse not rendered for {job_key!r} within the wait")
-            post(completion_message)
+            _post_completion(completion_message, completion_message)
             return
         local_video = announcer.materialize_archived_timelapse(archived)
         try:
             local_video = discord_sized_video(local_video)
         except Exception as exc:  # oversize source still gets a try; the text fallback covers a 413
             log(f"timelapse shrink failed for {job_key!r}: {exc!r}")
-        if not post(f"{completion_message}\nMEDIA:{local_video}"):
+        if not _post_completion(f"{completion_message}\nMEDIA:{local_video}", completion_message):
             # Never lose the completion notice because Discord refused the attachment.
             log(f"timelapse attach failed for {job_key!r}; posting text only")
-            post(f"{completion_message}\nTimelapse archived but too big for Discord: {Path(str(archived)).name}")
+            _post_completion(f"{completion_message}\nTimelapse archived but too big for Discord: {Path(str(archived)).name}", completion_message)
     except Exception as exc:
         log(f"timelapse postprocess failed for {job_key!r}: {exc!r}")
-        post(completion_message)
+        _post_completion(completion_message, completion_message)
 
 
 # Discord rejects bot uploads above the server limit (10 MiB unboosted) with HTTP 413.

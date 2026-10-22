@@ -153,8 +153,9 @@ def install_clarify_stand_in():
 class FakeAdapter:
     """The two DiscordAdapter calls the intake makes. A click is an immediate clarify resolution."""
 
-    def __init__(self, clicks):
+    def __init__(self, clicks, events=None):
         self.clicks = clicks
+        self.events = events if events is not None else []
         self.questions = []   # {'question', 'choices', 'picked'}
         self.sent = []
 
@@ -175,6 +176,7 @@ class FakeAdapter:
         index = self.pick(kw["question"], kw["choices"])
         self.questions.append({"question": kw["question"], "choices": list(kw["choices"]),
                                "picked": kw["choices"][index]})
+        self.events.append(("prompt", kw["question"]))
         cm.resolve_gateway_clarify(kw["clarify_id"], kw["choices"][index])
         return S(success=True)
 
@@ -223,12 +225,14 @@ G1 X120 Y120 E1
 """
 
 
-def fake_orca_run(real_run, orca_command):
+def fake_orca_run(real_run, orca_command, events=None):
     """subprocess.run stand-in. Only a slice may reach Orca in the mock tier; the fit probe is modelled."""
     def run(cmd, *args, **kwargs):
         if list(cmd[:len(orca_command)]) != list(orca_command):
             return real_run(cmd, *args, **kwargs)
         assert "--slice" in cmd, f"mock tier: Orca was asked to do more than slice: {cmd}"
+        if events is not None:
+            events.append(("slice", list(cmd)))
         out = Path(cmd[cmd.index("--outputdir") + 1])
         machine, process = (Path(p) for p in cmd[cmd.index("--load-settings") + 1].split(";")[:2])
         filaments = cmd[cmd.index("--load-filaments") + 1].split(";")
@@ -295,7 +299,8 @@ def run_case(case, work, *, real_slicer=False, state_file=FIXTURE_STATE, in_gate
     stub = _stub_print_now(work)
     model_copy = work / case.model.name
     model_copy.write_bytes(case.model.read_bytes())
-    adapter = FakeAdapter(case.clicks)
+    events = []
+    adapter = FakeAdapter(case.clicks, events)
     starts = []
     real_start = print_next.start
 
@@ -342,7 +347,7 @@ def run_case(case, work, *, real_slicer=False, state_file=FIXTURE_STATE, in_gate
             (WORK / "tmp").mkdir(parents=True, exist_ok=True)
             patch(tempfile, "tempdir", str(WORK / "tmp"))
         else:
-            patch(orca_adapter.subprocess, "run", fake_orca_run(orca_adapter.subprocess.run, orca_adapter.ORCA_COMMAND))
+            patch(orca_adapter.subprocess, "run", fake_orca_run(orca_adapter.subprocess.run, orca_adapter.ORCA_COMMAND, events))
             patch(orca_adapter, "orca_plate_capacity",
                   model_capacity(orca_adapter._multi_plate_capacity, orca_adapter.source_triangles,
                                  orca_adapter._source_plate_count))
@@ -358,7 +363,7 @@ def run_case(case, work, *, real_slicer=False, state_file=FIXTURE_STATE, in_gate
         receipt = json.loads(receipts[-1].read_text()) if receipts else {}
         job = json.loads(Path(receipt["job_json"]).read_text()) if receipt.get("job_json") else {}
         state = printer_state.load()
-    return S(outcome=outcome, receipt=receipt, job=job, state=state, adapter=adapter, starts=starts,
+    return S(outcome=outcome, receipt=receipt, job=job, state=state, adapter=adapter, starts=starts, events=events,
              state_root=state_root, receipts=receipts, archive=archive,
              gcodes=[Path(g) for g in receipt.get("gcodes", [])])
 

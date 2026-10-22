@@ -209,6 +209,14 @@ def test_discord_flow(case, tmp_path):
     run = harness.run_case(case, tmp_path, real_slicer=REAL)
     try:
         harness.check_expectations(case, run)
+        slice_events = [i for i, event in enumerate(run.events) if event[0] == "slice"]
+        assert slice_events, "fake slicer was never called"
+        first_slice = slice_events[0]
+        option_prompts = [i for i, event in enumerate(run.events)
+                          if event[0] == "prompt" and any(term in event[1].casefold() for term in
+                          ("fit", "orient", "support", "quality", "layer", "material", "filament", "color"))]
+        assert all(index < first_slice for index in option_prompts), (
+            f"slice configuration prompt occurred after first slicer call: {run.events}")
     finally:
         if REAL:
             shutil.rmtree(run.archive, ignore_errors=True)

@@ -291,7 +291,7 @@ def run_case(case, work, *, real_slicer=False, state_file=FIXTURE_STATE, in_gate
     environment exactly as the gateway sees them.
     """
     install_clarify_stand_in()
-    from print_buddy.core import model_job, orca_adapter, prepared_intake, printer_state, source_colors
+    from print_buddy.core import background_slice, model_job, orca_adapter, prepared_intake, printer_state, source_colors
     from print_buddy.hermes import _config, print_next, print_records
 
     work = Path(work)
@@ -302,6 +302,14 @@ def run_case(case, work, *, real_slicer=False, state_file=FIXTURE_STATE, in_gate
     events = []
     adapter = FakeAdapter(case.clicks, events)
     starts = []
+    slice_starts = []
+    real_background_start = background_slice.BackgroundSlice.start
+
+    async def observe_slice_start(runner, job_path, binding, slice_func):
+        slice_starts.append(("slice_start", str(job_path)))
+        events.append(("slice_start", str(job_path)))
+        return await real_background_start(runner, job_path, binding, slice_func)
+
     real_start = print_next.start
 
     async def start(target):
@@ -338,6 +346,7 @@ def run_case(case, work, *, real_slicer=False, state_file=FIXTURE_STATE, in_gate
         patch(model_job, "CONTEXT", work / "context.json")
         patch(model_job, "BOUNDS_CACHE", work / "bounds-cache")
         patch(prepared_intake, "_heavy", thread_heavy)
+        patch(background_slice.BackgroundSlice, "start", observe_slice_start)
         patch(model_job, "verify_gcode", offline_verify)
         patch(print_next, "start", start)
         patch(prepared_intake.print_summary, "find_job", find_job)
@@ -364,7 +373,7 @@ def run_case(case, work, *, real_slicer=False, state_file=FIXTURE_STATE, in_gate
         job = json.loads(Path(receipt["job_json"]).read_text()) if receipt.get("job_json") else {}
         state = printer_state.load()
     return S(outcome=outcome, receipt=receipt, job=job, state=state, adapter=adapter, starts=starts, events=events,
-             state_root=state_root, receipts=receipts, archive=archive,
+             slice_starts=slice_starts, state_root=state_root, receipts=receipts, archive=archive,
              gcodes=[Path(g) for g in receipt.get("gcodes", [])])
 
 

@@ -550,7 +550,15 @@ def run_announcer(reason):
     out = io.StringIO()
     pending = announcer.load_state().get("pending_completion_message")
     if pending:
-        _post_completion(pending, pending)
+        delivered = _post_completion(pending, pending)
+        if not delivered or announcer.load_state().get("pending_completion_message"):
+            # Avoid a second identical delivery attempt from main() in this pass.
+            try:
+                with contextlib.redirect_stdout(io.StringIO()):
+                    announcer.main()
+            except Exception as exc:  # never let one bad pass kill the listener
+                log(f"announcer error ({reason}): {exc!r}")
+            return
     try:
         with contextlib.redirect_stdout(out):
             announcer.main()

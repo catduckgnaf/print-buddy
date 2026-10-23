@@ -1,0 +1,124 @@
+"""Button question registry: register, wait, resolve, cancel. No Hermes needed.
+
+The intake asks a question in four steps: register an id, send the buttons, wait in a worker
+thread, then resolve the id with CANCELLED to clean up. A button click (or a typed answer) resolves
+the id from the event loop. This module is the same API as Hermes' ``tools.clarify_gateway``,
+which owns the clicks when the Hermes gateway runs the plugin.
+
+``gateway()`` picks the registry. The standalone bot calls ``activate()`` so its own buttons and
+this registry always meet. Under Hermes the gateway's module is used, so Hermes' Discord adapter
+can resolve what the plugin registered. Without Hermes installed, this module is the only choice.
+"""
+from __future__ import annotations
+
+import sys
+import threading
+import time
+
+CANCELLED = "__cancelled__"
+
+_lock = threading.Lock()
+_prompts: dict[str, "_Prompt"] = {}
+_active = False
+
+
+class _Prompt:
+    __slots__ = ("session_key", "question", "choices", "event", "answer", "created")
+
+    def __init__(self, session_key, question, choices):
+        self.session_key = str(session_key or "")
+        self.question = str(question or "")
+        self.choices = list(choices or [])
+        self.event = threading.Event()
+        self.answer = None
+        self.created = time.monotonic()
+
+
+def register(clarify_id, session_key, question, choices):
+    """Open a prompt. Call before the buttons are sent: a fast click must find it."""
+    with _lock:
+        _prompts[str(clarify_id)] = _Prompt(session_key, question, choices)
+
+
+def resolve_gateway_clarify(clarify_id, answer):
+    """Answer an open prompt. True for the first answer, False when it is unknown or already answered."""
+    with _lock:
+        prompt = _prompts.get(str(clarify_id))
+        if prompt is None or prompt.event.is_set():
+            return False
+        prompt.answer = answer
+        prompt.event.set()
+        return True
+
+
+def wait_for_response(clarify_id, timeout=None):
+    """Block until the prompt is answered. Returns the answer, or None on timeout or an unknown id.
+
+    The prompt is closed either way, so a late click finds nothing to resolve.
+    """
+    with _lock:
+        prompt = _prompts.get(str(clarify_id))
+    if prompt is None:
+        return None
+    got = prompt.event.wait(timeout)
+    with _lock:
+        if _prompts.get(str(clarify_id)) is prompt:
+            _prompts.pop(str(clarify_id), None)
+    return prompt.answer if got else None
+
+
+def is_open(clarify_id):
+    """True while the prompt is registered and unanswered."""
+    with _lock:
+        prompt = _prompts.get(str(clarify_id))
+        return prompt is not None and not prompt.event.is_set()
+
+
+def choices(clarify_id):
+    """The button labels a prompt was registered with, or None when it is not open."""
+    with _lock:
+        prompt = _prompts.get(str(clarify_id))
+        return list(prompt.choices) if prompt is not None and not prompt.event.is_set() else None
+
+
+def session_key(clarify_id):
+    """The session key an open prompt was registered under, else None."""
+    with _lock:
+        prompt = _prompts.get(str(clarify_id))
+        return prompt.session_key if prompt is not None and not prompt.event.is_set() else None
+
+
+def cancel_session(session_key):
+    """Cancel every open prompt of one session key. Returns how many were cancelled."""
+    with _lock:
+        hits = [p for p in _prompts.values() if p.session_key == str(session_key) and not p.event.is_set()]
+        for prompt in hits:
+            prompt.answer = CANCELLED
+            prompt.event.set()
+    return len(hits)
+
+
+def open_count():
+    with _lock:
+        return sum(1 for p in _prompts.values() if not p.event.is_set())
+
+
+def activate(on=True):
+    """The standalone bot owns the buttons: always use this registry, even when Hermes is importable."""
+    global _active
+    _active = bool(on)
+
+
+def active():
+    return _active
+
+
+def gateway():
+    """The registry the current runtime's buttons resolve: this module, or Hermes' clarify gateway."""
+    if _active:
+        return sys.modules[__name__]
+    try:
+        from tools import clarify_gateway
+    except ImportError:
+        return sys.modules[__name__]
+    return clarify_gateway

@@ -62,7 +62,8 @@ async def _with_stop(adapter, source, key, metadata, text, work, *, allow_stop=F
             pass  # progress delivery must not block offline work
         return await work
     import uuid
-    from tools import clarify_gateway as cm
+    from .prompts import gateway as _prompts
+    cm = _prompts()
     cid = uuid.uuid4().hex
     cm.register(cid, key, text, [STOP_LABEL])
     stop_msg = None

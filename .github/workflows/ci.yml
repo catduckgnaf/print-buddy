@@ -24,6 +24,29 @@ jobs:
       - name: Offline tests (no printer, no slicer, no network)
         run: python -m pytest -q tests
 
+  standalone-no-hermes:
+    # #73: the standalone bot installs from requirements.txt alone, loads every handler and imports no Hermes module.
+    runs-on: ubuntu-24.04  # pinned: ubuntu-latest moves to 26 on 2026-10-19
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+      - name: Clean venv with runtime requirements only
+        run: |
+          python -m venv "$RUNNER_TEMP/clean"
+          "$RUNNER_TEMP/clean/bin/python" -m pip install -r requirements.txt
+      - name: Standalone bot setup check
+        env:
+          PRINT_BUDDY__BOT__MODE: standalone
+          PRINT_BUDDY__DISCORD__CHAT_ID: "100000000000000001"
+          PRINT_BUDDY__DISCORD__ALLOWED_USER_IDS: "200000000000000002"
+          DISCORD_BOT_TOKEN: not-a-real-token
+        run: |
+          export PRINT_BUDDY__PATHS__HERMES_HOME="$RUNNER_TEMP/print-buddy"
+          "$RUNNER_TEMP/clean/bin/python" -m print_buddy.bot check
+
   real-slicer:
     # Full corpus and slicer fixtures stay on the production-default OrcaSlicer 2.4.2 track.
     runs-on: ubuntu-24.04  # pinned: ubuntu-latest moves to 26 on 2026-10-19

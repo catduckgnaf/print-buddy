@@ -327,3 +327,17 @@ def test_gateway_environment_keeps_state_in_the_profile(name, tmp_path):
     leaked = [p for p in gateway_home.rglob("*") if p.is_file() and not p.is_relative_to(gateway_home / "profiles")]
     assert not leaked, f"state written outside the profile: {leaked}"
     assert not (gateway_home / "state").exists()
+
+
+# ----------------------------------------------------------------------------- standalone transport (#73)
+
+@pytest.mark.skipif(REAL, reason="the transport does not depend on the slicer; the mock tier covers it")
+@pytest.mark.parametrize("case", CASES, ids=IDS)
+def test_discord_flow_standalone(case, tmp_path):
+    """The same cases through the standalone bot: fake discord.py client, real adapter, buttons and registry."""
+    run = harness.run_case(case, tmp_path, transport="standalone")
+    harness.check_expectations(case, run)
+    assert len(run.slice_starts) == 1, run.slice_starts
+    assert run.adapter.questions, "no button question reached the fake Discord"
+    for message in run.adapter.messages:
+        assert all(label for label, _ in message.buttons()), "a button without a label"

@@ -235,7 +235,17 @@ def check(st=None):
     """Return (ok, problems, facts). Never raises on network errors; reports them."""
     st = st or load()
     probs, facts = [], {}
-    native = printers.current().has_native_screen  # offset authority is a ZMod screen concept
+    adapter = printers.current()
+    if getattr(adapter, 'transport', None) == 'octoprint':
+        try:
+            snapshot = adapter.client().status()
+            facts['octoprint'] = adapter.normalize_status(snapshot)
+            probs.extend(adapter.readiness_problems(st, snapshot))
+        except RuntimeError as exc:
+            probs.append(str(exc))
+        # Nozzle/calibration and loaded spool are operator records on Marlin.
+        return (not probs), probs, facts
+    native = adapter.has_native_screen  # offset authority is a ZMod screen concept
     mr, sm = st["moonraker_url"], st["spoolman_url"]
     try:
         s = _get(f"{mr}/printer/objects/query?configfile=settings")["result"]["status"]["configfile"]["settings"]

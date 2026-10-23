@@ -17,6 +17,7 @@ AD5X_ARTIFACTS = re.compile(
 
 MODELS = tuple(printers.MODELS)
 AD5X, GENERIC, SV06 = "flashforge.ad5x", "klipper.generic", "sovol.sv06"
+OCTOPRINT = "octoprint.marlin"
 
 
 def config_for(family):
@@ -29,7 +30,7 @@ def adapter_for(family):
 
 class ContractTests(unittest.TestCase):
     def test_registry_finds_every_model_file(self):
-        self.assertEqual(set(MODELS), {AD5X, GENERIC, SV06})
+        self.assertEqual(set(MODELS), {AD5X, GENERIC, SV06, OCTOPRINT})
         for key, model in printers.MODELS.items():
             self.assertEqual(model.key, key)
             self.assertTrue((settings.ROOT / "print_buddy" / "templates" / "orca" / model.templates).is_dir())
@@ -54,9 +55,17 @@ class ContractTests(unittest.TestCase):
                 folder = a.templates_dir()
                 for name in ("machine", "process", "filament"):
                     json.loads((folder / f"{name}.json").read_text())
-                self.assertIn("[bed_temperature_initial_layer_single]", a.machine_start_gcode("X MESH=auto", "auto"))
+                if family != OCTOPRINT:
+                    self.assertIn("[bed_temperature_initial_layer_single]", a.machine_start_gcode("X MESH=auto", "auto"))
                 plan = a.start_plan(60, 215)
                 self.assertTrue(plan and all(isinstance(line, str) for line in plan))
+                if family == OCTOPRINT:
+                    self.assertEqual(plan, ["M190 S60", "M109 S215"])
+                    self.assertEqual(a.machine_end_gcode("END_PRINT"), "END_PRINT")
+                    self.assertRaises(Exception, a.moonraker_start_commands, "part.gcode")
+                    self.assertRaises(Exception, a.moonraker_objects)
+                    self.assertEqual(a.normalize_status({})["state"], "unknown")
+                    continue
                 cmds = a.moonraker_start_commands("part.gcode")
                 self.assertEqual(cmds[-1]["path"], "/printer/print/start")
                 self.assertEqual(cmds[-1]["body"], {"filename": "part.gcode"})
@@ -189,7 +198,8 @@ class SettingsModelTests(unittest.TestCase):
             data = self.load(model=key)
             for section, values in model.settings.items():
                 for name, value in values.items():
-                    self.assertEqual(data[section][name], value, (key, section, name))
+                    expected = Path(settings.ROOT / value) if section == "orca" and name == "templates" else value
+                    self.assertEqual(data[section][name], expected, (key, section, name))
 
     def test_local_toml_overrides_the_model_defaults_with_type_checks(self):
         folder = Path(tempfile.mkdtemp())

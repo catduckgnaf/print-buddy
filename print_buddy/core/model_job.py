@@ -978,14 +978,23 @@ def verify_gcode(gcode_path):
                     math.isclose(float(args.get(hotend_key, 'nan')), float(hotend), abs_tol=1e-3))
         except ValueError:
             return False
-    if not native:
+    octoprint = getattr(printers.current(), 'transport', None) == 'octoprint'
+    if octoprint:
+        for command, target in (('M190', bed), ('M109', hotend)):
+            values = re.findall(rf'^{command}\s+S([\d.]+)', text, re.M)
+            if not values or not math.isclose(float(values[0]), float(target), abs_tol=1e-3):
+                errors.append(f'missing {command} matching target {target}')
+        # Validate the slicer-owned shutdown, never append a guessed end sequence.
+        if not all(re.search(rf'^{cmd}\s+S0(?:\s|$)', text, re.M) for cmd in ('M104', 'M140')):
+            errors.append('Marlin slicer end G-code must turn off nozzle and bed (M104 S0, M140 S0)')
+    elif not native:
         macro = printers.current().start_macro
         if not numeric_macro_match(rf'^{re.escape(macro)}\s+([^;]*)', 'BED', 'HOTEND'):
             errors.append(f"missing {macro} matching bed {bed} and effective hotend {hotend}")
     elif not (numeric_macro_match(r'^PRINT_START\s+([^;]*)', 'BED', 'HOTEND') or
               numeric_macro_match(r'^START_PRINT\s+([^;]*)', 'BED_TEMP', 'EXTRUDER_TEMP')):
         errors.append(f"missing START_PRINT/PRINT_START matching bed {bed} and effective hotend {hotend}")
-    if not (re.search(r'^PRINT_END(?:\s|$)',text,re.M) or re.search(r'^END_PRINT(?:\s|$)',text,re.M)
+    if not octoprint and not (re.search(r'^PRINT_END(?:\s|$)',text,re.M) or re.search(r'^END_PRINT(?:\s|$)',text,re.M)
             or (not native and re.search(rf'^{re.escape(printers.current().end_macro)}(?:\s|$)',text,re.M))):
         errors.append("missing END_PRINT/PRINT_END safe end sequence")
     try:
@@ -3081,6 +3090,45 @@ def remap_slot(target, new_slot, tool="0", state=None):
     }
 
 
+def _print_octoprint(adapter, state, gcode, job, job_path, wait_s, reprint):
+    """A separate transport path, retaining artifact and approval guards above."""
+    client = adapter.client()
+    try:
+        client.require_ready(client.status())
+        verify_gcode(gcode)
+        _refuse_multicolor(gcode.read_text())
+    except RuntimeError as exc:
+        raise SystemExit(f'REFUSED: {exc}. Nothing uploaded or started.') from exc
+    remote = remote_name(gcode, file_sha256(gcode), job)
+    if job_path is not None:
+        _consume_approval(job_path, job, gcode, reprint=reprint)
+    try:
+        remote = client.upload(gcode, remote)
+        from .nozzle import effective_nozzle_temperature
+        hotend = effective_nozzle_temperature((state.get('nozzle') or {}).get('type', 'hardened_steel'), state['temps_c']['nozzle'])
+        client.start(remote, state['temps_c']['bed'], hotend)
+    except RuntimeError as exc:
+        raise SystemExit(f'OctoPrint submission failed or uncertain: {exc}. Do not resubmit without checking printer status.') from exc
+    # Accepted is not proof of printing. No resubmission on delayed readback.
+    live = {}
+    try:
+        live = adapter.normalize_status(client.status())
+    except RuntimeError:
+        pass
+    confirmed = live.get('state') == 'printing' and live.get('filename') == remote
+    out = {'started': confirmed, 'accepted': True, 'file': remote, 'method': 'octoprint',
+           'phase': 'executing' if confirmed else 'awaiting_confirmation',
+           'outcome': 'printing' if confirmed else 'unconfirmed', 'live': live,
+           'message': 'printing' if confirmed else 'submitted, awaiting confirmation; do not resubmit'}
+    if confirmed:
+        try:
+            out['record_path'] = record_start(gcode, remote)
+        except Exception as exc:
+            print(f'WARNING: start record failed: {exc}')
+    print(('PRINT STARTED ' if confirmed else 'START SUBMITTED; AWAITING CONFIRMATION ') + json.dumps(out))
+    return out
+
+
 def print_now(target, wait_s=25, accept_default_z_offset=False, reprint=False, remap_slot_num=None):
     """Bed is confirmed clear: verify, upload, start, confirm, record. One command."""
     if remap_slot_num is not None:
@@ -3121,6 +3169,8 @@ def print_now(target, wait_s=25, accept_default_z_offset=False, reprint=False, r
     # accept_default_z_offset is kept for CLI compatibility only. With display_off=0 ZMod applies the
     # native screen zProbeOffset, which is the correct calibrated value; no Z_OFFSET in START_PRINT is fine.
     st=printer_state.load()
+    if getattr(adapter, 'transport', None) == 'octoprint':
+        return _print_octoprint(adapter, st, g, job, job_path, wait_s, reprint)
     state,fn,busy=_printer_phase(st)
     if state == "printing" or busy == "Printing":
         raise SystemExit(f"REFUSED: printer is busy ({state}, {fn}). Nothing uploaded or started.")

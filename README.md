@@ -13,6 +13,7 @@ The Discord conversation runs on [Hermes Agent](https://github.com/NousResearch/
 Supported printers:
 * **Sovol** on stock Klipper, where Print Buddy started, plus any other Klipper printer with Moonraker. Single extruder.
 * **Flashforge (running ZMod)**, including IFS multi color slots and the ZMod plugin below.
+* **Bambu Lab** vendor profile, offline only: slicing, validation, and a `.gcode.3mf` handoff you open in Bambu Studio or Bambu Handy, or copy to the SD card. No upload, telemetry or print control. Printer profiles (A1, then P1S) drop in under it. See [Printer profiles](docs/PRINTER-PROFILES.md).
 
 Pick one with `[printer] model` (see Settings). The offline core in `print_buddy/core/` runs with no printer.
 
@@ -38,7 +39,7 @@ The print starts only when someone clicks the button. On completion, the bot pos
 * Multi plate models merged onto one bed when they fit; plates that would run longer than `layout.max_merged_hours` stay separate.
 * Oversized models split across plates, tracked as one plan.
 * Copy counts offered only where the G-code will actually contain the copies.
-* Headless OrcaSlicer with versioned machine, process, and filament templates; Bambu Studio as a fallback slicer with its network cut.
+* Headless OrcaSlicer with versioned machine, process, and filament templates; Bambu Studio as a fallback slicer with its network cut, or as an opt-in primary slicer where the vendor profile allows it (Bambu Lab).
 * Readable part names: generic CAD names like "Cylinder" become a shape, size, plate, and color description.
 
 **Filament and spools**
@@ -50,6 +51,7 @@ The print starts only when someone clicks the button. On completion, the bot pos
 
 **Printing**
 * Nothing starts without a bed clear button press.
+* After "Slice only", the printer's vendor profile decides what is offered: the Start button, "Send the files here" (Discord attachments within `discord.upload_max_bytes`, zipped when that makes them fit), or "Package for Bambu (no upload)". Deliveries never authorize a print. See [Printer profiles](docs/PRINTER-PROFILES.md#after-a-slice).
 * Multi plate plans: `/print-next` offers the exact next plate, and finishing a plate advances the plan.
 * `/print-again` reprints an archived job exactly, with no re-slice.
 * `/print-stop` and `/print-resume` each send at most one Moonraker command behind a confirm button.
@@ -87,9 +89,11 @@ visual_watch:
 
 ### Printer models
 
-One package per brand under `print_buddy/printers/`, one file per printer inside it: `flashforge/ad5x.py`, `sovol/sv06.py`, `klipper/generic.py`. A model file holds the printer's defaults, its adapter and the name of its Orca template folder (`print_buddy/templates/orca/<folder>`). Its user-adjustable keys are `printer.name`, `printer.firmware`, `printer.start_macro`, `printer.end_macro`, `printer.bed_mm`, `printer.max_print_height_mm`, `printer.nozzle_diameter_mm`, `printer.ifs_slots`, `layout.single_copy_edge_mm`, `layout.multi_copy_edge_mm`, `layout.merge_edge_margin_mm`, `layout.merge_spacing_mm`, `prime_tower.size_mm`, `prime_tower.part_clearance_mm`, `prime_tower.edge_mm`, `prime_tower.merge_slack_mm`, `cold_pull` profile names and values, and `orca.templates`. `config/home.yaml` picks one with `printer.model: flashforge.ad5x`; settings merge in this order, later wins: model defaults, home configuration, selected local or explicit configuration, environment.
+Printers are organised vendor first, then printer: one package per vendor under `print_buddy/printers/`, one file per printer inside it. The vendor's `__init__.py` defines `VENDOR`, the profile every printer of that vendor shares: connection (Moonraker, OctoPrint or offline), start G-code family, allowed slicers, file formats, post-slice delivery options, and shared defaults (firmware, macro names, margins, prime tower, cold pull). A printer file defines `MODEL` with only what differs (bed, height, nozzles, slots, adapter and Orca template folder `print_buddy/templates/orca/<folder>`) and inherits the rest. Vendors: `flashforge`, `klipper`, `sovol`, `octoprint`, `bambulab`. Printers: `flashforge/ad5x.py`, `klipper/generic.py`, `sovol/sv06.py`, `octoprint/marlin.py`.
 
-Adding a printer is one new file in its brand package plus its templates; nothing in `core/` changes. The AD5X and ZMod code lives in `print_buddy/printers/flashforge/zmod/`, and `base.py` lists what core still shares with it.
+The user-adjustable keys are `printer.name`, `printer.firmware`, `printer.start_macro`, `printer.end_macro`, `printer.bed_mm`, `printer.max_print_height_mm`, `printer.nozzle_diameter_mm`, `printer.ifs_slots`, `printer.slicer`, `layout.single_copy_edge_mm`, `layout.multi_copy_edge_mm`, `layout.merge_edge_margin_mm`, `layout.merge_spacing_mm`, `prime_tower.size_mm`, `prime_tower.part_clearance_mm`, `prime_tower.edge_mm`, `prime_tower.merge_slack_mm`, `delivery.methods`, the `cold_pull` profile names and values, and `orca.templates`. `config/home.yaml` picks a printer with `printer.model: flashforge.ad5x`. `printer.vendor: sovol` with `printer.model: sv06` works too and is stored as `sovol.sv06`. Settings merge in this order, later wins: vendor defaults, printer defaults, home configuration, selected local or explicit configuration, environment.
+
+Adding a printer is one new file in its vendor package plus its templates; nothing in `core/` changes. [Printer profiles](docs/PRINTER-PROFILES.md) has a worked example. The AD5X and ZMod code lives in `print_buddy/printers/flashforge/zmod/`, and `base.py` lists what core still shares with it.
 
 Upgrading from `[printer] family`: replace it in `config/local.toml` with `model = "flashforge.ad5x"` (or `sovol.sv06`, `klipper.generic`). A leftover `family` stops the import and names the key.
 
@@ -113,7 +117,9 @@ Empty bed, spaghetti, detached part, uncertain, and vision failure alerts fire a
 |---|---|---|---|
 | `printer` | `name`, `firmware` | from the model | Shown in job summaries |
 | | `nozzle_type` | from the model or unset | Optional nozzle material; use a type supported by the selected printer model |
-| | `model` | `flashforge.ad5x` | Printer model: `flashforge.ad5x`, `sovol.sv06`, `klipper.generic`. Sets every default below |
+| | `model` | `flashforge.ad5x` | Printer model: `flashforge.ad5x`, `sovol.sv06`, `klipper.generic`, `octoprint.marlin`. Sets every default below |
+| | `vendor` | from the model | Optional. With it, `model` may be the printer part alone (`sv06`); `bambu` reads as `bambulab` |
+| | `slicer` | `orca` | Primary slicer. `bambu_studio` only where the vendor profile allows it (Bambu Lab) |
 | | `start_macro`, `end_macro` | `PRINT_START`, `PRINT_END` | Start and end macros for stock Klipper models |
 | | `bed_mm` | `[220, 220]` | Usable print area |
 | | `max_print_height_mm` | `220` | Tallest allowed print |
@@ -125,7 +131,8 @@ Empty bed, spaghetti, detached part, uncertain, and vision failure alerts fire a
 | `prime_tower` | `size_mm`, `part_clearance_mm`, `edge_mm`, `merge_slack_mm` | `45`, `8`, `10`, `5` | Prime tower size and clearances |
 | `orca` | `templates` | the model's folder under `print_buddy/templates/orca` | Orca machine, process, and filament JSON |
 | | `command` | Flathub OrcaSlicer | How to start the Orca CLI |
-| `bambu` | `command` | Flathub Bambu Studio, no network | Fallback slicer |
+| `bambu` | `command` | Flathub Bambu Studio, no network | Fallback slicer, or the primary one with `printer.slicer: bambu_studio` |
+| `delivery` | `methods` | the vendor default: `[printer]`, or `[discord, bambu_handoff]` for Bambu Lab | Options after "Slice only": `printer` (Start button), `discord` (send the files), `bambu_handoff` (package a `.gcode.3mf`, no upload). Must be offered by the vendor |
 | `paths` | `hermes_home` | `~/.hermes/profiles/3dprinting` | Hermes profile the bot runs in |
 | | `archive`, `records_vault`, `cache` | `~/3d-prints`, `~/Documents/3D Printing Records`, `~/.hermes/cache` | Job archive, Obsidian records, cache |
 | | `hermes_bin`, `hermes_agent`, `hermes_restart_helper`, `ffmpeg` | | Tool locations |
@@ -134,7 +141,7 @@ Empty bed, spaghetti, detached part, uncertain, and vision failure alerts fire a
 | | `vision_chat_url` | empty | OpenAI compatible endpoint for vision checks and roasts; empty disables both |
 | | `stock_api_port` | `8898` | Flashforge stock API for IFS presence |
 | `discord` | `chat_id`, `approval_user_id` | empty | Channel and approver IDs |
-| | `upload_max_bytes` | `9500000` | Largest upload before video is shrunk |
+| | `upload_max_bytes` | `9500000` | Largest upload before video is shrunk; also the cap for sliced files sent to Discord |
 | | `post_print_quiet_s` | `7200` | Quiet time before a chat session resets |
 | | `daily_reset_hour`, `timezone` | `4`, `America/New_York` | Daily session reset |
 | | `bot_name` | `Print Buddy` | Name the bot uses in the roast persona and the rendered profile templates (`SOUL.md`, locale strings). Set it to anything, for example your old name |
@@ -262,14 +269,14 @@ is_system_service: False
 * `print_buddy/doctor.py`: checks that a machine can run Print Buddy.
 * `print_buddy/core/`: offline 3MF and STL pipeline. No printer connection.
 * `print_buddy/hermes/`: Moonraker listener, Discord posts, spool sync, print control, and records.
-* `print_buddy/printers/`: one package per brand, one file per printer model; see `base.py` for what each one owns.
+* `print_buddy/printers/`: one package per vendor (its `VENDOR` profile in `__init__.py`), one file per printer model; see `base.py` and [Printer profiles](docs/PRINTER-PROFILES.md).
 * `print_buddy/templates/orca/<model folder>/`: Orca machine, process, and filament JSON per printer.
 * `plugins/print-feedback/`: Hermes plugin with the Discord slash commands and interaction guards.
 * `hermes/`: profile templates and skills installed by `scripts/install-hermes.sh`.
 * `scripts/`: `install-hermes.sh`, `home-update.sh`, and `migrate-names.sh` (one-shot, see `docs/RENAME-MIGRATION.md`).
 * `print_buddy.cfg`, `install.sh`, `uninstall.sh`, `update.sh`: ZMod plugin macro and lifecycle scripts.
 * `tests/`: offline suite, real slicer checks, the Discord flow corpus (`tests/corpus/`), and the Klipper macro tests.
-* `docs/`: install guide and AD5X integration specs.
+* `docs/`: install guide, AD5X integration specs, and [printer profiles and post-slice delivery](docs/PRINTER-PROFILES.md).
 
 ## Links
 

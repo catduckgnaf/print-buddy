@@ -10,6 +10,7 @@ import subprocess
 import xml.etree.ElementTree as ET
 import zipfile
 from .. import printers, settings
+from ..printers.base import start_code_problems
 from . import slice_guard as sg
 from .slice_guard import pre_slice, post_slice
 
@@ -481,6 +482,17 @@ def finalize_zmod(path, color, material, printer=None):
     return (printer or printers.current()).native.finalize(path, (color, material))
 
 
+def slicer_choice(printer):
+    """Primary slicer for this printer: [printer] slicer for the configured model, else its vendor default.
+
+    OrcaSlicer unless the vendor profile allows Bambu Studio and the config picks it (opt-in)."""
+    vendor = printer.model.vendor
+    default = vendor.slicers[0] if vendor else 'orca'
+    if printer.config.get('printer', {}).get('model') != printer.key:
+        return default
+    return printer.config['printer'].get('slicer') or default
+
+
 def slice_model(source, folder, state, brim=None, first_layer=False, color_decisions=None, preserve_layout=False, filament_slot=None, item_shifts=None, copies=None, scale=None, rotation=None, supports=None, object_ids=None, adapter=None, brim_policy=None):
     source, folder = Path(source), Path(folder)
     # An explicit adapter (a job prepared for another model) brings its own templates; the default keeps TEMPLATES.
@@ -786,16 +798,22 @@ def slice_model(source, folder, state, brim=None, first_layer=False, color_decis
             slot_count=len(filament_paths) if mapped_profile else 1))
     # Never accept stale output if a failed slicer leaves the preceding artifact behind.
     output.unlink(missing_ok=True)
-    result = subprocess.run(command, capture_output=True, text=True, timeout=600)
-    (folder / 'orca.log').write_text(result.stdout + result.stderr)
-    if result.returncode:
-        # Bounded recovery clamps only keys named in Orca's range error.
-        # Already-normalized sentinels are not rewritten by this path.
-        fixed = clamp_rejected_settings(input_path, result.stdout + result.stderr)
-        if fixed:
-            sanitized.update(fixed)
-            result = subprocess.run(command, capture_output=True, text=True, timeout=600)
-            (folder / 'orca.log').write_text(result.stdout + result.stderr)
+    primary = slicer_choice(printer)
+    if primary == 'bambu_studio':
+        # Opt-in Bambu Studio as the primary slicer (vendor profile allows it, [printer] slicer picks it):
+        # Orca never runs, so there is no Orca failure and no fallback.
+        result = subprocess.CompletedProcess(command, 0, '', '')
+    else:
+        result = subprocess.run(command, capture_output=True, text=True, timeout=600)
+        (folder / 'orca.log').write_text(result.stdout + result.stderr)
+        if result.returncode:
+            # Bounded recovery clamps only keys named in Orca's range error.
+            # Already-normalized sentinels are not rewritten by this path.
+            fixed = clamp_rejected_settings(input_path, result.stdout + result.stderr)
+            if fixed:
+                sanitized.update(fixed)
+                result = subprocess.run(command, capture_output=True, text=True, timeout=600)
+                (folder / 'orca.log').write_text(result.stdout + result.stderr)
     if mapped_profile and result.returncode and _orca_conflict(folder):
         # Tower placement clears mesh bounds, but tree supports and brims can
         # still reach it. Retry the precomputed alternate tower origins only;
@@ -815,12 +833,22 @@ def slice_model(source, folder, state, brim=None, first_layer=False, color_decis
         geometry['prime_tower_attempts_mm'] = tried
     slicer = 'OrcaSlicer'
     fallback = None
-    if result.returncode or not output.is_file() or output.stat().st_size == 0:
-        # Only an actual Orca execution failure reaches this branch. All Print Buddy
-        # validation and placement refusals above remain fail-closed and never invoke Bambu.
+    vendor = printer.model.vendor
+    bambu_allowed = primary == 'bambu_studio' or vendor is None or vendor.fallback_slicer == 'bambu_studio'
+    orca_failed = primary != 'bambu_studio' and (result.returncode or not output.is_file()
+                                                 or output.stat().st_size == 0)
+    if orca_failed and not bambu_allowed:
         details = _orca_failure_details(folder)
+        raise RuntimeError(f'Orca slicing failed ({result.returncode}) or no G-code output{details}')
+    if primary == 'bambu_studio' or orca_failed:
+        # Only an actual Orca execution failure (or the opt-in Bambu Studio primary) reaches this
+        # branch. All Print Buddy validation and placement refusals above remain fail-closed and
+        # never invoke Bambu.
+        details = _orca_failure_details(folder) if orca_failed else ''
         log_text = (result.stdout + '\n' + result.stderr).strip()
-        if re.search(r'G-code conflicts detected', log_text, re.I):
+        if not orca_failed:
+            orca_failure = 'Bambu Studio is the configured slicer'
+        elif re.search(r'G-code conflicts detected', log_text, re.I):
             # A conflict is a slicer failure, not a Print Buddy refusal. Bambu gets
             # one isolated attempt after Orca's own retry/candidate logic is exhausted.
             orca_failure = ('Orca detected G-code conflicts: inspect the model for '
@@ -830,6 +858,7 @@ def slice_model(source, folder, state, brim=None, first_layer=False, color_decis
             orca_failure = (f'Orca slicing failed ({result.returncode}) or no G-code output{details}'
                             if details else
                             f'Orca slicing failed ({result.returncode}) or no G-code output')
+        bambu_role = 'Bambu Studio fallback' if orca_failed else 'Bambu Studio'
         bambu_dir = folder / 'bambu'
         bambu_dir.mkdir(exist_ok=True)
         bambu_machine = bambu_dir / 'machine.json'
@@ -875,18 +904,19 @@ def slice_model(source, folder, state, brim=None, first_layer=False, color_decis
         try:
             bambu_result = subprocess.run(bambu_command, capture_output=True, text=True, timeout=600)
         except (subprocess.TimeoutExpired, OSError) as exc:
-            raise RuntimeError(f'{orca_failure}; Bambu Studio fallback failed to start: {exc}') from exc
+            raise RuntimeError(f'{orca_failure}; {bambu_role} failed to start: {exc}') from exc
         (folder / 'bambu.log').write_text(bambu_result.stdout + bambu_result.stderr)
         if bambu_result.returncode or not output.is_file() or output.stat().st_size == 0:
             raise RuntimeError(
-                f'{orca_failure}; Bambu Studio fallback failed ({bambu_result.returncode}) or produced no G-code; '
-                f'see {folder / "orca.log"} and {folder / "bambu.log"}'
+                f'{orca_failure}; {bambu_role} failed ({bambu_result.returncode}) or produced no G-code; '
+                + (f'see {folder / "orca.log"} and {folder / "bambu.log"}' if orca_failed else f'see {folder / "bambu.log"}')
             )
         configs.extend([bambu_machine, bambu_process, *bambu_filaments])
         command = bambu_command
         slicer = 'Bambu Studio'
-        fallback = {'from': 'OrcaSlicer', 'reason': orca_failure, 'orca_log': str(folder / 'orca.log'),
-                    'bambu_log': str(folder / 'bambu.log')}
+        if orca_failed:
+            fallback = {'from': 'OrcaSlicer', 'reason': orca_failure, 'orca_log': str(folder / 'orca.log'),
+                        'bambu_log': str(folder / 'bambu.log')}
     text = output.read_text()
     generator = re.search(r'^; generated by ((?:OrcaSlicer|BambuStudio).+)$', text, re.M)
     if generator is None:
@@ -900,9 +930,13 @@ def slice_model(source, folder, state, brim=None, first_layer=False, color_decis
     elif printer.has_native_screen:
         finalize_zmod(output, filament['filament_colour'][0], state['spool']['material'], printer)
     result_path = folder / 'result.json'
-    post_gate = post_slice(output, result_json=None if fallback else (result_path if result_path.is_file() else None),
+    post_gate = post_slice(output, result_json=None if slicer != 'OrcaSlicer' else (result_path if result_path.is_file() else None),
                            bed=bed, ifs_slots=IFS_SLOTS, tool_slots=tool_slots,
                            templates=templates, profile_paths=filament_paths)
+    # Each vendor runs only its own start code: e.g. no Klipper/ZMod macro reaches a Bambu Lab printer.
+    if vendor is not None:
+        for problem in start_code_problems(output.read_text(errors='replace'), vendor):
+            post_gate.block(problem)
     # Each model approves its own protected settings; a model without a baseline file keeps the shared one.
     baseline_kw = {} if printer.baseline_path is None else {'path': printer.baseline_path}
     baseline_gate = (sg.enforce_approved_baseline(output, **baseline_kw)

@@ -2,6 +2,8 @@
 
 [![CI](https://github.com/catduckgnaf/print-buddy/actions/workflows/ci.yml/badge.svg)](https://github.com/catduckgnaf/print-buddy/actions/workflows/ci.yml)
 
+[Contributing](CONTRIBUTING.md) · [User documentation](docs/README.md)
+
 Print Buddy is an automated 3D printing pipeline driven from a Discord channel, for Sovol and other Klipper printers, and Flashforge printers running ZMod. Post a MakerWorld or Printables link, or a 3MF or STL file, and the bot downloads the model, merges multi plate parts, matches colors to loaded spools in Spoolman, and slices headless with OrcaSlicer. Once someone confirms the bed is clear, it sends the job to the printer through Moonraker, watches it through the camera, and posts the result.
 
 ## About

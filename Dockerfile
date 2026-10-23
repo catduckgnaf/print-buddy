@@ -44,6 +44,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     fonts-liberation && rm -rf /var/lib/apt/lists/* && \
     python3 -m venv /opt/venv && useradd --uid 1000 --create-home buddy
 COPY --from=orca-build /out/ /
+ARG APP_CHANNEL=development
+RUN case "$APP_CHANNEL" in stable|development) ;; *) echo 'APP_CHANNEL must be stable or development' >&2; exit 2;; esac
+LABEL org.print-buddy.app-channel=$APP_CHANNEL
 WORKDIR /app
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt

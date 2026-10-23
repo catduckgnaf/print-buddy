@@ -22,7 +22,7 @@ services:
   moonraker_url: ""
   moonraker_ws_url: ""
   camera_snapshot_url: ""
-  spoolman_url: http://spoolman:8000
+  spoolman_url: ""
   openviking_url: ""
   vision_chat_url: ""
   stock_api_port: 8898

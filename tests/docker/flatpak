@@ -1,0 +1,20 @@
+#!/bin/sh
+# Test-only stand-in for `flatpak run com.orcaslicer.OrcaSlicer ...` inside the release image.
+# The Discord flow corpus pins the Flathub command from config/home.yaml; this forwards it to the
+# OrcaSlicer bundled in the image so the corpus runs against the exact slicer users get.
+# Put this directory first on PATH only in CI test containers; it is not part of the image.
+set -eu
+if [ "${1:-}" != run ]; then
+    echo "flatpak shim: only 'run' is supported" >&2
+    exit 2
+fi
+shift
+while [ $# -gt 0 ]; do
+    case "$1" in
+        --*) shift ;;
+        com.orcaslicer.OrcaSlicer|org.orcaslicer.OrcaSlicer*) shift; exec /opt/orcaslicer/AppRun "$@" ;;
+        *) echo "flatpak shim: unsupported app $1" >&2; exit 2 ;;
+    esac
+done
+echo "flatpak shim: no app id" >&2
+exit 2

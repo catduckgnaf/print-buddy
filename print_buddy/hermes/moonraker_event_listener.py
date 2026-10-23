@@ -28,7 +28,7 @@ from pathlib import Path
 
 import websockets
 
-from .. import printers
+from .. import healthcheck, printers
 from . import _config
 from . import moonraker_discord_announcements as announcer
 from . import discord_print_summary as print_summary
@@ -1274,6 +1274,7 @@ class Listener:
         self.last_pause_was_runout = False
         self.pause_context = None
         self.native_error_alerted = None
+        self.moonraker_connected = False
 
     async def read_slots(self):
         from print_buddy.core import printer_state
@@ -1540,6 +1541,7 @@ class Listener:
         self.ifs_monitor.stable_counts = {}
         self.ifs_monitor.transition_from = {}
         async with websockets.connect(WS_URL, ping_interval=20, ping_timeout=20, max_size=2**22) as ws:
+            self.moonraker_connected = True
             await ws.send(SUBSCRIBE)
             last_tick = time.monotonic()
             while True:
@@ -1592,13 +1594,26 @@ class Listener:
                     last_tick = time.monotonic()
                     await asyncio.to_thread(run_announcer, "tick")
 
+    async def heartbeat(self):
+        """Container health: proves this event loop still runs, whether or not the printer is up."""
+        while True:
+            try:
+                await asyncio.to_thread(healthcheck.beat, "moonraker_event_listener",
+                                        moonraker_connected=self.moonraker_connected, state=self.state)
+            except Exception as exc:
+                log(f"heartbeat write failed: {exc!r}")
+            await asyncio.sleep(healthcheck.HEARTBEAT_S)
+
     async def forever(self):
         delay = 5
+        beating = asyncio.create_task(self.heartbeat())
+        self.background_tasks.add(beating)
         while True:
             try:
                 await self.session()
             except Exception as exc:
                 log(f"connection lost: {exc!r}; retry in {delay}s")
+            self.moonraker_connected = False
             await asyncio.sleep(delay)
             delay = min(delay * 2, 120)
 

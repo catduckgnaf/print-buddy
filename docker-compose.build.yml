@@ -1,0 +1,14 @@
+# Build the image from this checkout instead of pulling a release (development, unreleased fixes):
+#
+#   docker compose -f docker-compose.yml -f docker-compose.build.yml up -d --build
+#
+# Add -f docker-compose.spoolman.yml as well for the bundled Spoolman.
+services:
+  print-buddy:
+    image: print-buddy:local
+    build:
+      context: .
+      args:
+        # alpha = OrcaSlicer 2.5.0-alpha; stable once pinned in docker/orcaslicer.lock
+        ORCA_CHANNEL: ${ORCA_CHANNEL:-alpha}
+        PRINT_BUDDY_VERSION: local

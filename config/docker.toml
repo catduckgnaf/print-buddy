@@ -4,7 +4,7 @@
 # Mount a replacement file at the same path to change lists such as orca.command or bed_mm.
 
 [orca]
-# Extracted AppImage AppRun from the pinned v2.4.2 release
+# Extracted AppImage AppRun of the OrcaSlicer release pinned in docker/orcaslicer.lock
 command = ["/opt/orcaslicer/AppRun"]
 
 [bambu]
@@ -26,7 +26,8 @@ hermes_restart_helper = "/data/hermes/restart_hermes.py"
 moonraker_url = ""
 moonraker_ws_url = ""
 camera_snapshot_url = ""
-spoolman_url = "http://spoolman:8000"
+# External Spoolman by default; docker-compose.spoolman.yml sets http://spoolman:8000 for the bundled one
+spoolman_url = ""
 openviking_url = ""
 vision_chat_url = ""
 stock_api_port = 8898

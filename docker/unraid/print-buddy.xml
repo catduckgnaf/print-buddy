@@ -1,0 +1,44 @@
+<?xml version="1.0"?>
+<!-- Unraid Docker template for Print Buddy. Install: docs/DOCKER.md, "Unraid".
+     Settings not listed here can be added as extra variables named PRINT_BUDDY__SECTION__KEY
+     (docs/SETTINGS.md). Spoolman is a separate container (Community Applications) or an existing server. -->
+<Container version="2">
+  <Name>print-buddy</Name>
+  <Repository>ghcr.io/catduckgnaf/print-buddy:stable</Repository>
+  <Registry>https://github.com/catduckgnaf/print-buddy/pkgs/container/print-buddy</Registry>
+  <Network>bridge</Network>
+  <MyIP/>
+  <Shell>bash</Shell>
+  <Privileged>false</Privileged>
+  <Support>https://github.com/catduckgnaf/print-buddy/issues</Support>
+  <Project>https://github.com/catduckgnaf/print-buddy</Project>
+  <Overview>Discord-driven 3D printing pipeline with a pinned OrcaSlicer CLI. Klipper/Moonraker/Fluidd or OctoPrint printers and Spoolman are external services you point it at. Replace "stable" in Repository with an exact version (for example 2.1.0) to control upgrades and roll back.</Overview>
+  <Category>Tools: HomeAutomation:</Category>
+  <WebUI/>
+  <TemplateURL>https://raw.githubusercontent.com/catduckgnaf/print-buddy/main/docker/unraid/print-buddy.xml</TemplateURL>
+  <Icon/>
+  <!-- Same hardening as docker-compose.yml. appdata belongs to nobody:users (99:100) on Unraid. -->
+  <ExtraParams>--user 99:100 --read-only --tmpfs /tmp:size=64m,mode=1777 --cap-drop ALL --security-opt no-new-privileges:true --shm-size 1g --memory 4g --cpus 2 --pids-limit 1024 --add-host host.docker.internal:host-gateway --restart unless-stopped</ExtraParams>
+  <PostArgs/>
+  <CPUset/>
+  <DonateText/>
+  <DonateLink/>
+  <Requires>A printer reachable from the Unraid server: Moonraker (Klipper, ZMod) or OctoPrint. Spoolman: an existing server or the Spoolman container from Community Applications.</Requires>
+  <Config Name="State and logs" Target="/data/hermes" Default="/mnt/user/appdata/print-buddy/hermes" Mode="rw" Description="Runtime state, health heartbeat and logs. Back this up." Type="Path" Display="always" Required="true" Mask="false">/mnt/user/appdata/print-buddy/hermes</Config>
+  <Config Name="Job archive" Target="/data/archive" Default="/mnt/user/appdata/print-buddy/archive" Mode="rw" Description="Sliced jobs and G-code. Back this up." Type="Path" Display="always" Required="true" Mask="false">/mnt/user/appdata/print-buddy/archive</Config>
+  <Config Name="Print records" Target="/data/records" Default="/mnt/user/appdata/print-buddy/records" Mode="rw" Description="Obsidian print records. Back this up." Type="Path" Display="always" Required="true" Mask="false">/mnt/user/appdata/print-buddy/records</Config>
+  <Config Name="Cache" Target="/data/cache" Default="/mnt/user/appdata/print-buddy/cache" Mode="rw" Description="Regenerable cache and slicer work files." Type="Path" Display="advanced" Required="true" Mask="false">/mnt/user/appdata/print-buddy/cache</Config>
+  <Config Name="Printer model" Target="PRINT_BUDDY__PRINTER__MODEL" Default="flashforge.ad5x|sovol.sv06|klipper.generic|octoprint.marlin" Mode="" Description="Printer brand and model." Type="Variable" Display="always" Required="true" Mask="false">flashforge.ad5x</Config>
+  <Config Name="Moonraker URL" Target="PRINT_BUDDY__SERVICES__MOONRAKER_URL" Default="" Mode="" Description="Klipper printers: Moonraker address, for example http://printer.example:7125. Fluidd runs on the printer and is not needed here." Type="Variable" Display="always" Required="false" Mask="false"></Config>
+  <Config Name="OctoPrint URL" Target="PRINT_BUDDY__SERVICES__OCTOPRINT_URL" Default="" Mode="" Description="OctoPrint printers (octoprint.marlin) only." Type="Variable" Display="always" Required="false" Mask="false"></Config>
+  <Config Name="OctoPrint API key" Target="OCTOPRINT_API_KEY" Default="" Mode="" Description="OctoPrint application key (secret)." Type="Variable" Display="always" Required="false" Mask="true"></Config>
+  <Config Name="Spoolman URL" Target="PRINT_BUDDY__SERVICES__SPOOLMAN_URL" Default="" Mode="" Description="Your Spoolman server, for example http://spoolman.example:7912 or http://[Unraid IP]:7912 for the Spoolman container." Type="Variable" Display="always" Required="false" Mask="false"></Config>
+  <Config Name="Discord bot token" Target="DISCORD_BOT_TOKEN" Default="" Mode="" Description="Bot token (secret)." Type="Variable" Display="always" Required="false" Mask="true"></Config>
+  <Config Name="Discord channel ID" Target="PRINT_BUDDY__DISCORD__CHAT_ID" Default="" Mode="" Description="Channel Print Buddy posts in." Type="Variable" Display="always" Required="false" Mask="false"></Config>
+  <Config Name="Discord approver ID" Target="PRINT_BUDDY__DISCORD__APPROVAL_USER_ID" Default="" Mode="" Description="User allowed to approve prints." Type="Variable" Display="always" Required="false" Mask="false"></Config>
+  <Config Name="Time zone" Target="PRINT_BUDDY__DISCORD__TIMEZONE" Default="America/New_York" Mode="" Description="IANA time zone for message times and the daily reset." Type="Variable" Display="always" Required="false" Mask="false">America/New_York</Config>
+  <Config Name="Camera monitoring" Target="PRINT_BUDDY__VISUAL_WATCH__ENABLED" Default="true|false" Mode="" Description="Camera watchdog on or off." Type="Variable" Display="advanced" Required="false" Mask="false">true</Config>
+  <Config Name="Vision endpoint" Target="PRINT_BUDDY__SERVICES__VISION_CHAT_URL" Default="" Mode="" Description="OpenAI-compatible endpoint for camera checks; empty disables them." Type="Variable" Display="advanced" Required="false" Mask="false"></Config>
+  <Config Name="Vision API key" Target="CLIPROXY_API_KEY" Default="" Mode="" Description="Key for the vision endpoint (secret)." Type="Variable" Display="advanced" Required="false" Mask="true"></Config>
+  <Config Name="Settings file" Target="PRINT_BUDDY_CONFIG" Default="/app/config/docker.yaml" Mode="" Description="Leave as is, or point at a YAML file you mounted for list settings." Type="Variable" Display="advanced" Required="false" Mask="false">/app/config/docker.yaml</Config>
+</Container>

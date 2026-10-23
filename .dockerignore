@@ -1,0 +1,27 @@
+# Keep the image to the runtime: no history, tests, docs, Hermes profile templates or local state.
+.git
+.github
+.gitignore
+.dockerignore
+.env
+.env.*
+.pytest_cache
+.slicer-work
+.claude
+**/__pycache__
+**/*.py[cod]
+data
+tests
+docs
+hermes
+plugins
+references
+scripts
+install.sh
+uninstall.sh
+update.sh
+print_buddy.cfg
+docker-compose*.yml
+config/local.yaml
+config/local.toml
+config/after-update.sh

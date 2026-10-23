@@ -1,0 +1,23 @@
+# Pinned OrcaSlicer CLI bundled in the Print Buddy image, one entry per release channel.
+# Shell syntax: read by docker/install-orcaslicer.sh and by tests/test_docker_release.py.
+# Digests are the SHA-256 GitHub publishes for each upstream release asset.
+#
+# Default channel: alpha (2.5.0-alpha). To move the image to stable 2.5.0 once it is
+# released, follow docs/DOCKER.md "OrcaSlicer channel": fill in the STABLE_* entries
+# from the v2.5.0 release page, then change ORCA_CHANNEL in the Dockerfile to stable.
+
+ORCA_DEFAULT_CHANNEL=alpha
+
+ORCA_ALPHA_VERSION=2.5.0-alpha
+ORCA_ALPHA_AMD64_ASSET=OrcaSlicer_Linux_AppImage_Ubuntu2404_V2.5.0-alpha.AppImage
+ORCA_ALPHA_AMD64_SHA256=386a5ef38991a4fc32ae2e35ee4261bea43d983683ac675a2c2e2395ab2bc7bb
+ORCA_ALPHA_ARM64_ASSET=OrcaSlicer_Linux_AppImage_Ubuntu2404_aarch64_V2.5.0-alpha.AppImage
+ORCA_ALPHA_ARM64_SHA256=b64c705537a80ca0f4a5d0b51fa21d1f789191141f54b7f3599d2f2b9bfad0be
+
+# Stable 2.5.0 is not released yet. Leave these empty until it is; the build refuses an
+# empty channel rather than guessing a version.
+ORCA_STABLE_VERSION=
+ORCA_STABLE_AMD64_ASSET=
+ORCA_STABLE_AMD64_SHA256=
+ORCA_STABLE_ARM64_ASSET=
+ORCA_STABLE_ARM64_SHA256=

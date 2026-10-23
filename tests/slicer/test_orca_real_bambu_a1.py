@@ -16,7 +16,7 @@ import pytest
 from print_buddy import printers, settings
 from print_buddy.core import orca_adapter, slice_guard as sg
 from print_buddy.printers.bambulab import guard
-from print_buddy.printers.bambulab.capabilities import A1
+from print_buddy.printers.bambulab.a1 import PROFILE
 
 from .test_orca_real import WORK, _orca_command, write_cube
 
@@ -62,7 +62,7 @@ def test_a1_slices_through_print_buddy_and_passes_every_guard(work):
     text = gcode.read_text(errors="replace")
     print(f"slice_guard: {provenance['slice_guard']}")
     assert "; printer_model = Bambu Lab A1" in text
-    assert guard.VENDOR_START in text
+    assert PROFILE.vendor_start in text
     assert guard.foreign_commands(text) == []
     assert sg.toolpath(text), "Orca's toolpath could not be located in real A1 output"
     assert a1.gcode_problems(text, a1_state()) == []
@@ -71,7 +71,7 @@ def test_a1_slices_through_print_buddy_and_passes_every_guard(work):
 
 def test_a1_oversized_model_is_never_accepted(work):
     a1 = adapter_for("bambulab.a1")
-    bed = A1["bed_mm"].value
+    bed = PROFILE.value("bed_mm")
     result, gcode = orca_cli(a1.templates_dir(), write_cube(work / "huge.stl", bed[0] + 10), work / "out")
     accepted = (result.returncode == 0 and gcode.is_file()
                 and sg.post_slice(gcode, tool_slots={0: 1}, ifs_slots=1, bed=bed, templates=a1.templates_dir(),
@@ -94,7 +94,7 @@ def test_a1_protected_settings_baseline_round_trips(work):
     result, gcode = orca_cli(a1.templates_dir(), write_cube(work / "cube.stl", 20), work / "out")
     assert result.returncode == 0
     found = sg._effective_config(gcode)
-    assert found.get("machine_start_gcode", "").startswith(guard.VENDOR_START)
+    assert found.get("machine_start_gcode", "").startswith(PROFILE.vendor_start)
     baseline = work / "baseline.json"
     sg.approve_baseline(gcode, path=baseline)
     assert sg.enforce_approved_baseline(gcode, path=baseline).ok

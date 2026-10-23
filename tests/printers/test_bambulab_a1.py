@@ -15,7 +15,8 @@ import pytest
 
 from print_buddy import printers, settings
 from print_buddy.core import model_job, orca_adapter, printer_state, slice_guard
-from print_buddy.printers.bambulab import capabilities, guard
+from print_buddy.printers.bambulab import guard, vendor
+from print_buddy.printers.bambulab.a1 import PROFILE, A1Adapter
 from print_buddy.printers.bambulab.adapter import BambuOfflineAdapter, LiveUnsupported
 from print_buddy.printers.base import MultiColorUnsupported
 
@@ -87,11 +88,42 @@ def ad5x_gcode():
         template(A1)["machine_end_gcode"], "END_PRINT")
 
 
+# ------------------------------------------------------------------ vendor -> printer profile layout
+
+def test_the_a1_profile_inherits_the_bambu_lab_vendor_profile():
+    assert PROFILE.vendor is vendor.BAMBU_LAB and PROFILE.vendor.key == "bambulab"
+    # Vendor facts reach the printer unless the printer overrides them; printer facts stay off the vendor.
+    assert PROFILE.fact("gcode_dialect") is vendor.BAMBU_LAB.facts["gcode_dialect"]
+    assert PROFILE.fact("bed_mm") is PROFILE.facts["bed_mm"]
+    assert not {"bed_mm", "max_print_height_mm", "bed_exclude_area", "ams", "motion_envelope_mm"} & set(vendor.BAMBU_LAB.facts)
+    assert PROFILE.capabilities == {**vendor.BAMBU_LAB.support, **PROFILE.support}
+    with pytest.raises(KeyError):
+        PROFILE.fact("no_such_fact")
+
+
+def test_a_printer_override_wins_over_the_vendor():
+    other = vendor.PrinterProfile(key="example", vendor=vendor.BAMBU_LAB, printer_model="Example", vendor_start=";",
+                                  orca_profiles={}, templates="none",
+                                  facts={"gcode_dialect": vendor.Fact("other", "DERIVED", False)},
+                                  support={"fit_checks": False})
+    assert other.value("gcode_dialect") == "other" and other.value("slicer") == PROFILE.value("slicer")
+    assert other.capabilities["fit_checks"] is False and PROFILE.capabilities["fit_checks"] is True
+
+
+def test_vendor_overrides_are_what_the_a1_templates_carry():
+    for kind, overrides in vendor.BAMBU_LAB.orca_overrides.items():
+        data = template(A1, kind)
+        assert data["name"] == PROFILE.orca_profiles[kind]
+        for key, value in overrides.items():
+            assert data[key] == value, (kind, key)
+
+
 # ------------------------------------------------------------------ model, capabilities and profile provenance
 
 def test_model_is_registered_with_verified_geometry():
     a = adapter_for(A1)
-    assert isinstance(a, BambuOfflineAdapter) and a.key == A1 and a.transport == "offline"
+    assert isinstance(a, A1Adapter) and isinstance(a, BambuOfflineAdapter) and a.profile is PROFILE
+    assert a.key == A1 and a.transport == "offline"
     vol = a.build_volume()
     assert (vol.bed_mm, vol.max_height_mm) == ((256.0, 256.0), 256.0)
     assert (a.slot_count, a.multi_slot, a.has_native_screen) == (1, False, False)
@@ -102,13 +134,13 @@ def test_model_is_registered_with_verified_geometry():
 def test_template_matches_the_capabilities_it_cites():
     machine = template(A1)
     corners = [tuple(float(v) for v in c.split("x")) for c in machine["printable_area"]]
-    assert (max(x for x, _ in corners), max(y for _, y in corners)) == capabilities.A1["bed_mm"].value
-    assert float(machine["printable_height"]) == capabilities.A1["max_print_height_mm"].value
-    assert machine["bed_exclude_area"] == list(capabilities.A1["bed_exclude_area"].value)
+    assert (max(x for x, _ in corners), max(y for _, y in corners)) == PROFILE.value("bed_mm")
+    assert float(machine["printable_height"]) == PROFILE.value("max_print_height_mm")
+    assert machine["bed_exclude_area"] == list(PROFILE.value("bed_exclude_area"))
     assert machine["printer_model"] == "Bambu Lab A1"
     assert machine["name"] == machine["printer_settings_id"] == "Bambu Lab A1 0.4 nozzle"
     assert machine["nozzle_diameter"] == ["0.4"] and machine["nozzle_type"] == ["stainless_steel"]
-    assert machine["gcode_flavor"] == capabilities.A1["gcode_flavor"].value
+    assert machine["gcode_flavor"] == PROFILE.value("gcode_flavor")
     for key, digest in VENDOR_GCODE_SHA256.items():
         assert hashlib.sha256(machine[key].encode()).hexdigest() == digest, key
 
@@ -125,7 +157,7 @@ def test_print_buddy_overrides_on_the_vendor_profile():
 
 def test_motion_envelope_covers_every_vendor_move():
     machine = template(A1)
-    xmin, ymin, xmax, ymax = capabilities.A1["motion_envelope_mm"].value
+    xmin, ymin, xmax, ymax = PROFILE.value("motion_envelope_mm")
     for key in ("machine_start_gcode", "machine_end_gcode", "change_filament_gcode", "time_lapse_gcode"):
         xs = [float(v) for v in re.findall(r"^\s*G[0-3]\b[^;\n]*?X(-?\d+\.?\d*)", machine[key], re.M)]
         ys = [float(v) for v in re.findall(r"^\s*G[0-3]\b[^;\n]*?Y(-?\d+\.?\d*)", machine[key], re.M)]
@@ -133,21 +165,21 @@ def test_motion_envelope_covers_every_vendor_move():
 
 
 def test_every_fact_names_a_source_and_unverified_values_say_so():
-    for name, fact in capabilities.A1.items():
+    for name, fact in PROFILE.all_facts.items():
         assert fact.source in ("ORCA", "BAMBU", "DERIVED"), name
         if fact.source != "ORCA":
             assert fact.verified is False, name
 
 
 def test_live_features_are_stated_unsupported():
-    support = capabilities.SUPPORT
+    support = PROFILE.capabilities
     assert support["offline_slicing"] and support["gcode_validation"] and support["fit_checks"]
     assert support["file_handoff"] == "manual"
-    for key in ("live_telemetry", "file_upload", "print_control", "ams_lite_multicolor", "bambu_studio_handoff"):
+    for key in ("live_telemetry", "file_upload", "print_control", "ams_multicolor", "bambu_studio_handoff"):
         assert support[key] is False, key
-    assert capabilities.LIVE_MODES == ()
+    assert PROFILE.live_modes == vendor.BAMBU_LAB.live_modes == ()
     a = adapter_for(A1)
-    assert a.capabilities is support
+    assert a.capabilities == support
     for call in (lambda: a.moonraker_start_commands("x.gcode"), a.moonraker_objects):
         with pytest.raises(LiveUnsupported, match="Nothing was sent"):
             call()
@@ -201,7 +233,7 @@ def test_a1_refuses_every_other_models_start_code(other):
     resolved = adapter_for(other).machine_start_gcode(start, "auto")
     if other != OCTOPRINT:  # Marlin start code holds no Klipper command; it is refused above for lacking the A1 vendor start
         with pytest.raises(guard.ForeignStartCode):
-            a.machine_start_gcode(guard.VENDOR_START + "=====\n" + resolved)
+            a.machine_start_gcode(PROFILE.vendor_start + "=====\n" + resolved)
     if guard.foreign_commands(end):
         with pytest.raises(guard.ForeignStartCode):
             a.machine_end_gcode(end)
@@ -270,14 +302,14 @@ def test_travel_to_the_wiper_and_relative_moves_are_allowed():
 
 
 @pytest.mark.parametrize("kwargs, message", [
-    ({"bed": 110}, "M140 S110 exceeds the A1 limit of 100 C"),
-    ({"hotend": 310}, "M104 S310 exceeds the A1 limit of 300 C"),
+    ({"bed": 110}, "M140 S110 exceeds the Bambu Lab A1 limit of 100 C"),
+    ({"hotend": 310}, "M104 S310 exceeds the Bambu Lab A1 limit of 300 C"),
     ({"material": "ABS"}, "ABS is not recommended"),
     ({"material": "PA-CF", "nozzle_type": "hardened_steel"}, "PA-CF is not recommended"),
     ({"material": "PLA-CF"}, "needs a hardened steel nozzle"),
     ({"material": "PLA;PETG"}, "exactly one filament_type"),
-    ({"nozzle": "0.6"}, "nozzle 0.6 mm has no A1 template"),
-    ({"nozzle_type": "brass"}, "nozzle type brass is not an A1 hotend option"),
+    ({"nozzle": "0.6"}, "nozzle 0.6 mm has no Bambu Lab A1 template"),
+    ({"nozzle_type": "brass"}, "nozzle type brass is not a Bambu Lab A1 hotend option"),
 ])
 def test_material_nozzle_and_temperature_limits(kwargs, message):
     assert any(message in p for p in adapter_for(A1).gcode_problems(a1_gcode(**kwargs))), message
@@ -298,7 +330,7 @@ def test_gcode_must_match_the_hardware_record():
 def test_post_slice_holds_only_the_toolpath_to_the_bed():
     text = a1_gcode()
     a = adapter_for(A1)
-    bed = capabilities.A1["bed_mm"].value
+    bed = PROFILE.value("bed_mm")
     r = slice_guard.post_slice(text, tool_slots={0: 1}, ifs_slots=1, bed=bed, templates=a.templates_dir(),
                                envelope=a.motion_envelope_mm)
     assert r.status == "ok", r.as_dict()
@@ -315,7 +347,7 @@ def test_toolpath_excludes_the_vendor_blocks_in_both_orca_layouts(tags):
     text = a1_gcode(tags=tags)
     body = slice_guard.toolpath(text)
     assert "G1 X120 Y100 E.8" in body and "G1 X-48.2 F3000 ; move to safe pos" in body  # timelapse is in the toolpath
-    assert guard.VENDOR_START not in body and "T1000" not in body and "T255" not in body
+    assert PROFILE.vendor_start not in body and "T1000" not in body and "T255" not in body
     assert "; filament end gcode" not in body
     assert adapter_for(A1).gcode_problems(text, state()) == []
 

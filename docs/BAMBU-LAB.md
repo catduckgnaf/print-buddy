@@ -1,6 +1,19 @@
-# Bambu Lab A1 (phase 1: offline only)
+# Bambu Lab printers (phase 1: A1, offline only)
 
-Select it with `printer.model: bambulab.a1`. Print Buddy slices for the A1, checks fit and G-code, and leaves a verified file for you to move to the printer yourself. It never connects to the printer. The P1S is a separate later model and is not covered here.
+Select the A1 with `printer.model: bambulab.a1`. Print Buddy slices for the A1, checks fit and G-code, and leaves a verified file for you to move to the printer yourself. It never connects to the printer. The P1S is a separate later model and is not covered here.
+
+## Profile layout: vendor, then printer
+
+Bambu Lab support is organised vendor first, then printer, inside `print_buddy/printers/bambulab/`:
+
+| File | Profile | Holds |
+|---|---|---|
+| `vendor.py` | `BAMBU_LAB` (`VendorProfile`) | What every Bambu Lab printer shares: the OrcaSlicer release the templates come from, Print Buddy's overrides to every vendor Orca profile, G-code dialect, job formats (Print Buddy writes `.gcode`; Bambu's own jobs are `.gcode.3mf`), the start-code family, connection types, handoff methods, the support matrix, and the validated live modes (none) |
+| `a1.py` | `PROFILE` (`PrinterProfile`, inherits `BAMBU_LAB`) plus `MODEL` and `A1Adapter` | Printer model name, vendor start marker, the Orca profile names, the template folder, dimensions, exclusions, motion envelope, nozzles, temperatures, materials, AMS Lite |
+| `p1s.py` | not written yet | A P1S `PrinterProfile` inheriting `BAMBU_LAB`, its `MODEL` and adapter subclass, and `templates/orca/bambulab_p1s` |
+| `adapter.py`, `guard.py` | vendor-wide code | `BambuOfflineAdapter` and the G-code checks, both driven by the printer profile they are given |
+
+A printer profile looks a fact up in its own facts first, then the vendor's, and its support matrix is the vendor's with the printer's overrides on top. Adding the P1S is a new profile module, its templates (`python3 scripts/bambu-templates.py --printer p1s` once its Orca profile names are in the profile) and its tests; the vendor profile and the shared code do not change unless the P1S differs. The Orca templates stay in the existing flat `templates/orca/bambulab_<printer>` folders, like every other model, and no other printer was moved.
 
 ## What works and what does not
 
@@ -31,7 +44,7 @@ A job sliced for another model is still refused by the existing `printer_model` 
 
 ## Values and sources
 
-The machine, process and filament templates are OrcaSlicer's own A1 profiles, flattened. `scripts/bambu-a1-templates.py` rebuilds them from OrcaSlicer tag v2.4.2 (commit `8500fcdccaa10b5099ac20d252af3a7c560046f1`, the version the real-slicer CI job installs): `Bambu Lab A1 0.4 nozzle` → `fdm_bbl_3dp_001_common` → `fdm_machine_common` with its five `template *_gcode` includes, `0.20mm Standard @BBL A1`, and `Generic PLA @BBL A1`. The tests pin the SHA-256 of every vendor G-code block, so a change has to be a deliberate re-import.
+The machine, process and filament templates are OrcaSlicer's own A1 profiles, flattened. `scripts/bambu-templates.py --printer a1` rebuilds them, using the release and overrides in the vendor profile and the profile names in the A1 profile, from OrcaSlicer tag v2.4.2 (commit `8500fcdccaa10b5099ac20d252af3a7c560046f1`, the version the real-slicer CI job installs): `Bambu Lab A1 0.4 nozzle` → `fdm_bbl_3dp_001_common` → `fdm_machine_common` with its five `template *_gcode` includes, `0.20mm Standard @BBL A1`, and `Generic PLA @BBL A1`. The tests pin the SHA-256 of every vendor G-code block, so a change has to be a deliberate re-import.
 
 | Value | Source | Verified |
 |---|---|---|
@@ -45,9 +58,11 @@ The machine, process and filament templates are OrcaSlicer's own A1 profiles, fl
 | AMS Lite: 4 spools | Bambu Lab A1 Combo pages | No, same reason. Not used |
 | Motion envelope X −48.2..267, Y −0.5..262.5 mm | Derived from the extremes of the vendor G-code moves | No: not a published Bambu figure, not checked on hardware |
 
-All values are in `print_buddy/printers/bambulab/capabilities.py` with the same source labels.
+All values are in `print_buddy/printers/bambulab/vendor.py` (vendor-wide) and `a1.py` (A1) with the same source labels.
 
-## Print Buddy changes to the vendor profile
+## Print Buddy changes to the vendor Orca profiles
+
+These live in the vendor profile (`BAMBU_LAB.orca_overrides`), so every Bambu printer gets the same ones.
 
 * `z_hop_types` and `filament_z_hop_types`: Normal Lift. The shared post-slice guard allows nothing else (the vendor uses Auto Lift).
 * `enable_arc_fitting`: 0. The guard blocks arc fitting on every printer.

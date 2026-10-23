@@ -13,7 +13,7 @@ The Discord conversation runs on [Hermes Agent](https://github.com/NousResearch/
 Supported printers:
 * **Sovol** on stock Klipper, where Print Buddy started, plus any other Klipper printer with Moonraker. Single extruder.
 * **Flashforge (running ZMod)**, including IFS multi color slots and the ZMod plugin below.
-* **Bambu Lab A1**, offline only: slicing, fit checks and G-code validation, then you move the file to the printer yourself. No telemetry, upload, print control or AMS Lite. See [Bambu Lab A1](docs/BAMBU-A1.md).
+* **Bambu Lab A1**, offline only: slicing, fit checks and G-code validation, then you move the file to the printer yourself. No telemetry, upload, print control or AMS Lite. See [Bambu Lab printers](docs/BAMBU-LAB.md).
 
 Pick one with `[printer] model` (see Settings). The offline core in `print_buddy/core/` runs with no printer.
 
@@ -270,7 +270,7 @@ is_system_service: False
 * `scripts/`: `install-hermes.sh`, `home-update.sh`, and `migrate-names.sh` (one-shot, see `docs/RENAME-MIGRATION.md`).
 * `print_buddy.cfg`, `install.sh`, `uninstall.sh`, `update.sh`: ZMod plugin macro and lifecycle scripts.
 * `tests/`: offline suite, real slicer checks, the Discord flow corpus (`tests/corpus/`), and the Klipper macro tests.
-* `docs/`: install guide, AD5X integration specs, and the [Bambu Lab A1](docs/BAMBU-A1.md) support statement.
+* `docs/`: install guide, AD5X integration specs, and the [Bambu Lab](docs/BAMBU-LAB.md) support statement.
 
 ## Links
 

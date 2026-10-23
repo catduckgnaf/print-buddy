@@ -5,7 +5,8 @@ Layout: one package per brand under print_buddy/printers/, one module per printe
     flashforge/ad5x.py    MODEL for "flashforge.ad5x"; adapter.py (ZMod adapter); zmod/ (AD5X-only code)
     sovol/sv06.py         MODEL for "sovol.sv06" on the stock Klipper adapter
     klipper/generic.py    MODEL for "klipper.generic"; adapter.py (the stock Klipper adapter)
-    bambulab/a1.py        MODEL for "bambulab.a1"; adapter.py (offline only: no transport), guard.py, capabilities.py
+    bambulab/a1.py        A1 printer profile + MODEL for "bambulab.a1"; vendor.py (Bambu Lab vendor profile the
+                          printer profiles inherit), adapter.py (offline only: no transport), guard.py
 
 A model module defines MODEL = PrinterModel(...): the printer's settings (bed, height, nozzle, slots,
 margins, prime tower, start/end macros, cold pull), the adapter class, and the Orca template folder under

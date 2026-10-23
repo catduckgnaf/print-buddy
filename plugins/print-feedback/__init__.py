@@ -371,7 +371,8 @@ async def _offer_spool_change(adapter, source, metadata, print_next, target, det
     Only the slice-time spool id is waived; material family and live slot checks still run.
     """
     import uuid
-    from tools import clarify_gateway as cm
+    from print_buddy.core.prompts import gateway as _prompts
+    cm = _prompts()
     question = _spool_change_text(target, detail)
     choices = [USE_LOADED_SPOOL, print_next.CANCEL_LABEL]
     cid = uuid.uuid4().hex
@@ -431,7 +432,8 @@ async def print_next_dispatch(event, gateway, **kwargs):
                                    f"plus warmup ~{print_summary.human(seconds + print_summary.WARMUP_S)} total"
                                    if isinstance(seconds, (int, float)) else
                                    f"Print #{number if number else 'unknown'}; estimated print time unknown")
-        from tools import clarify_gateway as cm
+        from print_buddy.core.prompts import gateway as _prompts
+        cm = _prompts()
         choices = [print_next.START_LABEL, print_next.CANCEL_LABEL]
         question = print_next.question_text(target)
         cid = uuid.uuid4().hex
@@ -850,7 +852,8 @@ async def print_stop_dispatch(event, gateway, **kwargs):
         if st['state'] not in print_stop.ACTIVE:
             message = f"Nothing to stop: printer is {st['state']}. Nothing sent."
         else:
-            from tools import clarify_gateway as cm
+            from print_buddy.core.prompts import gateway as _prompts
+            cm = _prompts()
             name = summary.format_event('started', st['filename']).splitlines()[0].split(': ', 1)[-1]
             where = print_stop.where_text(st)
             question = f"Stop {name} ({st['state']}{', ' + where if where else ''})? This cancels the print."
@@ -898,7 +901,8 @@ def _control_preamble(event, gateway, command, with_args=False):
 
 async def _confirm(adapter, source, metadata, prefix, question, choices, timeout):
     import uuid
-    from tools import clarify_gateway as cm
+    from print_buddy.core.prompts import gateway as _prompts
+    cm = _prompts()
     cid = uuid.uuid4().hex
     session_key = f'{prefix}:{source.chat_id}:{source.thread_id}'
     cm.register(cid, session_key, question, choices)
@@ -1164,6 +1168,18 @@ def _recent_model_link_from_db():
     return None
 
 
+def _recent_model_link(source):
+    """The last model link in this channel: Print Buddy's own state first, then Hermes' state.db."""
+    from print_buddy.bot import recent_links
+    found = recent_links.recall(getattr(source, 'chat_id', None), getattr(source, 'thread_id', None))
+    if found:
+        return found
+    from print_buddy.core import prompts
+    if prompts.active():
+        return None  # standalone: there is no Hermes session history to read
+    return _recent_model_link_from_db()
+
+
 def _is_affirmative_followup(text: str) -> bool:
     if not text:
         return False
@@ -1197,7 +1213,7 @@ async def model_link_dispatch(event, gateway, **kwargs):
     reuse = None
     if not (model_link(text) or model_file(event)):
         if _is_affirmative_followup(text):
-            recent_url = _recent_model_link_from_db()
+            recent_url = _recent_model_link(source)
             if recent_url:
                 text = f"{recent_url} {text}"
                 setattr(event, 'text', text)
@@ -1206,6 +1222,10 @@ async def model_link_dispatch(event, gateway, **kwargs):
             reuse = last_job() if reprint_request(text) else None
             if reuse is None:
                 return None
+    linked = model_link(text)
+    if linked:
+        from print_buddy.bot import recent_links
+        recent_links.remember(source.chat_id, linked, getattr(source, 'thread_id', None))
     event.metadata['fresh_model_intake_handled'] = True
     event.metadata['live_session_key'] = gateway._session_key_for_source(source)
     adapter = gateway._delivery_adapter_for(source)
@@ -1280,7 +1300,8 @@ def alert_button_handlers(bot, adapter):
         return await channel.send(text, view=view)
 
     async def handle_stop(interaction, clarify_id):
-        from tools import clarify_gateway as cm
+        from print_buddy.core.prompts import gateway as _prompts
+        cm = _prompts()
         resolved = cm.resolve_gateway_clarify(clarify_id, _pi.STOP_LABEL)
         note = 'Stopping.' if resolved else 'That step already finished. Nothing to stop.'
         try:

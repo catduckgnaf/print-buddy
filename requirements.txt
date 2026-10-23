@@ -1,7 +1,8 @@
-# Runtime dependencies for Print Buddy (slicing, previews, Moonraker WS, Discord posts via Hermes).
+# Runtime dependencies for Print Buddy (slicing, previews, Moonraker WS, the standalone Discord bot).
 # Test-only packages live in requirements-test.txt.
 jinja2>=3.1
 numpy>=1.26
 pillow>=10.0
 pyyaml>=6.0
 websockets>=12
+discord.py>=2.3,<3

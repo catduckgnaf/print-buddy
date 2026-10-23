@@ -9,6 +9,12 @@
         "com.bambulab.BambuStudio"
       ]
     },
+    "bot": {
+      "health_port": 0,
+      "health_stale_s": 120,
+      "mode": "hermes",
+      "sync_commands": true
+    },
     "cold_pull": {
       "petg": [
         245,
@@ -20,6 +26,7 @@
       ]
     },
     "discord": {
+      "allowed_user_ids": "",
       "approval_user_id": "",
       "bot_name": "Print Buddy",
       "chat_id": "",
@@ -29,6 +36,7 @@
       "question_timeout_s": 1800,
       "safety_confirm_timeout_s": 600,
       "timezone": "America/New_York",
+      "token_env": "DISCORD_BOT_TOKEN",
       "upload_max_bytes": 9500000,
       "upload_wait_s": 3600
     },
@@ -44,6 +52,12 @@
       "spool_nag_s": 600,
       "start_claim_ttl_s": 1800,
       "tick_s": 600
+    },
+    "llm": {
+      "api_key_env": "LLM_API_KEY",
+      "chat_url": "",
+      "model": "",
+      "timeout_s": 20.0
     },
     "maintenance": {
       "full_days": 30,
@@ -164,6 +178,12 @@
         "com.bambulab.BambuStudio"
       ]
     },
+    "bot": {
+      "health_port": 0,
+      "health_stale_s": 120,
+      "mode": "hermes",
+      "sync_commands": true
+    },
     "cold_pull": {
       "petg": [
         245,
@@ -175,6 +195,7 @@
       ]
     },
     "discord": {
+      "allowed_user_ids": "",
       "approval_user_id": "",
       "bot_name": "Print Buddy",
       "chat_id": "",
@@ -184,6 +205,7 @@
       "question_timeout_s": 1800,
       "safety_confirm_timeout_s": 600,
       "timezone": "America/New_York",
+      "token_env": "DISCORD_BOT_TOKEN",
       "upload_max_bytes": 9500000,
       "upload_wait_s": 3600
     },
@@ -199,6 +221,12 @@
       "spool_nag_s": 600,
       "start_claim_ttl_s": 1800,
       "tick_s": 600
+    },
+    "llm": {
+      "api_key_env": "LLM_API_KEY",
+      "chat_url": "",
+      "model": "",
+      "timeout_s": 20.0
     },
     "maintenance": {
       "full_days": 30,
@@ -319,6 +347,12 @@
         "com.bambulab.BambuStudio"
       ]
     },
+    "bot": {
+      "health_port": 0,
+      "health_stale_s": 120,
+      "mode": "hermes",
+      "sync_commands": true
+    },
     "cold_pull": {
       "petg": [
         245,
@@ -330,6 +364,7 @@
       ]
     },
     "discord": {
+      "allowed_user_ids": "",
       "approval_user_id": "",
       "bot_name": "Print Buddy",
       "chat_id": "",
@@ -339,6 +374,7 @@
       "question_timeout_s": 1800,
       "safety_confirm_timeout_s": 600,
       "timezone": "America/New_York",
+      "token_env": "DISCORD_BOT_TOKEN",
       "upload_max_bytes": 9500000,
       "upload_wait_s": 3600
     },
@@ -354,6 +390,12 @@
       "spool_nag_s": 600,
       "start_claim_ttl_s": 1800,
       "tick_s": 600
+    },
+    "llm": {
+      "api_key_env": "LLM_API_KEY",
+      "chat_url": "",
+      "model": "",
+      "timeout_s": 20.0
     },
     "maintenance": {
       "full_days": 30,
@@ -474,6 +516,12 @@
         "com.bambulab.BambuStudio"
       ]
     },
+    "bot": {
+      "health_port": 0,
+      "health_stale_s": 120,
+      "mode": "hermes",
+      "sync_commands": true
+    },
     "cold_pull": {
       "petg": [
         245,
@@ -485,6 +533,7 @@
       ]
     },
     "discord": {
+      "allowed_user_ids": "",
       "approval_user_id": "",
       "bot_name": "Print Buddy",
       "chat_id": "",
@@ -494,6 +543,7 @@
       "question_timeout_s": 1800,
       "safety_confirm_timeout_s": 600,
       "timezone": "America/New_York",
+      "token_env": "DISCORD_BOT_TOKEN",
       "upload_max_bytes": 9500000,
       "upload_wait_s": 3600
     },
@@ -509,6 +559,12 @@
       "spool_nag_s": 600,
       "start_claim_ttl_s": 1800,
       "tick_s": 600
+    },
+    "llm": {
+      "api_key_env": "LLM_API_KEY",
+      "chat_url": "",
+      "model": "",
+      "timeout_s": 20.0
     },
     "maintenance": {
       "full_days": 30,

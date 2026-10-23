@@ -223,6 +223,46 @@ def _validate_vendor_choices(data, model):
     data["delivery"]["methods"] = [m for m in vendor.delivery if m in methods]
 
 
+BOT_MODES = ("hermes", "standalone")
+
+
+def user_ids(value):
+    """Discord user IDs from a comma or space separated string. A non-numeric entry is an error."""
+    ids = [part for part in re.split(r"[\s,]+", str(value or "").strip()) if part]
+    for part in ids:
+        if not part.isdigit():
+            raise SettingsError(f"[discord] allowed_user_ids must be numeric Discord user IDs, got {part!r}")
+    return ids
+
+
+def _validate_bot(data):
+    """The standalone bot sections (#73). Absent sections in a hand-made home file get the defaults."""
+    bot = data.setdefault("bot", {})
+    bot.setdefault("mode", "hermes")
+    if bot["mode"] not in BOT_MODES:
+        raise SettingsError(f"[bot] mode must be one of {', '.join(BOT_MODES)}, got {bot['mode']!r}")
+    port = bot.setdefault("health_port", 0)
+    if isinstance(port, bool) or not isinstance(port, int) or not 0 <= port <= 65535:
+        raise SettingsError(f"[bot] health_port must be a port number from 0 to 65535, got {port!r}")
+    bot.setdefault("health_stale_s", 120)
+    bot["health_stale_s"] = _positive(data, "bot", "health_stale_s", int)
+    bot.setdefault("sync_commands", True)
+    discord = data["discord"]
+    discord.setdefault("token_env", "DISCORD_BOT_TOKEN")
+    if not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", str(discord["token_env"])):
+        raise SettingsError(f"[discord] token_env must be an environment variable name, got {discord['token_env']!r}")
+    user_ids(discord.setdefault("allowed_user_ids", ""))
+    llm = data.setdefault("llm", {})
+    for key, default in (("chat_url", ""), ("model", ""), ("api_key_env", "LLM_API_KEY")):
+        llm.setdefault(key, default)
+    if llm["chat_url"] and not llm["chat_url"].startswith(("http://", "https://")):
+        raise SettingsError(f"[llm] chat_url must be a URL, got {llm['chat_url']!r}")
+    if llm["chat_url"] and not llm["model"]:
+        raise SettingsError("[llm] model is required when chat_url is set")
+    llm.setdefault("timeout_s", 20)
+    llm["timeout_s"] = _positive(data, "llm", "timeout_s")
+
+
 def validate(data):
     """Normalize types and fail loudly on a typo instead of slicing with a bad bed."""
     material_temps = data.setdefault("material_temps", {})
@@ -305,6 +345,7 @@ def validate(data):
     data["visual_watch"]["sensitivity"] = int(level)
     for key in ("question_timeout_s", "safety_confirm_timeout_s", "upload_wait_s", "cold_pull_outcome_s"):
         data["discord"][key] = _positive(data, "discord", key, int)
+    _validate_bot(data)
     templates = data.get("orca", {}).get("templates")
     if not isinstance(templates, str) or not templates:
         raise SettingsError("[orca] templates must be a folder path")

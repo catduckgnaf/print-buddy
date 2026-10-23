@@ -120,6 +120,21 @@ def discord_chat_id() -> str:
     return str(cfg()["discord"]["chat_id"] or "")
 
 
+def bot_mode() -> str:
+    """hermes (the gateway runs the plugin) or standalone (python3 -m print_buddy.bot)."""
+    return str((cfg().get("bot") or {}).get("mode") or "hermes")
+
+
+def standalone() -> bool:
+    return bot_mode() == "standalone"
+
+
+def discord_token() -> str:
+    """The Discord bot token: the [discord] token_env variable, then the profile .env files."""
+    name = str((cfg().get("discord") or {}).get("token_env") or "DISCORD_BOT_TOKEN")
+    return profile_env_value(name)
+
+
 def question_timeout_s() -> int:
     """How long a Discord question waits for a button press."""
     return int(cfg()["discord"]["question_timeout_s"])

@@ -8,7 +8,7 @@ Print Buddy is an automated 3D printing pipeline driven from a Discord channel, 
 
 Print Buddy is almost entirely Python. Downloading, plate merging, color matching, slicing, job start, printer monitoring, spool sync, timelapses, and print records are all plain scripts with fixed rules, so they are fast and make no LLM calls.
 
-The Discord conversation runs on [Hermes Agent](https://github.com/NousResearch/hermes-agent) using Luna at medium reasoning. Two optional extras also call a model: the camera watchdog asks a vision model to classify a print frame, and the "print started" post adds a one line roast. Leave `services.vision_chat_url` empty and neither runs.
+The Discord side runs one of two ways. As a **standalone bot** (`python3 -m print_buddy.bot`), Print Buddy talks to Discord itself with a bot token: links, files, buttons, slash commands, slicing, print start and printer alerts need no Hermes and no LLM; an OpenAI-compatible model can optionally word replies to free text. See [Standalone bot](docs/STANDALONE.md). Or the conversation runs on [Hermes Agent](https://github.com/NousResearch/hermes-agent) using Luna at medium reasoning, with the same handlers loaded as a Hermes plugin. Two optional extras also call a model: the camera watchdog asks a vision model to classify a print frame, and the "print started" post adds a one line roast. Leave `services.vision_chat_url` empty and neither runs.
 
 Supported printers:
 * **Sovol** on stock Klipper, where Print Buddy started, plus any other Klipper printer with Moonraker. Single extruder.
@@ -149,6 +149,12 @@ Empty bed, spaghetti, detached part, uncertain, and vision failure alerts fire a
 | | `safety_confirm_timeout_s` | `600` | How long a safety confirmation (stop, resume, reboot, cold-pull go-ahead) waits |
 | | `upload_wait_s` | `3600` | How long an upload-wait freeze stays active |
 | | `cold_pull_outcome_s` | `1800` | How long a cold-pull outcome prompt stays open |
+| | `token_env` | `DISCORD_BOT_TOKEN` | Standalone bot: environment variable holding the bot token |
+| | `allowed_user_ids` | empty | Standalone bot: Discord user IDs allowed to use it, comma or space separated |
+| `bot` | `mode` | `hermes` | `standalone` runs `python3 -m print_buddy.bot` with no Hermes; see [Standalone bot](docs/STANDALONE.md) |
+| | `health_port`, `health_stale_s` | `0`, `120` | Standalone bot: `GET /healthz` port (0 off) and heartbeat age limit |
+| | `sync_commands` | `true` | Standalone bot: register slash commands at startup |
+| `llm` | `chat_url`, `model`, `api_key_env`, `timeout_s` | empty, empty, `LLM_API_KEY`, `20` | Optional OpenAI-compatible model for standalone free-text replies; never starts anything itself |
 | `listener` | `tick_s` | `600` | Listener housekeeping interval |
 | | `ifs_presence_poll_s` | `15` | IFS spool presence poll |
 | | `spool_nag_s` | `600` | Reminder interval for an unanswered spool question |
@@ -165,7 +171,7 @@ Empty bed, spaghetti, detached part, uncertain, and vision failure alerts fire a
 
 ## Install and update
 
-See [docs/INSTALL.md](docs/INSTALL.md) to install into a Hermes profile.
+See [docs/INSTALL.md](docs/INSTALL.md) to install into a Hermes profile, or [docs/STANDALONE.md](docs/STANDALONE.md) and `scripts/install-standalone.sh` to run the standalone bot with no Hermes.
 
 Update only from a commit that is green in CI. On the machine running Print Buddy:
 ```bash
@@ -202,7 +208,7 @@ A second CI job installs the Flathub OrcaSlicer, slices small test models with t
 
 ### Discord flow corpus
 
-`tests/corpus/cases/` holds generated, redistributable 3MF projects and STL meshes run end to end through the Discord intake with fake button clicks. Nothing contacts a printer. Every PR runs the corpus with fake Orca; a separate real-slicer CI job runs the same cases with Flathub Orca.
+`tests/corpus/cases/` holds generated, redistributable 3MF projects and STL meshes run end to end through the Discord intake with fake button clicks. Nothing contacts a printer. Each case runs twice: through the Hermes plugin hook, and through the standalone bot on a fake discord.py client (`tests/corpus/fake_discord.py`), where real buttons resolve the core prompt registry. Every PR runs the corpus with fake Orca; a separate real-slicer CI job runs the same cases with Flathub Orca.
 
 | Coverage | Cases | Behavior asserted |
 | --- | --- | --- |
@@ -271,9 +277,10 @@ is_system_service: False
 * `print_buddy/hermes/`: Moonraker listener, Discord posts, spool sync, print control, and records.
 * `print_buddy/printers/`: one package per vendor (its `VENDOR` profile in `__init__.py`), one file per printer model; see `base.py` and [Printer profiles](docs/PRINTER-PROFILES.md).
 * `print_buddy/templates/orca/<model folder>/`: Orca machine, process, and filament JSON per printer.
-* `plugins/print-feedback/`: Hermes plugin with the Discord slash commands and interaction guards.
+* `plugins/print-feedback/`: the Discord command handlers and interaction guards, loaded by the Hermes gateway or by the standalone bot.
+* `print_buddy/bot/`: standalone Discord bot (discord.py adapter, router, health check, optional LLM); `systemd/` holds its units.
 * `hermes/`: profile templates and skills installed by `scripts/install-hermes.sh`.
-* `scripts/`: `install-hermes.sh`, `home-update.sh`, and `migrate-names.sh` (one-shot, see `docs/RENAME-MIGRATION.md`).
+* `scripts/`: `install-hermes.sh`, `install-standalone.sh`, `home-update.sh`, and `migrate-names.sh` (one-shot, see `docs/RENAME-MIGRATION.md`).
 * `print_buddy.cfg`, `install.sh`, `uninstall.sh`, `update.sh`: ZMod plugin macro and lifecycle scripts.
 * `tests/`: offline suite, real slicer checks, the Discord flow corpus (`tests/corpus/`), and the Klipper macro tests.
 * `docs/`: install guide, AD5X integration specs, and [printer profiles and post-slice delivery](docs/PRINTER-PROFILES.md).

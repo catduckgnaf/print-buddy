@@ -1,0 +1,137 @@
+"""The optional LLM words replies and may name a command. It can never start, stop or write anything itself."""
+import asyncio
+import io
+import json
+from unittest import mock
+
+import pytest
+
+from corpus import fake_discord
+from print_buddy.bot import llm, runtime
+from print_buddy.bot.adapter import parse_custom_id
+from print_buddy.core import prompts
+from print_buddy.hermes import print_stop
+
+LLM_URL = "http://llm.test/v1/chat/completions"
+
+
+class FakeLLM:
+    def __init__(self, reply, command=None, raw=None):
+        self.content = raw if raw is not None else json.dumps({"reply": reply, "command": command})
+        self.requests = []
+
+    def __call__(self, req, timeout=None):
+        assert req.full_url == LLM_URL, f"the LLM path reached {req.full_url}"
+        self.requests.append(json.loads(req.data))
+        return io.BytesIO(json.dumps({"choices": [{"message": {"content": self.content}}]}).encode())
+
+
+@pytest.fixture
+def llm_cfg(cfg):
+    cfg["llm"].update(chat_url=LLM_URL, model="small-model")
+    return cfg
+
+
+def make(cfg, opener):
+    discord = fake_discord.FakeDiscord(auto=False, chat_id=int(cfg["discord"]["chat_id"]),
+                                       operator_id=int(cfg["discord"]["allowed_user_ids"]))
+    return discord, runtime.BotCore(discord.client, cfg, llm_opener=opener)
+
+
+@pytest.mark.parametrize(("command", "allowed"), [
+    ("/print-stop", "/print-stop"), ("/print-next abc123 2", "/print-next abc123 2"),
+    ("/PRINT-AGAIN list", "/print-again list"), ("/spool", "/spool"), ("/spool list", "/spool list"),
+    ("/print-maintenance quick", "/print-maintenance quick"),
+    ("/spool sync", None), ("/spool change 1 12", None), ("/spool new a, PLA, red, 1000", None),
+    ("/print-again stop", None), ("/print-colors /x/JOB.json", None), ("M112", None), ("G28", None),
+    ("https://makerworld.com/en/models/1", None), ("/print-stop; rm -rf /", None), ("", None), (None, None),
+])
+def test_only_read_only_or_button_gated_commands_are_allowed(command, allowed):
+    assert llm.allowed_command(command) == allowed
+
+
+def test_llm_picked_stop_still_waits_for_the_button_and_writes_nothing_without_it(llm_cfg):
+    opener = FakeLLM("I can stop it, press the button to confirm.", "/print-stop")
+    discord, core = make(llm_cfg, opener)
+
+    async def flow():
+        task = asyncio.create_task(core.handle_message(discord.message("the print is spaghetti, kill it")))
+        for _ in range(300):
+            message = discord.last_question()
+            if message:
+                break
+            await asyncio.sleep(0.01)
+        assert message is not None, discord.sent
+        moonraker.assert_not_called()
+        keep = next(cid for label, cid in message.buttons() if label == print_stop.KEEP_LABEL)
+        await discord.press(message, keep)
+        return await task
+
+    with mock.patch.object(print_stop, "status", return_value={"state": "printing", "filename": "a.gcode"}), \
+            mock.patch.object(print_stop, "_call") as moonraker:
+        out = asyncio.run(flow())
+    assert out["reason"] == "deterministic print stop handled"
+    moonraker.assert_not_called()  # no Moonraker cancel: the button said keep printing
+    assert discord.sent[0].startswith("I can stop it") and discord.sent[-1] == "Kept printing. Nothing sent."
+    assert len(opener.requests) == 1 and opener.requests[0]["model"] == "small-model"
+
+
+def test_llm_naming_a_write_command_runs_nothing(llm_cfg):
+    opener = FakeLLM("Syncing the screens now!", "/spool sync")
+    discord, core = make(llm_cfg, opener)
+    with mock.patch("print_buddy.hermes.spool_sync.sync_all_screens") as sync, \
+            mock.patch("print_buddy.hermes.spool_sync.bind_slot") as bind:
+        out = asyncio.run(core.handle_message(discord.message("sync the spools on the screen")))
+    sync.assert_not_called()
+    bind.assert_not_called()
+    assert out == {"action": "skip", "reason": "llm reply"}
+    assert discord.sent == ["Syncing the screens now!"]
+    assert prompts.open_count() == 0
+
+
+def test_llm_gcode_or_prose_is_only_text(llm_cfg):
+    opener = FakeLLM(None, raw="Sure! Send M112 and G28 to the printer.")
+    discord, core = make(llm_cfg, opener)
+    with mock.patch("urllib.request.urlopen", side_effect=AssertionError("no other network")), \
+            mock.patch("print_buddy.hermes.print_next.start") as start:
+        out = asyncio.run(core.handle_message(discord.message("home the printer")))
+    start.assert_not_called()
+    assert out["reason"] == "llm reply" and discord.sent == ["Sure! Send M112 and G28 to the printer."]
+
+
+def test_llm_failure_falls_back_to_the_command_list(llm_cfg):
+    def broken(req, timeout=None):
+        raise OSError("llm down")
+    discord, core = make(llm_cfg, broken)
+    out = asyncio.run(core.handle_message(discord.message("hello?")))
+    assert out == {"action": "skip", "reason": "command list"} and discord.sent == [core.help]
+
+
+def test_llm_is_never_asked_about_commands_or_links(llm_cfg):
+    opener = FakeLLM("should not be asked")
+    discord, core = make(llm_cfg, opener)
+    with mock.patch("print_buddy.hermes.spool_sync.list_text", return_value="spools"):
+        asyncio.run(core.handle_message(discord.message("/spool list")))
+    assert opener.requests == [] and discord.sent == ["spools"]
+
+
+def test_typed_answer_to_an_llm_routed_question_is_not_sent_to_the_llm(llm_cfg):
+    opener = FakeLLM("Stopping needs a button.", "/print-stop")
+    discord, core = make(llm_cfg, opener)
+
+    async def flow():
+        task = asyncio.create_task(core.handle_message(discord.message("stop the print")))
+        for _ in range(300):
+            if discord.last_question():
+                break
+            await asyncio.sleep(0.01)
+        message = discord.last_question()
+        cid = parse_custom_id(message.buttons()[0][1])[0]
+        prompts.resolve_gateway_clarify(cid, print_stop.KEEP_LABEL)
+        return await task
+
+    with mock.patch.object(print_stop, "status", return_value={"state": "printing", "filename": "a.gcode"}), \
+            mock.patch.object(print_stop, "_call") as moonraker:
+        asyncio.run(flow())
+    moonraker.assert_not_called()
+    assert len(opener.requests) == 1

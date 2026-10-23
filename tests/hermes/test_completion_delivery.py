@@ -20,6 +20,19 @@ def test_failed_completion_retries_and_success_survives_restart(monkeypatch, tmp
     assert attempts == ["Print complete: Stand"] * 2
 
 
+def test_failed_pending_retry_does_not_attempt_a_second_delivery(monkeypatch, tmp_path):
+    announcer = listener.announcer
+    monkeypatch.setattr(announcer, "STATE_PATH", tmp_path / "announcement.json")
+    monkeypatch.setattr(announcer, "main", lambda: print("Print complete: Stand"))
+    monkeypatch.setattr(listener, "log", lambda text: None)
+    announcer.save_state({"job_key": "stand", "pending_completion_message": "Print complete: Stand"})
+    attempts = []
+    monkeypatch.setattr(listener, "post", lambda text: attempts.append(text) or False)
+    listener.run_announcer("retry")
+    assert attempts == ["Print complete: Stand"]
+    assert announcer.load_state()["pending_completion_message"] == "Print complete: Stand"
+
+
 def test_video_success_acknowledges_pending_completion(monkeypatch, tmp_path):
     announcer = listener.announcer
     monkeypatch.setattr(announcer, "STATE_PATH", tmp_path / "announcement.json")

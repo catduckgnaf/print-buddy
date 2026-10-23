@@ -22,6 +22,7 @@ from . import settings
 # Every state file or folder name the code uses under <hermes_home>/state. tests/test_state_files.py
 # greps the source and fails when a name appears there that is missing here.
 KNOWN = (
+    "bot_health.json",
     "gcode-bounds-cache",
     "ifs_pending_prompts.json",
     "ifs_presence_edges.json",
@@ -37,6 +38,7 @@ KNOWN = (
     "print_buddy_start_messages.json",
     "print_numbers.json",
     "printer_hardware.json",
+    "recent_model_links.json",
     "reprint_queue.json",
     "runout_pause.json",
     "screen_sync_pending.json",

@@ -58,6 +58,18 @@ discord:
   safety_confirm_timeout_s: 600
   upload_wait_s: 3600
   cold_pull_outcome_s: 1800
+  token_env: DISCORD_BOT_TOKEN
+  allowed_user_ids: ''
+bot:
+  mode: hermes
+  health_port: 0
+  health_stale_s: 120
+  sync_commands: true
+llm:
+  chat_url: ''
+  model: ''
+  api_key_env: LLM_API_KEY
+  timeout_s: 20
 listener:
   tick_s: 600
   ifs_presence_poll_s: 15

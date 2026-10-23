@@ -1,0 +1,62 @@
+"""The last model link posted in each channel, for "print it" follow-ups.
+
+Replaces the Hermes state.db messages lookup: Print Buddy keeps its own small state file.
+"""
+from __future__ import annotations
+
+import json
+import os
+import threading
+import time
+
+from ..hermes import _config
+
+LIMIT = 50
+TTL_S = 7 * 24 * 3600
+_lock = threading.Lock()
+
+
+def _path():
+    return _config.state_file(None, "recent_model_links.json")
+
+
+def _load():
+    try:
+        data = json.loads(_path().read_text())
+        return data if isinstance(data, dict) else {}
+    except (OSError, ValueError):
+        return {}
+
+
+def _scope(chat_id, thread_id=None):
+    return f"{chat_id}:{thread_id or ''}"
+
+
+def remember(chat_id, url, thread_id=None, now=None):
+    """Record the newest model link for a channel (or thread). Failures are ignored."""
+    if not url or not chat_id:
+        return
+    now = time.time() if now is None else now
+    path = _path()
+    with _lock:
+        data = {k: v for k, v in _load().items()
+                if isinstance(v, dict) and now - float(v.get("at", 0)) < TTL_S}
+        data[_scope(chat_id, thread_id)] = {"url": str(url), "at": now}
+        if len(data) > LIMIT:
+            data = dict(sorted(data.items(), key=lambda kv: kv[1]["at"])[-LIMIT:])
+        try:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            tmp = path.with_suffix(".tmp")
+            tmp.write_text(json.dumps(data, indent=1))
+            os.replace(tmp, path)
+        except OSError:
+            pass
+
+
+def recall(chat_id, thread_id=None, now=None):
+    """The newest unexpired model link for this channel (or thread), else None."""
+    now = time.time() if now is None else now
+    row = _load().get(_scope(chat_id, thread_id))
+    if not isinstance(row, dict) or now - float(row.get("at", 0)) >= TTL_S:
+        return None
+    return row.get("url") or None

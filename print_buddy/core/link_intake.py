@@ -46,7 +46,8 @@ def _scope(source):
 def typed_reply(source, text):
     """Route typed text to this chat's open typed prompt. Returns None when no prompt is open,
     '' when the reply resolved it, or a corrective message (the prompt stays open)."""
-    from tools import clarify_gateway as cm
+    from .prompts import gateway as _prompts
+    cm = _prompts()
     pending = _typed_prompts.get(_scope(source))
     if pending is None:
         return None
@@ -109,7 +110,8 @@ async def ask(adapter, source, session_key, question, choices, timeout=None, all
     """Ask a button question. With ``parser``, a typed reply in the same chat is also accepted;
     ``live_key`` registers under the live chat session so a busy gateway routes the text here
     instead of queueing it as a new agent turn."""
-    from tools import clarify_gateway as cm
+    from .prompts import gateway as _prompts
+    cm = _prompts()
     registration_key = live_key or session_key
     # Every question offers Cancel. Callers that already end on a cancel choice keep theirs.
     cancel_added = not choices or not any(term in str(choices[-1]).casefold()

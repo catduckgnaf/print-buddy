@@ -61,3 +61,15 @@ supported Docker delivery until image gates and final CI are satisfied.
 2. #138 A1 with #137 vendor-delivery: reconcile shared profiles/settings/slicer work.
 3. Documentation #140, #119 and #120: reconcile actual shipped behavior first.
 4. #118 fixtures: review coverage and provenance after behavior settles.
+
+## Phase 2 native continuation
+
+See DOCKER-117-ACCEPTANCE.md for the finite original-criterion matrix and the
+pending minimal Phase 3 approval packet. This supersedes the earlier 29-test
+snapshot as an inventory of coverage, not as image certification. Bot shutdown
+now awaits owned tasks/server closure and malformed PID health fails closed.
+The environment starter defaults to external Spoolman and includes required
+standalone inputs. New native tests exercise a relocated copied payload with
+Hermes and socket access blocked, absent-Orca refusal, all default scalar keys,
+independent build selectors and health/shutdown edge cases. Exact run counts and
+head-specific CI are recorded in the phase handoff, not invented here.

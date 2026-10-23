@@ -54,7 +54,9 @@ def _alive(pid):
         os.kill(int(pid), 0)
     except ProcessLookupError:
         return False
-    except (PermissionError, ValueError, TypeError):
+    except (ValueError, TypeError, OverflowError):
+        return False
+    except PermissionError:
         return True
     return True
 
@@ -71,7 +73,13 @@ def evaluate(status, now=None, stale_s=None):
         return False, "invalid heartbeat timestamp"
     if not math.isfinite(age) or age < -5 or age > stale_s:
         return False, f"heartbeat is {age:.0f}s old (limit {stale_s:.0f}s)"
-    if status.get("pid") and not _alive(status["pid"]):
+    try:
+        pid = int(status["pid"])
+        if pid <= 0:
+            raise ValueError("nonpositive PID")
+    except (KeyError, ValueError, TypeError, OverflowError):
+        return False, "invalid bot process identity"
+    if not _alive(pid):
         return False, f"bot process {status['pid']} is gone"
     if status.get("mode") != "standalone":
         return False, f"bot mode is {status.get('mode')!r}"
@@ -92,7 +100,7 @@ def check(out=None):
             if (status.get("host") != socket.gethostname()
                     or process_identity(status["pid"]) != status.get("process_start")):
                 ok, reason = False, "heartbeat belongs to another container or replaced process"
-        except (OSError, ValueError, TypeError, KeyError, IndexError):
+        except (OSError, ValueError, TypeError, KeyError, IndexError, OverflowError):
             ok, reason = False, "bot process identity unavailable"
     print(f"{'ok' if ok else 'FAIL'}  standalone bot: {reason}", file=out)
     return 0 if ok else 1

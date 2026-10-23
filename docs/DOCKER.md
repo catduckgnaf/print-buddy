@@ -71,7 +71,7 @@ and persistent data, setting its internal URL on both services. This optional
 container is not required, tested here, or approved for creation by this PR.
 It publishes no UI port. Adding a host listener requires separate network review.
 
-Bot health checks its standalone Discord connection, handler state, freshness,
+Bot health reports its handler count and checks its standalone Discord connection, freshness,
 container identity and Linux process start identity. Listener health checks its
 own event-loop heartbeat and identity, not the bot's file. Printer connectivity
 is reported separately: an offline printer does not make a live reconnecting
@@ -114,3 +114,100 @@ optional Spoolman override, build-context filtering and listener heartbeat.
 The current health implementation additionally binds container/process identity;
 the source build deliberately replaces the contributor's binary-download route.
 Original contributor commits and license notices remain intact.
+
+## Settings and external service boundaries
+
+The complete runtime scalar inventory and defaults live in config/home.yaml and
+README's All settings table. Every scalar accepts PRINT_BUDDY__SECTION__KEY;
+use integer spelling for schema integer defaults (for example MAX_MERGED_HOURS=12,
+not 12.0). Arrays and nested mappings require a mounted YAML/TOML file. Optional
+keys include services.octoprint_url and printer.nozzle_type. Unknown settings fail
+at startup instead of silently changing behavior. .env.example is a starter,
+not an exhaustive inventory. Compose reads .env but a direct DockerMan entry
+requires the same variables entered manually. Runtime secrets are separate:
+DISCORD_BOT_TOKEN, OCTOPRINT_API_KEY and the configured LLM key variable.
+
+Select brand/model with printer.model, not a separate unsupported printer.brand:
+flashforge.ad5x, klipper.generic, sovol.sv06 or octoprint.marlin. Selection alone
+does not erase AD5X values inherited from home.yaml. For a single-extruder model,
+explicitly set printer.ifs_slots=1 and the actual bed, height, firmware and Orca
+template directory. See OCTOPRINT-MARLIN.md and the selected printer's defaults.
+Example partial override (merge into a copy of docker.yaml, do not discard its
+container paths and source-installed Orca command):
+
+```yaml
+printer:
+  model: octoprint.marlin
+  firmware: Marlin
+  ifs_slots: 1
+  bed_mm: [220, 220]
+  max_print_height_mm: 220
+orca:
+  templates: print_buddy/templates/orca/octoprint_marlin
+services:
+  octoprint_url: http://octoprint.example:5000
+```
+
+Equivalent scalar variables: PRINT_BUDDY__PRINTER__MODEL=octoprint.marlin,
+PRINT_BUDDY__PRINTER__IFS_SLOTS=1,
+PRINT_BUDDY__SERVICES__OCTOPRINT_URL=http://octoprint.example:5000;
+OCTOPRINT_API_KEY supplies its secret. YAML and TOML use the same section/key names.
+This is configuration, not physical certification of the selected printer.
+
+Moonraker uses services.moonraker_url (HTTP) and moonraker_ws_url (WebSocket).
+Empty WebSocket and camera URLs derive from Moonraker when set; override
+camera_snapshot_url explicitly for a different scheme, port or route. Fluidd is
+an external browser UI, not a runtime service API: there is no fluidd_url setting.
+Klipper is reached through Moonraker, not a direct klipper_url setting. OctoPrint
+uses its own adapter; the separately configured Moonraker listener is not an
+OctoPrint event monitor. Do not start the listener for an OctoPrint-only setup.
+No printer services are bundled. Outbound reachability to the chosen endpoints
+and Discord is required for live operation; no inbound port is required by the
+base example. Do not expose Moonraker, OctoPrint or Spoolman publicly as a shortcut.
+Actual network changes and live startup require their own review/approval.
+
+APP_CHANNEL and ORCA_CHANNEL are independent build selectors, not YAML runtime
+settings. The current default stable Orca pin is 2.4.2, not 2.5.0 stable. The alpha
+pin is 2.5.0-alpha. On a future stable 2.5.0 release, update the stable source ref
+and version documentation together, verify the new build/runtime and promote the
+exact tested artifact. No automatic transition or published channel exists yet.
+
+## Candidate upgrade, persistence and rollback procedure
+
+These are proposed operator steps for a separately approved deployment, not an
+assertion that container recreation has passed here.
+
+1. Record the currently tested immutable image digest, effective config path and
+   the four persistent host paths. Keep secrets outside the image. Stop both
+   services before a consistent data migration. Never use compose down -v.
+2. Preserve /data/hermes (state, prompts, hardware and job records), /data/archive,
+   /data/records and /data/cache. Their legacy hermes directory name is not a
+   dependency on a Hermes installation. User-managed recovery copies must include
+   config and secrets with restricted permissions. This PR creates no backup job.
+3. Change PRINT_BUDDY_IMAGE only to a separately tested digest. Reuse the same
+   writable host directories and selected config mount. Start only the applicable
+   approved services; check their distinct health commands. Health is not slicing
+   or physical-print approval. A no-Orca image cannot create a verified slice.
+4. Roll back by stopping the candidate, restoring the recorded digest and matching
+   config, and reusing compatible data. No automatic schema downgrade is provided.
+   If state schema changes incompatibly, restore the matching operator recovery
+   data before startup; do not run an older binary over unknown newer state.
+
+For optional bundled Spoolman use both Compose files:
+`docker compose -f docker-compose.yml -f docker-compose.spoolman.yml config`.
+The override replaces each application's Spoolman URL with http://spoolman:8000.
+Its database lives in PRINT_BUDDY_DATA/spoolman. To switch back to external mode,
+stop the bundled server, preserve that directory, migrate/export using Spoolman's
+supported procedure, set the external URL in .env and omit the override. Changing
+a URL does not move a database. Never delete the old directory to switch modes.
+Bundled recreation and migration remain image/runtime gates.
+
+Troubleshooting: check selected YAML/TOML path and UID 1000 permissions first;
+use bot check for missing required inputs. Bot health fails until Discord is
+connected; dummy credentials intentionally cannot demonstrate healthy login.
+Listener health reports an offline printer separately. Missing Orca is a refusal,
+not permission to send unsliced geometry. Docker restart unless-stopped reacts to
+process exit, not to an unhealthy healthcheck alone. No autoheal is supplied.
+Manual DockerMan parity also requires restart unless-stopped, shared memory 256m
+and rotating json-file logs (max-size 10m, max-file 3); apply the same config mount
+and external Spoolman URL. Do not bind-mount the source tree over /app.

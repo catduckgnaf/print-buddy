@@ -59,7 +59,7 @@ Nothing else is changed. In particular the vendor start, end, filament-change, t
 
 ## Checks specific to the A1
 
-* Bounds: the vendor start and end blocks park the head on the wiper at X −48.2, the cutter at X 267 and the purge lane at Y −0.5 and Y 262.5, and the per-layer timelapse block moves to X −48.2. So only the Orca toolpath between `; MACHINE_START_GCODE_END` and `; MACHINE_END_GCODE_START` is checked: every move inside the motion envelope, every extruding move on the 256 mm bed and under 256 mm. Tool changes are checked in the same span (the vendor blocks use the firmware's T1000 and T255).
+* Bounds: the vendor start and end blocks park the head on the wiper at X −48.2, the cutter at X 267 and the purge lane at Y −0.5 and Y 262.5, and the per-layer timelapse block moves to X −48.2. So only Orca's own toolpath is checked. Orca 2.5+ tags it with `; MACHINE_START_GCODE_END` and `; MACHINE_END_GCODE_START`; Orca 2.4 has no such tags, so the toolpath runs from the first layer change (`; CHANGE_LAYER` in Bambu output, `;LAYER_CHANGE` otherwise) to the last `Custom` role tag (`; FEATURE: Custom` / `;TYPE:Custom`), which Orca writes just before the end G-code. A file where neither can be found is refused. Within the toolpath: every move inside the motion envelope, every extruding move on the 256 mm bed and under 256 mm. Tool changes are checked in the same span (the vendor blocks use the firmware's T1000 and T255).
 * Temperatures: any M104/M109 above 300 °C or M140/M190 above 100 °C is refused.
 * Materials: not-recommended materials are refused outright; abrasive filaments need `nozzle.type` hardened_steel.
 * Nozzle: 0.4 mm only, stainless or hardened steel.
@@ -67,7 +67,8 @@ Nothing else is changed. In particular the vendor start, end, filament-change, t
 
 ## Known limitations and follow-ups
 
-* No real OrcaSlicer slice of the A1 templates has been run yet. The offline tests use synthetic G-code built around the vendor blocks; the next step is adding `bambulab.a1` to the real-slicer CI job and approving its protected-settings baseline (`config/protected-settings-baseline.bambulab.a1.json` is absent, so the baseline check only warns).
+* Real-slicer coverage: `tests/slicer/test_orca_real_bambu_a1.py` and the nozzle-size matrix in `tests/slicer/test_orca_real.py` slice the A1 templates with the real Orca CLI in CI's real-slicer jobs (2.4.2, and the 2.5.0 alpha track). They check that a cube passes every Print Buddy and A1 guard, that an oversized model is never accepted, that real AD5X output is refused by the A1 guard, and that the protected-settings baseline round-trips. The offline tests use synthetic G-code laid out like real 2.4.2 Bambu output.
+* The protected-settings baseline is not approved yet: `config/protected-settings-baseline.bambulab.a1.json` is absent, so the baseline check only warns. Approve it deliberately from a real A1 slice with `python3 -c "from pathlib import Path; from print_buddy.core.slice_guard import approve_baseline; approve_baseline(Path('<plate_1.gcode>'), path=Path('config/protected-settings-baseline.bambulab.a1.json'))"`. Do not use the `approve-baseline` command for this: it always writes the shared AD5X baseline.
 * Print Buddy writes plain `.gcode`. Whether the A1 prints a plain `.gcode` file from its microSD card, or needs Bambu's `.gcode.3mf` package, is unverified.
 * Orca's plate type for the CLI slice is not set, so the vendor start's Textured PEI offset (`G29.1 Z-0.02`) only applies if Orca resolves the plate as Textured PEI. Unverified.
 * The vendor G-code is copied from OrcaSlicer (AGPL-3.0) into this MIT-licensed repository. Check that this is acceptable before offering the change upstream.

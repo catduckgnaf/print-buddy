@@ -89,13 +89,33 @@ def is_allowed_filament_id(value, own_ids=None):
     return bool(HERMES_SLOT_PATTERN.match(v))
 
 
+# Orca 2.5+ tags the end of the machine start G-code and the start of the end G-code. Orca 2.4 does not:
+# there the first layer change opens the toolpath and the last "Custom" role tag (written just before the
+# filament and machine end G-code) closes it. Bambu Lab profiles use "; CHANGE_LAYER" and "; FEATURE: ".
+START_TAG = re.compile(r"^; MACHINE_START_GCODE_END\s*$", re.M)
+END_TAG = re.compile(r"^; MACHINE_END_GCODE_START\s*$", re.M)
+LAYER_TAG = re.compile(r"^;(?: CHANGE_LAYER|LAYER_CHANGE)\s*$", re.M)
+CUSTOM_TAG = re.compile(r"^;(?: FEATURE: |TYPE:)Custom\s*$", re.M)
+
+def toolpath(text):
+    """Orca's own toolpath, without the machine start and end G-code; None when it cannot be located."""
+    start = START_TAG.search(text) or LAYER_TAG.search(text)
+    if start is None:
+        return None
+    rest = text[start.end():]
+    end = END_TAG.search(rest)
+    if end is None:
+        ends = list(CUSTOM_TAG.finditer(rest))
+        end = ends[-1] if ends else None
+    return rest[:end.start()] if end else None
+
 def _mm(value):
     return "?" if value is None else f"{value:g}"
 
 def body_motion_problems(body, bed, envelope, height=None):
     """Bounds for G-code whose vendor start/end blocks park the head off the bed (Bambu wiper, purge lane).
 
-    body is the text between Orca's machine start and end markers. Every absolute XY move must stay inside
+    body is Orca's toolpath without the machine start and end G-code (see toolpath). Every absolute XY move must stay inside
     envelope (xmin, ymin, xmax, ymax); every extruding move must also stay on the bed and under height.
     Moves made in G91 relative mode are skipped and leave the position unknown until set again.
     """
@@ -120,7 +140,7 @@ def post_slice(gcode, *, ifs_slots=None, tool_slots=None, bed=None, result_json=
     """Check bounds + effective motion/profile settings and capture provenance.
 
     envelope (xmin, ymin, xmax, ymax) is for printers whose vendor start/end G-code moves off the bed:
-    only the toolpath between Orca's start/end markers is bounds- and tool-checked (body_motion_problems).
+    only Orca's toolpath (see toolpath) is bounds- and tool-checked (body_motion_problems).
     """
     r=Result(); tool_slots=tool_slots or {}; bed,ifs_slots=_printer(bed,ifs_slots)
     if isinstance(gcode, Path):
@@ -182,14 +202,13 @@ def post_slice(gcode, *, ifs_slots=None, tool_slots=None, bed=None, result_json=
     if "g-code conflicts detected" in low or "slicing result conflict" in low or "gcode path conflicts" in low:
         r.block("Orca reported a G-code conflict; the slice cannot be used. Inspect overlapping geometry/wipe-tower placement (see Orca adapter diagnostic).")
     # With an envelope, the vendor start/end blocks are the printer maker's (Bambu uses T1000 and T255 there);
-    # tools and bounds are checked on the toolpath between Orca's markers.
-    start, end = "; MACHINE_START_GCODE_END", "; MACHINE_END_GCODE_START"
+    # tools and bounds are checked on Orca's toolpath only.
     body = text
     if envelope is not None:
-        if start in text and end in text:
-            body = text.split(start,1)[1].split(end,1)[0]
-        else:
-            r.block("G-code has no Orca machine start/end markers; toolpath bounds cannot be checked.")
+        body = toolpath(text)
+        if body is None:
+            body = text
+            r.block("Cannot locate Orca's toolpath (no layer change or end G-code marker); bounds cannot be checked.")
     tools={int(n) for n in re.findall(r"(?im)^\s*T(\d+)\s*(?:;.*)?$",body)}
     for n in sorted(tools):
         if n not in tool_slots: r.block(f"G-code uses T{n}, but no physical IFS slot mapping is recorded.")

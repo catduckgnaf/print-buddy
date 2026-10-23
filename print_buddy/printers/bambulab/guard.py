@@ -16,8 +16,6 @@ KLIPPER_COMMAND = re.compile(r"^[ \t]*([A-Z][A-Z0-9]*_[A-Z0-9_]+)\b", re.M)
 # ZMod/AD5X markers that are not commands: START_PRINT's MESH= argument, zmod_color data, the ZMod MD5 line.
 ZMOD_MARKER = re.compile(r"\bMESH=|zmod|^; MD5:", re.M | re.I)
 VENDOR_START = ";===== machine: A1 "
-START_END_TAG = "; MACHINE_START_GCODE_END"
-END_START_TAG = "; MACHINE_END_GCODE_START"
 
 
 class ForeignStartCode(RuntimeError):
@@ -68,10 +66,11 @@ def a1_gcode_problems(text, *, state=None, nozzle_sizes=(0.4,), nozzle_types=("s
         problems.append(f"G-code was sliced for printer_model {model!r}, not 'Bambu Lab A1'")
     if VENDOR_START not in text:
         problems.append("G-code does not start with the Bambu Lab A1 vendor start sequence")
-    if START_END_TAG not in text or END_START_TAG not in text:
-        problems.append("G-code has no OrcaSlicer machine start/end markers; toolpath bounds cannot be checked")
+    body = slice_guard.toolpath(text)
+    if body is None:
+        problems.append("cannot locate the OrcaSlicer toolpath (no layer change or end G-code marker); "
+                        "bounds cannot be checked")
     else:
-        body = text.split(START_END_TAG, 1)[1].split(END_START_TAG, 1)[0]
         tools = sorted({int(n) for n in re.findall(r"^[ \t]*T(\d+)\b", body, re.M)} - {0})
         if tools:
             problems.append(f"G-code changes to tools {tools}; AMS Lite multi-color is not supported")

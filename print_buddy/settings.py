@@ -66,7 +66,8 @@ LEGACY_ENV = {
 # Sections whose keys are names you choose, not a fixed set.
 OPEN_SECTIONS = {"cold_pull", "nozzle_temp_offsets", "material_temps"}
 # Keys that can be optionally specified even if absent from base home.toml.
-OPTIONAL_KEYS = {("printer", "nozzle_type"): str, ("visual_watch", "enabled"): bool}
+OPTIONAL_KEYS = {("printer", "nozzle_type"): str, ("visual_watch", "enabled"): bool,
+                 ("services", "octoprint_url"): str}
 DEFAULT_MATERIAL_TEMPS = {
     "PLA": {"nozzle": 210, "bed": 60}, "PETG": {"nozzle": 240, "bed": 85},
     "ABS": {"nozzle": 245, "bed": 100}, "ASA": {"nozzle": 260, "bed": 105},

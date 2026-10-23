@@ -5,7 +5,9 @@ x-runtime: &runtime
   restart: unless-stopped
   env_file: [.env]
   environment:
-    PRINT_BUDDY_CONFIG: /app/config/docker.yaml
+    # To use legacy TOML, select /app/config/docker.toml in .env.
+    # Mount a custom config at the selected path with a local Compose override.
+    PRINT_BUDDY_CONFIG: ${PRINT_BUDDY_CONFIG:-/app/config/docker.yaml}
     PRINT_BUDDY__BOT__MODE: standalone
   volumes:
     - ${PRINT_BUDDY_DATA:-./data}/hermes:/data/hermes

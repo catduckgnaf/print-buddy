@@ -5,6 +5,7 @@ Layout: one package per brand under print_buddy/printers/, one module per printe
     flashforge/ad5x.py    MODEL for "flashforge.ad5x"; adapter.py (ZMod adapter); zmod/ (AD5X-only code)
     sovol/sv06.py         MODEL for "sovol.sv06" on the stock Klipper adapter
     klipper/generic.py    MODEL for "klipper.generic"; adapter.py (the stock Klipper adapter)
+    bambulab/a1.py        MODEL for "bambulab.a1"; adapter.py (offline only: no transport), guard.py, capabilities.py
 
 A model module defines MODEL = PrinterModel(...): the printer's settings (bed, height, nozzle, slots,
 margins, prime tower, start/end macros, cold pull), the adapter class, and the Orca template folder under
@@ -29,6 +30,9 @@ Where printer specifics live, and which responsibilities sit behind PrinterAdapt
   screen / slot sync             zmod.screen (CHANGE_ZCOLOR)             none (returns None)
   native status API              zmod.stock (/detail)                    none (returns None)
   telemetry normalization        Moonraker + zmod_color                  plain Moonraker objects
+
+bambulab.a1 has transport "offline": core slices and validates its G-code (adapter.gcode_problems) but never
+contacts the printer; printer_state.check, verify_gcode and print_now take the offline path for it.
 
 Core reaches ZMod code only through adapter.native (the printers.flashforge.zmod package): finalize,
 embedded_mapping, normalize_mapping, describe_mapping, validate_materials, the stock /detail readers,
@@ -117,6 +121,10 @@ class PrinterAdapter(ABC):
     multi_slot: bool = False
     # ZMod-style native screen: display_off modes, saved/screen Z offset authority, MD5 gcode, stock /detail.
     has_native_screen: bool = False
+    # How Print Buddy reaches the printer: "moonraker", "octoprint", or "offline" (no connection at all).
+    transport: str = "moonraker"
+    # (xmin, ymin, xmax, ymax) when vendor start/end G-code moves off the bed; None holds every move to the bed.
+    motion_envelope_mm: tuple[float, float, float, float] | None = None
 
     def __init__(self, config: dict[str, Any] | None = None, model: PrinterModel | None = None):
         if config is None:
@@ -189,6 +197,10 @@ class PrinterAdapter(ABC):
     @abstractmethod
     def moonraker_start_commands(self, remote_filename: str) -> list[dict[str, Any]]:
         """Moonraker requests, in order, that start a print: [{'method', 'path', 'body'}]."""
+
+    def gcode_problems(self, text: str, state: dict | None = None) -> list[str]:
+        """Printer-specific reasons a sliced G-code must not be used; empty when none apply."""
+        return []
 
     # color / tools
     @abstractmethod

@@ -902,7 +902,11 @@ def slice_model(source, folder, state, brim=None, first_layer=False, color_decis
     result_path = folder / 'result.json'
     post_gate = post_slice(output, result_json=None if fallback else (result_path if result_path.is_file() else None),
                            bed=bed, ifs_slots=IFS_SLOTS, tool_slots=tool_slots,
-                           templates=templates, profile_paths=filament_paths)
+                           templates=templates, profile_paths=filament_paths,
+                           envelope=printer.motion_envelope_mm)
+    # Printer-specific refusals, e.g. Klipper/ZMod start code in a Bambu Lab file.
+    for problem in printer.gcode_problems(output.read_text(errors='replace'), state):
+        post_gate.block(problem)
     # Each model approves its own protected settings; a model without a baseline file keeps the shared one.
     baseline_kw = {} if printer.baseline_path is None else {'path': printer.baseline_path}
     baseline_gate = (sg.enforce_approved_baseline(output, **baseline_kw)

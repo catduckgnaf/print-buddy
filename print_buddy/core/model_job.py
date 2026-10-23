@@ -871,6 +871,8 @@ def verify_gcode_offline(gcode_path, state):
     artifact against the already loaded hardware record: MD5 when present,
     native heater prefix, nozzle, material, start and end, and motion bounds.
     """
+    if printers.current().transport == 'offline':
+        return _verify_offline_transport(gcode_path, state)
     p = Path(gcode_path)
     raw = p.read_bytes()
     text = raw.decode(errors='ignore')
@@ -913,8 +915,25 @@ def verify_gcode_offline(gcode_path, state):
     return {'bounds_mm': bounds, 'nozzle': nozzle, 'offline': True}
 
 
+def _verify_offline_transport(gcode_path, state):
+    """A printer Print Buddy cannot reach (bambulab.a1): the adapter's checks against the hardware record."""
+    from .printer_state import _material_temperature_contract
+    try:
+        _material_temperature_contract(state)
+    except RuntimeError as exc:
+        raise RuntimeError(f'offline G-code verification failed: {exc}') from exc
+    problems = printers.current().gcode_problems(Path(gcode_path).read_text(errors='ignore'), state)
+    if problems:
+        raise RuntimeError('offline G-code verification failed: ' + '; '.join(problems))
+    return {'offline': True, 'transport': 'offline'}
+
+
 def verify_gcode(gcode_path):
     """Check a G-code artifact against live nozzle, spool and temperature state."""
+    if printers.current().transport == 'offline':
+        st = printer_state.load(); ok, probs, _ = printer_state.check(st)
+        if not ok: raise RuntimeError("hardware record check failed:\n  " + "\n  ".join(probs))
+        return _verify_offline_transport(gcode_path, st)
     st=printer_state.load(); ok, probs, _=printer_state.check(st)
     if not ok: raise RuntimeError("live hardware check failed:\n  " + "\n  ".join(probs))
     p=Path(gcode_path); raw=p.read_bytes(); text=raw.decode(errors="ignore")
@@ -3171,6 +3190,15 @@ def print_now(target, wait_s=25, accept_default_z_offset=False, reprint=False, r
     st=printer_state.load()
     if getattr(adapter, 'transport', None) == 'octoprint':
         return _print_octoprint(adapter, st, g, job, job_path, wait_s, reprint)
+    if adapter.transport == 'offline':
+        # No connection exists. Verify the file for manual handoff; the bed-clear approval is left unused.
+        try:
+            verify_gcode(g)
+        except RuntimeError as exc:
+            raise SystemExit("REFUSED: " + " ".join(str(exc).split()) + ". Nothing uploaded or started.")
+        raise SystemExit(f"REFUSED: {adapter.label} has no live connection in Print Buddy (no upload, start or "
+                         f"control). {g} passed offline checks; copy it to the printer yourself. "
+                         "Nothing uploaded or started.")
     state,fn,busy=_printer_phase(st)
     if state == "printing" or busy == "Printing":
         raise SystemExit(f"REFUSED: printer is busy ({state}, {fn}). Nothing uploaded or started.")

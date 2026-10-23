@@ -18,6 +18,7 @@ AD5X_ARTIFACTS = re.compile(
 MODELS = tuple(printers.MODELS)
 AD5X, GENERIC, SV06 = "flashforge.ad5x", "klipper.generic", "sovol.sv06"
 OCTOPRINT = "octoprint.marlin"
+BAMBU_A1 = "bambulab.a1"
 
 
 def config_for(family):
@@ -30,7 +31,7 @@ def adapter_for(family):
 
 class ContractTests(unittest.TestCase):
     def test_registry_finds_every_model_file(self):
-        self.assertEqual(set(MODELS), {AD5X, GENERIC, SV06, OCTOPRINT})
+        self.assertEqual(set(MODELS), {AD5X, GENERIC, SV06, OCTOPRINT, BAMBU_A1})
         for key, model in printers.MODELS.items():
             self.assertEqual(model.key, key)
             self.assertTrue((settings.ROOT / "print_buddy" / "templates" / "orca" / model.templates).is_dir())
@@ -55,10 +56,18 @@ class ContractTests(unittest.TestCase):
                 folder = a.templates_dir()
                 for name in ("machine", "process", "filament"):
                     json.loads((folder / f"{name}.json").read_text())
-                if family != OCTOPRINT:
+                if family not in (OCTOPRINT, BAMBU_A1):
                     self.assertIn("[bed_temperature_initial_layer_single]", a.machine_start_gcode("X MESH=auto", "auto"))
                 plan = a.start_plan(60, 215)
                 self.assertTrue(plan and all(isinstance(line, str) for line in plan))
+                if family == BAMBU_A1:
+                    # Offline only: the vendor start runs first, and nothing live is available.
+                    self.assertTrue(plan[0].startswith(";===== machine: A1 "))
+                    self.assertRaises(Exception, a.machine_start_gcode, "X MESH=auto", "auto")
+                    self.assertRaises(Exception, a.moonraker_start_commands, "part.gcode")
+                    self.assertRaises(Exception, a.moonraker_objects)
+                    self.assertEqual(a.normalize_status({"print_stats": {"state": "printing"}})["state"], "unknown")
+                    continue
                 if family == OCTOPRINT:
                     self.assertEqual(plan, ["M190 S60", "M109 S215"])
                     self.assertEqual(a.machine_end_gcode("END_PRINT"), "END_PRINT")

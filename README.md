@@ -13,6 +13,7 @@ The Discord conversation runs on [Hermes Agent](https://github.com/NousResearch/
 Supported printers:
 * **Sovol** on stock Klipper, where Print Buddy started, plus any other Klipper printer with Moonraker. Single extruder.
 * **Flashforge (running ZMod)**, including IFS multi color slots and the ZMod plugin below.
+* **Bambu Lab A1**, offline only: slicing, fit checks and G-code validation, then you move the file to the printer yourself. No telemetry, upload, print control or AMS Lite. See [Bambu Lab A1](docs/BAMBU-A1.md).
 
 Pick one with `[printer] model` (see Settings). The offline core in `print_buddy/core/` runs with no printer.
 
@@ -54,7 +55,7 @@ The print starts only when someone clicks the button. On completion, the bot pos
 * `/print-again` reprints an archived job exactly, with no re-slice.
 * `/print-stop` and `/print-resume` each send at most one Moonraker command behind a confirm button.
 * `/print-reboot` uses the safe ZMod reboot flow.
-* Printer models: `flashforge.ad5x`, `sovol.sv06`, `klipper.generic`. Each job records the model it was sliced for and refuses another.
+* Printer models: `flashforge.ad5x`, `sovol.sv06`, `klipper.generic`, `octoprint.marlin`, `bambulab.a1` (offline handoff only). Each job records the model it was sliced for and refuses another.
 
 **Monitoring**
 * Event driven Moonraker listener: start, pause, error, and completion posts with stats.
@@ -113,7 +114,7 @@ Empty bed, spaghetti, detached part, uncertain, and vision failure alerts fire a
 |---|---|---|---|
 | `printer` | `name`, `firmware` | from the model | Shown in job summaries |
 | | `nozzle_type` | from the model or unset | Optional nozzle material; use a type supported by the selected printer model |
-| | `model` | `flashforge.ad5x` | Printer model: `flashforge.ad5x`, `sovol.sv06`, `klipper.generic`. Sets every default below |
+| | `model` | `flashforge.ad5x` | Printer model: `flashforge.ad5x`, `sovol.sv06`, `klipper.generic`, `octoprint.marlin`, `bambulab.a1`. Sets every default below |
 | | `start_macro`, `end_macro` | `PRINT_START`, `PRINT_END` | Start and end macros for stock Klipper models |
 | | `bed_mm` | `[220, 220]` | Usable print area |
 | | `max_print_height_mm` | `220` | Tallest allowed print |
@@ -269,7 +270,7 @@ is_system_service: False
 * `scripts/`: `install-hermes.sh`, `home-update.sh`, and `migrate-names.sh` (one-shot, see `docs/RENAME-MIGRATION.md`).
 * `print_buddy.cfg`, `install.sh`, `uninstall.sh`, `update.sh`: ZMod plugin macro and lifecycle scripts.
 * `tests/`: offline suite, real slicer checks, the Discord flow corpus (`tests/corpus/`), and the Klipper macro tests.
-* `docs/`: install guide and AD5X integration specs.
+* `docs/`: install guide, AD5X integration specs, and the [Bambu Lab A1](docs/BAMBU-A1.md) support statement.
 
 ## Links
 

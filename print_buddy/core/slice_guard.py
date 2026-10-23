@@ -89,9 +89,39 @@ def is_allowed_filament_id(value, own_ids=None):
     return bool(HERMES_SLOT_PATTERN.match(v))
 
 
+def _mm(value):
+    return "?" if value is None else f"{value:g}"
+
+def body_motion_problems(body, bed, envelope, height=None):
+    """Bounds for G-code whose vendor start/end blocks park the head off the bed (Bambu wiper, purge lane).
+
+    body is the text between Orca's machine start and end markers. Every absolute XY move must stay inside
+    envelope (xmin, ymin, xmax, ymax); every extruding move must also stay on the bed and under height.
+    Moves made in G91 relative mode are skipped and leave the position unknown until set again.
+    """
+    problems=[]; x=y=z=None; relative=False
+    for line in body.splitlines():
+        code=line.split(';',1)[0].strip().upper()
+        if code.startswith('G90'): relative=False; continue
+        if code.startswith('G91'): relative=True; x=y=z=None; continue
+        m=MOVE.match(line)
+        if not m or relative: continue
+        vals={k.upper():float(v) for k,v in WORD.findall(m.group(1))}
+        x=vals.get('X',x); y=vals.get('Y',y); z=vals.get('Z',z)
+        if 'X' in vals and not envelope[0]<=x<=envelope[2] or 'Y' in vals and not envelope[1]<=y<=envelope[3]:
+            problems.append(f"G-code move leaves the machine envelope at X{_mm(x)} Y{_mm(y)}."); break
+        if vals.get('E',0)>0 and (x is not None and not 0<=x<=bed[0] or y is not None and not 0<=y<=bed[1]
+                                  or height is not None and z is not None and z>height):
+            problems.append(f"G-code extrudes off the {bed[0]:g}x{bed[1]:g} mm bed at X{_mm(x)} Y{_mm(y)} Z{_mm(z)}."); break
+    return problems
+
 def post_slice(gcode, *, ifs_slots=None, tool_slots=None, bed=None, result_json=None,
-               templates=None, profile_paths=()):
-    """Check bounds + effective motion/profile settings and capture provenance."""
+               templates=None, profile_paths=(), envelope=None):
+    """Check bounds + effective motion/profile settings and capture provenance.
+
+    envelope (xmin, ymin, xmax, ymax) is for printers whose vendor start/end G-code moves off the bed:
+    only the toolpath between Orca's start/end markers is bounds- and tool-checked (body_motion_problems).
+    """
     r=Result(); tool_slots=tool_slots or {}; bed,ifs_slots=_printer(bed,ifs_slots)
     if isinstance(gcode, Path):
         text=gcode.read_text(errors="replace")
@@ -151,13 +181,25 @@ def post_slice(gcode, *, ifs_slots=None, tool_slots=None, bed=None, result_json=
             r.block("Unsafe effective setting enable_arc_fitting=1.")
     if "g-code conflicts detected" in low or "slicing result conflict" in low or "gcode path conflicts" in low:
         r.block("Orca reported a G-code conflict; the slice cannot be used. Inspect overlapping geometry/wipe-tower placement (see Orca adapter diagnostic).")
-    tools={int(n) for n in re.findall(r"(?im)^\s*T(\d+)\s*(?:;.*)?$",text)}
+    # With an envelope, the vendor start/end blocks are the printer maker's (Bambu uses T1000 and T255 there);
+    # tools and bounds are checked on the toolpath between Orca's markers.
+    start, end = "; MACHINE_START_GCODE_END", "; MACHINE_END_GCODE_START"
+    body = text
+    if envelope is not None:
+        if start in text and end in text:
+            body = text.split(start,1)[1].split(end,1)[0]
+        else:
+            r.block("G-code has no Orca machine start/end markers; toolpath bounds cannot be checked.")
+    tools={int(n) for n in re.findall(r"(?im)^\s*T(\d+)\s*(?:;.*)?$",body)}
     for n in sorted(tools):
         if n not in tool_slots: r.block(f"G-code uses T{n}, but no physical IFS slot mapping is recorded.")
         elif not 1<=int(tool_slots[n])<=ifs_slots: r.block(f"T{n} maps outside the available IFS slots.")
     if tools and max(tools)>=ifs_slots: r.block(f"G-code uses tool T{max(tools)} but only {ifs_slots} IFS slots are available.")
     coords=[]; x=y=0.0
-    for line in text.splitlines():
+    if envelope is not None and body is not text:
+        for problem in body_motion_problems(body, bed, envelope):
+            r.block(problem)
+    for line in (text.splitlines() if envelope is None else ()):
         m=MOVE.match(line)
         if not m: continue
         vals={k.upper():float(v) for k,v in WORD.findall(m.group(1))}

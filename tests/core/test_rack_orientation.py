@@ -51,3 +51,10 @@ def test_full_size_bed_turn_precedes_equally_fitting_face_change():
         rows = oa.rotation_alternatives(Path('rack.stl'), state, authored_max=.85)
     assert rows[0]['full_size']
     assert rows[0]['axis'] == '+Z', 'Preserve the authored bed-contact face when full size already fits'
+
+
+def test_typed_full_size_selects_unique_verified_rotation():
+    from print_buddy.core.prepared_intake import _fit_choice_reply
+    rows = [{'kind': 'rotate', 'scale': 1.0}, {'kind': 'scale', 'scale': .85},
+            {'kind': 'cancel'}]
+    assert _fit_choice_reply('full size', rows) == 0

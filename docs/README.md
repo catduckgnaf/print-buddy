@@ -18,6 +18,7 @@ Do not run both Discord modes with the same token. Installing, enabling services
 - [AD5X integration contract](AD5X-CONTRACT.md): printer-specific behavior and limitations.
 - [OctoPrint/Marlin notes](OCTOPRINT-MARLIN.md): read the integration-specific limits before assuming Moonraker feature parity.
 - [Bambu Lab printers](BAMBU-LAB.md): the offline-only A1 profile, what its G-code guard checks and trusts, unverified values, and the open template licence decision.
+- [Read-only mesh topology audit](MESH-AUDIT.md): topology metrics, CLI usage, and manifold/watertight checks.
 
 ## 3. Troubleshoot by symptom
 

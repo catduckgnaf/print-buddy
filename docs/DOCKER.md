@@ -9,6 +9,10 @@ Every stage (Orca build, Bambu Studio build, runtime) uses `debian:13-slim` (Deb
 user, so the runtime user `buddy` takes UID 1000 directly. Not yet built on Debian: the first
 `docker-image-validation` run is the acceptance check.
 
+## First GHCR publication
+
+`.github/workflows/docker-publish.yml` is the maintainer-dispatched workflow for publishing an amd64 image to `ghcr.io/catduckgnaf/print-buddy`. It builds the selected variant once, runs the offline acceptance harness, and only after acceptance pushes the requested version and `latest` tags. The intended first package is 2.0.9; no image has been published yet. For deployments, prefer the exact tested immutable `ghcr.io/catduckgnaf/print-buddy@sha256:<digest>` recorded in the workflow run summary over a mutable tag. This workflow does not build ARM64 images.
+
 ## Build dimensions
 
 The same Dockerfile supports two application channels, each running either the

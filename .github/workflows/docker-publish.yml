@@ -1,0 +1,128 @@
+name: Publish Docker image to GHCR (manual)
+
+# Inert until a maintainer dispatches it. Builds once, validates offline, and only then publishes.
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Release version in MAJOR.MINOR.PATCH form
+        type: string
+        required: true
+      with_orca:
+        description: Build the pinned OrcaSlicer from source
+        type: boolean
+        default: true
+      with_bambu:
+        description: Build the pinned Bambu Studio from source
+        type: boolean
+        default: true
+      orca_channel:
+        description: OrcaSlicer revision
+        type: choice
+        options: [stable, alpha]
+        default: stable
+
+permissions:
+  contents: read
+  packages: write
+
+concurrency:
+  group: docker-publish-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    runs-on: ubuntu-24.04  # amd64 only
+    timeout-minutes: 350
+    env:
+      IMAGE: ghcr.io/catduckgnaf/print-buddy
+      APP_CHANNEL: stable
+      ORCA_BUILD_JOBS: auto
+      # Inputs reach the shell only as environment variables, never interpolated into scripts.
+      PUBLISH_VERSION: ${{ inputs.version }}
+      WITH_ORCA: ${{ inputs.with_orca }}
+      WITH_BAMBU: ${{ inputs.with_bambu }}
+      ORCA_CHANNEL: ${{ inputs.orca_channel }}
+      SPOOLMAN_MODE: external
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+      - name: Validate release version and prepare evidence
+        run: |
+          set -euo pipefail
+          [[ "$PUBLISH_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || {
+            echo "Version must use MAJOR.MINOR.PATCH numeric form" >&2
+            exit 1
+          }
+          mkdir -p evidence
+          {
+            echo "source_sha=$GITHUB_SHA"
+            echo "version=$PUBLISH_VERSION"
+            echo "app_channel=$APP_CHANNEL with_orca=$WITH_ORCA with_bambu=$WITH_BAMBU orca_channel=$ORCA_CHANNEL orca_build_jobs=$ORCA_BUILD_JOBS spoolman=$SPOOLMAN_MODE"
+          } | tee evidence/pins.txt
+      - name: Free runner disk for the source build
+        if: inputs.with_orca || inputs.with_bambu
+        run: |
+          df -h /
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL
+          df -h / | tee evidence/disk.txt
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069  # v4.4.1
+        with:
+          driver: docker
+      - name: Build amd64 image once (no push)
+        run: |
+          set -euo pipefail
+          start=$(date -u +%FT%TZ)
+          docker buildx build --platform linux/amd64 --progress=plain --load -t "$IMAGE:$PUBLISH_VERSION" \
+            --build-arg "APP_CHANNEL=$APP_CHANNEL" \
+            --build-arg "WITH_ORCA=$WITH_ORCA" \
+            --build-arg "WITH_BAMBU=$WITH_BAMBU" \
+            --build-arg "ORCA_CHANNEL=$ORCA_CHANNEL" \
+            --build-arg "ORCA_BUILD_JOBS=$ORCA_BUILD_JOBS" \
+            --label "org.opencontainers.image.source=https://github.com/catduckgnaf/print-buddy" \
+            --label "org.opencontainers.image.version=$PUBLISH_VERSION" \
+            --label "org.opencontainers.image.revision=$GITHUB_SHA" \
+            . 2>&1 | tee evidence/build.log
+          {
+            echo "build_start=$start"
+            echo "build_end=$(date -u +%FT%TZ)"
+            echo "image_id=$(docker image inspect --format '{{.Id}}' "$IMAGE:$PUBLISH_VERSION")"
+            docker image inspect --format 'platform={{.Os}}/{{.Architecture}} size={{.Size}}' "$IMAGE:$PUBLISH_VERSION"
+          } | tee evidence/identity.txt
+      - name: Offline runtime acceptance
+        id: acceptance
+        run: tests/docker/image_acceptance.sh "$IMAGE:$PUBLISH_VERSION" "$SPOOLMAN_MODE" evidence/acceptance
+      - uses: docker/login-action@74a5d142397b4f367a81961eba4e8cd7edddf772  # v3.4.0
+        if: steps.acceptance.outcome == 'success'
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Tag and publish accepted image
+        id: publish
+        if: steps.acceptance.outcome == 'success'
+        run: |
+          set -euo pipefail
+          docker tag "$IMAGE:$PUBLISH_VERSION" "$IMAGE:latest"
+          docker push "$IMAGE:$PUBLISH_VERSION" 2>&1 | tee evidence/push.log
+          digest=$(sed -nE 's/.*digest: (sha256:[0-9a-f]{64}).*/\1/p' evidence/push.log | tail -n 1)
+          [[ "$digest" =~ ^sha256:[0-9a-f]{64}$ ]] || {
+            echo "Could not read the pushed image digest" >&2
+            exit 1
+          }
+          docker push --quiet "$IMAGE:latest"
+          printf '%s\n' "$digest" | tee evidence/digest.txt
+          {
+            echo "### GHCR image published"
+            echo
+            echo "- Version: \`$IMAGE:$PUBLISH_VERSION\`"
+            echo "- Latest: \`$IMAGE:latest\`"
+            echo "- Digest: \`$IMAGE@$digest\`"
+            echo "- Source revision: \`$GITHUB_SHA\`"
+          } >> "$GITHUB_STEP_SUMMARY"
+      - name: Upload build and acceptance evidence
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9  # v7.0.2
+        with:
+          name: docker-publish-${{ github.run_id }}-${{ github.run_attempt }}
+          path: evidence/
+          retention-days: 30

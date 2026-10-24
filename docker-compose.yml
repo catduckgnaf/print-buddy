@@ -1,68 +1,44 @@
-# Print Buddy: standalone Docker deployment. Full guide: docs/DOCKER.md.
-#
-#   cp .env.example .env      # then fill in .env
-#   docker compose pull && docker compose up -d
-#
-# Printers (Klipper + Moonraker + Fluidd, or OctoPrint) are external endpoints and are never bundled.
-# Spoolman is external by default (set PRINT_BUDDY__SERVICES__SPOOLMAN_URL in .env). To run the
-# optional bundled Spoolman instead, also load docker-compose.spoolman.yml (COMPOSE_FILE in .env).
-# Hermes is not part of this stack.
-name: print-buddy
-
+# Installation example only. No published release image exists yet.
+# Set PRINT_BUDDY_IMAGE to an approved locally built image or future immutable digest.
+x-runtime: &runtime
+  image: ${PRINT_BUDDY_IMAGE:?Set PRINT_BUDDY_IMAGE to a tested image digest or local tag}
+  restart: unless-stopped
+  env_file: [.env]
+  environment:
+    # To use legacy TOML, select /app/config/docker.toml in .env.
+    # Mount a custom config at the selected path with a local Compose override.
+    PRINT_BUDDY_CONFIG: ${PRINT_BUDDY_CONFIG:-/app/config/docker.yaml}
+    PRINT_BUDDY__BOT__MODE: standalone
+  volumes:
+    - ${PRINT_BUDDY_DATA:-./data}/hermes:/data/hermes
+    - ${PRINT_BUDDY_DATA:-./data}/archive:/data/archive
+    - ${PRINT_BUDDY_DATA:-./data}/records:/data/records
+    - ${PRINT_BUDDY_DATA:-./data}/cache:/data/cache
+  cap_drop: [ALL]
+  security_opt: [no-new-privileges:true]
+  pids_limit: 256
+  mem_limit: 2g
+  cpus: 2
+  shm_size: 256m
+  logging:
+    driver: json-file
+    options: {max-size: 10m, max-file: "3"}
 services:
-  print-buddy:
-    # Pin an exact release (e.g. PRINT_BUDDY_TAG=2.1.0) for upgrades you control and can roll back;
-    # "stable" moves to every new release.
-    image: ${PRINT_BUDDY_IMAGE:-ghcr.io/catduckgnaf/print-buddy}:${PRINT_BUDDY_TAG:-stable}
-    restart: unless-stopped
-    env_file:
-      - .env
-    environment:
-      PRINT_BUDDY_CONFIG: ${PRINT_BUDDY_CONFIG:-/app/config/docker.yaml}
-      TZ: ${TZ:-Etc/UTC}
-      # All scalar settings can be overridden with PRINT_BUDDY__SECTION__KEY in .env.
-      # Optional YAML override: mount it below and set PRINT_BUDDY_CONFIG=/app/config/local.yaml in .env.
-      # Legacy TOML override: mount it at /app/config/docker.toml and set PRINT_BUDDY_CONFIG=/app/config/docker.toml.
-    volumes:
-      - ${PRINT_BUDDY_DATA:-./data}/hermes:/data/hermes
-      - ${PRINT_BUDDY_DATA:-./data}/archive:/data/archive
-      - ${PRINT_BUDDY_DATA:-./data}/records:/data/records
-      - ${PRINT_BUDDY_DATA:-./data}/cache:/data/cache
-      # - ./config/local.yaml:/app/config/local.yaml:ro
-      # - ./config/docker.toml:/app/config/docker.toml:ro
-    # Least privilege: unprivileged user, read-only image filesystem, no Linux capabilities.
-    user: "${PUID:-1000}:${PGID:-1000}"
-    read_only: true
-    tmpfs:
-      - /tmp:size=64m,mode=1777
-    cap_drop:
-      - ALL
-    security_opt:
-      - no-new-privileges:true
-    # Lets Print Buddy reach services on the Docker host itself, e.g. http://host.docker.internal:7912
-    extra_hosts:
-      - "host.docker.internal:host-gateway"
-    # OrcaSlicer needs shared memory and up to a few GB of RAM while slicing large plates.
-    shm_size: "1gb"
-    deploy:
-      resources:
-        limits:
-          cpus: "${PRINT_BUDDY_CPUS:-2}"
-          memory: ${PRINT_BUDDY_MEMORY:-4g}
-          pids: 1024
-    # Same check as the image HEALTHCHECK, restated so it is visible here.
+  bot:
+    <<: *runtime
+    command: [python3, -m, print_buddy.bot]
     healthcheck:
-      test: ["CMD", "python3", "-m", "print_buddy.healthcheck"]
+      test: [CMD, python3, -m, print_buddy.bot, health]
       interval: 30s
-      timeout: 15s
+      timeout: 10s
       start_period: 60s
       retries: 3
-    stop_grace_period: 30s
-    logging:
-      driver: json-file
-      options:
-        max-size: "10m"
-        max-file: "3"
-    # Host networking is only needed when the printer is reachable from the host but not from the
-    # Docker bridge (rare). It disables the extra_hosts entry above.
-    # network_mode: host
+  listener:
+    <<: *runtime
+    command: [python3, -m, print_buddy.hermes.moonraker_event_listener]
+    healthcheck:
+      test: [CMD, python3, -m, print_buddy.healthcheck]
+      interval: 30s
+      timeout: 10s
+      start_period: 60s
+      retries: 3

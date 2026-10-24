@@ -78,6 +78,32 @@ safety_confirm_timeout_s = 600
 upload_wait_s = 3600
 # How long a cold-pull outcome prompt stays open.
 cold_pull_outcome_s = 1800
+# Standalone bot only: the environment variable holding the Discord bot token. The token itself never goes in a file here.
+token_env = "DISCORD_BOT_TOKEN"
+# Standalone bot only: Discord user IDs allowed to use the bot, separated by commas or spaces.
+# approval_user_id is always allowed. Empty with no approval_user_id refuses everyone.
+allowed_user_ids = ""
+
+[bot]
+# hermes: the Hermes gateway runs the print-feedback plugin (the default).
+# standalone: python3 -m print_buddy.bot talks to Discord directly. No Hermes, no LLM needed.
+# Use one mode per bot token.
+mode = "hermes"
+# Standalone bot: serve GET /healthz on this port. 0 turns the HTTP check off; the health file still works.
+health_port = 0
+# The health check fails when the bot's heartbeat is older than this, in seconds.
+health_stale_s = 120
+# Standalone bot: register the slash commands with Discord at startup.
+sync_commands = true
+
+[llm]
+# Optional natural language for the standalone bot: any OpenAI-compatible chat completions URL.
+# Empty: unmatched messages get the command list. The model never starts or changes a print itself.
+chat_url = ""
+model = ""
+# Environment variable holding the API key for chat_url, if it needs one.
+api_key_env = "LLM_API_KEY"
+timeout_s = 20
 
 [listener]
 tick_s = 600

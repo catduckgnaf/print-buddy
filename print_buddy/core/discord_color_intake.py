@@ -20,7 +20,8 @@ def _visible_choices(question, choices):
 
 
 async def collect(job_path, state, adapter, chat_id, session_key, metadata=None, timeout=None):
-    from tools import clarify_gateway as cm
+    from .prompts import gateway as _prompts
+    cm = _prompts()
     from .model_job import intake_color_choices, set_color_decisions, resolve_filament_selection, write_job, decisions_digest, build_slot_labels
     from .source_colors import inventory, prompts, canonical_prompts, grouped_prompts, validate_decisions
     path = Path(job_path)

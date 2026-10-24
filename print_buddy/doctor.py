@@ -109,6 +109,59 @@ def check_service(data, key):
     return url
 
 
+def check_bot(data):
+    """Which runtime talks to Discord, and for the standalone bot, where and for whom."""
+    mode = data["bot"]["mode"]
+    if mode != "standalone":
+        return f"{mode} (the Hermes gateway runs the print-feedback plugin)"
+    from .bot.runtime import allowed_users
+    chat = data["discord"]["chat_id"]
+    users = allowed_users(data)
+    if not chat:
+        raise RuntimeError("standalone, but discord.chat_id is empty")
+    if not users:
+        raise RuntimeError("standalone, but no allowed users: set discord.allowed_user_ids")
+    return f"standalone, print channel {chat}, {len(users)} allowed user(s)"
+
+
+def _bot_token(data):
+    from .hermes import _config
+    name = data["discord"]["token_env"]
+    return _config.profile_env_value(name), name
+
+
+def check_discord_login(data):
+    """Standalone only: log in over REST with the bot token. Skipped in Hermes mode."""
+    if data["bot"]["mode"] != "standalone":
+        return None
+    token, name = _bot_token(data)
+    if not token:
+        raise RuntimeError(f"${name} is empty; the standalone bot needs its Discord bot token there")
+    from .bot import rest
+    me = rest.whoami(token)
+    return f"{me.get('username')} ({me.get('id')})"
+
+
+def check_shared_token(data, hermes_root=None):
+    """A warning when a Hermes profile holds the standalone bot's token: both would answer everything."""
+    if data["bot"]["mode"] != "standalone":
+        return None
+    token, _name = _bot_token(data)
+    if not token:
+        return None
+    root = Path(hermes_root) if hermes_root is not None else Path.home() / ".hermes"
+    for env in [root / ".env", *sorted(root.glob("profiles/*/.env"))]:
+        try:
+            lines = env.read_text().splitlines()
+        except OSError:
+            continue
+        for line in lines:
+            if line.startswith("DISCORD_BOT_TOKEN=") and line.split("=", 1)[1].strip().strip("'\"") == token:
+                return (f"the Hermes profile {env} holds this bot token. Stop that Hermes gateway: "
+                        "one token runs one mode, or every message is answered twice")
+    return None
+
+
 def run(out=sys.stdout):
     failed = False
 
@@ -136,6 +189,14 @@ def run(out=sys.stdout):
     report("orca cli", check_orca, data)
     for key in SERVICE_PATHS:
         report(key.replace("_url", ""), check_service, data, key)
+    report("bot mode", check_bot, data)
+    if data["bot"]["mode"] == "standalone":
+        report("discord login", check_discord_login, data)
+        try:
+            shared = check_shared_token(data)
+        except Exception as exc:
+            shared = f"could not compare tokens: {exc}"
+        print(f"WARN  bot token: {shared}" if shared else "ok    bot token: not shared with a Hermes profile", file=out)
     try:
         warning = check_strays(data)
     except Exception as exc:  # a scan problem is a warning, never a failed check

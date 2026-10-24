@@ -1,27 +1,21 @@
-# Keep the image to the runtime: no history, tests, docs, Hermes profile templates or local state.
+# Runtime packaging adapted from zaheria985 Docker commit 3bb0984.
+# Keep plugins: standalone router dynamically loads plugins/print-feedback.
 .git
 .github
-.gitignore
-.dockerignore
 .env
 .env.*
-.pytest_cache
-.slicer-work
-.claude
+!.env.example
 **/__pycache__
 **/*.py[cod]
+.pytest_cache
+.venv
+.worktrees
+.slicer-work
 data
 tests
 docs
 hermes
-plugins
-references
-scripts
-install.sh
-uninstall.sh
-update.sh
-print_buddy.cfg
-docker-compose*.yml
+.claude
 config/local.yaml
 config/local.toml
 config/after-update.sh

@@ -1,0 +1,64 @@
+"""The core prompt registry: the Hermes clarify gateway's API, owned by Print Buddy."""
+import sys
+import threading
+import types
+
+from print_buddy.core import prompts
+
+
+def test_answer_reaches_the_waiter_once():
+    prompts.register("a1", "s", "Q?", ["Yes", "No"])
+    assert prompts.is_open("a1") and prompts.choices("a1") == ["Yes", "No"] and prompts.session_key("a1") == "s"
+    got = []
+    worker = threading.Thread(target=lambda: got.append(prompts.wait_for_response("a1", 5)))
+    worker.start()
+    assert prompts.resolve_gateway_clarify("a1", "Yes") is True
+    assert prompts.resolve_gateway_clarify("a1", "No") is False  # a second click changes nothing
+    worker.join(5)
+    assert got == ["Yes"]
+    assert not prompts.is_open("a1") and prompts.choices("a1") is None
+
+
+def test_timeout_closes_the_prompt_and_a_late_click_finds_nothing():
+    prompts.register("a2", "s", "Q?", ["Yes"])
+    assert prompts.wait_for_response("a2", 0.01) is None
+    assert prompts.resolve_gateway_clarify("a2", "Yes") is False
+
+
+def test_cleanup_pattern_of_the_intake_leaves_nothing_behind():
+    """ask(): resolve CANCELLED then wait 1 ms, after an answer or after a failed send."""
+    before = prompts.open_count()
+    prompts.register("a3", "s", "Q?", ["Yes"])
+    prompts.resolve_gateway_clarify("a3", prompts.CANCELLED)
+    assert prompts.wait_for_response("a3", 0.001) == prompts.CANCELLED
+    assert prompts.resolve_gateway_clarify("a3", prompts.CANCELLED) is False
+    assert prompts.wait_for_response("a3", 0.001) is None
+    assert prompts.open_count() == before
+
+
+def test_cancel_session_only_touches_that_session():
+    prompts.register("b1", "mine", "Q?", ["Yes"])
+    prompts.register("b2", "other", "Q?", ["Yes"])
+    assert prompts.cancel_session("mine") == 1
+    assert prompts.wait_for_response("b1", 0.01) == prompts.CANCELLED
+    assert prompts.is_open("b2")
+    prompts.resolve_gateway_clarify("b2", prompts.CANCELLED)
+    prompts.wait_for_response("b2", 0.001)
+
+
+def test_gateway_prefers_hermes_unless_the_standalone_bot_is_active(monkeypatch):
+    hermes = types.ModuleType("tools.clarify_gateway")
+    package = types.ModuleType("tools")
+    package.clarify_gateway = hermes
+    monkeypatch.setitem(sys.modules, "tools", package)
+    monkeypatch.setitem(sys.modules, "tools.clarify_gateway", hermes)
+    assert prompts.gateway() is hermes
+    prompts.activate()
+    assert prompts.gateway() is prompts
+    prompts.activate(False)
+
+
+def test_gateway_without_hermes_is_the_core_registry(monkeypatch):
+    monkeypatch.setitem(sys.modules, "tools", None)  # import of tools raises ImportError
+    monkeypatch.delitem(sys.modules, "tools.clarify_gateway", raising=False)
+    assert prompts.gateway() is prompts

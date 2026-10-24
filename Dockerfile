@@ -1,114 +1,60 @@
 # syntax=docker/dockerfile:1
-# Print Buddy release image: Print Buddy, a pinned OrcaSlicer CLI and their runtime, nothing else.
-# Klipper/Moonraker/Fluidd, OctoPrint and Spoolman are external endpoints. Hermes is not installed.
-# Build and run notes: docs/DOCKER.md.
+# Source-build variant replacing the reviewed zaheria985 Docker contribution's
+# binary download approach. See docs/DOCKER-117-PROGRESS.md for attribution.
+FROM ubuntu:24.04 AS orca-build
+ARG WITH_ORCA=false
+ARG ORCA_CHANNEL=stable
+ARG ORCA_STABLE_REF=8500fcdccaa10b5099ac20d252af3a7c560046f1
+ARG ORCA_ALPHA_REF=3880f2c58ec392ed2bd5938ab31c9c7c496c0eb2
+ENV DEBIAN_FRONTEND=noninteractive
+RUN mkdir -p /out && \
+    case "$WITH_ORCA" in true|false) ;; *) echo 'WITH_ORCA must be true or false' >&2; exit 2;; esac && \
+    case "$ORCA_CHANNEL" in stable|alpha) ;; *) echo 'ORCA_CHANNEL must be stable or alpha' >&2; exit 2;; esac
+RUN if [ "$WITH_ORCA" = true ]; then \
+      apt-get update && apt-get install -y --no-install-recommends \
+        ca-certificates git cmake ninja-build build-essential autoconf automake \
+        libtool pkg-config gettext texinfo curl wget file m4 \
+        eglexternalplatform-dev extra-cmake-modules libcurl4-openssl-dev \
+        libdbus-1-dev libglew-dev libgstreamerd-3-dev libgtk-3-dev \
+        libmspack-dev libsecret-1-dev libspnav-dev libssl-dev libudev-dev \
+        libwebkit2gtk-4.1-dev gstreamer1.0-gtk3 && \
+      case "$ORCA_CHANNEL" in stable) ref="$ORCA_STABLE_REF";; alpha) ref="$ORCA_ALPHA_REF";; esac && \
+      git init /src/orca && cd /src/orca && \
+      git remote add origin https://github.com/OrcaSlicer/OrcaSlicer.git && \
+      git fetch --depth 1 origin "$ref" && git checkout --detach FETCH_HEAD && \
+      test "$(git rev-parse HEAD)" = "$ref" && \
+      cmake -S deps -B deps/build -G Ninja -DCMAKE_BUILD_TYPE=Release && \
+      cmake --build deps/build --parallel 1 && \
+      cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release \
+        -DSLIC3R_STATIC=ON -DSLIC3R_FHS=ON -DSLIC3R_PCH=OFF \
+        -DCMAKE_INSTALL_PREFIX=/usr && \
+      cmake --build build --parallel 1 && \
+      DESTDIR=/out cmake --install build && \
+      test -x /out/usr/bin/orca-slicer && \
+      printf '%s\n' "$ref" > /out/orca-source-revision; \
+    fi
 
-ARG BASE_IMAGE=ubuntu:24.04
-
-# Optional local copies of the pinned OrcaSlicer AppImages, for offline or cached builds:
-#   docker buildx build --build-context orca-cache=/dir/with/appimages .
-# Files are still checked against docker/orcaslicer.lock.
-FROM scratch AS orca-cache
-
-# OrcaSlicer is unpacked, never executed, so this stage runs natively on the build host.
-FROM --platform=$BUILDPLATFORM ${BASE_IMAGE} AS orca
-ARG TARGETARCH
-# alpha = 2.5.0-alpha (default). stable = 2.5.0 once it is pinned in docker/orcaslicer.lock.
-ARG ORCA_CHANNEL=alpha
-# Optional: when set (CI sets it from the lock for the image label), it must match the lock.
-ARG ORCA_VERSION=
-RUN apt-get update && apt-get install -y --no-install-recommends \
-        ca-certificates curl python3 squashfs-tools \
-    && rm -rf /var/lib/apt/lists/*
-COPY docker/orcaslicer.lock docker/install-orcaslicer.sh /build/
-RUN --mount=type=bind,from=orca-cache,target=/cache \
-    EXPECT_VERSION="$ORCA_VERSION" sh /build/install-orcaslicer.sh "$ORCA_CHANNEL" "$TARGETARCH" /opt/orcaslicer /cache
-
-FROM ${BASE_IMAGE} AS runtime
-ARG ORCA_CHANNEL=alpha
-ARG ORCA_VERSION=
-ARG PRINT_BUDDY_VERSION=dev
-
-ENV DEBIAN_FRONTEND=noninteractive \
-    PYTHONUNBUFFERED=1 \
-    PYTHONDONTWRITEBYTECODE=1 \
+FROM ubuntu:24.04 AS runtime
+ENV DEBIAN_FRONTEND=noninteractive PYTHONUNBUFFERED=1 \
     PATH=/opt/venv/bin:$PATH
-
-# Python, the OrcaSlicer GUI toolkit it links even in CLI mode, a virtual display, and the
-# tools Print Buddy shells out to (ffmpeg/ffprobe, curl/jq for bin/moonrakerctl, ssh for timelapses).
 RUN apt-get update && apt-get install -y --no-install-recommends \
-        python3 \
-        python3-venv \
-        ca-certificates \
-        tini \
-        bash \
-        curl \
-        jq \
-        openssh-client \
-        ffmpeg \
-        xvfb \
-        xauth \
-        libgl1 \
-        libegl1 \
-        libglu1-mesa \
-        libwebkit2gtk-4.1-0 \
-        libgstreamer1.0-0 \
-        libgstreamer-plugins-base1.0-0 \
-        libgtk-3-0 \
-        libsecret-1-0 \
-        fonts-liberation \
-        tzdata \
-    && rm -rf /var/lib/apt/lists/*
-# uid/gid 1000 belong to the image's own unprivileged user, not the base image's ubuntu user
-RUN if id ubuntu >/dev/null 2>&1; then userdel --remove ubuntu; fi \
-    && groupadd --gid 1000 printbuddy \
-    && useradd --uid 1000 --gid 1000 --no-create-home --home-dir /data/cache/home --shell /usr/sbin/nologin printbuddy
-
-COPY --from=orca /opt/orcaslicer /opt/orcaslicer
-RUN ln -s /opt/orcaslicer/AppRun /usr/local/bin/orca-slicer
-
+    python3 python3-venv ca-certificates ffmpeg xvfb xauth tini \
+    libwebkit2gtk-4.1-0 libgstreamer1.0-0 libgstreamer-plugins-base1.0-0 \
+    libgtk-3-0t64 libglew2.2 libsecret-1-0 libspnav0 libgstreamerd-3-0 \
+    fonts-liberation && rm -rf /var/lib/apt/lists/* && \
+    python3 -m venv /opt/venv && useradd --uid 1000 --create-home buddy
+COPY --from=orca-build /out/ /
+ARG APP_CHANNEL=development
+RUN case "$APP_CHANNEL" in stable|development) ;; *) echo 'APP_CHANNEL must be stable or development' >&2; exit 2;; esac
+LABEL org.print-buddy.app-channel=$APP_CHANNEL
 WORKDIR /app
 COPY requirements.txt .
-RUN python3 -m venv /opt/venv && pip install --no-cache-dir -r requirements.txt
-
-# Application code (.dockerignore keeps tests, docs, Hermes profile templates and local config out)
+RUN pip install --no-cache-dir -r requirements.txt
 COPY . .
-RUN python3 -m compileall -q print_buddy \
-    && install -m 0755 docker/entrypoint.sh /usr/local/bin/print-buddy-entrypoint \
-    && mkdir -p /data/hermes /data/archive /data/records /data/cache/home \
-    && chown -R printbuddy:printbuddy /data
-
-# Docker-specific defaults (Orca binary path, container paths).
-# Scalars can be overridden with PRINT_BUDDY__SECTION__KEY.
-# YAML is the default; the legacy TOML file remains selectable with PRINT_BUDDY_CONFIG.
-ENV PRINT_BUDDY_CONFIG=/app/config/docker.yaml
-ENV HOME=/data/cache/home \
-    TMPDIR=/data/cache/tmp \
-    PYTHONPATH=/app \
-    DISPLAY=:99 \
-    PRINT_BUDDY_VERSION=${PRINT_BUDDY_VERSION} \
-    ORCA_CHANNEL=${ORCA_CHANNEL}
-
-LABEL org.opencontainers.image.title="Print Buddy" \
-      org.opencontainers.image.description="Discord-driven 3D printing pipeline with a pinned OrcaSlicer CLI; printers and Spoolman are external services" \
-      org.opencontainers.image.licenses="MIT" \
-      org.opencontainers.image.version="${PRINT_BUDDY_VERSION}" \
-      io.print-buddy.orcaslicer.channel="${ORCA_CHANNEL}" \
-      io.print-buddy.orcaslicer.version="${ORCA_VERSION}"
-
-USER 1000:1000
-# OrcaSlicer writes its log into the current directory and /app is read-only, so `docker exec`
-# sessions (doctor, health check) start in /tmp; the entrypoint moves the runtime to the cache volume.
-WORKDIR /tmp
-
-# Healthy = settings load, the slicer is installed, and the runtime's event loop wrote a heartbeat
-# within the last 90 s from a live process (print_buddy/healthcheck.py). A powered-off printer is
-# reported in the heartbeat but does not make the container unhealthy.
-HEALTHCHECK --interval=30s --timeout=15s --start-period=60s --retries=3 \
-    CMD ["python3", "-m", "print_buddy.healthcheck"]
-
-ENTRYPOINT ["tini", "--", "print-buddy-entrypoint"]
-# RUNTIME ENTRY POINT. The only place that names the process the container runs.
-# Today: the Moonraker event listener. When standalone mode (#73) lands, replace this line with
-# the standalone bot's module; it must call print_buddy.healthcheck.beat() like the listener does.
-CMD ["python3", "-m", "print_buddy.hermes.moonraker_event_listener"]
+ENV PRINT_BUDDY_CONFIG=/app/config/docker.yaml HOME=/data \
+    PRINT_BUDDY__BOT__MODE=standalone
+RUN mkdir -p /data/hermes/state /data/archive /data/records /data/cache && \
+    chown -R buddy:buddy /data && chmod +x /app/docker/entrypoint.sh
+USER buddy
+ENTRYPOINT ["/usr/bin/tini", "--", "/app/docker/entrypoint.sh"]
+CMD ["python3", "-m", "print_buddy.bot"]

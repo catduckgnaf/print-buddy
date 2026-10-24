@@ -1,9 +1,9 @@
 # Docker defaults for Print Buddy. Override with PRINT_BUDDY__SECTION__KEY.
 # Legacy config/docker.toml remains supported when explicitly selected.
 orca:
-  # Extracted AppImage AppRun of the OrcaSlicer release pinned in docker/orcaslicer.lock
+  # Source-installed binary; requires WITH_ORCA=true at image build time
   command:
-    - /opt/orcaslicer/AppRun
+    - /usr/bin/orca-slicer
 bambu:
   # Not installed by default; override if you add the Bambu Studio binary
   command:
@@ -22,8 +22,6 @@ services:
   moonraker_url: ""
   moonraker_ws_url: ""
   camera_snapshot_url: ""
-  # External Spoolman by default: set PRINT_BUDDY__SERVICES__SPOOLMAN_URL.
-  # docker-compose.spoolman.yml sets http://spoolman:8000 for the bundled service.
   spoolman_url: ""
   openviking_url: ""
   vision_chat_url: ""

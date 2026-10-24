@@ -111,6 +111,11 @@ class PrintBuddyBot(ext_commands.Bot):
             if not isinstance(item, asyncio.Task):
                 await item.wait_closed()
         self._background.clear()
+        try:  # a slicer or model-check worker must not outlive the bot
+            from print_buddy.core import owned_worker
+            await owned_worker.shutdown()
+        except Exception:
+            logger.exception("stopping intake workers failed")
         self.connected = False
         try:
             if self.core is not None:

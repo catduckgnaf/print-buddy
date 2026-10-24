@@ -19,6 +19,7 @@ EXISTING = ("flashforge.ad5x", "klipper.generic", "octoprint.marlin", "sovol.sv0
 def without_added(data):
     data = json.loads(json.dumps(data, default=str))
     data.pop("delivery", None)
+    data.pop("logging", None)  # added by #150, after the golden files were captured
     for key in ADDED_PRINTER_KEYS:
         data.get("printer", {}).pop(key, None)
     return data

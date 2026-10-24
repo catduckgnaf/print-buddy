@@ -36,6 +36,8 @@ In the `#3d-printer` channel, someone posts a link. The bot replies with a job s
 
 The print starts only when someone clicks the button. On completion, the bot posts stats and writes the job to an Obsidian archive note.
 
+A bed-clear approval starts one print. Starting the same G-code again needs a new confirmation (`print-now --reprint`). Only one start runs per printer at a time. If Print Buddy cannot tell whether a start reached the printer (it stopped during the request, or the printer never confirmed it), it refuses later starts on that printer until the printer reports that exact file. An operator can also check the printer and run `python3 -m print_buddy.core.model_job reconcile-launch --started` or `--not-started`; without a flag, the command only shows the pending start. Print Buddy never resends that start on its own. This launch state is kept in `<hermes_home>/state/print_buddy_launches.sqlite3`.
+
 ## Features
 
 **Intake and slicing**
@@ -44,6 +46,7 @@ The print starts only when someone clicks the button. On completion, the bot pos
 * Multi plate models merged onto one bed when they fit; plates that would run longer than `layout.max_merged_hours` stay separate.
 * Oversized models split across plates, tracked as one plan.
 * Copy counts offered only where the G-code will actually contain the copies.
+* Each slice records a versioned recipe with its G-code: source file, printer model, orientation and scale, copies, supports and brim, split assignments, filament and nozzle, Orca profile files and slicer command. A slice made for one recipe is never reused for another.
 * Headless OrcaSlicer with versioned machine, process, and filament templates; Bambu Studio as a fallback slicer with its network cut.
 * Readable part names: generic CAD names like "Cylinder" become a shape, size, plate, and color description.
 
@@ -57,7 +60,7 @@ The print starts only when someone clicks the button. On completion, the bot pos
 **Printing**
 * Nothing starts without a bed clear button press.
 * Multi plate plans: `/print-next` offers the exact next plate, and finishing a plate advances the plan.
-* `/print-again` reprints an archived job exactly, with no re-slice.
+* `/print-again` reprints an archived job exactly, with no re-slice. A job sliced before slice recipes were recorded is refused until it is re-sliced once.
 * `/print-stop` and `/print-resume` each send at most one Moonraker command behind a confirm button.
 * `/print-reboot` uses the safe ZMod reboot flow.
 * Printer models: `flashforge.ad5x`, `sovol.sv06`, `klipper.generic`. Each job records the model it was sliced for and refuses another.
@@ -163,6 +166,7 @@ Empty bed, spaghetti, detached part, uncertain, and vision failure alerts fire a
 | `timelapse` | `archive_host`, `archive_dir`, `ssh_key` | empty | Remote timelapse copy; empty host disables it |
 | | `render_wait_s`, `render_poll_s` | `900`, `10` | Wait for the printer to render the timelapse |
 | | `max_bytes`, `local_retention_days`, `plan_clip_retention_days` | 200 MiB, `1`, `14` | Size cap and retention |
+| `logging` | `level`, `format`, `file` | `INFO`, `text`, empty | Log verbosity (`DEBUG`, `INFO`, `WARNING`, `ERROR`), `text` or `json` lines, and an optional rotating log file |
 | `maintenance` | `quick_hours`, `full_hours`, `full_days` | `25`, `75`, `30` | When maintenance reminders come due |
 | `nozzle_temp_offsets` | supported nozzle type | `0.0` | Optional temperature compensation from −10 to +15 °C for a known nozzle type |
 | `material_temps` | PLA, PETG, ABS, ASA, TPU, PA, PC (`nozzle`, `bed`) | see `config/home.yaml` | Configurable fallback temperatures in °C; explicit Spoolman filament settings take precedence |

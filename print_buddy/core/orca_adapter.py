@@ -1,18 +1,22 @@
 """Offline Orca adapter. Geometry conversion never imports project machine settings."""
 import hashlib
 import json
+import logging
 import math
 import os
 from pathlib import Path
 import re
 import struct
 import subprocess
+import time
 import xml.etree.ElementTree as ET
 import zipfile
-from .. import printers, settings
+from .. import logs, printers, settings
 from ..printers.base import start_code_problems
 from . import slice_guard as sg
 from .slice_guard import pre_slice, post_slice
+
+logger = logging.getLogger(__name__)
 
 _S = settings.current()
 TEMPLATES = _S['orca']['templates']
@@ -493,6 +497,27 @@ def slicer_choice(printer):
     return printer.config['printer'].get('slicer') or default
 
 
+def _run_slicer(command, name, folder):
+    """subprocess.run for a slicer, logging the command name, exit code and elapsed time.
+
+    Arguments are not logged (they hold local paths and profile contents); the slicer's own output is
+    kept in <folder>/orca.log or bambu.log, and a failure logs where to find it.
+    """
+    started = time.monotonic()
+    logger.info('%s run started folder=%s', name, folder)
+    try:
+        result = subprocess.run(command, capture_output=True, text=True, timeout=600)
+    except (subprocess.TimeoutExpired, OSError):
+        logger.exception('%s did not complete after %.1fs', name, time.monotonic() - started)
+        raise
+    level = logging.WARNING if result.returncode else logging.INFO
+    logger.log(level, '%s run finished rc=%s in %.1fs', name, result.returncode, time.monotonic() - started)
+    if result.returncode:
+        tail = (result.stdout + result.stderr).strip().splitlines()[-3:]
+        logger.debug('%s output tail: %s', name, ' | '.join(tail))
+    return result
+
+
 def slice_model(source, folder, state, brim=None, first_layer=False, color_decisions=None, preserve_layout=False, filament_slot=None, item_shifts=None, copies=None, scale=None, rotation=None, supports=None, object_ids=None, adapter=None, brim_policy=None):
     source, folder = Path(source), Path(folder)
     # An explicit adapter (a job prepared for another model) brings its own templates; the default keeps TEMPLATES.
@@ -804,7 +829,7 @@ def slice_model(source, folder, state, brim=None, first_layer=False, color_decis
         # Orca never runs, so there is no Orca failure and no fallback.
         result = subprocess.CompletedProcess(command, 0, '', '')
     else:
-        result = subprocess.run(command, capture_output=True, text=True, timeout=600)
+        result = _run_slicer(command, 'OrcaSlicer', folder)
         (folder / 'orca.log').write_text(result.stdout + result.stderr)
         if result.returncode:
             # Bounded recovery clamps only keys named in Orca's range error.
@@ -812,7 +837,7 @@ def slice_model(source, folder, state, brim=None, first_layer=False, color_decis
             fixed = clamp_rejected_settings(input_path, result.stdout + result.stderr)
             if fixed:
                 sanitized.update(fixed)
-                result = subprocess.run(command, capture_output=True, text=True, timeout=600)
+                result = _run_slicer(command, 'OrcaSlicer', folder)
                 (folder / 'orca.log').write_text(result.stdout + result.stderr)
     if mapped_profile and result.returncode and _orca_conflict(folder):
         # Tower placement clears mesh bounds, but tree supports and brims can
@@ -824,7 +849,7 @@ def slice_model(source, folder, state, brim=None, first_layer=False, color_decis
             configs[1].write_text(json.dumps(process, indent=2) + '\n')
             output.unlink(missing_ok=True)
             (folder / 'result.json').unlink(missing_ok=True)
-            result = subprocess.run(command, capture_output=True, text=True, timeout=600)
+            result = _run_slicer(command, 'OrcaSlicer', folder)
             (folder / 'orca.log').write_text(result.stdout + result.stderr)
             tried.append([tower_x, tower_y])
             if not (result.returncode and _orca_conflict(folder)):
@@ -859,6 +884,7 @@ def slice_model(source, folder, state, brim=None, first_layer=False, color_decis
                             if details else
                             f'Orca slicing failed ({result.returncode}) or no G-code output')
         bambu_role = 'Bambu Studio fallback' if orca_failed else 'Bambu Studio'
+        logger.warning('%s: %s', bambu_role, orca_failure)
         bambu_dir = folder / 'bambu'
         bambu_dir.mkdir(exist_ok=True)
         bambu_machine = bambu_dir / 'machine.json'
@@ -902,7 +928,7 @@ def slice_model(source, folder, state, brim=None, first_layer=False, color_decis
             '--allow-newer-file', '--slice', '0', '--outputdir', str(folder), str(input_path),
         ]
         try:
-            bambu_result = subprocess.run(bambu_command, capture_output=True, text=True, timeout=600)
+            bambu_result = _run_slicer(bambu_command, 'Bambu Studio', folder)
         except (subprocess.TimeoutExpired, OSError) as exc:
             raise RuntimeError(f'{orca_failure}; {bambu_role} failed to start: {exc}') from exc
         (folder / 'bambu.log').write_text(bambu_result.stdout + bambu_result.stderr)
@@ -1502,6 +1528,61 @@ def _surface_stats(tris, rotation):
     return contact, overhang
 
 
+def _euler_xyz(rotation):
+    """Return deterministic XYZ Euler angles for a row-major rigid matrix."""
+    r = rotation
+    y = math.asin(max(-1.0, min(1.0, r[2])))
+    if abs(math.cos(y)) > 1e-9:
+        x, z = math.atan2(-r[5], r[8]), math.atan2(-r[1], r[0])
+    else:
+        x, z = math.atan2(r[7], r[4]), 0.0
+    return [round(math.degrees(v), 3) for v in (x, y, z)]
+
+
+def placement_candidates(path_or_triangles, printer_model=None, bed_mm=None, max_z_mm=None):
+    """Pure offline placement report; never invokes OrcaSlicer or printer services."""
+    tris = source_triangles(path_or_triangles) if isinstance(path_or_triangles, (str, Path)) else path_or_triangles
+    if not tris:
+        raise ValueError('placement report requires non-empty triangles')
+    points = _unique_points(tris)
+    bed = tuple(float(v) for v in (bed_mm or BED))
+    height_limit = float(max_z_mm if max_z_mm is not None else MAX_HEIGHT_MM)
+    if len(bed) != 2 or min(*bed, height_limit) <= 0:
+        raise ValueError('bed_mm and max_z_mm must be positive dimensions')
+    rows = []
+    orientations = [('Upright', 'identity', IDENTITY_ROT)]
+    orientations.extend((name, axis, matrix) for axis, (name, matrix) in UP_AXES.items())
+    for name, axis, matrix in orientations:
+        rotated = [_rotate(p, matrix) for p in points]
+        hull = _hull([(p[0], p[1]) for p in rotated])
+        yaw_set = {0.0, 45.0, 90.0}
+        for i, a in enumerate(hull):
+            b = hull[(i + 1) % len(hull)]
+            yaw_set.add(round(math.degrees(math.atan2(b[1]-a[1], b[0]-a[0])) % 90.0, 6))
+        for yaw in sorted(yaw_set):
+            rot = _matmul(_yaw(yaw), matrix)
+            moved = [_rotate(p, rot) for p in points]
+            dims = [max(p[k] for p in moved) - min(p[k] for p in moved) for k in range(3)]
+            mx, my, mz = bed[0]-dims[0], bed[1]-dims[1], height_limit-dims[2]
+            euler = _euler_xyz(rot)
+            rows.append({'label': name, 'axis': axis, 'rx_deg': euler[0], 'ry_deg': euler[1], 'rz_deg': round(yaw, 3),
+                         'footprint_mm': [round(v, 3) for v in dims], 'margin_x_mm': round(mx, 3),
+                         'margin_y_mm': round(my, 3), 'margin_z_mm': round(mz, 3),
+                         'min_bed_margin_mm': round(min(mx, my, mz), 3),
+                         'fits_bed': dims[0] <= bed[0] and dims[1] <= bed[1] and dims[2] <= height_limit,
+                         'diagonal_gain_mm': 0.0, 'rotation': [round(v, 9) for v in rot]})
+    for row in rows:
+        cardinal = next((r for r in rows if r['axis'] == row['axis'] and r['rz_deg'] == 0.0), row)
+        row['diagonal_gain_mm'] = round(max(0.0, cardinal['footprint_mm'][0]-row['footprint_mm'][0],
+                                               cardinal['footprint_mm'][1]-row['footprint_mm'][1]), 3)
+    rows.sort(key=lambda r: (not r['fits_bed'], 0 if r['axis']=='identity' and r['fits_bed'] else 1,
+                             -r['min_bed_margin_mm'], r['footprint_mm'][2], r['label'], r['axis'], r['rz_deg']))
+    for rank, row in enumerate(rows, 1):
+        row['rank'] = rank
+        row['printer_model'] = printer_model
+    return rows
+
+
 def rotation_alternatives(source: Path, state: dict, authored_max: float = 0.0, limit: int = 2) -> list[dict]:
     """Rotated orientations that print larger than the authored orientation can.
 
@@ -1608,6 +1689,15 @@ def fit_options(source: Path, state: dict, brim_override=None) -> dict:
     result = {'scales': scales, 'rotations': rotations,
               'brim_policy': policy if scales and scales[0] < 0.97 else None,
               'fit_search_deferred': bool(source.suffix.lower() == '.3mf' and _source_plate_count(source) > 1)}
+    try:
+        from .geometry_layout import probe_single_plate_rearrange
+        bed = tuple(state.get('bed_mm') or BED)
+        max_h = float(state.get('max_print_height_mm', MAX_HEIGHT_MM))
+        rearrange = probe_single_plate_rearrange(source, bed=(float(bed[0]), float(bed[1]), max_h))
+        if rearrange is not None:
+            result['rearrange_100'] = rearrange
+    except Exception:
+        pass
     if source.suffix.lower() == '.3mf':
         try:
             from . import color_geometry

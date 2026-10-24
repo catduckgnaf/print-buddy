@@ -576,6 +576,43 @@ class MeshTopologyAuditTests(unittest.TestCase):
             self.assertEqual(stored["printer_model"], "ad5x")
             self.assertEqual(stored["triangle_count"], 1)
 
+    def test_vertex_only_touching_tetrahedra_is_singular(self):
+        tetra=[[(0,0,0),(1,0,0),(0,1,0)],[(0,0,0),(0,1,0),(0,0,1)],[(0,0,0),(0,0,1),(1,0,0)],[(1,0,0),(0,0,1),(0,1,0)]]
+        second=[[(0,0,0),(-1,0,0),(0,-1,0)],[(0,0,0),(0,-1,0),(0,0,-1)],[(0,0,0),(0,0,-1),(-1,0,0)],[(-1,0,0),(0,0,-1),(0,-1,0)]]
+        r=model_job.mesh_topology(tetra+second)
+        self.assertEqual(r["boundary_edges"],0); self.assertEqual(r["non_manifold_edges"],0)
+        self.assertGreaterEqual(r["singular_vertices"],1); self.assertTrue(r["watertight"]); self.assertFalse(r["manifold"])
+
+    def test_collinear_distinct_triangle_is_degenerate(self):
+        r=model_job.mesh_topology([[(0,0,0),(1,1,1),(2,2,2)]])
+        self.assertEqual(r["degenerate_triangles"],1); self.assertFalse(r["manifold"])
+
+    def test_dense_edge_fan_is_bounded(self):
+        # A child timeout makes quadratic regressions fail, rather than hang
+        # the entire test runner. 20k faces would create ~400M pair links.
+        code = (
+            "import json; from print_buddy.core.model_job import mesh_topology; "
+            "print(json.dumps(mesh_topology([[(0,0,0),(1,0,0),(0,i+1,1)] "
+            "for i in range(20000)])))"
+        )
+        proc = subprocess.run([sys.executable, "-c", code], env=CLI_ENV,
+                              capture_output=True, text=True, timeout=10)
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        result = json.loads(proc.stdout)
+        self.assertEqual(result["non_manifold_edges"], 1)
+        self.assertEqual(result["connected_shells"], 1)
+        self.assertFalse(result["manifold"])
+
+    def test_near_collinear_area_threshold_and_exclusion(self):
+        result = model_job.mesh_topology([
+            [(0, 0, 0), (0.000001, 0, 0), (0.000002, 0.000001, 0)],
+            [(10, 0, 0), (11, 0, 0), (10, 1, 0)],
+        ])
+        self.assertEqual(result["triangle_count"], 2)
+        self.assertEqual(result["degenerate_triangles"], 1)
+        self.assertEqual(result["boundary_edges"], 3)
+        self.assertEqual(result["connected_shells"], 1)
+
     def test_duplicate_vertex_degenerate_triangle_is_counted(self):
         result = model_job.mesh_topology([[(0,0,0),(1,0,0),(1,0,0)]])
         self.assertEqual(result["degenerate_triangles"], 1)

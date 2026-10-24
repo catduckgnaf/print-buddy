@@ -1,6 +1,6 @@
 # Contributing to Print Buddy
 
-Thanks for helping improve Print Buddy. This guide describes the repository workflow and project specific checks. The root `PULL_REQUEST_TEMPLATE.md` provides the expected pull request description structure.
+Thanks for helping improve Print Buddy. This guide describes the repository workflow and project specific checks. The [`.github/PULL_REQUEST_TEMPLATE.md`](.github/PULL_REQUEST_TEMPLATE.md) provides the expected pull request description structure.
 
 ## Before starting
 
@@ -44,3 +44,7 @@ Report which checks you actually ran and their result in the pull request. Clear
 - Link related issues. Use `Fixes #N` only when the pull request is intended to close that issue after merge.
 - Include test results and distinguish automated tests from manual or live checks. Do not include secrets or personal information in examples or logs.
 - Keep the PR in draft while implementation or required checks are incomplete. Respond to review feedback with focused updates.
+
+## Documentation and release notes
+
+Use [the documentation home](docs/README.md) for user guidance. Keep the root README focused on purpose, compatibility and the first setup step; put detailed reference material in `docs/`. Check relative links from the file that contains them. Follow [the release-note guide](docs/RELEASE-NOTES.md): user capabilities first, fixes next, implementation details and PR references last. Keep pending changes separate from shipped releases, and preserve the detailed internal history.

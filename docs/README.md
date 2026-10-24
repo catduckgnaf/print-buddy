@@ -4,6 +4,7 @@
 
 ## 1. Install one mode
 
+- [Light install](INSTALL-LIGHT.md): one command for a Raspberry Pi or Debian/Ubuntu machine; asks about your printer and sets up the standalone bot or a Hermes profile. Needs a [Discord bot](DISCORD-BOT-SETUP.md).
 - [Standalone bot](STANDALONE.md): Discord without Hermes or a required LLM; token permissions, configuration, setup checks and systemd services.
 - [Hermes installation](INSTALL.md): profile installation, private overlays and listener setup.
 - [Docker](DOCKER.md): container configuration, persistent storage and service lifecycle. Follow the guide for the checked-out revision; do not assume a draft packaging PR is available.

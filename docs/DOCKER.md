@@ -1,7 +1,6 @@
-# Docker candidate: issue #117 / PR #134
+# Docker
 
-This is an unreleased candidate, not a supported image or deployment approval.
-Do not use production credentials or a live printer to validate this draft.
+The first published image is 2.1.0 at `ghcr.io/catduckgnaf/print-buddy` (amd64). Pin it by digest (`@sha256:<digest>` from the publish run summary), not by tag. The quick start is in the [README](../README.md#docker).
 
 ## Base image
 
@@ -11,7 +10,7 @@ user, so the runtime user `buddy` takes UID 1000 directly. Not yet built on Debi
 
 ## First GHCR publication
 
-`.github/workflows/docker-publish.yml` is the maintainer-dispatched workflow for publishing an amd64 image to `ghcr.io/catduckgnaf/print-buddy`. It builds the selected variant once, runs the offline acceptance harness, and only after acceptance pushes the requested version and `latest` tags. The intended first package is 2.1.0; no image has been published yet. For deployments, prefer the exact tested immutable `ghcr.io/catduckgnaf/print-buddy@sha256:<digest>` recorded in the workflow run summary over a mutable tag. This workflow does not build ARM64 images.
+`.github/workflows/docker-publish.yml` is the maintainer-dispatched workflow for publishing an amd64 image to `ghcr.io/catduckgnaf/print-buddy`. It builds the selected variant once, runs the offline acceptance harness, and only after acceptance pushes the requested version and `latest` tags. The first package is 2.1.0. For deployments, prefer the exact tested immutable `ghcr.io/catduckgnaf/print-buddy@sha256:<digest>` recorded in the workflow run summary over a mutable tag. This workflow does not build ARM64 images.
 
 ## Build dimensions
 

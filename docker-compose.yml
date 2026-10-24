@@ -1,4 +1,4 @@
-# Installation example. GHCR image: ghcr.io/catduckgnaf/print-buddy; published by the manual workflow after offline acceptance. No image has been published yet; prefer its tested digest.
+# Installation example. GHCR image: ghcr.io/catduckgnaf/print-buddy; published by the manual workflow after offline acceptance. Prefer its tested digest.
 # Set PRINT_BUDDY_IMAGE to an approved locally built image or tested immutable digest.
 x-runtime: &runtime
   image: ${PRINT_BUDDY_IMAGE:?Set PRINT_BUDDY_IMAGE to a tested image digest or local tag}

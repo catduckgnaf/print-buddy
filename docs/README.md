@@ -14,6 +14,7 @@ Do not run both Discord modes with the same token. Installing, enabling services
 
 - [YAML configuration and TOML migration](CONFIGURATION-YAML.md): schema, precedence and safety limits.
 - [Detailed project reference](PROJECT-REFERENCE.md): workflow examples, commands, printer models, spool identity rules, monitoring and updates.
+- [Printer profiles and offline delivery](PRINTER-PROFILES.md): vendor/model inheritance, supported delivery methods and verification limitations.
 - [AD5X integration contract](AD5X-CONTRACT.md): printer-specific behavior and limitations.
 - [OctoPrint/Marlin notes](OCTOPRINT-MARLIN.md): read the integration-specific limits before assuming Moonraker feature parity.
 
@@ -37,3 +38,18 @@ Do not run both Discord modes with the same token. Installing, enabling services
 - [CAD evaluation](KICAD-EVALUATION.md) and [reuse map](REUSE-MAP.md) for technical background, not promises of shipped capability.
 
 These versioned repository pages are the documentation home. Update them with behavior changes so readers can use the documentation for their checked-out revision.
+
+## Documentation ownership and wiki policy
+
+This `docs/` directory is the dedicated, versioned documentation location for
+issue #120, not a placeholder for a future website. Installation, configuration,
+workflow reference and troubleshooting live here so changes can be reviewed
+with code. GitHub renders these pages directly; use the docs for your selected
+revision rather than assuming main describes an installed release.
+
+Every feature PR must identify its documentation and wiki impact using the
+[contribution checklist](../CONTRIBUTING.md#automated-pr-review-support).
+Update the relevant guide and this index when adding a new page. A separate
+GitHub Wiki, if maintained, should provide links or summaries pointing here;
+it is not a second source of configuration or safety instructions. No wiki
+publication or synchronization is automated by the PR checks.

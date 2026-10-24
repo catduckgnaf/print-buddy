@@ -1,6 +1,7 @@
 """Offline regression coverage for PR documentation policy."""
 import importlib.util
 import unittest
+import tempfile
 from pathlib import Path
 
 SCRIPT = Path(__file__).resolve().parents[1] / "scripts/check_contribution.py"
@@ -22,6 +23,15 @@ Reason: New configuration option documented in docs/CONFIGURATION-YAML.md.
 Wiki: not applicable
 Wiki reason: Versioned docs are authoritative; no separate wiki page exists.
 """
+
+    def test_markdown_destinations(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "README.md").write_text("[ok](guide.md) [remote](https://example.com) [anchor](#heading)")
+            (root / "guide.md").write_text("# Guide")
+            self.assertEqual([], self.policy.check_links(root, ["README.md", "deleted.md"]))
+            (root / "README.md").write_text("[bad](missing.md) [escape](../outside.md)")
+            self.assertEqual(2, len(self.policy.check_links(root, ["README.md"])))
 
     def test_valid_feature(self):
         self.assertEqual([], self.policy.check_pr(self.body(), ["print_buddy/settings.py", "docs/CONFIGURATION-YAML.md"]))

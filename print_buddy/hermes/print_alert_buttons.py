@@ -22,6 +22,7 @@ from . import _config
 STATE = _config.state_file("PRINT_ALERT_STATE", "print_alert_buttons.json")
 BASE = _config.moonraker_url()
 PREFIX = "pbalert"
+RETRY_PREFIX = "pbretry"
 INSERTION_PREFIX = "pbinsert"
 SPOOL_QUESTION_PREFIX = "pbspool"
 PLATE_PREFIX = "pbplate"
@@ -393,6 +394,26 @@ def parse_custom_id(custom_id: str) -> tuple[str, str] | None:
     parts = str(custom_id or "").split(":")
     if len(parts) == 3 and parts[0] == PREFIX and parts[1] in ("resume", "cancel", "pause", "acknowledge"):
         return parts[1], parts[2]
+    return None
+
+
+def retry_custom_id(aid: str) -> str:
+    """Return the button ID for one intake receipt."""
+    return f"{RETRY_PREFIX}:{aid}"
+
+
+def retry_components(aid: str) -> list[dict[str, Any]]:
+    """Single safe retry action after a confirmed pre-upload refusal."""
+    return [{"type": 1, "components": [
+        {"type": 2, "style": 1, "label": "Retry", "custom_id": retry_custom_id(aid)},
+    ]}]
+
+
+def parse_retry_custom_id(custom_id: str) -> str | None:
+    """Return an intake receipt id only for a well-formed single-use Retry button."""
+    parts = str(custom_id or "").split(":")
+    if len(parts) == 2 and parts[0] == RETRY_PREFIX and re.fullmatch(r"[a-f0-9]{32}", parts[1]):
+        return parts[1]
     return None
 
 

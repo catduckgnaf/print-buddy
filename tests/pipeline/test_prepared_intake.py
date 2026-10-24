@@ -350,7 +350,7 @@ def test_changed_gcode_after_slice_is_refused_by_existing_gate(env, monkeypatch)
     monkeypatch.setattr(print_next, 'start', tampered)
     adapter, result, receipt = run_flow(env, [1, 0, 0])
     assert receipt['status'] == 'START_REFUSED' and receipt['started'] is False
-    assert any('REFUSED' in m for m in adapter.sent)
+    assert any(m.startswith("Didn't start:") for m in adapter.sent)
 
 
 def test_failed_slice_retry_needs_fresh_approval_and_start_button(env, monkeypatch):

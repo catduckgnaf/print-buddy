@@ -29,6 +29,37 @@ from .test_prepared_intake import Adapter, env, run_flow  # noqa: E402
 PREP_TEXT = 'Preparing to start'
 
 
+def test_start_refusal_filters_diagnostics_and_explains_stale_heater_targets():
+    tail = '\n'.join([
+        'TIMING {"stage": "print_now"}',
+        'G-CODE OK: plate_1.gcode | validated for upload',
+        'REFUSED: idle guard failed: native rightTargetTemp == 0 (observed 210.0); '
+        'native platTargetTemp == 0 (observed 60.0). Nothing uploaded or started.',
+    ])
+
+    message = prepared_intake._refusal_text(tail)
+
+    assert message == (
+        "Didn't start: the printer still has the nozzle set to 210 °C and the bed to 60 °C "
+        "from the last job. Clear heating on the printer screen (or power cycle it), then press Retry."
+    )
+    assert 'TIMING' not in message and 'G-CODE OK:' not in message
+    assert prepared_intake._safe_preupload_refusal(tail)
+
+
+def test_unknown_refusal_is_plain_and_keeps_raw_detail_out_of_chat():
+    tail = 'REFUSED: internal probe 7 failed with opaque_code=QX-19. Nothing uploaded or started.'
+
+    message = prepared_intake._refusal_text(tail)
+
+    assert message == (
+        "Didn't start: the printer could not confirm it was ready. Check the printer screen, "
+        "resolve any warning, then press Retry."
+    )
+    assert 'opaque_code' not in message
+    assert prepared_intake._safe_preupload_refusal(tail)
+
+
 def test_single_color_successful_flow_messages_and_order(env):
     """After bed-clear approved, prep message is sent before start, followed by started confirmation."""
     adapter, result, receipt = run_flow(env, [1, 0, 0])  # single color, slot 1, slice and print now
@@ -101,16 +132,22 @@ def test_refused_start_sends_prep_then_precise_failure_no_printing_claim(env, mo
 
     assert not any(m.startswith('Sliced:') for m in adapter.log)
     assert not any('print started' in m.lower() for m in adapter.log)
-    assert adapter.log[1].startswith('REFUSED:')
+    assert adapter.log[1] == (
+        "Didn't start: the printer could not confirm it was ready. Check the printer screen, "
+        "resolve any warning, then press Retry."
+    )
+    assert 'REFUSED:' not in adapter.log[1]
 
-    # Receipt reflects refusal
+    # Raw refusal remains in the receipt for status/debug details.
     assert receipt['status'] == 'START_REFUSED'
     assert receipt['started'] is False
+    assert receipt['start_refusal_detail'] == refusal_reason
 
     # Receipt is valid JSON
     receipt_file = next(env.root.glob('*.json'))
     data = json.loads(receipt_file.read_text())
     assert data['status'] == 'START_REFUSED'
+    assert data['start_refusal_detail'] == refusal_reason
 
 
 def test_duplicate_event_deduplication_and_no_duplicate_messages(env):
@@ -193,7 +230,7 @@ def test_multicolor_refused_start_sends_prep_then_precise_failure(env, monkeypat
     adapter, result, receipt = run_flow(env, [0, 0, 1, 0])
 
     prep_idx = next(i for i, m in enumerate(adapter.log) if PREP_TEXT in m)
-    fail_idx = next(i for i, m in enumerate(adapter.log) if 'REFUSED:' in m)
+    fail_idx = next(i for i, m in enumerate(adapter.log) if m.startswith("Didn't start:"))
     assert prep_idx < fail_idx
     assert not any('Print started:' in m for m in adapter.log)
     assert receipt['status'] == 'START_REFUSED'

@@ -61,6 +61,15 @@ def test_record_take_once(tmp_path):
         assert "already answered" in pab.handle_click("cancel", None)
 
 
+def test_retry_button_custom_id_is_explicit_and_parseable():
+    components = pab.retry_components('de' * 16)
+    button = components[0]['components'][0]
+    assert button['label'] == 'Retry'
+    assert button['custom_id'] == 'pbretry:' + 'de' * 16
+    assert pab.parse_retry_custom_id(button['custom_id']) == 'de' * 16
+    assert pab.parse_retry_custom_id('pbretry:') is None
+
+
 def test_parse_custom_id():
     assert pab.parse_custom_id("pbalert:cancel:ab12") == ("cancel", "ab12")
     assert pab.parse_custom_id("clarify:x:y") is None

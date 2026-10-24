@@ -1485,7 +1485,8 @@ def rotation_alternatives(source: Path, state: dict, authored_max: float = 0.0, 
     candidates: list[dict] = []
     # Same model, turned on the bed (yaw only): no new overhangs.
     scale, yaw, dims = _orientation_bound(points, state, IDENTITY_ROT)
-    if yaw not in (0.0, 90.0) and scale > authored_max + 0.004:
+    # A quarter turn is not redundant on rectangular printable areas.
+    if yaw != 0.0 and scale > authored_max + 0.004:
         candidates.append({'name': f'Turn {round(yaw)}° on the bed', 'axis': '+Z', 'rotation': _yaw(yaw),
                            'bound': scale, 'dims_full_mm': dims, 'supports': False})
     for axis_pair in (('+Y', '-Y'), ('+X', '-X')):

@@ -14,7 +14,7 @@ from types import SimpleNamespace
 from urllib.parse import urlsplit
 
 from .. import printers, settings
-from . import _external, delivery, split_fit
+from . import _external, delivery, owned_worker, split_fit
 
 BED = settings.current()['printer']['bed_mm']
 IFS_SLOTS = settings.current()['printer']['ifs_slots']
@@ -28,6 +28,11 @@ from .background_slice import drop_runner, runner_for, slice_binding  # noqa: E4
 _OFFLOAD = {('model_job', 'audit'), ('model_job', 'slice_job'), ('source_colors', 'inventory'),
             ('orca_adapter', 'orca_plate_capacity'), ('orca_adapter', 'fit_options'),
             ('model_job', 'per_part_fit_options'), ('plate_merge', 'full_size_split_possible')}
+# Steps that run the slicer share one lane; the geometry-only steps share a small general lane.
+_SLICER_STEPS = {('model_job', 'slice_job'), ('orca_adapter', 'orca_plate_capacity'), ('orca_adapter', 'fit_options')}
+_STEP_LABELS = {'slice_job': 'slicing', 'audit': 'the model check', 'inventory': 'the color check',
+                'orca_plate_capacity': 'the bed fit check', 'fit_options': 'the bed fit check',
+                'per_part_fit_options': 'the per-part fit check', 'full_size_split_possible': 'the split check'}
 
 
 STOP_LABEL = "Stop"
@@ -119,21 +124,24 @@ async def _heavy(func, *args, **kwargs):
 
     Threads are not enough: large 3MF XML parsing holds the GIL for ~10 s stretches and starves the
     gateway loop past Discord's 3 s interaction deadline. Substituted callables (tests) run in a thread.
+    The child is owned: it has a deadline and an output limit, and a cancel stops its process group.
     """
     import importlib
     mod, name = getattr(func, '__module__', None), getattr(func, '__name__', None)
     short = (mod or '').rsplit('.', 1)[-1]
     real = (short, name) in _OFFLOAD and getattr(importlib.import_module(mod), name, None) is func
     if not real:
-        return await asyncio.to_thread(func, *args, **kwargs)
+        return await owned_worker.in_thread(func, *args, **kwargs)
     def plain(v):
         return str(v) if isinstance(v, Path) else v
     payload = json.dumps({'module': short, 'func': name, 'args': [plain(a) for a in args],
                           'kwargs': {k: plain(v) for k, v in kwargs.items()}}).encode()
-    proc = await asyncio.create_subprocess_exec(
-        sys.executable, '-m', 'print_buddy.core.heavy_worker', cwd=str(settings.ROOT),
-        stdin=asyncio.subprocess.PIPE, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
-    out, err = await proc.communicate(payload)
+    slicer = (short, name) in _SLICER_STEPS
+    # A slice worker leaves a record in its intake folder, so a restart mid-slice can be explained.
+    record = Path(args[0]).parent / owned_worker.RECORD if (short, name) == ('model_job', 'slice_job') else None
+    out, err = await owned_worker.run(
+        [sys.executable, '-m', 'print_buddy.core.heavy_worker'], payload, label=_STEP_LABELS.get(name, name),
+        lane=owned_worker.SLICER if slicer else owned_worker.GENERAL, cwd=str(settings.ROOT), record=record)
     try:
         reply = json.loads(out.decode().rstrip().rsplit('\n', 1)[-1])
     except (ValueError, IndexError):
@@ -471,6 +479,26 @@ def resume_job(saved):
     return job
 
 
+def _saved_folder(saved):
+    """The intake folder of an archived job: the nearest parent of its source that holds JOB.json."""
+    source = (saved or {}).get('downloaded_file')
+    return next((p for p in Path(source).parents if (p / 'JOB.json').is_file()), None) if source else None
+
+
+def interrupted_note(saved):
+    """One sentence when Print Buddy stopped while this saved job was being prepared, else None.
+
+    The record only explains what happened. An interrupted preparation is never resumed with its
+    old approvals: reuse_job and resume_job carry no approval, so every confirmation is asked again.
+    """
+    folder = _saved_folder(saved)
+    record = owned_worker.interrupted(folder) if folder else None
+    if not record:
+        return None
+    return (f"Its last preparation was interrupted during {record.get('step') or 'a heavy step'} when "
+            'Print Buddy stopped. That run is not reused; every choice and confirmation is asked again.')
+
+
 _LIVE_KEY = contextvars.ContextVar('prepared_intake_live_key', default=None)
 
 
@@ -673,9 +701,13 @@ async def prepare_link(event, adapter, state, root, timeout=None, reuse=None):
             else:
                 done = reuse.get('sliced_at') and (reuse.get('filament_selection') or {}).get('color')
                 when = f" (last sliced in {reuse['filament_selection']['color']})" if done else ''
+                interrupted = interrupted_note(reuse)
                 pick = await _ask(adapter, source, key, f"Did you mean {reuse.get('title') or 'the last model'}{when}? "
-                                 'I will slice it again from the saved file, no download.',
+                                 'I will slice it again from the saved file, no download.'
+                                 + (f' {interrupted}' if interrupted else ''),
                                  ['Yes, slice it again', "No, I'll send a link"], timeout)
+                if interrupted:
+                    owned_worker.clear(_saved_folder(reuse))  # explained once; the new intake has its own folder
                 if pick != 0:
                     receipt.update(status='DECLINED_REPRINT')
                     receipt_path.write_text(json.dumps(receipt, indent=2) + '\n')

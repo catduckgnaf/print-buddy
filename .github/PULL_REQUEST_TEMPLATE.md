@@ -63,3 +63,22 @@
 - [ ] No credentials, private model files or personal runtime records included.
 
 <!-- Leave unchecked items unchecked until verified. Use "Not applicable" with a reason rather than claiming an unrun check passed. -->
+
+## Documentation impact
+
+<!-- Required by contribution-policy. Choose each status and explain it. Do not check a box as a substitute for evidence. Features/configuration changes should update versioned docs in this PR. An internal-only change can explain why no documentation is needed. -->
+
+Documentation: updated | not needed
+Reason:
+Wiki: updated | not applicable | deferred
+Wiki reason:
+
+<!-- Wiki updated: link the page. Deferred: link a tracking issue. Not applicable: explain why versioned docs cover the change and no separate wiki page needs updating. -->
+
+## Reviewer checklist
+
+- [ ] User-visible behavior, configuration and limitations match the docs and release note.
+- [ ] Documentation impact and wiki impact were reviewed, including any exemption or deferral.
+- [ ] Tests cover the changed behavior; reported checks match actual evidence.
+- [ ] Safety/authorization guards and contributor attribution are preserved.
+- [ ] Required current-head CI checks pass before merge; no deployment or live action is implied.

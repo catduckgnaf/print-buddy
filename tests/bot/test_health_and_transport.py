@@ -273,8 +273,10 @@ def test_bot_shutdown_awaits_owned_resources(cfg):
         server = mock.Mock()
         server.wait_closed = mock.AsyncMock()
         bot._background = [task, server]
-        with mock.patch("discord.ext.commands.Bot.close", mock.AsyncMock()):
+        with mock.patch("discord.ext.commands.Bot.close", mock.AsyncMock()), \
+                mock.patch("print_buddy.core.owned_worker.shutdown", mock.AsyncMock()) as workers:
             await bot.close()
+        workers.assert_awaited_once()  # no slicer or model-check worker outlives the bot
         assert stopped.is_set() and task.done()
         server.close.assert_called_once()
         server.wait_closed.assert_awaited_once()

@@ -21,6 +21,8 @@ material_temps:
 
 The targets use representative points within the documented manufacturer/profile ranges: PLA 185–235/50–60 °C, PETG 215–270/70–90 °C, ABS 230–255/95–110 °C, ASA 220–275/90–110 °C, TPU 220–260/40–85 °C, PA 240–285/70–115 °C, and PC 270–275/100–115 °C. Brand, formulation, printer capability, and enclosure affect the correct settings. Every resolved nozzle target still passes the active nozzle type's safety limit, and the existing printer start/slice validation remains authoritative.
 
+`logging.level` is `DEBUG`, `INFO`, `WARNING` or `ERROR` (case does not matter) and `logging.format` is `text` or `json`; anything else stops startup with a message naming the key. `logging.file` is empty by default; a path adds a rotating log file (5 MiB, 3 backups) next to the standard error output that systemd and Docker already capture. Logs name the component, the intake id while an intake runs, and how long each slicer run took. Discord and bearer tokens, `token=`/`password=` style values, URL credentials and the values of `*_TOKEN`, `*_KEY`, `*_SECRET` and `*_PASSWORD` environment variables are replaced with `***` in the message and the traceback. The Hermes gateway plugin does not configure logging; the standalone bot and the printer listener do.
+
 Example:
 
 ```yaml
@@ -29,6 +31,10 @@ printer:
 visual_watch:
   enabled: true
   sensitivity: 3
+logging:
+  level: DEBUG
+  format: json
+  file: /var/log/print-buddy/print-buddy.log
 ```
 
 During migration, convert a TOML document by preserving its section names and keys as YAML mappings, then set `PRINT_BUDDY_CONFIG` to that YAML file or use `config/local.yaml`. Compare the effective values before removing the old TOML file. Do not copy secrets into either file.

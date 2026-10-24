@@ -224,6 +224,8 @@ def _validate_vendor_choices(data, model):
 
 
 BOT_MODES = ("hermes", "standalone")
+LOG_LEVELS = ("DEBUG", "INFO", "WARNING", "ERROR")
+LOG_FORMATS = ("text", "json")
 
 
 def user_ids(value):
@@ -233,6 +235,22 @@ def user_ids(value):
         if not part.isdigit():
             raise SettingsError(f"[discord] allowed_user_ids must be numeric Discord user IDs, got {part!r}")
     return ids
+
+
+def _validate_logging(data):
+    """The [logging] section (#150). Absent in a hand-made home file means the defaults."""
+    logging_cfg = data.setdefault("logging", {})
+    level = str(logging_cfg.setdefault("level", "INFO")).upper()
+    if level not in LOG_LEVELS:
+        raise SettingsError(f"[logging] level must be one of {', '.join(LOG_LEVELS)}, got {logging_cfg['level']!r}")
+    logging_cfg["level"] = level
+    kind = str(logging_cfg.setdefault("format", "text")).lower()
+    if kind not in LOG_FORMATS:
+        raise SettingsError(f"[logging] format must be one of {', '.join(LOG_FORMATS)}, got {logging_cfg['format']!r}")
+    logging_cfg["format"] = kind
+    path = logging_cfg.setdefault("file", "")
+    if not isinstance(path, str):
+        raise SettingsError(f"[logging] file must be a path or empty, got {path!r}")
 
 
 def _validate_bot(data):
@@ -350,6 +368,7 @@ def validate(data):
     for key in ("question_timeout_s", "safety_confirm_timeout_s", "upload_wait_s", "cold_pull_outcome_s"):
         data["discord"][key] = _positive(data, "discord", key, int)
     _validate_bot(data)
+    _validate_logging(data)
     templates = data.get("orca", {}).get("templates")
     if not isinstance(templates, str) or not templates:
         raise SettingsError("[orca] templates must be a folder path")

@@ -285,29 +285,55 @@ def model_info_output(path):
 
 
 def mesh_topology(triangles):
-    """Conservative indexed-by-position topology summary; does not repair geometry."""
+    """Conservative positional topology; no repair or self-intersection test.
+
+    Weld coordinates on a six-decimal grid. Exclude faces whose squared
+    double-area is <= 1e-18 source-units**4 from all topology adjacency.
+    """
     vertices = {}
     faces = []
     degenerate = 0
     for tri in triangles:
+        points = [tuple(float(v) for v in point) for point in tri]
         ids = []
-        for point in tri:
-            key = tuple(round(float(v), 6) for v in point)
+        for point in points:
+            key = tuple(round(v, 6) for v in point)
             ids.append(vertices.setdefault(key, len(vertices)))
-        if len(set(ids)) < 3:
+        u = tuple(b - a for a, b in zip(points[0], points[1]))
+        v = tuple(b - a for a, b in zip(points[0], points[2]))
+        cross = (u[1]*v[2] - u[2]*v[1], u[2]*v[0] - u[0]*v[2],
+                 u[0]*v[1] - u[1]*v[0])
+        if len(set(ids)) < 3 or sum(c*c for c in cross) <= 1e-18:
             degenerate += 1
+            continue
         faces.append(ids)
+
     edges = {}
+    vertex_faces = {}
     adjacency = [[] for _ in faces]
+    vertex_links = {}
     for fi, face in enumerate(faces):
+        for vertex in face:
+            vertex_faces.setdefault(vertex, set()).add(fi)
         for a, b in zip(face, face[1:] + face[:1]):
-            key = (min(a, b), max(a, b))
-            edges.setdefault(key, []).append((fi, a < b))
-    for uses in edges.values():
-        for fi, _ in uses:
-            for other, _ in uses:
-                if fi != other:
-                    adjacency[fi].append(other)
+            edges.setdefault((min(a, b), max(a, b)), []).append((fi, a < b))
+    singular_ids = set()
+    for edge, uses in edges.items():
+        # A star preserves shell connectivity with k-1 links, even for a dense
+        # non-manifold fan. Never expand k*(k-1) face pairs (including k > 64).
+        first = uses[0][0]
+        for other, _ in uses[1:]:
+            adjacency[first].append(other)
+            adjacency[other].append(first)
+        if len(uses) != 2:
+            singular_ids.update(edge)
+        else:
+            a, b = uses[0][0], uses[1][0]
+            for vertex in edge:
+                links = vertex_links.setdefault(vertex, {})
+                links.setdefault(a, []).append(b)
+                links.setdefault(b, []).append(a)
+
     seen = set()
     shells = 0
     for start in range(len(faces)):
@@ -317,22 +343,36 @@ def mesh_topology(triangles):
         stack = [start]
         seen.add(start)
         while stack:
-            current = stack.pop()
-            for other in adjacency[current]:
+            for other in adjacency[stack.pop()]:
                 if other not in seen:
                     seen.add(other)
                     stack.append(other)
+
+    # A closed edge neighborhood can still contain disconnected face fans,
+    # e.g. two tetrahedra touching at one vertex. Traverse only local links,
+    # not every edge for every vertex, so this remains linear in mesh size.
+    for vertex, attached in vertex_faces.items():
+        if vertex in singular_ids:
+            continue
+        links = vertex_links.get(vertex, {})
+        reached = {next(iter(attached))}
+        stack = list(reached)
+        while stack:
+            for other in links.get(stack.pop(), ()):
+                if other not in reached:
+                    reached.add(other)
+                    stack.append(other)
+        if len(reached) != len(attached):
+            singular_ids.add(vertex)
+
     boundary = sum(len(uses) == 1 for uses in edges.values())
     nonmanifold = sum(len(uses) > 2 for uses in edges.values())
     winding = sum(len(uses) == 2 and uses[0][1] == uses[1][1] for uses in edges.values())
-    incident = {}
-    for edge, uses in edges.items():
-        for vertex in edge:
-            incident.setdefault(vertex, []).append(len(uses))
-    singular = sum(any(count != 2 for count in counts) for counts in incident.values())
+    singular = len(singular_ids)
     manifold = not (boundary or nonmanifold or singular or degenerate or winding)
-    return {"format": "triangle-mesh", "triangles": len(faces),
-            "shells": shells, "triangle_count": len(faces), "connected_shells": shells,
+    count = len(faces) + degenerate
+    return {"format": "triangle-mesh", "triangles": count,
+            "shells": shells, "triangle_count": count, "connected_shells": shells,
             "boundary_edges": boundary, "non_manifold_edges": nonmanifold,
             "non_manifold_vertices": singular, "singular_vertices": singular, "winding_inconsistencies": winding,
             "degenerate_triangles": degenerate, "watertight": boundary == 0 and nonmanifold == 0,

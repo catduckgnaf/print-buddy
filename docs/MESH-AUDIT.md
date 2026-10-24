@@ -37,6 +37,25 @@ The topology audit produces a versioned v1 report. Existing flat topology keys a
 | `watertight` | Boolean indicating whether `boundary_edges == 0` and `non_manifold_edges == 0`. |
 | `manifold` | Boolean indicating strict manifoldness (no boundaries, non-manifold edges, singular vertices, degenerate triangles, or winding inconsistencies). |
 
+## Topology heuristics and limitations
+
+- Vertices are welded by rounding each coordinate to six decimal places (a
+  `1e-6` grid in source coordinate units), not by a Euclidean distance test.
+  Nearby points across a rounding boundary need not weld.
+- Repeated welded vertices and squared 3D cross-product magnitudes (squared
+  double-area) `<= 1e-18` source-units to the fourth power are degenerate.
+  The area test uses original coordinates. These faces count toward
+  `triangle_count` but not edge, vertex-fan, or shell adjacency.
+- Closed vertices must have one connected incident face fan. Two otherwise
+  closed shells touching at one vertex are watertight by the edge-only
+  definition but are not manifold.
+- Shell adjacency uses a linear star (at most `k-1` links for `k` edge uses),
+  including edges with more than 64 faces. It never expands all face pairs;
+  dense fans remain connected and are still reported as non-manifold.
+- Self-intersections are not detected. These heuristics are not a geometric
+  proof or approval to print. An all-degenerate mesh can satisfy the
+  edge-only `watertight` definition while failing `manifold` for degeneracy.
+
 ## Integration with job preparation
 
 When preparing a print job, `audit(path, printer_model=...)`:

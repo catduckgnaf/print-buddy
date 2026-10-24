@@ -140,5 +140,6 @@ def slice_binding(job, source_sha256):
         'copies': int(job.get('copies') or 1),
         'plate_mode': job.get('plate_mode'),
         'full_size_split': bool(job.get('full_size_split_plan')),
+        'full_size_rearrange': bool(job.get('full_size_rearrange_plan')),
     }
     return json.dumps(frozen, sort_keys=True, separators=(',', ':'), allow_nan=False)

@@ -1,5 +1,6 @@
 import io
 import json
+import hashlib
 import os
 import shutil
 import sys
@@ -557,6 +558,24 @@ class MeshTopologyAuditTests(unittest.TestCase):
         self.assertFalse(result["watertight"])
         self.assertFalse(result["manifold"])
 
+    def test_prepared_job_audit_persists_versioned_artifact(self):
+        with tempfile.TemporaryDirectory() as td:
+            folder = Path(td)
+            path = folder / "part.stl"
+            tri = [(0,0,0),(2,0,0),(0,3,4)]
+            with path.open("wb") as f:
+                f.write(b"part".ljust(80,b" ") + struct.pack("<I",1))
+                f.write(struct.pack("<12fH",0,0,0,*(v for point in tri for v in point),0))
+            job = {"printer_model": "ad5x", "downloaded_file": str(path), "audit": model_job.audit(path, printer_model="ad5x")}
+            model_job.write_job(folder, job)
+            stored = json.loads((folder / "JOB.json").read_text())["audit"]["mesh_audit"]
+            self.assertEqual(stored["schema_version"], 1)
+            self.assertEqual(stored["source_sha256"], hashlib.sha256(path.read_bytes()).hexdigest())
+            self.assertEqual(stored["dimensions_mm"], [2.0, 3.0, 4.0])
+            self.assertEqual(stored["units"], "mm")
+            self.assertEqual(stored["printer_model"], "ad5x")
+            self.assertEqual(stored["triangle_count"], 1)
+
     def test_duplicate_vertex_degenerate_triangle_is_counted(self):
         result = model_job.mesh_topology([[(0,0,0),(1,0,0),(1,0,0)]])
         self.assertEqual(result["degenerate_triangles"], 1)
@@ -577,6 +596,11 @@ class MeshTopologyAuditTests(unittest.TestCase):
             report = json.loads(proc.stdout)
             self.assertEqual(report["triangle_count"], 4)
             self.assertTrue(report["watertight"])
+            self.assertEqual(report["schema_version"], 1)
+            self.assertEqual(report["source_sha256"], hashlib.sha256(before).hexdigest())
+            self.assertEqual(report["dimensions_mm"], [1.0, 1.0, 1.0])
+            self.assertEqual(report["units"], "mm")
+            self.assertIsNone(report["printer_model"])
             self.assertEqual(path.read_bytes(), before)
 
 

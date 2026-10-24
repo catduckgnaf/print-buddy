@@ -1,6 +1,9 @@
 """Issue #117 packaging regressions, runnable without a container engine."""
 from pathlib import Path
+import re
 import unittest
+
+import yaml
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -73,6 +76,25 @@ class DockerReleaseContract(unittest.TestCase):
         self.assertIn("COPY --from=bambu-build /out/ /", dockerfile)
         for suffix in ("yaml", "toml"):
             self.assertIn("/usr/bin/bambu-studio", (ROOT / "config" / f"docker.{suffix}").read_text())
+
+    def test_ghcr_publisher_is_manual_gated_and_uses_pinned_actions(self):
+        workflow = yaml.load((ROOT / ".github" / "workflows" / "docker-publish.yml").read_text(),
+                             Loader=yaml.BaseLoader)
+        self.assertEqual(list(workflow["on"]), ["workflow_dispatch"])
+        inputs = workflow["on"]["workflow_dispatch"]["inputs"]
+        self.assertEqual(inputs["version"]["required"], "true")
+        self.assertEqual(inputs["with_orca"]["default"], "true")
+        self.assertEqual(inputs["with_bambu"]["default"], "true")
+        steps = workflow["jobs"]["publish"]["steps"]
+        acceptance = next(i for i, step in enumerate(steps) if step.get("id") == "acceptance")
+        publish = next(i for i, step in enumerate(steps) if step.get("id") == "publish")
+        self.assertLess(acceptance, publish)
+        self.assertEqual(steps[publish]["if"], "steps.acceptance.outcome == 'success'")
+        self.assertIn("docker push", steps[publish]["run"])
+        self.assertIn("image_acceptance.sh", steps[acceptance]["run"])
+        for step in steps:
+            if "uses" in step:
+                self.assertRegex(step["uses"], r"^[^@]+@[0-9a-f]{40}$")
 
 
 if __name__ == "__main__":

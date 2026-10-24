@@ -1,6 +1,7 @@
 <?xml version="1.0"?>
 <!-- Unraid DockerMan template PROPOSAL for the listener service (issue #117). Not published or exercised on Unraid.
-     Replace Repository with a locally built, tested image tag or immutable digest: no published image exists.
+     GHCR image ghcr.io/catduckgnaf/print-buddy is published only by the maintainer workflow after offline acceptance; no image has been published yet.
+     Replace Repository with a locally built, tested image tag or immutable digest; prefer the tested GHCR digest when available.
      Mirrors docker-compose.yml; tests/test_docker_release.py keeps the two in step. Setup: docs/DOCKER.md. -->
 <Container version="2">
   <Name>print-buddy-listener</Name>

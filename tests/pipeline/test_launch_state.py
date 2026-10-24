@@ -285,3 +285,150 @@ def test_upload_failure_releases_the_lease(printer):
     with pytest.raises(SystemExit, match="UPLOAD FAILED"):
         model_job.print_now(a)
     assert leases() == []
+
+
+def test_hard_crash_before_submission_is_released_after_restart():
+    from print_buddy.core import launch_state
+    launch_state.acquire(PRINTER, job_json="/jobs/a/JOB.json", gcode_sha256="a" * 64, remote="a.gcode")
+    with pytest.raises(SystemExit, match="in progress"):
+        launch_state.acquire(PRINTER, remote="b.gcode")
+    simulate_restart()  # the owner died during checks or upload: nothing was sent to start
+    launch_state.acquire(PRINTER, remote="b.gcode").release()
+    assert leases() == []
+
+
+# OctoPrint: the same lease, with upload and start as one uncertain step.
+
+class FakeOctoPrint:
+    transport, key, multi_slot = "octoprint", "octoprint.marlin", False
+
+    def __init__(self):
+        self.statuses, self.uploads = [], []
+        outer = self
+
+        class Client:
+            def status(self):
+                status = outer.statuses.pop(0) if len(outer.statuses) > 1 else outer.statuses[0]
+                return status() if callable(status) else status
+            def require_ready(self, status):
+                if status["state"] != "standby": raise RuntimeError(f"printer is {status['state']}")
+            def upload(self, gcode, remote): outer.uploads.append(remote); return remote
+            def start(self, remote, bed, hotend): pass
+        self._client = Client()
+
+    def client(self): return self._client
+    def normalize_status(self, raw): return raw
+    def normalize_tool_mapping(self, mapping, state): return mapping
+
+
+@pytest.fixture
+def octoprint(tmp_path):
+    fake = FakeOctoPrint()
+    st = {"temps_c": {"bed": 60, "nozzle": 210}, "nozzle": {"type": "hardened_steel"}}
+    with mock.patch.object(model_job.printers, "current", return_value=fake), \
+         mock.patch.object(model_job.printer_state, "load", return_value=st), \
+         mock.patch.object(model_job, "verify_gcode"), \
+         mock.patch.object(model_job, "record_start", return_value="/vault/x.md"):
+        fake.root = tmp_path
+        yield fake
+
+
+def octo_job(root, name):
+    jp, g = make_job(root, name)
+    jp.write_text(json.dumps(dict(json.loads(jp.read_text()), printer_model="octoprint.marlin")))
+    return jp
+
+
+def test_octoprint_unconfirmed_start_is_uncertain_until_the_printer_reports_it(octoprint):
+    a, b = octo_job(octoprint.root, "a"), octo_job(octoprint.root, "b")
+    idle = {"state": "standby", "filename": ""}
+    octoprint.statuses = [idle, idle, idle]  # pre-check, in-lease check, readback: never confirmed
+    assert model_job.print_now(a)["outcome"] == "unconfirmed"
+    assert [r["phase"] for r in leases()] == ["uncertain"]
+    octoprint.statuses = [idle]
+    with pytest.raises(SystemExit, match="uncertain"):
+        model_job.print_now(b)
+    done = {"state": "standby", "filename": octoprint.uploads[0]}  # OctoPrint shows A's file: it ran
+    octoprint.statuses = [done, done, lambda: {"state": "printing", "filename": octoprint.uploads[-1]}]
+    assert model_job.print_now(b)["outcome"] == "printing"
+    assert len(octoprint.uploads) == 2 and leases() == []
+
+
+# Native mapped route (SET_ZCOLOR): the idle guard runs again inside the lease.
+
+@pytest.fixture
+def mapped(tmp_path):
+    native = mock.Mock()
+    native.normalize_mapping.side_effect = lambda m, st: {"0": 1}
+    native.require_idle_settled.return_value = True
+    adapter = mock.Mock(native=native)
+    scripts = []
+
+    def fake_mr(st, path, data=None, timeout=30):
+        if path == "/printer/gcode/script":
+            scripts.append(data["script"])
+            return {"result": "ok"}
+        return {"result": {"status": {
+            "webhooks": {"state": "ready"}, "print_stats": {"state": "standby", "filename": ""},
+            "extruder": {}, "heater_bed": {},
+            "zmod_color": {"slots": [{"ID": 1, "Material": "PLA", "HEX": "000000"}]},
+            "filament_switch_sensor head_switch_sensor": {"enabled": True}}}}
+
+    st = {"moonraker_url": PRINTER, "ifs_slots": {"1": {"material": "PLA", "hex": "#000000"}}}
+    with mock.patch.object(model_job.printers, "current", return_value=adapter), \
+         mock.patch.object(model_job, "START_CLAIMS", tmp_path / "claims.json"), \
+         mock.patch.object(model_job, "validate_saved_mesh_start"), \
+         mock.patch.object(model_job, "_mr", side_effect=fake_mr), \
+         mock.patch.object(model_job, "read_stock_detail", return_value={}), \
+         mock.patch.object(model_job, "read_stock_ifs_slots_from_detail", return_value={1: True}), \
+         mock.patch.object(model_job, "_sync_active_spool"), \
+         mock.patch.object(model_job, "_announce_print_name"), \
+         mock.patch.object(model_job, "_publish_job_card"), \
+         mock.patch.object(model_job, "_assign_print_number", return_value=None), \
+         mock.patch.object(model_job, "record_start", return_value="/vault/x.md"), \
+         mock.patch.object(model_job, "_wait_printing", return_value="standby"), \
+         mock.patch.object(model_job, "_preparation_evidence", return_value=False), \
+         mock.patch.object(model_job.subprocess, "run", side_effect=upload_ok) as run:
+        yield mock.Mock(native=native, scripts=scripts, run=run, st=st, root=tmp_path)
+
+
+def launch_mapped(m, name):
+    jp, g = make_job(m.root, name)
+    job = json.loads(jp.read_text())
+    return jp, lambda: model_job.print_mapped_native(g, m.st, {"display_off": 0}, {"0": 1}, job, jp, 0, False)
+
+
+def test_mapped_launch_rechecks_idle_inside_the_lease(mapped):
+    jp, launch = launch_mapped(mapped, "a")
+    mapped.native.require_idle_settled.side_effect = [True, RuntimeError("REFUSED: idle guard failed: Moonraker reports active execution")]
+    with pytest.raises(SystemExit, match="idle guard failed"):
+        launch()
+    assert uploads(mapped.run) == [] and mapped.scripts == [] and leases() == []
+    assert "approvals" not in json.loads(jp.read_text())
+
+
+def test_mapped_unresolved_start_is_uncertain_and_blocks_the_next_job(mapped):
+    _, launch_a = launch_mapped(mapped, "a")
+    out = launch_a()
+    assert out["phase"] == "preparing_or_unresolved" and len(mapped.scripts) == 1
+    assert [r["phase"] for r in leases()] == ["uncertain"]
+    _, launch_b = launch_mapped(mapped, "b")
+    with pytest.raises(SystemExit, match="uncertain"):
+        launch_b()
+    assert len(mapped.scripts) == 1 and len(uploads(mapped.run)) == 1
+
+
+def test_operator_can_clear_a_lease_left_by_another_host_but_not_a_live_local_one():
+    from print_buddy.core import launch_state
+    lease = launch_state.acquire(PRINTER, remote="a.gcode")
+    with pytest.raises(SystemExit, match="still running"):
+        launch_state.resolve(PRINTER, "not_started")
+    con = sqlite3.connect(os.environ["PRINT_BUDDY_LAUNCH_DB"])
+    with con:
+        con.execute("UPDATE leases SET host='another-container'")
+    con.close()
+    with pytest.raises(SystemExit, match="in progress"):
+        launch_state.acquire(PRINTER, remote="b.gcode")  # unknown liveness fails closed
+    assert launch_state.resolve(PRINTER, "not_started")["remote"] == "a.gcode"
+    lease.release()  # a stale token changes nothing
+    assert leases() == []

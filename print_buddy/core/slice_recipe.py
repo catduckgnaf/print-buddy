@@ -71,7 +71,8 @@ def slice_recipe(job, source_sha256, state=None, *, copies=None, scale=None, bri
         'copies': int(copies or job.get('copies') or 1),
         'supports_brim': {'supports': supports, 'orientation_brim': orientation_brim,
                           'fit_brim_policy': job.get('fit_brim_policy')},
-        'layout': {'plate_mode': job.get('plate_mode'), 'full_size_split_plan': job.get('full_size_split_plan')},
+        'layout': {'plate_mode': job.get('plate_mode'), 'full_size_split_plan': job.get('full_size_split_plan'),
+                    'full_size_rearrange_plan': job.get('full_size_rearrange_plan')},
         'filament': {'decisions_sha256': mj.decisions_digest(decisions) if decisions else None,
                      'selected_slot': (job.get('filament_selection') or {}).get('slot'),
                      'slots': {str(key): {field: (row or {}).get(field) for field in ('material', 'color', 'hex')}

@@ -44,7 +44,7 @@ Every key can come from the environment as `PRINT_BUDDY__SECTION__KEY`, for exam
 `PRINT_BUDDY__BOT__MODE=standalone` or `PRINT_BUDDY__DISCORD__ALLOWED_USER_IDS="111 222"`.
 
 For example, set `PRINT_BUDDY__DISCORD__BOT_NAME="Print Bitch"` in the process environment, or
-`discord.bot_name: "Print Bitch"` in YAML (as a key inside the `discord` mapping). Docker Compose reads
+`bot_name: "Print Bitch"` inside the YAML `discord:` mapping. Docker Compose reads
 the same variable from `.env`. Restart the bot after changing it. This changes its self-description,
 not the Discord account username or server nickname; set those in Discord. The default stays `Print Buddy`.
 

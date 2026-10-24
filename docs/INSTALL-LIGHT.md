@@ -6,7 +6,7 @@ One command installs Print Buddy natively and walks you through the setup.
 curl -fsSL https://raw.githubusercontent.com/catduckgnaf/print-buddy/main/scripts/install-light.sh | bash
 ```
 
-Pin a release with `bash -s -- --ref v2.0.9`. Read the script first if you prefer:
+Pin a release with `bash -s -- --ref 2.0.9`. Read the script first if you prefer:
 [scripts/install-light.sh](../scripts/install-light.sh).
 
 ## Requirements

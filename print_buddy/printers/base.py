@@ -275,6 +275,18 @@ class PrinterAdapter(ABC):
         return self.model.label
 
     @property
+    def display_name(self) -> str:
+        """Configured printer name for user-facing messages, with a profile label fallback."""
+        configured = (self.config.get("printer") or {}).get("name")
+        return str(configured or self.model.label or "the printer")
+
+    @property
+    def firmware_name(self) -> str:
+        """Configured firmware name for user-facing messages, with a generic fallback."""
+        configured = (self.config.get("printer") or {}).get("firmware")
+        return str(configured or "the firmware")
+
+    @property
     def connection(self) -> str | None:
         """The vendor's connection type (CONNECTIONS); the vendor profile is the only authority for it."""
         return self.model.vendor.connection if self.model.vendor else None

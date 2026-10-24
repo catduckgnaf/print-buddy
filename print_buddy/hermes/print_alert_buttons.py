@@ -37,7 +37,7 @@ def _call(path: str, method: str = "GET", timeout: float = 10) -> dict[str, Any]
 
 
 def shutdown_message() -> str:
-    """Klipper's own reason for the stop. Empty when it can't be read."""
+    """Printer firmware's own reason for the stop. Empty when it can't be read."""
     try:
         s = (_call("/printer/objects/query?webhooks=state_message").get("result") or {}).get("status") or {}
         return str((s.get("webhooks") or {}).get("state_message") or "")
@@ -47,9 +47,11 @@ def shutdown_message() -> str:
 
 def explain(state_message: str) -> str:
     """Plain English cause. Unknown text is passed through, never guessed at."""
+    from .. import printers
+    firmware = printers.current().firmware_name
     text = (state_message or "").strip()
     if not text:
-        return "Klipper didn't say why. Check the printer screen."
+        return f"{firmware} didn't say why. Check the printer screen."
     weight = re.search(r"Weight\s*(\d+(?:\.\d+)?)\s*g?\s*>\s*(?:max\s*)?(\d+(?:\.\d+)?)", text)
     if weight or re.search(r"nozzle hit|part detachment", text, re.I):
         z = re.search(r"\bZ\s*=\s*(-?\d+(?:\.\d+)?)", text)
@@ -63,7 +65,7 @@ def explain(state_message: str) -> str:
         return ("Nozzle collision stop: the nozzle hit something" + detail + ". Usually a blob on the bed, "
                 "a curled edge, or a part that came loose. Clear the bed and check the nozzle before anything else.")
     first = next((ln.strip() for ln in text.splitlines() if ln.strip()), text)
-    return f"Klipper says: {first}"
+    return f"{firmware} says: {first}"
 
 
 def _load() -> dict[str, Any]:
@@ -413,6 +415,7 @@ def parse_spool_question_custom_id(custom_id: str) -> tuple[str, str] | None:
 def clear_shutdown(wait_s: float = 60, poll_s: float = 2.0, *, caller=None, reader=None) -> tuple[bool, str]:
     """FIRMWARE_RESTART once after an emergency stop, then wait for Klipper ready. No motion, no heat."""
     from . import print_control as pc
+    firmware = pc.firmware_name()
     call = caller or _call
     read = reader or pc.status
     try:
@@ -427,8 +430,8 @@ def clear_shutdown(wait_s: float = 60, poll_s: float = 2.0, *, caller=None, read
         except Exception:
             continue
         if st.get("klippy") == "ready":
-            return True, "Cleared the emergency stop. Klipper is ready, heaters off."
-    return False, f"Sent a firmware restart, but Klipper wasn't ready after {wait_s:.0f}s. Check the printer screen. Not retrying."
+            return True, f"Cleared the emergency stop. {firmware} is ready, heaters off."
+    return False, f"Sent a firmware restart, but {firmware} wasn't ready after {wait_s:.0f}s. Check the printer screen. Not retrying."
 
 
 def handle_click(action: str, alert: dict[str, Any] | None) -> str:

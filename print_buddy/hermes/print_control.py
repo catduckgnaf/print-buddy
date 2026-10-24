@@ -34,11 +34,23 @@ RESUME_LABEL = "Resume print now"
 KEEP_LABEL = "Keep paused"
 AGAIN_LABEL = "Print again · bed is clear"
 AGAIN_CANCEL_LABEL = "Cancel"
-REBOOT_LABEL = "Force restart AD5X now"
+REBOOT_LABEL = "Force restart printer now"
 CANCEL_REBOOT_LABEL = "Cancel restart"
 _CONTROL_LOCK = __import__('threading').Lock()
 # Profile name -> (hot C, cold C), from [cold_pull] in the home configuration.
 COLD_PULL_PROFILES = {name: (int(pair[0]), int(pair[1])) for name, pair in _config.cfg()["cold_pull"].items()}
+
+
+def firmware_name() -> str:
+    """Configured firmware name for short user-facing status messages."""
+    from print_buddy import printers
+    return printers.current().firmware_name
+
+
+def display_name() -> str:
+    """Configured printer name for short user-facing status messages."""
+    from print_buddy import printers
+    return printers.current().display_name
 
 
 def cold_pull_allowed(temp: int, cold: int) -> bool:

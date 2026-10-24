@@ -118,7 +118,9 @@ Required environment: `PRINT_BUDDY__BOT__MODE=standalone`, `DISCORD_BOT_TOKEN`, 
   `/print-coldpull`, `/print-maintenance`, `/print-colors`, `/spool`, `/print-help`. Typing the same text works too.
 * Listener posts (started, complete, failed, timelapse) and alert buttons (Resume, Cancel, spool questions, IFS
   insertion, plate picker) work with the Hermes gateway stopped.
-* A typed reply answers your own open question, as under Hermes ("2" for two copies, "split", "cancel").
+* A typed reply answers your own open question, as under Hermes ("2" for two copies, "split", "cancel"). It
+  never answers another allowed user's question, even in the same channel or thread. Buttons are shared: any
+  allowed user may press an open question's button, and the message then shows who chose.
 * Anything else gets the command list, or with `[llm]` set, a short reply from the model. The model may name one
   command from a fixed list (read-only or button-gated: `/print-stop`, `/print-next`, `/spool list`, ...). That
   command then asks for its button like a typed one. It can never run `/spool change`, `/spool new`,

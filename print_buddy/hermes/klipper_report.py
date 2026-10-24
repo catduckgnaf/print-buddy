@@ -96,12 +96,13 @@ def log_alarms(text: str, limit: int = 6) -> list[str]:
 def build(filename: str, status: dict[str, Any], store: list[dict[str, Any]], log_tail: str,
           *, by_bot: bool, now: float | None = None) -> str:
     from . import print_alert_buttons as pab
+    from .. import printers
     now = time.time() if now is None else now
     ps = status.get("print_stats") or {}
     wh = status.get("webhooks") or {}
     info = ps.get("info") or {}
     who = "by the print bot (/print-stop or a button)" if by_bot else "from the printer screen or another client"
-    lines = [f"**Print cancelled {who}.** Klipper report:"]
+    lines = [f"**Print cancelled {who}.** {printers.current().display_name} report:"]
     where = []
     if info.get("current_layer") and info.get("total_layer"):
         where.append(f"layer {info['current_layer']}/{info['total_layer']}")
@@ -116,10 +117,10 @@ def build(filename: str, status: dict[str, Any], store: list[dict[str, Any]], lo
                  f"{(ps.get('filament_used') or 0) / 1000:.2f} m filament used")
     lines.append(f"Nozzle {_temp(status.get('extruder') or {})}, bed {_temp(status.get('heater_bed') or {})}")
     klippy = wh.get("state") or "unknown"
-    lines.append(f"Klipper: {klippy}" + (f", Moonraker job message: {ps['message']}" if ps.get("message") else ""))
+    lines.append(f"{printers.current().firmware_name}: {klippy}" + (f", Moonraker job message: {ps['message']}" if ps.get("message") else ""))
     if klippy in ("shutdown", "error"):
         lines.append("**Why it stopped:** " + pab.explain(wh.get("state_message") or ""))
-        lines.append("Klipper is still in an emergency stop. It needs one firmware restart (/print-reboot) "
+        lines.append(f"{printers.current().firmware_name} is still in an emergency stop. It needs one firmware restart (/print-reboot) "
                      "before it will accept anything else.")
     since = now - max(float(ps.get("total_duration") or 0), 600) - 60
     console = console_lines(store, since)

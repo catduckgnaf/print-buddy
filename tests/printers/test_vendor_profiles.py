@@ -131,6 +131,18 @@ def test_vendor_plus_printer_name_is_stored_as_the_full_key():
     assert printers.current(data).key == "sovol.sv06"
 
 
+def test_printer_adapters_expose_display_and_firmware_names():
+    bambu = printers.current(load({"PRINT_BUDDY__PRINTER__MODEL": "bambulab.a1"}))
+    octoprint = printers.current(load({"PRINT_BUDDY__PRINTER__MODEL": "octoprint.marlin"}))
+    klipper = printers.current(load({"PRINT_BUDDY__PRINTER__MODEL": "klipper.generic"}))
+
+    assert (bambu.display_name, bambu.firmware_name) == (
+        "Bambu Lab A1", "Bambu Lab (offline handoff only)")
+    assert (octoprint.display_name, octoprint.firmware_name) == (
+        "Marlin via OctoPrint", "Marlin")
+    assert (klipper.display_name, klipper.firmware_name) == ("Generic Klipper", "Klipper")
+
+
 def test_unique_printer_name_alone_resolves():
     assert load({"PRINT_BUDDY__PRINTER__MODEL": "ad5x"})["printer"]["model"] == "flashforge.ad5x"
 

@@ -1538,7 +1538,8 @@ def rotation_alternatives(source: Path, state: dict, authored_max: float = 0.0, 
         row['label'] = (f"{row['name']}, {'full size' if scale >= 1.0 else scale_label(scale)}"
                         + (f" (needs {' + '.join(extras)})" if extras else ''))
         results.append(row)
-    results.sort(key=lambda r: (-r['scale'], r['supports']))
+    # At equal verified scale/support requirements, preserve the authored contact face.
+    results.sort(key=lambda r: (-r['scale'], r['supports'], r['axis'] != '+Z'))
     return results[:limit]
 
 
@@ -1565,7 +1566,9 @@ def fit_options(source: Path, state: dict, brim_override=None) -> dict:
             policy, scales = candidate, candidate_scales
             break
     try:
-        rotations = rotation_alternatives(source, state, authored_max=scales[0] if scales else 0.0)
+        # Explicit operator brim clearance applies to every candidate, including yaw.
+        rotation_state = {**state, 'brim_policy': policies[0]} if requested is not None else state
+        rotations = rotation_alternatives(source, rotation_state, authored_max=scales[0] if scales else 0.0)
     except (RuntimeError, ValueError, OSError) as exc:
         return {'scales': scales, 'rotations': [], 'rotation_error': str(exc)}
     result = {'scales': scales, 'rotations': rotations,

@@ -18,9 +18,9 @@ class LiveUnsupported(RuntimeError):
 class BambuOfflineAdapter(PrinterAdapter):
     multi_slot = False
     facts: dict = {}  # the printer's sourced facts (facts.py), set by each printer's subclass
-    # Slicers whose output has been checked against this printer's guard. Bambu Studio is allowed by VENDOR but
-    # its A1 output has not been verified, so it is refused as primary and as fallback.
-    verified_slicers = ("orca",)
+    # Slicers this printer's guard accepts. Bambu Studio is the Bambu Lab default (owner decision); every line
+    # of its output still passes the same guard, which refuses anything that is not plain G/M/T code.
+    verified_slicers = ("bambu_studio", "orca")
 
     def fact(self, name):
         return self.facts[name].value

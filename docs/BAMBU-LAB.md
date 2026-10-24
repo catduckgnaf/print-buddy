@@ -28,7 +28,7 @@ The A1 is one printer module under the existing Bambu Lab vendor profile. See [P
 |---|---|
 | `print_buddy/printers/bambulab/__init__.py` | `VENDOR`: the only authority for connection (`offline`), start code (`bambu`), slicers, file formats and delivery (`discord`, `bambu_handoff`; never `printer`) |
 | `print_buddy/printers/bambulab/a1.py` | `MODEL` for `bambulab.a1` with `vendor=VENDOR`: bed, height, nozzle, slots, adapter, templates, baseline file |
-| `print_buddy/printers/bambulab/adapter.py` | `BambuOfflineAdapter`: every live call raises `LiveUnsupported`. `connection` is read from `VENDOR`. `verified_slicers` limits the A1 to OrcaSlicer |
+| `print_buddy/printers/bambulab/adapter.py` | `BambuOfflineAdapter`: every live call raises `LiveUnsupported`. `connection` is read from `VENDOR`. `verified_slicers` allows Bambu Studio (default) and OrcaSlicer |
 | `print_buddy/printers/bambulab/guard.py` | The A1 G-code checks, run after slicing, before packaging and at `print-now` |
 | `print_buddy/printers/bambulab/facts.py` | Supplemental metadata only: each hardware value the guard enforces, with its source and whether it was verified, plus the profile names, Print Buddy's overrides and the SHA-256 identity of the checked OrcaSlicer profiles. It decides nothing about connection, slicer or delivery |
 | `print_buddy/printers/bambulab/profiles.py` | Generates the A1 templates from an installed OrcaSlicer and re-verifies them before every use |
@@ -45,7 +45,7 @@ A P1S drops in as `bambulab/p1s.py`: its facts (profile names and a checked iden
 | G-code validation | Supported: after slicing, before packaging, at `print-now` and `verify-gcode` |
 | Delivery | `discord` and `bambu_handoff` from `VENDOR`. A `.gcode.3mf` package is built in Bambu Studio's export layout. Opening it in Bambu Studio or Bambu Handy, printing it from SD, or printing a plain `.gcode` on an A1 has **not** been tested |
 | Print | Not offered. `print-now` verifies the file, then refuses. The bed-clear approval is not used up |
-| Bambu Studio as slicer | Refused for the A1, as primary and as fallback. Its A1 output has not been checked against the A1 guard |
+| Bambu Studio as slicer | Default for the A1, like every Bambu Lab printer; `[printer] slicer: orca` opts out. Its output passes the same A1 guard. No real Bambu Studio A1 slice has been run yet |
 | Live telemetry, upload, print control | Not supported. No MQTT, LAN FTPS or cloud client, no credentials |
 | AMS Lite multi-color | Not supported: tool changes are refused, as are multi-color, multi-part and multi-plate sources |
 | P1S | Not started |

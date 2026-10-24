@@ -213,12 +213,15 @@ def screen_cancel_reboot(filename, *, status_reader=None, rebooter=None, clearer
         return False, "skipped"
     label = print_summary.safe_label(filename) if filename else "the print"
     if st.get("klippy") == "shutdown":
-        say(f"Screen cancel on {label} during an emergency stop. Clearing it with one firmware restart (no motion or heat).")
+        # The cancel report was just posted; one result line after the restart is enough.
         ok, msg = (clearer or pab.clear_shutdown)()
     else:
         say(f"Screen cancel on {label}. Force restarting the printer now, about two minutes.")
         ok, msg = (rebooter or print_control.force_reboot)()
     log(f"screen cancel reboot ok={ok}: {msg}")
+    if ok and clearer is None and rebooter is None:  # real run only; tests inject fakes
+        with contextlib.suppress(Exception):
+            pab.retire_alerts(_bot_token(), filename, "Cleared after the screen cancel; nothing to do.")
     say(msg)
     return ok, msg
 
@@ -930,11 +933,24 @@ def announce_warmup_done(filename):
     text = print_summary.format_event("started", filename)
     text += "\nWarmup complete, now printing."
     message_id = None
+    roast = ""
     try:
         from . import print_next
         message_id = print_next.take_start_message(filename)
     except Exception as exc:
         log(f"start message lookup failed file={filename!r}: {exc!r}")
+    if not message_id:
+        # The intake already posted the one "Print started" message; a second line after it is noise.
+        log(f"no recorded start message; warmup done silently file={filename!r}")
+        return False
+    try:
+        job, _plate = print_summary.find_job(filename)
+        roast = generate_roast((job or {}).get("title") or Path(str(filename or "")).stem,
+                               (job or {}).get("summary") or "")
+    except Exception:
+        roast = ""
+    if roast:
+        text += f"\n\n{roast}"
     if message_id:
         try:
             from . import print_alert_buttons as pab
@@ -944,9 +960,8 @@ def announce_warmup_done(filename):
                 return True
         except Exception as exc:
             log(f"start message edit error id={message_id}: {exc!r}")
-        log(f"start message edit failed id={message_id}; posting short line")
-    title = print_summary.safe_label(((print_summary.find_job(filename)[0] or {}).get("title")) or filename, "print")
-    return post(f"Warmup done, now printing: {title}")
+        log(f"start message edit failed id={message_id}; leaving the start post as is")
+    return False
 
 
 SUBSCRIBE = json.dumps({
@@ -1603,7 +1618,11 @@ class Listener:
                     elif method in ("notify_klippy_disconnected", "notify_klippy_shutdown"):
                         log(f"{method} while state={self.state}")
                         if self.state in ("printing", "paused"):
-                            await asyncio.to_thread(post_shutdown_alert, self.filename)
+                            if getattr(self, "shutdown_alerted", None) != self.filename:
+                                self.shutdown_alerted = self.filename  # one firmware-stopped alert per job
+                                await asyncio.to_thread(post_shutdown_alert, self.filename)
+                            else:
+                                log("firmware stop already alerted for this job; not posting again")
                             self.state = "error"
                     elif method == "notify_klippy_ready":
                         log("klippy ready; resubscribing")

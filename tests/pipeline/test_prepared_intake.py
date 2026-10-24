@@ -27,9 +27,12 @@ class Adapter:
         self.picks = iter(picks)
         self.questions = []
         self.sent = []
+        self.log = []  # plain posts plus single-button (Stop) status prompts, in order
 
     async def send_clarify(self, **kw):
         self.questions.append(kw)
+        if len(kw.get('choices') or []) == 1:
+            getattr(self, 'log', []).append(kw['question'])
         if getattr(self, 'expire_once', False):
             self.expire_once = False
             return S(success=True)
@@ -41,6 +44,7 @@ class Adapter:
     # Exactly the production DiscordAdapter.send signature: a stray text= raises TypeError.
     async def send(self, chat_id, content, reply_to=None, metadata=None):
         self.sent.append(content)
+        getattr(self, 'log', []).append(content)
         return S(success=True)
 
 
@@ -78,6 +82,13 @@ class _Kept:
 @pytest.fixture
 def env(tmp_path, monkeypatch):
     src = source(tmp_path)
+    _orig_with_stop = prepared_intake._with_stop
+
+    async def _logged_with_stop(adapter, source_, key, metadata, text, work, **kw):
+        if kw.get('allow_stop') and text and isinstance(getattr(adapter, 'log', None), list) and hasattr(adapter, 'picks'):
+            adapter.log.append(text)  # the Stop status prompt counts as a posted message
+        return await _orig_with_stop(adapter, source_, key, metadata, text, work, **kw)
+    monkeypatch.setattr(prepared_intake, '_with_stop', _logged_with_stop)
     folder_root = tmp_path / 'archive'
     monkeypatch.setattr(model_job, 'ARCHIVE', folder_root)
     monkeypatch.setattr(model_job, 'printables_inventory', lambda url: {
@@ -396,7 +407,7 @@ def test_intake_recognizes_real_print_now_output():
     assert print_next.started_file(REAL_AWAITING) == 'ghost_plate_1_abc.gcode'
 
 
-def test_start_still_preparing_posts_one_warming_up_start_and_records_its_id(env, monkeypatch, tmp_path):
+def test_start_still_preparing_posts_one_start_without_warming_line(env, monkeypatch, tmp_path):
     monkeypatch.setattr(print_next, 'START_MESSAGES', tmp_path / 'start_messages.json')
 
     async def preparing(target):
@@ -411,8 +422,8 @@ def test_start_still_preparing_posts_one_warming_up_start_and_records_its_id(env
     adapter, result, receipt = run_flow(env, [1, 0, 0])
     assert receipt['status'] == 'STARTED' and len(env.starts) == 1
     starts = [m for m in adapter.sent if m.startswith('Print started')]
-    assert len(starts) == 1 and 'Warming up' in starts[0]
-    assert print_next.take_start_message('ghost_plate_1_abc.gcode') == f'm{len(adapter.sent)}'
+    assert len(starts) == 1 and 'Warming up' not in starts[0]
+    assert print_next.take_start_message('ghost_plate_1_abc.gcode') is None
 
 
 def test_preparation_metadata_mismatch_never_blocks_start(env, monkeypatch):
@@ -425,7 +436,7 @@ def test_preparation_metadata_mismatch_never_blocks_start(env, monkeypatch):
                         lambda *_args, **_kw: 'Print preparing: stale metadata unavailable')
     adapter, _result, receipt = run_flow(env, [1, 0, 0])
     assert receipt['status'] == 'STARTED' and len(env.starts) == 1
-    assert any(msg.startswith('Preparing to start') and '#unknown' not in msg for msg in adapter.sent)
+    assert any(msg.startswith('Preparing to start') and '#unknown' not in msg for msg in adapter.log)
 
 
 def test_duplicate_event_does_not_start_twice(env):
@@ -574,7 +585,7 @@ def test_preview_omits_estimate_when_incomplete_but_keeps_description(env, monke
     if extra == {}:
         row = {'name': 'ghost.3mf', 'instance_id': 1}
     log, _ = run_preview(env, monkeypatch, 'A sturdy stand.', row)
-    tail = ('Model page estimate (for Bambu X1C): about 1h 30m and 20 g of filament over 2 plates. '
+    tail = ('Model page estimate: about 1h 30m and 20 g of filament over 2 plates. '
             'The AD5X figure after slicing will differ somewhat.' if extra.get('site_printer')
             else 'The model page gives no time or filament estimate; I will report both after slicing.')
     assert log[0] == ('send', 'That looks like Ghost Stand, A sturdy stand. I will use the selected profile: ghost. ' + tail)
@@ -748,7 +759,7 @@ def test_capacity_zero_full_size_split_saves_separate_mode_before_slice(env, mon
               message_id='too-large', text='https://www.printables.com/model/1-ghost')
     adapter = Adapter([1, 0, 0, 1, 2])  # ..., slice only, then Cancel in the plate picker
     result = asyncio.run(prepared_intake.prepare_link(event, adapter, state(), env.root, timeout=1))
-    scale_prompt = next(q for q in adapter.questions if 'does not fit the AD5X bed' in q['question'])
+    scale_prompt = next(q for q in adapter.questions if 'does not fit the' in q['question'])
     assert scale_prompt['choices'][0] == '100% · split 2 plates'
     assert 'Part 1 on plate 1' in scale_prompt['question'] and 'Part 2 on plate 2' in scale_prompt['question']
     job_data = json.loads(next(env.root.parent.glob('archive/*/JOB.json')).read_text())
@@ -778,7 +789,7 @@ def test_capacity_zero_offers_rotation_alternative(env, monkeypatch):
     # One color, slot 1, pick choice 0 (the rotated alternative), slice only, decline start.
     adapter = Adapter([1, 0, 0, 1, 1])
     result = asyncio.run(prepared_intake.prepare_link(event, adapter, state(), env.root, timeout=1))
-    scale_prompt = next(q for q in adapter.questions if 'does not fit the AD5X bed' in q['question'])
+    scale_prompt = next(q for q in adapter.questions if 'does not fit the' in q['question'])
     assert scale_prompt['choices'][0] == '100% + supports'
     assert 'needs supports' in scale_prompt['question']
     job_data = json.loads(next(env.root.parent.glob('archive/*/JOB.json')).read_text())
@@ -825,7 +836,7 @@ def test_per_part_offers_only_fits_every_slot_plate_honors(env, monkeypatch):
     # Per-part mode, both parts on the first slot, then pick the first fit row.
     adapter, result, seen = _per_part_oversized(env, monkeypatch, {0.5}, [0, 0, 0, 0])
     assert seen and seen[0][0] == 'per_part'
-    fit_question = next(q for q in adapter.questions if 'does not fit the AD5X bed' in q['question'])
+    fit_question = next(q for q in adapter.questions if 'does not fit the' in q['question'])
     assert not any('88' in c or '94' in c for c in fit_question['choices'])
     assert any('50%' in c for c in fit_question['choices'])
     receipt = json.loads(next(env.root.glob('*.json')).read_text())

@@ -125,11 +125,11 @@ def test_callback_swap_stale_refusal_and_reslice_launch(tmp_path, monkeypatch):
     monkeypatch.setattr(mj, 'screen_z_offset', lambda _: -0.05)
     monkeypatch.setattr(mj, 'read_stock_detail', lambda _: detail(st))
     monkeypatch.setattr(mj, '_fetch_remote_gcode_sha256', lambda *a: mj.file_sha256(g))
-    monkeypatch.setattr(mj, '_wait_printing', lambda *a: 'printing')
+    monkeypatch.setattr(mj, '_wait_printing', lambda *a, **k: 'printing')
     monkeypatch.setattr(mj, 'record_start', lambda *a: tmp_path / 'record.md')
     routed = []
     real_mapped = mj.print_mapped_native
-    monkeypatch.setattr(mj, 'print_mapped_native', lambda *a: routed.append(a[3]) or real_mapped(*a))
+    monkeypatch.setattr(mj, 'print_mapped_native', lambda *a, **k: routed.append(a[3]) or real_mapped(*a, **k))
     out = mj.print_now(str(jp))
     assert routed == [{'0': 1}] and out['submission_count'] == 1
     assert len(submissions) == 1

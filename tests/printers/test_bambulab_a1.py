@@ -144,7 +144,7 @@ def test_a1_is_a_model_of_the_shared_bambu_vendor():
 
 def test_settings_follow_the_vendor_and_the_printer():
     data = config_for(A1)
-    assert (data["printer"]["vendor"], data["printer"]["slicer"]) == ("bambulab", "orca")
+    assert (data["printer"]["vendor"], data["printer"]["slicer"]) == ("bambulab", "bambu_studio")
     assert data["delivery"]["methods"] == list(VENDOR.default_delivery) and "printer" not in VENDOR.delivery
     assert data["printer"]["bed_mm"] == [256.0, 256.0] and data["printer"]["max_print_height_mm"] == 256.0
     assert data["printer"]["firmware"] == VENDOR.settings["printer"]["firmware"]
@@ -540,18 +540,11 @@ def test_slice_refuses_klipper_start_code_in_the_output(tmp_path, monkeypatch):
         fake_slice(tmp_path, monkeypatch, ad5x_gcode())
 
 
-def test_bambu_studio_is_gated_for_the_a1(tmp_path, monkeypatch):
-    cfg = config_for(A1, slicer="bambu_studio")  # the vendor allows it; the A1 adapter has not verified it
-    assert cfg["printer"]["slicer"] == "bambu_studio"
-    with pytest.raises(RuntimeError, match="bambu_studio output is not verified"):
-        fake_slice(tmp_path, monkeypatch, a1_gcode(), config=cfg)
-    # An Orca failure does not fall back to Bambu Studio for the A1: one slicer call, then a refusal.
-    calls = []
-    monkeypatch.setattr(orca_adapter.subprocess, "run",
-                        lambda command, **k: calls.append(command) or type("R", (), {"returncode": 1, "stdout": "", "stderr": ""})())
-    with pytest.raises(RuntimeError, match="Orca slicing failed"):
-        orca_adapter.slice_model(CUBE, tmp_path / "again", state(), adapter=adapter_for(A1))
-    assert len(calls) == 1 and "com.bambulab.BambuStudio" not in " ".join(calls[0])
+def test_the_a1_defaults_to_bambu_studio_and_may_pick_orca():
+    """Every Bambu Lab printer slices with Bambu Studio by default; [printer] slicer: orca opts out."""
+    assert MODEL.defaults()["printer"]["slicer"] == "bambu_studio"
+    assert set(adapter_for(A1).verified_slicers) == {"bambu_studio", "orca"}
+    assert config_for(A1, slicer="orca")["printer"]["slicer"] == "orca"
 
 
 def _box(path, w, d, h):

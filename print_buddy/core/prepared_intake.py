@@ -66,6 +66,8 @@ async def _with_stop(adapter, source, key, metadata, text, work, *, allow_stop=F
     if "picks" in adapter_state or "clicks" in adapter_state:
         return await work
     if not allow_stop:
+        if not text:
+            return await work
         status = text
         for suffix in (" Press Stop to cancel before it starts.", " Press Stop to cancel."):
             if status.endswith(suffix):
@@ -270,9 +272,8 @@ def preview_sentence(job, row):
         from . import model_job as mj
         site = mj.source_site_estimate(row)
         if site:
-            printer = str((row or {}).get('site_printer') or '').strip()
             plates = len((row or {}).get('plates') or [])
-            text += (f" Model page estimate{f' (for {printer})' if printer else ''}: about {mj.human_dur(site[0])}"
+            text += (f" Model page estimate: about {mj.human_dur(site[0])}"
                      f" and {round(site[1])} g of filament{f' over {plates} plates' if plates > 1 else ''}."
                      ' The AD5X figure after slicing will differ somewhat.')
         else:
@@ -368,7 +369,7 @@ def fit_question(title, options):
     extent_text = ' × '.join(f'{v:g}' for v in extent[:3]) + ' mm' if extent else 'measured dimensions unavailable'
     checked = options.get('orientations_checked') or (parts[0].get('orientations_checked') if parts else None)
     orientations = ', '.join(checked or ['authored XY', 'verified rotations'])
-    lines = [f'{part_name} ({extent_text}) does not fit the AD5X bed full size. Orientations checked: {orientations}.']
+    lines = [f'{part_name} ({extent_text}) does not fit the bed full size.']
     if scales:
         lines.append(f'As authored it fits at {_pct(scales[0])} max.')
     for alt in rotations[:2]:
@@ -385,13 +386,6 @@ def fit_question(title, options):
         lines.append('Full-size option: separate already-independent parts onto the original plates (100%).')
     if options.get('brim_policy'):
         lines.append('Tight-fit brim policy: ' + options['brim_policy'].get('label', 'No brim') + '.')
-    lines.append('Options: rotate to a listed verified orientation; separate only already-independent parts (100%); '
-                 f'shrink to the exact listed percentage ({_pct(scales[0]) if scales else "no verified scale"}); '
-                 'or cut and join manually (future option, not implemented; https://github.com/catduckgnaf/print-buddy/issues/83).')
-    if options.get('fit_search_deferred'):
-        lines.append('Fine scale search for painted multi-plate jobs is deferred to keep preparation bounded; the listed options are the verified safe choices.')
-    lines.append('Margin note: the edge margin is bed-edge clearance; the 10 mm object gap is object-to-object spacing. '
-                 'They are separate budgets and each is applied once. Brim width and non-normal lift sweep consume bed-edge clearance only.')
     lines.append('Pick a fit option, or type split / 100% / shrink / cancel.')
     return '\n'.join(lines)
 
@@ -549,6 +543,41 @@ async def _ask(adapter, source, key, question, choices, timeout=None, **kwargs):
     if on_shown is not None:  # fire as the question goes up, before the operator answers
         on_shown()
     return await ask(adapter, source, key, question, list(choices), timeout, live_key=live_key, **kwargs)
+
+
+_NOISE = re.compile(r'^(?:TIMING \{|G-CODE OK:)')
+
+
+def _refusal_text(tail):
+    """Chat gets the refusal, not the TIMING and preflight lines that belong in the job log."""
+    lines = [ln for ln in str(tail or '').splitlines() if ln.strip() and not _NOISE.match(ln.strip())]
+    return '\n'.join(lines) or 'Not started.'
+
+
+def _restart_helps(tail):
+    """A stale heater target, stuck screen or leftover job: a force restart clears these."""
+    text = str(tail or '').casefold()
+    return 'refused' in text and any(w in text for w in (
+        'idle guard', 'targettemp', 'paused', 'cancelled', 'canceled', 'shutdown', 'klippy',
+        'stale', 'retained job', 'not idle', 'state is error'))
+
+
+async def _offer_force_restart(adapter, source, key, message, timeout=None):
+    """Offer the existing safe REBOOT flow; never start the print afterwards."""
+    pc = _external.load('print_control')
+    question = (message + '\n\nThe printer looks stuck from a previous job. Force restart clears it '
+                '(and wipes any Resume on the screen). The print will not start by itself afterwards.')
+    try:
+        answer = await _ask(adapter, source, key, question, [pc.REBOOT_LABEL, pc.CANCEL_REBOOT_LABEL], timeout)
+    except Exception:
+        return message
+    if answer != 0:  # _ask returns the button index
+        return 'Not restarted. Nothing uploaded or started.'
+    with contextlib.suppress(Exception):
+        await adapter.send(chat_id=source.chat_id, content='Force restarting the printer now, about two minutes.',
+                           metadata=getattr(source, 'metadata', None))
+    ok, result = await asyncio.to_thread(pc.force_reboot)
+    return result + (' Send the link or press Print again to retry.' if ok else '')
 
 
 async def _pick_plate(adapter, source, key, parts, timeout=None):
@@ -800,7 +829,7 @@ async def prepare_link(event, adapter, state, root, timeout=None, reuse=None):
         fetch = copy_upload if (reuse or job['site'] == 'upload') else {'makerworld': mj.maker_download}.get(
             job['site'], mj.printables_download)
         path = await _with_stop(
-            adapter, source, key, metadata, "Downloading the model. Press Stop to cancel.",
+            adapter, source, key, metadata, None,
             asyncio.to_thread(fetch, job, chosen, folder / 'source'))
         job['downloaded_file'] = str(path)
         if job['site'] == 'upload':
@@ -967,13 +996,19 @@ async def prepare_link(event, adapter, state, root, timeout=None, reuse=None):
                     options['extent_mm'] = failing[0]['extent_mm']
                     options['orientations_checked'] = ['authored XY (measured)'] + [r.get('label', 'rotation') for r in options.get('rotations') or []]
             full_size_split = False
+            rotate_100 = any(float(r.get('scale') or 0) >= 0.995 and not r.get('supports')
+                             for r in options.get('rotations') or [])
             try:
+                if rotate_100:
+                    raise LookupError('a plain 100% rotation fits; skip the split checks')
                 full_size_split = await _with_stop(adapter, source, key, metadata, "Checking whether it splits at full size. Press Stop to cancel.",
                                                    _heavy(plate_merge.full_size_split_possible, path, manifest,
                                                           int((state.get('bed_mm') or BED)[0])))
             except Exception:
                 full_size_split = False
             try:
+                if rotate_100:
+                    raise LookupError('a plain 100% rotation fits; skip the split checks')
                 split_plan = await _with_stop(adapter, source, key, metadata, "Checking whether it splits at full size. Press Stop to cancel.",
                                              _heavy(split_fit.split_plan_100, path,
                                                     int((state.get('bed_mm') or BED)[0])))
@@ -1024,7 +1059,10 @@ async def prepare_link(event, adapter, state, root, timeout=None, reuse=None):
                           '. Choose a fit option, or type split / 100% / shrink / cancel.')
             else:
                 prompt = fit_question(title, options)
-            while True:
+            # Fits at 100% by rotation alone (no supports): just do it, no question, no announcement.
+            silent = next((r for r in picked if r['kind'] == 'rotate' and r['scale'] >= 0.995
+                           and not r.get('supports')), None)
+            while silent is None:
                 scale_pick = await _ask(adapter, source, key, prompt,
                                         [row['label'] for row in picked], timeout,
                                         parser=lambda text: _fit_choice_reply(text, picked))
@@ -1038,6 +1076,9 @@ async def prepare_link(event, adapter, state, root, timeout=None, reuse=None):
                 except Exception as exc:
                     await adapter.send(chat_id=source.chat_id,
                         content=f'Preview unavailable: {exc}. No blank image was sent.', metadata=metadata)
+            if silent is not None:
+                row = silent
+                receipt['fit_auto_rotated'] = True
             if row['kind'] == 'cancel':
                 receipt['status'] = 'CANCELLED_OVERSIZED'
                 receipt_path.write_text(json.dumps(receipt, indent=2) + '\n')
@@ -1185,18 +1226,7 @@ async def prepare_link(event, adapter, state, root, timeout=None, reuse=None):
                                        'recipe_version': RECIPE_VERSION, 'recipe_sha256': recipe_sha})
         receipt_path.write_text(json.dumps(receipt, indent=2) + '\n')
         mj._timing(jp, 'intake_slice_requested')
-        prep_sent = False
-        if choice == 0:
-            # Acknowledge the tap before the slow slice, so a slicer failure is
-            # never the first thing anyone hears. This is the only message
-            # until "Print started" (or the failure that replaces it).
-            pre_no = latest.get('print_number')
-            pre_total = (f"~{mj.human_dur(estimate_s + 300)} total" if estimate_s is not None
-                         else 'estimate after slicing')
-            await adapter.send(chat_id=source.chat_id, metadata=metadata,
-                               content=' · '.join(['Preparing to start'] + ([f'Print #{pre_no}'] if pre_no else [])
-                                                  + [pre_total]))
-            prep_sent = True
+        prep_sent = False  # one combined Preparing + Uploading message after slicing, with the real estimate
         try:
             out = await early.take(binding)  # finished while the question was up, or still running
             if out is None and early.error is not None:
@@ -1204,10 +1234,12 @@ async def prepare_link(event, adapter, state, root, timeout=None, reuse=None):
             if out is None:
                 if chosen_quantity and chosen_quantity > 1:
                     out = await _with_stop(adapter, source, key, metadata, "Slicing. Press Stop to cancel.",
-                                           _heavy(mj.slice_job, str(jp), copies=chosen_quantity, recipe_sha256=recipe_sha))
+                                           _heavy(mj.slice_job, str(jp), copies=chosen_quantity, recipe_sha256=recipe_sha),
+                                           allow_stop=True)  # nothing uploaded yet, so Stop is safe
                 else:
                     out = await _with_stop(adapter, source, key, metadata, "Slicing. Press Stop to cancel.",
-                                           _heavy(mj.slice_job, str(jp), recipe_sha256=recipe_sha))
+                                           _heavy(mj.slice_job, str(jp), recipe_sha256=recipe_sha),
+                                           allow_stop=True)
         except Exception as slice_error:
             logger.exception('slice failed')
             # A failed attempt has no reusable slice approval or G-code. Retry is a
@@ -1357,11 +1389,10 @@ async def prepare_link(event, adapter, state, root, timeout=None, reuse=None):
         prep_msg = ' · '.join(['Preparing to start'] + ([f'Print #{print_no}'] if print_no else []) + [total])
         if slot_lines:
             prep_msg += '\n' + slot_lines
-        if not prep_sent:
-            await adapter.send(chat_id=source.chat_id, content=prep_msg, metadata=metadata)
         mj._timing(jp, 'intake_start_tapped')
         ok, tail = await _with_stop(adapter, source, key, metadata,
-                                    "Uploading to the printer. Press Stop to request cancellation.",
+                                    ((prep_msg + "\n") if not prep_sent else "")
+                                    + "Uploading to the printer. Press Stop to request cancellation.",
                                     print_next.start(target), allow_stop=True)
         mj._timing(jp, 'intake_start_returned', ok=bool(ok))
         receipt.update(status='STARTED' if ok else 'START_REFUSED', started=bool(ok))
@@ -1369,12 +1400,19 @@ async def prepare_link(event, adapter, state, root, timeout=None, reuse=None):
         warming = ok and print_next.still_preparing(tail)
         if ok:
             message = print_summary.format_started(exact_job, exact_plate) + later
-            if warming:
-                message += '\nWarming up; this message updates when printing begins.'
+            # No warming line and no later edit: the roast is always the last thing in this one post.
+            with contextlib.suppress(Exception):
+                roast = await asyncio.wait_for(asyncio.to_thread(
+                    _external.load('moonraker_event_listener').generate_roast,
+                    (exact_job or {}).get('title') or '', (exact_job or {}).get('summary') or ''), 8)
+                if roast:
+                    message += f'\n\n{roast}'
         else:
-            message = print_summary.scrub(tail)
+            message = print_summary.scrub(_refusal_text(tail))
+            if _restart_helps(tail):
+                message = await _offer_force_restart(adapter, source, key, message, timeout)
         sent = await adapter.send(chat_id=source.chat_id, content=message, metadata=metadata)
-        remote = print_next.started_file(tail) if warming else None
+        remote = None  # nothing edits this post later; warmup finishing stays silent
         message_id = getattr(sent, 'message_id', None)
         if remote and message_id:
             try:

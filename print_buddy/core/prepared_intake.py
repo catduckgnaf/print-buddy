@@ -23,6 +23,7 @@ print_next = _external.lazy('print_next')
 from .link_intake import ask, model_link, has_duration_question  # noqa: E402
 from .quantity_selection import quantity_options, parse_quantity  # noqa: E402
 from .background_slice import drop_runner, runner_for, slice_binding  # noqa: E402
+from .slice_recipe import RECIPE_VERSION, binding_sha256  # noqa: E402
 
 
 _OFFLOAD = {('model_job', 'audit'), ('model_job', 'slice_job'), ('source_colors', 'inventory'),
@@ -1096,8 +1097,9 @@ async def prepare_link(event, adapter, state, root, timeout=None, reuse=None):
         # so a job that never asked for G-code keeps none.
         early = runner_for(jp)
         binding = slice_binding(latest, decisions['source_sha256'])
+        recipe_sha = binding_sha256(binding)  # the worker refuses to slice any other recipe
         await early.start(jp, binding, lambda job_path, work, runner, copies=chosen_quantity:
-                          _heavy(mj.slice_job, str(job_path), **(
+                          _heavy(mj.slice_job, str(job_path), recipe_sha256=recipe_sha, **(
                               {'copies': copies} if copies and int(copies) > 1 else {})))
         await early.started.wait()  # armed before the question goes up
         multi = len(manifest['parts']) > 1
@@ -1150,7 +1152,8 @@ async def prepare_link(event, adapter, state, root, timeout=None, reuse=None):
             raise ValueError('source/job changed before slice approval; no handoff')
         receipt.update(status='SLICE_APPROVED', slice_attempt=1,
                        slice_approval={'intake_id': iid, 'source_sha256': decisions['source_sha256'],
-                                       'decisions_sha256': mj.decisions_digest(validated), 'attempt': 1})
+                                       'decisions_sha256': mj.decisions_digest(validated), 'attempt': 1,
+                                       'recipe_version': RECIPE_VERSION, 'recipe_sha256': recipe_sha})
         receipt_path.write_text(json.dumps(receipt, indent=2) + '\n')
         mj._timing(jp, 'intake_slice_requested')
         prep_sent = False
@@ -1172,10 +1175,10 @@ async def prepare_link(event, adapter, state, root, timeout=None, reuse=None):
             if out is None:
                 if chosen_quantity and chosen_quantity > 1:
                     out = await _with_stop(adapter, source, key, metadata, "Slicing. Press Stop to cancel.",
-                                           _heavy(mj.slice_job, str(jp), copies=chosen_quantity))
+                                           _heavy(mj.slice_job, str(jp), copies=chosen_quantity, recipe_sha256=recipe_sha))
                 else:
                     out = await _with_stop(adapter, source, key, metadata, "Slicing. Press Stop to cancel.",
-                                           _heavy(mj.slice_job, str(jp)))
+                                           _heavy(mj.slice_job, str(jp), recipe_sha256=recipe_sha))
         except Exception as slice_error:
             # A failed attempt has no reusable slice approval or G-code. Retry is a
             # separate button action, and its output still needs a fresh start button.
@@ -1202,7 +1205,8 @@ async def prepare_link(event, adapter, state, root, timeout=None, reuse=None):
             attempt = int(receipt.get('slice_attempt') or 1) + 1
             receipt.update(status='SLICE_APPROVED', slice_attempt=attempt,
                            slice_approval={'intake_id': iid, 'source_sha256': decisions['source_sha256'],
-                                           'decisions_sha256': mj.decisions_digest(validated), 'attempt': attempt})
+                                           'decisions_sha256': mj.decisions_digest(validated), 'attempt': attempt,
+                                           'recipe_version': RECIPE_VERSION, 'recipe_sha256': recipe_sha})
             receipt.pop('slice_error', None)
             receipt_path.write_text(json.dumps(receipt, indent=2) + '\n')
             # A prior "slice and print" choice applies only to the failed output.
@@ -1211,10 +1215,10 @@ async def prepare_link(event, adapter, state, root, timeout=None, reuse=None):
             try:
                 if chosen_quantity and chosen_quantity > 1:
                     out = await _with_stop(adapter, source, key, metadata, "Retrying the slice. Press Stop to cancel.",
-                                           _heavy(mj.slice_job, str(jp), copies=chosen_quantity))
+                                           _heavy(mj.slice_job, str(jp), copies=chosen_quantity, recipe_sha256=recipe_sha))
                 else:
                     out = await _with_stop(adapter, source, key, metadata, "Retrying the slice. Press Stop to cancel.",
-                                           _heavy(mj.slice_job, str(jp)))
+                                           _heavy(mj.slice_job, str(jp), recipe_sha256=recipe_sha))
             except Exception as retry_error:
                 await early.discard()
                 receipt.update(status='SLICE_FAILED', sliced=False, uploaded=False, started=False,

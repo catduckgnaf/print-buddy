@@ -1,19 +1,17 @@
 """One background slice per intake, started while the confirm question is still on screen.
 
-The slice is bound to the source SHA256 and the decisions digest. A later call with a different
+The slice is bound to the complete slice recipe (slice_recipe.py). A later call with a different
 binding cancels the running slice and discards its output. Cancelling stops the slicer worker's
 process group (SIGTERM, then SIGKILL after a grace period) and waits until it is gone, so nothing
 writes after the cleanup. Nothing here uploads or starts a print.
 """
 import asyncio
 import contextlib
-import json
 import shutil
 import time
 from pathlib import Path
 
-from . import model_job as mj
-from . import owned_worker
+from . import owned_worker, slice_recipe
 
 
 class BackgroundSlice:
@@ -129,16 +127,6 @@ def drop_runner(job_path):
     _RUNNERS.pop(str(Path(job_path).parent.resolve()), None)
 
 
-def slice_binding(job, source_sha256):
-    """Identity of every choice that changes the G-code, plus the source bytes."""
-    decisions = job.get('color_decisions') or {}
-    frozen = {
-        'source_sha256': source_sha256,
-        'decisions_sha256': mj.decisions_digest(decisions) if decisions else None,
-        'scale': job.get('scale'),
-        'orientation': (job.get('orientation') or {}).get('label'),
-        'copies': int(job.get('copies') or 1),
-        'plate_mode': job.get('plate_mode'),
-        'full_size_split': bool(job.get('full_size_split_plan')),
-    }
-    return json.dumps(frozen, sort_keys=True, separators=(',', ':'), allow_nan=False)
+def slice_binding(job, source_sha256, state=None):
+    """Canonical JSON of the complete slice recipe: every input that changes the G-code, plus the source bytes."""
+    return slice_recipe.canonical(slice_recipe.slice_recipe(job, source_sha256, state))

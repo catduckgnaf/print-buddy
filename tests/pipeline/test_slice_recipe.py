@@ -167,3 +167,36 @@ def test_tampered_recipe_record_is_refused(tmp_path, monkeypatch):
     job['slice_recipe']['recipe']['copies'] = 4
     with pytest.raises(RuntimeError, match='slice recipe'):
         mj.require_current_artifact(job, gcode)
+
+
+def test_worker_accepts_the_recipe_intake_bound_before_the_first_slice(tmp_path, monkeypatch):
+    # Intake binds the job as saved before slicing; slice_job then normalizes the job
+    # (printer model, resolved slot selection) and must still see the same recipe.
+    from .test_color_intake import source, state
+    from print_buddy.core import slice_recipe
+    st = state(); st.update(bed_mm=[220, 220], max_print_height_mm=220, moonraker_url='offline://fake')
+    for slot in st['ifs_slots'].values():
+        slot['physical_color_verified'] = True
+    jp = tmp_path / 'JOB.json'
+    jp.write_text(json.dumps({'downloaded_file': str(source(tmp_path)),
+                              'audit': {'plates': 1, 'size_x': 40, 'size_y': 10, 'size_z': 1}}))
+    mj.intake_color_choices(jp, st, 'single_color', [1])
+    monkeypatch.setattr(mj.printer_state, 'load', lambda: st)
+    job = json.loads(jp.read_text())
+    job['copies'] = 2
+    jp.write_text(json.dumps(job))
+    assert 'printer_model' not in job
+
+    def slice_fake(src, folder, st, brim, color_decisions, filament_slot=None, copies=1):
+        folder.mkdir(parents=True)
+        out = folder / 'plate_1.gcode'
+        out.write_text('G1 X1\n')
+        return out, {'offline_test': True}, []
+    monkeypatch.setattr(orca_adapter, 'slice_model', slice_fake)
+    monkeypatch.setattr(mj, 'verify_gcode', lambda _: None)
+    from print_buddy.printers.flashforge.zmod import multicolor_contract
+    monkeypatch.setattr(multicolor_contract, 'finalize', lambda *a, **k: None)
+    requested = slice_recipe.binding_sha256(slice_binding(job, mj.file_sha256(job['downloaded_file'])))
+    mj.slice_job(str(jp), copies=2, recipe_sha256=requested)
+    sliced = json.loads(jp.read_text())
+    assert sliced['printer_model'] and sliced['artifact_binding']['recipe_sha256'] == requested

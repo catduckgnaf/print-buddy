@@ -44,6 +44,7 @@ The print starts only when someone clicks the button. On completion, the bot pos
 * Multi plate models merged onto one bed when they fit; plates that would run longer than `layout.max_merged_hours` stay separate.
 * Oversized models split across plates, tracked as one plan.
 * Copy counts offered only where the G-code will actually contain the copies.
+* Each slice records a versioned recipe with its G-code: source file, printer model, orientation and scale, copies, supports and brim, split assignments, filament and nozzle, Orca profile files and slicer command. A slice made for one recipe is never reused for another.
 * Headless OrcaSlicer with versioned machine, process, and filament templates; Bambu Studio as a fallback slicer with its network cut.
 * Readable part names: generic CAD names like "Cylinder" become a shape, size, plate, and color description.
 
@@ -57,7 +58,7 @@ The print starts only when someone clicks the button. On completion, the bot pos
 **Printing**
 * Nothing starts without a bed clear button press.
 * Multi plate plans: `/print-next` offers the exact next plate, and finishing a plate advances the plan.
-* `/print-again` reprints an archived job exactly, with no re-slice.
+* `/print-again` reprints an archived job exactly, with no re-slice. A job sliced before slice recipes were recorded is refused until it is re-sliced once.
 * `/print-stop` and `/print-resume` each send at most one Moonraker command behind a confirm button.
 * `/print-reboot` uses the safe ZMod reboot flow.
 * Printer models: `flashforge.ad5x`, `sovol.sv06`, `klipper.generic`. Each job records the model it was sliced for and refuses another.

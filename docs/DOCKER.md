@@ -11,7 +11,7 @@ user, so the runtime user `buddy` takes UID 1000 directly. Not yet built on Debi
 
 ## First GHCR publication
 
-`.github/workflows/docker-publish.yml` is the maintainer-dispatched workflow for publishing an amd64 image to `ghcr.io/catduckgnaf/print-buddy`. It builds the selected variant once, runs the offline acceptance harness, and only after acceptance pushes the requested version and `latest` tags. The intended first package is 2.0.9; no image has been published yet. For deployments, prefer the exact tested immutable `ghcr.io/catduckgnaf/print-buddy@sha256:<digest>` recorded in the workflow run summary over a mutable tag. This workflow does not build ARM64 images.
+`.github/workflows/docker-publish.yml` is the maintainer-dispatched workflow for publishing an amd64 image to `ghcr.io/catduckgnaf/print-buddy`. It builds the selected variant once, runs the offline acceptance harness, and only after acceptance pushes the requested version and `latest` tags. The intended first package is 2.1.0; no image has been published yet. For deployments, prefer the exact tested immutable `ghcr.io/catduckgnaf/print-buddy@sha256:<digest>` recorded in the workflow run summary over a mutable tag. This workflow does not build ARM64 images.
 
 ## Build dimensions
 
@@ -20,11 +20,10 @@ standalone Discord bot or Moonraker listener. There is no combined supervisor.
 
 | Build argument | Values | Meaning |
 | --- | --- | --- |
-| APP_CHANNEL | stable, development (default) | Application provenance label, not a Git checkout |
-| WITH_ORCA | false (default), true | Include a source-built slicer or omit it |
-| ORCA_CHANNEL | stable (default), alpha | Independently select the pinned slicer revision |
-| ORCA_BUILD_JOBS | auto (default), 1-64 | Bounded compile parallelism; see OrcaSlicer source build |
-| WITH_BAMBU | false (default), true | Include a source-built Bambu Studio, the default slicer for Bambu Lab printers |
+| `APP_CHANNEL` | `stable`, `development` (default) | Application provenance label, not a Git checkout |
+| `WITH_ORCA` | `false` (default), `true` | Include both source-built stable and alpha slicers, or omit both |
+| `ORCA_BUILD_JOBS` | `auto` (default), `1-64` | Bounded compile parallelism; see OrcaSlicer source build |
+| `WITH_BAMBU` | `false` (default), `true` | Include a source-built Bambu Studio, the default slicer for Bambu Lab printers |
 
 All build arguments, with defaults: [SETTINGS.md](SETTINGS.md#build-arguments).
 
@@ -39,9 +38,9 @@ image works. Do not promote an untested source rebuild as an identical artifact.
 Orca stable v2.4.2 is pinned to 8500fcdccaa10b5099ac20d252af3a7c560046f1;
 alpha v2.5.0-alpha is pinned to 3880f2c58ec392ed2bd5938ab31c9c7c496c0eb2.
 The build uses source CMake dependencies and FHS installation, never AppImages.
-Changing runtime environment variables cannot install or change a bundled slicer.
+The runtime selector `PRINT_BUDDY_ORCA_CHANNEL` defaults to `stable` and accepts `alpha`; invalid values stop container startup.
 A no-Orca image can handle non-slicing commands; slicing requires the absent
-/usr/bin/orca-slicer and must fail without an approved slice artifact. No remote
+/usr/local/bin/orca-slicer and must fail without an approved slice artifact. No remote
 slicing fallback is provided. Exact user-facing failure behavior still needs
 image verification. Alpha and ARM64 source builds are unverified; no multiarch
 publication is claimed.
@@ -59,9 +58,7 @@ image with it has been built yet, and ARM64 is untested. Bambu Studio is AGPL-3.
 
 ## OrcaSlicer source build
 
-With `WITH_ORCA=true` the `orca-build` stage compiles the pinned revision with Orca's own CMake
-dependency recipe. Orca source is never patched: the build refuses a checkout whose HEAD is not the
-pinned commit or whose tracked files differ from it.
+With `WITH_ORCA=true` both pinned OrcaSlicer channels are built from source into separate prefixes; `WITH_ORCA=false` omits both. At runtime, `PRINT_BUDDY_ORCA_CHANNEL=stable` (the default) or `alpha` selects the executable. Any other value exits with a clear error. Both channel builds use Orca's own CMake dependency recipe. Orca source is never patched: each build refuses a checkout whose HEAD is not the pinned commit or whose tracked files differ from it.
 
 Parallelism: `ORCA_BUILD_JOBS=auto` (default) runs one compile job per
 `ORCA_BUILD_MEM_PER_JOB_MIB` (default 2560 MiB) of memory, capped at the usable CPUs minus one and
@@ -76,15 +73,13 @@ and because only one dependency builds at a time, they run alone. A 4-CPU build'
 stage therefore may briefly use all four CPUs. Earlier builds used `--parallel 1` only at the top
 level, which still let every dependency use all host CPUs.
 
-Cache: with BuildKit (`docker buildx build`, the default builder of current Docker), the stage keeps a
-cache mount whose id combines architecture, `ORCA_CHANNEL`, both pinned revisions and
-`ORCA_BUILD_PROFILE`. Stable and alpha, different revisions, architectures or option profiles
-therefore never share a cache. The mount holds the pinned checkout, downloaded dependency sources,
-finished dependencies with their completion stamps, Ninja objects and a ccache store
-(`ORCA_CCACHE_MAXSIZE`, default 5G). A fingerprint of the OS release, GCC and CMake versions, the
-compiler wrappers and the option profile is kept with it; any change empties the build trees and
-keeps the downloads and ccache, which checks every object itself. Rename `ORCA_BUILD_PROFILE` when
-the CMake options in the Dockerfile change.
+Cache: with BuildKit (`docker buildx build`, the default builder of current Docker), each channel has
+an independent cache mount keyed by channel, architecture, its pinned revision and `ORCA_BUILD_PROFILE`.
+The mount holds the pinned checkout, downloaded dependency sources, finished dependencies with their
+completion stamps, Ninja objects and a ccache store (`ORCA_CCACHE_MAXSIZE`, default 5G). A fingerprint
+of the OS release, GCC and CMake versions, compiler wrappers and option profile is kept with it; any
+change empties the build trees and keeps the downloads and ccache, which checks every object itself.
+Rename `ORCA_BUILD_PROFILE` when the CMake options in the Dockerfile change.
 
 What survives an interrupted build: the cache mount does, whether the `RUN` fails or the build is
 cancelled. A re-run reuses the checkout, skips finished dependencies and recompiles only unfinished
@@ -99,8 +94,11 @@ Example build commands, to run only after the relevant container approval:
 
 ```sh
 docker build --build-arg APP_CHANNEL=development --build-arg WITH_ORCA=false -t print-buddy:development-no-orca .
-docker build --build-arg APP_CHANNEL=stable --build-arg WITH_ORCA=true --build-arg ORCA_CHANNEL=stable -t print-buddy:stable-orca-stable .
+docker build --build-arg APP_CHANNEL=stable --build-arg WITH_ORCA=true -t print-buddy:stable-orca .
+docker run -e PRINT_BUDDY_ORCA_CHANNEL=alpha print-buddy:stable-orca
 ```
+
+OpenSCAD (`openscad`) is included in the runtime image for `cad_split.py --execute`. KiCad is not bundled; it remains deferred per [KICAD-EVALUATION.md](KICAD-EVALUATION.md). Spoolman stays a separate container, optionally provided by `docker-compose.spoolman.yml`.
 
 ## First-run configuration
 

@@ -5,7 +5,7 @@
 
 [orca]
 # Source-installed binary; requires WITH_ORCA=true at image build time
-command = ["/usr/bin/orca-slicer"]
+command = ["/usr/local/bin/orca-slicer"]
 
 [bambu]
 # Source-installed binary; requires WITH_BAMBU=true at image build time.

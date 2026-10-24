@@ -18,7 +18,7 @@ import uuid
 import weakref
 from pathlib import Path
 
-DEADLINE_S = 30 * 60      # upper bound for one heavy step; a hung worker is stopped, not waited for
+DEADLINE_S = 60 * 60      # upper bound for one heavy step; slice_job may run Orca (600 s limit) per plate
 GRACE_S = 10.0            # between SIGTERM and SIGKILL
 REAP_S = 10.0             # after SIGKILL, before the stop is reported unconfirmed
 OUTPUT_LIMIT = 64 << 20   # stdout bytes; the result is one JSON line

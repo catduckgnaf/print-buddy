@@ -61,6 +61,19 @@ class DockerReleaseContract(unittest.TestCase):
         self.assertNotIn(".AppImage", dockerfile)
         self.assertIn("cmake --build", dockerfile)
 
+    def test_bambu_studio_is_optional_pinned_and_built_from_source(self):
+        dockerfile = (ROOT / "Dockerfile").read_text()
+        stage = dockerfile.split("AS bambu-build", 1)[1].split("AS runtime", 1)[0]
+        self.assertIn("ARG WITH_BAMBU=false", stage)
+        self.assertRegex(stage, r"ARG BAMBU_REF=[0-9a-f]{40}\n")
+        self.assertIn("https://github.com/bambulab/BambuStudio.git", stage)
+        self.assertIn('test "$(git rev-parse HEAD)" = "$ref"', stage)
+        self.assertIn("-DSLIC3R_FHS=ON", stage)
+        self.assertNotIn(".AppImage", stage)
+        self.assertIn("COPY --from=bambu-build /out/ /", dockerfile)
+        for suffix in ("yaml", "toml"):
+            self.assertIn("/usr/bin/bambu-studio", (ROOT / "config" / f"docker.{suffix}").read_text())
+
 
 if __name__ == "__main__":
     unittest.main()

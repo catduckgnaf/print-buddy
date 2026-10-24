@@ -46,10 +46,11 @@ def test_vendor_profiles_carry_the_shared_settings():
     assert printers.VENDORS["octoprint"].connection == "octoprint"
     bambu = printers.VENDORS["bambulab"]
     assert bambu.connection == "offline" and bambu.start_code == "bambu"
-    assert bambu.slicers == ("orca", "bambu_studio") and bambu.file_formats[0] == ".gcode.3mf"
+    assert bambu.slicers == ("bambu_studio", "orca") and bambu.file_formats[0] == ".gcode.3mf"
     assert "printer" not in bambu.delivery and set(bambu.default_delivery) == {"discord", "bambu_handoff"}
     for vendor in printers.VENDORS.values():
-        assert vendor.slicers[0] == "orca"  # OrcaSlicer stays the default everywhere
+        # Bambu Studio is the Bambu Lab default; OrcaSlicer stays the default everywhere else
+        assert vendor.slicers[0] == ("bambu_studio" if vendor.key == "bambulab" else "orca")
         if vendor.key != "bambulab":
             assert "bambu_handoff" not in vendor.delivery
             assert vendor.default_delivery == ("printer",)

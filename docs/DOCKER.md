@@ -14,6 +14,7 @@ standalone Discord bot or Moonraker listener. There is no combined supervisor.
 | WITH_ORCA | false (default), true | Include a source-built slicer or omit it |
 | ORCA_CHANNEL | stable (default), alpha | Independently select the pinned slicer revision |
 | ORCA_BUILD_JOBS | auto (default), 1-64 | Bounded compile parallelism; see OrcaSlicer source build |
+| WITH_BAMBU | false (default), true | Include a source-built Bambu Studio, the default slicer for Bambu Lab printers |
 
 All build arguments, with defaults: [SETTINGS.md](SETTINGS.md#build-arguments).
 
@@ -34,6 +35,17 @@ A no-Orca image can handle non-slicing commands; slicing requires the absent
 slicing fallback is provided. Exact user-facing failure behavior still needs
 image verification. Alpha and ARM64 source builds are unverified; no multiarch
 publication is claimed.
+
+## Bambu Studio source build
+
+With `WITH_BAMBU=true` the `bambu-build` stage compiles Bambu Studio 2.8.2 (public release 61) (pinned to
+`926a7192574bcb9b3a732e1ec59a46d79cb45466`) the same way as Orca: its own CMake dependency recipe,
+an FHS install to `/usr/bin/bambu-studio`, no AppImage, no patches, and a cache mount keyed by
+architecture, revision and `BAMBU_BUILD_PROFILE`. It shares `ORCA_BUILD_JOBS` for parallelism.
+Bambu Studio is the default slicer for every Bambu Lab printer (`printer.slicer: orca` opts out)
+and Orca's one-shot fallback for other vendors. Without it, Bambu Lab slicing fails closed. The
+image records `/bambu-source-revision` and `/bambu-build-info`. This build is unverified: no
+image with it has been built yet, and ARM64 is untested. Bambu Studio is AGPL-3.0, like Orca.
 
 ## OrcaSlicer source build
 

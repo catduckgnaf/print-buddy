@@ -2,7 +2,7 @@
 
 No live connection: no MQTT, LAN FTPS or cloud client, so no telemetry, upload or print control. The
 handoff format is a .gcode.3mf (Metadata/plate_N.gcode plus its MD5), the file Bambu Studio, Bambu
-Handy and the SD card take. Bambu Studio may be chosen as the primary slicer with [printer] slicer.
+Handy and the SD card take. Bambu Studio is the default slicer; [printer] slicer: orca opts back into Orca.
 Every G-code line must be a plain G/M/T code: Klipper or ZMod start code is refused (base.start_code_problems).
 
 Printer modules (bambulab/a1.py, later p1s.py) define MODEL = PrinterModel(..., vendor=VENDOR) with the
@@ -15,7 +15,7 @@ VENDOR = VendorProfile(
     label="Bambu Lab",
     connection="offline",
     start_code="bambu",
-    slicers=("orca", "bambu_studio"),
+    slicers=("bambu_studio", "orca"),  # Bambu Studio first: the default for every Bambu Lab printer
     file_formats=(".gcode.3mf", ".gcode"),
     delivery=("discord", "bambu_handoff"),
     default_delivery=("discord", "bambu_handoff"),

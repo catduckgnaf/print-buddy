@@ -22,7 +22,7 @@ RUN mkdir -p /out && chmod +x /usr/local/bin/orca-build-jobs /usr/local/bin/orca
     if [ "$WITH_ORCA" = true ]; then \
       apt-get update && apt-get install -y --no-install-recommends \
         ca-certificates git cmake ninja-build build-essential autoconf automake \
-        libtool pkg-config gettext texinfo curl wget file m4 ccache \
+        libtool pkg-config gettext texinfo curl wget file m4 ccache nasm yasm \
         eglexternalplatform-dev extra-cmake-modules libcurl4-openssl-dev \
         libdbus-1-dev libglew-dev libgstreamerd-3-dev libgtk-3-dev \
         libmspack-dev libsecret-1-dev libspnav-dev libssl-dev libudev-dev \

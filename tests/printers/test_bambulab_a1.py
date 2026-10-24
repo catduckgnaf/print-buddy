@@ -2,15 +2,17 @@
 Klipper/ZMod start-code guard, vendor-block validation, the modal toolpath interpreter, limits and the public
 slice -> verification -> delivery path.
 
-Nothing here contacts a printer, slicer or service. Fixture G-code is synthetic: the pinned templates rendered with
-fixed placeholder values in the layout real OrcaSlicer 2.4.2 writes for a Bambu Lab profile. Real-slicer coverage
-is in tests/slicer/test_orca_real_bambu_a1.py.
+Nothing here contacts a printer, slicer or service, and nothing here is OrcaSlicer or Bambu Lab material. The A1
+templates are generated (profiles.install) from the invented resource tree in fixtures/orca_resources, whose
+hashes are trusted for the tests only (a1_fixture). Fixture G-code is synthetic: those templates rendered with fixed
+placeholder values in the file layout OrcaSlicer 2.4.2 writes for a Bambu Lab profile. Real-slicer coverage, with
+the operator's own OrcaSlicer profiles, is in tests/slicer/test_orca_real_bambu_a1.py.
 """
 import copy
-import hashlib
 import json
 import os
 import re
+import shutil
 import subprocess
 import sys
 import zipfile
@@ -20,31 +22,33 @@ import pytest
 
 from print_buddy import printers, settings
 from print_buddy.core import delivery, model_job, orca_adapter, printer_state, slice_guard
-from print_buddy.printers.bambulab import VENDOR, facts, guard
+from print_buddy.printers.bambulab import VENDOR, facts, guard, profiles
 from print_buddy.printers.bambulab.a1 import MODEL, A1Adapter
 from print_buddy.printers.bambulab.adapter import BambuOfflineAdapter, LiveUnsupported
 from print_buddy.printers.base import MultiColorUnsupported
+
+from . import a1_fixture
 
 ROOT = Path(__file__).resolve().parents[2]
 STATE = ROOT / "tests" / "pipeline" / "fixtures" / "printer_hardware.json"
 CUBE = ROOT / "tests" / "slicer" / "fixtures" / "cube.stl"
 A1, AD5X, GENERIC, SV06, OCTOPRINT = "bambulab.a1", "flashforge.ad5x", "klipper.generic", "sovol.sv06", "octoprint.marlin"
-# sha256 of the vendor G-code blocks copied from OrcaSlicer v2.4.2. A change here must be a deliberate re-import.
-VENDOR_GCODE_SHA256 = {
-    "machine_start_gcode": "73cf49bbd31cfc3a8a1ee7c131794b7607eb64084873dafc199ddd037b2d47e4",
-    "machine_end_gcode": "47e1e6debe27ce9a0be8e2967e08d70d63552f1acd2355363a9f482f1490ef2d",
-    "change_filament_gcode": "e527cbc473b85eb1de3fc8e793ff28834f2672d2cddf7bea469b113be1025ee8",
-    "time_lapse_gcode": "d0bd945aa92d9b29d60e9549a1482fdc9fb430479e508092d813c836fe344ba6",
-    "layer_change_gcode": "137df44edc98f7192367ef747fa45b94e38f29286791277b8eccf64dc5af227e",
-}
 PLACEHOLDER_VALUES = {"bed_temperature_initial_layer_single": "60", "nozzle_temperature_initial_layer": "210",
                       "nozzle_temperature": "210", "curr_bed_type": "Textured PEI Plate", "filament_type": "PLA",
                       "initial_no_support_extruder": "0", "first_layer_center_no_wipe_tower": "128"}
 
 
-def config_for(key, **printer):
-    env = {"PRINT_BUDDY__PRINTER__MODEL": key, **{f"PRINT_BUDDY__PRINTER__{k.upper()}": str(v) for k, v in printer.items()}}
+def config_for(key, hermes=a1_fixture.HERMES, **printer):
+    env = {"PRINT_BUDDY__PRINTER__MODEL": key, "PRINT_BUDDY__PATHS__HERMES_HOME": str(hermes),
+           **{f"PRINT_BUDDY__PRINTER__{k.upper()}": str(v) for k, v in printer.items()}}
     return settings.load(local=False, environ=env)
+
+
+@pytest.fixture(autouse=True)
+def a1_profiles(monkeypatch):
+    """Every test sees A1 templates generated from the fixture tree, which is trusted for the test only."""
+    a1_fixture.trust(monkeypatch.setattr)
+    a1_fixture.install(adapter_for(A1))
 
 
 def adapter_for(key):
@@ -79,8 +83,7 @@ def a1_gcode(body=None, *, material="PLA", nozzle="0.4", nozzle_type="stainless_
     tags=True adds the start/end tags Orca 2.5+ writes. Not real Orca output."""
     machine, filament = template(A1), template(A1, "filament")
     start = render(machine["machine_start_gcode"]).replace("M104 S210", f"M104 S{hotend}").replace("M140 S60", f"M140 S{bed}")
-    start = start.replace(";curr_bed_type=Textured PEI Plate", f";curr_bed_type={plate}")
-    timelapse = "; SKIPPABLE_START\nG1 X0 Y128 F18000\nG1 X-48.2 F3000 ; move to safe pos\nG1 X0 F18000\n; SKIPPABLE_END\n"
+    timelapse = "; SKIPPABLE_START\n" + render(machine["time_lapse_gcode"]) + "G1 X100 Y120 F18000\n; SKIPPABLE_END\n"
     body = body if body is not None else (
         "G1 E-.8 F1800\nG1 Z.2 F720\nG1 X100 Y100 F30000\nG1 E.8 F1800\n; FEATURE: Outer wall\n; LINE_WIDTH: 0.42\n"
         "G1 X120 Y100 E.8\nG1 X120 Y120 E.8\nG1 X100 Y120 E.8\nG1 X100 Y100 E.8\n" + timelapse +
@@ -90,7 +93,8 @@ def a1_gcode(body=None, *, material="PLA", nozzle="0.4", nozzle_type="stainless_
         "; HEADER_BLOCK_END", "; CONFIG_BLOCK_START", "; printer_model = Bambu Lab A1",
         "; printer_settings_id = Bambu Lab A1 0.4 nozzle", "; print_settings_id = 0.20mm Standard @BBL A1",
         "; filament_settings_id = \"Generic PLA @BBL A1\"", f"; filament_type = {material}",
-        f"; nozzle_diameter = {nozzle}", f"; nozzle_type = {nozzle_type}", "; z_hop_types = Normal Lift",
+        f"; nozzle_diameter = {nozzle}", f"; nozzle_type = {nozzle_type}", f"; curr_bed_type = {plate}",
+        "; z_hop_types = Normal Lift",
         "; enable_arc_fitting = 0", "; brim_type = outer_only", "; CONFIG_BLOCK_END", "; EXECUTABLE_BLOCK_START",
         "M73 P0 R20", "M201 X6000 Y6000 Z1500 E5000", "M204 P12000 R5000 T12000",
         "; FEATURE: Custom", start, render(filament["filament_start_gcode"][0]),
@@ -167,28 +171,98 @@ def test_live_calls_are_refused():
         a.normalize_tool_mapping({"0": 1, "1": 2}, {})
 
 
-# ------------------------------------------------------------------ provenance, facts, baseline
+# ------------------------------------------------------------------ profiles: generated, never shipped
 
-def test_template_matches_its_sourced_facts_and_pinned_vendor_gcode():
-    machine, process = template(A1), template(A1, "process")
-    corners = [tuple(float(v) for v in c.split("x")) for c in machine["printable_area"]]
-    assert (max(x for x, _ in corners), max(y for _, y in corners)) == facts.A1["bed_mm"].value
-    assert float(machine["printable_height"]) == facts.A1["max_print_height_mm"].value
-    assert machine["bed_exclude_area"] == list(facts.A1["bed_exclude_area"].value)
-    assert machine["printer_model"] == facts.A1["printer_model"].value
-    assert machine["nozzle_diameter"] == ["0.4"] and machine["nozzle_type"] == ["stainless_steel"]
-    assert process["curr_bed_type"] == facts.A1["default_plate"].value
-    for key, digest in VENDOR_GCODE_SHA256.items():
-        assert hashlib.sha256(machine[key].encode()).hexdigest() == digest, key
+def test_no_orca_or_bambu_profile_is_shipped():
+    assert not (ROOT / "print_buddy/templates/orca/bambulab_a1").exists()
+    tracked = subprocess.run(["git", "ls-files"], cwd=ROOT, capture_output=True, text=True).stdout.split()
+    profiles_in_repo = [f for f in tracked if "bambulab" in f.lower() and f.endswith(".json")
+                        and not f.startswith("tests/printers/fixtures/orca_resources/")]
+    assert profiles_in_repo == ["config/protected-settings-baseline.bambulab.a1.proposed.json"], profiles_in_repo
+    proposal = json.loads((ROOT / profiles_in_repo[0]).read_text())
+    assert all(set(entry) <= {"sha256", "value"} for entry in proposal.values())  # hashes and two short values
+    assert all("value" not in proposal[k] for k in ("machine_start_gcode", "machine_end_gcode"))
+
+
+def test_settings_point_the_a1_at_its_generated_profile_folder(tmp_path):
+    data = config_for(A1, hermes=tmp_path)
+    assert data["orca"]["templates"] == tmp_path / "state" / "orca-profiles" / "bambulab_a1"
+    assert config_for(AD5X, hermes=tmp_path)["orca"]["templates"] == ROOT / "print_buddy/templates/orca/flashforge_ad5x"
+
+
+def test_generated_templates_are_the_installed_profiles_plus_overrides():
+    a = adapter_for(A1)
+    folder = a.pinned_templates()
+    upstream, _ = profiles.flatten(a1_fixture.RESOURCES, facts.A1["orca_profiles"].value)
     for kind, overrides in facts.ORCA_OVERRIDES.items():
         data = template(A1, kind)
+        assert json.loads((folder / "upstream" / f"{kind}.json").read_text()) == upstream[kind]
         assert data["name"] == facts.A1["orca_profiles"].value[kind]
         assert data[facts.SETTINGS_IDS[kind]] in (data["name"], [data["name"]])
         for key, value in overrides.items():
             assert data[key] == value, (kind, key)
+        assert {k: v for k, v in data.items() if k not in overrides and k != facts.SETTINGS_IDS[kind]} == \
+            {k: v for k, v in upstream[kind].items() if k not in overrides}
+    # inherits and include are resolved, the child wins
+    machine = template(A1)
+    assert "inherits" not in machine and "include" not in machine and machine["bed_exclude_area"] == []
+    assert machine["time_lapse_gcode"] and machine["layer_change_gcode"]
+    assert json.loads((folder / "SOURCE.json").read_text())["vendor_version"] == "00.00.00.00"
 
 
-def test_motion_envelope_covers_every_literal_vendor_move():
+def test_missing_profiles_refuse_everything(tmp_path):
+    a = printers.get(A1, config_for(A1, hermes=tmp_path))
+    found = " ".join(a.gcode_problems(a1_gcode()))
+    assert "cannot be checked" in found and "are not installed" in found and "--resources" in found
+    with pytest.raises(profiles.ProfileError, match="not installed"):
+        a.machine_start_gcode(template(A1)["machine_start_gcode"])
+    with pytest.raises(profiles.ProfileError, match="not installed"):
+        a.start_plan(60, 210)
+
+
+def test_an_unchecked_orcaslicer_is_refused_and_nothing_is_written(tmp_path, monkeypatch):
+    monkeypatch.setattr(A1Adapter, "facts", facts.A1)  # production identities only
+    a = printers.get(A1, config_for(A1, hermes=tmp_path))
+    with pytest.raises(profiles.ProfileError, match="not a version Print Buddy has checked.*Nothing was written"):
+        profiles.install(a, a1_fixture.RESOURCES)
+    assert not a.pinned_templates_folder().exists()
+    packed = tmp_path / "resources" / "profiles"
+    packed.mkdir(parents=True)
+    (packed / "BBL.opc").write_bytes(b"ZCRO")
+    with pytest.raises(profiles.ProfileError, match="packed vendor profiles"):
+        profiles.install(a, tmp_path / "resources")
+    with pytest.raises(profiles.ProfileError, match="no OrcaSlicer BBL vendor profiles"):
+        profiles.install(a, tmp_path / "nowhere")
+
+
+def test_a_profile_for_another_printer_is_refused(tmp_path, monkeypatch):
+    resources = tmp_path / "resources"
+    shutil.copytree(a1_fixture.RESOURCES, resources)
+    path = resources / "profiles" / "BBL" / "machine" / "Bambu Lab A1 0.4 nozzle.json"
+    data = json.loads(path.read_text())
+    data.update(printable_area=["0x0", "180x0", "180x180", "0x180"], printable_height="180")
+    path.write_text(json.dumps(data))
+    a1_fixture.trust(monkeypatch.setattr, resources)  # even a trusted identity must describe the A1
+    a = printers.get(A1, config_for(A1, hermes=tmp_path / "hermes"))
+    with pytest.raises(profiles.ProfileError, match="printable_area .* is not 0..256 x 0..256 mm"):
+        profiles.install(a, resources)
+
+
+@pytest.mark.parametrize("target, message", [
+    ("machine.json", "is not the generated template (edited?)"),
+    ("upstream/machine.json", "not a version Print Buddy has checked"),
+])
+def test_edited_generated_profiles_are_refused(target, message):
+    a = adapter_for(A1)
+    path = a.pinned_templates_folder() / target
+    data = json.loads(path.read_text())
+    data["machine_start_gcode"] += "G1 X0 Y0\n"
+    path.write_text(json.dumps(data))
+    assert any(message in p for p in profiles.problems(a))
+    assert any(message in p for p in a.gcode_problems(a1_gcode()))
+
+
+def test_motion_envelope_covers_every_literal_fixture_move():
     machine = template(A1)
     xmin, ymin, xmax, ymax = facts.A1["motion_envelope_mm"].value
     for key in ("machine_start_gcode", "machine_end_gcode", "change_filament_gcode", "time_lapse_gcode"):
@@ -202,6 +276,8 @@ def test_every_fact_names_a_source_and_unconfirmed_values_say_so():
         assert fact.source in ("ORCA", "BAMBU", "DERIVED"), name
         if fact.source != "ORCA":
             assert fact.verified is False, name
+    assert facts.A1["orca_identity"].value and all(set(i) == {"label", "vendor_version", "sha256"}
+                                                   for i in facts.A1["orca_identity"].value)
 
 
 def test_baseline_is_proposed_not_approved():
@@ -211,7 +287,7 @@ def test_baseline_is_proposed_not_approved():
     assert not a.baseline_path.exists()  # approval is a separate, deliberate maintainer step
     proposal = json.loads((ROOT / "config/protected-settings-baseline.bambulab.a1.proposed.json").read_text())
     assert set(proposal) == {"machine_start_gcode", "machine_end_gcode", "post_process", "printer_technology"}
-    assert "bambulab" not in shared.read_text() and "machine: A1" not in shared.read_text()
+    assert "bambulab" not in shared.read_text()
     warning = slice_guard.enforce_approved_baseline("x.gcode", path=a.baseline_path).warnings[0]
     assert "--baseline config/protected-settings-baseline.bambulab.a1.json" in warning
     from print_buddy.core import approve_baseline
@@ -235,9 +311,9 @@ def test_a1_refuses_every_other_models_start_code(other):
     a = adapter_for(A1)
     with pytest.raises(guard.ForeignStartCode):
         a.machine_start_gcode(start)
-    if other != OCTOPRINT:  # Marlin start code has no Klipper command; it fails above for lacking the A1 start
-        with pytest.raises(guard.ForeignStartCode):
-            a.machine_start_gcode(facts.A1["vendor_start"].value + "=====\n" + adapter_for(other).machine_start_gcode(start, "auto"))
+    with pytest.raises(guard.ForeignStartCode):  # the A1 start with another printer's start appended
+        a.machine_start_gcode(template(A1)["machine_start_gcode"] + adapter_for(other).machine_start_gcode(start, "auto")
+                              .replace("MESH=auto", ""))
     if guard.foreign_commands(end):
         with pytest.raises(guard.ForeignStartCode):
             a.machine_end_gcode(end)
@@ -247,7 +323,7 @@ def test_ad5x_gcode_is_refused_by_both_guards():
     text = ad5x_gcode()
     found = " ".join(problems(text))
     assert "Klipper/ZMod code (START_PRINT" in found and "printer_model 'Flashforge AD5X'" in found
-    assert "vendor start sequence" in found
+    assert "start G-code line" in found and "is not in the pinned vendor template" in found
     assert any("non-Bambu commands" in p for p in __import__("print_buddy.printers.base", fromlist=["x"])
                .start_code_problems(text, VENDOR))
 
@@ -256,7 +332,7 @@ def test_ad5x_gcode_is_refused_by_both_guards():
                                   "BED_MESH_PROFILE LOAD=default", "SET_PRINT_STATS_INFO TOTAL_LAYER=2",
                                   "CHANGE_ZCOLOR SLOT=1 TYPE=PLA HEX=FFFFFF", "  SAVE_VARIABLE VARIABLE=x VALUE=1"])
 def test_klipper_lines_anywhere_are_refused(line):
-    for anchor in ("; filament start gcode", "G1 X120 Y120 E.8", "M73 P100 R0"):
+    for anchor in ("; fixture filament start", "G1 X120 Y120 E.8", "M73 P100 R0"):
         text = a1_gcode().replace(anchor, line + "\n" + anchor, 1)
         assert any("Klipper/ZMod code" in p for p in problems(text)), anchor
 
@@ -281,22 +357,28 @@ def test_synthetic_a1_gcode_passes_in_both_orca_layouts(tags):
     assert problems(a1_gcode(tags=tags), state()) == []
 
 
-def test_the_start_marker_alone_is_not_start_validation():
+def test_an_edited_or_extended_vendor_block_is_refused():
     good = a1_gcode()
-    # The marker is still there, but a vendor line changed or a line was added: refused.
-    changed = good.replace("M1002 gcode_claim_action : 2", "M1002 gcode_claim_action : 99", 1)
-    assert any("not in the pinned vendor template" in p for p in problems(changed))
-    added = good.replace("G1 X-28.5 F30000", "G1 Z-20\nG1 X-28.5 F30000", 1)
+    changed = good.replace("G1 X-40 Y10 F6000", "G1 X-40 Y11 F6000", 1)
+    assert any("not in the pinned vendor template: G1 X-40 Y11" in p for p in problems(changed))
+    added = good.replace("G1 X-40 Y10 F6000", "G1 Z-20\nG1 X-40 Y10 F6000", 1)
     assert any("not in the pinned vendor template: G1 Z-20" in p for p in problems(added))
-    # Only the marker, no vendor sequence behind it.
+    # The whole vendor start replaced by another sequence.
     pre, rest = good.split("; FEATURE: Custom\n", 1)
-    marker_only = pre + "; FEATURE: Custom\n" + facts.A1["vendor_start"].value + "\nG28\n" + rest.split("; filament start gcode", 1)[1]
-    assert any("start G-code" in p for p in problems(marker_only))
+    swapped = pre + "; FEATURE: Custom\nG28\nG1 X10 Y10 Z5\n; fixture filament start" + rest.split("; fixture filament start", 1)[1]
+    assert any("start G-code" in p for p in problems(swapped))
+
+
+def test_reordered_vendor_lines_are_refused():
+    good = a1_gcode()
+    swapped = good.replace("M190 S60\nM109 S210", "M109 S210\nM190 S60", 1)
+    assert swapped != good
+    assert any("start G-code" in p for p in problems(swapped))
 
 
 def test_dropping_a_required_vendor_line_is_refused():
     # Heater-off lines are unconditional in the vendor end G-code: an artifact without them is refused.
-    for line in ("M104 S0 ; turn off hotend", "M140 S0 ; turn off bed"):
+    for line in ("M104 S0 ; hotend off", "M140 S0 ; bed off"):
         found = problems(a1_gcode().replace(line + "\n", "", 1))
         assert any("end G-code" in p and ("required line" in p or "expected" in p) for p in found), (line, found)
 
@@ -304,10 +386,10 @@ def test_dropping_a_required_vendor_line_is_refused():
 def test_truncated_vendor_blocks_are_refused():
     good = a1_gcode()
     start = render(template(A1)["machine_start_gcode"])
-    cut_start = good.replace(start, "\n".join(start.splitlines()[:-40]), 1)
+    cut_start = good.replace(start, "\n".join(start.splitlines()[:-5]), 1)
     assert any("start G-code ends before the pinned vendor template" in p for p in problems(cut_start)), problems(cut_start)
     end = render(template(A1)["machine_end_gcode"])
-    cut_end = good.replace(end, "\n".join(end.splitlines()[:-20]), 1)
+    cut_end = good.replace(end, "\n".join(end.splitlines()[:-4]), 1)
     assert any("end G-code ends before the pinned vendor template" in p for p in problems(cut_end))
     assert any("cannot locate" in p or "Cannot locate" in p for p in problems(good.split("; FEATURE: Outer wall")[0]))
 
@@ -318,13 +400,15 @@ def test_a_template_override_is_never_the_reference(tmp_path):
     for name in ("machine", "process", "filament"):
         data = template(A1, name)
         if name == "machine":
-            data["machine_start_gcode"] = data["machine_start_gcode"].replace("G1 X-48.2 F3000", "G1 X-48.2 Y300 F3000")
+            data["machine_start_gcode"] = data["machine_start_gcode"].replace("G1 X-40 Y10 F6000", "G1 X-40 Y300 F6000")
         (folder / f"{name}.json").write_text(json.dumps(data))
     cfg = config_for(A1)
     cfg["orca"]["templates"] = folder
     a = printers.get(A1, cfg)
     assert a.templates_dir() == folder and a.pinned_templates() != folder
-    text = a1_gcode().replace("G1 X-48.2 F3000", "G1 X-48.2 Y300 F3000")
+    with pytest.raises(guard.ForeignStartCode, match="not the Bambu Lab A1 vendor sequence"):
+        a.machine_start_gcode(template(A1)["machine_start_gcode"].replace("G1 X-40 Y10 F6000", "G1 X-40 Y300 F6000"))
+    text = a1_gcode().replace("G1 X-40 Y10 F6000", "G1 X-40 Y300 F6000")
     assert any("not in the pinned vendor template" in p for p in a.gcode_problems(text))
 
 
@@ -332,7 +416,7 @@ def test_a_template_override_is_never_the_reference(tmp_path):
     (lambda t: t.replace("; CHANGE_LAYER\n; Z_HEIGHT: 0.2", "; Z_HEIGHT: 0.2").replace("; CHANGE_LAYER", ";"), "cannot locate"),
     (lambda t: t.replace("; FEATURE: Custom", ";"), "cannot locate"),
     # A layer marker spoofed into the vendor start: the rest of the start lands in the toolpath and fails there.
-    (lambda t: t.replace("G1 X-28.5 F30000", "; CHANGE_LAYER\nG1 X-28.5 F30000", 1), "toolpath"),
+    (lambda t: t.replace("G1 X-40 Y-0.4 F3000", "; CHANGE_LAYER\nG1 X-40 Y-0.4 F3000", 1), "toolpath"),
     # An end marker spoofed after the real end: the real end lands in the toolpath (T255, homing), the tail is
     # checked against the end template.
     (lambda t: t.replace("; EXECUTABLE_BLOCK_END", "; FEATURE: Custom\nG1 X100 Y100 E5\n; EXECUTABLE_BLOCK_END"),
@@ -384,8 +468,9 @@ def test_unsafe_or_ambiguous_toolpath_motion_is_refused(body, message):
     assert any(message in p for p in found), found
 
 
-def test_other_printers_keep_the_whole_file_bounds_check():
-    text = a1_gcode()
+def test_other_printers_keep_the_whole_file_bounds_check(tmp_path):
+    text = tmp_path / "plate_1.gcode"
+    text.write_text(a1_gcode())
     r = slice_guard.post_slice(text, tool_slots={0: 1}, ifs_slots=1, bed=(256, 256), templates=adapter_for(A1).templates_dir())
     assert any("off the 256x256 mm bed at X-" in b for b in r.blocked)  # no envelope: old behaviour
     r = slice_guard.post_slice(text, tool_slots={0: 1}, ifs_slots=1, bed=(256, 256), templates=adapter_for(A1).templates_dir(),
@@ -513,10 +598,12 @@ def test_hardware_record_cannot_exceed_the_a1_volume():
 def run_a1_flow(tmp_path, gcode_text):
     fake = tmp_path / "fake.gcode"
     fake.write_text(gcode_text)
-    env = {**os.environ, "PRINT_BUDDY__PRINTER__MODEL": A1, "PRINT_BUDDY_CONFIG": str(settings.HOME)}
+    env = {**os.environ, "PRINT_BUDDY__PRINTER__MODEL": A1, "PRINT_BUDDY_CONFIG": str(settings.HOME),
+           "PRINT_BUDDY__PATHS__HERMES_HOME": str(tmp_path / "hermes")}
     for key in [k for k in env if k.startswith("PRINT_BUDDY__SERVICES__")]:
         env.pop(key)
-    out = subprocess.run([sys.executable, "-m", "tests.printers.a1_flow", str(tmp_path / "work"), "--fake-gcode", str(fake)],
+    out = subprocess.run([sys.executable, "-m", "tests.printers.a1_flow", str(tmp_path / "work"), "--fake-gcode", str(fake),
+                          "--fixture-resources", str(a1_fixture.RESOURCES)],
                          cwd=ROOT, capture_output=True, text=True, env=env, timeout=600)
     line = next((l for l in out.stdout.splitlines() if l.startswith("A1_FLOW ")), None)
     assert line, out.stdout[-2000:] + out.stderr[-2000:]
@@ -527,6 +614,7 @@ def test_slice_verify_and_package_end_to_end(tmp_path):
     result = run_a1_flow(tmp_path, a1_gcode())
     assert "error" not in result, result
     assert (result["model"], result["connection"], result["printer_model"]) == (A1, "offline", A1)
+    assert result["templates"] == str(tmp_path / "hermes" / "state" / "orca-profiles" / "bambulab_a1")
     assert result["gcode_verified"] is True and result["slice_guard"] in ("ok", "warnings")
     [package] = result["packages"]
     with zipfile.ZipFile(package) as archive:

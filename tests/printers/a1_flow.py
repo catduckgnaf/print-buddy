@@ -1,12 +1,15 @@
 """The Bambu Lab A1 production path, offline, in a process configured as bambulab.a1.
 
-    PRINT_BUDDY__PRINTER__MODEL=bambulab.a1 python3 -m tests.printers.a1_flow <workdir> [--fake-gcode FILE] [--stl FILE]
+    PRINT_BUDDY__PRINTER__MODEL=bambulab.a1 python3 -m tests.printers.a1_flow <workdir> \
+        (--resources ORCA_RESOURCES | --fixture-resources DIR) [--fake-gcode FILE] [--stl FILE]
 
 Runs what the Discord intake runs after an approval: model_job.slice_job (slice, post-slice guards, offline
 verification, JOB.json binding), then delivery.bambu_handoff (the .gcode.3mf package), then model_job.print_now,
 which must refuse. Every network attempt is recorded and refused except the Spoolman spool lookup, answered
 locally. Nothing contacts a printer. With --fake-gcode, Orca is replaced by a copy of that file; without it the
-configured Orca command slices for real. Prints one JSON line with the results.
+configured Orca command slices for real. The A1 templates are generated first into the configured profile:
+--resources from an installed OrcaSlicer (production identities only), --fixture-resources from the invented
+test tree, trusted for this process only. Prints one JSON line with the results.
 """
 import copy
 import json
@@ -33,8 +36,16 @@ def main(argv):
     stl = Path(argv[argv.index("--stl") + 1]) if "--stl" in argv else ROOT / "tests" / "slicer" / "fixtures" / "cube.stl"
     from print_buddy import printers
     from print_buddy.core import delivery, model_job, orca_adapter, printer_state
+    from print_buddy.printers.bambulab import profiles
 
     assert printers.current().key == "bambulab.a1", printers.current().key
+    if "--fixture-resources" in argv:
+        from . import a1_fixture
+        resources = Path(argv[argv.index("--fixture-resources") + 1])
+        a1_fixture.trust(resources=resources)
+    else:
+        resources = Path(argv[argv.index("--resources") + 1])
+    identity = profiles.install(printers.current(), resources)
     contacted = []
 
     def refuse(url, *a, **k):
@@ -70,7 +81,8 @@ def main(argv):
     job_path = job_dir / "JOB.json"
     model_job.write_job(job_dir, {"downloaded_file": str(source), "audit": {"plates": 1}, "approvals": [],
                                   "slug": "a1-flow"})
-    result = {"model": printers.current().key, "connection": printers.current().connection}
+    result = {"model": printers.current().key, "connection": printers.current().connection,
+              "profiles": identity["label"], "templates": str(printers.current().templates_dir())}
     try:
         out = model_job.slice_job(job_path)
         job = json.loads(job_path.read_text())

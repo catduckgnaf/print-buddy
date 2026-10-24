@@ -7,14 +7,33 @@ import json
 import zipfile
 from pathlib import Path
 
+import pytest
+
+from print_buddy import printers
 from print_buddy.core import delivery, model_job
-from printers.test_bambulab_a1 import a1_gcode, ad5x_gcode
+from printers import a1_fixture
+from printers.test_bambulab_a1 import A1 as A1_KEY, a1_gcode, ad5x_gcode, adapter_for
 from .helpers import external
 from .test_delivery import _delivery_menu, config_for, use_config
 from .test_prepared_intake import env, run_flow  # noqa: F401  (pytest fixture)
 
 print_next = external("print_next")
 A1 = "bambulab.a1"
+
+
+@pytest.fixture(autouse=True)
+def a1_profiles(monkeypatch, tmp_path):
+    """A1 templates generated from the invented fixture tree (trusted for the test only), never the profile's."""
+    a1_fixture.trust(monkeypatch.setattr)
+    a1_fixture.install(adapter_for(A1_KEY))
+
+
+def a1_config(tmp_path):
+    cfg = config_for(A1)
+    cfg["paths"]["hermes_home"] = tmp_path / "hermes"
+    cfg["orca"]["templates"] = tmp_path / "hermes" / "state" / "orca-profiles" / "bambulab_a1"
+    a1_fixture.install(printers.get(A1, cfg))
+    return cfg
 
 
 def _a1_slice(monkeypatch, text):
@@ -30,8 +49,8 @@ def _a1_slice(monkeypatch, text):
     monkeypatch.setattr(model_job, "slice_job", slice_as_a1)
 
 
-def test_a1_offers_no_print_and_packages_through_its_guard(env, monkeypatch):  # noqa: F811
-    use_config(monkeypatch, config_for(A1))
+def test_a1_offers_no_print_and_packages_through_its_guard(env, monkeypatch, tmp_path):  # noqa: F811
+    use_config(monkeypatch, a1_config(tmp_path))
     _a1_slice(monkeypatch, a1_gcode())
     # one color, slot 1, "Slice only", package, send, (menu ends)
     adapter, result, receipt = run_flow(env, [1, 0, 0, 1, 0])
@@ -48,8 +67,8 @@ def test_a1_offers_no_print_and_packages_through_its_guard(env, monkeypatch):  #
     assert [d["method"] for d in receipt["deliveries"]] == ["bambu_handoff", "discord"]
 
 
-def test_a1_refuses_to_package_foreign_start_code(env, monkeypatch):  # noqa: F811
-    use_config(monkeypatch, config_for(A1))
+def test_a1_refuses_to_package_foreign_start_code(env, monkeypatch, tmp_path):  # noqa: F811
+    use_config(monkeypatch, a1_config(tmp_path))
     _a1_slice(monkeypatch, ad5x_gcode())
     adapter, result, receipt = run_flow(env, [1, 0, 0, 1, 1])
     assert not any("MEDIA:" in m and m.strip().endswith(".gcode.3mf") for m in adapter.sent)

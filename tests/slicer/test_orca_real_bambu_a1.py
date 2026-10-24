@@ -1,12 +1,19 @@
-"""Bambu Lab A1 with the real Orca CLI: the production slice path, the A1 guards on real output, the baseline proposal.
+"""Bambu Lab A1 with the real Orca CLI: profiles generated from the installed OrcaSlicer, the production slice path,
+the A1 guards on real output, the baseline proposal.
 
 Skipped unless PRINT_BUDDY_REAL_SLICER=1; CI's real-slicer jobs run tests/slicer with the Flathub OrcaSlicer 2.4.2
-and the pinned 2.5.0-alpha bundle. Locally: PRINT_BUDDY_REAL_SLICER=1 python3 -m pytest -s tests/slicer/test_orca_real_bambu_a1.py
-with a supported OrcaSlicer as the configured [orca] command (PB_ORCA_CMD overrides it). Printed lines record the
-slicer version, effective settings and exact toolpath bounds for the review log.
+and the pinned 2.5.0-alpha bundle. The A1 templates are generated (profiles.install, production identities only)
+from that OrcaSlicer's own resources folder: PB_ORCA_RESOURCES, else the Flatpak's install location. OrcaSlicer
+2.5 packs its vendor profiles (BBL.opc); the A1 refuses to generate from it, which test_packed_profiles_fail_closed
+records, and the slicing tests skip with that reason. Locally: PRINT_BUDDY_REAL_SLICER=1 python3 -m pytest -s
+tests/slicer/test_orca_real_bambu_a1.py with a supported OrcaSlicer as the configured [orca] command (PB_ORCA_CMD
+overrides it). Printed lines record the slicer version, profile identity, effective settings and exact toolpath
+bounds for the review log.
 """
 import json
 import os
+import re
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -16,7 +23,7 @@ import pytest
 
 from print_buddy import printers, settings
 from print_buddy.core import slice_guard as sg
-from print_buddy.printers.bambulab import facts
+from print_buddy.printers.bambulab import facts, guard, profiles
 
 from .test_orca_real import WORK, _orca_command, write_cube
 
@@ -26,8 +33,45 @@ ROOT = Path(__file__).resolve().parents[2]
 PROPOSAL = ROOT / "config" / "protected-settings-baseline.bambulab.a1.proposed.json"
 
 
-def adapter_for(key):
-    return printers.get(key, settings.load(local=False, environ={"PRINT_BUDDY__PRINTER__MODEL": key}))
+def installed_resources():
+    """The OrcaSlicer resources folder of the slicer under test: PB_ORCA_RESOURCES, else the Flatpak's."""
+    if os.environ.get("PB_ORCA_RESOURCES"):
+        return Path(os.environ["PB_ORCA_RESOURCES"])
+    for scope in ("--user", "--system"):
+        if not shutil.which("flatpak"):
+            break
+        found = subprocess.run(["flatpak", "info", scope, "--show-location", "com.orcaslicer.OrcaSlicer"],
+                               capture_output=True, text=True)
+        files = Path(found.stdout.strip()) / "files"
+        if found.returncode == 0 and files.is_dir():
+            for marker in ("BBL.json", "BBL.opc"):
+                hit = next(files.glob(f"share/*/resources/profiles/{marker}"), None) or next(
+                    files.glob(f"**/resources/profiles/{marker}"), None)
+                if hit:
+                    return hit.parent.parent
+    raise AssertionError("no OrcaSlicer resources folder: set PB_ORCA_RESOURCES or install the Flatpak")
+
+
+def packed():
+    return (installed_resources() / "profiles" / "BBL.opc").is_file()
+
+
+def adapter_for(key, hermes=None):
+    env = {"PRINT_BUDDY__PRINTER__MODEL": key}
+    if hermes is not None:
+        env["PRINT_BUDDY__PATHS__HERMES_HOME"] = str(hermes)
+    return printers.get(key, settings.load(local=False, environ=env))
+
+
+@pytest.fixture
+def a1(work):
+    """The A1 adapter with templates generated from the installed OrcaSlicer (production identities only)."""
+    if packed():
+        pytest.skip("this OrcaSlicer packs its vendor profiles (BBL.opc); A1 profile generation refuses it")
+    adapter = adapter_for("bambulab.a1", work / "hermes")
+    known = profiles.install(adapter, installed_resources())
+    print(f"\nA1 profiles: {known['label']} from {installed_resources()}")
+    return adapter
 
 
 @pytest.fixture
@@ -39,8 +83,10 @@ def work():
 
 def production_flow(work, stl):
     """tests.printers.a1_flow with the real configured Orca: slice_job -> verification -> bambu_handoff -> print_now."""
-    env = {**os.environ, "PRINT_BUDDY__PRINTER__MODEL": "bambulab.a1"}
-    out = subprocess.run([sys.executable, "-m", "tests.printers.a1_flow", str(work / "flow"), "--stl", str(stl)],
+    env = {**os.environ, "PRINT_BUDDY__PRINTER__MODEL": "bambulab.a1",
+           "PRINT_BUDDY__PATHS__HERMES_HOME": str(work / "flow-hermes")}
+    out = subprocess.run([sys.executable, "-m", "tests.printers.a1_flow", str(work / "flow"), "--stl", str(stl),
+                          "--resources", str(installed_resources())],
                          cwd=ROOT, capture_output=True, text=True, env=env, timeout=900)
     line = next((l for l in out.stdout.splitlines() if l.startswith("A1_FLOW ")), None)
     assert line, out.stdout[-3000:] + out.stderr[-3000:]
@@ -65,7 +111,30 @@ def toolpath_bounds(text):
     return bounds
 
 
-def test_a1_production_slice_verifies_packages_and_never_starts(work):
+def textured_plate_patterns(start):
+    """Patterns for the lines the vendor start runs only for the Textured PEI plate, read from the generated profile."""
+    branch = re.search(r'\{if curr_bed_type\s*==\s*"Textured PEI Plate"\}(.*?)\{(?:else|elsif|endif)', start, re.S)
+    assert branch, "the installed A1 start G-code has no Textured PEI branch"
+    return guard.template_patterns(branch.group(1))
+
+
+def test_packed_profiles_fail_closed(work):
+    if not packed():
+        pytest.skip("this OrcaSlicer ships JSON vendor profiles")
+    with pytest.raises(profiles.ProfileError, match="packed vendor profiles"):
+        profiles.install(adapter_for("bambulab.a1", work / "hermes"), installed_resources())
+
+
+def test_motion_envelope_covers_every_literal_vendor_move(a1):
+    machine = json.loads((a1.pinned_templates() / "machine.json").read_text())
+    xmin, ymin, xmax, ymax = facts.A1["motion_envelope_mm"].value
+    for key in ("machine_start_gcode", "machine_end_gcode", "change_filament_gcode", "time_lapse_gcode"):
+        xs = [float(v) for v in re.findall(r"^\s*G[0-3]\b[^;\n]*?X(-?\d+\.?\d*)", machine[key], re.M)]
+        ys = [float(v) for v in re.findall(r"^\s*G[0-3]\b[^;\n]*?Y(-?\d+\.?\d*)", machine[key], re.M)]
+        assert all(xmin <= x <= xmax for x in xs) and all(ymin <= y <= ymax for y in ys), key
+
+
+def test_a1_production_slice_verifies_packages_and_never_starts(work, a1):
     result = production_flow(work, write_cube(work / "cube.stl", 20))
     assert "error" not in result, result
     assert result["printer_model"] == "bambulab.a1" and result["gcode_verified"] is True
@@ -73,10 +142,16 @@ def test_a1_production_slice_verifies_packages_and_never_starts(work):
     assert result["packages"] and result["print_now"].startswith("REFUSED: Bambu Lab A1 has no live connection")
     assert result["job_unchanged_by_print_now"] is True
     assert all("/api/v1/spool/" in url for url in result["contacted"])
+    assert result["templates"].endswith("flow-hermes/state/orca-profiles/bambulab_a1")
     text = Path(result["sliced"]).read_text(errors="replace")
-    a1 = adapter_for("bambulab.a1")
     assert a1.gcode_problems(text) == []
-    assert ";curr_bed_type=Textured PEI Plate" in text and "G29.1 Z-0.02" in text  # the plate is explicit
+    # The plate is explicit, and the vendor start ran its Textured PEI branch.
+    start = json.loads((a1.pinned_templates() / "machine.json").read_text())["machine_start_gcode"]
+    plate_lines = textured_plate_patterns(start)
+    executed = [guard._code(line) for line in text.splitlines()]
+    assert "; curr_bed_type = Textured PEI Plate" in text and plate_lines
+    for code, pattern, _ in plate_lines:
+        assert any(pattern.fullmatch(line) for line in executed), code
     bounds = toolpath_bounds(text)
     print(f"A1 extruding toolpath bounds (mm): {bounds}")
     assert 0 <= bounds["X"][0] and bounds["X"][1] <= 256 and 0 <= bounds["Y"][0] and bounds["Y"][1] <= 256
@@ -90,7 +165,7 @@ def test_a1_production_slice_verifies_packages_and_never_starts(work):
     assert effective["printer_model"] == "Bambu Lab A1" and effective["curr_bed_type"] == "Textured PEI Plate"
 
 
-def test_a1_output_matches_the_proposed_baseline(work):
+def test_a1_output_matches_the_proposed_baseline(work, a1):
     """The proposal (not an approval) must describe what the supported slicer actually writes."""
     result = production_flow(work, write_cube(work / "cube.stl", 20))
     assert "error" not in result, result
@@ -109,8 +184,7 @@ def orca_cli(templates, stl, out):
     return result, out / "plate_1.gcode"
 
 
-def test_a1_oversized_model_is_never_accepted(work):
-    a1 = adapter_for("bambulab.a1")
+def test_a1_oversized_model_is_never_accepted(work, a1):
     bed = facts.A1["bed_mm"].value
     result, gcode = orca_cli(a1.templates_dir(), write_cube(work / "huge.stl", bed[0] + 10), work / "out")
     accepted = (result.returncode == 0 and gcode.is_file()
@@ -120,9 +194,9 @@ def test_a1_oversized_model_is_never_accepted(work):
     assert not accepted, "an oversized model produced A1 G-code the guards accepted"
 
 
-def test_ad5x_output_is_refused_by_the_a1_guard(work):
+def test_ad5x_output_is_refused_by_the_a1_guard(work, a1):
     ad5x = adapter_for("flashforge.ad5x")
     result, gcode = orca_cli(ad5x.templates_dir(), write_cube(work / "cube.stl", 20), work / "out")
     assert result.returncode == 0
-    found = " ".join(adapter_for("bambulab.a1").gcode_problems(gcode.read_text(errors="replace")))
+    found = " ".join(a1.gcode_problems(gcode.read_text(errors="replace")))
     assert "Klipper/ZMod code (START_PRINT" in found and "not 'Bambu Lab A1'" in found

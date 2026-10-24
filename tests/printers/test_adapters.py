@@ -6,9 +6,13 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 from print_buddy import printers, settings
+from print_buddy.printers.bambulab.a1 import A1Adapter
 from print_buddy.printers.base import BuildVolume, MultiColorUnsupported, PrinterAdapter
+
+from . import a1_fixture
 
 AD5X_ARTIFACTS = re.compile(
     r"SET_EXTRUDER_SLOT|\bIFS\b|zmod|ZMOD|CHANGE_ZCOLOR|display_off|LOAD_ZOFFSET|START_PRINT|MESH=|8898|AD5X|/detail",
@@ -22,7 +26,8 @@ BAMBU_A1 = "bambulab.a1"
 
 
 def config_for(family):
-    return settings.load(local=False, environ={"PRINT_BUDDY__PRINTER__MODEL": family})
+    return settings.load(local=False, environ={"PRINT_BUDDY__PRINTER__MODEL": family,
+                                               "PRINT_BUDDY__PATHS__HERMES_HOME": str(a1_fixture.HERMES)})
 
 
 def adapter_for(family):
@@ -30,11 +35,20 @@ def adapter_for(family):
 
 
 class ContractTests(unittest.TestCase):
+    def setUp(self):
+        # The A1 ships no templates: generate them from the invented fixture tree, trusted for this test only.
+        patcher = mock.patch.object(A1Adapter, "facts", a1_fixture.fixture_facts())
+        patcher.start()
+        self.addCleanup(patcher.stop)
+        a1_fixture.install(adapter_for(BAMBU_A1))
+
     def test_registry_finds_every_model_file(self):
         self.assertEqual(set(MODELS), {AD5X, GENERIC, SV06, OCTOPRINT, BAMBU_A1})
         for key, model in printers.MODELS.items():
             self.assertEqual(model.key, key)
-            self.assertTrue((settings.ROOT / "print_buddy" / "templates" / "orca" / model.templates).is_dir())
+            shipped = settings.ROOT / "print_buddy" / "templates" / "orca" / model.templates
+            # Generated templates (third-party profiles) are never shipped; every other model ships its own.
+            self.assertEqual(shipped.is_dir(), not model.generated_templates, key)
             self.assertTrue(issubclass(model.adapter, PrinterAdapter))
 
     def test_every_family_has_an_adapter(self):
@@ -62,7 +76,8 @@ class ContractTests(unittest.TestCase):
                 self.assertTrue(plan and all(isinstance(line, str) for line in plan))
                 if family == BAMBU_A1:
                     # Offline only: the vendor start runs first, and nothing live is available.
-                    self.assertTrue(plan[0].startswith(";===== machine: A1 "))
+                    machine = json.loads((a.pinned_templates() / "machine.json").read_text())
+                    self.assertEqual(plan, machine["machine_start_gcode"].splitlines())
                     self.assertRaises(Exception, a.machine_start_gcode, "X MESH=auto", "auto")
                     self.assertRaises(Exception, a.moonraker_start_commands, "part.gcode")
                     self.assertRaises(Exception, a.moonraker_objects)

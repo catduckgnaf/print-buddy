@@ -1,11 +1,21 @@
 """Offline checks that keep Klipper/ZMod start code and unsupported jobs away from Bambu hardware.
 
-Pure text checks: no printer, slicer or network. Used when templates are assembled, after slicing, and again
-before the operator is handed a file. Vendor-wide checks run for every Bambu Lab printer; the limits come from
-the printer profile (vendor.PrinterProfile).
+Pure text checks: no printer, slicer or network. Used when templates are assembled, after slicing, before a
+Bambu package is made, and at print-now. The limits come from the printer's adapter facts (facts.py).
+
+Trust model. A sliced file is untrusted. Its toolpath is held to the bed by a modal interpreter
+(slice_guard.toolpath_motion_problems). Its vendor start and end blocks run off the bed, so instead of bounds
+they are matched line by line, in order, against the pinned checked-in templates (vendor_block_problems):
+every executable line must be the next template line (placeholders match one token; only lines inside Orca
+{if} blocks may be skipped) or one of Orca's own non-motion preamble codes, and every unconditional template line
+must be present, so a vendor block cannot be edited, reordered, extended or cut short. A substring check for the vendor start marker alone is not start-sequence validation; it only
+names the printer. The pinned templates themselves are trusted because their vendor G-code is reproduced
+byte for byte from the pinned OrcaSlicer release (scripts/bambu-templates.py --check) and pinned by SHA-256 in
+the tests; an [orca] templates override is never the reference.
 """
 from __future__ import annotations
 
+import json
 import math
 import re
 
@@ -45,8 +55,87 @@ def _numbers(text, command):
     return [float(v) for v in re.findall(rf"^[ \t]*{command}\b[^;\n]*?\bS(-?\d+(?:\.\d+)?)", text, re.M)]
 
 
-def gcode_problems(text, profile, *, state=None, nozzle_sizes, nozzle_types):
-    """Reasons this sliced G-code must not be handed to the printer in profile; empty when it passes.
+# Codes Orca writes around the vendor blocks itself: progress, machine limits, modes, units, fan, spaghetti detector.
+# None of them moves an axis.
+ORCA_PREAMBLE = {"M73", "M201", "M203", "M204", "M205", "G90", "G21", "M82", "M83", "M106", "M107", "M981"}
+_CONTROL = re.compile(r"\{(?:if|elsif|else|endif)\b[^}]*\}")
+_PLACEHOLDER = re.compile(r"(\{[^{}]*\}|\[[^\[\]]*\])")
+
+
+def _code(line):
+    return re.sub(r"\s+", " ", line.split(";", 1)[0].strip())
+
+
+def template_patterns(*templates):
+    """(code, regex, required) per executable template line, in order. A placeholder matches one token.
+
+    Lines inside an Orca {if}/{else} block are optional (Orca keeps one branch); every other line is required.
+    """
+    out = []
+    for text in templates:
+        depth = 0
+        for line in text.splitlines():
+            pieces = re.split(r"(\{(?:if|elsif|else|endif)\b[^}]*\})", line)
+            for piece in pieces:
+                control = _CONTROL.fullmatch(piece)
+                if control:
+                    word = re.match(r"\{(\w+)", piece).group(1)
+                    depth += 1 if word == "if" else -1 if word == "endif" else 0
+                    continue
+                code = _code(piece)
+                if not code:
+                    continue
+                parts = [r"[^\s;{}\[\]]+" if _PLACEHOLDER.fullmatch(t) else re.escape(t) for t in _PLACEHOLDER.split(code)]
+                out.append((code, re.compile("".join(parts).replace(r"\ ", " ")), depth == 0))
+                if ";" in piece:
+                    break  # the rest of the line is a comment
+    return out
+
+
+def vendor_block_problems(block, patterns, what):
+    """Lines of block that break the pinned template: refused unless each executable line is, in order, the next
+    template line (skipping only optional, conditional ones) or one of Orca's own non-motion preamble codes, and
+    every required template line appears. A missing required line (a truncated or edited block) is refused.
+    """
+    problems, index = [], 0
+    for number, line in enumerate(block.splitlines(), 1):
+        code = _code(line)
+        if not code:
+            continue
+        k = index
+        while k < len(patterns):
+            if patterns[k][1].fullmatch(code):
+                break
+            if patterns[k][2]:
+                k = len(patterns)  # a required line cannot be skipped
+                break
+            k += 1
+        if k < len(patterns):
+            index = k + 1
+        elif code.split()[0].upper() not in ORCA_PREAMBLE:
+            expected = next((c for c, _, req in patterns[index:] if req), None)
+            problems.append(f"{what} line {number} is not in the pinned vendor template: {code[:60]}"
+                            + (f" (expected {expected[:40]!r})" if expected else ""))
+            if len(problems) == 3:
+                return problems
+    missing = [c for c, _, req in patterns[index:] if req]
+    if missing:
+        problems.append(f"{what} ends before the pinned vendor template does (truncated or edited?): "
+                        f"{len(missing)} required line(s) missing, first {missing[0][:60]!r}")
+    return problems
+
+
+def _templates(adapter):
+    root = adapter.pinned_templates()
+    machine = json.loads((root / "machine.json").read_text())
+    filament = json.loads((root / "filament.json").read_text())
+    first = lambda v: v[0] if isinstance(v, list) else v  # noqa: E731
+    return ((machine["machine_start_gcode"], first(filament.get("filament_start_gcode", ""))),
+            (first(filament.get("filament_end_gcode", "")), machine["machine_end_gcode"]))
+
+
+def gcode_problems(text, adapter, *, state=None):
+    """Reasons this sliced G-code must not be handed to the adapter's printer; empty when it passes.
 
     state, when given, is the printer hardware record: its nozzle, spool material and temperatures must match.
     """
@@ -54,28 +143,40 @@ def gcode_problems(text, profile, *, state=None, nozzle_sizes, nozzle_types):
     from ...core.nozzle import NozzleError, effective_nozzle_temperature, is_abrasive_material, normalize_nozzle_type
     from ...core.printer_state import material_family, same_material
 
+    fact = adapter.fact
+    nozzle_sizes, nozzle_types = adapter.supported_nozzle_sizes, adapter.supported_nozzle_types
     text = text or ""
     problems = []
     bad = foreign_commands(text)
     if bad:
         problems.append(f"G-code contains Klipper/ZMod code ({', '.join(bad[:5])}); never sent to a Bambu Lab printer")
-    name = profile.printer_model
+    name = fact("printer_model")
     model = _config(text, "printer_model")
     if model != name:
         problems.append(f"G-code was sliced for printer_model {model!r}, not {name!r}")
-    if profile.vendor_start not in text:
-        problems.append(f"G-code does not start with the {name} vendor start sequence")
-    body = slice_guard.toolpath(text)
-    if body is None:
+    if not re.search(r"^; generated by OrcaSlicer ", text, re.M):
+        problems.append(f"only OrcaSlicer output is verified for the {name}; Bambu Studio and other slicers are refused")
+    split = slice_guard.split_toolpath(text)
+    if split is None:
         problems.append("cannot locate the OrcaSlicer toolpath (no layer change or end G-code marker); "
                         "bounds cannot be checked")
     else:
+        prelude, body, epilogue = split
+        if fact("vendor_start") not in prelude:
+            problems.append(f"G-code does not start with the {name} vendor start sequence")
+        start, end = _templates(adapter)
+        problems += vendor_block_problems(prelude, template_patterns(*start), "start G-code")
+        problems += vendor_block_problems(epilogue, template_patterns(*end), "end G-code")
         tools = sorted({int(n) for n in re.findall(r"^[ \t]*T(\d+)\b", body, re.M)} - {0})
-        if tools and not profile.capabilities["ams_multicolor"]:
-            problems.append(f"G-code changes to tools {tools}; {profile.value('ams')[0]} multi-color is not supported")
-        bed, height = profile.value("bed_mm"), profile.value("max_print_height_mm")
-        problems += slice_guard.body_motion_problems(body, bed, profile.value("motion_envelope_mm"), height)
-    hotend_max, bed_max = profile.value("max_hotend_c"), profile.value("max_bed_c")
+        if tools:
+            problems.append(f"G-code changes to tools {tools}; {fact('ams')[0]} multi-color is not supported")
+        plate = re.search(r"^;curr_bed_type=(.*)$", prelude, re.M)
+        if plate is None or plate.group(1).strip() != fact("default_plate"):
+            problems.append(f"plate type must be {fact('default_plate')!r} (the only plate the {name} profile "
+                            f"is checked for), got {plate.group(1).strip() if plate else None!r}")
+        problems += slice_guard.toolpath_motion_problems(text, fact("bed_mm"), fact("motion_envelope_mm"),
+                                                         fact("max_print_height_mm"), fact("travel_z_headroom_mm"))
+    hotend_max, bed_max = fact("max_hotend_c"), fact("max_bed_c")
     for command, limit in (("M104", hotend_max), ("M109", hotend_max), ("M140", bed_max), ("M190", bed_max)):
         over = [v for v in _numbers(text, command) if v > limit]
         if over:
@@ -101,7 +202,7 @@ def gcode_problems(text, profile, *, state=None, nozzle_sizes, nozzle_types):
         problems.append(f"G-code must name exactly one filament_type, got {material!r}")
     else:
         family = material_family(material)
-        if family.split("-", 1)[0] in profile.value("not_recommended_materials"):
+        if family.split("-", 1)[0] in fact("not_recommended_materials"):
             problems.append(f"{material} is not recommended by Bambu Lab for the {name}; refused")
         if is_abrasive_material(material) and nozzle_type != "hardened_steel":
             problems.append(f"{material} is abrasive; the {name} needs a hardened steel nozzle for it")

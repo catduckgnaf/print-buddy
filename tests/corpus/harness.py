@@ -283,14 +283,23 @@ def _stub_print_now(folder):
     return stub
 
 
-def run_case(case, work, *, real_slicer=False, state_file=FIXTURE_STATE, in_gateway_env=False):
+def run_case(case, work, *, real_slicer=False, state_file=FIXTURE_STATE, in_gateway_env=False, transport="hermes"):
     """Run the case end to end and return what happened. `work` is a fresh directory.
 
     Everything the flow writes (archive, receipts, claims) goes under `work`, except state in
     in_gateway_env mode, where settings, printer_state and the plugin's state dir come from the process
     environment exactly as the gateway sees them.
+
+    transport="hermes" calls the plugin hook the way the gateway does, with the FakeAdapter.
+    transport="standalone" posts the file to the standalone bot (print_buddy.bot) on a fake discord.py
+    client: real adapter, real buttons, clicks resolved through the core prompt registry.
     """
-    install_clarify_stand_in()
+    if transport not in ("hermes", "standalone"):
+        raise ValueError(f"unknown transport {transport!r}")
+    if transport == "standalone" and in_gateway_env:
+        raise ValueError("the gateway environment check is Hermes only")
+    if transport == "hermes":
+        install_clarify_stand_in()
     from print_buddy.core import background_slice, model_job, orca_adapter, prepared_intake, printer_state, source_colors
     from print_buddy.hermes import _config, print_next, print_records
 
@@ -361,12 +370,15 @@ def run_case(case, work, *, real_slicer=False, state_file=FIXTURE_STATE, in_gate
                   model_capacity(orca_adapter._multi_plate_capacity, orca_adapter.source_triangles,
                                  orca_adapter._source_plate_count))
         plugin = load_plugin()
-        gateway = S(_is_user_authorized_for_source=lambda s: True, _session_key_for_source=lambda s: "corpus-session",
-                    _delivery_adapter_for=lambda s: adapter)
-        event = drop_event(model_copy, case.name)
-        if in_gateway_env:
-            plugin._deliver_receipt = _noop_receipt
-        outcome = asyncio.run(plugin.model_link_dispatch(event, gateway))
+        if transport == "standalone":
+            adapter, outcome = _run_standalone(case, work, model_copy, plugin, events, patch)
+        else:
+            gateway = S(_is_user_authorized_for_source=lambda s: True, _session_key_for_source=lambda s: "corpus-session",
+                        _delivery_adapter_for=lambda s: adapter)
+            event = drop_event(model_copy, case.name)
+            if in_gateway_env:
+                plugin._deliver_receipt = _noop_receipt
+            outcome = asyncio.run(plugin.model_link_dispatch(event, gateway))
         state_root = plugin._state_dir()
         receipts = sorted((state_root / "model-link-intakes").glob("*.json"))
         receipt = json.loads(receipts[-1].read_text()) if receipts else {}
@@ -379,6 +391,37 @@ def run_case(case, work, *, real_slicer=False, state_file=FIXTURE_STATE, in_gate
 
 async def _noop_receipt(*args, **kwargs):
     return None
+
+
+def _run_standalone(case, work, model, plugin, events, patch):
+    """Drop the model in a fake Discord channel and let the standalone bot handle the message."""
+    import copy
+    from print_buddy.bot.router import Router
+    from print_buddy.bot.runtime import BotCore
+    from print_buddy.core import prepared_intake, prompts
+    from print_buddy.hermes import _config
+    from . import fake_discord
+
+    discord = fake_discord.FakeDiscord(case.clicks, events=events)
+    cfg = copy.deepcopy(_config.cfg())
+    cfg["bot"]["mode"] = "standalone"
+    cfg["discord"].update(chat_id=str(discord.channel.id), allowed_user_ids=str(discord.operator.id),
+                          approval_user_id="")
+    cfg["paths"]["cache"] = Path(work) / "cache"
+    cfg["llm"].update(chat_url="", model="")
+    # Both are process globals the bot sets; restore them so later Hermes-path tests see the defaults.
+    patch(prepared_intake, "STOP_SENDER", None)
+    patch(prompts, "_active", False)
+    core = BotCore(discord.client, cfg, router=Router(plugin))
+    message = discord.message(attachments=[fake_discord.FakeAttachment(model, f"{case.name}{Path(model).suffix.lower()}")])
+
+    async def go():
+        outcome = await core.handle_message(message)
+        if discord.pending:
+            await asyncio.gather(*discord.pending)
+        return outcome
+
+    return discord, asyncio.run(go())
 
 
 # ----------------------------------------------------------------------------- inspecting a run
@@ -432,6 +475,8 @@ def check_expectations(case, run):
     """Assert the case's [expect] table. Returns nothing; raises AssertionError with the difference."""
     want = case.expect
     receipt = run.receipt
+    assert not getattr(run.adapter, "unanswered", None), "\n".join(run.adapter.unanswered)
+    assert not getattr(run.adapter, "errors", None), run.adapter.errors
     assert receipt.get("status") == want.get("status", "STARTED"), (
         f"receipt status {receipt.get('status')!r}: {receipt.get('error')}\n{_transcript(run)}")
     if "parts" in want:

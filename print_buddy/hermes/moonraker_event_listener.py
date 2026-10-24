@@ -28,7 +28,7 @@ from pathlib import Path
 
 import websockets
 
-from .. import printers
+from .. import healthcheck, printers
 from . import _config
 from . import moonraker_discord_announcements as announcer
 from . import discord_print_summary as print_summary
@@ -61,6 +61,8 @@ def post(message):
     if target == "discord:":
         log("post skipped: discord.chat_id is not configured")
         return False
+    if _config.standalone():
+        return _post_rest(message)
     try:
         result = subprocess.run(
             [HERMES_BIN, "-p", "3dprinting", "send", "--quiet", "--to", target, message],
@@ -73,11 +75,20 @@ def post(message):
         return False
 
 
+def _post_rest(message):
+    """Standalone mode: Discord REST with the bot token. Works with no gateway connected."""
+    from print_buddy.bot import rest
+    ok, detail = rest.send(_bot_token(), announcer.DISCORD_CHAT_ID, message)
+    log(f"post rest target={DISCORD_TARGET} ok={ok} {message.splitlines()[0][:120] if message else ''!r}"
+        f"{'' if ok else ' ' + str(detail)[:200]}")
+    return ok
+
+
 def post_alert(message, kind, filename):
     """Post with Resume/Cancel buttons; fall back to plain text if Discord refuses."""
     try:
         from . import print_alert_buttons as pab
-        if pab.post_with_buttons(_profile_env_value("DISCORD_BOT_TOKEN"), announcer.DISCORD_CHAT_ID,
+        if pab.post_with_buttons(_bot_token(), announcer.DISCORD_CHAT_ID,
                                  message, kind, filename):
             log(f"post buttons kind={kind} {message.splitlines()[0][:120]!r}")
             return True
@@ -98,7 +109,7 @@ def post_plate_picker(plan_id):
         if not parts:
             return False
         options = [{"label": print_next.plate_choice_label(part), "value": str(part["id"])} for part in parts]
-        if pab.post_plate_picker(_profile_env_value("DISCORD_BOT_TOKEN"), announcer.DISCORD_CHAT_ID,
+        if pab.post_plate_picker(_bot_token(), announcer.DISCORD_CHAT_ID,
                                  "Which plate is next? Clear the bed, then choose a plate.", plan_id, options):
             log(f"post plate picker plan={plan_id} plates={len(options)}")
             return True
@@ -113,7 +124,7 @@ def post_insertion_confirmation(slot):
     try:
         from . import print_alert_buttons as pab
         text = insertion_confirmation_text(slot)
-        if pab.post_insertion_confirmation(_profile_env_value("DISCORD_BOT_TOKEN"), announcer.DISCORD_CHAT_ID,
+        if pab.post_insertion_confirmation(_bot_token(), announcer.DISCORD_CHAT_ID,
                                            text, slot):
             log(f"post insertion confirmation slot={slot}")
             return True
@@ -131,7 +142,7 @@ def post_spool_question(record, nag=False):
         if nag and not previous:
             log("spool question nag skipped: no Discord message id to refresh")
             return False
-        message_id = pab.post_spool_question(_profile_env_value("DISCORD_BOT_TOKEN"), announcer.DISCORD_CHAT_ID,
+        message_id = pab.post_spool_question(_bot_token(), announcer.DISCORD_CHAT_ID,
                                              spool_question_text(record, nag=nag), record, previous or None)
         if message_id:
             record["discord_message_id"] = message_id
@@ -206,6 +217,11 @@ def post_shutdown_alert(filename):
 def _profile_env_value(name):
     """Read one profile env value. The listener unit loads no EnvironmentFile."""
     return _config.profile_env_value(name)
+
+
+def _bot_token():
+    """The Discord bot token, from the variable [discord] token_env names (DISCORD_BOT_TOKEN by default)."""
+    return _profile_env_value(str(_config.cfg()["discord"].get("token_env") or "DISCORD_BOT_TOKEN"))
 
 
 def generate_roast(title, summary=""):
@@ -909,7 +925,7 @@ def announce_warmup_done(filename):
     if message_id:
         try:
             from . import print_alert_buttons as pab
-            if pab.edit_message(_profile_env_value("DISCORD_BOT_TOKEN"), announcer.DISCORD_CHAT_ID,
+            if pab.edit_message(_bot_token(), announcer.DISCORD_CHAT_ID,
                                 message_id, text):
                 log(f"start message edited id={message_id} file={filename!r}")
                 return True
@@ -1068,7 +1084,7 @@ def _visual_alert(filename, image, reason):
     text = f"Print camera check: {clean(filename)}\n{reason}"
     try:
         from . import print_alert_buttons as pab
-        if pab.post_visual_alert(_profile_env_value("DISCORD_BOT_TOKEN"), announcer.DISCORD_CHAT_ID,
+        if pab.post_visual_alert(_bot_token(), announcer.DISCORD_CHAT_ID,
                                  text, filename, path):
             log(f"post visual alert {clean(filename)!r}")
             return path
@@ -1540,6 +1556,7 @@ class Listener:
         self.ifs_monitor.stable_counts = {}
         self.ifs_monitor.transition_from = {}
         async with websockets.connect(WS_URL, ping_interval=20, ping_timeout=20, max_size=2**22) as ws:
+            self.moonraker_connected = True
             await ws.send(SUBSCRIBE)
             last_tick = time.monotonic()
             while True:
@@ -1592,15 +1609,34 @@ class Listener:
                     last_tick = time.monotonic()
                     await asyncio.to_thread(run_announcer, "tick")
 
-    async def forever(self):
-        delay = 5
+    async def heartbeat(self):
+        """Adapted from contributor Docker commit 3bb0984; no printer probe."""
         while True:
             try:
-                await self.session()
+                await asyncio.to_thread(healthcheck.beat,
+                                        moonraker_connected=self.moonraker_connected,
+                                        state=self.state)
             except Exception as exc:
-                log(f"connection lost: {exc!r}; retry in {delay}s")
-            await asyncio.sleep(delay)
-            delay = min(delay * 2, 120)
+                log(f"heartbeat write failed: {exc!r}")
+            await asyncio.sleep(healthcheck.HEARTBEAT_S)
+
+    async def forever(self):
+        delay = 5
+        self.moonraker_connected = False
+        beating = asyncio.create_task(self.heartbeat())
+        try:
+            while True:
+                try:
+                    await self.session()
+                except Exception as exc:
+                    log(f"connection lost: {exc!r}; retry in {delay}s")
+                finally:
+                    self.moonraker_connected = False
+                await asyncio.sleep(delay)
+                delay = min(delay * 2, 120)
+        finally:
+            beating.cancel()
+            await asyncio.gather(beating, return_exceptions=True)
 
 
 def main():

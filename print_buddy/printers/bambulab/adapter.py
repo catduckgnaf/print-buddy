@@ -1,8 +1,9 @@
 """Bambu Lab printers, offline only: Orca slicing and G-code validation, no transport to the printer.
 
-One adapter for the vendor; each printer subclasses it with its PrinterProfile (see a1.py). Deliberately imports
-nothing from the ZMod/AD5X code and has no Moonraker, MQTT, FTPS or cloud client. Every live call raises
-LiveUnsupported; the operator moves a verified file to the printer by hand.
+VENDOR (bambulab/__init__.py) is the authority for connection ("offline"), start code, slicers and delivery.
+This adapter only answers the PrinterAdapter contract for an offline printer: every live call raises
+LiveUnsupported, and gcode_problems runs the printer's guard. Each printer subclasses it with its facts
+(see a1.py). Deliberately imports nothing from the ZMod/AD5X code and has no Moonraker, MQTT, FTPS or cloud client.
 """
 import json
 
@@ -16,12 +17,13 @@ class LiveUnsupported(RuntimeError):
 
 class BambuOfflineAdapter(PrinterAdapter):
     multi_slot = False
-    transport = "offline"
-    profile = None  # the printer's vendor.PrinterProfile, set by each printer's subclass
+    facts: dict = {}  # the printer's sourced facts (facts.py), set by each printer's subclass
+    # Slicers whose output has been checked against this printer's guard. Bambu Studio is allowed by VENDOR but
+    # its A1 output has not been verified, so it is refused as primary and as fallback.
+    verified_slicers = ("orca",)
 
-    @property
-    def capabilities(self):
-        return self.profile.capabilities
+    def fact(self, name):
+        return self.facts[name].value
 
     @property
     def slot_count(self):
@@ -29,7 +31,7 @@ class BambuOfflineAdapter(PrinterAdapter):
 
     @property
     def motion_envelope_mm(self):
-        return self.profile.value("motion_envelope_mm")
+        return self.fact("motion_envelope_mm")
 
     def _unsupported(self, what):
         return LiveUnsupported(f"{self.label}: {what} is not supported; Print Buddy only slices and validates "
@@ -37,8 +39,8 @@ class BambuOfflineAdapter(PrinterAdapter):
 
     # slicer: the vendor start/end G-code is used as is; Print Buddy adds and changes nothing.
     def machine_start_gcode(self, template_start, mesh="auto"):
-        if self.profile.vendor_start not in template_start:
-            raise guard.ForeignStartCode(f"{self.label} start G-code is not the {self.profile.printer_model} vendor "
+        if self.fact("vendor_start") not in template_start:
+            raise guard.ForeignStartCode(f"{self.label} start G-code is not the {self.fact('printer_model')} vendor "
                                          "sequence; check [orca] templates")
         return guard.require_bambu_code(template_start, f"{self.label} start G-code")
 
@@ -50,9 +52,13 @@ class BambuOfflineAdapter(PrinterAdapter):
         machine = json.loads((self.templates_dir() / "machine.json").read_text())
         return self.machine_start_gcode(machine["machine_start_gcode"]).splitlines()
 
+    def pinned_templates(self):
+        """The checked-in vendor templates for this model. An [orca] templates override is never the reference."""
+        from ... import settings
+        return settings.ROOT / "print_buddy" / "templates" / "orca" / self.model.templates
+
     def gcode_problems(self, text, state=None):
-        return guard.gcode_problems(text, self.profile, state=state, nozzle_sizes=self.supported_nozzle_sizes,
-                                    nozzle_types=self.supported_nozzle_types)
+        return guard.gcode_problems(text, self, state=state)
 
     def moonraker_start_commands(self, remote_filename):
         raise self._unsupported("starting a print")
@@ -61,7 +67,7 @@ class BambuOfflineAdapter(PrinterAdapter):
         tools = {str(k) for k in (mapping or {"0": 1})}
         if tools != {"0"}:
             raise MultiColorUnsupported(
-                f"{self.label}: {self.profile.value('ams')[0]} multi-color is not supported yet; this job uses tools "
+                f"{self.label}: {self.fact('ams')[0]} multi-color is not supported; this job uses tools "
                 f"{sorted(tools)}. Slice it single-color.")
         return {"0": 1}
 
@@ -69,7 +75,7 @@ class BambuOfflineAdapter(PrinterAdapter):
         """Offline record checks only. There is no live status to read."""
         problems = []
         state = state or {}
-        bed, height = self.profile.value("bed_mm"), self.profile.value("max_print_height_mm")
+        bed, height = self.fact("bed_mm"), self.fact("max_print_height_mm")
         record_bed = state.get("bed_mm", bed)
         if any(float(v) > limit for v, limit in zip(record_bed, bed)):
             problems.append(f"recorded bed {record_bed[0]:g}x{record_bed[1]:g} mm exceeds the {self.label} "

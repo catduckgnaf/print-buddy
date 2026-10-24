@@ -213,6 +213,8 @@ def silently_reset_discord_session(chat_id, session_id=None, reason="print_compl
     the old single-match discovery refused whenever two users had sessions, so the
     completion reset never fired.
     """
+    if _config.standalone():
+        return False, "standalone mode: no agent session"
     try:
         ids = [session_id] if session_id else [r["id"] for r in _live_channel_sessions(chat_id)]
         if not ids:
@@ -243,6 +245,9 @@ def _open_multipart_plans():
 def check_and_reset_idle_discord_session(armed_at=None, chat_id=DISCORD_CHAT_ID,
                                         quiet_seconds=DISCORD_POST_PRINT_QUIET_SECONDS):
     """Post-print quiet reset plus 4 AM backup. Returns (changed, detail, disarm)."""
+    if _config.standalone():
+        # The standalone bot keeps no agent conversation, so there is no session to reset.
+        return False, "standalone mode: no agent session", True
     queued = _queued_jobs()
     if queued is None:
         return False, "queue check failed", False
@@ -718,6 +723,10 @@ def queue_completion_record(previous, job_key, filename, stats):
 
 def process_pending_cleanups(state, now=None):
     """Archive only verified channel sessions after the five-minute delay."""
+    if _config.standalone():
+        # No agent sessions exist to archive; never open (and so create) a Hermes state.db.
+        state["pending_cleanups"] = []
+        return state
     now = time.time() if now is None else now
     pending = state.get("pending_cleanups")
     if not isinstance(pending, list):

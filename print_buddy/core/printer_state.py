@@ -260,9 +260,9 @@ def check(st=None):
             probs.append(str(exc))
         # Nozzle/calibration and loaded spool are operator records on Marlin.
         return (not probs), probs, facts
-    if adapter.transport == 'offline':
-        # No printer connection (bambulab.a1): the hardware record and Spoolman only, never Moonraker.
-        facts["transport"] = "offline"
+    if adapter.connection == 'offline':
+        # No printer connection (Bambu Lab): the hardware record and Spoolman only, never Moonraker.
+        facts["connection"] = "offline"
         probs.extend(adapter.readiness_problems(st, {}))
         _check_spoolman(st, probs, facts)
         return (not probs), probs, facts

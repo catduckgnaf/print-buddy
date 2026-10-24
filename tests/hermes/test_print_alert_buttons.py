@@ -15,7 +15,7 @@ def test_explain_nozzle_collision_live_text():
 
 def test_explain_old_format_and_unknown_and_empty():
     assert "1512 g" in pab.explain("Nozzle hit the model or bed! Weight 1512 > 1500; Extruder Off!")
-    assert pab.explain("MCU 'mcu' shutdown: Timer too close\nmore") == "Klipper says: MCU 'mcu' shutdown: Timer too close"
+    assert pab.explain("MCU 'mcu' shutdown: Timer too close\nmore") == "ZMod Klipper says: MCU 'mcu' shutdown: Timer too close"
     assert "didn't say why" in pab.explain("")
 
 
@@ -169,6 +169,21 @@ def test_clear_shutdown_reports_timeout_without_retry():
     ok, msg = pab.clear_shutdown(wait_s=0.05, poll_s=0.01, caller=lambda *a, **k: calls.append(a),
                                  reader=lambda: {"klippy": "shutdown"})
     assert not ok and len(calls) == 1 and "Not retrying" in msg
+
+
+def test_clear_shutdown_uses_non_klipper_profile_firmware_name(monkeypatch):
+    from print_buddy import printers, settings
+
+    config = settings.load(home=settings.HOME, local=False,
+                           environ={"PRINT_BUDDY__PRINTER__MODEL": "bambulab.a1"})
+    profile = printers.current(config)
+    monkeypatch.setattr(printers, "current", lambda: profile)
+    ok, message = pab.clear_shutdown(wait_s=0.05, poll_s=0.001, caller=lambda *a, **k: None,
+                                     reader=lambda: {"klippy": "ready"})
+
+    assert ok
+    assert "Bambu Lab (offline handoff only)" in message
+    assert "Klipper" not in message
 
 
 def test_listener_shutdown_text_has_reason():

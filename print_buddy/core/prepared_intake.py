@@ -6,6 +6,7 @@ import contextlib
 import contextvars
 import hashlib
 import json
+import logging
 import re
 from pathlib import Path
 import sys
@@ -13,7 +14,7 @@ import time
 from types import SimpleNamespace
 from urllib.parse import urlsplit
 
-from .. import printers, settings
+from .. import logs, printers, settings
 from . import _external, delivery, split_fit
 
 BED = settings.current()['printer']['bed_mm']
@@ -31,6 +32,8 @@ _OFFLOAD = {('model_job', 'audit'), ('model_job', 'slice_job'), ('source_colors'
             ('geometry_layout', 'inspect_geometry'), ('geometry_layout', 'arrange_and_export'),
             ('geometry_layout', 'probe_single_plate_rearrange')}
 
+
+logger = logging.getLogger(__name__)
 
 STOP_LABEL = "Stop"
 STOP_CUSTOM_ID = "pbstop:"
@@ -671,6 +674,8 @@ async def prepare_link(event, adapter, state, root, timeout=None, reuse=None):
     key = 'model-link:' + iid
     event_metadata = getattr(event, 'metadata', None) or {}
     live_token = _LIVE_KEY.set(event_metadata.get('live_session_key') or key)
+    log_token = logs.bind(intake=iid)
+    logger.info('intake started origin=%s', logs.redact(str(origin)))
     metadata = {'thread_id': source.thread_id} if source.thread_id else None
     jp = None
     try:
@@ -844,6 +849,7 @@ async def prepare_link(event, adapter, state, root, timeout=None, reuse=None):
             capacity = await _with_stop(adapter, source, key, metadata, "Checking whether it fits the bed. Press Stop to cancel.",
                                         _heavy(orca_adapter.orca_plate_capacity, path, state))
         except Exception as exc:
+            logger.exception('fit check failed; intake is resumable')
             receipt['status'] = 'FIT_UNKNOWN'
             receipt['fit_error'] = str(exc)
             receipt_path.write_text(json.dumps(receipt, indent=2) + '\n')
@@ -1134,6 +1140,7 @@ async def prepare_link(event, adapter, state, root, timeout=None, reuse=None):
                 or slice_binding(latest, decisions['source_sha256']) != binding):
             await early.discard()  # the slice was for decisions that no longer match
             raise ValueError('source/job changed before slice approval; no handoff')
+        logger.info('slice approved')
         receipt.update(status='SLICE_APPROVED', slice_attempt=1,
                        slice_approval={'intake_id': iid, 'source_sha256': decisions['source_sha256'],
                                        'decisions_sha256': mj.decisions_digest(validated), 'attempt': 1})
@@ -1163,6 +1170,7 @@ async def prepare_link(event, adapter, state, root, timeout=None, reuse=None):
                     out = await _with_stop(adapter, source, key, metadata, "Slicing. Press Stop to cancel.",
                                            _heavy(mj.slice_job, str(jp)))
         except Exception as slice_error:
+            logger.exception('slice failed')
             # A failed attempt has no reusable slice approval or G-code. Retry is a
             # separate button action, and its output still needs a fresh start button.
             await early.discard()
@@ -1202,6 +1210,7 @@ async def prepare_link(event, adapter, state, root, timeout=None, reuse=None):
                     out = await _with_stop(adapter, source, key, metadata, "Retrying the slice. Press Stop to cancel.",
                                            _heavy(mj.slice_job, str(jp)))
             except Exception as retry_error:
+                logger.exception('slice retry failed')
                 await early.discard()
                 receipt.update(status='SLICE_FAILED', sliced=False, uploaded=False, started=False,
                                slice_error=str(retry_error))
@@ -1334,6 +1343,7 @@ async def prepare_link(event, adapter, state, root, timeout=None, reuse=None):
                 pass  # the listener then posts a short distinct follow-up instead of editing
         return {'action': 'skip', 'reason': 'sliced and start handled by button flow'}
     except (IntakeCancelled, Stopped) as exc:
+        logger.warning('intake stopped by operator: %s', type(exc).__name__)
         uncertain_start = isinstance(exc, Stopped) and exc.uncertain
         if jp is not None and not uncertain_start:
             with contextlib.suppress(Exception):
@@ -1351,6 +1361,7 @@ async def prepare_link(event, adapter, state, root, timeout=None, reuse=None):
         await adapter.send(chat_id=source.chat_id, content=message, metadata=metadata)
         return {'action': 'skip', 'reason': reason}
     except IntakeExpired:
+        logger.warning('intake question expired')
         # The receipt and JOB.json written before this question stay on disk. Resume
         # re-reads them instead of asking for the link again.
         receipt.update(status='EXPIRED', sliced=False, uploaded=False, started=False)
@@ -1384,6 +1395,7 @@ async def prepare_link(event, adapter, state, root, timeout=None, reuse=None):
                            metadata=metadata)
         return {'action': 'skip', 'reason': 'expired before a choice'}
     except Exception as exc:
+        logger.exception('intake failed')
         receipt.update(status='FAILED', error=str(exc))
         receipt_path.write_text(json.dumps(receipt, indent=2) + '\n')
         await adapter.send(chat_id=source.chat_id, content=f'New model preparation stopped: {exc}. Nothing sliced, uploaded or started.', metadata=metadata)
@@ -1392,3 +1404,4 @@ async def prepare_link(event, adapter, state, root, timeout=None, reuse=None):
         if jp is not None:
             drop_runner(jp)
         _LIVE_KEY.reset(live_token)
+        logs.unbind(log_token)

@@ -1608,6 +1608,15 @@ def fit_options(source: Path, state: dict, brim_override=None) -> dict:
     result = {'scales': scales, 'rotations': rotations,
               'brim_policy': policy if scales and scales[0] < 0.97 else None,
               'fit_search_deferred': bool(source.suffix.lower() == '.3mf' and _source_plate_count(source) > 1)}
+    try:
+        from .geometry_layout import probe_single_plate_rearrange
+        bed = tuple(state.get('bed_mm') or BED)
+        max_h = float(state.get('max_print_height_mm', MAX_HEIGHT_MM))
+        rearrange = probe_single_plate_rearrange(source, bed=(float(bed[0]), float(bed[1]), max_h))
+        if rearrange is not None:
+            result['rearrange_100'] = rearrange
+    except Exception:
+        pass
     if source.suffix.lower() == '.3mf':
         try:
             from . import color_geometry

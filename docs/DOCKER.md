@@ -3,6 +3,12 @@
 This is an unreleased candidate, not a supported image or deployment approval.
 Do not use production credentials or a live printer to validate this draft.
 
+## Base image
+
+Both stages use `debian:13-slim` (Debian 13 "trixie", Python 3.13). It has no stock UID 1000
+user, so the runtime user `buddy` takes UID 1000 directly. Not yet built on Debian: the first
+`docker-image-validation` run is the acceptance check.
+
 ## Build dimensions
 
 The same Dockerfile supports two application channels, each running either the

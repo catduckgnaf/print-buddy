@@ -1,7 +1,7 @@
 # syntax=docker/dockerfile:1
 # Source-build variant replacing the reviewed zaheria985 Docker contribution's
 # binary download approach. See docs/DOCKER-117-PROGRESS.md for attribution.
-FROM ubuntu:24.04 AS orca-build
+FROM debian:13-slim AS orca-build
 ARG WITH_ORCA=false
 ARG ORCA_CHANNEL=stable
 ARG ORCA_STABLE_REF=8500fcdccaa10b5099ac20d252af3a7c560046f1
@@ -64,7 +64,7 @@ RUN --mount=type=cache,id=print-buddy-orca-${TARGETARCH}-${ORCA_CHANNEL}-${ORCA_
       ccache --show-stats; \
     fi
 
-FROM ubuntu:24.04 AS runtime
+FROM debian:13-slim AS runtime
 ENV DEBIAN_FRONTEND=noninteractive PYTHONUNBUFFERED=1 \
     PATH=/opt/venv/bin:$PATH
 RUN apt-get update && apt-get install -y --no-install-recommends \
@@ -73,8 +73,6 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libgtk-3-0t64 libglew2.2 libsecret-1-0 libspnav0 libgstreamerd-3-0 \
     fonts-liberation && rm -rf /var/lib/apt/lists/* && \
     python3 -m venv /opt/venv && \
-    # ubuntu:24.04 ships an `ubuntu` user with UID 1000; free the UID for buddy.
-    if id -u ubuntu >/dev/null 2>&1; then userdel --remove ubuntu; fi && \
     useradd --uid 1000 --create-home buddy
 COPY --from=orca-build /out/ /
 ARG APP_CHANNEL=development

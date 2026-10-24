@@ -99,7 +99,7 @@ def test_application_and_slicer_channels_are_independent_build_arguments():
     assert 'case "$ORCA_CHANNEL" in stable|alpha)' in text
     assert 'case "$ORCA_CHANNEL" in stable) ref="$ORCA_STABLE_REF"' in text
     assert 'org.print-buddy.app-channel=$APP_CHANNEL' in text
-    assert '$APP_CHANNEL' not in text.split('FROM ubuntu:24.04 AS runtime')[0]
+    assert '$APP_CHANNEL' not in text.split('FROM debian:13-slim AS runtime')[0]
 
 
 def test_optional_octoprint_and_nozzle_settings_file_environment_parity(tmp_path):

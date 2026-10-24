@@ -8,7 +8,7 @@ LiveUnsupported, and gcode_problems runs the printer's guard. Each printer subcl
 import json
 
 from ..base import MultiColorUnsupported, PrinterAdapter
-from . import guard
+from . import guard, profiles
 
 
 class LiveUnsupported(RuntimeError):
@@ -37,25 +37,41 @@ class BambuOfflineAdapter(PrinterAdapter):
         return LiveUnsupported(f"{self.label}: {what} is not supported; Print Buddy only slices and validates "
                                "G-code for this printer. Nothing was sent.")
 
-    # slicer: the vendor start/end G-code is used as is; Print Buddy adds and changes nothing.
+    # slicer: the vendor start/end G-code is used as is; Print Buddy adds and changes nothing. The only accepted
+    # start and end are the ones in the verified generated profiles (profiles.py), so an [orca] templates
+    # override with other vendor code is refused before Orca runs.
+    def _vendor_gcode(self, key):
+        return json.loads((self.pinned_templates() / "machine.json").read_text())[key]
+
     def machine_start_gcode(self, template_start, mesh="auto"):
-        if self.fact("vendor_start") not in template_start:
+        guard.require_bambu_code(template_start, f"{self.label} start G-code")
+        if template_start != self._vendor_gcode("machine_start_gcode"):
             raise guard.ForeignStartCode(f"{self.label} start G-code is not the {self.fact('printer_model')} vendor "
-                                         "sequence; check [orca] templates")
-        return guard.require_bambu_code(template_start, f"{self.label} start G-code")
+                                         "sequence from the verified profiles; check [orca] templates")
+        return template_start
 
     def machine_end_gcode(self, template_end):
-        return guard.require_bambu_code(template_end, f"{self.label} end G-code")
+        guard.require_bambu_code(template_end, f"{self.label} end G-code")
+        if template_end != self._vendor_gcode("machine_end_gcode"):
+            raise guard.ForeignStartCode(f"{self.label} end G-code is not the {self.fact('printer_model')} vendor "
+                                         "sequence from the verified profiles; check [orca] templates")
+        return template_end
 
     def start_plan(self, bed_temp, nozzle_temp, *, mesh="auto"):
         # Orca fills the vendor placeholders; these are the template lines the printer runs first.
-        machine = json.loads((self.templates_dir() / "machine.json").read_text())
-        return self.machine_start_gcode(machine["machine_start_gcode"]).splitlines()
+        return self._vendor_gcode("machine_start_gcode").splitlines()
+
+    def pinned_templates_folder(self):
+        """Where this model's profiles are generated: <state>/orca-profiles/<templates>, never the repository."""
+        from ... import settings
+        return settings.generated_templates_dir(self.model, self.config)
 
     def pinned_templates(self):
-        """The checked-in vendor templates for this model. An [orca] templates override is never the reference."""
-        from ... import settings
-        return settings.ROOT / "print_buddy" / "templates" / "orca" / self.model.templates
+        """The verified generated templates (profiles.require); an [orca] templates override is never the reference.
+
+        Raises profiles.ProfileError when they are missing, edited or not a checked OrcaSlicer version.
+        """
+        return profiles.require(self)
 
     def gcode_problems(self, text, state=None):
         return guard.gcode_problems(text, self, state=state)

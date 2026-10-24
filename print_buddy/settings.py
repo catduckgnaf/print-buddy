@@ -370,6 +370,8 @@ def validate(data):
     _validate_bot(data)
     _validate_logging(data)
     templates = data.get("orca", {}).get("templates")
+    if templates == "" and model.generated_templates:
+        templates = str(generated_templates_dir(model, data))
     if not isinstance(templates, str) or not templates:
         raise SettingsError("[orca] templates must be a folder path")
     path = Path(templates).expanduser()
@@ -422,6 +424,11 @@ def current():
 def state_dir(data=None):
     """Where runtime state files live: <hermes_home>/state."""
     return (data or current())["paths"]["hermes_home"] / "state"
+
+
+def generated_templates_dir(model, data=None):
+    """Where a model's generated Orca templates live (never the repository): <state>/orca-profiles/<templates>."""
+    return state_dir(data) / "orca-profiles" / model.templates
 
 
 def _main(argv):

@@ -14,7 +14,8 @@ printer model inside it. The [printer] model key is "<vendor>.<printer>", the pa
     bambulab/__init__.py     VENDOR: no live connection, Bambu start code, OrcaSlicer or Bambu Studio,
                              .gcode.3mf handoff. Printer modules (A1, later P1S) drop in beside it.
     bambulab/a1.py           MODEL for "bambulab.a1"; adapter.py (offline adapter, no transport), guard.py
-                             (A1 G-code checks), facts.py (sourced hardware facts, supplemental metadata)
+                             (A1 G-code checks), facts.py (sourced hardware facts, supplemental metadata),
+                             profiles.py (templates generated from the operator's OrcaSlicer, none shipped)
 
 A vendor package defines VENDOR = VendorProfile(...): what every printer of that vendor shares, namely
 the connection type, the start G-code family, the slicers it may use, the file formats it hands over,
@@ -197,7 +198,7 @@ class PrinterModel:
     key: str  # "brand.model", the [printer] model value
     label: str
     adapter: type  # PrinterAdapter subclass
-    templates: str  # folder under print_buddy/templates/orca
+    templates: str  # folder under print_buddy/templates/orca (or under <state>/orca-profiles when generated)
     # Printer-specific defaults for [printer], [layout], [prime_tower] and [cold_pull], merged over the
     # vendor's settings. Config files and the environment override both.
     settings: dict
@@ -217,6 +218,9 @@ class PrinterModel:
     # The vendor this printer inherits from. printers/__init__ fills it from the vendor package when a
     # model module leaves it out, and refuses a vendor that does not match the package.
     vendor: VendorProfile | None = None
+    # True when the Orca templates are not shipped but generated on the operator's machine into
+    # <state>/orca-profiles/<templates> (third-party profiles; see printers/bambulab/profiles.py).
+    generated_templates: bool = False
 
     @property
     def vendor_key(self) -> str:
@@ -231,7 +235,8 @@ class PrinterModel:
         out = merge_settings(self.vendor.settings if self.vendor else {}, self.settings)
         printer = out.setdefault("printer", {})
         printer["model"] = self.key
-        out.setdefault("orca", {})["templates"] = f"print_buddy/templates/orca/{self.templates}"
+        # Empty means generated: settings resolves it to <state>/orca-profiles/<templates>.
+        out.setdefault("orca", {})["templates"] = "" if self.generated_templates else f"print_buddy/templates/orca/{self.templates}"
         if self.vendor is not None:
             printer["vendor"] = self.vendor.key
             printer["slicer"] = self.vendor.slicers[0]
@@ -311,6 +316,8 @@ class PrinterAdapter(ABC):
         from .. import settings
         if self.config["printer"].get("model") == self.key:
             return Path(self.config["orca"]["templates"])
+        if self.model.generated_templates:
+            return settings.generated_templates_dir(self.model, self.config)
         return settings.ROOT / "print_buddy" / "templates" / "orca" / self.model.templates
 
     @abstractmethod

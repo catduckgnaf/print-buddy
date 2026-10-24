@@ -1,21 +1,22 @@
 #!/usr/bin/env python3
-"""Rebuild a Bambu Lab printer's Orca templates from OrcaSlicer's vendor profiles. Maintainer use only.
+"""Generate a Bambu Lab printer's Orca templates from the operator's own OrcaSlicer installation.
 
-    python3 scripts/bambu-templates.py [--printer a1] [--check]
+    python3 scripts/bambu-templates.py --printer a1 --resources <OrcaSlicer resources folder> [--check]
 
-Reads the release, Print Buddy overrides and the printer's Orca profile names from print_buddy/printers/bambulab/
-facts.py, and the template folder from the printer's MODEL (bambulab/<printer>.py). Downloads
-resources/profiles/BBL at that release (network), resolves each profile's `inherits` chain and `include`
-G-code templates into one flat JSON, applies the overrides, and writes machine.json, process.json and
-filament.json. --check compares instead of writing and exits 1 on a difference. Tests never run this; they pin
-the result (tests/printers/test_bambulab_a1.py).
+Print Buddy ships no OrcaSlicer or Bambu Lab profiles. This reads the BBL vendor profiles from an installed
+OrcaSlicer (the folder that holds profiles/BBL.json and profiles/BBL/; a Flatpak keeps it under
+`flatpak info --show-location com.orcaslicer.OrcaSlicer`/files/share/OrcaSlicer/resources), resolves the
+printer's profiles, refuses unless they hash to an identity recorded in print_buddy/printers/bambulab/facts.py,
+and writes them with Print Buddy's overrides into <state>/orca-profiles/<printer> for the configured profile.
+Nothing is downloaded and nothing is written into the repository.
+
+--check writes nothing: it reports whether the installed OrcaSlicer has a checked identity and whether the
+generated folder (if any) is current. Exit 1 on any problem.
 """
 import argparse
 import importlib
-import json
+import os
 import sys
-import urllib.parse
-import urllib.request
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -25,53 +26,30 @@ sys.path.insert(0, str(ROOT))
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--printer", default="a1", help="printer profile module under print_buddy/printers/bambulab")
-    ap.add_argument("--check", action="store_true")
+    ap.add_argument("--resources", required=True, type=Path, help="the installed OrcaSlicer resources folder")
+    ap.add_argument("--check", action="store_true", help="verify only; write nothing")
     a = ap.parse_args()
-    from print_buddy.printers.bambulab import facts
-    module = importlib.import_module(f"print_buddy.printers.bambulab.{a.printer}")
-    printer_facts = module.MODEL.adapter.facts
-    tag, commit = facts.ORCA_RELEASE
-    base = f"https://raw.githubusercontent.com/SoftFever/OrcaSlicer/{commit}/{facts.ORCA_PROFILE_ROOT.rsplit('/', 1)[0]}/"
-    out_dir = ROOT / "print_buddy" / "templates" / "orca" / module.MODEL.templates
-
-    def get(path):
-        with urllib.request.urlopen(base + urllib.parse.quote(path), timeout=30) as response:
-            return json.loads(response.read())
-
-    index = get("BBL.json")
-    paths = {e["name"]: e["sub_path"] for key in ("machine_list", "process_list", "filament_list")
-             for e in index[key]}
-
-    def resolve(name):
-        data = get("BBL/" + paths[name])
-        out = resolve(data["inherits"]) if data.get("inherits") else {}
-        for include in data.get("include", []):
-            out.update({k: v for k, v in get("BBL/" + paths[include]).items()
-                        if k not in ("type", "name", "instantiation", "from")})
-        out.update(data)
-        out.pop("inherits", None)
-        out.pop("include", None)
-        return out
-
-    changed = []
-    for kind, name in printer_facts["orca_profiles"].value.items():
-        data = resolve(name)
-        data.update(facts.ORCA_OVERRIDES[kind])
-        data[facts.SETTINGS_IDS[kind]] = [data["name"]] if kind == "filament" else data["name"]
-        head = [k for k in ("type", "name", "from", "instantiation") if k in data]
-        text = json.dumps({**{k: data[k] for k in head}, **{k: data[k] for k in sorted(data) if k not in head}},
-                          indent=2, ensure_ascii=False) + "\n"
-        target = out_dir / f"{kind}.json"
+    from print_buddy import printers, settings
+    from print_buddy.printers.bambulab import profiles
+    model = importlib.import_module(f"print_buddy.printers.bambulab.{a.printer}").MODEL
+    adapter = printers.get(model.key, settings.load(environ={**os.environ, "PRINT_BUDDY__PRINTER__MODEL": model.key}))
+    try:
+        upstream, version = profiles.flatten(a.resources, adapter.fact("orca_profiles"))
+        hashes = {kind: profiles.sha256(upstream[kind]) for kind in profiles.KINDS}
         if a.check:
-            if not target.is_file() or target.read_text() != text:
-                changed.append(str(target))
-        else:
-            out_dir.mkdir(parents=True, exist_ok=True)
-            target.write_text(text)
-    if changed:
-        print(f"differs from OrcaSlicer {tag}: " + ", ".join(changed))
+            known = profiles.identity(adapter, hashes, version)
+            if known is None:
+                raise profiles.ProfileError(f"{a.resources}: vendor version {version}, sha256 {hashes} is not a "
+                                            f"checked {model.label} identity")
+            found = profiles.problems(adapter)
+            print(f"{a.resources}: {known['label']} matches" + (f"; generated folder: {'; '.join(found)}"
+                                                                 if found else "; generated folder is current"))
+            return 1 if found else 0
+        known = profiles.install(adapter, a.resources)
+    except profiles.ProfileError as exc:
+        print(f"REFUSED: {exc}", file=sys.stderr)
         return 1
-    print(("matches" if a.check else "wrote") + f" {module.MODEL.label} from OrcaSlicer {tag} ({commit})")
+    print(f"wrote {model.label} Orca templates from {known['label']} to {adapter.pinned_templates_folder()}")
     return 0
 
 

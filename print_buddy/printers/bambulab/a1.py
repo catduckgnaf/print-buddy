@@ -3,7 +3,8 @@
 Quirks: the vendor start/end G-code parks the head off the bed on the wiper (X-48.2) and purge lane, so only
 the Orca toolpath is held to the 256 mm bed; the vendor blocks are matched line by line against the pinned
 templates instead. The AMS Lite is not driven: single filament only. Bambu Studio output is not verified for
-the A1 and is refused. Sourced values: facts.py; docs/BAMBU-LAB.md. Templates: templates/orca/bambulab_a1.
+the A1 and is refused. Sourced values: facts.py; docs/BAMBU-LAB.md. Templates: generated on the operator's
+machine from their own OrcaSlicer into <state>/orca-profiles/bambulab_a1 (profiles.py); none are shipped.
 """
 from ..base import PrinterModel
 from . import VENDOR, facts
@@ -19,6 +20,7 @@ MODEL = PrinterModel(
     label="Bambu Lab A1",
     adapter=A1Adapter,
     templates="bambulab_a1",
+    generated_templates=True,
     vendor=VENDOR,
     # Proposed in config/protected-settings-baseline.bambulab.a1.proposed.json; not approved by this change.
     baseline="protected-settings-baseline.bambulab.a1.json",

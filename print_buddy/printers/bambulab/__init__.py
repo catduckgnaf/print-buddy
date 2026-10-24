@@ -7,8 +7,9 @@ the primary slicer with [printer] slicer where a printer's adapter verifies it (
 Every G-code line must be a plain G/M/T code: Klipper or ZMod start code is refused (base.start_code_problems).
 
 Printer modules (bambulab/a1.py, later p1s.py) define MODEL = PrinterModel(..., vendor=VENDOR) with the
-printer's own bed, height, nozzles and adapter; their sourced facts and template provenance are in facts.py,
-their G-code checks in guard.py. See docs/PRINTER-PROFILES.md and docs/BAMBU-LAB.md.
+printer's own bed, height, nozzles and adapter; their sourced facts and profile identity are in facts.py,
+their G-code checks in guard.py. Their Orca templates are generated from the operator's own OrcaSlicer
+(profiles.py); none are shipped. See docs/PRINTER-PROFILES.md and docs/BAMBU-LAB.md.
 """
 from ..base import SHARED_SETTINGS, VendorProfile, merge_settings
 

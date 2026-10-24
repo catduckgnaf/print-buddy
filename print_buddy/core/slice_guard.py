@@ -93,7 +93,7 @@ def is_allowed_filament_id(value, own_ids=None):
 # there the first layer change opens the toolpath and the last "Custom" role tag (written just before the
 # filament and machine end G-code) closes it. Bambu Lab profiles use "; CHANGE_LAYER" and "; FEATURE: ".
 # These are comments, so they only split the file: a printer that trusts its vendor blocks must also check
-# them against its pinned templates (printers.bambulab.guard). A spoofed or duplicated marker then moves vendor
+# them against its verified templates (printers.bambulab.guard). A spoofed or duplicated marker then moves vendor
 # lines into the checked toolpath, or toolpath lines into a template check, and is refused either way.
 EXEC_START = re.compile(r"^; EXECUTABLE_BLOCK_START\s*$", re.M)
 EXEC_END = re.compile(r"^; EXECUTABLE_BLOCK_END\s*$", re.M)

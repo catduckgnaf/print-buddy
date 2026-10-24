@@ -5,19 +5,21 @@ Bambu package is made, and at print-now. The limits come from the printer's adap
 
 Trust model. A sliced file is untrusted. Its toolpath is held to the bed by a modal interpreter
 (slice_guard.toolpath_motion_problems). Its vendor start and end blocks run off the bed, so instead of bounds
-they are matched line by line, in order, against the pinned checked-in templates (vendor_block_problems):
+they are matched line by line, in order, against the printer's verified templates (vendor_block_problems):
 every executable line must be the next template line (placeholders match one token; only lines inside Orca
 {if} blocks may be skipped) or one of Orca's own non-motion preamble codes, and every unconditional template line
-must be present, so a vendor block cannot be edited, reordered, extended or cut short. A substring check for the vendor start marker alone is not start-sequence validation; it only
-names the printer. The pinned templates themselves are trusted because their vendor G-code is reproduced
-byte for byte from the pinned OrcaSlicer release (scripts/bambu-templates.py --check) and pinned by SHA-256 in
-the tests; an [orca] templates override is never the reference.
+must be present, so a vendor block cannot be edited, reordered, extended or cut short. The reference templates
+are generated on the operator's machine from their own OrcaSlicer (profiles.py) and trusted only while their
+flattened vendor profiles hash to an identity recorded in facts.py; an [orca] templates override is never the
+reference, and missing or unverified profiles refuse every file.
 """
 from __future__ import annotations
 
 import json
 import math
 import re
+
+from . import profiles
 
 # Klipper extended commands (START_PRINT, PRINT_END, BED_MESH_PROFILE, SET_PRINT_STATS_INFO, CHANGE_ZCOLOR,
 # SAVE_VARIABLE, LOAD_ZOFFSET, ...) are UPPER_SNAKE words. Bambu G-code lines start with G, M or T codes.
@@ -162,18 +164,20 @@ def gcode_problems(text, adapter, *, state=None):
                         "bounds cannot be checked")
     else:
         prelude, body, epilogue = split
-        if fact("vendor_start") not in prelude:
-            problems.append(f"G-code does not start with the {name} vendor start sequence")
-        start, end = _templates(adapter)
-        problems += vendor_block_problems(prelude, template_patterns(*start), "start G-code")
-        problems += vendor_block_problems(epilogue, template_patterns(*end), "end G-code")
+        try:
+            start, end = _templates(adapter)
+        except profiles.ProfileError as exc:
+            problems.append(f"vendor start and end G-code cannot be checked: {exc}")
+        else:
+            problems += vendor_block_problems(prelude, template_patterns(*start), "start G-code")
+            problems += vendor_block_problems(epilogue, template_patterns(*end), "end G-code")
         tools = sorted({int(n) for n in re.findall(r"^[ \t]*T(\d+)\b", body, re.M)} - {0})
         if tools:
             problems.append(f"G-code changes to tools {tools}; {fact('ams')[0]} multi-color is not supported")
-        plate = re.search(r"^;curr_bed_type=(.*)$", prelude, re.M)
-        if plate is None or plate.group(1).strip() != fact("default_plate"):
+        plate = _config(text, "curr_bed_type")
+        if plate != fact("default_plate"):
             problems.append(f"plate type must be {fact('default_plate')!r} (the only plate the {name} profile "
-                            f"is checked for), got {plate.group(1).strip() if plate else None!r}")
+                            f"is checked for), got {plate!r}")
         problems += slice_guard.toolpath_motion_problems(text, fact("bed_mm"), fact("motion_envelope_mm"),
                                                          fact("max_print_height_mm"), fact("travel_z_headroom_mm"))
     hotend_max, bed_max = fact("max_hotend_c"), fact("max_bed_c")

@@ -3537,6 +3537,11 @@ def _main():
     lay.add_argument("--input-unit", default=None, help="explicit length unit for STL or unitless model (mm, cm, m, inch, ft)")
     lay.add_argument("--split-stl-components", action="store_true", help="treat disconnected STL shells as separate parts")
     lay.add_argument("--allow-rotations", nargs="*", type=float, default=None, help="candidate Z rotations in degrees")
+    cad = sub.add_parser("cad-split", help="offline opt-in reviewed CAD split plan and printable dowel preparation; no slicing or start")
+    cad.add_argument("source", help="input .stl path")
+    cad.add_argument("-o", "--outdir", default=None, help="output directory for split artifacts and split_validation.json")
+    cad.add_argument("--plan", required=True, help="reviewed split plan preset (rack_adapter_10to19, macmini_mount_a1347) or JSON path")
+    cad.add_argument("--execute", action="store_true", help="invoke OpenSCAD CLI to render boolean split halves and verify volume conservation")
     m=sub.add_parser("plate-manifest",help="read-only source plate inventory; does not authorize slicing")
     m.add_argument("source_3mf")
     r=sub.add_parser("record-start",help="after a confirmed print start: write the dated Obsidian note"); r.add_argument("gcode"); r.add_argument("--moonraker-name"); r.add_argument("--started-at",help="ISO UTC, default now")
@@ -3590,6 +3595,13 @@ def _main():
             input_unit=a.input_unit,
             split_stl=a.split_stl_components,
         )
+        print(json.dumps(res, indent=2))
+        return
+    if a.cmd=="cad-split":
+        from .cad_split import prepare_cad_split
+        src_path = Path(a.source)
+        out_dir = Path(a.outdir) if a.outdir else (src_path.parent / f"{src_path.stem}_cad_split")
+        res = prepare_cad_split(src_path, out_dir, a.plan, execute_openscad=bool(a.execute))
         print(json.dumps(res, indent=2))
         return
     if a.cmd=="prepare-first-layer":

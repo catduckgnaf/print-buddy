@@ -348,10 +348,12 @@ def mesh_audit(path, printer_model=None):
     lo = [min(point[axis] for triangle in triangles for point in triangle) for axis in range(3)]
     hi = [max(point[axis] for triangle in triangles for point in triangle) for axis in range(3)]
     source_sha256 = file_sha256(path)
+    from .orca_adapter import placement_candidates
     return {"schema_version": 1, "sha256": source_sha256,
             "source_sha256": source_sha256,
             "dimensions_mm": [round(hi[axis] - lo[axis], 2) for axis in range(3)],
             "units": "mm", "printer_model": printer_model,
+            "placement_candidates": placement_candidates(path, printer_model=printer_model),
             **mesh_topology(triangles)}
 
 

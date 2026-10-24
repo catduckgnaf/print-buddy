@@ -44,6 +44,12 @@ When preparing a print job, `audit(path, printer_model=...)`:
 1. The mesh audit report is stored under the `mesh_audit` key in the source audit dictionary and persisted in `JOB.json`.
 2. If geometry extraction fails (for example, an unreadable file or corrupt archive), the error message is recorded under `mesh_audit_error` without terminating intake processing prematurely.
 
+## Offline placement candidates
+
+The versioned `mesh_audit` report also includes `placement_candidates`. This is deterministic geometric discovery from the mesh vertices: it evaluates upright and axis-up placements at cardinal bed yaw angles and convex-hull edge yaw angles. Each row reports the rigid rotation, XYZ Euler angles, axis-aligned footprint, per-axis bed margins, minimum margin, fit result, and diagonal footprint gain. Rows are ranked deterministically, retaining the authored upright placement first when it fits.
+
+This report is an estimate against the configured full bed and height, not a slicing acceptance result. It does not apply feature clearance, brim, adhesion, support, or object-spacing rules. Existing slicer-backed `rotation_alternatives()` remains the final orientation acceptance check before slicing; a candidate marked as fitting is not approval to print.
+
 ## Scope and boundaries
 
 The topology audit is strictly read-only and conservative:

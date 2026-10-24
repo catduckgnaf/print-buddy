@@ -89,6 +89,9 @@ Schema, validation limits and TOML migration: [CONFIGURATION-YAML.md](CONFIGURAT
 | `timelapse.max_bytes` | `PRINT_BUDDY__TIMELAPSE__MAX_BYTES` | `209715200` | Largest timelapse kept |
 | `timelapse.local_retention_days` | `PRINT_BUDDY__TIMELAPSE__LOCAL_RETENTION_DAYS` | `1` | Local copy retention |
 | `timelapse.plan_clip_retention_days` | `PRINT_BUDDY__TIMELAPSE__PLAN_CLIP_RETENTION_DAYS` | `14` | Plan clip retention |
+| `logging.level` | `PRINT_BUDDY__LOGGING__LEVEL` | `INFO` | `DEBUG`, `INFO`, `WARNING` or `ERROR` |
+| `logging.format` | `PRINT_BUDDY__LOGGING__FORMAT` | `text` | `text` (one readable line per event) or `json` (one JSON object per line) |
+| `logging.file` | `PRINT_BUDDY__LOGGING__FILE` | empty | Also write a rotating log file (5 MiB, 3 backups) at this path, for example under `/data/hermes/logs`; empty logs to stderr only |
 | `maintenance.quick_hours` | `PRINT_BUDDY__MAINTENANCE__QUICK_HOURS` | `25` | Quick maintenance due after these print hours |
 | `maintenance.full_hours` | `PRINT_BUDDY__MAINTENANCE__FULL_HOURS` | `75` | Full maintenance due after these print hours |
 | `maintenance.full_days` | `PRINT_BUDDY__MAINTENANCE__FULL_DAYS` | `30` | Full maintenance due after these days |

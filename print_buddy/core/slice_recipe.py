@@ -49,10 +49,17 @@ def slice_recipe(job, source_sha256, state=None, *, copies=None, scale=None, bri
 
     copies, scale and brim_override are the slice_job arguments that take precedence over the job.
     """
-    from .. import printers
+    from .. import printers, settings
     from . import model_job as mj, orca_adapter, printer_state
     from .nozzle import get_tuned_nozzle_profile
-    state = printer_state.load() if state is None else state
+    if state is None:
+        # Slicing passes the loaded hardware record. A binding compared before any record
+        # exists (intake fit choices) falls back to the configured nozzle so the recipe
+        # stays computable, and a missing file cannot make two different jobs look identical.
+        try:
+            state = printer_state.load()
+        except FileNotFoundError:
+            state = {'nozzle': {'diameter_mm': settings.current()['printer']['nozzle_diameter_mm']}}
     adapter = mj._job_adapter(job)
     # Mirrors slice_job/slice_model: the configured model slices from [orca] templates.
     templates = (Path(orca_adapter.TEMPLATES) if adapter.key == printers.current().key

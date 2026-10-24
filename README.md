@@ -10,7 +10,8 @@ Share a MakerWorld or Printables link, or upload an STL or 3MF. Print Buddy guid
 
 ## Is it for your setup?
 
-- **Printers:** built-in profiles for Flashforge AD5X with ZMod and Sovol SV06, plus a generic Klipper/Moonraker adapter. A generic adapter is not a tuned or physically verified profile for every printer. The Bambu Lab A1 is supported offline only: slicing, G-code checks and an untested Bambu package, no printer connection. Its slicer profiles are generated from your own OrcaSlicer 2.4.2; see [Bambu Lab printers](docs/BAMBU-LAB.md).
+- **Printers:** built-in profiles for Flashforge AD5X with ZMod and Sovol SV06, plus a generic Klipper/Moonraker adapter. A generic adapter is not a tuned or physically verified profile for every printer. The Bambu Lab A1 is supported offline only: slicing, G-code checks and an untested Bambu package, no printer connection. Bambu Lab printers slice with Bambu Studio by default (set `printer.slicer: orca` to use OrcaSlicer); everything else uses OrcaSlicer. See [Bambu Lab printers](docs/BAMBU-LAB.md).
+- **Computers:** Raspberry Pi 4 or 5 with 64-bit Raspberry Pi OS, or any 64-bit Debian or Ubuntu machine.
 - **Discord:** run the standalone Python bot without Hermes or an LLM, or use the Hermes plugin. Use only one mode with a given bot token.
 - **Slicing:** requires a compatible OrcaSlicer CLI and the correct printer, process and filament profiles. A Python install alone does not provide a slicer.
 - **Offline delivery:** vendor profiles can offer Discord file delivery or an offline Bambu package after slicing. Delivery does not authorize printing. Bambu packaging is not verified in Bambu Studio or on hardware. See [printer profiles](docs/PRINTER-PROFILES.md).
@@ -18,7 +19,23 @@ Share a MakerWorld or Printables link, or upload an STL or 3MF. Print Buddy guid
 
 ## Get started
 
-1. **Choose a mode:** [standalone Discord bot](docs/STANDALONE.md) is the direct route without Hermes; [Hermes installation](docs/INSTALL.md) is for existing Hermes users. Both require Python 3.11 or newer. [Docker setup](docs/DOCKER.md) is a separate packaging route; read its prerequisites before starting services.
+### Quick install (Raspberry Pi or Debian/Ubuntu)
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/catduckgnaf/print-buddy/main/scripts/install-light.sh | bash
+```
+
+To install a specific release instead of the latest code:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/catduckgnaf/print-buddy/main/scripts/install-light.sh | bash -s -- --ref v2.0.9
+```
+
+The setup wizard asks for your printer brand and model (or Other / generic), the connection, nozzle, filament, slicer, Spoolman, camera and timelapse, your Discord bot, and whether to run as a Hermes profile or a standalone bot. It installs the stock Flathub OrcaSlicer or Bambu Studio; it does not bundle Spoolman (it can run the official Spoolman installer if you ask). See [light install](docs/INSTALL-LIGHT.md) and [Discord bot setup](docs/DISCORD-BOT-SETUP.md).
+
+### Manual install
+
+1. **Choose a mode:** the [light installer](docs/INSTALL-LIGHT.md) above is recommended. For a manual setup, the [standalone Discord bot](docs/STANDALONE.md) is the direct route without Hermes, and the [Hermes installation](docs/INSTALL.md) is for existing Hermes users. Both require Python 3.11 or newer. Docker image: coming in 2.1.0, see [Docker setup](docs/DOCKER.md).
 2. **Configure your printer and access:** follow the chosen guide, then use [configuration](docs/CONFIGURATION-YAML.md) to set your printer model, Discord channel and authorized users, service addresses and slicer command. Keep local settings and tokens out of Git.
 3. **Check before enabling printing:** confirm the selected printer profile, bed dimensions, nozzle, filament and service permissions. Review the guide's checks before starting the bot or listener. The doctor can contact configured services; it is not an offline-only check.
 

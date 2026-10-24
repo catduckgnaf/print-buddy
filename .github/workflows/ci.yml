@@ -47,6 +47,38 @@ jobs:
           export PRINT_BUDDY__PATHS__HERMES_HOME="$RUNNER_TEMP/print-buddy"
           "$RUNNER_TEMP/clean/bin/python" -m print_buddy.bot check
 
+  light-install-arm64:
+    # The Raspberry Pi route: runtime requirements install on arm64 and the installer plus wizard run end to end (dry run).
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+      - name: Runtime requirements on arm64
+        run: |
+          python -m venv .venv
+          .venv/bin/python -m pip install -r requirements.txt
+      - name: Installer and wizard dry run with an answers file
+        run: |
+          cat > "$RUNNER_TEMP/answers.yaml" <<'YAML'
+          brand: sovol
+          model: sovol.sv06
+          has_printer_software: "yes"
+          moonraker_url: http://printer.local:7125
+          spoolman: install
+          camera: "yes"
+          have_bot: "no"
+          discord_chat_id: "100000000000000001"
+          discord_user_ids: "200000000000000002"
+          hermes: "no"
+          YAML
+          bash scripts/install-light.sh --dry-run --yes --dir "$GITHUB_WORKSPACE" --ref "$GITHUB_SHA" --answers "$RUNNER_TEMP/answers.yaml" | tee "$RUNNER_TEMP/out.txt"
+          grep -q 'com.orcaslicer.OrcaSlicer' "$RUNNER_TEMP/out.txt"
+          grep -q 'Dry run: nothing was changed' "$RUNNER_TEMP/out.txt"
+          test ! -e config/local.yaml
+
   real-slicer:
     # Full corpus and slicer fixtures stay on the production-default OrcaSlicer 2.4.2 track.
     runs-on: ubuntu-24.04  # pinned: ubuntu-latest moves to 26 on 2026-10-19

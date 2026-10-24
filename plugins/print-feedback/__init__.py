@@ -1300,6 +1300,23 @@ def alert_button_handlers(bot, adapter):
                                         custom_id=f'{STOP_PREFIX}{clarify_id}'))
         return await channel.send(text, view=view)
 
+    async def edit_refusal(source, message, text, context, raw):
+        """Retire Stop and replace it with plain guidance plus a single Retry button."""
+        import discord
+        from print_buddy.hermes import print_alert_buttons as pab
+        receipt = (context or {}).get('receipt') or {}
+        receipt_id = str(receipt.get('intake_id') or '')
+        if not re.fullmatch(r'[a-f0-9]{32}', receipt_id):
+            await message.edit(content=text, view=None)
+            return False
+        view = discord.ui.View(timeout=(globals().get('_config').question_timeout_s() if globals().get('_config') else 1800))
+        view.add_item(discord.ui.Button(label='Retry', style=discord.ButtonStyle.primary,
+                                        custom_id=pab.retry_custom_id(receipt_id)))
+        await message.edit(content=text, view=view)
+        return True
+
+    _pi.REFUSAL_EDITOR = edit_refusal
+
     async def handle_stop(interaction, clarify_id):
         from print_buddy.core.prompts import gateway as _prompts
         cm = _prompts()
@@ -1593,9 +1610,73 @@ def alert_button_handlers(bot, adapter):
         await interaction.response.edit_message(content=f"Preparing to start {target['label']} with the loaded spool.", view=None)
         await run_plate_start(interaction, target, alert, accept_spool_change=True)
 
+    async def handle_intake_retry(interaction, receipt_id):
+        """Retry this exact refused plate through print_next.start and all of its guards."""
+        import discord
+        from print_buddy.hermes import print_alert_buttons as pab, print_next
+        from print_buddy.core import prepared_intake as intake
+        receipt_path = _state_dir() / 'model-link-intakes' / f'{receipt_id}.json'
+
+        def retry_view():
+            view = discord.ui.View(timeout=(globals().get('_config').question_timeout_s() if globals().get('_config') else 1800))
+            view.add_item(discord.ui.Button(label='Retry', style=discord.ButtonStyle.primary,
+                                            custom_id=pab.retry_custom_id(receipt_id)))
+            return view
+
+        try:
+            receipt = json.loads(receipt_path.read_text())
+            target = receipt.get('retry_target')
+            if (receipt.get('intake_id') != receipt_id or receipt.get('status') != 'START_REFUSED'
+                    or receipt.get('uploaded') is True or receipt.get('started') is True
+                    or not intake._safe_preupload_refusal(receipt.get('start_refusal_detail'))
+                    or not isinstance(target, dict) or not target.get('gcode')
+                    or not target.get('gcode_sha256')):
+                raise ValueError('this is not a confirmed pre-upload refusal')
+            if str(receipt.get('start_prompt_message_id') or '') != str(getattr(interaction.message, 'id', '') or ''):
+                raise ValueError('this Retry button no longer matches the saved prompt')
+        except Exception as exc:
+            await interaction.response.edit_message(content=f'Retry unavailable: {exc}. Nothing started.', view=None)
+            return
+
+        await interaction.response.edit_message(content='Checking the printer again before retrying this prepared print.', view=None)
+        try:
+            ok, detail = await print_next.start(target)
+        except Exception as exc:
+            logger.exception('pre-upload retry failed')
+            detail = f'REFUSED: printer readiness could not be confirmed: {exc}. Nothing uploaded or started.'
+            ok = False
+        receipt.update(status='STARTED' if ok else 'START_REFUSED', started=bool(ok),
+                       uploaded=bool(ok), start_refusal_detail='' if ok else str(detail))
+        receipt_path.write_text(json.dumps(receipt, indent=2) + '\n')
+        if ok:
+            logger.info('retry start accepted plan=%s part=%s', target.get('plan_id'), target.get('part_id'))
+            await interaction.message.edit(content='Print accepted by the printer.', view=None)
+            return
+        raw = intake._raw_preupload_refusal(detail)
+        logger.warning('print retry refused detail=%s', intake.logs.redact(raw or detail))
+        if intake._safe_preupload_refusal(detail):
+            await interaction.message.edit(content=intake._refusal_text(detail), view=retry_view())
+        else:
+            receipt.update(status='START_UNCERTAIN', uploaded=None, started=None,
+                           start_refusal_detail=str(detail))
+            receipt_path.write_text(json.dumps(receipt, indent=2) + '\n')
+            await interaction.message.edit(content=(
+                'The printer did not confirm the start result. Check its screen before taking action. '
+                'Do not retry until the printer state is known.'), view=None)
+
     async def on_interaction(interaction):
         data = getattr(interaction, 'data', None) or {}
         custom_id = data.get('custom_id', '')
+        if str(custom_id).startswith(_pi.RETRY_CUSTOM_ID):
+            if not allowed(interaction):
+                await reject(interaction)
+                return
+            receipt_id = pab.parse_retry_custom_id(custom_id)
+            if not receipt_id:
+                await interaction.response.send_message('That Retry button is invalid. Nothing started.', ephemeral=True)
+                return
+            await handle_intake_retry(interaction, receipt_id)
+            return
         if str(custom_id).startswith(STOP_PREFIX):
             if not allowed(interaction):
                 await reject(interaction)

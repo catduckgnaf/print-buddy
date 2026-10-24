@@ -47,9 +47,12 @@ logger = logging.getLogger(__name__)
 
 STOP_LABEL = "Stop"
 STOP_CUSTOM_ID = "pbstop:"
+RETRY_CUSTOM_ID = "pbretry:"
 # Set by the print-feedback plugin: async (source, text, clarify_id) -> sent message with a single
 # Stop button. None (tests, no Discord bot) falls back to the gateway clarify prompt.
 STOP_SENDER = None
+# Set by the plugin to edit the original Uploading/Stop prompt and install Retry after a safe refusal.
+REFUSAL_EDITOR = None
 
 
 class Stopped(BaseException):
@@ -60,7 +63,7 @@ class Stopped(BaseException):
         self.uncertain = uncertain
 
 
-async def _with_stop(adapter, source, key, metadata, text, work, *, allow_stop=False):
+async def _with_stop(adapter, source, key, metadata, text, work, *, allow_stop=False, refusal_context=None):
     """Run work with plain progress by default; opt in to Stop only when cancellation is safe."""
     adapter_state = getattr(adapter, "__dict__", {})
     if "picks" in adapter_state or "clicks" in adapter_state:
@@ -100,6 +103,7 @@ async def _with_stop(adapter, source, key, metadata, text, work, *, allow_stop=F
         return await work
     task = asyncio.ensure_future(work)
     waiter = asyncio.ensure_future(asyncio.to_thread(cm.wait_for_response, cid, 3600))
+    result = None
     try:
         # Race the work against the Stop button. The work finishing must never wait on a press:
         # awaiting the button first froze every fit check until someone pressed Stop (2.0.6).
@@ -116,7 +120,7 @@ async def _with_stop(adapter, source, key, metadata, text, work, *, allow_stop=F
             # A coroutine that suppresses cancellation and returns has completed with a
             # definitive outcome. Preserve it instead of claiming a false cancellation.
             return result
-        return await task
+        result = await task
     finally:
         if not task.done():
             task.cancel()
@@ -127,8 +131,26 @@ async def _with_stop(adapter, source, key, metadata, text, work, *, allow_stop=F
             await asyncio.wait_for(waiter, 5)
         cm.wait_for_response(cid, 0.001)
         if stop_msg is not None:
-            with contextlib.suppress(Exception):
-                await stop_msg.edit(view=None)
+            # The Stop button is dead once the work returns: retire it, and after a confirmed
+            # pre-upload refusal turn the same prompt into plain guidance plus Retry.
+            handled = False
+            if (refusal_context is not None and isinstance(result, tuple) and len(result) >= 2
+                    and not result[0] and _safe_preupload_refusal(result[1])):
+                detail = str(result[1])
+                refusal_context['start_prompt_message_id'] = str(getattr(stop_msg, 'id', '') or '')
+                if REFUSAL_EDITOR is not None:
+                    with contextlib.suppress(Exception):
+                        handled = bool(await REFUSAL_EDITOR(source, stop_msg, _refusal_text(detail),
+                                                            refusal_context, detail))
+                if not handled:
+                    with contextlib.suppress(Exception):
+                        await stop_msg.edit(content=_refusal_text(detail), view=None)
+                        handled = True
+                refusal_context['prompt_handled'] = handled
+            if not handled:
+                with contextlib.suppress(Exception):
+                    await stop_msg.edit(view=None)
+    return result
 
 
 async def _heavy(func, *args, **kwargs):
@@ -546,12 +568,41 @@ async def _ask(adapter, source, key, question, choices, timeout=None, **kwargs):
 
 
 _NOISE = re.compile(r'^(?:TIMING \{|G-CODE OK:)')
+_HEATER_TARGET = re.compile(
+    r'(rightTargetTemp|platTargetTemp)\s*==\s*0\s*\(observed\s*([0-9]+(?:\.[0-9]+)?)', re.I)
+
+
+def _raw_preupload_refusal(tail):
+    """Return the refusal line, excluding timing and preflight diagnostics."""
+    lines = [ln.strip() for ln in str(tail or '').splitlines()
+             if ln.strip() and not _NOISE.match(ln.strip())]
+    return next((ln for ln in reversed(lines) if ln.startswith('REFUSED:')), '')
+
+
+def _safe_preupload_refusal(tail):
+    """Only an explicit terminal REFUSED line confirms nothing uploaded or started."""
+    raw = _raw_preupload_refusal(tail)
+    return bool(raw and not raw.startswith('UNCERTAIN:'))
 
 
 def _refusal_text(tail):
-    """Chat gets the refusal, not the TIMING and preflight lines that belong in the job log."""
-    lines = [ln for ln in str(tail or '').splitlines() if ln.strip() and not _NOISE.match(ln.strip())]
-    return '\n'.join(lines) or 'Not started.'
+    """Return plain user-facing guidance; raw internals remain in the receipt and job log."""
+    raw = _raw_preupload_refusal(tail)
+    targets = {name.casefold(): float(value) for name, value in _HEATER_TARGET.findall(raw) if float(value) > 0}
+    if targets:
+        heaters = []
+        if targets.get('righttargettemp'):
+            heaters.append(f"the nozzle set to {targets['righttargettemp']:g} °C")
+        if targets.get('plattargettemp'):
+            heaters.append(f"the bed to {targets['plattargettemp']:g} °C")
+        if len(heaters) == 2:
+            detail = f"{heaters[0]} and {heaters[1]} from the last job"
+        else:
+            detail = f"{heaters[0]} from the last job"
+        return (f"Didn't start: the printer still has {detail}. Clear heating on the printer screen "
+                "(or power cycle it), then press Retry.")
+    return ("Didn't start: the printer could not confirm it was ready. Check the printer screen, "
+            "resolve any warning, then press Retry.")
 
 
 def _restart_helps(tail):
@@ -1390,12 +1441,21 @@ async def prepare_link(event, adapter, state, root, timeout=None, reuse=None):
         if slot_lines:
             prep_msg += '\n' + slot_lines
         mj._timing(jp, 'intake_start_tapped')
+        receipt['retry_target'] = target
+        receipt_path.write_text(json.dumps(receipt, indent=2) + '\n')
+        start_context = {'target': target, 'receipt': receipt}
         ok, tail = await _with_stop(adapter, source, key, metadata,
                                     ((prep_msg + "\n") if not prep_sent else "")
                                     + "Uploading to the printer. Press Stop to request cancellation.",
-                                    print_next.start(target), allow_stop=True)
+                                    print_next.start(target), allow_stop=True,
+                                    refusal_context=start_context)
         mj._timing(jp, 'intake_start_returned', ok=bool(ok))
         receipt.update(status='STARTED' if ok else 'START_REFUSED', started=bool(ok))
+        if not ok:
+            raw = _raw_preupload_refusal(tail)
+            logger.warning('print start refused detail=%s', logs.redact(raw or str(tail)))
+            receipt.update(start_refusal_detail=str(tail), uploaded=False if raw else None,
+                           start_prompt_message_id=start_context.get('start_prompt_message_id', ''))
         receipt_path.write_text(json.dumps(receipt, indent=2) + '\n')
         warming = ok and print_next.still_preparing(tail)
         if ok:
@@ -1411,6 +1471,8 @@ async def prepare_link(event, adapter, state, root, timeout=None, reuse=None):
             message = print_summary.scrub(_refusal_text(tail))
             if _restart_helps(tail):
                 message = await _offer_force_restart(adapter, source, key, message, timeout)
+            elif start_context.get('prompt_handled'):
+                return {'action': 'skip', 'reason': 'start refused; prompt shows the reason and Retry'}
         sent = await adapter.send(chat_id=source.chat_id, content=message, metadata=metadata)
         remote = None  # nothing edits this post later; warmup finishing stays silent
         message_id = getattr(sent, 'message_id', None)

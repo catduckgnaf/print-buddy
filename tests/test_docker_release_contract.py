@@ -1,6 +1,10 @@
 """Issue #117 packaging regressions, runnable without a container engine."""
 from pathlib import Path
+import os
+import shlex
 import re
+import subprocess
+import tempfile
 import unittest
 
 import yaml
@@ -18,12 +22,10 @@ class DockerReleaseContract(unittest.TestCase):
         for suffix in ("yaml", "toml"):
             with self.subTest(format=suffix):
                 config = (ROOT / "config" / f"docker.{suffix}").read_text()
-                self.assertIn("/usr/bin/orca-slicer", config)
+                self.assertIn("/usr/local/bin/orca-slicer", config)
                 self.assertNotIn("/opt/orcaslicer/AppRun", config)
 
     def test_separate_services_and_external_spoolman_default(self):
-        import yaml
-
         compose = yaml.safe_load((ROOT / "docker-compose.yml").read_text())
         services = compose["services"]
         self.assertIn("bot", services)
@@ -39,7 +41,6 @@ class DockerReleaseContract(unittest.TestCase):
                 self.assertFalse(any("/app" in v for v in service["volumes"]))
 
     def test_configuration_parity_channels_and_packaged_plugins(self):
-        import yaml
         import tomllib
         from print_buddy import settings
 
@@ -47,6 +48,7 @@ class DockerReleaseContract(unittest.TestCase):
                    for suffix in ("yaml", "toml")]
         self.assertEqual(configs[0], configs[1])
         self.assertEqual(configs[0]["services"]["spoolman_url"], "")
+        self.assertEqual(configs[0]["orca"]["command"], ["/usr/local/bin/orca-slicer"])
         dockerfile = (ROOT / "Dockerfile").read_text()
         self.assertIn("ARG APP_CHANNEL=development", dockerfile)
         ignored = (ROOT / ".dockerignore").read_text().splitlines()
@@ -57,12 +59,51 @@ class DockerReleaseContract(unittest.TestCase):
         self.assertIn("spoolman", extra["services"])
         self.assertNotIn("ports", extra["services"]["spoolman"])
 
+    def test_entrypoint_selects_stable_by_default_and_alpha_on_request(self):
+        script = ROOT / "docker" / "entrypoint.sh"
+        with tempfile.TemporaryDirectory(dir=ROOT / ".") as data:
+            Path(data, "hermes/state").mkdir(parents=True)
+            Path(data, "archive").mkdir()
+            Path(data, "records").mkdir()
+            Path(data, "cache").mkdir()
+            command = ["sh", "-c", "printf \"%s\\n\" \"$PB_ORCA_CMD\""]
+            env = {"PATH": os.environ["PATH"], "HOME": data, "PRINT_BUDDY_ORCA_CHANNEL": "alpha"}
+            alpha = subprocess.run(["bash", str(script), *command], cwd=data, env=env,
+                                   text=True, capture_output=True, check=True)
+            self.assertEqual(alpha.stdout.strip(), "/usr/local/bin/orca-slicer-alpha")
+            env.pop("PRINT_BUDDY_ORCA_CHANNEL")
+            stable = subprocess.run(["bash", str(script), *command], cwd=data, env=env,
+                                    text=True, capture_output=True, check=True)
+            self.assertEqual(stable.stdout.strip(), "/usr/local/bin/orca-slicer-stable")
+            env["PRINT_BUDDY_ORCA_CHANNEL"] = "other"
+            invalid = subprocess.run(["bash", str(script), *command], cwd=data, env=env,
+                                     text=True, capture_output=True)
+            self.assertNotEqual(invalid.returncode, 0)
+            self.assertIn("must be 'stable' or 'alpha'", invalid.stderr)
+
     def test_orca_is_optional_and_built_from_source(self):
         dockerfile = (ROOT / "Dockerfile").read_text()
         self.assertIn("ARG WITH_ORCA=", dockerfile)
-        self.assertIn("ARG ORCA_CHANNEL=", dockerfile)
+        self.assertNotIn("ARG ORCA_CHANNEL=", dockerfile)
+        self.assertEqual(dockerfile.count("FROM orca-base AS orca-"), 2)
+        self.assertIn('COPY --from=orca-stable /out/ /', dockerfile)
+        self.assertIn('COPY --from=orca-alpha /out/ /', dockerfile)
+        entrypoint = (ROOT / "docker" / "entrypoint.sh").read_text()
+        self.assertIn("PRINT_BUDDY_ORCA_CHANNEL:-stable", entrypoint)
+        self.assertIn("export PB_ORCA_CMD=\"$selected\"", entrypoint)
+        self.assertIn("must be 'stable' or 'alpha'", entrypoint)
+        runtime = dockerfile.split("AS runtime", 1)[1]
+        self.assertIn("openscad", runtime)
+        self.assertIn("--no-install-recommends", runtime)
         self.assertNotIn(".AppImage", dockerfile)
-        self.assertIn("cmake --build", dockerfile)
+        helper = (ROOT / "docker" / "orca-build.sh").read_text()
+        self.assertIn("cmake --build deps/build", helper)
+        self.assertIn('cmake --install build', helper)
+        self.assertIn("orca-slicer-$channel", helper)
+        self.assertIn("ARG ORCA_STABLE_REF=", dockerfile)
+        self.assertIn("ARG ORCA_ALPHA_REF=", dockerfile)
+        for channel, ref in (("stable", "${ORCA_STABLE_REF}"), ("alpha", "${ORCA_ALPHA_REF}")):
+            self.assertRegex(dockerfile, rf"--mount=type=cache,id=print-buddy-orca-\$\{{TARGETARCH\}}-{channel}-\$\{{{ref[2:-1]}\}}-")
 
     def test_bambu_studio_is_optional_pinned_and_built_from_source(self):
         dockerfile = (ROOT / "Dockerfile").read_text()
@@ -76,6 +117,28 @@ class DockerReleaseContract(unittest.TestCase):
         self.assertIn("COPY --from=bambu-build /out/ /", dockerfile)
         for suffix in ("yaml", "toml"):
             self.assertIn("/usr/bin/bambu-studio", (ROOT / "config" / f"docker.{suffix}").read_text())
+
+    def test_documentation_and_app_version_match_the_docker_contract(self):
+        docs = (ROOT / "docs" / "DOCKER.md").read_text()
+        self.assertIn("PRINT_BUDDY_ORCA_CHANNEL", docs)
+        self.assertIn("OpenSCAD (`openscad`) is included", docs)
+        self.assertIn("KiCad is not bundled; it remains deferred", docs)
+        self.assertIn("Spoolman stays a separate container", docs)
+
+    def test_validation_workflow_builds_both_orca_channels(self):
+        workflow = (ROOT / ".github" / "workflows" / "docker-image-validation.yml").read_text()
+        dockerfile = (ROOT / "Dockerfile").read_text()
+        self.assertNotIn("      orca_channel:", workflow)
+        self.assertNotIn("inputs.orca_channel", workflow)
+        self.assertNotIn("ORCA_CHANNEL:", workflow)
+        self.assertIn("ORCA_STABLE_REF", workflow)
+        self.assertIn("ORCA_ALPHA_REF", workflow)
+        self.assertIn("orca-stable", dockerfile)
+        self.assertIn("orca-alpha", dockerfile)
+
+    def test_publish_workflow_has_no_orca_revision_selector(self):
+        publish_text = (ROOT / ".github" / "workflows" / "docker-publish.yml").read_text()
+        self.assertNotIn("orca_channel", publish_text)
 
     def test_ghcr_publisher_is_manual_gated_and_uses_pinned_actions(self):
         workflow = yaml.load((ROOT / ".github" / "workflows" / "docker-publish.yml").read_text(),

@@ -31,12 +31,13 @@ UNRAID = {name: ET.parse(ROOT / "docker" / "unraid" / f"print-buddy-{name}.xml")
           for name in ("bot", "listener")}
 # Public files a user copies or reads to deploy. All must be sanitized.
 DEPLOYMENT_FILES = [".env.example", "docker-compose.yml", "docker-compose.spoolman.yml", "Dockerfile",
-                    "docker/entrypoint.sh", "docker/orca-build-jobs.sh", "docker/unraid/print-buddy-bot.xml",
+                    "docker/entrypoint.sh", "docker/orca-build-jobs.sh", "docker/orca-build.sh", "docker/unraid/print-buddy-bot.xml",
                     "docker/unraid/print-buddy-listener.xml", "config/docker.yaml", "config/docker.toml",
                     "docs/DOCKER.md", "docs/SETTINGS.md", "tests/docker/compose.acceptance.yml"]
 SECRETS = {"DISCORD_BOT_TOKEN", "LLM_API_KEY", "OCTOPRINT_API_KEY", "MOONRAKER_API_KEY", "CLIPROXY_API_KEY",
            "OPENVIKING_API_KEY"}
 COMPOSE_VARS = {"PRINT_BUDDY_IMAGE", "PRINT_BUDDY_DATA", "PRINT_BUDDY_CONFIG"}
+RUNTIME_ENV_VARS = {"PRINT_BUDDY_ORCA_CHANNEL"}
 DATA_TARGETS = {"/data/hermes", "/data/archive", "/data/records", "/data/cache"}
 
 
@@ -124,6 +125,7 @@ class SettingsParityTests(unittest.TestCase):
 
     def test_compose_build_and_secret_variables_are_documented(self):
         self.assertEqual(set(table("Compose variables")), COMPOSE_VARS)
+        self.assertEqual(set(table("Runtime environment")), RUNTIME_ENV_VARS)
         self.assertEqual(set(table("Secrets")), SECRETS)
         args = set(re.findall(r"(?m)^ARG ([A-Z_]+)", DOCKERFILE)) - {"TARGETARCH"}
         self.assertEqual(set(table("Build arguments")), args)
@@ -218,31 +220,52 @@ class OrcaBuildJobsTests(unittest.TestCase):
 
 
 class OrcaCacheTests(unittest.TestCase):
-    def test_cache_id_separates_channel_revisions_architecture_and_profile(self):
-        mount = re.search(r"--mount=type=cache,id=(\S+?),target=/cache,sharing=locked", DOCKERFILE)
-        self.assertIsNotNone(mount)
-        for part in ("${TARGETARCH}", "${ORCA_CHANNEL}", "${ORCA_STABLE_REF}", "${ORCA_ALPHA_REF}",
-                     "${ORCA_BUILD_PROFILE}"):
-            self.assertIn(part, mount.group(1))
+    def test_cache_ids_separate_channels_revisions_architecture_and_profile(self):
+        mounts = re.findall(r"--mount=type=cache,id=(\S+?),target=/cache,sharing=locked", DOCKERFILE)
+        mounts = [mount for mount in mounts if "print-buddy-orca-" in mount]
+        self.assertEqual(len(mounts), 2)
+        for channel, mount, ref in zip(("stable", "alpha"), mounts,
+                                       ("${ORCA_STABLE_REF}", "${ORCA_ALPHA_REF}")):
+            with self.subTest(channel=channel):
+                self.assertIn("${TARGETARCH}", mount)
+                self.assertIn(ref, mount)
+                self.assertIn("${ORCA_BUILD_PROFILE}", mount)
+                self.assertIn(f"-{channel}-", mount)
+
+    def test_channel_builder_owns_install_prefix_but_wrappers_are_distinct(self):
+        helper = (ROOT / "docker" / "orca-build.sh").read_text()
+        self.assertIn('binary="/out/opt/orca-$channel/bin/orca-slicer"', helper)
+        self.assertIn('"/out/usr/local/bin/orca-slicer-$channel"', helper)
+        self.assertIn('mkdir -p /out/usr/local/bin', helper)
+        self.assertIn('if [ "$channel" = stable ]; then ln -sf orca-slicer-stable /out/usr/local/bin/orca-slicer; fi', helper)
+        self.assertNotIn('ln -sf "orca-slicer-$channel" /out/usr/local/bin/orca-slicer', helper)
+        self.assertIn('> "/out/orca-$channel-build-info"', helper)
+        self.assertIn('-DCMAKE_INSTALL_PREFIX="/opt/orca-$channel"', helper)
+        self.assertIn("exec /opt/orca-%s/bin/orca-slicer", helper)
+        for marker in ("toolchain", "source-revision", "binary-path"):
+            self.assertIn(marker, helper)
 
     def test_toolchain_change_resets_build_trees_and_source_is_unpatched(self):
-        self.assertIn('"$(gcc -dumpfullversion)"', DOCKERFILE)
-        self.assertIn('"$(cmake --version | head -n 1)" "$CC" "$CXX" "$ORCA_BUILD_PROFILE"', DOCKERFILE)
-        self.assertIn("rm -rf /cache/orca/deps/build /cache/orca/build", DOCKERFILE)
-        self.assertIn('test "$(git rev-parse HEAD)" = "$ref"', DOCKERFILE)
-        self.assertIn('test -z "$(git status --porcelain --untracked-files=no)"', DOCKERFILE)
-        self.assertIn("CC=/usr/lib/ccache/gcc CXX=/usr/lib/ccache/g++", DOCKERFILE)
-        self.assertNotIn(".AppImage", DOCKERFILE)
+        helper = (ROOT / "docker" / "orca-build.sh").read_text()
+        self.assertIn('"$(gcc -dumpfullversion)"', helper)
+        self.assertIn('"$(cmake --version | head -n 1)" "$CC" "$CXX" "$profile"', helper)
+        self.assertIn("rm -rf /cache/orca/deps/build /cache/orca/build", helper)
+        self.assertIn('test "$(git rev-parse HEAD)" = "$ref"', helper)
+        self.assertIn('test -z "$(git status --porcelain --untracked-files=no)"', helper)
+        self.assertIn("CC=/usr/lib/ccache/gcc CXX=/usr/lib/ccache/g++", helper)
+        self.assertNotIn(".AppImage", helper)
 
     def test_build_records_its_identity(self):
-        self.assertIn("> /out/orca-build-info", DOCKERFILE)
-        self.assertIn("> /out/orca-source-revision", DOCKERFILE)
+        helper = (ROOT / "docker" / "orca-build.sh").read_text()
+        self.assertIn('> "/out/orca-$channel-build-info"', helper)
+        self.assertIn('> "/out/orca-$channel-source-revision"', helper)
 
 
 class RuntimeImageTests(unittest.TestCase):
     def test_every_stage_uses_debian_stable(self):
         """Debian 13 slim for every stage; it has no stock UID 1000 user, so buddy takes 1000 directly."""
-        self.assertEqual(re.findall(r"^FROM (\S+)", DOCKERFILE, re.M), ["debian:13-slim"] * 3)
+        self.assertEqual(re.findall(r"^FROM (debian:13-slim)(?: AS [\w-]+)?$", DOCKERFILE, re.M),
+                         ["debian:13-slim"] * 3)
         runtime = DOCKERFILE.split("FROM debian:13-slim AS runtime", 1)[1]
         self.assertIn("useradd --uid 1000 --create-home buddy", runtime)
         self.assertNotIn("ubuntu", DOCKERFILE)
@@ -293,6 +316,8 @@ class UnraidTemplateTests(unittest.TestCase):
                     if target in SECRETS:
                         self.assertEqual(config.get("Mask"), "true")
                         self.assertFalse(config.text)
+                    elif target in RUNTIME_ENV_VARS:
+                        self.assertEqual(config.text, "stable")
                     elif target.startswith("PRINT_BUDDY__"):
                         section, key = target[len("PRINT_BUDDY__"):].lower().split("__")
                         self.assertIn((section, key), inventory())

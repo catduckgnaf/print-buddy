@@ -16,11 +16,6 @@ on:
         description: Build the pinned Bambu Studio from source
         type: boolean
         default: true
-      orca_channel:
-        description: OrcaSlicer revision
-        type: choice
-        options: [stable, alpha]
-        default: stable
 
 permissions:
   contents: read
@@ -42,7 +37,6 @@ jobs:
       PUBLISH_VERSION: ${{ inputs.version }}
       WITH_ORCA: ${{ inputs.with_orca }}
       WITH_BAMBU: ${{ inputs.with_bambu }}
-      ORCA_CHANNEL: ${{ inputs.orca_channel }}
       SPOOLMAN_MODE: external
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
@@ -57,7 +51,7 @@ jobs:
           {
             echo "source_sha=$GITHUB_SHA"
             echo "version=$PUBLISH_VERSION"
-            echo "app_channel=$APP_CHANNEL with_orca=$WITH_ORCA with_bambu=$WITH_BAMBU orca_channel=$ORCA_CHANNEL orca_build_jobs=$ORCA_BUILD_JOBS spoolman=$SPOOLMAN_MODE"
+            echo "app_channel=$APP_CHANNEL with_orca=$WITH_ORCA with_bambu=$WITH_BAMBU orca_build_jobs=$ORCA_BUILD_JOBS spoolman=$SPOOLMAN_MODE"
           } | tee evidence/pins.txt
       - name: Free runner disk for the source build
         if: inputs.with_orca || inputs.with_bambu
@@ -76,7 +70,6 @@ jobs:
             --build-arg "APP_CHANNEL=$APP_CHANNEL" \
             --build-arg "WITH_ORCA=$WITH_ORCA" \
             --build-arg "WITH_BAMBU=$WITH_BAMBU" \
-            --build-arg "ORCA_CHANNEL=$ORCA_CHANNEL" \
             --build-arg "ORCA_BUILD_JOBS=$ORCA_BUILD_JOBS" \
             --label "org.opencontainers.image.source=https://github.com/catduckgnaf/print-buddy" \
             --label "org.opencontainers.image.version=$PUBLISH_VERSION" \

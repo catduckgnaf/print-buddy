@@ -3,7 +3,7 @@
 orca:
   # Source-installed binary; requires WITH_ORCA=true at image build time
   command:
-    - /usr/bin/orca-slicer
+    - /usr/local/bin/orca-slicer
 bambu:
   # Source-installed binary; requires WITH_BAMBU=true at image build time.
   # The default slicer for Bambu Lab printers; elsewhere only Orca's one-shot fallback.

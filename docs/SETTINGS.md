@@ -33,7 +33,7 @@ Schema, validation limits and TOML migration: [CONFIGURATION-YAML.md](CONFIGURAT
 | `printer.slicer` | `PRINT_BUDDY__PRINTER__SLICER` | `orca` *model* | Slicer: `orca` everywhere; Bambu Lab printers default to `bambu_studio` and may pick `orca` |
 | `printer.nozzle_type` | `PRINT_BUDDY__PRINTER__NOZZLE_TYPE` | unset | Optional nozzle material, limited to the model's supported types |
 | `orca.templates` | `PRINT_BUDDY__ORCA__TEMPLATES` | the model's folder *model* | Folder with the Orca machine, process and filament JSON |
-| `orca.command` | file only | `["/usr/bin/orca-slicer"]` | How to start the OrcaSlicer CLI; `/usr/bin/orca-slicer` exists only in a `WITH_ORCA=true` image |
+| `orca.command` | file only | `["/usr/local/bin/orca-slicer"]` | How to start the OrcaSlicer CLI; `PRINT_BUDDY_ORCA_CHANNEL` selects stable (default) or alpha; both binaries exist only when `WITH_ORCA=true` |
 | `delivery.methods` | file only | `["printer"]` *model* | Post-slice options offered, from the vendor profile (for example `printer`) |
 | `bambu.command` | file only | `["/usr/bin/bambu-studio"]` | Bambu Studio CLI: the default slicer for Bambu Lab printers, Orca's one-shot fallback elsewhere; exists only in a `WITH_BAMBU=true` image |
 | `paths.hermes_home` | `PRINT_BUDDY__PATHS__HERMES_HOME` | `/data/hermes` | State folder (`state/`, `logs/`); the name is historical, Hermes is not required |
@@ -109,24 +109,31 @@ These configure the Compose deployment, not Print Buddy itself. Set them in `.en
 | `PRINT_BUDDY_DATA` | `./data` | Host folder holding the `hermes`, `archive`, `records` and `cache` volumes (and `spoolman` with the bundled override) |
 | `PRINT_BUDDY_CONFIG` | `/app/config/docker.yaml` | Settings file the services read (YAML, or legacy `.toml`) |
 
+## Runtime environment
+
+| Variable | Default | What it does |
+|---|---|---|
+| `PRINT_BUDDY_ORCA_CHANNEL` | `stable` | Selects the bundled stable or alpha OrcaSlicer at startup; invalid values stop the container |
+
+`WITH_ORCA=false` (default) omits both Orca builds; slicing fails closed without either binary.
+
 ## Build arguments
 
-Image build inputs (`docker build --build-arg NAME=value`), not runtime settings. Changing a runtime variable cannot add or switch a bundled slicer.
+Image build inputs (`docker build --build-arg NAME=value`), not runtime settings. `PRINT_BUDDY_ORCA_CHANNEL` is a runtime environment variable (default `stable`, accepts `alpha`) and requires an image built with `WITH_ORCA=true`.
 
 | Argument | Default | What it does |
 |---|---|---|
 | `APP_CHANNEL` | `development` | Application provenance label, `stable` or `development`; it does not change the source checkout |
-| `WITH_ORCA` | `false` | `true` builds OrcaSlicer from pinned source into `/usr/bin/orca-slicer`; `false` omits it and slicing fails closed |
-| `ORCA_CHANNEL` | `stable` | Slicer revision to build: `stable` (`ORCA_STABLE_REF`) or `alpha` (`ORCA_ALPHA_REF`), independent of `APP_CHANNEL` |
-| `ORCA_STABLE_REF` | `8500fcdccaa10b5099ac20d252af3a7c560046f1` | Pinned OrcaSlicer v2.4.2 source commit |
-| `ORCA_ALPHA_REF` | `3880f2c58ec392ed2bd5938ab31c9c7c496c0eb2` | Pinned OrcaSlicer v2.5.0-alpha source commit |
+| `WITH_ORCA` | `false` | `true` builds stable and alpha OrcaSlicer from pinned source; `false` omits both and slicing fails closed |
+| `ORCA_STABLE_REF` | `8500fcdccaa10b5099ac20d252af3a7c560046f1` | Pinned stable OrcaSlicer source commit |
+| `ORCA_ALPHA_REF` | `3880f2c58ec392ed2bd5938ab31c9c7c496c0eb2` | Pinned OrcaSlicer alpha source commit |
 | `ORCA_BUILD_JOBS` | `auto` | Parallel compile jobs: `auto` (memory-aware, below the CPU count) or a whole number from 1 to 64; see [DOCKER.md](DOCKER.md#orcaslicer-source-build) |
 | `ORCA_BUILD_MEM_PER_JOB_MIB` | `2560` | Memory budgeted per job by `auto`, at least 256 |
 | `ORCA_CCACHE_MAXSIZE` | `5G` | Size cap of the compiler cache inside the build cache |
 | `WITH_BAMBU` | `false` | `true` builds Bambu Studio from pinned source into `/usr/bin/bambu-studio`; `false` omits it and Bambu Lab slicing fails closed |
-| `BAMBU_REF` | `926a7192574bcb9b3a732e1ec59a46d79cb45466` | Pinned Bambu Studio 2.8.2 (public release 61) source commit |
+| `BAMBU_REF` | `926a7192574bcb9b3a732e1ec59a46d79cb45466` | Pinned Bambu Studio 2.8.2 source commit |
 | `BAMBU_BUILD_PROFILE` | `release-static-fhs` | Names the Bambu Studio build options; rename it to reset the build trees |
-| `ORCA_BUILD_PROFILE` | `release-static-fhs-nopch` | Name of the fixed CMake option set; part of the build cache key |
+| `ORCA_BUILD_PROFILE` | `release-static-fhs-nopch` | Name of the fixed CMake option set; part of each channel's build cache key |
 
 ## Secrets
 

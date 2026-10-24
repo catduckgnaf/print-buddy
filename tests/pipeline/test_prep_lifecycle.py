@@ -215,7 +215,6 @@ def test_slice_only_then_start_button_lifecycle(env, monkeypatch):
 
     # The noisy 'Sliced:' post was retired; the Start button question is the only pre-start prompt.
     assert not any(m.startswith('Sliced:') for m in adapter.sent)
-    prep_idx = next(i for i, m in enumerate(adapter.sent) if PREP_TEXT in m)
-    start_idx = next(i for i, m in enumerate(adapter.sent) if m.startswith('Print started:'))
-
-    assert prep_idx < start_idx
+    # 'Preparing to start' now rides on the single Stop/Uploading prompt, not a separate post.
+    assert not any(m.startswith(PREP_TEXT) for m in adapter.sent)
+    assert any(m.startswith('Print started:') for m in adapter.sent)

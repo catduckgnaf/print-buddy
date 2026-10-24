@@ -97,7 +97,7 @@ def receipt_text(text):
     has_link = bool(re.search(r'https?://\S+', text))
     bed_clear = 'bed is clear' in lower or 'bed clear' in lower
     if has_link:
-        return 'Got the link. I’m checking the files and preparing the slice.'
+        return None  # the model preview and color picker follow; a receipt is noise
     if lower in {'run the routine', 'run routine'}:
         return 'Received. Preparing the requested routine and checking safety conditions. It is not running yet.'
     if bed_clear:
@@ -1234,7 +1234,7 @@ async def model_link_dispatch(event, gateway, **kwargs):
     # Receipt BEFORE the slow download/inventory: receive_ack never sees handled events.
     mid = getattr(event, 'message_id', None)
     if reuse is None and mid:
-        ack = receipt_text(text) if model_link(text) else 'Got the file. I’m checking it and preparing the slice.'
+        ack = None  # the preview and color picker are the acknowledgement
         if ack:
             await _deliver_receipt(source, adapter, mid, ack)
     from print_buddy.core import printer_state

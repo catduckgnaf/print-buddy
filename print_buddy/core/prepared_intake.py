@@ -66,6 +66,8 @@ async def _with_stop(adapter, source, key, metadata, text, work, *, allow_stop=F
     if "picks" in adapter_state or "clicks" in adapter_state:
         return await work
     if not allow_stop:
+        if not text:
+            return await work
         status = text
         for suffix in (" Press Stop to cancel before it starts.", " Press Stop to cancel."):
             if status.endswith(suffix):
@@ -270,9 +272,8 @@ def preview_sentence(job, row):
         from . import model_job as mj
         site = mj.source_site_estimate(row)
         if site:
-            printer = str((row or {}).get('site_printer') or '').strip()
             plates = len((row or {}).get('plates') or [])
-            text += (f" Model page estimate{f' (for {printer})' if printer else ''}: about {mj.human_dur(site[0])}"
+            text += (f" Model page estimate: about {mj.human_dur(site[0])}"
                      f" and {round(site[1])} g of filament{f' over {plates} plates' if plates > 1 else ''}."
                      ' The AD5X figure after slicing will differ somewhat.')
         else:
@@ -800,7 +801,7 @@ async def prepare_link(event, adapter, state, root, timeout=None, reuse=None):
         fetch = copy_upload if (reuse or job['site'] == 'upload') else {'makerworld': mj.maker_download}.get(
             job['site'], mj.printables_download)
         path = await _with_stop(
-            adapter, source, key, metadata, "Downloading the model. Press Stop to cancel.",
+            adapter, source, key, metadata, None,
             asyncio.to_thread(fetch, job, chosen, folder / 'source'))
         job['downloaded_file'] = str(path)
         if job['site'] == 'upload':
@@ -1186,10 +1187,9 @@ async def prepare_link(event, adapter, state, root, timeout=None, reuse=None):
         receipt_path.write_text(json.dumps(receipt, indent=2) + '\n')
         mj._timing(jp, 'intake_slice_requested')
         prep_sent = False
-        if choice == 0:
-            # Acknowledge the tap before the slow slice, so a slicer failure is
-            # never the first thing anyone hears. This is the only message
-            # until "Print started" (or the failure that replaces it).
+        if choice == 0 and early.running():
+            # Acknowledge the tap only when the slice is still running; otherwise the single
+            # "Preparing to start ... Uploading" message below is the acknowledgement.
             pre_no = latest.get('print_number')
             pre_total = (f"~{mj.human_dur(estimate_s + 300)} total" if estimate_s is not None
                          else 'estimate after slicing')
@@ -1357,11 +1357,10 @@ async def prepare_link(event, adapter, state, root, timeout=None, reuse=None):
         prep_msg = ' · '.join(['Preparing to start'] + ([f'Print #{print_no}'] if print_no else []) + [total])
         if slot_lines:
             prep_msg += '\n' + slot_lines
-        if not prep_sent:
-            await adapter.send(chat_id=source.chat_id, content=prep_msg, metadata=metadata)
         mj._timing(jp, 'intake_start_tapped')
         ok, tail = await _with_stop(adapter, source, key, metadata,
-                                    "Uploading to the printer. Press Stop to request cancellation.",
+                                    ((prep_msg + "\n") if not prep_sent else "")
+                                    + "Uploading to the printer. Press Stop to request cancellation.",
                                     print_next.start(target), allow_stop=True)
         mj._timing(jp, 'intake_start_returned', ok=bool(ok))
         receipt.update(status='STARTED' if ok else 'START_REFUSED', started=bool(ok))
@@ -1371,6 +1370,14 @@ async def prepare_link(event, adapter, state, root, timeout=None, reuse=None):
             message = print_summary.format_started(exact_job, exact_plate) + later
             if warming:
                 message += '\nWarming up; this message updates when printing begins.'
+            else:
+                # Warming starts get the roast when the listener edits the message; others get it now, last.
+                with contextlib.suppress(Exception):
+                    roast = await asyncio.wait_for(asyncio.to_thread(
+                        _external.load('moonraker_event_listener').generate_roast,
+                        (exact_job or {}).get('title') or '', (exact_job or {}).get('summary') or ''), 6)
+                    if roast:
+                        message += f'\n\n{roast}'
         else:
             message = print_summary.scrub(tail)
         sent = await adapter.send(chat_id=source.chat_id, content=message, metadata=metadata)

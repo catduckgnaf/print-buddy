@@ -574,7 +574,7 @@ def test_preview_omits_estimate_when_incomplete_but_keeps_description(env, monke
     if extra == {}:
         row = {'name': 'ghost.3mf', 'instance_id': 1}
     log, _ = run_preview(env, monkeypatch, 'A sturdy stand.', row)
-    tail = ('Model page estimate (for Bambu X1C): about 1h 30m and 20 g of filament over 2 plates. '
+    tail = ('Model page estimate: about 1h 30m and 20 g of filament over 2 plates. '
             'The AD5X figure after slicing will differ somewhat.' if extra.get('site_printer')
             else 'The model page gives no time or filament estimate; I will report both after slicing.')
     assert log[0] == ('send', 'That looks like Ghost Stand, A sturdy stand. I will use the selected profile: ghost. ' + tail)

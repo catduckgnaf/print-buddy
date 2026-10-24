@@ -930,11 +930,24 @@ def announce_warmup_done(filename):
     text = print_summary.format_event("started", filename)
     text += "\nWarmup complete, now printing."
     message_id = None
+    roast = ""
     try:
         from . import print_next
         message_id = print_next.take_start_message(filename)
     except Exception as exc:
         log(f"start message lookup failed file={filename!r}: {exc!r}")
+    if not message_id:
+        # The intake already posted the one "Print started" message; a second line after it is noise.
+        log(f"no recorded start message; warmup done silently file={filename!r}")
+        return False
+    try:
+        job, _plate = print_summary.find_job(filename)
+        roast = generate_roast((job or {}).get("title") or Path(str(filename or "")).stem,
+                               (job or {}).get("summary") or "")
+    except Exception:
+        roast = ""
+    if roast:
+        text += f"\n\n{roast}"
     if message_id:
         try:
             from . import print_alert_buttons as pab
@@ -944,9 +957,8 @@ def announce_warmup_done(filename):
                 return True
         except Exception as exc:
             log(f"start message edit error id={message_id}: {exc!r}")
-        log(f"start message edit failed id={message_id}; posting short line")
-    title = print_summary.safe_label(((print_summary.find_job(filename)[0] or {}).get("title")) or filename, "print")
-    return post(f"Warmup done, now printing: {title}")
+        log(f"start message edit failed id={message_id}; leaving the start post as is")
+    return False
 
 
 SUBSCRIBE = json.dumps({

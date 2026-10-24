@@ -18,7 +18,21 @@ import copy
 import os
 import re
 import tomllib
-import yaml
+
+try:  # PyYAML preferred; the Hermes plugin runtime ships ruamel.yaml instead (#170)
+    import yaml
+    _yaml_load = yaml.safe_load
+    _YAML_ERRORS = (yaml.YAMLError,)
+except ImportError:  # pragma: no cover
+    yaml = None
+    try:
+        from ruamel.yaml import YAML as _RuamelYAML
+        from ruamel.yaml.error import YAMLError as _RuamelYAMLError
+        _yaml_load = _RuamelYAML(typ="safe", pure=True).load
+        _YAML_ERRORS = (_RuamelYAMLError,)
+    except ImportError:
+        _yaml_load = None
+        _YAML_ERRORS = ()
 from functools import lru_cache
 from pathlib import Path
 
@@ -96,14 +110,16 @@ def _read(path):
         if path.suffix.lower() == ".toml":
             with open(path, "rb") as f:
                 return tomllib.load(f)
+        if _yaml_load is None:
+            raise SettingsError(f"{path}: PyYAML is required to read YAML config; install pyyaml or use a .toml file")
         with open(path, encoding="utf-8") as f:
-            data = yaml.safe_load(f)
+            data = _yaml_load(f)
         if data is None:
             return {}
         if not isinstance(data, dict):
             raise SettingsError(f"{path}: top-level config must be a mapping")
         return data
-    except (tomllib.TOMLDecodeError, yaml.YAMLError, OSError) as exc:
+    except (tomllib.TOMLDecodeError, OSError, *_YAML_ERRORS) as exc:
         raise SettingsError(f"{path}: {exc}") from None
 
 

@@ -15,7 +15,7 @@ class DockerReleaseContract(unittest.TestCase):
         for suffix in ("yaml", "toml"):
             with self.subTest(format=suffix):
                 config = (ROOT / "config" / f"docker.{suffix}").read_text()
-                self.assertIn("/usr/bin/orca-slicer", config)
+                self.assertIn("/usr/local/bin/orca-slicer", config)
                 self.assertNotIn("/opt/orcaslicer/AppRun", config)
 
     def test_separate_services_and_external_spoolman_default(self):
@@ -57,9 +57,21 @@ class DockerReleaseContract(unittest.TestCase):
     def test_orca_is_optional_and_built_from_source(self):
         dockerfile = (ROOT / "Dockerfile").read_text()
         self.assertIn("ARG WITH_ORCA=", dockerfile)
-        self.assertIn("ARG ORCA_CHANNEL=", dockerfile)
+        self.assertNotIn("ARG ORCA_CHANNEL=", dockerfile)
+        self.assertEqual(dockerfile.count("FROM debian:13-slim AS orca-"), 2)
+        self.assertIn("COPY --from=orca-stable /out/ /opt/orca-stable/", dockerfile)
+        self.assertIn("COPY --from=orca-alpha /out/ /opt/orca-alpha/", dockerfile)
+        self.assertIn("PRINT_BUDDY_ORCA_CHANNEL:-stable", (ROOT / "docker" / "entrypoint.sh").read_text())
+        self.assertIn("openscad", dockerfile.split("AS runtime", 1)[1])
         self.assertNotIn(".AppImage", dockerfile)
         self.assertIn("cmake --build", dockerfile)
+        self.assertEqual(dockerfile.count("COPY --from=orca-"), 2)
+        self.assertIn("test -x /usr/local/bin/orca-slicer-stable", dockerfile)
+        self.assertIn("test -x /usr/local/bin/orca-slicer-alpha", dockerfile)
+        self.assertIn("ARG ORCA_STABLE_REF=", dockerfile)
+        self.assertIn("ARG ORCA_ALPHA_REF=", dockerfile)
+        self.assertIn("--mount=type=cache,id=print-buddy-orca-${TARGETARCH}-stable-", dockerfile)
+        self.assertIn("--mount=type=cache,id=print-buddy-orca-${TARGETARCH}-alpha-", dockerfile)
 
     def test_bambu_studio_is_optional_pinned_and_built_from_source(self):
         dockerfile = (ROOT / "Dockerfile").read_text()
@@ -71,9 +83,28 @@ class DockerReleaseContract(unittest.TestCase):
         self.assertIn("-DSLIC3R_FHS=ON", stage)
         self.assertNotIn(".AppImage", stage)
         self.assertIn("COPY --from=bambu-build /out/ /", dockerfile)
-        for suffix in ("yaml", "toml"):
-            self.assertIn("/usr/bin/bambu-studio", (ROOT / "config" / f"docker.{suffix}").read_text())
+        self.assertIn("/usr/bin/bambu-studio", (ROOT / "config" / "docker.yaml").read_text())
+        self.assertIn("/usr/bin/bambu-studio", (ROOT / "config" / "docker.toml").read_text())
+        docs = (ROOT / "docs" / "DOCKER.md").read_text()
+        self.assertIn("PRINT_BUDDY_ORCA_CHANNEL", docs)
+        self.assertIn("OpenSCAD is included", docs)
+        self.assertIn("KiCad is not bundled; it remains deferred", docs)
+        self.assertIn("Spoolman stays a separate container", docs)
+        from print_buddy import __version__
+        self.assertEqual(__version__, "2.0.9")
 
+    def test_publish_workflow_has_no_orca_revision_selector(self):
+        publish = ROOT / ".github" / "workflows" / "docker-publish.yml"
+        if publish.exists():
+            self.assertNotIn("orca_channel", publish.read_text())
 
-if __name__ == "__main__":
-    unittest.main()
+    def test_validation_workflow_builds_both_orca_channels(self):
+        workflow = (ROOT / ".github" / "workflows" / "docker-image-validation.yml").read_text()
+        dockerfile = (ROOT / "Dockerfile").read_text()
+        self.assertNotIn("      orca_channel:", workflow)
+        self.assertNotIn("inputs.orca_channel", workflow)
+        self.assertNotIn("ORCA_CHANNEL:", workflow)
+        self.assertIn("ORCA_STABLE_REF", workflow)
+        self.assertIn("ORCA_ALPHA_REF", workflow)
+        self.assertIn("orca-stable", dockerfile)
+        self.assertIn("orca-alpha", dockerfile)

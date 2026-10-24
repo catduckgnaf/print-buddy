@@ -96,8 +96,9 @@ def test_example_requires_explicit_standalone_inputs_and_external_spoolman():
 def test_application_and_slicer_channels_are_independent_build_arguments():
     text = (ROOT / "Dockerfile").read_text()
     assert 'case "$APP_CHANNEL" in stable|development)' in text
-    assert 'case "$ORCA_CHANNEL" in stable|alpha)' in text
-    assert 'case "$ORCA_CHANNEL" in stable) ref="$ORCA_STABLE_REF"' in text
+    assert 'ARG ORCA_CHANNEL=' not in text
+    assert "AS orca-stable" in text and "AS orca-alpha" in text
+    assert 'PRINT_BUDDY_ORCA_CHANNEL:-stable' in (ROOT / "docker" / "entrypoint.sh").read_text()
     assert 'org.print-buddy.app-channel=$APP_CHANNEL' in text
     assert '$APP_CHANNEL' not in text.split('FROM debian:13-slim AS runtime')[0]
 

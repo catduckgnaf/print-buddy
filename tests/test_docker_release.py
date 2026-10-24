@@ -218,12 +218,15 @@ class OrcaBuildJobsTests(unittest.TestCase):
 
 
 class OrcaCacheTests(unittest.TestCase):
-    def test_cache_id_separates_channel_revisions_architecture_and_profile(self):
-        mount = re.search(r"--mount=type=cache,id=(\S+?),target=/cache,sharing=locked", DOCKERFILE)
-        self.assertIsNotNone(mount)
-        for part in ("${TARGETARCH}", "${ORCA_CHANNEL}", "${ORCA_STABLE_REF}", "${ORCA_ALPHA_REF}",
-                     "${ORCA_BUILD_PROFILE}"):
-            self.assertIn(part, mount.group(1))
+    def test_cache_ids_separate_channels_revisions_architecture_and_profile(self):
+        mounts = re.findall(r"--mount=type=cache,id=(\S+?),target=/cache,sharing=locked", DOCKERFILE)
+        self.assertEqual(len(mounts), 2)
+        for channel, mount in zip(("stable", "alpha"), mounts):
+            with self.subTest(channel=channel):
+                for part in ("${TARGETARCH}", "${ORCA_STABLE_REF}", "${ORCA_ALPHA_REF}",
+                             "${ORCA_BUILD_PROFILE}"):
+                    self.assertIn(part, mount)
+                self.assertIn(f"-{channel}-", mount)
 
     def test_toolchain_change_resets_build_trees_and_source_is_unpatched(self):
         self.assertIn('"$(gcc -dumpfullversion)"', DOCKERFILE)

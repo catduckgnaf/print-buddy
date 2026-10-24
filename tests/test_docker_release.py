@@ -1,43 +1,42 @@
-"""The Docker release stays complete, consistent and public-safe.
+"""Issue #117 release residue on top of main's Docker contract (test_docker_release_contract.py).
 
-Settings parity: every user-adjustable setting has a row in docs/SETTINGS.md and, when it is a
-scalar, an entry in .env.example; every PRINT_BUDDY__ name in a deployment file is a real setting.
-Sanitization: public deployment examples carry no LAN addresses, machine paths, IDs or credentials.
-Structure: the Compose stack, Dockerfile, Unraid template and OrcaSlicer pin agree with each other.
+Settings parity: every user-adjustable setting in the schema has a docs/SETTINGS.md row and, when it
+is a scalar, an .env.example line; every PRINT_BUDDY__ name in a deployment file is a real setting.
+Sanitization: public deployment files carry no LAN addresses, machine paths, IDs or credentials.
+Build: bounded, validated Orca parallelism and a cache keyed so channels, revisions, architectures
+and option profiles never mix. Unraid: both templates match the Compose runtime contract.
 """
 import ipaddress
 import json
 import os
 import re
 import shlex
-import socket
-import time
+import subprocess
+import tempfile
 import unittest
 import xml.etree.ElementTree as ET
 from pathlib import Path
-from unittest import mock
 
 import yaml
 
-from print_buddy import healthcheck, printers, settings
+from print_buddy import printers, settings
 
 ROOT = settings.ROOT
 DOCS = (ROOT / "docs" / "SETTINGS.md").read_text()
 ENV_EXAMPLE = (ROOT / ".env.example").read_text()
 DOCKERFILE = (ROOT / "Dockerfile").read_text()
 COMPOSE = yaml.safe_load((ROOT / "docker-compose.yml").read_text())
-SPOOLMAN = yaml.safe_load((ROOT / "docker-compose.spoolman.yml").read_text())
-UNRAID = ET.parse(ROOT / "docker" / "unraid" / "print-buddy.xml").getroot()
-LOCK = dict(line.split("=", 1) for line in (ROOT / "docker" / "orcaslicer.lock").read_text().splitlines()
-            if line and not line.startswith("#"))
+JOBS = ROOT / "docker" / "orca-build-jobs.sh"
+UNRAID = {name: ET.parse(ROOT / "docker" / "unraid" / f"print-buddy-{name}.xml").getroot()
+          for name in ("bot", "listener")}
 # Public files a user copies or reads to deploy. All must be sanitized.
-DEPLOYMENT_FILES = [".env.example", "docker-compose.yml", "docker-compose.spoolman.yml", "docker-compose.build.yml",
-                    "Dockerfile", "docker/entrypoint.sh", "docker/unraid/print-buddy.xml", "docker/orcaslicer.lock",
-                    "config/docker.yaml", "config/docker.toml", "docs/DOCKER.md", "docs/SETTINGS.md"]
-SECRETS = {"DISCORD_BOT_TOKEN", "OCTOPRINT_API_KEY", "MOONRAKER_API_KEY", "CLIPROXY_API_KEY", "OPENVIKING_API_KEY"}
-CONTAINER_VARS = {"PRINT_BUDDY_CONFIG", "PRINT_BUDDY_IMAGE", "PRINT_BUDDY_TAG", "PRINT_BUDDY_DATA", "PUID", "PGID",
-                  "TZ", "PRINT_BUDDY_CPUS", "PRINT_BUDDY_MEMORY", "PRINT_BUDDY_HEALTH_MAX_AGE_S", "COMPOSE_FILE",
-                  "SPOOLMAN_TAG", "SPOOLMAN_PORT", "ORCA_CHANNEL"}
+DEPLOYMENT_FILES = [".env.example", "docker-compose.yml", "docker-compose.spoolman.yml", "Dockerfile",
+                    "docker/entrypoint.sh", "docker/orca-build-jobs.sh", "docker/unraid/print-buddy-bot.xml",
+                    "docker/unraid/print-buddy-listener.xml", "config/docker.yaml", "config/docker.toml",
+                    "docs/DOCKER.md", "docs/SETTINGS.md", "tests/docker/compose.acceptance.yml"]
+SECRETS = {"DISCORD_BOT_TOKEN", "LLM_API_KEY", "OCTOPRINT_API_KEY", "MOONRAKER_API_KEY", "CLIPROXY_API_KEY",
+           "OPENVIKING_API_KEY"}
+COMPOSE_VARS = {"PRINT_BUDDY_IMAGE", "PRINT_BUDDY_DATA", "PRINT_BUDDY_CONFIG"}
 DATA_TARGETS = {"/data/hermes", "/data/archive", "/data/records", "/data/cache"}
 
 
@@ -62,10 +61,22 @@ def is_scalar(value):
     return not isinstance(value, (list, dict))
 
 
+def table(heading):
+    """{first column: second column} of the markdown table under a docs/SETTINGS.md heading."""
+    text = DOCS.split(f"## {heading}\n", 1)[1].split("\n## ", 1)[0]
+    return dict(re.findall(r"^\| `([A-Z0-9_]+)` \| ([^|]+) \|", text, re.M))
+
+
 class SettingsParityTests(unittest.TestCase):
     def setUp(self):
         self.inventory = inventory()
         self.rows = dict(re.findall(r"^\| `([a-z_]+\.(?:[a-z_]+|<[a-zA-Z]+>))` \| ([^|]+) \|", DOCS, re.M))
+
+    def test_schema_includes_the_standalone_and_vendor_settings(self):
+        for setting in [("bot", "mode"), ("bot", "health_port"), ("llm", "chat_url"), ("discord", "token_env"),
+                        ("discord", "allowed_user_ids"), ("printer", "vendor"), ("printer", "slicer"),
+                        ("delivery", "methods")]:
+            self.assertIn(setting, self.inventory)
 
     def test_every_setting_has_a_reference_row_with_its_env_name(self):
         for (section, key), value in self.inventory.items():
@@ -93,36 +104,35 @@ class SettingsParityTests(unittest.TestCase):
         names = set()
         for path in DEPLOYMENT_FILES:
             names |= set(re.findall(r"PRINT_BUDDY__[A-Z0-9_]+__[A-Z0-9_]+", (ROOT / path).read_text()))
-        names.discard("PRINT_BUDDY__SECTION__KEY")
-        names = {n for n in names if not n.endswith("__TYPE")}  # the <type> placeholder row
+        names -= {"PRINT_BUDDY__SECTION__KEY", "PRINT_BUDDY__NOZZLE_TEMP_OFFSETS__TYPE"}
         self.assertIn("PRINT_BUDDY__SERVICES__MOONRAKER_URL", names)
-        home = settings.load(local=False, environ={})
         for name in sorted(names):
             section, key = name[len("PRINT_BUDDY__"):].lower().split("__")
             with self.subTest(env=name):
-                self.assertTrue(key in home.get(section, {}) or (section, key) in settings.OPTIONAL_KEYS, name)
+                self.assertTrue((section, key) in self.inventory or section in settings.OPEN_SECTIONS, name)
 
-    def test_env_example_values_load(self):
-        """The uncommented example values are valid settings once the hosts are filled in."""
+    def test_every_commented_example_value_loads_when_uncommented(self):
+        """Integer spelling, booleans and URLs in .env.example are values the loader accepts."""
         environ = {}
         for line in ENV_EXAMPLE.splitlines():
-            if line and not line.startswith("#") and "=" in line:
-                name, value = line.split("=", 1)
-                environ[name] = value
-        self.assertEqual(set(environ) - CONTAINER_VARS - SECRETS,
-                         {n for n in environ if n.startswith("PRINT_BUDDY__")})
-        data = settings.load(home=settings.HOME, local=ROOT / "config" / "docker.yaml",
-                             environ={k: v for k, v in environ.items() if k.startswith("PRINT_BUDDY__")})
-        self.assertEqual(data["services"]["moonraker_ws_url"], "ws://printer.example:7125/websocket")
+            match = re.match(r"^#? ?(PRINT_BUDDY__[A-Z0-9_]+)=(.+)$", line)
+            if match and "example" not in match.group(2) and match.group(1) != "PRINT_BUDDY__PRINTER__MODEL":
+                environ[match.group(1)] = match.group(2)
+        self.assertGreater(len(environ), 40)
+        data = settings.load(local=ROOT / "config" / "docker.yaml", environ=environ)
+        self.assertEqual(data["bot"]["mode"], "standalone")
 
-    def test_secrets_and_container_variables_are_documented(self):
-        for name in SECRETS | CONTAINER_VARS:
-            with self.subTest(name=name):
-                self.assertIn(f"`{name}`", DOCS)
+    def test_compose_build_and_secret_variables_are_documented(self):
+        self.assertEqual(set(table("Compose variables")), COMPOSE_VARS)
+        self.assertEqual(set(table("Secrets")), SECRETS)
+        args = set(re.findall(r"(?m)^ARG ([A-Z_]+)", DOCKERFILE)) - {"TARGETARCH"}
+        self.assertEqual(set(table("Build arguments")), args)
+        for name, default in re.findall(r"(?m)^ARG ([A-Z_]+)=(\S+)$", DOCKERFILE):
+            with self.subTest(arg=name):
+                self.assertEqual(table("Build arguments")[name].strip(), f"`{default}`")
         for name in SECRETS:
             with self.subTest(secret=name):
-                self.assertRegex(ENV_EXAMPLE, rf"(?m)^# {name}=$")
-                self.assertNotIn(name.lower(), (ROOT / "config" / "docker.yaml").read_text().lower())
+                self.assertRegex(ENV_EXAMPLE, rf"(?m)^#? ?{name}=$")
 
 
 class SanitizedExamplesTests(unittest.TestCase):
@@ -135,208 +145,187 @@ class SanitizedExamplesTests(unittest.TestCase):
                     self.assertFalse(address.is_private and not address.is_loopback, f"{path}: LAN address {raw}")
                 self.assertIsNone(re.search(r"/(home|Users)/(?!app/)[a-z]", text), f"{path}: machine path")
                 self.assertIsNone(re.search(r"/mnt/user/(?!appdata/)", text), f"{path}: personal share")
-                self.assertIsNone(re.search(r"(?<![0-9a-f])\d{17,20}(?![0-9a-f])", text), f"{path}: Discord ID")
-                self.assertIsNone(re.search(r"[MN][A-Za-z\d]{23,}\.[\w-]{6}\.[\w-]{27,}|gh[pousr]_[A-Za-z0-9]{20,}|sk-[A-Za-z0-9]{20,}",
-                                            text), f"{path}: credential")
+                self.assertIsNone(re.search(r"(?<![0-9a-f])(?!100000000000000001|200000000000000002)\d{17,20}(?![0-9a-f])",
+                                            text), f"{path}: Discord ID")
+                self.assertIsNone(re.search(r"[MN][A-Za-z\d]{23,}\.[\w-]{6}\.[\w-]{27,}|gh[pousr]_[A-Za-z0-9]{20,}"
+                                            r"|sk-[A-Za-z0-9]{20,}", text), f"{path}: credential")
                 for host in re.findall(r"https?://([A-Za-z0-9.-]+)", text):
-                    self.assertFalse(host.endswith((".lan", ".local", ".home", ".internal")) and host != "host.docker.internal",
-                                     f"{path}: private host name {host}")
+                    self.assertFalse(host.endswith((".lan", ".local", ".home", ".internal")), f"{path}: private host {host}")
+
+    def test_required_secrets_are_empty_in_the_example(self):
+        for line in ENV_EXAMPLE.splitlines():
+            name = line.lstrip("# ").split("=", 1)[0]
+            if name in SECRETS:
+                with self.subTest(secret=name):
+                    self.assertEqual(line.split("=", 1)[1], "")
 
 
-class ComposeTests(unittest.TestCase):
-    def setUp(self):
-        self.service = COMPOSE["services"]["print-buddy"]
+class OrcaBuildJobsTests(unittest.TestCase):
+    """docker/orca-build-jobs.sh: bounded, memory-aware, validated."""
 
-    def test_only_print_buddy_runs_by_default(self):
-        self.assertEqual(set(COMPOSE["services"]), {"print-buddy"})
-        self.assertNotIn("build", self.service)
-        self.assertNotIn("command", self.service)  # the image CMD is the single runtime switch
-        for stack in (COMPOSE, SPOOLMAN):
-            for name, service in stack["services"].items():
-                self.assertNotIn("hermes", name + service.get("image", "") + json.dumps(service.get("command", "")))
+    def run_jobs(self, request, nproc=8, mem_kib=None, cpu_max=None, memory_max=None, per_job=None):
+        with tempfile.TemporaryDirectory() as root:
+            proc = Path(root, "proc")
+            proc.mkdir()
+            (proc / "meminfo").write_text(f"MemTotal: 99999999 kB\nMemAvailable: {mem_kib or 64 * 1024 * 1024} kB\n")
+            cgroup = Path(root, "sys", "fs", "cgroup")
+            cgroup.mkdir(parents=True)
+            if cpu_max:
+                (cgroup / "cpu.max").write_text(cpu_max + "\n")
+            if memory_max:
+                (cgroup / "memory.max").write_text(memory_max + "\n")
+            env = {"PATH": os.environ["PATH"], "ORCA_JOBS_ROOT": root, "ORCA_JOBS_NPROC": str(nproc)}
+            if per_job:
+                env["ORCA_BUILD_MEM_PER_JOB_MIB"] = str(per_job)
+            return subprocess.run(["sh", str(JOBS), request], capture_output=True, text=True, env=env, timeout=30)
 
-    def test_least_privilege_and_restart(self):
-        self.assertTrue(self.service["read_only"])
-        self.assertEqual(self.service["cap_drop"], ["ALL"])
-        self.assertNotIn("cap_add", self.service)
-        self.assertIn("no-new-privileges:true", self.service["security_opt"])
-        self.assertEqual(self.service["user"], "${PUID:-1000}:${PGID:-1000}")
-        self.assertEqual(self.service["restart"], "unless-stopped")
-        self.assertNotIn("privileged", self.service)
-        limits = self.service["deploy"]["resources"]["limits"]
-        self.assertIn("memory", limits)
-        self.assertIn("cpus", limits)
+    def jobs(self, *args, **kwargs):
+        result = self.run_jobs(*args, **kwargs)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        return int(result.stdout)
 
-    def test_healthcheck_matches_the_image(self):
-        image = re.search(r'HEALTHCHECK [^\n]*\\\n\s+CMD (\[.*\])', DOCKERFILE).group(1)
-        self.assertEqual(self.service["healthcheck"]["test"], ["CMD", *json.loads(image)])
+    def test_auto_never_takes_every_cpu(self):
+        self.assertEqual(self.jobs("auto", nproc=8), 7)
+        self.assertEqual(self.jobs("auto", nproc=1), 1)
 
-    def test_volumes_cover_every_data_directory(self):
-        targets = {volume.rsplit(":", 1)[1] for volume in self.service["volumes"]}
-        self.assertEqual(targets, DATA_TARGETS)
-        entrypoint = (ROOT / "docker" / "entrypoint.sh").read_text()
-        self.assertIn("for dir in " + " ".join(sorted(DATA_TARGETS, key=["/data/hermes", "/data/archive",
-                      "/data/records", "/data/cache"].index)), entrypoint)
+    def test_auto_is_bounded_by_memory(self):
+        six_gib = 6 * 1024 * 1024
+        self.assertEqual(self.jobs("auto", nproc=4, mem_kib=six_gib), 2)
+        self.assertEqual(self.jobs("auto", nproc=4, memory_max=str(6 * 1024 ** 3)), 2)
+        self.assertEqual(self.jobs("auto", nproc=4, mem_kib=1024 * 1024), 1)
+        self.assertEqual(self.jobs("auto", nproc=16, mem_kib=six_gib, per_job=1024), 6)
 
-    def test_bundled_spoolman_override(self):
-        spoolman = SPOOLMAN["services"]["spoolman"]
-        self.assertRegex(spoolman["image"], r"^ghcr\.io/donkie/spoolman:\$\{SPOOLMAN_TAG:-\d+\.\d+\.\d+\}$")
-        self.assertEqual(spoolman["volumes"], ["${PRINT_BUDDY_DATA:-./data}/spoolman:/home/app/.local/share/spoolman"])
-        self.assertIn("healthcheck", spoolman)
-        self.assertEqual(spoolman["restart"], "unless-stopped")
-        self.assertEqual(spoolman["cap_drop"], ["ALL"])
-        override = SPOOLMAN["services"]["print-buddy"]
-        self.assertEqual(override["environment"]["PRINT_BUDDY__SERVICES__SPOOLMAN_URL"], "http://spoolman:8000")
-        self.assertEqual(override["depends_on"]["spoolman"]["condition"], "service_healthy")
+    def test_auto_respects_a_cgroup_cpu_quota(self):
+        self.assertEqual(self.jobs("auto", nproc=16, cpu_max="400000 100000"), 3)
+        self.assertEqual(self.jobs("auto", nproc=4, cpu_max="max 100000"), 3)
 
-    def test_external_spoolman_is_the_default(self):
-        for path in ("config/docker.yaml", "config/docker.toml"):
-            with self.subTest(file=path):
-                data = settings.load(home=settings.HOME, local=ROOT / path, environ={})
-                self.assertEqual(data["services"]["spoolman_url"], "")
-        self.assertRegex(ENV_EXAMPLE, r"(?m)^PRINT_BUDDY__SERVICES__SPOOLMAN_URL=http")
-        self.assertRegex(ENV_EXAMPLE, r"(?m)^# COMPOSE_FILE=docker-compose.yml:docker-compose.spoolman.yml$")
+    def test_explicit_override_and_validation(self):
+        self.assertEqual(self.jobs("5", nproc=2, mem_kib=1024), 5)
+        for bad in ("0", "65", "-1", "two", "", "1.5", "08"):
+            with self.subTest(request=bad):
+                result = self.run_jobs(bad)
+                self.assertEqual(result.returncode, 2)
+                self.assertIn("ORCA_BUILD_JOBS", result.stderr)
+        self.assertEqual(self.run_jobs("auto", per_job=100).returncode, 2)
 
-    def test_spoolman_pin_matches_ci(self):
-        tag = re.search(r"SPOOLMAN_TAG:-([\d.]+)", SPOOLMAN["services"]["spoolman"]["image"]).group(1)
-        workflow = (ROOT / ".github" / "workflows" / "ci.yml").read_text()
-        self.assertIn(f"releases/download/v{tag}/spoolman.zip", workflow)
+    def test_jobs_apply_to_dependencies_and_the_application(self):
+        build = DOCKERFILE.split("FROM ubuntu:24.04 AS runtime")[0]
+        self.assertIn('orca-build-jobs "$ORCA_BUILD_JOBS" >/dev/null', build)  # validated even without Orca
+        self.assertIn('export CMAKE_BUILD_PARALLEL_LEVEL="$jobs"', build)       # every dependency's own build
+        self.assertIn("cmake --build deps/build --parallel 1", build)             # one dependency at a time
+        self.assertIn('cmake --build build --parallel "$jobs"', build)            # the application
+        self.assertNotIn("$(nproc)", build)
 
 
-class DockerfileTests(unittest.TestCase):
-    def test_single_runtime_entry_point_is_importable(self):
-        commands = re.findall(r"(?m)^CMD (\[.*\])$", DOCKERFILE)
-        self.assertEqual(len(commands), 1)
-        command = json.loads(commands[0])
-        self.assertEqual(command[:2], ["python3", "-m"])
-        module = ROOT / (command[2].replace(".", "/") + ".py")
-        self.assertTrue(module.is_file(), module)
-        self.assertIn("healthcheck.beat", module.read_text().replace("healthcheck.HEARTBEAT_S", ""))
+class OrcaCacheTests(unittest.TestCase):
+    def test_cache_id_separates_channel_revisions_architecture_and_profile(self):
+        mount = re.search(r"--mount=type=cache,id=(\S+?),target=/cache,sharing=locked", DOCKERFILE)
+        self.assertIsNotNone(mount)
+        for part in ("${TARGETARCH}", "${ORCA_CHANNEL}", "${ORCA_STABLE_REF}", "${ORCA_ALPHA_REF}",
+                     "${ORCA_BUILD_PROFILE}"):
+            self.assertIn(part, mount.group(1))
 
-    def test_runs_unprivileged_without_hermes(self):
-        self.assertRegex(DOCKERFILE, r"(?m)^USER 1000:1000$")
-        installs = " ".join(re.findall(r"(?ms)^RUN .*?(?<!\\)$", DOCKERFILE))
-        self.assertNotIn("hermes", installs.replace("/data/hermes", ""))
-        ignored = (ROOT / ".dockerignore").read_text().split()
-        for path in ("hermes", "plugins", "tests", ".env", ".git", "data"):
-            self.assertIn(path, ignored)
+    def test_toolchain_change_resets_build_trees_and_source_is_unpatched(self):
+        self.assertIn('"$(gcc -dumpfullversion)"', DOCKERFILE)
+        self.assertIn('"$(cmake --version | head -n 1)" "$CC" "$CXX" "$ORCA_BUILD_PROFILE"', DOCKERFILE)
+        self.assertIn("rm -rf /cache/orca/deps/build /cache/orca/build", DOCKERFILE)
+        self.assertIn('test "$(git rev-parse HEAD)" = "$ref"', DOCKERFILE)
+        self.assertIn('test -z "$(git status --porcelain --untracked-files=no)"', DOCKERFILE)
+        self.assertIn("CC=/usr/lib/ccache/gcc CXX=/usr/lib/ccache/g++", DOCKERFILE)
+        self.assertNotIn(".AppImage", DOCKERFILE)
 
-    def test_orca_channel_default_matches_the_lock(self):
-        defaults = set(re.findall(r"(?m)^ARG ORCA_CHANNEL=(\w+)$", DOCKERFILE))
-        self.assertEqual(defaults, {LOCK["ORCA_DEFAULT_CHANNEL"]})
-        build = yaml.safe_load((ROOT / "docker-compose.build.yml").read_text())
-        self.assertEqual(build["services"]["print-buddy"]["build"]["args"]["ORCA_CHANNEL"],
-                         "${ORCA_CHANNEL:-%s}" % LOCK["ORCA_DEFAULT_CHANNEL"])
-        for path in ("config/docker.yaml", "config/docker.toml"):
-            data = settings.load(home=settings.HOME, local=ROOT / path, environ={})
-            self.assertEqual(data["orca"]["command"], ["/opt/orcaslicer/AppRun"])
+    def test_build_records_its_identity(self):
+        self.assertIn("> /out/orca-build-info", DOCKERFILE)
+        self.assertIn("> /out/orca-source-revision", DOCKERFILE)
 
 
-class OrcaLockTests(unittest.TestCase):
-    def channel(self, name):
-        prefix = f"ORCA_{name.upper()}_"
-        return {k[len(prefix):]: v for k, v in LOCK.items() if k.startswith(prefix)}
-
-    def test_alpha_is_the_pinned_default(self):
-        self.assertEqual(LOCK["ORCA_DEFAULT_CHANNEL"], "alpha")
-        alpha = self.channel("alpha")
-        self.assertEqual(alpha["VERSION"], "2.5.0-alpha")
-        for arch in ("AMD64", "ARM64"):
-            with self.subTest(arch=arch):
-                self.assertIn(f"V{alpha['VERSION']}", alpha[f"{arch}_ASSET"])
-                self.assertRegex(alpha[f"{arch}_SHA256"], r"^[0-9a-f]{64}$")
-        self.assertIn("aarch64", alpha["ARM64_ASSET"])
-
-    def test_stable_is_either_unset_or_fully_pinned_to_2_5(self):
-        stable = self.channel("stable")
-        self.assertEqual(set(stable), {"VERSION", "AMD64_ASSET", "AMD64_SHA256", "ARM64_ASSET", "ARM64_SHA256"})
-        if any(stable.values()):
-            self.assertTrue(all(stable.values()), "fill in every ORCA_STABLE_* entry")
-            self.assertTrue(stable["VERSION"].startswith("2.5."))
-            self.assertRegex(stable["AMD64_SHA256"], r"^[0-9a-f]{64}$")
-            self.assertRegex(stable["ARM64_SHA256"], r"^[0-9a-f]{64}$")
-
-    def test_ci_alpha_job_uses_the_same_release(self):
-        workflow = (ROOT / ".github" / "workflows" / "ci.yml").read_text()
-        self.assertIn(f"releases/download/v{LOCK['ORCA_ALPHA_VERSION']}/", workflow)
+class RuntimeImageTests(unittest.TestCase):
+    def test_uid_1000_is_freed_before_the_runtime_user_is_created(self):
+        """ubuntu:24.04 ships `ubuntu` as UID 1000, so a plain useradd --uid 1000 fails the build."""
+        runtime = DOCKERFILE.split("FROM ubuntu:24.04 AS runtime", 1)[1]
+        self.assertLess(runtime.index("userdel --remove ubuntu"), runtime.index("useradd --uid 1000"))
 
 
 class UnraidTemplateTests(unittest.TestCase):
-    def configs(self, kind):
-        return {c.get("Target"): c for c in UNRAID.findall("Config") if c.get("Type") == kind}
+    def configs(self, root, kind):
+        return {c.get("Target"): c for c in root.findall("Config") if c.get("Type") == kind}
 
-    def test_repository_and_paths_match_compose(self):
-        image = COMPOSE["services"]["print-buddy"]["image"]
-        default = re.match(r"\$\{PRINT_BUDDY_IMAGE:-([^}]+)\}:\$\{PRINT_BUDDY_TAG:-([^}]+)\}", image).groups()
-        self.assertEqual(UNRAID.findtext("Repository"), ":".join(default))
-        self.assertEqual(set(self.configs("Path")), DATA_TARGETS)
+    def test_each_template_runs_its_compose_service(self):
+        for name, root in UNRAID.items():
+            service = COMPOSE["services"][name]
+            with self.subTest(service=name):
+                self.assertEqual(shlex.split(root.findtext("PostArgs")), service["command"])
+                params = shlex.split(root.findtext("ExtraParams"))
+                health = params[params.index("--health-cmd") + 1]
+                self.assertEqual(["CMD", *shlex.split(health)], service["healthcheck"]["test"])
+                self.assertEqual(root.findtext("Repository"), "REPLACE_WITH_TESTED_IMAGE")
+                self.assertEqual(root.findtext("Privileged"), "false")
 
-    def test_variables_are_real_settings_or_secrets(self):
-        home = settings.load(local=False, environ={})
-        for target in self.configs("Variable"):
-            with self.subTest(target=target):
-                if target.startswith("PRINT_BUDDY__"):
-                    section, key = target[len("PRINT_BUDDY__"):].lower().split("__")
-                    self.assertTrue(key in home[section] or (section, key) in settings.OPTIONAL_KEYS)
-                else:
-                    self.assertIn(target, SECRETS | CONTAINER_VARS)
-                if target in SECRETS:
-                    self.assertEqual(self.configs("Variable")[target].get("Mask"), "true")
+    def test_hardening_and_limits_match_compose(self):
+        runtime = COMPOSE["x-runtime"]
+        for name, root in UNRAID.items():
+            params = shlex.split(root.findtext("ExtraParams"))
+            value = {flag: params[i + 1] for i, flag in enumerate(params[:-1]) if flag.startswith("--")}
+            logs = [params[i + 1] for i, flag in enumerate(params[:-1]) if flag == "--log-opt"]
+            with self.subTest(service=name):
+                self.assertEqual(value["--cap-drop"], "ALL")
+                self.assertIn(value["--security-opt"], runtime["security_opt"])
+                self.assertEqual(int(value["--pids-limit"]), runtime["pids_limit"])
+                self.assertEqual(value["--memory"], runtime["mem_limit"])
+                self.assertEqual(float(value["--cpus"]), float(runtime["cpus"]))
+                self.assertEqual(value["--shm-size"], runtime["shm_size"])
+                self.assertEqual(value["--restart"], runtime["restart"])
+                self.assertEqual(sorted(logs), sorted(f"{k}={v}" for k, v in runtime["logging"]["options"].items()))
 
-    def test_same_hardening_as_compose(self):
-        params = shlex.split(UNRAID.findtext("ExtraParams"))
-        for flag in ("--read-only", "--cap-drop", "--security-opt", "--user", "--memory"):
-            self.assertIn(flag, params)
-        self.assertEqual(params[params.index("--cap-drop") + 1], "ALL")
-        self.assertEqual(UNRAID.findtext("Privileged"), "false")
+    def test_paths_and_variables_match_the_runtime(self):
+        compose_env = COMPOSE["x-runtime"]["environment"]
+        for name, root in UNRAID.items():
+            with self.subTest(service=name):
+                paths = self.configs(root, "Path")
+                self.assertEqual(set(paths), DATA_TARGETS)
+                self.assertTrue(all(p.text.startswith("/mnt/user/appdata/print-buddy/") for p in paths.values()))
+                variables = self.configs(root, "Variable")
+                for key in ("PRINT_BUDDY_CONFIG", "PRINT_BUDDY__BOT__MODE"):
+                    self.assertEqual(variables[key].text, compose_env[key].split(":-")[-1].rstrip("}"))
+                for target, config in variables.items():
+                    if target in SECRETS:
+                        self.assertEqual(config.get("Mask"), "true")
+                        self.assertFalse(config.text)
+                    elif target.startswith("PRINT_BUDDY__"):
+                        section, key = target[len("PRINT_BUDDY__"):].lower().split("__")
+                        self.assertIn((section, key), inventory())
+                    else:
+                        self.assertIn(target, COMPOSE_VARS)
+                for required in ("DISCORD_BOT_TOKEN", "PRINT_BUDDY__DISCORD__CHAT_ID",
+                                 "PRINT_BUDDY__DISCORD__ALLOWED_USER_IDS"):
+                    self.assertEqual(variables[required].get("Required"), "true")
+        self.assertEqual({c.get("Target"): c.text for c in UNRAID["bot"].findall("Config")},
+                         {c.get("Target"): c.text for c in UNRAID["listener"].findall("Config")})
 
 
-class HealthcheckTests(unittest.TestCase):
-    def setUp(self):
-        import tempfile
-        self.tmp = tempfile.TemporaryDirectory()
-        self.addCleanup(self.tmp.cleanup)
-        self.data = settings.load(local=False, environ={})
-        self.data["paths"]["hermes_home"] = Path(self.tmp.name)
-        self.data["orca"]["command"] = ["sh"]
+class AcceptanceFixtureTests(unittest.TestCase):
+    def test_overlay_isolates_services_and_gives_the_fake_printer_a_readiness_check(self):
+        overlay = yaml.safe_load((ROOT / "tests" / "docker" / "compose.acceptance.yml").read_text())
+        self.assertTrue(overlay["networks"]["isolated"]["internal"])
+        for name in ("bot", "listener", "fake-moonraker"):
+            with self.subTest(service=name):
+                service = overlay["services"][name]
+                self.assertEqual(service["networks"], ["isolated"])
+                self.assertEqual(service["restart"], "no")
+                self.assertNotIn("ports", service)
+        fake = overlay["services"]["fake-moonraker"]
+        self.assertIn("/server/info", json.dumps(fake["healthcheck"]["test"]))
+        self.assertEqual(overlay["services"]["listener"]["depends_on"]["fake-moonraker"]["condition"], "service_healthy")
+        spoolman = yaml.safe_load((ROOT / "tests" / "docker" / "compose.acceptance-spoolman.yml").read_text())
+        self.assertEqual(spoolman["services"]["spoolman"]["networks"], ["isolated"])
 
-    def test_fresh_heartbeat_is_healthy(self):
-        record = healthcheck.beat("test-runtime", self.data, moonraker_connected=False)
-        healthy, reason, seen = healthcheck.check(self.data, environ={})
-        self.assertTrue(healthy, reason)
-        self.assertEqual(seen, record)
-        self.assertFalse(seen["moonraker_connected"])  # a printer that is off does not fail health
-
-    def test_missing_stale_or_foreign_heartbeat_is_unhealthy(self):
-        self.assertFalse(healthcheck.check(self.data, environ={})[0])
-        healthcheck.beat("test-runtime", self.data)
-        self.assertFalse(healthcheck.check(self.data, now=time.time() + 91, environ={})[0])
-        self.assertTrue(healthcheck.check(self.data, now=time.time() + 91,
-                                          environ={"PRINT_BUDDY_HEALTH_MAX_AGE_S": "120"})[0])
-        path = healthcheck.heartbeat_path(self.data)
-        record = json.loads(path.read_text())
-        path.write_text(json.dumps({**record, "host": socket.gethostname() + "-old"}))
-        self.assertFalse(healthcheck.check(self.data, environ={})[0])
-        path.write_text(json.dumps({**record, "pid": 2 ** 22 + 7}))
-        with mock.patch.object(healthcheck.os, "kill", side_effect=ProcessLookupError):
-            self.assertFalse(healthcheck.check(self.data, environ={})[0])
-        path.write_text("{not json")
-        self.assertFalse(healthcheck.check(self.data, environ={})[0])
-
-    def test_missing_slicer_or_bad_settings_is_unhealthy(self):
-        healthcheck.beat("test-runtime", self.data)
-        self.data["orca"]["command"] = ["/nonexistent/AppRun"]
-        healthy, reason, _ = healthcheck.check(self.data, environ={})
-        self.assertFalse(healthy)
-        self.assertIn("not installed", reason)
-        healthy, reason, _ = healthcheck.check(environ={"PRINT_BUDDY__VISUAL_WATCH__SENSITIVITY": "9"})
-        self.assertFalse(healthy)
-        self.assertIn("settings", reason)
-
-    def test_heartbeat_write_is_atomic(self):
-        healthcheck.beat("test-runtime", self.data)
-        state = healthcheck.heartbeat_path(self.data).parent
-        self.assertEqual([p.name for p in state.iterdir()], [healthcheck.HEARTBEAT])
+    def test_harness_owns_its_names_and_publishes_no_port(self):
+        script = (ROOT / "tests" / "docker" / "image_acceptance.sh").read_text()
+        self.assertIn('project="pb-accept-${mode}-${run_id}"', script)
+        self.assertNotIn("container_name", script)
+        self.assertNotRegex(script, r"\s-p\s+\d|--publish")
+        self.assertNotIn("prune", script)
+        self.assertIn("not a version upgrade", script)
 
 
 if __name__ == "__main__":

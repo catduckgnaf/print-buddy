@@ -1528,6 +1528,61 @@ def _surface_stats(tris, rotation):
     return contact, overhang
 
 
+def _euler_xyz(rotation):
+    """Return deterministic XYZ Euler angles for a row-major rigid matrix."""
+    r = rotation
+    y = math.asin(max(-1.0, min(1.0, r[2])))
+    if abs(math.cos(y)) > 1e-9:
+        x, z = math.atan2(-r[5], r[8]), math.atan2(-r[1], r[0])
+    else:
+        x, z = math.atan2(r[7], r[4]), 0.0
+    return [round(math.degrees(v), 3) for v in (x, y, z)]
+
+
+def placement_candidates(path_or_triangles, printer_model=None, bed_mm=None, max_z_mm=None):
+    """Pure offline placement report; never invokes OrcaSlicer or printer services."""
+    tris = source_triangles(path_or_triangles) if isinstance(path_or_triangles, (str, Path)) else path_or_triangles
+    if not tris:
+        raise ValueError('placement report requires non-empty triangles')
+    points = _unique_points(tris)
+    bed = tuple(float(v) for v in (bed_mm or BED))
+    height_limit = float(max_z_mm if max_z_mm is not None else MAX_HEIGHT_MM)
+    if len(bed) != 2 or min(*bed, height_limit) <= 0:
+        raise ValueError('bed_mm and max_z_mm must be positive dimensions')
+    rows = []
+    orientations = [('Upright', 'identity', IDENTITY_ROT)]
+    orientations.extend((name, axis, matrix) for axis, (name, matrix) in UP_AXES.items())
+    for name, axis, matrix in orientations:
+        rotated = [_rotate(p, matrix) for p in points]
+        hull = _hull([(p[0], p[1]) for p in rotated])
+        yaw_set = {0.0, 45.0, 90.0}
+        for i, a in enumerate(hull):
+            b = hull[(i + 1) % len(hull)]
+            yaw_set.add(round(math.degrees(math.atan2(b[1]-a[1], b[0]-a[0])) % 90.0, 6))
+        for yaw in sorted(yaw_set):
+            rot = _matmul(_yaw(yaw), matrix)
+            moved = [_rotate(p, rot) for p in points]
+            dims = [max(p[k] for p in moved) - min(p[k] for p in moved) for k in range(3)]
+            mx, my, mz = bed[0]-dims[0], bed[1]-dims[1], height_limit-dims[2]
+            euler = _euler_xyz(rot)
+            rows.append({'label': name, 'axis': axis, 'rx_deg': euler[0], 'ry_deg': euler[1], 'rz_deg': round(yaw, 3),
+                         'footprint_mm': [round(v, 3) for v in dims], 'margin_x_mm': round(mx, 3),
+                         'margin_y_mm': round(my, 3), 'margin_z_mm': round(mz, 3),
+                         'min_bed_margin_mm': round(min(mx, my, mz), 3),
+                         'fits_bed': dims[0] <= bed[0] and dims[1] <= bed[1] and dims[2] <= height_limit,
+                         'diagonal_gain_mm': 0.0, 'rotation': [round(v, 9) for v in rot]})
+    for row in rows:
+        cardinal = next((r for r in rows if r['axis'] == row['axis'] and r['rz_deg'] == 0.0), row)
+        row['diagonal_gain_mm'] = round(max(0.0, cardinal['footprint_mm'][0]-row['footprint_mm'][0],
+                                               cardinal['footprint_mm'][1]-row['footprint_mm'][1]), 3)
+    rows.sort(key=lambda r: (not r['fits_bed'], 0 if r['axis']=='identity' and r['fits_bed'] else 1,
+                             -r['min_bed_margin_mm'], r['footprint_mm'][2], r['label'], r['axis'], r['rz_deg']))
+    for rank, row in enumerate(rows, 1):
+        row['rank'] = rank
+        row['printer_model'] = printer_model
+    return rows
+
+
 def rotation_alternatives(source: Path, state: dict, authored_max: float = 0.0, limit: int = 2) -> list[dict]:
     """Rotated orientations that print larger than the authored orientation can.
 

@@ -348,10 +348,12 @@ def mesh_audit(path, printer_model=None):
     lo = [min(point[axis] for triangle in triangles for point in triangle) for axis in range(3)]
     hi = [max(point[axis] for triangle in triangles for point in triangle) for axis in range(3)]
     source_sha256 = file_sha256(path)
+    from .orca_adapter import placement_candidates
     return {"schema_version": 1, "sha256": source_sha256,
             "source_sha256": source_sha256,
             "dimensions_mm": [round(hi[axis] - lo[axis], 2) for axis in range(3)],
             "units": "mm", "printer_model": printer_model,
+            "placement_candidates": placement_candidates(path, printer_model=printer_model),
             **mesh_topology(triangles)}
 
 
@@ -1480,9 +1482,9 @@ def set_color_decisions(job, decisions):
     if decisions_digest(job.get('color_decisions')) != decisions_digest(decisions):
         if job.get('gcode'):
             job.setdefault('artifact_history', []).append({key: job[key] for key in
-                ('gcode', 'gcode_verified', 'provenance', 'artifact_binding', 'sliced_at', 'slice_config')
-                if key in job})
-        for key in ('gcode', 'provenance', 'artifact_binding', 'sliced_at', 'slice_config'):
+                ('gcode', 'gcode_verified', 'provenance', 'artifact_binding', 'sliced_at', 'slice_config',
+                 'slice_recipe') if key in job})
+        for key in ('gcode', 'provenance', 'artifact_binding', 'sliced_at', 'slice_config', 'slice_recipe'):
             job.pop(key, None)
         job['gcode_verified'] = False
     job['color_decisions'] = decisions
@@ -1501,6 +1503,8 @@ def require_current_artifact(job, gcode):
         return  # Preserve legacy jobs without source-color decisions.
     if not binding or job.get('gcode_verified') is not True:
         raise RuntimeError('stale color artifact: reslice current JOB before launch')
+    from .slice_recipe import RECIPE_VERSION, require_recorded
+    recipe_sha = require_recorded(job, binding)
     stored_hash = binding.get('gcode_sha256')
     presented = Path(gcode).resolve()
     if isinstance(stored_hash, dict):
@@ -1537,9 +1541,22 @@ def require_current_artifact(job, gcode):
             raise RuntimeError('stale color artifact: source, decisions or G-code changed; reslice before launch')
     expected = {'source_sha256': file_sha256(job['downloaded_file']),
                 'decisions_sha256': decisions_digest(job.get('color_decisions')),
-                'gcode_sha256': expected_hash}
+                'gcode_sha256': expected_hash, 'recipe_version': RECIPE_VERSION, 'recipe_sha256': recipe_sha}
     if binding != expected:
         raise RuntimeError('stale color artifact: source, decisions or G-code changed; reslice before launch')
+
+
+def _recipe_binding(job):
+    """Recipe fields every artifact_binding carries; slice_job records the recipe before slicing."""
+    return {'recipe_version': job['slice_recipe']['version'], 'recipe_sha256': job['slice_recipe']['sha256']}
+
+
+def _recipe_changed(job, latest):
+    """True when JOB.json, the hardware record, profiles or slicer now give another recipe than the one sliced."""
+    from .slice_recipe import recipe_sha256, slice_recipe
+    sliced = job['slice_recipe']['recipe']
+    current = slice_recipe(latest, sliced['source_sha256'], printer_state.load(), **sliced['overrides'])
+    return recipe_sha256(current) != job['slice_recipe']['sha256']
 
 
 def _job_adapter(job):
@@ -1900,14 +1917,14 @@ def _slice_painted_plates(job, job_path, src, manifest, decisions, view, plates,
     if not artifacts:
         raise RuntimeError('painted source produced no plates')
     latest = json.loads(Path(job_path).read_text())
-    if file_sha256(src) != source_sha or decisions_digest(latest.get('color_decisions')) != decision_sha:
-        raise RuntimeError('source or decisions changed during slicing; artifact not made ready')
+    if file_sha256(src) != source_sha or decisions_digest(latest.get('color_decisions')) != decision_sha or _recipe_changed(job, latest):
+        raise RuntimeError('source, decisions or slice recipe changed during slicing; artifact not made ready')
     job['derived_plates'] = artifacts
     job['plate_merge'] = {'mode': 'split', 'painted': True, 'plates_in': len(plates), 'plates_out': len(artifacts),
                           'reason': 'painted multicolor plates sliced separately, one multicolor G-code each',
                           'scales': {str(a['plate_id']): a['scale'] for a in artifacts}, 'fits_bed': True,
                           'bed_mm': int(st['bed_mm'][0])}
-    job['artifact_binding'] = {'source_sha256': source_sha, 'decisions_sha256': decision_sha,
+    job['artifact_binding'] = {**_recipe_binding(job), 'source_sha256': source_sha, 'decisions_sha256': decision_sha,
                                'gcode_sha256': {a['binding_key']: file_sha256(a['gcode']) for a in artifacts}}
     job.update({'gcode': artifacts[0]['gcode'], 'gcode_verified': True,
                 'sliced_at': time.strftime('%Y-%m-%dT%H:%M:%S%z')})
@@ -1960,8 +1977,8 @@ def _slice_merged(job, job_path, src, manifest, decisions, view, verdict, st, br
         raise RuntimeError(f'merged G-code prints {labelled} objects but the source has {len(manifest["parts"])}')
     check = verify_gcode_offline(out, st)
     latest = json.loads(Path(job_path).read_text())
-    if file_sha256(src) != source_sha or decisions_digest(latest.get('color_decisions')) != decision_sha:
-        raise RuntimeError('source or decisions changed during slicing; artifact not made ready')
+    if file_sha256(src) != source_sha or decisions_digest(latest.get('color_decisions')) != decision_sha or _recipe_changed(job, latest):
+        raise RuntimeError('source, decisions or slice recipe changed during slicing; artifact not made ready')
     summary = {'mode': 'merge', 'reason': None, 'plates_in': verdict['plates_in'], 'objects_in': len(verdict['objects_in']),
                'objects_out': len(placed_ids), 'parts_in': len(manifest['parts']), 'bed_mm': verdict['bed_mm'],
                'spacing_mm': verdict['spacing_mm'], 'fits_bed': True, 'slots': slots,
@@ -1969,7 +1986,7 @@ def _slice_merged(job, job_path, src, manifest, decisions, view, verdict, st, br
                'estimate': human_dur(estimate) if estimate else None, 'gcode_objects_labelled': labelled or None}
     job.pop('derived_plates', None); job.pop('refused_plates', None); job.pop('multipart_plan', None)
     job['plate_merge'] = summary
-    job['artifact_binding'] = {'source_sha256': source_sha, 'decisions_sha256': decision_sha, 'gcode_sha256': file_sha256(out)}
+    job['artifact_binding'] = {**_recipe_binding(job), 'source_sha256': source_sha, 'decisions_sha256': decision_sha, 'gcode_sha256': file_sha256(out)}
     job.update({'slice_config': [str(p) for p in configs], 'gcode': str(out), 'provenance': provenance,
                 'gcode_verified': True, 'offline_check': check, 'merged': extra,
                 'sliced_at': time.strftime('%Y-%m-%dT%H:%M:%S%z')})
@@ -2030,14 +2047,14 @@ def _slice_per_plate(job, job_path, src, manifest, decisions, view, plates, st, 
     if covered != sorted(p['key'] for p in manifest['parts']):
         raise RuntimeError('per-plate output does not account for every source part')
     latest = json.loads(Path(job_path).read_text())
-    if file_sha256(src) != source_sha or decisions_digest(latest.get('color_decisions')) != decision_sha:
-        raise RuntimeError('source or decisions changed during slicing; artifacts not made ready')
+    if file_sha256(src) != source_sha or decisions_digest(latest.get('color_decisions')) != decision_sha or _recipe_changed(job, latest):
+        raise RuntimeError('source, decisions or slice recipe changed during slicing; artifacts not made ready')
     job['derived_plates'] = artifacts
     if refused:
         job['refused_plates'] = refused
     else:
         job.pop('refused_plates', None)
-    job['artifact_binding'] = {'source_sha256': source_sha, 'decisions_sha256': decision_sha,
+    job['artifact_binding'] = {**_recipe_binding(job), 'source_sha256': source_sha, 'decisions_sha256': decision_sha,
                                'gcode_sha256': {row['binding_key']: file_sha256(row['gcode']) for row in artifacts}}
     job.update({'gcode': artifacts[0]['gcode'], 'gcode_verified': True,
                 'sliced_at': time.strftime('%Y-%m-%dT%H:%M:%S%z')})
@@ -2083,13 +2100,13 @@ def _slice_full_size_split(job, job_path, src, manifest, decisions, st):
                           'offline_check': check, 'plate_report': report, 'provenance': provenance,
                           'slice_config': [str(path) for path in configs]})
     latest = json.loads(Path(job_path).read_text())
-    if file_sha256(src) != source_sha or decisions_digest(latest.get('color_decisions')) != decision_sha:
-        raise RuntimeError('source or decisions changed during full-size split slicing')
+    if file_sha256(src) != source_sha or decisions_digest(latest.get('color_decisions')) != decision_sha or _recipe_changed(job, latest):
+        raise RuntimeError('source, decisions or slice recipe changed during full-size split slicing')
     job['derived_plates'] = artifacts
     job['plate_merge'] = {'mode': 'split', 'reason': f"operator chose full-size split into {len(artifacts)} plates",
                           'plates_in': len(artifacts), 'parts_in': len(expected), 'fits_bed': True,
                           'bed_mm': int(st['bed_mm'][0]), 'full_size': True}
-    job['artifact_binding'] = {'source_sha256': source_sha, 'decisions_sha256': decision_sha,
+    job['artifact_binding'] = {**_recipe_binding(job), 'source_sha256': source_sha, 'decisions_sha256': decision_sha,
                                'gcode_sha256': {row['binding_key']: file_sha256(row['gcode']) for row in artifacts}}
     job.update({'gcode': artifacts[0]['gcode'], 'gcode_verified': True,
                 'sliced_at': time.strftime('%Y-%m-%dT%H:%M:%S%z')})
@@ -2097,7 +2114,7 @@ def _slice_full_size_split(job, job_path, src, manifest, decisions, st):
     return [row['gcode'] for row in artifacts]
 
 
-def slice_job(job_path, brim_override=None, copies=None, scale=None):
+def slice_job(job_path, brim_override=None, copies=None, scale=None, recipe_sha256=None):
     # Disk only. Launch still runs printer_state.check inside print_now and
     # verify_gcode. A file that never leaves disk does not need Moonraker or Spoolman.
     job = json.loads(Path(job_path).read_text()); st = printer_state.load()
@@ -2115,6 +2132,14 @@ def slice_job(job_path, brim_override=None, copies=None, scale=None):
         job["filament_selection"] = selection
     src=Path(job["downloaded_file"]); ad=job["audit"]; multi_plate=False
     if src.suffix.lower() not in (".3mf",".stl"): raise RuntimeError("only STL/3MF can be sliced; selected source is not geometry")
+    from . import slice_recipe as sr
+    recipe = sr.record(sr.slice_recipe(job, file_sha256(src), st,
+                                       copies=copies, scale=scale, brim_override=brim_override))
+    if recipe_sha256 is not None and recipe_sha256 != recipe['sha256']:
+        # The request was bound to a recipe the job no longer describes (a background slice
+        # requested before the job changed). Slicing now would label one recipe with another.
+        raise RuntimeError('slice request is for another slice recipe; the job changed after it was requested. '
+                           'Nothing sliced')
     # A Bambu/Orca multi-plate project is not one PrusaSlicer bed. Its aggregate
     # dimensions and center are not meaningful for an individual printable plate.
     if src.suffix.lower() == ".3mf":
@@ -2151,6 +2176,7 @@ def slice_job(job_path, brim_override=None, copies=None, scale=None):
     job['color_manifest'], job['color_prompts'] = manifest, prompts(manifest)
     write_job(Path(job_path).parent, job)
     _timing(job_path, 'inventory_done')
+    job['slice_recipe'] = recipe  # persisted only with the artifact it describes
     decisions = None if generic else job.get('color_decisions')
     if decisions is not None:
         decisions = validate_decisions(manifest, decisions, st, resolve_filament_selection)
@@ -2218,11 +2244,11 @@ def slice_job(job_path, brim_override=None, copies=None, scale=None):
                               'gcode': str(out), 'offline_check': check, 'plate_report': report,
                               'provenance': provenance, 'slice_config': [str(path) for path in configs]})
         latest = json.loads(Path(job_path).read_text())
-        if file_sha256(src) != source_sha or decisions_digest(latest.get('color_decisions')) != decision_sha:
-            raise RuntimeError('source or decisions changed during slicing; artifacts not made ready')
+        if file_sha256(src) != source_sha or decisions_digest(latest.get('color_decisions')) != decision_sha or _recipe_changed(job, latest):
+            raise RuntimeError('source, decisions or slice recipe changed during slicing; artifacts not made ready')
         job['derived_plates'] = artifacts
         job.pop('refused_plates', None)
-        job['artifact_binding'] = {'source_sha256': source_sha, 'decisions_sha256': decision_sha,
+        job['artifact_binding'] = {**_recipe_binding(job), 'source_sha256': source_sha, 'decisions_sha256': decision_sha,
                                    'gcode_sha256': {row['slot']: file_sha256(row['gcode']) for row in artifacts}}
         job.update({'gcode': artifacts[0]['gcode'], 'gcode_verified': True,
                     'sliced_at': time.strftime('%Y-%m-%dT%H:%M:%S%z')})
@@ -2311,9 +2337,9 @@ def slice_job(job_path, brim_override=None, copies=None, scale=None):
         verify_gcode(out)
     latest = json.loads(Path(job_path).read_text())
     _timing(job_path, 'verify_done')
-    if file_sha256(src) != source_sha or decisions_digest(latest.get("color_decisions")) != decision_sha:
-        raise RuntimeError("source or decisions changed during slicing; artifact not made ready")
-    job["artifact_binding"] = {"source_sha256": source_sha, "decisions_sha256": decision_sha,
+    if file_sha256(src) != source_sha or decisions_digest(latest.get("color_decisions")) != decision_sha or _recipe_changed(job, latest):
+        raise RuntimeError("source, decisions or slice recipe changed during slicing; artifact not made ready")
+    job["artifact_binding"] = {**_recipe_binding(job), "source_sha256": source_sha, "decisions_sha256": decision_sha,
                                "gcode_sha256": file_sha256(out)}
     if auto_scale is not None:
         job['auto_scale'] = auto_scale
@@ -3537,6 +3563,11 @@ def _main():
     lay.add_argument("--input-unit", default=None, help="explicit length unit for STL or unitless model (mm, cm, m, inch, ft)")
     lay.add_argument("--split-stl-components", action="store_true", help="treat disconnected STL shells as separate parts")
     lay.add_argument("--allow-rotations", nargs="*", type=float, default=None, help="candidate Z rotations in degrees")
+    cad = sub.add_parser("cad-split", help="offline opt-in reviewed CAD split plan and printable dowel preparation; no slicing or start")
+    cad.add_argument("source", help="input .stl path")
+    cad.add_argument("-o", "--outdir", default=None, help="output directory for split artifacts and split_validation.json")
+    cad.add_argument("--plan", required=True, help="reviewed split plan preset (rack_adapter_10to19, macmini_mount_a1347) or JSON path")
+    cad.add_argument("--execute", action="store_true", help="invoke OpenSCAD CLI to render boolean split halves and verify volume conservation")
     m=sub.add_parser("plate-manifest",help="read-only source plate inventory; does not authorize slicing")
     m.add_argument("source_3mf")
     r=sub.add_parser("record-start",help="after a confirmed print start: write the dated Obsidian note"); r.add_argument("gcode"); r.add_argument("--moonraker-name"); r.add_argument("--started-at",help="ISO UTC, default now")
@@ -3590,6 +3621,13 @@ def _main():
             input_unit=a.input_unit,
             split_stl=a.split_stl_components,
         )
+        print(json.dumps(res, indent=2))
+        return
+    if a.cmd=="cad-split":
+        from .cad_split import prepare_cad_split
+        src_path = Path(a.source)
+        out_dir = Path(a.outdir) if a.outdir else (src_path.parent / f"{src_path.stem}_cad_split")
+        res = prepare_cad_split(src_path, out_dir, a.plan, execute_openscad=bool(a.execute))
         print(json.dumps(res, indent=2))
         return
     if a.cmd=="prepare-first-layer":

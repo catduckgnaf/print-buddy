@@ -1,6 +1,10 @@
 """Offline orientation regressions; slicer verification boundary is stubbed explicitly."""
 from pathlib import Path
 from unittest.mock import patch
+import math
+import struct
+
+import pytest
 
 from print_buddy.core import orca_adapter as oa
 
@@ -77,3 +81,35 @@ def test_height_and_footprint_swaps_are_not_duplicate_placements():
          patch.object(oa, 'orca_plate_capacity', side_effect=capacity):
         rows = oa.rotation_alternatives(Path('rack.stl'), state, authored_max=.85)
     assert rows and rows[0]['axis'] == '+Z'
+
+
+@pytest.mark.parametrize('dims', [(254., 44.6, 183.4), (245., 44.5, 20.)])
+def test_rack_envelope_bed_turn_round_trips_at_full_scale(tmp_path, dims):
+    # Generated cuboids reproduce public dimensions, not private model geometry.
+    points = [(x, y, z) for x in (0., dims[0]) for y in (0., dims[1]) for z in (0., dims[2])]
+    faces = [(0, 2, 3), (0, 3, 1), (4, 5, 7), (4, 7, 6),
+             (0, 1, 5), (0, 5, 4), (2, 6, 7), (2, 7, 3),
+             (0, 4, 6), (0, 6, 2), (1, 3, 7), (1, 7, 5)]
+    source = tmp_path / 'rack.stl'
+    data = bytearray(b'generated rack envelope'.ljust(80, b'\0'))
+    data += struct.pack('<I', len(faces))
+    for face in faces:
+        data += struct.pack('<12fH', 0., 0., 0., *(v for i in face for v in points[i]), 0)
+    source.write_bytes(data)
+    state = {'bed_mm': [220, 220], 'max_print_height_mm': 220,
+             'resolved_hop_types': ['Normal Lift']}
+    with patch.object(oa, 'orca_plate_capacity', return_value=1):
+        rows = oa.rotation_alternatives(source, state, authored_max=.8)
+    chosen = rows[0]
+    assert chosen['axis'] == '+Z' and chosen['scale'] == 1.
+    target = tmp_path / 'oriented.stl'
+    oa.place_stl(source, target, scale=chosen['scale'], rotation=chosen['rotation'])
+    before, after = oa.source_triangles(source), oa.source_triangles(target)
+    assert len(before) == len(after) == len(faces)
+    vertices = [p for tri in after for p in tri]
+    assert all(1. <= p[i] <= 219. for p in vertices for i in (0, 1))
+    assert min(p[2] for p in vertices) == pytest.approx(0.)
+    assert max(p[2] for p in vertices) == pytest.approx(dims[2], abs=.001)
+    for old, new in zip(before, after):
+        for i, j in ((0, 1), (1, 2), (2, 0)):
+            assert math.dist(old[i], old[j]) == pytest.approx(math.dist(new[i], new[j]), abs=.001)

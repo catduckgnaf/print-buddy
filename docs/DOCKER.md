@@ -13,6 +13,9 @@ standalone Discord bot or Moonraker listener. There is no combined supervisor.
 | APP_CHANNEL | stable, development (default) | Application provenance label, not a Git checkout |
 | WITH_ORCA | false (default), true | Include a source-built slicer or omit it |
 | ORCA_CHANNEL | stable (default), alpha | Independently select the pinned slicer revision |
+| ORCA_BUILD_JOBS | auto (default), 1-64 | Bounded compile parallelism; see OrcaSlicer source build |
+
+All build arguments, with defaults: [SETTINGS.md](SETTINGS.md#build-arguments).
 
 Build from the intended source checkout. Setting APP_CHANNEL does not switch the
 application source. The proposed branch policy is main for stable candidates and
@@ -31,6 +34,44 @@ A no-Orca image can handle non-slicing commands; slicing requires the absent
 slicing fallback is provided. Exact user-facing failure behavior still needs
 image verification. Alpha and ARM64 source builds are unverified; no multiarch
 publication is claimed.
+
+## OrcaSlicer source build
+
+With `WITH_ORCA=true` the `orca-build` stage compiles the pinned revision with Orca's own CMake
+dependency recipe. Orca source is never patched: the build refuses a checkout whose HEAD is not the
+pinned commit or whose tracked files differ from it.
+
+Parallelism: `ORCA_BUILD_JOBS=auto` (default) runs one compile job per
+`ORCA_BUILD_MEM_PER_JOB_MIB` (default 2560 MiB) of memory, capped at the usable CPUs minus one and
+never below 1. Usable CPUs honour a cgroup v2 `cpu.max` quota, and memory honours a cgroup
+`memory.max` limit before falling back to `MemAvailable`. For example, 4 CPUs with 6 GiB gives 2 jobs.
+Override it with `--build-arg ORCA_BUILD_JOBS=N` (1-64); anything else stops the build before it
+compiles. The same value is exported as `CMAKE_BUILD_PARALLEL_LEVEL`, so every dependency's own
+build uses it while the dependency graph builds one dependency at a time, as Orca recommends. The
+application then builds with `--parallel N`. Orca's recipe hard-codes its own parallelism for three
+small C dependencies (GMP and MPFR use `make -j`, OpenSSL `make -j$(nproc)`). They are not patched,
+and because only one dependency builds at a time, they run alone. A 4-CPU build's first dependency
+stage therefore may briefly use all four CPUs. Earlier builds used `--parallel 1` only at the top
+level, which still let every dependency use all host CPUs.
+
+Cache: with BuildKit (`docker buildx build`, the default builder of current Docker), the stage keeps a
+cache mount whose id combines architecture, `ORCA_CHANNEL`, both pinned revisions and
+`ORCA_BUILD_PROFILE`. Stable and alpha, different revisions, architectures or option profiles
+therefore never share a cache. The mount holds the pinned checkout, downloaded dependency sources,
+finished dependencies with their completion stamps, Ninja objects and a ccache store
+(`ORCA_CCACHE_MAXSIZE`, default 5G). A fingerprint of the OS release, GCC and CMake versions, the
+compiler wrappers and the option profile is kept with it; any change empties the build trees and
+keeps the downloads and ccache, which checks every object itself. Rename `ORCA_BUILD_PROFILE` when
+the CMake options in the Dockerfile change.
+
+What survives an interrupted build: the cache mount does, whether the `RUN` fails or the build is
+cancelled. A re-run reuses the checkout, skips finished dependencies and recompiles only unfinished
+objects, mostly from ccache. The image layer itself is only committed when the whole step succeeds, so
+an interrupted build on a builder that ignores or does not keep this cache mount, or with
+`--no-cache`, starts over (the behaviour above was measured with Docker 29 BuildKit). After a hard kill (SIGKILL, out-of-memory) a truncated object can
+make a later link fail. Clear the build trees by changing `ORCA_BUILD_PROFILE` for one build, or
+remove the BuildKit cache. ccache keeps the rebuild short either way. Hosted runners start with an
+empty cache.
 
 Example build commands, to run only after the relevant container approval:
 
@@ -86,9 +127,14 @@ between replicas of one service.
 
 ## Unraid DockerMan parity (manual candidate setup)
 
-No DockerMan template is published by this draft. After separate deployment
-approval, create two entries from the same tested image: Print Buddy Bot and
-Print Buddy Listener. Override the commands respectively with
+No DockerMan template is published by this draft. Two template proposals,
+`docker/unraid/print-buddy-bot.xml` and `docker/unraid/print-buddy-listener.xml`,
+encode the entries below. Tests keep them in step with Compose, and the acceptance
+harness runs their docker arguments. Their Repository is a
+`REPLACE_WITH_TESTED_IMAGE` placeholder. After separate deployment approval, copy
+them to `/boot/config/plugins/dockerMan/templates-user/`, set Repository to the
+tested image, or create the two entries by hand from the same tested image:
+Print Buddy Bot and Print Buddy Listener. Override the commands respectively with
 `python3 -m print_buddy.bot` and
 `python3 -m print_buddy.hermes.moonraker_event_listener`.
 Map the same four persistent paths to /data/hermes, /data/archive, /data/records
@@ -104,7 +150,25 @@ DockerMan installation and persistence have not been exercised on Unraid.
 
 ## Validation and attribution
 
-See DOCKER-117-PROGRESS.md for exact evidence and outstanding gates. Source tests
+`tests/docker/image_acceptance.sh IMAGE [external|bundled]` is the offline runtime
+acceptance for one already-built image. It never builds, pulls or pushes. It runs under
+a unique Compose project on an internal network with no route out, uses dummy
+secrets, and removes only its own containers. It checks:
+
+- the payload and handlers, without a source mount
+- Orca's executable and shared-library closure, or its absence
+- real slicing plus G-code guards, or fail-closed refusal
+- read-only root behaviour
+- per-service bot and listener readiness
+- refusal of foreign and stopped heartbeats
+- SIGTERM, recreation persistence, and a same-image tag switch (recreation only, not an
+  upgrade)
+- bundled Spoolman persistence
+
+The hosted equivalent, `.github/workflows/docker-image-validation.yml`, only runs when a
+maintainer dispatches it, and never publishes anything.
+
+See DOCKER-117-PROGRESS.md and DOCKER-117-ACCEPTANCE.md for exact evidence and outstanding gates. Source tests
 are not a source-built Orca image, runtime fixture, release, or live-printer test.
 
 Standalone foundations originated in zaheria985/print-buddy commit
@@ -118,12 +182,12 @@ Original contributor commits and license notices remain intact.
 ## Settings and external service boundaries
 
 The complete runtime scalar inventory and defaults live in config/home.yaml and
-README's All settings table. Every scalar accepts PRINT_BUDDY__SECTION__KEY;
+[SETTINGS.md](SETTINGS.md), which a test keeps complete. Every scalar accepts PRINT_BUDDY__SECTION__KEY;
 use integer spelling for schema integer defaults (for example MAX_MERGED_HOURS=12,
 not 12.0). Arrays and nested mappings require a mounted YAML/TOML file. Optional
 keys include services.octoprint_url and printer.nozzle_type. Unknown settings fail
-at startup instead of silently changing behavior. .env.example is a starter,
-not an exhaustive inventory. Compose reads .env but a direct DockerMan entry
+at startup instead of silently changing behavior. .env.example starts with the
+required values and lists every other scalar commented out. Compose reads .env but a direct DockerMan entry
 requires the same variables entered manually. Runtime secrets are separate:
 DISCORD_BOT_TOKEN, OCTOPRINT_API_KEY and the configured LLM key variable.
 

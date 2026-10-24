@@ -203,3 +203,10 @@ def test_p1s_stays_offline_and_does_not_use_the_bambu_live_paths(p1s_profiles):
     assert VENDOR.delivery == ("discord", "bambu_handoff")
     assert "printer" not in VENDOR.delivery
     assert adapter_for().normalize_status({"print_stats": {"state": "printing"}})["state"] == "unknown"
+
+
+def test_p1s_defaults_to_bambu_studio_like_every_bambu_printer():
+    from print_buddy import settings
+    for key in ("bambulab.a1", "bambulab.p1s"):
+        config = settings.load(local=False, environ={"PRINT_BUDDY__PRINTER__MODEL": key})
+        assert config["printer"]["slicer"] == "bambu_studio", key

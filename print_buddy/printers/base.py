@@ -13,6 +13,9 @@ printer model inside it. The [printer] model key is "<vendor>.<printer>", the pa
     octoprint/marlin.py      MODEL for "octoprint.marlin"
     bambulab/__init__.py     VENDOR: no live connection, Bambu start code, OrcaSlicer or Bambu Studio,
                              .gcode.3mf handoff. Printer modules (A1, later P1S) drop in beside it.
+    bambulab/a1.py           MODEL for "bambulab.a1"; adapter.py (offline adapter, no transport), guard.py
+                             (A1 G-code checks), facts.py (sourced hardware facts, supplemental metadata),
+                             profiles.py (templates generated from the operator's OrcaSlicer, none shipped)
 
 A vendor package defines VENDOR = VendorProfile(...): what every printer of that vendor shares, namely
 the connection type, the start G-code family, the slicers it may use, the file formats it hands over,
@@ -105,7 +108,7 @@ SLICERS = ("orca", "bambu_studio")
 # What can happen to a validated slice, besides nothing:
 #   printer        start it on the printer through the vendor connection, behind the per-job bed-clear button
 #   discord        attach the sliced files to the Discord thread
-#   bambu_handoff  package a .gcode.3mf for Bambu Studio, Bambu Handy or the SD card; nothing is uploaded
+#   bambu_handoff  package a .gcode.3mf in Bambu Studio's export layout; nothing is uploaded (untested on hardware)
 DELIVERY_METHODS = ("printer", "discord", "bambu_handoff")
 
 
@@ -195,7 +198,7 @@ class PrinterModel:
     key: str  # "brand.model", the [printer] model value
     label: str
     adapter: type  # PrinterAdapter subclass
-    templates: str  # folder under print_buddy/templates/orca
+    templates: str  # folder under print_buddy/templates/orca (or under <state>/orca-profiles when generated)
     # Printer-specific defaults for [printer], [layout], [prime_tower] and [cold_pull], merged over the
     # vendor's settings. Config files and the environment override both.
     settings: dict
@@ -215,6 +218,9 @@ class PrinterModel:
     # The vendor this printer inherits from. printers/__init__ fills it from the vendor package when a
     # model module leaves it out, and refuses a vendor that does not match the package.
     vendor: VendorProfile | None = None
+    # True when the Orca templates are not shipped but generated on the operator's machine into
+    # <state>/orca-profiles/<templates> (third-party profiles; see printers/bambulab/profiles.py).
+    generated_templates: bool = False
 
     @property
     def vendor_key(self) -> str:
@@ -229,7 +235,8 @@ class PrinterModel:
         out = merge_settings(self.vendor.settings if self.vendor else {}, self.settings)
         printer = out.setdefault("printer", {})
         printer["model"] = self.key
-        out.setdefault("orca", {})["templates"] = f"print_buddy/templates/orca/{self.templates}"
+        # Empty means generated: settings resolves it to <state>/orca-profiles/<templates>.
+        out.setdefault("orca", {})["templates"] = "" if self.generated_templates else f"print_buddy/templates/orca/{self.templates}"
         if self.vendor is not None:
             printer["vendor"] = self.vendor.key
             printer["slicer"] = self.vendor.slicers[0]
@@ -243,6 +250,11 @@ class PrinterAdapter(ABC):
     multi_slot: bool = False
     # ZMod-style native screen: display_off modes, saved/screen Z offset authority, MD5 gcode, stock /detail.
     has_native_screen: bool = False
+    # (xmin, ymin, xmax, ymax) when vendor start/end G-code moves off the bed; None holds every move to the bed.
+    motion_envelope_mm: tuple[float, float, float, float] | None = None
+    # Slicers ([printer] slicer values) whose output this printer's guards have been checked against; None trusts
+    # every slicer the vendor allows. A slicer outside it is refused as primary and as fallback.
+    verified_slicers: tuple[str, ...] | None = None
 
     def __init__(self, config: dict[str, Any] | None = None, model: PrinterModel | None = None):
         if config is None:
@@ -261,6 +273,11 @@ class PrinterAdapter(ABC):
     @property
     def label(self) -> str:
         return self.model.label
+
+    @property
+    def connection(self) -> str | None:
+        """The vendor's connection type (CONNECTIONS); the vendor profile is the only authority for it."""
+        return self.model.vendor.connection if self.model.vendor else None
 
     @property
     def baseline_path(self) -> Path | None:
@@ -299,6 +316,8 @@ class PrinterAdapter(ABC):
         from .. import settings
         if self.config["printer"].get("model") == self.key:
             return Path(self.config["orca"]["templates"])
+        if self.model.generated_templates:
+            return settings.generated_templates_dir(self.model, self.config)
         return settings.ROOT / "print_buddy" / "templates" / "orca" / self.model.templates
 
     @abstractmethod
@@ -315,6 +334,10 @@ class PrinterAdapter(ABC):
     @abstractmethod
     def moonraker_start_commands(self, remote_filename: str) -> list[dict[str, Any]]:
         """Moonraker requests, in order, that start a print: [{'method', 'path', 'body'}]."""
+
+    def gcode_problems(self, text: str, state: dict | None = None) -> list[str]:
+        """Printer-specific reasons a sliced G-code must not be used, beyond start_code_problems; empty when none."""
+        return []
 
     # color / tools
     @abstractmethod

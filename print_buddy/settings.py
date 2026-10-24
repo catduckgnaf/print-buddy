@@ -359,6 +359,10 @@ def validate(data):
     for key, value in services.items():
         if key.endswith("_url") and value and not value.startswith(("ws://", "wss://") if key == "moonraker_ws_url" else ("http://", "https://")):
             raise SettingsError(f"[services] {key} must be a URL, got {value!r}")
+    if model.vendor.connection == "offline" and (services["moonraker_url"] or services.get("octoprint_url")):
+        # The listener, /print-stop and /print-resume would otherwise act on whatever answers at that URL.
+        raise SettingsError(f"[services] moonraker_url and octoprint_url must be empty for model {model.key!r}: "
+                            "Print Buddy has no live connection to it")
     if services["moonraker_url"]:
         base = services["moonraker_url"].rstrip("/")
         host = base.split("://", 1)[1].split("/", 1)[0].rsplit(":", 1)[0]
@@ -382,6 +386,8 @@ def validate(data):
     _validate_bot(data)
     _validate_logging(data)
     templates = data.get("orca", {}).get("templates")
+    if templates == "" and model.generated_templates:
+        templates = str(generated_templates_dir(model, data))
     if not isinstance(templates, str) or not templates:
         raise SettingsError("[orca] templates must be a folder path")
     path = Path(templates).expanduser()
@@ -434,6 +440,11 @@ def current():
 def state_dir(data=None):
     """Where runtime state files live: <hermes_home>/state."""
     return (data or current())["paths"]["hermes_home"] / "state"
+
+
+def generated_templates_dir(model, data=None):
+    """Where a model's generated Orca templates live (never the repository): <state>/orca-profiles/<templates>."""
+    return state_dir(data) / "orca-profiles" / model.templates
 
 
 def _main(argv):

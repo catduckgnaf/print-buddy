@@ -18,6 +18,7 @@ Do not run both Discord modes with the same token. Installing, enabling services
 - [Printer profiles and offline delivery](PRINTER-PROFILES.md): vendor/model inheritance, supported delivery methods and verification limitations.
 - [AD5X integration contract](AD5X-CONTRACT.md): printer-specific behavior and limitations.
 - [OctoPrint/Marlin notes](OCTOPRINT-MARLIN.md): read the integration-specific limits before assuming Moonraker feature parity.
+- [Bambu Lab printers](BAMBU-LAB.md): the offline-only A1 profile, generating its slicer profiles from your own OrcaSlicer, what its G-code guard checks and trusts, unverified values, and the licensing basis awaiting approval.
 - [Read-only mesh topology audit](MESH-AUDIT.md): topology metrics, CLI usage, and manifold/watertight checks.
 - [100%-scale geometry layout and export](GEOMETRY-LAYOUT.md): multi-object single-plate packing, status ladder, and geometry-only export boundaries.
 - [Opt-in reviewed CAD split plans and dowel connectors](CAD-SPLIT-PLANS.md): reviewed split presets, chamfered dowel generation, OpenSCAD CSG script synthesis, and post-boolean volume conservation checks.

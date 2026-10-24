@@ -22,8 +22,11 @@ print_buddy/printers/
   bambulab/
     __init__.py          VENDOR  Bambu Lab: no live connection, Bambu start code, Orca or Bambu Studio,
                                  .gcode.3mf handoff
-    (a1.py, p1s.py)      printer profiles land here (issue #127)
-templates/orca/<folder>/ machine.json, process.json, filament.json per printer
+    a1.py                MODEL   bambulab.a1: 256 mm bed, 0.4 mm nozzle, single filament, offline only
+                                 (adapter.py, guard.py, facts.py, profiles.py; see BAMBU-LAB.md)
+    (p1s.py)             the P1S lands here (issue #127)
+templates/orca/<folder>/ machine.json, process.json, filament.json per printer; a model with
+                         generated_templates (the A1) ships none: <state>/orca-profiles/<folder>
 ```
 
 The `[printer] model` key is `<vendor>.<printer>`, which is the package name and the module name. Existing keys did not change.

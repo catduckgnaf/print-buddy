@@ -60,11 +60,12 @@ def digest(path):
     return hashlib.sha256(Path(path).read_bytes()).hexdigest()
 
 
-def export_geometry(source, target, scale=1.0, rotation=None):
+def export_geometry(source, target, scale=1.0, rotation=None, bed=None):
     """Flatten 3MF build/component transforms exactly; preserve every triangle/order.
 
     No mesh repair, merging or per-part rearrangement. An optional operator-selected
-    rigid rotation, then uniform scale, is applied before rigid centering on AD5X bed.
+    rigid rotation, then uniform scale, is applied before rigid centering on the bed (bed, default the configured one).
+    A source with negative/modifier volumes goes through color_geometry, which still centres at 110 mm.
     STL float32 rounding is recorded by hashes. Non-mm and nonprintable builds refuse.
     """
     scale = float(scale) if scale is not None else 1.0
@@ -78,7 +79,7 @@ def export_geometry(source, target, scale=1.0, rotation=None):
             raise RuntimeError('source has negative/modifier volumes; export to .3mf, not STL')
         from .color_geometry import export_volume_plate
         return export_volume_plate(source, target, scale=scale, rotation=rotation)
-    return _place_triangles(_3mf_triangles(source), target, scale, rotation)
+    return _place_triangles(_3mf_triangles(source), target, scale, rotation, bed)
 
 
 def has_cutters(source):
@@ -200,8 +201,11 @@ def _rotate(point, m):
     return (m[0] * x + m[1] * y + m[2] * z, m[3] * x + m[4] * y + m[5] * z, m[6] * x + m[7] * y + m[8] * z)
 
 
-def _place_triangles(result, target, scale=1.0, rotation=None):
-    """Rotate (rigid), uniformly scale, then center on the AD5X bed with the lowest vertex on Z0."""
+def _place_triangles(result, target, scale=1.0, rotation=None, bed=None):
+    """Rotate (rigid), uniformly scale, then center on the bed with the lowest vertex on Z0.
+
+    bed is the target printer's (x, y) bed in mm; the configured printer's bed when omitted (220 mm: 110, 110).
+    """
     scale = float(scale) if scale is not None else 1.0
     if not scale > 0:
         raise ValueError('scale must be greater than 0')
@@ -210,9 +214,10 @@ def _place_triangles(result, target, scale=1.0, rotation=None):
         result = [[_rotate(p, rotation) for p in tri] for tri in result]
     if scale != 1.0:
         result = [[(p[0] * scale, p[1] * scale, p[2] * scale) for p in tri] for tri in result]
-    # One rigid translation only: center XY on AD5X and put the lowest vertex on Z0.
+    # One rigid translation only: center XY on the bed and put the lowest vertex on Z0.
+    center = [float(v) / 2 for v in (bed or BED)]
     bounds = [(min(p[a] for t in result for p in t), max(p[a] for t in result for p in t)) for a in range(3)]
-    delta = [110 - sum(bounds[a]) / 2 for a in (0, 1)] + [-bounds[2][0]]
+    delta = [center[a] - sum(bounds[a]) / 2 for a in (0, 1)] + [-bounds[2][0]]
     placed_bounds = [(bounds[a][0] + delta[a], bounds[a][1] + delta[a]) for a in range(3)]
     with Path(target).open('wb') as output:
         output.write(b'3MF transformed triangles, rigid centered translation'.ljust(80, b'\0'))
@@ -292,12 +297,12 @@ def _footprint(source, rotation=None):
     return hit
 
 
-def place_stl(source, target, scale=1.0, rotation=None):
+def place_stl(source, target, scale=1.0, rotation=None, bed=None):
     """Write a rotated/scaled/bed-centered STL from a 3MF or STL source."""
     source = Path(source)
     if source.suffix.lower() == '.3mf':
-        return export_geometry(source, target, scale=scale, rotation=rotation)
-    return _place_triangles(read_stl_triangles(source), target, scale, rotation)
+        return export_geometry(source, target, scale=scale, rotation=rotation, bed=bed)
+    return _place_triangles(read_stl_triangles(source), target, scale, rotation, bed)
 
 
 PROCESS_KEYS = ('layer_height', 'initial_layer_print_height', 'wall_loops', 'sparse_infill_density',
@@ -489,7 +494,7 @@ def finalize_zmod(path, color, material, printer=None):
 def slicer_choice(printer):
     """Primary slicer for this printer: [printer] slicer for the configured model, else its vendor default.
 
-    The vendor's first slicer: Bambu Studio for Bambu Lab printers, OrcaSlicer for everyone else."""
+    The vendor's first slicer: Bambu Studio for every Bambu Lab printer, OrcaSlicer for everyone else."""
     vendor = printer.model.vendor
     default = vendor.slicers[0] if vendor else 'orca'
     if printer.config.get('printer', {}).get('model') != printer.key:
@@ -561,14 +566,16 @@ def slice_model(source, folder, state, brim=None, first_layer=False, color_decis
             if 'Metadata/project_settings.config' in archive.namelist():
                 author = json.loads(archive.read('Metadata/project_settings.config'))
         input_path = folder / ('geometry.3mf' if has_cutters(source) else 'geometry.stl')
-        geometry.update(export_geometry(source, input_path, scale=scale or 1.0, rotation=rotation))
+        geometry.update(export_geometry(source, input_path, scale=scale or 1.0, rotation=rotation,
+                                        bed=printer.build_volume().bed_mm))
         if scale is not None:
             geometry['scale_policy'] = 'uniform scale applied to transformed source vertices before bed centering'
     elif rotation is not None or (source.suffix.lower() == '.stl' and scale is not None):
         # Direct STL with an operator-selected orientation or scale: transform vertices
         # before slicing so every slicer receives identical resolved geometry.
         input_path = folder / 'geometry.stl'
-        geometry.update(place_stl(source, input_path, scale=scale or 1.0, rotation=rotation))
+        geometry.update(place_stl(source, input_path, scale=scale or 1.0, rotation=rotation,
+                                  bed=printer.build_volume().bed_mm))
     else:
         if source.suffix.lower() == '.3mf':
             with zipfile.ZipFile(source) as archive:
@@ -738,7 +745,7 @@ def slice_model(source, folder, state, brim=None, first_layer=False, color_decis
         triangles = source_triangles(input_path)
         duplicated = [[(point[0] + dx, point[1] + dy, point[2]) for point in triangle]
                       for dx, dy in shifts for triangle in triangles]
-        geometry.update(_place_triangles(duplicated, clones))
+        geometry.update(_place_triangles(duplicated, clones, bed=printer.build_volume().bed_mm))
         input_path = clones
         copies = None
     output = folder / 'plate_1.gcode'
@@ -824,6 +831,10 @@ def slice_model(source, folder, state, brim=None, first_layer=False, color_decis
     # Never accept stale output if a failed slicer leaves the preceding artifact behind.
     output.unlink(missing_ok=True)
     primary = slicer_choice(printer)
+    verified = getattr(printer, 'verified_slicers', None)
+    if verified is not None and primary not in verified:
+        raise RuntimeError(f'{printer.label}: {primary} output is not verified for this printer; '
+                           f'set [printer] slicer to one of {", ".join(verified)}. Nothing was sliced.')
     if primary == 'bambu_studio':
         # Opt-in Bambu Studio as the primary slicer (vendor profile allows it, [printer] slicer picks it):
         # Orca never runs, so there is no Orca failure and no fallback.
@@ -859,7 +870,8 @@ def slice_model(source, folder, state, brim=None, first_layer=False, color_decis
     slicer = 'OrcaSlicer'
     fallback = None
     vendor = printer.model.vendor
-    bambu_allowed = primary == 'bambu_studio' or vendor is None or vendor.fallback_slicer == 'bambu_studio'
+    bambu_allowed = ((primary == 'bambu_studio' or vendor is None or vendor.fallback_slicer == 'bambu_studio')
+                     and (verified is None or 'bambu_studio' in verified))
     orca_failed = primary != 'bambu_studio' and (result.returncode or not output.is_file()
                                                  or output.stat().st_size == 0)
     if orca_failed and not bambu_allowed:
@@ -958,11 +970,15 @@ def slice_model(source, folder, state, brim=None, first_layer=False, color_decis
     result_path = folder / 'result.json'
     post_gate = post_slice(output, result_json=None if slicer != 'OrcaSlicer' else (result_path if result_path.is_file() else None),
                            bed=bed, ifs_slots=IFS_SLOTS, tool_slots=tool_slots,
-                           templates=templates, profile_paths=filament_paths)
+                           templates=templates, profile_paths=filament_paths,
+                           envelope=printer.motion_envelope_mm)
     # Each vendor runs only its own start code: e.g. no Klipper/ZMod macro reaches a Bambu Lab printer.
     if vendor is not None:
         for problem in start_code_problems(output.read_text(errors='replace'), vendor):
             post_gate.block(problem)
+    # Printer-specific refusals: the A1's vendor blocks, modal toolpath bounds, limits and hardware record.
+    for problem in printer.gcode_problems(output.read_text(errors='replace'), state):
+        post_gate.block(problem)
     # Each model approves its own protected settings; a model without a baseline file keeps the shared one.
     baseline_kw = {} if printer.baseline_path is None else {'path': printer.baseline_path}
     baseline_gate = (sg.enforce_approved_baseline(output, **baseline_kw)

@@ -207,8 +207,10 @@ def bambu_package(gcode, target, plate=1, nozzle_mm=0.4):
 def bambu_handoff(job, gcodes, config=None):
     """Package each validated plate as a .gcode.3mf for a Bambu Lab printer. Uploads and starts nothing.
 
-    Refused unless the configured printer and the job's printer are Bambu Lab, and unless every
-    G-code line is a plain G/M/T code: Klipper or ZMod start code never reaches Bambu hardware.
+    Refused unless the configured printer and the job's printer are Bambu Lab, unless every
+    G-code line is a plain G/M/T code (Klipper or ZMod start code never reaches Bambu hardware), and
+    unless the printer's own guard passes (adapter.gcode_problems: vendor blocks against the pinned
+    templates, toolpath bounds, limits).
     """
     config = config or settings.current()
     model = current_model(config)
@@ -218,9 +220,11 @@ def bambu_handoff(job, gcodes, config=None):
     if job_key != model.key:
         raise DeliveryRefused(f"this job was sliced for {job_key}, not {model.key}; no Bambu package was made")
     nozzle = config["printer"].get("nozzle_diameter_mm", 0.4)
+    adapter = printers.get(model.key, config)
     packages = []
     for index, gcode in enumerate(map(Path, gcodes), 1):
-        problems = start_code_problems(gcode.read_text(errors="replace"), model.vendor)
+        text = gcode.read_text(errors="replace")
+        problems = start_code_problems(text, model.vendor) + adapter.gcode_problems(text)
         if problems:
             raise DeliveryRefused("; ".join(problems) + "; no Bambu package was made")
         target = gcode.parent / "bambu" / (gcode.name[:-len(".gcode")] if gcode.name.endswith(".gcode")
@@ -232,8 +236,9 @@ def bambu_handoff(job, gcodes, config=None):
 def handoff_note(model):
     """What a Bambu handoff does and does not do, for the Discord reply."""
     return (f"Nothing was uploaded to the {model.label} and no print was started: Print Buddy has no live "
-            "connection to Bambu printers (no LAN, cloud or MQTT upload, status or print control). Open the "
-            ".gcode.3mf in Bambu Studio or Bambu Handy, or copy it to the printer's SD card, and start it there.")
+            "connection to Bambu printers (no LAN, cloud or MQTT upload, status or print control). The "
+            ".gcode.3mf follows the Bambu Studio export layout, but opening it in Bambu Studio or Bambu Handy, or "
+            "printing it from the SD card, has not been tested on a printer yet: check it before you start it.")
 
 
 def files_for_discord(job, artifacts, config=None):

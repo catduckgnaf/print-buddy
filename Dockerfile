@@ -42,7 +42,10 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libwebkit2gtk-4.1-0 libgstreamer1.0-0 libgstreamer-plugins-base1.0-0 \
     libgtk-3-0t64 libglew2.2 libsecret-1-0 libspnav0 libgstreamerd-3-0 \
     fonts-liberation && rm -rf /var/lib/apt/lists/* && \
-    python3 -m venv /opt/venv && useradd --uid 1000 --create-home buddy
+    python3 -m venv /opt/venv && \
+    # ubuntu:24.04 ships an `ubuntu` user with UID 1000; free the UID for buddy.
+    if id -u ubuntu >/dev/null 2>&1; then userdel --remove ubuntu; fi && \
+    useradd --uid 1000 --create-home buddy
 COPY --from=orca-build /out/ /
 ARG APP_CHANNEL=development
 RUN case "$APP_CHANNEL" in stable|development) ;; *) echo 'APP_CHANNEL must be stable or development' >&2; exit 2;; esac

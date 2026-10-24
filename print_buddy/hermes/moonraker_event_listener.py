@@ -213,12 +213,15 @@ def screen_cancel_reboot(filename, *, status_reader=None, rebooter=None, clearer
         return False, "skipped"
     label = print_summary.safe_label(filename) if filename else "the print"
     if st.get("klippy") == "shutdown":
-        say(f"Screen cancel on {label} during an emergency stop. Clearing it with one firmware restart (no motion or heat).")
+        # The cancel report was just posted; one result line after the restart is enough.
         ok, msg = (clearer or pab.clear_shutdown)()
     else:
         say(f"Screen cancel on {label}. Force restarting the printer now, about two minutes.")
         ok, msg = (rebooter or print_control.force_reboot)()
     log(f"screen cancel reboot ok={ok}: {msg}")
+    if ok and clearer is None and rebooter is None:  # real run only; tests inject fakes
+        with contextlib.suppress(Exception):
+            pab.retire_alerts(_bot_token(), filename, "Cleared after the screen cancel; nothing to do.")
     say(msg)
     return ok, msg
 
@@ -1615,7 +1618,11 @@ class Listener:
                     elif method in ("notify_klippy_disconnected", "notify_klippy_shutdown"):
                         log(f"{method} while state={self.state}")
                         if self.state in ("printing", "paused"):
-                            await asyncio.to_thread(post_shutdown_alert, self.filename)
+                            if getattr(self, "shutdown_alerted", None) != self.filename:
+                                self.shutdown_alerted = self.filename  # one firmware-stopped alert per job
+                                await asyncio.to_thread(post_shutdown_alert, self.filename)
+                            else:
+                                log("firmware stop already alerted for this job; not posting again")
                             self.state = "error"
                     elif method == "notify_klippy_ready":
                         log("klippy ready; resubscribing")

@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import math
 import os
 import shutil
 import tempfile
@@ -120,10 +121,19 @@ def describe_problems(adapter, upstream):
     (w, d), height = adapter.fact("bed_mm"), adapter.fact("max_print_height_mm")
     if machine.get("printable_area") != ["0x0", f"{w:g}x0", f"{w:g}x{d:g}", f"0x{d:g}"]:
         out.append(f"machine printable_area {machine.get('printable_area')} is not 0..{w:g} x 0..{d:g} mm")
-    if str(machine.get("printable_height")) != f"{height:g}":
-        out.append(f"machine printable_height {machine.get('printable_height')} is not {height:g} mm")
-    if machine.get("bed_exclude_area") not in (None, [], [""]):
-        out.append(f"machine bed_exclude_area {machine.get('bed_exclude_area')} is not empty")
+    # The Orca machine profile may be shorter than the vendor volume (P1S: 250 of 256 mm); default to the volume.
+    orca_height = adapter.facts["orca_profile_height_mm"].value if "orca_profile_height_mm" in adapter.facts else height
+    try:
+        height_ok = math.isclose(float(machine.get("printable_height")), float(orca_height), abs_tol=1e-6)
+    except (TypeError, ValueError):
+        height_ok = False
+    if not height_ok:
+        out.append(f"machine printable_height {machine.get('printable_height')} is not {orca_height:g} mm")
+    exclusion = adapter.facts["bed_exclude_area"].value if "bed_exclude_area" in adapter.facts else ()
+    expected_exclusion = [f"{x:g}x{y:g}" for x, y in exclusion]
+    if machine.get("bed_exclude_area") not in (None, [], [""]) and machine.get("bed_exclude_area") != expected_exclusion:
+        out.append(f"machine bed_exclude_area {machine.get('bed_exclude_area')} is not "
+                   f"{expected_exclusion or 'empty'}")
     nozzle = machine.get("nozzle_diameter")
     if [str(v) for v in (nozzle if isinstance(nozzle, list) else [nozzle])] != [f"{adapter.fact('stock_nozzle')[0]:g}"]:
         out.append(f"machine nozzle_diameter {nozzle} is not {adapter.fact('stock_nozzle')[0]:g} mm")

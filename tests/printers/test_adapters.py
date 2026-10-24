@@ -10,9 +10,10 @@ from unittest import mock
 
 from print_buddy import printers, settings
 from print_buddy.printers.bambulab.a1 import A1Adapter
+from print_buddy.printers.bambulab.p1s import P1SAdapter
 from print_buddy.printers.base import BuildVolume, MultiColorUnsupported, PrinterAdapter
 
-from . import a1_fixture
+from . import a1_fixture, p1s_fixture
 
 AD5X_ARTIFACTS = re.compile(
     r"SET_EXTRUDER_SLOT|\bIFS\b|zmod|ZMOD|CHANGE_ZCOLOR|display_off|LOAD_ZOFFSET|START_PRINT|MESH=|8898|AD5X|/detail",
@@ -23,6 +24,7 @@ MODELS = tuple(printers.MODELS)
 AD5X, GENERIC, SV06 = "flashforge.ad5x", "klipper.generic", "sovol.sv06"
 OCTOPRINT = "octoprint.marlin"
 BAMBU_A1 = "bambulab.a1"
+BAMBU_P1S = "bambulab.p1s"
 
 
 def config_for(family):
@@ -41,9 +43,13 @@ class ContractTests(unittest.TestCase):
         patcher.start()
         self.addCleanup(patcher.stop)
         a1_fixture.install(adapter_for(BAMBU_A1))
+        patcher = mock.patch.object(P1SAdapter, "facts", p1s_fixture.fixture_facts())
+        patcher.start()
+        self.addCleanup(patcher.stop)
+        p1s_fixture.install(adapter_for(BAMBU_P1S))
 
     def test_registry_finds_every_model_file(self):
-        self.assertEqual(set(MODELS), {AD5X, GENERIC, SV06, OCTOPRINT, BAMBU_A1})
+        self.assertEqual(set(MODELS), {AD5X, GENERIC, SV06, OCTOPRINT, BAMBU_A1, BAMBU_P1S})
         for key, model in printers.MODELS.items():
             self.assertEqual(model.key, key)
             shipped = settings.ROOT / "print_buddy" / "templates" / "orca" / model.templates
@@ -70,11 +76,11 @@ class ContractTests(unittest.TestCase):
                 folder = a.templates_dir()
                 for name in ("machine", "process", "filament"):
                     json.loads((folder / f"{name}.json").read_text())
-                if family not in (OCTOPRINT, BAMBU_A1):
+                if family not in (OCTOPRINT, BAMBU_A1, BAMBU_P1S):
                     self.assertIn("[bed_temperature_initial_layer_single]", a.machine_start_gcode("X MESH=auto", "auto"))
                 plan = a.start_plan(60, 215)
                 self.assertTrue(plan and all(isinstance(line, str) for line in plan))
-                if family == BAMBU_A1:
+                if family in (BAMBU_A1, BAMBU_P1S):
                     # Offline only: the vendor start runs first, and nothing live is available.
                     machine = json.loads((a.pinned_templates() / "machine.json").read_text())
                     self.assertEqual(plan, machine["machine_start_gcode"].splitlines())

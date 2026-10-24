@@ -88,3 +88,37 @@ A1 = {
     # AMS Lite: four spool holders feeding one hotend (A1 Combo). Not driven by Print Buddy.
     "ams": Fact(("AMS Lite", 4), "BAMBU", False),
 }
+
+
+# P1S system profiles selected from the checked OrcaSlicer BBL index. The selected process and filament are the
+# P1S machine profile's actual 0.20 mm / PLA defaults; the X1C profiles explicitly list P1S compatibility.
+P1S = {
+    "printer_model": Fact("Bambu Lab P1S", "ORCA", True),
+    "orca_profiles": Fact({"machine": "Bambu Lab P1S 0.4 nozzle", "process": "0.20mm Standard @BBL X1C",
+                           "filament": "Bambu PLA Basic @BBL X1C"}, "ORCA", True),
+    "orca_identity": Fact(({
+        "label": "OrcaSlicer 2.4.2 (BBL vendor profiles 02.01.00.19)",
+        "vendor_version": "02.01.00.19",
+        "sha256": {"machine": "61c68e30dd084e185ec0cf75beab03195130dabf11702cacb168205770a4782f",
+                   "process": "bc4e02dad296e7584bf12143276bbbe2debf73f390f7e6dd2ec2aeac9e3d3c14",
+                   "filament": "ff10a3d1ad9e7ed43f5dec36996248b6abb934eed6692c480732670848e0a403"},
+    },), "ORCA", True),
+    "bed_mm": Fact((256.0, 256.0), "BAMBU", True),
+    "max_print_height_mm": Fact(256.0, "BAMBU", True),
+    # Orca's conservative machine profile limits slices to Z=250 although Bambu lists a 256 mm volume.
+    "orca_profile_height_mm": Fact(250.0, "ORCA", True),
+    "bed_exclude_area": Fact(((0.0, 0.0), (18.0, 0.0), (18.0, 28.0), (0.0, 28.0)), "ORCA", True),
+    # The literal vendor-profile start, end and timelapse moves include the front purge lane through Y=265.
+    "motion_envelope_mm": Fact((0.0, -3.0, 256.0, 265.0), "DERIVED", False),
+    "travel_z_headroom_mm": Fact(1.0, "DERIVED", False),
+    "default_plate": Fact("Textured PEI Plate", "ORCA", True),
+    "stock_nozzle": Fact((0.4, "stainless_steel"), "ORCA", True),
+    "nozzle_sizes_mm": Fact((0.2, 0.4, 0.6, 0.8), "BAMBU", True),
+    "max_hotend_c": Fact(300, "BAMBU", True),
+    "max_bed_c": Fact(100, "BAMBU", True),
+    "ideal_materials": Fact(("PLA", "PETG", "TPU", "PVA"), "BAMBU", True),
+    "not_recommended_materials": Fact(("ABS", "ASA", "PC", "PA", "PET"), "BAMBU", True),
+    # P1S's standard AMS has four slots; Print Buddy deliberately enables only single-color offline jobs.
+    "ams": Fact(("AMS", 4), "BAMBU", True),
+    "enclosed": Fact(True, "BAMBU", True),
+}

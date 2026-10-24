@@ -13,7 +13,7 @@ printer model inside it. The [printer] model key is "<vendor>.<printer>", the pa
     octoprint/marlin.py      MODEL for "octoprint.marlin"
     bambulab/__init__.py     VENDOR: no live connection, Bambu start code, OrcaSlicer or Bambu Studio,
                              .gcode.3mf handoff. Printer modules (A1, later P1S) drop in beside it.
-    bambulab/a1.py           MODEL for "bambulab.a1"; adapter.py (offline adapter, no transport), guard.py
+    bambulab/a1.py, p1s.py   MODEL for "bambulab.a1" and "bambulab.p1s"; adapter.py (offline adapter, no transport), guard.py
                              (A1 G-code checks), facts.py (sourced hardware facts, supplemental metadata),
                              profiles.py (templates generated from the operator's OrcaSlicer, none shipped)
 

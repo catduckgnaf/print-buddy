@@ -17,6 +17,7 @@ Do not run both Discord modes with the same token. Installing, enabling services
 - [Printer profiles and offline delivery](PRINTER-PROFILES.md): vendor/model inheritance, supported delivery methods and verification limitations.
 - [AD5X integration contract](AD5X-CONTRACT.md): printer-specific behavior and limitations.
 - [OctoPrint/Marlin notes](OCTOPRINT-MARLIN.md): read the integration-specific limits before assuming Moonraker feature parity.
+- [Read-only mesh topology audit](MESH-AUDIT.md): topology metrics, CLI usage, and manifold/watertight checks.
 
 ## 3. Troubleshoot by symptom
 

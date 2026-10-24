@@ -58,3 +58,22 @@ def test_typed_full_size_selects_unique_verified_rotation():
     rows = [{'kind': 'rotate', 'scale': 1.0}, {'kind': 'scale', 'scale': .85},
             {'kind': 'cancel'}]
     assert _fit_choice_reply('full size', rows) == 0
+
+
+def test_height_and_footprint_swaps_are_not_duplicate_placements():
+    points = [(0., 0., 0.), (200., 200., 20.), (200., 0., 0.)]
+    state = {'bed_mm': [220, 220], 'max_print_height_mm': 220}
+    # Same unordered dimensions, different contact face and XY footprint.
+    # A failed tall candidate must not erase the fitting horizontal candidate.
+    def capacity(source, checked_state, rotation, **kwargs):
+        return int(rotation[6:9] == [0, 0, 1])
+
+    with patch.object(oa, 'source_triangles', return_value=[tuple(points)]), \
+         patch.object(oa, '_surface_stats', return_value=(5000, 0)), \
+         patch.object(oa, '_orientation_bound', side_effect=[
+             (1., 45., [200., 200., 20.]),
+             (1., 45., [200., 20., 200.]),
+             (1., 45., [20., 200., 200.])]), \
+         patch.object(oa, 'orca_plate_capacity', side_effect=capacity):
+        rows = oa.rotation_alternatives(Path('rack.stl'), state, authored_max=.85)
+    assert rows and rows[0]['axis'] == '+Z'

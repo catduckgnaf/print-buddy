@@ -1503,13 +1503,13 @@ def rotation_alternatives(source: Path, state: dict, authored_max: float = 0.0, 
         candidates.append({'name': name, 'axis': axis, 'rotation': _matmul(_yaw(yaw), up), 'bound': scale,
                            'dims_full_mm': dims, 'supports': needs, 'bed_contact_mm2': round(contact),
                            'overhang_mm2': round(overhang)})
-    # Opposite-face pairs and X/Y turns of symmetric parts produce the same envelope;
-    # verify each distinct envelope once, keeping the steadier (more contact) option.
+    # An envelope is not a placement: equal dimensions can hide different
+    # contact faces, hulls and support geometry. Only identical transforms are
+    # redundant; independently verify every distinct rigid placement.
     unique: list[dict] = []
-    for row in sorted(candidates, key=lambda r: (r['supports'], -r.get('bed_contact_mm2', 0))):
-        envelope = sorted(row['dims_full_mm'])
-        if any(abs(u['bound'] - row['bound']) < 0.002 and
-               all(abs(a - b) < 1.0 for a, b in zip(sorted(u['dims_full_mm']), envelope)) for u in unique):
+    for row in candidates:
+        if any(all(abs(a - b) < 1e-9 for a, b in zip(u['rotation'], row['rotation']))
+               and u['supports'] == row['supports'] for u in unique):
             continue
         unique.append(row)
     candidates = unique

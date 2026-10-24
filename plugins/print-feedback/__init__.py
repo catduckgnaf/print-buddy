@@ -5,6 +5,7 @@ the Print Buddy package: print_buddy.hermes (listener helpers, print control) an
 (the slicing and print pipeline). Hosts, paths and temperatures come from the home configuration.
 """
 import asyncio
+import contextlib
 import json
 import logging
 import os
@@ -1653,6 +1654,10 @@ def alert_button_handlers(bot, adapter):
 
 
 def register(ctx):
+    # Print Buddy's button prompts already say what to do; drop Hermes's generic
+    # "Pick one below, or click Other..." line for this gateway (a locale overlay, not a core patch).
+    with contextlib.suppress(Exception):
+        ctx.register_locale('en', {'platform': {'discord': {'prompt': {'clarify_hint_buttons': ''}}}})
     ctx.register_hook('pre_gateway_dispatch', maintenance_dispatch)
     ctx.register_hook('pre_gateway_dispatch', coldpull_dispatch)
     ctx.register_hook('pre_gateway_dispatch', typed_quantity_dispatch)

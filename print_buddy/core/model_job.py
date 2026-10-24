@@ -2923,13 +2923,20 @@ def _preparation_evidence(st):
     return any(v > 0 for v in targets)
 
 
-def _wait_printing(st, remote, wait_s):
-    """Wait until print_stats is printing, or the start sequence settles without printing."""
+def _wait_printing(st, remote, wait_s, prep_check=None):
+    """Wait until print_stats is printing, or the start sequence settles without printing.
+
+    prep_check (native mapped starts): heater targets set by the printer's own preparation already
+    prove acceptance, so stop waiting as soon as they appear instead of sitting out the 20 s settle."""
     t0=time.monotonic(); state=None
     while time.monotonic()-t0 < wait_s:
         state,fn,busy=_printer_phase(st)
         if state=="printing" and fn==remote: return "printing"
         if state in ("error","cancelled"): return state
+        if prep_check and time.monotonic()-t0 > 2:
+            try:
+                if prep_check(st) is True: return state
+            except Exception: pass
         if time.monotonic()-t0 > 20 and busy != "Printing": return state  # settled, not printing
         time.sleep(1)
     return state
@@ -3133,7 +3140,7 @@ def print_mapped_native(g, st, mesh, mapping, job, job_path, wait_s, reprint):
     print('MAPPED START SUBMITTED ' + json.dumps(out), flush=True)
     # Record immediately so a long native preparation cannot lose its dated note.
     out['record_path'] = str(record_start(g, remote))
-    state = _wait_printing(st, remote, wait_s)
+    state = _wait_printing(st, remote, wait_s, prep_check=_preparation_evidence)
     readback = None
     try:
         snap = _mr(st, "/printer/objects/query?print_stats&extruder&heater_bed&virtual_sdcard&idle_timeout&webhooks&toolhead")

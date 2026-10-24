@@ -13,6 +13,7 @@ Share a MakerWorld or Printables link, or upload an STL or 3MF. Print Buddy guid
 - **Printers:** built-in profiles for Flashforge AD5X with ZMod and Sovol SV06, plus a generic Klipper/Moonraker adapter. A generic adapter is not a tuned or physically verified profile for every printer.
 - **Discord:** run the standalone Python bot without Hermes or an LLM, or use the Hermes plugin. Use only one mode with a given bot token.
 - **Slicing:** requires a compatible OrcaSlicer CLI and the correct printer, process and filament profiles. A Python install alone does not provide a slicer.
+- **Offline delivery:** vendor profiles can offer Discord file delivery or an offline Bambu package after slicing. Delivery does not authorize printing. Bambu packaging is not verified in Bambu Studio or on hardware. See [printer profiles](docs/PRINTER-PROFILES.md).
 - **Optional integrations:** Spoolman for filament records, camera checks, timelapses and Obsidian records. Requirements depend on the features you enable.
 
 ## Get started

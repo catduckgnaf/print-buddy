@@ -36,6 +36,8 @@ In the `#3d-printer` channel, someone posts a link. The bot replies with a job s
 
 The print starts only when someone clicks the button. On completion, the bot posts stats and writes the job to an Obsidian archive note.
 
+A bed-clear approval starts one print. Starting the same G-code again needs a new confirmation (`print-now --reprint`). Only one start runs per printer at a time. If Print Buddy cannot tell whether a start reached the printer (it stopped during the request, or the printer never confirmed it), it refuses later starts on that printer until the printer reports that exact file. An operator can also check the printer and run `python3 -m print_buddy.core.model_job reconcile-launch --started` or `--not-started`; without a flag, the command only shows the pending start. Print Buddy never resends that start on its own. This launch state is kept in `<hermes_home>/state/print_buddy_launches.sqlite3`.
+
 ## Features
 
 **Intake and slicing**

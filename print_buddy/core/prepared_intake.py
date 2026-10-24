@@ -28,12 +28,18 @@ from .slice_recipe import RECIPE_VERSION, binding_sha256  # noqa: E402
 
 _OFFLOAD = {('model_job', 'audit'), ('model_job', 'slice_job'), ('source_colors', 'inventory'),
             ('orca_adapter', 'orca_plate_capacity'), ('orca_adapter', 'fit_options'),
-            ('model_job', 'per_part_fit_options'), ('plate_merge', 'full_size_split_possible')}
+            ('model_job', 'per_part_fit_options'), ('plate_merge', 'full_size_split_possible'),
+            ('geometry_layout', 'inspect_geometry'), ('geometry_layout', 'arrange_and_export'),
+            ('geometry_layout', 'probe_single_plate_rearrange'),
+            ('cad_split', 'check_source_against_split_plan'), ('cad_split', 'prepare_cad_split')}
 # Steps that run the slicer share one lane; the geometry-only steps share a small general lane.
 _SLICER_STEPS = {('model_job', 'slice_job'), ('orca_adapter', 'orca_plate_capacity'), ('orca_adapter', 'fit_options')}
 _STEP_LABELS = {'slice_job': 'slicing', 'audit': 'the model check', 'inventory': 'the color check',
                 'orca_plate_capacity': 'the bed fit check', 'fit_options': 'the bed fit check',
-                'per_part_fit_options': 'the per-part fit check', 'full_size_split_possible': 'the split check'}
+                'per_part_fit_options': 'the per-part fit check', 'full_size_split_possible': 'the split check',
+                'inspect_geometry': 'the geometry check', 'arrange_and_export': 'the layout',
+                'probe_single_plate_rearrange': 'the layout check',
+                'check_source_against_split_plan': 'the split check', 'prepare_cad_split': 'the split'}
 
 
 STOP_LABEL = "Stop"
@@ -286,16 +292,20 @@ def _pct(scale):
 
 
 def fit_choice_rows(options):
-    """At most four short choices, with full-size split before orientation/shrink."""
+    """At most four short choices, with full-size rearrange/split before orientation/shrink."""
     rows = []
+    rearrange = options.get('rearrange_100')
+    if rearrange:
+        rows.append({'kind': 'rearrange', 'label': '100% · rearrange 1 plate',
+                     'scale': 1.0, 'rearrange_100': rearrange})
     split_plan = options.get('split_plan')
-    if split_plan:
+    if split_plan and len(rows) < 2:
         rows.append({'kind': 'split', 'label': f"100% · split {len(split_plan['plates'])} plates",
                      'plates': split_plan['plates'], 'scale': 1.0})
-    elif options.get('full_size_split'):
+    elif options.get('full_size_split') and len(rows) < 2:
         rows.append({'kind': 'split', 'label': 'Split plates at 100%', 'scale': 1.0})
-    split_available = any(row['kind'] == 'split' for row in rows)
-    for alt in (options.get('rotations') or [])[:1 if split_available else 2]:
+    full_size_available = any(row['kind'] in ('split', 'rearrange') for row in rows)
+    for alt in (options.get('rotations') or [])[:1 if full_size_available else 2]:
         scale = float(alt['scale'])
         if scale < 0.995:
             continue
@@ -318,11 +328,13 @@ def fit_choice_rows(options):
 def _fit_choice_reply(text, rows):
     """Resolve typed fit intent only when it names one available action."""
     value = str(text or '').strip().casefold()
-    if value in {'split', 'separate', 'split plates'}:
+    if value in {'rearrange', 'rearrange 1 plate', 'rearrange plate', 'pack'}:
+        matches = [i for i, row in enumerate(rows) if row['kind'] == 'rearrange']
+    elif value in {'split', 'separate', 'split plates'}:
         matches = [i for i, row in enumerate(rows) if row['kind'] == 'split'
                    or (row['kind'] == 'painted' and 'split' in row['label'])]
     elif value in {'100%', '100', 'full', 'full size'} or 'full size' in value:
-        matches = [i for i, row in enumerate(rows) if row['kind'] == 'split'
+        matches = [i for i, row in enumerate(rows) if row['kind'] in ('rearrange', 'split')
                    or (row['kind'] in ('painted', 'rotate') and row['scale'] >= 1.0)]
     elif value in {'cancel', 'stop', "don't print"}:
         matches = [i for i, row in enumerate(rows) if row['kind'] == 'cancel']
@@ -1030,21 +1042,31 @@ async def prepare_link(event, adapter, state, root, timeout=None, reuse=None):
             if options.get('brim_policy'):
                 latest['fit_brim_policy'] = options['brim_policy']
                 receipt['fit_brim_policy'] = options['brim_policy']
+            if row['kind'] == 'rearrange':
+                latest['scale'] = 1.0
+                latest['full_size_rearrange_plan'] = row.get('rearrange_100') or {'rearrange_plate': True}
+                latest.pop('orientation', None)
+                latest.pop('full_size_split_plan', None)
+                receipt['full_size_rearrange'] = True
+                receipt['scale'] = 1.0
+                receipt_path.write_text(json.dumps(receipt, indent=2) + '\n')
+                mj.write_job(folder, latest)
             if row['kind'] == 'split':
                 latest['plate_mode'] = 'separate'
                 latest['scale'] = 1.0
                 if row.get('plates'):
                     latest['full_size_split_plan'] = {'plates': row['plates']}
                 latest.pop('orientation', None)
+                latest.pop('full_size_rearrange_plan', None)
                 receipt['full_size_split'] = True
                 receipt['scale'] = 1.0
                 receipt_path.write_text(json.dumps(receipt, indent=2) + '\n')
                 mj.write_job(folder, latest)
             selected_scale = row.get('scale', 1.0)
             rotation = row.get('rotation')
-            if row['kind'] == 'split':
-                # Capacity on the unsplit source is zero by definition here; each
-                # source plate was independently checked at authored size.
+            if row['kind'] in ('split', 'rearrange'):
+                # Capacity on the unsplit/unarranged source is zero by definition here; each
+                # rearranged or split plate was verified at authored size.
                 capacity = 1
             else:
                 capacity = await _with_stop(adapter, source, key, metadata, "Checking whether it fits the bed. Press Stop to cancel.",

@@ -22,7 +22,7 @@ from typing import Any, NamedTuple
 
 from .. import printers, settings
 from ..printers.base import MultiColorUnsupported
-from . import _external, printer_state
+from . import _external, launch_state, printer_state
 
 PROFILE = settings.current()["paths"]["hermes_home"]
 STATE = settings.state_dir()/"printer_hardware.json"
@@ -331,23 +331,31 @@ def mesh_topology(triangles):
             incident.setdefault(vertex, []).append(len(uses))
     singular = sum(any(count != 2 for count in counts) for counts in incident.values())
     manifold = not (boundary or nonmanifold or singular or degenerate or winding)
-    return {"triangle_count": len(faces), "connected_shells": shells,
+    return {"format": "triangle-mesh", "triangles": len(faces),
+            "shells": shells, "triangle_count": len(faces), "connected_shells": shells,
             "boundary_edges": boundary, "non_manifold_edges": nonmanifold,
-            "singular_vertices": singular, "winding_inconsistencies": winding,
+            "non_manifold_vertices": singular, "singular_vertices": singular, "winding_inconsistencies": winding,
             "degenerate_triangles": degenerate, "watertight": boundary == 0 and nonmanifold == 0,
             "manifold": manifold}
 
 
-def mesh_audit(path):
-    """Read-only topology report for STL/3MF source geometry."""
+def mesh_audit(path, printer_model=None):
+    """Read-only, versioned topology report for STL/3MF source geometry."""
     from .orca_adapter import source_triangles
     triangles = source_triangles(path)
     if not triangles:
         raise RuntimeError("model has no printable geometry")
-    return {"schema_version": 1, "sha256": file_sha256(path), **mesh_topology(triangles)}
+    lo = [min(point[axis] for triangle in triangles for point in triangle) for axis in range(3)]
+    hi = [max(point[axis] for triangle in triangles for point in triangle) for axis in range(3)]
+    source_sha256 = file_sha256(path)
+    return {"schema_version": 1, "sha256": source_sha256,
+            "source_sha256": source_sha256,
+            "dimensions_mm": [round(hi[axis] - lo[axis], 2) for axis in range(3)],
+            "units": "mm", "printer_model": printer_model,
+            **mesh_topology(triangles)}
 
 
-def audit(path):
+def audit(path, printer_model=None):
     with open(path,"rb") as source:
         digest=hashlib.file_digest(source,"sha256").hexdigest()
     out={"path":path.name,"bytes":path.stat().st_size,"sha256":digest,"kind":path.suffix.lower()}
@@ -378,7 +386,7 @@ def audit(path):
     out['color_manifest'] = manifest
     out['color_prompts'] = prompts(manifest)
     try:
-        out["mesh_audit"] = mesh_audit(path)
+        out["mesh_audit"] = mesh_audit(path, printer_model=printer_model)
     except Exception as exc:
         out["mesh_audit_error"] = str(exc)
     try:
@@ -1142,7 +1150,8 @@ def copies_supported(job, multi_plate=None):
     if multi_plate is None:
         try: multi_plate = int((job.get('audit') or {}).get('plates') or 0) > 1
         except (TypeError, ValueError): multi_plate = False
-    return not (multi_plate or job.get('full_size_split_plan') or job.get('plate_mode') == 'separate'
+    return not (multi_plate or job.get('full_size_split_plan') or job.get('full_size_rearrange_plan')
+                or job.get('plate_mode') == 'separate'
                 or (job.get('color_decisions') or {}).get('mode') == 'per_part')
 
 
@@ -2262,6 +2271,9 @@ def slice_job(job_path, brim_override=None, copies=None, scale=None, recipe_sha2
     if rotation and orientation.get("dims_full_mm"):
         # Operator chose a rotated orientation: check the rotated envelope, not the authored one.
         sx, sy, sz = (float(v) for v in orientation["dims_full_mm"])
+    rearrange_plan = job.get("full_size_rearrange_plan") or {}
+    if rearrange_plan.get("size_mm"):
+        sx, sy, sz = (float(v) for v in rearrange_plan["size_mm"])
     auto_scale = None
     if (not explicit_scale and src.suffix.lower() == '.stl' and max(sx, sy, sz) < 10.0):
         inches_scale = 25.4
@@ -2287,6 +2299,19 @@ def slice_job(job_path, brim_override=None, copies=None, scale=None, recipe_sha2
     # Preserve historical artifact bytes on every reslice.
     slice_dir = work / "sliced" / "orca" / uuid.uuid4().hex
     source_sha = file_sha256(src)
+    slice_src = src
+    if rearrange_plan:
+        from .geometry_layout import arrange_and_export
+        rearrange_dir = slice_dir / "rearranged_100pct"
+        layout_report = arrange_and_export(
+            src,
+            rearrange_dir,
+            bed=(float(st["bed_mm"][0]), float(st["bed_mm"][1]), float(st["max_print_height_mm"])),
+            allow_geometry_only_strip=not bool(decisions and decisions.get("mode") in ("multicolor", "per_part")),
+        )
+        preserved = (layout_report.get("preserved_3mf_package") or {}).get("preserved_3mf")
+        slice_src = rearrange_dir / (preserved or layout_report["exported_3mf_geometry_only"])
+        job["layout_report"] = str(rearrange_dir / "validation.json")
     decision_sha = decisions_digest(decisions)
     selected_slot = None if generic else (job.get("filament_selection") or {}).get("slot")
     scale_kw = {'scale': scale} if scale is not None else {}
@@ -2298,12 +2323,12 @@ def slice_job(job_path, brim_override=None, copies=None, scale=None, recipe_sha2
     if selected_slot is not None:
         # Single-color jobs are bound to their named IFS slot exactly like
         # derived per-slot plates, so launch uses the mapped native route.
-        out, provenance, configs = slice_model(src, slice_dir, st, brim_override,
+        out, provenance, configs = slice_model(slice_src, slice_dir, st, brim_override,
                                               color_decisions=decisions, filament_slot=selected_slot,
                                               copies=copies, **scale_kw)
         finalize_multicolor(out, None, st, {"0": selected_slot})
     else:
-        out, provenance, configs = slice_model(src, slice_dir, st, brim_override,
+        out, provenance, configs = slice_model(slice_src, slice_dir, st, brim_override,
                                               color_decisions=decisions, copies=copies, **scale_kw)
     _timing(job_path, 'orca_finalize_done')
     if adapter.key == printers.current().key:
@@ -2924,16 +2949,29 @@ def routine_phase(st, accepted=True):
 
 
 def _consume_approval(job_path, job, gcode, reprint=False):
-    """Single-use bed-clear approval per G-code. Refuses reuse unless an explicit new reprint approval."""
-    require_current_artifact(json.loads(Path(job_path).read_text()), gcode)
-    sha=file_sha256(gcode); now=time.strftime("%Y-%m-%dT%H:%M:%S%z")
-    used=[a for a in job.get("approvals",[]) if a.get("gcode_sha256")==sha and a.get("consumed_at")]
-    if used and not reprint:
-        raise SystemExit(f"REFUSED: the bed-clear approval for this G-code was already used at {used[-1]['consumed_at']}. "
-                         "Ask the operator for a new bed-clear confirmation, then rerun with --reprint. Nothing uploaded or started.")
-    job.setdefault("approvals",[]).append({"gcode_sha256":sha,"granted_at":now,"consumed_at":now,
-                                           "kind":"reprint" if used else "bed_clear"})
-    write_job(Path(job_path).parent, job)
+    """Single-use bed-clear approval per G-code. Refuses reuse unless an explicit new reprint approval.
+    Check and record run in one launch-state transaction on the current JOB.json, never the caller's
+    possibly stale snapshot; the database copy survives another writer saving an older JOB.json."""
+    sha=file_sha256(gcode); key=str(Path(job_path).resolve())
+    with launch_state.transaction() as con:
+        current=json.loads(Path(job_path).read_text())
+        require_current_artifact(current, gcode)
+        now=time.strftime("%Y-%m-%dT%H:%M:%S%z")
+        used=[a for a in current.get("approvals",[]) if a.get("gcode_sha256")==sha and a.get("consumed_at")]
+        used+=launch_state.consumed(con, key, sha)
+        if used and not reprint:
+            raise SystemExit(f"REFUSED: the bed-clear approval for this G-code was already used at {used[-1]['consumed_at']}. "
+                             "Ask the operator for a new bed-clear confirmation, then rerun with --reprint. Nothing uploaded or started.")
+        kind="reprint" if used else "bed_clear"
+        launch_state.record_consumed(con, key, sha, kind, now)
+        current.setdefault("approvals",[]).append({"gcode_sha256":sha,"granted_at":now,"consumed_at":now,"kind":kind})
+        write_job(Path(job_path).parent, current)
+    job.clear(); job.update(current)
+
+
+def _printer_key(st):
+    """One submission lease per printer this profile drives."""
+    return st.get("moonraker_url") or printers.current().key
 
 
 def _require_idle_before_mapped_launch(require_idle_settled, read_moonraker, read_native):
@@ -2993,43 +3031,53 @@ def print_mapped_native(g, st, mesh, mapping, job, job_path, wait_s, reprint):
                 raise RuntimeError(f'T{tool} slot {slot} occupancy is unknown or unconfirmed')
     sha = file_sha256(g)
     remote = remote_name(g, sha, job)
-    if job_path is not None:
-        _consume_approval(job_path, job, g, reprint=reprint)
-    slots_used = sorted(set(mapped.values()))
-    if len(slots_used) > 1:
-        print('WARNING: MULTI-SLOT JOB: automatic Spoolman usage deduction disabled; aggregate usage cannot be safely apportioned to selected spools.', flush=True)
-    else:
-        _sync_active_spool(st, slots_used[0])
-    _timing(job_path, 'upload_begin')
-    uploaded = subprocess.run([str(MOONRAKERCTL), 'upload', str(g), remote, sha],
-                              text=True, capture_output=True, timeout=300)
-    if uploaded.returncode:
-        raise RuntimeError('UPLOAD FAILED: ' + (uploaded.stderr or uploaded.stdout)[-500:])
-    upload_json = json.loads(uploaded.stdout)
-    g.with_suffix('.upload.json').write_text(json.dumps(upload_json, indent=2) + '\n')
-    result = upload_json.get('result', upload_json)
-    item = result.get('item', {}) if isinstance(result, dict) else {}
-    if item.get('root') != 'gcodes' or item.get('path') != remote:
-        raise RuntimeError('uploaded target mismatch: ' + json.dumps(item))
-    # Integrity: Moonraker checked the SHA256 we sent and refuses the upload (HTTP 400) on mismatch,
-    # so the file is never downloaded back to hash it.
-    _timing(job_path, 'upload_verified')
-    command = (f'SET_ZCOLOR FILENAME={remote} SILENT=1 AUTO_ASSIGN=0 LEVELING=0 ' +
-               ' '.join(f'T{tool}={slot}' for tool, slot in sorted(mapping.items())))
-    checkpoint = g.with_suffix('.launch.json')
-    if checkpoint.exists():
-        raise RuntimeError('mapped submission checkpoint exists; reconcile instead of replaying')
-    checkpoint.write_text(json.dumps({'phase': 'submission_pending', 'command': command, 'sha256': sha}) + '\n')
-    # This path posts its own start card, so the listener must not post a second one
-    # when native preparation (heating, leveling) finishes minutes later (2026-10-11 duplicate).
-    try: claim_start_announcement(remote)
-    except OSError as e: print(f"WARNING: start announcement claim failed, listener may also post: {e}")
-    _announce_print_name(st, job, slots_used, g)
-    _publish_job_card(st, job, remote, g.read_text(errors="ignore"))
+    lease = launch_state.acquire(_printer_key(st), job_json=job_path, gcode_sha256=sha, remote=remote,
+                                 observed_file=(status.get('print_stats') or {}).get('filename'))
+    try:
+        # Again inside the lease: the first read may predate another job's start.
+        _require_idle_before_mapped_launch(require_idle_settled, read_moonraker, read_native)
+        if job_path is not None:
+            _consume_approval(job_path, job, g, reprint=reprint)
+        slots_used = sorted(set(mapped.values()))
+        if len(slots_used) > 1:
+            print('WARNING: MULTI-SLOT JOB: automatic Spoolman usage deduction disabled; aggregate usage cannot be safely apportioned to selected spools.', flush=True)
+        else:
+            _sync_active_spool(st, slots_used[0])
+        _timing(job_path, 'upload_begin')
+        uploaded = subprocess.run([str(MOONRAKERCTL), 'upload', str(g), remote, sha],
+                                  text=True, capture_output=True, timeout=300)
+        if uploaded.returncode:
+            raise RuntimeError('UPLOAD FAILED: ' + (uploaded.stderr or uploaded.stdout)[-500:])
+        upload_json = json.loads(uploaded.stdout)
+        g.with_suffix('.upload.json').write_text(json.dumps(upload_json, indent=2) + '\n')
+        result = upload_json.get('result', upload_json)
+        item = result.get('item', {}) if isinstance(result, dict) else {}
+        if item.get('root') != 'gcodes' or item.get('path') != remote:
+            raise RuntimeError('uploaded target mismatch: ' + json.dumps(item))
+        # Integrity: Moonraker checked the SHA256 we sent and refuses the upload (HTTP 400) on mismatch,
+        # so the file is never downloaded back to hash it.
+        _timing(job_path, 'upload_verified')
+        command = (f'SET_ZCOLOR FILENAME={remote} SILENT=1 AUTO_ASSIGN=0 LEVELING=0 ' +
+                   ' '.join(f'T{tool}={slot}' for tool, slot in sorted(mapping.items())))
+        checkpoint = g.with_suffix('.launch.json')
+        if checkpoint.exists():
+            raise RuntimeError('mapped submission checkpoint exists; reconcile instead of replaying')
+        checkpoint.write_text(json.dumps({'phase': 'submission_pending', 'command': command, 'sha256': sha}) + '\n')
+        # This path posts its own start card, so the listener must not post a second one
+        # when native preparation (heating, leveling) finishes minutes later (2026-10-11 duplicate).
+        try: claim_start_announcement(remote)
+        except OSError as e: print(f"WARNING: start announcement claim failed, listener may also post: {e}")
+        _announce_print_name(st, job, slots_used, g)
+        _publish_job_card(st, job, remote, g.read_text(errors="ignore"))
+    except BaseException:
+        lease.release()  # nothing was sent to start
+        raise
+    lease.submitting()
     try:
         receipt = _mr(st, '/printer/gcode/script', data={'script': command})
-    except BaseException:
+    except BaseException as exc:
         release_start_announcement(remote)
+        lease.uncertain(f'start request did not complete: {exc!r}')
         raise
     _timing(job_path, 'start_submitted')
     # Number at submission, not at "printing": native preparation can outlast the readback
@@ -3067,6 +3115,10 @@ def print_mapped_native(g, st, mesh, mapping, job, job_path, wait_s, reprint):
                    phase='preparing' if is_prep else 'preparing_or_unresolved',
                    outcome=outcome_val,
                    message=msg, preparation_evidence=preparing)
+    if out['accepted']:
+        lease.release()  # accepted; the busy printer now refuses another start
+    else:
+        lease.uncertain(out['message'])  # reconciled when the printer reports this file
     checkpoint.write_text(json.dumps(out, indent=2) + '\n')
     print('MAPPED START READBACK ' + json.dumps(out), flush=True)
     return out
@@ -3184,21 +3236,39 @@ def _print_octoprint(adapter, state, gcode, job, job_path, wait_s, reprint):
     """A separate transport path, retaining artifact and approval guards above."""
     client = adapter.client()
     try:
-        client.require_ready(client.status())
+        status = client.status()
+        client.require_ready(status)
+        observed = adapter.normalize_status(status).get('filename')
         verify_gcode(gcode)
         _refuse_multicolor(gcode.read_text())
     except RuntimeError as exc:
         raise SystemExit(f'REFUSED: {exc}. Nothing uploaded or started.') from exc
-    remote = remote_name(gcode, file_sha256(gcode), job)
-    if job_path is not None:
-        _consume_approval(job_path, job, gcode, reprint=reprint)
+    sha = file_sha256(gcode)
+    remote = remote_name(gcode, sha, job)
+    lease = launch_state.acquire(_printer_key(state), job_json=job_path, gcode_sha256=sha, remote=remote,
+                                 observed_file=observed)
+    try:
+        try:
+            client.require_ready(client.status())  # again inside the lease
+        except RuntimeError as exc:
+            raise SystemExit(f'REFUSED: {exc}. Nothing uploaded or started.') from exc
+        if job_path is not None:
+            _consume_approval(job_path, job, gcode, reprint=reprint)
+    except BaseException:
+        lease.release()
+        raise
+    # Upload and start are one uncertain step here: the client reports either failure the same way.
+    lease.submitting()
     try:
         remote = client.upload(gcode, remote)
         from .nozzle import effective_nozzle_temperature
         hotend = effective_nozzle_temperature((state.get('nozzle') or {}).get('type', 'hardened_steel'), state['temps_c']['nozzle'])
         client.start(remote, state['temps_c']['bed'], hotend)
-    except RuntimeError as exc:
-        raise SystemExit(f'OctoPrint submission failed or uncertain: {exc}. Do not resubmit without checking printer status.') from exc
+    except BaseException as exc:
+        lease.uncertain(f'OctoPrint submission did not complete: {exc!r}')
+        if isinstance(exc, RuntimeError):
+            raise SystemExit(f'OctoPrint submission failed or uncertain: {exc}. Do not resubmit without checking printer status.') from exc
+        raise
     # Accepted is not proof of printing. No resubmission on delayed readback.
     live = {}
     try:
@@ -3206,6 +3276,10 @@ def _print_octoprint(adapter, state, gcode, job, job_path, wait_s, reprint):
     except RuntimeError:
         pass
     confirmed = live.get('state') == 'printing' and live.get('filename') == remote
+    if confirmed:
+        lease.release()
+    else:
+        lease.uncertain('submitted, awaiting confirmation')
     out = {'started': confirmed, 'accepted': True, 'file': remote, 'method': 'octoprint',
            'phase': 'executing' if confirmed else 'awaiting_confirmation',
            'outcome': 'printing' if confirmed else 'unconfirmed', 'live': live,
@@ -3217,6 +3291,15 @@ def _print_octoprint(adapter, state, gcode, job, job_path, wait_s, reprint):
             print(f'WARNING: start record failed: {exc}')
     print(('PRINT STARTED ' if confirmed else 'START SUBMITTED; AWAITING CONFIRMATION ') + json.dumps(out))
     return out
+
+
+def _require_idle(st):
+    state,fn,busy=_printer_phase(st)
+    if state == "printing" or busy == "Printing":
+        raise SystemExit(f"REFUSED: printer is busy ({state}, {fn}). Nothing uploaded or started.")
+    if st.get("display_off") == 0 and state not in ("standby", "complete", "cancelled", "error"):
+        raise SystemExit(f"REFUSED: native printer state is {state!r} for {fn}; nothing uploaded or started.")
+    return state,fn,busy
 
 
 def print_now(target, wait_s=25, accept_default_z_offset=False, reprint=False, remap_slot_num=None):
@@ -3261,11 +3344,7 @@ def print_now(target, wait_s=25, accept_default_z_offset=False, reprint=False, r
     st=printer_state.load()
     if getattr(adapter, 'transport', None) == 'octoprint':
         return _print_octoprint(adapter, st, g, job, job_path, wait_s, reprint)
-    state,fn,busy=_printer_phase(st)
-    if state == "printing" or busy == "Printing":
-        raise SystemExit(f"REFUSED: printer is busy ({state}, {fn}). Nothing uploaded or started.")
-    if st.get("display_off") == 0 and state not in ("standby", "complete", "cancelled", "error"):
-        raise SystemExit(f"REFUSED: native printer state is {state!r} for {fn}; nothing uploaded or started.")
+    state,fn,busy=_require_idle(st)
     mesh=mesh_readiness(st)
     if mesh["problem"]:
         raise SystemExit(f"REFUSED: {mesh['problem']}. Nothing uploaded or started.")
@@ -3304,26 +3383,37 @@ def print_now(target, wait_s=25, accept_default_z_offset=False, reprint=False, r
             validate_native_start(read_stock_detail(st), selection)
         except Exception as exc:
             raise SystemExit(f'REFUSED: native preflight: {exc}. Nothing uploaded or started.') from exc
-    if job_path is not None: _consume_approval(job_path, job, g, reprint=reprint)
-    _timing(job_path, 'upload_begin')
-    r=subprocess.run([str(MOONRAKERCTL),"upload",str(g),remote,sha],text=True,capture_output=True,timeout=300)
-    if r.returncode: raise SystemExit(f"UPLOAD FAILED: {(r.stderr or r.stdout)[-500:]}")
+    lease=launch_state.acquire(_printer_key(st), job_json=job_path, gcode_sha256=sha, remote=remote, observed_file=fn)
     try:
-        up_json=json.loads(r.stdout)
-    except Exception as e:
-        raise SystemExit(f"UPLOAD FAILED: malformed upload response: {e}")
-    res=up_json.get("result", up_json) if isinstance(up_json, dict) else {}
-    item=res.get("item") if isinstance(res, dict) else None
-    if not isinstance(item, dict) or item.get("root")!="gcodes" or item.get("path")!=remote:
-        raise SystemExit(f"UPLOAD FAILED: upload target mismatch or invalid response: {up_json}")
-    # Moonraker verified the SHA256 sent with the upload (mismatch = HTTP 400 = UPLOAD FAILED above).
-    _timing(job_path, 'upload_verified')
-    try: claim_start_announcement(remote)
-    except OSError as e: print(f"WARNING: start announcement claim failed, listener may also post: {e}")
-    _announce_print_name(st, job, gcode=g)
-    _publish_job_card(st, job, remote, text)
-    for command in adapter.moonraker_start_commands(remote):
-        _mr(st, command["path"], data=command["body"])
+        _require_idle(st)  # again inside the lease: the first read may predate another job's start
+        if job_path is not None: _consume_approval(job_path, job, g, reprint=reprint)
+        _timing(job_path, 'upload_begin')
+        r=subprocess.run([str(MOONRAKERCTL),"upload",str(g),remote,sha],text=True,capture_output=True,timeout=300)
+        if r.returncode: raise SystemExit(f"UPLOAD FAILED: {(r.stderr or r.stdout)[-500:]}")
+        try:
+            up_json=json.loads(r.stdout)
+        except Exception as e:
+            raise SystemExit(f"UPLOAD FAILED: malformed upload response: {e}")
+        res=up_json.get("result", up_json) if isinstance(up_json, dict) else {}
+        item=res.get("item") if isinstance(res, dict) else None
+        if not isinstance(item, dict) or item.get("root")!="gcodes" or item.get("path")!=remote:
+            raise SystemExit(f"UPLOAD FAILED: upload target mismatch or invalid response: {up_json}")
+        # Moonraker verified the SHA256 sent with the upload (mismatch = HTTP 400 = UPLOAD FAILED above).
+        _timing(job_path, 'upload_verified')
+        try: claim_start_announcement(remote)
+        except OSError as e: print(f"WARNING: start announcement claim failed, listener may also post: {e}")
+        _announce_print_name(st, job, gcode=g)
+        _publish_job_card(st, job, remote, text)
+    except BaseException:
+        lease.release()  # nothing was sent to start
+        raise
+    lease.submitting()
+    try:
+        for command in adapter.moonraker_start_commands(remote):
+            _mr(st, command["path"], data=command["body"])
+    except BaseException as exc:
+        lease.uncertain(f"start request did not complete: {exc!r}")
+        raise
     _timing(job_path, 'start_submitted')
     print("START REQUEST ACCEPTED " + json.dumps({"file": remote, "printing_confirmed": False}), flush=True)
     method="print/start"; state=_wait_printing(st,remote,wait_s)
@@ -3337,6 +3427,7 @@ def print_now(target, wait_s=25, accept_default_z_offset=False, reprint=False, r
         if readback and readback.outcome == "preparing":
             out = {"started": True, "accepted": True, "phase": "preparing", "outcome": "preparing", "file": remote,
                    "message": readback.message}
+            lease.release()  # accepted; the busy printer now refuses another start
             print("START SUBMITTED; AWAITING CONFIRMATION " + json.dumps(out), flush=True)
             return out
         # Do not retry a still-running preparation sequence or call it a failure.
@@ -3346,6 +3437,7 @@ def print_now(target, wait_s=25, accept_default_z_offset=False, reprint=False, r
             # otherwise post a duplicate when preparation reaches "printing".
             out = {"started": True, "accepted": True, "phase": "preparing", "outcome": "preparing", "file": remote,
                    "message": "printer accepted the job and is preparing (heating/loading); not a failure; do not resubmit"}
+            lease.release()
             print("START SUBMITTED; AWAITING CONFIRMATION " + json.dumps(out), flush=True)
             return out
         # An unreadable/ambiguous delayed readback after the one start request is
@@ -3353,12 +3445,15 @@ def print_now(target, wait_s=25, accept_default_z_offset=False, reprint=False, r
         if pending_state not in ("error", "cancelled") and pending_file in (None, ""):
             out = {"started": False, "accepted": True, "phase": "awaiting_confirmation", "outcome": "unconfirmed", "file": remote,
                    "message": "submitted, awaiting confirmation"}
+            lease.uncertain("submitted, awaiting confirmation")  # reconciled when the printer reports this file
             print("START SUBMITTED; AWAITING CONFIRMATION " + json.dumps(out), flush=True)
             return out
     if state!="printing" and not (readback and readback.outcome == "printing"):
         release_start_announcement(remote)
+        lease.release()  # the printer reports the start failed
         fail_msg = readback.message if (readback and readback.outcome == "failed") else f"printer state is {state!r} after {method}"
         raise SystemExit(f"START FAILED: {fail_msg}. Not retrying; check the printer screen.")
+    lease.release()  # printing; the busy printer now refuses another start
     record_path=None
     try: record_path=record_start(g, remote)
     except Exception as e: print(f"WARNING: Obsidian start note failed: {e}")
@@ -3444,6 +3539,10 @@ def _main():
     for x in (pn,f,s):
         x.add_argument("--accept-default-z-offset",action="store_true",help="the operator accepted the printer default Z offset for this start")
         x.add_argument("--reprint",action="store_true",help="the operator gave a NEW bed-clear approval to reprint the same G-code")
+    rl=sub.add_parser("reconcile-launch",help="show, or after checking the printer settle, an uncertain start; never resubmits")
+    outcome=rl.add_mutually_exclusive_group()
+    outcome.add_argument("--started",action="store_true",help="the operator saw that start reach the printer")
+    outcome.add_argument("--not-started",action="store_true",help="the operator saw that the printer never started it")
     rt=sub.add_parser("routine-receipt",help="immediate typical-duration receipt for a calibration routine (no printer contact)"); rt.add_argument("routine",choices=sorted(ROUTINE_TYPICAL_MIN))
     sub.add_parser("routine-status",help="read-only accepted/running/completed phase from Klipper idle_timeout")
     for x in (f,s):
@@ -3452,6 +3551,21 @@ def _main():
         x.add_argument('--color-slot', type=int, action='append', help='slot for each displayed part/filament question, in order')
     ma=sub.add_parser("audit",help="read-only mesh topology audit; no repair or slicing")
     ma.add_argument("source")
+    lay = sub.add_parser("layout", help="offline 100%-scale geometry inspection, arrangement, and export; no slicing or start")
+    lay.add_argument("source")
+    lay.add_argument("-o", "--outdir", default=None, help="directory for arranged 3MF/STL/PNG/JSON outputs")
+    lay.add_argument("--inspect-only", action="store_true", help="inspect geometry and nominal bed fit without writing arranged files")
+    lay.add_argument("--bed", nargs=3, type=float, default=[220.0, 220.0, 220.0], metavar=("X", "Y", "Z"))
+    lay.add_argument("--margin", type=float, default=5.0)
+    lay.add_argument("--gap", type=float, default=5.0)
+    lay.add_argument("--input-unit", default=None, help="explicit length unit for STL or unitless model (mm, cm, m, inch, ft)")
+    lay.add_argument("--split-stl-components", action="store_true", help="treat disconnected STL shells as separate parts")
+    lay.add_argument("--allow-rotations", nargs="*", type=float, default=None, help="candidate Z rotations in degrees")
+    cad = sub.add_parser("cad-split", help="offline opt-in reviewed CAD split plan and printable dowel preparation; no slicing or start")
+    cad.add_argument("source", help="input .stl path")
+    cad.add_argument("-o", "--outdir", default=None, help="output directory for split artifacts and split_validation.json")
+    cad.add_argument("--plan", required=True, help="reviewed split plan preset (rack_adapter_10to19, macmini_mount_a1347) or JSON path")
+    cad.add_argument("--execute", action="store_true", help="invoke OpenSCAD CLI to render boolean split halves and verify volume conservation")
     m=sub.add_parser("plate-manifest",help="read-only source plate inventory; does not authorize slicing")
     m.add_argument("source_3mf")
     r=sub.add_parser("record-start",help="after a confirmed print start: write the dated Obsidian note"); r.add_argument("gcode"); r.add_argument("--moonraker-name"); r.add_argument("--started-at",help="ISO UTC, default now")
@@ -3477,6 +3591,43 @@ def _main():
         return
     if a.cmd=="audit":
         print(json.dumps(mesh_audit(a.source), indent=2)); return
+    if a.cmd=="layout":
+        from .geometry_layout import arrange_and_export, inspect_geometry
+        src_path = Path(a.source)
+        if a.inspect_only:
+            res = inspect_geometry(
+                src_path,
+                bed=tuple(a.bed),
+                margin=a.margin,
+                input_unit=a.input_unit,
+                split_stl=a.split_stl_components,
+            )
+            if a.outdir:
+                out_dir = Path(a.outdir)
+                out_dir.mkdir(parents=True, exist_ok=True)
+                (out_dir / "inspection.json").write_text(json.dumps(res, indent=2) + "\n", encoding="utf-8")
+            print(json.dumps(res, indent=2))
+            return
+        out_dir = Path(a.outdir) if a.outdir else (src_path.parent / f"{src_path.stem}_layout_100pct")
+        res = arrange_and_export(
+            src_path,
+            out_dir,
+            bed=tuple(a.bed),
+            margin=a.margin,
+            gap=a.gap,
+            angles=a.allow_rotations,
+            input_unit=a.input_unit,
+            split_stl=a.split_stl_components,
+        )
+        print(json.dumps(res, indent=2))
+        return
+    if a.cmd=="cad-split":
+        from .cad_split import prepare_cad_split
+        src_path = Path(a.source)
+        out_dir = Path(a.outdir) if a.outdir else (src_path.parent / f"{src_path.stem}_cad_split")
+        res = prepare_cad_split(src_path, out_dir, a.plan, execute_openscad=bool(a.execute))
+        print(json.dumps(res, indent=2))
+        return
     if a.cmd=="prepare-first-layer":
         prepare_first_layer(a.slot, a.color, a.material, a.spoolman_id, slicer=a.slicer); return
     if a.cmd=="plate-manifest":
@@ -3507,6 +3658,13 @@ def _main():
     if a.cmd=="filament-status":
         st = printer_state.load()
         print(json.dumps(read_filament_telemetry(st), indent=2))
+        return
+    if a.cmd=="reconcile-launch":
+        key=_printer_key(printer_state.load())
+        if a.started or a.not_started:
+            launch_state.resolve(key, "started" if a.started else "not_started")
+        else:
+            print(json.dumps(launch_state.pending(key), indent=2))
         return
     if a.cmd=="routine-receipt":
         print(routine_receipt(a.routine)); return
@@ -3587,7 +3745,7 @@ def _main():
         if site_mats and st["spool"]["material"] not in site_mats: notes.append(f"site profile material is {', '.join(sorted(site_mats))}; loaded material is {st['spool']['material']}")
         if notes: print("SITE PROFILE NOT REUSED: " + "; ".join(notes) + ". Reslicing geometry to live local state.")
     srcdir=folder/"source"; path=maker_download(job,chosen,srcdir) if job["site"]=="makerworld" else printables_download(job,chosen,srcdir)
-    job["selected_source"],job["downloaded_file"],job["audit"]=chosen,str(path),audit(path); write_job(folder,job)
+    job["selected_source"],job["downloaded_file"],job["audit"]=chosen,str(path),audit(path, printer_model=job.get("printer_model") or printers.current().key); write_job(folder,job)
     print("\nAUDIT: "+json.dumps(job["audit"],indent=2))
     if a.inspect_only:
         print('SOURCE_INSPECTED ' + json.dumps({'job_json': str(folder/'JOB.json'), 'sliced': False, 'uploaded': False, 'started': False}))

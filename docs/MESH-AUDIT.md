@@ -17,12 +17,16 @@ The command prints a formatted JSON topology report to standard output and leave
 
 ## Output metrics
 
-The topology audit produces a versioned report with the following metrics:
+The topology audit produces a versioned v1 report. Existing flat topology keys and the legacy `sha256` field remain intact for compatibility. The artifact also records source identity, bounding dimensions, units, and the printer profile when available.
 
 | Field | Description |
 | --- | --- |
 | `schema_version` | Integer report schema version (currently `1`). |
-| `sha256` | SHA-256 digest of the source file. |
+| `source_sha256` | SHA-256 hex digest of the audited source file. The legacy `sha256` alias remains available. |
+| `dimensions_mm` | `[x, y, z]` printable-geometry bounding-box dimensions in millimeters, rounded to two decimal places like `audit_source` geometry metrics. |
+| `units` | Explicit dimensions unit policy, always `"mm"` in schema v1. |
+| `printer_model` | Configured printer profile ID used for prepared-job fit probing; standalone audit reports `null` when no profile is configured. |
+| `sha256` | Backward-compatible SHA-256 digest of the source file. |
 | `triangle_count` | Total number of faces analyzed from the model. |
 | `connected_shells` | Number of topologically connected face components. |
 | `boundary_edges` | Number of mesh edges referenced by only one face (open holes or edges). |
@@ -35,7 +39,7 @@ The topology audit produces a versioned report with the following metrics:
 
 ## Integration with job preparation
 
-When preparing a print job via `audit(path)`:
+When preparing a print job, `audit(path, printer_model=...)`:
 
 1. The mesh audit report is stored under the `mesh_audit` key in the source audit dictionary and persisted in `JOB.json`.
 2. If geometry extraction fails (for example, an unreadable file or corrupt archive), the error message is recorded under `mesh_audit_error` without terminating intake processing prematurely.

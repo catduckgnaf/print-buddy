@@ -1142,7 +1142,8 @@ def copies_supported(job, multi_plate=None):
     if multi_plate is None:
         try: multi_plate = int((job.get('audit') or {}).get('plates') or 0) > 1
         except (TypeError, ValueError): multi_plate = False
-    return not (multi_plate or job.get('full_size_split_plan') or job.get('plate_mode') == 'separate'
+    return not (multi_plate or job.get('full_size_split_plan') or job.get('full_size_rearrange_plan')
+                or job.get('plate_mode') == 'separate'
                 or (job.get('color_decisions') or {}).get('mode') == 'per_part')
 
 
@@ -2238,6 +2239,9 @@ def slice_job(job_path, brim_override=None, copies=None, scale=None):
     if rotation and orientation.get("dims_full_mm"):
         # Operator chose a rotated orientation: check the rotated envelope, not the authored one.
         sx, sy, sz = (float(v) for v in orientation["dims_full_mm"])
+    rearrange_plan = job.get("full_size_rearrange_plan") or {}
+    if rearrange_plan.get("size_mm"):
+        sx, sy, sz = (float(v) for v in rearrange_plan["size_mm"])
     auto_scale = None
     if (not explicit_scale and src.suffix.lower() == '.stl' and max(sx, sy, sz) < 10.0):
         inches_scale = 25.4
@@ -2263,6 +2267,19 @@ def slice_job(job_path, brim_override=None, copies=None, scale=None):
     # Preserve historical artifact bytes on every reslice.
     slice_dir = work / "sliced" / "orca" / uuid.uuid4().hex
     source_sha = file_sha256(src)
+    slice_src = src
+    if rearrange_plan:
+        from .geometry_layout import arrange_and_export
+        rearrange_dir = slice_dir / "rearranged_100pct"
+        layout_report = arrange_and_export(
+            src,
+            rearrange_dir,
+            bed=(float(st["bed_mm"][0]), float(st["bed_mm"][1]), float(st["max_print_height_mm"])),
+            allow_geometry_only_strip=not bool(decisions and decisions.get("mode") in ("multicolor", "per_part")),
+        )
+        preserved = (layout_report.get("preserved_3mf_package") or {}).get("preserved_3mf")
+        slice_src = rearrange_dir / (preserved or layout_report["exported_3mf_geometry_only"])
+        job["layout_report"] = str(rearrange_dir / "validation.json")
     decision_sha = decisions_digest(decisions)
     selected_slot = None if generic else (job.get("filament_selection") or {}).get("slot")
     scale_kw = {'scale': scale} if scale is not None else {}
@@ -2274,12 +2291,12 @@ def slice_job(job_path, brim_override=None, copies=None, scale=None):
     if selected_slot is not None:
         # Single-color jobs are bound to their named IFS slot exactly like
         # derived per-slot plates, so launch uses the mapped native route.
-        out, provenance, configs = slice_model(src, slice_dir, st, brim_override,
+        out, provenance, configs = slice_model(slice_src, slice_dir, st, brim_override,
                                               color_decisions=decisions, filament_slot=selected_slot,
                                               copies=copies, **scale_kw)
         finalize_multicolor(out, None, st, {"0": selected_slot})
     else:
-        out, provenance, configs = slice_model(src, slice_dir, st, brim_override,
+        out, provenance, configs = slice_model(slice_src, slice_dir, st, brim_override,
                                               color_decisions=decisions, copies=copies, **scale_kw)
     _timing(job_path, 'orca_finalize_done')
     if adapter.key == printers.current().key:
@@ -3428,6 +3445,16 @@ def _main():
         x.add_argument('--color-slot', type=int, action='append', help='slot for each displayed part/filament question, in order')
     ma=sub.add_parser("audit",help="read-only mesh topology audit; no repair or slicing")
     ma.add_argument("source")
+    lay = sub.add_parser("layout", help="offline 100%-scale geometry inspection, arrangement, and export; no slicing or start")
+    lay.add_argument("source")
+    lay.add_argument("-o", "--outdir", default=None, help="directory for arranged 3MF/STL/PNG/JSON outputs")
+    lay.add_argument("--inspect-only", action="store_true", help="inspect geometry and nominal bed fit without writing arranged files")
+    lay.add_argument("--bed", nargs=3, type=float, default=[220.0, 220.0, 220.0], metavar=("X", "Y", "Z"))
+    lay.add_argument("--margin", type=float, default=5.0)
+    lay.add_argument("--gap", type=float, default=5.0)
+    lay.add_argument("--input-unit", default=None, help="explicit length unit for STL or unitless model (mm, cm, m, inch, ft)")
+    lay.add_argument("--split-stl-components", action="store_true", help="treat disconnected STL shells as separate parts")
+    lay.add_argument("--allow-rotations", nargs="*", type=float, default=None, help="candidate Z rotations in degrees")
     m=sub.add_parser("plate-manifest",help="read-only source plate inventory; does not authorize slicing")
     m.add_argument("source_3mf")
     r=sub.add_parser("record-start",help="after a confirmed print start: write the dated Obsidian note"); r.add_argument("gcode"); r.add_argument("--moonraker-name"); r.add_argument("--started-at",help="ISO UTC, default now")
@@ -3453,6 +3480,36 @@ def _main():
         return
     if a.cmd=="audit":
         print(json.dumps(mesh_audit(a.source), indent=2)); return
+    if a.cmd=="layout":
+        from .geometry_layout import arrange_and_export, inspect_geometry
+        src_path = Path(a.source)
+        if a.inspect_only:
+            res = inspect_geometry(
+                src_path,
+                bed=tuple(a.bed),
+                margin=a.margin,
+                input_unit=a.input_unit,
+                split_stl=a.split_stl_components,
+            )
+            if a.outdir:
+                out_dir = Path(a.outdir)
+                out_dir.mkdir(parents=True, exist_ok=True)
+                (out_dir / "inspection.json").write_text(json.dumps(res, indent=2) + "\n", encoding="utf-8")
+            print(json.dumps(res, indent=2))
+            return
+        out_dir = Path(a.outdir) if a.outdir else (src_path.parent / f"{src_path.stem}_layout_100pct")
+        res = arrange_and_export(
+            src_path,
+            out_dir,
+            bed=tuple(a.bed),
+            margin=a.margin,
+            gap=a.gap,
+            angles=a.allow_rotations,
+            input_unit=a.input_unit,
+            split_stl=a.split_stl_components,
+        )
+        print(json.dumps(res, indent=2))
+        return
     if a.cmd=="prepare-first-layer":
         prepare_first_layer(a.slot, a.color, a.material, a.spoolman_id, slicer=a.slicer); return
     if a.cmd=="plate-manifest":

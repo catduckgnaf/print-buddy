@@ -314,7 +314,7 @@ def _fit_choice_reply(text, rows):
                    or (row['kind'] == 'painted' and 'split' in row['label'])]
     elif value in {'100%', '100', 'full', 'full size'} or 'full size' in value:
         matches = [i for i, row in enumerate(rows) if row['kind'] == 'split'
-                   or (row['kind'] == 'painted' and row['scale'] >= 1.0)]
+                   or (row['kind'] in ('painted', 'rotate') and row['scale'] >= 1.0)]
     elif value in {'cancel', 'stop', "don't print"}:
         matches = [i for i, row in enumerate(rows) if row['kind'] == 'cancel']
     elif value in {'shrink', 'smaller'}:

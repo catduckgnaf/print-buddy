@@ -209,7 +209,7 @@ class OrcaBuildJobsTests(unittest.TestCase):
         self.assertEqual(self.run_jobs("auto", per_job=100).returncode, 2)
 
     def test_jobs_apply_to_dependencies_and_the_application(self):
-        build = DOCKERFILE.split("FROM ubuntu:24.04 AS runtime")[0]
+        build = DOCKERFILE.split("FROM debian:13-slim AS runtime")[0]
         self.assertIn('orca-build-jobs "$ORCA_BUILD_JOBS" >/dev/null', build)  # validated even without Orca
         self.assertIn('export CMAKE_BUILD_PARALLEL_LEVEL="$jobs"', build)       # every dependency's own build
         self.assertIn("cmake --build deps/build --parallel 1", build)             # one dependency at a time
@@ -240,10 +240,12 @@ class OrcaCacheTests(unittest.TestCase):
 
 
 class RuntimeImageTests(unittest.TestCase):
-    def test_uid_1000_is_freed_before_the_runtime_user_is_created(self):
-        """ubuntu:24.04 ships `ubuntu` as UID 1000, so a plain useradd --uid 1000 fails the build."""
-        runtime = DOCKERFILE.split("FROM ubuntu:24.04 AS runtime", 1)[1]
-        self.assertLess(runtime.index("userdel --remove ubuntu"), runtime.index("useradd --uid 1000"))
+    def test_every_stage_uses_debian_stable(self):
+        """Debian 13 slim for every stage; it has no stock UID 1000 user, so buddy takes 1000 directly."""
+        self.assertEqual(re.findall(r"^FROM (\S+)", DOCKERFILE, re.M), ["debian:13-slim"] * 3)
+        runtime = DOCKERFILE.split("FROM debian:13-slim AS runtime", 1)[1]
+        self.assertIn("useradd --uid 1000 --create-home buddy", runtime)
+        self.assertNotIn("ubuntu", DOCKERFILE)
 
 
 class UnraidTemplateTests(unittest.TestCase):

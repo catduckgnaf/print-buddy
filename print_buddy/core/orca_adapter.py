@@ -1485,7 +1485,8 @@ def rotation_alternatives(source: Path, state: dict, authored_max: float = 0.0, 
     candidates: list[dict] = []
     # Same model, turned on the bed (yaw only): no new overhangs.
     scale, yaw, dims = _orientation_bound(points, state, IDENTITY_ROT)
-    if yaw not in (0.0, 90.0) and scale > authored_max + 0.004:
+    # A quarter turn is not redundant on rectangular printable areas.
+    if yaw != 0.0 and scale > authored_max + 0.004:
         candidates.append({'name': f'Turn {round(yaw)}° on the bed', 'axis': '+Z', 'rotation': _yaw(yaw),
                            'bound': scale, 'dims_full_mm': dims, 'supports': False})
     for axis_pair in (('+Y', '-Y'), ('+X', '-X')):
@@ -1502,13 +1503,13 @@ def rotation_alternatives(source: Path, state: dict, authored_max: float = 0.0, 
         candidates.append({'name': name, 'axis': axis, 'rotation': _matmul(_yaw(yaw), up), 'bound': scale,
                            'dims_full_mm': dims, 'supports': needs, 'bed_contact_mm2': round(contact),
                            'overhang_mm2': round(overhang)})
-    # Opposite-face pairs and X/Y turns of symmetric parts produce the same envelope;
-    # verify each distinct envelope once, keeping the steadier (more contact) option.
+    # An envelope is not a placement: equal dimensions can hide different
+    # contact faces, hulls and support geometry. Only identical transforms are
+    # redundant; independently verify every distinct rigid placement.
     unique: list[dict] = []
-    for row in sorted(candidates, key=lambda r: (r['supports'], -r.get('bed_contact_mm2', 0))):
-        envelope = sorted(row['dims_full_mm'])
-        if any(abs(u['bound'] - row['bound']) < 0.002 and
-               all(abs(a - b) < 1.0 for a, b in zip(sorted(u['dims_full_mm']), envelope)) for u in unique):
+    for row in candidates:
+        if any(all(abs(a - b) < 1e-9 for a, b in zip(u['rotation'], row['rotation']))
+               and u['supports'] == row['supports'] for u in unique):
             continue
         unique.append(row)
     candidates = unique
@@ -1537,7 +1538,8 @@ def rotation_alternatives(source: Path, state: dict, authored_max: float = 0.0, 
         row['label'] = (f"{row['name']}, {'full size' if scale >= 1.0 else scale_label(scale)}"
                         + (f" (needs {' + '.join(extras)})" if extras else ''))
         results.append(row)
-    results.sort(key=lambda r: (-r['scale'], r['supports']))
+    # At equal verified scale/support requirements, preserve the authored contact face.
+    results.sort(key=lambda r: (-r['scale'], r['supports'], r['axis'] != '+Z'))
     return results[:limit]
 
 
@@ -1564,7 +1566,9 @@ def fit_options(source: Path, state: dict, brim_override=None) -> dict:
             policy, scales = candidate, candidate_scales
             break
     try:
-        rotations = rotation_alternatives(source, state, authored_max=scales[0] if scales else 0.0)
+        # Explicit operator brim clearance applies to every candidate, including yaw.
+        rotation_state = {**state, 'brim_policy': policies[0]} if requested is not None else state
+        rotations = rotation_alternatives(source, rotation_state, authored_max=scales[0] if scales else 0.0)
     except (RuntimeError, ValueError, OSError) as exc:
         return {'scales': scales, 'rotations': [], 'rotation_error': str(exc)}
     result = {'scales': scales, 'rotations': rotations,

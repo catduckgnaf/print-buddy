@@ -331,23 +331,31 @@ def mesh_topology(triangles):
             incident.setdefault(vertex, []).append(len(uses))
     singular = sum(any(count != 2 for count in counts) for counts in incident.values())
     manifold = not (boundary or nonmanifold or singular or degenerate or winding)
-    return {"triangle_count": len(faces), "connected_shells": shells,
+    return {"format": "triangle-mesh", "triangles": len(faces),
+            "shells": shells, "triangle_count": len(faces), "connected_shells": shells,
             "boundary_edges": boundary, "non_manifold_edges": nonmanifold,
-            "singular_vertices": singular, "winding_inconsistencies": winding,
+            "non_manifold_vertices": singular, "singular_vertices": singular, "winding_inconsistencies": winding,
             "degenerate_triangles": degenerate, "watertight": boundary == 0 and nonmanifold == 0,
             "manifold": manifold}
 
 
-def mesh_audit(path):
-    """Read-only topology report for STL/3MF source geometry."""
+def mesh_audit(path, printer_model=None):
+    """Read-only, versioned topology report for STL/3MF source geometry."""
     from .orca_adapter import source_triangles
     triangles = source_triangles(path)
     if not triangles:
         raise RuntimeError("model has no printable geometry")
-    return {"schema_version": 1, "sha256": file_sha256(path), **mesh_topology(triangles)}
+    lo = [min(point[axis] for triangle in triangles for point in triangle) for axis in range(3)]
+    hi = [max(point[axis] for triangle in triangles for point in triangle) for axis in range(3)]
+    source_sha256 = file_sha256(path)
+    return {"schema_version": 1, "sha256": source_sha256,
+            "source_sha256": source_sha256,
+            "dimensions_mm": [round(hi[axis] - lo[axis], 2) for axis in range(3)],
+            "units": "mm", "printer_model": printer_model,
+            **mesh_topology(triangles)}
 
 
-def audit(path):
+def audit(path, printer_model=None):
     with open(path,"rb") as source:
         digest=hashlib.file_digest(source,"sha256").hexdigest()
     out={"path":path.name,"bytes":path.stat().st_size,"sha256":digest,"kind":path.suffix.lower()}
@@ -378,7 +386,7 @@ def audit(path):
     out['color_manifest'] = manifest
     out['color_prompts'] = prompts(manifest)
     try:
-        out["mesh_audit"] = mesh_audit(path)
+        out["mesh_audit"] = mesh_audit(path, printer_model=printer_model)
     except Exception as exc:
         out["mesh_audit_error"] = str(exc)
     try:
@@ -3701,7 +3709,7 @@ def _main():
         if site_mats and st["spool"]["material"] not in site_mats: notes.append(f"site profile material is {', '.join(sorted(site_mats))}; loaded material is {st['spool']['material']}")
         if notes: print("SITE PROFILE NOT REUSED: " + "; ".join(notes) + ". Reslicing geometry to live local state.")
     srcdir=folder/"source"; path=maker_download(job,chosen,srcdir) if job["site"]=="makerworld" else printables_download(job,chosen,srcdir)
-    job["selected_source"],job["downloaded_file"],job["audit"]=chosen,str(path),audit(path); write_job(folder,job)
+    job["selected_source"],job["downloaded_file"],job["audit"]=chosen,str(path),audit(path, printer_model=job.get("printer_model") or printers.current().key); write_job(folder,job)
     print("\nAUDIT: "+json.dumps(job["audit"],indent=2))
     if a.inspect_only:
         print('SOURCE_INSPECTED ' + json.dumps({'job_json': str(folder/'JOB.json'), 'sliced': False, 'uploaded': False, 'started': False}))

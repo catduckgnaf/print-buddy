@@ -489,7 +489,7 @@ def finalize_zmod(path, color, material, printer=None):
 def slicer_choice(printer):
     """Primary slicer for this printer: [printer] slicer for the configured model, else its vendor default.
 
-    OrcaSlicer unless the vendor profile allows Bambu Studio and the config picks it (opt-in)."""
+    The vendor's first slicer: Bambu Studio for Bambu Lab printers, OrcaSlicer for everyone else."""
     vendor = printer.model.vendor
     default = vendor.slicers[0] if vendor else 'orca'
     if printer.config.get('printer', {}).get('model') != printer.key:

@@ -241,8 +241,8 @@ class OrcaCacheTests(unittest.TestCase):
 
 class RuntimeImageTests(unittest.TestCase):
     def test_every_stage_uses_debian_stable(self):
-        """Debian 13 slim for both stages; it has no stock UID 1000 user, so buddy takes 1000 directly."""
-        self.assertEqual(re.findall(r"^FROM (\S+)", DOCKERFILE, re.M), ["debian:13-slim", "debian:13-slim"])
+        """Debian 13 slim for every stage; it has no stock UID 1000 user, so buddy takes 1000 directly."""
+        self.assertEqual(re.findall(r"^FROM (\S+)", DOCKERFILE, re.M), ["debian:13-slim"] * 3)
         runtime = DOCKERFILE.split("FROM debian:13-slim AS runtime", 1)[1]
         self.assertIn("useradd --uid 1000 --create-home buddy", runtime)
         self.assertNotIn("ubuntu", DOCKERFILE)

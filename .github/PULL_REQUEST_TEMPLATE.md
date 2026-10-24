@@ -38,3 +38,28 @@
 
 - Related:
 - Fixes:
+## Scope and acceptance criteria
+
+<!-- State what is included and explicitly excluded. Link existing related work to avoid overlapping implementations. Keep this PR draft until required acceptance checks are complete. -->
+
+- Acceptance criteria:
+- Out of scope / remaining work:
+
+## User-facing release note
+
+<!-- Write for someone operating Print Buddy, not someone reading the diff. Lead with what they can do or what no longer breaks. Group features, fixes, then technical details. State pending/draft status accurately. Write "Not applicable" for changes with no release-note impact. See docs/RELEASE-NOTES.md. -->
+
+## Safety, compatibility and deployment
+
+<!-- Identify changed confirmation, readiness, profile, clearance or artifact guards. Distinguish offline, real-slicer and live-printer verification. Document migration/rollback where relevant. Merging code does not authorize release publication, service deployment or physical operation. -->
+
+- Safety/compatibility impact:
+- Live checks or deployments performed (or "None"):
+
+## Documentation and attribution
+
+- [ ] Relevant setup, configuration and user documentation updated, or reason given below.
+- [ ] Contributor credit and third-party licenses preserved where applicable; no invented coauthors.
+- [ ] No credentials, private model files or personal runtime records included.
+
+<!-- Leave unchecked items unchecked until verified. Use "Not applicable" with a reason rather than claiming an unrun check passed. -->

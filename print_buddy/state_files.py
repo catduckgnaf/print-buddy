@@ -35,6 +35,7 @@ KNOWN = (
     "print-next-claims",
     "print_alert_buttons.json",
     "print_buddy_context.json",
+    "print_buddy_launches.sqlite3",
     "print_buddy_start_claims.json",
     "print_buddy_start_messages.json",
     "print_numbers.json",

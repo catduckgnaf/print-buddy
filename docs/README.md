@@ -13,6 +13,7 @@ Do not run both Discord modes with the same token. Installing, enabling services
 ## 2. Configure and use
 
 - [YAML configuration and TOML migration](CONFIGURATION-YAML.md): schema, precedence and safety limits.
+- [Settings reference](SETTINGS.md): every setting with its YAML key, environment variable and Docker value, plus Docker build arguments and secrets.
 - [Detailed project reference](PROJECT-REFERENCE.md): workflow examples, commands, printer models, spool identity rules, monitoring and updates.
 - [Printer profiles and offline delivery](PRINTER-PROFILES.md): vendor/model inheritance, supported delivery methods and verification limitations.
 - [AD5X integration contract](AD5X-CONTRACT.md): printer-specific behavior and limitations.

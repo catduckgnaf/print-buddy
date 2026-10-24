@@ -166,6 +166,7 @@ Empty bed, spaghetti, detached part, uncertain, and vision failure alerts fire a
 | `timelapse` | `archive_host`, `archive_dir`, `ssh_key` | empty | Remote timelapse copy; empty host disables it |
 | | `render_wait_s`, `render_poll_s` | `900`, `10` | Wait for the printer to render the timelapse |
 | | `max_bytes`, `local_retention_days`, `plan_clip_retention_days` | 200 MiB, `1`, `14` | Size cap and retention |
+| `logging` | `level`, `format`, `file` | `INFO`, `text`, empty | Log verbosity (`DEBUG`, `INFO`, `WARNING`, `ERROR`), `text` or `json` lines, and an optional rotating log file |
 | `maintenance` | `quick_hours`, `full_hours`, `full_days` | `25`, `75`, `30` | When maintenance reminders come due |
 | `nozzle_temp_offsets` | supported nozzle type | `0.0` | Optional temperature compensation from −10 to +15 °C for a known nozzle type |
 | `material_temps` | PLA, PETG, ABS, ASA, TPU, PA, PC (`nozzle`, `bed`) | see `config/home.yaml` | Configurable fallback temperatures in °C; explicit Spoolman filament settings take precedence |

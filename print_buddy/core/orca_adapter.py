@@ -1,18 +1,22 @@
 """Offline Orca adapter. Geometry conversion never imports project machine settings."""
 import hashlib
 import json
+import logging
 import math
 import os
 from pathlib import Path
 import re
 import struct
 import subprocess
+import time
 import xml.etree.ElementTree as ET
 import zipfile
-from .. import printers, settings
+from .. import logs, printers, settings
 from ..printers.base import start_code_problems
 from . import slice_guard as sg
 from .slice_guard import pre_slice, post_slice
+
+logger = logging.getLogger(__name__)
 
 _S = settings.current()
 TEMPLATES = _S['orca']['templates']
@@ -493,6 +497,27 @@ def slicer_choice(printer):
     return printer.config['printer'].get('slicer') or default
 
 
+def _run_slicer(command, name, folder):
+    """subprocess.run for a slicer, logging the command name, exit code and elapsed time.
+
+    Arguments are not logged (they hold local paths and profile contents); the slicer's own output is
+    kept in <folder>/orca.log or bambu.log, and a failure logs where to find it.
+    """
+    started = time.monotonic()
+    logger.info('%s run started folder=%s', name, folder)
+    try:
+        result = subprocess.run(command, capture_output=True, text=True, timeout=600)
+    except (subprocess.TimeoutExpired, OSError):
+        logger.exception('%s did not complete after %.1fs', name, time.monotonic() - started)
+        raise
+    level = logging.WARNING if result.returncode else logging.INFO
+    logger.log(level, '%s run finished rc=%s in %.1fs', name, result.returncode, time.monotonic() - started)
+    if result.returncode:
+        tail = (result.stdout + result.stderr).strip().splitlines()[-3:]
+        logger.debug('%s output tail: %s', name, ' | '.join(tail))
+    return result
+
+
 def slice_model(source, folder, state, brim=None, first_layer=False, color_decisions=None, preserve_layout=False, filament_slot=None, item_shifts=None, copies=None, scale=None, rotation=None, supports=None, object_ids=None, adapter=None, brim_policy=None):
     source, folder = Path(source), Path(folder)
     # An explicit adapter (a job prepared for another model) brings its own templates; the default keeps TEMPLATES.
@@ -804,7 +829,7 @@ def slice_model(source, folder, state, brim=None, first_layer=False, color_decis
         # Orca never runs, so there is no Orca failure and no fallback.
         result = subprocess.CompletedProcess(command, 0, '', '')
     else:
-        result = subprocess.run(command, capture_output=True, text=True, timeout=600)
+        result = _run_slicer(command, 'OrcaSlicer', folder)
         (folder / 'orca.log').write_text(result.stdout + result.stderr)
         if result.returncode:
             # Bounded recovery clamps only keys named in Orca's range error.
@@ -812,7 +837,7 @@ def slice_model(source, folder, state, brim=None, first_layer=False, color_decis
             fixed = clamp_rejected_settings(input_path, result.stdout + result.stderr)
             if fixed:
                 sanitized.update(fixed)
-                result = subprocess.run(command, capture_output=True, text=True, timeout=600)
+                result = _run_slicer(command, 'OrcaSlicer', folder)
                 (folder / 'orca.log').write_text(result.stdout + result.stderr)
     if mapped_profile and result.returncode and _orca_conflict(folder):
         # Tower placement clears mesh bounds, but tree supports and brims can
@@ -824,7 +849,7 @@ def slice_model(source, folder, state, brim=None, first_layer=False, color_decis
             configs[1].write_text(json.dumps(process, indent=2) + '\n')
             output.unlink(missing_ok=True)
             (folder / 'result.json').unlink(missing_ok=True)
-            result = subprocess.run(command, capture_output=True, text=True, timeout=600)
+            result = _run_slicer(command, 'OrcaSlicer', folder)
             (folder / 'orca.log').write_text(result.stdout + result.stderr)
             tried.append([tower_x, tower_y])
             if not (result.returncode and _orca_conflict(folder)):
@@ -859,6 +884,7 @@ def slice_model(source, folder, state, brim=None, first_layer=False, color_decis
                             if details else
                             f'Orca slicing failed ({result.returncode}) or no G-code output')
         bambu_role = 'Bambu Studio fallback' if orca_failed else 'Bambu Studio'
+        logger.warning('%s: %s', bambu_role, orca_failure)
         bambu_dir = folder / 'bambu'
         bambu_dir.mkdir(exist_ok=True)
         bambu_machine = bambu_dir / 'machine.json'
@@ -902,7 +928,7 @@ def slice_model(source, folder, state, brim=None, first_layer=False, color_decis
             '--allow-newer-file', '--slice', '0', '--outputdir', str(folder), str(input_path),
         ]
         try:
-            bambu_result = subprocess.run(bambu_command, capture_output=True, text=True, timeout=600)
+            bambu_result = _run_slicer(bambu_command, 'Bambu Studio', folder)
         except (subprocess.TimeoutExpired, OSError) as exc:
             raise RuntimeError(f'{orca_failure}; {bambu_role} failed to start: {exc}') from exc
         (folder / 'bambu.log').write_text(bambu_result.stdout + bambu_result.stderr)

@@ -28,7 +28,7 @@ curl -fsSL https://raw.githubusercontent.com/catduckgnaf/print-buddy/main/script
 To install a specific release instead of the latest code:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/catduckgnaf/print-buddy/main/scripts/install-light.sh | bash -s -- --ref v2.0.9
+curl -fsSL https://raw.githubusercontent.com/catduckgnaf/print-buddy/main/scripts/install-light.sh | bash -s -- --ref 2.0.9
 ```
 
 The setup wizard asks for your printer brand and model (or Other / generic), the connection, nozzle, filament, slicer, Spoolman, camera and timelapse, your Discord bot, and whether to run as a Hermes profile or a standalone bot. It installs the stock Flathub OrcaSlicer or Bambu Studio; it does not bundle Spoolman (it can run the official Spoolman installer if you ask). See [light install](docs/INSTALL-LIGHT.md) and [Discord bot setup](docs/DISCORD-BOT-SETUP.md).

@@ -28,14 +28,33 @@ curl -fsSL https://raw.githubusercontent.com/catduckgnaf/print-buddy/main/script
 To install a specific release instead of the latest code:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/catduckgnaf/print-buddy/main/scripts/install-light.sh | bash -s -- --ref 2.0.9
+curl -fsSL https://raw.githubusercontent.com/catduckgnaf/print-buddy/main/scripts/install-light.sh | bash -s -- --ref 2.1.0
 ```
 
 The setup wizard asks for your printer brand and model (or Other / generic), the connection, nozzle, filament, slicer, Spoolman, camera and timelapse, your Discord bot, and whether to run as a Hermes profile or a standalone bot. It installs the stock Flathub OrcaSlicer or Bambu Studio; it does not bundle Spoolman (it can run the official Spoolman installer if you ask). See [light install](docs/INSTALL-LIGHT.md) and [Discord bot setup](docs/DISCORD-BOT-SETUP.md).
 
+### Docker
+
+The 2.1.0 image is `ghcr.io/catduckgnaf/print-buddy` (amd64 only). It is built and checked offline by the publish workflow before it is pushed.
+
+1. Pin the image by digest, not a tag: set `PRINT_BUDDY_IMAGE=ghcr.io/catduckgnaf/print-buddy@sha256:<digest>` in `.env`. The digest is in the publish run summary and the 2.1.0 release notes.
+2. Copy `.env.example` to `.env` and fill in the Discord token, channel and allowed users. Set `PRINT_BUDDY_DATA` to a persistent directory owned by UID 1000.
+3. Run `docker compose up -d`. Add `docker-compose.spoolman.yml` if you want Spoolman as a separate container.
+
+What the image includes:
+
+| Item | Detail |
+|---|---|
+| OrcaSlicer | Stable and alpha. `PRINT_BUDDY_ORCA_CHANNEL=stable` (default) or `alpha` picks one at startup, no rebuild. Any other value stops the container. Used for Flashforge and Sovol |
+| Bambu Studio | Default slicer for every Bambu Lab printer (A1, P1S) |
+| OpenSCAD | For CAD splitting (`cad_split.py --execute`) |
+| Not included | Spoolman (separate container), KiCad (deferred) |
+
+See [Docker setup](docs/DOCKER.md) for health checks, upgrades and rollback.
+
 ### Manual install
 
-1. **Choose a mode:** the [light installer](docs/INSTALL-LIGHT.md) above is recommended. For a manual setup, the [standalone Discord bot](docs/STANDALONE.md) is the direct route without Hermes, and the [Hermes installation](docs/INSTALL.md) is for existing Hermes users. Both require Python 3.11 or newer. Docker image: coming in 2.1.0, see [Docker setup](docs/DOCKER.md).
+1. **Choose a mode:** the [light installer](docs/INSTALL-LIGHT.md) above is recommended. For a manual setup, the [standalone Discord bot](docs/STANDALONE.md) is the direct route without Hermes, and the [Hermes installation](docs/INSTALL.md) is for existing Hermes users. Both require Python 3.11 or newer. For Docker, see [Docker](#docker) below.
 2. **Configure your printer and access:** follow the chosen guide, then use [configuration](docs/CONFIGURATION-YAML.md) to set your printer model, Discord channel and authorized users, service addresses and slicer command. Keep local settings and tokens out of Git.
 3. **Check before enabling printing:** confirm the selected printer profile, bed dimensions, nozzle, filament and service permissions. Review the guide's checks before starting the bot or listener. The doctor can contact configured services; it is not an offline-only check.
 

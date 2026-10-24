@@ -8,8 +8,9 @@
 command = ["/usr/bin/orca-slicer"]
 
 [bambu]
-# Not installed by default; override if you add the Bambu Studio binary
-command = ["true"]
+# Source-installed binary; requires WITH_BAMBU=true at image build time.
+# The default slicer for Bambu Lab printers; elsewhere only Orca's one-shot fallback.
+command = ["/usr/bin/bambu-studio"]
 
 [paths]
 hermes_home = "/data/hermes"

@@ -30,12 +30,12 @@ Schema, validation limits and TOML migration: [CONFIGURATION-YAML.md](CONFIGURAT
 | `printer.ifs_slots` | `PRINT_BUDDY__PRINTER__IFS_SLOTS` | `4` *model* | Filament slots; 1 for a single extruder |
 | `printer.model` | `PRINT_BUDDY__PRINTER__MODEL` | `flashforge.ad5x` | Printer brand and model: `flashforge.ad5x`, `sovol.sv06`, `klipper.generic`, `octoprint.marlin`. Sets every model default marked *model* |
 | `printer.vendor` | `PRINT_BUDDY__PRINTER__VENDOR` | `flashforge` *model* | Vendor part of the model key, set by the model; `vendor` plus a bare printer name is also accepted |
-| `printer.slicer` | `PRINT_BUDDY__PRINTER__SLICER` | `orca` *model* | Slicer: `orca`; `bambu_studio` only where the vendor offers it (Bambu Lab) |
+| `printer.slicer` | `PRINT_BUDDY__PRINTER__SLICER` | `orca` *model* | Slicer: `orca` everywhere; Bambu Lab printers default to `bambu_studio` and may pick `orca` |
 | `printer.nozzle_type` | `PRINT_BUDDY__PRINTER__NOZZLE_TYPE` | unset | Optional nozzle material, limited to the model's supported types |
 | `orca.templates` | `PRINT_BUDDY__ORCA__TEMPLATES` | the model's folder *model* | Folder with the Orca machine, process and filament JSON |
 | `orca.command` | file only | `["/usr/bin/orca-slicer"]` | How to start the OrcaSlicer CLI; `/usr/bin/orca-slicer` exists only in a `WITH_ORCA=true` image |
 | `delivery.methods` | file only | `["printer"]` *model* | Post-slice options offered, from the vendor profile (for example `printer`) |
-| `bambu.command` | file only | `["true"]` | Fallback Bambu Studio CLI; not bundled in the image (`true` disables it) |
+| `bambu.command` | file only | `["/usr/bin/bambu-studio"]` | Bambu Studio CLI: the default slicer for Bambu Lab printers, Orca's one-shot fallback elsewhere; exists only in a `WITH_BAMBU=true` image |
 | `paths.hermes_home` | `PRINT_BUDDY__PATHS__HERMES_HOME` | `/data/hermes` | State folder (`state/`, `logs/`); the name is historical, Hermes is not required |
 | `paths.archive` | `PRINT_BUDDY__PATHS__ARCHIVE` | `/data/archive` | Job archive |
 | `paths.records_vault` | `PRINT_BUDDY__PATHS__RECORDS_VAULT` | `/data/records` | Obsidian print records |
@@ -123,6 +123,9 @@ Image build inputs (`docker build --build-arg NAME=value`), not runtime settings
 | `ORCA_BUILD_JOBS` | `auto` | Parallel compile jobs: `auto` (memory-aware, below the CPU count) or a whole number from 1 to 64; see [DOCKER.md](DOCKER.md#orcaslicer-source-build) |
 | `ORCA_BUILD_MEM_PER_JOB_MIB` | `2560` | Memory budgeted per job by `auto`, at least 256 |
 | `ORCA_CCACHE_MAXSIZE` | `5G` | Size cap of the compiler cache inside the build cache |
+| `WITH_BAMBU` | `false` | `true` builds Bambu Studio from pinned source into `/usr/bin/bambu-studio`; `false` omits it and Bambu Lab slicing fails closed |
+| `BAMBU_REF` | `926a7192574bcb9b3a732e1ec59a46d79cb45466` | Pinned Bambu Studio 2.8.2 (public release 61) source commit |
+| `BAMBU_BUILD_PROFILE` | `release-static-fhs` | Names the Bambu Studio build options; rename it to reset the build trees |
 | `ORCA_BUILD_PROFILE` | `release-static-fhs-nopch` | Name of the fixed CMake option set; part of the build cache key |
 
 ## Secrets

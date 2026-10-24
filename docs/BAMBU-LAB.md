@@ -1,90 +1,174 @@
 # Bambu Lab printers (phase 1: A1, offline only)
 
-Select the A1 with `printer.model: bambulab.a1`. Print Buddy slices for the A1, checks fit and G-code, and leaves a verified file for you to move to the printer yourself. It never connects to the printer. The P1S is a separate later model and is not covered here.
+[Documentation home](README.md) · [Printer profiles](PRINTER-PROFILES.md)
 
-## Profile layout: vendor, then printer
+Select the A1 with `printer.model: bambulab.a1`. Print Buddy slices for the A1, checks fit and G-code, and can package the result. It never connects to the printer, and nothing in this phase has been tested on an A1. The P1S, also part of issue #127, is not covered here.
 
-Bambu Lab support is organised vendor first, then printer, inside `print_buddy/printers/bambulab/`:
+## How the A1 fits the vendor and printer profiles
 
-| File | Profile | Holds |
-|---|---|---|
-| `vendor.py` | `BAMBU_LAB` (`VendorProfile`) | What every Bambu Lab printer shares: the OrcaSlicer release the templates come from, Print Buddy's overrides to every vendor Orca profile, G-code dialect, job formats (Print Buddy writes `.gcode`; Bambu's own jobs are `.gcode.3mf`), the start-code family, connection types, handoff methods, the support matrix, and the validated live modes (none) |
-| `a1.py` | `PROFILE` (`PrinterProfile`, inherits `BAMBU_LAB`) plus `MODEL` and `A1Adapter` | Printer model name, vendor start marker, the Orca profile names, the template folder, dimensions, exclusions, motion envelope, nozzles, temperatures, materials, AMS Lite |
-| `p1s.py` | not written yet | A P1S `PrinterProfile` inheriting `BAMBU_LAB`, its `MODEL` and adapter subclass, and `templates/orca/bambulab_p1s` |
-| `adapter.py`, `guard.py` | vendor-wide code | `BambuOfflineAdapter` and the G-code checks, both driven by the printer profile they are given |
+The A1 is one printer module under the existing Bambu Lab vendor profile. See [Printer profiles](PRINTER-PROFILES.md) for the general layout.
 
-A printer profile looks a fact up in its own facts first, then the vendor's, and its support matrix is the vendor's with the printer's overrides on top. Adding the P1S is a new profile module, its templates (`python3 scripts/bambu-templates.py --printer p1s` once its Orca profile names are in the profile) and its tests; the vendor profile and the shared code do not change unless the P1S differs. The Orca templates stay in the existing flat `templates/orca/bambulab_<printer>` folders, like every other model, and no other printer was moved.
+| File | Role |
+|---|---|
+| `print_buddy/printers/bambulab/__init__.py` | `VENDOR`: the only authority for connection (`offline`), start code (`bambu`), slicers, file formats and delivery (`discord`, `bambu_handoff`; never `printer`) |
+| `print_buddy/printers/bambulab/a1.py` | `MODEL` for `bambulab.a1` with `vendor=VENDOR`: bed, height, nozzle, slots, adapter, templates, baseline file |
+| `print_buddy/printers/bambulab/adapter.py` | `BambuOfflineAdapter`: every live call raises `LiveUnsupported`. `connection` is read from `VENDOR`. `verified_slicers` limits the A1 to OrcaSlicer |
+| `print_buddy/printers/bambulab/guard.py` | The A1 G-code checks, run after slicing, before packaging and at `print-now` |
+| `print_buddy/printers/bambulab/facts.py` | Supplemental metadata only: each hardware value the guard enforces, with its source and whether it was verified, plus template provenance. It decides nothing about connection, slicer or delivery |
+| `print_buddy/templates/orca/bambulab_a1/` | The OrcaSlicer machine, process and filament templates. These are third-party copies; see [Provenance and licence](#provenance-and-licence) |
+
+A P1S drops in as `bambulab/p1s.py`: its facts, an `A1Adapter`-style subclass, a `MODEL`, and templates made with `python3 scripts/bambu-templates.py --printer p1s` after its Orca profile names are added to its facts.
 
 ## What works and what does not
 
 | Capability | Status |
 |---|---|
-| Slicing with OrcaSlicer (`templates/orca/bambulab_a1`) | Supported |
-| Fit checks against 256 × 256 × 256 mm, original dimensions kept, shrink only on operator choice | Supported, same deterministic checks as other models |
-| G-code compatibility validation after slicing and again at `print-now` | Supported (`print_buddy/printers/bambulab/guard.py`) |
-| File handoff | Manual: `print-now` verifies the file, prints its path and refuses to start. The bed clear approval is not used up |
-| Live telemetry (MQTT, LAN or cloud status) | Not supported |
-| File upload (FTPS, LAN, cloud) | Not supported |
-| Print control (start, pause, resume, stop) | Not supported |
-| AMS Lite multi-color | Not supported: multi-color, multi-part and multi-plate sources are refused, as on other single-extruder models |
-| Bambu Studio handoff (upstream issue #123) | Out of scope |
-| P1S | Not started; follows only after the A1 path is validated on hardware |
+| Slicing with OrcaSlicer | Supported; real-slicer CI on 2.4.2 and the pinned 2.5.0 alpha |
+| Fit checks against 256 × 256 × 256 mm | Supported; the same deterministic checks as other models. Geometry is centred on the printer's own bed (see below) |
+| G-code validation | Supported: after slicing, before packaging, at `print-now` and `verify-gcode` |
+| Delivery | `discord` and `bambu_handoff` from `VENDOR`. A `.gcode.3mf` package is built in Bambu Studio's export layout. Opening it in Bambu Studio or Bambu Handy, printing it from SD, or printing a plain `.gcode` on an A1 has **not** been tested |
+| Print | Not offered. `print-now` verifies the file, then refuses. The bed-clear approval is not used up |
+| Bambu Studio as slicer | Refused for the A1, as primary and as fallback. Its A1 output has not been checked against the A1 guard |
+| Live telemetry, upload, print control | Not supported. No MQTT, LAN FTPS or cloud client, no credentials |
+| AMS Lite multi-color | Not supported: tool changes are refused, as are multi-color, multi-part and multi-plate sources |
+| P1S | Not started |
 
-Supported firmware and authentication modes for live use: none. No LAN-only mode, access code, developer mode or cloud login has been tested or implemented, and no credentials are read. `services.moonraker_url` and `services.octoprint_url` must stay empty for this model; settings refuse to load otherwise, so the listener, `/print-stop` and `/print-resume` cannot act on some other printer that answers at an old URL. The Moonraker listener, camera watchdog, timelapse, cold pull and other Klipper-only commands do not apply to the A1.
+Supported firmware and authentication modes for live use: none. `services.moonraker_url` and `services.octoprint_url` must stay empty for an offline vendor; settings refuse to load otherwise. The Moonraker listener, camera watchdog, timelapse download and cold pull do not apply.
 
-## Never Klipper or ZMod code on a Bambu printer
+## What the guard checks, and what it trusts
 
-AD5X and Klipper start code (`START_PRINT ... MESH=`, `PRINT_START`, `END_PRINT`, `BED_MESH_*`, `SET_PRINT_STATS_INFO`, `CHANGE_ZCOLOR`, `SAVE_VARIABLE`, the ZMod `; MD5:` line, and any other Klipper `UPPER_SNAKE` command) is refused at three points:
+A sliced file is untrusted. `guard.gcode_problems` refuses it unless all of the following hold:
 
-1. Template assembly: the A1 adapter's `machine_start_gcode` and `machine_end_gcode` raise `ForeignStartCode` unless the start is the A1 vendor sequence and both are free of Klipper/ZMod commands. An `[orca] templates` override that points the A1 at another printer's folder fails here.
-2. After slicing: `adapter.gcode_problems` blocks the slice. The G-code must declare `printer_model = Bambu Lab A1` and contain the vendor start.
-3. At `print-now` and `verify-gcode`: the same checks run against the hardware record before the operator is told the file passed.
+1. **Foreign code.** No Klipper or ZMod code anywhere: `START_PRINT`, `MESH=`, `PRINT_START`, `END_PRINT`, any Klipper `UPPER_SNAKE` command, or the ZMod `; MD5:` line. `base.start_code_problems` independently requires every line to be a G, M or T code.
+2. **Identity.** `printer_model = Bambu Lab A1`, and the file was generated by OrcaSlicer.
+3. **Split.** The file divides into prelude, toolpath and epilogue (`slice_guard.split_toolpath`):
+   - Orca 2.5+ marks the boundaries with `MACHINE_START_GCODE_END` and `MACHINE_END_GCODE_START`.
+   - Orca 2.4 has no such tags. There the toolpath runs from the first `; CHANGE_LAYER` (or `;LAYER_CHANGE`) to the last `Custom` role tag (`; FEATURE: Custom` or `;TYPE:Custom`).
+   - These markers are comments, so they only split the file. They are never a reason to trust a block.
+4. **Vendor blocks.** The prelude and epilogue are matched line by line against the **pinned, checked-in** vendor templates (`guard.vendor_block_problems`):
+   - Each executable line must be the next template line. A placeholder matches exactly one token.
+   - Only lines inside an Orca `{if}` block may be skipped. Every other template line must be present, so heater-off lines cannot go missing.
+   - The only other lines allowed are Orca's own non-motion preamble codes: `M73`, `M201`–`M205`, `G90`, `G21`, `M82`/`M83`, `M106`/`M107`, `M981`.
+   - So a vendor block cannot be edited, reordered, extended or truncated.
+   - The `;===== machine: A1` marker check only names the printer; it is not start-sequence validation.
+   - An `[orca] templates` override is never the reference.
+5. **Toolpath motion.** A modal interpreter (`slice_guard.toolpath_motion_problems`) runs through the whole file. In the toolpath:
+   - **State it tracks.** G90/G91 positioning, M82/M83 extruder mode (G90/G91 make the extruder mode unknown until the next M82/M83), G92, and the XYZ position. The position is never carried into the toolpath from the vendor start.
+   - **Where moves may go.** A relative move needs a known starting position. Every move stays inside the motion envelope, with Z from 0 to height + 1 mm.
+   - **Extrusion.** Every possibly extruding move (an E move in an unknown mode counts) must be at a known position on the 256 mm bed at 0 < Z ≤ 256.
+   - **Refused outright.** Arcs, homing, probing other than Bambu's in-print head-wrap probes (G39, G39.3), and XYZ coordinate resets.
+   - **Outside the toolpath.** In the prelude and epilogue, XY moves are held to the envelope.
+6. **Spoofed markers fail closed.** A spoofed, duplicated or missing marker either moves vendor lines into the toolpath, where they fail the motion checks, or moves toolpath lines into a template check, where they fail. It cannot hide code.
+7. **Tools, limits and materials.**
+   - No tool change in the toolpath (AMS Lite).
+   - M104/M109 at most 300 °C; M140/M190 at most 100 °C.
+   - Exactly one filament type. Materials Bambu lists as not recommended are refused; abrasive filament needs `nozzle.type: hardened_steel`.
+   - 0.4 mm nozzle, stainless or hardened steel.
+8. **Plate type.** The resolved start G-code must name `curr_bed_type = Textured PEI Plate`.
+9. **Hardware record.** When given, the nozzle, material and temperatures must match it.
 
-A job sliced for another model is still refused by the existing `printer_model` check on `JOB.json`.
+The pinned templates are trusted only because:
+
+- `scripts/bambu-templates.py --printer a1 --check` reproduces them byte for byte from the pinned OrcaSlicer commit;
+- the tests pin the SHA-256 of every vendor G-code block;
+- they contain no Klipper or ZMod code.
+
+That makes them a faithful copy of OrcaSlicer's A1 profile. It does not prove they are correct for an A1; that needs a printer.
+
+## Plate type
+
+The A1 vendor profile's default plate is the Textured PEI Plate, and its start G-code lowers the nozzle by 0.02 mm only for that plate (`G29.1 Z-0.02`). Orca's CLI does not take the plate from the vendor profile; it resolved Cool Plate. The A1 process template therefore sets `curr_bed_type: Textured PEI Plate` explicitly, real-slicer CI checks that the offset appears, and the guard refuses any other plate. Other plates are not supported in this phase.
+
+## Protected-settings baseline
+
+The A1 has its own baseline file, `config/protected-settings-baseline.bambulab.a1.json`. It does not exist yet, so the baseline check only warns.
+
+`config/protected-settings-baseline.bambulab.a1.proposed.json` is a proposal. It records what OrcaSlicer 2.4.2 writes for the A1's protected keys, and the real-slicer CI test checks that the supported slicer's output matches it. Nothing reads it as an approval.
+
+Approving it is a separate, deliberate maintainer step:
+
+1. Slice an A1 job with the supported slicer.
+2. Review the protected values.
+3. Run:
+
+   ```bash
+   python3 -m print_buddy.core.approve_baseline approve-baseline <plate_1.gcode> \
+       --baseline config/protected-settings-baseline.bambulab.a1.json
+   ```
+
+The command prints the differences and writes only that file. `--baseline` refuses the shared `config/protected-settings-baseline.json`, which stays the AD5X's.
+
+## Geometry
+
+Exporters that place a model for an operator-chosen scale or rotation used to centre it at a fixed 110 mm, the middle of a 220 mm bed. That puts large A1 parts off the bed. `orca_adapter._place_triangles`, `export_geometry` and `place_stl` now centre on the target printer's own bed (half its `bed_mm`):
+
+- **220 mm beds:** unchanged.
+- **A 240 mm part on the A1:** lands at 8 to 248 mm.
+- **Existing printers with a local `bed_mm` override that is not 220 mm:** these now centre on their own bed rather than at 110 mm.
+
+Known limitation: the multi-color and negative-volume exporters in `core/color_geometry.py` still centre at 110 mm. Those paths are unreachable for the single-filament A1.
 
 ## Values and sources
 
-The machine, process and filament templates are OrcaSlicer's own A1 profiles, flattened. `scripts/bambu-templates.py --printer a1` rebuilds them, using the release and overrides in the vendor profile and the profile names in the A1 profile, from OrcaSlicer tag v2.4.2 (commit `8500fcdccaa10b5099ac20d252af3a7c560046f1`, the version the real-slicer CI job installs): `Bambu Lab A1 0.4 nozzle` → `fdm_bbl_3dp_001_common` → `fdm_machine_common` with its five `template *_gcode` includes, `0.20mm Standard @BBL A1`, and `Generic PLA @BBL A1`. The tests pin the SHA-256 of every vendor G-code block, so a change has to be a deliberate re-import.
-
 | Value | Source | Verified |
 |---|---|---|
-| Printable area 0..256 × 0..256 mm, height 256 mm | OrcaSlicer A1 profile | Yes, read from the pinned commit. Bambu also publishes 256 × 256 × 256 mm |
-| No bed exclusion area (the A1 profile empties the X1 family's corner exclusion) | OrcaSlicer A1 profile | Yes |
-| Head-wrap detection zone 226..256 × 224..256 mm (where the firmware checks for a nozzle clump; not an exclusion) | OrcaSlicer A1 profile | Yes, but its runtime effect is unverified |
-| 0.4 mm stainless steel stock nozzle, `marlin` G-code flavor | OrcaSlicer A1 profile | Yes |
-| Hotend 300 °C max, bed 100 °C max | Bambu Lab A1 spec pages | No: read from search-result extracts; bambulab.com was unreachable from the build sandbox |
-| 0.2, 0.6 and 0.8 mm hotends; hardened steel needed for CF/GF and glow filaments | Bambu Lab A1 spec pages | No, same reason. Only 0.4 mm is templated and accepted |
-| PLA, PETG, TPU, PVA ideal; ABS, ASA, PC, PA, PET and fiber-filled versions not recommended | Bambu Lab A1 spec pages | No, same reason |
-| AMS Lite: 4 spools | Bambu Lab A1 Combo pages | No, same reason. Not used |
-| Motion envelope X −48.2..267, Y −0.5..262.5 mm | Derived from the extremes of the vendor G-code moves | No: not a published Bambu figure, not checked on hardware |
+| Printable area 0 to 256 × 0 to 256 mm, height 256 mm | OrcaSlicer A1 profile | Yes. Bambu also publishes 256 × 256 × 256 mm |
+| No bed exclusion area | OrcaSlicer A1 profile (empties the X1 family's corner exclusion) | Yes |
+| Head-wrap detection zone 226 to 256 × 224 to 256 mm | OrcaSlicer A1 profile; a firmware check location, not an exclusion | Yes (runtime effect not verified) |
+| 0.4 mm stainless steel stock nozzle, `marlin` G-code flavor, Textured PEI default plate | OrcaSlicer A1 profile | Yes |
+| Hotend at most 300 °C, bed at most 100 °C | Bambu Lab A1 spec pages | **No**: read from search-result extracts; bambulab.com was unreachable from the build environment |
+| 0.2, 0.6 and 0.8 mm hotends; hardened steel needed for CF/GF and glow filaments | Bambu Lab A1 spec pages | **No**, same reason. Only 0.4 mm is templated and accepted |
+| PLA, PETG, TPU, PVA ideal; ABS, ASA, PC, PA, PET and fiber-filled versions not recommended | Bambu Lab A1 spec pages | **No**, same reason. Not-recommended materials are refused outright, a conservative choice |
+| AMS Lite: 4 spools | Bambu Lab A1 Combo pages | **No**. Not used |
+| `.gcode.3mf` as Bambu's job format; LAN/cloud connection types | Bambu Lab pages | **No** |
+| Motion envelope X −48.2 to 267, Y −0.5 to 262.5 mm; 1 mm travel headroom above 256 | Derived from the vendor G-code moves | **No**: not a Bambu figure and not a hardware certification |
 
-All values are in `print_buddy/printers/bambulab/vendor.py` (vendor-wide) and `a1.py` (A1) with the same source labels.
+All values are in `print_buddy/printers/bambulab/facts.py` with the same source labels.
 
-## Print Buddy changes to the vendor Orca profiles
+## Provenance and licence
 
-These live in the vendor profile (`BAMBU_LAB.orca_overrides`), so every Bambu printer gets the same ones.
+**Decision needed from the maintainer.** The A1 templates are copied third-party material under the GNU Affero General Public License v3. This repository is MIT. This change does not alter the repository licence and does not claim the combination is settled.
 
-* `z_hop_types` and `filament_z_hop_types`: Normal Lift. The shared post-slice guard allows nothing else (the vendor uses Auto Lift).
-* `enable_arc_fitting`: 0. The guard blocks arc fitting on every printer.
-* `enable_prime_tower`: 0, single filament only.
-* `brim_type`: `outer_only`, the brim mode Print Buddy's fit checks budget for.
-* `printer_settings_id`, `print_settings_id`, `filament_settings_id` set to the profile names, and `filament_colour` set, so the post-slice provenance check can match them.
+Upstream source: [OrcaSlicer](https://github.com/SoftFever/OrcaSlicer) tag `v2.4.2`, commit `8500fcdccaa10b5099ac20d252af3a7c560046f1`. Its `LICENSE.txt` is the AGPL-3.0 and its README states the licence. There is no separate licence file under `resources/profiles/`. The BBL profiles came to OrcaSlicer from Bambu Studio by Bambu Lab, which is also AGPL-3.0. The SHA-256 prefixes below are of the upstream files at that commit, under `resources/profiles/BBL/`.
 
-Nothing else is changed. In particular the vendor start, end, filament-change, timelapse and layer-change G-code are copied verbatim.
+| Upstream file | SHA-256 (prefix) | Used in |
+|---|---|---|
+| `machine/Bambu Lab A1 0.4 nozzle.json` (includes the A1 start, end, change-filament and timelapse G-code) | `34612480ad2671d8` | `machine.json` |
+| `machine/fdm_bbl_3dp_001_common.json` (includes the layer-change G-code) | `e90597a202d5461a` | `machine.json` |
+| `machine/fdm_machine_common.json` | `cdcaa5e5061934a9` | `machine.json` |
+| `process/0.20mm Standard @BBL A1.json` | `dd2d5e127a579d17` | `process.json` |
+| `process/fdm_process_single_0.20.json` | `b26b4c110e0f44dc` | `process.json` |
+| `process/fdm_process_single_common.json` | `59fc5ca43dcf9850` | `process.json` |
+| `process/fdm_process_common.json` | `398fcb322a7f459e` | `process.json` |
+| `filament/Generic PLA @BBL A1.json` | `594edb0e8a694378` | `filament.json` |
+| `filament/Generic PLA @base.json` | `85ebc04bd25c2363` | `filament.json` |
+| `filament/fdm_filament_pla.json` | `79f257ca32c8a938` | `filament.json` |
+| `filament/fdm_filament_common.json` | `05725cc129f96ea9` | `filament.json` |
 
-## Checks specific to the A1
+What each file in this change is:
 
-* Bounds: the vendor start and end blocks park the head on the wiper at X −48.2, the cutter at X 267 and the purge lane at Y −0.5 and Y 262.5, and the per-layer timelapse block moves to X −48.2. So only Orca's own toolpath is checked. Orca 2.5+ tags it with `; MACHINE_START_GCODE_END` and `; MACHINE_END_GCODE_START`; Orca 2.4 has no such tags, so the toolpath runs from the first layer change (`; CHANGE_LAYER` in Bambu output, `;LAYER_CHANGE` otherwise) to the last `Custom` role tag (`; FEATURE: Custom` / `;TYPE:Custom`), which Orca writes just before the end G-code. A file where neither can be found is refused. Within the toolpath: every move inside the motion envelope, every extruding move on the 256 mm bed and under 256 mm. Tool changes are checked in the same span (the vendor blocks use the firmware's T1000 and T255).
-* Temperatures: any M104/M109 above 300 °C or M140/M190 above 100 °C is refused.
-* Materials: not-recommended materials are refused outright; abrasive filaments need `nozzle.type` hardened_steel.
-* Nozzle: 0.4 mm only, stainless or hardened steel.
-* Hardware record: its bed and height may not exceed the A1's, and its nozzle must be one of the above. `printer_state check` reads only the record and Spoolman, never Moonraker.
+| File | Kind |
+|---|---|
+| `print_buddy/templates/orca/bambulab_a1/machine.json`, `process.json`, `filament.json` | **Copied and generated**: the files above flattened (`inherits` resolved), vendor G-code verbatim, plus the overrides in `facts.ORCA_OVERRIDES` and the settings IDs |
+| `print_buddy/templates/orca/bambulab_a1/NOTICE.md` | Original; the attribution notice for the three files above |
+| `config/protected-settings-baseline.bambulab.a1.proposed.json` | **Generated** from OrcaSlicer output: SHA-256 of the copied start and end G-code, plus two short values |
+| `scripts/bambu-templates.py` | Original. Downloads the AGPL files when a maintainer runs it; nothing in CI runs it |
+| `print_buddy/printers/bambulab/a1.py`, `adapter.py`, `guard.py`, `facts.py` | Original. `facts.py` quotes the one-line `;===== machine: A1` marker and lists numbers taken from the profile |
+| `print_buddy/core/*`, `tests/*`, `docs/*` changes | Original. `tests/printers/test_bambulab_a1.py` renders the checked-in templates at test time; it stores no copy |
 
-## Known limitations and follow-ups
+Packaging options, for the maintainer to choose:
 
-* Real-slicer coverage: `tests/slicer/test_orca_real_bambu_a1.py` and the nozzle-size matrix in `tests/slicer/test_orca_real.py` slice the A1 templates with the real Orca CLI in CI's real-slicer jobs (2.4.2, and the 2.5.0 alpha track). They check that a cube passes every Print Buddy and A1 guard, that an oversized model is never accepted, that real AD5X output is refused by the A1 guard, and that the protected-settings baseline round-trips. The offline tests use synthetic G-code laid out like real 2.4.2 Bambu output.
-* The protected-settings baseline is not approved yet: `config/protected-settings-baseline.bambulab.a1.json` is absent, so the baseline check only warns. Approve it deliberately from a real A1 slice with `python3 -c "from pathlib import Path; from print_buddy.core.slice_guard import approve_baseline; approve_baseline(Path('<plate_1.gcode>'), path=Path('config/protected-settings-baseline.bambulab.a1.json'))"`. Do not use the `approve-baseline` command for this: it always writes the shared AD5X baseline.
-* Print Buddy writes plain `.gcode`. Whether the A1 prints a plain `.gcode` file from its microSD card, or needs Bambu's `.gcode.3mf` package, is unverified.
-* Orca's plate type for the CLI slice is not set, so the vendor start's Textured PEI offset (`G29.1 Z-0.02`) only applies if Orca resolves the plate as Textured PEI. Unverified.
-* The vendor G-code is copied from OrcaSlicer (AGPL-3.0) into this MIT-licensed repository. Check that this is acceptable before offering the change upstream.
-* Next phases, each needing its own review: hardware validation of a hand-carried file, then live status, then upload and print control with explicit per-job authorization, then AMS Lite, then the P1S.
+1. **Keep the copies, with their notice (this change).** Simple and reviewable. It means AGPL-licensed files sit in an MIT repository, and their notice, source and attribution obligations apply to anyone who distributes them. The maintainer has to accept that, or not.
+2. **Recommended for approval: generate at install time from the user's own OrcaSlicer.** Do not commit the three JSON files or the proposal. Ship only the original generator, overrides and expected hashes. The generator reads the BBL profiles from the locally installed OrcaSlicer, which already ships them under its own licence, or from the pinned commit, writes the templates into the user's installation, and refuses unless the vendor G-code hashes match. The guard then compares against that local copy. This needs the generator to read a local OrcaSlicer resources folder (Flatpak, AppImage or source build) and an install step. It is not implemented here.
+3. **An independently written A1 start and end sequence.** Not recommended: it could not be checked without a printer, and it would lose Bambu's calibration and nozzle-wipe logic.
+
+Until the maintainer chooses, the licence question stays open, and the PR states that it should not be merged without that decision.
+
+## Evidence
+
+| Kind | What exists | Not covered |
+|---|---|---|
+| Geometry | Offline tests: centring on 220 and 256 mm beds, fit bounds on the A1 volume, hardware-record limits | Physical bed calibration |
+| Real slicer | CI real-slicer jobs on the exact head, Flathub OrcaSlicer 2.4.2 and the pinned 2.5.0-alpha bundle. They run the production `model_job.slice_job` → verification → `bambu_handoff` → `print_now` path in a process configured as `bambulab.a1`, and check that the guard passes on real output, the plate offset, toolpath bounds, the baseline proposal, an oversized model and AD5X output | Other Orca versions; Bambu Studio |
+| Packaging consumer | Offline: the `.gcode.3mf` holds exactly the validated G-code and is refused for wrong-model or foreign files; the Discord flow offers it and no print | Opening the package in Bambu Studio or Bambu Handy; reading it from SD on an A1 |
+| Hardware | None | Everything on a real A1: start sequence, envelope, plate offset, temperatures, materials, a finished print |

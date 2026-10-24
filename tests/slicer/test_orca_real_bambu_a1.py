@@ -45,10 +45,11 @@ def installed_resources():
         files = Path(found.stdout.strip()) / "files"
         if found.returncode == 0 and files.is_dir():
             for marker in ("BBL.json", "BBL.opc"):
-                hit = next(files.glob(f"share/*/resources/profiles/{marker}"), None) or next(
-                    files.glob(f"**/resources/profiles/{marker}"), None)
+                hit = next(files.glob(f"**/profiles/{marker}"), None)
                 if hit:
                     return hit.parent.parent
+            listing = sorted(str(p.relative_to(files)) for p in files.glob("share/*/*"))[:40]
+            raise AssertionError(f"no profiles/BBL.json or BBL.opc under {files}; share/*/*: {listing}")
     raise AssertionError("no OrcaSlicer resources folder: set PB_ORCA_RESOURCES or install the Flatpak")
 
 

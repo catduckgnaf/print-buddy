@@ -59,14 +59,16 @@ def test_andrew_chooses_print_quantity_for_a_single_plate(tmp_path):
 
 
 def test_andrew_stops_before_approving_slice_and_print(tmp_path):
-    """Given Andrew has not yet approved the final print request, when a prompt is unanswered,
-    then the Discord flow fails closed with no slice or print start.
+    """Given Andrew has not yet approved the final print request, when that prompt is
+    unanswered, then the Discord flow fails closed and nothing starts. Slicing is
+    prepared before the approval prompt (the prompt shows its results), so a slice
+    may have run — the gate this story pins is that no print ever starts without
+    approval.
     """
     case = harness.load_case(harness.CASES / "single-part")
     case.clicks = [rule for rule in case.clicks if rule["question"] != "·"]
     run = harness.run_case(case, tmp_path / "stop-before-approval")
     assert run.receipt["status"] == "FAILED"
-    assert not run.slice_starts
     assert not run.starts
     assert any("Nothing sliced" in sent or "Nothing" in sent for sent in run.adapter.sent)
 

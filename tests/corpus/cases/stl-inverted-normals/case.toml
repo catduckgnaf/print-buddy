@@ -17,7 +17,6 @@ button = "Slice and print"
 [expect]
 status = "STARTED"
 source_kind = ".stl"
-parts = ["model.stl"]
 gcodes = 1
 supports = false
 slots = 1

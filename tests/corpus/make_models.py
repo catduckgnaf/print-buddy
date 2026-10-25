@@ -232,7 +232,9 @@ def build():
               [("Base", 1, box(70, 50, 6), (60, 60)),
                ("Post", 1, cylinder(10, 30), (70, 130)),
                ("Tab", 1, box(30, 12, 4), (130, 140))],
-              [("Plate 1", [0, 1, 2])], [("#FFFFFF", "PLA")])
+              # Post is assigned to both plates; production tolerates the
+              # overlap and prints it with the later plate (see the case).
+              [("Plate 1", [0, 1]), ("Plate 2", [1, 2])], [("#FFFFFF", "PLA")])
     write_3mf(cases / "plates-multicolor/model.3mf",
               [("Body", 1, box(60, 40, 12), (50, 60)), ("Lid", 2, box(60, 40, 4), (50, 60)),
                ("Knob", 3, cylinder(9, 14), (60, 130))],

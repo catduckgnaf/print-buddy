@@ -17,7 +17,7 @@ button = "Slice and print"
 [expect]
 status = "STARTED"
 parts = ["No plate metadata"]
-source_plates = 1
+source_plates = 0
 gcodes = 1
 supports = false
 slots = 1

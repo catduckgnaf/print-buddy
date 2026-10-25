@@ -135,7 +135,9 @@ def install_clarify_stand_in():
 
     def wait_for_response(cid, timeout=None):
         e = entry(cid)
-        got = e.event.wait(timeout)
+        # The stand-in simulates prompt expiry quickly: an unanswered prompt must
+        # fail closed in tests, not block for the production wait (up to an hour).
+        got = e.event.wait(min(timeout, 10) if timeout else timeout)
         with lock:
             prompts.pop(cid, None)
         return e.answer if got else None

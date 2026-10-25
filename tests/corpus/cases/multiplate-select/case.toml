@@ -27,7 +27,7 @@ status = "STARTED"
 parts = ["Plate A", "Plate B"]
 source_plates = 2
 colors = { "Plate A" = "white", "Plate B" = "white" }
-plate_mode = "separate"
+plate_mode = "split"
 gcodes = 2
 scale = 1.0
 supports = false

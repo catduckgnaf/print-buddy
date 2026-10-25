@@ -12,6 +12,7 @@ permissions:
 
 jobs:
   assign:
+    # Metadata-only privileged workflow; no contributor code runs in a container.
     runs-on: ubuntu-24.04
     timeout-minutes: 2
     steps:

@@ -38,4 +38,5 @@
   <Config Name="OctoPrint URL" Target="PRINT_BUDDY__SERVICES__OCTOPRINT_URL" Default="" Mode="" Description="octoprint.marlin printers only." Type="Variable" Display="always" Required="false" Mask="false"></Config>
   <Config Name="OctoPrint API key" Target="OCTOPRINT_API_KEY" Default="" Mode="" Description="Secret, octoprint.marlin printers only." Type="Variable" Display="always" Required="false" Mask="true"></Config>
   <Config Name="Spoolman URL" Target="PRINT_BUDDY__SERVICES__SPOOLMAN_URL" Default="http://spoolman:8000" Mode="" Description="Included Spoolman container by default. Set an existing external Spoolman, for example http://spoolman.example:8000, to use that instead; nothing is migrated." Type="Variable" Display="always" Required="false" Mask="false">http://spoolman:8000</Config>
+  <Config Name="OrcaSlicer channel" Target="PRINT_BUDDY_ORCA_CHANNEL" Default="stable" Mode="" Description="Bundled OrcaSlicer channel selected at startup: stable (default) or alpha. Any other value stops the container." Type="Variable" Display="advanced" Required="false" Mask="false">stable</Config>
 </Container>

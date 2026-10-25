@@ -212,7 +212,8 @@ def test_native_start_refuses_conflicting_mapping(call):
 
 
 def test_native_start_accepts_baseline_without_offset():
-    job.validate_saved_mesh_start('START_PRINT MESH=MESH_DATA', {'display_off': 0, 'profile': 'MESH_DATA'})
+    result = job.validate_saved_mesh_start('START_PRINT MESH=MESH_DATA', {'display_off': 0, 'profile': 'MESH_DATA'})
+    assert result is None
 
 @pytest.mark.parametrize('status', ['printing', 'paused', 'busy', None, 'unknown'])
 def test_native_guard_blocks_nonidle(status):
@@ -229,7 +230,8 @@ def test_native_guard_blocks_wrong_loaded_slot():
 def test_native_guard_accepts_ready_present_matching_slot():
     detail = {'status': 'ready', 'hasMatlStation': True, 'matlStationInfo': {
         'currentLoadSlot': 4, 'slotInfos': [{'slotId': 4, 'hasFilament': True}]}}
-    job.validate_native_start(detail, {'slot': 4})
+    result = job.validate_native_start(detail, {'slot': 4})
+    assert result is None
 
 @pytest.mark.parametrize('detail', [
     {'status': 'ready', 'hasMatlStation': True, 'matlStationInfo': {'currentLoadSlot': 4, 'slotInfos': [{'slotId': 4, 'hasFilament': False}]}},

@@ -317,6 +317,26 @@ def test_expired_question_offers_one_resume_and_keeps_the_saved_intake(env):
     assert any('Nothing was sliced' in line for line in adapter.sent)
 
 
+@pytest.mark.parametrize('resume_outcome', ['expired', 'cancelled'])
+def test_unanswered_or_cancelled_resume_closes_the_intake(env, monkeypatch, resume_outcome):
+    calls = []
+
+    async def expire_then_close(*args, **kwargs):
+        calls.append(args[3])
+        if len(calls) == 1 or resume_outcome == 'expired':
+            raise prepared_intake.IntakeExpired('no answer')
+        raise prepared_intake.IntakeCancelled('cancelled')
+
+    monkeypatch.setattr(prepared_intake, '_ask', expire_then_close)
+    adapter, result, receipt = run_flow(env, [])
+    assert len(calls) == 2 and 'expired' in calls[1].lower()
+    assert receipt['status'] == ('FAILED' if resume_outcome == 'expired' else 'CANCELLED')
+    assert receipt['sliced'] is False and receipt['uploaded'] is False and receipt['started'] is False
+    assert env.sliced == [] and env.starts == []
+    assert result == {'action': 'skip', 'reason': 'resume cancelled or expired'}
+    assert adapter.sent[-1] == 'Intake closed. Nothing was sliced, uploaded or started.'
+
+
 def test_resume_continues_the_saved_intake_instead_of_stopping_at_the_marker(env):
     # First color question expires. Resume must ask the next saved question
     # (the color choice), not stop after the action marker.

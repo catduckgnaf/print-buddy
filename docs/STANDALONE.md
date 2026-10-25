@@ -84,7 +84,7 @@ The bot writes its heartbeat to `<paths.hermes_home>/state/bot_health.json` ever
 `GET /healthz` read the same record:
 
 ```json
-{"mode": "standalone", "connected": true, "user": "Print Buddy#1234", "handlers": 13,
+{"mode": "standalone", "connected": true, "user": "Print Buddy#1234", "handlers": 15,
  "hermes_modules": [], "heartbeat_at": 1792727951.3, "pid": 7, "chat_id": "123...", "allowed_users": 2,
  "llm": false, "open_prompts": 0, "started_at": 1792727900.1}
 ```

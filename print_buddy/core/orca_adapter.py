@@ -1895,7 +1895,9 @@ def fit_options(source: Path, state: dict, brim_override=None) -> dict:
                                     'best_extent_mm': fit['best_extent_mm'],
                                     'usable_mm': fit['usable_mm'],
                                     'height_limit_mm': fit['height_limit_mm'],
-                                    'blocking_reason': fit['blocking_reason']})
+                                    'blocking_reason': fit['blocking_reason'],
+                                    **({'placement_mm': fit['placement_mm']}
+                                       if fit.get('placement_mm') else {})})
                     details.append(row)
             result['parts'] = details
             blocking = [row['name'] for row in details if row.get('fits_full_size') is False]

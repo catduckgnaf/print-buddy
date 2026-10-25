@@ -1,10 +1,54 @@
 """Unit tests for offline full-size split planning."""
 import sys
+import zipfile
 from pathlib import Path
 
 from print_buddy.core import split_fit  # noqa: E402
 from print_buddy.core import plate_merge  # noqa: E402
 from .test_plate_merge import _source  # noqa: E402
+
+
+def _mesh_source(path, meshes, plates):
+    """A 3MF from explicit vertex lists: meshes {object_id: [(x, y, z), ...]}.
+
+    Same package shape as test_plate_merge._source, but the mesh vertices are
+    the caller's, so non-rectangular footprints (whose bounding rectangle is
+    larger than the mesh ever occupies) can be tested honestly.
+    """
+    resources, items, objects = [], [], []
+    for oid, points in meshes.items():
+        body = ''.join(f'<vertex x="{x}" y="{y}" z="{z}"/>' for x, y, z in points)
+        model = (f'<model unit="millimeter"><resources><object id="1"><mesh><vertices>{body}</vertices>'
+                 f'<triangles><triangle v1="0" v2="1" v3="2"/></triangles></mesh></object></resources></model>')
+        with zipfile.ZipFile(path, 'a') as archive:
+            archive.writestr(f'3D/Objects/object_{oid}.model', model)
+        resources.append(f'<object id="{oid}" name="Part {oid}"><components><component p:path="/3D/Objects/object_{oid}.model" objectid="1" transform="1 0 0 0 1 0 0 0 1 0 0 0"/></components></object>')
+        items.append(f'<item objectid="{oid}" transform="1 0 0 0 1 0 0 0 1 {20 + 5 * int(oid)} 30 0"/>')
+        objects.append(f'<object id="{oid}"><metadata key="name" value="Part {oid}"/><metadata key="extruder" value="1"/><part id="1"><metadata key="name" value="Part {oid}"/><metadata key="extruder" value="1"/></part></object>')
+    plate_xml = ''.join(
+        f'<plate><metadata key="plater_id" value="{i}"/>' +
+        ''.join(f'<model_instance><metadata key="object_id" value="{o}"/></model_instance>' for o in ids) + '</plate>'
+        for i, ids in enumerate(plates, 1))
+    with zipfile.ZipFile(path, 'a') as archive:
+        archive.writestr('3D/3dmodel.model', f'<model xmlns:p="http://schemas.microsoft.com/3dmanufacturing/production/2015/06" unit="millimeter"><resources>{"".join(resources)}</resources><build>{"".join(items)}</build></model>')
+        archive.writestr('Metadata/model_settings.config', f'<config>{"".join(objects)}{plate_xml}</config>')
+        archive.writestr('Metadata/project_settings.config', '{\n  "filament_colour": [\n    "#FFFFFF"\n  ],\n  "filament_type": [\n    "PLA"\n  ]\n}')
+        archive.writestr('3D/_rels/3dmodel.model.rels', '<Relationships>' + ''.join(f'<Relationship Target="/3D/Objects/object_{o}.model" Id="r{o}"/>' for o in meshes) + '</Relationships>')
+        for i in range(1, len(plates) + 1):
+            archive.writestr(f'Metadata/plate_{i}.png', b'png')
+
+
+def _rect_points(w, d, h):
+    corners = [(0, 0), (w, 0), (w, d), (0, d)]
+    return [(x, y, 0) for x, y in corners] + [(x, y, h) for x, y in corners]
+
+
+def _plus_points(half_length=115, half_arm=20, h=10):
+    outline = [(half_arm, half_length), (-half_arm, half_length), (-half_arm, half_arm),
+               (-half_length, half_arm), (-half_length, -half_arm), (-half_arm, -half_arm),
+               (-half_arm, -half_length), (half_arm, -half_length), (half_arm, -half_arm),
+               (half_length, -half_arm), (half_length, half_arm), (half_arm, half_arm)]
+    return [(x, y, 0) for x, y in outline] + [(x, y, h) for x, y in outline]
 
 
 def test_two_large_objects_pack_into_two_full_size_plates(tmp_path):
@@ -174,3 +218,72 @@ def test_slicing_refuses_a_turn_recorded_for_a_shared_plate(tmp_path, monkeypatc
     monkeypatch.setattr(orca_adapter, 'slice_model', _fake_slice())
     with pytest.raises(RuntimeError, match='not that part alone'):
         model_job.slice_job(job_path)
+
+
+def test_per_part_fit_judges_a_plus_part_by_its_mesh_not_its_rectangle(tmp_path):
+    # A plus/cross part spans 230 x 230 mm, so its bounding rectangle fits the
+    # 204 mm usable bed at no yaw; the actual mesh, turned 45 degrees, occupies
+    # about 191 x 191 mm and does fit (#221). Rectangle evaluation blocked it.
+    source = tmp_path / 'plus.3mf'
+    _mesh_source(source, {'1': _plus_points(), '2': _rect_points(150, 150, 10)}, [['1', '2']])
+    rows = {row['object_id']: row for row in split_fit.per_part_fit(source, 220)}
+    plus = rows['1']
+    assert plus['extent_mm'] == [230.0, 230.0, 10]
+    assert plus['fits_authored'] is False
+    rect_yaw, rect_env = split_fit.best_yaw(230, 230, 204, 204)
+    assert max(rect_env) > 204  # the old rectangle verdict: blocking
+    assert plus['fits_full_size'] is True
+    assert plus['best_yaw_deg'] == 45.0
+    assert max(plus['best_extent_mm'][:2]) <= 204
+    # And the split plan can use that verdict, with the turn recorded (#220).
+    plan = split_fit.split_plan_100(source, 220)
+    assert plan is not None and plan['yaw_by_object'] == {'1': 45.0}
+    assert next(plate for plate in plan['plates'] if '1:1' in plate) == ['1:1']
+
+
+def test_per_part_fit_rectangle_mesh_matches_the_rectangle_sweep(tmp_path):
+    # For a truly rectangular mesh the vertex-extrema sweep must agree with
+    # the rectangle sweep exactly: rectangular verdicts do not change (#221).
+    source = tmp_path / 'rect.3mf'
+    _mesh_source(source, {'1': _rect_points(230, 50, 20)}, [['1']])
+    (row,) = split_fit.per_part_fit(source, 220)
+    yaw, envelope = split_fit.best_yaw(230, 50, 204, 204)
+    assert row['best_yaw_deg'] == yaw
+    assert row['best_extent_mm'][:2] == [round(envelope[0], 3), round(envelope[1], 3)]
+    assert row['fits_full_size'] is True
+
+
+def test_per_part_fit_exclusion_blocks_when_no_placement_avoids_it(tmp_path):
+    # A 200 x 200 mm part fits the 204 mm usable area, but on a bed whose
+    # front-left 18 x 28 mm is excluded every legal placement overlaps the
+    # exclusion, so it must not count as fitting (#221).
+    source = tmp_path / 'nearly-full.3mf'
+    _mesh_source(source, {'1': _rect_points(200, 200, 10)}, [['1']])
+    (open_row,) = split_fit.per_part_fit(source, 220, exclusions=[])
+    assert open_row['fits_full_size'] is True and open_row['placement_mm'] is None
+    (row,) = split_fit.per_part_fit(source, 220, exclusions=[(0, 0, 18, 28)])
+    assert row['fits_full_size'] is False
+    assert row['placement_mm'] is None
+    assert 'exclusion' in row['blocking_reason']
+    assert row['exclusions_mm'] == [[0.0, 0.0, 18.0, 28.0]]
+
+
+def test_per_part_fit_exclusion_reports_an_avoiding_placement(tmp_path):
+    source = tmp_path / 'small.3mf'
+    _mesh_source(source, {'1': _rect_points(100, 50, 10)}, [['1']])
+    (row,) = split_fit.per_part_fit(source, 220, exclusions=[(0, 0, 18, 28)])
+    assert row['fits_full_size'] is True
+    # Placed flush against the exclusion's right edge, on the bed edge.
+    assert row['placement_mm'] == [18.0, 8.0]
+
+
+def test_split_plan_is_not_offered_on_a_bed_with_exclusions(tmp_path):
+    # Evaluation can find avoiding placements, but the split exporter cannot
+    # realize one yet, so planning refuses instead of overpromising (#221).
+    source = tmp_path / 'two-boxes.3mf'
+    _mesh_source(source, {'1': _rect_points(150, 150, 10), '2': _rect_points(150, 150, 10)},
+                 [['1', '2']])
+    rows = split_fit.per_part_fit(source, 220, exclusions=[(0, 0, 18, 28)])
+    assert all(row['fits_full_size'] for row in rows)
+    assert split_fit.split_plan_100(source, 220, exclusions=[(0, 0, 18, 28)]) is None
+    assert split_fit.split_plan_100(source, 220, exclusions=[]) is not None

@@ -158,6 +158,24 @@ def final_choices(adapter):
     return adapter.questions[-1]['choices'] if adapter.questions[-1]['choices'][0].startswith('Slice') else None
 
 
+def test_resource_refusal_precedes_audit_and_color_prompts(env, monkeypatch):
+    from print_buddy.core import intake_resources
+    monkeypatch.setattr(intake_resources, 'MAX_XML_BYTES', 1)
+
+    def unexpected_audit(path):
+        pytest.fail('oversized source reached audit')
+
+    monkeypatch.setattr(model_job, 'audit', unexpected_audit)
+    adapter, result, receipt = run_flow(env, [])
+    assert result['action'] == 'skip'
+    assert receipt['status'] == 'FAILED'
+    assert 'model XML exceeds' in receipt['error']
+    assert any('Simplify the mesh or split' in text for text in adapter.sent)
+    assert adapter.questions == []
+    assert not env.sliced and not env.starts
+    assert not receipt['sliced'] and not receipt['uploaded'] and not receipt['started']
+
+
 def test_fit_choice_rows_are_four_or_fewer_and_never_offer_preview():
     rows = prepared_intake.fit_choice_rows({'scales': [0.98, 0.75, 0.5], 'rotations': [],
                                             'full_size_split': True})
@@ -1310,3 +1328,50 @@ def test_work_error_surfaces_without_a_stop_press():
 
     with pytest.raises(ValueError, match='larger than the bed'):
         asyncio.run(run())
+
+
+def _box_stl(path, width, depth, height):
+    vertices = [(0, 0, 0), (width, 0, 0), (width, depth, 0), (0, depth, 0),
+                (0, 0, height), (width, 0, height), (width, depth, height), (0, depth, height)]
+    faces = [(0, 1, 2), (0, 2, 3), (4, 6, 5), (4, 7, 6),
+             (0, 4, 5), (0, 5, 1), (1, 5, 6), (1, 6, 2),
+             (2, 6, 7), (2, 7, 3), (3, 7, 4), (3, 4, 0)]
+    path.write_text('solid box\n' + ''.join(
+        'facet normal 0 0 0\nouter loop\n' + ''.join(
+            f'vertex {vertices[index][0]} {vertices[index][1]} {vertices[index][2]}\n' for index in face)
+        + 'endloop\nendfacet\n' for face in faces) + 'endsolid box\n')
+
+
+def _run_small_stl_upload(env, monkeypatch, unit_pick):
+    monkeypatch.setattr(model_job, 'audit', lambda path: {
+        'plates': 1, 'size_x': '5', 'size_y': '2', 'size_z': '2'})
+    drop = env.tmp / 'pin.stl'
+    _box_stl(drop, 5, 2, 2)
+    event = S(source=S(profile='3dprinting', chat_id='c1', thread_id=None, user_id='u'),
+              message_id='m-unit', text='', media_urls=[str(drop)])
+    # picks: unit answer, filament slot, slice only, then Cancel on the start button
+    adapter = Adapter([unit_pick, 0, 1, 1])
+    asyncio.run(prepared_intake.prepare_link(event, adapter, state(), env.root, timeout=1))
+    receipt = json.loads(next(env.root.glob('*.json')).read_text())
+    job = json.loads(Path(receipt['job_json']).read_text())
+    return adapter, receipt, job
+
+
+def test_small_stl_upload_asks_units_and_mm_answer_stays_authored_size(env, monkeypatch):
+    adapter, receipt, job = _run_small_stl_upload(env, monkeypatch, 0)
+    assert 'do not record units' in adapter.questions[0]['question']
+    assert adapter.questions[0]['choices'][0].startswith('Millimeters')
+    assert job['unit_decision']['units'] == 'mm'
+    assert job['unit_decision']['source_sha256'] == model_job.file_sha256(job['downloaded_file'])
+    assert job['unit_provenance']['source'] == 'user_confirmation'
+    assert receipt['unit_decision']['units'] == 'mm'
+    assert 'auto_scale' not in job and 'scale' not in job
+    assert env.starts == [] and receipt['status'] == 'SLICED_NOT_STARTED'
+
+
+def test_small_stl_upload_inch_answer_records_25_4_provenance(env, monkeypatch):
+    adapter, receipt, job = _run_small_stl_upload(env, monkeypatch, 1)
+    assert job['unit_decision']['units'] == 'inch'
+    assert job['unit_provenance'] == {'units': 'inch', 'source': 'user_confirmation',
+                                      'original_mm': [5.0, 2.0, 2.0], 'factor': 25.4}
+    assert receipt['unit_decision']['units'] == 'inch'

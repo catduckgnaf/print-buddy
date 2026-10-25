@@ -80,13 +80,9 @@ def get_download_url(file_id: str, model_id: str, file_type: str = "stl") -> str
 def download_file(url: str, output_path: str):
     req = urllib.request.Request(url, headers={"User-Agent": HEADERS["User-Agent"]})
     os.makedirs(os.path.dirname(os.path.abspath(output_path)), exist_ok=True)
-    with urllib.request.urlopen(req, timeout=60) as resp, open(output_path, "wb") as f:
-        chunk_size = 1024 * 1024
-        while True:
-            chunk = resp.read(chunk_size)
-            if not chunk:
-                break
-            f.write(chunk)
+    from .intake_resources import save_download
+    with urllib.request.urlopen(req, timeout=60) as resp:
+        save_download(resp, output_path)
 
 def main():
     parser = argparse.ArgumentParser(description="Download 3D model files from Printables")

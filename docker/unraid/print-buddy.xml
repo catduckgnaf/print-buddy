@@ -40,5 +40,6 @@
   <Config Name="OctoPrint API key" Target="OCTOPRINT_API_KEY" Default="" Mode="" Description="Secret, octoprint.marlin printers only." Type="Variable" Display="always" Required="false" Mask="true"></Config>
   <Config Name="Spoolman URL" Target="PRINT_BUDDY__SERVICES__SPOOLMAN_URL" Default="http://127.0.0.1:8000" Mode="" Description="Bundled Spoolman API by default. To use an existing external Spoolman, set its URL here and set Bundled Spoolman to false; nothing is migrated." Type="Variable" Display="always" Required="false" Mask="false">http://127.0.0.1:8000</Config>
   <Config Name="Bundled Spoolman" Target="PRINT_BUDDY_BUNDLED_SPOOLMAN" Default="true" Mode="" Description="true runs the bundled Spoolman API; false uses the external Spoolman URL." Type="Variable" Display="advanced" Required="false" Mask="false">true</Config>
+  <Config Name="OrcaSlicer channel" Target="PRINT_BUDDY_ORCA_CHANNEL" Default="stable" Mode="" Description="Bundled OrcaSlicer channel selected at startup: stable (default) or alpha. Any other value stops the container at startup." Type="Variable" Display="advanced" Required="false" Mask="false">stable</Config>
   <Config Name="Container timezone" Target="TZ" Default="" Mode="" Description="Optional IANA timezone, for example America/New_York." Type="Variable" Display="advanced" Required="false" Mask="false"></Config>
 </Container>

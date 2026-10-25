@@ -135,6 +135,19 @@ def _validate_service_url(value, answers):
     return text
 
 
+def _validate_spoolman_url(value, _answers):
+    text = value.strip()
+    if text.lower() in ("", "skip", "none"):
+        return ""
+    # Spoolman is printer-independent (unlike Moonraker above): every model can use it,
+    # so there is no model-connection refusal here.
+    from ..setup_wizard import _url
+    error = _url(text)
+    if error:
+        raise ValueError(f"Spoolman URL {error}, or reply `skip`")
+    return text
+
+
 def _validate_token_ack(value, _answers):
     text = value.strip().lower()
     if text == "stored":
@@ -170,6 +183,10 @@ def steps(token_env="DISCORD_BOT_TOKEN"):
         Step("moonraker_url", "Moonraker URL (optional)",
              "If this printer runs Klipper/Moonraker, reply with its URL (for example "
              "http://printer.local:7125). Otherwise reply `skip`.", _validate_service_url),
+        Step("spoolman_url", "Spoolman URL (optional)",
+             "If you run Spoolman for filament inventory, reply with its URL (for example "
+             "http://spoolman.local:7912; the Spoolman included in the Docker stack is "
+             "http://spoolman:8000). Otherwise reply `skip`.", _validate_spoolman_url),
         Step("token_stored", "Bot token stored securely",
              f"Create the bot in the Discord developer portal and store its token as the "
              f"environment variable ${token_env} in the profile/data folder's `.env` file "
@@ -264,6 +281,7 @@ def _review_text(session):
              f"- Bot mode: `{answers.get('mode')}`",
              "- Print channel and allowed users: the IDs you entered (not repeated here)",
              f"- Moonraker URL: {answers.get('moonraker_url') or 'not set'}",
+             f"- Spoolman URL: {answers.get('spoolman_url') or 'not set'}",
              f"- Bot token: {'stored in its environment variable' if answers.get('token_stored') else 'not stored yet — the bot cannot log in until it is'}",
              "", checklist_text(session), "",
              "Reply `apply` to write these settings to config/local.yaml (values already there "
@@ -281,6 +299,8 @@ def _manual_text(session):
              "   - `[discord] chat_id` and `allowed_user_ids` = the numeric IDs you entered above"]
     if answers.get("moonraker_url"):
         lines.append("   - `[services] moonraker_url` = the URL you entered above")
+    if answers.get("spoolman_url"):
+        lines.append("   - `[services] spoolman_url` = the URL you entered above")
     lines += ["2. Store the Discord bot token in the environment variable named by `[discord] "
               "token_env` (default `DISCORD_BOT_TOKEN`) in the profile/data folder `.env` "
               "(file mode 600). Do not put the token in the YAML file or in chat.",
@@ -313,8 +333,13 @@ def _apply_answers(answers, config_path):
 
     config = {"printer": {"model": answers["model"]}, "bot": {"mode": answers["mode"]},
               "discord": {"chat_id": answers["chat_id"], "allowed_user_ids": answers["user_ids"]}}
+    services = {}
     if answers.get("moonraker_url"):
-        config["services"] = {"moonraker_url": answers["moonraker_url"]}
+        services["moonraker_url"] = answers["moonraker_url"]
+    if answers.get("spoolman_url"):
+        services["spoolman_url"] = answers["spoolman_url"]
+    if services:
+        config["services"] = services
     writer = _Consent()
     setup_wizard.merge_config(Path(config_path), config, writer)
     return ("Settings written to config/local.yaml (any values already there were kept). "

@@ -30,11 +30,13 @@ Do not run both Discord modes with the same token. Installing, enabling services
 
 | Symptom | First check |
 | --- | --- |
+| Model intake is refused for size or complexity | Simplify or split the model offline; see [intake resource limits](INTAKE-LIMITS.md). |
 | Bot replies twice | Confirm only one mode uses the token; see [standalone setup](STANDALONE.md). |
 | Startup rejects a setting | Read the named key and [configuration precedence](CONFIGURATION-YAML.md); YAML takes precedence over corresponding TOML files. |
 | Slicing fails or model does not fit | Check slicer command, selected printer/profile and model bounds in the [reference](PROJECT-REFERENCE.md). Do not bypass G-code or clearance guards. |
 | Spool or color disagrees with the printer | Read the reference's spool/IFS source-of-truth rules before rebinding slots. |
 | Installation or update fails | Use the guide for your selected mode; collect the actual error without tokens, private model files or personal service addresses. |
+| Physical print problem (first layer, clog, heat creep, mesh, ringing) | `/print-troubleshoot` in Discord, or the [troubleshooting guide](TROUBLESHOOTING.md); `/print-lookup <query>` searches the knowledge, firmware and printer registries. Both are read-only and send nothing to the printer. |
 
 `python3 -m print_buddy.doctor` checks setup and can contact configured Moonraker and Spoolman services. Run it only where those contacts are authorized. A clean check does not prove physical readiness.
 

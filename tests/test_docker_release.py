@@ -338,6 +338,11 @@ class UnraidTemplateTests(unittest.TestCase):
                     self.assertIn(target, COMPOSE_VARS)
         # The bot token may be empty: the listener and Spoolman run while the bot idles.
         self.assertEqual(variables["DISCORD_BOT_TOKEN"].get("Required"), "false")
+        # The runtime Orca channel selector (#180): in the template, the Compose runtime
+        # environment and as a settable .env.example line, so both reach alpha without a rebuild.
+        self.assertEqual(variables["PRINT_BUDDY_ORCA_CHANNEL"].text, "stable")
+        self.assertEqual(compose_env["PRINT_BUDDY_ORCA_CHANNEL"], "${PRINT_BUDDY_ORCA_CHANNEL:-stable}")
+        self.assertRegex(ENV_EXAMPLE, r"(?m)^PRINT_BUDDY_ORCA_CHANNEL=stable$")
 
 
 class AcceptanceFixtureTests(unittest.TestCase):

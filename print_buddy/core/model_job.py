@@ -46,8 +46,9 @@ def request_json(url, *, data=None, headers=None, timeout=25):
 def download(url, target):
     target.parent.mkdir(parents=True, exist_ok=True)
     req=urllib.request.Request(url, headers={"User-Agent":UA})
-    with urllib.request.urlopen(req, timeout=90) as r, open(target,"wb") as out:
-        shutil.copyfileobj(r,out)
+    from .intake_resources import save_download
+    with urllib.request.urlopen(req, timeout=90) as r:
+        save_download(r, target)
     if target.stat().st_size == 0: raise RuntimeError("downloaded an empty file")
 
 
@@ -295,6 +296,9 @@ def mesh_topology(triangles):
     Weld coordinates on a six-decimal grid. Exclude faces whose squared
     double-area is <= 1e-18 source-units**4 from all topology adjacency.
     """
+    if hasattr(triangles, '__len__') and len(triangles) > 100_000:
+        from .compact_topology import mesh_topology_compact
+        return mesh_topology_compact(triangles)
     vertices = {}
     faces = []
     degenerate = 0
@@ -390,8 +394,13 @@ def mesh_audit(path, printer_model=None):
     triangles = source_triangles(path)
     if not triangles:
         raise RuntimeError("model has no printable geometry")
-    lo = [min(point[axis] for triangle in triangles for point in triangle) for axis in range(3)]
-    hi = [max(point[axis] for triangle in triangles for point in triangle) for axis in range(3)]
+    from .compact_geometry import IndexedTriangles
+    if isinstance(triangles, IndexedTriangles):
+        from .mesh_fast import bounds_and_volume
+        lo, hi, _ = bounds_and_volume(triangles)
+    else:
+        lo = [min(point[axis] for triangle in triangles for point in triangle) for axis in range(3)]
+        hi = [max(point[axis] for triangle in triangles for point in triangle) for axis in range(3)]
     source_sha256 = file_sha256(path)
     from .orca_adapter import placement_candidates
     return {"schema_version": 1, "sha256": source_sha256,
@@ -403,6 +412,8 @@ def mesh_audit(path, printer_model=None):
 
 
 def audit(path, printer_model=None):
+    from .intake_resources import check_source
+    check_source(path)
     with open(path,"rb") as source:
         digest=hashlib.file_digest(source,"sha256").hexdigest()
     out={"path":path.name,"bytes":path.stat().st_size,"sha256":digest,"kind":path.suffix.lower()}
@@ -1572,6 +1583,144 @@ def set_color_decisions(job, decisions):
         job.pop('filament_selection', None)
 
 
+UNIT_QUESTION_MAX_MM = 10.0
+INCH_TO_MM = 25.4
+
+
+def normalize_units(value):
+    """Canonical unit name for a user answer: 'mm' or 'inch'."""
+    text = str(value or '').strip().lower()
+    if text in ('mm', 'millimeter', 'millimeters', 'millimetre', 'millimetres'):
+        return 'mm'
+    if text in ('inch', 'inches', 'in'):
+        return 'inch'
+    raise ValueError('units must be mm or inch')
+
+
+def _audit_dims(job):
+    """Authored extents from the job audit, or None when they were not measured."""
+    ad = job.get('audit') or {}
+    try:
+        dims = tuple(float(ad[key]) for key in ('size_x', 'size_y', 'size_z'))
+    except (KeyError, TypeError, ValueError):
+        return None
+    return dims if all(value > 0 for value in dims) else None
+
+
+def _is_generated_mm(job):
+    """True when Print Buddy itself generated the source, so its units are known mm."""
+    provenance = job.get('unit_provenance')
+    if isinstance(provenance, dict) and provenance.get('source') == 'generated' and provenance.get('units') == 'mm':
+        return True
+    return job.get('generated') is True or job.get('generated_units') == 'mm'
+
+
+def make_unit_decision(units, source_sha256, dims):
+    """A user unit confirmation bound to the exact source bytes it was given for."""
+    return {'source_sha256': source_sha256, 'units': normalize_units(units),
+            'original_mm': [float(value) for value in dims], 'source': 'user_confirmation'}
+
+
+def set_unit_decision(job, decision):
+    """Record a unit confirmation; a changed answer retires any artifact sliced under the old one."""
+    if decisions_digest(job.get('unit_decision')) != decisions_digest(decision):
+        if job.get('gcode'):
+            job.setdefault('artifact_history', []).append({key: job[key] for key in
+                ('gcode', 'gcode_verified', 'provenance', 'artifact_binding', 'sliced_at', 'slice_config',
+                 'slice_recipe') if key in job})
+        for key in ('gcode', 'provenance', 'artifact_binding', 'sliced_at', 'slice_config', 'slice_recipe'):
+            job.pop(key, None)
+        job['gcode_verified'] = False
+    job['unit_decision'] = decision
+    job['unit_provenance'] = {'units': decision['units'], 'source': 'user_confirmation',
+                              'original_mm': decision['original_mm'],
+                              'factor': INCH_TO_MM if decision['units'] == 'inch' else 1.0}
+
+
+def unit_question(job):
+    """The inch-vs-mm question for a small STL job, or None when its units are already settled.
+
+    STL files do not record units. A largest authored dimension under 10 mm is
+    ambiguous — a genuine millimeter pin and an inch-authored part look alike —
+    so intake must ask instead of assuming inches. Units are settled by an
+    explicit scale (including 1.0), by a source-bound user confirmation, or
+    when Print Buddy generated the part itself in millimeters.
+    """
+    src = job.get('downloaded_file')
+    if not src or Path(str(src)).suffix.lower() != '.stl':
+        return None
+    dims = _audit_dims(job)
+    if dims is None or max(dims) >= UNIT_QUESTION_MAX_MM:
+        return None
+    if job.get('scale') is not None:
+        return None
+    if _is_generated_mm(job):
+        return None
+    decision = job.get('unit_decision')
+    if isinstance(decision, dict):
+        try:
+            normalize_units(decision.get('units'))
+        except ValueError:
+            pass
+        else:
+            known_sha = ((job.get('color_manifest') or {}).get('source_sha256')
+                         or (job.get('audit') or {}).get('sha256'))
+            if not decision.get('source_sha256') or not known_sha or decision['source_sha256'] == known_sha:
+                return None
+    inch_dims = tuple(round(value * INCH_TO_MM, 6) for value in dims)
+    measured = ' x '.join(f'{value:g}' for value in dims)
+    as_inch = ' x '.join(f'{value:g}' for value in inch_dims)
+    return {'status': 'UNIT_CONFIRMATION_REQUIRED',
+            'original_mm': [float(value) for value in dims], 'inch_mm': list(inch_dims),
+            'question': (f'STL files do not record units. This model measures {measured} mm as written: '
+                         f'is that millimeters (prints at {measured} mm) or inches (prints at {as_inch} mm)?'),
+            'choices': [f'Millimeters — print at {measured} mm', f'Inches — print at {as_inch} mm'],
+            'resume': 'slice JOB.json --approved --units mm|inch (or unit-select JOB.json --units mm|inch)'}
+
+
+def intake_unit_confirmation(job_path, units=None, interactive=False):
+    """Normal intake gate: ask inch vs mm for a small STL and persist the answer on the job.
+
+    Noninteractive callers receive a structured question packet and resume the
+    same JOB via slice --units; no JSON file authoring is required. Settled
+    jobs record their unit provenance and pass through.
+    """
+    path = Path(job_path)
+    job = json.loads(path.read_text())
+    question = unit_question(job)
+    if question is None:
+        dims = _audit_dims(job)
+        if dims is not None and Path(str(job.get('downloaded_file') or '')).suffix.lower() == '.stl' \
+                and not isinstance(job.get('unit_provenance'), dict):
+            provenance = None
+            if job.get('scale') is not None:
+                provenance = {'units': None, 'source': 'explicit_scale',
+                              'original_mm': [float(value) for value in dims], 'factor': float(job['scale'])}
+            elif _is_generated_mm(job):
+                provenance = {'units': 'mm', 'source': 'generated',
+                              'original_mm': [float(value) for value in dims], 'factor': 1.0}
+            elif max(dims) >= UNIT_QUESTION_MAX_MM:
+                provenance = {'units': 'mm', 'source': 'authored_size',
+                              'original_mm': [float(value) for value in dims], 'factor': 1.0}
+            if provenance is not None:
+                job['unit_provenance'] = provenance
+                write_job(path.parent, job)
+        return True
+    question['job_json'] = str(path)
+    if units is None:
+        print(json.dumps(question, indent=2))
+        if not interactive:
+            return False
+        answer = input('Units (mm or inch; blank stops): ').strip()
+        if not answer:
+            return False
+        units = answer
+    decision = make_unit_decision(units, file_sha256(job['downloaded_file']), question['original_mm'])
+    set_unit_decision(job, decision)
+    write_job(path.parent, job)
+    return True
+
+
 def require_current_artifact(job, gcode):
     """Offline fail-closed guard before telemetry, approval consumption or upload."""
     if not isinstance(job, dict):
@@ -1846,7 +1995,8 @@ def per_part_fit_options(source, decisions, options, bed=BED_MM):
                 if fit:
                     row.update({k: fit[k] for k in ('object_id', 'fits_full_size', 'best_yaw_deg',
                                                     'best_extent_mm', 'usable_mm', 'height_limit_mm',
-                                                    'blocking_reason', 'orientations_checked') if k in fit})
+                                                    'blocking_reason', 'orientations_checked',
+                                                    'placement_mm') if k in fit})
                 details.append(row)
     except (OSError, zipfile.BadZipFile, RuntimeError, KeyError):
         details = []
@@ -2161,6 +2311,22 @@ def _slice_full_size_split(job, job_path, src, manifest, decisions, st):
     flattened = [key for group in plates for key in group]
     if len(flattened) < 2 or len(flattened) != len(set(flattened)) or set(flattened) != expected:
         raise RuntimeError('full-size split plan does not cover every source part exactly once')
+    yaw_by_object = plan.get('yaw_by_object') or {}
+    if not isinstance(yaw_by_object, dict):
+        raise RuntimeError('full-size split plan yaw_by_object must be a mapping of object id to degrees')
+    placement_by_object = plan.get('placement_by_object') or {}
+    if not isinstance(placement_by_object, dict):
+        raise RuntimeError('full-size split plan placement_by_object must be a mapping of object id to [x, y] mm')
+    key_to_object = {part['key']: str(part['object_id']) for part in manifest.get('parts') or []}
+    unknown_yaw = sorted(set(yaw_by_object) - set(key_to_object.values()))
+    if unknown_yaw:
+        raise RuntimeError(f"full-size split plan records a turn for unknown object(s) {','.join(unknown_yaw)}")
+    unknown_placement = sorted(set(placement_by_object) - set(key_to_object.values()))
+    if unknown_placement:
+        raise RuntimeError(f"full-size split plan records a placement for unknown object(s) {','.join(unknown_placement)}")
+    bed_xy = [float(v) for v in (st.get('bed_mm') or [])[:2]]
+    bed_x = bed_xy[0] if bed_xy else float(st['bed_mm'][0])
+    bed_y = bed_xy[1] if len(bed_xy) > 1 else bed_x
     view = _per_part_view(manifest, decisions)
     slots = sorted(set(_part_slots(view, manifest).values()))
     if len(slots) != 1:
@@ -2176,14 +2342,57 @@ def _slice_full_size_split(job, job_path, src, manifest, decisions, st):
     artifacts = []
     for index, keys in enumerate(plates, 1):
         plate = derived / f'full_size_split_{index}.3mf'
+        turned = {key_to_object[key] for key in keys if key_to_object[key] in yaw_by_object}
+        placed = {key_to_object[key] for key in keys if key_to_object[key] in placement_by_object}
+        fit, yaw_deg, placement_mm = None, None, None
+        if turned:
+            # The exporter turns a whole derived plate rigidly about one origin,
+            # so a recorded turn is only realizable for that part alone. Refuse
+            # anything else instead of slicing the plate as authored (#76).
+            if len(turned) != 1 or {key_to_object[key] for key in keys} != turned:
+                raise RuntimeError('full-size split plan records a turn for a plate that is not '
+                                   'that part alone; refusing to slice it as authored')
+            yaw_deg = float(yaw_by_object[turned.pop()])
+            if not math.isfinite(yaw_deg) or not 0 < yaw_deg <= 90:
+                raise RuntimeError(f'full-size split plan turn must be between 0 and 90 degrees, got {yaw_deg!r}')
+            rad = math.radians(yaw_deg)
+            c, s = math.cos(rad), math.sin(rad)
+            fit = {'scale': 1.0, 'rotation': [c, -s, 0.0, s, c, 0.0, 0.0, 0.0, 1.0]}
+        if placed:
+            # Same realizability rule as a turn: the exporter places a whole
+            # derived plate rigidly, so a recorded placement is only
+            # realizable for that part alone (#221).
+            if len(placed) != 1 or {key_to_object[key] for key in keys} != placed:
+                raise RuntimeError('full-size split plan records a placement for a plate that is not '
+                                   'that part alone; refusing to slice it as authored')
+            raw = placement_by_object[placed.pop()]
+            if not isinstance(raw, (list, tuple)) or len(raw) != 2:
+                raise RuntimeError(f'full-size split plan placement must be an [x, y] pair, got {raw!r}')
+            try:
+                placement_mm = [float(raw[0]), float(raw[1])]
+            except (TypeError, ValueError) as exc:
+                raise RuntimeError(f'full-size split plan placement must be numeric, got {raw!r}') from exc
+            if (not all(math.isfinite(v) for v in placement_mm)
+                    or not 0 <= placement_mm[0] < bed_x or not 0 <= placement_mm[1] < bed_y):
+                raise RuntimeError(f'full-size split plan placement {placement_mm!r} is outside the '
+                                   f'{bed_x:g} x {bed_y:g} mm bed; refusing to slice it as authored')
+            fit = {**(fit or {'scale': 1.0}), 'placement_mm': placement_mm}
         report = export_single_color_plate(src, plate, view, keys, bed=int(st['bed_mm'][0]),
-                                           slot_colors=st.get('ifs_slots') or {})
+                                           slot_colors=st.get('ifs_slots') or {},
+                                           **({'fit': fit} if fit is not None else {}))
+        if placement_mm is not None:
+            landed = report.get('placed_bounds_mm') or []
+            if len(landed) != 2 or any(abs(landed[axis][0] - placement_mm[axis]) > 1e-6 for axis in range(2)):
+                raise RuntimeError('derived plate did not land at the recorded placement; '
+                                   'refusing to slice it as placed')
         slice_dir = work / 'sliced' / 'orca' / uuid.uuid4().hex
         out, provenance, configs = slice_model(plate, slice_dir, st, preserve_layout=True, filament_slot=slot)
         finalize_multicolor(out, None, st, {'0': slot})
         check = verify_gcode_offline(out, st)
         artifacts.append({'slot': slot, 'plate_id': index, 'binding_key': f'{index}:{slot}',
                           'part_keys': keys, 'plate': str(plate), 'gcode': str(out),
+                          **({'yaw_deg': yaw_deg} if yaw_deg is not None else {}),
+                          **({'placement_mm': placement_mm} if placement_mm is not None else {}),
                           'offline_check': check, 'plate_report': report, 'provenance': provenance,
                           'slice_config': [str(path) for path in configs]})
     latest = json.loads(Path(job_path).read_text())
@@ -2357,6 +2566,7 @@ def slice_job(job_path, brim_override=None, copies=None, scale=None, recipe_sha2
             k, _, v = line.partition(" = ")
             if k in ("size_x", "size_y", "size_z"): ad[k] = v
     sx,sy,sz=(float(ad[k]) for k in ("size_x","size_y","size_z"))
+    authored_dims = (sx, sy, sz)
     if rotation and orientation.get("dims_full_mm"):
         # Operator chose a rotated orientation: check the rotated envelope, not the authored one.
         sx, sy, sz = (float(v) for v in orientation["dims_full_mm"])
@@ -2364,17 +2574,54 @@ def slice_job(job_path, brim_override=None, copies=None, scale=None, recipe_sha2
     if rearrange_plan.get("size_mm"):
         sx, sy, sz = (float(v) for v in rearrange_plan["size_mm"])
     auto_scale = None
-    if (not explicit_scale and src.suffix.lower() == '.stl' and max(sx, sy, sz) < 10.0):
-        inches_scale = 25.4
-        inch_dims = tuple(round(value * inches_scale, 6) for value in (sx, sy, sz))
-        if (inch_dims[0] > st["bed_mm"][0] or inch_dims[1] > st["bed_mm"][1]
-                or inch_dims[2] > st["max_print_height_mm"]):
-            measured = f'{sx:g}x{sy:g}x{sz:g}'
-            final = f'{inch_dims[0]:g}x{inch_dims[1]:g}x{inch_dims[2]:g}'
-            raise RuntimeError(f'model measures {measured} mm and treating it as inches would be {final} mm, which exceeds printer volume')
-        scale = inches_scale
-        auto_scale = {'factor': inches_scale, 'reason': 'inch units',
-                      'original_mm': [sx, sy, sz], 'final_mm': list(inch_dims)}
+    unit_provenance = job.get('unit_provenance') if isinstance(job.get('unit_provenance'), dict) else None
+    if src.suffix.lower() == '.stl':
+        if explicit_scale:
+            # An explicit scale — 1.0 included — is the operator's own size
+            # instruction; it settles the size and is never overridden.
+            unit_provenance = {'units': None, 'source': 'explicit_scale',
+                               'original_mm': list(authored_dims), 'factor': float(scale)}
+        elif _is_generated_mm(job):
+            unit_provenance = {'units': 'mm', 'source': 'generated',
+                               'original_mm': list(authored_dims), 'factor': 1.0}
+        elif max(authored_dims) < UNIT_QUESTION_MAX_MM:
+            # STL carries no units and a sub-10 mm part may be authored in
+            # millimeters or inches. Never assume inches: slicing waits for a
+            # source-bound user confirmation recorded on the job (#206).
+            decision = job.get('unit_decision')
+            expected_sha = manifest.get('source_sha256') or file_sha256(src)
+            if not isinstance(decision, dict) or decision.get('source_sha256') != expected_sha:
+                measured = ' x '.join(f'{value:g}' for value in authored_dims)
+                as_inch = ' x '.join(f'{value * INCH_TO_MM:g}' for value in authored_dims)
+                raise RuntimeError(
+                    f'model measures {measured} mm and STL files do not record units; confirm whether that '
+                    f'size is millimeters (prints at {measured} mm) or inches (prints at {as_inch} mm) before '
+                    'slicing — record the answer on this job (unit-select JOB.json --units mm|inch, or slice '
+                    '--units mm|inch). Nothing sliced')
+            try:
+                confirmed = normalize_units(decision.get('units'))
+            except ValueError:
+                raise RuntimeError('recorded unit confirmation must be mm or inch; confirm the units again '
+                                   'before slicing. Nothing sliced')
+            if confirmed == 'inch':
+                inches_scale = INCH_TO_MM
+                inch_dims = tuple(round(value * inches_scale, 6) for value in (sx, sy, sz))
+                if (inch_dims[0] > st["bed_mm"][0] or inch_dims[1] > st["bed_mm"][1]
+                        or inch_dims[2] > st["max_print_height_mm"]):
+                    measured = f'{sx:g}x{sy:g}x{sz:g}'
+                    final = f'{inch_dims[0]:g}x{inch_dims[1]:g}x{inch_dims[2]:g}'
+                    raise RuntimeError(f'model measures {measured} mm and treating it as inches would be {final} mm, which exceeds printer volume')
+                scale = inches_scale
+                auto_scale = {'factor': inches_scale, 'reason': 'inch units',
+                              'original_mm': [sx, sy, sz], 'final_mm': list(inch_dims)}
+                unit_provenance = {'units': 'inch', 'source': 'user_confirmation',
+                                   'original_mm': list(authored_dims), 'factor': inches_scale}
+            else:
+                unit_provenance = {'units': 'mm', 'source': 'user_confirmation',
+                                   'original_mm': list(authored_dims), 'factor': 1.0}
+        else:
+            unit_provenance = {'units': 'mm', 'source': 'authored_size',
+                               'original_mm': list(authored_dims), 'factor': 1.0}
     eff_sx, eff_sy, eff_sz = sx * (float(scale) if scale else 1.0), sy * (float(scale) if scale else 1.0), sz * (float(scale) if scale else 1.0)
     if eff_sx>st["bed_mm"][0] or eff_sy>st["bed_mm"][1] or eff_sz>st["max_print_height_mm"]: raise RuntimeError(f"model {sx}x{sy}x{sz} mm exceeds printer volume")
     if brim_override is None and job.get('fit_brim_policy'):
@@ -2432,6 +2679,10 @@ def slice_job(job_path, brim_override=None, copies=None, scale=None, recipe_sha2
         job['auto_scale'] = auto_scale
     else:
         job.pop('auto_scale', None)
+    if unit_provenance is not None:
+        job['unit_provenance'] = unit_provenance
+    else:
+        job.pop('unit_provenance', None)
     job.update({"printer_model": adapter.key, "slice_config": [str(p) for p in configs], "gcode": str(out),
                 "provenance": provenance, "gcode_verified": True,
                 # Only this path clones copies into the G-code; estimates read it, never the request.
@@ -3842,6 +4093,9 @@ def _main():
     filament_select.add_argument("--color", required=True)
     filament_select.add_argument("--material", required=True)
     filament_select.add_argument("--spoolman-id", type=int, required=True)
+    unit_select = sub.add_parser("unit-select", help="record a user-confirmed inch vs mm choice for a small STL in a model JOB.json; no slicing or start")
+    unit_select.add_argument("job_json")
+    unit_select.add_argument("--units", choices=["mm", "inch"], required=True)
     cp = sub.add_parser('color-plan', help='offline per-part and source-filament selection questions')
     cp.add_argument('job_json')
     cs = sub.add_parser('color-select', help='save source-bound color decisions; no slicing or start')
@@ -3870,6 +4124,7 @@ def _main():
     sub.add_parser("routine-status",help="read-only accepted/running/completed phase from Klipper idle_timeout")
     for x in (f,s):
         x.add_argument("--print-now",action="store_true",help="bed confirmed clear: start the print right after slicing")
+        x.add_argument('--units', choices=['mm', 'inch'], default=None, help='user-confirmed units for a small STL (largest dimension under 10 mm); required before slicing one')
         x.add_argument('--color-mode', choices=['per_part', 'single_color'])
         x.add_argument('--color-slot', type=int, action='append', help='slot for each displayed part/filament question, in order')
     ma=sub.add_parser("audit",help="read-only mesh topology audit; no repair or slicing")
@@ -3899,6 +4154,11 @@ def _main():
     prep.add_argument("--spoolman-id", type=int, required=True)
     prep.add_argument("--slicer", choices=["orca"], default="orca", help="canonical Orca engine; no legacy fallback")
     a=ap.parse_args();
+    if a.cmd == 'unit-select':
+        intake_unit_confirmation(a.job_json, units=a.units)
+        saved = json.loads(Path(a.job_json).read_text())
+        print('UNIT PROVENANCE RECORDED ' + json.dumps(saved.get('unit_decision') or saved.get('unit_provenance')))
+        return
     if a.cmd in ('color-plan', 'color-select'):
         from .source_colors import inventory, prompts, validate_decisions
         path = Path(a.job_json)
@@ -4009,6 +4269,8 @@ def _main():
         if a.printer:
             _job = json.loads(Path(a.job_json).read_text()); _job["printer_model"] = a.printer
             write_job(Path(a.job_json).parent, _job)
+        if not intake_unit_confirmation(a.job_json, units=a.units, interactive=sys.stdin.isatty()):
+            return
         if not intake_color_choices(a.job_json, st, a.color_mode, a.color_slot, sys.stdin.isatty()):
             return
         if a.separate:
@@ -4072,6 +4334,9 @@ def _main():
     print("\nAUDIT: "+json.dumps(job["audit"],indent=2))
     if a.inspect_only:
         print('SOURCE_INSPECTED ' + json.dumps({'job_json': str(folder/'JOB.json'), 'sliced': False, 'uploaded': False, 'started': False}))
+        return
+    if not intake_unit_confirmation(folder/'JOB.json', units=a.units, interactive=sys.stdin.isatty()):
+        print(f"\nSTOPPED: unit confirmation pending at {folder/'JOB.json'}. Resume with slice --approved --units mm|inch; slicing requires --approved.")
         return
     if not intake_color_choices(folder/'JOB.json', st, a.color_mode, a.color_slot, sys.stdin.isatty()):
         return

@@ -9,6 +9,9 @@ services:
       # Mount a custom config at the selected path with a local Compose override.
       PRINT_BUDDY_CONFIG: ${PRINT_BUDDY_CONFIG:-/app/config/docker.yaml}
       PRINT_BUDDY__BOT__MODE: standalone
+      # Bundled OrcaSlicer channel the entrypoint selects at startup (docs/SETTINGS.md
+      # "Runtime environment"); stable is the default, alpha is the other accepted value.
+      PRINT_BUDDY_ORCA_CHANNEL: ${PRINT_BUDDY_ORCA_CHANNEL:-stable}
       PRINT_BUDDY__SERVICES__SPOOLMAN_URL: ${PRINT_BUDDY__SERVICES__SPOOLMAN_URL:-http://127.0.0.1:8000}
       SPOOLMAN_DIR_DATA: /data/spoolman
       SPOOLMAN_DIR_CONFIG: /data/spoolman/config

@@ -1,0 +1,253 @@
+# Firmware command, macro and error registry. See firmware/README.md for the schema.
+#
+# Every entry is advisory reference data for lookups (issue #169). An entry is never
+# sent to a printer by the lookup or troubleshooting code; sending anything stays
+# behind the existing guarded print-control flows and their confirmation buttons.
+#
+# firmware is one of: zmod, klipper, marlin.
+# kind is one of: command, macro, error.
+# printers lists the registered printer model keys (printers/registry.toml) the entry
+# is known to apply to, or ["*"] when it applies to every printer on that firmware.
+
+[[entry]]
+id = "zmod.start-print"
+name = "START_PRINT"
+aliases = ["start print", "zmod start", "ad5x start macro"]
+firmware = "zmod"
+kind = "macro"
+printers = ["flashforge.ad5x"]
+command = "START_PRINT BED_TEMP=<bed C> EXTRUDER_TEMP=<nozzle C> MESH=<mesh profile>"
+description = "ZMod start macro on the AD5X. Owns heating, homing and mesh loading for the job; the slicer template emits it and Print Buddy checks the temperatures and MESH= argument against the job instead of inventing its own startup."
+safety = "Heats the nozzle and bed and moves the toolhead. Only ever runs as part of a confirmed print start, never from a lookup."
+notes = "An explicit Z_OFFSET argument is not part of the normal flow; the saved or native-screen offset is the authority (see docs/AD5X-CONTRACT.md)."
+
+[[entry]]
+id = "zmod.end-print"
+name = "END_PRINT"
+aliases = ["end print", "zmod end"]
+firmware = "zmod"
+kind = "macro"
+printers = ["flashforge.ad5x"]
+command = "END_PRINT"
+description = "ZMod end macro emitted by the AD5X Orca template: turns heaters off and parks the toolhead at the end of a job."
+safety = "Runs only as the tail of a sliced job."
+
+[[entry]]
+id = "zmod.change-zcolor"
+name = "CHANGE_ZCOLOR"
+aliases = ["change zcolor", "ifs slot sync", "screen slot sync", "slot colour sync"]
+firmware = "zmod"
+kind = "macro"
+printers = ["flashforge.ad5x"]
+command = "CHANGE_ZCOLOR SLOT=<1-4> TYPE=<material> HEX=<rrggbb>"
+description = "Tells the AD5X native screen which material and colour sit in an IFS slot, so the screen agrees with Spoolman. Print Buddy builds this line in the printer adapter when a spool binding changes."
+safety = "Changes printer screen state. It is sent only by the spool-binding flow, never by a lookup or a troubleshooting step."
+
+[[entry]]
+id = "zmod.ifs-load"
+name = "_INSERT_PRUTOK_IFS / IFS_F10"
+aliases = ["ifs load", "ifs unload", "load filament ifs", "feed filament ad5x"]
+firmware = "zmod"
+kind = "macro"
+printers = ["flashforge.ad5x"]
+command = "_INSERT_PRUTOK_IFS"
+description = "ZMod IFS feed path on the AD5X: feeds staged filament from an IFS slot into the extruder. Filament staged in the IFS buffer or tube reads as not detected at the head sensor until a load like this runs."
+safety = "Extrudes filament and needs a hot nozzle. Operator action at the printer or through the existing confirmed flows only."
+
+[[entry]]
+id = "zmod.auto-full-bed-level"
+name = "AUTO_FULL_BED_LEVEL"
+aliases = ["full bed level", "auto level ad5x", "bed level ad5x"]
+firmware = "zmod"
+kind = "macro"
+printers = ["flashforge.ad5x"]
+command = "AUTO_FULL_BED_LEVEL"
+description = "Full bed levelling routine exposed by the AD5X ZMod install. One of the levelling macros verified present on the machine; the AD5X does not expose G34, so older gantry-alignment instructions do not apply to it."
+safety = "Homes and probes the bed with a hot or warming nozzle. Run it at the printer, not from a lookup."
+
+[[entry]]
+id = "zmod.bed-level-screws-tune"
+name = "BED_LEVEL_SCREWS_TUNE"
+aliases = ["screws tune", "bed screws ad5x", "tram ad5x"]
+firmware = "zmod"
+kind = "macro"
+printers = ["flashforge.ad5x"]
+command = "BED_LEVEL_SCREWS_TUNE"
+description = "AD5X ZMod helper that probes over the bed screws so the operator can tram the bed by hand between probes."
+safety = "Moves the toolhead over the bed. Keep hands clear while it probes."
+
+[[entry]]
+id = "klipper.print-start"
+name = "PRINT_START"
+aliases = ["print start", "klipper start macro"]
+firmware = "klipper"
+kind = "macro"
+printers = ["klipper.generic", "sovol.sv06"]
+command = "PRINT_START BED=<bed C> HOTEND=<nozzle C>"
+description = "Stock Klipper start macro name Print Buddy's generic Klipper and Sovol profiles expect the printer to provide. The installed macro owns heating, homing and mesh loading for the job."
+safety = "Heats and moves. Runs only as part of a confirmed print start."
+
+[[entry]]
+id = "klipper.print-end"
+name = "PRINT_END"
+aliases = ["print end", "klipper end macro"]
+firmware = "klipper"
+kind = "macro"
+printers = ["klipper.generic", "sovol.sv06"]
+command = "PRINT_END"
+description = "Stock Klipper end macro name for the generic Klipper and Sovol profiles: heaters off and park at the end of a job."
+safety = "Runs only as the tail of a sliced job."
+
+[[entry]]
+id = "klipper.bed-mesh-calibrate"
+name = "BED_MESH_CALIBRATE"
+aliases = ["bed mesh calibrate", "mesh calibrate", "probe mesh", "g29 klipper"]
+firmware = "klipper"
+kind = "command"
+printers = ["*"]
+command = "BED_MESH_CALIBRATE"
+description = "Probes the bed and builds a new mesh. Klipper has no G29; this is the mesh routine. A mesh is not applied automatically after homing: the start macro or BED_MESH_PROFILE LOAD must load it."
+safety = "Long probing move over the whole bed; the call blocks until it finishes. Keep the bed clear and hands away."
+
+[[entry]]
+id = "klipper.bed-mesh-profile-load"
+name = "BED_MESH_PROFILE LOAD"
+aliases = ["load mesh", "bed mesh profile load", "mesh load"]
+firmware = "klipper"
+kind = "command"
+printers = ["*"]
+command = "BED_MESH_PROFILE LOAD=default"
+description = "Loads a saved bed mesh profile (default shown). Check the start G-code actually loads the intended profile when a mesh seems ignored."
+safety = "No motion by itself, but it changes which mesh the next moves use."
+
+[[entry]]
+id = "klipper.probe-calibrate"
+name = "PROBE_CALIBRATE"
+aliases = ["probe calibrate", "z probe calibration", "probe offset calibrate"]
+firmware = "klipper"
+kind = "command"
+printers = ["*"]
+command = "PROBE_CALIBRATE"
+description = "Interactive Klipper routine for setting the probe Z offset: probes the bed, then walks the operator through paper-test moves (TESTZ) before ACCEPT and SAVE_CONFIG."
+safety = "Moves the nozzle toward the bed in small steps. One wrong step can drive the nozzle into the bed; follow the prompts and be ready to power off."
+
+[[entry]]
+id = "klipper.screws-tilt-calculate"
+name = "SCREWS_TILT_CALCULATE"
+aliases = ["screws tilt", "tram klipper", "bed tramming klipper"]
+firmware = "klipper"
+kind = "command"
+printers = ["*"]
+command = "SCREWS_TILT_CALCULATE"
+description = "Probes over each bed screw and reports how far to turn each one to tram the bed. Requires a [screws_tilt_adjust] section in the printer config."
+safety = "Probes over the bed; keep hands clear while it runs, turn screws only while it is stopped between probes."
+
+[[entry]]
+id = "klipper.save-config"
+name = "SAVE_CONFIG"
+aliases = ["save config", "persist calibration"]
+firmware = "klipper"
+kind = "command"
+printers = ["*"]
+command = "SAVE_CONFIG"
+description = "Persists calibration values Klipper is holding (probe offset, mesh, PID) into printer.cfg and restarts the firmware. Values from a calibration routine are lost on restart until this runs."
+safety = "Restarts the Klipper firmware. Never run it mid-print."
+
+[[entry]]
+id = "klipper.move-out-of-range"
+name = "Move out of range"
+aliases = ["move out of range", "out of range error"]
+firmware = "klipper"
+kind = "error"
+printers = ["*"]
+command = ""
+description = "Klipper refused a move outside the axis limits in printer.cfg. Usual causes: a job sliced for a bigger bed, a start macro that parks off-bed, or wrong axis limits after a config change. Compare the job's printer profile with the configured model before changing limits."
+safety = "Do not widen axis limits just to make the error go away; that can drive the toolhead into the frame."
+
+[[entry]]
+id = "marlin.g28"
+name = "G28"
+aliases = ["home", "home all", "homing"]
+firmware = "marlin"
+kind = "command"
+printers = ["octoprint.marlin"]
+command = "G28"
+description = "Homes all axes (G28 X Y or G28 Z home one axis). The first move a Marlin printer makes before probing or printing."
+safety = "Moves every axis to its endstop. Keep the area around the printer clear."
+
+[[entry]]
+id = "marlin.g29"
+name = "G29"
+aliases = ["bed level probe", "auto bed leveling", "abl"]
+firmware = "marlin"
+kind = "command"
+printers = ["octoprint.marlin"]
+command = "G29"
+description = "Probes the bed and builds the levelling mesh on Marlin printers with a probe. Follow with M420 S1 in start G-code (or store the mesh) so the mesh is actually applied while printing."
+safety = "Probes over the bed; a failed probe can push the nozzle into the bed if the probe does not trigger. Watch the first probe point."
+
+[[entry]]
+id = "marlin.m420"
+name = "M420 S1"
+aliases = ["load mesh marlin", "enable leveling", "mesh on"]
+firmware = "marlin"
+kind = "command"
+printers = ["octoprint.marlin"]
+command = "M420 S1"
+description = "Turns bed levelling on using the stored or probed mesh. Marlin has no BED_MESH_PROFILE; M420 S1 after G28 is the usual start-G-code line, because homing turns levelling off."
+safety = "No motion by itself."
+
+[[entry]]
+id = "marlin.m851"
+name = "M851"
+aliases = ["z probe offset", "z offset marlin", "babystep offset"]
+firmware = "marlin"
+kind = "command"
+printers = ["octoprint.marlin"]
+command = "M851 Z<offset mm>"
+description = "Reads or sets the probe Z offset on Marlin (M851 with no argument reports it). Negative moves the nozzle closer to the bed. Store a change with M500 or it is lost on restart."
+safety = "A too-negative offset drives the nozzle into the bed on the next print. Change in small steps and test with a first-layer print."
+
+[[entry]]
+id = "marlin.m600"
+name = "M600"
+aliases = ["filament change", "pause change filament", "m600 pause"]
+firmware = "marlin"
+kind = "command"
+printers = ["octoprint.marlin"]
+command = "M600"
+description = "Marlin filament-change pause: parks the toolhead, unloads, and waits for the operator to load new filament and confirm. Needs the printer's filament-change feature enabled in firmware."
+safety = "The nozzle stays hot during the pause. Mind the burn risk while changing filament."
+
+[[entry]]
+id = "marlin.heat-commands"
+name = "M104 / M109 / M140 / M190"
+aliases = ["set temperature", "heat nozzle", "heat bed", "m104", "m109", "m140", "m190"]
+firmware = "marlin"
+kind = "command"
+printers = ["*"]
+command = "M104 S<nozzle C>  M109 S<nozzle C> (wait)  M140 S<bed C>  M190 S<bed C> (wait)"
+description = "Set heater targets: M104/M140 set and return immediately, M109/M190 wait until the target is reached. M104 S0 and M140 S0 turn the heaters off; slicer end G-code for Marlin must contain both, and Print Buddy's Marlin guard checks for them."
+safety = "A set target stays until something turns it off. Never leave a hot printer unattended to cool 'later'."
+
+[[entry]]
+id = "marlin.m500"
+name = "M500"
+aliases = ["store settings", "save eeprom"]
+firmware = "marlin"
+kind = "command"
+printers = ["octoprint.marlin"]
+command = "M500"
+description = "Stores current settings (offsets, steps, PID) to EEPROM so they survive a restart. M503 reports the current values."
+safety = "No motion. Storing wrong values persists them; read them back with M503 first when unsure."
+
+[[entry]]
+id = "marlin.heating-failed"
+name = "Heating failed / Thermal Runaway"
+aliases = ["heating failed", "thermal runaway", "thermal protection", "err extruder heater"]
+firmware = "marlin"
+kind = "error"
+printers = ["octoprint.marlin"]
+command = ""
+description = "Marlin stopped heating because a temperature did not move as expected, or moved when it should not. Common causes: a loose or failed thermistor, a heater cartridge fault, a silicone sock or fan cooling the block, or a target the heater cannot reach. The printer needs a power cycle after the fault is fixed."
+safety = "This is a fire-safety protection doing its job. Do not disable thermal protection to clear it. Power off, let everything cool, and inspect the thermistor and heater wiring before heating again."

@@ -351,7 +351,11 @@ def fit_choice_rows(options):
     split_plan = options.get('split_plan')
     if split_plan and len(rows) < 2:
         rows.append({'kind': 'split', 'label': f"100% · split {len(split_plan['plates'])} plates",
-                     'plates': split_plan['plates'], 'scale': 1.0})
+                     'plates': split_plan['plates'], 'scale': 1.0,
+                     **({'yaw_by_object': split_plan['yaw_by_object']}
+                        if split_plan.get('yaw_by_object') else {}),
+                     **({'placement_by_object': split_plan['placement_by_object']}
+                        if split_plan.get('placement_by_object') else {})})
     elif options.get('full_size_split') and len(rows) < 2:
         rows.append({'kind': 'split', 'label': 'Split plates at 100%', 'scale': 1.0})
     full_size_available = any(row['kind'] in ('split', 'rearrange') for row in rows)
@@ -918,6 +922,8 @@ async def prepare_link(event, adapter, state, root, timeout=None, reuse=None):
             adapter, source, key, metadata, None,
             asyncio.to_thread(fetch, job, chosen, folder / 'source'))
         job['downloaded_file'] = str(path)
+        from .intake_resources import check_source
+        await asyncio.to_thread(check_source, path)
         if job['site'] == 'upload':
             job['title'] = await asyncio.to_thread(upload_title, path) or job['title']
         job['audit'] = await _with_stop(adapter, source, key, metadata, large_model_notice(path),
@@ -943,6 +949,36 @@ async def prepare_link(event, adapter, state, root, timeout=None, reuse=None):
         mj.write_job(folder, job)
         receipt.update(job_json=str(jp), source_sha256=manifest['source_sha256'], status='AWAITING_COLOR')
         receipt_path.write_text(json.dumps(receipt, indent=2) + '\n')
+        unit_q = mj.unit_question(job)
+        if unit_q is not None:
+            # STL records no units and this part is small enough to be either
+            # millimeters or inches. Ask before any fit or color work, and
+            # record the answer on the job; slicing refuses to assume (#206).
+            measured = ' x '.join(f'{float(value):g}' for value in unit_q['original_mm'])
+            as_inch = ' x '.join(f'{float(value):g}' for value in unit_q['inch_mm'])
+            pick = await _ask(adapter, source, key,
+                              f'This STL measures {measured} mm as written, and STL files do not record units. '
+                              f'Is that size in millimeters, or in inches (which would print at {as_inch} mm)?',
+                              unit_q['choices'], timeout)
+            units = 'mm' if pick == 0 else 'inch'
+            decision = mj.make_unit_decision(units, manifest['source_sha256'], unit_q['original_mm'])
+            mj.set_unit_decision(job, decision)
+            mj.write_job(folder, job)
+            receipt.update(unit_decision=decision)
+            receipt_path.write_text(json.dumps(receipt, indent=2) + '\n')
+            if units == 'inch':
+                bed = state.get('bed_mm') or BED
+                height = state.get('max_print_height_mm')
+                if (unit_q['inch_mm'][0] > float(bed[0]) or unit_q['inch_mm'][1] > float(bed[1])
+                        or (height is not None and unit_q['inch_mm'][2] > float(height))):
+                    receipt.update(status='CANCELLED_OVERSIZED')
+                    receipt_path.write_text(json.dumps(receipt, indent=2) + '\n')
+                    await adapter.send(chat_id=source.chat_id,
+                                       content=f'Treating it as inches would make it {as_inch} mm, which exceeds '
+                                               'the printer volume. Print cancelled. Nothing was sliced, '
+                                               'uploaded, or started.',
+                                       metadata=metadata)
+                    return {'action': 'skip', 'reason': 'inch-confirmed model exceeds printer volume'}
         selections = [mj.resolve_filament_selection(state, dict(label, slot=int(slot)))
                       for slot, label in sorted(state.get('ifs_slots', {}).items())]
         labels = mj.build_slot_labels(selections)
@@ -1013,6 +1049,10 @@ async def prepare_link(event, adapter, state, root, timeout=None, reuse=None):
                                content=f"Fit check is unverified and can be resumed. No slice or print was started. {exc}",
                                metadata=metadata)
             return {'action': 'skip', 'reason': 'fit unknown; resumable'}
+        if (job.get('unit_decision') or {}).get('units') == 'inch':
+            # Capacity was probed at the authored size; an inch-confirmed part
+            # prints 25.4x larger, so only the single copy is verified.
+            capacity = min(capacity, 1)
         painted_multi = (manifest.get('painted') and (latest.get('color_decisions') or {}).get('mode') == 'per_part')
         if capacity < 1 and painted_multi:
             # Painted multicolor: one multicolor G-code per authored plate at
@@ -1150,9 +1190,22 @@ async def prepare_link(event, adapter, state, root, timeout=None, reuse=None):
             if split_plan:
                 distribution = []
                 names_by_key = {part['key']: part['name'] for part in manifest.get('parts', [])}
+                object_by_key = {part['key']: str(part['object_id']) for part in manifest.get('parts', [])}
+                yaw_by_object = split_plan.get('yaw_by_object') or {}
+                placement_by_object = split_plan.get('placement_by_object') or {}
                 for index, part_keys in enumerate(split_plan['plates'], 1):
-                    names = ', '.join(names_by_key.get(key, key) for key in part_keys)
-                    distribution.append(f'{names} on plate {index}')
+                    labels = []
+                    for part_key in part_keys:
+                        label = names_by_key.get(part_key, part_key)
+                        yaw = yaw_by_object.get(object_by_key.get(part_key, ''))
+                        if yaw:
+                            label += f' (turned {float(yaw):g}° on the bed)'
+                        placement = placement_by_object.get(object_by_key.get(part_key, ''))
+                        if placement:
+                            label += (f' (placed at {float(placement[0]):g}, {float(placement[1]):g} mm '
+                                      'to avoid the bed exclusion)')
+                        labels.append(label)
+                    distribution.append(f"{', '.join(labels)} on plate {index}")
                 prompt = (f"{title} does not fit the AD5X bed full size as one plate. "
                           f"Full size works as {len(split_plan['plates'])} plates: " + '; '.join(distribution) +
                           '. Choose a fit option, or type split / 100% / shrink / cancel.')
@@ -1201,7 +1254,11 @@ async def prepare_link(event, adapter, state, root, timeout=None, reuse=None):
                 latest['plate_mode'] = 'separate'
                 latest['scale'] = 1.0
                 if row.get('plates'):
-                    latest['full_size_split_plan'] = {'plates': row['plates']}
+                    latest['full_size_split_plan'] = {'plates': row['plates'],
+                                                      **({'yaw_by_object': row['yaw_by_object']}
+                                                         if row.get('yaw_by_object') else {}),
+                                                      **({'placement_by_object': row['placement_by_object']}
+                                                         if row.get('placement_by_object') else {})}
                 latest.pop('orientation', None)
                 latest.pop('full_size_rearrange_plan', None)
                 receipt['full_size_split'] = True
@@ -1212,7 +1269,8 @@ async def prepare_link(event, adapter, state, root, timeout=None, reuse=None):
             rotation = row.get('rotation')
             if row['kind'] in ('split', 'rearrange'):
                 # Capacity on the unsplit/unarranged source is zero by definition here; each
-                # rearranged or split plate was verified at authored size.
+                # rearranged or split plate was verified at authored size (a turned
+                # plate at exactly the yaw recorded in its split plan).
                 capacity = 1
             else:
                 capacity = await _with_stop(adapter, source, key, metadata, "Checking whether it fits the bed. Press Stop to cancel.",

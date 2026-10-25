@@ -23,6 +23,8 @@ ALLOWED = (
     re.compile(r"/print-next(?: [\w.-]{1,80}){0,2}"),
     re.compile(r"/print-(?:stop|resume|reboot|coldpull)"),
     re.compile(r"/print-maintenance(?: (?:full|quick))?"),
+    re.compile(r"/print-lookup(?: [\w .#/-]{1,80})?"),
+    re.compile(r"/print-troubleshoot(?: (?:first-layer|clog|heat-creep|bed-level|ringing))?"),
 )
 
 

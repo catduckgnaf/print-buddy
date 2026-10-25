@@ -22,6 +22,8 @@ import zipfile
 import zlib
 from pathlib import Path
 
+from .compact_geometry import CompactTriangles, IndexedTriangles, transform_vertices_array
+from .mesh_fast import archive_tables, bounds_and_volume
 from .model_job import mesh_topology
 from .orca_adapter import _hull, read_stl_triangles
 from .painted_geometry import paint_census
@@ -130,6 +132,27 @@ def _linear_transform_deviation(transform_12):
 
 
 def _triangle_area_and_signed_volume(triangles):
+    if isinstance(triangles, IndexedTriangles) and len(triangles) >= 32768:
+        # Batched twin of the scalar loop below: same per-face operation
+        # order, chunk sums accumulated in face order.
+        import numpy as np
+        area = 0.0
+        signed_vol = 0.0
+        vertices, faces = triangles.vertices, triangles.faces
+        for start in range(0, len(faces), 8192):
+            pts = vertices[faces[start:start + 8192].ravel()].reshape((-1, 3, 3))
+            a, b, c = pts[:, 0], pts[:, 1], pts[:, 2]
+            ux, uy, uz = b[:, 0] - a[:, 0], b[:, 1] - a[:, 1], b[:, 2] - a[:, 2]
+            vx, vy, vz = c[:, 0] - a[:, 0], c[:, 1] - a[:, 1], c[:, 2] - a[:, 2]
+            nx = uy * vz - uz * vy
+            ny = uz * vx - ux * vz
+            nz = ux * vy - uy * vx
+            area += float(np.sum(0.5 * np.sqrt(nx * nx + ny * ny + nz * nz)))
+            signed_vol += float(np.sum(
+                (a[:, 0] * (b[:, 1] * c[:, 2] - b[:, 2] * c[:, 1])
+                 - a[:, 1] * (b[:, 0] * c[:, 2] - b[:, 2] * c[:, 0])
+                 + a[:, 2] * (b[:, 0] * c[:, 1] - b[:, 1] * c[:, 0])) / 6.0))
+        return area, abs(signed_vol)
     area = 0.0
     signed_vol = 0.0
     for (ax, ay, az), (bx, by, bz), (cx, cy, cz) in triangles:
@@ -144,11 +167,7 @@ def _triangle_area_and_signed_volume(triangles):
 
 
 def _bounds_from_triangles(triangles):
-    xs = [p[0] for tri in triangles for p in tri]
-    ys = [p[1] for tri in triangles for p in tri]
-    zs = [p[2] for tri in triangles for p in tri]
-    lo = [min(xs), min(ys), min(zs)]
-    hi = [max(xs), max(ys), max(zs)]
+    lo, hi, _ = bounds_and_volume(triangles)
     ext = [hi[a] - lo[a] for a in range(3)]
     return lo, hi, ext
 
@@ -269,7 +288,7 @@ def _load_3mf_parts(path: Path, input_unit: str | None = None):
         if '3D/3dmodel.model' not in archive.namelist():
             raise ValueError(f'{path} is missing 3D/3dmodel.model')
         cutters = cutter_ids(archive)
-        root_bytes = archive.read('3D/3dmodel.model')
+        root_bytes, _ = archive_tables(archive, '3D/3dmodel.model')
         root_el = ET.fromstring(root_bytes)
         declared_unit = root_el.get('unit') or 'millimeter'
         raw_unit = input_unit or declared_unit
@@ -291,34 +310,50 @@ def _load_3mf_parts(path: Path, input_unit: str | None = None):
 
         def get_model(model_path):
             if model_path not in models:
-                r = ET.fromstring(archive.read(model_path))
-                models[model_path] = (r, {o.get('id'): o for o in r.findall('c:resources/c:object', NS)})
+                data, tables = archive_tables(archive, model_path)
+                r = ET.fromstring(data)
+                models[model_path] = (r, {o.get('id'): o for o in r.findall('c:resources/c:object', NS)}, tables)
             return models[model_path]
 
         def collect_triangles(model_path, object_id, chain, seen):
             if (model_path, object_id) in seen:
                 raise RuntimeError('3MF component cycle')
-            _, objects = get_model(model_path)
+            _, objects, tables = get_model(model_path)
             if object_id not in objects:
                 raise RuntimeError(f'missing 3MF object {model_path}:{object_id}')
             obj = objects[object_id]
             mesh = obj.find('c:mesh', NS)
-            tris = []
+            tris = IndexedTriangles()
             if mesh is not None:
-                verts = [
-                    (float(v.attrib['x']), float(v.attrib['y']), float(v.attrib['z']))
-                    for v in mesh.findall('c:vertices/c:vertex', NS)
-                ]
-                for point_Transform in chain:
-                    verts = [apply(point_Transform, p) for p in verts]
+                transforms = list(chain)
                 if mm_factor != 1.0:
-                    verts = [(p[0] * mm_factor, p[1] * mm_factor, p[2] * mm_factor) for p in verts]
-                for tri in mesh.findall('c:triangles/c:triangle', NS):
-                    tris.append([
-                        verts[int(tri.attrib['v1'])],
-                        verts[int(tri.attrib['v2'])],
-                        verts[int(tri.attrib['v3'])],
-                    ])
+                    transforms.append([mm_factor, 0, 0, 0, mm_factor, 0, 0, 0, mm_factor, 0, 0, 0])
+                if tables is not None:
+                    table = tables.get(object_id)
+                    if table is not None:
+                        # Compact indexed path: transform the shared vertices
+                        # once (bit-identical to the scalar apply chain) and
+                        # keep the faces as indices; never expand per-face
+                        # point tuples.
+                        verts = transform_vertices_array(table.vertices, transforms, apply)
+                        tris.extend_indexed(verts, table.triangles)
+                else:
+                    import numpy as np
+                    verts = [
+                        (float(v.attrib['x']), float(v.attrib['y']), float(v.attrib['z']))
+                        for v in mesh.findall('c:vertices/c:vertex', NS)
+                    ]
+                    faces = [(int(t.attrib['v1']), int(t.attrib['v2']), int(t.attrib['v3']))
+                             for t in mesh.findall('c:triangles/c:triangle', NS)]
+                    if faces:
+                        face_array = np.array(faces, dtype=np.int64)
+                        count = len(verts)
+                        if int(face_array.max()) >= count or int(face_array.min()) < -count:
+                            raise IndexError('3MF triangle vertex index out of range')
+                        face_array = np.where(face_array < 0, face_array + count, face_array)
+                        verts = transform_vertices_array(
+                            np.array(verts, dtype=np.float64).reshape((-1, 3)), transforms, apply)
+                        tris.extend_indexed(verts, face_array)
             for comp in obj.findall('c:components/c:component', NS):
                 comp_oid = comp.get('objectid')
                 if (object_id, comp_oid) in cutters:
@@ -334,7 +369,7 @@ def _load_3mf_parts(path: Path, input_unit: str | None = None):
                 )
             return tris
 
-        root, objects = get_model('3D/3dmodel.model')
+        root, objects, _ = get_model('3D/3dmodel.model')
         parts = []
         warnings = []
         items = [item for item in root.findall('c:build/c:item', NS) if item.get('printable', '1') == '1']
@@ -369,7 +404,9 @@ def _load_3mf_parts(path: Path, input_unit: str | None = None):
 
 def load_parts(path: Path, input_unit: str | None = None, split_stl: bool = False):
     """Load printable parts from an STL or 3MF in millimeters without user scaling."""
+    from .intake_resources import check_source
     path = Path(path)
+    check_source(path)
     suffix = path.suffix.lower()
     if suffix not in ('.stl', '.3mf'):
         raise ValueError('Only STL and 3MF are supported')
@@ -415,16 +452,11 @@ def rotate_triangles_z(triangles, angle_deg: float):
     """Rotate triangles around Z by angle_deg and normalize min XYZ to (0, 0, 0)."""
     rad = math.radians(float(angle_deg))
     c, s = math.cos(rad), math.sin(rad)
-    rotated = [
-        [(c * x - s * y, s * x + c * y, z) for x, y, z in tri]
-        for tri in triangles
-    ]
+    from .compact_geometry import TransformedTriangles
+    rotated = TransformedTriangles(triangles, lambda x, y, z: (c * x - s * y, s * x + c * y, z))
     lo, hi, ext = _bounds_from_triangles(rotated)
     dx, dy, dz = -lo[0], -lo[1], -lo[2]
-    normalized = [
-        [(x + dx, y + dy, z + dz) for x, y, z in tri]
-        for tri in rotated
-    ]
+    normalized = TransformedTriangles(rotated, lambda x, y, z: (x + dx, y + dy, z + dz))
     return normalized, ext, (c, s, lo)
 
 

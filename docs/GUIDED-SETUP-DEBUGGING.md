@@ -18,7 +18,7 @@ authorizes a printer, and neither flow can start one.
 
 ## Setup
 
-Setup asks six small steps, validating each answer before moving on:
+Setup asks seven small steps, validating each answer before moving on:
 
 1. **Printer model** — a model key from the printer registry (see
    [printer profiles](PRINTER-PROFILES.md)).
@@ -27,7 +27,11 @@ Setup asks six small steps, validating each answer before moving on:
 4. **Allowed users** — numeric Discord user IDs, comma separated.
 5. **Moonraker URL** (optional) — validated as a URL, and refused for printer models that
    have no Moonraker connection.
-6. **Bot token stored securely** — this step never collects the token. It explains how to
+6. **Spoolman URL** (optional) — validated as a URL. Spoolman is printer-independent, so
+   this step is offered for every model, including models with no Moonraker connection.
+   The Spoolman included in the Docker stack (#214) is at `http://spoolman:8000`; an
+   existing external Spoolman keeps its own URL, exactly as in the CLI setup wizard.
+7. **Bot token stored securely** — this step never collects the token. It explains how to
    store it: as the environment variable named by `[discord] token_env` (default
    `DISCORD_BOT_TOKEN`) in the profile/data folder `.env` file with mode 600, as in the
    [Discord bot setup guide](DISCORD-BOT-SETUP.md). Reply `stored` when it is saved, or

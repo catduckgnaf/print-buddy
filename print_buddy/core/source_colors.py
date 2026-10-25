@@ -9,7 +9,8 @@ import posixpath
 from pathlib import Path
 import xml.etree.ElementTree as ET
 from .part_translator import display_name
-from .mesh_fast import archive_tables
+from .mesh_fast import archive_tables, MeshTable
+from .compact_geometry import transform_vertices_array
 import zipfile
 import subprocess
 
@@ -33,6 +34,29 @@ def _has_paint(data):
                 return True
             i = data.find(attr + b'=', i + 1)
     return False
+
+
+def _has_paint_stream(stream):
+    """_has_paint over a member stream, without holding the member in memory.
+
+    A match is accepted only from context bytes actually present in the
+    scanned window, so a True here is a True for the whole member. A match
+    the window truncates (its lookahead byte or its 40-byte lookbehind is
+    cut off) is re-scanned in the next window: the 128-byte carry places it
+    at offset >= 40 with its lookahead present, or it was already fully
+    visible in the previous window. End of stream is the member's real end,
+    so a match cut off there is genuinely not paint, exactly as _has_paint
+    judges the full bytes.
+    """
+    carry = b''
+    while True:
+        chunk = stream.read(1024 * 1024)
+        if not chunk:
+            return False
+        window = carry + chunk
+        if _has_paint(window):
+            return True
+        carry = window[-128:]
 
 
 def _without_mesh_bodies(data):
@@ -165,7 +189,11 @@ def _annotate_parts(archive, names, parts, filaments):
     Best effort and display only; a failure here never blocks intake.
     """
     try:
-        root = ET.fromstring(archive.read('3D/3dmodel.model'))
+        # The streaming reader's retained structure carries objects,
+        # components and build items without materialising mesh elements;
+        # files it declines keep the reference parse of the raw member.
+        data, _fast = archive_tables(archive, '3D/3dmodel.model')
+        root = ET.fromstring(data)
         objects = {n.get('id'): n for n in root.iter() if n.tag.split('}')[-1] == 'object'}
         items = {n.get('objectid'): n for n in root.iter() if n.tag.split('}')[-1] == 'item'}
         cache = {}
@@ -184,29 +212,57 @@ def _annotate_parts(archive, names, parts, filaments):
                 continue
             comps = [c for c in obj.iter() if c.tag.split('}')[-1] == 'component']
             want = [c for c in comps if c.get('objectid') == part.get('part_id')] or comps
-            pts = []
+            item = items.get(part['object_id'])
+            item_m = None
+            if item is not None:
+                # Rotation/scale only: translation does not change size.
+                item_m = mat(item)[:9] + [0, 0, 0]
+            lo = hi = None
             for comp in want:
                 path_attr = next((v for k, v in comp.attrib.items() if k.split('}')[-1] == 'path'), None)
                 mpath = path_attr.lstrip('/') if path_attr else '3D/3dmodel.model'
                 if mpath not in cache:
                     data, fast = archive_tables(archive, mpath)
                     if fast is not None:
-                        cache[mpath] = {oid: verts for oid, (verts, _) in fast.items()}
+                        cache[mpath] = fast
                 if mpath not in cache:
                     mroot = ET.fromstring(data)
                     cache[mpath] = {o.get('id'): [(float(v.get('x')), float(v.get('y')), float(v.get('z')))
                                                   for v in o.iter() if v.tag.split('}')[-1] == 'vertex']
                                     for o in mroot.iter() if o.tag.split('}')[-1] == 'object'}
+                entry = cache[mpath].get(comp.get('objectid'))
+                if entry is None:
+                    continue
                 m = mat(comp)
-                pts += [apply(m, *pt) for pt in cache[mpath].get(comp.get('objectid'), [])]
-            if pts:
-                item = items.get(part['object_id'])
-                if item is not None:
-                    m = mat(item)
-                    # Rotation/scale only: translation does not change size.
-                    m = m[:9] + [0, 0, 0]
-                    pts = [apply(m, *pt) for pt in pts]
-                part['bounds_mm'] = [round(max(axis) - min(axis), 1) for axis in zip(*pts)]
+                chain = [m] if item_m is None else [m, item_m]
+                if isinstance(entry, MeshTable):
+                    if not len(entry.vertices):
+                        continue
+                    # Same per-point operation order as apply(), on the whole
+                    # vertex array; min/max selection is exact.
+                    arr = transform_vertices_array(entry.vertices, chain, apply)
+                    c_lo, c_hi = arr.min(axis=0), arr.max(axis=0)
+                    if lo is None:
+                        lo, hi = c_lo.tolist(), c_hi.tolist()
+                    else:
+                        for axis in range(3):
+                            lo[axis] = min(lo[axis], float(c_lo[axis]))
+                            hi[axis] = max(hi[axis], float(c_hi[axis]))
+                else:
+                    for pt in entry:
+                        p = apply(m, *pt)
+                        if item_m is not None:
+                            p = apply(item_m, *p)
+                        if lo is None:
+                            lo, hi = list(p), list(p)
+                        else:
+                            for axis in range(3):
+                                if p[axis] < lo[axis]:
+                                    lo[axis] = p[axis]
+                                if p[axis] > hi[axis]:
+                                    hi[axis] = p[axis]
+            if lo is not None:
+                part['bounds_mm'] = [round(hi[axis] - lo[axis], 1) for axis in range(3)]
         if 'Metadata/model_settings.config' in names:
             settings = ET.fromstring(archive.read('Metadata/model_settings.config'))
             plate_of = {}
@@ -229,7 +285,9 @@ def _annotate_parts(archive, names, parts, filaments):
 
 
 def inventory(path):
+    from .intake_resources import check_source
     path = Path(path)
+    check_source(path)
     if path.suffix.lower() != '.3mf':
         # Non-3MF sources have no palette, but every decision is still bound to the file bytes.
         res = {'source_sha256': __import__('hashlib').sha256(path.read_bytes()).hexdigest(),
@@ -265,8 +323,10 @@ def inventory(path):
                                   'source_extruder': int(raw) if raw else None, 'status': 'planned'})
         for name in names:
             if name.lower().endswith('.model'):
-                # Same test as walking every node, without building a million-element tree.
-                painted |= _has_paint(archive.read(name))
+                # Same test as walking every node, without building a million-element tree
+                # or holding the whole member in memory.
+                with archive.open(name) as member:
+                    painted |= _has_paint_stream(member)
         resolved = component_parts(archive)
         _apply_plate_names(archive, names, parts)
         if not parts:

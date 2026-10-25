@@ -538,17 +538,17 @@ def _matrix(node):
     return values
 
 
-def _world_bounds(archive, object_ids, fit=None):
-    """World AABB of selected build items, through their component chain.
+def _world_item_points(archive, object_ids, fit=None):
+    """World-space mesh vertices per selected build item, through the component chain.
 
     fit (a fit_transform matrix) is applied after the item transform, so the
-    bounds are those of the scaled/rotated group. Original transforms stay in
-    the archive; the caller uses this to choose the derived plate placement.
+    points are those of the scaled/rotated group. Original transforms stay in
+    the archive; callers use the points to measure or place the derived plate.
     """
     root = ET.fromstring(archive.read('3D/3dmodel.model'))
     objects = {node.get('id'): node for node in root.iter() if node.tag.split('}')[-1] == 'object'}
     model_object_points = {}
-    boxes = []
+    items = []
     for item in (node for node in root.iter() if node.tag.split('}')[-1] == 'item'):
         if item.get('objectid') not in object_ids:
             continue
@@ -579,10 +579,28 @@ def _world_bounds(archive, object_ids, fit=None):
                 item_points.extend([_apply(matrix, point) for point in points])
         if not item_points:
             raise RuntimeError('empty part geometry')
-        boxes.append([(min(point[axis] for point in item_points), max(point[axis] for point in item_points)) for axis in range(3)])
-    if len(boxes) != len(object_ids):
+        items.append(item_points)
+    if len(items) != len(object_ids):
         raise RuntimeError('geometry and selection inventory disagree')
-    return boxes
+    return items
+
+
+def _world_points(archive, object_ids, fit=None):
+    """Every world-space mesh vertex of the selected build items, flattened."""
+    return [point for item_points in _world_item_points(archive, object_ids, fit)
+            for point in item_points]
+
+
+def _world_bounds(archive, object_ids, fit=None):
+    """World AABB of selected build items, through their component chain.
+
+    fit (a fit_transform matrix) is applied after the item transform, so the
+    bounds are those of the scaled/rotated group. Original transforms stay in
+    the archive; the caller uses this to choose the derived plate placement.
+    """
+    return [[(min(point[axis] for point in item_points), max(point[axis] for point in item_points))
+             for axis in range(3)]
+            for item_points in _world_item_points(archive, object_ids, fit)]
 
 
 def export_single_color_plate(source, target, decisions, part_keys, bed=BED_MM, slot_colors=None, item_shifts=None, fit=None):
@@ -608,9 +626,29 @@ def export_single_color_plate(source, target, decisions, part_keys, bed=BED_MM, 
     reorientation. It is composed into every selected build item about one
     common origin before bounds, placement and the crop check, so the group
     keeps its authored layout, only smaller or turned. Meshes stay untouched.
+
+    fit may also carry 'placement_mm': [x, y], the bed coordinates the
+    (possibly turned) group's placed bounds must start at. The group is then
+    shifted rigidly so its minimum XY lands exactly there instead of being
+    kept as authored or centered; the caller owns proving that placement
+    avoids any declared bed exclusion, and the bounds are still checked
+    against the bed here.
     """
     manifest = inventory(source)
     world = fit_transform(fit)
+    placement = None
+    if fit and fit.get('placement_mm') is not None:
+        raw = fit['placement_mm']
+        if not isinstance(raw, (list, tuple)) or len(raw) != 2:
+            raise RuntimeError('fit placement_mm must be an [x, y] pair in bed coordinates')
+        try:
+            placement = [float(raw[0]), float(raw[1])]
+        except (TypeError, ValueError) as exc:
+            raise RuntimeError('fit placement_mm must be numeric bed coordinates') from exc
+        if not all(math.isfinite(v) for v in placement) or any(v < 0 for v in placement):
+            raise RuntimeError('fit placement_mm must be finite and on the bed')
+        if item_shifts is not None:
+            raise RuntimeError('a placed plate cannot reuse merge shifts planned without the placement')
     if world is not None and item_shifts is not None:
         raise RuntimeError('a resized plate cannot reuse merge shifts planned at authored size')
     if decisions.get('source_sha256') != manifest['source_sha256'] or decisions.get('mode') != 'per_part':
@@ -669,7 +707,12 @@ def export_single_color_plate(source, target, decisions, part_keys, bed=BED_MM, 
         if world is not None and any(box[2][0] - minimum[2] > 0.05 for box in boxes):
             # Turning a laid-out group tips separate parts into the air.
             raise RuntimeError('resized layout lifts a part off the bed')
-        if all(minimum[axis] >= margin and maximum[axis] <= bed - margin for axis in range(2)) and abs(minimum[2]) < 1e-3:
+        if placement is not None:
+            # Land the group's minimum XY exactly on the recorded placement
+            # (e.g. one that avoids a declared bed exclusion, #221); Z keeps
+            # the usual drop to the bed.
+            shift = [placement[0] - minimum[0], placement[1] - minimum[1], -minimum[2]]
+        elif all(minimum[axis] >= margin and maximum[axis] <= bed - margin for axis in range(2)) and abs(minimum[2]) < 1e-3:
             shift = [0.0, 0.0, 0.0]
         else:
             # Center, not corner: Orca adds brim/skirt outside the mesh and refuses
@@ -678,6 +721,8 @@ def export_single_color_plate(source, target, decisions, part_keys, bed=BED_MM, 
         placed = [(minimum[axis] + shift[axis], maximum[axis] + shift[axis]) for axis in range(2)]
         if any(high > bed - margin or low < 0 for low, high in placed):
             raise RuntimeError('part group does not fit the target bed without cropping')
+        if placement is not None and any(abs(placed[axis][0] - placement[axis]) > 1e-6 for axis in range(2)):
+            raise RuntimeError('placed plate does not start at the recorded placement')
     model_bytes = payload['3D/3dmodel.model']
     settings_bytes = payload['Metadata/model_settings.config']
     # Orca 2.4.2 rejects a plate (-52, "partly inside") when a printable=0 item
@@ -718,7 +763,9 @@ def export_single_color_plate(source, target, decisions, part_keys, bed=BED_MM, 
             'part_keys': [part['key'] for part in parts], 'object_ids': sorted(selected),
             'nonprintable_object_ids': sorted(_build_ids(model_out) - selected),
             'slot': slot, 'logical_filament': 1, 'translation_mm': shift,
-            **({'fit': {'scale': float(fit.get('scale') or 1.0), 'rotation': fit.get('rotation'), 'item_transform': world}} if world else {}), 'merged_placement': item_shifts is not None, 'bounds_mm': boxes,
+            **({'fit': {'scale': float(fit.get('scale') or 1.0), 'rotation': fit.get('rotation'), 'item_transform': world,
+                        **({'placement_mm': placement} if placement is not None else {})}} if world or placement is not None else {}),
+            **({'placement_mm': placement} if placement is not None else {}), 'merged_placement': item_shifts is not None, 'bounds_mm': boxes,
             'placed_bounds_mm': placed, 'bed_mm': bed, 'changed_entries': changed,
             'policy': 'production package copy; every object, mesh and relationship kept; unselected build items printable=0; all extruders logical 1; selected transforms kept unless the group must shift to fit',
             **({'filament_colour': colour} if colour is not None else {})}

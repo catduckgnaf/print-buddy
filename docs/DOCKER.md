@@ -30,6 +30,8 @@ For an existing external instance set `PRINT_BUDDY__SERVICES__SPOOLMAN_URL=http:
 
 Use `docker/unraid/print-buddy.xml`, replacing the prior three templates. One entry runs all required processes; leave PostArgs empty. The template specifies UID/GID 1000:1000 and five persistent paths under `/mnt/user/appdata/print-buddy`. Set Repository to the tested immutable digest before deployment. It publishes no port; add an approved API mapping only as described under Included Spoolman. Image HEALTHCHECK covers the combined runtime.
 
+The runtime selector `PRINT_BUDDY_ORCA_CHANNEL` (Compose, `.env.example` and the template) defaults to `stable` and accepts `alpha`; any other value stops container startup.
+
 This source template does not prove a Community Applications listing or an exercised Unraid installation. The host owner verifies deployment and final network mapping.
 
 ## Build dimensions and slicers

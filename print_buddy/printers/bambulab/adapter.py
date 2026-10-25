@@ -18,7 +18,7 @@ from .client import BambuLanClient, BambuLanError, signature_required
 
 
 class LiveUnsupported(RuntimeError):
-    """This Bambu Lab operation is not supported yet (upload or print control in the telemetry stage)."""
+    """A Moonraker-shaped live call reached a Bambu Lab printer; Bambu uses its LAN path instead."""
 
 
 # Bambu `gcode_state` values -> Print Buddy's normalized state vocabulary (the Klipper/OctoPrint shape).
@@ -50,8 +50,9 @@ class BambuAdapter(PrinterAdapter):
         return self.fact("motion_envelope_mm")
 
     def _unsupported(self, what):
-        return LiveUnsupported(f"{self.label}: {what} is not supported; Print Buddy's Bambu Lab LAN support "
-                               "is read-only telemetry. Nothing was sent.")
+        return LiveUnsupported(f"{self.label}: {what} is not supported over Moonraker; Bambu Lab printers "
+                               "use the LAN path (status, upload and print start are separate calls). "
+                               "Nothing was sent.")
 
     # -- LAN configuration -------------------------------------------------
     def _lan(self):
@@ -85,6 +86,14 @@ class BambuAdapter(PrinterAdapter):
             raise BambuLanError(f"{self.label}: only a packaged .gcode.3mf can be uploaded to a Bambu Lab "
                                 "printer; slice and package the job first (the Bambu package delivery does this)")
         return self.client().upload(local_path, remote_name)
+
+    def start_print(self, remote_name, plate="Metadata/plate_1.gcode"):
+        """Send the print-start command for an uploaded package. Gates live in the print path."""
+        return self.client().start_print(remote_name, plate)
+
+    def control(self, action):
+        """Pause, resume or stop the current print over LAN MQTT."""
+        return self.client().control(action)
 
     # slicer: the vendor start/end G-code is used as is; Print Buddy adds and changes nothing. The only accepted
     # start and end are the ones in the verified generated profiles (profiles.py), so an [orca] templates

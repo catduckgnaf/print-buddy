@@ -145,7 +145,7 @@ def test_a1_is_a_model_of_the_shared_bambu_vendor():
 def test_settings_follow_the_vendor_and_the_printer():
     data = config_for(A1)
     assert (data["printer"]["vendor"], data["printer"]["slicer"]) == ("bambulab", "bambu_studio")
-    assert data["delivery"]["methods"] == list(VENDOR.default_delivery) and "printer" not in VENDOR.delivery
+    assert data["delivery"]["methods"] == list(VENDOR.default_delivery) and "printer" not in data["delivery"]["methods"]
     assert data["printer"]["bed_mm"] == [256.0, 256.0] and data["printer"]["max_print_height_mm"] == 256.0
     assert data["printer"]["firmware"] == VENDOR.settings["printer"]["firmware"]
     assert data["orca"]["templates"].name == "bambulab_a1"
@@ -612,7 +612,7 @@ def test_slice_verify_and_package_end_to_end(tmp_path):
     [package] = result["packages"]
     with zipfile.ZipFile(package) as archive:
         assert archive.read("Metadata/plate_1.gcode") == Path(result["sliced"]).read_bytes()
-    assert result["print_now"].startswith("REFUSED: Bambu Lab A1 has no print control in Print Buddy yet")
+    assert result["print_now"].startswith("REFUSED: Bambu Lab A1 print delivery is not enabled in Print Buddy")
     assert result["job_unchanged_by_print_now"] is True  # no approval consumed, nothing recorded
     assert all("/api/v1/spool/" in url for url in result["contacted"]), result["contacted"]
 

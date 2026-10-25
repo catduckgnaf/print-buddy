@@ -1291,7 +1291,8 @@ async def prepare_link(event, adapter, state, root, timeout=None, reuse=None):
         if chosen_quantity and chosen_quantity != 1:
             estimate_text = f"{chosen_quantity} copies · " + estimate_text
         # Post-slice choices come from the printer's vendor profile ([delivery] methods). Printing is
-        # offered only where the vendor has a connection (never for an offline Bambu Lab printer).
+        # offered only where the vendor offers it AND the operator enabled it in [delivery] methods
+        # (for Bambu Lab that means the LAN print opt-in; it is never a default there).
         enabled = delivery.methods()
         can_print = delivery.PRINTER in enabled
         first_labels = [print_label, 'Slice only', 'Stop with colors saved', cancel_label][0 if can_print else 1:]

@@ -63,16 +63,14 @@ def test_check_nozzle_material_safety_abrasive_on_brass_raises():
 
 def test_check_nozzle_material_safety_abrasive_on_hardened_passes():
     # Hardened steel, ruby, tungsten carbide, diamond can handle abrasive materials
-    check_nozzle_material_safety("hardened_steel", "PLA-CF")
-    check_nozzle_material_safety("ruby", "PETG-GF")
-    check_nozzle_material_safety("tungsten_carbide", "Glow PLA")
-    check_nozzle_material_safety("diamond", "Metal-fill PLA")
+    for nozzle, material in (("hardened_steel", "PLA-CF"), ("ruby", "PETG-GF"),
+                            ("tungsten_carbide", "Glow PLA"), ("diamond", "Metal-fill PLA")):
+        assert check_nozzle_material_safety(nozzle, material) is None
 
 
 def test_check_nozzle_material_safety_non_abrasive_on_brass_passes():
-    check_nozzle_material_safety("brass", "PLA")
-    check_nozzle_material_safety("brass", "PETG")
-    check_nozzle_material_safety("brass", None)
+    for material in ("PLA", "PETG", None):
+        assert check_nozzle_material_safety("brass", material) is None
 
 
 def test_validate_nozzle_setting():

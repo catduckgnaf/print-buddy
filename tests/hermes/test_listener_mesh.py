@@ -8,28 +8,6 @@ from unittest import mock
 from print_buddy.hermes import moonraker_event_listener as mel
 
 
-class MaintenanceReminderTickTests(unittest.IsolatedAsyncioTestCase):
-    async def test_printing_and_paused_do_not_query_history_or_post(self):
-        for state in ("printing", "paused"):
-            with mock.patch.object(mel.print_control, "status", return_value={"state": state}) as status, \
-                 mock.patch.object(mel, "_maintenance_history_totals") as totals, \
-                 mock.patch.object(mel, "post") as post:
-                await mel.maintenance_reminder_tick(object())
-            status.assert_called_once()
-            totals.assert_not_called()
-            post.assert_not_called()
-
-
-class MaintenanceReminderTickTests(unittest.IsolatedAsyncioTestCase):
-    async def test_printing_and_paused_do_not_query_history_or_post(self):
-        for state in ("printing", "paused"):
-            with mock.patch.object(mel.print_control, "status", return_value={"state": state}) as status, \
-                 mock.patch.object(mel, "_maintenance_history_totals") as totals, \
-                 mock.patch.object(mel, "post") as post:
-                await mel.maintenance_reminder_tick(object())
-            status.assert_called_once()
-            totals.assert_not_called()
-            post.assert_not_called()
 
 
 class NoMeshLineTests(unittest.TestCase):

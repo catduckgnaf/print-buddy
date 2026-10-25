@@ -27,6 +27,7 @@ import stat
 import sys
 import threading
 import tempfile
+import time
 import tomllib
 import types
 import uuid
@@ -53,6 +54,22 @@ def find_model(case_dir):
             f"{case_dir} has no model file ({', '.join(sorted(MODEL_FILE_EXTS))})")
     preferred = [p for p in found if p.name == "model.3mf"]
     return preferred[0] if preferred else found[0]
+
+
+class TimedEvents(list):
+    """The run's event log with a monotonic timestamp per entry (times[i] belongs to self[i])."""
+
+    def __init__(self, *args):
+        super().__init__(*args)
+        self.t0 = time.monotonic()
+        self.times = [self.t0] * len(self)
+
+    def append(self, item):
+        super().append(item)
+        self.times.append(time.monotonic())
+
+    def timeline(self):
+        return [(round(t - self.t0, 3), e[0], str(e[1])[:80] if len(e) > 1 else "") for t, e in zip(self.times, self)]
 
 
 class UnansweredPrompt(AssertionError):
@@ -134,7 +151,9 @@ def install_clarify_stand_in():
 
     def wait_for_response(cid, timeout=None):
         e = entry(cid)
-        got = e.event.wait(timeout)
+        # The stand-in simulates prompt expiry quickly: an unanswered prompt must
+        # fail closed in tests, not block for the production wait (up to an hour).
+        got = e.event.wait(10 if timeout is None else min(timeout, 10))
         with lock:
             prompts.pop(cid, None)
         return e.answer if got else None
@@ -183,6 +202,7 @@ class FakeAdapter:
     # The production DiscordAdapter.send signature: a stray text= raises TypeError.
     async def send(self, chat_id, content, reply_to=None, metadata=None):
         self.sent.append(content)
+        self.events.append(("send", content))
         return S(success=True, message_id=None)
 
 
@@ -283,7 +303,7 @@ def _stub_print_now(folder):
     return stub
 
 
-def run_case(case, work, *, real_slicer=False, state_file=FIXTURE_STATE, in_gateway_env=False, transport="hermes"):
+def run_case(case, work, *, real_slicer=False, state_file=FIXTURE_STATE, in_gateway_env=False, transport="hermes", audit_started=None, auto=True):
     """Run the case end to end and return what happened. `work` is a fresh directory.
 
     Everything the flow writes (archive, receipts, claims) goes under `work`, except state in
@@ -308,7 +328,7 @@ def run_case(case, work, *, real_slicer=False, state_file=FIXTURE_STATE, in_gate
     stub = _stub_print_now(work)
     model_copy = work / case.model.name
     model_copy.write_bytes(case.model.read_bytes())
-    events = []
+    events = TimedEvents()
     adapter = FakeAdapter(case.clicks, events)
     starts = []
     slice_starts = []
@@ -329,6 +349,10 @@ def run_case(case, work, *, real_slicer=False, state_file=FIXTURE_STATE, in_gate
     async def thread_heavy(func, *args, **kwargs):
         # The production _heavy runs steps in a child process with its own settings. Keep them in
         # this process so the fakes below apply to them.
+        if getattr(func, "__module__", "").endswith("model_job") and getattr(func, "__name__", "") == "audit":
+            if audit_started is not None:
+                audit_started.append(("audit_start", time.monotonic()))
+            events.append(("audit_start", str(args[0]) if args else ""))
         return await asyncio.to_thread(func, *args, **kwargs)
 
     def offline_verify(out):
@@ -371,7 +395,7 @@ def run_case(case, work, *, real_slicer=False, state_file=FIXTURE_STATE, in_gate
                                  orca_adapter._source_plate_count))
         plugin = load_plugin()
         if transport == "standalone":
-            adapter, outcome = _run_standalone(case, work, model_copy, plugin, events, patch)
+            adapter, outcome = _run_standalone(case, work, model_copy, plugin, events, patch, auto=auto)
         else:
             gateway = S(_is_user_authorized_for_source=lambda s: True, _session_key_for_source=lambda s: "corpus-session",
                         _delivery_adapter_for=lambda s: adapter)
@@ -386,14 +410,14 @@ def run_case(case, work, *, real_slicer=False, state_file=FIXTURE_STATE, in_gate
         state = printer_state.load()
     return S(outcome=outcome, receipt=receipt, job=job, state=state, adapter=adapter, starts=starts, events=events,
              slice_starts=slice_starts, state_root=state_root, receipts=receipts, archive=archive,
-             gcodes=[Path(g) for g in receipt.get("gcodes", [])])
+             gcodes=[Path(g) for g in receipt.get("gcodes", [])], audit_started=audit_started)
 
 
 async def _noop_receipt(*args, **kwargs):
     return None
 
 
-def _run_standalone(case, work, model, plugin, events, patch):
+def _run_standalone(case, work, model, plugin, events, patch, *, auto=True):
     """Drop the model in a fake Discord channel and let the standalone bot handle the message."""
     import copy
     from print_buddy.bot.router import Router
@@ -402,7 +426,7 @@ def _run_standalone(case, work, model, plugin, events, patch):
     from print_buddy.hermes import _config
     from . import fake_discord
 
-    discord = fake_discord.FakeDiscord(case.clicks, events=events)
+    discord = fake_discord.FakeDiscord(case.clicks, events=events, auto=auto)
     cfg = copy.deepcopy(_config.cfg())
     cfg["bot"]["mode"] = "standalone"
     cfg["discord"].update(chat_id=str(discord.channel.id), allowed_user_ids=str(discord.operator.id),
@@ -412,6 +436,15 @@ def _run_standalone(case, work, model, plugin, events, patch):
     # Both are process globals the bot sets; restore them so later Hermes-path tests see the defaults.
     patch(prepared_intake, "STOP_SENDER", None)
     patch(prompts, "_active", False)
+    # BotCore.activate() routes standalone buttons to the real core registry, not
+    # tools.clarify_gateway. Keep that registry and its cleanup semantics, but
+    # apply the same ten-second expiry as the Hermes corpus stand-in.
+    wait_for_response = prompts.wait_for_response
+
+    def short_wait(cid, timeout=None):
+        return wait_for_response(cid, 10 if timeout is None else min(timeout, 10))
+
+    patch(prompts, "wait_for_response", short_wait)
     core = BotCore(discord.client, cfg, router=Router(plugin))
     message = discord.message(attachments=[fake_discord.FakeAttachment(model, f"{case.name}{Path(model).suffix.lower()}")])
 
@@ -508,6 +541,13 @@ def check_expectations(case, run):
     if "supports" in want:
         used = slice_support_setting(run)
         assert used == {"1" if want["supports"] else "0"}, f"slice profile enable_support={used}"
+    if "copies" in want:
+        assert int(run.receipt.get("copies", 1)) == want["copies"], run.receipt
+        assert int(run.job.get("sliced_copies", {}).get("copies", 1)) == want["copies"], run.job.get("sliced_copies")
+    if "mesh_manifold" in want:
+        assert run.job["audit"]["mesh_audit"]["manifold"] is want["mesh_manifold"]
+    if "mesh_winding_inconsistencies" in want:
+        assert run.job["audit"]["mesh_audit"]["winding_inconsistencies"] == want["mesh_winding_inconsistencies"]
     if want.get("started", True):
         assert len(run.starts) == 1, "the start button path did not run exactly once"
     for row in gcode_checks(run):

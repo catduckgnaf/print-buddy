@@ -2314,10 +2314,19 @@ def _slice_full_size_split(job, job_path, src, manifest, decisions, st):
     yaw_by_object = plan.get('yaw_by_object') or {}
     if not isinstance(yaw_by_object, dict):
         raise RuntimeError('full-size split plan yaw_by_object must be a mapping of object id to degrees')
+    placement_by_object = plan.get('placement_by_object') or {}
+    if not isinstance(placement_by_object, dict):
+        raise RuntimeError('full-size split plan placement_by_object must be a mapping of object id to [x, y] mm')
     key_to_object = {part['key']: str(part['object_id']) for part in manifest.get('parts') or []}
     unknown_yaw = sorted(set(yaw_by_object) - set(key_to_object.values()))
     if unknown_yaw:
         raise RuntimeError(f"full-size split plan records a turn for unknown object(s) {','.join(unknown_yaw)}")
+    unknown_placement = sorted(set(placement_by_object) - set(key_to_object.values()))
+    if unknown_placement:
+        raise RuntimeError(f"full-size split plan records a placement for unknown object(s) {','.join(unknown_placement)}")
+    bed_xy = [float(v) for v in (st.get('bed_mm') or [])[:2]]
+    bed_x = bed_xy[0] if bed_xy else float(st['bed_mm'][0])
+    bed_y = bed_xy[1] if len(bed_xy) > 1 else bed_x
     view = _per_part_view(manifest, decisions)
     slots = sorted(set(_part_slots(view, manifest).values()))
     if len(slots) != 1:
@@ -2334,7 +2343,8 @@ def _slice_full_size_split(job, job_path, src, manifest, decisions, st):
     for index, keys in enumerate(plates, 1):
         plate = derived / f'full_size_split_{index}.3mf'
         turned = {key_to_object[key] for key in keys if key_to_object[key] in yaw_by_object}
-        fit, yaw_deg = None, None
+        placed = {key_to_object[key] for key in keys if key_to_object[key] in placement_by_object}
+        fit, yaw_deg, placement_mm = None, None, None
         if turned:
             # The exporter turns a whole derived plate rigidly about one origin,
             # so a recorded turn is only realizable for that part alone. Refuse
@@ -2348,9 +2358,33 @@ def _slice_full_size_split(job, job_path, src, manifest, decisions, st):
             rad = math.radians(yaw_deg)
             c, s = math.cos(rad), math.sin(rad)
             fit = {'scale': 1.0, 'rotation': [c, -s, 0.0, s, c, 0.0, 0.0, 0.0, 1.0]}
+        if placed:
+            # Same realizability rule as a turn: the exporter places a whole
+            # derived plate rigidly, so a recorded placement is only
+            # realizable for that part alone (#221).
+            if len(placed) != 1 or {key_to_object[key] for key in keys} != placed:
+                raise RuntimeError('full-size split plan records a placement for a plate that is not '
+                                   'that part alone; refusing to slice it as authored')
+            raw = placement_by_object[placed.pop()]
+            if not isinstance(raw, (list, tuple)) or len(raw) != 2:
+                raise RuntimeError(f'full-size split plan placement must be an [x, y] pair, got {raw!r}')
+            try:
+                placement_mm = [float(raw[0]), float(raw[1])]
+            except (TypeError, ValueError) as exc:
+                raise RuntimeError(f'full-size split plan placement must be numeric, got {raw!r}') from exc
+            if (not all(math.isfinite(v) for v in placement_mm)
+                    or not 0 <= placement_mm[0] < bed_x or not 0 <= placement_mm[1] < bed_y):
+                raise RuntimeError(f'full-size split plan placement {placement_mm!r} is outside the '
+                                   f'{bed_x:g} x {bed_y:g} mm bed; refusing to slice it as authored')
+            fit = {**(fit or {'scale': 1.0}), 'placement_mm': placement_mm}
         report = export_single_color_plate(src, plate, view, keys, bed=int(st['bed_mm'][0]),
                                            slot_colors=st.get('ifs_slots') or {},
                                            **({'fit': fit} if fit is not None else {}))
+        if placement_mm is not None:
+            landed = report.get('placed_bounds_mm') or []
+            if len(landed) != 2 or any(abs(landed[axis][0] - placement_mm[axis]) > 1e-6 for axis in range(2)):
+                raise RuntimeError('derived plate did not land at the recorded placement; '
+                                   'refusing to slice it as placed')
         slice_dir = work / 'sliced' / 'orca' / uuid.uuid4().hex
         out, provenance, configs = slice_model(plate, slice_dir, st, preserve_layout=True, filament_slot=slot)
         finalize_multicolor(out, None, st, {'0': slot})
@@ -2358,6 +2392,7 @@ def _slice_full_size_split(job, job_path, src, manifest, decisions, st):
         artifacts.append({'slot': slot, 'plate_id': index, 'binding_key': f'{index}:{slot}',
                           'part_keys': keys, 'plate': str(plate), 'gcode': str(out),
                           **({'yaw_deg': yaw_deg} if yaw_deg is not None else {}),
+                          **({'placement_mm': placement_mm} if placement_mm is not None else {}),
                           'offline_check': check, 'plate_report': report, 'provenance': provenance,
                           'slice_config': [str(path) for path in configs]})
     latest = json.loads(Path(job_path).read_text())

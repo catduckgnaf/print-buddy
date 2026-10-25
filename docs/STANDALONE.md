@@ -118,7 +118,8 @@ Required environment: `PRINT_BUDDY__BOT__MODE=standalone`, `DISCORD_BOT_TOKEN`, 
 * Post a MakerWorld or Printables link, or drop one `.3mf` or `.stl`: the same intake as under Hermes, with the same
   buttons. "print it" after a link, and "print the last one again", work.
 * Slash commands: `/print-next`, `/print-stop`, `/print-resume`, `/print-again`, `/print-reboot`,
-  `/print-coldpull`, `/print-maintenance`, `/print-colors`, `/spool`, `/print-help`. Typing the same text works too.
+  `/print-coldpull`, `/print-maintenance`, `/print-colors`, `/spool`, `/print-lookup`, `/print-troubleshoot`,
+  `/print-help`. Typing the same text works too.
 * Listener posts (started, complete, failed, timelapse) and alert buttons (Resume, Cancel, spool questions, IFS
   insertion, plate picker) work with the Hermes gateway stopped.
 * A typed reply answers your own open question, as under Hermes ("2" for two copies, "split", "cancel"). It

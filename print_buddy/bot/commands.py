@@ -40,6 +40,12 @@ COMMANDS = (
     Command("spool", "List, change, add or sync spools (never moves the printer)",
             (Option("args", "list | change <slot> <spool#> | new brand, material, color, grams | sync"),),
             "/spool [list | change <slot> <spool#> | new ... | sync]"),
+    Command("print-lookup", "Look up a firmware command, macro, error, symptom or printer (read-only, sends nothing)",
+            (Option("query", "e.g. M600, zmod ifs load, bed mesh klipper, first layer not sticking"),),
+            "/print-lookup <query>"),
+    Command("print-troubleshoot", "Guided step-by-step physical troubleshooting (advice only, sends nothing)",
+            (Option("flow", "Which problem", ("first-layer", "clog", "heat-creep", "bed-level", "ringing")),),
+            "/print-troubleshoot [first-layer | clog | heat-creep | bed-level | ringing]"),
     Command("print-help", "What Print Buddy can do", usage="/print-help"),
 )
 

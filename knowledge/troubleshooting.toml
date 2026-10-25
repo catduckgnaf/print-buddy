@@ -1,0 +1,333 @@
+# Guided physical troubleshooting flows. See knowledge/README.md for the schema.
+#
+# A flow is a small graph of nodes. A question node offers labelled options; each
+# option names the next node. An advice node states one bounded physical check or
+# fix, then either continues (next) or ends the flow. Flows are advisory only:
+# following one never sends a command, heat or motion to a printer (issue #169).
+
+[[flow]]
+id = "first-layer"
+title = "First-layer adhesion and Z offset"
+aliases = ["first layer not sticking", "first layer", "z offset", "adhesion", "print not sticking", "layer peeling"]
+safety = [
+  "The nozzle and bed may be at printing temperature. Do not touch either to test adhesion.",
+  "Change Z offset in small steps (0.02-0.05 mm). A nozzle driven into the bed can gouge the sheet and damage the nozzle.",
+]
+start = "clean-bed"
+
+[[flow.node]]
+id = "clean-bed"
+kind = "question"
+prompt = "Start with the cheapest cause. Is the bed surface clean and free of grease (washed with dish soap and water, or wiped with isopropyl alcohol, and not touched with bare fingers since)?"
+  [[flow.node.option]]
+  label = "Yes, it is clean"
+  next = "look"
+  [[flow.node.option]]
+  label = "No, or not sure"
+  next = "wash-bed"
+
+[[flow.node]]
+id = "wash-bed"
+kind = "advice"
+prompt = "Let the bed cool, remove the sheet if it is removable, wash it with dish soap and warm water, dry it fully, and handle it by the edges. Adhesion problems that survive a clean bed are rarely about glue or tape."
+next = "look"
+
+[[flow.node]]
+id = "look"
+kind = "question"
+prompt = "Start a small first-layer test and watch the lines go down. Which best matches what you see?"
+  [[flow.node.option]]
+  label = "Lines are round with gaps between them"
+  next = "too-far"
+  [[flow.node.option]]
+  label = "Lines are smeared flat, transparent, or ridged"
+  next = "too-close"
+  [[flow.node.option]]
+  label = "Filament curls up onto the nozzle instead of sticking"
+  next = "curling"
+  [[flow.node.option]]
+  label = "Nothing comes out at all"
+  next = "nothing-comes-out"
+
+[[flow.node]]
+id = "too-far"
+kind = "advice"
+prompt = "The nozzle is too far from the bed: the lines never get squished together. Move the Z offset a small step closer (more negative on Klipper/Marlin live adjust, or the printer screen's offset on the AD5X) and re-run the test. Repeat in small steps until lines touch with no gaps and no ridges."
+
+[[flow.node]]
+id = "too-close"
+kind = "advice"
+prompt = "The nozzle is too close: it is ploughing the first layer. Move the Z offset a small step away from the bed and re-run the test. Check the sheet for gouges; a scarred area will keep failing until the sheet is flipped, moved or replaced."
+
+[[flow.node]]
+id = "curling"
+kind = "advice"
+prompt = "Filament curling up at the tip usually means a dirty nozzle exterior, a partial clog, or filament that has absorbed moisture. Clean the outside of the (hot, take care) nozzle with a brass brush, and if curling persists, work through the clog flow: /print-troubleshoot clog"
+
+[[flow.node]]
+id = "nothing-comes-out"
+kind = "advice"
+prompt = "Adhesion is not the problem yet: nothing is extruding. Stop the test print and work through the clog flow instead: /print-troubleshoot clog"
+
+[[flow]]
+id = "clog"
+title = "Nozzle clogs, cold pulls and extruder clicking"
+aliases = ["clog", "nozzle clog", "extruder clicking", "extruder slipping", "not extruding", "cold pull", "under extrusion"]
+safety = [
+  "A clog is cleared at printing temperature: the nozzle and heater block will burn skin on contact. Work with tools, never fingers, near the tip.",
+  "Never force filament through by hand against a clicking extruder; that grinds the filament and makes the jam worse.",
+]
+start = "any-filament"
+
+[[flow.node]]
+id = "any-filament"
+kind = "question"
+prompt = "With the nozzle at printing temperature for the loaded filament, what happens when filament should be coming out?"
+  [[flow.node.option]]
+  label = "Nothing comes out, extruder clicks or grinds"
+  next = "path-check"
+  [[flow.node.option]]
+  label = "Some comes out, thin or in bursts, with clicking"
+  next = "partial-clog"
+  [[flow.node.option]]
+  label = "It comes out but curls sideways or up"
+  next = "tip-check"
+
+[[flow.node]]
+id = "path-check"
+kind = "question"
+prompt = "Check the path before the nozzle: is the spool free to turn, the filament unbroken and unkinked, and (on an IFS/AMS) the slot actually feeding rather than staged in the tube?"
+  [[flow.node.option]]
+  label = "Path is fine"
+  next = "cold-pull"
+  [[flow.node.option]]
+  label = "Found a path problem"
+  next = "path-fix"
+
+[[flow.node]]
+id = "path-fix"
+kind = "advice"
+prompt = "Fix the path problem first (free the spool, replace the broken section, re-seat the tube or slot), then retry extrusion. A surprising share of 'clogs' never reach the nozzle."
+next = "cold-pull"
+
+[[flow.node]]
+id = "partial-clog"
+kind = "advice"
+prompt = "A partial clog passes some filament but starves the print. The bounded fix is a cold pull, which pulls the plug out of the melt zone. Print Buddy has a guided one that asks before heating: /print-coldpull. If two cold pulls do not restore a clean, full stream, change the nozzle rather than escalating force."
+next = "verify-stream"
+
+[[flow.node]]
+id = "cold-pull"
+kind = "advice"
+prompt = "With a clear path and zero extrusion, treat it as a full clog. A cold pull is the bounded fix: Print Buddy's guided one asks before heating and steps through it: /print-coldpull. If the filament will not move at all even for a cold pull, suspect heat creep or a jam above the nozzle: /print-troubleshoot heat-creep"
+next = "verify-stream"
+
+[[flow.node]]
+id = "tip-check"
+kind = "advice"
+prompt = "A sideways or curling stream points at debris on the nozzle tip or a damaged tip. Clean the outside of the hot nozzle with a brass brush and retry. If the stream still curls after cleaning and a cold pull, the tip is likely damaged: change the nozzle."
+next = "verify-stream"
+
+[[flow.node]]
+id = "verify-stream"
+kind = "question"
+prompt = "After the fix, does filament now come out in a straight, steady stream?"
+  [[flow.node.option]]
+  label = "Yes, clean stream"
+  next = "done"
+  [[flow.node.option]]
+  label = "Still not right"
+  next = "escalate"
+
+[[flow.node]]
+id = "done"
+kind = "advice"
+prompt = "Good. Run a small test print and watch the first layer before trusting a long job. If this clog followed a filament change, note the filament; repeated clogs on one spool usually mean moisture or a bad spool, not the printer."
+
+[[flow.node]]
+id = "escalate"
+kind = "advice"
+prompt = "Stop escalating force. The remaining causes are a worn or damaged nozzle, heat creep, or a failing extruder gear or motor. Change the nozzle if you have a spare; otherwise work through /print-troubleshoot heat-creep, and check the extruder gear for ground filament and a loose drive screw."
+
+[[flow]]
+id = "heat-creep"
+title = "Heat creep and filament jams above the nozzle"
+aliases = ["heat creep", "jam", "filament jam", "stops extruding mid print", "softened filament"]
+safety = [
+  "A heat-creep jam sits above a hot melt zone. Let the hotend cool before opening the extruder or pulling the Bowden tube.",
+  "Do not leave a heat-soaked printer sitting hot while you investigate; turn the nozzle heater off between checks.",
+]
+start = "pattern"
+
+[[flow.node]]
+id = "pattern"
+kind = "question"
+prompt = "Heat creep has a pattern: prints start well, then extrusion fades or stops partway, and the filament is hard to pull out with a swollen, soft end. Does that match?"
+  [[flow.node.option]]
+  label = "Yes, starts fine then stops"
+  next = "fan-check"
+  [[flow.node.option]]
+  label = "No, it never starts extruding"
+  next = "not-heat-creep"
+
+[[flow.node]]
+id = "not-heat-creep"
+kind = "advice"
+prompt = "That pattern fits a clog or a path problem better than heat creep. Work through /print-troubleshoot clog instead."
+
+[[flow.node]]
+id = "fan-check"
+kind = "question"
+prompt = "With the nozzle hot, is the hotend (heat-break) fan actually spinning? It is the small fan on the hotend itself, not the part-cooling fan, and on most machines it should run whenever the nozzle is hot."
+  [[flow.node.option]]
+  label = "Fan is not spinning, or sounds weak"
+  next = "fan-fix"
+  [[flow.node.option]]
+  label = "Fan spins fine"
+  next = "environment"
+
+[[flow.node]]
+id = "fan-fix"
+kind = "advice"
+prompt = "That is the likely cause: without the heat-break fan, heat climbs into the cold zone and softens filament where it should stay solid. Let everything cool, check the fan for debris and a pinched wire, and replace it if it does not spin freely. Do not print until it works; every attempt re-jams."
+
+[[flow.node]]
+id = "environment"
+kind = "question"
+prompt = "Is the printer in a closed enclosure, a hot room, or printing low-temperature filament (like PLA) with the door/lid shut?"
+  [[flow.node.option]]
+  label = "Yes, enclosed or hot"
+  next = "cool-it"
+  [[flow.node.option]]
+  label = "No, open and cool"
+  next = "retraction-check"
+
+[[flow.node]]
+id = "cool-it"
+kind = "advice"
+prompt = "Open the door or lid and improve airflow for low-temperature filament. PLA in a warm closed box is the classic heat-creep setup. Retry a short print before a long one."
+
+[[flow.node]]
+id = "retraction-check"
+kind = "advice"
+prompt = "With cooling ruled out, check retraction: excessive retraction length or count pulls molten filament up into the cold zone repeatedly. Reduce retraction distance in the slicer profile in small steps, and check the heat break is seated and its thermal paste or the PTFE tube (if fitted) is not degraded or cut at an angle."
+
+[[flow]]
+id = "bed-level"
+title = "Bed tramming, levelling and mesh irregularities"
+aliases = ["bed level", "leveling", "tramming", "mesh", "bed mesh", "uneven first layer", "level the bed"]
+safety = [
+  "Probing and tramming move the toolhead close to the bed. Keep hands out of the machine while it probes; turn screws only when it is stopped.",
+  "Turn bed screws in small increments (an eighth of a turn). Big turns chase the error around the bed.",
+]
+start = "pattern"
+
+[[flow.node]]
+id = "pattern"
+kind = "question"
+prompt = "Where does the first layer go wrong?"
+  [[flow.node.option]]
+  label = "Good in one area, bad in another"
+  next = "tram-check"
+  [[flow.node.option]]
+  label = "Evenly wrong everywhere"
+  next = "not-mesh"
+  [[flow.node.option]]
+  label = "One stripe or patch is always bad"
+  next = "local-fault"
+
+[[flow.node]]
+id = "not-mesh"
+kind = "advice"
+prompt = "An evenly wrong first layer is a Z offset problem, not a mesh problem: a mesh cannot fix a global offset. Work through /print-troubleshoot first-layer and only come back here if the result varies across the bed."
+
+[[flow.node]]
+id = "tram-check"
+kind = "question"
+prompt = "Has the bed been trammed (squared to the gantry) since the last time the mesh was made? A mesh made over an untrammed bed fights the screws."
+  [[flow.node.option]]
+  label = "No, or not sure"
+  next = "tram-first"
+  [[flow.node.option]]
+  label = "Yes, trammed then meshed"
+  next = "mesh-fresh"
+
+[[flow.node]]
+id = "tram-first"
+kind = "advice"
+prompt = "Tram first, then re-mesh; the order matters. Klipper: SCREWS_TILT_CALCULATE (or BED_LEVEL_SCREWS_TUNE on the AD5X) probes over the screws and reports each turn. Marlin: tram with a feeler or the printer's corner routine. Then run a fresh mesh (BED_MESH_CALIBRATE on Klipper, G29 on Marlin) and make sure the start G-code actually loads it."
+next = "mesh-fresh"
+
+[[flow.node]]
+id = "mesh-fresh"
+kind = "question"
+prompt = "Is the mesh you are printing with fresh (made after the last tram, on a heat-soaked bed), and does the start G-code load it?"
+  [[flow.node.option]]
+  label = "Not sure"
+  next = "remesh"
+  [[flow.node.option]]
+  label = "Fresh and loaded, still uneven"
+  next = "probe-check"
+
+[[flow.node]]
+id = "remesh"
+kind = "advice"
+prompt = "Heat-soak the bed at printing temperature for 10 minutes (beds warp as they warm), re-run the mesh, and check the start code: Klipper loads with BED_MESH_PROFILE LOAD or the start macro; Marlin homing turns levelling off, so start G-code needs M420 S1 after G28. Look both up with /print-lookup mesh"
+next = "probe-check"
+
+[[flow.node]]
+id = "probe-check"
+kind = "advice"
+prompt = "If a fresh, loaded mesh is still uneven, suspect the probe: check its mount is tight, the trigger height is consistent, and repeatability by running the mesh twice and comparing. A loose probe or a warped or magnetic sheet with a dead spot produces exactly this. Also confirm the sheet sits flat with nothing trapped under it."
+
+[[flow.node]]
+id = "local-fault"
+kind = "advice"
+prompt = "One bad patch that never moves is local: a dented or gouged sheet, debris under a removable sheet, or a magnet/sheet dead spot. Inspect and clean both sides of the sheet and the bed under it, and try rotating the sheet 180 degrees: if the bad patch moves with the sheet, the sheet is the fault."
+
+[[flow]]
+id = "ringing"
+title = "Resonance and ringing (ghosting)"
+aliases = ["ringing", "ghosting", "vibration", "echo lines", "ripples"]
+safety = [
+  "Belt and pulley checks are done powered off, with the toolhead moved by hand slowly; fast hand moves can back-drive the motors.",
+]
+start = "where"
+
+[[flow.node]]
+id = "where"
+kind = "question"
+prompt = "Ringing shows as fading ripples after sharp corners or features, worst on the axis that changed direction. Is the ripple spacing even and does it fade with distance from the corner?"
+  [[flow.node.option]]
+  label = "Yes, fading ripples after corners"
+  next = "mechanical"
+  [[flow.node.option]]
+  label = "No, the whole surface is rough or banded"
+  next = "not-ringing"
+
+[[flow.node]]
+id = "not-ringing"
+kind = "advice"
+prompt = "Even roughness or regular banding on every wall is usually not ringing: look at extrusion consistency (/print-troubleshoot clog), Z banding from a bent or dirty lead screw, or a loose nozzle. Ringing only follows direction changes."
+
+[[flow.node]]
+id = "mechanical"
+kind = "question"
+prompt = "Power off and check by hand: are belts evenly tensioned (a low twang, not slack, not guitar-string tight), pulleys tight on their shafts, and the printer on a solid surface that does not wobble?"
+  [[flow.node.option]]
+  label = "Found slack, looseness or wobble"
+  next = "fix-mechanical"
+  [[flow.node.option]]
+  label = "All solid"
+  next = "speed-check"
+
+[[flow.node]]
+id = "fix-mechanical"
+kind = "advice"
+prompt = "Fix the mechanical cause first: re-tension the belt evenly, tighten the pulley grub screw onto the shaft flat, and put the printer on a rigid surface. Then re-run the same test print; software compensation on a loose machine only hides the fault until it worsens."
+next = "speed-check"
+
+[[flow.node]]
+id = "speed-check"
+kind = "advice"
+prompt = "With mechanics sound, ringing is acceleration exciting the frame's resonance. Lower outer-wall speed and acceleration in the slicer in steps, or, on Klipper, run input-shaper calibration and store the result (SAVE_CONFIG). Compare with the same test model each time; change one thing at a time."

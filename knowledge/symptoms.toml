@@ -1,0 +1,59 @@
+# Symptom index. See knowledge/README.md for the schema.
+#
+# Each symptom names the guided flow that works it (knowledge/troubleshooting.toml)
+# and, where useful, firmware registry entries (firmware/commands.toml) a lookup
+# can jump to. first_checks are read-only observations, never printer actions.
+
+[[symptom]]
+id = "first-layer-not-sticking"
+title = "First layer will not stick"
+aliases = ["not sticking", "adhesion failure", "print comes loose", "spaghetti on bed", "first layer peeling"]
+flow = "first-layer"
+firmware_entries = ["marlin.m851", "klipper.probe-calibrate"]
+summary = "Usually a dirty bed or a wrong Z offset, in that order. Work the clean-bed check before touching calibration."
+first_checks = ["Look at the laid lines: round with gaps means too far, smeared means too close.", "Check the bed was cleaned and not fingerprinted since."]
+
+[[symptom]]
+id = "extruder-clicking"
+title = "Extruder clicks, slips or grinds"
+aliases = ["clicking extruder", "extruder skipping", "filament grinding", "extruder slip"]
+flow = "clog"
+firmware_entries = ["zmod.ifs-load"]
+summary = "The extruder cannot push filament as fast as asked: a clog, a path blockage, or a temperature too low for the flow rate."
+first_checks = ["Check the spool turns freely and the path is clear.", "Confirm the nozzle is at the right temperature for the filament."]
+
+[[symptom]]
+id = "stops-extruding-mid-print"
+title = "Print starts fine, then stops extruding"
+aliases = ["stops extruding", "mid print jam", "air printing", "extrusion stops"]
+flow = "heat-creep"
+firmware_entries = []
+summary = "The heat-creep pattern until proven otherwise: heat climbs past the heat break and filament softens where it should stay solid."
+first_checks = ["Check the hotend heat-break fan spins whenever the nozzle is hot.", "Note whether the printer is enclosed or the room is hot."]
+
+[[symptom]]
+id = "uneven-first-layer"
+title = "First layer is good in one place and bad in another"
+aliases = ["uneven first layer", "patchy first layer", "mesh not working", "bed not level"]
+flow = "bed-level"
+firmware_entries = ["klipper.bed-mesh-calibrate", "klipper.screws-tilt-calculate", "marlin.g29", "marlin.m420"]
+summary = "Tramming first, then a fresh mesh made on a heat-soaked bed, then proof the start G-code loads that mesh."
+first_checks = ["Confirm the mesh was made after the last tramming.", "Check the start G-code loads the mesh."]
+
+[[symptom]]
+id = "ringing-on-walls"
+title = "Ripples or ghost images on walls after corners"
+aliases = ["ghosting", "ringing", "ripples on walls", "vibration marks"]
+flow = "ringing"
+firmware_entries = ["klipper.save-config"]
+summary = "Acceleration exciting frame resonance, most visible after sharp direction changes. Rule out loose belts and pulleys before tuning input shaping or speeds."
+first_checks = ["Check belt tension and pulley grub screws, powered off.", "Confirm the printer sits on a rigid surface."]
+
+[[symptom]]
+id = "heater-error"
+title = "Printer stops with a heating or thermal error"
+aliases = ["heating failed", "thermal runaway error", "heater error", "temperature error"]
+flow = ""
+firmware_entries = ["marlin.heating-failed"]
+summary = "A safety protection tripped. Power off, let everything cool, and inspect the thermistor and heater wiring before heating again. There is deliberately no guided flow that walks past this one."
+first_checks = ["Power off and let the printer cool fully.", "Look for a loose thermistor, damaged heater wires or a displaced silicone sock."]

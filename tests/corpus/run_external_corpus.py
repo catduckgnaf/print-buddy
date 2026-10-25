@@ -22,6 +22,10 @@ for index, model in enumerate(models):
     case = S(name=case_dir.name, dir=case_dir, model=model,
              data={"description": model.name},
              clicks=[{"question": "Choose the color", "button": "White"},
+                     # Explicit monochrome consent for multipart and painted models.
+                     {"question": "one color for everything?", "button": "One color for everything"},
+                     # Pick the offered shrink, never silently approve a rotation/support tradeoff.
+                     {"question": "does not fit the bed full size", "button": "Shrink to"},
                      {"question": "How many copies", "button": "One copy"},
                      {"question": "·", "button": "Slice and print"}],
              expect={"status": "STARTED"})
@@ -38,7 +42,8 @@ for index, model in enumerate(models):
             raise AssertionError("fake slicer was never called")
     except Exception as exc:
         row["result"] = "FAIL"
-        row["error"] = f"{type(exc).__name__}: {str(exc).splitlines()[0]}"
+        # Preserve unanswered question text and buttons, not just the generic first line.
+        row["error"] = f"{type(exc).__name__}: {exc}"
     row["seconds"] = round(time.monotonic() - started, 2)
     results.append(row)
     print(json.dumps(row), flush=True)

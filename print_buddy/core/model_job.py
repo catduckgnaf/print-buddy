@@ -296,6 +296,9 @@ def mesh_topology(triangles):
     Weld coordinates on a six-decimal grid. Exclude faces whose squared
     double-area is <= 1e-18 source-units**4 from all topology adjacency.
     """
+    if hasattr(triangles, '__len__') and len(triangles) > 100_000:
+        from .compact_topology import mesh_topology_compact
+        return mesh_topology_compact(triangles)
     vertices = {}
     faces = []
     degenerate = 0

@@ -1169,8 +1169,9 @@ def _multi_plate_capacity(source: Path, state: dict, scale: float = 1.0, single_
                 if not fits:
                     return 0
         return 1
-    except Exception:
-        return 1
+    except Exception as exc:
+        # An uninspectable plate is unknown, not "fits once": callers treat raises as probe failures.
+        raise RuntimeError(f'multi-plate fit check cannot inspect {source}: {exc}') from exc
 
 
 def orca_plate_capacity(source: Path, state: dict, spacing_mm: float = 10.0, edge_margin_mm: float | None = None,

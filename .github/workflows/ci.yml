@@ -26,6 +26,11 @@ jobs:
           command -v git || { apt-get update -q && apt-get install -y -q git; }
           git --version
       - uses: actions/checkout@v7
+      - name: Normalize checkout ownership for Git subprocesses
+        # checkout's safe.directory lives in its temporary HOME, not the test process HOME.
+        run: |
+          chown -R "$(id -u):$(id -g)" "$GITHUB_WORKSPACE"
+          git rev-parse --is-inside-work-tree
       - run: python -m pip install -r requirements-test.txt
       - name: Offline tests (no printer, no slicer, no network)
         timeout-minutes: 25

@@ -2,8 +2,9 @@
 
 The shapes are generated here, not copied from anyone, so each one is CC0 and safe to commit.
 Fixture content is deterministic (fixed ZIP timestamps and sorted entries); compressed ZIP bytes may vary by zlib version.
-Only the standard library is used.
+Only the standard library is used. A million-triangle torus is generated at test time only.
 """
+import html
 import json
 import math
 import struct
@@ -39,7 +40,7 @@ def cylinder(radius, height, sides=48):
 
 
 def extrude_y(profile, triangles, depth):
-    """Prism along +Y from an XZ profile (counter clockwise seen from -Y) and its triangle list."""
+    """Prism along +Y from an XZ profile (counter clockwise seen from -Y)."""
     n = len(profile)
     v = [(x, 0, z) for x, z in profile] + [(x, depth, z) for x, z in profile]
     f = [(a, b, c) for a, b, c in triangles] + [(n + a, n + c, n + b) for a, b, c in triangles]
@@ -50,7 +51,7 @@ def extrude_y(profile, triangles, depth):
 
 
 def t_shape(bar_w, stem_w, height, bar_t, depth):
-    """A T: a thin bar on top of a narrow stem. The bar overhangs the stem on both sides."""
+    """A T: the bar overhangs a narrow stem."""
     s0, s1 = (bar_w - stem_w) / 2, (bar_w + stem_w) / 2
     profile = [(s0, 0), (s1, 0), (s1, height - bar_t), (bar_w, height - bar_t),
                (bar_w, height), (0, height), (0, height - bar_t), (s0, height - bar_t)]
@@ -58,21 +59,73 @@ def t_shape(bar_w, stem_w, height, bar_t, depth):
     return extrude_y(profile, triangles, depth)
 
 
-def write_stl(path, mesh):
-    """Write a deterministic binary STL from generated CC0 triangles."""
+def _normal(a, b, c):
+    ux, uy, uz = (b[i] - a[i] for i in range(3))
+    vx, vy, vz = (c[i] - a[i] for i in range(3))
+    n = (uy * vz - uz * vy, uz * vx - ux * vz, ux * vy - uy * vx)
+    length = math.sqrt(sum(value * value for value in n)) or 1.0
+    return tuple(value / length for value in n)
+
+
+def write_stl(path, mesh, *, binary=True, invert=False, lying_solid=False):
+    """Write deterministic generated STL; supports ASCII and binary header edge cases."""
     vertices, faces = mesh
-    rows = [b"Print Buddy generated corpus model (CC0)".ljust(80, b"\0"), struct.pack("<I", len(faces))]
-    for face in faces:
-        a, b, c = (vertices[index] for index in face)
-        ux, uy, uz = (b[i] - a[i] for i in range(3))
-        vx, vy, vz = (c[i] - a[i] for i in range(3))
-        normal = (uy * vz - uz * vy, uz * vx - ux * vz, ux * vy - uy * vx)
-        length = math.sqrt(sum(value * value for value in normal)) or 1.0
-        normal = tuple(value / length for value in normal)
-        rows.append(struct.pack("<12fH", *normal, *a, *b, *c, 0))
     target = Path(path)
     target.parent.mkdir(parents=True, exist_ok=True)
-    target.write_bytes(b"".join(rows))
+    if not binary:
+        rows = ["solid Print Buddy CC0 generated model"]
+        for face in faces:
+            points = [vertices[index] for index in face]
+            n = _normal(*points)
+            if invert:
+                n = tuple(-v for v in n)
+                points[1], points[2] = points[2], points[1]
+            rows.append(" facet normal " + " ".join(f"{x:.7g}" for x in n))
+            rows.append("  outer loop")
+            rows.extend("   vertex " + " ".join(f"{x:.7g}" for x in point) for point in points)
+            rows.extend(("  endloop", " endfacet"))
+        rows.append("endsolid Print Buddy CC0 generated model")
+        target.write_text("\n".join(rows) + "\n", encoding="ascii")
+        return
+    head = (b"solid generated binary model" if lying_solid else b"Print Buddy generated corpus model (CC0)").ljust(80, b"\0")[:80]
+    with target.open("wb") as stream:
+        stream.write(head)
+        stream.write(struct.pack("<I", len(faces)))
+        for face in faces:
+            points = [vertices[index] for index in face]
+            n = _normal(*points)
+            if invert:
+                n = tuple(-v for v in n)
+                points[1], points[2] = points[2], points[1]
+            stream.write(struct.pack("<12fH", *n, *points[0], *points[1], *points[2], 0))
+
+
+def write_binary_stl(path, triangles):
+    """Stream binary STL triangles without retaining face indices or XML text."""
+    target = Path(path)
+    target.parent.mkdir(parents=True, exist_ok=True)
+    with target.open("wb") as stream:
+        stream.write(b"Print Buddy generated binary STL".ljust(80, b"\0"))
+        stream.write(struct.pack("<I", len(triangles)))
+        for tri in triangles:
+            n = _normal(*tri)
+            stream.write(struct.pack("<12fH", *n, *tri[0], *tri[1], *tri[2], 0))
+
+
+def write_binary_stl_stream(path, triangles):
+    """Write generated facets with a streaming header that permits count backpatching."""
+    target = Path(path)
+    target.parent.mkdir(parents=True, exist_ok=True)
+    count = 0
+    with target.open("wb") as stream:
+        stream.write(b"Print Buddy generated binary STL".ljust(80, b"\0"))
+        stream.write(b"\0\0\0\0")
+        for tri in triangles:
+            n = _normal(*tri)
+            stream.write(struct.pack("<12fH", *n, *tri[0], *tri[1], *tri[2], 0))
+            count += 1
+        stream.seek(80)
+        stream.write(struct.pack("<I", count))
 
 
 def _xml(objects, items):
@@ -102,21 +155,24 @@ def _settings(parts, plates):
     """Bambu style model_settings.config: parts is [(assembly_id, mesh_id, name, extruder)]."""
     out = ["<config>"]
     for assembly, mesh, name, extruder in parts:
-        out.append(f'<object id="{assembly}"><metadata key="name" value="{name}"/>'
+        safe_name = html.escape(name, quote=True)
+        out.append(f'<object id="{assembly}"><metadata key="name" value="{safe_name}"/>'
                    f'<metadata key="extruder" value="{extruder}"/>'
-                   f'<part id="{mesh}" subtype="normal_part"><metadata key="name" value="{name}"/>'
+                   f'<part id="{mesh}" subtype="normal_part"><metadata key="name" value="{safe_name}"/>'
                    f'<metadata key="extruder" value="{extruder}"/></part></object>')
     for number, (name, assemblies) in enumerate(plates, 1):
+        if not assemblies:
+            continue
         out.append(f'<plate><metadata key="plater_id" value="{number}"/>'
-                   f'<metadata key="plater_name" value="{name}"/>')
+                   f'<metadata key="plater_name" value="{html.escape(name, quote=True)}"/>')
         out += [f'<model_instance><metadata key="object_id" value="{a}"/></model_instance>' for a in assemblies]
         out.append("</plate>")
     out.append("</config>")
     return "\n".join(out)
 
 
-def write_3mf(path, shapes, plates, palette, support=False):
-    """shapes: [(name, extruder, (vertices, faces), (x, y))]; plates: [(plate name, [shape index])]."""
+def write_3mf(path, shapes, plates, palette, support=False, *, omit_plate_metadata=False, extra_empty_plates=0):
+    """shapes: [(name, extruder, mesh, (x, y))]; plates: [(plate name, [shape index])]."""
     objects, items, parts = [], [], []
     for index, (name, extruder, mesh, at) in enumerate(shapes):
         mesh_id, assembly = 2 * index + 2, 2 * index + 1
@@ -127,12 +183,14 @@ def write_3mf(path, shapes, plates, palette, support=False):
                "enable_support": "1" if support else "0"}
     if support:
         project["support_type"] = "tree(auto)"
+    plate_rows = [] if omit_plate_metadata else plates
+    if extra_empty_plates:
+        plate_rows = list(plate_rows) + [(f"Empty {i}", []) for i in range(1, extra_empty_plates + 1)]
     files = {
         "[Content_Types].xml": '<?xml version="1.0" encoding="UTF-8"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="model" ContentType="application/vnd.ms-package.3dmanufacturing-3dmodel+xml"/><Default Extension="config" ContentType="text/xml"/></Types>',
         "_rels/.rels": '<?xml version="1.0" encoding="UTF-8"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Target="/3D/3dmodel.model" Id="rel0" Type="http://schemas.microsoft.com/3dmanufacturing/2013/01/3dmodel"/></Relationships>',
         "3D/3dmodel.model": _xml(objects, items),
-        "Metadata/model_settings.config": _settings(
-            parts, [(name, [parts[i][0] for i in members]) for name, members in plates]),
+        "Metadata/model_settings.config": _settings(parts, plate_rows),
         "Metadata/project_settings.config": json.dumps(project, indent=2),
     }
     Path(path).parent.mkdir(parents=True, exist_ok=True)
@@ -143,46 +201,86 @@ def write_3mf(path, shapes, plates, palette, support=False):
             archive.writestr(info, files[name])
 
 
-WHITE, BLACK, RED = ("#FFFFFF", "PLA"), ("#000000", "PLA"), ("#C0392B", "PLA")
+def torus_triangles(major_radius=28.0, minor_radius=9.7, major_segments=1000, minor_segments=500):
+    """Stream a 75.4 x 75.4 x 19.4 mm torus as exactly one million facets."""
+    tau = 2 * math.pi
+    def vertex(i, j):
+        u, v = tau * (i % major_segments) / major_segments, tau * (j % minor_segments) / minor_segments
+        radial = major_radius + minor_radius * math.cos(v)
+        return radial * math.cos(u), radial * math.sin(u), minor_radius * math.sin(v)
+    for i in range(major_segments):
+        for j in range(minor_segments):
+            p00, p10 = vertex(i, j), vertex(i + 1, j)
+            p11, p01 = vertex(i + 1, j + 1), vertex(i, j + 1)
+            yield p00, p10, p11
+            yield p00, p11, p01
+
+
+def generate_large_torus(path):
+    """Generate a 1,000,000-triangle test STL in the caller's temporary directory."""
+    target = Path(path)
+    write_binary_stl_stream(target, torus_triangles())
+    return target
 
 
 def build():
     cases = HERE / "cases"
-    # 1) three parts on one plate, one palette color
     write_3mf(cases / "parts-one-plate/model.3mf",
               [("Base", 1, box(70, 50, 6), (60, 60)),
                ("Post", 1, cylinder(10, 30), (70, 130)),
                ("Tab", 1, box(30, 12, 4), (130, 140))],
-              [("Plate 1", [0, 1, 2])], [WHITE])
-    # 2) two plates, three palette colors
+              [("Plate 1", [0, 1, 2])], [("#FFFFFF", "PLA")])
     write_3mf(cases / "plates-multicolor/model.3mf",
-              [("Body", 1, box(60, 40, 12), (50, 60)),
-               ("Lid", 2, box(60, 40, 4), (50, 60)),
+              [("Body", 1, box(60, 40, 12), (50, 60)), ("Lid", 2, box(60, 40, 4), (50, 60)),
                ("Knob", 3, cylinder(9, 14), (60, 130))],
-              [("Body", [0]), ("Lid and knob", [1, 2])], [WHITE, BLACK, RED])
-    # 3) a T whose bar overhangs the stem; the project asks for supports
+              [("Body", [0]), ("Lid and knob", [1, 2])],
+              [("#FFFFFF", "PLA"), ("#000000", "PLA"), ("#C0392B", "PLA")])
     write_3mf(cases / "needs-supports/model.3mf",
               [("T bracket", 1, t_shape(60, 12, 40, 6, 30), (80, 90))],
-              [("Plate 1", [0])], [WHITE], support=True)
-    # 4) a plate wider than the 220 mm bed in both directions and taller than the gantry when stood on
-    #    its edge: the only way to fit it is to shrink it
-    write_3mf(cases / "must-shrink/model.3mf",
-              [("Big plate", 1, box(260, 260, 8), (0, 0))],
-              [("Plate 1", [0])], [WHITE])
-    # 4b) two parts that fit the bed one at a time but not together: the 100% split plan is offered
+              [("Plate 1", [0])], [("#FFFFFF", "PLA")], support=True)
+    write_3mf(cases / "must-shrink/model.3mf", [("Big plate", 1, box(260, 260, 8), (0, 0))],
+              [("Plate 1", [0])], [("#FFFFFF", "PLA")])
     write_3mf(cases / "split-plan/model.3mf",
-              [("Left half", 1, box(150, 150, 10), (0, 0)),
-               ("Right half", 1, box(150, 150, 10), (160, 0))],
-              [("Plate 1", [0, 1])], [WHITE])
-    # 5) the baseline: one part, one color
-    write_3mf(cases / "single-part/model.3mf",
-              [("Cube", 1, box(30, 30, 20), (90, 90))],
-              [("Plate 1", [0])], [WHITE])
-    # Native STL has no project metadata, so its corpus covers geometry ingestion and fit outcomes.
+              [("Left half", 1, box(150, 150, 10), (0, 0)), ("Right half", 1, box(150, 150, 10), (160, 0))],
+              [("Plate 1", [0, 1])], [("#FFFFFF", "PLA")])
+    write_3mf(cases / "single-part/model.3mf", [("Cube", 1, box(30, 30, 20), (90, 90))],
+              [("Plate 1", [0])], [("#FFFFFF", "PLA")])
+    names8 = [(f"Part {i}", 1, box(10, 10, 5), (10 + ((i - 1) % 4) * 22, 10 + ((i - 1) // 4) * 22)) for i in range(1, 9)]
+    write_3mf(cases / "many-parts/model.3mf", names8, [("One plate", list(range(8)))], [("#FFFFFF", "PLA")])
+    palette = [("#FFFFFF", "PLA"), ("#000000", "PLA"), ("#FF00FF", "PLA"), ("#067749", "PLA"), ("#C0392B", "PLA")]
+    four = [(f"Part {i}", i, box(18, 18, 5), (15 + (i - 1) * 28, 40)) for i in range(1, 5)]
+    write_3mf(cases / "four-colors-one-plate/model.3mf", four, [("One plate", [0, 1, 2, 3])], palette[:4])
+    five = [(f"Part {i}", i, box(15, 15, 5), (10 + (i - 1) * 24, 50)) for i in range(1, 6)]
+    write_3mf(cases / "five-colors-over-slots/model.3mf", five, [("One plate", [0, 1, 2, 3, 4])], palette)
+    two = [("Plate A", 1, box(150, 150, 10), (0, 0)), ("Plate B", 1, box(150, 150, 10), (0, 0))]
+    write_3mf(cases / "multiplate-select/model.3mf", two, [("Plate A", [0]), ("Plate B", [1])], [palette[0]])
+    write_3mf(cases / "unicode-part-extra-plate/model.3mf",
+              [("Unicode 🐙 – part", 1, box(25, 25, 6), (60, 60))],
+              [("One plate", [0])], [palette[0]], extra_empty_plates=1)
+    write_3mf(cases / "rotation-fit/model.3mf", [("Rotatable plate", 1, box(223, 100, 8), (0, 0))],
+              [("Plate 1", [0])], [palette[0]])
     write_stl(cases / "stl-single-part/model.stl", box(30, 30, 20))
     write_stl(cases / "stl-must-shrink/model.stl", box(260, 260, 8))
     write_stl(cases / "stl-needs-supports/model.stl", t_shape(60, 12, 40, 6, 30))
     write_stl(cases / "stl-thin-footprint/model.stl", box(8, 8, 180))
+    write_stl(cases / "stl-ascii/model.stl", box(24, 18, 8), binary=False)
+    write_stl(cases / "stl-text-solid-header/model.stl", box(24, 18, 8), lying_solid=True)
+    write_stl(cases / "stl-tiny/model.stl", box(1.5, 1.5, 1.5))
+    write_stl(cases / "stl-open-thin-wall/model.stl", box(30, 30, 1.0)[:1] + (box(30, 30, 1.0)[1][:-2],))
+    write_stl(cases / "stl-degenerate-zero-volume/model.stl", ([(0, 0, 0), (1, 0, 0), (0, 1, 0)], [(0, 1, 2), (0, 1, 2), (0, 1, 2)]))
+    write_stl(cases / "stl-inverted-normals/model.stl", box(24, 18, 8), invert=True)
+    write_stl(cases / "stl-tall/model.stl", box(12, 16, 275))
+    write_stl(cases / "stl-very-thin-wall/model.stl", box(0.25, 20, 15))
+    write_3mf(cases / "duplicate-part-names/model.3mf",
+              [("Duplicate", 1, box(18, 18, 5), (20, 40)), ("Duplicate", 1, box(18, 18, 5), (60, 40))],
+              [("One plate", [0, 1])], [palette[0]])
+    write_3mf(cases / "missing-plate-metadata/model.3mf",
+              [("No plate metadata", 1, box(24, 18, 8), (40, 50))],
+              [("One plate", [0])], [palette[0]], omit_plate_metadata=True)
+    quantity_parts = [("Quantity A", 1, box(35, 30, 8), (35, 40)),
+                      ("Quantity B", 1, box(35, 30, 8), (95, 40))]
+    write_3mf(cases / "copies-multiple-plates/model.3mf", quantity_parts,
+              [("Plate A", [0]), ("Plate B", [1])], [palette[0]])
 
 
 if __name__ == "__main__":

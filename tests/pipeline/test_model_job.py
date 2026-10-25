@@ -132,17 +132,26 @@ class GcodeBoundsTests(unittest.TestCase):
             if missing: raise RuntimeError("missing bounded motion for axis " + ", ".join(missing))
             return {axis.lower():(min(seen[axis]),max(seen[axis])) for axis in "XYZ"}
 
-        paths = list(settings.current()["paths"]["archive"].rglob("*.gcode"))
-        if not paths:
-            self.skipTest("no archived G-code to compare against")
-        random.Random(0).shuffle(paths)
-        for path in paths[:10]:
-            text = path.read_text(errors="replace")
-            def outcome(fn):
-                try: return ("ok", fn(text))
-                except Exception as exc: return (type(exc), str(exc))
-            with self.subTest(path=str(path)):
-                self.assertEqual(outcome(reference), outcome(model_job.gcode_motion_bounds))
+        import tempfile
+        fixtures = [
+            "G90\nG1 X0 Y0 Z0\nG1 X10 Y4 Z1\nG1 X-2 Y8 Z2\n",
+            "G90\nG1 X1 Y2 Z3\nG91\nG1 X4 Y-1 Z2\nG1 X-2 Y3 Z-1\n",
+            "G90\nG1 X-20 Y5 Z0\nG1 X30 Y-5 Z12\n",
+        ]
+        with tempfile.TemporaryDirectory() as directory:
+            paths = []
+            for index, content in enumerate(fixtures):
+                path = Path(directory) / f"reference-{index}.gcode"
+                path.write_text(content)
+                paths.append(path)
+            random.Random(0).shuffle(paths)
+            for path in paths:
+                text = path.read_text(errors="replace")
+                def outcome(fn):
+                    try: return ("ok", fn(text))
+                    except RuntimeError as exc: return (type(exc), str(exc))
+                with self.subTest(path=str(path)):
+                    self.assertEqual(outcome(reference), outcome(model_job.gcode_motion_bounds))
 
     def test_absolute_and_relative_xyz_bounds(self):
         text = """G90
@@ -790,10 +799,7 @@ class EnglishAndPrintNowTests(unittest.TestCase):
         now = datetime.now(timezone.utc)
         old = (now - timedelta(days=2, hours=1)).isoformat()
         runs = [{"kind": "full", "hours_total": 12.0, "at": old}]
-        try:
-            maintenance = _external.load("maintenance")
-        except ModuleNotFoundError:
-            self.skipTest("runtime module maintenance is not installed")
+        maintenance = _external.load("maintenance")
         offline = mock.Mock(_call=mock.Mock(side_effect=OSError("offline")))
         with tempfile.TemporaryDirectory() as d, \
              mock.patch.dict(os.environ, {"PRINTER_MAINTENANCE_STATE": str(Path(d) / "maintenance.json")}), \

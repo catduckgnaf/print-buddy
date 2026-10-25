@@ -1,0 +1,12 @@
+[[click]]
+question = "Choose the color for"
+button = "White"
+
+[[click]]
+question = "·"
+button = "Slice and print"
+
+[expect]
+status = "FAILED"
+source_kind = ".stl"
+started = false

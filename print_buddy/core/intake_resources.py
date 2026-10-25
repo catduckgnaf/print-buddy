@@ -11,13 +11,15 @@ import zipfile
 MIB = 1024 * 1024
 MAX_DOWNLOAD_BYTES = 200 * MIB
 MAX_MEMBERS = 4096
-MAX_EXPANDED_BYTES = 256 * MIB
-MAX_XML_BYTES = 32 * MIB  # aggregate model XML; DOM + Python geometry amplify this
-MAX_MEMBER_BYTES = 64 * MIB
+MAX_EXPANDED_BYTES = 512 * MIB
+MAX_XML_BYTES = 400 * MIB  # expanded model XML is streamed, not retained as a DOM
+MAX_MEMBER_BYTES = 400 * MIB
 MAX_STL_BYTES = 32 * MIB
-MAX_TRIANGLES = 500_000
-MAX_VERTICES = 500_000
-MAX_XML_ELEMENTS = 1_100_000
+# Dense float32/int32 tables plus downstream topology/instance working storage.
+MAX_ESTIMATED_GEOMETRY_BYTES = 1536 * MIB
+MAX_TRIANGLES = 10_000_000
+MAX_VERTICES = 10_000_000
+MAX_XML_ELEMENTS = 40_000_000
 CHUNK = 64 * 1024
 
 
@@ -85,7 +87,7 @@ def check_source(path):
             _refuse(f'expanded archive exceeds {MAX_EXPANDED_BYTES // MIB} MiB limit')
         if any(i.file_size > MAX_MEMBER_BYTES for i in members):
             _refuse(f'archive member exceeds {MAX_MEMBER_BYTES // MIB} MiB limit')
-        counts = {'triangle': 0, 'vertex': 0, 'elements': 0}
+        counts = {'triangle': 0, 'vertex': 0, 'elements': 0, 'estimated_bytes': 0}
 
         def start(name, attrs):
             local = name.rsplit('}', 1)[-1]
@@ -97,6 +99,12 @@ def check_source(path):
                 maximum = MAX_TRIANGLES if local == 'triangle' else MAX_VERTICES
                 if counts[local] > maximum:
                     _refuse(f'{local} count exceeds {maximum:,} limit')
+                # Vertex/triangle arrays, streaming parser's temporary tuple lists,
+                # and one transformed copy per active instance are conservatively
+                # budgeted at 160 bytes per primitive. This intentionally errs high.
+                counts['estimated_bytes'] += 160
+                if counts['estimated_bytes'] > MAX_ESTIMATED_GEOMETRY_BYTES:
+                    _refuse(f'estimated geometry allocation exceeds {MAX_ESTIMATED_GEOMETRY_BYTES // MIB} MiB safety ceiling')
 
         def doctype(*args):
             _refuse('XML document type declarations are not supported')

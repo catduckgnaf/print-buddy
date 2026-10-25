@@ -133,7 +133,7 @@ def _parse_3mf_triangles(source):
             return models[name]
         def apply(point, t):
             # Same float operation order as sum(p[j] * t[j*3+i]) + t[9+i]; output is bit-identical.
-            x, y, z = point
+            x, y, z = (float(value) for value in point)
             return (0 + x * t[0] + y * t[3] + z * t[6] + t[9],
                     0 + x * t[1] + y * t[4] + z * t[7] + t[10],
                     0 + x * t[2] + y * t[5] + z * t[8] + t[11])

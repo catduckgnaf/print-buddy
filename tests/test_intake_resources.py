@@ -8,15 +8,42 @@ import pytest
 from print_buddy.core import intake_resources as limits
 
 
-def test_large_mesh_refused_without_opening_member(tmp_path):
+def test_large_mesh_streams_successfully(tmp_path):
+    from print_buddy.core import mesh_fast
+    import tracemalloc
+
     source = tmp_path / 'large.3mf'
-    # Compressible mesh-like XML is small on disk but exceeds the expanded budget.
+    # Andrew's still-print contract replaces the obsolete 32 MiB refusal:
+    # ordinary large geometry must succeed, not merely fail cheaply.
+    count = 900_000
     with zipfile.ZipFile(source, 'w', zipfile.ZIP_DEFLATED) as archive:
         with archive.open('3D/Objects/object_1.model', 'w') as member:
-            for _ in range(33):
-                member.write(b' ' * (1024 * 1024))
-    with patch.object(zipfile.ZipFile, 'open', side_effect=AssertionError('parsed mesh')):
-        with pytest.raises(limits.IntakeLimitExceeded, match='XML.*32 MiB'):
+            member.write(b'<model xmlns="http://schemas.microsoft.com/3dmanufacturing/core/2015/02"><resources><object id="1"><mesh><vertices><vertex x="0" y="0" z="0"/><vertex x="1" y="0" z="0"/><vertex x="0" y="1" z="0"/></vertices><triangles>')
+            batch = b'<triangle v1="0" v2="1" v3="2"/>' * 1000
+            for _ in range(count // 1000):
+                member.write(batch)
+            member.write(b'</triangles></mesh></object></resources></model>')
+    limits.check_source(source)
+    mesh_fast._TABLE_CACHE.clear()
+    tracemalloc.start()
+    try:
+        with zipfile.ZipFile(source) as archive:
+            structure, tables = mesh_fast.archive_tables(archive, '3D/Objects/object_1.model')
+        _, peak = tracemalloc.get_traced_memory()
+    finally:
+        tracemalloc.stop()
+    assert len(tables['1'].triangles) == count
+    assert tables['1'].triangles.nbytes == count * 12
+    assert len(structure) < 1024
+    assert peak < 64 * limits.MIB
+
+
+def test_geometry_memory_ceiling(tmp_path):
+    source = tmp_path / 'ceiling.3mf'
+    with zipfile.ZipFile(source, 'w') as archive:
+        archive.writestr('a.model', '<model><triangle/><triangle/></model>')
+    with patch.object(limits, 'MAX_ESTIMATED_GEOMETRY_BYTES', 160):
+        with pytest.raises(limits.IntakeLimitExceeded, match='geometry allocation'):
             limits.check_source(source)
 
 

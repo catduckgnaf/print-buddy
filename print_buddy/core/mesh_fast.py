@@ -1,169 +1,356 @@
-"""Byte-level 3MF mesh reader.
+"""Memory-bounded streaming 3MF mesh reader.
 
-ElementTree builds one Python object per <vertex> and <triangle>; a 1M-triangle
-FlexyRing mesh costs ~50 s to parse that way, and the same file was parsed twice.
-Here the mesh payload is read with compiled regexes straight from the bytes and
-the remaining document structure is parsed with ElementTree after the mesh
-bodies are stripped. Values are identical: float()/int() on the same digits.
-
-Anything unexpected (namespaced mesh tags, reordered attributes, a count that
-does not match) returns None so callers fall back to the full ElementTree path.
+The Expat callbacks discard vertex/triangle XML elements as they arrive and
+append coordinates and indices directly to compact typed buffers. Only the
+small non-mesh model structure is retained for the existing 3MF resolver.
+Unsupported XML is returned to ElementTree unchanged rather than partially
+interpreted.
 """
-import re
+from array import array
+from dataclasses import dataclass
 import xml.etree.ElementTree as ET
 from xml.parsers import expat
 
-_OBJECT = re.compile(rb'<object\b[^>]*?\sid="([^"]*)"')
-_VERTEX = re.compile(rb'<vertex\s+x="([^"]*)"\s+y="([^"]*)"\s+z="([^"]*)"')
-_TRIANGLE = re.compile(rb'<triangle\s+v1="(\d+)"\s+v2="(\d+)"\s+v3="(\d+)"')
+import numpy as np
+
+_CORE_URI = 'http://schemas.microsoft.com/3dmanufacturing/core/2015/02'
+_CORE = '{' + _CORE_URI + '}'
+_MAX_VERTICES = 10_000_000
+_MAX_TRIANGLES = 10_000_000
+_MAX_ELEMENTS = 40_000_000
+_MAX_SOURCE_BUFFER_BYTES = 1536 * 1024 * 1024
 
 
-# Fast extraction is only safe for this deliberately narrow grammar. Other XML
-# layouts keep their original bytes and use ElementTree, including extensions.
-_MESH_BODY = re.compile(
-    rb'<mesh>\s*<vertices>\s*(?:<vertex\s+x="[^"<&]*"\s+y="[^"<&]*"\s+z="[^"<&]*"\s*/>\s*)*'
-    rb'</vertices>\s*<triangles>\s*(?:<triangle\s+v1="\d+"\s+v2="\d+"\s+v3="\d+"'
-    rb'(?:\s+(?!xmlns)[\w:.-]+="[^"<&]*")*\s*/>\s*)*</triangles>\s*</mesh>')
-_CORE = '{http://schemas.microsoft.com/3dmanufacturing/core/2015/02}'
+class _UnsupportedFastPath(Exception):
+    """The XML is legal but outside the compact reader's exact grammar."""
 
 
-def _safe_layout(data):
-    # Expat checks the ORIGINAL document without allocating an Element per face.
-    # Never let mesh stripping turn malformed XML into valid XML.
-    if b'<!' in data or b'&' in data or b'\x00' in data:
-        return False
+@dataclass(frozen=True)
+class MeshTable:
+    """Array-backed mesh: float32 vertices and int32 triangle indices."""
+    vertices: np.ndarray
+    triangles: np.ndarray
+
+    def __eq__(self, other):
+        if isinstance(other, MeshTable):
+            return (np.array_equal(self.vertices, other.vertices, equal_nan=True)
+                    and np.array_equal(self.triangles, other.triangles))
+        if isinstance(other, tuple) and len(other) == 2:
+            vertices, triangles = other
+            return (list(map(tuple, self.vertices.tolist())) == vertices
+                    and list(map(tuple, self.triangles.tolist())) == triangles)
+        return NotImplemented
+
+    def __len__(self):
+        return len(self.triangles)
+
+    def __bool__(self):
+        return bool(len(self.triangles))
+
+    def __iter__(self):
+        # Preserve the historical unpacking shape: vertices, faces = table.
+        yield self.vertices
+        yield self.triangles
+
+    def __getitem__(self, index):
+        return _LegacyRows((self.vertices, self.triangles)[index])
+
+    def iter_triangles(self):
+        for face in self.triangles:
+            yield (tuple(float(v) for v in self.vertices[int(face[0])]),
+                   tuple(float(v) for v in self.vertices[int(face[1])]),
+                   tuple(float(v) for v in self.vertices[int(face[2])]))
+
+    def iter_used_vertices(self):
+        """Yield referenced vertices once, in source index order."""
+        if not len(self.triangles):
+            return
+        used = set()
+        for face in self.triangles:
+            used.update((int(face[0]), int(face[1]), int(face[2])))
+        for index in sorted(used):
+            yield tuple(float(v) for v in self.vertices[index])
+
+    def to_legacy(self):
+        """Compatibility conversion; avoid in intake and large-geometry paths."""
+        return [[tuple(point) for point in tri] for tri in self.iter_triangles()]
+
+
+class _LegacyRows:
+    """Lazy tuple rows for indexed legacy callers, without copying the mesh."""
+    def __init__(self, rows):
+        self.rows = rows
+
+    def __len__(self):
+        return len(self.rows)
+
+    def __getitem__(self, index):
+        row = self.rows[index]
+        return _LegacyRows(row) if isinstance(index, slice) else tuple(row.tolist())
+
+    def __iter__(self):
+        return (tuple(row.tolist()) for row in self.rows)
+
+
+def validate_geometry_budget(vertices, faces, instances=1,
+                             ceiling=_MAX_SOURCE_BUFFER_BYTES):
+    """Conservative compact + topology estimate for all emitted instances."""
+    estimate = (vertices * 24 + faces * 120) * max(1, instances)
+    if estimate > ceiling:
+        raise ValueError(f'estimated geometry allocation {estimate} exceeds {ceiling} byte ceiling')
+    return estimate
+
+
+def _et_name(name):
+    if '}' in name:
+        uri, local = name.rsplit('}', 1)
+        return '{' + uri + '}' + local
+    return name
+
+
+def _parse_member(data, want_triangles=True):
+    """Parse a byte string or readable stream; never retain mesh XML nodes."""
+    tables = {}
+    root = None
+    # (Clark tag, Element-or-None). Mesh descendants deliberately have no ET node.
+    stack = []
+    object_id = None
+    object_mesh_count = 0
+    mesh_active = False
+    vertex_buf = face_buf = None
+    vertex_total = face_total = element_total = 0
+    saw_mesh = False
+    unsupported_prefix = False
+    namespace_pending = []
+    object_ids = set()
+    parser = expat.ParserCreate(namespace_separator='}')
+    parser.ordered_attributes = True
+
+    def namespace_decl(prefix, uri):
+        if prefix and uri == _CORE_URI:
+            # Preserve the strict-reader fallback for prefixed core tags.
+            raise _UnsupportedFastPath
+        namespace_pending.append((prefix, uri))
+
+    def start(raw_name, raw_attrs):
+        raw_attrs = dict(zip(raw_attrs[::2], raw_attrs[1::2]))
+        nonlocal root, object_id, object_mesh_count, mesh_active
+        nonlocal vertex_buf, face_buf, vertex_total, face_total, element_total, saw_mesh
+        element_total += 1
+        if element_total > _MAX_ELEMENTS:
+            raise ValueError('3MF XML element count exceeds hard safety ceiling')
+        full_name = _et_name(raw_name)
+        attrs = {_et_name(key): value for key, value in raw_attrs.items()}
+        parent = stack[-1][0] if stack else None
+        if full_name.rsplit('}', 1)[-1] == 'object' and full_name != _CORE + 'object':
+            raise _UnsupportedFastPath
+        in_mesh = mesh_active
+
+        if namespace_pending:
+            # Namespace declaration attributes on primitive tags make their
+            # identity ambiguous to the old strict reader; use the XML fallback.
+            local = full_name.rsplit('}', 1)[-1]
+            if local in ('vertex', 'triangle'):
+                raise _UnsupportedFastPath
+            namespace_pending.clear()
+        if not stack and full_name != _CORE + 'model':
+            raise _UnsupportedFastPath
+
+        if in_mesh:
+            if full_name == _CORE + 'object':
+                raise _UnsupportedFastPath
+            if full_name == _CORE + 'vertex' and parent == _CORE + 'vertices':
+                if any(key not in raw_attrs for key in ('x', 'y', 'z')):
+                    raise KeyError('mesh vertex has missing coordinate')
+                # The legacy optimized grammar did not expand XML entities in
+                # coordinate attributes. Let ElementTree retain that contract.
+                values = (raw_attrs['x'], raw_attrs['y'], raw_attrs['z'])
+                if any('&' in value for value in values):
+                    raise _UnsupportedFastPath
+                if not all(value.isascii() for value in values):
+                    raise _UnsupportedFastPath
+                vertex_buf.extend(float(value) for value in values)
+                vertex_total += 1
+                if vertex_total > _MAX_VERTICES:
+                    raise ValueError('3MF vertex count exceeds hard safety ceiling')
+                if (vertex_total + face_total) * 32 > _MAX_SOURCE_BUFFER_BYTES:
+                    raise ValueError('estimated source geometry allocation exceeds safety ceiling')
+                elem = None
+            elif full_name == _CORE + 'triangle' and parent == _CORE + 'triangles':
+                if want_triangles:
+                    values = tuple(raw_attrs.get(f'v{i}') for i in (1, 2, 3))
+                    if any(value is None for value in values):
+                        raise KeyError('mesh triangle has missing vertex index')
+                    # Only canonical ASCII unsigned indices can enter int32.
+                    if any(not value.isascii() or not value.isdigit() for value in values):
+                        raise _UnsupportedFastPath
+                    indices = tuple(int(value) for value in values)
+                    if any(index > 2_147_483_647 for index in indices):
+                        raise _UnsupportedFastPath
+                    face_buf.extend(indices)
+                    face_total += 1
+                    if face_total > _MAX_TRIANGLES:
+                        raise ValueError('3MF triangle count exceeds hard safety ceiling')
+                    if (vertex_total + face_total) * 32 > _MAX_SOURCE_BUFFER_BYTES:
+                        raise ValueError('estimated source geometry allocation exceeds safety ceiling')
+                    elem = None
+            elif full_name in (_CORE + 'vertices', _CORE + 'triangles') and parent == _CORE + 'mesh':
+                elem = None
+            else:
+                raise _UnsupportedFastPath
+        else:
+            elem = ET.Element(full_name, attrs)
+            if stack:
+                parent_elem = stack[-1][1]
+                if parent_elem is not None:
+                    parent_elem.append(elem)
+            else:
+                root = elem
+
+            if full_name == _CORE + 'object':
+                if parent != _CORE + 'resources' or not raw_attrs.get('id'):
+                    raise _UnsupportedFastPath
+                object_id = raw_attrs['id']
+                if object_id in object_ids:
+                    raise _UnsupportedFastPath
+                object_ids.add(object_id)
+                object_mesh_count = 0
+            elif full_name == _CORE + 'mesh':
+                if parent != _CORE + 'object' or object_id is None:
+                    raise _UnsupportedFastPath
+                object_mesh_count += 1
+                if object_mesh_count != 1:
+                    raise _UnsupportedFastPath
+                saw_mesh = True
+                mesh_active = True
+                vertex_buf, face_buf = array('f'), array('i')
+        stack.append((full_name, elem))
+
+    def end(raw_name):
+        nonlocal object_id, mesh_active, vertex_buf, face_buf
+        full_name = _et_name(raw_name)
+        if full_name == _CORE + 'mesh' and mesh_active:
+            if object_id is None:
+                raise _UnsupportedFastPath
+            if not len(vertex_buf) or (want_triangles and not len(face_buf)):
+                raise _UnsupportedFastPath
+            vertices = np.frombuffer(vertex_buf, dtype=np.float32).reshape((-1, 3))
+            triangles = np.frombuffer(face_buf, dtype=np.int32).reshape((-1, 3))
+            if len(triangles) and (int(triangles.min()) < 0 or int(triangles.max()) >= len(vertices)):
+                raise _UnsupportedFastPath
+            tables[object_id] = MeshTable(vertices, triangles)
+            mesh_active = False
+            vertex_buf = face_buf = None
+        if full_name == _CORE + 'object':
+            object_id = None
+        if stack:
+            stack.pop()
+
+    def characters(text):
+        if not stack:
+            return
+        if mesh_active:
+            if text.strip():
+                raise _UnsupportedFastPath
+            return
+        elem = stack[-1][1]
+        if elem is None:
+            return
+        if len(elem):
+            child = elem[-1]
+            child.tail = (child.tail or '') + text
+        else:
+            elem.text = (elem.text or '') + text
+
+    def reject_markup(*args):
+        raise _UnsupportedFastPath
+
+    parser.StartElementHandler = start
+    parser.EndElementHandler = end
+    parser.CharacterDataHandler = characters
+    parser.StartNamespaceDeclHandler = namespace_decl
+    parser.StartDoctypeDeclHandler = reject_markup
+    parser.CommentHandler = reject_markup
+    parser.ProcessingInstructionHandler = reject_markup
+    parser.StartCdataSectionHandler = reject_markup
+    parser.SetParamEntityParsing(expat.XML_PARAM_ENTITY_PARSING_NEVER)
     try:
-        expat.ParserCreate().Parse(data, True)
+        if hasattr(data, 'read'):
+            while chunk := data.read(64 * 1024):
+                if b'&' in chunk or b'\x00' in chunk or chunk.startswith((b'\xff\xfe', b'\xfe\xff')):
+                    return None
+                parser.Parse(chunk, False)
+            parser.Parse(b'', True)
+        else:
+            if b'&' in data or b'\x00' in data or data.startswith((b'\xff\xfe', b'\xfe\xff')):
+                return None
+            view = memoryview(data)
+            for offset in range(0, len(view), 64 * 1024):
+                parser.Parse(view[offset:offset + 64 * 1024], False)
+            parser.Parse(b'', True)
+    except _UnsupportedFastPath:
+        return None
     except expat.ExpatError:
-        return False
-    # str.find spans, not a lazy DOTALL regex: a prefix match such as <meshfoo never matches the
-    # grammar below, so any surprise ends in the ElementTree fallback, never in accepted geometry.
-    meshes, pos = 0, 0
-    while True:
-        start = data.find(b'<mesh', pos)
-        if start == -1:
-            break
-        end = data.find(b'</mesh>', start)
-        if end == -1 or _MESH_BODY.fullmatch(data, start, end + 7) is None:
-            return False
-        meshes += 1
-        pos = end + 7
-    if not meshes:
-        return False
-    root = ET.fromstring(strip_mesh_bodies(data))
-    objects = root.findall(_CORE + 'resources/' + _CORE + 'object')
-    ids = [o.get('id') for o in objects]
-    if (root.tag != _CORE + 'model' or None in ids or len(ids) != len(set(ids))
-            or len(objects) != len(_OBJECT.findall(data))):
-        return False
-    # Namespace changes, nested objects/meshes and prefix aliases must fall back.
-    core_meshes = [o.find(_CORE + 'mesh') for o in objects]
-    return sum(m is not None for m in core_meshes) == meshes
-
-
-def _object_spans(data):
-    """[(object_id, start, end)] byte spans of each <object> element (objects never nest)."""
-    found = list(_OBJECT.finditer(data))
-    spans = []
-    for i, match in enumerate(found):
-        start = match.end()
-        stop = found[i + 1].start() if i + 1 < len(found) else len(data)
-        spans.append((match.group(1).decode(), start, stop))
-    return spans
+        return None
+    if not saw_mesh or root is None:
+        return None
+    return tables, ET.tostring(root, encoding='utf-8', xml_declaration=True)
 
 
 def mesh_tables(data, want_triangles=True):
-    """{object_id: (vertices, triangles)} for every object with a mesh, or None.
-
-    vertices is a list of (x, y, z) float tuples; triangles a list of (v1, v2, v3)
-    int tuples (empty when want_triangles is False). None means "use ElementTree".
-    """
-    if b'<mesh' not in data or b':mesh' in data or b':vertex' in data or b':triangle' in data:
-        return None
-    if not _safe_layout(data):
-        return None
-    tables = {}
-    for oid, start, stop in _object_spans(data):
-        mesh_at = data.find(b'<mesh', start, stop)
-        if mesh_at == -1:
-            continue
-        mesh_end = data.find(b'</mesh>', mesh_at, stop)
-        if mesh_end == -1:
-            return None  # self-closing or malformed: let ElementTree decide
-        body = data[mesh_at:mesh_end]
-        tri_at = body.find(b'<triangles')
-        vpart = body if tri_at == -1 else body[:tri_at]
-        raw = _VERTEX.findall(vpart)
-        if len(raw) != vpart.count(b'<vertex'):  # '<vertices' does not match '<vertex'
-            return None
-        vertices = [(float(x), float(y), float(z)) for x, y, z in raw]
-        triangles = []
-        if want_triangles and tri_at != -1:
-            tpart = body[tri_at:]
-            idx = _TRIANGLE.findall(tpart)
-            if len(idx) != tpart.count(b'<triangle') - tpart.count(b'<triangles'):
-                return None
-            triangles = [(int(a), int(b), int(c)) for a, b, c in idx]
-            if triangles and max(max(t) for t in triangles) >= len(vertices):
-                return None
-        tables[oid] = (vertices, triangles)
-    return tables
+    """Return ``{object_id: MeshTable}``, or ``None`` for ElementTree fallback."""
+    parsed = _parse_member(data, want_triangles)
+    return None if parsed is None else parsed[0]
 
 
 def strip_mesh_bodies(data):
-    """<mesh>...</mesh> -> <mesh/> so structure-only ElementTree parsing is cheap."""
-    if b'<mesh' not in data or b':mesh' in data:
-        return data
-    out, pos = [], 0
-    while True:
-        start = data.find(b'<mesh', pos)
-        if start == -1:
-            break
-        end = data.find(b'</mesh>', start)
-        if end == -1:
-            return data
-        out += [data[pos:start], b'<mesh/>']
-        pos = end + len(b'</mesh>')
-    out.append(data[pos:])
-    return b''.join(out)
+    """Return structure-only XML for supported meshes; otherwise preserve input."""
+    parsed = _parse_member(data)
+    return data if parsed is None else parsed[1]
 
 
 def bounds_and_volume(triangles):
-    """(lo, hi, signed_volume) with the same float operation order as the old loops."""
-    xs, ys, zs = [], [], []
-    vol = 0.0
-    for (ax, ay, az), (bx, by, bz), (cx, cy, cz) in triangles:
-        xs += (ax, bx, cx)
-        ys += (ay, by, cy)
-        zs += (az, bz, cz)
-        vol += (ax * (by * cz - bz * cy) - ay * (bx * cz - bz * cx) + az * (bx * cy - by * cx)) / 6.0
-    return [min(xs), min(ys), min(zs)], [max(xs), max(ys), max(zs)], vol
+    """(lo, hi, signed volume), without materializing a per-triangle point list."""
+    source = triangles.iter_triangles() if isinstance(triangles, MeshTable) else iter(triangles)
+    lo = hi = None
+    volume = 0.0
+    for (ax, ay, az), (bx, by, bz), (cx, cy, cz) in source:
+        for point in ((ax, ay, az), (bx, by, bz), (cx, cy, cz)):
+            if lo is None:
+                lo, hi = list(point), list(point)
+            else:
+                for axis, value in enumerate(point):
+                    # Match Python min/max order and NaN behavior of the old loops.
+                    if value < lo[axis]:
+                        lo[axis] = value
+                    if value > hi[axis]:
+                        hi[axis] = value
+        volume += (ax * (by * cz - bz * cy) - ay * (bx * cz - bz * cx) + az * (bx * cy - by * cx)) / 6.0
+    if lo is None:
+        raise ValueError('empty triangle table')
+    return lo, hi, volume
 
 
 _TABLE_CACHE = {}
 
 
 def archive_tables(archive, name):
-    """(data, tables) for one 3MF member; tables cached per archive member version.
-
-    Intake reads the same mesh for part sizes and again for the printable triangles;
-    this keeps one parsed copy (one model at a time, like the triangle cache).
-    """
+    """Return structure XML and compact tables, cached for one archive version."""
     info = archive.getinfo(name)
     source = str(getattr(archive, 'filename', '') or id(archive))
     key = (name, info.CRC, info.file_size)
     if _TABLE_CACHE.get('source') != source:
-        # One archive at a time, but every member of it: a Bambu 3MF alternates
-        # between 3D/3dmodel.model and 3D/Objects/*.model, and evicting on each
-        # switch reparsed the 88 MB object mesh three times per intake.
         _TABLE_CACHE.clear()
         _TABLE_CACHE['source'] = source
     hit = _TABLE_CACHE.get(key)
     if hit is not None:
         return hit
-    data = archive.read(name)
-    tables = mesh_tables(data)
-    if tables is not None:
-        data = strip_mesh_bodies(data)
-    _TABLE_CACHE[key] = (data, tables)
-    return data, tables
+    with archive.open(info) as member:
+        parsed = _parse_member(member)
+    if parsed is None:
+        result = (archive.read(info), None)
+    else:
+        tables, structure = parsed
+        result = (structure, tables)
+    _TABLE_CACHE[key] = result
+    return result

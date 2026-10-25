@@ -229,7 +229,9 @@ def _annotate_parts(archive, names, parts, filaments):
 
 
 def inventory(path):
+    from .intake_resources import check_source
     path = Path(path)
+    check_source(path)
     if path.suffix.lower() != '.3mf':
         # Non-3MF sources have no palette, but every decision is still bound to the file bytes.
         res = {'source_sha256': __import__('hashlib').sha256(path.read_bytes()).hexdigest(),

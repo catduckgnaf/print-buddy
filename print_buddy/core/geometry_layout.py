@@ -369,7 +369,9 @@ def _load_3mf_parts(path: Path, input_unit: str | None = None):
 
 def load_parts(path: Path, input_unit: str | None = None, split_stl: bool = False):
     """Load printable parts from an STL or 3MF in millimeters without user scaling."""
+    from .intake_resources import check_source
     path = Path(path)
+    check_source(path)
     suffix = path.suffix.lower()
     if suffix not in ('.stl', '.3mf'):
         raise ValueError('Only STL and 3MF are supported')

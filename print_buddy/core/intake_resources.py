@@ -1,0 +1,106 @@
+"""Conservative offline intake budgets, checked before DOM/mesh allocation.
+
+These are refusal limits, not a promise that every accepted mesh fits in a
+particular RSS budget (component instancing and downstream slicers vary).
+"""
+from pathlib import Path
+import struct
+import xml.parsers.expat
+import zipfile
+
+MIB = 1024 * 1024
+MAX_DOWNLOAD_BYTES = 200 * MIB
+MAX_MEMBERS = 4096
+MAX_EXPANDED_BYTES = 256 * MIB
+MAX_XML_BYTES = 32 * MIB  # aggregate model XML; DOM + Python geometry amplify this
+MAX_MEMBER_BYTES = 64 * MIB
+MAX_STL_BYTES = 32 * MIB
+MAX_TRIANGLES = 500_000
+MAX_VERTICES = 500_000
+MAX_XML_ELEMENTS = 1_100_000
+CHUNK = 64 * 1024
+
+
+class IntakeLimitExceeded(ValueError):
+    """Safe, user-facing refusal; no slicing or printer operation is permitted."""
+
+
+def _refuse(detail):
+    raise IntakeLimitExceeded(
+        f'Model intake refused: {detail}. Simplify the mesh or split it into smaller '
+        'files in your modeling app, then upload again. Nothing was sliced or started.')
+
+
+def save_download(response, target):
+    """Count actual bytes, not untrusted Content-Length; remove partial downloads."""
+    target = Path(target)
+    try:
+        with target.open('wb') as output:
+            total = 0
+            while chunk := response.read(CHUNK):
+                total += len(chunk)
+                if total > MAX_DOWNLOAD_BYTES:
+                    _refuse(f'download exceeds {MAX_DOWNLOAD_BYTES // MIB} MiB limit')
+                output.write(chunk)
+    except BaseException:
+        target.unlink(missing_ok=True)
+        raise
+
+
+def check_source(path):
+    """Check sizes first, then bounded streaming XML counts without building a tree."""
+    path = Path(path)
+    size = path.stat().st_size
+    if size > MAX_DOWNLOAD_BYTES:
+        _refuse(f'file exceeds {MAX_DOWNLOAD_BYTES // MIB} MiB limit')
+    if path.suffix.lower() == '.stl':
+        if size > MAX_STL_BYTES:
+            _refuse(f'STL exceeds {MAX_STL_BYTES // MIB} MiB limit')
+        with path.open('rb') as source:
+            header = source.read(84)
+            if len(header) == 84:
+                triangles = struct.unpack('<I', header[80:84])[0]
+                if 84 + 50 * triangles == size and triangles > MAX_TRIANGLES:
+                    _refuse(f'triangle count exceeds {MAX_TRIANGLES:,} limit')
+        return
+    if path.suffix.lower() != '.3mf':
+        return
+    with zipfile.ZipFile(path) as archive:
+        members = archive.infolist()
+        if len(members) > MAX_MEMBERS:
+            _refuse(f'archive exceeds {MAX_MEMBERS:,} members')
+        if sum(i.file_size for i in members) > MAX_EXPANDED_BYTES:
+            _refuse(f'expanded archive exceeds {MAX_EXPANDED_BYTES // MIB} MiB limit')
+        models = [i for i in members if i.filename.lower().endswith('.model')]
+        if sum(i.file_size for i in models) > MAX_XML_BYTES:
+            _refuse(f'model XML exceeds {MAX_XML_BYTES // MIB} MiB limit')
+        if any(i.file_size > MAX_MEMBER_BYTES for i in members):
+            _refuse(f'archive member exceeds {MAX_MEMBER_BYTES // MIB} MiB limit')
+        counts = {'triangle': 0, 'vertex': 0, 'elements': 0}
+
+        def start(name, attrs):
+            local = name.rsplit('}', 1)[-1]
+            counts['elements'] += 1
+            if counts['elements'] > MAX_XML_ELEMENTS:
+                _refuse(f'XML element count exceeds {MAX_XML_ELEMENTS:,} limit')
+            if local in ('triangle', 'vertex'):
+                counts[local] += 1
+                maximum = MAX_TRIANGLES if local == 'triangle' else MAX_VERTICES
+                if counts[local] > maximum:
+                    _refuse(f'{local} count exceeds {maximum:,} limit')
+
+        def doctype(*args):
+            _refuse('XML document type declarations are not supported')
+
+        for member in models:
+            parser = xml.parsers.expat.ParserCreate(namespace_separator='}')
+            parser.StartElementHandler = start
+            parser.StartDoctypeDeclHandler = doctype
+            with archive.open(member) as source:
+                total = 0
+                while chunk := source.read(CHUNK):
+                    total += len(chunk)
+                    if total > MAX_XML_BYTES:
+                        _refuse(f'model XML exceeds {MAX_XML_BYTES // MIB} MiB limit')
+                    parser.Parse(chunk, False)
+                parser.Parse(b'', True)

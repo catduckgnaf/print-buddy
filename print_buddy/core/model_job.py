@@ -46,8 +46,9 @@ def request_json(url, *, data=None, headers=None, timeout=25):
 def download(url, target):
     target.parent.mkdir(parents=True, exist_ok=True)
     req=urllib.request.Request(url, headers={"User-Agent":UA})
-    with urllib.request.urlopen(req, timeout=90) as r, open(target,"wb") as out:
-        shutil.copyfileobj(r,out)
+    from .intake_resources import save_download
+    with urllib.request.urlopen(req, timeout=90) as r:
+        save_download(r, target)
     if target.stat().st_size == 0: raise RuntimeError("downloaded an empty file")
 
 
@@ -403,6 +404,8 @@ def mesh_audit(path, printer_model=None):
 
 
 def audit(path, printer_model=None):
+    from .intake_resources import check_source
+    check_source(path)
     with open(path,"rb") as source:
         digest=hashlib.file_digest(source,"sha256").hexdigest()
     out={"path":path.name,"bytes":path.stat().st_size,"sha256":digest,"kind":path.suffix.lower()}

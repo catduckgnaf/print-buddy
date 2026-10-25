@@ -29,6 +29,7 @@ Do not run both Discord modes with the same token. Installing, enabling services
 
 | Symptom | First check |
 | --- | --- |
+| Model intake is refused for size or complexity | Simplify or split the model offline; see [intake resource limits](INTAKE-LIMITS.md). |
 | Bot replies twice | Confirm only one mode uses the token; see [standalone setup](STANDALONE.md). |
 | Startup rejects a setting | Read the named key and [configuration precedence](CONFIGURATION-YAML.md); YAML takes precedence over corresponding TOML files. |
 | Slicing fails or model does not fit | Check slicer command, selected printer/profile and model bounds in the [reference](PROJECT-REFERENCE.md). Do not bypass G-code or clearance guards. |

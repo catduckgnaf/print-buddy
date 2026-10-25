@@ -225,7 +225,6 @@ def per_part_fit(source, bed=None, height=None, exclusions=None, brim_policy=Non
     """
     from . import color_geometry
     from . import plate_merge
-    from .orca_adapter import _hull
     from .source_colors import inventory
 
     bed_x, bed_y, height_limit = _bed_xy_height(bed, height)
@@ -253,7 +252,7 @@ def per_part_fit(source, bed=None, height=None, exclusions=None, brim_policy=Non
             points = color_geometry._world_points(archive, {oid})
             extent = [round(max(p[a] for p in points) - min(p[a] for p in points), 3)
                       for a in range(3)]
-            hull = _hull([(p[0], p[1]) for p in points])
+            hull = color_geometry._world_hull_xy(archive, {oid})[0][0]
             candidates = mesh_yaw_candidates(hull, usable[0], usable[1])
             _ratio, best_deg, best_envelope = candidates[0]
             fits_authored = (extent[0] <= usable[0] + 1e-9 and extent[1] <= usable[1] + 1e-9

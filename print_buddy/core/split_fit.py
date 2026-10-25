@@ -11,12 +11,20 @@ is applied exactly once.
   an individual part's footprint or the machine's printable area, so reducing
   it cannot make an individually oversized part fit.
 
-Generated features (brim, skirt, supports, prime tower) are not part of this
-geometry check: their extents depend on the slice and are accounted for by the
-slicer capacity checks and the G-code out-of-bounds guard downstream. A plan
-returned here is therefore an offer to slice at 100%, never a print-ready
-assurance, and separate plates are never offered as a remedy for a part that
-does not fit a plate on its own.
+One generated feature IS part of this geometry check when the caller
+supplies the job's brim policy (#221 stage 3): the brim budget computed by
+``orca_adapter.required_feature_edge`` (the explicit brim width plus the
+resolved travel sweep) is added to the bed-edge clearance, so the usable
+area shrinks by that budget exactly once and a part that fits only without
+its brim no longer counts as fitting — its blocking reason names the brim.
+With no brim policy supplied, the budget is zero and verdicts are exactly
+as before. The remaining generated features (skirt, supports, prime tower
+and purge structures) are slice-dependent: their extents stay with the
+slicer capacity checks and the G-code out-of-bounds guard downstream, and
+this check makes no claim about them. A plan returned here is therefore an
+offer to slice at 100%, never a print-ready assurance, and separate plates
+are never offered as a remedy for a part that does not fit a plate on its
+own.
 
 A part that fits a plate only when turned in the bed plane gets a plate of
 its own, and the plan records the turn as ``yaw_by_object`` (object id to
@@ -178,7 +186,21 @@ def mesh_yaw_candidates(hull_xy, usable_x, usable_y):
     return candidates
 
 
-def per_part_fit(source, bed=None, height=None, exclusions=None):
+def _feature_edge_mm(brim_policy=None, state=None):
+    """Brim/feature edge budget in mm for a supplied brim policy, else 0.
+
+    The budget is ``orca_adapter.required_feature_edge`` (explicit brim
+    width plus the resolved travel sweep) for the job's brim policy. No
+    policy — neither passed directly nor carried on ``state`` — means no
+    budget, so policy-off jobs keep the pre-stage-3 verdicts exactly.
+    """
+    if brim_policy is None and not (state and state.get('brim_policy')):
+        return 0.0
+    from .orca_adapter import required_feature_edge
+    return float(required_feature_edge(state or {}, brim_policy))
+
+
+def per_part_fit(source, bed=None, height=None, exclusions=None, brim_policy=None, state=None):
     """Evaluate every authored object of a 3MF at 100% scale, one row per object.
 
     Each row reports the authored extent, the usable XY area (bed minus the
@@ -189,10 +211,17 @@ def per_part_fit(source, bed=None, height=None, exclusions=None):
     override them, as (x0, y0, x1, y1) rectangles in bed coordinates), the row
     also reports an avoiding ``placement_mm``; a part whose footprint fits
     only where every placement overlaps an exclusion does not count as
-    fitting, and its blocking reason names the exclusion. Parts are evaluated
-    as authored: grouping, part colors and relationships are read, never
-    altered, and a continuous part is never silently split. ``fits_full_size``
-    is False for a part that no separate-plate assignment can cure.
+    fitting, and its blocking reason names the exclusion. When the caller
+    supplies the job's brim policy (``brim_policy``, with the printer
+    ``state`` it was resolved against), the brim/feature budget from
+    :func:`_feature_edge_mm` shrinks the usable area exactly once, the row
+    reports it as ``feature_edge_mm``, placements keep the brimmed footprint
+    clear of exclusions as well as the bed edge, and a part that fits only
+    without its brim does not count as fitting — its blocking reason names
+    the brim budget. Parts are evaluated as authored: grouping, part colors
+    and relationships are read, never altered, and a continuous part is never
+    silently split. ``fits_full_size`` is False for a part that no
+    separate-plate assignment can cure.
     """
     from . import color_geometry
     from . import plate_merge
@@ -201,7 +230,11 @@ def per_part_fit(source, bed=None, height=None, exclusions=None):
 
     bed_x, bed_y, height_limit = _bed_xy_height(bed, height)
     edge = float(plate_merge.EDGE_MARGIN_MM)
-    usable = (bed_x - 2 * edge, bed_y - 2 * edge)
+    feature = _feature_edge_mm(brim_policy, state)
+    # The brim/feature budget is added to the edge clearance once: the usable
+    # area is bed - 2 * (edge + feature) per axis, never shrunk twice.
+    usable = (bed_x - 2 * (edge + feature), bed_y - 2 * (edge + feature))
+    usable_no_brim = (bed_x - 2 * edge, bed_y - 2 * edge)
     if exclusions is None:
         exclusions = _declared_exclusions()
     exclusions = [tuple(float(v) for v in rect) for rect in exclusions]
@@ -226,17 +259,40 @@ def per_part_fit(source, bed=None, height=None, exclusions=None):
             fits_authored = (extent[0] <= usable[0] + 1e-9 and extent[1] <= usable[1] + 1e-9
                              and extent[2] <= height_limit + 1e-9)
             chosen, placement = None, None
+            fits_without_brim = False
             if extent[2] <= height_limit + 1e-9:
                 for _r, degrees, envelope in candidates:
                     if envelope[0] > usable[0] + 1e-9 or envelope[1] > usable[1] + 1e-9:
                         continue
                     if exclusions:
-                        spot = _placement(envelope, bed_x, bed_y, edge, exclusions)
-                        if spot is None:
-                            continue
-                        placement = spot
+                        if feature:
+                            # Place the brimmed footprint (envelope grown by
+                            # the budget on every side) against the original
+                            # edge clearance, so the brim itself also avoids
+                            # the exclusion and the bed edge; the recorded
+                            # placement is the part's own lower-left corner.
+                            grown = (envelope[0] + 2 * feature, envelope[1] + 2 * feature)
+                            spot = _placement(grown, bed_x, bed_y, edge, exclusions)
+                            if spot is None:
+                                continue
+                            placement = (round(spot[0] + feature, 3), round(spot[1] + feature, 3))
+                        else:
+                            spot = _placement(envelope, bed_x, bed_y, edge, exclusions)
+                            if spot is None:
+                                continue
+                            placement = spot
                     chosen = (degrees, envelope)
                     break
+                if feature:
+                    # Shadow verdict at the no-brim usable area, used only to
+                    # name the brim as the blocker when it alone is decisive.
+                    for _r, _degrees, envelope in candidates:
+                        if (envelope[0] <= usable_no_brim[0] + 1e-9
+                                and envelope[1] <= usable_no_brim[1] + 1e-9
+                                and (not exclusions
+                                     or _placement(envelope, bed_x, bed_y, edge, exclusions) is not None)):
+                            fits_without_brim = True
+                            break
             fits = chosen is not None
             yaw, envelope = chosen if chosen else (best_deg, best_envelope)
             reason = None
@@ -244,6 +300,11 @@ def per_part_fit(source, bed=None, height=None, exclusions=None):
                 if extent[2] > height_limit + 1e-9:
                     reason = (f'height {extent[2]:g} mm exceeds the {height_limit:g} mm '
                               'print height')
+                elif feature and fits_without_brim:
+                    reason = (f'footprint {extent[0]:g} x {extent[1]:g} mm fits the usable '
+                              f'{usable_no_brim[0]:g} x {usable_no_brim[1]:g} mm bed without a brim, '
+                              f'but not with the {feature:g} mm brim/feature edge budget applied '
+                              f'once (usable {usable[0]:g} x {usable[1]:g} mm with the brim)')
                 elif exclusions and any(env[0] <= usable[0] + 1e-9 and env[1] <= usable[1] + 1e-9
                                         for _r, _d, env in candidates):
                     x0, y0, x1, y1 = exclusions[0]
@@ -261,6 +322,7 @@ def per_part_fit(source, bed=None, height=None, exclusions=None):
                          'best_yaw_deg': yaw,
                          'best_extent_mm': [round(envelope[0], 3), round(envelope[1], 3), extent[2]],
                          'fits_authored': bool(fits_authored),
+                         'feature_edge_mm': round(feature, 3),
                          'fits_full_size': bool(fits),
                          'placement_mm': list(placement) if placement else None,
                          'exclusions_mm': [[round(v, 3) for v in rect] for rect in exclusions],
@@ -268,7 +330,7 @@ def per_part_fit(source, bed=None, height=None, exclusions=None):
     return rows
 
 
-def split_plan_100(source, bed=None, height=None, exclusions=None):
+def split_plan_100(source, bed=None, height=None, exclusions=None, brim_policy=None, state=None):
     """Return the fewest greedy full-size plates, or None if any object cannot fit.
 
     Source plate assignments are respected: objects from distinct authored plates
@@ -284,9 +346,15 @@ def split_plan_100(source, bed=None, height=None, exclusions=None):
     its own plate and the placement is recorded in ``placement_by_object``,
     so slicing can land that plate exactly there (#221 stage 2). A part with
     no avoiding placement does not fit (its blocking reason names the
-    exclusion), so no plan is offered for it. Geometry checks and packing use
-    the printer's edge and spacing margins (see the module docstring) and do
-    not slice or contact the printer.
+    exclusion), so no plan is offered for it. When the caller supplies the
+    job's brim policy (``brim_policy`` / ``state``, #221 stage 3), the
+    brim/feature budget is threaded into :func:`per_part_fit` — a part that
+    fits only without its brim has no plan — and packing checks each plate
+    with footprints grown by the budget on every side, so shared plates keep
+    the brimmed parts clear of the bed edge and of each other; the budget is
+    applied exactly once in each check, never stacked. Geometry checks and
+    packing use the printer's edge and spacing margins (see the module
+    docstring) and do not slice or contact the printer.
     """
     from . import color_geometry
     from . import model_job
@@ -298,7 +366,9 @@ def split_plan_100(source, bed=None, height=None, exclusions=None):
     manifest = inventory(source)
     if not manifest.get('parts'):
         return None
-    report = per_part_fit(source, bed=(bed_x, bed_y), height=height, exclusions=exclusions)
+    report = per_part_fit(source, bed=(bed_x, bed_y), height=height, exclusions=exclusions,
+                          brim_policy=brim_policy, state=state)
+    feature = _feature_edge_mm(brim_policy, state)
     if any(not row['fits_full_size'] for row in report):
         return None
     yaw_by_object = {row['object_id']: row['best_yaw_deg'] for row in report
@@ -326,7 +396,10 @@ def split_plan_100(source, bed=None, height=None, exclusions=None):
         for plate_id in sorted(groups, key=str):
             objects = groups[plate_id]
             boxes = {oid: color_geometry._world_bounds(archive, {oid})[0] for oid in objects}
-            extents = {oid: (box[0][1] - box[0][0], box[1][1] - box[1][0])
+            # Packing footprints carry the brim/feature budget grown on every
+            # side (zero when no brim policy was supplied, so packing is then
+            # exactly as before); pack() applies the bed-edge margin itself.
+            extents = {oid: (box[0][1] - box[0][0] + 2 * feature, box[1][1] - box[1][0] + 2 * feature)
                        for oid, box in boxes.items()}
             if any(oid not in yaw_by_object and oid not in placement_by_object
                    and plate_merge.pack({oid: extent}, bed) is None

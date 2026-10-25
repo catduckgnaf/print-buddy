@@ -467,3 +467,178 @@ def test_per_part_fit_brim_and_exclusion_compose(tmp_path):
     assert 'brim' in row['blocking_reason']
     assert split_fit.split_plan_100(tight, 220, exclusions=exclusions,
                                     brim_policy=_BRIM_10, state=_BRIM_STATE) is None
+
+
+# --- #221 P2: polygon (convex hull) bins on the split path -----------------
+# Complementary right triangles: each is 180 x 110 mm, so rectangle packing
+# cannot bin the pair (two 180 mm widths / 110 mm depths never shelf-pack
+# the 204 mm usable bed), but their hulls interlock along the diagonal with
+# the merge spacing to spare — the same shapes as the P1 merge tests.
+_TRI_A = [(0, 0), (180, 0), (0, 110)]
+_TRI_B = [(0, 110), (180, 0), (180, 110)]
+
+
+def _tri_prism(poly, h=10):
+    return [(x, y, 0) for x, y in poly] + [(poly[0][0], poly[0][1], h)]
+
+
+def _tri_source(path):
+    _mesh_source(path, {'1': _tri_prism(_TRI_A), '2': _tri_prism(_TRI_B),
+                        '3': _rect_points(150, 150, 10)}, [['1', '2'], ['3']])
+
+
+def _placed_hulls(source, shifts):
+    from print_buddy.core import color_geometry
+    placed = {}
+    with zipfile.ZipFile(source) as archive:
+        for oid, shift in shifts.items():
+            hull, _bounds = color_geometry._world_hull_xy(archive, {oid})[0]
+            placed[oid] = [(x + shift[0], y + shift[1]) for x, y in hull]
+    return placed
+
+
+def test_split_plan_polygon_bins_triangles_onto_a_shared_plate(tmp_path):
+    source = tmp_path / 'tri-split.3mf'
+    _tri_source(source)
+    # Rectangle binning alone gives the authored group two plates.
+    assert plate_merge.pack({'1': (180, 110), '2': (180, 110)}, 220) is None
+    plan = split_fit.split_plan_100(source, 220)
+    assert plan is not None
+    assert plan['plates'] == [['1:1', '2:1'], ['3:1']]
+    shifts, solo = plan['shifts_by_plate']
+    assert set(shifts) == {'1', '2'} and solo is None
+    placed = _placed_hulls(source, shifts)
+    assert plate_merge.hull_distance(placed['1'], placed['2']) >= plate_merge.SPACING_MM - 1e-9
+    for poly in placed.values():
+        assert all(plate_merge.EDGE_MARGIN_MM - 1e-9 <= v <= 220 - plate_merge.EDGE_MARGIN_MM + 1e-9
+                   for point in poly for v in point)
+
+
+def test_split_plan_polygon_plate_supersedes_solo_placements_on_an_exclusion_bed(tmp_path):
+    # Deliberate change (#221 P2): on an exclusion bed the triangles would
+    # each have been solo-binned with a recorded placement (Stage 2). A
+    # proved shared polygon placement that also avoids the exclusion wins
+    # for them; the untouched rectangle keeps its Stage 2 solo placement.
+    source = tmp_path / 'tri-exclusion.3mf'
+    _tri_source(source)
+    plan = split_fit.split_plan_100(source, 220, exclusions=[(0, 0, 18, 28)])
+    assert plan is not None
+    assert plan['plates'] == [['1:1', '2:1'], ['3:1']]
+    assert plan['placement_by_object'] == {'3': [18.0, 8.0]}
+    shifts = plan['shifts_by_plate'][0]
+    assert set(shifts) == {'1', '2'}
+    exclusion = plate_merge._rect_polygon((0, 0, 18, 28))
+    for poly in _placed_hulls(source, shifts).values():
+        assert not plate_merge._polygons_overlap(poly, exclusion)
+
+
+def test_split_plan_polygon_sharing_charges_the_brim_budget_once(tmp_path):
+    source = tmp_path / 'tri-brim.3mf'
+    _tri_source(source)
+    plan = split_fit.split_plan_100(source, 220, brim_policy=_BRIM_10, state=_BRIM_STATE)
+    assert plan is not None and plan['plates'][0] == ['1:1', '2:1']
+    placed = _placed_hulls(source, plan['shifts_by_plate'][0])
+    # Hull-to-hull is spacing + 2 * feature and hull-to-edge is edge +
+    # feature: the budget replaces the rectangle growth, never stacks.
+    assert plate_merge.hull_distance(placed['1'], placed['2']) >= \
+        plate_merge.SPACING_MM + 2 * 10.0 - 1e-9
+    for poly in placed.values():
+        assert all(v >= plate_merge.EDGE_MARGIN_MM + 10.0 - 1e-9 for point in poly for v in point)
+
+
+def test_split_plan_brim_budget_can_remove_the_shared_polygon_plate(tmp_path):
+    # 185 x 115 mm complementary triangles share a polygon plate with no
+    # brim; under a 10 mm brim budget the shared plate is no longer offered.
+    def big(poly):
+        return [(x * 185 / 180, y * 115 / 110) for x, y in poly]
+    source = tmp_path / 'tri-brim-tight.3mf'
+    _mesh_source(source, {'1': _tri_prism(big(_TRI_A)), '2': _tri_prism(big(_TRI_B)),
+                          '3': _rect_points(150, 150, 10)}, [['1', '2'], ['3']])
+    plain = split_fit.split_plan_100(source, 220)
+    assert plain is not None and 'shifts_by_plate' in plain
+    brimmed = split_fit.split_plan_100(source, 220, brim_policy=_BRIM_10, state=_BRIM_STATE)
+    assert brimmed is None or 'shifts_by_plate' not in brimmed
+
+
+def test_split_plan_rectangle_only_sources_record_no_shifts(tmp_path):
+    source = tmp_path / 'two-boxes.3mf'
+    _source(source, {'1': (150, 150, 10), '2': (150, 150, 10)}, [['1', '2']])
+    plan = split_fit.split_plan_100(source, 220)
+    assert plan is not None and 'shifts_by_plate' not in plan
+
+
+def test_fit_choice_rows_carry_the_split_shifts():
+    from print_buddy.core.prepared_intake import fit_choice_rows
+    shifts = [{'1': [1.0, 2.0, 0.0], '2': [3.0, 4.0, 0.0]}, None]
+    rows = fit_choice_rows({'scales': [], 'rotations': [],
+                            'split_plan': {'plates': [['1:1', '2:1'], ['3:1']],
+                                           'shifts_by_plate': shifts}})
+    (split,) = [row for row in rows if row['kind'] == 'split']
+    assert split['shifts_by_plate'] == shifts
+
+
+def test_slicing_a_polygon_split_lands_at_the_recorded_shifts(tmp_path, monkeypatch):
+    import json
+
+    import pytest
+
+    from print_buddy.core import color_geometry, model_job, orca_adapter
+    from .test_plate_merge import _fake_slice
+    source = tmp_path / 'tri-split.3mf'
+    _tri_source(source)
+    plan = split_fit.split_plan_100(source, 220)
+    assert plan and plan['shifts_by_plate'][0]
+    job_path = _split_job(tmp_path, source, plan)
+    fake = _fake_slice()
+    monkeypatch.setattr(orca_adapter, 'slice_model', fake)
+    paths = model_job.slice_job(job_path)
+    assert len(paths) == 2 and len(fake.calls) == 2
+    saved = json.loads(job_path.read_text())
+    shared = next(row for row in saved['derived_plates'] if row['part_keys'] == ['1:1', '2:1'])
+    assert shared['shifts_by_object'] == plan['shifts_by_plate'][0]
+    assert shared['plate_report']['merged_placement'] is True
+    solo = next(row for row in saved['derived_plates'] if row['part_keys'] == ['3:1'])
+    assert 'shifts_by_object' not in solo
+    # Derived-plate re-read proof: every object landed at the recorded
+    # corner (authored bounds minimum + shift) and hull spacing survives.
+    derived = Path(shared['plate'])
+    placed = {}
+    with zipfile.ZipFile(derived) as archive:
+        for oid in ('1', '2'):
+            hull, bounds = color_geometry._world_hull_xy(archive, {oid})[0]
+            placed[oid] = hull
+            shift = plan['shifts_by_plate'][0][oid]
+            with zipfile.ZipFile(source) as src_archive:
+                authored = color_geometry._world_bounds(src_archive, {oid})[0]
+            assert bounds[0][0] == pytest.approx(authored[0][0] + shift[0], abs=2e-3)
+            assert bounds[1][0] == pytest.approx(authored[1][0] + shift[1], abs=2e-3)
+    assert plate_merge.hull_distance(placed['1'], placed['2']) >= plate_merge.SPACING_MM - 1e-6
+
+
+def test_slicing_refuses_unproved_or_malformed_shifts(tmp_path, monkeypatch):
+    import pytest
+
+    from print_buddy.core import model_job, orca_adapter
+    from .test_plate_merge import _fake_slice
+    source = tmp_path / 'tri-split.3mf'
+    _tri_source(source)
+    good = {'1': [0.0, 0.0, 0.0], '2': [0.0, 0.0, 0.0]}
+    plates = [['1:1', '2:1'], ['3:1']]
+    bad_plans = [
+        ({'plates': plates, 'shifts_by_plate': [{**good, '9': [0.0, 0.0, 0.0]}, None]}, 'shifts'),
+        ({'plates': plates, 'shifts_by_plate': [{'1': [0.0, 0.0, 0.0]}, None]}, 'do not name exactly'),
+        ({'plates': plates, 'shifts_by_plate': [{'1': [0.0, 0.0], '2': [0.0, 0.0, 0.0]}, None]}, 'triple'),
+        # A non-finite shift fails closed: either the split validation's
+        # finite check or the recipe serializer's strict JSON encoding.
+        ({'plates': plates, 'shifts_by_plate': [{'1': [float('inf'), 0.0, 0.0], '2': [0.0, 0.0, 0.0]}, None]},
+         '(finite|Out of range float)'),
+        ({'plates': plates, 'shifts_by_plate': [good]}, 'parallel'),
+        ({'plates': [['1:1'], ['2:1'], ['3:1']],
+          'shifts_by_plate': [{'1': [0.0, 0.0, 0.0]}, None, None]}, 'not shared'),
+        ({'plates': plates, 'shifts_by_plate': [{'1': [500.0, 0.0, 0.0], '2': [0.0, 0.0, 0.0]}, None]}, 'does not fit'),
+    ]
+    for plan, match in bad_plans:
+        job_path = _split_job(tmp_path, source, plan)
+        monkeypatch.setattr(orca_adapter, 'slice_model', _fake_slice())
+        with pytest.raises((RuntimeError, ValueError), match=match):
+            model_job.slice_job(job_path)

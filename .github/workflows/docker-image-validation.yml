@@ -3,7 +3,8 @@ name: Docker image validation (manual)
 # INERT until a maintainer dispatches it: no push, pull_request or schedule trigger. It builds ONE
 # image variant on ONE hosted runner and runs tests/docker/image_acceptance.sh against it offline.
 # It never pushes or publishes an image, tags, releases or deploys, and never contacts Discord, a
-# printer or a Spoolman server. The image and the build cache are discarded with the runner.
+# printer or an external Spoolman server (the included Spoolman runs only inside the
+# harness's isolated network). The image and the build cache are discarded with the runner.
 # Run only under the approval packet in docs/DOCKER-117-ACCEPTANCE.md ("Phase 3 hosted run").
 on:
   workflow_dispatch:
@@ -25,11 +26,6 @@ on:
         description: Compile jobs, auto or 1-64
         type: string
         default: auto
-      spoolman_mode:
-        description: Spoolman mode for runtime acceptance
-        type: choice
-        options: [external, bundled]
-        default: external
 
 permissions:
   contents: read
@@ -49,7 +45,8 @@ jobs:
       WITH_ORCA: ${{ inputs.with_orca }}
       WITH_BAMBU: ${{ inputs.with_bambu }}
       ORCA_BUILD_JOBS: ${{ inputs.orca_build_jobs }}
-      SPOOLMAN_MODE: ${{ inputs.spoolman_mode }}
+      # Spoolman is included in the stack (#214); acceptance always exercises it.
+      SPOOLMAN_MODE: included
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
       - name: Record the exact source and Orca revisions

@@ -13,7 +13,7 @@
   <Privileged>false</Privileged>
   <Support>https://github.com/catduckgnaf/print-buddy/issues</Support>
   <Project>https://github.com/catduckgnaf/print-buddy</Project>
-  <Overview>The standalone Discord bot. Install together with Print Buddy Listener, from the same image and the same appdata paths. Printers and Spoolman are external services; no port is published.</Overview>
+  <Overview>The standalone Discord bot. Install together with Print Buddy Listener and the included Spoolman container, from the same image and the same appdata paths. Printers are external services; no port is published.</Overview>
   <Category>Tools:</Category>
   <WebUI/>
   <TemplateURL/>
@@ -23,7 +23,7 @@
   <CPUset/>
   <DonateText/>
   <DonateLink/>
-  <Requires>The same image and appdata paths for Print Buddy Bot and Print Buddy Listener. Paths owned by UID/GID 1000.</Requires>
+  <Requires>The same image and appdata paths for Print Buddy Bot and Print Buddy Listener, plus the included Spoolman container on the same custom Docker network. Paths owned by UID/GID 1000.</Requires>
   <Config Name="State" Target="/data/hermes" Default="/mnt/user/appdata/print-buddy/hermes" Mode="rw" Description="Runtime state, prompts, hardware and job records. Back this up." Type="Path" Display="always" Required="true" Mask="false">/mnt/user/appdata/print-buddy/hermes</Config>
   <Config Name="Archive" Target="/data/archive" Default="/mnt/user/appdata/print-buddy/archive" Mode="rw" Description="Sliced jobs and G-code. Back this up." Type="Path" Display="always" Required="true" Mask="false">/mnt/user/appdata/print-buddy/archive</Config>
   <Config Name="Records" Target="/data/records" Default="/mnt/user/appdata/print-buddy/records" Mode="rw" Description="Print records. Back this up." Type="Path" Display="always" Required="true" Mask="false">/mnt/user/appdata/print-buddy/records</Config>
@@ -37,5 +37,5 @@
   <Config Name="Moonraker URL" Target="PRINT_BUDDY__SERVICES__MOONRAKER_URL" Default="" Mode="" Description="Klipper printers, for example http://printer.example:7125. Fluidd is not needed here." Type="Variable" Display="always" Required="false" Mask="false"></Config>
   <Config Name="OctoPrint URL" Target="PRINT_BUDDY__SERVICES__OCTOPRINT_URL" Default="" Mode="" Description="octoprint.marlin printers only." Type="Variable" Display="always" Required="false" Mask="false"></Config>
   <Config Name="OctoPrint API key" Target="OCTOPRINT_API_KEY" Default="" Mode="" Description="Secret, octoprint.marlin printers only." Type="Variable" Display="always" Required="false" Mask="true"></Config>
-  <Config Name="Spoolman URL" Target="PRINT_BUDDY__SERVICES__SPOOLMAN_URL" Default="" Mode="" Description="An existing Spoolman, for example http://spoolman.example:8000. Empty: none." Type="Variable" Display="always" Required="false" Mask="false"></Config>
+  <Config Name="Spoolman URL" Target="PRINT_BUDDY__SERVICES__SPOOLMAN_URL" Default="http://spoolman:8000" Mode="" Description="Included Spoolman container by default. Set an existing external Spoolman, for example http://spoolman.example:8000, to use that instead; nothing is migrated." Type="Variable" Display="always" Required="false" Mask="false">http://spoolman:8000</Config>
 </Container>

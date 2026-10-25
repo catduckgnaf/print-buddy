@@ -52,7 +52,7 @@ Schema, validation limits and TOML migration: [CONFIGURATION-YAML.md](CONFIGURAT
 | `services.moonraker_url` | `PRINT_BUDDY__SERVICES__MOONRAKER_URL` | empty | Klipper printers: Moonraker HTTP URL, e.g. `http://printer.example:7125`. Required by the listener |
 | `services.moonraker_ws_url` | `PRINT_BUDDY__SERVICES__MOONRAKER_WS_URL` | empty | Moonraker websocket; derived from `moonraker_url` when empty |
 | `services.camera_snapshot_url` | `PRINT_BUDDY__SERVICES__CAMERA_SNAPSHOT_URL` | empty | Camera snapshot URL; derived from the Moonraker host when empty |
-| `services.spoolman_url` | `PRINT_BUDDY__SERVICES__SPOOLMAN_URL` | empty | Spoolman URL. External by default; the bundled-Spoolman Compose file sets `http://spoolman:8000` |
+| `services.spoolman_url` | `PRINT_BUDDY__SERVICES__SPOOLMAN_URL` | empty | Spoolman URL. The file default is empty; the Docker Compose stack (and Unraid templates) set `http://spoolman:8000`, the included Spoolman. Set another URL to use an existing external Spoolman instead |
 | `services.openviking_url` | `PRINT_BUDDY__SERVICES__OPENVIKING_URL` | empty | Optional OpenViking memory store |
 | `services.vision_chat_url` | `PRINT_BUDDY__SERVICES__VISION_CHAT_URL` | empty | OpenAI-compatible endpoint for camera checks and roasts; empty disables both |
 | `services.stock_api_port` | `PRINT_BUDDY__SERVICES__STOCK_API_PORT` | `8898` | Flashforge stock API port for IFS presence |
@@ -111,8 +111,9 @@ These configure the Compose deployment, not Print Buddy itself. Set them in `.en
 | Variable | Default | What it does |
 |---|---|---|
 | `PRINT_BUDDY_IMAGE` | none, required | Image both services run: a locally built tag or a tested immutable digest. No published image exists yet |
-| `PRINT_BUDDY_DATA` | `./data` | Host folder holding the `hermes`, `archive`, `records` and `cache` volumes (and `spoolman` with the bundled override) |
+| `PRINT_BUDDY_DATA` | `./data` | Host folder holding the `hermes`, `archive`, `records`, `cache` and `spoolman` volumes |
 | `PRINT_BUDDY_CONFIG` | `/app/config/docker.yaml` | Settings file the services read (YAML, or legacy `.toml`) |
+| `TZ` | `UTC` | Timezone for the included Spoolman service only (IANA name); Print Buddy itself uses `discord.timezone` |
 
 ## Runtime environment
 

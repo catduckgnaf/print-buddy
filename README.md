@@ -39,7 +39,7 @@ Docker is not part of 2.1.0. No image has been published yet; the first image is
 
 1. Pin the image by digest, not a tag: set `PRINT_BUDDY_IMAGE=ghcr.io/catduckgnaf/print-buddy@sha256:<digest>` in `.env`. The digest will be in the publish run summary and that release's notes.
 2. Copy `.env.example` to `.env` and fill in the Discord token, channel and allowed users. Set `PRINT_BUDDY_DATA` to a persistent directory owned by UID 1000.
-3. Run `docker compose up -d`. Add `docker-compose.spoolman.yml` if you want Spoolman as a separate container.
+3. Run `docker compose up -d`. Spoolman is included: it starts with Print Buddy, already wired up, with its data under `PRINT_BUDDY_DATA/spoolman`. (Already run your own Spoolman? Set `PRINT_BUDDY__SERVICES__SPOOLMAN_URL` in `.env` and Print Buddy will use yours instead — nothing is migrated.)
 
 What the image includes:
 
@@ -48,7 +48,8 @@ What the image includes:
 | OrcaSlicer | Stable and alpha. `PRINT_BUDDY_ORCA_CHANNEL=stable` (default) or `alpha` picks one at startup, no rebuild. Any other value stops the container. Used for Flashforge and Sovol |
 | Bambu Studio | Default slicer for every Bambu Lab printer (A1, P1S) |
 | OpenSCAD | For CAD splitting (`cad_split.py --execute`) |
-| Not included | Spoolman (separate container), KiCad (deferred) |
+| Spoolman | Included as its own container in the Compose stack, pinned to `ghcr.io/donkie/spoolman:0.27.0`, data persisted under `PRINT_BUDDY_DATA/spoolman` |
+| Not included | KiCad (deferred) |
 
 See [Docker setup](docs/DOCKER.md) for health checks, upgrades and rollback.
 

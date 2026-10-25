@@ -1,10 +1,11 @@
 #!/bin/bash
 # Offline runtime acceptance for ONE already-built Print Buddy image. Never builds or pulls it.
 #
-#   tests/docker/image_acceptance.sh IMAGE [external|bundled] [OUT_DIR]
+#   tests/docker/image_acceptance.sh IMAGE [included] [OUT_DIR]
 #
-# IMAGE is a local tag or immutable ID. external (default) uses no Spoolman; bundled adds the
-# optional docker-compose.spoolman.yml (its pinned Spoolman image must already be present).
+# IMAGE is a local tag or immutable ID. Spoolman is included in docker-compose.yml (#214),
+# so every run exercises it (its pinned Spoolman image must already be present). The legacy
+# mode spelling `bundled` is accepted as an alias for `included`; there is no Spoolman-free mode.
 # Everything runs under a unique Compose project on an internal network with no route out, with
 # dummy secrets, and only this run's containers and temp files are removed afterwards. No
 # Discord, printer, Home Assistant or household Spoolman is contacted, and no host port is used.
@@ -14,12 +15,13 @@
 # refusal; egress isolation; the same on a read-only root; per-service bot and listener readiness;
 # stale and cross-container heartbeat refusal; graceful SIGTERM; data persistence across container
 # recreation; a same-image tag switch (recreation coverage, NOT a cross-version upgrade); and,
-# when bundled, Spoolman data persistence. Results: OUT_DIR/results.txt plus logs.
+# Spoolman data persistence. Results: OUT_DIR/results.txt plus logs.
 set -euo pipefail
 
-image=${1:?usage: image_acceptance.sh IMAGE [external|bundled] [OUT_DIR]}
-mode=${2:-external}
-case "$mode" in external|bundled) ;; *) echo "mode must be external or bundled" >&2; exit 2 ;; esac
+image=${1:?usage: image_acceptance.sh IMAGE [included] [OUT_DIR]}
+mode=${2:-included}
+case "$mode" in included|bundled) ;; *) echo "mode must be included (Spoolman is included in the stack; there is no external mode)" >&2; exit 2 ;; esac
+if [ "$mode" = bundled ]; then mode=included; fi
 repo=$(cd "$(dirname "$0")/../.." && pwd)
 out=${3:-$(mktemp -d)}
 mkdir -p "$out"
@@ -51,12 +53,10 @@ cleanup() {
 trap cleanup EXIT
 
 # The deployment files a user downloads, plus the acceptance overlays, in a fresh folder.
-cp "$repo/docker-compose.yml" "$repo/docker-compose.spoolman.yml" \
+cp "$repo/docker-compose.yml" \
    "$repo/tests/docker/compose.acceptance.yml" "$repo/tests/docker/compose.acceptance-spoolman.yml" "$work/"
 mkdir -p "$work/fixture" && cp "$repo/tests/docker/fake_moonraker.py" "$repo/tests/docker/image_probe.py" "$work/fixture/"
-files=(-f docker-compose.yml)
-if [ "$mode" = bundled ]; then files+=(-f docker-compose.spoolman.yml -f compose.acceptance-spoolman.yml); fi
-files+=(-f compose.acceptance.yml)
+files=(-f docker-compose.yml -f compose.acceptance-spoolman.yml -f compose.acceptance.yml)
 compose() { (cd "$work" && docker compose -p "$project" "${files[@]}" "$@"); }
 
 # .env from the shipped example: dummy values only, never real credentials.
@@ -195,8 +195,8 @@ else
 fi
 
 spool=""
-if [ "$mode" = bundled ]; then
-    log "bundled Spoolman: create a spool"
+if [ "$mode" = included ]; then
+    log "included Spoolman: create a spool"
     if compose up -d --wait --wait-timeout 180 spoolman > "$out/up-spoolman.txt" 2>&1 &&
         spool=$(compose exec -T spoolman python3 -c "
 import json, urllib.request

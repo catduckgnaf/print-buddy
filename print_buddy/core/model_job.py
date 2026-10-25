@@ -1154,6 +1154,10 @@ def verify_gcode(gcode_path):
     if nozzle_value is not None:
         floor=0.9*nozzle_value
         layers=re.split(r'^;LAYER_CHANGE', text, flags=re.M)
+        # Orca (notably with Arachne walls) writes ;WIDTH only when it changes, so a
+        # layer can inherit its width from an earlier one. Carry the width in effect
+        # across layers and count it once per structural feature (;TYPE) as well.
+        carried = [None]
         def structural_widths(block):
             # Gap infill deliberately fills spaces narrower than the nozzle. Its
             # transition count is not a wall-flow measurement; never remove model
@@ -1163,9 +1167,18 @@ def verify_gcode(gcode_path):
             for line in block.splitlines():
                 if line.startswith(";TYPE:"):
                     role = line[6:].strip().casefold()
-                if line.startswith(";WIDTH:") and role not in ("gap infill", "gap fill"):
-                    widths.append(float(line[7:]))
+                    if carried[0] is not None and role not in ("gap infill", "gap fill"):
+                        widths.append(carried[0])
+                if line.startswith(";WIDTH:"):
+                    carried[0] = float(line[7:])
+                    if role not in ("gap infill", "gap fill"):
+                        widths.append(carried[0])
+            if not widths and carried[0] is not None and role not in ("gap infill", "gap fill") \
+                    and re.search(r'^G[01] [^;\n]*E[0-9.]*[1-9]', block, re.M):
+                # Extrudes with no new ;TYPE/;WIDTH line: the width in effect still applies.
+                widths.append(carried[0])
             return widths
+        structural_widths(layers[0] if layers else "")
         first=structural_widths(layers[1] if len(layers)>1 else "")
         body=structural_widths("".join(layers[2:6]))
         for name,ws in (("first layer",first),("layers 2-5",body)):

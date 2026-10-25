@@ -303,7 +303,8 @@ def post_slice(gcode, *, ifs_slots=None, tool_slots=None, bed=None, result_json=
         if match_brim:
             val = match_brim.group(1).strip().strip('"')
             allowed_brim = own_settings.get('brim_type')
-            if allowed_brim is not None and val.lower() != str(allowed_brim).strip().lower():
+            # Turning the brim off is Print Buddy's own choice (fit policy, flex prints), never foreign.
+            if allowed_brim is not None and val.lower() not in (str(allowed_brim).strip().lower(), 'no_brim'):
                 r.block(f"Foreign effective setting brim_type: {val!r}; expected {allowed_brim!r}.")
         match = re.match(r"^;\s*(filament_z_hop_types|z_hop_types)\s*=\s*(.*)$", line, re.I)
         if match:

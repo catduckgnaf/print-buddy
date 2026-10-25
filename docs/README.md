@@ -14,6 +14,7 @@ Do not run both Discord modes with the same token. Installing, enabling services
 ## 2. Configure and use
 
 - [YAML configuration and TOML migration](CONFIGURATION-YAML.md): schema, precedence and safety limits.
+- [Guided setup and debugging in Discord](GUIDED-SETUP-DEBUGGING.md): the `/print-buddy setup` checklist (resumable, consent-gated, never collects the token) and the read-only, redacted `/print-buddy debugging` checks.
 - [Settings reference](SETTINGS.md): every setting with its YAML key, environment variable and Docker value, plus Docker build arguments and secrets.
 - [Detailed project reference](PROJECT-REFERENCE.md): workflow examples, commands, printer models, spool identity rules, monitoring and updates.
 - [Printer profiles and offline delivery](PRINTER-PROFILES.md): vendor/model inheritance, supported delivery methods and verification limitations.

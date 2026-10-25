@@ -159,6 +159,6 @@ printed instructions in [standalone systemd setup](STANDALONE.md#systemd) before
 
 Startup logs go to stderr by default; optional logging settings are in [standalone settings](STANDALONE.md#settings).
 Review and redact logs locally before sharing: diagnostic output can contain paths, channel IDs and service URLs.
-Setup/debugging slash-command wizards are not implemented; the supported checks here are CLI commands.
+In Discord, `/print-buddy setup` runs a guided, resumable setup checklist and `/print-buddy debugging` runs read-only, redacted diagnostics; see [guided setup and debugging](GUIDED-SETUP-DEBUGGING.md). The CLI checks above remain the offline and machine-level routes.
 After a restart, intake questions held in memory must be restarted by resending the model; do not treat old
 buttons as authorization. Listener alerts have separate persistent-button support.

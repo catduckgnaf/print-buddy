@@ -40,6 +40,10 @@ COMMANDS = (
     Command("spool", "List, change, add or sync spools (never moves the printer)",
             (Option("args", "list | change <slot> <spool#> | new brand, material, color, grams | sync"),),
             "/spool [list | change <slot> <spool#> | new ... | sync]"),
+    Command("print-buddy", "Guided setup and read-only debugging (never prints)",
+            (Option("action", "setup, debugging, status, cancel or help",
+                    ("setup", "debugging", "status", "cancel", "help")),),
+            "/print-buddy [setup | debugging | status | cancel | help]"),
     Command("print-help", "What Print Buddy can do", usage="/print-help"),
 )
 

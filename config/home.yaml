@@ -22,6 +22,13 @@ orca:
   - flatpak
   - run
   - com.orcaslicer.OrcaSlicer
+slicer:
+  # Optional user-installed Flash Studio executable; empty keeps the normal Orca/Bambu behavior.
+  flash_studio_path: ''
+# Stock Flashforge LAN. Empty host means the printer stays offline. The serial and
+# check code are never written here; they stay in AD5X_SERIAL and AD5X_CHECK_CODE.
+flashforge_stock:
+  host: ''
 bambu:
   command:
   - flatpak

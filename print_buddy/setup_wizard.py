@@ -293,10 +293,20 @@ def build_plan(w, *, hermes_found=False, existing_profiles=()):
                          "the access code above; Print Buddy only reads status in this stage.")
     if connection == "flashforge_stock":
         notes.append(f"{vendor.label}: Print Buddy uploads one .gcode and starts it through the printer's own "
-                     "LAN HTTP API. There is no Moonraker, no ZMod, and no multicolor.")
-        stock_lan = {"host": w.ask("stock_host", "Printer LAN IP address or hostname (port 8898)", "", _host)}
-        stock_serial = w.ask("stock_serial", "Printer serial number (on the printer; stored as a secret)", "", _serial)
-        stock_code = w.secret("stock_check_code", "Printer check code (stored as a secret)")
+                     "LAN HTTP API. There is no Moonraker, no ZMod, and no multicolor. Leave the address blank "
+                     "to stay offline until the printer is on the network.")
+        # Empty is valid: the printer stays offline until [flashforge_stock] host is set.
+        # A typed value still has to be a plain address, the same rule as the Bambu LAN host.
+        host = w.ask(
+            "stock_host",
+            "Printer LAN IP address or hostname (port 8898; Enter to leave offline)",
+            "",
+            lambda value: _host(value) if str(value or "").strip() else None,
+        )
+        if str(host or "").strip():
+            stock_lan = {"host": host.strip()}
+            stock_serial = w.ask("stock_serial", "Printer serial number (on the printer; stored as a secret)", "", _serial)
+            stock_code = w.secret("stock_check_code", "Printer check code (stored as a secret)")
     has_software = True
     if connection == "moonraker":
         has_software = w.confirm("has_printer_software", "Is Klipper with Moonraker already running on the printer?")

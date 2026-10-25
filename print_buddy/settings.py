@@ -86,7 +86,9 @@ OPEN_SECTIONS = {"cold_pull", "nozzle_temp_offsets", "material_temps"}
 OPTIONAL_KEYS = {("printer", "nozzle_type"): str, ("visual_watch", "enabled"): bool,
                  ("services", "octoprint_url"): str,
                  ("bambu", "lan_host"): str, ("bambu", "lan_serial"): str,
-                 ("bambu", "lan_access_code_env"): str}
+                 ("bambu", "lan_access_code_env"): str,
+                 ("slicer", "flash_studio_path"): str,
+                 ("flashforge_stock", "host"): str}
 DEFAULT_MATERIAL_TEMPS = {
     "PLA": {"nozzle": 210, "bed": 60}, "PETG": {"nozzle": 240, "bed": 85},
     "ABS": {"nozzle": 245, "bed": 100}, "ASA": {"nozzle": 260, "bed": 105},

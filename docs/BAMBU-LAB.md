@@ -1,10 +1,10 @@
-# Bambu Lab printers (A1 and P1S, offline only)
+# Bambu Lab printers (A1 and P1S; slicing offline, optional read-only LAN status)
 
 [Documentation home](README.md) · [Printer profiles](PRINTER-PROFILES.md)
 
-Select the A1 with `printer.model: bambulab.a1`. Print Buddy slices for the A1, checks fit and G-code, and can package the result. It never connects to the printer, and nothing in this phase has been tested on an A1.
+Select the A1 with `printer.model: bambulab.a1`. Print Buddy slices for the A1, checks fit and G-code, and can package the result. It connects to the printer only when you configure read-only LAN status (see [LAN status](#lan-status-read-only-opt-in)); it never uploads or starts a print, and nothing here has been tested on an A1 — not the slicing path, and not the LAN path.
 
-Select the P1S with `printer.model: bambulab.p1s`. Like every Bambu Lab printer it slices with Bambu Studio by default (`printer.slicer: orca` opts out). It works the same way, offline only, and has not been tested on a P1S either. Its differences: OrcaSlicer's P1S profile slices to 250 mm high (Bambu lists 256 mm), an 18 × 28 mm area at the front left of the bed is kept clear, and the vendor start and end moves use the front purge lane up to Y = 265. The AMS is not used; P1S jobs are single color. Generate its profiles with `--printer p1s`.
+Select the P1S with `printer.model: bambulab.p1s`. Like every Bambu Lab printer it slices with Bambu Studio by default (`printer.slicer: orca` opts out). It works the same way, and has not been tested on a P1S either. Its differences: OrcaSlicer's P1S profile slices to 250 mm high (Bambu lists 256 mm), an 18 × 28 mm area at the front left of the bed is kept clear, and the vendor start and end moves use the front purge lane up to Y = 265. The AMS is not used; P1S jobs are single color. Generate its profiles with `--printer p1s`.
 
 Print Buddy ships no A1 slicer profiles. Before the first A1 slice, generate them from your own OrcaSlicer (see [Set up the A1 profiles](#set-up-the-a1-profiles)).
 
@@ -28,15 +28,15 @@ The A1 is one printer module under the existing Bambu Lab vendor profile. See [P
 
 | File | Role |
 |---|---|
-| `print_buddy/printers/bambulab/__init__.py` | `VENDOR`: the only authority for connection (`offline`), start code (`bambu`), slicers, file formats and delivery (`discord`, `bambu_handoff`; never `printer`) |
+| `print_buddy/printers/bambulab/__init__.py` | `VENDOR`: the only authority for connection (`bambulab_lan`), start code (`bambu`), slicers, file formats and delivery (`discord`, `bambu_handoff`; never `printer`) |
 | `print_buddy/printers/bambulab/a1.py` | `MODEL` for `bambulab.a1` with `vendor=VENDOR`: bed, height, nozzle, slots, adapter, templates, baseline file |
-| `print_buddy/printers/bambulab/adapter.py` | `BambuOfflineAdapter`: every live call raises `LiveUnsupported`. `connection` is read from `VENDOR`. `verified_slicers` allows Bambu Studio (default) and OrcaSlicer |
+| `print_buddy/printers/bambulab/adapter.py` | `BambuAdapter` (the old `BambuOfflineAdapter` name is kept as an alias): upload/start calls raise `LiveUnsupported`; when LAN status is configured it also reads telemetry through `client.py`. `connection` is read from `VENDOR`. `verified_slicers` allows Bambu Studio (default) and OrcaSlicer |
 | `print_buddy/printers/bambulab/guard.py` | The A1 G-code checks, run after slicing, before packaging and at `print-now` |
 | `print_buddy/printers/bambulab/facts.py` | Supplemental metadata only: each hardware value the guard enforces, with its source and whether it was verified, plus the profile names, Print Buddy's overrides and the SHA-256 identity of the checked OrcaSlicer profiles. It decides nothing about connection, slicer or delivery |
 | `print_buddy/printers/bambulab/profiles.py` | Generates the A1 templates from an installed OrcaSlicer and re-verifies them before every use |
 | `<hermes_home>/state/orca-profiles/bambulab_a1/` | The generated templates, on the operator's machine only (`MODEL.generated_templates`) |
 
-The P1S is `bambulab/p1s.py`: its facts in `facts.P1S` (profile names, checked identity, 250 mm Orca height, bed exclusion, motion envelope), a `BambuOfflineAdapter` subclass and a `MODEL` with `generated_templates=True`. Its templates go to `<hermes_home>/state/orca-profiles/bambulab_p1s/`.
+The P1S is `bambulab/p1s.py`: its facts in `facts.P1S` (profile names, checked identity, 250 mm Orca height, bed exclusion, motion envelope), a `BambuAdapter` subclass and a `MODEL` with `generated_templates=True`. Its templates go to `<hermes_home>/state/orca-profiles/bambulab_p1s/`.
 
 ## What works and what does not
 
@@ -48,11 +48,29 @@ The P1S is `bambulab/p1s.py`: its facts in `facts.P1S` (profile names, checked i
 | Delivery | `discord` and `bambu_handoff` from `VENDOR`. A `.gcode.3mf` package is built in Bambu Studio's export layout. Opening it in Bambu Studio or Bambu Handy, printing it from SD, or printing a plain `.gcode` on an A1 has **not** been tested |
 | Print | Not offered. `print-now` verifies the file, then refuses. The bed-clear approval is not used up |
 | Bambu Studio as slicer | Default for the A1 and P1S, like every Bambu Lab printer; `[printer] slicer: orca` opts out. Its output passes the same A1 guard. No real Bambu Studio A1 slice has been run yet |
-| Live telemetry, upload, print control | Not supported. No MQTT, LAN FTPS or cloud client, no credentials |
+| Live telemetry | Read-only, opt-in: with `[bambu] lan_host` + `lan_serial` set and the access code supplied as a secret, the health check reads one MQTT status snapshot (state, progress, temperatures) — see [LAN status](#lan-status-read-only-opt-in). **Not tested on a printer.** No listener, no camera |
+| Upload, print control | Not supported. No LAN FTPS or cloud client, nothing starts a print |
 | AMS Lite multi-color | Not supported: tool changes are refused, as are multi-color, multi-part and multi-plate sources |
 | P1S | Supported offline, like the A1: `bambulab.p1s`, with profiles generated by `--printer p1s` from OrcaSlicer 2.4.2. Not tested on a P1S |
 
-Supported firmware and authentication modes for live use: none. `services.moonraker_url` and `services.octoprint_url` must stay empty for an offline vendor; settings refuse to load otherwise. The Moonraker listener, camera watchdog, timelapse download and cold pull do not apply.
+Supported firmware and authentication modes for live use: for read-only LAN status, the printer in LAN Mode with its LAN access code (the setup wizard collects both; Developer Mode is **not** needed for reading, and is what a future write path would require). `services.moonraker_url` and `services.octoprint_url` must stay empty for a Bambu Lab model; settings refuse to load otherwise. The Moonraker listener, camera watchdog, timelapse download and cold pull do not apply.
+
+## LAN status (read-only, opt-in)
+
+Off by default. To enable it, set both keys and supply the secret:
+
+```yaml
+bambu:
+  lan_host: 192.168.1.50   # the printer's LAN address
+  lan_serial: 00M00A000000000   # its serial number (Settings > WLAN; case is normalized)
+  lan_access_code_env: BAMBU_LAN_PASSWORD   # the default; names an environment variable
+```
+
+Put the printer's LAN access code in the environment variable that `lan_access_code_env` names (the setup wizard stores it in the profile `.env` as `BAMBU_LAN_PASSWORD`). Never put the code itself in a config file: it is also the password for the printer's other LAN services. The log redactor covers `*_PASSWORD` variable names.
+
+What happens then: the printer health check (`printer_state.check`, used by the doctor/status paths) opens one short MQTT-over-TLS connection to port 8883 as user `bblp`, asks for the version and a full status snapshot (`pushall` — A1/P1 printers otherwise report only changes), normalizes state/progress/temperatures into the same shape other printers report, and disconnects. It publishes nothing else. The peer certificate chain is verified against Bambu Lab's CA bundle shipped at `print_buddy/printers/bambulab/bambu_ca.pem`; hostname checking is off because the certificate names the printer serial, not its IP. There is no option to disable certificate verification. Busy state, a print error, active HMS errors, and the firmware signature bit (Developer Mode off — writes would be blocked) are reported as readiness problems. A wrong access code is reported with the remedy (re-read the current code on the printer; it changes after a factory reset), not retried forever.
+
+What it is not: no background listener (the Moonraker listener does not run for Bambu), no camera, no AMS detail beyond what the status snapshot carries, no upload, no start/pause/cancel — `print-now` still verifies the file and refuses, leaving the bed-clear approval unused. Newer firmware's packed temperature words (`device.*.info.temp`) are not decoded; the classic temperature fields are used. All of this is implemented from the #187 research document and the maintained integrations it cites, and **none of it has been run against a real Bambu printer yet**; treat the first live use as a test, and expect the unknowns listed in the research document (certificate chain on real firmware, single-MQTT-session contention with Bambu Studio/Handy, snapshot behaviour) to apply.
 
 Live connectivity has been researched but not implemented: see [Bambu Lab live connectivity research](BAMBU-CONNECTIVITY.md) (#187) for the LAN MQTT/FTPS protocol evidence, the LAN Mode + Developer Mode requirement that current firmware puts on control, the staged plan (telemetry, then upload, then print start), and the unknowns that need a live test before any of it is claimed.
 

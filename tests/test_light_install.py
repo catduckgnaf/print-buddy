@@ -67,7 +67,9 @@ def test_bambu_defaults_to_bambu_studio_and_has_no_connection():
     assert plan["slicer"] == "bambu_studio"
     assert plan["flatpaks"] == ["com.bambulab.BambuStudio"]
     assert "moonraker_url" not in plan["config"]["services"]
-    assert any("no live printer connection" in n for n in plan["notes"])
+    # LAN status is opt-in in the wizard and off by default: no [bambu] section, no secret.
+    assert "bambu" not in plan["config"] and plan["secrets"]["BAMBU_LAN_PASSWORD"] == ""
+    assert any("you start the print yourself" in n for n in plan["notes"])
 
 
 @pytest.mark.parametrize("key", ["sovol.sv06", "flashforge.ad5x", "klipper.generic"])

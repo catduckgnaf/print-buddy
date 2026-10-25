@@ -172,7 +172,7 @@ class OverrideTests(unittest.TestCase):
             "prime_tower": {"size_mm", "part_clearance_mm", "edge_mm", "merge_slack_mm"},
             "cold_pull": {"pla_trial", "petg"},
             "orca": {"templates", "command"},
-            "bambu": {"command"},
+            "bambu": {"command", "lan_host", "lan_serial", "lan_access_code_env"},
             "paths": {"hermes_home", "archive", "records_vault", "cache", "hermes_bin", "ffmpeg",
                       "hermes_agent", "hermes_restart_helper"},
             "services": {"moonraker_url", "moonraker_ws_url", "camera_snapshot_url", "spoolman_url",

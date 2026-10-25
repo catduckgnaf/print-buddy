@@ -11,9 +11,9 @@ printer model inside it. The [printer] model key is "<vendor>.<printer>", the pa
     sovol/sv06.py            MODEL for "sovol.sv06" on the stock Klipper adapter
     octoprint/__init__.py    VENDOR: OctoPrint REST, plain Marlin start code, OrcaSlicer, .gcode
     octoprint/marlin.py      MODEL for "octoprint.marlin"
-    bambulab/__init__.py     VENDOR: no live connection, Bambu start code, OrcaSlicer or Bambu Studio,
+    bambulab/__init__.py     VENDOR: opt-in read-only LAN MQTT telemetry, Bambu start code, OrcaSlicer or Bambu Studio,
                              .gcode.3mf handoff. Printer modules (A1, later P1S) drop in beside it.
-    bambulab/a1.py, p1s.py   MODEL for "bambulab.a1" and "bambulab.p1s"; adapter.py (offline adapter, no transport), guard.py
+    bambulab/a1.py, p1s.py   MODEL for "bambulab.a1" and "bambulab.p1s"; adapter.py (adapter with a bambulab_lan transport), guard.py
                              (A1 G-code checks), facts.py (sourced hardware facts, supplemental metadata),
                              profiles.py (templates generated from the operator's OrcaSlicer, none shipped)
 
@@ -100,7 +100,7 @@ class BuildVolume:
 
 # How Print Buddy reaches a printer. "offline" means it never does: it slices and validates, a person
 # moves the file.
-CONNECTIONS = ("moonraker", "octoprint", "offline")
+CONNECTIONS = ("moonraker", "octoprint", "offline", "bambulab_lan")
 # Start G-code families. Each printer runs only its own; see start_code_problems.
 START_CODES = ("zmod", "klipper_macro", "marlin", "bambu")
 # Slicers a vendor may pick as its primary. OrcaSlicer is the default everywhere.

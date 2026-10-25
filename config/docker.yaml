@@ -9,6 +9,11 @@ bambu:
   # The default slicer for Bambu Lab printers; elsewhere only Orca's one-shot fallback.
   command:
     - /usr/bin/bambu-studio
+  # Read-only LAN telemetry (#187): set via PRINT_BUDDY__BAMBU__LAN_HOST / __LAN_SERIAL;
+  # the access code comes from the BAMBU_LAN_PASSWORD environment secret, never from a file.
+  lan_host: ""
+  lan_serial: ""
+  lan_access_code_env: BAMBU_LAN_PASSWORD
 paths:
   hermes_home: /data/hermes
   archive: /data/archive

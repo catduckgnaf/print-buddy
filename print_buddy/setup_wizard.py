@@ -194,6 +194,18 @@ def _url(value):
     return None
 
 
+def _host(value):
+    if not re.fullmatch(r"[A-Za-z0-9._-]+", value or ""):
+        return "must be a plain IP address or hostname, without http:// or a port"
+    return None
+
+
+def _serial(value):
+    if not re.fullmatch(r"[A-Za-z0-9]+", value or ""):
+        return "must be the printer's alphanumeric serial number"
+    return None
+
+
 def _ids(value):
     if value and not all(p.isdigit() for p in re.split(r"[,\s]+", value.strip()) if p):
         return "Discord IDs are numbers (Developer Mode > Copy ID); separate several with commas"
@@ -265,9 +277,19 @@ def build_plan(w, *, hermes_found=False, existing_profiles=()):
 
     # Connection
     connection = vendor.connection
+    bambu_lan, bambu_code = {}, ""
     if connection == "offline":
         notes.append(f"{vendor.label}: no live printer connection. Print Buddy slices, checks G-code and "
                      "packages the file; you start the print yourself.")
+    if connection == "bambulab_lan":
+        notes.append(f"{vendor.label}: Print Buddy slices, checks G-code and packages the file; you start "
+                     "the print yourself. Read-only LAN status is optional and never starts anything.")
+        if w.confirm("bambu_lan", "Enable read-only LAN status for this printer (MQTT telemetry)?", default=False):
+            bambu_lan = {"lan_host": w.ask("lan_host", "Printer LAN IP address or hostname", "", _host),
+                         "lan_serial": w.ask("lan_serial", "Printer serial number (on the printer / Settings > WLAN)", "", _serial)}
+            bambu_code = w.secret("bambu_lan_password", "Printer LAN access code (Settings > WLAN; stored as a secret)")
+            notes.append("LAN status needs the printer in LAN Mode (Bambu Handy then cannot reach it) and "
+                         "the access code above; Print Buddy only reads status in this stage.")
     has_software = True
     if connection == "moonraker":
         has_software = w.confirm("has_printer_software", "Is Klipper with Moonraker already running on the printer?")
@@ -350,11 +372,14 @@ def build_plan(w, *, hermes_found=False, existing_profiles=()):
         "bot": {"mode": "hermes" if hermes else "standalone"},
         "paths": {"hermes_home": data_home},
     }
+    if bambu_lan:
+        config["bambu"] = bambu_lan
     return {
         "config": config, "display": display, "material": material, "slicer": slicer, "flatpaks": flatpaks,
         "actions": actions, "notes": notes, "hermes": hermes, "profile": profile,
         "profile_exists": profile in existing_profiles, "data_home": data_home, "timezone": timezone,
-        "secrets": {"DISCORD_BOT_TOKEN": token, "OCTOPRINT_API_KEY": octoprint_key},
+        "secrets": {"DISCORD_BOT_TOKEN": token, "OCTOPRINT_API_KEY": octoprint_key,
+                    "BAMBU_LAN_PASSWORD": bambu_code},
         "hermes_env": {"DISCORD_ALLOWED_USERS": users.replace(" ", ""), "DISCORD_HOME_CHANNEL": chat_id},
         "spoolman": spool,
     }

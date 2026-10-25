@@ -260,8 +260,25 @@ def check(st=None):
             probs.append(str(exc))
         # Nozzle/calibration and loaded spool are operator records on Marlin.
         return (not probs), probs, facts
+    if getattr(adapter, 'transport', None) == 'bambulab_lan':
+        # Bambu Lab: the hardware record and Spoolman, plus read-only LAN MQTT telemetry when the
+        # operator configured [bambu] lan_host/lan_serial. Never Moonraker. An unconfigured LAN is
+        # the original offline behaviour, not an error.
+        facts["connection"] = "bambulab_lan"
+        facts["lan_configured"] = adapter.lan_configured()
+        if adapter.lan_configured():
+            try:
+                snapshot = adapter.client().snapshot()
+                facts["bambu"] = adapter.normalize_status(snapshot)
+                probs.extend(adapter.readiness_problems(st, snapshot))
+            except RuntimeError as exc:
+                probs.append(str(exc))
+        else:
+            probs.extend(adapter.readiness_problems(st, {}))
+        _check_spoolman(st, probs, facts)
+        return (not probs), probs, facts
     if adapter.connection == 'offline':
-        # No printer connection (Bambu Lab): the hardware record and Spoolman only, never Moonraker.
+        # No printer connection: the hardware record and Spoolman only, never Moonraker.
         facts["connection"] = "offline"
         probs.extend(adapter.readiness_problems(st, {}))
         _check_spoolman(st, probs, facts)

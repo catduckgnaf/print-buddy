@@ -394,8 +394,13 @@ def mesh_audit(path, printer_model=None):
     triangles = source_triangles(path)
     if not triangles:
         raise RuntimeError("model has no printable geometry")
-    lo = [min(point[axis] for triangle in triangles for point in triangle) for axis in range(3)]
-    hi = [max(point[axis] for triangle in triangles for point in triangle) for axis in range(3)]
+    from .compact_geometry import IndexedTriangles
+    if isinstance(triangles, IndexedTriangles):
+        from .mesh_fast import bounds_and_volume
+        lo, hi, _ = bounds_and_volume(triangles)
+    else:
+        lo = [min(point[axis] for triangle in triangles for point in triangle) for axis in range(3)]
+        hi = [max(point[axis] for triangle in triangles for point in triangle) for axis in range(3)]
     source_sha256 = file_sha256(path)
     from .orca_adapter import placement_candidates
     return {"schema_version": 1, "sha256": source_sha256,

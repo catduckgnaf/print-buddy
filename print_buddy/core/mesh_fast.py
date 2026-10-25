@@ -343,8 +343,46 @@ def strip_mesh_bodies(data):
     return data if parsed is None else parsed[1]
 
 
+def _bounds_and_volume_arrays(vertices, faces):
+    """Vectorized bounds/volume over indexed storage, gathered in bounded chunks.
+
+    Per-face terms use the same left-to-right operation order as the scalar
+    loop; chunk sums are accumulated in face order. Bounds are exact (pure
+    selection). Used only for large indexed meshes, where the scalar loop's
+    per-triangle Python tuples are the memory/time problem; small meshes keep
+    the bit-identical scalar path below.
+    """
+    import math
+    lo = [math.inf, math.inf, math.inf]
+    hi = [-math.inf, -math.inf, -math.inf]
+    volume = 0.0
+    for start in range(0, len(faces), 8192):
+        pts = np.asarray(vertices[faces[start:start + 8192].ravel()],
+                         dtype=np.float64).reshape((-1, 3, 3))
+        chunk_lo = pts.min(axis=(0, 1))
+        chunk_hi = pts.max(axis=(0, 1))
+        for axis in range(3):
+            lo[axis] = min(lo[axis], float(chunk_lo[axis]))
+            hi[axis] = max(hi[axis], float(chunk_hi[axis]))
+        a, b, c = pts[:, 0], pts[:, 1], pts[:, 2]
+        ax, ay, az = a[:, 0], a[:, 1], a[:, 2]
+        bx, by, bz = b[:, 0], b[:, 1], b[:, 2]
+        cx, cy, cz = c[:, 0], c[:, 1], c[:, 2]
+        terms = (ax * (by * cz - bz * cy) - ay * (bx * cz - bz * cx)
+                 + az * (bx * cy - by * cx)) / 6.0
+        volume += float(np.sum(terms))
+    return lo, hi, volume
+
+
 def bounds_and_volume(triangles):
     """(lo, hi, signed volume), without materializing a per-triangle point list."""
+    from .compact_geometry import IndexedTriangles
+    if isinstance(triangles, IndexedTriangles) and len(triangles) >= 32768:
+        if not len(triangles):
+            raise ValueError('empty triangle table')
+        return _bounds_and_volume_arrays(triangles.vertices, triangles.faces)
+    if isinstance(triangles, MeshTable) and len(triangles) >= 32768:
+        return _bounds_and_volume_arrays(triangles.vertices, triangles.triangles)
     source = triangles.iter_triangles() if isinstance(triangles, MeshTable) else iter(triangles)
     lo = hi = None
     volume = 0.0

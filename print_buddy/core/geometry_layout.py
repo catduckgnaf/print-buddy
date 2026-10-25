@@ -22,7 +22,7 @@ import zipfile
 import zlib
 from pathlib import Path
 
-from .compact_geometry import CompactTriangles, transformed_rows
+from .compact_geometry import CompactTriangles, IndexedTriangles, transform_vertices_array
 from .mesh_fast import archive_tables, bounds_and_volume
 from .model_job import mesh_topology
 from .orca_adapter import _hull, read_stl_triangles
@@ -132,6 +132,27 @@ def _linear_transform_deviation(transform_12):
 
 
 def _triangle_area_and_signed_volume(triangles):
+    if isinstance(triangles, IndexedTriangles) and len(triangles) >= 32768:
+        # Batched twin of the scalar loop below: same per-face operation
+        # order, chunk sums accumulated in face order.
+        import numpy as np
+        area = 0.0
+        signed_vol = 0.0
+        vertices, faces = triangles.vertices, triangles.faces
+        for start in range(0, len(faces), 8192):
+            pts = vertices[faces[start:start + 8192].ravel()].reshape((-1, 3, 3))
+            a, b, c = pts[:, 0], pts[:, 1], pts[:, 2]
+            ux, uy, uz = b[:, 0] - a[:, 0], b[:, 1] - a[:, 1], b[:, 2] - a[:, 2]
+            vx, vy, vz = c[:, 0] - a[:, 0], c[:, 1] - a[:, 1], c[:, 2] - a[:, 2]
+            nx = uy * vz - uz * vy
+            ny = uz * vx - ux * vz
+            nz = ux * vy - uy * vx
+            area += float(np.sum(0.5 * np.sqrt(nx * nx + ny * ny + nz * nz)))
+            signed_vol += float(np.sum(
+                (a[:, 0] * (b[:, 1] * c[:, 2] - b[:, 2] * c[:, 1])
+                 - a[:, 1] * (b[:, 0] * c[:, 2] - b[:, 2] * c[:, 0])
+                 + a[:, 2] * (b[:, 0] * c[:, 1] - b[:, 1] * c[:, 0])) / 6.0))
+        return area, abs(signed_vol)
     area = 0.0
     signed_vol = 0.0
     for (ax, ay, az), (bx, by, bz), (cx, cy, cz) in triangles:
@@ -302,22 +323,37 @@ def _load_3mf_parts(path: Path, input_unit: str | None = None):
                 raise RuntimeError(f'missing 3MF object {model_path}:{object_id}')
             obj = objects[object_id]
             mesh = obj.find('c:mesh', NS)
-            tris = CompactTriangles()
+            tris = IndexedTriangles()
             if mesh is not None:
+                transforms = list(chain)
+                if mm_factor != 1.0:
+                    transforms.append([mm_factor, 0, 0, 0, mm_factor, 0, 0, 0, mm_factor, 0, 0, 0])
                 if tables is not None:
-                    verts, faces = tables.get(object_id, ([], []))
+                    table = tables.get(object_id)
+                    if table is not None:
+                        # Compact indexed path: transform the shared vertices
+                        # once (bit-identical to the scalar apply chain) and
+                        # keep the faces as indices; never expand per-face
+                        # point tuples.
+                        verts = transform_vertices_array(table.vertices, transforms, apply)
+                        tris.extend_indexed(verts, table.triangles)
                 else:
+                    import numpy as np
                     verts = [
                         (float(v.attrib['x']), float(v.attrib['y']), float(v.attrib['z']))
                         for v in mesh.findall('c:vertices/c:vertex', NS)
                     ]
                     faces = [(int(t.attrib['v1']), int(t.attrib['v2']), int(t.attrib['v3']))
                              for t in mesh.findall('c:triangles/c:triangle', NS)]
-                transforms = list(chain)
-                if mm_factor != 1.0:
-                    transforms.append([mm_factor, 0, 0, 0, mm_factor, 0, 0, 0, mm_factor, 0, 0, 0])
-                verts = transformed_rows(verts, transforms, apply)
-                tris.extend([verts[a], verts[b], verts[c]] for a, b, c in faces)
+                    if faces:
+                        face_array = np.array(faces, dtype=np.int64)
+                        count = len(verts)
+                        if int(face_array.max()) >= count or int(face_array.min()) < -count:
+                            raise IndexError('3MF triangle vertex index out of range')
+                        face_array = np.where(face_array < 0, face_array + count, face_array)
+                        verts = transform_vertices_array(
+                            np.array(verts, dtype=np.float64).reshape((-1, 3)), transforms, apply)
+                        tris.extend_indexed(verts, face_array)
             for comp in obj.findall('c:components/c:component', NS):
                 comp_oid = comp.get('objectid')
                 if (object_id, comp_oid) in cutters:

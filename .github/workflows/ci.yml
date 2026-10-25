@@ -52,12 +52,18 @@ jobs:
     steps:
       - uses: actions/checkout@v7
       - name: Debian tools the installer expects
-        run: apt-get update -q && apt-get install -y -q git curl ca-certificates
+        # Container jobs run as root; install-light refuses root, so add a normal sudo user like a Pi owner.
+        run: |
+          apt-get update -q && apt-get install -y -q git curl ca-certificates sudo
+          useradd -m -s /bin/bash pi
+          echo 'pi ALL=(ALL) NOPASSWD:ALL' > /etc/sudoers.d/pi
+          chown -R pi "$GITHUB_WORKSPACE" && chmod 1777 "$RUNNER_TEMP"
       - name: Runtime requirements on arm64
         run: |
           python -m venv .venv
           .venv/bin/python -m pip install -r requirements.txt
       - name: Installer and wizard dry run with an answers file
+        shell: runuser -u pi -- bash -e {0}
         run: |
           cat > "$RUNNER_TEMP/answers.yaml" <<'YAML'
           brand: sovol

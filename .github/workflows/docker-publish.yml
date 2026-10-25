@@ -47,7 +47,7 @@ jobs:
       WITH_ORCA: ${{ inputs.with_orca }}
       ORCA_SOURCE: ${{ inputs.orca_source || 'prebuilt' }}
       WITH_BAMBU: ${{ inputs.with_bambu }}
-      SPOOLMAN_MODE: external
+      SPOOLMAN_MODE: included
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
       - name: Validate release version and prepare evidence

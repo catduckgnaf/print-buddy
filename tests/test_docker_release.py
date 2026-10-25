@@ -30,13 +30,13 @@ JOBS = ROOT / "docker" / "orca-build-jobs.sh"
 UNRAID = {name: ET.parse(ROOT / "docker" / "unraid" / f"print-buddy-{name}.xml").getroot()
           for name in ("bot", "listener")}
 # Public files a user copies or reads to deploy. All must be sanitized.
-DEPLOYMENT_FILES = [".env.example", "docker-compose.yml", "docker-compose.spoolman.yml", "Dockerfile",
+DEPLOYMENT_FILES = [".env.example", "docker-compose.yml", "Dockerfile",
                     "docker/entrypoint.sh", "docker/orca-build-jobs.sh", "docker/orca-build.sh", "docker/unraid/print-buddy-bot.xml",
-                    "docker/unraid/print-buddy-listener.xml", "config/docker.yaml", "config/docker.toml",
+                    "docker/unraid/print-buddy-listener.xml", "docker/unraid/print-buddy-spoolman.xml", "config/docker.yaml", "config/docker.toml",
                     "docs/DOCKER.md", "docs/SETTINGS.md", "tests/docker/compose.acceptance.yml"]
 SECRETS = {"DISCORD_BOT_TOKEN", "LLM_API_KEY", "OCTOPRINT_API_KEY", "MOONRAKER_API_KEY", "CLIPROXY_API_KEY",
            "OPENVIKING_API_KEY", "BAMBU_LAN_PASSWORD"}
-COMPOSE_VARS = {"PRINT_BUDDY_IMAGE", "PRINT_BUDDY_DATA", "PRINT_BUDDY_CONFIG"}
+COMPOSE_VARS = {"PRINT_BUDDY_IMAGE", "PRINT_BUDDY_DATA", "PRINT_BUDDY_CONFIG", "TZ"}
 RUNTIME_ENV_VARS = {"PRINT_BUDDY_ORCA_CHANNEL"}
 DATA_TARGETS = {"/data/hermes", "/data/archive", "/data/records", "/data/cache"}
 
@@ -328,6 +328,27 @@ class UnraidTemplateTests(unittest.TestCase):
                     self.assertEqual(variables[required].get("Required"), "true")
         self.assertEqual({c.get("Target"): c.text for c in UNRAID["bot"].findall("Config")},
                          {c.get("Target"): c.text for c in UNRAID["listener"].findall("Config")})
+
+
+class UnraidSpoolmanTemplateTests(unittest.TestCase):
+    """#214: the included Spoolman has its own DockerMan template, matching Compose."""
+
+    def setUp(self):
+        self.root = ET.parse(ROOT / "docker" / "unraid" / "print-buddy-spoolman.xml").getroot()
+        self.compose = yaml.safe_load((ROOT / "docker-compose.yml").read_text())["services"]["spoolman"]
+
+    def test_repository_is_the_pinned_compose_image(self):
+        self.assertEqual(self.root.findtext("Repository"), self.compose["image"])
+        self.assertEqual(self.root.findtext("Name"), "spoolman")
+        self.assertEqual(self.root.findtext("Privileged"), "false")
+
+    def test_data_path_and_memory_match_compose(self):
+        paths = {c.get("Target"): c for c in self.root.findall("Config") if c.get("Type") == "Path"}
+        self.assertEqual(set(paths), {"/home/app/.local/share/spoolman"})
+        self.assertTrue(paths["/home/app/.local/share/spoolman"].text.startswith("/mnt/user/appdata/print-buddy/"))
+        params = shlex.split(self.root.findtext("ExtraParams"))
+        self.assertEqual(params[params.index("--memory") + 1], self.compose["mem_limit"])
+        self.assertEqual(params[params.index("--restart") + 1], self.compose["restart"])
 
 
 class AcceptanceFixtureTests(unittest.TestCase):

@@ -10,7 +10,6 @@ permissions:
 
 jobs:
   contribution-policy:
-    # Trivial metadata/policy job: a Debian container adds no runtime value.
     runs-on: ubuntu-24.04
     timeout-minutes: 3
     steps:

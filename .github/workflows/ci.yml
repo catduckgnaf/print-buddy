@@ -46,11 +46,13 @@ jobs:
   light-install-arm64:
     # The Raspberry Pi route: runtime requirements install on arm64 and the installer plus wizard run end to end (dry run).
     runs-on: ubuntu-24.04-arm  # Debian container on the hosted arm64 runner.
-    container:
-      image: python:3.12-slim-trixie
+    # Hosted ARM runner is required for hardware-architecture validation; tested base remains Ubuntu.
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
       - name: Runtime requirements on arm64
         run: |
           python -m venv .venv
@@ -76,19 +78,22 @@ jobs:
 
   real-slicer:
     # Full corpus and slicer fixtures stay on the production-default OrcaSlicer 2.4.2 track.
-    # Flatpak needs privileged bubblewrap when nested in the GitHub Actions container.
-    runs-on: ubuntu-24.04  # Debian 13 container; hosted runner supplies the VM only.
-    container:
-      image: python:3.12-slim-trixie
-      options: --privileged
+    # Flatpak plus xvfb requires a full system session and display; kept on the host runner after
+    # Debian 13 container attempts failed during actual slicer startup.
+    runs-on: ubuntu-24.04
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: requirements-test.txt
       - run: python -m pip install -r requirements-test.txt
       - name: Install Flathub OrcaSlicer 2.4.2 and xvfb
         run: |
-          apt-get update -q
-          apt-get install -y -q flatpak xvfb dbus-x11 curl unzip
+          sudo apt-get update -q
+          sudo apt-get install -y -q flatpak xvfb
           flatpak remote-add --user --if-not-exists flathub https://dl.flathub.org/repo/flathub.flatpakrepo
           flatpak install --user -y --noninteractive flathub com.orcaslicer.OrcaSlicer
           flatpak info --user com.orcaslicer.OrcaSlicer
@@ -103,22 +108,25 @@ jobs:
 
   real-slicer-alpha:
     # Alpha validation is intentionally limited; full Discord corpus remains on the 2.4.2 job.
-    # Flatpak needs privileged bubblewrap when nested in the GitHub Actions container.
-    runs-on: ubuntu-24.04  # Debian 13 container; hosted runner supplies the VM only.
-    container:
-      image: python:3.12-slim-trixie
-      options: --privileged
+    # Flatpak plus xvfb requires a full system session and display; kept on the host runner after
+    # Debian 13 container attempts failed during actual slicer startup.
+    runs-on: ubuntu-24.04
     timeout-minutes: 30
     env:
       ORCA_FLATPAK_APP_ID: com.orcaslicer.OrcaSlicer
       PRINT_BUDDY_REAL_SLICER: "1"
     steps:
       - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: requirements-test.txt
       - run: python -m pip install -r requirements-test.txt
       - name: Install flatpak and xvfb
         run: |
-          apt-get update -q
-          apt-get install -y -q flatpak xvfb dbus-x11 curl unzip
+          sudo apt-get update -q
+          sudo apt-get install -y -q flatpak xvfb
       - name: Cache OrcaSlicer 2.5.0 alpha bundle and runtime
         uses: actions/cache@v6
         with:

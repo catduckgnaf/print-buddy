@@ -36,6 +36,7 @@ jobs:
           sh -n docker/orca-build-jobs.sh
           shellcheck -x docker/entrypoint.sh docker/orca-build-jobs.sh tests/docker/image_acceptance.sh
       - name: Render every Compose variant (no containers)
+        shell: bash
         run: |
           set -euo pipefail
           cp .env.example .env

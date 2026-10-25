@@ -3490,8 +3490,8 @@ def _print_flashforge_stock(adapter, state, gcode, job, job_path, wait_s, reprin
     """The stock Flashforge LAN path, mirroring _print_bambu's guard order.
 
     Every check that can refuse cleanly runs before the submission lease: host and
-    credentials present, /detail idle, G-code verified and free of Klipper or ZMod
-    commands. Inside the lease the snapshot is taken again, the bed-clear approval is
+    credentials present, G-code free of Klipper or ZMod commands, /detail idle, then
+    the rest of the G-code check. Inside the lease the snapshot is taken again, the bed-clear approval is
     consumed, and only then does anything reach the printer: one upload with print
     disabled, then /printGcode for that exact name. Upload and start are one uncertain
     step from submitting() on. Acceptance is confirmed from a fresh /detail, never assumed.
@@ -3533,13 +3533,13 @@ def _print_flashforge_stock(adapter, state, gcode, job, job_path, wait_s, reprin
         return reduced
 
     try:
-        observed = ready_snapshot()
-        verify_gcode(gcode)
         text = gcode.read_text(errors="ignore")
-        adapter.normalize_tool_mapping({str(t): t + 1 for t in sorted(_gcode_tools(text) | {0})}, state)
         problems = adapter.gcode_problems(text)
         if problems:
             raise RuntimeError(problems[0])
+        observed = ready_snapshot()
+        verify_gcode(gcode)
+        adapter.normalize_tool_mapping({str(t): t + 1 for t in sorted(_gcode_tools(text) | {0})}, state)
     except RuntimeError as exc:
         raise refuse(exc) from exc
     sha = file_sha256(gcode)

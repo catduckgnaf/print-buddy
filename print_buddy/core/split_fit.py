@@ -32,10 +32,13 @@ extrema), so a non-rectangular part is judged by the size it really occupies
 when turned. For a rectangular part this is identical to the rectangle
 check. When the selected printer model declares a printable-area exclusion,
 a part counts as fitting only if a placement of that envelope exists inside
-the usable area that avoids the exclusion; split plans are not offered on
-such beds yet, because the split exporter cannot yet realize the avoiding
-placement — reporting stays honest instead of offering a layout slicing
-would center into the exclusion.
+the usable area that avoids the exclusion; the plan records that placement
+as ``placement_by_object`` and the part gets a plate of its own, because the
+split exporter applies one recorded placement to a whole derived plate (see
+``yaw_by_object``). Slicing applies exactly the recorded placement to that
+plate alone and refuses a placement recorded for a shared plate, an unknown
+object or an out-of-range position instead of slicing the plate centered
+into the exclusion.
 """
 import math
 import zipfile
@@ -276,12 +279,14 @@ def split_plan_100(source, bed=None, height=None, exclusions=None):
     part. An object that fits only at a turned yaw is planned alone on its own
     plate and the turn is recorded in ``yaw_by_object``; objects that fit as
     authored keep their authored orientation and are packed together as
-    before. No plan is offered when the bed has declared exclusions: evaluation
-    can find an avoiding placement, but the split exporter cannot realize one
-    yet, so planning refuses rather than offering a layout slicing would
-    place into the exclusion (#221). Geometry checks and packing use the
-    printer's edge and spacing margins (see the module docstring) and do not
-    slice or contact the printer.
+    before. When the bed has declared exclusions, every fitting object carries
+    an avoiding placement from :func:`per_part_fit`: it is planned alone on
+    its own plate and the placement is recorded in ``placement_by_object``,
+    so slicing can land that plate exactly there (#221 stage 2). A part with
+    no avoiding placement does not fit (its blocking reason names the
+    exclusion), so no plan is offered for it. Geometry checks and packing use
+    the printer's edge and spacing margins (see the module docstring) and do
+    not slice or contact the printer.
     """
     from . import color_geometry
     from . import model_job
@@ -296,10 +301,13 @@ def split_plan_100(source, bed=None, height=None, exclusions=None):
     report = per_part_fit(source, bed=(bed_x, bed_y), height=height, exclusions=exclusions)
     if any(not row['fits_full_size'] for row in report):
         return None
-    if report and report[0]['exclusions_mm']:
-        return None
     yaw_by_object = {row['object_id']: row['best_yaw_deg'] for row in report
                      if not row['fits_authored'] and row['best_yaw_deg'] > 0}
+    # On an exclusion bed every fitting row carries the avoiding placement
+    # per_part_fit proved; a row without one would already have failed
+    # fits_full_size above, so a missing placement here is impossible.
+    placement_by_object = {row['object_id']: row['placement_mm'] for row in report
+                           if row.get('placement_mm')}
     try:
         authored = model_job.plate_manifest(source)['plates']
     except (RuntimeError, zipfile.BadZipFile):
@@ -320,15 +328,16 @@ def split_plan_100(source, bed=None, height=None, exclusions=None):
             boxes = {oid: color_geometry._world_bounds(archive, {oid})[0] for oid in objects}
             extents = {oid: (box[0][1] - box[0][0], box[1][1] - box[1][0])
                        for oid, box in boxes.items()}
-            if any(oid not in yaw_by_object
+            if any(oid not in yaw_by_object and oid not in placement_by_object
                    and plate_merge.pack({oid: extent}, bed) is None
                    for oid, extent in extents.items()):
                 return None
             bins = []  # (objects dict, closed to further packing)
             for oid in sorted(extents, key=lambda key: -(extents[key][0] * extents[key][1])):
-                if oid in yaw_by_object:
-                    # A turned part is always alone: the exporter turns a whole
-                    # derived plate rigidly, so it cannot share one.
+                if oid in yaw_by_object or oid in placement_by_object:
+                    # A turned or placed part is always alone: the exporter
+                    # turns / places a whole derived plate rigidly, so it
+                    # cannot share one.
                     bins.append(({oid: extents[oid]}, True))
                     continue
                 for bin_objects, closed in bins:
@@ -347,4 +356,6 @@ def split_plan_100(source, bed=None, height=None, exclusions=None):
     plan = {'plates': result}
     if yaw_by_object:
         plan['yaw_by_object'] = yaw_by_object
+    if placement_by_object:
+        plan['placement_by_object'] = placement_by_object
     return plan

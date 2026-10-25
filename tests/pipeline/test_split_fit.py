@@ -277,13 +277,101 @@ def test_per_part_fit_exclusion_reports_an_avoiding_placement(tmp_path):
     assert row['placement_mm'] == [18.0, 8.0]
 
 
-def test_split_plan_is_not_offered_on_a_bed_with_exclusions(tmp_path):
-    # Evaluation can find avoiding placements, but the split exporter cannot
-    # realize one yet, so planning refuses instead of overpromising (#221).
+def test_split_plan_on_an_exclusion_bed_records_avoiding_placements(tmp_path):
+    # Stage 2 (#221): the exporter can now realize an avoiding placement, so
+    # a plan IS offered on an exclusion bed. Each placed part sits alone (the
+    # exporter places a whole plate rigidly) and the plan records the exact
+    # placement per_part_fit proved.
     source = tmp_path / 'two-boxes.3mf'
     _mesh_source(source, {'1': _rect_points(150, 150, 10), '2': _rect_points(150, 150, 10)},
                  [['1', '2']])
-    rows = split_fit.per_part_fit(source, 220, exclusions=[(0, 0, 18, 28)])
-    assert all(row['fits_full_size'] for row in rows)
+    rows = {row['object_id']: row for row in split_fit.per_part_fit(source, 220, exclusions=[(0, 0, 18, 28)])}
+    assert all(row['fits_full_size'] for row in rows.values())
+    plan = split_fit.split_plan_100(source, 220, exclusions=[(0, 0, 18, 28)])
+    assert plan is not None
+    assert sorted(plan['plates']) == [['1:1'], ['2:1']]
+    assert plan['placement_by_object'] == {oid: row['placement_mm'] for oid, row in rows.items()}
+    # The recorded placements really avoid the 18 x 28 exclusion.
+    for oid, (px, py) in plan['placement_by_object'].items():
+        w, d = rows[oid]['best_extent_mm'][:2]
+        assert px + w <= 0 or px >= 18 or py + d <= 0 or py >= 28
+    # Without exclusions the same source keeps its old plan shape: no placements.
+    open_plan = split_fit.split_plan_100(source, 220, exclusions=[])
+    assert open_plan is not None and 'placement_by_object' not in open_plan
+
+
+def test_split_plan_on_an_exclusion_bed_still_blocks_without_a_placement(tmp_path):
+    # A part whose footprint fits the usable bed only inside the exclusion
+    # has no avoiding placement: it stays blocking (naming the exclusion) and
+    # no split plan is offered (#221).
+    source = tmp_path / 'blocked.3mf'
+    _mesh_source(source, {'1': _rect_points(200, 200, 10), '2': _rect_points(150, 150, 10)},
+                 [['1', '2']])
+    rows = {row['object_id']: row for row in split_fit.per_part_fit(source, 220, exclusions=[(0, 0, 18, 28)])}
+    assert rows['1']['fits_full_size'] is False
+    assert 'exclusion' in rows['1']['blocking_reason']
+    assert rows['2']['fits_full_size'] is True
     assert split_fit.split_plan_100(source, 220, exclusions=[(0, 0, 18, 28)]) is None
-    assert split_fit.split_plan_100(source, 220, exclusions=[]) is not None
+
+
+def test_fit_choice_rows_carry_the_split_placement():
+    from print_buddy.core.prepared_intake import fit_choice_rows
+    rows = fit_choice_rows({'scales': [], 'rotations': [],
+                            'split_plan': {'plates': [['1:1'], ['2:1']],
+                                           'placement_by_object': {'1': [18.0, 8.0]}}})
+    (split,) = [row for row in rows if row['kind'] == 'split']
+    assert split['placement_by_object'] == {'1': [18.0, 8.0]}
+
+
+def test_slicing_an_exclusion_split_lands_the_plate_at_the_recorded_placement(tmp_path, monkeypatch):
+    import json
+
+    from print_buddy.core import model_job, orca_adapter
+    from .test_plate_merge import _fake_slice
+    source = tmp_path / 'placed.3mf'
+    _source(source, {'1': (150, 150, 10), '2': (150, 150, 10)}, [['1', '2']])
+    plan = split_fit.split_plan_100(source, 220, exclusions=[(0, 0, 18, 28)])
+    assert plan and plan['placement_by_object'] == {'1': [18.0, 8.0], '2': [18.0, 8.0]}
+    job_path = _split_job(tmp_path, source, plan)
+    fake = _fake_slice()
+    monkeypatch.setattr(orca_adapter, 'slice_model', fake)
+    paths = model_job.slice_job(job_path)
+    assert len(paths) == 2 and len(fake.calls) == 2
+    saved = json.loads(job_path.read_text())
+    for row in saved['derived_plates']:
+        assert row['placement_mm'] == [18.0, 8.0]
+        placed = row['plate_report']['placed_bounds_mm']
+        # The derived plate was exported at the recorded placement, not
+        # centered or as authored, and the placed bounds avoid the exclusion.
+        assert placed[0][0] == 18.0 and placed[1][0] == 8.0
+        assert placed[0][1] == 168.0 and placed[1][1] == 158.0
+        assert row['plate_report']['placement_mm'] == [18.0, 8.0]
+
+
+def test_slicing_refuses_a_placement_recorded_for_a_shared_plate(tmp_path, monkeypatch):
+    import pytest
+
+    from print_buddy.core import model_job, orca_adapter
+    from .test_plate_merge import _fake_slice
+    source = tmp_path / 'shared.3mf'
+    _source(source, {'1': (150, 150, 10), '2': (150, 150, 10)}, [['1', '2']])
+    plan = {'plates': [['1:1', '2:1']], 'placement_by_object': {'1': [18.0, 8.0]}}
+    job_path = _split_job(tmp_path, source, plan)
+    monkeypatch.setattr(orca_adapter, 'slice_model', _fake_slice())
+    with pytest.raises(RuntimeError, match='not that part alone'):
+        model_job.slice_job(job_path)
+
+
+def test_slicing_refuses_an_out_of_range_or_unknown_placement(tmp_path, monkeypatch):
+    import pytest
+
+    from print_buddy.core import model_job, orca_adapter
+    from .test_plate_merge import _fake_slice
+    source = tmp_path / 'bad-placement.3mf'
+    _source(source, {'1': (150, 150, 10), '2': (150, 150, 10)}, [['1', '2']])
+    for bad in ({'1': [220.0, 8.0]}, {'1': [-1.0, 8.0]}, {'9': [18.0, 8.0]}):
+        plan = {'plates': [['1:1'], ['2:1']], 'placement_by_object': bad}
+        job_path = _split_job(tmp_path, source, plan)
+        monkeypatch.setattr(orca_adapter, 'slice_model', _fake_slice())
+        with pytest.raises(RuntimeError, match='placement'):
+            model_job.slice_job(job_path)

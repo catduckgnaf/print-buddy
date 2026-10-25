@@ -353,7 +353,9 @@ def fit_choice_rows(options):
         rows.append({'kind': 'split', 'label': f"100% · split {len(split_plan['plates'])} plates",
                      'plates': split_plan['plates'], 'scale': 1.0,
                      **({'yaw_by_object': split_plan['yaw_by_object']}
-                        if split_plan.get('yaw_by_object') else {})})
+                        if split_plan.get('yaw_by_object') else {}),
+                     **({'placement_by_object': split_plan['placement_by_object']}
+                        if split_plan.get('placement_by_object') else {})})
     elif options.get('full_size_split') and len(rows) < 2:
         rows.append({'kind': 'split', 'label': 'Split plates at 100%', 'scale': 1.0})
     full_size_available = any(row['kind'] in ('split', 'rearrange') for row in rows)
@@ -1190,6 +1192,7 @@ async def prepare_link(event, adapter, state, root, timeout=None, reuse=None):
                 names_by_key = {part['key']: part['name'] for part in manifest.get('parts', [])}
                 object_by_key = {part['key']: str(part['object_id']) for part in manifest.get('parts', [])}
                 yaw_by_object = split_plan.get('yaw_by_object') or {}
+                placement_by_object = split_plan.get('placement_by_object') or {}
                 for index, part_keys in enumerate(split_plan['plates'], 1):
                     labels = []
                     for part_key in part_keys:
@@ -1197,6 +1200,10 @@ async def prepare_link(event, adapter, state, root, timeout=None, reuse=None):
                         yaw = yaw_by_object.get(object_by_key.get(part_key, ''))
                         if yaw:
                             label += f' (turned {float(yaw):g}° on the bed)'
+                        placement = placement_by_object.get(object_by_key.get(part_key, ''))
+                        if placement:
+                            label += (f' (placed at {float(placement[0]):g}, {float(placement[1]):g} mm '
+                                      'to avoid the bed exclusion)')
                         labels.append(label)
                     distribution.append(f"{', '.join(labels)} on plate {index}")
                 prompt = (f"{title} does not fit the AD5X bed full size as one plate. "
@@ -1249,7 +1256,9 @@ async def prepare_link(event, adapter, state, root, timeout=None, reuse=None):
                 if row.get('plates'):
                     latest['full_size_split_plan'] = {'plates': row['plates'],
                                                       **({'yaw_by_object': row['yaw_by_object']}
-                                                         if row.get('yaw_by_object') else {})}
+                                                         if row.get('yaw_by_object') else {}),
+                                                      **({'placement_by_object': row['placement_by_object']}
+                                                         if row.get('placement_by_object') else {})}
                 latest.pop('orientation', None)
                 latest.pop('full_size_rearrange_plan', None)
                 receipt['full_size_split'] = True

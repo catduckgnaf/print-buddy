@@ -538,17 +538,17 @@ def _matrix(node):
     return values
 
 
-def _world_bounds(archive, object_ids, fit=None):
-    """World AABB of selected build items, through their component chain.
+def _world_item_points(archive, object_ids, fit=None):
+    """World-space mesh vertices per selected build item, through the component chain.
 
     fit (a fit_transform matrix) is applied after the item transform, so the
-    bounds are those of the scaled/rotated group. Original transforms stay in
-    the archive; the caller uses this to choose the derived plate placement.
+    points are those of the scaled/rotated group. Original transforms stay in
+    the archive; callers use the points to measure or place the derived plate.
     """
     root = ET.fromstring(archive.read('3D/3dmodel.model'))
     objects = {node.get('id'): node for node in root.iter() if node.tag.split('}')[-1] == 'object'}
     model_object_points = {}
-    boxes = []
+    items = []
     for item in (node for node in root.iter() if node.tag.split('}')[-1] == 'item'):
         if item.get('objectid') not in object_ids:
             continue
@@ -579,10 +579,28 @@ def _world_bounds(archive, object_ids, fit=None):
                 item_points.extend([_apply(matrix, point) for point in points])
         if not item_points:
             raise RuntimeError('empty part geometry')
-        boxes.append([(min(point[axis] for point in item_points), max(point[axis] for point in item_points)) for axis in range(3)])
-    if len(boxes) != len(object_ids):
+        items.append(item_points)
+    if len(items) != len(object_ids):
         raise RuntimeError('geometry and selection inventory disagree')
-    return boxes
+    return items
+
+
+def _world_points(archive, object_ids, fit=None):
+    """Every world-space mesh vertex of the selected build items, flattened."""
+    return [point for item_points in _world_item_points(archive, object_ids, fit)
+            for point in item_points]
+
+
+def _world_bounds(archive, object_ids, fit=None):
+    """World AABB of selected build items, through their component chain.
+
+    fit (a fit_transform matrix) is applied after the item transform, so the
+    bounds are those of the scaled/rotated group. Original transforms stay in
+    the archive; the caller uses this to choose the derived plate placement.
+    """
+    return [[(min(point[axis] for point in item_points), max(point[axis] for point in item_points))
+             for axis in range(3)]
+            for item_points in _world_item_points(archive, object_ids, fit)]
 
 
 def export_single_color_plate(source, target, decisions, part_keys, bed=BED_MM, slot_colors=None, item_shifts=None, fit=None):

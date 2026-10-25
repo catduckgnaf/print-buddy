@@ -1984,7 +1984,8 @@ def per_part_fit_options(source, decisions, options, bed=BED_MM):
                 if fit:
                     row.update({k: fit[k] for k in ('object_id', 'fits_full_size', 'best_yaw_deg',
                                                     'best_extent_mm', 'usable_mm', 'height_limit_mm',
-                                                    'blocking_reason', 'orientations_checked') if k in fit})
+                                                    'blocking_reason', 'orientations_checked',
+                                                    'placement_mm') if k in fit})
                 details.append(row)
     except (OSError, zipfile.BadZipFile, RuntimeError, KeyError):
         details = []

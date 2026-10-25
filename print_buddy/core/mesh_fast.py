@@ -257,6 +257,11 @@ def _parse_member(data, want_triangles=True):
 
     def end(raw_name):
         nonlocal object_id, mesh_active, vertex_buf, face_buf
+        # Primitive closing tags need no namespace conversion or mesh finalization.
+        # Expat already guarantees matching start/end names, including nesting.
+        if raw_name == vertex_tag or raw_name == triangle_tag:
+            stack.pop()
+            return
         full_name = _et_name(raw_name)
         if full_name == _CORE + 'mesh' and mesh_active:
             if object_id is None:

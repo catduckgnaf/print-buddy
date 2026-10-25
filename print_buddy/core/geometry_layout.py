@@ -416,16 +416,11 @@ def rotate_triangles_z(triangles, angle_deg: float):
     """Rotate triangles around Z by angle_deg and normalize min XYZ to (0, 0, 0)."""
     rad = math.radians(float(angle_deg))
     c, s = math.cos(rad), math.sin(rad)
-    rotated = [
-        [(c * x - s * y, s * x + c * y, z) for x, y, z in tri]
-        for tri in triangles
-    ]
+    from .compact_geometry import TransformedTriangles
+    rotated = TransformedTriangles(triangles, lambda x, y, z: (c * x - s * y, s * x + c * y, z))
     lo, hi, ext = _bounds_from_triangles(rotated)
     dx, dy, dz = -lo[0], -lo[1], -lo[2]
-    normalized = [
-        [(x + dx, y + dy, z + dz) for x, y, z in tri]
-        for tri in rotated
-    ]
+    normalized = TransformedTriangles(rotated, lambda x, y, z: (x + dx, y + dy, z + dz))
     return normalized, ext, (c, s, lo)
 
 

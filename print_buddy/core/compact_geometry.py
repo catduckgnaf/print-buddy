@@ -47,6 +47,21 @@ class CompactTriangles(Sequence):
         return False
 
 
+class TransformedTriangles(Sequence):
+    """Reiterable scalar transform view; orientations share the source storage."""
+    def __init__(self, source, transform):
+        self.source = source
+        self.transform = transform
+
+    def __len__(self):
+        return len(self.source)
+
+    def __getitem__(self, index):
+        if isinstance(index, slice):
+            return CompactTriangles(self[i] for i in range(*index.indices(len(self))))
+        return [self.transform(*point) for point in self.source[index]]
+
+
 def transformed_rows(vertices, chain, transform):
     """Apply transforms with historical scalar operation order, compactly."""
     from .mesh_fast import _LegacyRows

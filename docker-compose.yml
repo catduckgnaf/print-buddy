@@ -1,5 +1,9 @@
 # Installation example. GHCR image: ghcr.io/catduckgnaf/print-buddy; published by the manual workflow after offline acceptance. Prefer its tested digest.
 # Set PRINT_BUDDY_IMAGE to an approved locally built image or tested immutable digest.
+# Spoolman is included in this stack (#214): it always runs alongside Print Buddy, with no
+# separate opt-in Compose file. Setting PRINT_BUDDY__SERVICES__SPOOLMAN_URL in .env to an
+# existing external Spoolman makes Print Buddy use that instance instead; the included
+# container and its data are then simply unused, never migrated or overwritten.
 x-runtime: &runtime
   image: ${PRINT_BUDDY_IMAGE:?Set PRINT_BUDDY_IMAGE to a tested image digest or local tag}
   restart: unless-stopped
@@ -9,6 +13,9 @@ x-runtime: &runtime
     # Mount a custom config at the selected path with a local Compose override.
     PRINT_BUDDY_CONFIG: ${PRINT_BUDDY_CONFIG:-/app/config/docker.yaml}
     PRINT_BUDDY__BOT__MODE: standalone
+    # Included Spoolman by default. An empty or unset value in .env falls back to the
+    # included service; a non-empty value is an existing external Spoolman and wins.
+    PRINT_BUDDY__SERVICES__SPOOLMAN_URL: ${PRINT_BUDDY__SERVICES__SPOOLMAN_URL:-http://spoolman:8000}
   volumes:
     - ${PRINT_BUDDY_DATA:-./data}/hermes:/data/hermes
     - ${PRINT_BUDDY_DATA:-./data}/archive:/data/archive
@@ -23,6 +30,9 @@ x-runtime: &runtime
   logging:
     driver: json-file
     options: {max-size: 10m, max-file: "3"}
+  depends_on:
+    spoolman:
+      condition: service_healthy
 services:
   bot:
     <<: *runtime
@@ -41,4 +51,25 @@ services:
       interval: 30s
       timeout: 10s
       start_period: 60s
+      retries: 3
+  spoolman:
+    # Included Spoolman companion (#214), adapted from zaheria985 Docker commit 3bb0984 (MIT).
+    # Pinned upstream release; never `latest`. See docs/DOCKER.md for the update policy.
+    image: ghcr.io/donkie/spoolman:0.27.0
+    restart: unless-stopped
+    volumes:
+      - ${PRINT_BUDDY_DATA:-./data}/spoolman:/home/app/.local/share/spoolman
+    environment:
+      TZ: ${TZ:-UTC}
+    mem_limit: 512m
+    logging:
+      driver: json-file
+      options: {max-size: 10m, max-file: "3"}
+    # No host port: Print Buddy reaches Spoolman on the Compose network, and the
+    # Spoolman UI/API is not exposed on the host by this stack.
+    healthcheck:
+      test: [CMD, python3, -c, "import urllib.request; urllib.request.urlopen('http://localhost:8000/api/v1/health', timeout=5)"]
+      interval: 30s
+      timeout: 10s
+      start_period: 30s
       retries: 3

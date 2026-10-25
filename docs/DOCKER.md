@@ -113,7 +113,7 @@ docker build --build-arg APP_CHANNEL=stable --build-arg WITH_ORCA=true --build-a
 docker run -e PRINT_BUDDY_ORCA_CHANNEL=alpha print-buddy:stable-orca
 ```
 
-OpenSCAD (`openscad`) is included in the runtime image for `cad_split.py --execute`. KiCad is not bundled; it remains deferred per [KICAD-EVALUATION.md](KICAD-EVALUATION.md). Spoolman stays a separate container, optionally provided by `docker-compose.spoolman.yml`.
+OpenSCAD (`openscad`) is included in the runtime image for `cad_split.py --execute`. KiCad is not bundled; it remains deferred per [KICAD-EVALUATION.md](KICAD-EVALUATION.md). Spoolman runs as its own container, included in the default Compose stack (see [Included Spoolman](#included-spoolman)).
 
 ## First-run configuration
 
@@ -123,7 +123,8 @@ OpenSCAD (`openscad`) is included in the runtime image for `cad_split.py --execu
 2. Set PRINT_BUDDY_IMAGE in .env to an approved local tag or immutable tested image
    digest. There is intentionally no invented published image default.
 3. Set PRINT_BUDDY_DATA to an absolute persistent directory. Create its hermes,
-   archive, records and cache subdirectories writable by container UID/GID 1000.
+   archive, records, cache and spoolman subdirectories writable by container
+   UID/GID 1000 (the spoolman subdirectory holds the included Spoolman's data).
    Do not run as root to hide ownership errors. First-run state is created there.
 4. Use PRINT_BUDDY__SECTION__KEY scalar overrides from the settings schema. YAML
    and TOML Docker examples have equivalent effective configuration. For arrays,
@@ -138,14 +139,56 @@ inside the image; editing host source cannot mask broken packaging.
 
 ## Services and health
 
-The base Compose file defines bot and listener using the same selected image.
-It publishes no ports and requires no bundled Spoolman. Supply an existing
-Spoolman URL with PRINT_BUDDY__SERVICES__SPOOLMAN_URL if used.
+The Compose file defines bot and listener using the same selected image, plus
+the included Spoolman service. It publishes no ports.
 
-The optional docker-compose.spoolman.yml override adds pinned Spoolman 0.27.0
-and persistent data, setting its internal URL on both services. This optional
-container is not required, tested here, or approved for creation by this PR.
-It publishes no UI port. Adding a host listener requires separate network review.
+## Included Spoolman
+
+Spoolman is included in the standard deployment ([#214](https://github.com/catduckgnaf/print-buddy/issues/214)); it is not an
+opt-in extra and there is no separate Spoolman Compose file to add. A plain
+`docker compose up -d` starts all three services:
+
+| Service | Image | Notes |
+| --- | --- | --- |
+| `spoolman` | `ghcr.io/donkie/spoolman:0.27.0` (pinned) | Data in `PRINT_BUDDY_DATA/spoolman`, mapped to `/home/app/.local/share/spoolman`; 512 MiB memory limit; no host port published |
+| `bot`, `listener` | the selected Print Buddy image | Both wait for Spoolman's healthcheck (`GET /api/v1/health`) via `depends_on: service_healthy`, and are wired to it automatically |
+
+Print Buddy is configured to use the included Spoolman without the user
+discovering or entering its internal URL: Compose sets
+`PRINT_BUDDY__SERVICES__SPOOLMAN_URL` to `http://spoolman:8000` on bot and
+listener whenever that variable is empty or unset in `.env`. Spoolman data
+persists across container recreation in that directory; recreate with
+`docker compose up -d` (never `docker compose down -v`).
+Starting the included Spoolman changes no spool or printer state by itself:
+it is a filament-record database. Print Buddy only reads or writes spool
+records through its normal, user-initiated flows.
+
+Supported version and update policy: the supported Spoolman is the pinned
+`0.27.0` image above, the same release the CI Spoolman job installs. The pin
+never floats on `latest`, Print Buddy never auto-updates Spoolman, and users
+should not change the tag on their own. A version bump lands as a reviewed
+change to the pin in `docker-compose.yml` and the Unraid Spoolman template
+together, after the acceptance harness passes with the new image. Before any
+such update, back up `PRINT_BUDDY_DATA/spoolman`; to roll back, restore the
+previous pin and that backup. No automatic database downgrade is provided.
+
+Network exposure: the Compose stack publishes no Spoolman port, so the
+Spoolman UI and API are reachable only from inside the Compose network.
+That is deliberate: Spoolman has no login of its own worth exposing. To use
+its web UI, reach it from the host without publishing it (for example an SSH
+tunnel or a one-off local override you create and review yourself); never
+forward a Spoolman port from a router or expose it publicly.
+
+Using an existing external Spoolman instead: set
+`PRINT_BUDDY__SERVICES__SPOOLMAN_URL` in `.env` to that instance (for
+example `http://spoolman.example:8000`) and Print Buddy uses it. Nothing is
+migrated, reset, overwritten or silently redirected: the external instance's
+data and configuration are untouched, the included container still starts
+(its own data directory is simply unused while the override is set), and
+removing the override returns Print Buddy to the included Spoolman with its
+data as it was left. Changing a URL never moves a database; to actually move
+between instances, export/import using Spoolman's own supported procedure
+and keep the old data directory until the move is verified.
 
 Bot health reports its handler count and checks its standalone Discord connection, freshness,
 container identity and Linux process start identity. Listener health checks its
@@ -162,30 +205,60 @@ between replicas of one service.
 
 ## Unraid DockerMan parity (manual candidate setup)
 
-No DockerMan template is published by this draft. Two template proposals,
-`docker/unraid/print-buddy-bot.xml` and `docker/unraid/print-buddy-listener.xml`,
-encode the entries below. Tests keep them in step with Compose, and the acceptance
-harness runs their docker arguments. Their Repository is a
-`REPLACE_WITH_TESTED_IMAGE` placeholder. After separate deployment approval, copy
-them to `/boot/config/plugins/dockerMan/templates-user/`, set Repository to the
-tested image, or create the two entries by hand from the same tested image:
-Print Buddy Bot and Print Buddy Listener. Override the commands respectively with
-`python3 -m print_buddy.bot` and
+No DockerMan template is published by this draft, and nothing here is a
+published Unraid Community Applications (CA) listing: submitting these
+templates to CA is a separate external step that has not happened (#180
+tracks the CA route). What this repo provides for Unraid today is three
+template proposals in `docker/unraid/`: `print-buddy-bot.xml`,
+`print-buddy-listener.xml` and `print-buddy-spoolman.xml` (the included
+Spoolman). Tests keep them in step with Compose, and the acceptance harness
+runs the bot/listener templates' docker arguments. The bot/listener
+Repository is a `REPLACE_WITH_TESTED_IMAGE` placeholder; the Spoolman
+template's Repository is the pinned upstream `ghcr.io/donkie/spoolman:0.27.0`.
+After separate deployment approval, copy the templates to
+`/boot/config/plugins/dockerMan/templates-user/`, set the bot/listener
+Repository to the tested image, or create the three entries by hand:
+Print Buddy Bot, Print Buddy Listener and spoolman. Override the bot/listener
+commands respectively with `python3 -m print_buddy.bot` and
 `python3 -m print_buddy.hermes.moonraker_event_listener`.
 Map the same four persistent paths to /data/hermes, /data/archive, /data/records
-and /data/cache. Preserve UID/GID 1000 ownership. Set PRINT_BUDDY_CONFIG to
+and /data/cache, and the Spoolman data path to
+/mnt/user/appdata/print-buddy/spoolman. Preserve UID/GID 1000 ownership. Set PRINT_BUDDY_CONFIG to
 /app/config/docker.yaml and PRINT_BUDDY__BOT__MODE to standalone. Copy the same
-required scalar settings and secrets into each entry, without exposing host
+required scalar settings and secrets into each Print Buddy entry, without exposing host
 ports. Apply Compose's health commands respectively:
 `python3 -m print_buddy.bot health` and `python3 -m print_buddy.healthcheck`.
 Use no-new-privileges, drop capabilities, 2 CPU/2 GiB and a 256 PID limit as the
-starting runtime envelope. Slicer memory requirements remain unverified; do not
+starting runtime envelope for bot/listener, and 512 MiB for Spoolman. Slicer memory requirements remain unverified; do not
 confuse these example service limits with the earlier 4 CPU/6 GiB build approval.
+
+Unraid limitations, specific to the included Spoolman:
+
+- DockerMan has no `depends_on`: nothing waits for Spoolman's healthcheck
+  before Print Buddy starts. Print Buddy tolerates Spoolman being briefly
+  unavailable at startup, but start (or restart) spoolman first and let its
+  healthcheck pass before relying on spool features.
+- Containers on Unraid's default bridge network cannot reach each other by
+  container name. Put all three containers on the same custom Docker network
+  and keep the Spoolman container named `spoolman`, so the default
+  `http://spoolman:8000` in the bot/listener templates resolves. If you cannot
+  do that, publish the Spoolman template's port (host 7912 to container 8000)
+  and set the bot/listener Spoolman URL to `http://<unraid-host>:7912`
+  instead. That port is then reachable on the LAN: never forward it from the
+  router or expose Spoolman publicly.
+- The Spoolman template publishes that 7912 port by default so its web UI is
+  usable from the LAN, unlike the Compose stack, which publishes nothing.
+  Delete the port mapping in DockerMan if you do not want the UI reachable
+  and Print Buddy shares the custom network.
+- Persistence is the single appdata path above; back it up with the other
+  Print Buddy appdata paths. Recreating the container from the template
+  keeps it; deleting the container and its appdata does not.
+
 DockerMan installation and persistence have not been exercised on Unraid.
 
 ## Validation and attribution
 
-`tests/docker/image_acceptance.sh IMAGE [external|bundled]` is the offline runtime
+`tests/docker/image_acceptance.sh IMAGE [included]` is the offline runtime
 acceptance for one already-built image. It never builds, pulls or pushes. It runs under
 a unique Compose project on an internal network with no route out, uses dummy
 secrets, and removes only its own containers. It checks:
@@ -198,7 +271,7 @@ secrets, and removes only its own containers. It checks:
 - refusal of foreign and stopped heartbeats
 - SIGTERM, recreation persistence, and a same-image tag switch (recreation only, not an
   upgrade)
-- bundled Spoolman persistence
+- included Spoolman persistence
 
 The hosted equivalent, `.github/workflows/docker-image-validation.yml`, only runs when a
 maintainer dispatches it, and never publishes anything.
@@ -209,7 +282,8 @@ are not a source-built Orca image, runtime fixture, release, or live-printer tes
 Standalone foundations originated in zaheria985/print-buddy commit
 fba5727184dd8f0070e59c8f1fc088751142a003 and merged through #132. Contributor
 Docker #139 commit 3bb0984250c20eb336d11ba1da06633950b45182 (MIT) informs the
-optional Spoolman override, build-context filtering and listener heartbeat.
+Spoolman service (originally an optional override, included in the base stack
+by #214), build-context filtering and listener heartbeat.
 The current health implementation additionally binds container/process identity;
 the source-build option and pinned official prebuilt preserve that attribution.
 Original contributor commits and license notices remain intact.
@@ -292,14 +366,13 @@ assertion that container recreation has passed here.
    If state schema changes incompatibly, restore the matching operator recovery
    data before startup; do not run an older binary over unknown newer state.
 
-For optional bundled Spoolman use both Compose files:
-`docker compose -f docker-compose.yml -f docker-compose.spoolman.yml config`.
-The override replaces each application's Spoolman URL with http://spoolman:8000.
-Its database lives in PRINT_BUDDY_DATA/spoolman. To switch back to external mode,
-stop the bundled server, preserve that directory, migrate/export using Spoolman's
-supported procedure, set the external URL in .env and omit the override. Changing
-a URL does not move a database. Never delete the old directory to switch modes.
-Bundled recreation and migration remain image/runtime gates.
+Spoolman is included in the same Compose file, so the upgrade and rollback
+steps above cover it too: its database lives in PRINT_BUDDY_DATA/spoolman and
+survives recreation. Back that directory up with the other four before an
+upgrade. To use an external Spoolman instead, set its URL in .env (see
+[Included Spoolman](#included-spoolman)); never delete the included data
+directory to switch, and changing a URL does not move a database.
+Included-Spoolman recreation remains an image/runtime acceptance gate.
 
 Troubleshooting: check selected YAML/TOML path and UID 1000 permissions first;
 use bot check for missing required inputs. Bot health fails until Discord is
@@ -309,4 +382,5 @@ not permission to send unsliced geometry. Docker restart unless-stopped reacts t
 process exit, not to an unhealthy healthcheck alone. No autoheal is supplied.
 Manual DockerMan parity also requires restart unless-stopped, shared memory 256m
 and rotating json-file logs (max-size 10m, max-file 3); apply the same config mount
-and external Spoolman URL. Do not bind-mount the source tree over /app.
+and the included-Spoolman URL (or your external Spoolman URL, if you set one).
+Do not bind-mount the source tree over /app.

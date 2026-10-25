@@ -39,7 +39,7 @@ Docker is not part of 2.1.0. No image has been published yet; the first image is
 
 1. Pin the image by digest, not a tag: set `PRINT_BUDDY_IMAGE=ghcr.io/catduckgnaf/print-buddy@sha256:<digest>` in `.env`. The digest will be in the publish run summary and that release's notes.
 2. Copy `.env.example` to `.env` and fill in the Discord token, channel and allowed users. Set `PRINT_BUDDY_DATA` to a persistent directory owned by UID 1000.
-3. Run `docker compose up -d`. Add `docker-compose.spoolman.yml` if you want Spoolman as a separate container.
+3. Run `docker compose up -d`. Spoolman is included: it starts with Print Buddy, already wired up, with its data under `PRINT_BUDDY_DATA/spoolman`. (Already run your own Spoolman? Set `PRINT_BUDDY__SERVICES__SPOOLMAN_URL` in `.env` and Print Buddy will use yours instead — nothing is migrated.)
 
 What the image includes:
 
@@ -48,7 +48,8 @@ What the image includes:
 | OrcaSlicer | Stable and alpha. `PRINT_BUDDY_ORCA_CHANNEL=stable` (default) or `alpha` picks one at startup, no rebuild. Any other value stops the container. Used for Flashforge and Sovol |
 | Bambu Studio | Default slicer for every Bambu Lab printer (A1, P1S) |
 | OpenSCAD | For CAD splitting (`cad_split.py --execute`) |
-| Not included | Spoolman (separate container), KiCad (deferred) |
+| Spoolman | Included as its own container in the Compose stack, pinned to `ghcr.io/donkie/spoolman:0.27.0`, data persisted under `PRINT_BUDDY_DATA/spoolman` |
+| Not included | KiCad (deferred) |
 
 See [Docker setup](docs/DOCKER.md) for health checks, upgrades and rollback.
 
@@ -66,6 +67,7 @@ Start with the installation guide, not a production print. Installation and serv
 - **Manage filament:** use Spoolman and supported IFS integrations to match loaded spools and keep identity and material information consistent.
 - **Run approved jobs:** confirm bed clearance, work through multi-plate plans and reprint archived jobs using guarded controls.
 - **Follow a print:** receive configured printer events, camera alerts and timelapses, and keep job records.
+- **Set up and troubleshoot in Discord:** `/print-buddy setup` walks a fresh install through a saved, resumable checklist (nothing is written without an explicit `apply`), and `/print-buddy debugging` runs read-only, redacted checks. See [guided setup and debugging](docs/GUIDED-SETUP-DEBUGGING.md).
 
 Printer-specific capabilities and detailed commands are in the [project reference](docs/PROJECT-REFERENCE.md). Optional vision and conversational features may use a model; the standalone command and slicing workflow does not require one.
 

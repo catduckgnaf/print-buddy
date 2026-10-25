@@ -25,20 +25,32 @@ class DockerReleaseContract(unittest.TestCase):
                 self.assertIn("/usr/local/bin/orca-slicer", config)
                 self.assertNotIn("/opt/orcaslicer/AppRun", config)
 
-    def test_separate_services_and_external_spoolman_default(self):
+    def test_separate_services_and_included_spoolman_default(self):
+        """#214: Spoolman is included in the base stack, not an opt-in override."""
         compose = yaml.safe_load((ROOT / "docker-compose.yml").read_text())
         services = compose["services"]
         self.assertIn("bot", services)
         self.assertIn("listener", services)
-        self.assertNotIn("spoolman", services)
+        self.assertIn("spoolman", services)
         for name, module in (("bot", "print_buddy.bot"),
                              ("listener", "print_buddy.hermes.moonraker_event_listener")):
             with self.subTest(service=name):
                 service = services[name]
                 self.assertEqual(service["command"], ["python3", "-m", module])
                 self.assertIn("healthcheck", service)
-                self.assertFalse(service.get("depends_on"))
+                # Bot and listener wait for the included Spoolman to be healthy.
+                self.assertEqual(service["depends_on"]["spoolman"]["condition"], "service_healthy")
                 self.assertFalse(any("/app" in v for v in service["volumes"]))
+        # Auto-wired to the included service, with an external URL in .env winning.
+        runtime = compose["x-runtime"]["environment"]
+        self.assertEqual(runtime["PRINT_BUDDY__SERVICES__SPOOLMAN_URL"],
+                         "${PRINT_BUDDY__SERVICES__SPOOLMAN_URL:-http://spoolman:8000}")
+        spoolman = services["spoolman"]
+        self.assertEqual(spoolman["image"], "ghcr.io/donkie/spoolman:0.27.0")
+        self.assertNotIn("ports", spoolman)
+        self.assertIn("healthcheck", spoolman)
+        self.assertTrue(any(v.endswith("/spoolman:/home/app/.local/share/spoolman")
+                            for v in spoolman["volumes"]))
 
     def test_configuration_parity_channels_and_packaged_plugins(self):
         import tomllib
@@ -55,9 +67,8 @@ class DockerReleaseContract(unittest.TestCase):
         self.assertNotIn("plugins", ignored)
         self.assertIn(".env", ignored)
         self.assertTrue((ROOT / "plugins" / "print-feedback").is_dir())
-        extra = yaml.safe_load((ROOT / "docker-compose.spoolman.yml").read_text())
-        self.assertIn("spoolman", extra["services"])
-        self.assertNotIn("ports", extra["services"]["spoolman"])
+        # The old opt-in override file is gone: Spoolman lives in the base file (#214).
+        self.assertFalse((ROOT / "docker-compose.spoolman.yml").exists())
 
     def test_entrypoint_selects_stable_by_default_and_alpha_on_request(self):
         script = ROOT / "docker" / "entrypoint.sh"
@@ -137,7 +148,7 @@ class DockerReleaseContract(unittest.TestCase):
         self.assertIn("PRINT_BUDDY_ORCA_CHANNEL", docs)
         self.assertIn("OpenSCAD (`openscad`) is included", docs)
         self.assertIn("KiCad is not bundled; it remains deferred", docs)
-        self.assertIn("Spoolman stays a separate container", docs)
+        self.assertIn("Spoolman runs as its own container, included in the default Compose stack", docs)
 
     def test_validation_workflow_builds_both_orca_channels(self):
         workflow = (ROOT / ".github" / "workflows" / "docker-image-validation.yml").read_text()

@@ -52,7 +52,7 @@ print('PAYLOAD ' + json.dumps({'root': str(settings.ROOT), 'plugin': str(PLUGIN)
     report = json.loads(next(line[8:] for line in result.stdout.splitlines() if line.startswith("PAYLOAD ")))
     assert report["root"] == str(payload)
     assert report["plugin"].startswith(str(payload))
-    assert "ok    handlers: 15" in result.stdout
+    assert "ok    handlers: 16" in result.stdout
 
 
 def test_no_orca_fit_refuses_without_an_artifact(tmp_path):
@@ -81,10 +81,11 @@ def test_docker_scalar_environment_parity_for_every_schema_key():
         assert loaded[section][key] == base[section][key], (section, key)
 
 
-def test_example_requires_explicit_standalone_inputs_and_external_spoolman():
+def test_example_requires_explicit_standalone_inputs_and_included_spoolman_default():
     text = (ROOT / ".env.example").read_text()
     assignments = dict(line.split("=", 1) for line in text.splitlines()
                        if line and not line.startswith("#") and "=" in line)
+    # Empty in .env.example: docker-compose.yml defaults it to the included Spoolman (#214).
     assert assignments["PRINT_BUDDY__SERVICES__SPOOLMAN_URL"] == ""
     for key in ("DISCORD_BOT_TOKEN", "PRINT_BUDDY_IMAGE", "PRINT_BUDDY__DISCORD__CHAT_ID",
                 "PRINT_BUDDY__DISCORD__ALLOWED_USER_IDS"):

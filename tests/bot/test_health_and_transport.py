@@ -136,7 +136,7 @@ def test_check_command_names_every_problem(monkeypatch, capsys, tmp_path):
     assert bot_main.check() == 1
     out = capsys.readouterr().out
     for line in ("FAIL  mode: hermes", "FAIL  token", "FAIL  print channel", "FAIL  allowed users",
-                 "ok    handlers: 15", "ok    no hermes", f"ok    state dir: {tmp_path}"):
+                 "ok    handlers: 16", "ok    no hermes", f"ok    state dir: {tmp_path}"):
         assert line in out, out
 
 

@@ -261,6 +261,7 @@ def test_discord_clarify_cap_is_scoped_to_3dprinting_discord():
     ctx = mock.Mock()
     plugin.register(ctx)
     assert [item.args for item in ctx.register_hook.call_args_list] == [
+        ('pre_gateway_dispatch', plugin.guided_dispatch),
         ('pre_gateway_dispatch', plugin.maintenance_dispatch),
         ('pre_gateway_dispatch', plugin.coldpull_dispatch),
         ('pre_gateway_dispatch', plugin.lookup_dispatch),

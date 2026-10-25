@@ -46,6 +46,10 @@ COMMANDS = (
     Command("print-troubleshoot", "Guided step-by-step physical troubleshooting (advice only, sends nothing)",
             (Option("flow", "Which problem", ("first-layer", "clog", "heat-creep", "bed-level", "ringing")),),
             "/print-troubleshoot [first-layer | clog | heat-creep | bed-level | ringing]"),
+    Command("print-buddy", "Guided setup and read-only debugging (never prints)",
+            (Option("action", "setup, debugging, status, cancel or help",
+                    ("setup", "debugging", "status", "cancel", "help")),),
+            "/print-buddy [setup | debugging | status | cancel | help]"),
     Command("print-help", "What Print Buddy can do", usage="/print-help"),
 )
 

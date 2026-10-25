@@ -51,6 +51,8 @@ JOB_CHANGES = {
                                              'selection': {'slot': 1, 'color': 'white', 'material': 'PETG'}}),
     'scale': _job(scale=0.8),
     'copies': _job(copies=3),
+    'unit decision': _job(unit_decision={'source_sha256': 'source-a', 'units': 'inch',
+                                         'original_mm': [2.0, 3.0, 4.0], 'source': 'user_confirmation'}),
 }
 
 

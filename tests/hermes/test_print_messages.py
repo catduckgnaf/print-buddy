@@ -547,6 +547,14 @@ def test_slice_summary_includes_auto_scale(job):
     assert 'Auto-scale: 2 x 3 x 4 mm treated as inches, scaled 25.4x -> 50.8 x 76.2 x 101.6 mm' in text
 
 
+def test_slice_summary_includes_confirmed_mm_units(job):
+    job.data['unit_provenance'] = {'units': 'mm', 'source': 'user_confirmation',
+                                   'original_mm': [5, 2, 2], 'factor': 1.0}
+    text = summary.format_slice_summary(job.data)
+    assert 'Units: millimeters confirmed, printed at authored size 5 x 2 x 2 mm' in text
+    assert 'Auto-scale' not in text
+
+
 # ---- D: the print-feedback plugin against the real DiscordAdapter.send signature ----
 
 class StrictAdapter:

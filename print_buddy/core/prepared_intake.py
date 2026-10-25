@@ -943,6 +943,36 @@ async def prepare_link(event, adapter, state, root, timeout=None, reuse=None):
         mj.write_job(folder, job)
         receipt.update(job_json=str(jp), source_sha256=manifest['source_sha256'], status='AWAITING_COLOR')
         receipt_path.write_text(json.dumps(receipt, indent=2) + '\n')
+        unit_q = mj.unit_question(job)
+        if unit_q is not None:
+            # STL records no units and this part is small enough to be either
+            # millimeters or inches. Ask before any fit or color work, and
+            # record the answer on the job; slicing refuses to assume (#206).
+            measured = ' x '.join(f'{float(value):g}' for value in unit_q['original_mm'])
+            as_inch = ' x '.join(f'{float(value):g}' for value in unit_q['inch_mm'])
+            pick = await _ask(adapter, source, key,
+                              f'This STL measures {measured} mm as written, and STL files do not record units. '
+                              f'Is that size in millimeters, or in inches (which would print at {as_inch} mm)?',
+                              unit_q['choices'], timeout)
+            units = 'mm' if pick == 0 else 'inch'
+            decision = mj.make_unit_decision(units, manifest['source_sha256'], unit_q['original_mm'])
+            mj.set_unit_decision(job, decision)
+            mj.write_job(folder, job)
+            receipt.update(unit_decision=decision)
+            receipt_path.write_text(json.dumps(receipt, indent=2) + '\n')
+            if units == 'inch':
+                bed = state.get('bed_mm') or BED
+                height = state.get('max_print_height_mm')
+                if (unit_q['inch_mm'][0] > float(bed[0]) or unit_q['inch_mm'][1] > float(bed[1])
+                        or (height is not None and unit_q['inch_mm'][2] > float(height))):
+                    receipt.update(status='CANCELLED_OVERSIZED')
+                    receipt_path.write_text(json.dumps(receipt, indent=2) + '\n')
+                    await adapter.send(chat_id=source.chat_id,
+                                       content=f'Treating it as inches would make it {as_inch} mm, which exceeds '
+                                               'the printer volume. Print cancelled. Nothing was sliced, '
+                                               'uploaded, or started.',
+                                       metadata=metadata)
+                    return {'action': 'skip', 'reason': 'inch-confirmed model exceeds printer volume'}
         selections = [mj.resolve_filament_selection(state, dict(label, slot=int(slot)))
                       for slot, label in sorted(state.get('ifs_slots', {}).items())]
         labels = mj.build_slot_labels(selections)
@@ -1013,6 +1043,10 @@ async def prepare_link(event, adapter, state, root, timeout=None, reuse=None):
                                content=f"Fit check is unverified and can be resumed. No slice or print was started. {exc}",
                                metadata=metadata)
             return {'action': 'skip', 'reason': 'fit unknown; resumable'}
+        if (job.get('unit_decision') or {}).get('units') == 'inch':
+            # Capacity was probed at the authored size; an inch-confirmed part
+            # prints 25.4x larger, so only the single copy is verified.
+            capacity = min(capacity, 1)
         painted_multi = (manifest.get('painted') and (latest.get('color_decisions') or {}).get('mode') == 'per_part')
         if capacity < 1 and painted_multi:
             # Painted multicolor: one multicolor G-code per authored plate at

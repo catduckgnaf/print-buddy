@@ -49,8 +49,8 @@ class MeshTable:
 
     def __iter__(self):
         # Preserve the historical unpacking shape: vertices, faces = table.
-        yield self.vertices
-        yield self.triangles
+        yield _LegacyRows(self.vertices)
+        yield _LegacyRows(self.triangles)
 
     def __getitem__(self, index):
         return _LegacyRows((self.vertices, self.triangles)[index])

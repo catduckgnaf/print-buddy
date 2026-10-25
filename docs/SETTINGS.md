@@ -127,7 +127,8 @@ Image build inputs (`docker build --build-arg NAME=value`), not runtime settings
 | Argument | Default | What it does |
 |---|---|---|
 | `APP_CHANNEL` | `development` | Application provenance label, `stable` or `development`; it does not change the source checkout |
-| `WITH_ORCA` | `false` | `true` builds stable and alpha OrcaSlicer from pinned source; `false` omits both and slicing fails closed |
+| `WITH_ORCA` | `false` | `true` includes OrcaSlicer from the distribution chosen by `ORCA_SOURCE`; `false` omits it and slicing fails closed |
+| `ORCA_SOURCE` | `prebuilt` | `prebuilt` installs the pinned official OrcaSlicer 2.4.2 Linux release (sha256 verified, stable channel only); `source` builds stable and alpha from pinned source |
 | `ORCA_STABLE_REF` | `8500fcdccaa10b5099ac20d252af3a7c560046f1` | Pinned stable OrcaSlicer source commit |
 | `ORCA_ALPHA_REF` | `3880f2c58ec392ed2bd5938ab31c9c7c496c0eb2` | Pinned OrcaSlicer alpha source commit |
 | `ORCA_BUILD_JOBS` | `auto` | Parallel compile jobs: `auto` (memory-aware, below the CPU count) or a whole number from 1 to 64; see [DOCKER.md](DOCKER.md#orcaslicer-source-build) |

@@ -32,6 +32,9 @@ cmake --build deps/build --parallel 1
 cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release \
   -DSLIC3R_STATIC=ON -DSLIC3R_FHS=ON -DSLIC3R_PCH=OFF \
   -DCMAKE_INSTALL_PREFIX="/opt/orca-$channel"
+# Configuring does not compile the application. Install must only follow a
+# successful bounded build (otherwise CMake cannot find src/orca-slicer).
+cmake --build build --parallel "$jobs" --target OrcaSlicer
 mkdir -p /out/usr/local/bin
 DESTDIR=/out cmake --install build
 binary="/out/opt/orca-$channel/bin/orca-slicer"

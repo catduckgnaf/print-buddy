@@ -34,6 +34,8 @@ def payload():
                                 root / "plugins" / "print-feedback", Path(PLUGIN)) if not p.exists()]
     templates = {}
     for key, model in printers.MODELS.items():
+        if model.generated_templates:  # Bambu: profiles come from the user's slicer at runtime; none ship
+            continue
         folder = root / "print_buddy" / "templates" / "orca" / model.templates
         templates[key] = all((folder / f"{n}.json").is_file() for n in ("machine", "process", "filament"))
     mounts = [line.split()[4] for line in Path("/proc/self/mountinfo").read_text().splitlines()]

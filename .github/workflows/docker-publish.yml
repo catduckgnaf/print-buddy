@@ -8,14 +8,23 @@ on:
         description: Release version in MAJOR.MINOR.PATCH form
         type: string
         required: true
+      publish:
+        description: Push version and latest only after validation (false is a no-push candidate)
+        type: boolean
+        default: false
       with_orca:
-        description: Build the pinned OrcaSlicer from source
+        description: Include pinned OrcaSlicer
         type: boolean
         default: true
+      orca_source:
+        description: Orca distribution (prebuilt stable only; source stable and alpha)
+        type: choice
+        options: [prebuilt, source]
+        default: prebuilt
       with_bambu:
-        description: Build the pinned Bambu Studio from source
+        description: Build the pinned Bambu Studio from source (separate optional build)
         type: boolean
-        default: true
+        default: false
 
 permissions:
   contents: read
@@ -36,6 +45,7 @@ jobs:
       # Inputs reach the shell only as environment variables, never interpolated into scripts.
       PUBLISH_VERSION: ${{ inputs.version }}
       WITH_ORCA: ${{ inputs.with_orca }}
+      ORCA_SOURCE: ${{ inputs.orca_source || 'prebuilt' }}
       WITH_BAMBU: ${{ inputs.with_bambu }}
       SPOOLMAN_MODE: external
     steps:
@@ -69,6 +79,7 @@ jobs:
           docker buildx build --platform linux/amd64 --progress=plain --load -t "$IMAGE:$PUBLISH_VERSION" \
             --build-arg "APP_CHANNEL=$APP_CHANNEL" \
             --build-arg "WITH_ORCA=$WITH_ORCA" \
+            --build-arg "ORCA_SOURCE=$ORCA_SOURCE" \
             --build-arg "WITH_BAMBU=$WITH_BAMBU" \
             --build-arg "ORCA_BUILD_JOBS=$ORCA_BUILD_JOBS" \
             --label "org.opencontainers.image.source=https://github.com/catduckgnaf/print-buddy" \
@@ -81,18 +92,32 @@ jobs:
             echo "image_id=$(docker image inspect --format '{{.Id}}' "$IMAGE:$PUBLISH_VERSION")"
             docker image inspect --format 'platform={{.Os}}/{{.Architecture}} size={{.Size}}' "$IMAGE:$PUBLISH_VERSION"
           } | tee evidence/identity.txt
+      - name: Headless slice with each bundled Orca channel
+        if: inputs.with_orca
+        run: |
+          set -euo pipefail
+          channels=stable
+          if [ "$ORCA_SOURCE" = source ]; then channels="stable alpha"; fi
+          for channel in $channels; do
+            docker run --rm --network none --cpus 2 --memory 4g --pids-limit 256 \
+              --cap-drop ALL --security-opt no-new-privileges:true \
+              --tmpfs /data:uid=1000,gid=1000,size=512m \
+              -e "PRINT_BUDDY_ORCA_CHANNEL=$channel" \
+              "$IMAGE:$PUBLISH_VERSION" python3 /app/docker/slicer-smoke.py \
+              2>&1 | tee "evidence/slicer-$channel.log"
+          done
       - name: Offline runtime acceptance
         id: acceptance
         run: tests/docker/image_acceptance.sh "$IMAGE:$PUBLISH_VERSION" "$SPOOLMAN_MODE" evidence/acceptance
       - uses: docker/login-action@74a5d142397b4f367a81961eba4e8cd7edddf772  # v3.4.0
-        if: steps.acceptance.outcome == 'success'
+        if: inputs.publish && steps.acceptance.outcome == 'success'
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
       - name: Tag and publish accepted image
         id: publish
-        if: steps.acceptance.outcome == 'success'
+        if: inputs.publish && steps.acceptance.outcome == 'success'
         run: |
           set -euo pipefail
           docker tag "$IMAGE:$PUBLISH_VERSION" "$IMAGE:latest"

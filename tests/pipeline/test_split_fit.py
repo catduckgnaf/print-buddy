@@ -375,3 +375,95 @@ def test_slicing_refuses_an_out_of_range_or_unknown_placement(tmp_path, monkeypa
         monkeypatch.setattr(orca_adapter, 'slice_model', _fake_slice())
         with pytest.raises(RuntimeError, match='placement'):
             model_job.slice_job(job_path)
+
+
+# --- #221 stage 3: brim/feature extents in the fit offer -------------------
+# A supplied brim policy is resolved through orca_adapter.required_feature_edge
+# against the printer state; Normal Lift keeps the travel sweep at zero so the
+# budget below is exactly the brim width.
+_BRIM_STATE = {'resolved_hop_types': ['Normal Lift']}
+_BRIM_10 = {'type': 'outer_only', 'width_mm': 10.0, 'label': 'Outer-only brim, 10 mm'}
+
+
+def test_feature_edge_budget_is_zero_without_a_policy_and_includes_travel_sweep():
+    assert split_fit._feature_edge_mm() == 0.0
+    assert split_fit._feature_edge_mm(state=_BRIM_STATE) == 0.0
+    assert split_fit._feature_edge_mm(brim_policy=_BRIM_10, state=_BRIM_STATE) == 10.0
+    spiral = {'resolved_hop_types': ['Spiral Lift'], 'z_hop': 0.4, 'travel_slope': 3.0}
+    budget = split_fit._feature_edge_mm(brim_policy={'type': 'outer_only', 'width_mm': 5.0},
+                                        state=spiral)
+    assert 6.21 < budget < 6.22  # 5 mm brim + ~1.215 mm resolved travel sweep
+
+
+def test_per_part_fit_brim_blocks_a_part_that_fits_only_without_it(tmp_path):
+    source = tmp_path / 'brim-tight.3mf'
+    _mesh_source(source, {'1': _rect_points(200, 200, 10)}, [['1']])
+    (plain,) = split_fit.per_part_fit(source, 220)
+    assert plain['fits_full_size'] is True and plain['feature_edge_mm'] == 0.0
+    assert plain['usable_mm'] == [204.0, 204.0]
+    (row,) = split_fit.per_part_fit(source, 220, brim_policy=_BRIM_10, state=_BRIM_STATE)
+    assert row['fits_full_size'] is False
+    assert row['feature_edge_mm'] == 10.0
+    # Budget applied exactly once: usable = 220 - 2 * (8 edge + 10 brim).
+    assert row['usable_mm'] == [184.0, 184.0]
+    assert 'brim' in row['blocking_reason'] and 'without a brim' in row['blocking_reason']
+    # And its split plan goes with it, while the no-brim plan shape is moot here
+    # (a single part has no split plan either way).
+    assert split_fit.split_plan_100(source, 220, brim_policy=_BRIM_10, state=_BRIM_STATE) is None
+
+
+def test_split_plan_brim_blocks_where_no_brim_plan_exists(tmp_path):
+    source = tmp_path / 'brim-split.3mf'
+    _source(source, {'1': (200, 200, 10), '2': (150, 150, 10)}, [['1', '2']])
+    plan = split_fit.split_plan_100(source, 220)
+    assert plan is not None and len(plan['plates']) == 2
+    assert split_fit.split_plan_100(source, 220, brim_policy=_BRIM_10, state=_BRIM_STATE) is None
+
+
+def test_per_part_fit_brim_still_fits_with_the_budget_accounted(tmp_path):
+    source = tmp_path / 'brim-roomy.3mf'
+    _mesh_source(source, {'1': _rect_points(150, 150, 10)}, [['1']])
+    (row,) = split_fit.per_part_fit(source, 220, brim_policy=_BRIM_10, state=_BRIM_STATE)
+    assert row['fits_full_size'] is True and row['fits_authored'] is True
+    assert row['feature_edge_mm'] == 10.0 and row['usable_mm'] == [184.0, 184.0]
+    assert row['blocking_reason'] is None
+
+
+def test_per_part_fit_brim_off_is_unchanged(tmp_path):
+    source = tmp_path / 'brim-off.3mf'
+    _mesh_source(source, {'1': _rect_points(200, 200, 10)}, [['1']])
+    (plain,) = split_fit.per_part_fit(source, 220)
+    for kwargs in ({'brim_policy': {'type': 'no_brim', 'width_mm': 0.0}, 'state': _BRIM_STATE},
+                   {'state': _BRIM_STATE}):
+        (row,) = split_fit.per_part_fit(source, 220, **kwargs)
+        assert row['feature_edge_mm'] == 0.0
+        for key in ('fits_full_size', 'fits_authored', 'usable_mm', 'best_yaw_deg',
+                    'best_extent_mm', 'placement_mm', 'blocking_reason'):
+            assert row[key] == plain[key]
+
+
+def test_per_part_fit_brim_and_exclusion_compose(tmp_path):
+    exclusions = [(0, 0, 18, 28)]
+    # Placement: the brimmed footprint avoids the exclusion, so the recorded
+    # placement is the grown footprint's spot shifted back by the budget.
+    source = tmp_path / 'brim-placed.3mf'
+    _mesh_source(source, {'1': _rect_points(100, 50, 10)}, [['1']])
+    (row,) = split_fit.per_part_fit(source, 220, exclusions=exclusions,
+                                    brim_policy={'type': 'outer_only', 'width_mm': 5.0},
+                                    state=_BRIM_STATE)
+    assert row['fits_full_size'] is True and row['feature_edge_mm'] == 5.0
+    assert row['placement_mm'] == [23.0, 13.0]
+    px, py = row['placement_mm']
+    assert px - 5.0 >= 18  # the brim itself clears the exclusion's right edge
+    # Blocking: a 190 mm part has an avoiding placement without a brim, but the
+    # brim budget alone makes it not fit, and the reason names the brim.
+    tight = tmp_path / 'brim-exclusion-tight.3mf'
+    _mesh_source(tight, {'1': _rect_points(190, 190, 10)}, [['1']])
+    (plain,) = split_fit.per_part_fit(tight, 220, exclusions=exclusions)
+    assert plain['fits_full_size'] is True and plain['placement_mm'] is not None
+    (row,) = split_fit.per_part_fit(tight, 220, exclusions=exclusions,
+                                    brim_policy=_BRIM_10, state=_BRIM_STATE)
+    assert row['fits_full_size'] is False
+    assert 'brim' in row['blocking_reason']
+    assert split_fit.split_plan_100(tight, 220, exclusions=exclusions,
+                                    brim_policy=_BRIM_10, state=_BRIM_STATE) is None

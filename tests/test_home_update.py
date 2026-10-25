@@ -12,6 +12,15 @@ from print_buddy.settings import LEGACY_ENV
 
 ROOT = Path(__file__).resolve().parents[1]
 
+# What the throwaway checkout's update check runs: the package imports and its settings load.
+SMOKE_TEST = (
+    "import unittest\n"
+    "class Smoke(unittest.TestCase):\n"
+    "    def test_package_imports_and_settings_load(self):\n"
+    "        from print_buddy import settings\n"
+    "        self.assertTrue(settings.load)\n"
+)
+
 
 def git(cwd, *args):
     return subprocess.run(["git", "-c", "user.name=t", "-c", "user.email=t@t", *args], cwd=cwd,
@@ -27,9 +36,16 @@ class HomeUpdateTests(unittest.TestCase):
         self.upstream, self.home = base / "upstream", base / "home"
         files = git(ROOT, "ls-files", "-co", "--exclude-standard").splitlines()
         for name in files:
+            # The update script runs `pytest tests` inside the throwaway checkout. Copying this repository's own
+            # suite would run all of it twice per update (about 200 s each), so the checkout gets a small test
+            # tree instead. The script's pass, rollback and doctor paths are exercised the same way.
+            if name.startswith("tests/") or name.startswith("docs/"):
+                continue
             if (ROOT / name).is_file():
                 (self.upstream / name).parent.mkdir(parents=True, exist_ok=True)
                 shutil.copy2(ROOT / name, self.upstream / name)
+        (self.upstream / "tests").mkdir()
+        (self.upstream / "tests" / "test_smoke.py").write_text(SMOKE_TEST)
         git(self.upstream, "init", "-q", "-b", "main")
         git(self.upstream, "add", "-A")
         git(self.upstream, "commit", "-qm", "base")

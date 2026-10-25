@@ -9,6 +9,7 @@ import posixpath
 from pathlib import Path
 import xml.etree.ElementTree as ET
 from .part_translator import display_name
+from .mesh_fast import archive_tables
 import zipfile
 import subprocess
 
@@ -188,7 +189,11 @@ def _annotate_parts(archive, names, parts, filaments):
                 path_attr = next((v for k, v in comp.attrib.items() if k.split('}')[-1] == 'path'), None)
                 mpath = path_attr.lstrip('/') if path_attr else '3D/3dmodel.model'
                 if mpath not in cache:
-                    mroot = ET.fromstring(archive.read(mpath))
+                    data, fast = archive_tables(archive, mpath)
+                    if fast is not None:
+                        cache[mpath] = {oid: verts for oid, (verts, _) in fast.items()}
+                if mpath not in cache:
+                    mroot = ET.fromstring(data)
                     cache[mpath] = {o.get('id'): [(float(v.get('x')), float(v.get('y')), float(v.get('z')))
                                                   for v in o.iter() if v.tag.split('}')[-1] == 'vertex']
                                     for o in mroot.iter() if o.tag.split('}')[-1] == 'object'}
@@ -201,7 +206,7 @@ def _annotate_parts(archive, names, parts, filaments):
                     # Rotation/scale only: translation does not change size.
                     m = m[:9] + [0, 0, 0]
                     pts = [apply(m, *pt) for pt in pts]
-                part['bounds_mm'] = [round(max(p[i] for p in pts) - min(p[i] for p in pts), 1) for i in range(3)]
+                part['bounds_mm'] = [round(max(axis) - min(axis), 1) for axis in zip(*pts)]
         if 'Metadata/model_settings.config' in names:
             settings = ET.fromstring(archive.read('Metadata/model_settings.config'))
             plate_of = {}

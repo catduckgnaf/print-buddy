@@ -14,6 +14,7 @@ import xml.etree.ElementTree as ET
 import zipfile
 from .. import logs, printers, settings
 from ..printers.base import start_code_problems
+from . import mesh_fast
 from . import slice_guard as sg
 from .slice_guard import pre_slice, post_slice
 
@@ -118,10 +119,14 @@ def _3mf_triangles(source):
 def _parse_3mf_triangles(source):
     with zipfile.ZipFile(source) as archive:
         models = {}
+        tables = {}
         def model(name):
             name = name.lstrip('/')
             if name not in models:
-                root = ET.fromstring(archive.read(name))
+                data, fast = mesh_fast.archive_tables(archive, name)
+                if fast is not None:
+                    tables[name] = fast
+                root = ET.fromstring(data)
                 if root.get('unit', 'millimeter') != 'millimeter':
                     raise RuntimeError('only millimeter 3MF geometry supported')
                 models[name] = (root, {o.get('id'): o for o in root.findall('c:resources/c:object', NS)})
@@ -144,11 +149,15 @@ def _parse_3mf_triangles(source):
             obj = model(name)[1][oid]
             mesh = obj.find('c:mesh', NS)
             if mesh is not None:
-                vertices = [tuple(float(v.get(k)) for k in ('x', 'y', 'z')) for v in mesh.findall('c:vertices/c:vertex', NS)]
+                if name in tables:
+                    vertices, faces = tables[name].get(oid, ([], []))
+                else:
+                    vertices = [tuple(float(v.get(k)) for k in ('x', 'y', 'z')) for v in mesh.findall('c:vertices/c:vertex', NS)]
+                    faces = [tuple(int(tri.get(i)) for i in ('v1', 'v2', 'v3')) for tri in mesh.findall('c:triangles/c:triangle', NS)]
                 for t in chain:  # transform each shared vertex once, not once per triangle reference
                     vertices = [apply(p, t) for p in vertices]
-                for tri in mesh.findall('c:triangles/c:triangle', NS):
-                    yield [vertices[int(tri.get(index))] for index in ('v1', 'v2', 'v3')]
+                for a, b, c in faces:
+                    yield [vertices[a], vertices[b], vertices[c]]
             for component in obj.findall('c:components/c:component', NS):
                 external = next((v for k, v in component.attrib.items() if k.endswith('}path')), name)
                 yield from triangles(external.lstrip('/'), component.get('objectid'), [transform(component)] + chain, active | {key})

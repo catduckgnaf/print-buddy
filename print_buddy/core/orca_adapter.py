@@ -15,6 +15,7 @@ import zipfile
 from .. import logs, printers, settings
 from ..printers.base import start_code_problems
 from . import mesh_fast
+from .compact_geometry import IndexedTriangles
 from . import slice_guard as sg
 from .slice_guard import pre_slice, post_slice
 
@@ -173,7 +174,7 @@ def _parse_3mf_triangles(source):
             return models[name]
         def apply(point, t):
             # Same float operation order as sum(p[j] * t[j*3+i]) + t[9+i]; output is bit-identical.
-            x, y, z = point
+            x, y, z = (float(value) for value in point)
             return (0 + x * t[0] + y * t[3] + z * t[6] + t[9],
                     0 + x * t[1] + y * t[4] + z * t[7] + t[10],
                     0 + x * t[2] + y * t[5] + z * t[8] + t[11])
@@ -182,29 +183,57 @@ def _parse_3mf_triangles(source):
             if len(values) != 12:
                 raise RuntimeError('invalid 3MF transform')
             return values
-        def triangles(name, oid, chain, active):
+        def transform_vertices(vertices, chain):
+            # Vectorized twin of [apply(p, t) for t in chain for p in vertices]:
+            # each coordinate keeps apply's exact left-to-right operation
+            # order (0 + x*t[0] + y*t[3] + z*t[6] + t[9]) as separate
+            # elementwise steps, so results are bit-identical per vertex.
+            import numpy as np
+            result = np.asarray(vertices, dtype=np.float64).reshape((-1, 3))
+            for t in chain:  # transform each shared vertex once, not once per triangle reference
+                x, y, z = result[:, 0], result[:, 1], result[:, 2]
+                result = np.stack((
+                    0.0 + x * t[0] + y * t[3] + z * t[6] + t[9],
+                    0.0 + x * t[1] + y * t[4] + z * t[7] + t[10],
+                    0.0 + x * t[2] + y * t[5] + z * t[8] + t[11],
+                ), axis=1)
+            return result
+
+        def collect(name, oid, chain, active):
             key = (name, oid)
             if key in active:
                 raise RuntimeError('cyclic 3MF component reference')
             obj = model(name)[1][oid]
             mesh = obj.find('c:mesh', NS)
+            out = IndexedTriangles()
             if mesh is not None:
                 if name in tables:
-                    vertices, faces = tables[name].get(oid, ([], []))
+                    table = tables[name].get(oid)
+                    if table is not None:
+                        out.extend_indexed(transform_vertices(table.vertices, chain),
+                                            table.triangles)
                 else:
+                    import numpy as np
                     vertices = [tuple(float(v.get(k)) for k in ('x', 'y', 'z')) for v in mesh.findall('c:vertices/c:vertex', NS)]
                     faces = [tuple(int(tri.get(i)) for i in ('v1', 'v2', 'v3')) for tri in mesh.findall('c:triangles/c:triangle', NS)]
-                for t in chain:  # transform each shared vertex once, not once per triangle reference
-                    vertices = [apply(p, t) for p in vertices]
-                for a, b, c in faces:
-                    yield [vertices[a], vertices[b], vertices[c]]
+                    if faces:
+                        face_array = np.array(faces, dtype=np.int64)
+                        count = len(vertices)
+                        if int(face_array.max()) >= count or int(face_array.min()) < -count:
+                            # The reference generator raises IndexError from
+                            # vertices[a] for exactly this range.
+                            raise IndexError('3MF triangle vertex index out of range')
+                        face_array = np.where(face_array < 0, face_array + count, face_array)
+                        out.extend_indexed(transform_vertices(vertices, chain), face_array)
             for component in obj.findall('c:components/c:component', NS):
                 external = next((v for k, v in component.attrib.items() if k.endswith('}path')), name)
-                yield from triangles(external.lstrip('/'), component.get('objectid'), [transform(component)] + chain, active | {key})
+                out.extend(collect(external.lstrip('/'), component.get('objectid'),
+                                   [transform(component)] + chain, active | {key}))
+            return out
         from .source_colors import cutter_ids
         cutters = cutter_ids(archive)
         root, objects = model('3D/3dmodel.model')
-        result = []
+        result = IndexedTriangles()
         for item in root.findall('c:build/c:item', NS):
             if item.get('printable', '1') != '1':
                 raise RuntimeError('nonprintable build item requires explicit selection')
@@ -216,10 +245,10 @@ def _parse_3mf_triangles(source):
                     if (oid, component.get('objectid')) in cutters:
                         continue
                     external = next((v for k, v in component.attrib.items() if k.endswith('}path')), '3D/3dmodel.model')
-                    result.extend(triangles(external.lstrip('/'), component.get('objectid'),
-                                            [transform(component), transform(item)], {('3D/3dmodel.model', oid)}))
+                    result.extend(collect(external.lstrip('/'), component.get('objectid'),
+                                          [transform(component), transform(item)], {('3D/3dmodel.model', oid)}))
                 continue
-            result.extend(triangles('3D/3dmodel.model', oid, [transform(item)], set()))
+            result.extend(collect('3D/3dmodel.model', oid, [transform(item)], set()))
     if not result:
         raise RuntimeError('3MF contains no printable triangles')
     return result
@@ -251,6 +280,59 @@ def _rotate(point, m):
     return (m[0] * x + m[1] * y + m[2] * z, m[3] * x + m[4] * y + m[5] * z, m[6] * x + m[7] * y + m[8] * z)
 
 
+def _place_indexed(result, target, scale, rotation, bed):
+    """_place_triangles over indexed storage: transform the shared vertices
+    once, compute bounds from gathered faces in chunks, and stream the binary
+    STL out in bounded batches. Arithmetic mirrors the scalar path per point:
+    rotate (m[0]*x + m[1]*y + m[2]*z, ...), then scale, then translate in
+    float64 before the float32 STL conversion."""
+    import numpy as np
+    vertices = result.vertices
+    if rotation is not None:
+        m = rotation
+        x, y, z = vertices[:, 0], vertices[:, 1], vertices[:, 2]
+        vertices = np.stack((
+            m[0] * x + m[1] * y + m[2] * z,
+            m[3] * x + m[4] * y + m[5] * z,
+            m[6] * x + m[7] * y + m[8] * z,
+        ), axis=1)
+    if scale != 1.0:
+        vertices = vertices * scale
+    faces = result.faces
+    lo = [math.inf, math.inf, math.inf]
+    hi = [-math.inf, -math.inf, -math.inf]
+    for start in range(0, len(faces), 8192):
+        pts = vertices[faces[start:start + 8192].ravel()]
+        chunk_lo, chunk_hi = pts.min(axis=0), pts.max(axis=0)
+        for axis in range(3):
+            lo[axis] = min(lo[axis], float(chunk_lo[axis]))
+            hi[axis] = max(hi[axis], float(chunk_hi[axis]))
+    bounds = [(lo[axis], hi[axis]) for axis in range(3)]
+    center = [float(v) / 2 for v in (bed or BED)]
+    delta = [center[a] - sum(bounds[a]) / 2 for a in (0, 1)] + [-bounds[2][0]]
+    placed_bounds = [(bounds[a][0] + delta[a], bounds[a][1] + delta[a]) for a in range(3)]
+    record = np.dtype([('normal', '<f4', (3,)), ('points', '<f4', (9,)), ('attr', '<u2')])
+    with Path(target).open('wb') as output:
+        output.write(b'3MF transformed triangles, rigid centered translation'.ljust(80, b'\0'))
+        output.write(struct.pack('<I', len(result)))
+        for start in range(0, len(faces), 8192):
+            chunk = faces[start:start + 8192]
+            pts = vertices[chunk.ravel()].reshape((-1, 3, 3)) + np.asarray(delta)
+            rows = np.zeros(len(chunk), dtype=record)
+            rows['points'] = pts.reshape((-1, 9)).astype('<f4')
+            output.write(rows.tobytes())
+    res = {'triangles': len(result), 'build_bounds_mm': bounds, 'translation_mm': delta,
+           'placed_bounds_mm': placed_bounds,
+           'converted_sha256': digest(target), 'policy': 'all triangles; component/build transforms; rigid translation only; float32 STL'}
+    if scale != 1.0:
+        res['uniform_scale'] = str(scale)
+        res['scale_policy'] = 'uniform scale applied to source vertices before rigid bed centering'
+    if rotation is not None:
+        res['rotation_matrix'] = rotation
+        res['policy'] += '; operator-selected rigid rotation applied before scale'
+    return res
+
+
 def _place_triangles(result, target, scale=1.0, rotation=None, bed=None):
     """Rotate (rigid), uniformly scale, then center on the bed with the lowest vertex on Z0.
 
@@ -260,6 +342,8 @@ def _place_triangles(result, target, scale=1.0, rotation=None, bed=None):
     if not scale > 0:
         raise ValueError('scale must be greater than 0')
     rotation = _check_rotation(rotation)
+    if isinstance(result, IndexedTriangles):
+        return _place_indexed(result, target, scale, rotation, bed)
     if rotation is not None:
         result = [[_rotate(p, rotation) for p in tri] for tri in result]
     if scale != 1.0:
@@ -288,12 +372,19 @@ def _place_triangles(result, target, scale=1.0, rotation=None, bed=None):
 
 def read_stl_triangles(path):
     """Read binary or ASCII STL triangles as [[(x, y, z)] * 3]."""
-    data = Path(path).read_bytes()
-    if len(data) >= 84:
-        count = struct.unpack('<I', data[80:84])[0]
-        if len(data) == 84 + count * 50:
-            return [[struct.unpack('<3f', data[84 + i * 50 + k:84 + i * 50 + k + 12]) for k in (12, 24, 36)]
-                    for i in range(count)]
+    path = Path(path)
+    with path.open('rb') as stream:
+        header = stream.read(84)
+        if len(header) == 84:
+            count = struct.unpack('<I', header[80:84])[0]
+            if path.stat().st_size == 84 + count * 50:
+                from .compact_geometry import CompactTriangles
+                result = CompactTriangles()
+                while chunk := stream.read(50 * 8192):
+                    for row in struct.iter_unpack('<12fH', chunk):
+                        result.append([row[3:6], row[6:9], row[9:12]])
+                return result
+    data = path.read_bytes()
     text = data.decode('utf-8', errors='ignore')
     points = [tuple(map(float, m.groups())) for m in re.finditer(
         r'vertex\s+(\S+)\s+(\S+)\s+(\S+)', text)]
@@ -1559,6 +1650,17 @@ def _yaw(degrees):
 
 
 def _unique_points(tris):
+    if isinstance(tris, IndexedTriangles):
+        # Same set the legacy comprehension builds (points referenced by at
+        # least one face, deduplicated by value), without expanding faces.
+        import numpy as np
+        referenced = np.zeros(len(tris.vertices), dtype=bool)
+        referenced[tris.faces.ravel()] = True
+        unique = np.unique(tris.vertices[referenced], axis=0)
+        points = []
+        for start in range(0, len(unique), 8192):
+            points.extend(tuple(row) for row in unique[start:start + 8192].tolist())
+        return points
     return list({p for tri in tris for p in tri})
 
 
@@ -1668,8 +1770,59 @@ def _faces(tris):
     return hit[1]
 
 
+def _surface_stats_indexed(tris, rotation):
+    """Batched twin of _surface_stats for large indexed meshes.
+
+    Mirrors the scalar path exactly in structure: zero-length faces are
+    excluded everywhere (including the floor), the floor is the minimum
+    rotated Z over kept faces' points, and a kept face counts as contact when
+    its rotated unit normal Z is below the support threshold and its highest
+    point is within 0.3 mm of the floor, else as overhang.
+    """
+    import numpy as np
+    r6, r7, r8 = (float(v) for v in rotation[6:9])
+    vertices, faces = tris.vertices, tris.faces
+
+    def chunks():
+        for start in range(0, len(faces), 8192):
+            pts = vertices[faces[start:start + 8192].ravel()].reshape((-1, 3, 3))
+            a, b, c = pts[:, 0], pts[:, 1], pts[:, 2]
+            u = (b[:, 0] - a[:, 0], b[:, 1] - a[:, 1], b[:, 2] - a[:, 2])
+            v = (c[:, 0] - a[:, 0], c[:, 1] - a[:, 1], c[:, 2] - a[:, 2])
+            n = (u[1] * v[2] - u[2] * v[1], u[2] * v[0] - u[0] * v[2], u[0] * v[1] - u[1] * v[0])
+            length = np.sqrt(n[0] ** 2 + n[1] ** 2 + n[2] ** 2)
+            rz = r6 * pts[:, :, 0] + r7 * pts[:, :, 1] + r8 * pts[:, :, 2]
+            yield pts, n, length, rz
+
+    floor = math.inf
+    for _, _, length, rz in chunks():
+        kept = length > 0
+        if np.any(kept):
+            floor = min(floor, float(rz[kept].min()))
+    if floor == math.inf:
+        raise ValueError('min() arg is an empty sequence')
+    contact = overhang = 0.0
+    for _, n, length, rz in chunks():
+        kept = length > 0
+        if not np.any(kept):
+            continue
+        safe_length = np.where(kept, length, 1.0)
+        rnz = (r6 * (n[0] / safe_length) + r7 * (n[1] / safe_length)
+               + r8 * (n[2] / safe_length))
+        facing = kept & (rnz < SUPPORT_THRESHOLD_NZ)
+        if not np.any(facing):
+            continue
+        area = length / 2
+        top = rz.max(axis=1)
+        contact += float(np.sum(area[facing & (top - floor < 0.3)]))
+        overhang += float(np.sum(area[facing & ~(top - floor < 0.3)]))
+    return contact, overhang
+
+
 def _surface_stats(tris, rotation):
     """(bed contact area, unsupported overhang area) in mm² for an orientation."""
+    if isinstance(tris, IndexedTriangles) and len(tris) >= 32768:
+        return _surface_stats_indexed(tris, rotation)
     r6, r7, r8 = (float(v) for v in rotation[6:9])
     faces = _faces(tris)
     floor = min(r6 * p[0] + r7 * p[1] + r8 * p[2] for f in faces for p in f[4:])

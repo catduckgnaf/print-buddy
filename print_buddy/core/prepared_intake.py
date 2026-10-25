@@ -920,6 +920,8 @@ async def prepare_link(event, adapter, state, root, timeout=None, reuse=None):
             adapter, source, key, metadata, None,
             asyncio.to_thread(fetch, job, chosen, folder / 'source'))
         job['downloaded_file'] = str(path)
+        from .intake_resources import check_source
+        await asyncio.to_thread(check_source, path)
         if job['site'] == 'upload':
             job['title'] = await asyncio.to_thread(upload_title, path) or job['title']
         job['audit'] = await _with_stop(adapter, source, key, metadata, large_model_notice(path),

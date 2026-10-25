@@ -158,6 +158,24 @@ def final_choices(adapter):
     return adapter.questions[-1]['choices'] if adapter.questions[-1]['choices'][0].startswith('Slice') else None
 
 
+def test_resource_refusal_precedes_audit_and_color_prompts(env, monkeypatch):
+    from print_buddy.core import intake_resources
+    monkeypatch.setattr(intake_resources, 'MAX_XML_BYTES', 1)
+
+    def unexpected_audit(path):
+        pytest.fail('oversized source reached audit')
+
+    monkeypatch.setattr(model_job, 'audit', unexpected_audit)
+    adapter, result, receipt = run_flow(env, [])
+    assert result['action'] == 'skip'
+    assert receipt['status'] == 'FAILED'
+    assert 'model XML exceeds' in receipt['error']
+    assert any('Simplify the mesh or split' in text for text in adapter.sent)
+    assert adapter.questions == []
+    assert not env.sliced and not env.starts
+    assert not receipt['sliced'] and not receipt['uploaded'] and not receipt['started']
+
+
 def test_fit_choice_rows_are_four_or_fewer_and_never_offer_preview():
     rows = prepared_intake.fit_choice_rows({'scales': [0.98, 0.75, 0.5], 'rotations': [],
                                             'full_size_split': True})

@@ -46,8 +46,9 @@ def request_json(url, *, data=None, headers=None, timeout=25):
 def download(url, target):
     target.parent.mkdir(parents=True, exist_ok=True)
     req=urllib.request.Request(url, headers={"User-Agent":UA})
-    with urllib.request.urlopen(req, timeout=90) as r, open(target,"wb") as out:
-        shutil.copyfileobj(r,out)
+    from .intake_resources import save_download
+    with urllib.request.urlopen(req, timeout=90) as r:
+        save_download(r, target)
     if target.stat().st_size == 0: raise RuntimeError("downloaded an empty file")
 
 
@@ -295,6 +296,9 @@ def mesh_topology(triangles):
     Weld coordinates on a six-decimal grid. Exclude faces whose squared
     double-area is <= 1e-18 source-units**4 from all topology adjacency.
     """
+    if hasattr(triangles, '__len__') and len(triangles) > 100_000:
+        from .compact_topology import mesh_topology_compact
+        return mesh_topology_compact(triangles)
     vertices = {}
     faces = []
     degenerate = 0
@@ -390,8 +394,13 @@ def mesh_audit(path, printer_model=None):
     triangles = source_triangles(path)
     if not triangles:
         raise RuntimeError("model has no printable geometry")
-    lo = [min(point[axis] for triangle in triangles for point in triangle) for axis in range(3)]
-    hi = [max(point[axis] for triangle in triangles for point in triangle) for axis in range(3)]
+    from .compact_geometry import IndexedTriangles
+    if isinstance(triangles, IndexedTriangles):
+        from .mesh_fast import bounds_and_volume
+        lo, hi, _ = bounds_and_volume(triangles)
+    else:
+        lo = [min(point[axis] for triangle in triangles for point in triangle) for axis in range(3)]
+        hi = [max(point[axis] for triangle in triangles for point in triangle) for axis in range(3)]
     source_sha256 = file_sha256(path)
     from .orca_adapter import placement_candidates
     return {"schema_version": 1, "sha256": source_sha256,
@@ -403,6 +412,8 @@ def mesh_audit(path, printer_model=None):
 
 
 def audit(path, printer_model=None):
+    from .intake_resources import check_source
+    check_source(path)
     with open(path,"rb") as source:
         digest=hashlib.file_digest(source,"sha256").hexdigest()
     out={"path":path.name,"bytes":path.stat().st_size,"sha256":digest,"kind":path.suffix.lower()}

@@ -153,6 +153,29 @@ async def _with_stop(adapter, source, key, metadata, text, work, *, allow_stop=F
     return result
 
 
+LARGE_MESH_MB = 20
+
+
+def large_model_notice(path):
+    """A heads-up for meshes big enough that the model check takes minutes, else None."""
+    import zipfile
+    try:
+        path = Path(path)
+        if path.suffix.lower() == '.3mf':
+            with zipfile.ZipFile(path) as z:
+                size = sum(i.file_size for i in z.infolist() if i.filename.lower().endswith('.model'))
+        else:
+            size = path.stat().st_size
+    except (OSError, zipfile.BadZipFile):
+        return None
+    mb = size / 1e6
+    if mb < LARGE_MESH_MB:
+        return None
+    minutes = max(1, round(mb / 45))
+    return (f'This is a large model ({mb:.0f} MB of mesh). Checking it takes about '
+            f'{minutes} minute{"s" if minutes != 1 else ""}, so it is not stuck.')
+
+
 async def _heavy(func, *args, **kwargs):
     """Run CPU-heavy intake work in a child process (own GIL) so Discord buttons answer in time.
 
@@ -179,7 +202,8 @@ async def _heavy(func, *args, **kwargs):
     try:
         reply = json.loads(out.decode().rstrip().rsplit('\n', 1)[-1])
     except (ValueError, IndexError):
-        raise RuntimeError(f'{name} worker failed: {err.decode(errors="replace")[-400:]}') from None
+        detail = err.decode(errors="replace")[-400:].strip() or 'it stopped without reporting why (killed or crashed)'
+        raise RuntimeError(f'{name} worker failed: {detail}') from None
     if not reply.get('ok'):
         exc = {'ValueError': ValueError, 'FileNotFoundError': FileNotFoundError}.get(reply.get('type'), RuntimeError)
         raise exc(reply.get('error'))
@@ -885,7 +909,8 @@ async def prepare_link(event, adapter, state, root, timeout=None, reuse=None):
         job['downloaded_file'] = str(path)
         if job['site'] == 'upload':
             job['title'] = await asyncio.to_thread(upload_title, path) or job['title']
-        job['audit'] = await _heavy(mj.audit, path)
+        job['audit'] = await _with_stop(adapter, source, key, metadata, large_model_notice(path),
+                                        _heavy(mj.audit, path))
         # Inspecting a large multi-object 3MF is ~30 s of pure-Python XML work. It must never run on the
         # gateway event loop (that froze Discord button callbacks). The audit already inspected these exact
         # bytes; reuse its manifest only if it is bound to the file's current SHA256, else inspect off-loop.

@@ -169,3 +169,17 @@ class QuantityTests(unittest.TestCase):
             qs.parse_quantity("a few", 4)
         with self.assertRaisesRegex(ValueError, "will not fit"):
             qs.parse_quantity("9", 4)
+
+
+class MultiPlateFitFailureTests(unittest.TestCase):
+    def test_uninspectable_multi_plate_raises_instead_of_reporting_one_copy(self):
+        import tempfile
+        from pathlib import Path
+        from unittest import mock
+        from print_buddy.core import model_job as mj
+        with tempfile.TemporaryDirectory() as tmp:
+            source = Path(tmp) / 'broken.3mf'
+            source.write_bytes(b'not a zip')
+            with mock.patch.object(mj, 'plate_manifest', return_value={'plates': [{'object_ids': [1]}]}):
+                with self.assertRaises(RuntimeError):
+                    oa._multi_plate_capacity(source, {'bed_mm': [220, 220], 'max_print_height_mm': 220})

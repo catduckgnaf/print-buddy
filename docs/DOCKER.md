@@ -10,7 +10,7 @@ user, so the runtime user `buddy` takes UID 1000 directly. Not yet built on Debi
 
 ## First GHCR publication
 
-`.github/workflows/docker-publish.yml` is the maintainer-dispatched workflow for publishing an amd64 image to `ghcr.io/catduckgnaf/print-buddy`. It builds the selected variant once, runs the offline acceptance harness, and only after acceptance pushes the requested version and `latest` tags. The first package is planned for 2.1.1. The `publish` input defaults to false: dispatch a candidate on the intended branch with `version=2.1.1`, `with_orca=true`, and `publish=false` to build and validate without registry login or pushes. Each bundled Orca channel must resolve its libraries, run `--help`, slice a generated cube headlessly with packaged templates, and pass the G-code guard before full offline runtime acceptance. Logs and image identity are retained for 30 days. A failed or absent selected slicer fails the smoke check. Only an explicit `publish=true` dispatch can push tags after these checks; candidate success alone publishes nothing. For deployments, prefer the exact tested immutable `ghcr.io/catduckgnaf/print-buddy@sha256:<digest>` recorded in the workflow run summary over a mutable tag. This workflow does not build ARM64 images.
+`.github/workflows/docker-publish.yml` is the maintainer-dispatched workflow for publishing an amd64 image to `ghcr.io/catduckgnaf/print-buddy`. It builds the selected variant once, runs the offline acceptance harness, and only after acceptance pushes the requested version and `latest` tags. The first package is planned for 2.1.1. The `publish` input defaults to false: dispatch a candidate on the intended branch with `version=2.1.1`, `with_orca=true`, `orca_source=prebuilt`, `with_bambu=false`, and `publish=false` to build and validate without registry login or pushes. Each bundled Orca channel must resolve its libraries, run `--help`, slice a generated cube headlessly with packaged templates, and pass the G-code guard before full offline runtime acceptance. Logs and image identity are retained for 30 days. A failed or absent selected slicer fails the smoke check. Only an explicit `publish=true` dispatch can push tags after these checks; candidate success alone publishes nothing. For deployments, prefer the exact tested immutable `ghcr.io/catduckgnaf/print-buddy@sha256:<digest>` recorded in the workflow run summary over a mutable tag. This workflow does not build ARM64 images.
 
 ## Build dimensions
 
@@ -20,7 +20,8 @@ standalone Discord bot or Moonraker listener. There is no combined supervisor.
 | Build argument | Values | Meaning |
 | --- | --- | --- |
 | `APP_CHANNEL` | `stable`, `development` (default) | Application provenance label, not a Git checkout |
-| `WITH_ORCA` | `false` (default), `true` | Include both source-built stable and alpha slicers, or omit both |
+| `WITH_ORCA` | `false` (default), `true` | Include Orca using the selected distribution, or omit it |
+| `ORCA_SOURCE` | `prebuilt` (default), `source` | Official stable binary, or compile both stable and alpha |
 | `ORCA_BUILD_JOBS` | `auto` (default), `1-64` | Bounded compile parallelism; see OrcaSlicer source build |
 | `WITH_BAMBU` | `false` (default), `true` | Include a source-built Bambu Studio, the default slicer for Bambu Lab printers |
 
@@ -36,7 +37,18 @@ image works. Do not promote an untested source rebuild as an identical artifact.
 
 Orca stable v2.4.2 is pinned to 8500fcdccaa10b5099ac20d252af3a7c560046f1;
 alpha v2.5.0-alpha is pinned to 3880f2c58ec392ed2bd5938ab31c9c7c496c0eb2.
-The build uses source CMake dependencies and FHS installation, never AppImages.
+The default `ORCA_SOURCE=prebuilt` downloads the official
+`OrcaSlicer_Linux_AppImage_Ubuntu2404_V2.4.2.AppImage` from the v2.4.2 GitHub release
+inside the Docker build stage only. SHA256 is pinned to
+`d12fb8c8eac1aecd2dfb6377acd48f994f8fa439ed5292fa532dd82880f029fd`;
+a mismatch stops the build before extraction. `--appimage-extract` needs no FUSE.
+The entire extracted tree (AppRun, resources, private libraries and upstream environment
+helper) is installed in `/opt/orca-stable`; no AppImage is installed in the runtime.
+Debian supplies WebKitGTK 4.1, GTK3, OpenGL/GLU and the remaining system runtime libraries.
+This prebuilt is amd64 only and ships stable only. Alpha requires `ORCA_SOURCE=source`;
+requesting alpha on a prebuilt image fails closed when its executable is absent.
+Do not download or run the AppImage on a Hermes host; image builds run in GitHub Actions.
+`/orca-stable-build-info` records distribution, version, source revision and asset checksum.
 The runtime selector `PRINT_BUDDY_ORCA_CHANNEL` defaults to `stable` and accepts `alpha`; invalid values stop container startup.
 A no-Orca image can handle non-slicing commands; slicing requires the absent
 /usr/local/bin/orca-slicer and must fail without an approved slice artifact. No remote
@@ -46,10 +58,17 @@ publication is claimed.
 
 ## Bambu Studio source build
 
+Bambu stays separate from the default prebuilt candidate: the publisher defaults
+`with_bambu=false`. No pinned prebuilt Bambu distribution is implemented here.
+Enabling it still compiles from source and may take substantially longer.
+
 With `WITH_BAMBU=true` the `bambu-build` stage compiles Bambu Studio 2.8.2 (public release 61) (pinned to
 `926a7192574bcb9b3a732e1ec59a46d79cb45466`) the same way as Orca: its own CMake dependency recipe,
 an FHS install to `/usr/bin/bambu-studio`, no AppImage, no patches, and a cache mount keyed by
 architecture, revision and `BAMBU_BUILD_PROFILE`. It shares `ORCA_BUILD_JOBS` for parallelism.
+The application CMake configuration supplies `-DCMAKE_CXX_FLAGS="-include map"` because
+this pinned revision's `FilamentMixer.hpp` uses `std::map` without including `<map>`.
+Dependency builds are unchanged and upstream source files are never edited.
 Bambu Studio is the default slicer for every Bambu Lab printer (`printer.slicer: orca` opts out)
 and Orca's one-shot fallback for other vendors. Without it, Bambu Lab slicing fails closed. The
 image records `/bambu-source-revision` and `/bambu-build-info`. This build is unverified: no
@@ -57,7 +76,7 @@ image with it has been built yet, and ARM64 is untested. Bambu Studio is AGPL-3.
 
 ## OrcaSlicer source build
 
-With `WITH_ORCA=true` both pinned OrcaSlicer channels are built from source into separate prefixes; `WITH_ORCA=false` omits both. At runtime, `PRINT_BUDDY_ORCA_CHANNEL=stable` (the default) or `alpha` selects the executable. Any other value exits with a clear error. Both channel builds use Orca's own CMake dependency recipe. Orca source is never patched: each build refuses a checkout whose HEAD is not the pinned commit or whose tracked files differ from it.
+With `WITH_ORCA=true ORCA_SOURCE=source` both pinned OrcaSlicer channels are built from source into separate prefixes; `WITH_ORCA=false` omits both. At runtime, `PRINT_BUDDY_ORCA_CHANNEL=stable` (the default) or `alpha` selects the executable. Any other value exits with a clear error. Both channel builds use Orca's own CMake dependency recipe. Orca source is never patched: each build refuses a checkout whose HEAD is not the pinned commit or whose tracked files differ from it.
 
 Parallelism: `ORCA_BUILD_JOBS=auto` (default) runs one compile job per
 `ORCA_BUILD_MEM_PER_JOB_MIB` (default 2560 MiB) of memory, capped at the usable CPUs minus one and
@@ -93,7 +112,7 @@ Example build commands, to run only after the relevant container approval:
 
 ```sh
 docker build --build-arg APP_CHANNEL=development --build-arg WITH_ORCA=false -t print-buddy:development-no-orca .
-docker build --build-arg APP_CHANNEL=stable --build-arg WITH_ORCA=true -t print-buddy:stable-orca .
+docker build --build-arg APP_CHANNEL=stable --build-arg WITH_ORCA=true --build-arg ORCA_SOURCE=source -t print-buddy:stable-orca .
 docker run -e PRINT_BUDDY_ORCA_CHANNEL=alpha print-buddy:stable-orca
 ```
 
@@ -195,7 +214,7 @@ fba5727184dd8f0070e59c8f1fc088751142a003 and merged through #132. Contributor
 Docker #139 commit 3bb0984250c20eb336d11ba1da06633950b45182 (MIT) informs the
 optional Spoolman override, build-context filtering and listener heartbeat.
 The current health implementation additionally binds container/process identity;
-the source build deliberately replaces the contributor's binary-download route.
+the source-build option and pinned official prebuilt preserve that attribution.
 Original contributor commits and license notices remain intact.
 
 ## Settings and external service boundaries
@@ -249,7 +268,7 @@ and Discord is required for live operation; no inbound port is required by the
 base example. Do not expose Moonraker, OctoPrint or Spoolman publicly as a shortcut.
 Actual network changes and live startup require their own review/approval.
 
-APP_CHANNEL and ORCA_CHANNEL are independent build selectors, not YAML runtime
+APP_CHANNEL and ORCA_SOURCE are independent build selectors, not YAML runtime
 settings. The current default stable Orca pin is 2.4.2, not 2.5.0 stable. The alpha
 pin is 2.5.0-alpha. On a future stable 2.5.0 release, update the stable source ref
 and version documentation together, verify the new build/runtime and promote the

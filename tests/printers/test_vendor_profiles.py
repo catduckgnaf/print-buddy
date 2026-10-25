@@ -20,8 +20,12 @@ def without_added(data):
     data = json.loads(json.dumps(data, default=str))
     data.pop("delivery", None)
     data.pop("logging", None)  # added by #150, after the golden files were captured
+    data.pop("flashforge_stock", None)  # added for the stock LAN vendor, after capture
     for key in ("lan_host", "lan_serial", "lan_access_code_env"):  # added by #187, after capture
         data.get("bambu", {}).pop(key, None)
+    data.get("slicer", {}).pop("flash_studio_path", None)  # added by the Flash Studio config, after capture
+    if data.get("slicer") == {}:
+        data.pop("slicer", None)
     for key in ADDED_PRINTER_KEYS:
         data.get("printer", {}).pop(key, None)
     return data
@@ -34,7 +38,7 @@ def load(environ=None, local=False):
 # ----------------------------------------------------------------------------- layout
 
 def test_every_printer_sits_under_its_vendor_package():
-    assert set(printers.VENDORS) == {"bambulab", "flashforge", "klipper", "octoprint", "sovol"}
+    assert set(printers.VENDORS) == {"bambulab", "flashforge", "flashforge_stock", "klipper", "octoprint", "sovol"}
     for key, model in printers.MODELS.items():
         assert model.vendor is printers.VENDORS[model.vendor_key]
         assert key == f"{model.vendor.key}.{model.printer_key}"
@@ -147,7 +151,10 @@ def test_printer_adapters_expose_display_and_firmware_names():
 
 
 def test_unique_printer_name_alone_resolves():
-    assert load({"PRINT_BUDDY__PRINTER__MODEL": "ad5x"})["printer"]["model"] == "flashforge.ad5x"
+    assert load({"PRINT_BUDDY__PRINTER__MODEL": "sv06"})["printer"]["model"] == "sovol.sv06"
+    # ad5x exists for both the ZMod vendor and the stock vendor, so the bare name is refused.
+    with pytest.raises(settings.SettingsError, match="several vendors"):
+        load({"PRINT_BUDDY__PRINTER__MODEL": "ad5x"})
 
 
 def test_local_yaml_with_vendor_and_printer_sections(tmp_path):
@@ -252,4 +259,8 @@ def test_klipper_and_zmod_start_code_never_passes_for_bambu():
         assert problems and foreign.split()[0] in problems[0]
     # Other vendors keep their own guards; their macros are expected there.
     assert start_code_problems("PRINT_START BED=60\n", printers.VENDORS["klipper"]) == []
+    stock = printers.VENDORS["flashforge_stock"]
+    assert stock.connection == "flashforge_stock" and stock.start_code == "flashforge_stock"
+    assert start_code_problems(clean, stock) == []
+    assert start_code_problems(clean + "START_PRINT EXTRUDER_TEMP=215\n", stock)[0].count("START_PRINT") == 1
 

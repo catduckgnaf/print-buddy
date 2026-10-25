@@ -31,6 +31,7 @@ Schema, validation limits and TOML migration: [CONFIGURATION-YAML.md](CONFIGURAT
 | `printer.model` | `PRINT_BUDDY__PRINTER__MODEL` | `flashforge.ad5x` | Printer brand and model: `flashforge.ad5x`, `sovol.sv06`, `klipper.generic`, `octoprint.marlin`. Sets every model default marked *model* |
 | `printer.vendor` | `PRINT_BUDDY__PRINTER__VENDOR` | `flashforge` *model* | Vendor part of the model key, set by the model; `vendor` plus a bare printer name is also accepted |
 | `printer.slicer` | `PRINT_BUDDY__PRINTER__SLICER` | `orca` *model* | Slicer: `orca` everywhere; Bambu Lab printers default to `bambu_studio` and may pick `orca` |
+| `slicer.flash_studio_path` | `PRINT_BUDDY__SLICER__FLASH_STUDIO_PATH` | empty | Optional path to a Flash Studio executable the user already installed. Empty keeps OrcaSlicer. A set but missing or non-executable path is an error, not a fallback. Never downloaded or bundled. |
 | `printer.nozzle_type` | `PRINT_BUDDY__PRINTER__NOZZLE_TYPE` | unset | Optional nozzle material, limited to the model's supported types |
 | `orca.templates` | `PRINT_BUDDY__ORCA__TEMPLATES` | the model's folder *model* | Folder with the Orca machine, process and filament JSON |
 | `orca.command` | file only | `["/usr/local/bin/orca-slicer"]` | How to start the OrcaSlicer CLI; `PRINT_BUDDY_ORCA_CHANNEL` selects stable (default) or alpha; both binaries exist only when `WITH_ORCA=true` |
@@ -39,6 +40,7 @@ Schema, validation limits and TOML migration: [CONFIGURATION-YAML.md](CONFIGURAT
 | `bambu.lan_host` | `PRINT_BUDDY__BAMBU__LAN_HOST` | `""` | Bambu Lab printer LAN address for read-only status (#187); must be set together with `lan_serial`; empty disables LAN status |
 | `bambu.lan_serial` | `PRINT_BUDDY__BAMBU__LAN_SERIAL` | `""` | The Bambu Lab printer's serial number (stored upper case); used in the MQTT topics, not as a credential |
 | `bambu.lan_access_code_env` | `PRINT_BUDDY__BAMBU__LAN_ACCESS_CODE_ENV` | `BAMBU_LAN_PASSWORD` | Name of the environment variable holding the printer's LAN access code; the code itself is never a setting |
+| `flashforge_stock.host` | `PRINT_BUDDY__FLASHFORGE_STOCK__HOST` | `""` | Stock Flashforge printer LAN address; empty leaves the printer offline. The serial and check code stay in `AD5X_SERIAL` and `AD5X_CHECK_CODE`, never in a setting |
 | `paths.hermes_home` | `PRINT_BUDDY__PATHS__HERMES_HOME` | `/data/hermes` | State folder (`state/`, `logs/`); the name is historical, Hermes is not required |
 | `paths.archive` | `PRINT_BUDDY__PATHS__ARCHIVE` | `/data/archive` | Job archive |
 | `paths.records_vault` | `PRINT_BUDDY__PATHS__RECORDS_VAULT` | `/data/records` | Obsidian print records |
@@ -127,7 +129,8 @@ Image build inputs (`docker build --build-arg NAME=value`), not runtime settings
 | Argument | Default | What it does |
 |---|---|---|
 | `APP_CHANNEL` | `development` | Application provenance label, `stable` or `development`; it does not change the source checkout |
-| `WITH_ORCA` | `false` | `true` builds stable and alpha OrcaSlicer from pinned source; `false` omits both and slicing fails closed |
+| `WITH_ORCA` | `false` | `true` includes OrcaSlicer from the distribution chosen by `ORCA_SOURCE`; `false` omits it and slicing fails closed |
+| `ORCA_SOURCE` | `prebuilt` | `prebuilt` installs the pinned official OrcaSlicer 2.4.2 Linux release (sha256 verified, stable channel only); `source` builds stable and alpha from pinned source |
 | `ORCA_STABLE_REF` | `8500fcdccaa10b5099ac20d252af3a7c560046f1` | Pinned stable OrcaSlicer source commit |
 | `ORCA_ALPHA_REF` | `3880f2c58ec392ed2bd5938ab31c9c7c496c0eb2` | Pinned OrcaSlicer alpha source commit |
 | `ORCA_BUILD_JOBS` | `auto` | Parallel compile jobs: `auto` (memory-aware, below the CPU count) or a whole number from 1 to 64; see [DOCKER.md](DOCKER.md#orcaslicer-source-build) |

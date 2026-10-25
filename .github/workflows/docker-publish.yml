@@ -13,13 +13,18 @@ on:
         type: boolean
         default: false
       with_orca:
-        description: Build the pinned OrcaSlicer from source
+        description: Include pinned OrcaSlicer
         type: boolean
         default: true
+      orca_source:
+        description: Orca distribution (prebuilt stable only; source stable and alpha)
+        type: choice
+        options: [prebuilt, source]
+        default: prebuilt
       with_bambu:
-        description: Build the pinned Bambu Studio from source
+        description: Build the pinned Bambu Studio from source (separate optional build)
         type: boolean
-        default: true
+        default: false
 
 permissions:
   contents: read
@@ -40,6 +45,7 @@ jobs:
       # Inputs reach the shell only as environment variables, never interpolated into scripts.
       PUBLISH_VERSION: ${{ inputs.version }}
       WITH_ORCA: ${{ inputs.with_orca }}
+      ORCA_SOURCE: ${{ inputs.orca_source || 'prebuilt' }}
       WITH_BAMBU: ${{ inputs.with_bambu }}
       SPOOLMAN_MODE: external
     steps:
@@ -73,6 +79,7 @@ jobs:
           docker buildx build --platform linux/amd64 --progress=plain --load -t "$IMAGE:$PUBLISH_VERSION" \
             --build-arg "APP_CHANNEL=$APP_CHANNEL" \
             --build-arg "WITH_ORCA=$WITH_ORCA" \
+            --build-arg "ORCA_SOURCE=$ORCA_SOURCE" \
             --build-arg "WITH_BAMBU=$WITH_BAMBU" \
             --build-arg "ORCA_BUILD_JOBS=$ORCA_BUILD_JOBS" \
             --label "org.opencontainers.image.source=https://github.com/catduckgnaf/print-buddy" \
@@ -89,7 +96,9 @@ jobs:
         if: inputs.with_orca
         run: |
           set -euo pipefail
-          for channel in stable alpha; do
+          channels=stable
+          if [ "$ORCA_SOURCE" = source ]; then channels="stable alpha"; fi
+          for channel in $channels; do
             docker run --rm --network none --cpus 2 --memory 4g --pids-limit 256 \
               --cap-drop ALL --security-opt no-new-privileges:true \
               --tmpfs /data:uid=1000,gid=1000,size=512m \

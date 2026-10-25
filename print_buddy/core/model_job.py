@@ -3486,6 +3486,111 @@ def _print_bambu(adapter, state, gcode, job, job_path, wait_s, reprint):
     return out
 
 
+def _print_flashforge_stock(adapter, state, gcode, job, job_path, wait_s, reprint):
+    """The stock Flashforge LAN path, mirroring _print_bambu's guard order.
+
+    Every check that can refuse cleanly runs before the submission lease: host and
+    credentials present, G-code free of Klipper or ZMod commands, /detail idle, then
+    the rest of the G-code check. Inside the lease the snapshot is taken again, the bed-clear approval is
+    consumed, and only then does anything reach the printer: one upload with print
+    disabled, then /printGcode for that exact name. Upload and start are one uncertain
+    step from submitting() on. Acceptance is confirmed from a fresh /detail, never assumed.
+    """
+    def refuse(exc):
+        return SystemExit(f"REFUSED: {' '.join(str(exc).split())}. Nothing uploaded or started.")
+
+    from ..printers.flashforge_stock.client import StockLanError
+    try:
+        client = adapter.client()
+    except (RuntimeError, StockLanError) as exc:
+        raise refuse(exc) from exc
+
+    def selected_slot():
+        selection = job.get("filament_selection") if isinstance(job, dict) else None
+        if not isinstance(selection, dict) or "slot" not in selection:
+            raise RuntimeError("pick one IFS slot before a stock Flashforge print")
+        slot = selection["slot"]
+        if type(slot) is not int or not 1 <= slot <= adapter.slot_count:
+            raise RuntimeError(f"IFS slot must be an integer from 1 through {adapter.slot_count}")
+        return slot
+
+    def ready_snapshot():
+        detail = client.detail()
+        problems = adapter.readiness_problems(state, detail)
+        reduced = adapter.normalize_status(detail)
+        if reduced["state"] not in ("standby", "complete", "cancelled"):
+            problems.append(f"printer state is {reduced['state']!r}, not idle")
+        try:
+            occupied = client.slots_of(detail)
+        except StockLanError as exc:
+            problems.append(str(exc))
+            occupied = {}
+        slot = selected_slot()
+        if occupied.get(slot) is not True:
+            problems.append(f"IFS slot {slot} does not report filament")
+        if problems:
+            raise RuntimeError("; ".join(dict.fromkeys(problems)))
+        return reduced
+
+    try:
+        text = gcode.read_text(errors="ignore")
+        problems = adapter.gcode_problems(text)
+        if problems:
+            raise RuntimeError(problems[0])
+        observed = ready_snapshot()
+        verify_gcode(gcode)
+        adapter.normalize_tool_mapping({str(t): t + 1 for t in sorted(_gcode_tools(text) | {0})}, state)
+    except RuntimeError as exc:
+        raise refuse(exc) from exc
+    sha = file_sha256(gcode)
+    remote = remote_name(gcode, sha, job)
+    if not remote.endswith(".gcode"):
+        remote += ".gcode"
+    lease = launch_state.acquire(_printer_key(state), job_json=job_path, gcode_sha256=sha, remote=remote,
+                                 observed_file=observed.get("filename"))
+    try:
+        try:
+            ready_snapshot()  # again inside the lease: the first read may predate another start
+        except RuntimeError as exc:
+            raise refuse(exc) from exc
+        if job_path is not None:
+            _consume_approval(job_path, job, gcode, reprint=reprint)
+    except BaseException:
+        lease.release()
+        raise
+    lease.submitting()
+    try:
+        client.upload(gcode, remote)
+        client.print_gcode(remote)
+    except BaseException as exc:
+        lease.uncertain(f"stock Flashforge submission did not complete: {exc!r}")
+        if isinstance(exc, RuntimeError):
+            raise SystemExit(f"stock Flashforge submission failed or uncertain: {exc}. Do not resubmit without "
+                             "checking printer status.") from exc
+        raise
+    live = {}
+    try:
+        live = adapter.normalize_status(client.detail())
+    except RuntimeError:
+        pass
+    confirmed = live.get("state") == "printing" and live.get("filename") == remote
+    if confirmed:
+        lease.release()
+    else:
+        lease.uncertain("submitted, awaiting confirmation")
+    out = {"started": confirmed, "accepted": True, "file": remote, "method": "flashforge_stock",
+           "phase": "executing" if confirmed else "awaiting_confirmation",
+           "outcome": "printing" if confirmed else "unconfirmed", "live": live,
+           "message": "printing" if confirmed else "submitted, awaiting confirmation; do not resubmit"}
+    if confirmed:
+        try:
+            out["record_path"] = record_start(gcode, remote)
+        except Exception as exc:
+            print(f"WARNING: start record failed: {exc}")
+    print(("PRINT STARTED " if confirmed else "START SUBMITTED; AWAITING CONFIRMATION ") + json.dumps(out))
+    return out
+
+
 def _require_idle(st):
     state,fn,busy=_printer_phase(st)
     if state == "printing" or busy == "Printing":
@@ -3537,6 +3642,8 @@ def print_now(target, wait_s=25, accept_default_z_offset=False, reprint=False, r
     st=printer_state.load()
     if getattr(adapter, 'transport', None) == 'octoprint':
         return _print_octoprint(adapter, st, g, job, job_path, wait_s, reprint)
+    if getattr(adapter, 'transport', None) == 'flashforge_stock':
+        return _print_flashforge_stock(adapter, st, g, job, job_path, wait_s, reprint)
     if getattr(adapter, 'transport', None) == 'bambulab_lan':
         from . import delivery as _delivery
         if 'printer' in _delivery.methods():

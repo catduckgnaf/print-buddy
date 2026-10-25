@@ -100,9 +100,9 @@ class BuildVolume:
 
 # How Print Buddy reaches a printer. "offline" means it never does: it slices and validates, a person
 # moves the file.
-CONNECTIONS = ("moonraker", "octoprint", "offline", "bambulab_lan")
+CONNECTIONS = ("moonraker", "octoprint", "offline", "bambulab_lan", "flashforge_stock")
 # Start G-code families. Each printer runs only its own; see start_code_problems.
-START_CODES = ("zmod", "klipper_macro", "marlin", "bambu")
+START_CODES = ("zmod", "klipper_macro", "marlin", "bambu", "flashforge_stock")
 # Slicers a vendor may pick as its primary. OrcaSlicer is the default everywhere.
 SLICERS = ("orca", "bambu_studio")
 # What can happen to a validated slice, besides nothing:
@@ -400,9 +400,13 @@ _GCODE_WORD = re.compile(r"^[GMT]\d+(?:\.\d+)?$", re.I)
 def start_code_problems(text: str, vendor: VendorProfile) -> list[str]:
     """Reasons this G-code must not reach a printer of `vendor`; empty when none apply.
 
-    Only Bambu start code is checked line by line: every command must be a G, M or T code, so no
-    Klipper or ZMod macro can reach Bambu hardware. Other vendors keep their existing slice guards.
+    Bambu and stock Flashforge are checked line by line: every command must be a G, M or T
+    code, so no Klipper or ZMod macro can reach that hardware. Other vendors keep their
+    existing slice guards.
     """
+    if vendor.start_code == "flashforge_stock":
+        from .flashforge_stock.guard import stock_gcode_problems
+        return stock_gcode_problems(text)
     if vendor.start_code != "bambu":
         return []
     foreign = []

@@ -10,6 +10,11 @@ print_buddy/printers/
   flashforge/
     __init__.py          VENDOR  Flashforge: Moonraker, ZMod START_PRINT start code, OrcaSlicer, .gcode
     ad5x.py              MODEL   flashforge.ad5x: 220 mm bed, 4-slot IFS, 0.25 to 0.8 mm nozzles
+  flashforge_stock/
+    __init__.py          VENDOR  Flashforge stock: LAN HTTP on port 8898, slicer-owned start code, OrcaSlicer, .gcode
+    ad5x.py              MODEL   flashforge_stock.ad5x: the AD5X bed, one tool, four IFS bays, no Moonraker.
+                                 IFS occupancy is read from /detail and is not verified on a live printer.
+                                 (adapter.py, client.py, guard.py)
   klipper/
     __init__.py          VENDOR  Klipper: Moonraker, PRINT_START/PRINT_END macros, OrcaSlicer, .gcode
     generic.py           MODEL   klipper.generic
@@ -35,8 +40,8 @@ The `[printer] model` key is `<vendor>.<printer>`, which is the package name and
 
 | Vendor profile (`VENDOR = VendorProfile(...)`) | Printer profile (`MODEL = PrinterModel(...)`) |
 |---|---|
-| `connection`: `moonraker`, `octoprint`, `offline` or `bambulab_lan` | `bed_mm`, `max_print_height_mm` (printable area) |
-| `start_code`: `zmod`, `klipper_macro`, `marlin` or `bambu` | printable-area exclusions and motion envelope (in its Orca `machine.json` and adapter) |
+| `connection`: `moonraker`, `octoprint`, `offline`, `bambulab_lan` or `flashforge_stock` | `bed_mm`, `max_print_height_mm` (printable area) |
+| `start_code`: `zmod`, `klipper_macro`, `marlin`, `bambu` or `flashforge_stock` | printable-area exclusions and motion envelope (in its Orca `machine.json` and adapter) |
 | `slicers`: allowed `[printer] slicer` values, first is default | `supported_nozzle_sizes`, `supported_nozzle_types`, `nozzle_diameter_mm` |
 | `fallback_slicer`: one isolated attempt after an Orca failure | `ifs_slots` / AMS / AMS Lite, multi-color support |
 | `file_formats`: what the printer takes, primary first | `adapter` class, Orca `templates` folder, protected-settings `baseline` |

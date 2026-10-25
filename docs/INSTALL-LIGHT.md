@@ -6,7 +6,7 @@ One command installs Print Buddy natively and walks you through the setup.
 curl -fsSL https://raw.githubusercontent.com/catduckgnaf/print-buddy/main/scripts/install-light.sh | bash
 ```
 
-Pin a release with `bash -s -- --ref 2.1.0`. Read the script first if you prefer:
+Pin a release with `bash -s -- --ref 2.1.1`. Read the script first if you prefer:
 [scripts/install-light.sh](../scripts/install-light.sh).
 
 ## Requirements
@@ -15,6 +15,7 @@ Pin a release with `bash -s -- --ref 2.1.0`. Read the script first if you prefer
   or a 64-bit Debian or Ubuntu machine (arm64 or x86_64). 32-bit Pi OS is refused: the slicers have no 32-bit build.
 - Python 3.11 or newer (Bookworm and Ubuntu 24.04 have it), `sudo` for apt, about 2 GB free for a slicer.
 - A Discord bot: see [Discord bot setup](DISCORD-BOT-SETUP.md).
+- Stock Flashforge IFS occupancy is read from `/detail` and is not verified on a live printer.
 
 ## What it does
 

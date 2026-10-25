@@ -126,6 +126,13 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 COPY --from=orca-stable /out/ /
 COPY --from=orca-alpha /out/ /
 COPY --from=bambu-build /out/ /
+# Compatibility paths used by the existing runtime acceptance harness. These
+# always identify stable; runtime channel selection still uses distinct wrappers.
+RUN if [ -x /usr/local/bin/orca-slicer-stable ]; then \
+      ln -s /opt/orca-stable/bin/orca-slicer /usr/bin/orca-slicer && \
+      ln -s /orca-stable-build-info /orca-build-info && \
+      ln -s /orca-stable-source-revision /orca-source-revision; \
+    fi
 ARG APP_CHANNEL=development
 RUN case "$APP_CHANNEL" in stable|development) ;; *) echo 'APP_CHANNEL must be stable or development' >&2; exit 2;; esac
 LABEL org.print-buddy.app-channel=$APP_CHANNEL

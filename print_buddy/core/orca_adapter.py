@@ -1571,14 +1571,18 @@ def placement_candidates(path_or_triangles, printer_model=None, bed_mm=None, max
     for name, axis, matrix in orientations:
         rotated = [_rotate(p, matrix) for p in points]
         hull = _hull([(p[0], p[1]) for p in rotated])
+        z_extent = max(p[2] for p in rotated) - min(p[2] for p in rotated)
         yaw_set = {0.0, 45.0, 90.0}
         for i, a in enumerate(hull):
             b = hull[(i + 1) % len(hull)]
             yaw_set.add(round(math.degrees(math.atan2(b[1]-a[1], b[0]-a[0])) % 90.0, 6))
         for yaw in sorted(yaw_set):
             rot = _matmul(_yaw(yaw), matrix)
-            moved = [_rotate(p, rot) for p in points]
-            dims = [max(p[k] for p in moved) - min(p[k] for p in moved) for k in range(3)]
+            # Yaw is about Z, so XY extents come from the 2D hull alone and Z is unchanged.
+            ym = _yaw(yaw)
+            moved = [(ym[0]*x + ym[1]*y, ym[3]*x + ym[4]*y) for x, y in hull]
+            dims = [max(p[0] for p in moved) - min(p[0] for p in moved),
+                    max(p[1] for p in moved) - min(p[1] for p in moved), z_extent]
             mx, my, mz = bed[0]-dims[0], bed[1]-dims[1], height_limit-dims[2]
             euler = _euler_xyz(rot)
             rows.append({'label': name, 'axis': axis, 'rx_deg': euler[0], 'ry_deg': euler[1], 'rz_deg': round(yaw, 3),

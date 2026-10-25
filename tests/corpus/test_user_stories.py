@@ -1,4 +1,4 @@
-"""Given/When/Then stories for Andrew using the public Discord model-intake flow."""
+"""Given/When/Then stories for Catduck using the public Discord model-intake flow."""
 
 import pytest
 
@@ -15,8 +15,8 @@ def _picked(run, fragment):
     return [q["picked"] for q in run.adapter.questions if fragment.casefold() in q["question"].casefold()]
 
 
-def test_andrew_drops_a_multicolor_file_then_slices_and_prints(tmp_path):
-    """Given Andrew drops a four-color 3MF in Discord, when he assigns colors and approves,
+def test_catduck_drops_a_multicolor_file_then_slices_and_prints(tmp_path):
+    """Given Catduck drops a four-color 3MF in Discord, when he assigns colors and approves,
     then each component keeps its requested slot and one verified G-code reaches the start path.
     """
     case, run = _run("four-colors-one-plate", tmp_path)
@@ -29,8 +29,8 @@ def test_andrew_drops_a_multicolor_file_then_slices_and_prints(tmp_path):
     assert run.receipt["status"] == "STARTED"
 
 
-def test_andrew_accepts_a_smaller_fit_for_an_oversized_model(tmp_path):
-    """Given Andrew drops a model wider than the bed, when he accepts the suggested shrink,
+def test_catduck_accepts_a_smaller_fit_for_an_oversized_model(tmp_path):
+    """Given Catduck drops a model wider than the bed, when he accepts the suggested shrink,
     then the receipt records a sub-unit scale and the smaller model is sliced before start.
     """
     case, run = _run("must-shrink", tmp_path)
@@ -41,8 +41,8 @@ def test_andrew_accepts_a_smaller_fit_for_an_oversized_model(tmp_path):
     assert len(run.starts) == 1
 
 
-def test_andrew_chooses_print_quantity_for_a_single_plate(tmp_path):
-    """Given Andrew needs two copies of a one-color model, when he selects two copies,
+def test_catduck_chooses_print_quantity_for_a_single_plate(tmp_path):
+    """Given Catduck needs two copies of a one-color model, when he selects two copies,
     then both the saved receipt and sliced job account for the quantity.
     """
     case, run = _run("single-part", tmp_path)
@@ -58,8 +58,8 @@ def test_andrew_chooses_print_quantity_for_a_single_plate(tmp_path):
     assert len(run.starts) == 1
 
 
-def test_andrew_stops_before_approving_slice_and_print(tmp_path):
-    """Given Andrew has not yet approved the final print request, when that prompt is
+def test_catduck_stops_before_approving_slice_and_print(tmp_path):
+    """Given Catduck has not yet approved the final print request, when that prompt is
     unanswered, then the Discord flow fails closed and nothing starts. Slicing is
     prepared before the approval prompt (the prompt shows its results), so a slice
     may have run — the gate this story pins is that no print ever starts without
@@ -74,8 +74,8 @@ def test_andrew_stops_before_approving_slice_and_print(tmp_path):
 
 
 @pytest.mark.parametrize("transport", ["hermes", "standalone"])
-def test_andrew_cancels_an_unanswered_color_prompt_without_start(transport, tmp_path):
-    """Given Andrew drops an STL but never answers its color prompt, when either Discord-backed
+def test_catduck_cancels_an_unanswered_color_prompt_without_start(transport, tmp_path):
+    """Given Catduck drops an STL but never answers its color prompt, when either Discord-backed
     intake waits for his choice, then the scenario does not authorize a slice or printer start.
     """
     case = harness.load_case(harness.CASES / "stl-single-part")

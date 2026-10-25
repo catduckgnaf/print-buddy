@@ -33,10 +33,14 @@ simplify or split the file. Nothing is sliced or started for a refused intake.
 
 ## Verification limits
 
-The compact parser has synthetic streaming-success and allocation-bound tests.
-These do not establish an end-to-end RSS guarantee: the geometry layout path,
-transforms, fallback XML parsing and downstream topology still allocate Python
-objects. Private-model capped intake and successful slicing acceptance remains
+Geometry layout, transforms, topology, mesh audit and part annotation now
+consume the same indexed vertex/face arrays instead of re-expanding the mesh
+into Python objects, and color inventory scans members without building the
+model DOM. Meshes the streaming reader declines still take the ElementTree
+fallback, whose memory use this work does not bound. Synthetic
+streaming-success and allocation-bound tests cover the parser and individual
+consumers; they do not by themselves establish an end-to-end RSS guarantee.
+Private-model capped intake and successful slicing acceptance remains
 required before claiming this revision solves the observed memory problem.
 OrcaSlicer's memory use must be measured separately from Print Buddy's.
 

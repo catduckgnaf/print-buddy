@@ -1,4 +1,4 @@
-"""Bambu Lab LAN transport: MQTT over TLS on port 8883, read-only in this stage.
+"""Bambu Lab LAN transport: MQTT over TLS on port 8883; FTPS upload on port 990 (stage c).
 
 Protocol facts are from docs/BAMBU-CONNECTIVITY.md (#187), verified against the maintained
 integrations at pinned commits: subscribe to ``device/<serial>/report``, publish to
@@ -6,9 +6,10 @@ integrations at pinned commits: subscribe to ``device/<serial>/report``, publish
 A1/P1 printers report deltas, so a snapshot is only complete after a ``pushall`` request
 answers with a full ``push_status`` (``msg == 0``); ``get_version`` identifies the machine.
 
-This module never publishes a print command: the only requests it sends are
-``get_version``, ``pushall`` and the ``pushing`` start that resumes the status stream.
-Starting, pausing or controlling a print is a later, separately gated stage.
+The MQTT side sends status requests only (``get_version``, ``pushall``); print commands are
+a later, separately gated stage. The FTPS side uploads one ``.gcode.3mf`` package to the
+printer's storage root and verifies it by reading the remote size back — uploading never
+starts a print by itself.
 
 TLS: the peer certificate chain is verified against Bambu Lab's own CA bundle
 (``bambu_ca.pem`` beside this file: the public BBL CA certificates, carried via the
@@ -19,19 +20,21 @@ Hostname checking is off because the certificate CN is the printer serial, not i
 address — the same posture as pybambu. There is deliberately no CERT_NONE mode.
 TLS is capped at 1.2: some Bambu firmware never answers a TLS 1.3 ClientHello.
 
-The MQTT client is injectable (``mqtt_factory``) so tests run fully offline with a fake,
-following the OctoPrint client's injectable-opener pattern. Error messages never include
-the access code or a payload body.
+Both transports are injectable (``mqtt_factory`` / ``ftp_factory``) so tests run fully
+offline with fakes, following the OctoPrint client's injectable-opener pattern. Error
+messages never include the access code or a payload body.
 """
 from __future__ import annotations
 
 import copy
+import ftplib
 import json
 import ssl
 import time
 from pathlib import Path
 
 MQTT_PORT = 8883
+FTPS_PORT = 990
 MQTT_USER = "bblp"
 CA_FILE = Path(__file__).with_name("bambu_ca.pem")
 
@@ -100,10 +103,80 @@ def _paho_factory(host, serial, access_code):
     return client
 
 
+class _ImplicitFTPS(ftplib.FTP_TLS):
+    """Implicit FTPS (port 990) the way Bambu firmware requires it.
+
+    Two firmware quirks, both taken from the maintained clients (pybambu's
+    ``ImplicitFTP_TLS`` and bambulabs_api's identical class): the control socket is
+    TLS-wrapped from the moment it exists (implicit mode), and the data connection must
+    reuse the control connection's TLS session or the printer refuses it. The store
+    variant skips the TLS ``unwrap()`` close handshake, which some firmware never
+    answers (pybambu's ``storbinary_no_unwrap``).
+    """
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self._sock = None
+
+    @property
+    def sock(self):
+        return self._sock
+
+    @sock.setter
+    def sock(self, value):
+        if value is not None and not isinstance(value, ssl.SSLSocket):
+            value = self.context.wrap_socket(value)
+        self._sock = value
+
+    def ntransfercmd(self, cmd, rest=None):
+        conn, size = ftplib.FTP.ntransfercmd(self, cmd, rest)
+        if self._prot_p:
+            conn = self.context.wrap_socket(conn, server_hostname=self.host,
+                                            session=self.sock.session)
+        return conn, size
+
+    def storbinary(self, cmd, fp, blocksize=8192, callback=None, rest=None):
+        self.voidcmd("TYPE I")
+        with self.transfercmd(cmd, rest) as conn:
+            while True:
+                buf = fp.read(blocksize)
+                if not buf:
+                    break
+                conn.sendall(buf)
+                if callback:
+                    callback(buf)
+            conn.close()  # no unwrap(): firmware may never answer it (see class docstring)
+        return self.voidresp()
+
+
+def _ftps_factory(host, access_code):
+    """Build the real FTPS connection: verified Bambu CA context, logged in, data protected."""
+    ftp = _ImplicitFTPS(context=lan_ssl_context())
+    try:
+        ftp.connect(host=host, port=FTPS_PORT, timeout=15)
+        ftp.login(user=MQTT_USER, passwd=access_code)
+        ftp.prot_p()
+    except Exception as exc:
+        raise BambuLanError(f"Bambu Lab FTPS at {host} could not be reached or rejected the login "
+                            f"({type(exc).__name__}); check the printer is on, in LAN Mode, and the "
+                            "LAN access code secret is current") from exc
+    return ftp
+
+
+def _remote_name(local_path, remote_name):
+    """The storage-root file name for an upload: a bare, plain `.gcode.3mf` basename."""
+    name = remote_name if remote_name is not None else Path(local_path).name
+    if (not name or name != Path(name).name or not name.endswith(".gcode.3mf")
+            or any(c.isspace() or ord(c) < 32 for c in name)):
+        raise BambuLanError(f"invalid Bambu Lab remote file name {name!r}: uploads are a single "
+                            ".gcode.3mf file name without folders or spaces")
+    return name
+
+
 class BambuLanClient:
     """One-shot LAN telemetry: connect, take a complete snapshot, disconnect."""
 
-    def __init__(self, host, serial, access_code, *, mqtt_factory=None, timeout_s=15.0):
+    def __init__(self, host, serial, access_code, *, mqtt_factory=None, ftp_factory=None, timeout_s=15.0):
         if not host or "://" in host or "/" in host or ":" in host or any(c.isspace() for c in host):
             raise BambuLanError("Bambu Lab LAN host must be a plain IP address or hostname, without scheme or port")
         if not serial or not str(serial).strip():
@@ -118,6 +191,7 @@ class BambuLanClient:
         self._access_code = access_code
         self.timeout_s = float(timeout_s)
         self._mqtt_factory = mqtt_factory or _paho_factory
+        self._ftp_factory = ftp_factory or _ftps_factory
 
     @property
     def report_topic(self):
@@ -201,3 +275,38 @@ class BambuLanClient:
                 client.disconnect()
             except Exception:
                 pass
+
+    def upload(self, local_path, remote_name=None):
+        """Upload one `.gcode.3mf` package to the printer's storage root via FTPS; return its remote name.
+
+        The upload is verified by reading the remote size back: a size the printer cannot
+        report, or one that differs from the local file, is a failure — the package on the
+        printer is then incomplete or different and must not be started. Uploading never
+        starts a print. Raises BambuLanError with no credential detail on any failure.
+        """
+        path = Path(local_path)
+        if not path.is_file():
+            raise BambuLanError(f"no package file at {path}; nothing was uploaded")
+        name = _remote_name(path, remote_name)
+        size = path.stat().st_size
+        ftp = self._ftp_factory(self.host, self._access_code)
+        try:
+            with path.open("rb") as fp:
+                ftp.storbinary(f"STOR {name}", fp)
+            remote_size = ftp.size(name)
+        except BambuLanError:
+            raise
+        except Exception as exc:
+            raise BambuLanError(f"FTPS upload of {name} to the Bambu Lab printer at {self.host} failed "
+                                f"({type(exc).__name__}); the file on the printer may be incomplete — "
+                                "check its storage before retrying") from exc
+        finally:
+            try:
+                ftp.quit()
+            except Exception:
+                pass
+        if remote_size != size:
+            raise BambuLanError(f"FTPS upload of {name} could not be verified: the printer reports "
+                                f"{remote_size!r} bytes, the local package is {size} bytes; do not start "
+                                "this file — delete it on the printer and upload again")
+        return name

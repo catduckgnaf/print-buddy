@@ -3,10 +3,11 @@
 VENDOR (bambulab/__init__.py) is the authority for connection ("bambulab_lan"), start code, slicers and
 delivery. The LAN path (client.py) exists only when the operator configures [bambu] lan_host and
 lan_serial and supplies the LAN access code through an environment variable; without that configuration
-the adapter behaves exactly as the original offline adapter did. Telemetry is read-only in this stage:
-upload, print start and control still raise LiveUnsupported, and `printer` delivery is not offered.
+the adapter behaves exactly as the original offline adapter did. Stage (b) added read-only telemetry;
+stage (c) adds the FTPS upload transport (client.py) behind `upload()` — print start and control still
+raise LiveUnsupported, and `printer` delivery is not offered until the print-start stage.
 Each printer subclasses this adapter with its facts (see a1.py). Deliberately imports nothing from the
-ZMod/AD5X code and has no Moonraker, FTPS or cloud client.
+ZMod/AD5X code and has no Moonraker or cloud client.
 """
 import json
 import os
@@ -73,6 +74,17 @@ class BambuAdapter(PrinterAdapter):
                                 "lan_serial and supply the LAN access code via the environment")
         return BambuLanClient(str(self._lan()["lan_host"]).strip(), str(self._lan()["lan_serial"]).strip(),
                               self.access_code(), **overrides)
+
+    def upload(self, local_path, remote_name=None):
+        """Upload a `.gcode.3mf` package to the printer's storage root (FTPS, size-verified).
+
+        Stage (c): this is the transport the print-start stage builds on. By itself it
+        starts nothing, and no delivery method calls it yet.
+        """
+        if not str(local_path).endswith(".gcode.3mf"):
+            raise BambuLanError(f"{self.label}: only a packaged .gcode.3mf can be uploaded to a Bambu Lab "
+                                "printer; slice and package the job first (the Bambu package delivery does this)")
+        return self.client().upload(local_path, remote_name)
 
     # slicer: the vendor start/end G-code is used as is; Print Buddy adds and changes nothing. The only accepted
     # start and end are the ones in the verified generated profiles (profiles.py), so an [orca] templates

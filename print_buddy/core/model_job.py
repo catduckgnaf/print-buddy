@@ -987,7 +987,7 @@ def verify_gcode_offline(gcode_path, state):
     artifact against the already loaded hardware record: MD5 when present,
     native heater prefix, nozzle, material, start and end, and motion bounds.
     """
-    if printers.current().connection == 'offline':
+    if printers.current().connection in ('offline', 'bambulab_lan'):
         return _verify_offline(gcode_path, state)
     p = Path(gcode_path)
     raw = p.read_bytes()
@@ -1041,12 +1041,12 @@ def _verify_offline(gcode_path, state):
     problems = printers.current().gcode_problems(Path(gcode_path).read_text(errors='ignore'), state)
     if problems:
         raise RuntimeError('offline G-code verification failed: ' + '; '.join(problems))
-    return {'offline': True, 'connection': 'offline'}
+    return {'offline': True, 'connection': printers.current().connection}
 
 
 def verify_gcode(gcode_path):
     """Check a G-code artifact against live nozzle, spool and temperature state."""
-    if printers.current().connection == 'offline':
+    if printers.current().connection in ('offline', 'bambulab_lan'):
         st = printer_state.load(); ok, probs, _ = printer_state.check(st)
         if not ok: raise RuntimeError("hardware record check failed:\n  " + "\n  ".join(probs))
         return _verify_offline(gcode_path, st)
@@ -3425,6 +3425,17 @@ def print_now(target, wait_s=25, accept_default_z_offset=False, reprint=False, r
     st=printer_state.load()
     if getattr(adapter, 'transport', None) == 'octoprint':
         return _print_octoprint(adapter, st, g, job, job_path, wait_s, reprint)
+    if getattr(adapter, 'transport', None) == 'bambulab_lan':
+        # LAN support is read-only telemetry in this stage. Verify the file for manual handoff;
+        # the bed-clear approval is left unused, exactly as for the offline path below.
+        try:
+            verify_gcode(g)
+        except RuntimeError as exc:
+            raise SystemExit("REFUSED: " + " ".join(str(exc).split()) + ". Nothing uploaded or started.")
+        raise SystemExit(f"REFUSED: {adapter.label} has no print control in Print Buddy yet (LAN support is "
+                         f"read-only telemetry: no upload, start or control). {g} passed offline checks; use "
+                         "the Bambu package delivery and move the file yourself (not yet tested on a printer). "
+                         "Nothing uploaded or started.")
     if adapter.connection == 'offline':
         # No connection exists. Verify the file for manual handoff; the bed-clear approval is left unused.
         try:

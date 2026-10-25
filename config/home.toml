@@ -34,6 +34,11 @@ command = ["flatpak", "run", "com.orcaslicer.OrcaSlicer"]
 [bambu]
 # Fallback slicer when Orca fails. Network is cut so it never phones home.
 command = ["flatpak", "run", "--unshare=network", "--command=bambu-studio", "com.bambulab.BambuStudio"]
+# Read-only LAN telemetry (#187): printer LAN address + serial; both empty = no LAN connection.
+# The access code is a secret and lives only in the environment variable lan_access_code_env names.
+lan_host = ""
+lan_serial = ""
+lan_access_code_env = "BAMBU_LAN_PASSWORD"
 
 [paths]
 # Hermes profile the bot runs in. State files live in <hermes_home>/state.

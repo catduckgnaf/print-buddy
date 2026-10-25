@@ -1,6 +1,8 @@
 # Runtime dependencies for Print Buddy (slicing, previews, Moonraker WS, the standalone Discord bot).
 # Test-only packages live in requirements-test.txt.
 jinja2>=3.1
+# Bambu Lab LAN MQTT telemetry (#187); imported lazily, only used when LAN is configured.
+paho-mqtt>=2.0
 numpy>=1.26
 pillow>=10.0
 pyyaml>=6.0

@@ -20,6 +20,8 @@ def without_added(data):
     data = json.loads(json.dumps(data, default=str))
     data.pop("delivery", None)
     data.pop("logging", None)  # added by #150, after the golden files were captured
+    for key in ("lan_host", "lan_serial", "lan_access_code_env"):  # added by #187, after capture
+        data.get("bambu", {}).pop(key, None)
     for key in ADDED_PRINTER_KEYS:
         data.get("printer", {}).pop(key, None)
     return data
@@ -45,7 +47,7 @@ def test_vendor_profiles_carry_the_shared_settings():
     assert sovol.settings == klipper.settings and sovol.label == "Sovol"
     assert printers.VENDORS["octoprint"].connection == "octoprint"
     bambu = printers.VENDORS["bambulab"]
-    assert bambu.connection == "offline" and bambu.start_code == "bambu"
+    assert bambu.connection == "bambulab_lan" and bambu.start_code == "bambu"
     assert bambu.slicers == ("bambu_studio", "orca") and bambu.file_formats[0] == ".gcode.3mf"
     assert "printer" not in bambu.delivery and set(bambu.default_delivery) == {"discord", "bambu_handoff"}
     for vendor in printers.VENDORS.values():

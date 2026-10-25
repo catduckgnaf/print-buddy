@@ -80,7 +80,7 @@ def test_model_registration_defaults_and_p1s_specific_hardware(p1s_profiles):
     a = adapter_for()
     assert printers.MODELS[P1S] == MODEL and MODEL.vendor is VENDOR is printers.VENDORS["bambulab"]
     assert isinstance(a, P1SAdapter) and isinstance(a, BambuOfflineAdapter)
-    assert (a.connection, a.slot_count, a.multi_slot) == ("offline", 1, False)
+    assert (a.connection, a.slot_count, a.multi_slot) == ("bambulab_lan", 1, False)
     volume = a.build_volume()
     assert volume.bed_mm == (256.0, 256.0) and volume.max_height_mm == 256.0
     assert a.supported_nozzle_sizes == (0.4,)
@@ -198,8 +198,10 @@ def test_profile_defaults_reference_orca_profile_names_and_sources(p1s_profiles)
     assert all(fact.source in {"ORCA", "BAMBU", "DERIVED"} for fact in facts.P1S.values())
 
 
-def test_p1s_stays_offline_and_does_not_use_the_bambu_live_paths(p1s_profiles):
-    assert adapter_for().connection == "offline"
+def test_p1s_offers_no_print_delivery_and_does_not_use_the_moonraker_live_paths(p1s_profiles):
+    # LAN telemetry is opt-in via [bambu] lan_*; the fixture config does not configure it.
+    assert adapter_for().connection == "bambulab_lan"
+    assert adapter_for().lan_configured() is False
     assert VENDOR.delivery == ("discord", "bambu_handoff")
     assert "printer" not in VENDOR.delivery
     assert adapter_for().normalize_status({"print_stats": {"state": "printing"}})["state"] == "unknown"

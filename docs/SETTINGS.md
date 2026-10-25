@@ -147,6 +147,7 @@ Secrets come from the environment only (Docker: `.env`, never committed or share
 | `DISCORD_BOT_TOKEN` | Standalone bot token. The variable name is `discord.token_env` |
 | `LLM_API_KEY` | Optional key for `llm.chat_url`. The variable name is `llm.api_key_env` |
 | `OCTOPRINT_API_KEY` | `octoprint.marlin` printers: OctoPrint application key |
+| `BAMBU_LAN_PASSWORD` | Bambu Lab printers: the LAN access code for read-only status. The variable name is `bambu.lan_access_code_env` |
 | `MOONRAKER_API_KEY` | Moonraker API key, only when Moonraker requires one |
 | `CLIPROXY_API_KEY` | Key for `services.vision_chat_url` |
 | `OPENVIKING_API_KEY` | Key for `services.openviking_url` |

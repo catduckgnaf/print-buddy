@@ -205,10 +205,13 @@ between replicas of one service.
 
 ## Unraid DockerMan parity (manual candidate setup)
 
-No DockerMan template is published by this draft, and nothing here is a
-published Unraid Community Applications (CA) listing: submitting these
-templates to CA is a separate external step that has not happened (#180
-tracks the CA route). What this repo provides for Unraid today is three
+Unraid: install from Community Applications by adding the maintainer's
+template repository, [catduck-unraid-templates](https://github.com/catduckgnaf/catduck-unraid-templates),
+under Apps &gt; Settings &gt; Custom repositories (#180). Its single
+`print-buddy` CA template runs the standalone bot only, with the same
+variables as the Compose and DockerMan contract below (including
+`PRINT_BUDDY_ORCA_CHANNEL`); the listener and the included Spoolman are
+separate DockerMan entries. What this repo provides for Unraid today is three
 template proposals in `docker/unraid/`: `print-buddy-bot.xml`,
 `print-buddy-listener.xml` and `print-buddy-spoolman.xml` (the included
 Spoolman). Tests keep them in step with Compose, and the acceptance harness

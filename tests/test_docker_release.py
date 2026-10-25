@@ -326,6 +326,13 @@ class UnraidTemplateTests(unittest.TestCase):
                 for required in ("DISCORD_BOT_TOKEN", "PRINT_BUDDY__DISCORD__CHAT_ID",
                                  "PRINT_BUDDY__DISCORD__ALLOWED_USER_IDS"):
                     self.assertEqual(variables[required].get("Required"), "true")
+                # The runtime Orca channel selector (#180): present in both templates,
+                # in the Compose runtime environment and as a settable .env.example line,
+                # so Docker and DockerMan users can both reach alpha without a rebuild.
+                self.assertEqual(variables["PRINT_BUDDY_ORCA_CHANNEL"].text, "stable")
+                self.assertEqual(compose_env["PRINT_BUDDY_ORCA_CHANNEL"],
+                                 "${PRINT_BUDDY_ORCA_CHANNEL:-stable}")
+                self.assertRegex(ENV_EXAMPLE, r"(?m)^PRINT_BUDDY_ORCA_CHANNEL=stable$")
         self.assertEqual({c.get("Target"): c.text for c in UNRAID["bot"].findall("Config")},
                          {c.get("Target"): c.text for c in UNRAID["listener"].findall("Config")})
 

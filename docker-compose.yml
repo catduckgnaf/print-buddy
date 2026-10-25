@@ -13,6 +13,9 @@ x-runtime: &runtime
     # Mount a custom config at the selected path with a local Compose override.
     PRINT_BUDDY_CONFIG: ${PRINT_BUDDY_CONFIG:-/app/config/docker.yaml}
     PRINT_BUDDY__BOT__MODE: standalone
+    # Bundled OrcaSlicer channel the entrypoint selects at startup (docs/SETTINGS.md
+    # "Runtime environment"); stable is the default, alpha is the other accepted value.
+    PRINT_BUDDY_ORCA_CHANNEL: ${PRINT_BUDDY_ORCA_CHANNEL:-stable}
     # Included Spoolman by default. An empty or unset value in .env falls back to the
     # included service; a non-empty value is an existing external Spoolman and wins.
     PRINT_BUDDY__SERVICES__SPOOLMAN_URL: ${PRINT_BUDDY__SERVICES__SPOOLMAN_URL:-http://spoolman:8000}

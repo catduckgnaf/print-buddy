@@ -1,66 +1,18 @@
 # syntax=docker/dockerfile:1
-# Pinned official prebuilt by default; source compilation remains opt-in.
+# OrcaSlicer is never built from source: both channels install pinned official
+# prebuilt releases (docker/orca-prebuilt.sh, SHA256 verified before extraction).
 # See docs/DOCKER-117-PROGRESS.md for contributor attribution.
-FROM debian:13-slim AS orca-base
+FROM debian:13-slim AS orca-prebuilt
 ARG WITH_ORCA=false
-ARG ORCA_SOURCE=prebuilt
-ARG ORCA_STABLE_REF=8500fcdccaa10b5099ac20d252af3a7c560046f1
-ARG ORCA_ALPHA_REF=3880f2c58ec392ed2bd5938ab31c9c7c496c0eb2
-ARG ORCA_BUILD_JOBS=auto
-ARG ORCA_BUILD_MEM_PER_JOB_MIB=2560
-ARG ORCA_CCACHE_MAXSIZE=5G
-ARG ORCA_BUILD_PROFILE=release-static-fhs-nopch
 ARG TARGETARCH
 ENV DEBIAN_FRONTEND=noninteractive
-COPY docker/orca-build-jobs.sh /usr/local/bin/orca-build-jobs
-COPY docker/orca-build.sh /usr/local/bin/orca-build
-RUN mkdir -p /out && chmod +x /usr/local/bin/orca-build-jobs /usr/local/bin/orca-build && \
-    case "$WITH_ORCA" in true|false) ;; *) echo 'WITH_ORCA must be true or false' >&2; exit 2;; esac && \
-    case "$ORCA_SOURCE" in prebuilt|source) ;; *) echo "ORCA_SOURCE must be prebuilt or source" >&2; exit 2;; esac && \
-    orca-build-jobs "$ORCA_BUILD_JOBS" >/dev/null && \
-    if [ "$WITH_ORCA" = true ] && [ "$ORCA_SOURCE" = source ]; then \
-      apt-get update && apt-get install -y --no-install-recommends \
-        ca-certificates git cmake ninja-build build-essential autoconf automake \
-        libtool pkg-config gettext texinfo curl wget file m4 ccache nasm yasm \
-        eglexternalplatform-dev extra-cmake-modules libcurl4-openssl-dev \
-        libdbus-1-dev libglew-dev libgstreamerd-3-dev libgtk-3-dev \
-        libmspack-dev libsecret-1-dev libspnav-dev libssl-dev libudev-dev \
-        libwebkit2gtk-4.1-dev gstreamer1.0-gtk3 && \
-      rm -rf /var/lib/apt/lists/*; \
-    fi
-
-FROM orca-base AS orca-stable
-ARG WITH_ORCA=false
-ARG ORCA_STABLE_REF=8500fcdccaa10b5099ac20d252af3a7c560046f1
-ARG ORCA_BUILD_JOBS=auto
-ARG ORCA_CCACHE_MAXSIZE=5G
-ARG ORCA_BUILD_PROFILE=release-static-fhs-nopch
-ARG TARGETARCH
-RUN --mount=type=cache,id=print-buddy-orca-${TARGETARCH}-stable-${ORCA_STABLE_REF}-${ORCA_BUILD_PROFILE},target=/cache,sharing=locked \
-    if [ "$WITH_ORCA" = true ] && [ "$ORCA_SOURCE" = source ]; then \
-      /usr/local/bin/orca-build stable "$ORCA_STABLE_REF" "$ORCA_BUILD_JOBS" \
-        "$ORCA_CCACHE_MAXSIZE" "$ORCA_BUILD_PROFILE" "$TARGETARCH"; \
-    fi
-
-FROM orca-base AS orca-alpha
-ARG WITH_ORCA=false
-ARG ORCA_ALPHA_REF=3880f2c58ec392ed2bd5938ab31c9c7c496c0eb2
-ARG ORCA_BUILD_JOBS=auto
-ARG ORCA_CCACHE_MAXSIZE=5G
-ARG ORCA_BUILD_PROFILE=release-static-fhs-nopch
-ARG TARGETARCH
-RUN --mount=type=cache,id=print-buddy-orca-${TARGETARCH}-alpha-${ORCA_ALPHA_REF}-${ORCA_BUILD_PROFILE},target=/cache,sharing=locked \
-    if [ "$WITH_ORCA" = true ] && [ "$ORCA_SOURCE" = source ]; then \
-      /usr/local/bin/orca-build alpha "$ORCA_ALPHA_REF" "$ORCA_BUILD_JOBS" \
-        "$ORCA_CCACHE_MAXSIZE" "$ORCA_BUILD_PROFILE" "$TARGETARCH"; \
-    fi
-
-FROM orca-base AS orca-prebuilt
-ARG TARGETARCH
 COPY docker/orca-prebuilt.sh /usr/local/bin/orca-prebuilt
-RUN if [ "$WITH_ORCA" = true ] && [ "$ORCA_SOURCE" = prebuilt ]; then \
+RUN mkdir -p /out && \
+    case "$WITH_ORCA" in true|false) ;; *) echo 'WITH_ORCA must be true or false' >&2; exit 2;; esac && \
+    if [ "$WITH_ORCA" = true ]; then \
       apt-get update && apt-get install -y --no-install-recommends ca-certificates curl && \
-      sh /usr/local/bin/orca-prebuilt "$TARGETARCH" && \
+      sh /usr/local/bin/orca-prebuilt stable "$TARGETARCH" && \
+      sh /usr/local/bin/orca-prebuilt alpha "$TARGETARCH" && \
       rm -rf /var/lib/apt/lists/*; \
     fi
 
@@ -144,8 +96,6 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     fonts-liberation && rm -rf /var/lib/apt/lists/*
 RUN python3 -m venv /opt/venv && useradd --uid 1000 --create-home buddy
 COPY --from=spoolman-build /opt/spoolman /opt/spoolman
-COPY --from=orca-stable /out/ /
-COPY --from=orca-alpha /out/ /
 COPY --from=orca-prebuilt /out/ /
 ENV LD_LIBRARY_PATH=/opt/orca-stable/lib/orca-runtime:/opt/orca-stable/bin
 COPY --from=bambu-build /out/ /

@@ -13,14 +13,9 @@ on:
         type: boolean
         default: false
       with_orca:
-        description: Include pinned OrcaSlicer
+        description: Include pinned official prebuilt OrcaSlicer (stable and alpha)
         type: boolean
         default: true
-      orca_source:
-        description: Orca distribution (prebuilt stable only; source stable and alpha)
-        type: choice
-        options: [prebuilt, source]
-        default: prebuilt
       with_bambu:
         description: Build the pinned Bambu Studio from source (separate optional build)
         type: boolean
@@ -41,11 +36,9 @@ jobs:
     env:
       IMAGE: ghcr.io/catduckgnaf/print-buddy
       APP_CHANNEL: stable
-      ORCA_BUILD_JOBS: auto
       # Inputs reach the shell only as environment variables, never interpolated into scripts.
       PUBLISH_VERSION: ${{ inputs.version }}
       WITH_ORCA: ${{ inputs.with_orca }}
-      ORCA_SOURCE: ${{ inputs.orca_source || 'prebuilt' }}
       WITH_BAMBU: ${{ inputs.with_bambu }}
       SPOOLMAN_MODE: included
     steps:
@@ -61,7 +54,7 @@ jobs:
           {
             echo "source_sha=$GITHUB_SHA"
             echo "version=$PUBLISH_VERSION"
-            echo "app_channel=$APP_CHANNEL with_orca=$WITH_ORCA with_bambu=$WITH_BAMBU orca_build_jobs=$ORCA_BUILD_JOBS spoolman=$SPOOLMAN_MODE"
+            echo "app_channel=$APP_CHANNEL with_orca=$WITH_ORCA with_bambu=$WITH_BAMBU spoolman=$SPOOLMAN_MODE"
           } | tee evidence/pins.txt
       - name: Free runner disk for the source build
         if: inputs.with_orca || inputs.with_bambu
@@ -79,9 +72,7 @@ jobs:
           docker buildx build --platform linux/amd64 --progress=plain --load -t "$IMAGE:$PUBLISH_VERSION" \
             --build-arg "APP_CHANNEL=$APP_CHANNEL" \
             --build-arg "WITH_ORCA=$WITH_ORCA" \
-            --build-arg "ORCA_SOURCE=$ORCA_SOURCE" \
             --build-arg "WITH_BAMBU=$WITH_BAMBU" \
-            --build-arg "ORCA_BUILD_JOBS=$ORCA_BUILD_JOBS" \
             --label "org.opencontainers.image.source=https://github.com/catduckgnaf/print-buddy" \
             --label "org.opencontainers.image.version=$PUBLISH_VERSION" \
             --label "org.opencontainers.image.revision=$GITHUB_SHA" \
@@ -96,8 +87,7 @@ jobs:
         if: inputs.with_orca
         run: |
           set -euo pipefail
-          channels=stable
-          if [ "$ORCA_SOURCE" = source ]; then channels="stable alpha"; fi
+          channels="stable alpha"
           for channel in $channels; do
             docker run --rm --network none --cpus 2 --memory 4g --pids-limit 256 \
               --cap-drop ALL --security-opt no-new-privileges:true \

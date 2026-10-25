@@ -36,15 +36,15 @@ This source template does not prove a Community Applications listing or an exerc
 
 ## Build dimensions and slicers
 
-All OS stages use Debian 13 slim. `APP_CHANNEL=stable|development` labels provenance, not a source switch. `WITH_ORCA=true` includes Orca; default false omits it. `ORCA_SOURCE=prebuilt` includes stable 2.4.2 only; `source` builds pinned stable and alpha independently. `PRINT_BUDDY_ORCA_CHANNEL=stable|alpha` selects wrappers; absent executables and invalid selections fail closed. `/usr/local/bin/orca-slicer` remains the stable path. Existing entrypoint preserves Xvfb for headless slicing.
+All OS stages use Debian 13 slim. `APP_CHANNEL=stable|development` labels provenance, not a source switch. `WITH_ORCA=true` includes Orca; default false omits it. OrcaSlicer is never built from source: `WITH_ORCA=true` installs both pinned official prebuilt releases, stable 2.4.2 and alpha 2.5.0-alpha. `PRINT_BUDDY_ORCA_CHANNEL=stable|alpha` selects wrappers; absent executables and invalid selections fail closed. `/usr/local/bin/orca-slicer` remains the stable path. Existing entrypoint preserves Xvfb for headless slicing.
 
-The official prebuilt archive is downloaded and extracted only inside approved hosted image builds, never installed on a Hermes host. Its SHA256 is pinned by `docker/orca-prebuilt.sh`. Source caches separate architecture, channel, revision and profile. `ORCA_BUILD_JOBS=auto` bounds CPU/memory usage; explicit values accept 1 through 64. See [SETTINGS.md](SETTINGS.md#build-arguments).
+The official prebuilt archives are downloaded and extracted only inside approved hosted image builds, never installed on a Hermes host. Each channel's version, source revision and SHA256 are pinned by `docker/orca-prebuilt.sh`, and the SHA256 is verified before extraction. `ORCA_BUILD_JOBS=auto` bounds CPU/memory usage for the optional Bambu Studio source build only; explicit values accept 1 through 64. See [SETTINGS.md](SETTINGS.md#build-arguments).
 
 `WITH_BAMBU=false` is the publication default; enabling pinned source-built Bambu Studio needs its own runtime acceptance. OpenSCAD (`openscad`) is included for CAD splitting.
 
 ## Validation and publication
 
-The existing manual `.github/workflows/docker-publish.yml` builds once, checks real offline headless slicing and runtime acceptance, and publishes only with `publish=true` after acceptance. Candidate inputs are `version=2.1.2`, `with_orca=true`, `orca_source=prebuilt`, `with_bambu=false`, `publish=false`. Preserve 2.1.1; never overwrite existing tags.
+The existing manual `.github/workflows/docker-publish.yml` builds once, checks real offline headless slicing and runtime acceptance, and publishes only with `publish=true` after acceptance. Candidate inputs are `version=2.1.2`, `with_orca=true`, `with_bambu=false`, `publish=false`. Preserve 2.1.1; never overwrite existing tags.
 
 Hosted ubuntu-24.04 amd64 jobs have a 350 minute timeout. Buildx uses the Docker driver, not a persistent builder container. Runtime fixtures must remain isolated, use dummy credentials and clean up owned containers. Evidence is retained 30 days. No live Discord, printer, Home Assistant or household Spoolman endpoints are permitted. Native tests prove lifecycle logic, not image startup, migration or slicing. Report actual workflow evidence and immutable identities separately.
 

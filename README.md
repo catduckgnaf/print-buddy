@@ -35,7 +35,7 @@ The setup wizard asks for your printer brand and model (or Other / generic), the
 
 ### Docker
 
-No Docker image has been published yet. The single-container image is planned for 2.1.2 (see [#117](https://github.com/catduckgnaf/print-buddy/issues/117) and [#214](https://github.com/catduckgnaf/print-buddy/issues/214)); use the light installer above until then. Once published, it will be at `ghcr.io/catduckgnaf/print-buddy` (amd64 only), built and checked offline by the publish workflow before it is pushed.
+The single-container image ships with 2.1.2 (see [#117](https://github.com/catduckgnaf/print-buddy/issues/117) and [#214](https://github.com/catduckgnaf/print-buddy/issues/214)); the published 2.1.1 image keeps the older three-container stack. The 2.1.2 image is at `ghcr.io/catduckgnaf/print-buddy` (amd64 only), built and checked offline by the publish workflow before it is pushed.
 
 One container runs the three parts of Print Buddy, started and watched by a supervisor:
 

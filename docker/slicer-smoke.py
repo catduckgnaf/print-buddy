@@ -22,7 +22,14 @@ def main():
     assert binary.is_file() and os.access(binary, os.X_OK), binary
     revision = Path(f"/orca-{channel}-source-revision").read_text().strip()
     assert len(revision) == 40
-    closure = subprocess.run(["ldd", str(binary)], capture_output=True, text=True, check=True)
+    # Resolve this channel's private libraries, not the other channel's (the image
+    # default LD_LIBRARY_PATH names the stable tree).
+    env = dict(os.environ)
+    paths = [f"/opt/orca-{channel}/lib", f"/opt/orca-{channel}/bin"]
+    if env.get("LD_LIBRARY_PATH"):
+        paths.append(env["LD_LIBRARY_PATH"])
+    env["LD_LIBRARY_PATH"] = ":".join(paths)
+    closure = subprocess.run(["ldd", str(binary)], capture_output=True, text=True, check=True, env=env)
     assert "not found" not in closure.stdout, closure.stdout
     # Use the official environment helper for prebuilt distributions.
     command_path = f"/usr/local/bin/orca-slicer-{channel}"

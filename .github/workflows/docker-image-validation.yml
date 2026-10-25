@@ -15,17 +15,13 @@ on:
         options: [development, stable]
         default: development
       with_orca:
-        description: Build the pinned OrcaSlicer from source
+        description: Include the pinned official prebuilt OrcaSlicer releases (stable and alpha)
         type: boolean
         default: true
       with_bambu:
         description: Build the pinned Bambu Studio from source (default slicer for Bambu Lab)
         type: boolean
         default: false
-      orca_build_jobs:
-        description: Compile jobs, auto or 1-64
-        type: string
-        default: auto
 
 permissions:
   contents: read
@@ -44,23 +40,22 @@ jobs:
       APP_CHANNEL: ${{ inputs.app_channel }}
       WITH_ORCA: ${{ inputs.with_orca }}
       WITH_BAMBU: ${{ inputs.with_bambu }}
-      ORCA_BUILD_JOBS: ${{ inputs.orca_build_jobs }}
       # Spoolman is included in the stack (#214); acceptance always exercises it.
       SPOOLMAN_MODE: included
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
-      - name: Record the exact source and Orca revisions
+      - name: Record the exact source and Orca prebuilt pins
         id: pins
         run: |
           set -euo pipefail
-          stable=$(sed -n 's/^ARG ORCA_STABLE_REF=//p' Dockerfile | sort -u)  # global and stage ARG must agree
-          alpha=$(sed -n 's/^ARG ORCA_ALPHA_REF=//p' Dockerfile | sort -u)  # global and stage ARG must agree
-          for ref in "$stable" "$alpha"; do [[ "$ref" =~ ^[0-9a-f]{40}$ ]] || { echo "unpinned Orca ref $ref"; exit 1; }; done
+          # Orca is prebuilt-only: docker/orca-prebuilt.sh is the single pin source for both channels.
+          [ "$(grep -cE 'revision=[0-9a-f]{40}' docker/orca-prebuilt.sh)" = 2 ] || { echo "expected two pinned Orca revisions"; exit 1; }
+          [ "$(grep -cE 'sha256=[0-9a-f]{64}' docker/orca-prebuilt.sh)" = 2 ] || { echo "expected two pinned Orca SHA256 digests"; exit 1; }
           mkdir -p evidence
-          { echo "source_sha=$GITHUB_SHA"; echo "orca_stable_ref=$stable"; echo "orca_alpha_ref=$alpha"
-            echo "app_channel=$APP_CHANNEL with_orca=$WITH_ORCA with_bambu=$WITH_BAMBU orca_build_jobs=$ORCA_BUILD_JOBS spoolman=$SPOOLMAN_MODE"
+          { echo "source_sha=$GITHUB_SHA"; grep -E 'version=|revision=|sha256=|asset=' docker/orca-prebuilt.sh
+            echo "app_channel=$APP_CHANNEL with_orca=$WITH_ORCA with_bambu=$WITH_BAMBU spoolman=$SPOOLMAN_MODE"
           } | tee evidence/pins.txt
-      - name: Free runner disk for the source build
+      - name: Free runner disk
         if: inputs.with_orca || inputs.with_bambu
         run: |
           df -h /
@@ -77,13 +72,24 @@ jobs:
             --build-arg "APP_CHANNEL=$APP_CHANNEL" \
             --build-arg "WITH_ORCA=$WITH_ORCA" \
             --build-arg "WITH_BAMBU=$WITH_BAMBU" \
-            --build-arg "ORCA_BUILD_JOBS=$ORCA_BUILD_JOBS" \
             . 2>&1 | tee evidence/build.log
           { echo "build_start=$start"; echo "build_end=$(date -u +%FT%TZ)"
             echo "image_id=$(docker image inspect --format '{{.Id}}' "$IMAGE")"
             docker image inspect --format 'platform={{.Os}}/{{.Architecture}} size={{.Size}}' "$IMAGE"
             docker run --rm --entrypoint sh "$IMAGE" -c 'cat /orca-stable-build-info 2>/dev/null || echo orca-stable=absent; cat /orca-alpha-build-info 2>/dev/null || echo orca-alpha=absent; cat /bambu-build-info 2>/dev/null || echo bambu=absent'
           } | tee evidence/identity.txt
+      - name: Headless slice with each bundled Orca channel
+        if: inputs.with_orca
+        run: |
+          set -euo pipefail
+          for channel in stable alpha; do
+            docker run --rm --network none --cpus 2 --memory 4g --pids-limit 256 \
+              --cap-drop ALL --security-opt no-new-privileges:true \
+              --tmpfs /data:uid=1000,gid=1000,size=512m \
+              -e "PRINT_BUDDY_ORCA_CHANNEL=$channel" \
+              "$IMAGE" python3 /app/docker/slicer-smoke.py \
+              2>&1 | tee "evidence/slicer-$channel.log"
+          done
       - name: Offline runtime acceptance
         run: tests/docker/image_acceptance.sh "$IMAGE" "$SPOOLMAN_MODE" evidence/acceptance
       - name: Keep the evidence (logs and identities only, never the image)

@@ -101,13 +101,15 @@ class DockerReleaseContract(unittest.TestCase):
             self.assertNotEqual(invalid.returncode, 0)
             self.assertIn("must be 'stable' or 'alpha'", invalid.stderr)
 
-    def test_orca_is_optional_with_prebuilt_default_and_source_option(self):
+    def test_orca_is_optional_and_prebuilt_only(self):
         dockerfile = (ROOT / "Dockerfile").read_text()
         self.assertIn("ARG WITH_ORCA=", dockerfile)
         self.assertNotIn("ARG ORCA_CHANNEL=", dockerfile)
-        self.assertEqual(dockerfile.count("FROM orca-base AS orca-"), 3)
-        self.assertIn('COPY --from=orca-stable /out/ /', dockerfile)
-        self.assertIn('COPY --from=orca-alpha /out/ /', dockerfile)
+        self.assertNotIn("ORCA_SOURCE", dockerfile)
+        self.assertNotIn("AS orca-stable", dockerfile)
+        self.assertNotIn("AS orca-alpha", dockerfile)
+        self.assertFalse((ROOT / "docker" / "orca-build.sh").exists())
+        self.assertIn('COPY --from=orca-prebuilt /out/ /', dockerfile)
         entrypoint = (ROOT / "docker" / "entrypoint.sh").read_text()
         self.assertIn("PRINT_BUDDY_ORCA_CHANNEL:-stable", entrypoint)
         self.assertIn("export PB_ORCA_CMD=\"$selected\"", entrypoint)
@@ -115,29 +117,23 @@ class DockerReleaseContract(unittest.TestCase):
         runtime = dockerfile.split("AS runtime", 1)[1]
         self.assertIn("openscad", runtime)
         self.assertIn("--no-install-recommends", runtime)
-        self.assertIn("ARG ORCA_SOURCE=prebuilt", dockerfile)
-        self.assertIn('case "$ORCA_SOURCE" in prebuilt|source)', dockerfile)
-        self.assertIn('COPY --from=orca-prebuilt /out/ /', dockerfile)
-        self.assertEqual(dockerfile.count('[ "$ORCA_SOURCE" = source ]'), 3)
         prebuilt = (ROOT / "docker" / "orca-prebuilt.sh").read_text()
-        self.assertIn("OrcaSlicer_Linux_AppImage_Ubuntu2404_V2.4.2.AppImage", prebuilt)
-        self.assertIn("d12fb8c8eac1aecd2dfb6377acd48f994f8fa439ed5292fa532dd82880f029fd", prebuilt)
+        for pin in ("OrcaSlicer_Linux_AppImage_Ubuntu2404_V2.4.2.AppImage",
+                    "d12fb8c8eac1aecd2dfb6377acd48f994f8fa439ed5292fa532dd82880f029fd",
+                    "8500fcdccaa10b5099ac20d252af3a7c560046f1",
+                    "OrcaSlicer_Linux_AppImage_Ubuntu2404_V2.5.0-alpha.AppImage",
+                    "386a5ef38991a4fc32ae2e35ee4261bea43d983683ac675a2c2e2395ab2bc7bb",
+                    "3880f2c58ec392ed2bd5938ab31c9c7c496c0eb2"):
+            with self.subTest(pin=pin):
+                self.assertIn(pin, prebuilt)
         self.assertIn("sha256sum --check --strict -", prebuilt)
         self.assertLess(prebuilt.index("sha256sum --check"), prebuilt.index("--appimage-extract"))
         self.assertIn("set -eu", prebuilt)
         self.assertIn("--appimage-extract", prebuilt)
         self.assertNotIn("--appimage-extract-and-run", prebuilt)
-        self.assertIn("mv squashfs-root /out/opt/orca-stable", prebuilt)
-        self.assertIn("exec /opt/orca-stable/AppRun", prebuilt)
+        self.assertIn('mv "squashfs-root" "/out/opt/orca-$channel"', prebuilt)
+        self.assertIn("exec /opt/orca-%s/AppRun", prebuilt)
         self.assertIn("libopengl0 libglu1-mesa", runtime)
-        helper = (ROOT / "docker" / "orca-build.sh").read_text()
-        self.assertIn("cmake --build deps/build", helper)
-        self.assertIn('cmake --install build', helper)
-        self.assertIn("orca-slicer-$channel", helper)
-        self.assertIn("ARG ORCA_STABLE_REF=", dockerfile)
-        self.assertIn("ARG ORCA_ALPHA_REF=", dockerfile)
-        for channel, ref in (("stable", "${ORCA_STABLE_REF}"), ("alpha", "${ORCA_ALPHA_REF}")):
-            self.assertRegex(dockerfile, rf"--mount=type=cache,id=print-buddy-orca-\$\{{TARGETARCH\}}-{channel}-\$\{{{ref[2:-1]}\}}-")
 
     def test_bambu_studio_is_optional_pinned_and_built_from_source(self):
         dockerfile = (ROOT / "Dockerfile").read_text()
@@ -160,16 +156,18 @@ class DockerReleaseContract(unittest.TestCase):
         self.assertIn("No Node, npm or web UI assets are built or copied", docs)
         self.assertIn("Default bind is `127.0.0.1:8000` inside the container", docs)
 
-    def test_validation_workflow_builds_both_orca_channels(self):
+    def test_validation_workflow_records_prebuilt_orca_pins(self):
         workflow = (ROOT / ".github" / "workflows" / "docker-image-validation.yml").read_text()
         dockerfile = (ROOT / "Dockerfile").read_text()
         self.assertNotIn("      orca_channel:", workflow)
         self.assertNotIn("inputs.orca_channel", workflow)
         self.assertNotIn("ORCA_CHANNEL:", workflow)
-        self.assertIn("ORCA_STABLE_REF", workflow)
-        self.assertIn("ORCA_ALPHA_REF", workflow)
-        self.assertIn("orca-stable", dockerfile)
-        self.assertIn("orca-alpha", dockerfile)
+        self.assertNotIn("ORCA_STABLE_REF", workflow)
+        self.assertNotIn("ORCA_ALPHA_REF", workflow)
+        self.assertNotIn("ORCA_SOURCE", workflow)
+        self.assertIn("docker/orca-prebuilt.sh", workflow)
+        self.assertIn("for channel in stable alpha", workflow)
+        self.assertIn("AS orca-prebuilt", dockerfile)
 
     def test_publish_workflow_has_no_orca_revision_selector(self):
         publish_text = (ROOT / ".github" / "workflows" / "docker-publish.yml").read_text()
@@ -183,8 +181,7 @@ class DockerReleaseContract(unittest.TestCase):
         self.assertEqual(inputs["version"]["required"], "true")
         self.assertEqual(inputs["with_orca"]["default"], "true")
         self.assertEqual(inputs["with_bambu"]["default"], "false")
-        self.assertEqual(inputs["orca_source"]["default"], "prebuilt")
-        self.assertEqual(inputs["orca_source"]["options"], ["prebuilt", "source"])
+        self.assertNotIn("orca_source", inputs)
         # Candidate validation must not authenticate or push without explicit opt-in.
         self.assertEqual(inputs["publish"]["type"], "boolean")
         self.assertEqual(inputs["publish"]["default"], "false")
@@ -200,8 +197,8 @@ class DockerReleaseContract(unittest.TestCase):
         self.assertIn("docker push", steps[publish]["run"])
         self.assertIn("image_acceptance.sh", steps[acceptance]["run"])
         smoke = next(step for step in steps if step.get("name") == "Headless slice with each bundled Orca channel")
-        self.assertIn("channels=stable", smoke["run"])
-        self.assertIn('if [ "$ORCA_SOURCE" = source ]; then channels="stable alpha"', smoke["run"])
+        self.assertIn('channels="stable alpha"', smoke["run"])
+        self.assertNotIn("ORCA_SOURCE", smoke["run"])
         self.assertIn("--network none", smoke["run"])
         for step in steps:
             if "uses" in step:

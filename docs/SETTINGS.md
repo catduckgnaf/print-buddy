@@ -124,7 +124,7 @@ These configure the Compose deployment, not Print Buddy itself. Set them in `.en
 | `PRINT_BUDDY_BUNDLED_SPOOLMAN` | `true` | `true` runs the bundled Spoolman API; `false` uses `services.spoolman_url` only |
 | `SPOOLMAN_HOST` | `127.0.0.1` | Bundled Spoolman bind address; widen it only together with an approved port mapping, see docs/DOCKER.md |
 
-`WITH_ORCA=false` (default) omits both Orca builds; slicing fails closed without either binary.
+`WITH_ORCA=false` (default) omits both Orca channels; slicing fails closed without either binary.
 
 ## Build arguments
 
@@ -133,18 +133,14 @@ Image build inputs (`docker build --build-arg NAME=value`), not runtime settings
 | Argument | Default | What it does |
 |---|---|---|
 | `APP_CHANNEL` | `development` | Application provenance label, `stable` or `development`; it does not change the source checkout |
-| `WITH_ORCA` | `false` | `true` includes OrcaSlicer from the distribution chosen by `ORCA_SOURCE`; `false` omits it and slicing fails closed |
-| `ORCA_SOURCE` | `prebuilt` | `prebuilt` installs the pinned official OrcaSlicer 2.4.2 Linux release (sha256 verified, stable channel only); `source` builds stable and alpha from pinned source |
-| `ORCA_STABLE_REF` | `8500fcdccaa10b5099ac20d252af3a7c560046f1` | Pinned stable OrcaSlicer source commit |
-| `ORCA_ALPHA_REF` | `3880f2c58ec392ed2bd5938ab31c9c7c496c0eb2` | Pinned OrcaSlicer alpha source commit |
+| `WITH_ORCA` | `false` | `true` installs both pinned official prebuilt OrcaSlicer releases (stable 2.4.2 and alpha 2.5.0-alpha, each SHA256 verified in `docker/orca-prebuilt.sh`); OrcaSlicer is never built from source; `false` omits it and slicing fails closed |
 | `SPOOLMAN_REF` | `bed3f14ee77a3a571d31b14215d54b0b88a7519c` | Pinned Spoolman v0.27.0 source commit; only its Python API backend is installed, never the web UI |
-| `ORCA_BUILD_JOBS` | `auto` | Parallel compile jobs: `auto` (memory-aware, below the CPU count) or a whole number from 1 to 64; see [DOCKER.md](DOCKER.md#orcaslicer-source-build) |
-| `ORCA_BUILD_MEM_PER_JOB_MIB` | `2560` | Memory budgeted per job by `auto`, at least 256 |
-| `ORCA_CCACHE_MAXSIZE` | `5G` | Size cap of the compiler cache inside the build cache |
+| `ORCA_BUILD_JOBS` | `auto` | Bambu Studio source build only: parallel compile jobs, `auto` (memory-aware, below the CPU count) or a whole number from 1 to 64 |
+| `ORCA_BUILD_MEM_PER_JOB_MIB` | `2560` | Bambu Studio source build only: memory budgeted per job by `auto`, at least 256 |
+| `ORCA_CCACHE_MAXSIZE` | `5G` | Bambu Studio source build only: size cap of the compiler cache inside the build cache |
 | `WITH_BAMBU` | `false` | `true` builds Bambu Studio from pinned source into `/usr/bin/bambu-studio`; `false` omits it and Bambu Lab slicing fails closed |
 | `BAMBU_REF` | `926a7192574bcb9b3a732e1ec59a46d79cb45466` | Pinned Bambu Studio 2.8.2 source commit |
 | `BAMBU_BUILD_PROFILE` | `release-static-fhs` | Names the Bambu Studio build options; rename it to reset the build trees |
-| `ORCA_BUILD_PROFILE` | `release-static-fhs-nopch` | Name of the fixed CMake option set; part of each channel's build cache key |
 
 ## Secrets
 

@@ -17,8 +17,11 @@ services:
       fake-moonraker:
         condition: service_healthy
     healthcheck:
+      # Matches the combined image's own start period: the supervisor starts Spoolman
+      # first and the listener's first heartbeat lands only after Spoolman is ready,
+      # so a 10s start period marks the container unhealthy before it can be healthy.
       interval: 5s
-      start_period: 10s
+      start_period: 90s
       retries: 3
 
   fake-moonraker:

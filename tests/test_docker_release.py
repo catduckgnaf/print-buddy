@@ -3,8 +3,9 @@
 Settings parity: every user-adjustable setting in the schema has a docs/SETTINGS.md row and, when it
 is a scalar, an .env.example line; every PRINT_BUDDY__ name in a deployment file is a real setting.
 Sanitization: public deployment files carry no LAN addresses, machine paths, IDs or credentials.
-Build: bounded, validated Orca parallelism and a cache keyed so channels, revisions, architectures
-and option profiles never mix. Unraid: both templates match the Compose runtime contract.
+Build: OrcaSlicer is prebuilt-only (both channels pinned by version, revision and SHA256);
+bounded, validated parallelism remains only for the Bambu Studio source build. Unraid: the
+single template matches the Compose runtime contract.
 """
 import ipaddress
 import json
@@ -30,7 +31,7 @@ JOBS = ROOT / "docker" / "orca-build-jobs.sh"
 UNRAID = ET.parse(ROOT / "docker" / "unraid" / "print-buddy.xml").getroot()
 # Public files a user copies or reads to deploy. All must be sanitized.
 DEPLOYMENT_FILES = [".env.example", "docker-compose.yml", "Dockerfile",
-                    "docker/entrypoint.sh", "docker/orca-build-jobs.sh", "docker/orca-build.sh", "docker/unraid/print-buddy.xml",
+                    "docker/entrypoint.sh", "docker/orca-build-jobs.sh", "docker/orca-prebuilt.sh", "docker/unraid/print-buddy.xml",
                     "docker/supervise.sh", "docker/healthcheck.py", "config/docker.yaml", "config/docker.toml",
                     "docs/DOCKER.md", "docs/SETTINGS.md", "tests/docker/compose.acceptance.yml"]
 SECRETS = {"DISCORD_BOT_TOKEN", "LLM_API_KEY", "OCTOPRINT_API_KEY", "MOONRAKER_API_KEY", "CLIPROXY_API_KEY",
@@ -209,55 +210,59 @@ class OrcaBuildJobsTests(unittest.TestCase):
                 self.assertIn("ORCA_BUILD_JOBS", result.stderr)
         self.assertEqual(self.run_jobs("auto", per_job=100).returncode, 2)
 
-    def test_jobs_apply_to_dependencies_and_the_application(self):
+    def test_jobs_apply_to_the_bambu_dependencies_and_application(self):
         build = DOCKERFILE.split("FROM debian:13-slim AS runtime")[0]
-        self.assertIn('orca-build-jobs "$ORCA_BUILD_JOBS" >/dev/null', build)  # validated even without Orca
+        self.assertIn('jobs="$(orca-build-jobs "$ORCA_BUILD_JOBS")"', build)      # Bambu Studio source build only
         self.assertIn('export CMAKE_BUILD_PARALLEL_LEVEL="$jobs"', build)       # every dependency's own build
         self.assertIn("cmake --build deps/build --parallel 1", build)             # one dependency at a time
         self.assertIn('cmake --build build --parallel "$jobs"', build)            # the application
         self.assertNotIn("$(nproc)", build)
 
 
-class OrcaCacheTests(unittest.TestCase):
-    def test_cache_ids_separate_channels_revisions_architecture_and_profile(self):
+class OrcaPrebuiltTests(unittest.TestCase):
+    """OrcaSlicer is never built from source: both channels are pinned official prebuilts."""
+
+    def test_no_orca_source_build_remains(self):
+        self.assertFalse((ROOT / "docker" / "orca-build.sh").exists())
+        for marker in ("ORCA_SOURCE", "ORCA_STABLE_REF", "ORCA_ALPHA_REF", "ORCA_BUILD_PROFILE",
+                       "AS orca-base", "AS orca-stable", "AS orca-alpha", "print-buddy-orca-"):
+            with self.subTest(marker=marker):
+                self.assertNotIn(marker, DOCKERFILE)
+        # The only remaining build cache is the Bambu Studio one.
         mounts = re.findall(r"--mount=type=cache,id=(\S+?),target=/cache,sharing=locked", DOCKERFILE)
-        mounts = [mount for mount in mounts if "print-buddy-orca-" in mount]
-        self.assertEqual(len(mounts), 2)
-        for channel, mount, ref in zip(("stable", "alpha"), mounts,
-                                       ("${ORCA_STABLE_REF}", "${ORCA_ALPHA_REF}")):
-            with self.subTest(channel=channel):
-                self.assertIn("${TARGETARCH}", mount)
-                self.assertIn(ref, mount)
-                self.assertIn("${ORCA_BUILD_PROFILE}", mount)
-                self.assertIn(f"-{channel}-", mount)
+        self.assertEqual(len(mounts), 1)
+        self.assertIn("print-buddy-bambu-", mounts[0])
+        self.assertIn('COPY --from=orca-prebuilt /out/ /', DOCKERFILE)
+        self.assertIn('sh /usr/local/bin/orca-prebuilt stable "$TARGETARCH"', DOCKERFILE)
+        self.assertIn('sh /usr/local/bin/orca-prebuilt alpha "$TARGETARCH"', DOCKERFILE)
 
-    def test_channel_builder_owns_install_prefix_but_wrappers_are_distinct(self):
-        helper = (ROOT / "docker" / "orca-build.sh").read_text()
-        self.assertIn('binary="/out/opt/orca-$channel/bin/orca-slicer"', helper)
+    def test_both_channels_are_pinned_prebuilts(self):
+        helper = (ROOT / "docker" / "orca-prebuilt.sh").read_text()
+        for pin in ("version=2.4.2", "revision=8500fcdccaa10b5099ac20d252af3a7c560046f1",
+                    "sha256=d12fb8c8eac1aecd2dfb6377acd48f994f8fa439ed5292fa532dd82880f029fd",
+                    "OrcaSlicer_Linux_AppImage_Ubuntu2404_V2.4.2.AppImage",
+                    "version=2.5.0-alpha", "revision=3880f2c58ec392ed2bd5938ab31c9c7c496c0eb2",
+                    "sha256=386a5ef38991a4fc32ae2e35ee4261bea43d983683ac675a2c2e2395ab2bc7bb",
+                    "OrcaSlicer_Linux_AppImage_Ubuntu2404_V2.5.0-alpha.AppImage"):
+            with self.subTest(pin=pin):
+                self.assertIn(pin, helper)
+        self.assertIn("set -eu", helper)
+        self.assertIn("sha256sum --check --strict -", helper)
+        self.assertLess(helper.index("sha256sum --check"), helper.index("--appimage-extract"))
+        self.assertIn("--appimage-extract", helper)
+        self.assertNotIn("--appimage-extract-and-run", helper)
+        self.assertNotIn("cmake", helper)
+
+    def test_each_channel_has_its_own_wrapper_and_identity(self):
+        helper = (ROOT / "docker" / "orca-prebuilt.sh").read_text()
+        self.assertIn('mv "squashfs-root" "/out/opt/orca-$channel"', helper)
         self.assertIn('"/out/usr/local/bin/orca-slicer-$channel"', helper)
-        self.assertIn('mkdir -p /out/usr/local/bin', helper)
-        self.assertIn('if [ "$channel" = stable ]; then ln -sf orca-slicer-stable /out/usr/local/bin/orca-slicer; fi', helper)
-        self.assertNotIn('ln -sf "orca-slicer-$channel" /out/usr/local/bin/orca-slicer', helper)
-        self.assertIn('> "/out/orca-$channel-build-info"', helper)
-        self.assertIn('-DCMAKE_INSTALL_PREFIX="/opt/orca-$channel"', helper)
-        self.assertIn("exec /opt/orca-%s/bin/orca-slicer", helper)
-        for marker in ("toolchain", "source-revision", "binary-path"):
-            self.assertIn(marker, helper)
-
-    def test_toolchain_change_resets_build_trees_and_source_is_unpatched(self):
-        helper = (ROOT / "docker" / "orca-build.sh").read_text()
-        self.assertIn('"$(gcc -dumpfullversion)"', helper)
-        self.assertIn('"$(cmake --version | head -n 1)" "$CC" "$CXX" "$profile"', helper)
-        self.assertIn("rm -rf /cache/orca/deps/build /cache/orca/build", helper)
-        self.assertIn('test "$(git rev-parse HEAD)" = "$ref"', helper)
-        self.assertIn('test -z "$(git status --porcelain --untracked-files=no)"', helper)
-        self.assertIn("CC=/usr/lib/ccache/gcc CXX=/usr/lib/ccache/g++", helper)
-        self.assertNotIn(".AppImage", helper)
-
-    def test_build_records_its_identity(self):
-        helper = (ROOT / "docker" / "orca-build.sh").read_text()
+        self.assertIn("exec /opt/orca-%s/AppRun", helper)
         self.assertIn('> "/out/orca-$channel-build-info"', helper)
         self.assertIn('> "/out/orca-$channel-source-revision"', helper)
+        # Only stable gets the default /usr/local/bin/orca-slicer symlink.
+        self.assertIn('if [ "$channel" = stable ]; then', helper)
+        self.assertIn("ln -s orca-slicer-stable /out/usr/local/bin/orca-slicer", helper)
 
 
 class RuntimeImageTests(unittest.TestCase):

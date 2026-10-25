@@ -2317,6 +2317,10 @@ def _slice_full_size_split(job, job_path, src, manifest, decisions, st):
     placement_by_object = plan.get('placement_by_object') or {}
     if not isinstance(placement_by_object, dict):
         raise RuntimeError('full-size split plan placement_by_object must be a mapping of object id to [x, y] mm')
+    shifts_by_plate = plan.get('shifts_by_plate') or []
+    if not isinstance(shifts_by_plate, list) or len(shifts_by_plate) not in (0, len(plates)):
+        raise RuntimeError('full-size split plan shifts_by_plate must be a list parallel to plates '
+                           'of per-object [dx, dy, dz] shifts (or None for a plate sliced as authored)')
     key_to_object = {part['key']: str(part['object_id']) for part in manifest.get('parts') or []}
     unknown_yaw = sorted(set(yaw_by_object) - set(key_to_object.values()))
     if unknown_yaw:
@@ -2324,6 +2328,10 @@ def _slice_full_size_split(job, job_path, src, manifest, decisions, st):
     unknown_placement = sorted(set(placement_by_object) - set(key_to_object.values()))
     if unknown_placement:
         raise RuntimeError(f"full-size split plan records a placement for unknown object(s) {','.join(unknown_placement)}")
+    unknown_shifts = sorted({oid for entry in shifts_by_plate if isinstance(entry, dict)
+                             for oid in entry} - set(key_to_object.values()))
+    if unknown_shifts:
+        raise RuntimeError(f"full-size split plan records shifts for unknown object(s) {','.join(unknown_shifts)}")
     bed_xy = [float(v) for v in (st.get('bed_mm') or [])[:2]]
     bed_x = bed_xy[0] if bed_xy else float(st['bed_mm'][0])
     bed_y = bed_xy[1] if len(bed_xy) > 1 else bed_x
@@ -2377,9 +2385,59 @@ def _slice_full_size_split(job, job_path, src, manifest, decisions, st):
                 raise RuntimeError(f'full-size split plan placement {placement_mm!r} is outside the '
                                    f'{bed_x:g} x {bed_y:g} mm bed; refusing to slice it as authored')
             fit = {**(fit or {'scale': 1.0}), 'placement_mm': placement_mm}
+        shifts_entry = shifts_by_plate[index - 1] if shifts_by_plate else None
+        item_shifts = None
+        if shifts_entry is not None:
+            # Polygon-shared plate (#221 P2): the recorded per-object shifts
+            # are the only realizable form of the proved hull placement.
+            # Fail closed on anything the plan did not prove for exactly this
+            # plate — never slice such a plate as authored.
+            if not isinstance(shifts_entry, dict):
+                raise RuntimeError('full-size split plan shifts for a plate must be a mapping '
+                                   f'of object id to [dx, dy, dz], got {shifts_entry!r}')
+            plate_objects = {key_to_object[key] for key in keys}
+            if set(shifts_entry) != plate_objects:
+                raise RuntimeError('full-size split plan records shifts that do not name exactly '
+                                   'the objects of their plate; refusing to slice it as authored')
+            if len(keys) < 2:
+                raise RuntimeError('full-size split plan records shifts for a plate that is not '
+                                   'shared; refusing to slice it as authored')
+            if turned or placed:
+                raise RuntimeError('full-size split plan records shifts for a plate that also '
+                                   'records a turn or a placement; refusing to slice it as authored')
+            item_shifts = {}
+            for oid, raw in shifts_entry.items():
+                if not isinstance(raw, (list, tuple)) or len(raw) != 3:
+                    raise RuntimeError(f'full-size split plan shift for object {oid} must be a '
+                                       f'[dx, dy, dz] triple, got {raw!r}')
+                try:
+                    values = [float(v) for v in raw]
+                except (TypeError, ValueError) as exc:
+                    raise RuntimeError(f'full-size split plan shift for object {oid} must be '
+                                       f'numeric, got {raw!r}') from exc
+                if not all(math.isfinite(v) for v in values):
+                    raise RuntimeError(f'full-size split plan shift for object {oid} must be '
+                                       f'finite, got {raw!r}')
+                item_shifts[oid] = values
         report = export_single_color_plate(src, plate, view, keys, bed=int(st['bed_mm'][0]),
                                            slot_colors=st.get('ifs_slots') or {},
-                                           **({'fit': fit} if fit is not None else {}))
+                                           **({'fit': fit} if fit is not None else {}),
+                                           **({'item_shifts': item_shifts} if item_shifts is not None else {}))
+        if item_shifts is not None:
+            # Re-read the derived plate: every object must have landed at
+            # exactly the recorded shift, or the plate is not the proved
+            # polygon placement and must not be sliced.
+            from .color_geometry import _world_bounds as _bounds_of
+            with zipfile.ZipFile(src) as archive:
+                authored = {oid: _bounds_of(archive, {oid})[0] for oid in item_shifts}
+            with zipfile.ZipFile(plate) as archive:
+                landed_boxes = {oid: _bounds_of(archive, {oid})[0] for oid in item_shifts}
+            for oid, values in item_shifts.items():
+                for axis in range(3):
+                    expected_min = authored[oid][axis][0] + values[axis]
+                    if abs(landed_boxes[oid][axis][0] - expected_min) > 2e-3:
+                        raise RuntimeError('derived plate did not land at the recorded shifts; '
+                                           'refusing to slice it as placed')
         if placement_mm is not None:
             landed = report.get('placed_bounds_mm') or []
             if len(landed) != 2 or any(abs(landed[axis][0] - placement_mm[axis]) > 1e-6 for axis in range(2)):
@@ -2393,6 +2451,7 @@ def _slice_full_size_split(job, job_path, src, manifest, decisions, st):
                           'part_keys': keys, 'plate': str(plate), 'gcode': str(out),
                           **({'yaw_deg': yaw_deg} if yaw_deg is not None else {}),
                           **({'placement_mm': placement_mm} if placement_mm is not None else {}),
+                          **({'shifts_by_object': item_shifts} if item_shifts is not None else {}),
                           'offline_check': check, 'plate_report': report, 'provenance': provenance,
                           'slice_config': [str(path) for path in configs]})
     latest = json.loads(Path(job_path).read_text())

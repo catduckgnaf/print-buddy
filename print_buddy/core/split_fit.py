@@ -47,6 +47,28 @@ split exporter applies one recorded placement to a whole derived plate (see
 plate alone and refuses a placement recorded for a shared plate, an unknown
 object or an out-of-range position instead of slicing the plate centered
 into the exclusion.
+
+Shared plates are packed by their bounding rectangles first, exactly as
+before (#221 P2). Only when rectangle packing cannot bin a set of objects
+together does the planner retry that set by the objects' actual convex
+hulls (``plate_merge.pack_polygon``, translation only at authored yaw):
+the proved per-object translations are recorded as ``shifts_by_plate``
+(parallel to ``plates``; ``None`` for a plate sliced as authored) and
+slicing hands them to the exporter as ``item_shifts`` after fail-closed
+validation, then re-reads the derived plate to prove it landed at the
+recorded shifts. The brim/feature budget is charged exactly once in the
+polygon branch — as hull clearances (``spacing + 2 * feature`` between
+hulls, ``edge + feature`` to the bed edge, ``feature`` to an exclusion) —
+replacing, never stacking with, the rectangle branch's footprint growth.
+
+One deliberate change on exclusion beds (#221 P2): an object Stage 2 would
+have solo-binned for its recorded placement may instead share a polygon
+plate, but only when the proved polygon placement for that plate also
+avoids every exclusion under the same once-only brim budget. A shared
+polygon placement supersedes the solo placement for its members: a plate
+never carries both, and its members lose their ``placement_by_object``
+entries. When no such shared placement is proved, Stage 2 behaviour is
+unchanged.
 """
 import math
 import zipfile
@@ -343,7 +365,10 @@ def split_plan_100(source, bed=None, height=None, exclusions=None, brim_policy=N
     before. When the bed has declared exclusions, every fitting object carries
     an avoiding placement from :func:`per_part_fit`: it is planned alone on
     its own plate and the placement is recorded in ``placement_by_object``,
-    so slicing can land that plate exactly there (#221 stage 2). A part with
+    so slicing can land that plate exactly there (#221 stage 2) — unless a
+    proved convex-hull placement lets it share a plate instead, in which
+    case the shared placement in ``shifts_by_plate`` supersedes the solo
+    placement for that object (see the module docstring, #221 P2). A part with
     no avoiding placement does not fit (its blocking reason names the
     exclusion), so no plan is offered for it. When the caller supplies the
     job's brim policy (``brim_policy`` / ``state``, #221 stage 3), the
@@ -390,7 +415,12 @@ def split_plan_100(source, bed=None, height=None, exclusions=None, brim_policy=N
     for object_id, keys in by_object.items():
         groups.setdefault(object_to_plate.get(object_id, 1), {})[object_id] = keys
 
+    if exclusions is None:
+        exclusions_eff = _declared_exclusions()
+    else:
+        exclusions_eff = [tuple(float(v) for v in rect) for rect in exclusions]
     result = []
+    shifts_by_plate = []
     with zipfile.ZipFile(source) as archive:
         for plate_id in sorted(groups, key=str):
             objects = groups[plate_id]
@@ -404,25 +434,70 @@ def split_plan_100(source, bed=None, height=None, exclusions=None, brim_policy=N
                    and plate_merge.pack({oid: extent}, bed) is None
                    for oid, extent in extents.items()):
                 return None
-            bins = []  # (objects dict, closed to further packing)
+            # Hulls for the polygon fallback (#221 P2): one shared helper with
+            # the merge path. None for rectangle-only sources, grouped or
+            # multi-item objects — those keep today's packing by construction.
+            hulls = plate_merge._object_hulls(source, list(objects))
+            # Each bin: its objects, how it may still grow ('yaw' and solo
+            # 'placement' bins are closed to rectangle packing; a placement
+            # bin may still be superseded by a proved polygon placement),
+            # and, for a polygon bin, the proved AABB corners per object.
+            bins = []
+
+            def polygon_corners(member_oids):
+                if hulls is None:
+                    return None
+                return plate_merge.pack_polygon(
+                    {oid: hulls[oid] for oid in member_oids}, bed,
+                    exclusions=exclusions_eff, feature=feature)
+
             for oid in sorted(extents, key=lambda key: -(extents[key][0] * extents[key][1])):
-                if oid in yaw_by_object or oid in placement_by_object:
-                    # A turned or placed part is always alone: the exporter
-                    # turns / places a whole derived plate rigidly, so it
-                    # cannot share one.
-                    bins.append(({oid: extents[oid]}, True))
+                if oid in yaw_by_object:
+                    # A turned part is always alone: the exporter turns a
+                    # whole derived plate rigidly, so it cannot share one.
+                    bins.append({'objects': {oid: extents[oid]}, 'kind': 'yaw', 'corners': None})
                     continue
-                for bin_objects, closed in bins:
-                    if closed:
+                placed = False
+                for current in bins:
+                    if current['kind'] == 'yaw':
                         continue
-                    candidate = {**bin_objects, oid: extents[oid]}
-                    if plate_merge.pack(candidate, bed) is not None:
-                        bin_objects[oid] = extents[oid]
+                    members = list(current['objects']) + [oid]
+                    if current['kind'] == 'rect' and oid not in placement_by_object:
+                        candidate = {**current['objects'], oid: extents[oid]}
+                        if plate_merge.pack(candidate, bed) is not None:
+                            current['objects'][oid] = extents[oid]
+                            placed = True
+                            break
+                    # Polygon fallback: rectangle packing could not bin this
+                    # set (or a member's solo placement forbids authored
+                    # sharing). A proved hull placement supersedes any solo
+                    # placement for its members (module docstring).
+                    corners = polygon_corners(members)
+                    if corners is not None:
+                        current['objects'][oid] = extents[oid]
+                        current['kind'] = 'polygon'
+                        current['corners'] = corners
+                        placed = True
                         break
-                else:
-                    bins.append(({oid: extents[oid]}, False))
-            for bin_objects, _closed in bins:
+                if not placed:
+                    kind = 'placement' if oid in placement_by_object else 'rect'
+                    bins.append({'objects': {oid: extents[oid]}, 'kind': kind, 'corners': None})
+            for current in bins:
+                bin_objects = current['objects']
                 result.append([key for oid in bin_objects for key in objects[oid]])
+                if current['kind'] == 'polygon' and len(bin_objects) > 1:
+                    corners = current['corners']
+                    shifts = {oid: [round(corners[oid][0] - boxes[oid][0][0], 3) + 0.0,
+                                    round(corners[oid][1] - boxes[oid][1][0], 3) + 0.0,
+                                    round(-boxes[oid][2][0], 3) + 0.0]
+                              for oid in bin_objects}
+                    shifts_by_plate.append(shifts)
+                    # The shared polygon placement supersedes Stage 2's solo
+                    # placements for these objects: never both.
+                    for oid in bin_objects:
+                        placement_by_object.pop(oid, None)
+                else:
+                    shifts_by_plate.append(None)
     if len(result) <= 1:
         return None
     plan = {'plates': result}
@@ -430,4 +505,6 @@ def split_plan_100(source, bed=None, height=None, exclusions=None, brim_policy=N
         plan['yaw_by_object'] = yaw_by_object
     if placement_by_object:
         plan['placement_by_object'] = placement_by_object
+    if any(shifts_by_plate):
+        plan['shifts_by_plate'] = shifts_by_plate
     return plan

@@ -54,6 +54,8 @@ The P1S is `bambulab/p1s.py`: its facts in `facts.P1S` (profile names, checked i
 
 Supported firmware and authentication modes for live use: none. `services.moonraker_url` and `services.octoprint_url` must stay empty for an offline vendor; settings refuse to load otherwise. The Moonraker listener, camera watchdog, timelapse download and cold pull do not apply.
 
+Live connectivity has been researched but not implemented: see [Bambu Lab live connectivity research](BAMBU-CONNECTIVITY.md) (#187) for the LAN MQTT/FTPS protocol evidence, the LAN Mode + Developer Mode requirement that current firmware puts on control, the staged plan (telemetry, then upload, then print start), and the unknowns that need a live test before any of it is claimed.
+
 ## What the guard checks, and what it trusts
 
 A sliced file is untrusted. `guard.gcode_problems` refuses it unless all of the following hold:

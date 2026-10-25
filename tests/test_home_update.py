@@ -27,9 +27,23 @@ class HomeUpdateTests(unittest.TestCase):
         self.upstream, self.home = base / "upstream", base / "home"
         files = git(ROOT, "ls-files", "-co", "--exclude-standard").splitlines()
         for name in files:
+            # Exercise the real updater and doctor, not five nested copies of
+            # the entire offline suite (including the million-triangle audit).
+            # The fixture suite below is the update gate; individual scenarios
+            # add a genuinely failing test to prove rollback still works.
+            if Path(name).parts[0] == "tests":
+                continue
             if (ROOT / name).is_file():
                 (self.upstream / name).parent.mkdir(parents=True, exist_ok=True)
                 shutil.copy2(ROOT / name, self.upstream / name)
+        (self.upstream / "tests").mkdir()
+        (self.upstream / "tests" / "test_update_smoke.py").write_text(
+            'import os\n'
+            'from print_buddy import doctor, settings\n\n'
+            'def test_updated_checkout_imports_and_check_is_guarded():\n'
+            '    assert os.environ["PRINT_BUDDY_UPDATE_CHECK"] == "1"\n'
+            '    assert settings.load()["printer"]["name"] == "Home AD5X"\n'
+            '    assert callable(doctor.run)\n')
         git(self.upstream, "init", "-q", "-b", "main")
         git(self.upstream, "add", "-A")
         git(self.upstream, "commit", "-qm", "base")
@@ -64,7 +78,7 @@ class HomeUpdateTests(unittest.TestCase):
             env["PYTHONUSERBASE"] = site.getuserbase()  # keep user-installed packages after HOME moves
             env["HOME"] = str(home)
         return subprocess.run(["sh", "scripts/home-update.sh"], cwd=self.home, capture_output=True, text=True,
-                              env=env)
+                              env=env, timeout=30)
 
     def test_good_update_sticks_and_keeps_local_settings(self):
         head = self.commit_upstream("NOTES.txt", "harmless\n")

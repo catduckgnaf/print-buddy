@@ -252,6 +252,10 @@ def plate_manifest(path):
             "plates":sorted(plates,key=lambda p:p["id"])}
 
 
+class NoPrintableVolume(RuntimeError):
+    """The mesh encloses no volume (flat or degenerate): nothing to slice or print (#194)."""
+
+
 def model_info_output(path):
     """Run or read cached geometry extents/manifoldness for a model file."""
     path = Path(path)
@@ -277,6 +281,10 @@ def model_info_output(path):
     vol = 0.0
     for (ax, ay, az), (bx, by, bz), (cx, cy, cz) in tris:
         vol += (ax * (by * cz - bz * cy) - ay * (bx * cz - bz * cx) + az * (bx * cy - by * cx)) / 6.0
+    if min(hi[a] - lo[a] for a in range(3)) <= 1e-6 or abs(vol) <= 1e-9:
+        # Flat or zero-volume mesh (#194): nothing for a slicer to fill, so refuse before
+        # any plate is offered rather than slicing empty layers and starting a print.
+        raise NoPrintableVolume("model has no printable volume (flat or zero-volume mesh)")
     info = "".join(f"{k} = {hi[a] - lo[a]:.2f}\n" for a, k in enumerate(("size_x", "size_y", "size_z")))
     info += f"volume = {abs(vol):.2f}\n"
     if key is not None:
@@ -435,6 +443,7 @@ def audit(path, printer_model=None):
         info = model_info_output(path)
     except Exception as exc:  # unreadable mesh: slice_job re-measures and refuses clearly
         info = ""; out["geometry_error"] = str(exc)
+        out["no_printable_volume"] = isinstance(exc, NoPrintableVolume)
     for key in ("size_x","size_y","size_z","number_of_parts","manifold"):
         m=re.search(rf'^{key}\s*=\s*(.+)$',info,re.M)
         if m: out[key]=m.group(1).strip()

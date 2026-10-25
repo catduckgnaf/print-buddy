@@ -153,7 +153,7 @@ def install_clarify_stand_in():
         e = entry(cid)
         # The stand-in simulates prompt expiry quickly: an unanswered prompt must
         # fail closed in tests, not block for the production wait (up to an hour).
-        got = e.event.wait(min(timeout, 10) if timeout else timeout)
+        got = e.event.wait(10 if timeout is None else min(timeout, 10))
         with lock:
             prompts.pop(cid, None)
         return e.answer if got else None
@@ -436,6 +436,15 @@ def _run_standalone(case, work, model, plugin, events, patch, *, auto=True):
     # Both are process globals the bot sets; restore them so later Hermes-path tests see the defaults.
     patch(prepared_intake, "STOP_SENDER", None)
     patch(prompts, "_active", False)
+    # BotCore.activate() routes standalone buttons to the real core registry, not
+    # tools.clarify_gateway. Keep that registry and its cleanup semantics, but
+    # apply the same ten-second expiry as the Hermes corpus stand-in.
+    wait_for_response = prompts.wait_for_response
+
+    def short_wait(cid, timeout=None):
+        return wait_for_response(cid, 10 if timeout is None else min(timeout, 10))
+
+    patch(prompts, "wait_for_response", short_wait)
     core = BotCore(discord.client, cfg, router=Router(plugin))
     message = discord.message(attachments=[fake_discord.FakeAttachment(model, f"{case.name}{Path(model).suffix.lower()}")])
 

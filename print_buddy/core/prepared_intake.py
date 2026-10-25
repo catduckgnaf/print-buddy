@@ -911,6 +911,9 @@ async def prepare_link(event, adapter, state, root, timeout=None, reuse=None):
             job['title'] = await asyncio.to_thread(upload_title, path) or job['title']
         job['audit'] = await _with_stop(adapter, source, key, metadata, large_model_notice(path),
                                         _heavy(mj.audit, path))
+        if isinstance(job['audit'], dict) and job['audit'].get('no_printable_volume'):
+            # Refuse at intake (#194): asking for colors and copies first only to fail at slicing wastes the operator's time.
+            raise mj.NoPrintableVolume(job['audit']['geometry_error'])
         # Inspecting a large multi-object 3MF is ~30 s of pure-Python XML work. It must never run on the
         # gateway event loop (that froze Discord button callbacks). The audit already inspected these exact
         # bytes; reuse its manifest only if it is bound to the file's current SHA256, else inspect off-loop.
@@ -1531,9 +1534,20 @@ async def prepare_link(event, adapter, state, root, timeout=None, reuse=None):
         # re-reads them instead of asking for the link again.
         receipt.update(status='EXPIRED', sliced=False, uploaded=False, started=False)
         receipt_path.write_text(json.dumps(receipt, indent=2) + '\n')
-        resumed = await _ask(adapter, source, key,
-                             'This question expired. Nothing was sliced, uploaded or started.',
-                             ['Resume'], timeout)
+        try:
+            resumed = await _ask(adapter, source, key,
+                                 'This question expired. Nothing was sliced, uploaded or started.',
+                                 ['Resume'], timeout)
+        except (IntakeExpired, IntakeCancelled) as exc:
+            # Exceptions raised inside this handler do not reach the sibling
+            # cancellation/failure handlers. Close the unanswered recovery prompt
+            # explicitly instead of leaving an EXPIRED receipt and escaping.
+            receipt.update(status='CANCELLED' if isinstance(exc, IntakeCancelled) else 'FAILED')
+            receipt_path.write_text(json.dumps(receipt, indent=2) + '\n')
+            await adapter.send(chat_id=source.chat_id,
+                               content='Intake closed. Nothing was sliced, uploaded or started.',
+                               metadata=metadata)
+            return {'action': 'skip', 'reason': 'resume cancelled or expired'}
         saved = receipt.get('job_json')
         if resumed == 0 and saved and Path(saved).is_file():
             job = json.loads(Path(saved).read_text())

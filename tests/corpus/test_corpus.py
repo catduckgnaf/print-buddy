@@ -31,6 +31,19 @@ CASES = [harness.load_case(folder) for folder in harness.case_dirs()]
 IDS = [case.name for case in CASES]
 
 
+def _refused_at_intake(case):
+    """A model refused before any question (#194): no clicks, FAILED, nothing started."""
+    return not case.clicks and case.expect.get("status") == "FAILED" and case.expect.get("started") is False
+
+
+def _assert_refused_before_questions(case, run):
+    assert not run.slice_starts, run.slice_starts
+    assert not [event for event in run.events if event[0] == "prompt"], run.events
+    want = case.expect.get("error_contains")
+    if want:
+        assert want in (run.receipt.get("error") or ""), run.receipt
+
+
 def _flow_params():
     """Parametrization for the flow tests. A case may declare
     known_failure = "<reason>" in case.toml while a tracked production defect
@@ -79,7 +92,7 @@ def test_the_corpus_covers_formats_and_slicing_scenarios():
     assert harness.load_case(harness.CASES / "many-parts").expect["parts"] == [f"Part {i}" for i in range(1, 9)]
     assert harness.load_case(harness.CASES / "four-colors-one-plate").expect["slots"] == 4
     assert harness.load_case(harness.CASES / "five-colors-over-slots").expect["slots"] == 4
-    assert harness.load_case(harness.CASES / "multiplate-select").expect["plate_mode"] == "separate"
+    assert harness.load_case(harness.CASES / "multiplate-select").expect["plate_mode"] == "split"
     assert harness.load_case(harness.CASES / "must-shrink").expect["scale_range"] == [0.78, 0.84]
     assert harness.load_case(harness.CASES / "rotation-fit").expect["scale"] == 1.0
     assert harness.load_case(harness.CASES / "stl-tiny").expect["source_size_mm"] == [1.5, 1.5, 1.5]
@@ -124,7 +137,8 @@ def test_case_folder_is_complete(case):
     assert case.model.is_file()
     if not harness.is_private_case(case.dir):
         assert case.model.stat().st_size <= 5 * 1024 * 1024
-    assert case.clicks and case.expect, "case.toml needs [[click]] rules and an [expect] table"
+    assert case.expect, "case.toml needs an [expect] table"
+    assert case.clicks or _refused_at_intake(case), "case.toml needs [[click]] rules unless intake refuses the model"
     for rule in case.clicks:
         assert rule.get("question") and rule.get("button"), rule
     _assert_case_license(case)
@@ -135,6 +149,9 @@ def test_discord_flow(case, tmp_path):
     run = harness.run_case(case, tmp_path, real_slicer=REAL)
     try:
         harness.check_expectations(case, run)
+        if _refused_at_intake(case):
+            _assert_refused_before_questions(case, run)
+            return
         assert run.slice_starts, "actual BackgroundSlice.start was never called"
         assert len(run.slice_starts) == 1, run.slice_starts
         first_slice = next(i for i, event in enumerate(run.events) if event[0] == "slice_start")
@@ -213,6 +230,9 @@ def test_discord_flow_standalone(case, tmp_path):
     """Same real intake through a fake discord.py client and the actual standalone adapter."""
     run = harness.run_case(case, tmp_path, transport="standalone")
     harness.check_expectations(case, run)
+    if _refused_at_intake(case):
+        _assert_refused_before_questions(case, run)
+        return
     assert len(run.slice_starts) == 1, run.slice_starts
     assert run.adapter.questions
     first_slice = next(i for i, event in enumerate(run.events) if event[0] == "slice_start")

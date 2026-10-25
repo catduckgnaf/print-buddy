@@ -6,12 +6,9 @@ ARG WITH_ORCA=false
 ARG ORCA_SOURCE=prebuilt
 ARG ORCA_STABLE_REF=8500fcdccaa10b5099ac20d252af3a7c560046f1
 ARG ORCA_ALPHA_REF=3880f2c58ec392ed2bd5938ab31c9c7c496c0eb2
-# Parallel compile jobs: auto (memory-aware, below the CPU count; see docker/orca-build-jobs.sh)
-# or an explicit 1-64. Applied to every dependency and to the application build.
 ARG ORCA_BUILD_JOBS=auto
 ARG ORCA_BUILD_MEM_PER_JOB_MIB=2560
 ARG ORCA_CCACHE_MAXSIZE=5G
-# The fixed CMake option set below. Rename it when those options change.
 ARG ORCA_BUILD_PROFILE=release-static-fhs-nopch
 ARG TARGETARCH
 ENV DEBIAN_FRONTEND=noninteractive
@@ -68,8 +65,6 @@ RUN if [ "$WITH_ORCA" = true ] && [ "$ORCA_SOURCE" = prebuilt ]; then \
     fi
 
 FROM debian:13-slim AS bambu-build
-# Bambu Studio is the default slicer for Bambu Lab printers. Built from pinned source like Orca:
-# never an AppImage, never patched. WITH_BAMBU=false omits it and Bambu Lab slicing fails closed.
 ARG WITH_BAMBU=false
 ARG BAMBU_REF=926a7192574bcb9b3a732e1ec59a46d79cb45466
 ARG BAMBU_BUILD_PROFILE=release-static-fhs
@@ -123,25 +118,37 @@ RUN --mount=type=cache,id=print-buddy-bambu-${TARGETARCH}-${BAMBU_REF}-${BAMBU_B
       ccache --show-stats; \
     fi
 
+# API-only Spoolman, isolated from Print Buddy's Python dependencies.
+FROM debian:13-slim AS spoolman-build
+ARG SPOOLMAN_REF=bed3f14ee77a3a571d31b14215d54b0b88a7519c
+ENV UV_PYTHON_DOWNLOADS=0 UV_NO_DEV=1 UV_LINK_MODE=copy
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    python3 python3-venv python3-dev build-essential libpq-dev libffi-dev git ca-certificates && \
+    rm -rf /var/lib/apt/lists/* && python3 -m venv /opt/uv && \
+    /opt/uv/bin/pip install --no-cache-dir uv==0.9.5
+WORKDIR /opt/spoolman
+RUN git init . && git remote add origin https://github.com/Donkie/Spoolman.git && \
+    git fetch --depth 1 origin "$SPOOLMAN_REF" && git checkout --detach FETCH_HEAD && \
+    test "$(git rev-parse HEAD)" = "$SPOOLMAN_REF" && \
+    /opt/uv/bin/uv sync --locked --no-dev --python /usr/bin/python3 && \
+    rm -rf .git client client_v2 && mkdir -p client_v2/build && \
+    printf '%s\n' 'Spoolman is managed by Print Buddy; use /api/v1.' > client_v2/build/200.html && \
+    printf '%s\n' "$SPOOLMAN_REF" > source-revision
 FROM debian:13-slim AS runtime
-ENV DEBIAN_FRONTEND=noninteractive PYTHONUNBUFFERED=1 \
-    PATH=/opt/venv/bin:$PATH
+ENV DEBIAN_FRONTEND=noninteractive PYTHONUNBUFFERED=1 PATH=/opt/venv/bin:$PATH
 RUN apt-get update && apt-get install -y --no-install-recommends \
     python3 python3-venv ca-certificates ffmpeg xvfb xauth tini openscad \
     libwebkit2gtk-4.1-0 libgstreamer1.0-0 libgstreamer-plugins-base1.0-0 \
     libgtk-3-0t64 libglew2.2 libsecret-1-0 libspnav0 libgstreamerd-3-0 \
     libosmesa6 libunwind8 libx264-164 libopengl0 libglu1-mesa libgl1 libegl1 \
-    fonts-liberation && rm -rf /var/lib/apt/lists/* && \
-    python3 -m venv /opt/venv && \
-    useradd --uid 1000 --create-home buddy
+    fonts-liberation && rm -rf /var/lib/apt/lists/*
+RUN python3 -m venv /opt/venv && useradd --uid 1000 --create-home buddy
+COPY --from=spoolman-build /opt/spoolman /opt/spoolman
 COPY --from=orca-stable /out/ /
 COPY --from=orca-alpha /out/ /
 COPY --from=orca-prebuilt /out/ /
-# Official binary private dependency closure; does not replace system libraries.
 ENV LD_LIBRARY_PATH=/opt/orca-stable/lib/orca-runtime:/opt/orca-stable/bin
 COPY --from=bambu-build /out/ /
-# Compatibility paths used by the existing runtime acceptance harness. These
-# always identify stable; runtime channel selection still uses distinct wrappers.
 RUN if [ -x /usr/local/bin/orca-slicer-stable ]; then \
       ln -s /opt/orca-stable/bin/orca-slicer /usr/bin/orca-slicer && \
       ln -s /orca-stable-build-info /orca-build-info && \
@@ -154,10 +161,18 @@ WORKDIR /app
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 COPY . .
-ENV PRINT_BUDDY_CONFIG=/app/config/docker.yaml HOME=/data \
-    PRINT_BUDDY__BOT__MODE=standalone PRINT_BUDDY_ORCA_CHANNEL=stable
-RUN mkdir -p /data/hermes/state /data/archive /data/records /data/cache && \
-    chown -R buddy:buddy /data && chmod +x /app/docker/entrypoint.sh
+ENV PRINT_BUDDY_CONFIG=/app/config/docker.yaml HOME=/data PRINT_BUDDY__BOT__MODE=standalone \
+    PRINT_BUDDY_ORCA_CHANNEL=stable PRINT_BUDDY__SERVICES__SPOOLMAN_URL=http://127.0.0.1:8000 \
+    SPOOLMAN_DIR_DATA=/data/spoolman SPOOLMAN_DIR_CONFIG=/data/spoolman/config \
+    SPOOLMAN_DIR_LOGS=/data/spoolman/logs SPOOLMAN_DIR_BACKUPS=/data/spoolman/backups \
+    SPOOLMAN_HOST=127.0.0.1 SPOOLMAN_PORT=8000
+VOLUME ["/data/hermes", "/data/archive", "/data/records", "/data/cache", "/data/spoolman"]
+EXPOSE 8000
+COPY docker/supervise.sh /usr/local/bin/print-buddy-supervise
+COPY docker/healthcheck.py /usr/local/bin/print-buddy-healthcheck
+RUN mkdir -p /data/hermes/state /data/archive /data/records /data/cache /data/spoolman/config /data/spoolman/logs /data/spoolman/backups && \
+    chown -R buddy:buddy /data && chmod +x /app/docker/entrypoint.sh /usr/local/bin/print-buddy-supervise
 USER buddy
-ENTRYPOINT ["/usr/bin/tini", "--", "/app/docker/entrypoint.sh"]
-CMD ["python3", "-m", "print_buddy.bot"]
+ENTRYPOINT ["/usr/bin/tini", "-g", "--", "/app/docker/entrypoint.sh", "/usr/local/bin/print-buddy-supervise"]
+HEALTHCHECK --interval=30s --timeout=10s --start-period=90s --retries=3 CMD ["python3", "/usr/local/bin/print-buddy-healthcheck"]
+CMD []

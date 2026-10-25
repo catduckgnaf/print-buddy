@@ -14,9 +14,17 @@ ROOT = Path(__file__).resolve().parents[1]
 
 class DockerReleaseContract(unittest.TestCase):
     def test_standalone_is_default_runtime(self):
+        """One supervised container: tini, then the supervisor that starts every required process."""
         dockerfile = (ROOT / "Dockerfile").read_text()
-        self.assertIn('"print_buddy.bot"', dockerfile)
         self.assertIn("PRINT_BUDDY__BOT__MODE=standalone", dockerfile)
+        self.assertIn('ENTRYPOINT ["/usr/bin/tini", "-g", "--", "/app/docker/entrypoint.sh", '
+                      '"/usr/local/bin/print-buddy-supervise"]', dockerfile)
+        self.assertIn('CMD ["python3", "/usr/local/bin/print-buddy-healthcheck"]', dockerfile)
+        supervisor = (ROOT / "docker" / "supervise.sh").read_text()
+        for process in ("python3 -m print_buddy.bot", "python3 -m print_buddy.hermes.moonraker_event_listener",
+                        "uvicorn spoolman.main:app"):
+            with self.subTest(process=process):
+                self.assertIn(process, supervisor)
 
     def test_docker_examples_use_source_installed_slicer(self):
         for suffix in ("yaml", "toml"):
@@ -25,32 +33,33 @@ class DockerReleaseContract(unittest.TestCase):
                 self.assertIn("/usr/local/bin/orca-slicer", config)
                 self.assertNotIn("/opt/orcaslicer/AppRun", config)
 
-    def test_separate_services_and_included_spoolman_default(self):
-        """#214: Spoolman is included in the base stack, not an opt-in override."""
+    def test_single_container_with_included_spoolman_api(self):
+        """#214: one Compose service runs Print Buddy plus the bundled Spoolman API on loopback."""
         compose = yaml.safe_load((ROOT / "docker-compose.yml").read_text())
         services = compose["services"]
-        self.assertIn("bot", services)
-        self.assertIn("listener", services)
-        self.assertIn("spoolman", services)
-        for name, module in (("bot", "print_buddy.bot"),
-                             ("listener", "print_buddy.hermes.moonraker_event_listener")):
-            with self.subTest(service=name):
-                service = services[name]
-                self.assertEqual(service["command"], ["python3", "-m", module])
-                self.assertIn("healthcheck", service)
-                # Bot and listener wait for the included Spoolman to be healthy.
-                self.assertEqual(service["depends_on"]["spoolman"]["condition"], "service_healthy")
-                self.assertFalse(any("/app" in v for v in service["volumes"]))
-        # Auto-wired to the included service, with an external URL in .env winning.
-        runtime = compose["x-runtime"]["environment"]
-        self.assertEqual(runtime["PRINT_BUDDY__SERVICES__SPOOLMAN_URL"],
-                         "${PRINT_BUDDY__SERVICES__SPOOLMAN_URL:-http://spoolman:8000}")
-        spoolman = services["spoolman"]
-        self.assertEqual(spoolman["image"], "ghcr.io/donkie/spoolman:0.27.0")
-        self.assertNotIn("ports", spoolman)
-        self.assertIn("healthcheck", spoolman)
-        self.assertTrue(any(v.endswith("/spoolman:/home/app/.local/share/spoolman")
-                            for v in spoolman["volumes"]))
+        self.assertEqual(list(services), ["combined"])
+        service = services["combined"]
+        self.assertNotIn("command", service)
+        self.assertNotIn("ports", service)
+        self.assertNotIn("depends_on", service)
+        self.assertTrue(service["init"])
+        self.assertEqual(service["healthcheck"]["test"], ["CMD", "python3", "/usr/local/bin/print-buddy-healthcheck"])
+        self.assertFalse(any(v.split(":")[-1].startswith("/app") for v in service["volumes"]))
+        self.assertTrue(any(v.endswith(":/data/spoolman") for v in service["volumes"]))
+        env = service["environment"]
+        # Bundled API by default; a non-empty external URL in .env wins and nothing is migrated.
+        self.assertEqual(env["PRINT_BUDDY__SERVICES__SPOOLMAN_URL"],
+                         "${PRINT_BUDDY__SERVICES__SPOOLMAN_URL:-http://127.0.0.1:8000}")
+        self.assertEqual(env["SPOOLMAN_HOST"], "${SPOOLMAN_HOST:-127.0.0.1}")
+        self.assertEqual(env["SPOOLMAN_DIR_DATA"], "/data/spoolman")
+        # Spoolman's backend only: pinned revision, locked deps, no Node build or web UI assets.
+        dockerfile = (ROOT / "Dockerfile").read_text()
+        stage = dockerfile.split("AS spoolman-build", 1)[1].split("AS runtime", 1)[0]
+        self.assertRegex(stage, r"ARG SPOOLMAN_REF=[0-9a-f]{40}\n")
+        self.assertIn("uv sync --locked --no-dev", stage)
+        self.assertIn("rm -rf .git client client_v2 && mkdir -p client_v2/build", stage)
+        self.assertNotRegex(stage, r"\b(npm|node|vite)\b")
+        self.assertIn("COPY --from=spoolman-build /opt/spoolman /opt/spoolman", dockerfile)
 
     def test_configuration_parity_channels_and_packaged_plugins(self):
         import tomllib
@@ -59,7 +68,7 @@ class DockerReleaseContract(unittest.TestCase):
         configs = [settings.load(local=ROOT / "config" / f"docker.{suffix}", environ={})
                    for suffix in ("yaml", "toml")]
         self.assertEqual(configs[0], configs[1])
-        self.assertEqual(configs[0]["services"]["spoolman_url"], "")
+        self.assertEqual(configs[0]["services"]["spoolman_url"], "http://127.0.0.1:8000")
         self.assertEqual(configs[0]["orca"]["command"], ["/usr/local/bin/orca-slicer"])
         dockerfile = (ROOT / "Dockerfile").read_text()
         self.assertIn("ARG APP_CHANNEL=development", dockerfile)
@@ -147,8 +156,9 @@ class DockerReleaseContract(unittest.TestCase):
         docs = (ROOT / "docs" / "DOCKER.md").read_text()
         self.assertIn("PRINT_BUDDY_ORCA_CHANNEL", docs)
         self.assertIn("OpenSCAD (`openscad`) is included", docs)
-        self.assertIn("KiCad is not bundled; it remains deferred", docs)
-        self.assertIn("Spoolman runs as its own container, included in the default Compose stack", docs)
+        self.assertNotIn("KiCad", docs)
+        self.assertIn("No Node, npm or web UI assets are built or copied", docs)
+        self.assertIn("Default bind is `127.0.0.1:8000` inside the container", docs)
 
     def test_validation_workflow_builds_both_orca_channels(self):
         workflow = (ROOT / ".github" / "workflows" / "docker-image-validation.yml").read_text()

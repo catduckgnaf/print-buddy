@@ -1,18 +1,14 @@
 # Acceptance-only overlay for tests/docker/image_acceptance.sh. Never used for a deployment.
-# Every service sits on an internal network with no route out, uses dummy secrets from the
-# harness's .env, and never restarts, so a failure surfaces instead of looping. The fake
-# Moonraker is the only "printer" and has a readiness check, so `up --wait` waits for it.
+# The combined container and the fake printer sit on an internal network with no route out,
+# use dummy secrets from the harness's .env, and never restart, so a failure surfaces instead
+# of looping. The fake Moonraker is the only "printer" and has a readiness check, so
+# `up --wait` waits for it. The bundled Spoolman API stays on the container's loopback.
 networks:
   isolated:
     internal: true
 
 services:
-  bot:
-    networks: [isolated]
-    restart: "no"
-    environment:
-      PRINT_BUDDY__SERVICES__MOONRAKER_URL: http://fake-moonraker:7125
-  listener:
+  combined:
     networks: [isolated]
     restart: "no"
     environment:

@@ -52,7 +52,7 @@ Schema, validation limits and TOML migration: [CONFIGURATION-YAML.md](CONFIGURAT
 | `services.moonraker_url` | `PRINT_BUDDY__SERVICES__MOONRAKER_URL` | empty | Klipper printers: Moonraker HTTP URL, e.g. `http://printer.example:7125`. Required by the listener |
 | `services.moonraker_ws_url` | `PRINT_BUDDY__SERVICES__MOONRAKER_WS_URL` | empty | Moonraker websocket; derived from `moonraker_url` when empty |
 | `services.camera_snapshot_url` | `PRINT_BUDDY__SERVICES__CAMERA_SNAPSHOT_URL` | empty | Camera snapshot URL; derived from the Moonraker host when empty |
-| `services.spoolman_url` | `PRINT_BUDDY__SERVICES__SPOOLMAN_URL` | empty | Spoolman URL. The file default is empty; the Docker Compose stack (and Unraid templates) set `http://spoolman:8000`, the included Spoolman. Set another URL to use an existing external Spoolman instead |
+| `services.spoolman_url` | `PRINT_BUDDY__SERVICES__SPOOLMAN_URL` | empty | Spoolman URL. The Docker config and Compose default to `http://127.0.0.1:8000`, the bundled Spoolman API in the same container. Set another URL, plus `PRINT_BUDDY_BUNDLED_SPOOLMAN=false`, to use an existing external Spoolman instead |
 | `services.openviking_url` | `PRINT_BUDDY__SERVICES__OPENVIKING_URL` | empty | Optional OpenViking memory store |
 | `services.vision_chat_url` | `PRINT_BUDDY__SERVICES__VISION_CHAT_URL` | empty | OpenAI-compatible endpoint for camera checks and roasts; empty disables both |
 | `services.stock_api_port` | `PRINT_BUDDY__SERVICES__STOCK_API_PORT` | `8898` | Flashforge stock API port for IFS presence |
@@ -110,16 +110,19 @@ These configure the Compose deployment, not Print Buddy itself. Set them in `.en
 
 | Variable | Default | What it does |
 |---|---|---|
-| `PRINT_BUDDY_IMAGE` | none, required | Image both services run: a locally built tag or a tested immutable digest. No published image exists yet |
-| `PRINT_BUDDY_DATA` | `./data` | Host folder holding the `hermes`, `archive`, `records`, `cache` and `spoolman` volumes |
-| `PRINT_BUDDY_CONFIG` | `/app/config/docker.yaml` | Settings file the services read (YAML, or legacy `.toml`) |
-| `TZ` | `UTC` | Timezone for the included Spoolman service only (IANA name); Print Buddy itself uses `discord.timezone` |
+| `PRINT_BUDDY_IMAGE` | none, required | Image the combined container runs: a locally built tag or a tested immutable digest. No published image exists yet |
+| `PRINT_BUDDY_DATA` | `./data` | Host folder holding the `hermes`, `archive`, `records` and `cache` volumes |
+| `PRINT_BUDDY_SPOOLMAN_DATA` | `./data/spoolman` | Host folder for the bundled Spoolman database, config, logs and backups |
+| `PRINT_BUDDY_CONFIG` | `/app/config/docker.yaml` | Settings file Print Buddy reads (YAML, or legacy `.toml`) |
+| `TZ` | `UTC` | Container timezone (IANA name), used by the bundled Spoolman; Print Buddy itself uses `discord.timezone` |
 
 ## Runtime environment
 
 | Variable | Default | What it does |
 |---|---|---|
 | `PRINT_BUDDY_ORCA_CHANNEL` | `stable` | Selects the bundled stable or alpha OrcaSlicer at startup; invalid values stop the container |
+| `PRINT_BUDDY_BUNDLED_SPOOLMAN` | `true` | `true` runs the bundled Spoolman API; `false` uses `services.spoolman_url` only |
+| `SPOOLMAN_HOST` | `127.0.0.1` | Bundled Spoolman bind address; widen it only together with an approved port mapping, see docs/DOCKER.md |
 
 `WITH_ORCA=false` (default) omits both Orca builds; slicing fails closed without either binary.
 
@@ -134,6 +137,7 @@ Image build inputs (`docker build --build-arg NAME=value`), not runtime settings
 | `ORCA_SOURCE` | `prebuilt` | `prebuilt` installs the pinned official OrcaSlicer 2.4.2 Linux release (sha256 verified, stable channel only); `source` builds stable and alpha from pinned source |
 | `ORCA_STABLE_REF` | `8500fcdccaa10b5099ac20d252af3a7c560046f1` | Pinned stable OrcaSlicer source commit |
 | `ORCA_ALPHA_REF` | `3880f2c58ec392ed2bd5938ab31c9c7c496c0eb2` | Pinned OrcaSlicer alpha source commit |
+| `SPOOLMAN_REF` | `bed3f14ee77a3a571d31b14215d54b0b88a7519c` | Pinned Spoolman v0.27.0 source commit; only its Python API backend is installed, never the web UI |
 | `ORCA_BUILD_JOBS` | `auto` | Parallel compile jobs: `auto` (memory-aware, below the CPU count) or a whole number from 1 to 64; see [DOCKER.md](DOCKER.md#orcaslicer-source-build) |
 | `ORCA_BUILD_MEM_PER_JOB_MIB` | `2560` | Memory budgeted per job by `auto`, at least 256 |
 | `ORCA_CCACHE_MAXSIZE` | `5G` | Size cap of the compiler cache inside the build cache |

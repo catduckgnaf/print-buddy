@@ -3,19 +3,21 @@
 #
 #   tests/docker/image_acceptance.sh IMAGE [included] [OUT_DIR]
 #
-# IMAGE is a local tag or immutable ID. Spoolman is included in docker-compose.yml (#214),
-# so every run exercises it (its pinned Spoolman image must already be present). The legacy
-# mode spelling `bundled` is accepted as an alias for `included`; there is no Spoolman-free mode.
+# IMAGE is a local tag or immutable ID. Print Buddy runs as ONE supervised container: Discord
+# bot, Moonraker listener and the bundled Spoolman API (#214). The mode argument is kept for the
+# workflow: `included`, or the legacy alias `bundled`; there is no Spoolman-free mode.
 # Everything runs under a unique Compose project on an internal network with no route out, with
 # dummy secrets, and only this run's containers and temp files are removed afterwards. No
 # Discord, printer, Home Assistant or household Spoolman is contacted, and no host port is used.
 #
 # Checks: image identity; packaged payload and handlers without a source mount; Orca executable
 # and shared-library closure, or its absence; real slicing plus G-code guards, or fail-closed
-# refusal; egress isolation; the same on a read-only root; per-service bot and listener readiness;
-# stale and cross-container heartbeat refusal; graceful SIGTERM; data persistence across container
-# recreation; a same-image tag switch (recreation coverage, NOT a cross-version upgrade); and,
-# Spoolman data persistence. Results: OUT_DIR/results.txt plus logs.
+# refusal; egress isolation; the same on a read-only root; the Unraid template's run flags;
+# combined readiness (listener plus Spoolman, bot idle); Spoolman API on loopback only with no
+# web UI; stale and cross-container heartbeat refusal; graceful SIGTERM; data and Spoolman
+# persistence across container recreation; a same-image tag switch (recreation coverage, NOT a
+# cross-version upgrade); and a dummy-token bot that never reports healthy.
+# Results: OUT_DIR/results.txt plus logs.
 set -euo pipefail
 
 image=${1:?usage: image_acceptance.sh IMAGE [included] [OUT_DIR]}
@@ -53,17 +55,17 @@ cleanup() {
 trap cleanup EXIT
 
 # The deployment files a user downloads, plus the acceptance overlays, in a fresh folder.
-cp "$repo/docker-compose.yml" \
-   "$repo/tests/docker/compose.acceptance.yml" "$repo/tests/docker/compose.acceptance-spoolman.yml" "$work/"
+cp "$repo/docker-compose.yml" "$repo/tests/docker/compose.acceptance.yml" "$work/"
 mkdir -p "$work/fixture" && cp "$repo/tests/docker/fake_moonraker.py" "$repo/tests/docker/image_probe.py" "$work/fixture/"
-files=(-f docker-compose.yml -f compose.acceptance-spoolman.yml -f compose.acceptance.yml)
+files=(-f docker-compose.yml -f compose.acceptance.yml)
 compose() { (cd "$work" && docker compose -p "$project" "${files[@]}" "$@"); }
 
-# .env from the shipped example: dummy values only, never real credentials.
+# .env from the shipped example: dummy values only, never real credentials. The token starts
+# empty so the bot idles; the last check sets the dummy token to prove the bot fails closed.
 dummy_token="offline-dummy-not-a-discord-token"
 sed -e "s#^PRINT_BUDDY_IMAGE=.*#PRINT_BUDDY_IMAGE=$image#" \
     -e "s#^PRINT_BUDDY_DATA=.*#PRINT_BUDDY_DATA=$data#" \
-    -e "s#^DISCORD_BOT_TOKEN=.*#DISCORD_BOT_TOKEN=$dummy_token#" \
+    -e "s#^DISCORD_BOT_TOKEN=.*#DISCORD_BOT_TOKEN=#" \
     -e "s#^PRINT_BUDDY__DISCORD__CHAT_ID=.*#PRINT_BUDDY__DISCORD__CHAT_ID=100000000000000001#" \
     -e "s#^PRINT_BUDDY__DISCORD__ALLOWED_USER_IDS=.*#PRINT_BUDDY__DISCORD__ALLOWED_USER_IDS=200000000000000002#" \
     "$repo/.env.example" > "$work/.env"
@@ -110,38 +112,33 @@ else
     record bot:offline-check FAIL "$(grep FAIL <<< "$output" | head -n 3 | tr '\n' ' ')"
 fi
 
-log "Unraid templates: their ExtraParams and PostArgs as docker run sees them"
-for service in bot listener; do
-    template="$repo/docker/unraid/print-buddy-$service.xml"
-    mapfile -t extra < <(python3 -c "
+log "Unraid template: its ExtraParams as docker run sees them"
+template="$repo/docker/unraid/print-buddy.xml"
+mapfile -t extra < <(python3 -c "
 import shlex, sys, xml.etree.ElementTree as ET
 params = shlex.split(ET.parse(sys.argv[1]).getroot().findtext('ExtraParams'))
 i = params.index('--restart'); del params[i:i + 2]   # --rm below replaces DockerMan's restart policy
 print('\n'.join(params))" "$template")
-    # The service module named by PostArgs must import under exactly these runtime flags.
-    module=$(python3 -c "
-import shlex, sys, xml.etree.ElementTree as ET
-args = shlex.split(ET.parse(sys.argv[1]).getroot().findtext('PostArgs'))
-assert args[:2] == ['python3', '-m'], args
-print(args[2])" "$template")
-    if output=$(timeout 300 docker run --name "$project-unraid-$service" "${probe_args[@]}" "${extra[@]}" "$image" \
-            python3 -c 'import importlib, sys; importlib.import_module(sys.argv[1]); print("imported", sys.argv[1])' "$module" 2>&1); then
-        record "unraid:$service-params" ok "docker run accepted ${#extra[@]} template arguments; $(tail -n 1 <<< "$output")"
-    else
-        echo "$output" > "$out/unraid-$service.txt"
-        record "unraid:$service-params" FAIL "$(tail -n 2 <<< "$output" | tr '\n' ' ')"
-    fi
-done
-
-log "listener readiness against the fake Moonraker"
-if compose up -d --wait --wait-timeout 180 fake-moonraker listener > "$out/up-1.txt" 2>&1; then
-    record listener:healthy ok "compose up --wait passed"
+# Every supervised module must import under exactly these runtime flags.
+if output=$(timeout 300 docker run --name "$project-unraid" "${probe_args[@]}" "${extra[@]}" "$image" \
+        python3 -c 'import importlib; [importlib.import_module(m) for m in ("print_buddy.bot", "print_buddy.hermes.moonraker_event_listener")]; print("imported bot and listener")' 2>&1); then
+    record unraid:params ok "docker run accepted ${#extra[@]} template arguments; $(tail -n 1 <<< "$output")"
 else
-    record listener:healthy FAIL "see up-1.txt"
+    echo "$output" > "$out/unraid.txt"
+    record unraid:params FAIL "$(tail -n 2 <<< "$output" | tr '\n' ' ')"
+fi
+
+health() { docker inspect --format '{{if .State.Health}}{{.State.Health.Status}}{{end}} running={{.State.Running}} exit={{.State.ExitCode}}' "$1" 2>/dev/null || echo gone; }
+
+log "combined container: listener and bundled Spoolman healthy, bot idle (empty token)"
+if compose up -d --wait --wait-timeout 240 fake-moonraker combined > "$out/up-1.txt" 2>&1; then
+    record combined:healthy ok "compose up --wait passed; healthcheck covers listener and Spoolman"
+else
+    record combined:healthy FAIL "see up-1.txt"
 fi
 connected=false
 for _ in $(seq 30); do
-    if compose exec -T listener python3 -c "import json, sys; d = json.load(open('/data/hermes/state/listener_health.json')); sys.exit(0 if d.get('moonraker_connected') else 1)" > /dev/null 2>&1; then
+    if compose exec -T combined python3 -c "import json, sys; d = json.load(open('/data/hermes/state/listener_health.json')); sys.exit(0 if d.get('moonraker_connected') else 1)" > /dev/null 2>&1; then
         connected=true
         break
     fi
@@ -149,81 +146,70 @@ for _ in $(seq 30); do
 done
 if [ "$connected" = true ]; then record listener:moonraker ok "heartbeat reports moonraker_connected"; else record listener:moonraker FAIL "never connected to fake-moonraker"; fi
 
-log "bot: dummy token, no route out; it must not report healthy"
-compose up -d bot > "$out/up-bot.txt" 2>&1 || echo "bot up returned non-zero" >> "$out/up-bot.txt"
-bot_healthy=false
-for _ in $(seq 20); do
-    if compose exec -T bot python3 -m print_buddy.bot health > /dev/null 2>&1; then bot_healthy=true; break; fi
-    if [ "$(docker inspect --format '{{.State.Running}}' "$(compose ps -aq bot)")" != true ]; then break; fi
-    sleep 3
-done
-bot_state=$(docker inspect --format 'running={{.State.Running}} exit={{.State.ExitCode}}' "$(compose ps -aq bot)")
-compose logs --no-color bot > "$out/bot.log" 2>&1 || echo "bot logs unavailable" >> "$out/bot.log"
-bot_reason=$(grep -E 'Cannot connect to host|LoginFailure|Error:' "$out/bot.log" | tail -n 1 | sed 's/^[^|]*| *//' | cut -c1-160 || true)
-if [ "$bot_healthy" = false ]; then record bot:fails-closed ok "$bot_state; never healthy without Discord; ${bot_reason:-see bot.log}"; else record bot:fails-closed FAIL "reported healthy with a dummy token"; fi
-
-log "cross-service and cross-container heartbeat refusal"
-if compose exec -T listener python3 -m print_buddy.bot health > "$out/listener-bot-health.txt" 2>&1; then
-    record heartbeat:bot-in-listener FAIL "bot health passed inside the listener container"
+log "bundled Spoolman: API only, loopback only"
+spool=""
+if spool=$(compose exec -T combined python3 -c "
+import json, urllib.request
+def post(path, body):
+    req = urllib.request.Request('http://127.0.0.1:8000/api/v1/' + path, json.dumps(body).encode(), {'Content-Type': 'application/json'})
+    return json.load(urllib.request.urlopen(req, timeout=10))
+f = post('filament', {'name': 'Acceptance PLA', 'material': 'PLA', 'density': 1.24, 'diameter': 1.75})
+print(post('spool', {'filament_id': f['id'], 'location': 'IFS Slot 1'})['id'])" 2> "$out/spoolman-create.txt"); then
+    record spoolman:create ok "spool $spool"
 else
-    record heartbeat:bot-in-listener ok "$(grep -m 1 FAIL "$out/listener-bot-health.txt")"
+    spool=""
+    record spoolman:create FAIL "see spoolman-create.txt"
 fi
-if compose run --rm --no-deps -T listener python3 -m print_buddy.healthcheck > "$out/foreign-health.txt" 2>&1; then
+if compose exec -T fake-moonraker python3 -c "import urllib.request; urllib.request.urlopen('http://combined:8000/api/v1/health', timeout=3)" > /dev/null 2>&1; then
+    record spoolman:loopback-only FAIL "another container reached the Spoolman API"
+else
+    record spoolman:loopback-only ok "unreachable from another container on the same network"
+fi
+if compose exec -T combined test ! -e /opt/spoolman/client_v2/build/assets; then
+    record spoolman:no-web-ui ok "no built Spoolman web UI assets in the image"
+else
+    record spoolman:no-web-ui FAIL "/opt/spoolman/client_v2/build/assets exists"
+fi
+
+log "heartbeat isolation"
+if compose run --rm --no-deps -T combined python3 -m print_buddy.healthcheck > "$out/foreign-health.txt" 2>&1; then
     record heartbeat:other-container FAIL "a second container accepted the listener's heartbeat"
 else
     record heartbeat:other-container ok "$(grep -m 1 FAIL "$out/foreign-health.txt")"
 fi
 
 log "persistence marker, then graceful SIGTERM"
-compose exec -T listener sh -c 'echo accepted > /data/archive/acceptance-marker && echo accepted > /data/records/acceptance-marker'
-listener_before=$(compose ps -q listener)
+compose exec -T combined sh -c 'echo accepted > /data/archive/acceptance-marker && echo accepted > /data/records/acceptance-marker'
+combined_before=$(compose ps -q combined)
 start=$(date +%s)
-compose stop -t 30 listener > /dev/null 2>&1
+compose stop -t 30 combined > /dev/null 2>&1
 elapsed=$(( $(date +%s) - start ))
-exit_code=$(docker inspect --format '{{.State.ExitCode}}' "$listener_before")
+exit_code=$(docker inspect --format '{{.State.ExitCode}}' "$combined_before")
 if [ "$exit_code" != 137 ] && [ "$elapsed" -lt 30 ]; then
-    record signal:listener-sigterm ok "exit $exit_code after ${elapsed}s (137 would mean SIGKILL)"
+    record signal:combined-sigterm ok "exit $exit_code after ${elapsed}s (137 would mean SIGKILL)"
 else
-    record signal:listener-sigterm FAIL "exit $exit_code after ${elapsed}s"
+    record signal:combined-sigterm FAIL "exit $exit_code after ${elapsed}s"
 fi
 # Age-based staleness is covered natively (tests/test_listener_health.py); this proves a stopped
-# listener's last heartbeat cannot make any other container healthy.
-if compose run --rm --no-deps -T listener python3 -m print_buddy.healthcheck > "$out/stopped-health.txt" 2>&1; then
-    record heartbeat:after-stop FAIL "heartbeat of a stopped listener accepted"
+# container's last heartbeat cannot make any other container healthy.
+if compose run --rm --no-deps -T combined python3 -m print_buddy.healthcheck > "$out/stopped-health.txt" 2>&1; then
+    record heartbeat:after-stop FAIL "heartbeat of a stopped container accepted"
 else
     record heartbeat:after-stop ok "$(grep -m 1 FAIL "$out/stopped-health.txt")"
 fi
 
-spool=""
-if [ "$mode" = included ]; then
-    log "included Spoolman: create a spool"
-    if compose up -d --wait --wait-timeout 180 spoolman > "$out/up-spoolman.txt" 2>&1 &&
-        spool=$(compose exec -T spoolman python3 -c "
-import json, urllib.request
-def post(path, body):
-    req = urllib.request.Request('http://127.0.0.1:8000/api/v1/' + path, json.dumps(body).encode(), {'Content-Type': 'application/json'})
-    return json.load(urllib.request.urlopen(req, timeout=10))
-f = post('filament', {'name': 'Acceptance PLA', 'material': 'PLA', 'density': 1.24, 'diameter': 1.75})
-print(post('spool', {'filament_id': f['id'], 'location': 'IFS Slot 1'})['id'])"); then
-        record spoolman:create ok "spool $spool"
-    else
-        record spoolman:create FAIL "see up-spoolman.txt"
-    fi
-fi
-
-log "recreate every container (down without -v, up again)"
+log "recreate the container (down without -v, up again)"
 compose down > "$out/down-1.txt" 2>&1
-compose up -d --wait --wait-timeout 180 fake-moonraker listener > "$out/up-2.txt" 2>&1 || record recreate:listener FAIL "see up-2.txt"
-listener_after=$(compose ps -q listener)
-if [ -n "$listener_after" ] && [ "$listener_after" != "$listener_before" ] &&
-    compose exec -T listener sh -c 'grep -qx accepted /data/archive/acceptance-marker && grep -qx accepted /data/records/acceptance-marker'; then
-    record recreate:data-persisted ok "new container ${listener_after:0:12}; markers intact"
+compose up -d --wait --wait-timeout 240 fake-moonraker combined > "$out/up-2.txt" 2>&1 || record recreate:combined FAIL "see up-2.txt"
+combined_after=$(compose ps -q combined)
+if [ -n "$combined_after" ] && [ "$combined_after" != "$combined_before" ] &&
+    compose exec -T combined sh -c 'grep -qx accepted /data/archive/acceptance-marker && grep -qx accepted /data/records/acceptance-marker'; then
+    record recreate:data-persisted ok "new container ${combined_after:0:12}; markers intact"
 else
-    record recreate:data-persisted FAIL "container ${listener_after:-none}"
+    record recreate:data-persisted FAIL "container ${combined_after:-none}"
 fi
 if [ -n "$spool" ]; then
-    compose up -d --wait --wait-timeout 180 spoolman > "$out/up-spoolman-2.txt" 2>&1 || record spoolman:recreate FAIL "see up-spoolman-2.txt"
-    if compose exec -T spoolman python3 -c "
+    if compose exec -T combined python3 -c "
 import json, sys, urllib.request
 s = json.load(urllib.request.urlopen('http://127.0.0.1:8000/api/v1/spool/$spool', timeout=10))
 sys.exit(0 if s['filament']['name'] == 'Acceptance PLA' and s['location'] == 'IFS Slot 1' else 1)"; then
@@ -237,12 +223,27 @@ log "same-image tag switch (recreation coverage only, not a version upgrade)"
 docker tag "$image_id" "pb-accept-tagswitch:$run_id"
 sed -i "s#^PRINT_BUDDY_IMAGE=.*#PRINT_BUDDY_IMAGE=pb-accept-tagswitch:$run_id#" "$work/.env"
 export PRINT_BUDDY_IMAGE="pb-accept-tagswitch:$run_id"
-if compose up -d --wait --wait-timeout 180 fake-moonraker listener > "$out/up-3.txt" 2>&1 &&
-    compose exec -T listener grep -qx accepted /data/archive/acceptance-marker; then
+if compose up -d --wait --wait-timeout 240 fake-moonraker combined > "$out/up-3.txt" 2>&1 &&
+    compose exec -T combined grep -qx accepted /data/archive/acceptance-marker; then
     record tagswitch:same-image ok "pb-accept-tagswitch:$run_id -> $image_id; data reused"
 else
     record tagswitch:same-image FAIL "see up-3.txt"
 fi
+
+log "bot: dummy token, no route out; the container must never report healthy"
+sed -i "s#^DISCORD_BOT_TOKEN=.*#DISCORD_BOT_TOKEN=$dummy_token#" "$work/.env"
+compose up -d --force-recreate combined > "$out/up-bot.txt" 2>&1 || echo "up returned non-zero" >> "$out/up-bot.txt"
+combined_bot=$(compose ps -aq combined)
+bot_healthy=false
+for _ in $(seq 20); do
+    state=$(health "$combined_bot")
+    case "$state" in healthy*) bot_healthy=true; break ;; *running=false*) break ;; esac
+    sleep 3
+done
+state=$(health "$combined_bot")
+compose logs --no-color combined > "$out/bot.log" 2>&1 || echo "logs unavailable" >> "$out/bot.log"
+bot_reason=$(grep -E 'Cannot connect to host|LoginFailure|Error:|Required child exited' "$out/bot.log" | tail -n 1 | sed 's/^[^|]*| *//' | cut -c1-160 || true)
+if [ "$bot_healthy" = false ]; then record bot:fails-closed ok "$state; never healthy without Discord; ${bot_reason:-see bot.log}"; else record bot:fails-closed FAIL "reported healthy with a dummy token"; fi
 
 echo "results: $out/results.txt"
 if [ "$failures" -gt 0 ]; then

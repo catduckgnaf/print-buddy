@@ -27,17 +27,16 @@ ENV_EXAMPLE = (ROOT / ".env.example").read_text()
 DOCKERFILE = (ROOT / "Dockerfile").read_text()
 COMPOSE = yaml.safe_load((ROOT / "docker-compose.yml").read_text())
 JOBS = ROOT / "docker" / "orca-build-jobs.sh"
-UNRAID = {name: ET.parse(ROOT / "docker" / "unraid" / f"print-buddy-{name}.xml").getroot()
-          for name in ("bot", "listener")}
+UNRAID = ET.parse(ROOT / "docker" / "unraid" / "print-buddy.xml").getroot()
 # Public files a user copies or reads to deploy. All must be sanitized.
 DEPLOYMENT_FILES = [".env.example", "docker-compose.yml", "Dockerfile",
-                    "docker/entrypoint.sh", "docker/orca-build-jobs.sh", "docker/orca-build.sh", "docker/unraid/print-buddy-bot.xml",
-                    "docker/unraid/print-buddy-listener.xml", "docker/unraid/print-buddy-spoolman.xml", "config/docker.yaml", "config/docker.toml",
+                    "docker/entrypoint.sh", "docker/orca-build-jobs.sh", "docker/orca-build.sh", "docker/unraid/print-buddy.xml",
+                    "docker/supervise.sh", "docker/healthcheck.py", "config/docker.yaml", "config/docker.toml",
                     "docs/DOCKER.md", "docs/SETTINGS.md", "tests/docker/compose.acceptance.yml"]
 SECRETS = {"DISCORD_BOT_TOKEN", "LLM_API_KEY", "OCTOPRINT_API_KEY", "MOONRAKER_API_KEY", "CLIPROXY_API_KEY",
            "OPENVIKING_API_KEY", "BAMBU_LAN_PASSWORD"}
-COMPOSE_VARS = {"PRINT_BUDDY_IMAGE", "PRINT_BUDDY_DATA", "PRINT_BUDDY_CONFIG", "TZ"}
-RUNTIME_ENV_VARS = {"PRINT_BUDDY_ORCA_CHANNEL"}
+COMPOSE_VARS = {"PRINT_BUDDY_IMAGE", "PRINT_BUDDY_DATA", "PRINT_BUDDY_SPOOLMAN_DATA", "PRINT_BUDDY_CONFIG", "TZ"}
+RUNTIME_ENV_VARS = {"PRINT_BUDDY_ORCA_CHANNEL", "PRINT_BUDDY_BUNDLED_SPOOLMAN", "SPOOLMAN_HOST"}
 DATA_TARGETS = {"/data/hermes", "/data/archive", "/data/records", "/data/cache"}
 
 
@@ -263,9 +262,9 @@ class OrcaCacheTests(unittest.TestCase):
 
 class RuntimeImageTests(unittest.TestCase):
     def test_every_stage_uses_debian_stable(self):
-        """Debian 13 slim for every stage; it has no stock UID 1000 user, so buddy takes 1000 directly."""
+        """Debian 13 slim for every stage (Orca, Bambu, Spoolman, runtime); no stock UID 1000 user, so buddy takes 1000."""
         self.assertEqual(re.findall(r"^FROM (debian:13-slim)(?: AS [\w-]+)?$", DOCKERFILE, re.M),
-                         ["debian:13-slim"] * 3)
+                         ["debian:13-slim"] * 4)
         runtime = DOCKERFILE.split("FROM debian:13-slim AS runtime", 1)[1]
         self.assertIn("useradd --uid 1000 --create-home buddy", runtime)
         self.assertNotIn("ubuntu", DOCKERFILE)
@@ -275,87 +274,78 @@ class UnraidTemplateTests(unittest.TestCase):
     def configs(self, root, kind):
         return {c.get("Target"): c for c in root.findall("Config") if c.get("Type") == kind}
 
-    def test_each_template_runs_its_compose_service(self):
-        for name, root in UNRAID.items():
-            service = COMPOSE["services"][name]
-            with self.subTest(service=name):
-                self.assertEqual(shlex.split(root.findtext("PostArgs")), service["command"])
-                params = shlex.split(root.findtext("ExtraParams"))
-                health = params[params.index("--health-cmd") + 1]
-                self.assertEqual(["CMD", *shlex.split(health)], service["healthcheck"]["test"])
-                self.assertEqual(root.findtext("Repository"), "REPLACE_WITH_TESTED_IMAGE")
-                self.assertEqual(root.findtext("Privileged"), "false")
+    def setUp(self):
+        self.service = COMPOSE["services"]["combined"]
+        params = shlex.split(UNRAID.findtext("ExtraParams"))
+        self.params = params
+        self.flags = {flag: params[i + 1] for i, flag in enumerate(params[:-1]) if flag.startswith("--")}
+
+    def test_template_runs_the_combined_compose_service(self):
+        self.assertEqual(list(COMPOSE["services"]), ["combined"])
+        self.assertEqual(UNRAID.findtext("Name"), "print-buddy")
+        self.assertFalse(UNRAID.findtext("PostArgs"))
+        self.assertNotIn("command", self.service)
+        health = self.flags["--health-cmd"]
+        self.assertEqual(["CMD", *shlex.split(health)], self.service["healthcheck"]["test"])
+        self.assertEqual(UNRAID.findtext("Repository"), "REPLACE_WITH_TESTED_IMAGE")
+        self.assertEqual(UNRAID.findtext("Privileged"), "false")
+        # The bundled Spoolman API stays on loopback: no published port and no WebUI.
+        self.assertNotIn("ports", self.service)
+        self.assertNotIn("-p", self.params)
+        self.assertFalse(any(p.startswith("--publish") for p in self.params))
+        self.assertFalse(self.configs(UNRAID, "Port"))
+        self.assertFalse(UNRAID.findtext("WebUI"))
 
     def test_hardening_and_limits_match_compose(self):
-        runtime = COMPOSE["x-runtime"]
-        for name, root in UNRAID.items():
-            params = shlex.split(root.findtext("ExtraParams"))
-            value = {flag: params[i + 1] for i, flag in enumerate(params[:-1]) if flag.startswith("--")}
-            logs = [params[i + 1] for i, flag in enumerate(params[:-1]) if flag == "--log-opt"]
-            with self.subTest(service=name):
-                self.assertEqual(value["--cap-drop"], "ALL")
-                self.assertIn(value["--security-opt"], runtime["security_opt"])
-                self.assertEqual(int(value["--pids-limit"]), runtime["pids_limit"])
-                self.assertEqual(value["--memory"], runtime["mem_limit"])
-                self.assertEqual(float(value["--cpus"]), float(runtime["cpus"]))
-                self.assertEqual(value["--shm-size"], runtime["shm_size"])
-                self.assertEqual(value["--restart"], runtime["restart"])
-                self.assertEqual(sorted(logs), sorted(f"{k}={v}" for k, v in runtime["logging"]["options"].items()))
+        value, service = self.flags, self.service
+        logs = [self.params[i + 1] for i, flag in enumerate(self.params[:-1]) if flag == "--log-opt"]
+        self.assertEqual(value["--user"], service["user"])
+        self.assertEqual(value["--cap-drop"], "ALL")
+        self.assertIn(value["--security-opt"], service["security_opt"])
+        self.assertEqual(int(value["--pids-limit"]), service["pids_limit"])
+        self.assertEqual(value["--memory"], service["mem_limit"])
+        self.assertEqual(float(value["--cpus"]), float(service["cpus"]))
+        self.assertEqual(value["--shm-size"], service["shm_size"])
+        self.assertEqual(value["--restart"], service["restart"])
+        self.assertEqual(sorted(logs), sorted(f"{k}={v}" for k, v in service["logging"]["options"].items()))
+        for flag, key in (("--health-interval", "interval"), ("--health-timeout", "timeout"),
+                          ("--health-start-period", "start_period"), ("--health-retries", "retries")):
+            with self.subTest(flag=flag):
+                self.assertEqual(str(value[flag]), str(service["healthcheck"][key]))
 
     def test_paths_and_variables_match_the_runtime(self):
-        compose_env = COMPOSE["x-runtime"]["environment"]
-        for name, root in UNRAID.items():
-            with self.subTest(service=name):
-                paths = self.configs(root, "Path")
-                self.assertEqual(set(paths), DATA_TARGETS)
-                self.assertTrue(all(p.text.startswith("/mnt/user/appdata/print-buddy/") for p in paths.values()))
-                variables = self.configs(root, "Variable")
-                for key in ("PRINT_BUDDY_CONFIG", "PRINT_BUDDY__BOT__MODE"):
-                    self.assertEqual(variables[key].text, compose_env[key].split(":-")[-1].rstrip("}"))
-                for target, config in variables.items():
-                    if target in SECRETS:
-                        self.assertEqual(config.get("Mask"), "true")
-                        self.assertFalse(config.text)
-                    elif target in RUNTIME_ENV_VARS:
-                        self.assertEqual(config.text, "stable")
-                    elif target.startswith("PRINT_BUDDY__"):
-                        section, key = target[len("PRINT_BUDDY__"):].lower().split("__")
-                        self.assertIn((section, key), inventory())
-                    else:
-                        self.assertIn(target, COMPOSE_VARS)
-                for required in ("DISCORD_BOT_TOKEN", "PRINT_BUDDY__DISCORD__CHAT_ID",
-                                 "PRINT_BUDDY__DISCORD__ALLOWED_USER_IDS"):
-                    self.assertEqual(variables[required].get("Required"), "true")
-        self.assertEqual({c.get("Target"): c.text for c in UNRAID["bot"].findall("Config")},
-                         {c.get("Target"): c.text for c in UNRAID["listener"].findall("Config")})
-
-
-class UnraidSpoolmanTemplateTests(unittest.TestCase):
-    """#214: the included Spoolman has its own DockerMan template, matching Compose."""
-
-    def setUp(self):
-        self.root = ET.parse(ROOT / "docker" / "unraid" / "print-buddy-spoolman.xml").getroot()
-        self.compose = yaml.safe_load((ROOT / "docker-compose.yml").read_text())["services"]["spoolman"]
-
-    def test_repository_is_the_pinned_compose_image(self):
-        self.assertEqual(self.root.findtext("Repository"), self.compose["image"])
-        self.assertEqual(self.root.findtext("Name"), "spoolman")
-        self.assertEqual(self.root.findtext("Privileged"), "false")
-
-    def test_data_path_and_memory_match_compose(self):
-        paths = {c.get("Target"): c for c in self.root.findall("Config") if c.get("Type") == "Path"}
-        self.assertEqual(set(paths), {"/home/app/.local/share/spoolman"})
-        self.assertTrue(paths["/home/app/.local/share/spoolman"].text.startswith("/mnt/user/appdata/print-buddy/"))
-        params = shlex.split(self.root.findtext("ExtraParams"))
-        self.assertEqual(params[params.index("--memory") + 1], self.compose["mem_limit"])
-        self.assertEqual(params[params.index("--restart") + 1], self.compose["restart"])
+        compose_env = self.service["environment"]
+        paths = self.configs(UNRAID, "Path")
+        self.assertEqual(set(paths), DATA_TARGETS | {"/data/spoolman"})
+        self.assertEqual(set(paths), {v.split(":")[-1] for v in self.service["volumes"]})
+        self.assertTrue(all(p.text.startswith("/mnt/user/appdata/print-buddy/") for p in paths.values()))
+        variables = self.configs(UNRAID, "Variable")
+        for key in ("PRINT_BUDDY_CONFIG", "PRINT_BUDDY__BOT__MODE", "PRINT_BUDDY__SERVICES__SPOOLMAN_URL",
+                    "PRINT_BUDDY_BUNDLED_SPOOLMAN"):
+            with self.subTest(variable=key):
+                self.assertEqual(variables[key].text, str(compose_env[key]).split(":-")[-1].rstrip("}"))
+        for target, config in variables.items():
+            with self.subTest(variable=target):
+                if target in SECRETS:
+                    self.assertEqual(config.get("Mask"), "true")
+                    self.assertFalse(config.text)
+                elif target in RUNTIME_ENV_VARS:
+                    self.assertEqual(config.text, str(compose_env[target]).split(":-")[-1].rstrip("}"))
+                elif target.startswith("PRINT_BUDDY__"):
+                    section, key = target[len("PRINT_BUDDY__"):].lower().split("__")
+                    self.assertIn((section, key), inventory())
+                else:
+                    self.assertIn(target, COMPOSE_VARS)
+        # The bot token may be empty: the listener and Spoolman run while the bot idles.
+        self.assertEqual(variables["DISCORD_BOT_TOKEN"].get("Required"), "false")
 
 
 class AcceptanceFixtureTests(unittest.TestCase):
     def test_overlay_isolates_services_and_gives_the_fake_printer_a_readiness_check(self):
         overlay = yaml.safe_load((ROOT / "tests" / "docker" / "compose.acceptance.yml").read_text())
         self.assertTrue(overlay["networks"]["isolated"]["internal"])
-        for name in ("bot", "listener", "fake-moonraker"):
+        self.assertEqual(set(overlay["services"]), {"combined", "fake-moonraker"})
+        for name in ("combined", "fake-moonraker"):
             with self.subTest(service=name):
                 service = overlay["services"][name]
                 self.assertEqual(service["networks"], ["isolated"])
@@ -363,9 +353,8 @@ class AcceptanceFixtureTests(unittest.TestCase):
                 self.assertNotIn("ports", service)
         fake = overlay["services"]["fake-moonraker"]
         self.assertIn("/server/info", json.dumps(fake["healthcheck"]["test"]))
-        self.assertEqual(overlay["services"]["listener"]["depends_on"]["fake-moonraker"]["condition"], "service_healthy")
-        spoolman = yaml.safe_load((ROOT / "tests" / "docker" / "compose.acceptance-spoolman.yml").read_text())
-        self.assertEqual(spoolman["services"]["spoolman"]["networks"], ["isolated"])
+        self.assertEqual(overlay["services"]["combined"]["depends_on"]["fake-moonraker"]["condition"], "service_healthy")
+        self.assertFalse((ROOT / "tests" / "docker" / "compose.acceptance-spoolman.yml").exists())
 
     def test_harness_owns_its_names_and_publishes_no_port(self):
         script = (ROOT / "tests" / "docker" / "image_acceptance.sh").read_text()
@@ -374,6 +363,10 @@ class AcceptanceFixtureTests(unittest.TestCase):
         self.assertNotRegex(script, r"\s-p\s+\d|--publish")
         self.assertNotIn("prune", script)
         self.assertIn("not a version upgrade", script)
+        self.assertNotIn("print-buddy-bot.xml", script)
+        for check in ("spoolman:loopback-only", "spoolman:no-web-ui", "spoolman:persisted", "bot:fails-closed"):
+            with self.subTest(check=check):
+                self.assertIn(check, script)
 
 
 if __name__ == "__main__":

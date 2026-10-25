@@ -66,6 +66,7 @@ Start with the installation guide, not a production print. Installation and serv
 - **Manage filament:** use Spoolman and supported IFS integrations to match loaded spools and keep identity and material information consistent.
 - **Run approved jobs:** confirm bed clearance, work through multi-plate plans and reprint archived jobs using guarded controls.
 - **Follow a print:** receive configured printer events, camera alerts and timelapses, and keep job records.
+- **Set up and troubleshoot in Discord:** `/print-buddy setup` walks a fresh install through a saved, resumable checklist (nothing is written without an explicit `apply`), and `/print-buddy debugging` runs read-only, redacted checks. See [guided setup and debugging](docs/GUIDED-SETUP-DEBUGGING.md).
 
 Printer-specific capabilities and detailed commands are in the [project reference](docs/PROJECT-REFERENCE.md). Optional vision and conversational features may use a model; the standalone command and slicing workflow does not require one.
 

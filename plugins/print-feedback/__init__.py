@@ -92,6 +92,54 @@ async def upload_wait_dispatch(event, gateway, **kwargs):
     return None
 
 
+async def guided_dispatch(event, gateway, **kwargs):
+    """/print-buddy setup|debugging|status|cancel, plus plain replies to an open setup checklist (#162).
+
+    One state machine (print_buddy.bot.guided) serves both runtimes. Setup never collects a
+    token, never writes configuration without the explicit `apply` reply, and never touches a
+    printer; debugging is read-only and redacted.
+    """
+    if not _is_print_discord_event(event):
+        return None
+    source = event.source
+    if not getattr(source, 'user_id', None) or not gateway._is_user_authorized_for_source(source):
+        return None
+    text = str(getattr(event, 'text', '') or '').strip()
+    from print_buddy.bot import guided
+    key = f"{source.chat_id}:{source.thread_id or ''}:{source.user_id}"
+    store = guided.SetupStore(_state_dir() / guided.STORE_NAME)
+    if not text.startswith('/print-buddy'):
+        session = store.get(key)
+        if not session or session.get('status') not in ('in_progress', 'awaiting_consent'):
+            return None
+    adapter = gateway._delivery_adapter_for(source)
+    if adapter is None:
+        return {'action': 'skip', 'reason': 'guided UI delivery unavailable'}
+
+    def report():
+        cfg = _config.cfg()
+        token = _config.discord_token()
+        return guided.debugging_report(loader=lambda: cfg,
+                                       token_getter=lambda _cfg: token,
+                                       secrets=[token] if token else [])
+
+    try:
+        token_env = str(_config.cfg()['discord'].get('token_env') or 'DISCORD_BOT_TOKEN')
+    except Exception:
+        token_env = 'DISCORD_BOT_TOKEN'
+    try:
+        reply = await asyncio.to_thread(guided.handle_text, key, text, store=store,
+                                        token_env=token_env, report=report)
+    except Exception:
+        logger.exception('guided setup/debugging failed')
+        reply = 'That guided step failed and nothing was changed. Try `/print-buddy status`, or `/print-buddy cancel` to pause setup.'
+    if reply is None:
+        return None
+    metadata = {'thread_id': source.thread_id} if source.thread_id else None
+    await adapter.send(chat_id=source.chat_id, metadata=metadata, content=reply)
+    return {'action': 'skip', 'reason': 'guided setup/debugging handled'}
+
+
 def receipt_text(text):
     text = str(text or '').strip()
     lower = text.casefold()
@@ -1739,6 +1787,7 @@ def register(ctx):
     # "Pick one below, or click Other..." line for this gateway (a locale overlay, not a core patch).
     with contextlib.suppress(Exception):
         ctx.register_locale('en', {'platform': {'discord': {'prompt': {'clarify_hint_buttons': ''}}}})
+    ctx.register_hook('pre_gateway_dispatch', guided_dispatch)
     ctx.register_hook('pre_gateway_dispatch', maintenance_dispatch)
     ctx.register_hook('pre_gateway_dispatch', coldpull_dispatch)
     ctx.register_hook('pre_gateway_dispatch', typed_quantity_dispatch)

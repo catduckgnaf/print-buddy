@@ -1,0 +1,662 @@
+"""Guided setup and read-only debugging for ``/print-buddy`` (#162).
+
+Two flows, both driven by plain Discord messages so the standalone bot and the Hermes
+print-feedback plugin share one implementation:
+
+- ``/print-buddy setup`` walks a fresh install through small validated steps. Progress is a
+  checklist persisted as JSON in the state folder, so cancelling, a timeout, or a bot restart
+  resumes where the person left off. Nothing is written to the real configuration until the
+  person explicitly replies ``apply`` at the review step; ``manual`` returns precise steps
+  instead. The Discord bot token is never collected in chat: the token step only explains
+  where to store it (the environment variable named by ``[discord] token_env``, in the
+  profile/data folder ``.env`` with mode 600) and records that it was stored.
+- ``/print-buddy debugging`` runs read-only diagnostics: configuration validity, bot mode and
+  Discord login readiness, channel/user permission prerequisites, service connectivity (GET
+  probes only), required executables and versions, and state/log locations. It never calls a
+  printer operation, never edits configuration, and never restarts anything. Every line of
+  output passes through :func:`redact`, which removes secret values, private filesystem
+  paths, and long numeric identifiers.
+
+Printer operations and print authorization are deliberately out of scope for both flows.
+"""
+from __future__ import annotations
+
+import json
+import os
+import re
+import shutil
+import subprocess
+import sys
+import time
+import urllib.request
+from dataclasses import dataclass, field
+from pathlib import Path
+
+from .. import printers, settings
+
+STORE_NAME = "guided-setup.json"
+# A saved checklist survives this long. After it, a plain reply is not consumed as an answer;
+# ``/print-buddy setup`` resumes the saved answers and says the session had timed out.
+SESSION_TIMEOUT_S = 24 * 3600
+
+HELP = """**Print Buddy setup and debugging** — neither flow prints, moves, or authorizes a printer.
+- `/print-buddy setup`: guided setup in small steps. Your checklist is saved, so you can stop and resume later.
+- `/print-buddy debugging`: read-only checks (configuration, bot login, permissions, connectivity, executables, state and logs). Secrets and private paths are redacted.
+- `/print-buddy status`: show the saved setup checklist.
+- `/print-buddy cancel`: pause setup; the saved checklist is kept for resuming.
+While setup is waiting for an answer, reply with the answer as a plain message."""
+
+
+# ---------------------------------------------------------------------- redaction
+
+_TOKEN_SHAPE = re.compile(r"\b[MN][A-Za-z0-9_-]{20,}\.[A-Za-z0-9_-]{5,}\.[A-Za-z0-9_-]{20,}\b")
+_SECRET_PAIR = re.compile(r"(?i)\b(token|password|passwd|secret|api[_-]?key|access[_-]?code)\b\s*[:=]\s*\S+")
+_LONG_ID = re.compile(r"\b\d{17,20}\b")
+_ABS_PATH = re.compile(r"(?<![:/\w])/(?:[\w.~-]+/)+[\w.~-]*")
+
+
+def redact(text, *, secrets=(), roots=()):
+    """Remove secret values, private paths, and long numeric identifiers from ``text``."""
+    out = str(text or "")
+    for secret in secrets:
+        secret = str(secret or "")
+        if len(secret) >= 4:
+            out = out.replace(secret, "[redacted]")
+    for root in roots:
+        root = str(root or "")
+        if len(root) > 1:
+            out = out.replace(root, "<local path>")
+    out = _TOKEN_SHAPE.sub("[redacted]", out)
+    out = _SECRET_PAIR.sub(lambda m: f"{m.group(1)}=[redacted]", out)
+    out = _LONG_ID.sub(lambda m: "…" + m.group(0)[-2:], out)
+    out = _ABS_PATH.sub("<local path>", out)
+    return out
+
+
+def _env_secrets(environ):
+    env = os.environ if environ is None else environ
+    return [v for k, v in env.items()
+            if any(word in k.upper() for word in ("TOKEN", "PASSWORD", "SECRET", "API_KEY")) and v]
+
+
+# ---------------------------------------------------------------------- setup steps
+
+def _validate_model(value, _answers):
+    key = value.strip()
+    if key not in printers.MODELS:
+        raise ValueError(f"unknown model key {key!r}; reply with one of: {', '.join(sorted(printers.MODELS))}")
+    return key
+
+
+def _validate_mode(value, _answers):
+    mode = value.strip().lower()
+    if mode not in settings.BOT_MODES:
+        raise ValueError("reply `standalone` (Print Buddy runs its own bot) or `hermes` (a Hermes Agent profile)")
+    return mode
+
+
+def _one_id(value, label):
+    from ..setup_wizard import _ids
+    error = _ids(value)
+    if error:
+        raise ValueError(error)
+    parts = [p for p in re.split(r"[,\s]+", value.strip()) if p]
+    if len(parts) != 1:
+        raise ValueError(f"reply with exactly one numeric {label} ID")
+    return parts[0]
+
+
+def _validate_chat_id(value, _answers):
+    return _one_id(value, "channel")
+
+
+def _validate_user_ids(value, _answers):
+    from ..setup_wizard import _ids
+    error = _ids(value)
+    if error:
+        raise ValueError(error)
+    if not value.strip():
+        raise ValueError("at least one allowed user ID is required; nobody can use the bot without one")
+    return value.strip()
+
+
+def _validate_service_url(value, answers):
+    text = value.strip()
+    if text.lower() in ("", "skip", "none"):
+        return ""
+    model = printers.MODELS.get(answers.get("model"))
+    if model is not None and model.vendor.connection in ("offline", "bambulab_lan", "flashforge_stock"):
+        raise ValueError("this printer model has no Moonraker connection (Print Buddy would refuse the "
+                         "setting); reply `skip`")
+    from ..setup_wizard import _url
+    error = _url(text)
+    if error:
+        raise ValueError(f"Moonraker URL {error}, or reply `skip`")
+    return text
+
+
+def _validate_token_ack(value, _answers):
+    text = value.strip().lower()
+    if text == "stored":
+        return True
+    if text == "skip":
+        return False
+    raise ValueError("reply `stored` once the token is saved in that environment variable, or `skip` to "
+                     "do it later. Never paste the token here: it is not collected in chat.")
+
+
+@dataclass(frozen=True)
+class Step:
+    key: str
+    label: str
+    prompt: str
+    validate: object  # callable(value, answers) -> stored value, raising ValueError
+
+
+def steps(token_env="DISCORD_BOT_TOKEN"):
+    model_list = ", ".join(sorted(printers.MODELS))
+    return (
+        Step("model", "Printer model",
+             f"Which printer? Reply with its model key, one of: {model_list}.", _validate_model),
+        Step("mode", "Bot mode",
+             "How should Print Buddy talk to Discord? Reply `standalone` for its own bot, or "
+             "`hermes` for a Hermes Agent profile.", _validate_mode),
+        Step("chat_id", "Print channel",
+             "Reply with the print channel's numeric ID. In Discord: User Settings > Advanced > "
+             "Developer Mode on, then right-click the channel > Copy Channel ID.", _validate_chat_id),
+        Step("user_ids", "Allowed users",
+             "Reply with the numeric Discord user IDs allowed to use Print Buddy, separated by "
+             "commas (right-click a user > Copy User ID, with Developer Mode on).", _validate_user_ids),
+        Step("moonraker_url", "Moonraker URL (optional)",
+             "If this printer runs Klipper/Moonraker, reply with its URL (for example "
+             "http://printer.local:7125). Otherwise reply `skip`.", _validate_service_url),
+        Step("token_stored", "Bot token stored securely",
+             f"Create the bot in the Discord developer portal and store its token as the "
+             f"environment variable ${token_env} in the profile/data folder's `.env` file "
+             f"(file mode 600) — see docs/DISCORD-BOT-SETUP.md. Never paste the token in chat; "
+             f"Print Buddy only ever reads ${token_env}. Reply `stored` when it is saved, or "
+             f"`skip` to do it later.", _validate_token_ack),
+    )
+
+
+STEP_LABELS = {s.key: s.label for s in steps()}
+
+
+# ---------------------------------------------------------------------- session store
+
+class SetupStore:
+    """All guided-setup sessions in one JSON file (mode 600: it holds Discord user IDs)."""
+
+    def __init__(self, path):
+        self.path = Path(path)
+
+    def _load(self):
+        try:
+            data = json.loads(self.path.read_text(encoding="utf-8"))
+            return data if isinstance(data, dict) else {}
+        except (OSError, ValueError):
+            return {}
+
+    def get(self, key):
+        session = self._load().get(key)
+        return session if isinstance(session, dict) else None
+
+    def save(self, session):
+        data = self._load()
+        data[session["key"]] = session
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        from ..setup_wizard import _atomic_write
+        _atomic_write(self.path, json.dumps(data, indent=1), 0o600)
+
+    def clear(self, key):
+        data = self._load()
+        if key in data:
+            del data[key]
+            self.path.parent.mkdir(parents=True, exist_ok=True)
+            from ..setup_wizard import _atomic_write
+            _atomic_write(self.path, json.dumps(data, indent=1), 0o600)
+
+
+def default_store(cfg=None):
+    data = cfg if cfg is not None else settings.current()
+    return SetupStore(settings.state_dir(data) / STORE_NAME)
+
+
+def _new_session(key, now):
+    return {"key": key, "status": "in_progress", "answers": {}, "step": 0,
+            "created_at": now, "updated_at": now}
+
+
+def _expired(session, now):
+    return (session["status"] in ("in_progress", "awaiting_consent")
+            and now - float(session.get("updated_at") or 0) > SESSION_TIMEOUT_S)
+
+
+def checklist_text(session):
+    flow = steps()
+    answers = session.get("answers") or {}
+    lines = []
+    for index, step in enumerate(flow):
+        if step.key in answers:
+            mark = "☑"
+        elif session["status"] == "in_progress" and index == session.get("step"):
+            mark = "▶"
+        else:
+            mark = "☐"
+        lines.append(f"{mark} {step.label}")
+    if session["status"] == "awaiting_consent":
+        lines.append("▶ Review and choose how to apply")
+    return "\n".join(lines)
+
+
+def _prompt_text(session, note=""):
+    flow = steps()
+    step = flow[session["step"]]
+    head = f"**Setup step {session['step'] + 1} of {len(flow)}: {step.label}**\n{step.prompt}"
+    return (note + "\n" if note else "") + head + "\n\n" + checklist_text(session) + \
+        "\n\nReply with the answer, or `/print-buddy cancel` to pause (your checklist is saved)."
+
+
+def _review_text(session):
+    answers = session["answers"]
+    lines = ["**Setup is ready to review.** Nothing has been written yet.",
+             f"- Printer model: `{answers.get('model')}`",
+             f"- Bot mode: `{answers.get('mode')}`",
+             "- Print channel and allowed users: the IDs you entered (not repeated here)",
+             f"- Moonraker URL: {answers.get('moonraker_url') or 'not set'}",
+             f"- Bot token: {'stored in its environment variable' if answers.get('token_stored') else 'not stored yet — the bot cannot log in until it is'}",
+             "", checklist_text(session), "",
+             "Reply `apply` to write these settings to config/local.yaml (values already there "
+             "always win; the token is never written). Reply `manual` for precise steps to do it "
+             "yourself instead, or `/print-buddy cancel` to leave setup unfinished and resume later."]
+    return "\n".join(lines)
+
+
+def _manual_text(session):
+    answers = session["answers"]
+    lines = ["**Manual setup steps** — nothing was changed for you.",
+             "1. In the Print Buddy folder, create or edit `config/local.yaml` with:",
+             f"   - `[printer] model` = `{answers.get('model')}`",
+             f"   - `[bot] mode` = `{answers.get('mode')}`",
+             "   - `[discord] chat_id` and `allowed_user_ids` = the numeric IDs you entered above"]
+    if answers.get("moonraker_url"):
+        lines.append("   - `[services] moonraker_url` = the URL you entered above")
+    lines += ["2. Store the Discord bot token in the environment variable named by `[discord] "
+              "token_env` (default `DISCORD_BOT_TOKEN`) in the profile/data folder `.env` "
+              "(file mode 600). Do not put the token in the YAML file or in chat.",
+              "3. Validate offline: `python3 -m print_buddy.bot check` (standalone) or "
+              "`python3 -m print_buddy.doctor`.",
+              "4. Run `/print-buddy debugging` here to re-check. Your saved checklist stays "
+              "available with `/print-buddy status` until you finish or restart setup."]
+    return "\n".join(lines)
+
+
+def _apply_answers(answers, config_path):
+    """Write the collected settings after the explicit `apply` consent.
+
+    Only config/local.yaml is touched, through the setup wizard's merge (existing keys win).
+    No secret is written: the token step collected none. Installing software, restarting
+    services, and changing network exposure are never done by this flow.
+    """
+    from .. import setup_wizard
+
+    class _Consent:
+        """The Discord `apply` reply is the consent merge_config asks for."""
+        def __init__(self):
+            self.notes = []
+
+        def say(self, text=""):
+            self.notes.append(str(text))
+
+        def confirm(self, _key, _prompt, default=True):
+            return True
+
+    config = {"printer": {"model": answers["model"]}, "bot": {"mode": answers["mode"]},
+              "discord": {"chat_id": answers["chat_id"], "allowed_user_ids": answers["user_ids"]}}
+    if answers.get("moonraker_url"):
+        config["services"] = {"moonraker_url": answers["moonraker_url"]}
+    writer = _Consent()
+    setup_wizard.merge_config(Path(config_path), config, writer)
+    return ("Settings written to config/local.yaml (any values already there were kept). "
+            "The bot token was not written anywhere by this flow. Nothing was installed, "
+            "restarted, or exposed on the network. Next: `python3 -m print_buddy.bot check`, "
+            "then `/print-buddy debugging`.")
+
+
+# ---------------------------------------------------------------------- the flow
+
+def handle_text(key, text, *, store, now=None, token_env="DISCORD_BOT_TOKEN",
+                apply_config=None, report=None):
+    """One message in the guided flows. Returns the reply text, or None when not ours.
+
+    ``key`` identifies one person's session in one channel/thread. ``report`` is a zero-arg
+    callable returning the debugging report; ``apply_config`` writes the consented settings.
+    """
+    now = time.time() if now is None else now
+    raw = str(text or "").strip()
+    low = raw.casefold()
+    session = store.get(key)
+
+    if low.startswith("/print-buddy"):
+        rest = low[len("/print-buddy"):].strip()
+        if rest in ("", "help"):
+            return HELP
+        if rest == "debugging" or rest == "debug":
+            if report is None:
+                return "Debugging is not available in this runtime."
+            return report()
+        if rest == "status":
+            if session is None:
+                return "No guided setup has been started here. `/print-buddy setup` begins one."
+            state = {"in_progress": "in progress", "awaiting_consent": "waiting for your review choice",
+                     "cancelled": "paused (cancelled)", "complete": "complete"}[session["status"]]
+            return f"**Guided setup: {state}**\n" + checklist_text(session)
+        if rest == "cancel":
+            if session is None or session["status"] == "complete":
+                return "No guided setup is in progress. Nothing was changed."
+            session["status"] = "cancelled"
+            session["updated_at"] = now
+            store.save(session)
+            return ("Setup paused. Your answers are saved in the checklist and nothing was "
+                    "written to the configuration.\n" + checklist_text(session) +
+                    "\nResume any time with `/print-buddy setup`.")
+        if rest in ("setup", "setup restart"):
+            if rest == "setup restart" or session is None or session["status"] == "complete":
+                session = _new_session(key, now)
+                store.save(session)
+                return _prompt_text(session, "**Guided setup started.** One question at a time; "
+                                             "nothing is written until you approve it at the end.")
+            note = ""
+            if session["status"] == "cancelled":
+                note = "**Welcome back — resuming your saved checklist.**"
+            elif _expired(session, now):
+                note = "**Your previous session timed out; your saved answers were kept.** Resuming:"
+            session["status"] = "in_progress" if session["status"] != "awaiting_consent" else "awaiting_consent"
+            session["updated_at"] = now
+            store.save(session)
+            if session["status"] == "awaiting_consent":
+                return (note + "\n" if note else "") + _review_text(session)
+            return _prompt_text(session, note)
+        return "Use `/print-buddy setup`, `/print-buddy debugging`, `/print-buddy status`, or `/print-buddy cancel`."
+
+    if session is None or session["status"] not in ("in_progress", "awaiting_consent"):
+        return None
+    if raw.startswith("/"):
+        return None  # another command; setup stays open for a later plain reply
+    if _expired(session, now):
+        return ("This setup session timed out, so that reply was not used as an answer. "
+                "Your saved answers were kept — run `/print-buddy setup` to resume the checklist.")
+
+    if session["status"] == "awaiting_consent":
+        if low == "apply":
+            apply_config = apply_config or (lambda answers: _apply_answers(answers, settings.LOCAL))
+            try:
+                detail = apply_config(session["answers"])
+            except Exception as exc:  # a failed write must not lose the checklist
+                return ("Applying the settings failed: " + redact(str(exc), roots=[Path.home()]) +
+                        "\nYour checklist is unchanged. Reply `apply` to retry, `manual` for "
+                        "steps, or `/print-buddy cancel` to pause.")
+            session["status"] = "complete"
+            session["updated_at"] = now
+            store.save(session)
+            return "**Setup complete.** " + detail
+        if low == "manual":
+            session["status"] = "cancelled"  # finished with the flow, checklist kept for reference
+            session["updated_at"] = now
+            store.save(session)
+            return _manual_text(session)
+        return "Reply `apply` to write the settings, `manual` for precise manual steps, or `/print-buddy cancel` to pause."
+
+    flow = steps(token_env)
+    step = flow[session["step"]]
+    try:
+        value = step.validate(raw, session["answers"])
+    except ValueError as exc:
+        return f"That answer does not work: {exc}\n\n" + _prompt_text(session)
+    session["answers"][step.key] = value
+    session["step"] += 1
+    session["updated_at"] = now
+    if session["step"] >= len(flow):
+        session["status"] = "awaiting_consent"
+        store.save(session)
+        return _review_text(session)
+    store.save(session)
+    return _prompt_text(session, f"Saved: {step.label}.")
+
+
+# ---------------------------------------------------------------------- debugging
+
+@dataclass
+class Finding:
+    name: str
+    status: str  # ok | warn | fail | skip
+    detail: str
+    action: str = ""
+
+
+_MARKS = {"ok": "✓", "warn": "⚠", "fail": "✗", "skip": "–"}
+
+
+def _default_probe(url):
+    """A read-only GET. Returns the HTTP status; raises on any failure."""
+    with urllib.request.urlopen(url, timeout=5) as resp:
+        return resp.status
+
+
+def _default_login_probe(token):
+    from . import rest
+    return rest.whoami(token)
+
+
+def _default_version_runner(command):
+    run = subprocess.run([*command, "--version"], capture_output=True, text=True, timeout=15)
+    out = (run.stdout or run.stderr or "").strip()
+    if run.returncode != 0 or not out:
+        run = subprocess.run([*command, "--help"], capture_output=True, text=True, timeout=15)
+        out = (run.stdout or run.stderr or "").strip()
+    return out.splitlines()[0] if out else ""
+
+
+def _default_token_getter(cfg):
+    from ..hermes import _config
+    return _config.profile_env_value(str(cfg["discord"].get("token_env") or "DISCORD_BOT_TOKEN"))
+
+
+def run_diagnostics(*, loader=None, token_getter=None, probe=None, login_probe=None,
+                    which=shutil.which, version_runner=None, environ=None):
+    """Read-only checks. Every external contact is a GET probe or a `--version` run."""
+    loader = loader or (lambda: settings.load(environ={}))
+    probe = probe or _default_probe
+    version_runner = version_runner or _default_version_runner
+    findings: list[Finding] = []
+    secrets = _env_secrets(environ)
+    roots = [Path.home()]
+
+    def clean(text):
+        return redact(text, secrets=secrets, roots=roots)
+
+    cfg = None
+    try:
+        cfg = loader()
+    except Exception as exc:
+        findings.append(Finding("configuration", "fail", clean(f"settings do not load: {exc}"),
+                                "Fix the named setting in config/local.yaml (see "
+                                "docs/CONFIGURATION-YAML.md), then run debugging again."))
+    if cfg is not None:
+        for section in ("paths",):
+            for value in (cfg.get(section) or {}).values():
+                if isinstance(value, (str, Path)):
+                    roots.append(str(value))
+        printer = cfg.get("printer") or {}
+        findings.append(Finding("configuration", "ok",
+                                clean(f"settings load and validate; printer model {printer.get('model')}, "
+                                      f"bed {printer.get('bed_mm')}")))
+
+        # Bot mode, token presence, and (standalone only) a read-only login probe.
+        mode = str((cfg.get("bot") or {}).get("mode") or "hermes")
+        token = ""
+        if token_getter is not None or mode == "standalone":
+            try:
+                token = (token_getter or _default_token_getter)(cfg) or ""
+            except Exception:
+                token = ""
+        if token:
+            secrets.append(token)
+        token_env = str((cfg.get("discord") or {}).get("token_env") or "DISCORD_BOT_TOKEN")
+        if mode != "standalone":
+            findings.append(Finding("bot mode and login", "skip",
+                                    f"mode is {mode}; the Hermes gateway owns the Discord login",
+                                    ""))
+        elif not token:
+            findings.append(Finding("bot mode and login", "fail",
+                                    f"mode is standalone but ${token_env} is empty",
+                                    f"Store the bot token in ${token_env} in the profile/data "
+                                    "folder .env (mode 600); never paste it in chat."))
+        else:
+            try:
+                me = (login_probe or _default_login_probe)(token)
+                findings.append(Finding("bot mode and login", "ok",
+                                        clean(f"standalone; Discord accepted the token "
+                                              f"(bot user {me.get('username')})")))
+            except Exception as exc:
+                findings.append(Finding("bot mode and login", "warn",
+                                        clean(f"standalone; ${token_env} is set but the read-only "
+                                              f"login check failed: {exc}"),
+                                        "Check network/DNS to discord.com and that the token was "
+                                        "not reset in the developer portal."))
+
+        # Permission prerequisites: what configuration can prove offline. Channel overrides
+        # themselves are only visible to the logged-in bot, so they stay a manual next step.
+        from .. import setup_wizard
+        discord_cfg = cfg.get("discord") or {}
+        chat = str(discord_cfg.get("chat_id") or "")
+        try:
+            users = settings.user_ids(discord_cfg.get("allowed_user_ids"))
+        except Exception:
+            users = []
+        missing = []
+        if not chat.isdigit():
+            missing.append("discord.chat_id is not a numeric channel ID")
+        if not users:
+            missing.append("no allowed user IDs are configured")
+        needed = ", ".join(setup_wizard.discord_permissions())
+        if missing:
+            findings.append(Finding("permissions", "fail", clean("; ".join(missing)),
+                                    f"The bot needs these channel permissions: {needed}. "
+                                    "Set the IDs in config/local.yaml and check channel overrides."))
+        else:
+            findings.append(Finding("permissions", "ok",
+                                    clean(f"print channel set; {len(users)} allowed user(s); "
+                                          f"required channel permissions: {needed}"),
+                                    ""))
+
+        # Service connectivity and health: GET probes only, never a printer operation.
+        from .. import doctor
+        services = cfg.get("services") or {}
+        probe_paths = dict(doctor.SERVICE_PATHS)
+        if services.get("octoprint_url"):
+            probe_paths["octoprint_url"] = "/api/version"
+        for key, path in probe_paths.items():
+            url = str(services.get(key) or "")
+            label = key.replace("_url", "")
+            if not url:
+                findings.append(Finding(f"service: {label}", "skip", "not configured", ""))
+                continue
+            try:
+                status = probe(url.rstrip("/") + path)
+                findings.append(Finding(f"service: {label}", "ok",
+                                        f"answered HTTP {status} on its read-only health path"))
+            except Exception as exc:
+                findings.append(Finding(f"service: {label}", "warn",
+                                        clean(f"health probe failed: {exc}"),
+                                        f"Check the {label} service is running and reachable at "
+                                        "the configured URL; debugging did not try to restart it."))
+
+        # Executables and versions.
+        findings.append(Finding("executable: python", "ok",
+                                f"Python {sys.version_info.major}.{sys.version_info.minor}."
+                                f"{sys.version_info.micro}"))
+        orca = (cfg.get("orca") or {}).get("command") or []
+        if orca:
+            exe = orca[0]
+            found = which(exe) or (str(exe) if Path(str(exe)).is_file() else None)
+            if not found:
+                findings.append(Finding("executable: slicer", "fail",
+                                        clean(f"{exe} is not on PATH"),
+                                        "Install OrcaSlicer or fix [orca] command in the settings."))
+            else:
+                try:
+                    version = version_runner(list(orca))
+                    findings.append(Finding("executable: slicer", "ok",
+                                            clean(f"{exe} runs: {version}" if version else f"{exe} runs")))
+                except Exception as exc:
+                    findings.append(Finding("executable: slicer", "warn",
+                                            clean(f"{exe} was found but did not run cleanly: {exc}"),
+                                            "Run the slicer command in a terminal and fix what it reports."))
+        ffmpeg = str((cfg.get("paths") or {}).get("ffmpeg") or "")
+        if ffmpeg:
+            found = which(ffmpeg) or (ffmpeg if Path(ffmpeg).is_file() else None)
+            findings.append(Finding("executable: ffmpeg", "ok" if found else "warn",
+                                    "found" if found else "not found; timelapse/video features "
+                                    "that need it will fail",
+                                    "" if found else "Install ffmpeg or fix [paths] ffmpeg."))
+
+        # State and log locations: existence/access only. Exact paths stay out of the report.
+        state = settings.state_dir(cfg)
+        if not state.is_dir():
+            findings.append(Finding("state and logs", "warn", "the state folder does not exist yet",
+                                    "It is created when the bot or a check first runs: "
+                                    "`python3 -m print_buddy.bot check`."))
+        elif not os.access(state, os.W_OK):
+            findings.append(Finding("state and logs", "fail", "the state folder is not writable",
+                                    "Fix ownership/permissions on the profile/data folder; "
+                                    "the bot must save state and its heartbeat there."))
+        else:
+            log_file = str((cfg.get("logging") or {}).get("file") or "")
+            detail = "state folder exists and is writable"
+            if log_file:
+                parent = Path(log_file).expanduser()
+                parent = parent if parent.is_absolute() else state / parent
+                detail += "; a log file is configured" + ("" if parent.parent.is_dir()
+                                                          else " but its folder is missing")
+            findings.append(Finding("state and logs", "ok", detail))
+            try:
+                from . import health
+                heartbeat = health.read()
+                if heartbeat:
+                    fresh, why = health.evaluate(heartbeat, stale_s=int(cfg["bot"]["health_stale_s"]))
+                    findings.append(Finding("bot heartbeat", "ok" if fresh else "warn",
+                                            clean(f"standalone heartbeat: {why}"),
+                                            "" if fresh else "Start the standalone bot, or ignore "
+                                                              "this in Hermes mode."))
+                else:
+                    findings.append(Finding("bot heartbeat", "skip",
+                                            "no standalone heartbeat found (expected in Hermes mode)", ""))
+            except Exception:
+                pass
+    return findings
+
+
+def format_report(findings, *, secrets=(), roots=()):
+    roots = [Path.home(), *roots]
+    lines = ["**Print Buddy debugging** — read-only: no settings, services, or printer state were changed."]
+    for finding in findings:
+        line = f"{_MARKS.get(finding.status, '?')} {finding.name}: " + \
+            redact(finding.detail, secrets=secrets, roots=roots)
+        lines.append(line)
+        if finding.action:
+            lines.append("  → Next: " + redact(finding.action, secrets=secrets, roots=roots))
+    failed = sum(1 for f in findings if f.status == "fail")
+    warned = sum(1 for f in findings if f.status == "warn")
+    lines.append(f"Summary: {failed} failed, {warned} warning(s), "
+                 f"{sum(1 for f in findings if f.status == 'ok')} ok. "
+                 "Anything that would edit configuration, install software, restart a service, "
+                 "or change network exposure needs your explicit go-ahead first; otherwise the "
+                 "Next steps above are the manual path.")
+    return "\n".join(lines)
+
+
+def debugging_report(**kwargs):
+    """The full redacted report text for ``/print-buddy debugging``."""
+    secrets = list(kwargs.pop("secrets", ()) or ())
+    return format_report(run_diagnostics(**kwargs), secrets=secrets)

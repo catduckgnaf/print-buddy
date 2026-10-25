@@ -1,0 +1,21 @@
+{
+ "_comment": "Hand reviewed. Calibrated on a 4 core host, 12 x paired min-of-5 runs on a 19602 triangle grid. Drift is reported, never auto refreshed. max_ratio sits above the observed max; ceiling_s is about 4x the observed worst candidate time to tolerate slow CI runners.",
+ "parse_3mf": {
+  "baseline_ratio": 0.98,
+  "observed_range": [
+   0.864,
+   1.221
+  ],
+  "max_ratio": 1.6,
+  "ceiling_s": 1.0
+ },
+ "bounds_and_volume": {
+  "baseline_ratio": 0.495,
+  "observed_range": [
+   0.432,
+   0.509
+  ],
+  "max_ratio": 0.7,
+  "ceiling_s": 0.25
+ }
+}

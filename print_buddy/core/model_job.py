@@ -272,11 +272,8 @@ def model_info_output(path):
     tris = source_triangles(path)
     if not tris:
         raise RuntimeError("model has no printable geometry")
-    lo = [min(p[a] for t in tris for p in t) for a in range(3)]
-    hi = [max(p[a] for t in tris for p in t) for a in range(3)]
-    vol = 0.0
-    for (ax, ay, az), (bx, by, bz), (cx, cy, cz) in tris:
-        vol += (ax * (by * cz - bz * cy) - ay * (bx * cz - bz * cx) + az * (bx * cy - by * cx)) / 6.0
+    from .mesh_fast import bounds_and_volume
+    lo, hi, vol = bounds_and_volume(tris)
     info = "".join(f"{k} = {hi[a] - lo[a]:.2f}\n" for a, k in enumerate(("size_x", "size_y", "size_z")))
     info += f"volume = {abs(vol):.2f}\n"
     if key is not None:

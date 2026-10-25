@@ -47,6 +47,15 @@ def save_download(response, target):
         raise
 
 
+def _parse_chunk(parser, data, final):
+    try:
+        parser.Parse(data, final)
+    except xml.parsers.expat.ExpatError as exc:
+        # Preserve the existing inventory API's malformed-XML exception contract.
+        from xml.etree.ElementTree import ParseError
+        raise ParseError(str(exc)) from exc
+
+
 def check_source(path):
     """Check sizes first, then bounded streaming XML counts without building a tree."""
     path = Path(path)
@@ -102,5 +111,5 @@ def check_source(path):
                     total += len(chunk)
                     if total > MAX_XML_BYTES:
                         _refuse(f'model XML exceeds {MAX_XML_BYTES // MIB} MiB limit')
-                    parser.Parse(chunk, False)
-                parser.Parse(b'', True)
+                    _parse_chunk(parser, chunk, False)
+                _parse_chunk(parser, b'', True)

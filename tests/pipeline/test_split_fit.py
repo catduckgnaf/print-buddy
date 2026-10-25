@@ -81,10 +81,96 @@ def test_fit_options_reports_blocking_parts_before_any_scale(tmp_path, monkeypat
     assert 'yaw sweep 0-90 degrees' in part['orientations_checked']
 
 
-def test_split_plan_stays_conservative_for_yaw_only_parts(tmp_path):
-    # A split plan is sliced with authored orientations, so a part that only
-    # fits yawed is evaluated and reported by per_part_fit but is not offered
-    # a split plan the slicing path cannot realize.
+def test_split_plan_gives_a_yaw_only_part_its_own_turned_plate(tmp_path):
+    # A part that only fits when turned in the bed plane is offered a split
+    # plan now: it sits alone on its own plate and the plan records the exact
+    # yaw slicing must apply, instead of no plan at all (#76 follow-up to #191).
     source = tmp_path / 'yaw-only.3mf'
     _source(source, {'1': (230, 50, 20), '2': (150, 150, 10)}, [['1', '2']])
+    plan = split_fit.split_plan_100(source, 220)
+    assert plan is not None
+    assert sorted(plan['plates']) == [['1:1'], ['2:1']]
+    (row,) = [r for r in split_fit.per_part_fit(source, 220) if r['object_id'] == '1']
+    assert plan['yaw_by_object'] == {'1': row['best_yaw_deg']}
+    assert 0 < plan['yaw_by_object']['1'] < 90
+    # The turned part never shares its plate, and no other part is turned.
+    turned_plate = next(plate for plate in plan['plates'] if '1:1' in plate)
+    assert turned_plate == ['1:1']
+
+
+def test_split_plan_without_yaw_records_no_yaw(tmp_path):
+    source = tmp_path / 'two-boxes.3mf'
+    _source(source, {'1': (150, 150, 10), '2': (150, 150, 10)}, [['1', '2']])
+    plan = split_fit.split_plan_100(source, 220)
+    assert plan is not None and 'yaw_by_object' not in plan
+
+
+def test_split_plan_yaw_does_not_cure_the_issue_76_stand(tmp_path):
+    # The retained Stand fits at no yaw, so a yaw-aware plan still refuses it.
+    source = tmp_path / 'stand.3mf'
+    _source(source, {'1': (130, 230, 30), '2': (150, 150, 10)}, [['1', '2']])
     assert split_fit.split_plan_100(source, 220) is None
+
+
+def test_fit_choice_rows_carry_the_split_yaw():
+    from print_buddy.core.prepared_intake import fit_choice_rows
+    rows = fit_choice_rows({'scales': [], 'rotations': [],
+                            'split_plan': {'plates': [['1:1'], ['2:1']],
+                                           'yaw_by_object': {'1': 43.0}}})
+    (split,) = [row for row in rows if row['kind'] == 'split']
+    assert split['yaw_by_object'] == {'1': 43.0}
+    assert split['plates'] == [['1:1'], ['2:1']]
+
+
+def _split_job(tmp_path, source, plan):
+    import json
+
+    from .test_plate_merge import _job
+    job_path = _job(tmp_path, source)
+    data = json.loads(job_path.read_text())
+    data['full_size_split_plan'] = plan
+    job_path.write_text(json.dumps(data))
+    return job_path
+
+
+def test_slicing_a_yaw_split_applies_the_recorded_turn_to_its_plate(tmp_path, monkeypatch):
+    import json
+
+    from print_buddy.core import model_job, orca_adapter
+    from .test_plate_merge import _fake_slice
+    source = tmp_path / 'yaw.3mf'
+    _source(source, {'1': (230, 50, 20), '2': (150, 150, 10)}, [['1', '2']])
+    plan = split_fit.split_plan_100(source, 220)
+    assert plan and plan['yaw_by_object']
+    job_path = _split_job(tmp_path, source, plan)
+    fake = _fake_slice()
+    monkeypatch.setattr(orca_adapter, 'slice_model', fake)
+    paths = model_job.slice_job(job_path)
+    assert len(paths) == 2 and len(fake.calls) == 2
+    saved = json.loads(job_path.read_text())
+    by_plate = {row['plate_id']: row for row in saved['derived_plates']}
+    turned = next(row for row in saved['derived_plates'] if row['part_keys'] == ['1:1'])
+    assert turned['yaw_deg'] == plan['yaw_by_object']['1']
+    # The derived plate was exported with the turn, not as authored: its
+    # reported fit carries the rotation and its placed bounds fit the bed.
+    fit = turned['plate_report']['fit']
+    assert fit['scale'] == 1.0 and fit['rotation'] is not None
+    placed = turned['plate_report']['placed_bounds_mm']
+    assert all(0 <= low and high <= 220 for low, high in placed)
+    other = next(row for row in saved['derived_plates'] if row['part_keys'] == ['2:1'])
+    assert 'yaw_deg' not in other and 'fit' not in other['plate_report']
+    assert by_plate[turned['plate_id']] is turned
+
+
+def test_slicing_refuses_a_turn_recorded_for_a_shared_plate(tmp_path, monkeypatch):
+    import pytest
+
+    from print_buddy.core import model_job, orca_adapter
+    from .test_plate_merge import _fake_slice
+    source = tmp_path / 'shared.3mf'
+    _source(source, {'1': (150, 150, 10), '2': (150, 150, 10)}, [['1', '2']])
+    plan = {'plates': [['1:1', '2:1']], 'yaw_by_object': {'1': 30.0}}
+    job_path = _split_job(tmp_path, source, plan)
+    monkeypatch.setattr(orca_adapter, 'slice_model', _fake_slice())
+    with pytest.raises(RuntimeError, match='not that part alone'):
+        model_job.slice_job(job_path)

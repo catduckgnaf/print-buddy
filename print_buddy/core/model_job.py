@@ -2299,6 +2299,13 @@ def _slice_full_size_split(job, job_path, src, manifest, decisions, st):
     flattened = [key for group in plates for key in group]
     if len(flattened) < 2 or len(flattened) != len(set(flattened)) or set(flattened) != expected:
         raise RuntimeError('full-size split plan does not cover every source part exactly once')
+    yaw_by_object = plan.get('yaw_by_object') or {}
+    if not isinstance(yaw_by_object, dict):
+        raise RuntimeError('full-size split plan yaw_by_object must be a mapping of object id to degrees')
+    key_to_object = {part['key']: str(part['object_id']) for part in manifest.get('parts') or []}
+    unknown_yaw = sorted(set(yaw_by_object) - set(key_to_object.values()))
+    if unknown_yaw:
+        raise RuntimeError(f"full-size split plan records a turn for unknown object(s) {','.join(unknown_yaw)}")
     view = _per_part_view(manifest, decisions)
     slots = sorted(set(_part_slots(view, manifest).values()))
     if len(slots) != 1:
@@ -2314,14 +2321,31 @@ def _slice_full_size_split(job, job_path, src, manifest, decisions, st):
     artifacts = []
     for index, keys in enumerate(plates, 1):
         plate = derived / f'full_size_split_{index}.3mf'
+        turned = {key_to_object[key] for key in keys if key_to_object[key] in yaw_by_object}
+        fit, yaw_deg = None, None
+        if turned:
+            # The exporter turns a whole derived plate rigidly about one origin,
+            # so a recorded turn is only realizable for that part alone. Refuse
+            # anything else instead of slicing the plate as authored (#76).
+            if len(turned) != 1 or {key_to_object[key] for key in keys} != turned:
+                raise RuntimeError('full-size split plan records a turn for a plate that is not '
+                                   'that part alone; refusing to slice it as authored')
+            yaw_deg = float(yaw_by_object[turned.pop()])
+            if not math.isfinite(yaw_deg) or not 0 < yaw_deg <= 90:
+                raise RuntimeError(f'full-size split plan turn must be between 0 and 90 degrees, got {yaw_deg!r}')
+            rad = math.radians(yaw_deg)
+            c, s = math.cos(rad), math.sin(rad)
+            fit = {'scale': 1.0, 'rotation': [c, -s, 0.0, s, c, 0.0, 0.0, 0.0, 1.0]}
         report = export_single_color_plate(src, plate, view, keys, bed=int(st['bed_mm'][0]),
-                                           slot_colors=st.get('ifs_slots') or {})
+                                           slot_colors=st.get('ifs_slots') or {},
+                                           **({'fit': fit} if fit is not None else {}))
         slice_dir = work / 'sliced' / 'orca' / uuid.uuid4().hex
         out, provenance, configs = slice_model(plate, slice_dir, st, preserve_layout=True, filament_slot=slot)
         finalize_multicolor(out, None, st, {'0': slot})
         check = verify_gcode_offline(out, st)
         artifacts.append({'slot': slot, 'plate_id': index, 'binding_key': f'{index}:{slot}',
                           'part_keys': keys, 'plate': str(plate), 'gcode': str(out),
+                          **({'yaw_deg': yaw_deg} if yaw_deg is not None else {}),
                           'offline_check': check, 'plate_report': report, 'provenance': provenance,
                           'slice_config': [str(path) for path in configs]})
     latest = json.loads(Path(job_path).read_text())

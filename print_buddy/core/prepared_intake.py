@@ -351,7 +351,9 @@ def fit_choice_rows(options):
     split_plan = options.get('split_plan')
     if split_plan and len(rows) < 2:
         rows.append({'kind': 'split', 'label': f"100% · split {len(split_plan['plates'])} plates",
-                     'plates': split_plan['plates'], 'scale': 1.0})
+                     'plates': split_plan['plates'], 'scale': 1.0,
+                     **({'yaw_by_object': split_plan['yaw_by_object']}
+                        if split_plan.get('yaw_by_object') else {})})
     elif options.get('full_size_split') and len(rows) < 2:
         rows.append({'kind': 'split', 'label': 'Split plates at 100%', 'scale': 1.0})
     full_size_available = any(row['kind'] in ('split', 'rearrange') for row in rows)
@@ -1184,9 +1186,17 @@ async def prepare_link(event, adapter, state, root, timeout=None, reuse=None):
             if split_plan:
                 distribution = []
                 names_by_key = {part['key']: part['name'] for part in manifest.get('parts', [])}
+                object_by_key = {part['key']: str(part['object_id']) for part in manifest.get('parts', [])}
+                yaw_by_object = split_plan.get('yaw_by_object') or {}
                 for index, part_keys in enumerate(split_plan['plates'], 1):
-                    names = ', '.join(names_by_key.get(key, key) for key in part_keys)
-                    distribution.append(f'{names} on plate {index}')
+                    labels = []
+                    for part_key in part_keys:
+                        label = names_by_key.get(part_key, part_key)
+                        yaw = yaw_by_object.get(object_by_key.get(part_key, ''))
+                        if yaw:
+                            label += f' (turned {float(yaw):g}° on the bed)'
+                        labels.append(label)
+                    distribution.append(f"{', '.join(labels)} on plate {index}")
                 prompt = (f"{title} does not fit the AD5X bed full size as one plate. "
                           f"Full size works as {len(split_plan['plates'])} plates: " + '; '.join(distribution) +
                           '. Choose a fit option, or type split / 100% / shrink / cancel.')
@@ -1235,7 +1245,9 @@ async def prepare_link(event, adapter, state, root, timeout=None, reuse=None):
                 latest['plate_mode'] = 'separate'
                 latest['scale'] = 1.0
                 if row.get('plates'):
-                    latest['full_size_split_plan'] = {'plates': row['plates']}
+                    latest['full_size_split_plan'] = {'plates': row['plates'],
+                                                      **({'yaw_by_object': row['yaw_by_object']}
+                                                         if row.get('yaw_by_object') else {})}
                 latest.pop('orientation', None)
                 latest.pop('full_size_rearrange_plan', None)
                 receipt['full_size_split'] = True
@@ -1246,7 +1258,8 @@ async def prepare_link(event, adapter, state, root, timeout=None, reuse=None):
             rotation = row.get('rotation')
             if row['kind'] in ('split', 'rearrange'):
                 # Capacity on the unsplit/unarranged source is zero by definition here; each
-                # rearranged or split plate was verified at authored size.
+                # rearranged or split plate was verified at authored size (a turned
+                # plate at exactly the yaw recorded in its split plan).
                 capacity = 1
             else:
                 capacity = await _with_stop(adapter, source, key, metadata, "Checking whether it fits the bed. Press Stop to cancel.",

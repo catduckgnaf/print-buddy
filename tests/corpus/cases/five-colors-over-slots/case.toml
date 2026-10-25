@@ -7,23 +7,23 @@ question = "Choose colors for these parts"
 button = "Choose colors"
 
 [[click]]
-question = "Choose the color/material for Small pin/peg"
+question = '("Part 1")'
 button = "White"
 
 [[click]]
-question = "Choose the color/material for Medium pin/peg"
+question = '("Part 2")'
 button = "Black"
 
 [[click]]
-question = "Choose the color/material for Large pin/peg"
+question = '("Part 3")'
 button = "Pink"
 
 [[click]]
-question = "Choose the color/material for Extra pin/peg"
+question = '("Part 4")'
 button = "Dark green"
 
 [[click]]
-question = "Choose the color/material for Fifth pin/peg"
+question = '("Part 5")'
 button = "White"
 
 [[click]]

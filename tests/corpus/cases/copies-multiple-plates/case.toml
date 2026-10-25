@@ -7,6 +7,10 @@ question = "Choose colors for these parts"
 button = "One color for everything"
 
 [[click]]
+question = "Choose the color for Quantity A"
+button = "White"
+
+[[click]]
 question = "does not fit"
 button = "split"
 

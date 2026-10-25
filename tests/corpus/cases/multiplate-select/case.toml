@@ -7,7 +7,7 @@ question = "Choose colors for these parts"
 button = "Choose colors"
 
 [[click]]
-question = "Choose the color for Plate A, Plate B"
+question = "Choose the color/material for"
 button = "White"
 
 [[click]]

@@ -7,19 +7,19 @@ question = "Choose colors for these parts"
 button = "Choose colors"
 
 [[click]]
-question = "Choose the color/material for Part 1"
+question = '("Part 1")'
 button = "White"
 
 [[click]]
-question = "Choose the color/material for Part 2"
+question = '("Part 2")'
 button = "Black"
 
 [[click]]
-question = "Choose the color/material for Part 3"
+question = '("Part 3")'
 button = "Pink"
 
 [[click]]
-question = "Choose the color/material for Part 4"
+question = '("Part 4")'
 button = "Dark green"
 
 [[click]]

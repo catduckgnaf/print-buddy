@@ -21,10 +21,10 @@ def test_andrew_drops_a_multicolor_file_then_slices_and_prints(tmp_path):
     """
     case, run = _run("four-colors-one-plate", tmp_path)
     harness.check_expectations(case, run)
-    assert _picked(run, "Part 1") == ["White PLA"]
-    assert _picked(run, "Part 2") == ["Black PLA"]
-    assert _picked(run, "Part 3") == ["Pink PLA"]
-    assert _picked(run, "Part 4") == ["Dark Green PLA"]
+    assert _picked(run, '("Part 1")') == ["White PLA"]
+    assert _picked(run, '("Part 2")') == ["Black PLA"]
+    assert _picked(run, '("Part 3")') == ["Pink PLA"]
+    assert _picked(run, '("Part 4")') == ["Dark Green PLA"]
     assert len(run.gcodes) == 1 and len(run.starts) == 1
     assert run.receipt["status"] == "STARTED"
 
@@ -37,7 +37,7 @@ def test_andrew_accepts_a_smaller_fit_for_an_oversized_model(tmp_path):
     harness.check_expectations(case, run)
     assert 0.78 <= run.receipt["scale"] <= 0.84
     assert run.events.index(next(e for e in run.events if e[0] == "slice_start")) > next(
-        i for i, e in enumerate(run.events) if e[0] == "prompt" and "scale" in e[1].casefold())
+        i for i, e in enumerate(run.events) if e[0] == "prompt" and "does not fit" in e[1].casefold())
     assert len(run.starts) == 1
 
 
@@ -46,7 +46,10 @@ def test_andrew_chooses_print_quantity_for_a_single_plate(tmp_path):
     then both the saved receipt and sliced job account for the quantity.
     """
     case, run = _run("single-part", tmp_path)
-    rules = list(case.clicks) + [{"question": "How many copies", "button": "Two copies"}]
+    # First matching rule wins in the harness, so replace the case's own copies
+    # rule instead of appending: this story is the one choosing the quantity.
+    rules = [{"question": "How many copies", "button": "Two copies"}] + [
+        rule for rule in case.clicks if rule["question"] != "How many copies"]
     case.clicks = rules
     run = harness.run_case(case, tmp_path / "two-copies")
     assert run.receipt["status"] == "STARTED"

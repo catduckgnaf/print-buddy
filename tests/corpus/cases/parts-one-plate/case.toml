@@ -11,6 +11,10 @@ question = "Choose the color/material for"
 button = "White"
 
 [[click]]
+question = "·"
+button = "Slice and print"
+
+[[click]]
 question = "Slicing failed"
 button = "Cancel"
 

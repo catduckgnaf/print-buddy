@@ -183,7 +183,10 @@ def write_3mf(path, shapes, plates, palette, support=False, *, omit_plate_metada
                "enable_support": "1" if support else "0"}
     if support:
         project["support_type"] = "tree(auto)"
-    plate_rows = [] if omit_plate_metadata else plates
+    # Plates arrive as shape indices; model_settings.config must reference the
+    # assembly object ids (2 * index + 1), as real Orca/Bambu files do.
+    plate_rows = [] if omit_plate_metadata else [
+        (name, [2 * index + 1 for index in indices]) for name, indices in plates]
     if extra_empty_plates:
         plate_rows = list(plate_rows) + [(f"Empty {i}", []) for i in range(1, extra_empty_plates + 1)]
     files = {

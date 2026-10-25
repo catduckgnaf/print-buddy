@@ -76,7 +76,7 @@ dysprosium is latency-sensitive and unsuitable for this build. Neither host has
 been approved as an alternate. Cleanup is limited to the two named disposable
 containers and their own fixture data after evidence capture, never broad prune,
 shared caches, volumes or unrelated resources. Retain image/logs for review unless
-Andrew approves their removal. Lifetime and all exact names/commands must be
+Catduck approves their removal. Lifetime and all exact names/commands must be
 confirmed in Phase 3's live approval request before creation.
 
 ## Phase 3/4 contributor continuation (PR #139)

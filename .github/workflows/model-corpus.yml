@@ -1,6 +1,8 @@
 name: Model regression corpus
 
 on:
+  push:
+    branches: [ci/model-corpus-171]
   workflow_dispatch:
   schedule:
     - cron: '17 6 * * 1'

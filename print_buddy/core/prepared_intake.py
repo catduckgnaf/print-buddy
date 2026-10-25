@@ -416,8 +416,19 @@ def fit_question(title, options):
     checked = options.get('orientations_checked') or (parts[0].get('orientations_checked') if parts else None)
     orientations = ', '.join(checked or ['authored XY', 'verified rotations'])
     lines = [f'{part_name} ({extent_text}) does not fit the bed full size.']
+    blocking = options.get('blocking_part') or next(
+        (part for part in parts if part.get('fits_full_size') is False), None)
+    if blocking:
+        # This part is oversized on its own (#76): say so plainly, with the
+        # measured limit it was checked against, before offering anything.
+        reason = blocking.get('blocking_reason')
+        if reason:
+            lines.append(f"{blocking.get('name') or part_name} does not fit a plate on its own: {reason}.")
+        lines.append('Splitting other parts onto separate plates, or reducing the gap between '
+                     'parts, does not shrink this part. Supports can help overhangs but do not '
+                     'make a part smaller, and can take more bed space.')
     if scales:
-        lines.append(f'As authored it fits at {_pct(scales[0])} max.')
+        lines.append(f'Shrink option: as authored it fits at {_pct(scales[0])} max.')
     for alt in rotations[:2]:
         size = ' x '.join(f'{v:g}' for v in alt.get('dims_mm') or [])
         warn = []
@@ -1065,11 +1076,18 @@ async def prepare_link(event, adapter, state, root, timeout=None, reuse=None):
                                            _heavy(mj.per_part_fit_options, path, latest['color_decisions'], options,
                                                   int((state.get('bed_mm') or BED)[0])))
             if options.get('parts'):
-                failing = [part for part in options['parts']
-                           if max(part['extent_mm'][:2]) > min(state.get('bed_mm') or BED)]
+                # Prefer the per-part fit evaluation (#76): a part blocks only
+                # when it fits no plate alone at any checked yaw or exceeds the
+                # Z limit. Fall back to the authored-extent check for options
+                # that carry no per-part evaluation.
+                failing = [part for part in options['parts'] if part.get('fits_full_size') is False]
+                if not failing and not any('fits_full_size' in part for part in options['parts']):
+                    failing = [part for part in options['parts']
+                               if max(part['extent_mm'][:2]) > min(state.get('bed_mm') or BED)]
                 if failing:
                     options['part_name'] = failing[0]['name']
                     options['extent_mm'] = failing[0]['extent_mm']
+                    options['blocking_part'] = failing[0]
                     options['orientations_checked'] = ['authored XY (measured)'] + [r.get('label', 'rotation') for r in options.get('rotations') or []]
             full_size_split = False
             rotate_100 = any(float(r.get('scale') or 0) >= 0.995 and not r.get('supports')
@@ -1109,8 +1127,10 @@ async def prepare_link(event, adapter, state, root, timeout=None, reuse=None):
                 receipt['fit_brim_policy'] = options['brim_policy']
             if options.get('parts'):
                 fit_receipt['parts'] = options['parts']
+            if options.get('blocking_parts'):
+                fit_receipt['blocking_parts'] = options['blocking_parts']
             receipt['fit_options'] = fit_receipt
-            if not any(r['kind'] in ('scale', 'rotate', 'split') for r in picked):  # nothing printable to offer
+            if not any(r['kind'] in ('scale', 'rotate', 'split', 'rearrange') for r in picked):  # nothing printable to offer
                 if (latest.get('color_decisions') or {}).get('mode') == 'per_part':
                     message = (f"{title} only fits when resized, and none of the resize options work with "
                                'these per-part colors. Cancel, then resend the link and choose single color to resize it.')

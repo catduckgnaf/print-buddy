@@ -33,6 +33,10 @@ chmod 0755 "$asset"
 test -x squashfs-root/AppRun
 test -x squashfs-root/bin/orca-slicer
 mv "squashfs-root" "/out/opt/orca-$channel"
+# The alpha AppImage extracts with directories the runtime user cannot traverse
+# (stat on bin/orca-slicer failed with EACCES in hosted validation); normalize the
+# extracted tree to world-readable/traversable without changing upstream files.
+chmod -R a+rX "/out/opt/orca-$channel"
 printf '#!/bin/sh\nexec /opt/orca-%s/AppRun "$@"\n' "$channel" > "/out/usr/local/bin/orca-slicer-$channel"
 chmod 0755 "/out/usr/local/bin/orca-slicer-$channel"
 if [ "$channel" = stable ]; then

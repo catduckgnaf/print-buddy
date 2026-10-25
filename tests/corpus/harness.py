@@ -56,6 +56,22 @@ def find_model(case_dir):
     return preferred[0] if preferred else found[0]
 
 
+class TimedEvents(list):
+    """The run's event log with a monotonic timestamp per entry (times[i] belongs to self[i])."""
+
+    def __init__(self, *args):
+        super().__init__(*args)
+        self.t0 = time.monotonic()
+        self.times = [self.t0] * len(self)
+
+    def append(self, item):
+        super().append(item)
+        self.times.append(time.monotonic())
+
+    def timeline(self):
+        return [(round(t - self.t0, 3), e[0], str(e[1])[:80] if len(e) > 1 else "") for t, e in zip(self.times, self)]
+
+
 class UnansweredPrompt(AssertionError):
     """The case has no [[click]] rule for a question the bot asked."""
 
@@ -312,7 +328,7 @@ def run_case(case, work, *, real_slicer=False, state_file=FIXTURE_STATE, in_gate
     stub = _stub_print_now(work)
     model_copy = work / case.model.name
     model_copy.write_bytes(case.model.read_bytes())
-    events = []
+    events = TimedEvents()
     adapter = FakeAdapter(case.clicks, events)
     starts = []
     slice_starts = []

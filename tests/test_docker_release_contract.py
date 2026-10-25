@@ -148,11 +148,18 @@ class DockerReleaseContract(unittest.TestCase):
         self.assertEqual(inputs["version"]["required"], "true")
         self.assertEqual(inputs["with_orca"]["default"], "true")
         self.assertEqual(inputs["with_bambu"]["default"], "true")
+        # Candidate validation must not authenticate or push without explicit opt-in.
+        self.assertEqual(inputs["publish"]["type"], "boolean")
+        self.assertEqual(inputs["publish"]["default"], "false")
         steps = workflow["jobs"]["publish"]["steps"]
         acceptance = next(i for i, step in enumerate(steps) if step.get("id") == "acceptance")
         publish = next(i for i, step in enumerate(steps) if step.get("id") == "publish")
         self.assertLess(acceptance, publish)
-        self.assertEqual(steps[publish]["if"], "steps.acceptance.outcome == 'success'")
+        publish_gate = "inputs.publish && steps.acceptance.outcome == 'success'"
+        self.assertEqual(steps[publish]["if"], publish_gate)
+        login = next(step for step in steps
+                     if step.get("uses", "").startswith("docker/login-action@"))
+        self.assertEqual(login["if"], publish_gate)
         self.assertIn("docker push", steps[publish]["run"])
         self.assertIn("image_acceptance.sh", steps[acceptance]["run"])
         for step in steps:

@@ -255,7 +255,7 @@ def test_uninstall_dry_run_touches_nothing(tmp_path):
 def test_docs_and_readme_point_at_the_installer():
     readme = (ROOT / "README.md").read_text()
     assert "scripts/install-light.sh | bash" in readme
-    assert "--ref 2.1.0" in readme
+    assert "--ref 2.1.1" in readme
     assert (ROOT / "docs" / "INSTALL-LIGHT.md").exists()
     discord = (ROOT / "docs" / "DISCORD-BOT-SETUP.md").read_text()
     assert f"permissions={PERMS}" in discord and "MESSAGE CONTENT" in discord

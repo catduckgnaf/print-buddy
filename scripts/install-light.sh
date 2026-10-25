@@ -2,7 +2,7 @@
 # Print Buddy light install: Raspberry Pi 4/5 (64-bit Raspberry Pi OS) or Debian/Ubuntu. No Docker.
 #
 #   curl -fsSL https://raw.githubusercontent.com/catduckgnaf/print-buddy/main/scripts/install-light.sh | bash
-#   curl -fsSL .../install-light.sh | bash -s -- --ref 2.1.0      # a pinned release
+#   curl -fsSL .../install-light.sh | bash -s -- --ref 2.1.1      # a pinned release
 #
 # Options:
 #   --ref REF        Git branch or tag to install (default: main)

@@ -156,9 +156,9 @@ jobs:
 
   real-slicer-alpha:
     # Alpha validation is intentionally limited; full Discord corpus remains on the 2.4.2 job.
+    # Flatpak plus xvfb requires a full system session and display; kept on the host runner after
+    # Debian 13 container attempts failed during actual slicer startup.
     runs-on: ubuntu-24.04
-    container:
-      image: python:3.12-slim-trixie
     timeout-minutes: 30
     env:
       ORCA_FLATPAK_APP_ID: com.orcaslicer.OrcaSlicer
@@ -171,13 +171,10 @@ jobs:
           cache: pip
           cache-dependency-path: requirements-test.txt
       - run: python -m pip install -r requirements-test.txt
-      - name: Install Debian Flatpak session and display tools
+      - name: Install flatpak and xvfb
         run: |
-          apt-get update -q
-          apt-get install -y -q flatpak xvfb xauth dbus-x11 curl ca-certificates
-          mkdir -p /tmp/orca-runtime
-          chmod 700 /tmp/orca-runtime
-          echo 'XDG_RUNTIME_DIR=/tmp/orca-runtime' >> "$GITHUB_ENV"
+          sudo apt-get update -q
+          sudo apt-get install -y -q flatpak xvfb
       - name: Cache OrcaSlicer 2.5.0 alpha bundle and runtime
         uses: actions/cache@v6
         with:
@@ -211,10 +208,10 @@ jobs:
           flatpak info --user --show-ref "$ORCA_FLATPAK_APP_ID"
           flatpak info --user --show-commit "$ORCA_FLATPAK_APP_ID"
       - name: Run slicer tests (2.5.0 alpha)
-        run: dbus-run-session -- xvfb-run -a python -m pytest -v -s tests/slicer
+        run: xvfb-run -a python -m pytest -v -s tests/slicer
       - name: Run representative Discord fixtures (2.5.0 alpha only)
         run: >-
-          dbus-run-session -- xvfb-run -a python -m pytest -v -s
+          xvfb-run -a python -m pytest -v -s
           tests/corpus/test_corpus.py::test_discord_flow[single-part]
           tests/corpus/test_corpus.py::test_discord_flow[plates-multicolor]
 

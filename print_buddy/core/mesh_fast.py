@@ -124,7 +124,9 @@ def _parse_member(data, want_triangles=True):
     namespace_pending = []
     object_ids = set()
     parser = expat.ParserCreate(namespace_separator='}')
-    parser.ordered_attributes = True
+    parser.ordered_attributes = False
+    vertex_tag = _CORE_URI + '}vertex'
+    triangle_tag = _CORE_URI + '}triangle'
 
     def namespace_decl(prefix, uri):
         if prefix and uri == _CORE_URI:
@@ -133,12 +135,39 @@ def _parse_member(data, want_triangles=True):
         namespace_pending.append((prefix, uri))
 
     def start(raw_name, raw_attrs):
-        raw_attrs = dict(zip(raw_attrs[::2], raw_attrs[1::2]))
         nonlocal root, object_id, object_mesh_count, mesh_active
         nonlocal vertex_buf, face_buf, vertex_total, face_total, element_total, saw_mesh
         element_total += 1
         if element_total > _MAX_ELEMENTS:
             raise ValueError('3MF XML element count exceeds hard safety ceiling')
+        # Primitive callbacks dominate large meshes. Avoid namespace/attribute
+        # dictionaries and structural Element work for the canonical hot path.
+        if mesh_active and not namespace_pending:
+            parent = stack[-1][0]
+            if raw_name == vertex_tag and parent == _CORE + 'vertices':
+                x, y, z = raw_attrs['x'], raw_attrs['y'], raw_attrs['z']
+                if not (x.isascii() and y.isascii() and z.isascii()):
+                    raise _UnsupportedFastPath
+                vertex_buf.extend((float(x), float(y), float(z)))
+                vertex_total += 1
+                if vertex_total > _MAX_VERTICES or (vertex_total + face_total) * 32 > _MAX_SOURCE_BUFFER_BYTES:
+                    raise ValueError('3MF source geometry exceeds hard safety ceiling')
+                stack.append((_CORE + 'vertex', None))
+                return
+            if want_triangles and raw_name == triangle_tag and parent == _CORE + 'triangles':
+                a, b, c = raw_attrs['v1'], raw_attrs['v2'], raw_attrs['v3']
+                if not (a.isascii() and b.isascii() and c.isascii()
+                        and a.isdigit() and b.isdigit() and c.isdigit()):
+                    raise _UnsupportedFastPath
+                a, b, c = int(a), int(b), int(c)
+                if max(a, b, c) > 2_147_483_647:
+                    raise _UnsupportedFastPath
+                face_buf.extend((a, b, c))
+                face_total += 1
+                if face_total > _MAX_TRIANGLES or (vertex_total + face_total) * 32 > _MAX_SOURCE_BUFFER_BYTES:
+                    raise ValueError('3MF source geometry exceeds hard safety ceiling')
+                stack.append((_CORE + 'triangle', None))
+                return
         full_name = _et_name(raw_name)
         attrs = {_et_name(key): value for key, value in raw_attrs.items()}
         parent = stack[-1][0] if stack else None
@@ -314,18 +343,33 @@ def bounds_and_volume(triangles):
     source = triangles.iter_triangles() if isinstance(triangles, MeshTable) else iter(triangles)
     lo = hi = None
     volume = 0.0
+    xs, ys, zs = [], [], []
+
+    def flush():
+        nonlocal lo, hi
+        low = [min(xs), min(ys), min(zs)]
+        high = [max(xs), max(ys), max(zs)]
+        if lo is None:
+            lo, hi = low, high
+        else:
+            for axis in range(3):
+                if low[axis] < lo[axis]:
+                    lo[axis] = low[axis]
+                if high[axis] > hi[axis]:
+                    hi[axis] = high[axis]
+        xs.clear()
+        ys.clear()
+        zs.clear()
+
     for (ax, ay, az), (bx, by, bz), (cx, cy, cz) in source:
-        for point in ((ax, ay, az), (bx, by, bz), (cx, cy, cz)):
-            if lo is None:
-                lo, hi = list(point), list(point)
-            else:
-                for axis, value in enumerate(point):
-                    # Match Python min/max order and NaN behavior of the old loops.
-                    if value < lo[axis]:
-                        lo[axis] = value
-                    if value > hi[axis]:
-                        hi[axis] = value
+        xs += (ax, bx, cx)
+        ys += (ay, by, cy)
+        zs += (az, bz, cz)
         volume += (ax * (by * cz - bz * cy) - ay * (bx * cz - bz * cx) + az * (bx * cy - by * cx)) / 6.0
+        if len(xs) >= 24576:
+            flush()
+    if xs:
+        flush()
     if lo is None:
         raise ValueError('empty triangle table')
     return lo, hi, volume

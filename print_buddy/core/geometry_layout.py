@@ -22,6 +22,8 @@ import zipfile
 import zlib
 from pathlib import Path
 
+from .compact_geometry import CompactTriangles, transformed_rows
+from .mesh_fast import archive_tables, bounds_and_volume
 from .model_job import mesh_topology
 from .orca_adapter import _hull, read_stl_triangles
 from .painted_geometry import paint_census
@@ -144,11 +146,7 @@ def _triangle_area_and_signed_volume(triangles):
 
 
 def _bounds_from_triangles(triangles):
-    xs = [p[0] for tri in triangles for p in tri]
-    ys = [p[1] for tri in triangles for p in tri]
-    zs = [p[2] for tri in triangles for p in tri]
-    lo = [min(xs), min(ys), min(zs)]
-    hi = [max(xs), max(ys), max(zs)]
+    lo, hi, _ = bounds_and_volume(triangles)
     ext = [hi[a] - lo[a] for a in range(3)]
     return lo, hi, ext
 
@@ -269,7 +267,7 @@ def _load_3mf_parts(path: Path, input_unit: str | None = None):
         if '3D/3dmodel.model' not in archive.namelist():
             raise ValueError(f'{path} is missing 3D/3dmodel.model')
         cutters = cutter_ids(archive)
-        root_bytes = archive.read('3D/3dmodel.model')
+        root_bytes, _ = archive_tables(archive, '3D/3dmodel.model')
         root_el = ET.fromstring(root_bytes)
         declared_unit = root_el.get('unit') or 'millimeter'
         raw_unit = input_unit or declared_unit
@@ -291,34 +289,35 @@ def _load_3mf_parts(path: Path, input_unit: str | None = None):
 
         def get_model(model_path):
             if model_path not in models:
-                r = ET.fromstring(archive.read(model_path))
-                models[model_path] = (r, {o.get('id'): o for o in r.findall('c:resources/c:object', NS)})
+                data, tables = archive_tables(archive, model_path)
+                r = ET.fromstring(data)
+                models[model_path] = (r, {o.get('id'): o for o in r.findall('c:resources/c:object', NS)}, tables)
             return models[model_path]
 
         def collect_triangles(model_path, object_id, chain, seen):
             if (model_path, object_id) in seen:
                 raise RuntimeError('3MF component cycle')
-            _, objects = get_model(model_path)
+            _, objects, tables = get_model(model_path)
             if object_id not in objects:
                 raise RuntimeError(f'missing 3MF object {model_path}:{object_id}')
             obj = objects[object_id]
             mesh = obj.find('c:mesh', NS)
-            tris = []
+            tris = CompactTriangles()
             if mesh is not None:
-                verts = [
-                    (float(v.attrib['x']), float(v.attrib['y']), float(v.attrib['z']))
-                    for v in mesh.findall('c:vertices/c:vertex', NS)
-                ]
-                for point_Transform in chain:
-                    verts = [apply(point_Transform, p) for p in verts]
+                if tables is not None:
+                    verts, faces = tables.get(object_id, ([], []))
+                else:
+                    verts = [
+                        (float(v.attrib['x']), float(v.attrib['y']), float(v.attrib['z']))
+                        for v in mesh.findall('c:vertices/c:vertex', NS)
+                    ]
+                    faces = [(int(t.attrib['v1']), int(t.attrib['v2']), int(t.attrib['v3']))
+                             for t in mesh.findall('c:triangles/c:triangle', NS)]
+                transforms = list(chain)
                 if mm_factor != 1.0:
-                    verts = [(p[0] * mm_factor, p[1] * mm_factor, p[2] * mm_factor) for p in verts]
-                for tri in mesh.findall('c:triangles/c:triangle', NS):
-                    tris.append([
-                        verts[int(tri.attrib['v1'])],
-                        verts[int(tri.attrib['v2'])],
-                        verts[int(tri.attrib['v3'])],
-                    ])
+                    transforms.append([mm_factor, 0, 0, 0, mm_factor, 0, 0, 0, mm_factor, 0, 0, 0])
+                verts = transformed_rows(verts, transforms, apply)
+                tris.extend([verts[a], verts[b], verts[c]] for a, b, c in faces)
             for comp in obj.findall('c:components/c:component', NS):
                 comp_oid = comp.get('objectid')
                 if (object_id, comp_oid) in cutters:
@@ -334,7 +333,7 @@ def _load_3mf_parts(path: Path, input_unit: str | None = None):
                 )
             return tris
 
-        root, objects = get_model('3D/3dmodel.model')
+        root, objects, _ = get_model('3D/3dmodel.model')
         parts = []
         warnings = []
         items = [item for item in root.findall('c:build/c:item', NS) if item.get('printable', '1') == '1']

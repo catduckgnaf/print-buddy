@@ -6,6 +6,8 @@ import time
 from pathlib import Path
 from types import SimpleNamespace as S
 
+# Ensure the repository's namespace package wins over any third-party `tests` package.
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 from tests.corpus import harness
 
 root = Path(os.environ["PRINT_BUDDY_PRIVATE_CORPUS"]).resolve()

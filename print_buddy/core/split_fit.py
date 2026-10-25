@@ -17,6 +17,13 @@ slicer capacity checks and the G-code out-of-bounds guard downstream. A plan
 returned here is therefore an offer to slice at 100%, never a print-ready
 assurance, and separate plates are never offered as a remedy for a part that
 does not fit a plate on its own.
+
+A part that fits a plate only when turned in the bed plane gets a plate of
+its own, and the plan records the turn as ``yaw_by_object`` (object id to
+degrees). The exporter can apply one rigid turn to a whole derived plate, so
+a turned part is never packed with other parts; slicing applies exactly the
+recorded turn (see ``model_job._slice_full_size_split``) and refuses a plan
+that records a turn for a shared plate instead of slicing it as authored.
 """
 import math
 import zipfile
@@ -145,7 +152,10 @@ def split_plan_100(source, bed=None, height=None):
     :func:`per_part_fit` (per-part XY footprint at dimension-preserving yaws,
     and the printer's real Z limit): a part that fits no plate alone has no
     split plan, because separate plates cannot cure an individually oversized
-    part. Geometry checks and packing use the printer's edge and spacing
+    part. An object that fits only at a turned yaw is planned alone on its own
+    plate and the turn is recorded in ``yaw_by_object``; objects that fit as
+    authored keep their authored orientation and are packed together as
+    before. Geometry checks and packing use the printer's edge and spacing
     margins (see the module docstring) and do not slice or contact the printer.
     """
     from . import color_geometry
@@ -161,6 +171,8 @@ def split_plan_100(source, bed=None, height=None):
     report = per_part_fit(source, bed=(bed_x, bed_y), height=height)
     if any(not row['fits_full_size'] for row in report):
         return None
+    yaw_by_object = {row['object_id']: row['best_yaw_deg'] for row in report
+                     if not row['fits_authored'] and row['best_yaw_deg'] > 0}
     try:
         authored = model_job.plate_manifest(source)['plates']
     except (RuntimeError, zipfile.BadZipFile):
@@ -181,17 +193,31 @@ def split_plan_100(source, bed=None, height=None):
             boxes = {oid: color_geometry._world_bounds(archive, {oid})[0] for oid in objects}
             extents = {oid: (box[0][1] - box[0][0], box[1][1] - box[1][0])
                        for oid, box in boxes.items()}
-            if any(plate_merge.pack({oid: extent}, bed) is None for oid, extent in extents.items()):
+            if any(oid not in yaw_by_object
+                   and plate_merge.pack({oid: extent}, bed) is None
+                   for oid, extent in extents.items()):
                 return None
-            bins = []
+            bins = []  # (objects dict, closed to further packing)
             for oid in sorted(extents, key=lambda key: -(extents[key][0] * extents[key][1])):
-                for bin_objects in bins:
+                if oid in yaw_by_object:
+                    # A turned part is always alone: the exporter turns a whole
+                    # derived plate rigidly, so it cannot share one.
+                    bins.append(({oid: extents[oid]}, True))
+                    continue
+                for bin_objects, closed in bins:
+                    if closed:
+                        continue
                     candidate = {**bin_objects, oid: extents[oid]}
                     if plate_merge.pack(candidate, bed) is not None:
                         bin_objects[oid] = extents[oid]
                         break
                 else:
-                    bins.append({oid: extents[oid]})
-            for bin_objects in bins:
+                    bins.append(({oid: extents[oid]}, False))
+            for bin_objects, _closed in bins:
                 result.append([key for oid in bin_objects for key in objects[oid]])
-    return {'plates': result} if len(result) > 1 else None
+    if len(result) <= 1:
+        return None
+    plan = {'plates': result}
+    if yaw_by_object:
+        plan['yaw_by_object'] = yaw_by_object
+    return plan

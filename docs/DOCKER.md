@@ -1,6 +1,6 @@
 # Docker
 
-The first published image is 2.1.0 at `ghcr.io/catduckgnaf/print-buddy` (amd64). Pin it by digest (`@sha256:<digest>` from the publish run summary), not by tag. The quick start is in the [README](../README.md#docker).
+No image has been published yet. Docker was deferred from 2.1.0; the first image is planned for 2.1.1 at `ghcr.io/catduckgnaf/print-buddy` (amd64), tracked in [#117](https://github.com/catduckgnaf/print-buddy/issues/117). When it is published, pin it by digest (`@sha256:<digest>` from the publish run summary), not by tag. The quick start is in the [README](../README.md#docker).
 
 ## Base image
 

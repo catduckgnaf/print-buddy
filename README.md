@@ -35,9 +35,9 @@ The setup wizard asks for your printer brand and model (or Other / generic), the
 
 ### Docker
 
-The 2.1.0 image is `ghcr.io/catduckgnaf/print-buddy` (amd64 only). It is built and checked offline by the publish workflow before it is pushed.
+Docker is not part of 2.1.0. No image has been published yet; the first image is planned for 2.1.1 (see [#117](https://github.com/catduckgnaf/print-buddy/issues/117)). Use the light installer above for now. The steps below describe the planned setup and will work once an image is published at `ghcr.io/catduckgnaf/print-buddy` (amd64 only), built and checked offline by the publish workflow before it is pushed.
 
-1. Pin the image by digest, not a tag: set `PRINT_BUDDY_IMAGE=ghcr.io/catduckgnaf/print-buddy@sha256:<digest>` in `.env`. The digest is in the publish run summary and the 2.1.0 release notes.
+1. Pin the image by digest, not a tag: set `PRINT_BUDDY_IMAGE=ghcr.io/catduckgnaf/print-buddy@sha256:<digest>` in `.env`. The digest will be in the publish run summary and that release's notes.
 2. Copy `.env.example` to `.env` and fill in the Discord token, channel and allowed users. Set `PRINT_BUDDY_DATA` to a persistent directory owned by UID 1000.
 3. Run `docker compose up -d`. Add `docker-compose.spoolman.yml` if you want Spoolman as a separate container.
 

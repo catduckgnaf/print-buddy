@@ -83,7 +83,6 @@ def test_hull_handles_empty_degenerate_duplicate_and_huge_negative_coordinates(p
 
 
 @pytest.mark.parametrize('bad', [float('nan'), float('inf'), float('-inf')])
-@pytest.mark.xfail(strict=True, reason='bug: placement_candidates accepts non-finite mesh coordinates')
 def test_placement_nonfinite_coordinates_do_not_produce_successful_candidate_report(bad):
     with pytest.raises((ValueError, OverflowError, RuntimeError)):
         orca_adapter.placement_candidates([[(0.0, 0.0, 0.0), (1.0, 0.0, 0.0), (0.0, bad, 1.0)]])

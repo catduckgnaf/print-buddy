@@ -1622,9 +1622,11 @@ def placement_candidates(path_or_triangles, printer_model=None, bed_mm=None, max
     if not tris:
         raise ValueError('placement report requires non-empty triangles')
     points = _unique_points(tris)
+    if not all(math.isfinite(component) for point in points for component in point):
+        raise ValueError('placement report requires finite mesh coordinates')
     bed = tuple(float(v) for v in (bed_mm or BED))
     height_limit = float(max_z_mm if max_z_mm is not None else MAX_HEIGHT_MM)
-    if len(bed) != 2 or min(*bed, height_limit) <= 0:
+    if len(bed) != 2 or not all(math.isfinite(v) for v in (*bed, height_limit)) or min(*bed, height_limit) <= 0:
         raise ValueError('bed_mm and max_z_mm must be positive dimensions')
     rows = []
     orientations = [('Upright', 'identity', IDENTITY_ROT)]

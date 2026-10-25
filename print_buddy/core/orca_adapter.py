@@ -248,12 +248,19 @@ def _place_triangles(result, target, scale=1.0, rotation=None, bed=None):
 
 def read_stl_triangles(path):
     """Read binary or ASCII STL triangles as [[(x, y, z)] * 3]."""
-    data = Path(path).read_bytes()
-    if len(data) >= 84:
-        count = struct.unpack('<I', data[80:84])[0]
-        if len(data) == 84 + count * 50:
-            return [[struct.unpack('<3f', data[84 + i * 50 + k:84 + i * 50 + k + 12]) for k in (12, 24, 36)]
-                    for i in range(count)]
+    path = Path(path)
+    with path.open('rb') as stream:
+        header = stream.read(84)
+        if len(header) == 84:
+            count = struct.unpack('<I', header[80:84])[0]
+            if path.stat().st_size == 84 + count * 50:
+                from .compact_geometry import CompactTriangles
+                result = CompactTriangles()
+                while chunk := stream.read(50 * 8192):
+                    for row in struct.iter_unpack('<12fH', chunk):
+                        result.append([row[3:6], row[6:9], row[9:12]])
+                return result
+    data = path.read_bytes()
     text = data.decode('utf-8', errors='ignore')
     points = [tuple(map(float, m.groups())) for m in re.finditer(
         r'vertex\s+(\S+)\s+(\S+)\s+(\S+)', text)]

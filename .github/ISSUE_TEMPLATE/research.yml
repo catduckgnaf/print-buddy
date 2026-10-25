@@ -1,0 +1,42 @@
+name: Research or evaluation
+description: A question to investigate before committing to an implementation.
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Research issues end with a recommendation, a documentation update, or a follow-up implementation issue — not with code. Keep the investigation offline unless the issue explicitly scopes live checks, and remember that an issue never authorises operating a live printer.
+  - type: textarea
+    id: question
+    attributes:
+      label: Question to answer
+      description: The single question this investigation should settle.
+    validations:
+      required: true
+  - type: textarea
+    id: why
+    attributes:
+      label: Why it matters
+      description: The decision this answer informs — what will be built, dropped, or documented differently depending on the result.
+    validations:
+      required: true
+  - type: textarea
+    id: evidence
+    attributes:
+      label: Evidence to gather
+      description: Measurements, source files, references or experiments that would settle the question. Separate facts you have already verified from what still needs checking.
+    validations:
+      required: true
+  - type: textarea
+    id: scope
+    attributes:
+      label: Scope
+      description: What is in scope for the investigation and what is explicitly out of scope. Link related issues to avoid duplicating earlier research.
+    validations:
+      required: true
+  - type: textarea
+    id: output
+    attributes:
+      label: Expected output
+      description: For example — a recommendation posted on this issue, a documentation page, or a follow-up implementation issue with acceptance criteria.
+    validations:
+      required: false

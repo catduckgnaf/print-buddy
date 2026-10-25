@@ -1,0 +1,36 @@
+name: Documentation
+description: A guide is wrong, missing, out of date, or hard to follow.
+labels: ["documentation"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        The versioned documentation in `docs/` is authoritative. Use this form for problems in those guides, the README, or setup and configuration instructions.
+  - type: input
+    id: page
+    attributes:
+      label: Page or section
+      description: The file and heading, for example "docs/CONFIGURATION-YAML.md, Spoolman section". A link to the rendered page is fine too.
+    validations:
+      required: true
+  - type: textarea
+    id: problem
+    attributes:
+      label: What is wrong or missing
+      description: Quote the current text if it is incorrect, and explain what a reader gets wrong by following it. If a step is missing, say where the reader gets stuck.
+    validations:
+      required: true
+  - type: textarea
+    id: suggestion
+    attributes:
+      label: Suggested correction
+      description: The replacement text or the content that should be added, if you have it. Verified behaviour beats remembered behaviour — say how you checked.
+    validations:
+      required: false
+  - type: checkboxes
+    id: attestations
+    attributes:
+      label: Before submitting
+      options:
+        - label: I checked the current version of the page on the main branch.
+          required: true

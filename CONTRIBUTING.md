@@ -9,6 +9,15 @@ Thanks for helping improve Print Buddy. This guide describes the repository work
 - Keep changes focused. Separate unrelated fixes and avoid including machine specific settings, credentials, private printer data, or personal model files.
 - Printer control is safety sensitive. Keep offline analysis and tests separate from live printer operations. A code change or successful test does not authorize contacting or operating a printer.
 
+## Filing an issue
+
+- Use the [issue forms](.github/ISSUE_TEMPLATE). Bug reports require the observed behaviour, the steps that reproduce it, the Print Buddy version and install method, and evidence. Feature requests require the problem, the proposed behaviour, scope, and acceptance criteria. Research issues require the question and the decision the answer informs. The forms mark which fields are required.
+- State measured facts, and label estimates and suspicions as such. Do not present a cause as verified when it is a hypothesis; say what evidence would settle it.
+- Never include credentials, tokens, private model files, or personal runtime records in an issue. Redact logs before posting.
+- An issue never authorizes operating a live printer. If a report involves unexpected motion, heating, or an ignored confirmation, say so in the first line so it can be prioritised.
+- Labels describe the kind of issue (`bug`, `enhancement`, `documentation`, `question`). Priority (`P0`–`P2`) and planning labels (`backlog`, `MVP`) are applied by maintainers during triage, not by the reporter.
+- Duplicates are closed with a link to the canonical issue. Issues closed as not planned get a short reason and, where one exists, a link to the issue that supersedes them. A closed issue can be reopened when new evidence or a changed scope justifies it.
+
 ## Prepare a change
 
 - Use a branch for your change and keep commits focused and clearly named.

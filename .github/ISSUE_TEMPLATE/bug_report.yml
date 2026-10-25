@@ -1,0 +1,82 @@
+name: Bug report
+description: Something is not working as documented or expected.
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for reporting a problem. A few ground rules before you start:
+
+        - Search open and closed issues first; duplicates are closed with a link to the canonical issue.
+        - Remove credentials, tokens, private model files and personal runtime records from anything you paste.
+        - A bug report never authorises anyone to operate a live printer. If the problem involves unexpected motion, heating or an ignored confirmation, say so in the first line of the summary so it can be prioritised.
+  - type: textarea
+    id: summary
+    attributes:
+      label: What happened
+      description: Describe the observed behaviour. State measured facts, and label anything estimated or suspected as such.
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: What you expected instead
+      description: The behaviour the documentation or the interface led you to expect.
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      description: The exact inputs and flow — model link or file type, the Discord command or UI path, and the settings that matter. Note whether this was offline analysis or a live printer flow.
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: Print Buddy version
+      description: Release version, image tag, or commit SHA.
+    validations:
+      required: true
+  - type: dropdown
+    id: install
+    attributes:
+      label: How is Print Buddy installed?
+      options:
+        - Docker image
+        - Standalone (install.sh)
+        - Hermes plugin
+        - Development checkout
+        - Other
+    validations:
+      required: true
+  - type: input
+    id: printer
+    attributes:
+      label: Printer and firmware
+      description: Printer model and firmware or mod (for example "Flashforge AD5X with ZMod"). Write "Not applicable" for purely offline problems.
+    validations:
+      required: false
+  - type: input
+    id: profile
+    attributes:
+      label: Printer / slicer profile
+      description: The Print Buddy printer profile and any slicer profile involved, if relevant.
+    validations:
+      required: false
+  - type: textarea
+    id: evidence
+    attributes:
+      label: Evidence
+      description: Relevant log lines, the exact error text, or measurements that show the problem. Do not present a cause as verified when it is a hypothesis — say what evidence would settle it. Redact secrets before pasting.
+    validations:
+      required: true
+  - type: checkboxes
+    id: attestations
+    attributes:
+      label: Before submitting
+      options:
+        - label: I searched open and closed issues for this problem.
+          required: true
+        - label: I removed credentials, tokens, private model files and personal data from this report.
+          required: true

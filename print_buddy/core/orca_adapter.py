@@ -1784,15 +1784,41 @@ def fit_options(source: Path, state: dict, brim_override=None) -> dict:
             from . import color_geometry
             from .source_colors import inventory
             manifest = inventory(source)
+            # Per-part fit at 100%: every authored object is evaluated on its
+            # own against the usable bed, the Z limit and dimension-preserving
+            # yaws before any shrink scale is offered (#76). A part that fits
+            # no plate alone is blocking: separate plates cannot cure it.
+            per_part = {}
+            try:
+                from . import split_fit
+                bed = tuple(state.get('bed_mm') or BED)
+                per_part = {row['object_id']: row for row in split_fit.per_part_fit(
+                    source, bed=(float(bed[0]), float(bed[1])),
+                    height=float(state.get('max_print_height_mm', MAX_HEIGHT_MM)))}
+            except Exception:
+                per_part = {}
             details = []
-            checked = ['authored XY']
+            checked = ['authored XY', 'yaw sweep 0-90 degrees'] if per_part else ['authored XY']
             with zipfile.ZipFile(source) as archive:
                 for part in manifest.get('parts', []):
                     box = color_geometry._world_bounds(archive, {str(part['object_id'])})[0]
                     dims = [round(box[i][1] - box[i][0], 1) for i in range(3)]
-                    details.append({'name': part.get('name') or f"Object {part['object_id']}",
-                                    'extent_mm': dims, 'orientations_checked': checked})
+                    row = {'name': part.get('name') or f"Object {part['object_id']}",
+                           'object_id': str(part['object_id']),
+                           'extent_mm': dims, 'orientations_checked': checked}
+                    fit = per_part.get(str(part['object_id']))
+                    if fit is not None:
+                        row.update({'fits_full_size': fit['fits_full_size'],
+                                    'best_yaw_deg': fit['best_yaw_deg'],
+                                    'best_extent_mm': fit['best_extent_mm'],
+                                    'usable_mm': fit['usable_mm'],
+                                    'height_limit_mm': fit['height_limit_mm'],
+                                    'blocking_reason': fit['blocking_reason']})
+                    details.append(row)
             result['parts'] = details
+            blocking = [row['name'] for row in details if row.get('fits_full_size') is False]
+            if blocking:
+                result['blocking_parts'] = blocking
         except (RuntimeError, OSError, zipfile.BadZipFile, KeyError, ValueError):
             result['parts'] = []
     return result

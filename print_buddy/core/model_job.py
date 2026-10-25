@@ -1826,13 +1826,22 @@ def per_part_fit_options(source, decisions, options, bed=BED_MM):
     rotations = [r for r in options.get('rotations') or []
                  if r.get('rotation') and honored({'scale': r.get('scale'), 'rotation': r['rotation']})]
     details = []
+    prior = {str(row.get('object_id')): row for row in options.get('parts') or [] if row.get('object_id')}
     try:
         with zipfile.ZipFile(source) as archive:
             for part in manifest.get('parts', []):
                 box = __import__('print_buddy.core.color_geometry', fromlist=['_world_bounds'])._world_bounds(
                     archive, {str(part['object_id'])})[0]
-                details.append({'name': part.get('name') or f"Object {part['object_id']}",
-                                'extent_mm': [round(box[i][1] - box[i][0], 1) for i in range(3)]})
+                row = {'name': part.get('name') or f"Object {part['object_id']}",
+                       'extent_mm': [round(box[i][1] - box[i][0], 1) for i in range(3)]}
+                # Keep the per-part fit evaluation from fit_options (#76), so a
+                # part that fits no plate alone stays blocking in per-part mode.
+                fit = prior.get(str(part['object_id']))
+                if fit:
+                    row.update({k: fit[k] for k in ('object_id', 'fits_full_size', 'best_yaw_deg',
+                                                    'best_extent_mm', 'usable_mm', 'height_limit_mm',
+                                                    'blocking_reason', 'orientations_checked') if k in fit})
+                details.append(row)
     except (OSError, zipfile.BadZipFile, RuntimeError, KeyError):
         details = []
     return {**options, 'scales': scales, 'rotations': rotations, 'parts': details}

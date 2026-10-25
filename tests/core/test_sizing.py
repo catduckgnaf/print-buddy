@@ -47,6 +47,25 @@ class FeatureClearanceTests(unittest.TestCase):
         self.assertIn('95%', text)
         self.assertNotIn('issues/83', text)  # no GitHub links or option essays in chat
 
+    def test_fit_question_explains_an_individually_oversized_part(self):
+        from print_buddy.core.prepared_intake import fit_question
+        text = fit_question('Model', {'scales': [0.956], 'parts': [{
+            'name': 'Stand', 'extent_mm': [130, 230, 30], 'fits_full_size': False,
+            'blocking_reason': 'footprint 130 x 230 mm exceeds the usable 204 x 204 mm bed '
+                               'at every checked yaw (best 130 x 230 mm at 0 degrees)'}]})
+        self.assertIn('does not fit a plate on its own', text)
+        self.assertIn('does not shrink this part', text)
+        self.assertIn('Supports can help overhangs but do not make a part smaller', text)
+        self.assertIn('95.6%', text)  # shrink stays a separate, labelled option
+
+    def test_fit_question_does_not_call_a_yaw_fitting_part_blocking(self):
+        from print_buddy.core.prepared_intake import fit_question
+        text = fit_question('Model', {'scales': [], 'parts': [{
+            'name': 'Rail', 'extent_mm': [230, 50, 20], 'fits_full_size': True,
+            'blocking_reason': None}]})
+        self.assertNotIn('does not fit a plate on its own', text)
+        self.assertNotIn('does not shrink this part', text)
+
     def test_painted_scale_search_uses_small_coarse_ladder(self):
         from print_buddy.core.model_job import PAINTED_SCALE_STEPS
         self.assertLessEqual(len(PAINTED_SCALE_STEPS), 12)

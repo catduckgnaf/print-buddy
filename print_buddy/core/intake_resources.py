@@ -69,11 +69,11 @@ def check_source(path):
         members = archive.infolist()
         if len(members) > MAX_MEMBERS:
             _refuse(f'archive exceeds {MAX_MEMBERS:,} members')
-        if sum(i.file_size for i in members) > MAX_EXPANDED_BYTES:
-            _refuse(f'expanded archive exceeds {MAX_EXPANDED_BYTES // MIB} MiB limit')
         models = [i for i in members if i.filename.lower().endswith('.model')]
         if sum(i.file_size for i in models) > MAX_XML_BYTES:
             _refuse(f'model XML exceeds {MAX_XML_BYTES // MIB} MiB limit')
+        if sum(i.file_size for i in members) > MAX_EXPANDED_BYTES:
+            _refuse(f'expanded archive exceeds {MAX_EXPANDED_BYTES // MIB} MiB limit')
         if any(i.file_size > MAX_MEMBER_BYTES for i in members):
             _refuse(f'archive member exceeds {MAX_MEMBER_BYTES // MIB} MiB limit')
         counts = {'triangle': 0, 'vertex': 0, 'elements': 0}

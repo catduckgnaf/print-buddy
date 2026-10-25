@@ -6,6 +6,7 @@ import math
 import os
 from pathlib import Path
 import re
+import shutil
 import struct
 import subprocess
 import time
@@ -305,10 +306,23 @@ def place_stl(source, target, scale=1.0, rotation=None, bed=None):
     return _place_triangles(read_stl_triangles(source), target, scale, rotation, bed)
 
 
+# Thin, print-in-place prints (flexy rings, articulated toys): per the AD5X Flexy Ring guide,
+# Arachne walls, 2 walls, 15% line infill, 0.20 mm first layer at 20 mm/s, moderate wall speeds,
+# and nothing that can fuse moving gaps (brim, supports, ironing, fuzzy skin).
+FLEX_PROFILE = {
+    'wall_generator': 'arachne', 'wall_loops': '2',
+    'sparse_infill_density': '15%', 'sparse_infill_pattern': 'line',
+    'initial_layer_print_height': '0.2', 'initial_layer_speed': '20', 'initial_layer_infill_speed': '20',
+    'outer_wall_speed': '70', 'inner_wall_speed': '130', 'sparse_infill_speed': '160',
+    'brim_type': 'no_brim', 'brim_width': '0', 'enable_support': '0', 'raft_layers': '0',
+    'ironing_type': 'no ironing', 'fuzzy_skin': 'none',
+}
+
 PROCESS_KEYS = ('layer_height', 'initial_layer_print_height', 'wall_loops', 'sparse_infill_density',
                 'sparse_infill_pattern', 'brim_type', 'brim_width', 'brim_object_gap', 'enable_support',
                 'support_type', 'support_on_build_plate_only', 'top_shell_layers', 'bottom_shell_layers',
-                'top_shell_thickness', 'bottom_shell_thickness', 'gap_fill_target', 'filter_out_gap_fill')
+                'top_shell_thickness', 'bottom_shell_thickness', 'gap_fill_target', 'filter_out_gap_fill',
+                'wall_generator')
 
 
 RANGE_ERROR = re.compile(r'^(\w+): (\S+) not in range \[([-0-9.eE+]+),([-0-9.eE+]+)\]', re.M)
@@ -502,6 +516,21 @@ def slicer_choice(printer):
     return printer.config['printer'].get('slicer') or default
 
 
+def _keep_failure_logs(folder: Path) -> Path:
+    """Copy slicer logs out of a slice folder that is deleted after a failure; return the kept dir."""
+    folder = Path(folder)
+    try:
+        from ..hermes import _config
+        keep = Path(_config.hermes_home()) / 'state' / 'slice-failures' / folder.name
+        keep.mkdir(parents=True, exist_ok=True)
+        for name in ('orca.log', 'bambu.log', 'result.json', '00000.log', 'process.json', 'machine.json'):
+            if (folder / name).is_file():
+                shutil.copy2(folder / name, keep / name)
+        return keep
+    except Exception:  # never mask the slicer error with a logging error
+        return folder
+
+
 def _run_slicer(command, name, folder):
     """subprocess.run for a slicer, logging the command name, exit code and elapsed time.
 
@@ -627,6 +656,16 @@ def slice_model(source, folder, state, brim=None, first_layer=False, color_decis
         process['line_width'] = str(tuned_profile.line_width)
         process['initial_layer_line_width'] = str(tuned_profile.initial_layer_line_width)
         process['internal_solid_infill_line_width'] = str(tuned_profile.line_width)
+    if author.get('wall_generator') == 'arachne' and not first_layer and not mapping:
+        # The designer chose variable-width walls: treat it as a thin/print-in-place model
+        # and use the flex profile so moving gaps are not fused (AD5X Flexy Ring guide).
+        process.update(FLEX_PROFILE)
+        if supports:
+            process.update({'enable_support': '1'})
+        if brim_policy is not None:
+            process['brim_type'] = brim_policy.get('type', 'no_brim')
+            process['brim_width'] = str(brim_policy.get('width_mm', 0))
+        geometry['thin_feature_profile'] = 'arachne flex (designer asked for arachne walls)'
     from .nozzle import get_nozzle_type_adjustments
     adj = get_nozzle_type_adjustments(nozzle_type)
     machine['nozzle_temperature_range_high'] = [str(int(adj['max_temperature_c']))]
@@ -850,6 +889,18 @@ def slice_model(source, folder, state, brim=None, first_layer=False, color_decis
                 sanitized.update(fixed)
                 result = _run_slicer(command, 'OrcaSlicer', folder)
                 (folder / 'orca.log').write_text(result.stdout + result.stderr)
+    if (primary != 'bambu_studio' and result.returncode and _orca_slicing_rejected(folder)
+            and any(process.get(k) != v for k, v in FLEX_PROFILE.items())):
+        # Classic walls fail thin print-in-place features (Orca -100, e.g. flexy rings);
+        # Arachne variable-width walls slice them. One retry with the flex-print profile, logged.
+        logger.warning('Orca failed (rc=%s); retrying once with the arachne flex profile', result.returncode)
+        process.update(FLEX_PROFILE)
+        geometry['thin_feature_profile'] = 'arachne flex (AD5X Flexy Ring guide)'
+        configs[1].write_text(json.dumps(process, indent=2) + '\n')
+        output.unlink(missing_ok=True)
+        (folder / 'result.json').unlink(missing_ok=True)
+        result = _run_slicer(command, 'OrcaSlicer', folder)
+        (folder / 'orca.log').write_text(result.stdout + result.stderr)
     if mapped_profile and result.returncode and _orca_conflict(folder):
         # Tower placement clears mesh bounds, but tree supports and brims can
         # still reach it. Retry the precomputed alternate tower origins only;
@@ -876,7 +927,8 @@ def slice_model(source, folder, state, brim=None, first_layer=False, color_decis
                                                  or output.stat().st_size == 0)
     if orca_failed and not bambu_allowed:
         details = _orca_failure_details(folder)
-        raise RuntimeError(f'Orca slicing failed ({result.returncode}) or no G-code output{details}')
+        raise RuntimeError(f'Orca slicing failed ({result.returncode}) or no G-code output{details}; '
+                           f'see {_keep_failure_logs(folder) / "orca.log"}')
     if primary == 'bambu_studio' or orca_failed:
         # Only an actual Orca execution failure (or the opt-in Bambu Studio primary) reaches this
         # branch. All Print Buddy validation and placement refusals above remain fail-closed and
@@ -947,7 +999,7 @@ def slice_model(source, folder, state, brim=None, first_layer=False, color_decis
         if bambu_result.returncode or not output.is_file() or output.stat().st_size == 0:
             raise RuntimeError(
                 f'{orca_failure}; {bambu_role} failed ({bambu_result.returncode}) or produced no G-code; '
-                + (f'see {folder / "orca.log"} and {folder / "bambu.log"}' if orca_failed else f'see {folder / "bambu.log"}')
+                + f'see {_keep_failure_logs(folder) / "bambu.log"}'
             )
         configs.extend([bambu_machine, bambu_process, *bambu_filaments])
         command = bambu_command
@@ -999,6 +1051,15 @@ def slice_model(source, folder, state, brim=None, first_layer=False, color_decis
                     'author_process': {k: author[k] for k in PROCESS_KEYS if k in author},
                     'sanitized_author_settings': sanitized,
                     'offline_geometry_and_slicer': True}, configs
+
+
+def _orca_slicing_rejected(folder: Path) -> bool:
+    """True when Orca's result.json reports -100 'Failed slicing the model' (thin features under Classic walls)."""
+    try:
+        payload = json.loads((folder / 'result.json').read_text())
+    except (OSError, json.JSONDecodeError):
+        return False
+    return payload.get('return_code') == -100 and not _orca_conflict(folder)
 
 
 def _orca_conflict(folder: Path) -> bool:

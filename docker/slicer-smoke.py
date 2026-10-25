@@ -24,7 +24,9 @@ def main():
     assert len(revision) == 40
     closure = subprocess.run(["ldd", str(binary)], capture_output=True, text=True, check=True)
     assert "not found" not in closure.stdout, closure.stdout
-    subprocess.run([str(binary), "--help"], check=True, timeout=120)
+    # Use the official environment helper for prebuilt distributions.
+    command_path = f"/usr/local/bin/orca-slicer-{channel}"
+    subprocess.run([command_path, "--help"], check=True, timeout=120)
     config = settings.current()
     with tempfile.TemporaryDirectory(dir="/data/cache") as tmp:
         work = Path(tmp)
@@ -41,7 +43,7 @@ def main():
         model = work / "cube.stl"
         model.write_text("\n".join(lines + ["endsolid cube"]) + "\n")
         templates = config["orca"]["templates"]
-        command = [str(binary), "--load-settings",
+        command = [command_path, "--load-settings",
                    f"{templates / 'machine.json'};{templates / 'process.json'}",
                    "--load-filaments", str(templates / "filament.json"),
                    "--arrange", "1", "--orient", "0", "--ensure-on-bed",

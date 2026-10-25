@@ -1,8 +1,9 @@
 # syntax=docker/dockerfile:1
-# Source-build variant replacing the reviewed zaheria985 Docker contribution's
-# binary download approach. See docs/DOCKER-117-PROGRESS.md for attribution.
+# Pinned official prebuilt by default; source compilation remains opt-in.
+# See docs/DOCKER-117-PROGRESS.md for contributor attribution.
 FROM debian:13-slim AS orca-base
 ARG WITH_ORCA=false
+ARG ORCA_SOURCE=prebuilt
 ARG ORCA_STABLE_REF=8500fcdccaa10b5099ac20d252af3a7c560046f1
 ARG ORCA_ALPHA_REF=3880f2c58ec392ed2bd5938ab31c9c7c496c0eb2
 # Parallel compile jobs: auto (memory-aware, below the CPU count; see docker/orca-build-jobs.sh)
@@ -18,8 +19,9 @@ COPY docker/orca-build-jobs.sh /usr/local/bin/orca-build-jobs
 COPY docker/orca-build.sh /usr/local/bin/orca-build
 RUN mkdir -p /out && chmod +x /usr/local/bin/orca-build-jobs /usr/local/bin/orca-build && \
     case "$WITH_ORCA" in true|false) ;; *) echo 'WITH_ORCA must be true or false' >&2; exit 2;; esac && \
+    case "$ORCA_SOURCE" in prebuilt|source) ;; *) echo "ORCA_SOURCE must be prebuilt or source" >&2; exit 2;; esac && \
     orca-build-jobs "$ORCA_BUILD_JOBS" >/dev/null && \
-    if [ "$WITH_ORCA" = true ]; then \
+    if [ "$WITH_ORCA" = true ] && [ "$ORCA_SOURCE" = source ]; then \
       apt-get update && apt-get install -y --no-install-recommends \
         ca-certificates git cmake ninja-build build-essential autoconf automake \
         libtool pkg-config gettext texinfo curl wget file m4 ccache nasm yasm \
@@ -38,7 +40,7 @@ ARG ORCA_CCACHE_MAXSIZE=5G
 ARG ORCA_BUILD_PROFILE=release-static-fhs-nopch
 ARG TARGETARCH
 RUN --mount=type=cache,id=print-buddy-orca-${TARGETARCH}-stable-${ORCA_STABLE_REF}-${ORCA_BUILD_PROFILE},target=/cache,sharing=locked \
-    if [ "$WITH_ORCA" = true ]; then \
+    if [ "$WITH_ORCA" = true ] && [ "$ORCA_SOURCE" = source ]; then \
       /usr/local/bin/orca-build stable "$ORCA_STABLE_REF" "$ORCA_BUILD_JOBS" \
         "$ORCA_CCACHE_MAXSIZE" "$ORCA_BUILD_PROFILE" "$TARGETARCH"; \
     fi
@@ -51,9 +53,18 @@ ARG ORCA_CCACHE_MAXSIZE=5G
 ARG ORCA_BUILD_PROFILE=release-static-fhs-nopch
 ARG TARGETARCH
 RUN --mount=type=cache,id=print-buddy-orca-${TARGETARCH}-alpha-${ORCA_ALPHA_REF}-${ORCA_BUILD_PROFILE},target=/cache,sharing=locked \
-    if [ "$WITH_ORCA" = true ]; then \
+    if [ "$WITH_ORCA" = true ] && [ "$ORCA_SOURCE" = source ]; then \
       /usr/local/bin/orca-build alpha "$ORCA_ALPHA_REF" "$ORCA_BUILD_JOBS" \
         "$ORCA_CCACHE_MAXSIZE" "$ORCA_BUILD_PROFILE" "$TARGETARCH"; \
+    fi
+
+FROM orca-base AS orca-prebuilt
+ARG TARGETARCH
+COPY docker/orca-prebuilt.sh /usr/local/bin/orca-prebuilt
+RUN if [ "$WITH_ORCA" = true ] && [ "$ORCA_SOURCE" = prebuilt ]; then \
+      apt-get update && apt-get install -y --no-install-recommends ca-certificates curl && \
+      sh /usr/local/bin/orca-prebuilt "$TARGETARCH" && \
+      rm -rf /var/lib/apt/lists/*; \
     fi
 
 FROM debian:13-slim AS bambu-build
@@ -119,12 +130,15 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     python3 python3-venv ca-certificates ffmpeg xvfb xauth tini openscad \
     libwebkit2gtk-4.1-0 libgstreamer1.0-0 libgstreamer-plugins-base1.0-0 \
     libgtk-3-0t64 libglew2.2 libsecret-1-0 libspnav0 libgstreamerd-3-0 \
-    libosmesa6 libunwind8 libx264-164 \
+    libosmesa6 libunwind8 libx264-164 libopengl0 libglu1-mesa libgl1 libegl1 \
     fonts-liberation && rm -rf /var/lib/apt/lists/* && \
     python3 -m venv /opt/venv && \
     useradd --uid 1000 --create-home buddy
 COPY --from=orca-stable /out/ /
 COPY --from=orca-alpha /out/ /
+COPY --from=orca-prebuilt /out/ /
+# Official binary private dependency closure; does not replace system libraries.
+ENV LD_LIBRARY_PATH=/opt/orca-stable/lib/orca-runtime:/opt/orca-stable/bin
 COPY --from=bambu-build /out/ /
 # Compatibility paths used by the existing runtime acceptance harness. These
 # always identify stable; runtime channel selection still uses distinct wrappers.

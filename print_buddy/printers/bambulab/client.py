@@ -1,4 +1,4 @@
-"""Bambu Lab LAN transport: MQTT over TLS on port 8883; FTPS upload on port 990 (stage c).
+"""Bambu Lab LAN transport: MQTT over TLS on port 8883; FTPS upload on port 990.
 
 Protocol facts are from docs/BAMBU-CONNECTIVITY.md (#187), verified against the maintained
 integrations at pinned commits: subscribe to ``device/<serial>/report``, publish to
@@ -6,10 +6,12 @@ integrations at pinned commits: subscribe to ``device/<serial>/report``, publish
 A1/P1 printers report deltas, so a snapshot is only complete after a ``pushall`` request
 answers with a full ``push_status`` (``msg == 0``); ``get_version`` identifies the machine.
 
-The MQTT side sends status requests only (``get_version``, ``pushall``); print commands are
-a later, separately gated stage. The FTPS side uploads one ``.gcode.3mf`` package to the
-printer's storage root and verifies it by reading the remote size back — uploading never
-starts a print by itself.
+Print commands (stage d) are the ``project_file`` start and pause/resume/stop payloads in
+this module. They are dumb transport only: every gate that must hold before one is sent
+(LAN configured, printer idle, firmware signature bit clear, bed-clear approval consumed,
+submission lease held) lives in the print path (``core/model_job._print_bambu``), never
+here. The FTPS side uploads one ``.gcode.3mf`` package to the printer's storage root and
+verifies it by reading the remote size back — uploading never starts a print by itself.
 
 TLS: the peer certificate chain is verified against Bambu Lab's own CA bundle
 (``bambu_ca.pem`` beside this file: the public BBL CA certificates, carried via the
@@ -41,6 +43,31 @@ CA_FILE = Path(__file__).with_name("bambu_ca.pem")
 GET_VERSION = {"info": {"sequence_id": "0", "command": "get_version"}}
 PUSHALL = {"pushing": {"sequence_id": "0", "command": "pushall"}}
 START_PUSH = {"pushing": {"sequence_id": "0", "command": "start"}}
+
+# Print controls, same shape in pybambu's commands.py at the pinned commit.
+PRINT_CONTROLS = ("pause", "resume", "stop")
+
+
+def project_file_payload(remote_name, plate="Metadata/plate_1.gcode"):
+    """The `project_file` print-start command for a package already on the printer.
+
+    Field set triangulated from pybambu's PRINT_PROJECT_FILE_TEMPLATE and
+    bambulabs_api's working LAN client (both cited in the #187 research): `param` is
+    the plate G-code inside the package, `file`/`url` name the uploaded package.
+    Calibration flags are all false — the behaviour the Home Assistant service call
+    uses (its template defaults them true and the call overrides to false) — so the
+    printer runs the file as sliced, without extra auto-calibration passes Print
+    Buddy did not ask for. AMS is off with the single-tray mapping: Print Buddy's
+    Bambu support is single-colour. `sequence_id` semantics are a recorded unknown
+    in the research doc; "0" matches every other command in this module.
+    """
+    return {"print": {"sequence_id": "0", "command": "project_file", "param": plate,
+                      "file": remote_name, "url": f"ftp:///{remote_name}",
+                      "bed_type": "auto", "timelapse": False,
+                      "bed_leveling": False, "flow_cali": False, "vibration_cali": False,
+                      "layer_inspect": False, "use_ams": False, "ams_mapping": [0],
+                      "subtask_name": remote_name,
+                      "profile_id": "0", "project_id": "0", "subtask_id": "0", "task_id": "0"}}
 
 # print.fun bit: the firmware requires signed MQTT commands (Developer Mode is off),
 # so every write is blocked even though reads keep working. See docs/BAMBU-CONNECTIVITY.md.
@@ -310,3 +337,71 @@ class BambuLanClient:
                                 f"{remote_size!r} bytes, the local package is {size} bytes; do not start "
                                 "this file — delete it on the printer and upload again")
         return name
+
+    def _send(self, payload):
+        """Publish one command payload and wait until the client accepts it. Transport only.
+
+        A successful return means the payload was handed to the MQTT client without an
+        error — not that the printer acted on it. Callers confirm effects from a fresh
+        snapshot. Raises BambuLanError on refusal, access denial or timeout.
+        """
+        client = self._mqtt_factory(self.host, self.serial, self._access_code)
+        state = {"sent": False, "denied": False, "failed": None}
+
+        def on_connect(mqtt_client, _userdata, _flags, reason_code, *_rest):
+            rc = getattr(reason_code, "value", reason_code)
+            if rc == 5:
+                state["denied"] = True
+                return
+            if rc != 0:
+                state["failed"] = f"MQTT connection refused (rc={rc})"
+                return
+            try:
+                self._publish(mqtt_client, payload)
+                state["sent"] = True
+            except BambuLanError as exc:
+                state["failed"] = str(exc)
+
+        client.on_connect = on_connect
+        try:
+            try:
+                client.connect(self.host, MQTT_PORT, keepalive=30)
+            except Exception as exc:
+                raise BambuLanError(f"Bambu Lab printer at {self.host} could not be reached "
+                                    f"({type(exc).__name__}); nothing was sent") from exc
+            deadline = time.monotonic() + self.timeout_s
+            while time.monotonic() < deadline:
+                if state["denied"]:
+                    raise BambuLanError("the printer rejected the LAN access code (MQTT access denied); nothing was sent")
+                if state["failed"]:
+                    raise BambuLanError(f"Bambu Lab LAN command was not sent: {state['failed']}")
+                if state["sent"]:
+                    return
+                client.loop(timeout=0.5)
+            raise BambuLanError(f"the Bambu Lab printer at {self.host} did not accept a command within "
+                                f"{self.timeout_s:g}s; whether anything was sent is unknown — check the "
+                                "printer before retrying")
+        finally:
+            try:
+                client.disconnect()
+            except Exception:
+                pass
+
+    def start_print(self, remote_name, plate="Metadata/plate_1.gcode"):
+        """Send `project_file` for a package already uploaded under `remote_name`.
+
+        No gates live here by design (see the module docstring): the print path checks
+        readiness, the firmware signature bit and the bed-clear approval first, and
+        confirms the start from telemetry afterwards.
+        """
+        name = _remote_name(remote_name, remote_name)
+        if not plate.startswith("Metadata/") or not plate.endswith(".gcode"):
+            raise BambuLanError(f"invalid plate path inside the package: {plate!r}")
+        self._send(project_file_payload(name, plate))
+
+    def control(self, action):
+        """Send a pause / resume / stop command for the current print."""
+        if action not in PRINT_CONTROLS:
+            raise BambuLanError(f"unsupported Bambu Lab print control {action!r}; use one of "
+                                f"{', '.join(PRINT_CONTROLS)}")
+        self._send({"print": {"sequence_id": "0", "command": action}})

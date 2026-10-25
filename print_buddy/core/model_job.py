@@ -3374,6 +3374,103 @@ def _print_octoprint(adapter, state, gcode, job, job_path, wait_s, reprint):
     return out
 
 
+def _print_bambu(adapter, state, gcode, job, job_path, wait_s, reprint):
+    """The Bambu Lab LAN print path (#187 stage d), mirroring _print_octoprint's guard order.
+
+    Every check that can refuse cleanly runs before the submission lease: LAN configured,
+    live snapshot idle with no readiness problems (the firmware signature bit — Developer
+    Mode off — is one of them), G-code verified, package built by the same delivery the
+    handoff uses and confirmed to hold exactly Metadata/plate_1.gcode. Inside the lease
+    the snapshot and readiness are taken again, the bed-clear approval is consumed, and
+    only then does anything reach the printer: FTPS upload (size-verified), then the
+    project_file command. Upload + start are one uncertain step from submitting() on,
+    exactly as for OctoPrint; acceptance is confirmed from a fresh snapshot, never assumed.
+    """
+    from . import delivery as _delivery
+
+    def refuse(exc):
+        return SystemExit(f"REFUSED: {' '.join(str(exc).split())}. Nothing uploaded or started.")
+
+    try:
+        client = adapter.client()
+    except RuntimeError as exc:
+        raise refuse(exc) from exc
+
+    def ready_snapshot():
+        # readiness_problems covers busy/print-error/HMS and the firmware signature bit
+        # (Developer Mode off), which blocks every write including this start.
+        snapshot = client.snapshot()
+        problems = adapter.readiness_problems(state, snapshot)
+        norm = adapter.normalize_status(snapshot)
+        if norm["state"] not in ("standby", "complete"):
+            problems.append(f"printer state is {norm['state']!r}, not idle")
+        if problems:
+            raise RuntimeError("; ".join(dict.fromkeys(problems)))
+        return snapshot, norm
+
+    try:
+        _snapshot, observed_norm = ready_snapshot()
+        verify_gcode(gcode)
+        packages = _delivery.bambu_handoff(job if isinstance(job, dict) else {"printer_model": adapter.key},
+                                            [gcode], settings.current())
+        if len(packages) != 1:
+            raise RuntimeError(f"expected exactly one Bambu package for this plate, got {len(packages)}")
+        package = Path(packages[0])
+        with zipfile.ZipFile(package) as archive:
+            plates = [n for n in archive.namelist() if n.startswith("Metadata/plate_") and n.endswith(".gcode")]
+        if plates != ["Metadata/plate_1.gcode"]:
+            raise RuntimeError(f"package holds plates {plates or 'none'}; LAN print start supports a "
+                               "single-plate package (Metadata/plate_1.gcode) only")
+    except RuntimeError as exc:
+        raise refuse(exc) from exc
+    remote = package.name
+    sha = file_sha256(gcode)
+    lease = launch_state.acquire(_printer_key(state), job_json=job_path, gcode_sha256=sha, remote=remote,
+                                 observed_file=observed_norm.get("filename"))
+    try:
+        try:
+            ready_snapshot()  # again inside the lease: the first read may predate another start
+        except RuntimeError as exc:
+            raise refuse(exc) from exc
+        if job_path is not None:
+            _consume_approval(job_path, job, gcode, reprint=reprint)
+    except BaseException:
+        lease.release()
+        raise
+    lease.submitting()
+    try:
+        client.upload(package, remote)
+        client.start_print(remote)
+    except BaseException as exc:
+        lease.uncertain(f"Bambu Lab submission did not complete: {exc!r}")
+        if isinstance(exc, RuntimeError):
+            raise SystemExit(f"Bambu Lab submission failed or uncertain: {exc}. Do not resubmit without "
+                             "checking printer status.") from exc
+        raise
+    # Accepted is not proof of printing. No resubmission on delayed readback.
+    live = {}
+    try:
+        live = adapter.normalize_status(client.snapshot())
+    except RuntimeError:
+        pass
+    confirmed = live.get("state") == "printing" and live.get("filename") == remote
+    if confirmed:
+        lease.release()
+    else:
+        lease.uncertain("submitted, awaiting confirmation")
+    out = {"started": confirmed, "accepted": True, "file": remote, "method": "bambulab_lan",
+           "phase": "executing" if confirmed else "awaiting_confirmation",
+           "outcome": "printing" if confirmed else "unconfirmed", "live": live,
+           "message": "printing" if confirmed else "submitted, awaiting confirmation; do not resubmit"}
+    if confirmed:
+        try:
+            out["record_path"] = record_start(gcode, remote)
+        except Exception as exc:
+            print(f"WARNING: start record failed: {exc}")
+    print(("PRINT STARTED " if confirmed else "START SUBMITTED; AWAITING CONFIRMATION ") + json.dumps(out))
+    return out
+
+
 def _require_idle(st):
     state,fn,busy=_printer_phase(st)
     if state == "printing" or busy == "Printing":
@@ -3426,16 +3523,19 @@ def print_now(target, wait_s=25, accept_default_z_offset=False, reprint=False, r
     if getattr(adapter, 'transport', None) == 'octoprint':
         return _print_octoprint(adapter, st, g, job, job_path, wait_s, reprint)
     if getattr(adapter, 'transport', None) == 'bambulab_lan':
-        # LAN support is read-only telemetry in this stage. Verify the file for manual handoff;
+        from . import delivery as _delivery
+        if 'printer' in _delivery.methods():
+            return _print_bambu(adapter, st, g, job, job_path, wait_s, reprint)
+        # Print delivery is not enabled for this printer: verify the file for manual handoff;
         # the bed-clear approval is left unused, exactly as for the offline path below.
         try:
             verify_gcode(g)
         except RuntimeError as exc:
             raise SystemExit("REFUSED: " + " ".join(str(exc).split()) + ". Nothing uploaded or started.")
-        raise SystemExit(f"REFUSED: {adapter.label} has no print control in Print Buddy yet (LAN support is "
-                         f"read-only telemetry: no upload, start or control). {g} passed offline checks; use "
-                         "the Bambu package delivery and move the file yourself (not yet tested on a printer). "
-                         "Nothing uploaded or started.")
+        raise SystemExit(f"REFUSED: {adapter.label} print delivery is not enabled in Print Buddy (add "
+                         f"'printer' to [delivery] methods to print over LAN; LAN status alone is "
+                         f"read-only). {g} passed offline checks; use the Bambu package delivery and "
+                         "move the file yourself (not yet tested on a printer). Nothing uploaded or started.")
     if adapter.connection == 'offline':
         # No connection exists. Verify the file for manual handoff; the bed-clear approval is left unused.
         try:

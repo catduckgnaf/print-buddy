@@ -202,8 +202,8 @@ def test_p1s_offers_no_print_delivery_and_does_not_use_the_moonraker_live_paths(
     # LAN telemetry is opt-in via [bambu] lan_*; the fixture config does not configure it.
     assert adapter_for().connection == "bambulab_lan"
     assert adapter_for().lan_configured() is False
-    assert VENDOR.delivery == ("discord", "bambu_handoff")
-    assert "printer" not in VENDOR.delivery
+    assert VENDOR.delivery == ("printer", "discord", "bambu_handoff")
+    assert "printer" not in VENDOR.default_delivery  # offered, but opt-in only (stage d)
     assert adapter_for().normalize_status({"print_stats": {"state": "printing"}})["state"] == "unknown"
 
 

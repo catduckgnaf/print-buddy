@@ -49,7 +49,8 @@ def test_vendor_profiles_carry_the_shared_settings():
     bambu = printers.VENDORS["bambulab"]
     assert bambu.connection == "bambulab_lan" and bambu.start_code == "bambu"
     assert bambu.slicers == ("bambu_studio", "orca") and bambu.file_formats[0] == ".gcode.3mf"
-    assert "printer" not in bambu.delivery and set(bambu.default_delivery) == {"discord", "bambu_handoff"}
+    # `printer` is offered (stage d) but never a default: the operator opts in via [delivery] methods.
+    assert "printer" in bambu.delivery and set(bambu.default_delivery) == {"discord", "bambu_handoff"}
     for vendor in printers.VENDORS.values():
         # Bambu Studio is the Bambu Lab default; OrcaSlicer stays the default everywhere else
         assert vendor.slicers[0] == ("bambu_studio" if vendor.key == "bambulab" else "orca")

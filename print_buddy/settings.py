@@ -84,7 +84,9 @@ LEGACY_ENV = {
 OPEN_SECTIONS = {"cold_pull", "nozzle_temp_offsets", "material_temps"}
 # Keys that can be optionally specified even if absent from base home.toml.
 OPTIONAL_KEYS = {("printer", "nozzle_type"): str, ("visual_watch", "enabled"): bool,
-                 ("services", "octoprint_url"): str}
+                 ("services", "octoprint_url"): str,
+                 ("bambu", "lan_host"): str, ("bambu", "lan_serial"): str,
+                 ("bambu", "lan_access_code_env"): str}
 DEFAULT_MATERIAL_TEMPS = {
     "PLA": {"nozzle": 210, "bed": 60}, "PETG": {"nozzle": 240, "bed": 85},
     "ABS": {"nozzle": 245, "bed": 100}, "ASA": {"nozzle": 260, "bed": 105},
@@ -239,6 +241,30 @@ def _validate_vendor_choices(data, model):
     data["delivery"]["methods"] = [m for m in vendor.delivery if m in methods]
 
 
+def _validate_bambu_lan(data, model):
+    """[bambu] LAN telemetry keys (#187 stage b): host and serial together, Bambu models only.
+
+    The access code itself is never a setting: [bambu] lan_access_code_env names the environment
+    variable that holds it, the same indirection as [discord] token_env and [llm] api_key_env.
+    """
+    bambu = data.setdefault("bambu", {})
+    host = str(bambu.setdefault("lan_host", "") or "").strip()
+    serial = str(bambu.setdefault("lan_serial", "") or "").strip().upper()
+    env_name = str(bambu.setdefault("lan_access_code_env", "BAMBU_LAN_PASSWORD") or "BAMBU_LAN_PASSWORD")
+    if (host or serial) and model.vendor.key != "bambulab":
+        raise SettingsError("[bambu] lan_host and lan_serial only apply to Bambu Lab printers")
+    if bool(host) != bool(serial):
+        raise SettingsError("[bambu] lan_host and lan_serial must be set together (the printer's LAN address "
+                            "and the serial number printed on it and shown in Settings > WLAN)")
+    if host and not re.fullmatch(r"[A-Za-z0-9._-]+", host):
+        raise SettingsError(f"[bambu] lan_host must be a plain IP address or hostname without scheme or port, got {host!r}")
+    if serial and not re.fullmatch(r"[A-Z0-9]+", serial):
+        raise SettingsError(f"[bambu] lan_serial must be the printer's alphanumeric serial number, got {serial!r}")
+    if not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", env_name):
+        raise SettingsError(f"[bambu] lan_access_code_env must be an environment variable name, got {env_name!r}")
+    bambu["lan_host"], bambu["lan_serial"], bambu["lan_access_code_env"] = host, serial, env_name
+
+
 BOT_MODES = ("hermes", "standalone")
 LOG_LEVELS = ("DEBUG", "INFO", "WARNING", "ERROR")
 LOG_FORMATS = ("text", "json")
@@ -359,10 +385,11 @@ def validate(data):
     for key, value in services.items():
         if key.endswith("_url") and value and not value.startswith(("ws://", "wss://") if key == "moonraker_ws_url" else ("http://", "https://")):
             raise SettingsError(f"[services] {key} must be a URL, got {value!r}")
-    if model.vendor.connection == "offline" and (services["moonraker_url"] or services.get("octoprint_url")):
+    if model.vendor.connection in ("offline", "bambulab_lan") and (services["moonraker_url"] or services.get("octoprint_url")):
         # The listener, /print-stop and /print-resume would otherwise act on whatever answers at that URL.
         raise SettingsError(f"[services] moonraker_url and octoprint_url must be empty for model {model.key!r}: "
-                            "Print Buddy has no live connection to it")
+                            "Print Buddy has no Moonraker or OctoPrint connection to it")
+    _validate_bambu_lan(data, model)
     if services["moonraker_url"]:
         base = services["moonraker_url"].rstrip("/")
         host = base.split("://", 1)[1].split("/", 1)[0].rsplit(":", 1)[0]

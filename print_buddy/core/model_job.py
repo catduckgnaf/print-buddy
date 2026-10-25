@@ -276,11 +276,8 @@ def model_info_output(path):
     tris = source_triangles(path)
     if not tris:
         raise RuntimeError("model has no printable geometry")
-    lo = [min(p[a] for t in tris for p in t) for a in range(3)]
-    hi = [max(p[a] for t in tris for p in t) for a in range(3)]
-    vol = 0.0
-    for (ax, ay, az), (bx, by, bz), (cx, cy, cz) in tris:
-        vol += (ax * (by * cz - bz * cy) - ay * (bx * cz - bz * cx) + az * (bx * cy - by * cx)) / 6.0
+    from .mesh_fast import bounds_and_volume
+    lo, hi, vol = bounds_and_volume(tris)
     if min(hi[a] - lo[a] for a in range(3)) <= 1e-6 or abs(vol) <= 1e-9:
         # Flat or zero-volume mesh (#194): nothing for a slicer to fill, so refuse before
         # any plate is offered rather than slicing empty layers and starting a print.
@@ -996,7 +993,7 @@ def verify_gcode_offline(gcode_path, state):
     artifact against the already loaded hardware record: MD5 when present,
     native heater prefix, nozzle, material, start and end, and motion bounds.
     """
-    if printers.current().connection == 'offline':
+    if printers.current().connection in ('offline', 'bambulab_lan'):
         return _verify_offline(gcode_path, state)
     p = Path(gcode_path)
     raw = p.read_bytes()
@@ -1050,12 +1047,12 @@ def _verify_offline(gcode_path, state):
     problems = printers.current().gcode_problems(Path(gcode_path).read_text(errors='ignore'), state)
     if problems:
         raise RuntimeError('offline G-code verification failed: ' + '; '.join(problems))
-    return {'offline': True, 'connection': 'offline'}
+    return {'offline': True, 'connection': printers.current().connection}
 
 
 def verify_gcode(gcode_path):
     """Check a G-code artifact against live nozzle, spool and temperature state."""
-    if printers.current().connection == 'offline':
+    if printers.current().connection in ('offline', 'bambulab_lan'):
         st = printer_state.load(); ok, probs, _ = printer_state.check(st)
         if not ok: raise RuntimeError("hardware record check failed:\n  " + "\n  ".join(probs))
         return _verify_offline(gcode_path, st)
@@ -1835,13 +1832,22 @@ def per_part_fit_options(source, decisions, options, bed=BED_MM):
     rotations = [r for r in options.get('rotations') or []
                  if r.get('rotation') and honored({'scale': r.get('scale'), 'rotation': r['rotation']})]
     details = []
+    prior = {str(row.get('object_id')): row for row in options.get('parts') or [] if row.get('object_id')}
     try:
         with zipfile.ZipFile(source) as archive:
             for part in manifest.get('parts', []):
                 box = __import__('print_buddy.core.color_geometry', fromlist=['_world_bounds'])._world_bounds(
                     archive, {str(part['object_id'])})[0]
-                details.append({'name': part.get('name') or f"Object {part['object_id']}",
-                                'extent_mm': [round(box[i][1] - box[i][0], 1) for i in range(3)]})
+                row = {'name': part.get('name') or f"Object {part['object_id']}",
+                       'extent_mm': [round(box[i][1] - box[i][0], 1) for i in range(3)]}
+                # Keep the per-part fit evaluation from fit_options (#76), so a
+                # part that fits no plate alone stays blocking in per-part mode.
+                fit = prior.get(str(part['object_id']))
+                if fit:
+                    row.update({k: fit[k] for k in ('object_id', 'fits_full_size', 'best_yaw_deg',
+                                                    'best_extent_mm', 'usable_mm', 'height_limit_mm',
+                                                    'blocking_reason', 'orientations_checked') if k in fit})
+                details.append(row)
     except (OSError, zipfile.BadZipFile, RuntimeError, KeyError):
         details = []
     return {**options, 'scales': scales, 'rotations': rotations, 'parts': details}
@@ -3383,6 +3389,103 @@ def _print_octoprint(adapter, state, gcode, job, job_path, wait_s, reprint):
     return out
 
 
+def _print_bambu(adapter, state, gcode, job, job_path, wait_s, reprint):
+    """The Bambu Lab LAN print path (#187 stage d), mirroring _print_octoprint's guard order.
+
+    Every check that can refuse cleanly runs before the submission lease: LAN configured,
+    live snapshot idle with no readiness problems (the firmware signature bit — Developer
+    Mode off — is one of them), G-code verified, package built by the same delivery the
+    handoff uses and confirmed to hold exactly Metadata/plate_1.gcode. Inside the lease
+    the snapshot and readiness are taken again, the bed-clear approval is consumed, and
+    only then does anything reach the printer: FTPS upload (size-verified), then the
+    project_file command. Upload + start are one uncertain step from submitting() on,
+    exactly as for OctoPrint; acceptance is confirmed from a fresh snapshot, never assumed.
+    """
+    from . import delivery as _delivery
+
+    def refuse(exc):
+        return SystemExit(f"REFUSED: {' '.join(str(exc).split())}. Nothing uploaded or started.")
+
+    try:
+        client = adapter.client()
+    except RuntimeError as exc:
+        raise refuse(exc) from exc
+
+    def ready_snapshot():
+        # readiness_problems covers busy/print-error/HMS and the firmware signature bit
+        # (Developer Mode off), which blocks every write including this start.
+        snapshot = client.snapshot()
+        problems = adapter.readiness_problems(state, snapshot)
+        norm = adapter.normalize_status(snapshot)
+        if norm["state"] not in ("standby", "complete"):
+            problems.append(f"printer state is {norm['state']!r}, not idle")
+        if problems:
+            raise RuntimeError("; ".join(dict.fromkeys(problems)))
+        return snapshot, norm
+
+    try:
+        _snapshot, observed_norm = ready_snapshot()
+        verify_gcode(gcode)
+        packages = _delivery.bambu_handoff(job if isinstance(job, dict) else {"printer_model": adapter.key},
+                                            [gcode], settings.current())
+        if len(packages) != 1:
+            raise RuntimeError(f"expected exactly one Bambu package for this plate, got {len(packages)}")
+        package = Path(packages[0])
+        with zipfile.ZipFile(package) as archive:
+            plates = [n for n in archive.namelist() if n.startswith("Metadata/plate_") and n.endswith(".gcode")]
+        if plates != ["Metadata/plate_1.gcode"]:
+            raise RuntimeError(f"package holds plates {plates or 'none'}; LAN print start supports a "
+                               "single-plate package (Metadata/plate_1.gcode) only")
+    except RuntimeError as exc:
+        raise refuse(exc) from exc
+    remote = package.name
+    sha = file_sha256(gcode)
+    lease = launch_state.acquire(_printer_key(state), job_json=job_path, gcode_sha256=sha, remote=remote,
+                                 observed_file=observed_norm.get("filename"))
+    try:
+        try:
+            ready_snapshot()  # again inside the lease: the first read may predate another start
+        except RuntimeError as exc:
+            raise refuse(exc) from exc
+        if job_path is not None:
+            _consume_approval(job_path, job, gcode, reprint=reprint)
+    except BaseException:
+        lease.release()
+        raise
+    lease.submitting()
+    try:
+        client.upload(package, remote)
+        client.start_print(remote)
+    except BaseException as exc:
+        lease.uncertain(f"Bambu Lab submission did not complete: {exc!r}")
+        if isinstance(exc, RuntimeError):
+            raise SystemExit(f"Bambu Lab submission failed or uncertain: {exc}. Do not resubmit without "
+                             "checking printer status.") from exc
+        raise
+    # Accepted is not proof of printing. No resubmission on delayed readback.
+    live = {}
+    try:
+        live = adapter.normalize_status(client.snapshot())
+    except RuntimeError:
+        pass
+    confirmed = live.get("state") == "printing" and live.get("filename") == remote
+    if confirmed:
+        lease.release()
+    else:
+        lease.uncertain("submitted, awaiting confirmation")
+    out = {"started": confirmed, "accepted": True, "file": remote, "method": "bambulab_lan",
+           "phase": "executing" if confirmed else "awaiting_confirmation",
+           "outcome": "printing" if confirmed else "unconfirmed", "live": live,
+           "message": "printing" if confirmed else "submitted, awaiting confirmation; do not resubmit"}
+    if confirmed:
+        try:
+            out["record_path"] = record_start(gcode, remote)
+        except Exception as exc:
+            print(f"WARNING: start record failed: {exc}")
+    print(("PRINT STARTED " if confirmed else "START SUBMITTED; AWAITING CONFIRMATION ") + json.dumps(out))
+    return out
+
+
 def _require_idle(st):
     state,fn,busy=_printer_phase(st)
     if state == "printing" or busy == "Printing":
@@ -3434,6 +3537,20 @@ def print_now(target, wait_s=25, accept_default_z_offset=False, reprint=False, r
     st=printer_state.load()
     if getattr(adapter, 'transport', None) == 'octoprint':
         return _print_octoprint(adapter, st, g, job, job_path, wait_s, reprint)
+    if getattr(adapter, 'transport', None) == 'bambulab_lan':
+        from . import delivery as _delivery
+        if 'printer' in _delivery.methods():
+            return _print_bambu(adapter, st, g, job, job_path, wait_s, reprint)
+        # Print delivery is not enabled for this printer: verify the file for manual handoff;
+        # the bed-clear approval is left unused, exactly as for the offline path below.
+        try:
+            verify_gcode(g)
+        except RuntimeError as exc:
+            raise SystemExit("REFUSED: " + " ".join(str(exc).split()) + ". Nothing uploaded or started.")
+        raise SystemExit(f"REFUSED: {adapter.label} print delivery is not enabled in Print Buddy (add "
+                         f"'printer' to [delivery] methods to print over LAN; LAN status alone is "
+                         f"read-only). {g} passed offline checks; use the Bambu package delivery and "
+                         "move the file yourself (not yet tested on a printer). Nothing uploaded or started.")
     if adapter.connection == 'offline':
         # No connection exists. Verify the file for manual handoff; the bed-clear approval is left unused.
         try:

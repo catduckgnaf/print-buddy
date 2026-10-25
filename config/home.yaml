@@ -29,6 +29,12 @@ bambu:
   - --unshare=network
   - --command=bambu-studio
   - com.bambulab.BambuStudio
+  # Read-only LAN telemetry (#187): the printer's LAN address and serial number.
+  # Both empty = no LAN connection (offline behaviour). The access code is a secret:
+  # it lives only in the environment variable lan_access_code_env names, never here.
+  lan_host: ''
+  lan_serial: ''
+  lan_access_code_env: BAMBU_LAN_PASSWORD
 paths:
   hermes_home: ~/.hermes/profiles/3dprinting
   archive: ~/3d-prints

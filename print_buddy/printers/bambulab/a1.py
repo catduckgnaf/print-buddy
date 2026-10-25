@@ -1,4 +1,5 @@
-"""Bambu Lab A1 (inherits bambulab VENDOR). Phase 1: offline slicing, fit checks and G-code validation only.
+"""Bambu Lab A1 (inherits bambulab VENDOR). Offline slicing, fit checks and G-code validation, plus
+the vendor's opt-in read-only LAN status; no upload or print control.
 
 Quirks: the vendor start/end G-code parks the head off the bed on the wiper (X-48.2) and purge lane, so only
 the Orca toolpath is held to the 256 mm bed; the vendor blocks are matched line by line against the pinned
@@ -8,10 +9,10 @@ machine from their own OrcaSlicer into <state>/orca-profiles/bambulab_a1 (profil
 """
 from ..base import PrinterModel
 from . import VENDOR, facts
-from .adapter import BambuOfflineAdapter
+from .adapter import BambuAdapter
 
 
-class A1Adapter(BambuOfflineAdapter):
+class A1Adapter(BambuAdapter):
     facts = facts.A1
 
 

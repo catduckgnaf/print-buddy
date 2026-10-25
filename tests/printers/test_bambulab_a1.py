@@ -133,8 +133,8 @@ def test_a1_is_a_model_of_the_shared_bambu_vendor():
     a = adapter_for(A1)
     assert isinstance(a, A1Adapter) and isinstance(a, BambuOfflineAdapter)
     # Connection, start code, slicers and delivery come from VENDOR only.
-    assert a.connection == VENDOR.connection == "offline"
-    assert not hasattr(a, "transport") and not (ROOT / "print_buddy/printers/bambulab/vendor.py").exists()
+    assert a.connection == VENDOR.connection == "bambulab_lan"
+    assert a.transport == "bambulab_lan" and not (ROOT / "print_buddy/printers/bambulab/vendor.py").exists()
     assert not {"connection", "delivery", "slicers", "start_code"} & (set(facts.A1) | set(facts.VENDOR_FACTS))
     vol = a.build_volume()
     assert (vol.bed_mm, vol.max_height_mm) == ((256.0, 256.0), 256.0)
@@ -145,7 +145,7 @@ def test_a1_is_a_model_of_the_shared_bambu_vendor():
 def test_settings_follow_the_vendor_and_the_printer():
     data = config_for(A1)
     assert (data["printer"]["vendor"], data["printer"]["slicer"]) == ("bambulab", "bambu_studio")
-    assert data["delivery"]["methods"] == list(VENDOR.default_delivery) and "printer" not in VENDOR.delivery
+    assert data["delivery"]["methods"] == list(VENDOR.default_delivery) and "printer" not in data["delivery"]["methods"]
     assert data["printer"]["bed_mm"] == [256.0, 256.0] and data["printer"]["max_print_height_mm"] == 256.0
     assert data["printer"]["firmware"] == VENDOR.settings["printer"]["firmware"]
     assert data["orca"]["templates"].name == "bambulab_a1"
@@ -606,13 +606,13 @@ def run_a1_flow(tmp_path, gcode_text):
 def test_slice_verify_and_package_end_to_end(tmp_path):
     result = run_a1_flow(tmp_path, a1_gcode())
     assert "error" not in result, result
-    assert (result["model"], result["connection"], result["printer_model"]) == (A1, "offline", A1)
+    assert (result["model"], result["connection"], result["printer_model"]) == (A1, "bambulab_lan", A1)
     assert result["templates"] == str(tmp_path / "hermes" / "state" / "orca-profiles" / "bambulab_a1")
     assert result["gcode_verified"] is True and result["slice_guard"] in ("ok", "warnings")
     [package] = result["packages"]
     with zipfile.ZipFile(package) as archive:
         assert archive.read("Metadata/plate_1.gcode") == Path(result["sliced"]).read_bytes()
-    assert result["print_now"].startswith("REFUSED: Bambu Lab A1 has no live connection")
+    assert result["print_now"].startswith("REFUSED: Bambu Lab A1 print delivery is not enabled in Print Buddy")
     assert result["job_unchanged_by_print_now"] is True  # no approval consumed, nothing recorded
     assert all("/api/v1/spool/" in url for url in result["contacted"]), result["contacted"]
 
@@ -656,7 +656,8 @@ def a1_current(monkeypatch):
 
 def test_hardware_check_reads_only_spoolman(a1_current):
     ok, found, record = printer_state.check(state())
-    assert (ok, found, record["connection"]) == (True, [], "offline")
+    assert (ok, found, record["connection"]) == (True, [], "bambulab_lan")
+    assert record["lan_configured"] is False
     assert a1_current == ["http://spoolman.test:7912/api/v1/spool/10"]
 
 

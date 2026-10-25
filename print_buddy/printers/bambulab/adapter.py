@@ -1,22 +1,38 @@
-"""Bambu Lab printers, offline only: Orca slicing and G-code validation, no transport to the printer.
+"""Bambu Lab printers: Orca slicing and G-code validation, plus opt-in read-only LAN telemetry.
 
-VENDOR (bambulab/__init__.py) is the authority for connection ("offline"), start code, slicers and delivery.
-This adapter only answers the PrinterAdapter contract for an offline printer: every live call raises
-LiveUnsupported, and gcode_problems runs the printer's guard. Each printer subclasses it with its facts
-(see a1.py). Deliberately imports nothing from the ZMod/AD5X code and has no Moonraker, MQTT, FTPS or cloud client.
+VENDOR (bambulab/__init__.py) is the authority for connection ("bambulab_lan"), start code, slicers and
+delivery. The LAN path (client.py) exists only when the operator configures [bambu] lan_host and
+lan_serial and supplies the LAN access code through an environment variable; without that configuration
+the adapter behaves exactly as the original offline adapter did. Stage (b) added read-only telemetry;
+stage (c) adds the FTPS upload transport (client.py) behind `upload()` — print start and control still
+raise LiveUnsupported, and `printer` delivery is not offered until the print-start stage.
+Each printer subclasses this adapter with its facts (see a1.py). Deliberately imports nothing from the
+ZMod/AD5X code and has no Moonraker or cloud client.
 """
 import json
+import os
 
 from ..base import MultiColorUnsupported, PrinterAdapter
 from . import guard, profiles
+from .client import BambuLanClient, BambuLanError, signature_required
 
 
 class LiveUnsupported(RuntimeError):
-    """Print Buddy has no live connection to this printer: no telemetry, upload or print control."""
+    """A Moonraker-shaped live call reached a Bambu Lab printer; Bambu uses its LAN path instead."""
 
 
-class BambuOfflineAdapter(PrinterAdapter):
+# Bambu `gcode_state` values -> Print Buddy's normalized state vocabulary (the Klipper/OctoPrint shape).
+_GCODE_STATES = {
+    "IDLE": "standby", "INIT": "standby", "OFFLINE": "unknown", "UNKNOWN": "unknown",
+    "RUNNING": "printing", "PREPARE": "printing", "SLICING": "printing",
+    "PAUSE": "paused", "FINISH": "complete", "FAILED": "error",
+}
+_BUSY_STATES = {"RUNNING", "PREPARE", "SLICING", "PAUSE"}
+
+
+class BambuAdapter(PrinterAdapter):
     multi_slot = False
+    transport = "bambulab_lan"
     facts: dict = {}  # the printer's sourced facts (facts.py), set by each printer's subclass
     # Slicers this printer's guard accepts. Bambu Studio is the Bambu Lab default (owner decision); every line
     # of its output still passes the same guard, which refuses anything that is not plain G/M/T code.
@@ -34,8 +50,50 @@ class BambuOfflineAdapter(PrinterAdapter):
         return self.fact("motion_envelope_mm")
 
     def _unsupported(self, what):
-        return LiveUnsupported(f"{self.label}: {what} is not supported; Print Buddy only slices and validates "
-                               "G-code for this printer. Nothing was sent.")
+        return LiveUnsupported(f"{self.label}: {what} is not supported over Moonraker; Bambu Lab printers "
+                               "use the LAN path (status, upload and print start are separate calls). "
+                               "Nothing was sent.")
+
+    # -- LAN configuration -------------------------------------------------
+    def _lan(self):
+        return (self.config.get("bambu") or {})
+
+    def lan_configured(self) -> bool:
+        """True when [bambu] lan_host and lan_serial are both set (the access code is a secret, checked by client())."""
+        lan = self._lan()
+        return bool(str(lan.get("lan_host") or "").strip() and str(lan.get("lan_serial") or "").strip())
+
+    def access_code(self) -> str:
+        """The LAN access code from the environment variable [bambu] lan_access_code_env names. Never from config."""
+        name = str(self._lan().get("lan_access_code_env") or "BAMBU_LAN_PASSWORD")
+        return os.environ.get(name, "")
+
+    def client(self, **overrides):
+        """A LAN telemetry client for the configured printer. Raises BambuLanError when unconfigured."""
+        if not self.lan_configured():
+            raise BambuLanError(f"{self.label}: LAN telemetry is not configured; set [bambu] lan_host and "
+                                "lan_serial and supply the LAN access code via the environment")
+        return BambuLanClient(str(self._lan()["lan_host"]).strip(), str(self._lan()["lan_serial"]).strip(),
+                              self.access_code(), **overrides)
+
+    def upload(self, local_path, remote_name=None):
+        """Upload a `.gcode.3mf` package to the printer's storage root (FTPS, size-verified).
+
+        Stage (c): this is the transport the print-start stage builds on. By itself it
+        starts nothing, and no delivery method calls it yet.
+        """
+        if not str(local_path).endswith(".gcode.3mf"):
+            raise BambuLanError(f"{self.label}: only a packaged .gcode.3mf can be uploaded to a Bambu Lab "
+                                "printer; slice and package the job first (the Bambu package delivery does this)")
+        return self.client().upload(local_path, remote_name)
+
+    def start_print(self, remote_name, plate="Metadata/plate_1.gcode"):
+        """Send the print-start command for an uploaded package. Gates live in the print path."""
+        return self.client().start_print(remote_name, plate)
+
+    def control(self, action):
+        """Pause, resume or stop the current print over LAN MQTT."""
+        return self.client().control(action)
 
     # slicer: the vendor start/end G-code is used as is; Print Buddy adds and changes nothing. The only accepted
     # start and end are the ones in the verified generated profiles (profiles.py), so an [orca] templates
@@ -88,7 +146,12 @@ class BambuOfflineAdapter(PrinterAdapter):
         return {"0": 1}
 
     def readiness_problems(self, state, status, selection=None, **kw):
-        """Offline record checks only. There is no live status to read."""
+        """Hardware-record checks, plus live checks when `status` is a LAN snapshot (or its print payload).
+
+        With no live status this is exactly the original offline behaviour. With a snapshot: a busy or
+        errored printer is not ready, an active print error / HMS entry is reported, and the firmware
+        signature bit (Developer Mode off) is reported because it blocks every future write.
+        """
         problems = []
         state = state or {}
         bed, height = self.fact("bed_mm"), self.fact("max_print_height_mm")
@@ -111,10 +174,65 @@ class BambuOfflineAdapter(PrinterAdapter):
         if kind not in self.supported_nozzle_types:
             problems.append(f"recorded nozzle type {nozzle.get('type')!r} is not an {self.label} option "
                             f"({', '.join(self.supported_nozzle_types)})")
+        payload = _print_payload(status)
+        if payload is not None:
+            gcode_state = str(payload.get("gcode_state") or "").upper()
+            if gcode_state in _BUSY_STATES:
+                problems.append(f"printer is busy ({gcode_state.lower()})")
+            if payload.get("print_error"):
+                problems.append(f"printer reports a print error (code {payload['print_error']})")
+            hms = [h for h in (payload.get("hms") or []) if isinstance(h, dict) and h.get("attr", 0)]
+            if hms:
+                problems.append(f"printer reports {len(hms)} active HMS error(s)")
+            if signature_required(payload):
+                problems.append("printer firmware requires signed MQTT commands (Developer Mode is off): "
+                                "telemetry works, but upload and print control would be blocked")
         return problems
 
     def moonraker_objects(self):
-        raise self._unsupported("live telemetry")
+        raise self._unsupported("Moonraker telemetry (this printer reports over Bambu LAN MQTT)")
 
     def normalize_status(self, raw):
-        return {"state": "unknown", "filename": "", "progress": None, "hotend_c": None, "bed_c": None}
+        """A LAN snapshot (client.snapshot()) or bare print payload -> the common status shape.
+
+        Anything else (including a Moonraker-shaped dict) normalizes to unknown, as before.
+        Temperatures come from the classic fields; newer firmware's packed `device.*.info.temp`
+        words are not decoded in this stage.
+        """
+        payload = _print_payload(raw)
+        if payload is None:
+            return {"state": "unknown", "filename": "", "progress": None, "hotend_c": None, "bed_c": None}
+        percent = payload.get("mc_percent")
+        remaining = payload.get("mc_remaining_time")
+        return {
+            "state": _GCODE_STATES.get(str(payload.get("gcode_state") or "").upper(), "unknown"),
+            "filename": payload.get("subtask_name") or payload.get("gcode_file") or "",
+            "progress": percent / 100 if isinstance(percent, (int, float)) and not isinstance(percent, bool) else None,
+            "hotend_c": _number(payload.get("nozzle_temper")),
+            "bed_c": _number(payload.get("bed_temper")),
+            "hotend_target_c": _number(payload.get("nozzle_target_temper")),
+            "bed_target_c": _number(payload.get("bed_target_temper")),
+            "remaining_min": remaining if isinstance(remaining, (int, float)) and not isinstance(remaining, bool) else None,
+            "layer": payload.get("layer_num"),
+            "total_layer": payload.get("total_layer_num"),
+            "writes_blocked": signature_required(payload),
+        }
+
+
+def _print_payload(raw):
+    """The Bambu `print` payload inside a snapshot dict, or `raw` itself when it is one. None otherwise."""
+    if not isinstance(raw, dict):
+        return None
+    if isinstance(raw.get("print"), dict):
+        return raw["print"]
+    if "gcode_state" in raw or "mc_percent" in raw:
+        return raw
+    return None
+
+
+def _number(value):
+    return value if isinstance(value, (int, float)) and not isinstance(value, bool) else None
+
+
+# Backwards-compatible name: the A1/P1S modules and older tests import the offline-era class name.
+BambuOfflineAdapter = BambuAdapter

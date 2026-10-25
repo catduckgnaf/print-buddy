@@ -1,9 +1,14 @@
-"""Bambu Lab vendor profile: offline only. Print Buddy slices, validates and packages; a person moves the file.
+"""Bambu Lab vendor profile: slicing and packaging, plus opt-in read-only LAN telemetry (#187 stage b).
 
-No live connection: no MQTT, LAN FTPS or cloud client, so no telemetry, upload or print control. The
-handoff format is a .gcode.3mf (Metadata/plate_N.gcode plus its MD5) in Bambu Studio's export layout; no
-printer, Bambu Studio, Bambu Handy or SD-card run of it has been tested yet. Bambu Studio is the default
-slicer for every Bambu Lab printer; [printer] slicer: orca opts back into Orca.
+Print Buddy slices, validates and packages; a person moves the file. When the operator configures
+[bambu] lan_host/lan_serial and supplies the LAN access code as a secret, the adapter can also read
+live status over LAN MQTT (client.py), upload the package over FTPS, and — only when the operator
+also adds `printer` to [delivery] methods and the printer is in Developer Mode — start it, through
+the gated print path in core/model_job. Without that configuration the vendor behaves exactly as
+the original offline vendor did. The handoff format is a .gcode.3mf (Metadata/plate_N.gcode plus its
+MD5) in Bambu Studio's export layout; no printer, Bambu Studio, Bambu Handy or SD-card run of it has
+been tested yet, and neither has the LAN telemetry path. Bambu Studio is the default slicer for every
+Bambu Lab printer; [printer] slicer: orca opts back into Orca.
 Every G-code line must be a plain G/M/T code: Klipper or ZMod start code is refused (base.start_code_problems).
 
 Printer modules (bambulab/a1.py, later p1s.py) define MODEL = PrinterModel(..., vendor=VENDOR) with the
@@ -16,11 +21,13 @@ from ..base import SHARED_SETTINGS, VendorProfile, merge_settings
 VENDOR = VendorProfile(
     key="bambulab",
     label="Bambu Lab",
-    connection="offline",
+    connection="bambulab_lan",
     start_code="bambu",
     slicers=("bambu_studio", "orca"),  # Bambu Studio first: the default for every Bambu Lab printer
     file_formats=(".gcode.3mf", ".gcode"),
-    delivery=("discord", "bambu_handoff"),
+    # `printer` is offered but NOT a default: the print button appears only when the operator
+    # adds "printer" to [delivery] methods, on top of configuring LAN + Developer Mode.
+    delivery=("printer", "discord", "bambu_handoff"),
     default_delivery=("discord", "bambu_handoff"),
     settings=merge_settings(SHARED_SETTINGS, {
         "printer": {

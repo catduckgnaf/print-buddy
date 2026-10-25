@@ -14,6 +14,7 @@ import xml.etree.ElementTree as ET
 import zipfile
 from .. import logs, printers, settings
 from ..printers.base import start_code_problems
+from . import mesh_fast
 from . import slice_guard as sg
 from .slice_guard import pre_slice, post_slice
 
@@ -118,10 +119,14 @@ def _3mf_triangles(source):
 def _parse_3mf_triangles(source):
     with zipfile.ZipFile(source) as archive:
         models = {}
+        tables = {}
         def model(name):
             name = name.lstrip('/')
             if name not in models:
-                root = ET.fromstring(archive.read(name))
+                data, fast = mesh_fast.archive_tables(archive, name)
+                if fast is not None:
+                    tables[name] = fast
+                root = ET.fromstring(data)
                 if root.get('unit', 'millimeter') != 'millimeter':
                     raise RuntimeError('only millimeter 3MF geometry supported')
                 models[name] = (root, {o.get('id'): o for o in root.findall('c:resources/c:object', NS)})
@@ -144,11 +149,15 @@ def _parse_3mf_triangles(source):
             obj = model(name)[1][oid]
             mesh = obj.find('c:mesh', NS)
             if mesh is not None:
-                vertices = [tuple(float(v.get(k)) for k in ('x', 'y', 'z')) for v in mesh.findall('c:vertices/c:vertex', NS)]
+                if name in tables:
+                    vertices, faces = tables[name].get(oid, ([], []))
+                else:
+                    vertices = [tuple(float(v.get(k)) for k in ('x', 'y', 'z')) for v in mesh.findall('c:vertices/c:vertex', NS)]
+                    faces = [tuple(int(tri.get(i)) for i in ('v1', 'v2', 'v3')) for tri in mesh.findall('c:triangles/c:triangle', NS)]
                 for t in chain:  # transform each shared vertex once, not once per triangle reference
                     vertices = [apply(p, t) for p in vertices]
-                for tri in mesh.findall('c:triangles/c:triangle', NS):
-                    yield [vertices[int(tri.get(index))] for index in ('v1', 'v2', 'v3')]
+                for a, b, c in faces:
+                    yield [vertices[a], vertices[b], vertices[c]]
             for component in obj.findall('c:components/c:component', NS):
                 external = next((v for k, v in component.attrib.items() if k.endswith('}path')), name)
                 yield from triangles(external.lstrip('/'), component.get('objectid'), [transform(component)] + chain, active | {key})
@@ -1786,15 +1795,41 @@ def fit_options(source: Path, state: dict, brim_override=None) -> dict:
             from . import color_geometry
             from .source_colors import inventory
             manifest = inventory(source)
+            # Per-part fit at 100%: every authored object is evaluated on its
+            # own against the usable bed, the Z limit and dimension-preserving
+            # yaws before any shrink scale is offered (#76). A part that fits
+            # no plate alone is blocking: separate plates cannot cure it.
+            per_part = {}
+            try:
+                from . import split_fit
+                bed = tuple(state.get('bed_mm') or BED)
+                per_part = {row['object_id']: row for row in split_fit.per_part_fit(
+                    source, bed=(float(bed[0]), float(bed[1])),
+                    height=float(state.get('max_print_height_mm', MAX_HEIGHT_MM)))}
+            except Exception:
+                per_part = {}
             details = []
-            checked = ['authored XY']
+            checked = ['authored XY', 'yaw sweep 0-90 degrees'] if per_part else ['authored XY']
             with zipfile.ZipFile(source) as archive:
                 for part in manifest.get('parts', []):
                     box = color_geometry._world_bounds(archive, {str(part['object_id'])})[0]
                     dims = [round(box[i][1] - box[i][0], 1) for i in range(3)]
-                    details.append({'name': part.get('name') or f"Object {part['object_id']}",
-                                    'extent_mm': dims, 'orientations_checked': checked})
+                    row = {'name': part.get('name') or f"Object {part['object_id']}",
+                           'object_id': str(part['object_id']),
+                           'extent_mm': dims, 'orientations_checked': checked}
+                    fit = per_part.get(str(part['object_id']))
+                    if fit is not None:
+                        row.update({'fits_full_size': fit['fits_full_size'],
+                                    'best_yaw_deg': fit['best_yaw_deg'],
+                                    'best_extent_mm': fit['best_extent_mm'],
+                                    'usable_mm': fit['usable_mm'],
+                                    'height_limit_mm': fit['height_limit_mm'],
+                                    'blocking_reason': fit['blocking_reason']})
+                    details.append(row)
             result['parts'] = details
+            blocking = [row['name'] for row in details if row.get('fits_full_size') is False]
+            if blocking:
+                result['blocking_parts'] = blocking
         except (RuntimeError, OSError, zipfile.BadZipFile, KeyError, ValueError):
             result['parts'] = []
     return result

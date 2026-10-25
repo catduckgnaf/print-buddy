@@ -11,6 +11,10 @@ command = ["/usr/local/bin/orca-slicer"]
 # Source-installed binary; requires WITH_BAMBU=true at image build time.
 # The default slicer for Bambu Lab printers; elsewhere only Orca's one-shot fallback.
 command = ["/usr/bin/bambu-studio"]
+# Read-only LAN telemetry (#187); access code only via the BAMBU_LAN_PASSWORD env secret.
+lan_host = ""
+lan_serial = ""
+lan_access_code_env = "BAMBU_LAN_PASSWORD"
 
 [paths]
 hermes_home = "/data/hermes"

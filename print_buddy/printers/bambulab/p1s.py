@@ -1,4 +1,4 @@
-"""Bambu Lab P1S (bambulab.p1s), offline only: shared Bambu vendor architecture and P1S-specific profile facts.
+"""Bambu Lab P1S (bambulab.p1s): shared Bambu vendor architecture and P1S-specific profile facts.
 
 The P1S uses a 256 x 256 mm bed but 250 mm printable height and an 18 x 28 mm front-left bed exclusion. It is
 enclosed and supports a 4-slot AMS, but Print Buddy does not drive the AMS. Its Orca profile moves park in a
@@ -6,10 +6,10 @@ P1S-specific envelope; vendor G-code is checked against templates generated from
 """
 from ..base import PrinterModel
 from . import VENDOR, facts
-from .adapter import BambuOfflineAdapter
+from .adapter import BambuAdapter
 
 
-class P1SAdapter(BambuOfflineAdapter):
+class P1SAdapter(BambuAdapter):
     facts = facts.P1S
 
 

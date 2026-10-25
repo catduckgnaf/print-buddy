@@ -235,8 +235,9 @@ def bambu_handoff(job, gcodes, config=None):
 
 def handoff_note(model):
     """What a Bambu handoff does and does not do, for the Discord reply."""
-    return (f"Nothing was uploaded to the {model.label} and no print was started: Print Buddy has no live "
-            "connection to Bambu printers (no LAN, cloud or MQTT upload, status or print control). The "
+    return (f"Nothing was uploaded to the {model.label} and no print was started: this handoff never "
+            "uploads. (Printing over LAN is a separate, opt-in delivery — 'Slice and print now' — and "
+            "only when you enable it.) The "
             ".gcode.3mf follows the Bambu Studio export layout, but opening it in Bambu Studio or Bambu Handy, or "
             "printing it from the SD card, has not been tested on a printer yet: check it before you start it.")
 

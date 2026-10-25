@@ -1,0 +1,57 @@
+name: Feature request
+description: Propose a new capability or a change to existing behaviour.
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        For larger changes, this issue is the discussion: scope and safety expectations should be clear here before implementation starts. Keep the request focused on one capability — separate unrelated ideas into separate issues.
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem or use case
+      description: What are you trying to do, and what gets in the way today? Describe the situation, not just the solution you have in mind.
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed behaviour
+      description: What should Print Buddy do? Cover the user-visible flow, any new settings or defaults, and what happens when it cannot comply.
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+      description: Other approaches, workarounds you use now, or "do nothing" — and why the proposal is better.
+    validations:
+      required: false
+  - type: textarea
+    id: scope
+    attributes:
+      label: Scope
+      description: What is explicitly in scope and what is out of scope for this request. Link related issues or pull requests to avoid overlapping work.
+    validations:
+      required: true
+  - type: textarea
+    id: acceptance
+    attributes:
+      label: Acceptance criteria
+      description: How will we know this works? List checkable criteria, including the tests or offline evidence that should demonstrate them. Do not claim printer support beyond what code and tests will establish.
+    validations:
+      required: true
+  - type: textarea
+    id: safety
+    attributes:
+      label: Safety and compatibility
+      description: Any effect on confirmation gates, readiness checks, bed bounds, printer profiles, or existing configurations. Write "None expected" if there is none.
+    validations:
+      required: false
+  - type: checkboxes
+    id: attestations
+    attributes:
+      label: Before submitting
+      options:
+        - label: I searched open issues and pull requests for related work.
+          required: true

@@ -49,7 +49,7 @@ class ContractTests(unittest.TestCase):
         p1s_fixture.install(adapter_for(BAMBU_P1S))
 
     def test_registry_finds_every_model_file(self):
-        self.assertEqual(set(MODELS), {AD5X, GENERIC, SV06, OCTOPRINT, BAMBU_A1, BAMBU_P1S})
+        self.assertEqual(set(MODELS), {AD5X, GENERIC, SV06, OCTOPRINT, BAMBU_A1, BAMBU_P1S, "flashforge_stock.ad5x"})
         for key, model in printers.MODELS.items():
             self.assertEqual(model.key, key)
             shipped = settings.ROOT / "print_buddy" / "templates" / "orca" / model.templates
@@ -72,14 +72,21 @@ class ContractTests(unittest.TestCase):
                 self.assertIsInstance(vol, BuildVolume)
                 self.assertTrue(all(v > 0 for v in (*vol.bed_mm, vol.max_height_mm)))
                 self.assertGreaterEqual(a.slot_count, 1)
-                self.assertEqual(a.multi_slot, a.slot_count > 1)
+                if family == "flashforge_stock.ad5x":
+                    # One tool and four physical IFS bays. That is not multicolor.
+                    self.assertEqual((a.slot_count, a.multi_slot), (4, False))
+                else:
+                    self.assertEqual(a.multi_slot, a.slot_count > 1)
                 folder = a.templates_dir()
                 for name in ("machine", "process", "filament"):
                     json.loads((folder / f"{name}.json").read_text())
-                if family not in (OCTOPRINT, BAMBU_A1, BAMBU_P1S):
+                if family not in (OCTOPRINT, BAMBU_A1, BAMBU_P1S, "flashforge_stock.ad5x"):
                     self.assertIn("[bed_temperature_initial_layer_single]", a.machine_start_gcode("X MESH=auto", "auto"))
                 plan = a.start_plan(60, 215)
-                self.assertTrue(plan and all(isinstance(line, str) for line in plan))
+                if family == "flashforge_stock.ad5x":
+                    self.assertEqual(plan, [])  # the slicer file owns heating
+                else:
+                    self.assertTrue(plan and all(isinstance(line, str) for line in plan))
                 if family in (BAMBU_A1, BAMBU_P1S):
                     # Offline only: the vendor start runs first, and nothing live is available.
                     machine = json.loads((a.pinned_templates() / "machine.json").read_text())
@@ -95,6 +102,13 @@ class ContractTests(unittest.TestCase):
                     self.assertRaises(Exception, a.moonraker_start_commands, "part.gcode")
                     self.assertRaises(Exception, a.moonraker_objects)
                     self.assertEqual(a.normalize_status({})["state"], "unknown")
+                    continue
+                if family == "flashforge_stock.ad5x":
+                    self.assertEqual(a.machine_start_gcode("SLICER START"), "SLICER START")
+                    self.assertEqual(a.machine_end_gcode("END_PRINT"), "END_PRINT")
+                    self.assertRaises(Exception, a.moonraker_start_commands, "part.gcode")
+                    self.assertRaises(Exception, a.moonraker_objects)
+                    self.assertIn("state", a.normalize_status({}))
                     continue
                 cmds = a.moonraker_start_commands("part.gcode")
                 self.assertEqual(cmds[-1]["path"], "/printer/print/start")

@@ -265,6 +265,21 @@ def _validate_bambu_lan(data, model):
     bambu["lan_host"], bambu["lan_serial"], bambu["lan_access_code_env"] = host, serial, env_name
 
 
+def _validate_stock_lan(data, model):
+    """[flashforge_stock] host: a plain IP or hostname, and only on the stock model.
+
+    The serial and check code are never settings. They stay in AD5X_SERIAL and
+    AD5X_CHECK_CODE, the same environment variables the ZMod /detail reader uses.
+    """
+    section = data.setdefault("flashforge_stock", {})
+    host = str(section.setdefault("host", "") or "").strip()
+    if host and model.vendor.key != "flashforge_stock":
+        raise SettingsError("[flashforge_stock] host only applies to the stock Flashforge printer")
+    if host and not re.fullmatch(r"[A-Za-z0-9._-]+", host):
+        raise SettingsError(f"[flashforge_stock] host must be a plain IP address or hostname without scheme or port, got {host!r}")
+    section["host"] = host
+
+
 BOT_MODES = ("hermes", "standalone")
 LOG_LEVELS = ("DEBUG", "INFO", "WARNING", "ERROR")
 LOG_FORMATS = ("text", "json")
@@ -366,7 +381,10 @@ def validate(data):
             raise SettingsError(f"[printer] nozzle_type {nozzle_type!r} is not supported by model {key!r} (supported: {supported_types})")
         data["printer"]["nozzle_type"] = norm_type
     if not model.adapter.multi_slot and data["printer"]["ifs_slots"] != 1:
-        raise SettingsError(f"[printer] ifs_slots must be 1 for model {key!r} (single extruder)")
+        # Stock Flashforge keeps one tool and still has four physical IFS bays.
+        # Occupancy is checked at print start; this is not a multicolor profile.
+        if model.key != "flashforge_stock.ad5x" or data["printer"]["ifs_slots"] != 4:
+            raise SettingsError(f"[printer] ifs_slots must be 1 for model {key!r} (single extruder)")
     _validate_vendor_choices(data, model)
     for key, default in (("start_macro", "PRINT_START"), ("end_macro", "PRINT_END")):
         macro = data["printer"].setdefault(key, default)
@@ -385,11 +403,12 @@ def validate(data):
     for key, value in services.items():
         if key.endswith("_url") and value and not value.startswith(("ws://", "wss://") if key == "moonraker_ws_url" else ("http://", "https://")):
             raise SettingsError(f"[services] {key} must be a URL, got {value!r}")
-    if model.vendor.connection in ("offline", "bambulab_lan") and (services["moonraker_url"] or services.get("octoprint_url")):
+    if model.vendor.connection in ("offline", "bambulab_lan", "flashforge_stock") and (services["moonraker_url"] or services.get("octoprint_url")):
         # The listener, /print-stop and /print-resume would otherwise act on whatever answers at that URL.
         raise SettingsError(f"[services] moonraker_url and octoprint_url must be empty for model {model.key!r}: "
                             "Print Buddy has no Moonraker or OctoPrint connection to it")
     _validate_bambu_lan(data, model)
+    _validate_stock_lan(data, model)
     if services["moonraker_url"]:
         base = services["moonraker_url"].rstrip("/")
         host = base.split("://", 1)[1].split("/", 1)[0].rsplit(":", 1)[0]

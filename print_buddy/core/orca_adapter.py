@@ -49,6 +49,46 @@ def _orca_command():
 
 ORCA_COMMAND = _orca_command()
 BAMBU_COMMAND = list(_S['bambu']['command'])
+_FLASH_STUDIO_CLI_CACHE: dict = {}
+
+
+def _flash_studio_command(printer):
+    """Return the configured Flash Studio executable, or None for normal Orca behavior."""
+    configured = printer.config.get('slicer', {}).get('flash_studio_path', '')
+    if not configured:
+        return None
+    vendor = printer.model.vendor
+    if vendor is None or vendor.key != 'flashforge':
+        raise RuntimeError('[slicer] flash_studio_path is only supported for Flashforge printers')
+    path = Path(configured).expanduser()
+    if not path.is_file() or not os.access(path, os.X_OK):
+        raise RuntimeError(f'[slicer] flash_studio_path is configured but is not an executable file: {path}')
+    return [str(path.resolve())]
+
+
+def _check_flash_studio_cli(command):
+    """Fail closed unless this exact executable advertises every flag used for this slice."""
+    executable = Path(command[0])
+    stat = executable.stat()
+    cache_key = (str(executable.resolve()), stat.st_mtime_ns, stat.st_size)
+    required = {arg.split('=', 1)[0] for arg in command[1:] if arg.startswith('--')}
+    supported = _FLASH_STUDIO_CLI_CACHE.get(cache_key)
+    if supported is None:
+        try:
+            help_result = subprocess.run([str(executable), '--help'], capture_output=True, text=True, timeout=30)
+        except (OSError, subprocess.TimeoutExpired) as exc:
+            raise RuntimeError(f'Flash Studio CLI help check failed for {executable}: {exc}') from exc
+        help_text = help_result.stdout + '\n' + help_result.stderr
+        if help_result.returncode:
+            raise RuntimeError(f'Flash Studio CLI help check failed ({help_result.returncode}) for {executable}')
+        supported = set(re.findall(r'--[A-Za-z][A-Za-z0-9-]*', help_text))
+        _FLASH_STUDIO_CLI_CACHE[cache_key] = supported
+    missing = sorted(required - supported)
+    if missing:
+        raise RuntimeError('Flash Studio CLI does not advertise required headless option(s): '
+                           + ', '.join(missing))
+
+
 # Margin semantics: this is bed-edge clearance only; object-to-object spacing
 # is a separate packing gap. Apply edge clearance once by shrinking the usable bed,
 # never by also dilating each object's footprint. Feature clearance is added below.
@@ -532,7 +572,7 @@ def _keep_failure_logs(folder: Path) -> Path:
         from ..hermes import _config
         keep = Path(_config.hermes_home()) / 'state' / 'slice-failures' / folder.name
         keep.mkdir(parents=True, exist_ok=True)
-        for name in ('orca.log', 'bambu.log', 'result.json', '00000.log', 'process.json', 'machine.json'):
+        for name in ('orca.log', 'flash-studio.log', 'bambu.log', 'result.json', '00000.log', 'process.json', 'machine.json'):
             if (folder / name).is_file():
                 shutil.copy2(folder / name, keep / name)
         return keep
@@ -879,6 +919,12 @@ def slice_model(source, folder, state, brim=None, first_layer=False, color_decis
     # Never accept stale output if a failed slicer leaves the preceding artifact behind.
     output.unlink(missing_ok=True)
     primary = slicer_choice(printer)
+    flash_studio_command = _flash_studio_command(printer)
+    if flash_studio_command is not None:
+        # This is an explicit, exclusive user choice, not an Orca fallback. Reuse
+        # Print Buddy's resolved CLI arguments but replace the configured Orca command.
+        primary = 'flash_studio'
+        command = [*flash_studio_command, *command[len(ORCA_COMMAND):]]
     verified = getattr(printer, 'verified_slicers', None)
     if verified is not None and primary not in verified:
         raise RuntimeError(f'{printer.label}: {primary} output is not verified for this printer; '
@@ -887,6 +933,13 @@ def slice_model(source, folder, state, brim=None, first_layer=False, color_decis
         # Opt-in Bambu Studio as the primary slicer (vendor profile allows it, [printer] slicer picks it):
         # Orca never runs, so there is no Orca failure and no fallback.
         result = subprocess.CompletedProcess(command, 0, '', '')
+    elif primary == 'flash_studio':
+        _check_flash_studio_cli(command)
+        result = _run_slicer(command, 'Flash Studio', folder)
+        (folder / 'flash-studio.log').write_text(result.stdout + result.stderr)
+        if result.returncode or not output.is_file() or output.stat().st_size == 0:
+            raise RuntimeError(f'Flash Studio slicing failed ({result.returncode}) or produced no G-code; '
+                               f'see {_keep_failure_logs(folder) / "flash-studio.log"}')
     else:
         result = _run_slicer(command, 'OrcaSlicer', folder)
         (folder / 'orca.log').write_text(result.stdout + result.stderr)
@@ -898,7 +951,7 @@ def slice_model(source, folder, state, brim=None, first_layer=False, color_decis
                 sanitized.update(fixed)
                 result = _run_slicer(command, 'OrcaSlicer', folder)
                 (folder / 'orca.log').write_text(result.stdout + result.stderr)
-    if (primary != 'bambu_studio' and result.returncode and _orca_slicing_rejected(folder)
+    if (primary == 'orca' and result.returncode and _orca_slicing_rejected(folder)
             and any(process.get(k) != v for k, v in FLEX_PROFILE.items())):
         # Classic walls fail thin print-in-place features (Orca -100, e.g. flexy rings);
         # Arachne variable-width walls slice them. One retry with the flex-print profile, logged.
@@ -910,7 +963,7 @@ def slice_model(source, folder, state, brim=None, first_layer=False, color_decis
         (folder / 'result.json').unlink(missing_ok=True)
         result = _run_slicer(command, 'OrcaSlicer', folder)
         (folder / 'orca.log').write_text(result.stdout + result.stderr)
-    if mapped_profile and result.returncode and _orca_conflict(folder):
+    if (primary == 'orca' and mapped_profile and result.returncode and _orca_conflict(folder)):
         # Tower placement clears mesh bounds, but tree supports and brims can
         # still reach it. Retry the precomputed alternate tower origins only;
         # never relax Orca's conflict check.
@@ -927,17 +980,20 @@ def slice_model(source, folder, state, brim=None, first_layer=False, color_decis
                 break
         geometry['prime_tower_xy_mm'] = tried[-1]
         geometry['prime_tower_attempts_mm'] = tried
-    slicer = 'OrcaSlicer'
+    slicer = {'flash_studio': 'Flash Studio', 'bambu_studio': 'Bambu Studio'}.get(primary, 'OrcaSlicer')
     fallback = None
     vendor = printer.model.vendor
     bambu_allowed = ((primary == 'bambu_studio' or vendor is None or vendor.fallback_slicer == 'bambu_studio')
                      and (verified is None or 'bambu_studio' in verified))
-    orca_failed = primary != 'bambu_studio' and (result.returncode or not output.is_file()
-                                                 or output.stat().st_size == 0)
+    orca_failed = primary == 'orca' and (result.returncode or not output.is_file()
+                                         or output.stat().st_size == 0)
     if orca_failed and not bambu_allowed:
         details = _orca_failure_details(folder)
         raise RuntimeError(f'Orca slicing failed ({result.returncode}) or no G-code output{details}; '
                            f'see {_keep_failure_logs(folder) / "orca.log"}')
+    if primary == 'flash_studio' and (result.returncode or not output.is_file() or output.stat().st_size == 0):
+        raise RuntimeError(f'Flash Studio slicing failed ({result.returncode}) or produced no G-code; '
+                           f'see {_keep_failure_logs(folder) / "flash-studio.log"}')
     if primary == 'bambu_studio' or orca_failed:
         # Only an actual Orca execution failure (or the opt-in Bambu Studio primary) reaches this
         # branch. All Print Buddy validation and placement refusals above remain fail-closed and
@@ -1006,19 +1062,36 @@ def slice_model(source, folder, state, brim=None, first_layer=False, color_decis
             raise RuntimeError(f'{orca_failure}; {bambu_role} failed to start: {exc}') from exc
         (folder / 'bambu.log').write_text(bambu_result.stdout + bambu_result.stderr)
         if bambu_result.returncode or not output.is_file() or output.stat().st_size == 0:
+            if primary == 'bambu_studio':
+                raise RuntimeError(
+                    f'Bambu Studio is the configured slicer; Bambu Studio failed ({bambu_result.returncode}) '
+                    f'or produced no G-code; see {_keep_failure_logs(folder) / "bambu.log"}'
+                )
             raise RuntimeError(
-                f'{orca_failure}; {bambu_role} failed ({bambu_result.returncode}) or produced no G-code; '
-                + f'see {_keep_failure_logs(folder) / "bambu.log"}'
+                f'{bambu_role} failed ({bambu_result.returncode}) or produced no G-code; '
+                f'see {_keep_failure_logs(folder) / "bambu.log"}'
             )
-        configs.extend([bambu_machine, bambu_process, *bambu_filaments])
-        command = bambu_command
-        slicer = 'Bambu Studio'
-        if orca_failed:
-            fallback = {'from': 'OrcaSlicer', 'reason': orca_failure, 'orca_log': str(folder / 'orca.log'),
-                        'bambu_log': str(folder / 'bambu.log')}
+        if primary == 'bambu_studio':
+            configs.extend([bambu_machine, bambu_process, *bambu_filaments])
+            command = bambu_command
+            slicer = 'Bambu Studio'
+        else:
+            configs.extend([bambu_machine, bambu_process, *bambu_filaments])
+            command = bambu_command
+            slicer = 'Bambu Studio'
+            if orca_failed:
+                fallback = {'from': 'OrcaSlicer', 'reason': orca_failure, 'orca_log': str(folder / 'orca.log'),
+                            'bambu_log': str(folder / 'bambu.log')}
     text = output.read_text()
-    generator = re.search(r'^; generated by ((?:OrcaSlicer|BambuStudio).+)$', text, re.M)
-    if generator is None:
+    generator = re.search(r'^; generated by ((?:OrcaSlicer|BambuStudio|Flash Studio).+)$', text, re.M)
+    if generator is None or (primary == 'flash_studio' and not generator.group(1).startswith('Flash Studio')) \
+            or (primary == 'bambu_studio' and not generator.group(1).startswith('BambuStudio')):
+        if primary == 'bambu_studio':
+            raise RuntimeError('Bambu Studio did not generate recognized G-code; see '
+                               f'{_keep_failure_logs(folder) / "bambu.log"}')
+        if primary == 'flash_studio':
+            raise RuntimeError('Flash Studio did not generate recognized G-code; see '
+                               f'{_keep_failure_logs(folder) / "flash-studio.log"}')
         raise RuntimeError(f'output is not generated by {slicer}')
     if mapped_profile or mapping:
         # Explicit T0 (one physical slot) and per-part maps share the mapped

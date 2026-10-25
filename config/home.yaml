@@ -22,6 +22,9 @@ orca:
   - flatpak
   - run
   - com.orcaslicer.OrcaSlicer
+slicer:
+  # Optional user-installed Flash Studio executable; empty keeps the normal Orca/Bambu behavior.
+  flash_studio_path: ''
 bambu:
   command:
   - flatpak

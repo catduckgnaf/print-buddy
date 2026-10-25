@@ -20,6 +20,11 @@ jobs:
       matrix:
         python-version: ["3.12", "3.14"]
     steps:
+      # Tests inspect tracked files and ignore rules, so checkout needs real Git metadata.
+      - name: Install Git before checkout
+        run: |
+          command -v git || { apt-get update -q && apt-get install -y -q git; }
+          git --version
       - uses: actions/checkout@v7
       - run: python -m pip install -r requirements-test.txt
       - name: Offline tests (no printer, no slicer, no network)

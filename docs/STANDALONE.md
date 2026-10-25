@@ -84,7 +84,7 @@ The bot writes its heartbeat to `<paths.hermes_home>/state/bot_health.json` ever
 `GET /healthz` read the same record:
 
 ```json
-{"mode": "standalone", "connected": true, "user": "Print Buddy#1234", "handlers": 13,
+{"mode": "standalone", "connected": true, "user": "Print Buddy#1234", "handlers": 15,
  "hermes_modules": [], "heartbeat_at": 1792727951.3, "pid": 7, "chat_id": "123...", "allowed_users": 2,
  "llm": false, "open_prompts": 0, "started_at": 1792727900.1}
 ```
@@ -118,7 +118,8 @@ Required environment: `PRINT_BUDDY__BOT__MODE=standalone`, `DISCORD_BOT_TOKEN`, 
 * Post a MakerWorld or Printables link, or drop one `.3mf` or `.stl`: the same intake as under Hermes, with the same
   buttons. "print it" after a link, and "print the last one again", work.
 * Slash commands: `/print-next`, `/print-stop`, `/print-resume`, `/print-again`, `/print-reboot`,
-  `/print-coldpull`, `/print-maintenance`, `/print-colors`, `/spool`, `/print-buddy` (guided setup and read-only debugging), `/print-help`. Typing the same text works too.
+  `/print-coldpull`, `/print-maintenance`, `/print-colors`, `/spool`, `/print-lookup`, `/print-troubleshoot`,
+  `/print-buddy` (guided setup and read-only debugging), `/print-help`. Typing the same text works too.
 * Listener posts (started, complete, failed, timelapse) and alert buttons (Resume, Cancel, spool questions, IFS
   insertion, plate picker) work with the Hermes gateway stopped.
 * A typed reply answers your own open question, as under Hermes ("2" for two copies, "split", "cancel"). It

@@ -45,14 +45,14 @@ jobs:
 
   light-install-arm64:
     # The Raspberry Pi route: runtime requirements install on arm64 and the installer plus wizard run end to end (dry run).
-    runs-on: ubuntu-24.04-arm  # Debian container on the hosted arm64 runner.
-    # Hosted ARM runner is required for hardware-architecture validation; tested base remains Ubuntu.
+    runs-on: ubuntu-24.04-arm  # Debian 13 container on the hosted arm64 runner (Raspberry Pi OS is Debian based).
+    container:
+      image: python:3.12-slim-trixie
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v7
-      - uses: actions/setup-python@v7
-        with:
-          python-version: "3.12"
+      - name: Debian tools the installer expects
+        run: apt-get update -q && apt-get install -y -q git curl ca-certificates
       - name: Runtime requirements on arm64
         run: |
           python -m venv .venv

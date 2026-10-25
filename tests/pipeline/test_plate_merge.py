@@ -253,3 +253,191 @@ def test_multi_slot_item_shifts_must_name_exactly_selected_objects(tmp_path):
     keys = [p['key'] for p in manifest['parts'] if p['object_id'] == '1']
     with pytest.raises(RuntimeError, match='item shifts must name exactly'):
         color_geometry.export_single_color_plate(source, tmp_path / 'x.3mf', decisions, keys, item_shifts={'1': [0, 0, 0], '2': [0, 0, 0]})
+
+
+# --- #221 P1: polygon (convex hull) merge fallback ---------------------------
+
+TRI_A = [(0, 0), (180, 0), (0, 110)]          # right triangle, right angle at origin
+TRI_B = [(0, 110), (180, 0), (180, 110)]      # its complement in the same 180x110 rectangle
+
+
+def _prism_model(poly, h):
+    body = ''.join(f'<vertex x="{x}" y="{y}" z="0"/>' for x, y in poly)
+    body += f'<vertex x="{poly[0][0]}" y="{poly[0][1]}" z="{h}"/>'
+    top = len(poly)
+    tris = ''.join(f'<triangle v1="0" v2="{i}" v3="{i + 1}"/>' for i in range(1, len(poly) - 1))
+    tris += f'<triangle v1="0" v2="1" v3="{top}"/>'
+    return f'<model unit="millimeter"><resources><object id="1"><mesh><vertices>{body}</vertices><triangles>{tris}</triangles></mesh></object></resources></model>'
+
+
+def _prism_source(path, shapes, plates):
+    """shapes {object_id: (poly_xy, h, (tx, ty))}; plates [[object ids], ...]."""
+    resources, items, objects = [], [], []
+    for oid, (poly, h, at) in shapes.items():
+        resources.append(f'<object id="{oid}" name="Part {oid}"><components><component p:path="/3D/Objects/object_{oid}.model" objectid="1" transform="1 0 0 0 1 0 0 0 1 0 0 0"/></components></object>')
+        items.append(f'<item objectid="{oid}" transform="1 0 0 0 1 0 0 0 1 {at[0]} {at[1]} 0"/>')
+        objects.append(f'<object id="{oid}"><metadata key="name" value="Part {oid}"/><metadata key="extruder" value="1"/><part id="1"><metadata key="name" value="Part {oid}"/><metadata key="extruder" value="1"/></part></object>')
+    plate_xml = ''.join(
+        f'<plate><metadata key="plater_id" value="{i}"/>' +
+        ''.join(f'<model_instance><metadata key="object_id" value="{o}"/></model_instance>' for o in ids) + '</plate>'
+        for i, ids in enumerate(plates, 1))
+    with zipfile.ZipFile(path, 'w') as archive:
+        for oid, (poly, h, at) in shapes.items():
+            archive.writestr(f'3D/Objects/object_{oid}.model', _prism_model(poly, h))
+        archive.writestr('3D/3dmodel.model', f'<model xmlns:p="http://schemas.microsoft.com/3dmanufacturing/production/2015/06" unit="millimeter"><resources>{"".join(resources)}</resources><build>{"".join(items)}</build></model>')
+        archive.writestr('Metadata/model_settings.config', f'<config>{"".join(objects)}{plate_xml}</config>')
+        archive.writestr('Metadata/project_settings.config', '{\n  "filament_colour": [\n    "#FFFFFF"\n  ],\n  "filament_type": [\n    "PLA"\n  ]\n}')
+        archive.writestr('3D/_rels/3dmodel.model.rels', '<Relationships>' + ''.join(f'<Relationship Target="/3D/Objects/object_{o}.model" Id="r{o}"/>' for o in shapes) + '</Relationships>')
+        for i in range(1, len(plates) + 1):
+            archive.writestr(f'Metadata/plate_{i}.png', b'png')
+
+
+def _plan(source):
+    state = json.loads(STATE.read_text())
+    manifest = source_colors.inventory(source)
+    plates = model_job.plate_manifest(source)['plates']
+    slots = {p['key']: 1 for p in manifest['parts']}
+    return plate_merge.plan(source, manifest, plates, slots, state)
+
+
+def _placed_hulls(source, verdict):
+    from print_buddy.core import color_geometry
+    placed = {}
+    with zipfile.ZipFile(source) as archive:
+        for oid, shift in verdict['shifts'].items():
+            hull, _bounds = color_geometry._world_hull_xy(archive, {oid})[0]
+            placed[oid] = [(x + shift[0], y + shift[1]) for x, y in hull]
+    return placed
+
+
+def test_pack_polygon_merges_complementary_triangles_that_rectangles_cannot():
+    assert plate_merge.pack({'a': (180, 110), 'b': (180, 110)}, 220) is None
+    placed = plate_merge.pack_polygon({'a': TRI_A, 'b': TRI_B}, 220)
+    assert placed is not None and set(placed) == {'a', 'b'}
+    hulls = {'a': TRI_A, 'b': TRI_B}
+    polys = {k: [(x + placed[k][0], y + placed[k][1]) for x, y in hulls[k]] for k in placed}
+    assert plate_merge.hull_distance(polys['a'], polys['b']) >= plate_merge.SPACING_MM - 1e-9
+    for poly in polys.values():
+        assert all(plate_merge.EDGE_MARGIN_MM - 1e-9 <= v <= 220 - plate_merge.EDGE_MARGIN_MM + 1e-9
+                   for point in poly for v in point)
+
+
+def test_pack_polygon_agrees_with_pack_for_rectangular_hulls():
+    cases = [
+        {'a': (90, 90), 'b': (90, 90), 'c': (40, 40)},
+        {'a': (100, 100), 'b': (100, 100), 'c': (100, 100)},
+        {'a': (250, 10)},
+        {'a': (60, 40), 'b': (50, 50)},
+        {'a': (200, 200)},
+    ]
+    for extents in cases:
+        hulls = {k: [(0, 0), (w, 0), (w, d), (0, d)] for k, (w, d) in extents.items()}
+        assert (plate_merge.pack_polygon(hulls, 220) is not None) == (plate_merge.pack(extents, 220) is not None), extents
+
+
+def test_hull_distance_touching_apart_and_overlapping():
+    a = [(0, 0), (10, 0), (10, 10), (0, 10)]
+    touching = [(10, 0), (20, 0), (20, 10), (10, 10)]
+    apart = [(25, 0), (35, 0), (35, 10), (25, 10)]
+    overlapping = [(5, 5), (15, 5), (15, 15), (5, 15)]
+    assert plate_merge.hull_distance(a, touching) == 0.0
+    assert not plate_merge._polygons_overlap(a, touching)
+    assert plate_merge.hull_distance(a, apart) == pytest.approx(15.0)
+    assert plate_merge.hull_distance(a, overlapping) == 0.0
+    assert plate_merge._polygons_overlap(a, overlapping)
+
+
+def test_pack_polygon_degenerate_hull_falls_back_to_its_aabb():
+    placed = plate_merge.pack_polygon({'line': [(0, 0), (100, 0)],
+                                       'sq': [(0, 0), (60, 0), (60, 60), (0, 60)]}, 220)
+    assert placed is not None and set(placed) == {'line', 'sq'}
+
+
+def test_pack_polygon_feature_budget_replaces_spacing_and_edge_once():
+    placed = plate_merge.pack_polygon({'a': TRI_A, 'b': TRI_B}, 220, feature=6.0)
+    assert placed is not None
+    hulls = {'a': TRI_A, 'b': TRI_B}
+    polys = {k: [(x + placed[k][0], y + placed[k][1]) for x, y in hulls[k]] for k in placed}
+    # hull-to-hull is spacing + 2*feature; hull-to-edge is edge + feature
+    assert plate_merge.hull_distance(polys['a'], polys['b']) >= plate_merge.SPACING_MM + 12.0 - 1e-9
+    for poly in polys.values():
+        assert all(v >= plate_merge.EDGE_MARGIN_MM + 6.0 - 1e-9 for point in poly for v in point)
+    # a budget so large the AABBs alone exceed the shrunken usable area refuses
+    assert plate_merge.pack_polygon({'a': TRI_A, 'b': TRI_B}, 220, feature=20.0) is None
+
+
+def test_pack_polygon_search_budget_exhaustion_is_todays_verdict():
+    assert plate_merge.pack_polygon({'a': TRI_A, 'b': TRI_B}, 220, max_nodes=1) is None
+
+
+def test_pack_polygon_is_deterministic():
+    first = plate_merge.pack_polygon({'a': TRI_A, 'b': TRI_B}, 220)
+    assert first == plate_merge.pack_polygon({'b': TRI_B, 'a': TRI_A}, 220) == \
+        plate_merge.pack_polygon({'a': TRI_A, 'b': TRI_B}, 220)
+
+
+def test_pack_polygon_respects_exclusions_and_reserve():
+    sq = [(0, 0), (60, 0), (60, 60), (0, 60)]
+    placed = plate_merge.pack_polygon({'a': sq, 'b': sq}, 220, exclusions=[(8, 8, 100, 100)])
+    assert placed is not None
+    for corner in placed.values():
+        poly = [(x + corner[0], y + corner[1]) for x, y in sq]
+        assert not plate_merge._polygons_overlap(poly, plate_merge._rect_polygon((8, 8, 100, 100)))
+    big = [(0, 0), (200, 0), (200, 200), (0, 200)]
+    assert plate_merge.pack_polygon({'a': big}, 220, exclusions=[(8, 8, 100, 100)]) is None
+    # the prime-tower reserve strip stays unusable to the polygon packer too
+    assert plate_merge.pack_polygon({'a': TRI_A, 'b': TRI_B}, 220, reserve_y=100.0) is None
+    assert plate_merge.pack_polygon({'a': TRI_A, 'b': TRI_B}, 220, reserve_y=0.0) is not None
+
+
+def test_plan_merges_triangles_via_polygon_fallback(tmp_path):
+    source = tmp_path / 'tri.3mf'
+    _prism_source(source, {'1': (TRI_A, 10, (20, 30)), '2': (TRI_B, 10, (100, 90))}, [['1'], ['2']])
+    verdict = _plan(source)
+    assert verdict['mode'] == 'merge' and verdict['packing'] == 'polygon'
+    placed = _placed_hulls(source, verdict)
+    ids = sorted(placed)
+    assert plate_merge.hull_distance(placed[ids[0]], placed[ids[1]]) >= plate_merge.SPACING_MM - 1e-9
+
+
+def test_plan_rectangle_only_sources_keep_todays_verdict(tmp_path):
+    rect = [(0, 0), (90, 0), (90, 90), (0, 90)]
+    source = tmp_path / 'rect.3mf'
+    _prism_source(source, {'1': (rect, 10, (0, 0)), '2': (rect, 10, (120, 0))}, [['1'], ['2']])
+    verdict = _plan(source)
+    assert verdict['mode'] == 'merge' and verdict['packing'] == 'rectangle'
+    # rectangle placements are exactly the shelf packer's corners as shifts
+    corners = plate_merge.pack({'1': (90, 90), '2': (90, 90)}, 220)
+    for oid, (px, py) in corners.items():
+        assert verdict['shifts'][oid][:2] == pytest.approx([px - (0 if oid == '1' else 120), py])
+    big = [(0, 0), (150, 0), (150, 150), (0, 150)]
+    _prism_source(source, {'1': (big, 10, (0, 0)), '2': (big, 10, (0, 0))}, [['1'], ['2']])
+    verdict = _plan(source)
+    assert verdict['mode'] == 'split' and 'do not fit' in verdict['reason'] and 'packing' not in verdict
+
+
+def test_polygon_merge_slices_to_one_gcode_at_the_recorded_corners(tmp_path, monkeypatch):
+    from print_buddy.core import color_geometry
+    source = tmp_path / 'tri.3mf'
+    _prism_source(source, {'1': (TRI_A, 10, (20, 30)), '2': (TRI_B, 10, (100, 90))}, [['1'], ['2']])
+    verdict = _plan(source)
+    assert verdict['mode'] == 'merge' and verdict['packing'] == 'polygon'
+    job_path = _job(tmp_path, source)
+    fake = _fake_slice()
+    monkeypatch.setattr('print_buddy.core.orca_adapter.slice_model', fake)
+    out = model_job.slice_job(job_path)
+    saved = json.loads(job_path.read_text())
+    assert isinstance(out, (str, Path)) and len(fake.calls) == 1
+    assert sorted(fake.calls[0]['printable']) == ['1', '2']
+    assert saved['plate_merge']['mode'] == 'merge'
+    # Re-read the derived plate: every object landed at the planned corner
+    # and the placed hulls still keep the merge spacing.
+    derived = Path(saved['merged']['plate'])
+    placed = {}
+    with zipfile.ZipFile(derived) as archive:
+        for oid in ('1', '2'):
+            hull, bounds = color_geometry._world_hull_xy(archive, {oid})[0]
+            placed[oid] = hull
+            corner = (verdict['placed_bounds_mm'][oid][0][0], verdict['placed_bounds_mm'][oid][1][0])
+            assert bounds[0][0] == pytest.approx(corner[0]) and bounds[1][0] == pytest.approx(corner[1])
+    assert plate_merge.hull_distance(placed['1'], placed['2']) >= plate_merge.SPACING_MM - 1e-6

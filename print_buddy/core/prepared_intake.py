@@ -1148,7 +1148,8 @@ async def prepare_link(event, adapter, state, root, timeout=None, reuse=None):
                     raise LookupError('a plain 100% rotation fits; skip the split checks')
                 split_plan = await _with_stop(adapter, source, key, metadata, "Checking whether it splits at full size. Press Stop to cancel.",
                                              _heavy(split_fit.split_plan_100, path,
-                                                    int((state.get('bed_mm') or BED)[0])))
+                                                    int((state.get('bed_mm') or BED)[0]),
+                                                    brim_policy=options.get('brim_policy'), state=state))
             except Exception:
                 split_plan = None
             if split_plan:

@@ -591,6 +591,28 @@ def _world_points(archive, object_ids, fit=None):
             for point in item_points]
 
 
+def _world_hull_xy(archive, object_ids, fit=None):
+    """Convex hull of the selected build items' mesh vertices in the bed plane.
+
+    Returns [(hull, bounds)] with one entry per build item: ``hull`` is the
+    item's world-space XY convex hull as [(x, y), ...] in authored orientation
+    (computed with orca_adapter's monotone-chain hull, the same one the
+    full-size fit check sweeps), and ``bounds`` is the item's world AABB in
+    the ``_world_bounds`` shape. The hull is a superset of the item's actual
+    footprint, so hull separation implies mesh separation. Shared by the fit
+    check (split_fit) and the merge planner (plate_merge) so both judge the
+    same footprint.
+    """
+    from .orca_adapter import _hull
+    out = []
+    for item_points in _world_item_points(archive, object_ids, fit):
+        hull = _hull([(p[0], p[1]) for p in item_points])
+        bounds = [(min(p[a] for p in item_points), max(p[a] for p in item_points))
+                  for a in range(3)]
+        out.append((hull, bounds))
+    return out
+
+
 def _world_bounds(archive, object_ids, fit=None):
     """World AABB of selected build items, through their component chain.
 

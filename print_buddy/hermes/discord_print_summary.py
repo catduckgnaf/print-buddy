@@ -466,4 +466,12 @@ def format_slice_summary(job, now=None):
             original_text = ' x '.join(f'{float(value):g}' for value in original)
             final_text = ' x '.join(f'{float(value):g}' for value in final)
             lines.append(f'Auto-scale: {original_text} mm treated as inches, scaled 25.4x -> {final_text} mm')
+    else:
+        provenance = job.get('unit_provenance')
+        if isinstance(provenance, dict) and provenance.get('source') == 'user_confirmation' \
+                and provenance.get('units') == 'mm':
+            original = provenance.get('original_mm') or ()
+            if len(original) == 3:
+                original_text = ' x '.join(f'{float(value):g}' for value in original)
+                lines.append(f'Units: millimeters confirmed, printed at authored size {original_text} mm')
     return scrub("\n".join(lines))

@@ -9,3 +9,35 @@ Included older test branch changes: complete test-path diff from the two test co
 Checks: focused unit/integration command `python3 -m pytest -q --basetemp "$HOME/.cache/hermes-pytest-basetemp/adhoc-pbpub-$$" -p no:cacheprovider tests/core/test_prepared_intake_units.py tests/pipeline/test_model_intake_audit_placement.py tests/core/test_large_model_notice.py` resulted in 29 passed, 1 skipped (optional trimesh), 3 strict xfailed for known non-finite-coordinate placement defect. The corpus suite run was interrupted after repeated failures and two four-minute faulthandler dumps. Saved historical `corpus-run.log` likewise reports failures and hangs: million-triangle mesh audit inside `mesh_topology`, and unanswered prompt waiting in `prompts.wait_for_response`. This PR does not claim the corpus suite is green; failures are to be investigated on the draft.
 
 Pending: reconcile corpus failures against current main, test family changes in GitHub CI, inspect all diffs and run repository policy check before publication. This branch does not include mesh_fast or performance work from the separate recovery lane.
+
+## Addendum (2026-10-25): behaviour-contract decisions applied
+
+After maintainer review of the remaining corpus failures, the cases were
+reconciled with current production behaviour (commit b6cc612):
+
+- copies-multiple-plates now expects the merged-plate contract (one G-code);
+  multiplate-select expects the `split` verdict name; duplicate-part-names
+  expects the plate-name rename for colliding part names
+  (`source_colors._apply_plate_names`); missing-plate-metadata expects 0
+  declared plates; six single-STL cases no longer assert a parts list.
+- parts-one-plate was regenerated with one part assigned to both plates;
+  production tolerates the overlap and merges the parts once, and the case
+  now pins that behaviour.
+- stl-degenerate-zero-volume is a known failure (strict xfail in the flow
+  tests) tracked by issue #194: zero-volume meshes are not rejected at
+  intake. The case stays as that issue's regression test.
+- The large-model notice test was removed; the feature it tests (commit
+  431a690) remains excluded from this PR, as documented above.
+- The harness clarify stand-in now expires unanswered waits after 10 s, so
+  the cancelled-prompt standalone story completes instead of blocking for
+  the production wait.
+- The no-approval user story now pins "nothing starts" rather than
+  "nothing slices": current production prepares slicing before the final
+  approval prompt.
+
+Verification state: a complete local run of the corpus suite has not yet
+been obtained on this machine (repeated runs were cut off by timeouts and
+service restarts while the VM was shared with other test suites). The last
+completed full pass predates these case edits; its only failures were the
+items this addendum covers. Treat CI as the authoritative result for this
+commit.

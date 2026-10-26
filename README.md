@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="assets/branding/logo-lockup.png" alt="Print Buddy logo" width="480">
+</p>
+
 # Print Buddy
 
 [![CI](https://github.com/catduckgnaf/print-buddy/actions/workflows/ci.yml/badge.svg)](https://github.com/catduckgnaf/print-buddy/actions/workflows/ci.yml)

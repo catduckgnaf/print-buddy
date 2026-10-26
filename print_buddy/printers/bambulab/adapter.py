@@ -88,9 +88,17 @@ class BambuAdapter(PrinterAdapter):
                                 "printer; slice and package the job first (the Bambu package delivery does this)")
         return self.client().upload(local_path, remote_name)
 
-    def start_print(self, remote_name, plate="Metadata/plate_1.gcode"):
-        """Send the print-start command for an uploaded package. Gates live in the print path."""
-        return self.client().start_print(remote_name, plate)
+    def start_print(self, remote_name, plate="Metadata/plate_1.gcode", **kw):
+        """Send the print-start command for an uploaded package. Gates live in the print path.
+
+        Extra keyword arguments (ams_mapping, nozzle_mapping, submission_id) pass
+        through to the LAN client unchanged (#308).
+        """
+        return self.client().start_print(remote_name, plate, **kw)
+
+    def extruder_count(self) -> int:
+        """How many extruders this model prints with (1 unless its facts say more, #308)."""
+        return int(self.facts["extruders"].value) if "extruders" in self.facts else 1
 
     def control(self, action):
         """Pause, resume or stop the current print over LAN MQTT."""

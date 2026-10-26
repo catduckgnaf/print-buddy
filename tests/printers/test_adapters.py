@@ -55,7 +55,8 @@ class ContractTests(unittest.TestCase):
         # The #127 Stage 1 models share the family fixture: trust + install each one.
         for key, fact_name in (("bambulab.a1mini", "A1MINI"), ("bambulab.p1p", "P1P"), ("bambulab.x1", "X1"),
                                ("bambulab.x1c", "X1C"), ("bambulab.x1e", "X1E"), ("bambulab.p2s", "P2S"),
-                               ("bambulab.h2s", "H2S")):
+                               ("bambulab.h2s", "H2S"), ("bambulab.h2d", "H2D"), ("bambulab.h2dpro", "H2DPRO"),
+                               ("bambulab.x2d", "X2D")):
             model_facts = getattr(bambu_facts, fact_name)
             patcher = mock.patch.object(printers.MODELS[key].adapter, "facts",
                                         bambu_family_fixture.fixture_facts(model_facts))
@@ -88,7 +89,8 @@ class ContractTests(unittest.TestCase):
                                        "flashforge.ad5m", "flashforge.ad5m_pro",
                                        "flashforge.creator5", "flashforge.creator5_pro",
                                        "bambulab.a1mini", "bambulab.p1p", "bambulab.x1", "bambulab.x1c",
-                                       "bambulab.x1e", "bambulab.p2s", "bambulab.h2s",
+                                       "bambulab.x1e", "bambulab.p2s", "bambulab.h2s", "bambulab.h2d",
+                                       "bambulab.h2dpro", "bambulab.x2d",
                                        "prusa.mk4s", "prusa.coreone", "prusa.xl", "prusa.miniplus",
                                        "elegoo.neptune4", "elegoo.neptune4pro", "elegoo.neptune4plus",
                                        "elegoo.neptune4max", "elegoo_sdcp.centauricarbon"})

@@ -132,7 +132,8 @@ P1S = {
     "max_bed_c": Fact(100, "BAMBU", True),
     "ideal_materials": Fact(("PLA", "PETG", "TPU", "PVA"), "BAMBU", True),
     "not_recommended_materials": Fact(("ABS", "ASA", "PC", "PA", "PET"), "BAMBU", True),
-    # P1S's standard AMS has four slots; Print Buddy deliberately enables only single-color offline jobs.
+    # P1S's standard AMS has four slots; offline jobs are single-color, and LAN print starts
+    # resolve trays per filament slot from live status (#308).
     "ams": Fact(("AMS", 4), "BAMBU", True),
     "enclosed": Fact(True, "BAMBU", True),
 }
@@ -143,9 +144,10 @@ P1S = {
 # profiles.sha256 over OrcaSlicer v2.4.2 at ORCA_RELEASE (the pipeline reproduces the A1 and P1S
 # identities above exactly). Motion envelopes are DERIVED the A1 way: extremes of the literal XY
 # moves in the flattened vendor start/end/timelapse/change-filament blocks, widened to cover the
-# bed. Dual-nozzle models (H2D, H2D Pro, X2D, H2C) are not here: their machine profiles carry two
-# nozzle_diameter entries and a narrower dual-tool width, which the single-path adapter refuses;
-# they are Stage 2 on #127.
+# bed. Dual-nozzle models (H2D, H2D Pro, X2D) are in the Stage 2 section below (#308): their
+# machine profiles carry two nozzle_diameter entries, handled by the extruder-aware identity and
+# guard checks. H2C is not here: it has no profile at all in the pinned OrcaSlicer 2.4.2 BBL index
+# (checked 2026-10-26), so no checked identity can be established for it; see #308.
 
 _IDENTITY_LABEL = "OrcaSlicer 2.4.2 (BBL vendor profiles 02.01.00.19)"
 
@@ -305,4 +307,119 @@ H2S = {
     "not_recommended_materials": Fact((), "BAMBU", False),
     "ams": Fact(("AMS 2 Pro", 4), "BAMBU", False),
     "enclosed": Fact(True, "BAMBU", False),
+}
+
+# --- #127 Stage 2 / #308: the dual-nozzle models ---------------------------------------------------
+# Same derivation as Stage 1: identities computed by running profiles.flatten + profiles.sha256
+# over OrcaSlicer v2.4.2 at ORCA_RELEASE (the pipeline reproduces the A1 and P1S identities
+# exactly). Motion envelopes are DERIVED the A1 way from the flattened vendor blocks' literal XY
+# extremes, widened to cover the bed. "extruders" is the profile's nozzle_diameter entry count and
+# drives the extruder-aware identity/guard checks and the AMS mapping's nozzle filter.
+# The H2D build width depends on the tool (305 mm single-tool, 350 mm dual, per Bambu's specs);
+# bed_mm records the full profile volume — a multi-tool job is the operator's to slice inside the
+# per-tool limits their mapping uses.
+
+H2D = {
+    "printer_model": Fact("Bambu Lab H2D", "ORCA", True),
+    "orca_profiles": Fact({"machine": "Bambu Lab H2D 0.4 nozzle", "process": "0.20mm Standard @BBL H2D",
+                           "filament": "Bambu PLA Basic @BBL H2D"}, "ORCA", True),
+    # One checked vendor filament profile per base polymer (#264), so a multi-material file's
+    # slots can each name a checked profile. PLA is the default profile above.
+    "orca_filaments": Fact({"PLA": "Bambu PLA Basic @BBL H2D", "PETG": "Generic PETG @BBL H2D",
+                            "TPU": "Generic TPU @BBL H2D", "PVA": "Generic PVA @BBL H2D"}, "ORCA", True),
+    "orca_identity": Fact(({
+        "label": _IDENTITY_LABEL, "vendor_version": "02.01.00.19",
+        "sha256": {"machine": "013c853bac2942a86e1ef32e073ecc8381345a0757dbd676789f1d1b3cd5c8b8",
+                   "process": "1208765d895439e9f66e3e0a913881a6b4e7d28b8edce62fb1f8ce002f6503ee",
+                   "filament": "cd3044c9e637453702e81254b351a702ef116dd2b2ffcf9b1b82b0bf8f89137d"},
+        "filaments": {"Generic PETG @BBL H2D": "93e86898330e805436f9f4f03d5eb89cca141fea43754333bd3def9327c197aa",
+                      "Generic TPU @BBL H2D": "05a1e6055eb3685900af5f86766d2fe922c06febd665db68814bcd86af3670b9",
+                      "Generic PVA @BBL H2D": "fb40c97e52ec35c86d838295f2900ba61b8293236b23d6ea346e15848c09545f"},
+    },), "ORCA", True),
+    "bed_mm": Fact((350.0, 320.0), "ORCA", True),
+    "max_print_height_mm": Fact(325.0, "ORCA", True),
+    "bed_exclude_area": Fact((), "ORCA", True),
+    "motion_envelope_mm": Fact((0.0, -16.0, 350.0, 320.0), "DERIVED", False),
+    "travel_z_headroom_mm": Fact(1.0, "DERIVED", False),
+    "default_plate": Fact("Textured PEI Plate", "ORCA", True),
+    "stock_nozzle": Fact((0.4, "hardened_steel"), "ORCA", True),
+    "nozzle_sizes_mm": Fact((0.2, 0.4, 0.6, 0.8), "BAMBU", False),
+    "max_hotend_c": Fact(350, "BAMBU", False),
+    "max_bed_c": Fact(120, "BAMBU", False),
+    "ideal_materials": Fact(("PLA", "PETG", "TPU", "ABS", "ASA", "PC", "PA"), "BAMBU", False),
+    "not_recommended_materials": Fact((), "BAMBU", False),
+    "ams": Fact(("AMS 2 Pro", 4), "BAMBU", False),
+    "enclosed": Fact(True, "BAMBU", False),
+    "extruders": Fact(2, "ORCA", True),
+}
+
+H2DPRO = {
+    "printer_model": Fact("Bambu Lab H2D Pro", "ORCA", True),
+    "orca_profiles": Fact({"machine": "Bambu Lab H2D Pro 0.4 nozzle", "process": "0.20mm Standard @BBL H2DP",
+                           "filament": "Bambu PLA Basic @BBL H2DP"}, "ORCA", True),
+    "orca_filaments": Fact({"PLA": "Bambu PLA Basic @BBL H2DP", "PETG": "Generic PETG @BBL H2DP",
+                            "TPU": "Generic TPU @BBL H2DP", "PVA": "Generic PVA @BBL H2DP"}, "ORCA", True),
+    "orca_identity": Fact(({
+        "label": _IDENTITY_LABEL, "vendor_version": "02.01.00.19",
+        "sha256": {"machine": "7284d424b3525b5e6b91f8f2f606e22b9690be76528c12498f07ee0e90a6b07f",
+                   "process": "bbf17643942051e8dff92ac2fa5d7fea61848b4cf212b550984bc5d25d7f4135",
+                   "filament": "2f19516c9f6728bec42cc58069cd97b6fa03ac1ab900381c5d919523d745ba29"},
+        "filaments": {"Generic PETG @BBL H2DP": "3185372d4c336bd44769c5145f18e8b3eb400747db794e264505b656572f4dc9",
+                      "Generic TPU @BBL H2DP": "9cd55060df6dc5a017705675cfec73eec3a97570d799c60bee1b989bf4815a51",
+                      "Generic PVA @BBL H2DP": "44323c62943ea2b48a499f47e19f0981253a31354bd3f77eee5907ff43dcb7ae"},
+    },), "ORCA", True),
+    "bed_mm": Fact((350.0, 320.0), "ORCA", True),
+    "max_print_height_mm": Fact(325.0, "ORCA", True),
+    "bed_exclude_area": Fact((), "ORCA", True),
+    "motion_envelope_mm": Fact((0.0, -16.0, 350.0, 320.0), "DERIVED", False),
+    "travel_z_headroom_mm": Fact(1.0, "DERIVED", False),
+    "default_plate": Fact("Textured PEI Plate", "ORCA", True),
+    "stock_nozzle": Fact((0.4, "hardened_steel"), "ORCA", True),
+    "nozzle_sizes_mm": Fact((0.2, 0.4, 0.6, 0.8), "BAMBU", False),
+    "max_hotend_c": Fact(350, "BAMBU", False),
+    "max_bed_c": Fact(120, "BAMBU", False),
+    "ideal_materials": Fact(("PLA", "PETG", "TPU", "ABS", "ASA", "PC", "PA"), "BAMBU", False),
+    "not_recommended_materials": Fact((), "BAMBU", False),
+    "ams": Fact(("AMS 2 Pro", 4), "BAMBU", False),
+    "enclosed": Fact(True, "BAMBU", False),
+    "extruders": Fact(2, "ORCA", True),
+}
+
+X2D = {
+    "printer_model": Fact("Bambu Lab X2D", "ORCA", True),
+    # The machine's own default filament is the 0.4-nozzle-suffixed profile; the un-suffixed
+    # @BBL X2D PLA profile lists only 0.6/0.8 nozzle machines and is not a checked default.
+    "orca_profiles": Fact({"machine": "Bambu Lab X2D 0.4 nozzle", "process": "0.20mm Standard @BBL X2D",
+                           "filament": "Bambu PLA Basic @BBL X2D 0.4 nozzle"}, "ORCA", True),
+    # The X2D's Generic profiles are nozzle-suffixed like its default: the un-suffixed
+    # @BBL X2D Generics list only the 0.6/0.8 nozzle machines in compatible_printers,
+    # so the checked set is the 0.4 nozzle variants (verified against the pinned tree).
+    "orca_filaments": Fact({"PLA": "Bambu PLA Basic @BBL X2D 0.4 nozzle",
+                            "PETG": "Generic PETG @BBL X2D 0.4 nozzle",
+                            "TPU": "Generic TPU @BBL X2D 0.4 nozzle",
+                            "PVA": "Generic PVA @BBL X2D 0.4 nozzle"}, "ORCA", True),
+    "orca_identity": Fact(({
+        "label": _IDENTITY_LABEL, "vendor_version": "02.01.00.19",
+        "sha256": {"machine": "72e2f78a837f4e85ef370125b5e82457cae0cd37a511795fd4ed9d321dfcf829",
+                   "process": "351fc2f4f031bb0209260c640acbfba000d55e20ee12983874aad1215c449d54",
+                   "filament": "7df0376d688adcb93649261bad60dc357a11cea08126bfb7b24e5eedca946c2d"},
+        "filaments": {"Generic PETG @BBL X2D 0.4 nozzle": "81cb8d9fc131ed3961aa1c6b8e7a432e5dbad1bbc0d93ac1aecfc785b679757c",
+                      "Generic TPU @BBL X2D 0.4 nozzle": "2c2a1b9dce7cc7c17961b9d84d2c11c20e9ca89890b0f9811364ffa0e340c0af",
+                      "Generic PVA @BBL X2D 0.4 nozzle": "c3bad6320ef116a054f1eaf6832567589c162992a2027c45e5c09ce26f655c4a"},
+    },), "ORCA", True),
+    "bed_mm": Fact((256.0, 256.0), "ORCA", True),
+    "max_print_height_mm": Fact(261.0, "ORCA", True),
+    "bed_exclude_area": Fact((), "ORCA", True),
+    "motion_envelope_mm": Fact((0.0, -16.0, 256.0, 256.0), "DERIVED", False),
+    "travel_z_headroom_mm": Fact(1.0, "DERIVED", False),
+    "default_plate": Fact("Textured PEI Plate", "ORCA", True),
+    "stock_nozzle": Fact((0.4, "hardened_steel"), "ORCA", True),
+    "nozzle_sizes_mm": Fact((0.2, 0.4, 0.6, 0.8), "BAMBU", False),
+    "max_hotend_c": Fact(320, "BAMBU", False),
+    "max_bed_c": Fact(110, "BAMBU", False),
+    "ideal_materials": Fact(("PLA", "PETG", "TPU", "ABS", "ASA", "PC", "PA"), "BAMBU", False),
+    "not_recommended_materials": Fact((), "BAMBU", False),
+    "ams": Fact(("AMS 2 Pro", 4), "BAMBU", False),
+    "enclosed": Fact(True, "BAMBU", False),
+    "extruders": Fact(2, "ORCA", True),
 }

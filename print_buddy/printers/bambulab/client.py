@@ -48,7 +48,61 @@ START_PUSH = {"pushing": {"sequence_id": "0", "command": "start"}}
 PRINT_CONTROLS = ("pause", "resume", "stop")
 
 
-def project_file_payload(remote_name, plate="Metadata/plate_1.gcode"):
+# The `project_file` sequence id every maintained client uses for a print start
+# (#308, from the #298 Stage 0 audit of maziggy/bambuddy at 98ecaf5: protocol facts
+# only, no code copied — Bambuddy is AGPL-3.0, this repo is MIT).
+PROJECT_FILE_SEQUENCE_ID = "20000"
+
+# Canonical AMS tray ids in a resolved mapping (ams_mapping.py produces these):
+# a regular AMS / AMS Lite tray is ams_id * 4 + slot_id, an AMS-HT unit is its unit
+# id (128-135, single tray), the external spool is 254 (left on a dual-nozzle
+# printer) or 255 (right), and -1 is a filament slot with no tray.
+EXTERNAL_TRAYS = (254, 255)
+UNMAPPED_TRAY = -1
+
+
+def _new_submission_id():
+    """One fresh submission id for a print start: epoch milliseconds, clamped.
+
+    The audit records that Bambuddy shares one fresh id across project/task/subtask
+    and clamps it — oversized values make P1 firmware treat new jobs as
+    continuations of an old one. Epoch ms is 13 digits today; the clamp keeps it
+    there whatever the clock says.
+    """
+    return str(max(0, min(int(time.time() * 1000), 9_999_999_999_999)))
+
+
+def _ams_wire_forms(mapping):
+    """(flat `ams_mapping`, `ams_mapping2`, `use_ams`) for a canonical tray mapping.
+
+    Wire shapes from the #298 audit (row 4): the flat list converts external
+    spools to -1 (the firmware rejects raw 254/255 there), while `ams_mapping2`
+    entries {ams_id, slot_id} carry the externals, with an unmapped slot as
+    {255, 255}; an AMS-HT unit (128-135) passes through as its own ams_id with
+    slot 0. `use_ams` is a JSON bool, reconciled from the mapping — any real
+    tray makes it True, an all-external/unmapped mapping makes it False — and
+    never an integer: on dual-nozzle firmware an int is read as a nozzle index.
+    """
+    flat, detailed = [], []
+    for tray in mapping:
+        if tray == UNMAPPED_TRAY:
+            flat.append(-1)
+            detailed.append({"ams_id": 255, "slot_id": 255})
+        elif tray in EXTERNAL_TRAYS:
+            flat.append(-1)
+            detailed.append({"ams_id": tray, "slot_id": 0})
+        elif 128 <= tray <= 135:  # AMS-HT unit: single tray, passes through
+            flat.append(tray)
+            detailed.append({"ams_id": tray, "slot_id": 0})
+        else:
+            flat.append(tray)
+            detailed.append({"ams_id": tray // 4, "slot_id": tray % 4})
+    use_ams = any(tray not in (UNMAPPED_TRAY, *EXTERNAL_TRAYS) for tray in mapping)
+    return flat, detailed, use_ams
+
+
+def project_file_payload(remote_name, plate="Metadata/plate_1.gcode", *, ams_mapping=None,
+                         nozzle_mapping=None, submission_id=None):
     """The `project_file` print-start command for a package already on the printer.
 
     Field set triangulated from pybambu's PRINT_PROJECT_FILE_TEMPLATE and
@@ -57,17 +111,35 @@ def project_file_payload(remote_name, plate="Metadata/plate_1.gcode"):
     Calibration flags are all false — the behaviour the Home Assistant service call
     uses (its template defaults them true and the call overrides to false) — so the
     printer runs the file as sliced, without extra auto-calibration passes Print
-    Buddy did not ask for. AMS is off with the single-tray mapping: Print Buddy's
-    Bambu support is single-colour. `sequence_id` semantics are a recorded unknown
-    in the research doc; "0" matches every other command in this module.
+    Buddy did not ask for.
+
+    AMS (#308, wire shapes from the #298 audit): with no mapping the payload is the
+    legacy single-tray form (`ams_mapping: [0]`, `use_ams: false`) — the file was
+    sliced for the recorded spool. A resolved mapping (canonical global tray ids,
+    see ams_mapping.py) is sent in both wire forms with `use_ams` reconciled, and
+    `md5` is sent empty (validation skipped deliberately, as in the audited
+    client); no `cfg` field is ever sent. `nozzle_mapping` (H2C rack: physical
+    nozzle ids) is included only when a caller supplies a resolved list — when
+    rack resolution is unknown the field is omitted and the firmware auto-picks,
+    which the audit records as preferable to a wrong id.
     """
-    return {"print": {"sequence_id": "0", "command": "project_file", "param": plate,
-                      "file": remote_name, "url": f"ftp:///{remote_name}",
-                      "bed_type": "auto", "timelapse": False,
-                      "bed_leveling": False, "flow_cali": False, "vibration_cali": False,
-                      "layer_inspect": False, "use_ams": False, "ams_mapping": [0],
-                      "subtask_name": remote_name,
-                      "profile_id": "0", "project_id": "0", "subtask_id": "0", "task_id": "0"}}
+    if ams_mapping is None:
+        flat, detailed, use_ams = [0], [{"ams_id": 0, "slot_id": 0}], False
+    else:
+        flat, detailed, use_ams = _ams_wire_forms(list(ams_mapping))
+    submission = str(submission_id) if submission_id is not None else _new_submission_id()
+    body = {"sequence_id": PROJECT_FILE_SEQUENCE_ID, "command": "project_file", "param": plate,
+            "file": remote_name, "url": f"ftp:///{remote_name}",
+            "bed_type": "auto", "timelapse": False,
+            "bed_leveling": False, "flow_cali": False, "vibration_cali": False,
+            "layer_inspect": False, "use_ams": use_ams, "ams_mapping": flat,
+            "ams_mapping2": detailed, "md5": "",
+            "subtask_name": remote_name,
+            "profile_id": "0", "project_id": submission, "subtask_id": submission,
+            "task_id": submission}
+    if nozzle_mapping is not None:
+        body["nozzle_mapping"] = list(nozzle_mapping)
+    return {"print": body}
 
 # print.fun bit: the firmware requires signed MQTT commands (Developer Mode is off),
 # so every write is blocked even though reads keep working. See docs/BAMBU-CONNECTIVITY.md.
@@ -387,17 +459,19 @@ class BambuLanClient:
             except Exception:
                 pass
 
-    def start_print(self, remote_name, plate="Metadata/plate_1.gcode"):
+    def start_print(self, remote_name, plate="Metadata/plate_1.gcode", *, ams_mapping=None,
+                    nozzle_mapping=None, submission_id=None):
         """Send `project_file` for a package already uploaded under `remote_name`.
 
         No gates live here by design (see the module docstring): the print path checks
-        readiness, the firmware signature bit and the bed-clear approval first, and
-        confirms the start from telemetry afterwards.
+        readiness, the firmware signature bit and the bed-clear approval first, resolves
+        any AMS mapping (ams_mapping.py), and confirms the start from telemetry afterwards.
         """
         name = _remote_name(remote_name, remote_name)
         if not plate.startswith("Metadata/") or not plate.endswith(".gcode"):
             raise BambuLanError(f"invalid plate path inside the package: {plate!r}")
-        self._send(project_file_payload(name, plate))
+        self._send(project_file_payload(name, plate, ams_mapping=ams_mapping,
+                                        nozzle_mapping=nozzle_mapping, submission_id=submission_id))
 
     def control(self, action):
         """Send a pause / resume / stop command for the current print."""

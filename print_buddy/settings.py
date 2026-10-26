@@ -84,7 +84,8 @@ LEGACY_ENV = {
 # Sections whose keys are names you choose, not a fixed set.
 OPEN_SECTIONS = {"cold_pull", "nozzle_temp_offsets", "material_temps"}
 # Keys that can be optionally specified even if absent from base home.toml.
-OPTIONAL_KEYS = {("printer", "nozzle_type"): str, ("visual_watch", "enabled"): bool,
+OPTIONAL_KEYS = {("printer", "nozzle_type"): str, ("printer", "tool_count"): int,
+                 ("visual_watch", "enabled"): bool,
                  ("services", "octoprint_url"): str,
                  ("bambu", "lan_host"): str, ("bambu", "lan_serial"): str,
                  ("bambu", "lan_access_code_env"): str,

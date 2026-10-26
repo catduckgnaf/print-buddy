@@ -28,14 +28,14 @@ curl -fsSL https://raw.githubusercontent.com/catduckgnaf/print-buddy/main/script
 To install a specific release instead of the latest code:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/catduckgnaf/print-buddy/main/scripts/install-light.sh | bash -s -- --ref 2.1.3
+curl -fsSL https://raw.githubusercontent.com/catduckgnaf/print-buddy/main/scripts/install-light.sh | bash -s -- --ref 2.1.4
 ```
 
 The setup wizard asks for your printer brand and model (or Other / generic), the connection, nozzle, filament, slicer, Spoolman, camera and timelapse, your Discord bot, and whether to run as a Hermes profile or a standalone bot. It installs the stock Flathub OrcaSlicer or Bambu Studio; it does not bundle Spoolman (it can run the official Spoolman installer if you ask). See [light install](docs/INSTALL-LIGHT.md) and [Discord bot setup](docs/DISCORD-BOT-SETUP.md).
 
 ### Docker
 
-The single-container image ships with 2.1.3 (see [#117](https://github.com/catduckgnaf/print-buddy/issues/117) and [#214](https://github.com/catduckgnaf/print-buddy/issues/214)); the published 2.1.1 image keeps the older three-container stack. The 2.1.3 image is at `ghcr.io/catduckgnaf/print-buddy` (amd64 only), built and checked offline by the publish workflow before it is pushed. From the next release the publish workflow also builds `linux/arm64` and a slicer-free `-light` variant under multi-arch manifests ([#192](https://github.com/catduckgnaf/print-buddy/issues/192)); see [Docker](docs/DOCKER.md#supported-platforms-and-variants-192) for the platform/variant matrix — no multi-arch tag exists until that release is actually published.
+The single-container image ships with 2.1.4 (see [#117](https://github.com/catduckgnaf/print-buddy/issues/117) and [#214](https://github.com/catduckgnaf/print-buddy/issues/214)); the published 2.1.1 image keeps the older three-container stack. The 2.1.4 image is at `ghcr.io/catduckgnaf/print-buddy` (amd64 only), built and checked offline by the publish workflow before it is pushed. From the next release the publish workflow also builds `linux/arm64` and a slicer-free `-light` variant under multi-arch manifests ([#192](https://github.com/catduckgnaf/print-buddy/issues/192)); see [Docker](docs/DOCKER.md#supported-platforms-and-variants-192) for the platform/variant matrix — no multi-arch tag exists until that release is actually published.
 
 One container runs the three parts of Print Buddy, started and watched by a supervisor:
 

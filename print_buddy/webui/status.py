@@ -98,13 +98,27 @@ def _bot_section(data, heartbeat):
 
 
 def _listener_section(data):
-    required = healthcheck.listener_required(data)
-    if not required:
-        return {"required": False, "ok": None,
-                "reason": f"not required for connection "
-                          f"{healthcheck.listener_connection(data)!r}"}
-    ok, reason = healthcheck.check(data)
-    return {"required": True, "ok": ok, "reason": reason}
+    entries = settings.printers(data)
+    if len(entries) <= 1:
+        required = healthcheck.listener_required(data)
+        if not required:
+            return {"required": False, "ok": None,
+                    "reason": f"not required for connection "
+                              f"{healthcheck.listener_connection(data)!r}"}
+        ok, reason = healthcheck.check(data)
+        return {"required": True, "ok": ok, "reason": reason}
+    # Multi-printer (#336): one listener instance per printer, aggregated —
+    # required when any printer's domain is implemented, ok only when every
+    # required printer's heartbeat checks out.
+    statuses = healthcheck.listener_statuses(data)
+    required = any(row["required"] for row in statuses.values())
+    ok = None
+    if required:
+        ok = all(row["ok"] for row in statuses.values() if row["required"])
+    reason = "; ".join(f"{printer_id}: {row['reason']}"
+                       for printer_id, row in statuses.items())
+    return {"required": required, "ok": ok, "reason": reason,
+            "printers": statuses}
 
 
 def _spoolman_section(data, environ, probe):

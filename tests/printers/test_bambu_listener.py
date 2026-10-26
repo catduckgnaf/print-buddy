@@ -290,7 +290,8 @@ def test_unconfigured_listener_idles_beats_and_never_touches_the_network(monkeyp
 
 def test_heartbeat_uses_the_bambu_runtime_and_satisfies_the_healthcheck(monkeypatch, tmp_path):
     path = tmp_path / "listener_health.json"
-    monkeypatch.setattr(healthcheck, "heartbeat_path", lambda data=None: path)
+    monkeypatch.setattr(healthcheck, "heartbeat_path",
+                        lambda data=None, printer_id=None: path)
     listener, _clock, _beats = make_listener(monkeypatch, [FakeMqtt()])
     listener._beat_fn = lambda **details: healthcheck.beat(runtime="bambu_event_listener",
                                                             **details)

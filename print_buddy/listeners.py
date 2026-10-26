@@ -3,12 +3,12 @@
 Print Buddy's listeners are split by *domain* — the configured printer's
 connection / firmware type (`print_buddy.printers.base.CONNECTIONS`). The
 domain selects the listener *type*; a listener *instance* serves one
-configured printer. Today exactly one instance exists per installation (one
-printer per instance, #257), but nothing here is a global singleton: the
-registry answers "which listener, if any, serves this connection", so a
-future multi-printer supervisor asks once per printer instance and
-supervises and healthchecks each instance independently — one instance
-failing must never take down the bot, Spoolman, or another instance (#256).
+configured printer. Since #336 the container supervisor runs one instance
+per roster printer (`--printer <id>`, below) and supervises and
+healthchecks each instance independently — one instance failing must
+never take down the bot, Spoolman, or another instance (#256). Nothing
+here is a global singleton: the registry answers "which listener, if
+any, serves this connection", once per printer instance.
 
 Availability is three-valued, and the distinction matters to the supervisor:
 
@@ -149,8 +149,58 @@ def validate_status(status):
     return problems
 
 
-def launch(data=None):
-    """Run the configured printer instance's listener in this process.
+# The printer instance this process serves, installed by launch() when it
+# starts a per-printer instance (#336). A listener process serves exactly
+# one printer for its whole life; the healthcheck resolves heartbeat
+# ownership through here when no explicit printer is named. None in every
+# other process (the bot, one-shot tools, the legacy no-selector launch).
+_instance_printer_id = None
+
+
+def instance_printer_id():
+    """The roster id of the printer this process listens for, or None."""
+    return _instance_printer_id
+
+
+def _set_instance_printer_id(printer_id):
+    global _instance_printer_id
+    _instance_printer_id = printer_id
+
+
+def _instance_view(printer_id, data):
+    """The settings a per-printer listener process runs on (#336).
+
+    The printer's own view (settings.view_for), deep-copied, with the
+    platform chat fields pointed at the printer's claimed chat when its
+    roster entry sets a chat_id — the claim model bot.routing validates —
+    so the listener's lifecycle posts land in the owning printer's channel
+    (design §2.3/§2.5). An entry without a chat_id keeps the platform home
+    chats, its fallback claim.
+    """
+    import copy
+
+    from . import settings
+
+    view = copy.deepcopy(settings.view_for(printer_id, data))
+    claim = str(settings.by_id(printer_id, data).get("chat_id") or "")
+    if claim:
+        for section, key in (("discord", "chat_id"), ("telegram", "chat_id"),
+                             ("matrix", "room_id")):
+            if isinstance(view.get(section), dict):
+                view[section][key] = claim
+    return view
+
+
+def launch(data=None, printer_id=None):
+    """Run a printer instance's listener in this process.
+
+    Without `printer_id` this is the configured (default) printer — the
+    original single-instance behaviour. With one, the instance serves
+    that roster printer: the launcher installs the printer's settings
+    view as this process's settings (settings.set_override) and records
+    the instance identity (instance_printer_id) before running the domain
+    module, so the module — written for one printer — reads its own
+    printer's model, connection and channel throughout.
 
     Returns the supervisor-facing exit code when there is nothing to run
     (3 = the instance's domain has no listener yet or by definition); an
@@ -160,21 +210,49 @@ def launch(data=None):
     """
     from . import healthcheck
 
-    domain = healthcheck.listener_domain(data)
+    if printer_id is None:
+        domain = healthcheck.listener_domain(data)
+        if domain is None:
+            print(f"listener: connection {healthcheck.listener_connection(data)!r} "
+                  "has no registered listener domain; not starting one")
+            return 3
+        if not domain.implemented:
+            print(f"listener: domain {domain.name!r} has no listener yet; not starting one")
+            return 3
+        runpy.run_module(domain.module, run_name="__main__")
+        return 0
+
+    from . import settings
+
+    data = settings.current() if data is None else data
+    settings.by_id(printer_id, data)  # an unknown id is the unresolved case
+    domain = healthcheck.listener_domain(data, printer_id)
     if domain is None:
-        print(f"listener: connection {healthcheck.listener_connection(data)!r} "
-              "has no registered listener domain; not starting one")
+        print(f"listener: printer {printer_id!r}: connection "
+              f"{healthcheck.listener_connection(data, printer_id)!r} has no "
+              "registered listener domain; not starting one")
         return 3
     if not domain.implemented:
-        print(f"listener: domain {domain.name!r} has no listener yet; not starting one")
+        print(f"listener: printer {printer_id!r}: domain {domain.name!r} has "
+              "no listener yet; not starting one")
         return 3
+    settings.set_override(_instance_view(printer_id, data))
+    _set_instance_printer_id(printer_id)
     runpy.run_module(domain.module, run_name="__main__")
     return 0
 
 
-def main():
+def main(argv=None):
+    args = list(sys.argv[1:] if argv is None else argv)
+    printer_id = None
+    if "--printer" in args:
+        index = args.index("--printer")
+        if index + 1 >= len(args):
+            print("listener: --printer requires a printer id", file=sys.stderr)
+            return 2
+        printer_id = args[index + 1]
     try:
-        return launch()
+        return launch(printer_id=printer_id)
     except Exception as exc:  # settings errors name themselves; keep the code 2 contract
         from . import settings
 

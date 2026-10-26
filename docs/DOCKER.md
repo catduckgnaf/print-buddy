@@ -10,7 +10,7 @@ An empty `DISCORD_BOT_TOKEN` disables only the Discord consumer for staging. Nev
 
 ## Which processes run
 
-Which children the supervisor starts depends on the configured printer instance's **listener domain** (#256, #299): the listener registry (`print_buddy/listeners.py`) maps the printer model's connection to a domain, decided from the resolved configuration (`python3 -m print_buddy.listener_gate`), never from whether a service URL is filled in:
+Which children the supervisor starts depends on each configured printer's **listener domain** (#256, #299): the listener registry (`print_buddy/listeners.py`) maps the printer model's connection to a domain, decided from the resolved configuration (`python3 -m print_buddy.listener_gate`, per printer since #336), never from whether a service URL is filled in. The table reads per roster printer — a multi-printer roster gets one listener instance per printer whose domain has one:
 
 | Listener domain (connection) | Printer listener | Discord bot | Bundled Spoolman |
 |---|---|---|---|
@@ -18,7 +18,7 @@ Which children the supervisor starts depends on the configured printer instance'
 | `bambulab_lan` (Bambu Lab) | runs — the Bambu listener; it idles without network contact when LAN is not configured | with a token | unless disabled |
 | anything else (`prusalink`, `elegoo_sdcp`, `octoprint`, `flashforge_stock`, `offline`) | **not started** — the domain has no listener yet, or none by definition | with a token | unless disabled |
 
-The `moonraker` and `bambulab_lan` domains have listener implementations today; the full domain list and the normalised status/event contract every domain listener reports through are in [Listener domains](LISTENERS.md). The healthcheck mirrors the same registry decision: a listener that was not started reports "not required for this printer connection" instead of failing, while a configuration whose domain has a listener with a stale or missing heartbeat still fails. If the configuration cannot be resolved at all, the supervisor stops with the settings error rather than guessing which children to run. A configuration with no children at all (no listener, no bot token, external Spoolman) idles instead of exiting.
+The `moonraker` and `bambulab_lan` domains have listener implementations today; the full domain list and the normalised status/event contract every domain listener reports through are in [Listener domains](LISTENERS.md). Listener instances are not required children (#336): the supervisor restarts a dead listener alone, with backoff and a restart budget, and a listener that exhausts its budget stays down as "that printer unhealthy" — the bot and bundled Spoolman remain the required children whose exit ends the container. The healthcheck mirrors the same registry decision, one row per printer in a multi-printer roster: a listener that was not started reports "not required for this printer connection" instead of failing, while a printer whose domain has a listener with a stale or missing heartbeat still fails. If the configuration cannot be resolved at all, the supervisor stops with the settings error rather than guessing which children to run. A configuration with no required children at all (no bot token, external Spoolman) idles instead of exiting.
 
 ## Included Spoolman
 

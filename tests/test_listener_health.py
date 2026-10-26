@@ -69,3 +69,83 @@ class ListenerHealthTests(unittest.TestCase):
 
     def test_current_linux_process_identity(self):
         self.assertTrue(health.process_identity(os.getpid()).isdigit())
+
+
+class PerPrinterHeartbeatTests(unittest.TestCase):
+    """#336: heartbeats live under printers/<id>/ and are checked per printer."""
+
+    ROSTER = {"printers": [
+        {"id": "moon-two", "model": "klipper.generic", "connection": "moonraker"},
+        {"id": "bambu-two", "model": "bambulab.a1"},
+    ]}
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        root = Path(self.tmp.name)
+        patch = mock.patch.object(
+            health.settings, "printer_state_dir",
+            side_effect=lambda printer_id=None, data=None: root / "printers" / printer_id)
+        patch.start()
+        self.addCleanup(patch.stop)
+        patch = mock.patch.object(
+            health.settings, "default_printer_id", return_value="moon-two")
+        patch.start()
+        self.addCleanup(patch.stop)
+
+    def roster(self):
+        return dict(self.ROSTER)
+
+    def test_heartbeats_are_independent_per_printer(self):
+        from print_buddy.printers.bambulab.listener import RUNTIME as BAMBU_RUNTIME
+        health.beat(data=self.roster(), printer_id="moon-two")
+        self.assertTrue(health.check(self.roster(), printer_id="moon-two")[0])
+        ok, reason = health.check(self.roster(), printer_id="bambu-two")
+        self.assertFalse(ok)
+        self.assertIn("missing", reason)
+        health.beat(runtime=BAMBU_RUNTIME, data=self.roster(), printer_id="bambu-two")
+        self.assertTrue(health.check(self.roster(), printer_id="bambu-two")[0])
+        # The other printer's heartbeat is untouched and still fresh.
+        self.assertTrue(health.check(self.roster(), printer_id="moon-two")[0])
+
+    def test_record_names_its_printer_and_a_foreign_record_fails(self):
+        from print_buddy.printers.bambulab.listener import RUNTIME as BAMBU_RUNTIME
+        health.beat(data=self.roster(), printer_id="moon-two")
+        record = json.loads(health.heartbeat_path(
+            self.roster(), "moon-two").read_text())
+        self.assertEqual(record["printer_id"], "moon-two")
+        # A record beating under bambu-two's own runtime but naming
+        # moon-two is foreign to bambu-two and must not satisfy its check.
+        foreign_record = health.beat(runtime=BAMBU_RUNTIME, data=self.roster(),
+                                      printer_id="moon-two")
+        foreign = health.heartbeat_path(self.roster(), "bambu-two")
+        foreign.parent.mkdir(parents=True, exist_ok=True)
+        foreign.write_text(json.dumps(foreign_record))
+        ok, reason = health.check(self.roster(), printer_id="bambu-two")
+        self.assertFalse(ok)
+        self.assertIn("another printer", reason)
+
+    def test_wrong_runtime_for_the_printer_fails(self):
+        # A Moonraker heartbeat does not satisfy the Bambu printer: each
+        # printer's expected runtime comes from its own domain.
+        health.beat(data=self.roster(), printer_id="bambu-two")
+        ok, _ = health.check(self.roster(), printer_id="bambu-two")
+        self.assertFalse(ok)
+
+    def test_listener_statuses_aggregates_the_roster(self):
+        health.beat(data=self.roster(), printer_id="moon-two")
+        statuses = health.listener_statuses(self.roster())
+        self.assertEqual(set(statuses), {"moon-two", "bambu-two"})
+        self.assertTrue(statuses["moon-two"]["ok"])
+        self.assertTrue(statuses["moon-two"]["required"])
+        self.assertFalse(statuses["bambu-two"]["ok"])
+        self.assertTrue(statuses["bambu-two"]["required"])
+
+    def test_instance_context_routes_an_unaddressed_beat(self):
+        from print_buddy import listeners
+        listeners._set_instance_printer_id("bambu-two")
+        self.addCleanup(listeners._set_instance_printer_id, None)
+        from print_buddy.printers.bambulab.listener import RUNTIME as BAMBU_RUNTIME
+        health.beat(runtime=BAMBU_RUNTIME, data=self.roster())
+        self.assertTrue(health.check(self.roster(), printer_id="bambu-two")[0])
+        self.assertFalse(health.check(self.roster(), printer_id="moon-two")[0])

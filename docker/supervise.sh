@@ -3,16 +3,39 @@
 set -euo pipefail
 if [ "$#" -gt 0 ]; then exec "$@"; fi
 children=()
+listener_loops=()
+listener_run_dir=""
 cleanup() {
     trap '' TERM INT
+    local pid file
     for pid in "${children[@]}"; do kill -TERM "$pid" 2>/dev/null || true; done
+    for pid in "${listener_loops[@]}"; do kill -TERM "$pid" 2>/dev/null || true; done
+    if [ -n "$listener_run_dir" ]; then
+        for file in "$listener_run_dir"/*.pid; do
+            [ -f "$file" ] || continue
+            kill -TERM "$(cat "$file")" 2>/dev/null || true
+        done
+    fi
     for _ in {1..100}; do
         alive=false
-        for pid in "${children[@]}"; do kill -0 "$pid" 2>/dev/null && alive=true; done
+        for pid in "${children[@]}" "${listener_loops[@]}"; do kill -0 "$pid" 2>/dev/null && alive=true; done
+        if [ -n "$listener_run_dir" ]; then
+            for file in "$listener_run_dir"/*.pid; do
+                [ -f "$file" ] || continue
+                kill -0 "$(cat "$file")" 2>/dev/null && alive=true
+            done
+        fi
         if [ "$alive" = false ]; then break; fi
         sleep 0.1
     done
-    for pid in "${children[@]}"; do kill -KILL "$pid" 2>/dev/null || true; done
+    for pid in "${children[@]}" "${listener_loops[@]}"; do kill -KILL "$pid" 2>/dev/null || true; done
+    if [ -n "$listener_run_dir" ]; then
+        for file in "$listener_run_dir"/*.pid; do
+            [ -f "$file" ] || continue
+            kill -KILL "$(cat "$file")" 2>/dev/null || true
+        done
+        rm -rf "$listener_run_dir"
+    fi
     wait || true
 }
 trap cleanup EXIT
@@ -71,24 +94,74 @@ if [ -x "$go2rtc_bin" ]; then
         exit "$go2rtc_gate"
     fi
 fi
-# The configured printer instance's listener runs only when its listener
-# domain (print_buddy.listeners, #299) has an implementation: the gate
-# resolves the effective configuration (model -> vendor connection ->
-# domain), never the presence of a service URL, which settings forbid for
-# most connections. Gate status: 0 = start the instance's listener through
-# the registry launcher, 3 = the domain has no listener (yet, or by
-# definition), anything else = the configuration could not be resolved;
-# stop instead of guessing.
-listener_gate=0
-python3 -m print_buddy.listener_gate || listener_gate=$?
-if [ "$listener_gate" -eq 0 ]; then
-    python3 -m print_buddy.listeners &
-    children+=("$!")
-elif [ "$listener_gate" -eq 3 ]; then
-    echo 'Printer listener not started: the configured printer instance has no listener for its domain.'
-else
-    echo "Listener gate failed (status $listener_gate); configuration unresolved, stopping container." >&2
-    exit "$listener_gate"
+# Listener instances (#336, design §2.5): one per roster printer whose
+# listener domain (print_buddy.listeners, #299) has an implementation. The
+# gate resolves the effective configuration per printer (model -> vendor
+# connection -> domain), never the presence of a service URL, which
+# settings forbid for most connections. Gate status per printer: 0 =
+# start that printer's listener through the registry launcher, 3 = the
+# domain has no listener (yet, or by definition), anything else = the
+# configuration could not be resolved; stop instead of guessing. The
+# roster itself failing to resolve stops the container the same way.
+roster_status=0
+roster_ids="$(python3 -m print_buddy.listener_gate --roster)" || roster_status=$?
+if [ "$roster_status" -ne 0 ]; then
+    echo "Listener gate failed (status $roster_status); configuration unresolved, stopping container." >&2
+    exit "$roster_status"
+fi
+listener_run_dir="$(mktemp -d)"
+run_listener() {
+    # One printer's listener, restarted alone when it exits, with backoff
+    # and a restart budget (design §2.5): listener children are NOT
+    # required children — a dead or looping listener degrades to "that
+    # printer unhealthy" in the healthcheck, never to a container restart
+    # loop (the #256 failure shape), and never touches the bot, Spoolman
+    # or another printer's listener. The backoff/budget/window are
+    # env-tunable for the container-shaped tests; defaults are production.
+    local printer_id="$1"
+    local backoff="${PRINT_BUDDY_LISTENER_RESTART_BACKOFF_S:-5}"
+    local budget="${PRINT_BUDDY_LISTENER_RESTART_BUDGET:-5}"
+    local window="${PRINT_BUDDY_LISTENER_RESTART_WINDOW_S:-600}"
+    local restarts=0 window_start=$SECONDS child="" status=0
+    trap 'if [ -n "$child" ]; then kill -TERM "$child" 2>/dev/null || true; fi; exit 0' TERM INT
+    while true; do
+        python3 -m print_buddy.listeners --printer "$printer_id" &
+        child=$!
+        echo "$child" > "$listener_run_dir/$printer_id.pid"
+        status=0
+        wait "$child" || status=$?
+        child=""
+        rm -f "$listener_run_dir/$printer_id.pid"
+        if [ $((SECONDS - window_start)) -ge "$window" ]; then
+            window_start=$SECONDS
+            restarts=0
+        fi
+        restarts=$((restarts + 1))
+        if [ "$restarts" -gt "$budget" ]; then
+            echo "Listener for printer '$printer_id' exited (status $status) and exhausted its restart budget ($budget restarts in ${window}s); leaving it down — the healthcheck reports this printer unhealthy." >&2
+            return 0
+        fi
+        echo "Listener for printer '$printer_id' exited (status $status); restarting in ${backoff}s (restart $restarts/$budget)." >&2
+        sleep "$backoff" & wait $! || true
+        backoff=$((backoff * 2))
+        if [ "$backoff" -gt 60 ]; then backoff=60; fi
+    done
+}
+if [ -n "$roster_ids" ]; then
+    while IFS= read -r printer_id; do
+        [ -n "$printer_id" ] || continue
+        listener_gate=0
+        python3 -m print_buddy.listener_gate --printer "$printer_id" || listener_gate=$?
+        if [ "$listener_gate" -eq 0 ]; then
+            run_listener "$printer_id" &
+            listener_loops+=("$!")
+        elif [ "$listener_gate" -eq 3 ]; then
+            echo "Printer listener not started for printer '$printer_id': its domain has no listener."
+        else
+            echo "Listener gate failed for printer '$printer_id' (status $listener_gate); configuration unresolved, stopping container." >&2
+            exit "$listener_gate"
+        fi
+    done <<< "$roster_ids"
 fi
 if [ -n "${DISCORD_BOT_TOKEN:-}" ]; then
     python3 -m print_buddy.bot &
@@ -116,8 +189,10 @@ else
     exit "$webui_gate"
 fi
 if [ "${#children[@]}" -eq 0 ]; then
-    # Nothing to supervise for this configuration (no listener, no bot, no
-    # bundled Spoolman): stay up idling instead of exiting into a restart loop.
+    # No required children for this configuration (no bot, no bundled
+    # Spoolman, no Web UI; listener instances run under their own loops
+    # and are never required): stay up idling instead of exiting into a
+    # restart loop.
     echo 'No supervised children for this configuration; idling.'
     sleep infinity &
     children+=("$!")

@@ -26,28 +26,62 @@ def main():
         print("ok  Discord bot disabled by empty token")
     # The listener is required exactly when the supervisor started it: the
     # listener registry (print_buddy.listeners, #299) decides from the
-    # configured instance's domain, mirroring the disabled-bot branch above.
-    # An unresolved configuration fails instead of passing.
+    # instance's domain, mirroring the disabled-bot branch above. Since
+    # #336 there is one instance per roster printer: a one-printer roster
+    # keeps the original single row; a larger roster gets one row per
+    # printer and every required printer's heartbeat must check out. An
+    # unresolved configuration fails instead of passing.
     try:
-        required = listener_required()
+        entries = settings.printers()
     except settings.SettingsError as exc:
         print(f"FAIL  listener: configuration unresolved: {exc}")
-        required, healthy = None, False
-    if required:
-        ok, reason = listener_check()
-        print(f"{'ok' if ok else 'FAIL'}  listener: {reason}")
-        healthy &= ok
-    elif required is not None:
-        detail = ""
+        entries, healthy = None, False
+    if entries is not None and len(entries) <= 1:
         try:
-            domain = listener_domain()
-        except Exception:
-            domain = None
-        if domain is not None:
-            state = "has no listener yet" if domain.availability == "planned" \
-                else "has no listener"
-            detail = f" (domain {domain.name!r} {state})"
-        print(f"ok  listener: not required for this printer connection{detail}")
+            required = listener_required()
+        except settings.SettingsError as exc:
+            print(f"FAIL  listener: configuration unresolved: {exc}")
+            required, healthy = None, False
+        if required:
+            ok, reason = listener_check()
+            print(f"{'ok' if ok else 'FAIL'}  listener: {reason}")
+            healthy &= ok
+        elif required is not None:
+            detail = ""
+            try:
+                domain = listener_domain()
+            except Exception:
+                domain = None
+            if domain is not None:
+                state = "has no listener yet" if domain.availability == "planned" \
+                    else "has no listener"
+                detail = f" (domain {domain.name!r} {state})"
+            print(f"ok  listener: not required for this printer connection{detail}")
+    elif entries is not None:
+        data = settings.current()
+        for entry in entries:
+            printer_id = entry["id"]
+            try:
+                required = listener_required(data, printer_id)
+            except settings.SettingsError as exc:
+                print(f"FAIL  listener ({printer_id}): configuration unresolved: {exc}")
+                healthy = False
+                continue
+            if required:
+                ok, reason = listener_check(data, printer_id=printer_id)
+                print(f"{'ok' if ok else 'FAIL'}  listener ({printer_id}): {reason}")
+                healthy &= ok
+            else:
+                detail = ""
+                try:
+                    domain = listener_domain(data, printer_id)
+                except Exception:
+                    domain = None
+                if domain is not None:
+                    state = "has no listener yet" if domain.availability == "planned" \
+                        else "has no listener"
+                    detail = f" (domain {domain.name!r} {state})"
+                print(f"ok  listener ({printer_id}): not required for this printer connection{detail}")
     # go2rtc (#246 stage 1) is covered exactly when the supervisor started
     # it: the same gate decision (print_buddy.go2rtc), mirroring the
     # disabled-bot branch above. Capture disabled (or enabled with no

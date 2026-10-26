@@ -1,0 +1,448 @@
+"""Offline tests for live camera source resolution and encoder planning (issue #311, stages 1-2).
+
+No network, printer or ffmpeg execution: resolvers run against recorded
+payload shapes, the encoder probe is injected, and ffmpeg construction is
+asserted as a pure argv list. The redaction test proves a credential
+carried in a camera URL appears in no error message and no repr.
+"""
+import pytest
+
+from print_buddy import live_stream as ls
+
+SECRET = "s3cr3t-PASS-xyz789"
+MOONRAKER_BASE = "http://printer.local:7125"
+OCTOPRINT_BASE = "http://octopi.local"
+
+
+# --------------------------------------------------------------------- Moonraker
+
+MOONRAKER_PAYLOAD = {
+    "webcams": [
+        {
+            "name": "bedcam",
+            "location": "printer",
+            "service": "mjpegstreamer",
+            "stream_url": "/webcam/?action=stream",
+            "snapshot_url": "/webcam/?action=snapshot",
+            "enabled": True,
+        },
+        {
+            "name": "nozzlecam",
+            "service": "mjpegstreamer",
+            "stream_url": "http://cam2.local/stream",
+            "snapshot_url": "http://cam2.local/snapshot",
+        },
+    ]
+}
+
+
+def test_moonraker_relative_urls_resolved_and_first_picked():
+    source = ls.camera_source_from_moonraker(MOONRAKER_PAYLOAD, base_url=MOONRAKER_BASE)
+    assert source.name == "bedcam"
+    assert source.stream_url == "http://printer.local:7125/webcam/?action=stream"
+    assert source.snapshot_url == "http://printer.local:7125/webcam/?action=snapshot"
+    assert source.kind == "mjpeg"
+    assert source.service == "mjpegstreamer"
+
+
+def test_moonraker_absolute_urls_pass_through():
+    source = ls.camera_source_from_moonraker(
+        MOONRAKER_PAYLOAD, base_url=MOONRAKER_BASE, preferred_name="nozzlecam")
+    assert source.name == "nozzlecam"
+    assert source.stream_url == "http://cam2.local/stream"
+    assert source.snapshot_url == "http://cam2.local/snapshot"
+
+
+def test_moonraker_preferred_name_is_case_insensitive_and_wins():
+    source = ls.camera_source_from_moonraker(
+        MOONRAKER_PAYLOAD, base_url=MOONRAKER_BASE, preferred_name="NozzleCam")
+    assert source.name == "nozzlecam"
+
+
+def test_moonraker_result_wrapper_shape():
+    wrapped = {"result": {"webcams": MOONRAKER_PAYLOAD["webcams"]}}
+    source = ls.camera_source_from_moonraker(wrapped, base_url=MOONRAKER_BASE)
+    assert source.name == "bedcam"
+    assert source.kind == "mjpeg"
+
+
+def test_moonraker_disabled_webcam_is_skipped():
+    payload = {"webcams": [
+        {"name": "off", "stream_url": "http://off.local/stream",
+         "snapshot_url": "http://off.local/snap", "enabled": False},
+        {"name": "on", "stream_url": "http://on.local/stream",
+         "snapshot_url": "http://on.local/snap"},
+    ]}
+    source = ls.camera_source_from_moonraker(payload, base_url=MOONRAKER_BASE)
+    assert source.name == "on"
+
+
+def test_moonraker_rtsp_and_webrtc_kinds():
+    rtsp = ls.camera_source_from_moonraker(
+        {"webcams": [{"name": "r", "stream_url": "rtsp://cam.local/feed",
+                      "snapshot_url": "http://cam.local/snap", "service": "camera-streamer"}]},
+        base_url=MOONRAKER_BASE)
+    assert rtsp.kind == "rtsp"
+    webrtc = ls.camera_source_from_moonraker(
+        {"webcams": [{"name": "w", "stream_url": "http://cam.local/webrtc",
+                      "snapshot_url": "http://cam.local/snap", "service": "webrtc-camerastreamer"}]},
+        base_url=MOONRAKER_BASE)
+    assert webrtc.kind == "webrtc"
+
+
+@pytest.mark.parametrize("payload", [None, {}, {"webcams": []}, {"webcams": [{"name": "empty"}]}])
+def test_moonraker_fallback_derives_stream_from_snapshot(payload):
+    source = ls.camera_source_from_moonraker(
+        payload, base_url=MOONRAKER_BASE,
+        fallback_snapshot_url="http://printer.local:7125/webcam/?action=snapshot")
+    assert source.stream_url == "http://printer.local:7125/webcam/?action=stream"
+    assert source.snapshot_url == "http://printer.local:7125/webcam/?action=snapshot"
+    assert source.kind == "mjpeg"
+
+
+def test_moonraker_no_payload_and_no_fallback_raises():
+    with pytest.raises(ls.LiveStreamError):
+        ls.camera_source_from_moonraker(None, base_url=MOONRAKER_BASE)
+    with pytest.raises(ls.LiveStreamError):
+        ls.camera_source_from_moonraker({"webcams": []}, base_url=MOONRAKER_BASE)
+
+
+# --------------------------------------------------------------------- derivation / snapshot-only
+
+def test_derive_action_snapshot_becomes_stream():
+    source = ls.derive_from_snapshot_url("http://cam.local/webcam/?action=snapshot")
+    assert source.kind == "mjpeg"
+    assert source.stream_url == "http://cam.local/webcam/?action=stream"
+    assert source.snapshot_url == "http://cam.local/webcam/?action=snapshot"
+
+
+def test_derive_preserves_other_query_params():
+    source = ls.derive_from_snapshot_url("http://cam.local/webcam/?foo=1&action=snapshot")
+    assert source.stream_url == "http://cam.local/webcam/?foo=1&action=stream"
+
+
+def test_snapshot_without_action_is_snapshot_only():
+    source = ls.derive_from_snapshot_url("http://cam.local/snapshot.jpg")
+    assert source.kind == "snapshot"
+    assert source.stream_url is None
+    assert source.snapshot_url == "http://cam.local/snapshot.jpg"
+
+
+def test_snapshot_only_from_moonraker_fallback_is_valid():
+    source = ls.camera_source_from_moonraker(
+        None, base_url=MOONRAKER_BASE, fallback_snapshot_url="http://cam.local/frame.jpg")
+    assert source.kind == "snapshot"
+    assert source.stream_url is None
+
+
+def test_moonraker_entry_with_only_snapshot_without_action_is_snapshot_kind():
+    payload = {"webcams": [{"name": "still", "snapshot_url": "http://cam.local/frame.jpg"}]}
+    source = ls.camera_source_from_moonraker(payload, base_url=MOONRAKER_BASE)
+    assert source.kind == "snapshot"
+    assert source.stream_url is None
+
+
+# --------------------------------------------------------------------- OctoPrint
+
+def test_octoprint_classic_webcam_relative_urls():
+    payload = {"webcam": {"streamUrl": "/?action=stream", "snapshotUrl": "/?action=snapshot",
+                          "webcamEnabled": True}}
+    source = ls.camera_source_from_octoprint(payload, base_url=OCTOPRINT_BASE)
+    assert source.stream_url == "http://octopi.local/?action=stream"
+    assert source.snapshot_url == "http://octopi.local/?action=snapshot"
+    assert source.kind == "mjpeg"
+
+
+def test_octoprint_absolute_and_top_level_shape():
+    payload = {"streamUrl": "http://cam.local/stream", "snapshotUrl": "http://cam.local/snap"}
+    source = ls.camera_source_from_octoprint(payload, base_url=OCTOPRINT_BASE)
+    assert source.stream_url == "http://cam.local/stream"
+    assert source.kind == "mjpeg"
+
+
+def test_octoprint_multi_webcam_list_under_webcam():
+    payload = {"webcam": {"webcams": [
+        {"name": "first", "streamUrl": "http://a.local/stream", "snapshotUrl": "http://a.local/snap"},
+        {"name": "second", "streamUrl": "http://b.local/stream", "snapshotUrl": "http://b.local/snap"},
+    ]}}
+    source = ls.camera_source_from_octoprint(payload, base_url=OCTOPRINT_BASE, preferred_name="second")
+    assert source.name == "second"
+    assert source.stream_url == "http://b.local/stream"
+
+
+def test_octoprint_multi_webcam_top_level_list():
+    payload = {"webcams": [
+        {"name": "only", "streamUrl": "/stream", "snapshotUrl": "/snap"}]}
+    source = ls.camera_source_from_octoprint(payload, base_url=OCTOPRINT_BASE)
+    assert source.stream_url == "http://octopi.local/stream"
+    assert source.snapshot_url == "http://octopi.local/snap"
+
+
+def test_octoprint_snapshot_only_derives_stream_from_action():
+    payload = {"webcam": {"snapshotUrl": "http://octopi.local/?action=snapshot", "streamUrl": ""}}
+    source = ls.camera_source_from_octoprint(payload, base_url=OCTOPRINT_BASE)
+    assert source.stream_url == "http://octopi.local/?action=stream"
+    assert source.kind == "mjpeg"
+
+
+def test_octoprint_snapshot_without_action_is_snapshot_kind():
+    payload = {"webcam": {"snapshotUrl": "http://cam.local/frame.jpg", "streamUrl": ""}}
+    source = ls.camera_source_from_octoprint(payload, base_url=OCTOPRINT_BASE)
+    assert source.kind == "snapshot"
+    assert source.stream_url is None
+
+
+def test_octoprint_empty_payload_raises_without_fallback():
+    with pytest.raises(ls.LiveStreamError):
+        ls.camera_source_from_octoprint({}, base_url=OCTOPRINT_BASE)
+    with pytest.raises(ls.LiveStreamError):
+        ls.camera_source_from_octoprint(None, base_url=OCTOPRINT_BASE)
+
+
+# --------------------------------------------------------------------- redaction
+
+def test_redaction_secret_appears_nowhere_in_repr_or_errors():
+    credential_url = f"http://user:{SECRET}@cam.local/webcam/?action=stream&token={SECRET}"
+    source = ls.camera_source_from_moonraker(
+        {"webcams": [{"name": "bed", "stream_url": credential_url,
+                      "snapshot_url": f"http://user:{SECRET}@cam.local/snap?api_key={SECRET}"}]},
+        base_url=MOONRAKER_BASE)
+    # The fields keep the real URL (the encoder needs it); repr must not.
+    assert source.stream_url == credential_url
+    assert SECRET not in repr(source)
+    assert SECRET not in str(source)
+    assert SECRET not in ls.redact_url(credential_url)
+    assert "user" not in ls.redact_url(credential_url).split("@")[0]
+
+    errors = []
+    # Unsupported scheme error path includes a (redacted) URL.
+    try:
+        ls.camera_source_from_moonraker(
+            {"webcams": [{"name": "x", "stream_url": f"ftp://user:{SECRET}@cam.local/feed"}]},
+            base_url=MOONRAKER_BASE)
+    except ls.LiveStreamError as exc:
+        errors.append(str(exc))
+    # Relative URL with no base: the message includes a (redacted) URL.
+    try:
+        ls.camera_source_from_moonraker(
+            {"webcams": [{"name": "x", "stream_url": f"/feed?token={SECRET}"}]},
+            base_url=None)
+    except ls.LiveStreamError as exc:
+        errors.append(str(exc))
+    # Bad snapshot scheme on the derive path.
+    try:
+        ls.derive_from_snapshot_url(f"ftp://user:{SECRET}@cam.local/snap")
+    except ls.LiveStreamError as exc:
+        errors.append(str(exc))
+
+    assert len(errors) == 3
+    for message in errors:
+        assert SECRET not in message
+
+
+def test_redact_url_keeps_host_path_and_non_secret_query():
+    redacted = ls.redact_url(f"http://user:{SECRET}@cam.local:8080/webcam/?action=stream&token={SECRET}")
+    assert redacted == "http://***@cam.local:8080/webcam/?action=stream&token=%2A%2A%2A" or \
+        "token=" in redacted and SECRET not in redacted and "cam.local:8080" in redacted
+
+
+# --------------------------------------------------------------------- encoder plan
+
+ALL_H264 = {"h264_vaapi", "h264_nvenc", "h264_qsv", "libx264"}
+ALL_VP8 = {"vp8_vaapi", "libvpx"}
+
+
+def _probe(encoders, dri=True, nvidia=True):
+    return ls.EncoderProbe(encoders=set(encoders), dri_present=dri, nvidia_present=nvidia)
+
+
+def _encoders(candidates):
+    return [c.encoder for c in candidates]
+
+
+def test_h264_default_order_vaapi_nvenc_qsv_cpu():
+    candidates = ls.encoder_candidates(_probe(ALL_H264), target_codec="h264")
+    assert _encoders(candidates) == ["h264_vaapi", "h264_nvenc", "h264_qsv", "libx264"]
+    assert [c.vendor for c in candidates] == ["vaapi", "nvenc", "qsv", "cpu"]
+    assert all(c.codec == "h264" for c in candidates)
+    assert candidates[-1].hardware is False
+
+
+def test_h264_vaapi_and_qsv_require_dri_nvenc_requires_nvidia():
+    no_dri = ls.encoder_candidates(_probe(ALL_H264, dri=False, nvidia=True), target_codec="h264")
+    assert _encoders(no_dri) == ["h264_nvenc", "libx264"]
+    no_nvidia = ls.encoder_candidates(_probe(ALL_H264, dri=True, nvidia=False), target_codec="h264")
+    assert _encoders(no_nvidia) == ["h264_vaapi", "h264_qsv", "libx264"]
+    neither = ls.encoder_candidates(_probe(ALL_H264, dri=False, nvidia=False), target_codec="h264")
+    assert _encoders(neither) == ["libx264"]
+
+
+def test_h264_encoder_must_be_in_probe_set():
+    candidates = ls.encoder_candidates(_probe({"libx264"}), target_codec="h264")
+    assert _encoders(candidates) == ["libx264"]
+    assert ls.encoder_candidates(_probe(set()), target_codec="h264") == ()
+
+
+def test_vp8_order_is_vaapi_then_cpu_and_never_nvenc_or_qsv():
+    candidates = ls.encoder_candidates(
+        _probe(ALL_VP8 | ALL_H264), target_codec="vp8")
+    assert _encoders(candidates) == ["vp8_vaapi", "libvpx"]
+    assert "h264_nvenc" not in _encoders(candidates)
+    assert all("nvenc" != c.vendor and "qsv" != c.vendor for c in candidates)
+
+
+def test_vp8_vaapi_requires_dri_and_encoder_listed():
+    no_dri = ls.encoder_candidates(_probe(ALL_VP8, dri=False), target_codec="vp8")
+    assert _encoders(no_dri) == ["libvpx"]
+    not_listed = ls.encoder_candidates(_probe({"libvpx"}, dri=True), target_codec="vp8")
+    assert _encoders(not_listed) == ["libvpx"]
+
+
+@pytest.mark.parametrize("preference,expected_first", [
+    ("vaapi", "h264_vaapi"), ("nvenc", "h264_nvenc"), ("qsv", "h264_qsv"), ("cpu", "libx264"),
+])
+def test_h264_preference_moves_vendor_first(preference, expected_first):
+    candidates = ls.encoder_candidates(_probe(ALL_H264), preference=preference, target_codec="h264")
+    assert candidates[0].encoder == expected_first
+    assert set(_encoders(candidates)) == ALL_H264
+
+
+def test_vp8_preferences():
+    vaapi_first = ls.encoder_candidates(_probe(ALL_VP8), preference="vaapi", target_codec="vp8")
+    assert _encoders(vaapi_first) == ["vp8_vaapi", "libvpx"]
+    cpu_first = ls.encoder_candidates(_probe(ALL_VP8), preference="cpu", target_codec="vp8")
+    assert _encoders(cpu_first) == ["libvpx", "vp8_vaapi"]
+    # NVENC preference is inapplicable to VP8: default order, no NVENC candidate.
+    nvenc_pref = ls.encoder_candidates(
+        _probe(ALL_VP8 | ALL_H264), preference="nvenc", target_codec="vp8")
+    assert _encoders(nvenc_pref) == ["vp8_vaapi", "libvpx"]
+
+
+def test_unavailable_preference_leaves_default_order():
+    candidates = ls.encoder_candidates(
+        _probe({"h264_vaapi", "libx264"}), preference="nvenc", target_codec="h264")
+    assert _encoders(candidates) == ["h264_vaapi", "libx264"]
+
+
+def test_encoder_candidates_bare_set_and_kwargs_forms():
+    by_set = ls.encoder_candidates({"h264_vaapi", "libx264"}, target_codec="h264")
+    assert _encoders(by_set) == ["h264_vaapi", "libx264"]
+    by_set_no_dri = ls.encoder_candidates(
+        {"h264_vaapi", "libx264"}, dri_present=False, target_codec="h264")
+    assert _encoders(by_set_no_dri) == ["libx264"]
+    by_dict = ls.encoder_candidates(
+        {"encoders": {"libx264"}, "dri_present": False, "nvidia_present": False}, target_codec="h264")
+    assert _encoders(by_dict) == ["libx264"]
+
+
+def test_encoder_candidates_reject_bad_preference_and_codec():
+    with pytest.raises(ls.LiveStreamError):
+        ls.encoder_candidates(_probe(ALL_H264), preference="amf", target_codec="h264")
+    with pytest.raises(ls.LiveStreamError):
+        ls.encoder_candidates(_probe(ALL_H264), target_codec="av1")
+
+
+# --------------------------------------------------------------------- ffmpeg argv pins
+
+INPUT = "http://printer.local:7125/webcam/?action=stream"
+OUT = "pipe:1"
+
+
+def _candidate(encoder, vendor, codec):
+    return ls.EncoderCandidate(encoder=encoder, vendor=vendor, codec=codec, hardware=(vendor != "cpu"))
+
+
+def test_ffmpeg_vaapi_h264_pinned():
+    argv = ls.build_ffmpeg_args(_candidate("h264_vaapi", "vaapi", "h264"),
+                                input_url=INPUT, target_codec="h264", output=OUT)
+    assert argv == ["ffmpeg", "-hide_banner", "-nostdin",
+                    "-vaapi_device", "/dev/dri/renderD128",
+                    "-i", INPUT, "-an",
+                    "-vf", "scale=-2:720,format=nv12,hwupload",
+                    "-r", "15", "-b:v", "2500k", "-c:v", "h264_vaapi", OUT]
+
+
+def test_ffmpeg_vaapi_vp8_pinned():
+    argv = ls.build_ffmpeg_args(_candidate("vp8_vaapi", "vaapi", "vp8"),
+                                input_url=INPUT, target_codec="vp8", output=OUT)
+    assert argv == ["ffmpeg", "-hide_banner", "-nostdin",
+                    "-vaapi_device", "/dev/dri/renderD128",
+                    "-i", INPUT, "-an",
+                    "-vf", "scale=-2:720,format=nv12,hwupload",
+                    "-r", "15", "-b:v", "2500k", "-c:v", "vp8_vaapi", OUT]
+
+
+def test_ffmpeg_nvenc_h264_pinned():
+    argv = ls.build_ffmpeg_args(_candidate("h264_nvenc", "nvenc", "h264"),
+                                input_url=INPUT, target_codec="h264", output=OUT)
+    assert argv == ["ffmpeg", "-hide_banner", "-nostdin",
+                    "-i", INPUT, "-an",
+                    "-vf", "scale=-2:720",
+                    "-r", "15", "-b:v", "2500k", "-c:v", "h264_nvenc", OUT]
+    assert "-vaapi_device" not in argv
+
+
+def test_ffmpeg_qsv_h264_pinned():
+    argv = ls.build_ffmpeg_args(_candidate("h264_qsv", "qsv", "h264"),
+                                input_url=INPUT, target_codec="h264", output=OUT)
+    assert argv == ["ffmpeg", "-hide_banner", "-nostdin",
+                    "-i", INPUT, "-an",
+                    "-vf", "scale=-2:720",
+                    "-r", "15", "-b:v", "2500k", "-c:v", "h264_qsv", OUT]
+
+
+def test_ffmpeg_cpu_h264_pinned_ultrafast():
+    argv = ls.build_ffmpeg_args(_candidate("libx264", "cpu", "h264"),
+                                input_url=INPUT, target_codec="h264", output=OUT)
+    assert argv == ["ffmpeg", "-hide_banner", "-nostdin",
+                    "-i", INPUT, "-an",
+                    "-vf", "scale=-2:720",
+                    "-r", "15", "-b:v", "2500k", "-c:v", "libx264",
+                    "-preset", "ultrafast", OUT]
+
+
+def test_ffmpeg_cpu_vp8_pinned_realtime():
+    argv = ls.build_ffmpeg_args(_candidate("libvpx", "cpu", "vp8"),
+                                input_url=INPUT, target_codec="vp8", output=OUT)
+    assert argv == ["ffmpeg", "-hide_banner", "-nostdin",
+                    "-i", INPUT, "-an",
+                    "-vf", "scale=-2:720",
+                    "-r", "15", "-b:v", "2500k", "-c:v", "libvpx",
+                    "-deadline", "realtime", OUT]
+
+
+def test_ffmpeg_custom_limits_and_output_is_final_arg():
+    argv = ls.build_ffmpeg_args("libx264", input_url=INPUT, max_height=480, fps=10,
+                                bitrate_kbps=1200, output="/tmp/feed.out")
+    assert argv[-1] == "/tmp/feed.out"
+    assert "scale=-2:480" in argv
+    assert argv[argv.index("-r") + 1] == "10"
+    assert argv[argv.index("-b:v") + 1] == "1200k"
+
+
+def test_ffmpeg_accepts_string_candidate_and_infers_codec():
+    argv = ls.build_ffmpeg_args("h264_nvenc", input_url=INPUT, output=OUT)
+    assert argv[argv.index("-c:v") + 1] == "h264_nvenc"
+
+
+def test_ffmpeg_rejects_codec_mismatch_and_bad_limits():
+    with pytest.raises(ls.LiveStreamError):
+        ls.build_ffmpeg_args(_candidate("libvpx", "cpu", "vp8"),
+                             input_url=INPUT, target_codec="h264", output=OUT)
+    with pytest.raises(ls.LiveStreamError):
+        ls.build_ffmpeg_args("libx264", input_url=INPUT, max_height=0, output=OUT)
+    with pytest.raises(ls.LiveStreamError):
+        ls.build_ffmpeg_args("libx264", input_url="", output=OUT)
+    with pytest.raises(ls.LiveStreamError):
+        ls.build_ffmpeg_args("libx264", input_url=INPUT, output="")
+    with pytest.raises(ls.LiveStreamError):
+        ls.build_ffmpeg_args("not_an_encoder", input_url=INPUT, output=OUT)
+
+
+def test_plan_then_build_round_trip_for_each_codec():
+    for codec, probe in (("h264", _probe(ALL_H264)), ("vp8", _probe(ALL_VP8 | ALL_H264))):
+        for candidate in ls.encoder_candidates(probe, target_codec=codec):
+            argv = ls.build_ffmpeg_args(candidate, input_url=INPUT, output=OUT)
+            assert argv[0] == "ffmpeg"
+            assert argv[-1] == OUT
+            assert argv[argv.index("-c:v") + 1] == candidate.encoder

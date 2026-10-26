@@ -77,6 +77,210 @@ description = "AD5X ZMod helper that probes over the bed screws so the operator 
 safety = "Moves the toolhead over the bed. Keep hands clear while it probes."
 
 [[entry]]
+id = "zmod.coldpull"
+name = "COLDPULL"
+aliases = ["cold pull", "zmod cold pull", "nozzle cold pull"]
+firmware = "zmod"
+kind = "macro"
+printers = ["flashforge.ad5x"]
+command = "COLDPULL"
+description = "ZMod's interactive cold pull on the AD5X. It asks which material is loaded (a prompt on the screen/client), heats and loads that material, then cools to the material's pull temperature so the operator can pull the filament out by hand and take the nozzle plug with it. Print Buddy's guided /print-coldpull is a separate flow; this entry describes the macro ZMod itself ships."
+safety = "Heats the nozzle to full printing temperature and extrudes before cooling. The pull itself is a hand action at the printer while the nozzle is still warm; never run it unattended."
+notes = "Source: ghzserg/zmod_ff5x@5409ffe7ffee572219837fbd0d7de381469537f6, en/base.cfg (shipped AD5X config set). Generic firmware knowledge from the shipped config, not verified on a Print Buddy printer."
+
+[[entry]]
+id = "zmod.load-filament"
+name = "LOAD_FILAMENT"
+aliases = ["load filament zmod", "zmod load", "feed filament zmod"]
+firmware = "zmod"
+kind = "macro"
+printers = ["flashforge.ad5x"]
+command = "LOAD_FILAMENT EXTRUDE_LEN=<mm> EXTRUDER_TEMP=<nozzle C>"
+description = "Heats the nozzle (the default target is the temperature ZMod's filament-change flow last stored) and extrudes EXTRUDE_LEN of filament (125 mm built-in default) into the extruder. It is the load half of ZMod's filament-change prompts and of LOAD_MATERIAL."
+safety = "Extrudes at full temperature; molten filament leaves the nozzle. Keep hands clear and give the purge somewhere to go."
+notes = "Source: ghzserg/zmod_ff5x@5409ffe7ffee572219837fbd0d7de381469537f6, en/base.cfg. Generic firmware knowledge from the shipped config, not verified on a Print Buddy printer."
+
+[[entry]]
+id = "zmod.unload-filament"
+name = "UNLOAD_FILAMENT"
+aliases = ["unload filament zmod", "zmod unload", "retract filament zmod"]
+firmware = "zmod"
+kind = "macro"
+printers = ["flashforge.ad5x"]
+command = "UNLOAD_FILAMENT"
+description = "Heats the nozzle to the stored filament-change temperature and retracts the filament out of the extruder (75 mm built-in default distance). The unload half of ZMod's filament-change prompts; LOAD_FILAMENT is the reverse."
+safety = "Heats the nozzle to full temperature first. Wait for the retract to finish before pulling the filament free by hand."
+notes = "Source: ghzserg/zmod_ff5x@5409ffe7ffee572219837fbd0d7de381469537f6, en/base.cfg. Generic firmware knowledge from the shipped config, not verified on a Print Buddy printer."
+
+[[entry]]
+id = "zmod.load-material"
+name = "LOAD_MATERIAL"
+aliases = ["load material", "manual filament change zmod", "change material zmod"]
+firmware = "zmod"
+kind = "macro"
+printers = ["flashforge.ad5x"]
+command = "LOAD_MATERIAL"
+description = "ZMod's manual filament load/change routine: it saves the current heater state and walks the operator through selecting and loading material with on-screen prompts, using the LOAD_FILAMENT and UNLOAD_FILAMENT paths underneath."
+safety = "Heats and extrudes as part of the guided change. Stay at the printer and answer its prompts; do not start it remotely and walk away."
+notes = "Source: ghzserg/zmod_ff5x@5409ffe7ffee572219837fbd0d7de381469537f6, en/base.cfg. Generic firmware knowledge from the shipped config, not verified on a Print Buddy printer."
+
+[[entry]]
+id = "zmod.clear-nozzle"
+name = "CLEAR_NOZZLE"
+aliases = ["clear nozzle", "nozzle cleaning zmod", "wipe nozzle zmod"]
+firmware = "zmod"
+kind = "macro"
+printers = ["flashforge.ad5x"]
+command = "CLEAR_NOZZLE EXTRUDER_TEMP=<nozzle C> BED_TEMP=<bed C>"
+description = "ZMod's nozzle-cleaning routine: heats nozzle and bed (built-in defaults 230 C and 80 C) and runs its cleaning moves, then turns nozzle control off. Print Buddy's AD5X preparation flows rely on ZMod cleaning as part of mesh and start preparation; this is the operator-facing name for the same routine."
+safety = "Heats both heaters and moves the toolhead against the cleaning surface. Keep the bed area clear and hands away while it runs."
+notes = "Source: ghzserg/zmod_ff5x@5409ffe7ffee572219837fbd0d7de381469537f6, en/base.cfg. Generic firmware knowledge from the shipped config, not verified on a Print Buddy printer."
+
+[[entry]]
+id = "zmod.set-extruder-slot"
+name = "SET_EXTRUDER_SLOT"
+aliases = ["set extruder slot", "loaded slot record", "slot loaded zmod"]
+firmware = "zmod"
+kind = "macro"
+printers = ["flashforge.ad5x"]
+command = "SET_EXTRUDER_SLOT SLOT=<1-4>"
+description = "Records in ZMod which IFS slot is the one loaded in the extruder. It is the bookkeeping step at the end of a slot load — Print Buddy's own slot-load flow sends it after the IFS feed macros — and it does not feed or move filament by itself."
+safety = "No motion. Recording the wrong slot makes the screen, ZMod's automatic spool switching and usage accounting all agree on the wrong spool."
+notes = "Source: ghzserg/zmod_ff5x@5409ffe7ffee572219837fbd0d7de381469537f6, en/ad5x.cfg; also sent by Print Buddy itself in print_buddy/hermes/slot_load.py. Generic firmware knowledge from the shipped config, not verified on a Print Buddy printer."
+
+[[entry]]
+id = "zmod.set-active-spool"
+name = "SET_ACTIVE_SPOOL"
+aliases = ["set active spool", "spoolman active spool", "active spool zmod"]
+firmware = "zmod"
+kind = "macro"
+printers = ["flashforge.ad5x"]
+command = "SET_ACTIVE_SPOOL ID=<spool id>"
+description = "Tells Spoolman, through Moonraker's spoolman remote method, which spool is active so extrusion is charged to it. The macro ships in ZMod's base config; the same macro is part of the standard Klipper Spoolman integration, so other Klipper printers may define it too."
+safety = "No motion and no heating. A wrong ID silently charges filament usage to the wrong spool until it is corrected."
+notes = "Source: ghzserg/zmod_ff5x@5409ffe7ffee572219837fbd0d7de381469537f6, en/base.cfg. Generic firmware knowledge from the shipped config, not verified on a Print Buddy printer."
+
+[[entry]]
+id = "zmod.clear-active-spool"
+name = "CLEAR_ACTIVE_SPOOL"
+aliases = ["clear active spool", "no active spool", "spoolman clear spool"]
+firmware = "zmod"
+kind = "macro"
+printers = ["flashforge.ad5x"]
+command = "CLEAR_ACTIVE_SPOOL"
+description = "Clears Spoolman's active spool (sets it to none) through Moonraker's spoolman remote method, so extrusion is charged to nobody until the next SET_ACTIVE_SPOOL. Ships in ZMod's base config; the same macro is part of the standard Klipper Spoolman integration."
+safety = "No motion. While no spool is active, filament use is not recorded against any spool."
+notes = "Source: ghzserg/zmod_ff5x@5409ffe7ffee572219837fbd0d7de381469537f6, en/base.cfg. Generic firmware knowledge from the shipped config, not verified on a Print Buddy printer."
+
+[[entry]]
+id = "zmod.save-zmod-data"
+name = "SAVE_ZMOD_DATA"
+aliases = ["save zmod data", "zmod settings", "save zmod settings"]
+firmware = "zmod"
+kind = "macro"
+printers = ["flashforge.ad5x"]
+command = "SAVE_ZMOD_DATA <KEY>=<value> ..."
+description = "Saves ZMod's own settings (saved variables such as dialog behaviour, motor-stop and screen options) — the settings interface Print Buddy's ZMod documentation points operators at instead of editing vendor macro files. GET_ZMOD_DATA reports the current values."
+safety = "No motion. The values persist across restarts and change how ZMod behaves on every later print; change one key at a time and note the old value first."
+notes = "Source: ghzserg/zmod_ff5x@5409ffe7ffee572219837fbd0d7de381469537f6, en/base.cfg. Generic firmware knowledge from the shipped config, not verified on a Print Buddy printer."
+
+[[entry]]
+id = "zmod.get-zmod-data"
+name = "GET_ZMOD_DATA"
+aliases = ["get zmod data", "zmod parameters", "show zmod settings"]
+firmware = "zmod"
+kind = "macro"
+printers = ["flashforge.ad5x"]
+command = "GET_ZMOD_DATA"
+description = "Reports ZMod's current parameter values (screen mode, Guppy and Moonraker options, and the other SAVE_ZMOD_DATA settings) to the console. The read side of SAVE_ZMOD_DATA."
+safety = "Reports only; it heats nothing and moves nothing."
+notes = "Source: ghzserg/zmod_ff5x@5409ffe7ffee572219837fbd0d7de381469537f6, en/base.cfg. Generic firmware knowledge from the shipped config, not verified on a Print Buddy printer."
+
+[[entry]]
+id = "zmod.nozzle-control"
+name = "NOZZLE_CONTROL"
+aliases = ["nozzle control", "nozzle hit detection", "part detachment detection"]
+firmware = "zmod"
+kind = "macro"
+printers = ["flashforge.ad5x"]
+command = "NOZZLE_CONTROL WEIGHT=<grams>"
+description = "Sets the load-cell weight threshold (built-in default 1500 g) at which ZMod's nozzle control treats bed contact as a nozzle hit or a detached part, handing the value to ZMod's znozzle helper. This is a protection threshold, not a print-quality setting."
+safety = "Raising the threshold weakens nozzle-hit and part-detachment detection; lowering it can false-trigger mid-print. Change it only with a reason, and test afterwards."
+notes = "Source: ghzserg/zmod_ff5x@5409ffe7ffee572219837fbd0d7de381469537f6, en/base.cfg. Generic firmware knowledge from the shipped config, not verified on a Print Buddy printer."
+
+[[entry]]
+id = "zmod.pid-tune-extruder"
+name = "PID_TUNE_EXTRUDER"
+aliases = ["pid tune extruder", "extruder pid zmod", "hotend pid calibration"]
+firmware = "zmod"
+kind = "macro"
+printers = ["flashforge.ad5x"]
+command = "PID_TUNE_EXTRUDER TEMPERATURE=<nozzle C>"
+description = "Homes, moves to mid-bed and runs Klipper PID_CALIBRATE for the extruder (built-in default target 245 C, part fan on), then saves the result through ZMod's save flow, which restarts the firmware. PID_TUNE_BED is the bed equivalent."
+safety = "Cycles the nozzle temperature repeatedly around the target and ends in a firmware restart when it saves. Never run it mid-print, and watch the first cycle."
+notes = "Source: ghzserg/zmod_ff5x@5409ffe7ffee572219837fbd0d7de381469537f6, en/base.cfg. Generic firmware knowledge from the shipped config, not verified on a Print Buddy printer."
+
+[[entry]]
+id = "zmod.pid-tune-bed"
+name = "PID_TUNE_BED"
+aliases = ["pid tune bed", "bed pid zmod", "bed pid calibration"]
+firmware = "zmod"
+kind = "macro"
+printers = ["flashforge.ad5x"]
+command = "PID_TUNE_BED TEMPERATURE=<bed C>"
+description = "Homes, moves to mid-bed and runs Klipper PID_CALIBRATE for the heated bed (built-in default target 80 C), then saves the result through ZMod's save flow, which restarts the firmware. PID_TUNE_EXTRUDER is the nozzle equivalent."
+safety = "Cycles the bed temperature repeatedly around the target and ends in a firmware restart when it saves. Never run it mid-print."
+notes = "Source: ghzserg/zmod_ff5x@5409ffe7ffee572219837fbd0d7de381469537f6, en/base.cfg. Generic firmware knowledge from the shipped config, not verified on a Print Buddy printer."
+
+[[entry]]
+id = "zmod.zshaper"
+name = "ZSHAPER"
+aliases = ["zshaper", "input shaper calibration zmod", "resonance calibration zmod"]
+firmware = "zmod"
+kind = "macro"
+printers = ["flashforge.ad5x"]
+command = "ZSHAPER"
+description = "ZMod's input-shaper calibration: homes, runs Klipper resonance testing on X and Y (TEST_RESONANCES) and hands the measurements to ZMod's shaper analysis, which proposes the shaper settings. BELTS_SHAPER_CALIBRATION is ZMod's separate belt-frequency test."
+safety = "The printer vibrates hard and loudly during the resonance sweeps. Nothing on the bed, the printer on a stable surface, and be ready to power off if anything comes loose."
+notes = "Source: ghzserg/zmod_ff5x@5409ffe7ffee572219837fbd0d7de381469537f6, en/base.cfg. Generic firmware knowledge from the shipped config, not verified on a Print Buddy printer."
+
+[[entry]]
+id = "zmod.display-off"
+name = "DISPLAY_OFF"
+aliases = ["display off", "screenless mode", "disable stock screen"]
+firmware = "zmod"
+kind = "macro"
+printers = ["flashforge.ad5x"]
+command = "DISPLAY_OFF"
+description = "Switches the AD5X to screenless operation: it saves display_off=1 so ZMod owns the printer and the stock Flashforge screen leaves the loop, after showing its own warning prompt. Z-offset and mesh authority change with the mode; Print Buddy's AD5X contract documents which mode owns what. DISPLAY_ON reverses it."
+safety = "A mode change, not a display toggle: in screenless mode the stock screen's dialogs and its Z-offset and mesh handling no longer apply. Do not switch until you know which mode owns your saved offset and mesh."
+notes = "Source: ghzserg/zmod_ff5x@5409ffe7ffee572219837fbd0d7de381469537f6, en/base.cfg. Generic firmware knowledge from the shipped config, not verified on a Print Buddy printer."
+
+[[entry]]
+id = "zmod.display-on"
+name = "DISPLAY_ON"
+aliases = ["display on", "enable stock screen", "native screen on"]
+firmware = "zmod"
+kind = "macro"
+printers = ["flashforge.ad5x"]
+command = "DISPLAY_ON"
+description = "Re-enables the stock Flashforge screen (saves display_off=0) and reboots so the native screen owns its dialogs, Z offset and mesh again. The reverse of DISPLAY_OFF."
+safety = "Reboots the printer and hands Z-offset and mesh authority back to the native screen; a saved offset from screenless mode may not be the one the screen applies. Never run it mid-print."
+notes = "Source: ghzserg/zmod_ff5x@5409ffe7ffee572219837fbd0d7de381469537f6, en/base.cfg. Generic firmware knowledge from the shipped config, not verified on a Print Buddy printer."
+
+[[entry]]
+id = "zmod.print-buddy"
+name = "PRINT_BUDDY"
+aliases = ["print buddy macro", "matching spool slots", "same spool another slot"]
+firmware = "zmod"
+kind = "macro"
+printers = ["flashforge.ad5x"]
+command = "PRINT_BUDDY SLOT=<1-4>"
+description = "Print Buddy's own macro, shipped in this repository's print-buddy.cfg for a ZMod install. It compares the colour and material stored for the IFS slots (the values copied from the COLOR menu into its variables) and reports which other slots hold the same colour and material as SLOT= — or as a COLOR= and MATERIAL= pair given directly — the matches ZMod's own automatic spool switching could use."
+safety = "Reports only. It never switches slots, loads filament or changes the loaded spool; acting on the report stays with the separate confirmed flows."
+notes = "Source: print-buddy.cfg in this repository (the ZMod plugin file). Present only on a printer where the Print Buddy ZMod plugin is installed and enabled."
+
+[[entry]]
 id = "klipper.print-start"
 name = "PRINT_START"
 aliases = ["print start", "klipper start macro"]
@@ -97,6 +301,78 @@ printers = ["klipper.generic", "sovol.sv06"]
 command = "PRINT_END"
 description = "Stock Klipper end macro name for the generic Klipper and Sovol profiles: heaters off and park at the end of a job."
 safety = "Runs only as the tail of a sliced job."
+
+[[entry]]
+id = "klipper.pause"
+name = "PAUSE"
+aliases = ["pause print klipper", "klipper pause macro"]
+firmware = "klipper"
+kind = "macro"
+printers = ["klipper.generic", "sovol.sv06", "flashforge.ad5x"]
+command = "PAUSE"
+description = "Pauses the running print. Klipper itself provides PAUSE as a built-in command when the [pause_resume] section is configured — that built-in is not a gcode_macro and never appears in a macro listing. The PAUSE a macro listing discovers is a config-defined wrapper (Mainsail's client config ships one; ZMod ships its own) that adds toolhead parking, a small retract and heater-state bookkeeping around the built-in, driven by the config's client variables."
+safety = "The nozzle stays at printing temperature while parked over or beside the print. A pause is not a state to leave unattended for hours; resume or cancel deliberately."
+notes = "Sources: mainsail-crew/mainsail-config@ff3869a621db17ce3ef660adbbd3fa321995ac42 (mainsail.cfg), klipper3d/klipper@ee2c6fb6b00b2b5d097ef70d0868df7d74943b51 (docs/G-Codes.md [pause_resume]), and ghzserg/zmod_ff5x@5409ffe7ffee572219837fbd0d7de381469537f6 (en/client.cfg) for the AD5X. Generic firmware knowledge, not verified on a Print Buddy printer."
+
+[[entry]]
+id = "klipper.resume"
+name = "RESUME"
+aliases = ["resume print klipper", "klipper resume macro"]
+firmware = "klipper"
+kind = "macro"
+printers = ["klipper.generic", "sovol.sv06", "flashforge.ad5x"]
+command = "RESUME"
+description = "Resumes a paused print, returning the toolhead to the position PAUSE captured. Klipper's built-in RESUME exists under the same [pause_resume] conditions as PAUSE; the macro a listing discovers is the config-defined wrapper (Mainsail client config; ZMod), which also restores the heater targets and speed PAUSE recorded. The Mainsail wrapper refuses to resume when its configured runout sensor reports no filament."
+safety = "The toolhead moves back to the captured position, possibly over the print. Make sure nothing (hands, tools, a removed part) is in its path and the part is still on the bed."
+notes = "Sources: mainsail-crew/mainsail-config@ff3869a621db17ce3ef660adbbd3fa321995ac42 (mainsail.cfg), klipper3d/klipper@ee2c6fb6b00b2b5d097ef70d0868df7d74943b51 (docs/G-Codes.md [pause_resume]), and ghzserg/zmod_ff5x@5409ffe7ffee572219837fbd0d7de381469537f6 (en/client.cfg) for the AD5X. Generic firmware knowledge, not verified on a Print Buddy printer."
+
+[[entry]]
+id = "klipper.cancel-print"
+name = "CANCEL_PRINT"
+aliases = ["cancel print klipper", "abort print klipper", "klipper cancel macro"]
+firmware = "klipper"
+kind = "macro"
+printers = ["klipper.generic", "sovol.sv06", "flashforge.ad5x"]
+command = "CANCEL_PRINT"
+description = "Cancels the running print. Klipper has a built-in of this name under [pause_resume] / [virtual_sdcard]; the macro a listing discovers is the config-defined wrapper (Mainsail client config; ZMod), which retracts, can park the toolhead first if the config's park_at_cancel is enabled, and runs the config's cancel handling around the built-in."
+safety = "The job is gone: cancelling cannot be resumed. What happens to the heaters afterwards follows the installed config, so check the printer instead of assuming it cooled down."
+notes = "Sources: mainsail-crew/mainsail-config@ff3869a621db17ce3ef660adbbd3fa321995ac42 (mainsail.cfg), klipper3d/klipper@ee2c6fb6b00b2b5d097ef70d0868df7d74943b51 (docs/G-Codes.md [pause_resume]), and ghzserg/zmod_ff5x@5409ffe7ffee572219837fbd0d7de381469537f6 (en/client.cfg) for the AD5X. Generic firmware knowledge, not verified on a Print Buddy printer."
+
+[[entry]]
+id = "klipper.set-pause-next-layer"
+name = "SET_PAUSE_NEXT_LAYER"
+aliases = ["pause next layer", "pause at next layer"]
+firmware = "klipper"
+kind = "macro"
+printers = ["klipper.generic", "sovol.sv06", "flashforge.ad5x"]
+command = "SET_PAUSE_NEXT_LAYER ENABLE=<0|1>"
+description = "Arms a pause when the next layer change begins (ENABLE=0 disarms it). It only records the request in the SET_PRINT_STATS_INFO macro state: the pause fires if the job's G-code feeds layer counters through SET_PRINT_STATS_INFO, and it calls PAUSE unless a different MACRO= was recorded. Defined by Mainsail's client config; ZMod's base config defines the same macro."
+safety = "No motion by itself. The pause it arms stops the job mid-print at temperature, so arm it only when someone will attend to it."
+notes = "Sources: mainsail-crew/mainsail-config@ff3869a621db17ce3ef660adbbd3fa321995ac42 (mainsail.cfg) and ghzserg/zmod_ff5x@5409ffe7ffee572219837fbd0d7de381469537f6 (en/base.cfg) for the AD5X. Generic firmware knowledge, not verified on a Print Buddy printer."
+
+[[entry]]
+id = "klipper.set-pause-at-layer"
+name = "SET_PAUSE_AT_LAYER"
+aliases = ["pause at layer", "pause on layer number"]
+firmware = "klipper"
+kind = "macro"
+printers = ["klipper.generic", "sovol.sv06", "flashforge.ad5x"]
+command = "SET_PAUSE_AT_LAYER LAYER=<layer number>"
+description = "Arms a pause when the job reaches the given layer number (ENABLE=0 disarms it), through the same SET_PRINT_STATS_INFO state and conditions as SET_PAUSE_NEXT_LAYER. Layer numbers are the slicer's count, starting where the job's own layer-change G-code starts counting. Defined by Mainsail's client config; ZMod's base config defines the same macro."
+safety = "No motion by itself. A wrong layer number parks the job mid-print at temperature at the wrong moment, or never; check it against the sliced job's layer count."
+notes = "Sources: mainsail-crew/mainsail-config@ff3869a621db17ce3ef660adbbd3fa321995ac42 (mainsail.cfg) and ghzserg/zmod_ff5x@5409ffe7ffee572219837fbd0d7de381469537f6 (en/base.cfg) for the AD5X. Generic firmware knowledge, not verified on a Print Buddy printer."
+
+[[entry]]
+id = "klipper.set-print-stats-info"
+name = "SET_PRINT_STATS_INFO"
+aliases = ["set print stats info", "layer counter macro"]
+firmware = "klipper"
+kind = "macro"
+printers = ["klipper.generic", "sovol.sv06", "flashforge.ad5x"]
+command = "SET_PRINT_STATS_INFO TOTAL_LAYER=<count> CURRENT_LAYER=<count>"
+description = "The support macro the layer-pause features hang off. Slicer start and layer-change G-code calls it with the job's layer counters; the config-defined version (Mainsail client config; ZMod base config) checks the armed SET_PAUSE_NEXT_LAYER / SET_PAUSE_AT_LAYER state and fires the recorded pause call, then passes through to Klipper's built-in. It is plumbing the slicer drives, not an operator control."
+safety = "Calling it by hand with invented counters makes layer pauses fire at the wrong layer, or not at all, on the running job."
+notes = "Sources: mainsail-crew/mainsail-config@ff3869a621db17ce3ef660adbbd3fa321995ac42 (mainsail.cfg) and ghzserg/zmod_ff5x@5409ffe7ffee572219837fbd0d7de381469537f6 (en/base.cfg) for the AD5X. Generic firmware knowledge, not verified on a Print Buddy printer."
 
 [[entry]]
 id = "klipper.bed-mesh-calibrate"

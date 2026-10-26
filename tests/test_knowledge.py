@@ -94,6 +94,42 @@ def test_lookup_resolves_across_families(registry):
     assert top(registry, "heating failed").item.id == "marlin.heating-failed"
 
 
+STAGE3_IDS = {
+    "zmod.coldpull", "zmod.load-filament", "zmod.unload-filament", "zmod.load-material",
+    "zmod.clear-nozzle", "zmod.set-extruder-slot", "zmod.set-active-spool",
+    "zmod.clear-active-spool", "zmod.save-zmod-data", "zmod.get-zmod-data",
+    "zmod.nozzle-control", "zmod.pid-tune-extruder", "zmod.pid-tune-bed", "zmod.zshaper",
+    "zmod.display-off", "zmod.display-on", "zmod.print-buddy",
+    "klipper.pause", "klipper.resume", "klipper.cancel-print",
+    "klipper.set-pause-next-layer", "klipper.set-pause-at-layer", "klipper.set-print-stats-info",
+}
+
+
+def test_stage3_registry_growth_is_complete_and_provenanced(registry):
+    """Stage 3 of #291: every added entry loads, is a macro, and names its source."""
+    assert len(registry.firmware_entries) == 45
+    by_id = {e.id: e for e in registry.firmware_entries}
+    assert STAGE3_IDS <= set(by_id)
+    for entry_id in STAGE3_IDS:
+        entry = by_id[entry_id]
+        assert entry.kind == "macro", entry_id
+        assert entry.notes, entry_id
+        assert ("@" in entry.notes) or ("print-buddy.cfg" in entry.notes), entry_id
+
+
+def test_lookup_stage3_entries_by_name_and_alias(registry):
+    assert top(registry, "COLDPULL").item.id == "zmod.coldpull"
+    assert top(registry, "cold pull").item.id == "zmod.coldpull"
+    assert top(registry, "set extruder slot").item.id == "zmod.set-extruder-slot"
+    assert top(registry, "save zmod data").item.id == "zmod.save-zmod-data"
+    assert top(registry, "PRINT_BUDDY").item.id == "zmod.print-buddy"
+    assert top(registry, "pause next layer").item.id == "klipper.set-pause-next-layer"
+    assert top(registry, "pause at layer").item.id == "klipper.set-pause-at-layer"
+    # The Stage 3 growth must not re-top the pinned cross-family M600 lookup:
+    # no same-name macro entry was added for it on purpose.
+    assert top(registry, "M600").item.id == "marlin.m600"
+
+
 def test_lookup_printer_filter_excludes_other_families(registry):
     hits = registry.lookup("start print", printer="flashforge.ad5x")
     ids = [h.item.id for h in hits if h.kind == "firmware"]

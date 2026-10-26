@@ -8,6 +8,7 @@ byte-for-byte against what they were before the generalisation.
 """
 import io
 import json
+import subprocess
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -161,6 +162,72 @@ def test_matrix_sizing_shrinks_to_the_homeserver_limit_below_the_discord_cap(mon
     source = _video(tmp_path, 8_000_000)  # fits the Discord cap: the old sizing passed it through
     result = mel.platform_sized_video(source)
     assert result != source and result.stat().st_size == 4_900_000
+
+
+# --------------------------------------------------------------- encoder choice
+
+
+def _fake_ffmpeg_unless(monkeypatch, out_size, fail_token):
+    """Fake ffmpeg that fails any command containing fail_token, encodes otherwise."""
+    calls = []
+
+    def fake_run(cmd, **kwargs):
+        calls.append(cmd)
+        if fail_token and fail_token in cmd:
+            raise subprocess.CalledProcessError(1, cmd)
+        Path(cmd[-1]).write_bytes(b"s" * out_size)
+        return subprocess.CompletedProcess(cmd, 0)
+
+    monkeypatch.setattr(mel, "_video_duration", lambda path: 60.0)
+    monkeypatch.setattr(mel.subprocess, "run", fake_run)
+    return calls
+
+
+def test_shrink_is_an_ffmpeg_cpu_encode_by_default(monkeypatch, tmp_path):
+    _use_settings(monkeypatch)
+    calls = _fake_ffmpeg(monkeypatch, 9_000_000)
+    mel.platform_sized_video(_video(tmp_path, 20_000_000))
+    argv = calls[0]
+    assert argv[0] == mel.FFMPEG_BIN  # the compressor is ffmpeg itself
+    assert "libx264" in argv
+    assert not {"h264_vaapi", "h264_qsv", "h264_nvenc", "-vaapi_device"} & set(argv)
+
+
+def test_shrink_uses_the_configured_nvenc_encoder(monkeypatch, tmp_path):
+    _use_settings(monkeypatch, PRINT_BUDDY__TIMELAPSE__ENCODER="nvenc")
+    calls = _fake_ffmpeg(monkeypatch, 9_000_000)
+    mel.platform_sized_video(_video(tmp_path, 20_000_000))
+    assert "h264_nvenc" in calls[0] and "libx264" not in calls[0]
+
+
+def test_shrink_uses_the_configured_vaapi_encoder_with_device_and_upload(monkeypatch, tmp_path):
+    _use_settings(monkeypatch, PRINT_BUDDY__TIMELAPSE__ENCODER="vaapi")
+    calls = _fake_ffmpeg(monkeypatch, 9_000_000)
+    mel.platform_sized_video(_video(tmp_path, 20_000_000))
+    argv = calls[0]
+    assert "h264_vaapi" in argv
+    assert argv[argv.index("-vaapi_device") + 1] == "/dev/dri/renderD128"
+    assert "hwupload" in argv[argv.index("-vf") + 1]
+
+
+def test_hardware_encode_failure_falls_back_to_cpu(monkeypatch, tmp_path):
+    _use_settings(monkeypatch, PRINT_BUDDY__TIMELAPSE__ENCODER="nvenc")
+    calls = _fake_ffmpeg_unless(monkeypatch, 9_000_000, "h264_nvenc")
+    result = mel.platform_sized_video(_video(tmp_path, 20_000_000))
+    assert result.stat().st_size == 9_000_000  # the shrink still succeeded...
+    assert "h264_nvenc" in calls[0] and "libx264" in calls[1]  # ...via the CPU retry
+
+
+def test_cpu_encode_failure_still_raises_for_the_callers_fallback(monkeypatch, tmp_path):
+    _use_settings(monkeypatch)
+    _fake_ffmpeg_unless(monkeypatch, 9_000_000, "libx264")
+    with pytest.raises(subprocess.CalledProcessError):
+        mel.platform_sized_video(_video(tmp_path, 20_000_000))
+
+
+def test_settings_reject_an_unknown_timelapse_encoder():
+    with pytest.raises(settings.SettingsError):
+        settings.load(local=False, environ={"PRINT_BUDDY__TIMELAPSE__ENCODER": "bogus"})
 
 
 # --------------------------------------------------------------- failure wording

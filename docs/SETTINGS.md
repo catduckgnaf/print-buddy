@@ -106,6 +106,7 @@ Schema, validation limits and TOML migration: [CONFIGURATION-YAML.md](CONFIGURAT
 | `visual_watch.sensitivity` | `PRINT_BUDDY__VISUAL_WATCH__SENSITIVITY` | `3` | Camera watchdog sensitivity, 1 (quietest) to 5 (most alerts); also sets the periodic check interval and stall threshold, see the [project reference](PROJECT-REFERENCE.md#camera-stall-sensitivity) |
 | `visual_watch.enabled` | `PRINT_BUDDY__VISUAL_WATCH__ENABLED` | `true` | Camera monitoring switch; the watchdog is alert-only and never controls the printer |
 | `timelapse.mode` | `PRINT_BUDDY__TIMELAPSE__MODE` | derived | Timelapse mode (#246/#295): `rendered` (the printer renders it, moonraker-timelapse), `container` (in-container capture) or `off`. Empty in a file derives: `rendered` when a Moonraker URL is configured, else `off` |
+| `timelapse.encoder` | `PRINT_BUDDY__TIMELAPSE__ENCODER` | `cpu` | ffmpeg encoder for the timelapse sizing shrink (#314): `cpu` (libx264), `vaapi`, `qsv` or `nvenc`. Hardware choices need the GPU passed through to the container (see [DOCKER.md](DOCKER.md)); a hardware encode that fails falls back to `cpu` automatically, so a completion post is never lost to the encoder |
 | `timelapse.archive_host` | `PRINT_BUDDY__TIMELAPSE__ARCHIVE_HOST` | empty | SSH host for the timelapse archive; empty disables it |
 | `timelapse.archive_dir` | `PRINT_BUDDY__TIMELAPSE__ARCHIVE_DIR` | empty | Archive folder on that host |
 | `timelapse.ssh_key` | `PRINT_BUDDY__TIMELAPSE__SSH_KEY` | empty | Path of the SSH key in the container (mount it read-only) |

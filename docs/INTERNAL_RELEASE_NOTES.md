@@ -17,6 +17,7 @@
 - The listener's `log()` helper still writes its legacy file and also feeds the shared logger, so existing tests and `listener.log` readers are unaffected.
 - Issue: #150. Offline tests: `tests/test_logs.py`.
 - The listener resolves one effective cap in `_media_upload_limit()` (bot-core `core.delivery.upload_limit`, plus the Matrix homeserver's reported `m.upload.size` as a runtime clamp) and `discord_sized_video()` is generalised to `platform_sized_video()`, writing `<name>.sized.mp4`; shrunk files cached under the old `.discord.mp4` name are simply re-shrunk once. Discord's cap, bitrate strategy and fallback wording are unchanged. No live Telegram/Matrix testing was possible (needs the operator's tokens); all proof is offline. Issue: #314. Offline tests: `tests/hermes/test_platform_media_sizing.py`.
+- The shrink's compression is ffmpeg's (it always was — the encoder was hard-coded libx264 in the command). It now takes the `[timelapse] encoder` choice (`cpu` default; `vaapi`/`qsv`/`nvenc` for a passed-through GPU) through the `vertical_short` encoder seam, using live_stream's vendor and ffmpeg encoder names (#311); any hardware-encode failure retries the attempt with the CPU encoder, so the never-fail-the-announcement contract stands. No live GPU encode was performed (no GPU on the build machine); selection and fallback are pinned offline with the stubbed-ffmpeg harness. Issue: #314.
 
 # Version 2.0.6
 

@@ -18,11 +18,13 @@ about a second as a reveal. Everything here is a pure command builder plus
 one runner; tests pin the command construction offline and no live
 rendering is claimed.
 
-Encoder seam: :func:`encoder_args` is the single place the codec is
-chosen. It returns CPU libx264 today; when #246's encoder-selection helper
-lands (VAAPI -> NVENC/QSV -> libx264), it should replace this choice —
-`print_buddy/live_stream.py` (#311) already has a codec-aware plan for the
-streaming case to align with.
+Encoder seam: :func:`encoder_args` (with :func:`encoder_input_args` and
+:func:`encoder_filter`) is the single place the codec is chosen. The
+default is CPU libx264; the timelapse sizing shrink (#314) passes the
+operator's ``[timelapse] encoder`` choice through the seam — the vendor
+names (``vaapi`` / ``qsv`` / ``nvenc`` / ``cpu``) and the ffmpeg encoder
+names are the ones `print_buddy/live_stream.py`'s codec-aware plan (#311)
+uses, and a hardware encode that fails falls back to CPU in the caller.
 """
 from __future__ import annotations
 
@@ -35,9 +37,41 @@ HOLD_S = 1.0
 MODES = ("pad", "crop")
 
 
-def encoder_args() -> list[str]:
-    """ffmpeg output codec args — the #246 encoder-helper seam (see module docstring)."""
-    return ["-c:v", "libx264", "-preset", "veryfast", "-pix_fmt", "yuv420p"]
+# The encoder choices an operator can pick for ffmpeg encodes (#314):
+# live_stream's vendor names (#311) mapped to the same ffmpeg encoder
+# names its plan uses. "cpu" is the default; the hardware choices need
+# the GPU passed through to the container (docs/DOCKER.md) and are only
+# ever used when configured.
+ENCODERS = ("cpu", "vaapi", "qsv", "nvenc")
+VAAPI_DEVICE = "/dev/dri/renderD128"  # the same device live_stream.VAAPI_DEVICE names
+
+_CODEC_ARGS = {
+    "cpu": ["-c:v", "libx264", "-preset", "veryfast", "-pix_fmt", "yuv420p"],
+    "vaapi": ["-c:v", "h264_vaapi"],
+    "qsv": ["-c:v", "h264_qsv", "-preset", "veryfast"],
+    "nvenc": ["-c:v", "h264_nvenc", "-preset", "fast", "-pix_fmt", "yuv420p"],
+}
+
+
+def encoder_args(encoder: str = "cpu") -> list[str]:
+    """ffmpeg output codec args for an encoder choice — the #246 encoder-helper seam.
+
+    An unknown choice yields the CPU args: the seam never raises, so a
+    bad value can cost hardware acceleration but never an encode.
+    """
+    return list(_CODEC_ARGS.get(str(encoder or "cpu").strip().lower(), _CODEC_ARGS["cpu"]))
+
+
+def encoder_input_args(encoder: str = "cpu") -> list[str]:
+    """ffmpeg args that must precede ``-i`` for an encoder choice (VAAPI's device)."""
+    return ["-vaapi_device", VAAPI_DEVICE] if str(encoder or "").strip().lower() == "vaapi" else []
+
+
+def encoder_filter(encoder: str, base_filter: str) -> str:
+    """The ``-vf`` chain for an encoder choice: VAAPI needs frames uploaded to the device."""
+    if str(encoder or "").strip().lower() == "vaapi":
+        return f"{base_filter},format=nv12,hwupload"
+    return base_filter
 
 
 def escape_drawtext(text) -> str:

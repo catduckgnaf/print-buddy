@@ -96,7 +96,7 @@ OPTIONAL_KEYS = {("printer", "nozzle_type"): str, ("printer", "tool_count"): int
                  ("slicer", "flash_studio_path"): str,
                  ("webui", "enabled"): bool, ("webui", "host"): str,
                  ("webui", "port"): int, ("webui", "access_token_env"): str,
-                 ("timelapse", "mode"): str,
+                 ("timelapse", "mode"): str, ("timelapse", "encoder"): str,
                  ("services", "camera_source"): str,
                  ("live_stream", "enabled"): bool, ("live_stream", "voice_channel_id"): str,
                  ("live_stream", "auto_start_on_print"): bool, ("live_stream", "max_height"): int,
@@ -747,6 +747,13 @@ CAPTURE_TRIGGERS = ("interval", "layer", "both")
 # (Stage 2) never encodes; "auto" will probe in the order vaapi, nvenc,
 # qsv and fall back to cpu.
 CAPTURE_ENCODERS = ("auto", "vaapi", "nvenc", "qsv", "cpu")
+# [timelapse] encoder (#314): which ffmpeg encoder the timelapse sizing
+# shrink uses. "cpu" (libx264) is the default and always available; the
+# hardware choices are live_stream's vendor names (#311) and need the
+# GPU passed through to the container (docs/DOCKER.md). A hardware
+# encode that fails falls back to CPU in the listener — it never fails
+# a completion post.
+TIMELAPSE_ENCODERS = ("cpu", "vaapi", "qsv", "nvenc")
 # [services] camera_source (#294): which camera the still images come
 # from. "auto" follows the printer vendor's rule; the explicit values pin
 # one source; "none" turns camera images off.
@@ -865,8 +872,9 @@ VERTICAL_SHORT_MODES = ("pad", "crop")
 
 
 def _validate_timelapse(data):
-    """The [timelapse] section: the capture mode (#246/#295) and the
-    vertical-short switches (#317). Absent keys get the defaults.
+    """The [timelapse] section: the capture mode (#246/#295), the
+    vertical-short switches (#317) and the sizing encoder (#314).
+    Absent keys get the defaults.
 
     The mode derives from the configured services when absent or empty:
     "rendered" (the printer-rendered moonraker-timelapse path) when a
@@ -918,6 +926,12 @@ def _validate_timelapse(data):
         if isinstance(value, bool) or not isinstance(value, int) or value < 0:
             raise SettingsError(
                 f"[timelapse] {key} must be a whole number, 0 or more (0 disables the cap), got {value!r}")
+    raw_encoder = timelapse.setdefault("encoder", "cpu")
+    encoder = str(raw_encoder or "").strip().lower()
+    if encoder not in TIMELAPSE_ENCODERS:
+        raise SettingsError(
+            f"[timelapse] encoder must be one of {', '.join(TIMELAPSE_ENCODERS)}, got {raw_encoder!r}")
+    timelapse["encoder"] = encoder
 
 
 def _validate_camera_source(data):

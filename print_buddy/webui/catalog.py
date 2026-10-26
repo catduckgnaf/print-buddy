@@ -48,6 +48,9 @@ class Field:
     restart_required: bool = True
     minimum: float | None = None
     maximum: float | None = None
+    # The /config page group (stage 3); every field is in exactly one,
+    # assigned from GROUP_OF below so the page order stays declarative.
+    group: str = ""
 
     def __post_init__(self):
         if self.kind not in KINDS:
@@ -58,8 +61,54 @@ class Field:
         return f"{self.section}.{self.key}"
 
 
+# Page groups for the stage 3 /config page, keyed by field id. The page
+# renders them in this order: printer, platform, services, timelapse,
+# images, slicing, logging, webui (pages.GROUPS carries the titles).
+GROUP_OF = {
+    "printer.model": "printer",
+    "printer.slicer": "slicing",
+    "delivery.methods": "slicing",
+    "bot.mode": "platform",
+    "bot.platform": "platform",
+    "discord.chat_id": "platform",
+    "discord.allowed_user_ids": "platform",
+    "discord.approval_user_id": "platform",
+    "discord.timezone": "platform",
+    "telegram.chat_id": "platform",
+    "telegram.allowed_user_ids": "platform",
+    "telegram.approval_user_id": "platform",
+    "matrix.homeserver_url": "platform",
+    "matrix.room_id": "platform",
+    "matrix.allowed_user_ids": "platform",
+    "matrix.approval_user_id": "platform",
+    "services.moonraker_url": "services",
+    "services.spoolman_url": "services",
+    "services.camera_source": "images",
+    "services.camera_snapshot_url": "images",
+    "services.vision_chat_url": "images",
+    "vision.model": "images",
+    "visual_watch.enabled": "images",
+    "visual_watch.sensitivity": "images",
+    "timelapse.mode": "timelapse",
+    "timelapse.render_wait_s": "timelapse",
+    "timelapse.render_poll_s": "timelapse",
+    "timelapse.max_bytes": "timelapse",
+    "timelapse.local_retention_days": "timelapse",
+    "timelapse.plan_clip_retention_days": "timelapse",
+    "timelapse.archive_host": "timelapse",
+    "timelapse.archive_dir": "timelapse",
+    "timelapse.ssh_key": "timelapse",
+    "logging.level": "logging",
+    "logging.format": "logging",
+    "webui.enabled": "webui",
+    "webui.host": "webui",
+    "webui.port": "webui",
+}
+
+
 def _field(section, key, label, kind, help, **kwargs):
-    return Field(section, key, label, kind, help=help, **kwargs)
+    return Field(section, key, label, kind, help=help,
+                 group=GROUP_OF[f"{section}.{key}"], **kwargs)
 
 
 CATALOG = (
@@ -122,9 +171,16 @@ CATALOG = (
     _field("services", "spoolman_url", "Spoolman URL", "url",
            "Spoolman URL for filament inventory; empty when Spoolman is not used.",
            validator="guided Spoolman URL / settings services check"),
-    # Images (camera snapshot and the vision endpoint the watchdog uses;
-    # visual_watch itself is the next group. API keys stay in the
-    # environment: vision_chat_url names no secret, and there is no key field.)
+    # Images (the camera source type, the snapshot URL and the vision
+    # endpoint the watchdog uses; visual_watch itself is the next group.
+    # API keys stay in the environment: vision_chat_url names no secret,
+    # and there is no key field.)
+    _field("services", "camera_source", "Camera source", "picker",
+           "Which camera still images come from (#294): auto follows the configured "
+           "printer vendor's rule, or pin one source — the Moonraker webcam snapshot, "
+           "the Bambu camera (LAN stills / RTSPS via go2rtc), a go2rtc stream — "
+           "or none for no camera images.",
+           choices=tuple(settings.CAMERA_SOURCES), validator="settings camera source check"),
     _field("services", "camera_snapshot_url", "Camera snapshot URL", "url",
            "Camera snapshot URL for status images and the camera watchdog; empty derives "
            "it from the Moonraker host.",
@@ -142,10 +198,16 @@ CATALOG = (
     _field("visual_watch", "sensitivity", "Camera watch sensitivity", "number",
            "Camera watchdog sensitivity, 1 (quietest) to 5 (most alerts).",
            validator="settings visual_watch check", minimum=1, maximum=5),
-    # Timelapse (render waiting, size cap, retention, and the SSH archive
-    # target). ssh_key is a filesystem *path* — the same plain string the
-    # YAML already stores — never key contents, so it is a text field like
-    # any other path and no secret value is involved.
+    # Timelapse (the mode type picker, render waiting, size cap, retention,
+    # and the SSH archive target). ssh_key is a filesystem *path* — the
+    # same plain string the YAML already stores — never key contents, so
+    # it is a text field like any other path and no secret value is involved.
+    _field("timelapse", "mode", "Timelapse mode", "picker",
+           "How timelapses are made (#246/#295): rendered = the printer renders it "
+           "(moonraker-timelapse); container = Print Buddy captures and encodes it "
+           "in-container; off = no timelapses. A file value left empty derives "
+           "rendered when a Moonraker URL is configured, else off.",
+           choices=tuple(settings.TIMELAPSE_MODES), validator="settings timelapse check"),
     _field("timelapse", "render_wait_s", "Timelapse render wait", "number",
            "How long to wait for a printer-rendered timelapse to appear after a print "
            "finishes, in seconds.",

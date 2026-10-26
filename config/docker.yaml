@@ -27,6 +27,9 @@ services:
   # Runtime paths: Spoolman is loopback only inside the combined container.
   moonraker_url: ""
   moonraker_ws_url: ""
+  # Which camera still images come from (#294): auto follows the printer
+  # vendor's rule; or pin moonraker, bambu, go2rtc, or none.
+  camera_source: "auto"
   camera_snapshot_url: ""
   spoolman_url: "http://127.0.0.1:8000"
   openviking_url: ""
@@ -35,6 +38,10 @@ services:
 printer:
   # Override with PRINT_BUDDY__PRINTER__MODEL=sovol.sv06 etc.
   model: flashforge.ad5x
+timelapse:
+  # Mode (#246/#295): rendered, container or off. Empty derives: rendered
+  # when a Moonraker URL is configured, else off.
+  mode: ""
 webui:
   # Optional Web UI (#286): off by default; nothing listens while disabled.
   # Port 0 means no port has been chosen yet. The access token itself never

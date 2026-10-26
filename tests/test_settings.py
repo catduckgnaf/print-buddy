@@ -179,8 +179,8 @@ class OverrideTests(unittest.TestCase):
             "elegoo_sdcp": {"host"},
             "paths": {"hermes_home", "archive", "records_vault", "cache", "hermes_bin", "ffmpeg",
                       "hermes_agent", "hermes_restart_helper"},
-            "services": {"moonraker_url", "moonraker_ws_url", "camera_snapshot_url", "spoolman_url",
-                         "openviking_url", "vision_chat_url", "stock_api_port"},
+            "services": {"moonraker_url", "moonraker_ws_url", "camera_snapshot_url", "camera_source",
+                         "spoolman_url", "openviking_url", "vision_chat_url", "stock_api_port"},
             "discord": {"chat_id", "approval_user_id", "upload_max_bytes", "post_print_quiet_s",
                         "daily_reset_hour", "timezone", "bot_name", "question_timeout_s",
                         "safety_confirm_timeout_s", "upload_wait_s", "cold_pull_outcome_s",
@@ -193,7 +193,7 @@ class OverrideTests(unittest.TestCase):
             "listener": {"tick_s", "ifs_presence_poll_s", "spool_nag_s", "start_claim_ttl_s"},
             "vision": {"model", "roast_model"},
             "visual_watch": {"enabled", "sensitivity"},
-            "timelapse": {"archive_host", "archive_dir", "ssh_key", "render_wait_s", "render_poll_s",
+            "timelapse": {"mode", "archive_host", "archive_dir", "ssh_key", "render_wait_s", "render_poll_s",
                           "max_bytes", "local_retention_days", "plan_clip_retention_days",
                           "vertical_short", "vertical_short_mode", "vertical_short_overlay"},
             "logging": {"level", "format", "file"},
@@ -225,6 +225,36 @@ class OverrideTests(unittest.TestCase):
                 settings.load(home=home, local=False, environ={"PRINT_BUDDY__BAMBU__START_CONFIRM_S": bad})
         with self.assertRaisesRegex(settings.SettingsError, "whole number"):
             settings.load(home=home, local=self.toml("bambu:\n  start_confirm_s: 12.5\n", "frac.yaml"), environ={})
+
+    def test_timelapse_mode_derives_from_the_moonraker_url(self):
+        # No Moonraker URL in the shipped home config: the derived default is off.
+        self.assertEqual(settings.load(local=False, environ={})["timelapse"]["mode"], "off")
+        with_moonraker = self.toml("services:\n  moonraker_url: http://printer.local:7125\n", "moonraker.yaml")
+        self.assertEqual(settings.load(local=with_moonraker, environ={})["timelapse"]["mode"], "rendered")
+        # An explicit value always wins over the derivation, and the
+        # environment overrides the file like any other scalar.
+        explicit = self.toml("timelapse:\n  mode: container\n", "container.yaml")
+        self.assertEqual(settings.load(local=explicit, environ={})["timelapse"]["mode"], "container")
+        off = self.toml("timelapse:\n  mode: 'off'\n", "off.yaml")
+        self.assertEqual(settings.load(local=off, environ={})["timelapse"]["mode"], "off")
+        env = {"PRINT_BUDDY__TIMELAPSE__MODE": "container"}
+        self.assertEqual(settings.load(local=off, environ=env)["timelapse"]["mode"], "container")
+        with self.assertRaisesRegex(settings.SettingsError, "timelapse.*mode"):
+            settings.load(local=self.toml("timelapse:\n  mode: sometimes\n", "bad.yaml"), environ={})
+        with self.assertRaisesRegex(settings.SettingsError, "timelapse.*mode"):
+            settings.load(local=False, environ={"PRINT_BUDDY__TIMELAPSE__MODE": "sometimes"})
+
+    def test_camera_source_defaults_to_auto_and_validates(self):
+        self.assertEqual(settings.load(local=False, environ={})["services"]["camera_source"], "auto")
+        for source in ("moonraker", "bambu", "go2rtc", "none"):
+            local = self.toml(f"services:\n  camera_source: {source}\n", f"{source}.yaml")
+            self.assertEqual(settings.load(local=local, environ={})["services"]["camera_source"], source)
+        env = {"PRINT_BUDDY__SERVICES__CAMERA_SOURCE": "bambu"}
+        self.assertEqual(settings.load(local=False, environ=env)["services"]["camera_source"], "bambu")
+        with self.assertRaisesRegex(settings.SettingsError, "camera_source"):
+            settings.load(local=self.toml("services:\n  camera_source: webcam\n", "bad.yaml"), environ={})
+        with self.assertRaisesRegex(settings.SettingsError, "camera_source"):
+            settings.load(local=False, environ={"PRINT_BUDDY__SERVICES__CAMERA_SOURCE": "webcam"})
 
     def test_docker_yaml_matches_legacy_toml_effective_settings(self):
         docker_yaml = settings.ROOT / "config" / "docker.yaml"

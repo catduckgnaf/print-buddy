@@ -1876,19 +1876,27 @@ def _recipe_changed(job, latest):
     return recipe_sha256(current) != job['slice_recipe']['sha256']
 
 
-def stamp_job_printer(job):
+def stamp_job_printer(job, printer_id=None):
     """Record the creating printer's roster id on a new job (#334, design §2.2).
 
     A job learns its printer at creation and never re-derives it: every later
     path (state, lease, approval, adapter) keys off JOB.json's printer_id.
     Jobs written before the upgrade carry no id and belong to the configured
     single printer — see _job_printer_id.
+
+    An explicit ``printer_id`` — the printer the intake channel routes to
+    (#335) — wins over the settings default when the job does not name one
+    yet; an unknown explicit id raises, naming it, rather than silently
+    stamping a different printer.
     """
     if isinstance(job, dict) and not job.get("printer_id"):
-        try:
-            job["printer_id"] = settings.default_printer_id()
-        except Exception:
-            pass
+        if printer_id:
+            job["printer_id"] = settings.by_id(str(printer_id))["id"]
+        else:
+            try:
+                job["printer_id"] = settings.default_printer_id()
+            except Exception:
+                pass
     return job
 
 

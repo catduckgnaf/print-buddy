@@ -133,6 +133,16 @@ class StandaloneAdapter(BasePlatformAdapter):
             await interaction.response.send_message("Not allowed. Nothing changed.", ephemeral=True)
             return True
         row = self._prompts.get(cid)
+        if row is not None:
+            # A prompt is answered in the channel it was asked in (#335): the
+            # channel is the approval's target, so a press arriving through a
+            # different channel never resolves another channel's question.
+            asked_channel = getattr(getattr(row.get("message"), "channel", None), "id", None)
+            press_channel = getattr(interaction, "channel_id", None)
+            if asked_channel is not None and press_channel is not None \
+                    and str(asked_channel) != str(press_channel):
+                await interaction.response.send_message("Not allowed. Nothing changed.", ephemeral=True)
+                return True
         labels = row["choices"] if row else (self.registry.choices(cid) or [])
         if not 0 <= index < len(labels) or not self.registry.resolve_gateway_clarify(cid, labels[index]):
             await interaction.response.send_message("That question already closed. Nothing changed.",

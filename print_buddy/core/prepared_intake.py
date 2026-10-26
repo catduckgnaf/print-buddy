@@ -309,8 +309,17 @@ def _printer_name(job=None):
     For the configured printer this is its display_name (the configured
     [printer] name, #267); for a job recorded for a different model it is
     that model's label, because display_name would leak the configured
-    printer's name from the shared settings.
+    printer's name from the shared settings. A job that names its roster
+    printer (#335) is announced by that entry's name — the default printer
+    is named wherever its output stands in for "the printer".
     """
+    try:
+        pid = job.get("printer_id") if isinstance(job, dict) else None
+        if pid:
+            from .. import settings
+            return settings.by_id(pid).get("name") or str(pid)
+    except Exception:
+        pass
     try:
         from . import model_job as mj
         from .. import printers
@@ -853,7 +862,7 @@ async def _send_source_thumbnail(adapter, source, path, target):
         pass
 
 
-async def prepare_link(event, adapter, state, root, timeout=None, reuse=None):
+async def prepare_link(event, adapter, state, root, timeout=None, reuse=None, printer_id=None):
     from . import model_job as mj
     from .source_colors import inventory, canonical_prompts, grouped_prompts, validate_decisions
     source = event.source
@@ -997,7 +1006,7 @@ async def prepare_link(event, adapter, state, root, timeout=None, reuse=None):
             manifest.update(source_sha256=await asyncio.to_thread(mj.file_sha256, path))
         job['color_manifest'] = manifest
         job['color_schema'] = 'part_slots_v1'
-        mj.stamp_job_printer(job)  # a new job learns its printer at creation (#334)
+        mj.stamp_job_printer(job, printer_id)  # a new job learns its printer at creation (#334); the intake channel's printer wins (#335)
         jp = folder / 'JOB.json'
         mj.write_job(folder, job)
         receipt.update(job_json=str(jp), source_sha256=manifest['source_sha256'], status='AWAITING_COLOR')
@@ -1604,8 +1613,10 @@ async def prepare_link(event, adapter, state, root, timeout=None, reuse=None):
             raise ValueError('sliced artifact has no exact JOB.json record; refusing preparation message and start')
         actual_estimate = mj.gcode_estimate_s(first.read_text())
         slot_lines = ''
+        job_adapter = None
         try:
-            if printers.current().multi_tool:  # toolheads, not a slot map (#346)
+            job_adapter = mj._job_adapter(exact_job)  # the exact job's printer, never "the current one" (#335)
+            if job_adapter.multi_tool:  # toolheads, not a slot map (#346)
                 mapping = (exact_job or {}).get('tool_mapping') or {}
                 if mapping:
                     records = mj.configured_slots(state)
@@ -1615,17 +1626,18 @@ async def prepare_link(event, adapter, state, root, timeout=None, reuse=None):
                         lines.append(f"T{tool} -> Toolhead {position}: "
                                      f"{record.get('color') or 'unknown color'} {record.get('material') or 'unknown material'}")
                     slot_lines = '\n'.join(lines)
-            elif printers.current().multi_slot:  # a single extruder printer has no slot map
-                native = printers.current().native
+            elif job_adapter.multi_slot:  # a single extruder printer has no slot map
+                native = job_adapter.native
                 _map = native.embedded_mapping(first.read_text(), state)
                 if _map:
                     slot_lines = native.describe_mapping(_map, state)
         except Exception as exc:  # a bad map is refused later by print-now; show why now
-            slot_lines = f'Position map problem: {exc}' if printers.current().multi_tool else f'Slot map problem: {exc}'
+            slot_lines = f'Position map problem: {exc}' if job_adapter is not None and job_adapter.multi_tool else f'Slot map problem: {exc}'
         estimate_text = (f"~{mj.human_dur(actual_estimate)} printing, ~{mj.human_dur(actual_estimate + 300)} total "
                          "including ~5 min warmup" if actual_estimate is not None else 'estimate unknown')
         target = {'plan_id': plan_id, 'part_id': parts[picked_plate]['id'] if split else 'plate1', 'copy': 1,
-                  'gcode': str(first), 'gcode_sha256': mj.file_sha256(first), 'reprint': False}
+                  'gcode': str(first), 'gcode_sha256': mj.file_sha256(first), 'reprint': False,
+                  'job_json': str(jp)}
         later = (f" Plate {picked_plate + 1} of {len(parts)} only; a picker for the rest follows when it finishes."
                  if split else '')
         if choice == 1:
@@ -1757,7 +1769,7 @@ async def prepare_link(event, adapter, state, root, timeout=None, reuse=None):
                 metadata=getattr(event, 'metadata', None))
             continued = await prepare_link(
                 continued_event, adapter, state, root, timeout,
-                reuse=resume_job(job))
+                reuse=resume_job(job), printer_id=printer_id)
             if continued.get('action') == 'skip' and continued.get('reason') == 'duplicate model-link event':
                 return {'action': 'skip', 'reason': 'resume could not continue the saved intake'}
             return continued

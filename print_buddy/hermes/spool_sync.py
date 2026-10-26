@@ -60,6 +60,19 @@ def moonraker(method: str, path: str, body: Any = None) -> Any:
     return _http(MOONRAKER, method, path, body, timeout=15)
 
 
+def moonraker_for(printer_id: str | None) -> Client:
+    """A Moonraker client bound to one roster printer's Moonraker (#335); the configured one when no printer is named."""
+    if not printer_id:
+        return moonraker
+    from print_buddy import settings
+    base = str(settings.view_for(printer_id)["services"]["moonraker_url"])
+
+    def call(method: str, path: str, body: Any = None) -> Any:
+        return _http(base, method, path, body, timeout=15)
+
+    return call
+
+
 # ---------------------------------------------------------------- state file
 
 def _hardware_path(path: Path | None = None, printer_id: str | None = None) -> Path:
@@ -173,9 +186,27 @@ def screen_hex(value: Any) -> str | None:
     return text if re.fullmatch(r"[0-9A-F]{6}", text) else None
 
 
-def screen_command(slot: int, material: str, hex_code: str) -> str:
+def screen_command(slot: int, material: str, hex_code: str, adapter=None) -> str:
     """CHANGE_ZCOLOR line for the printer screen; the printer's adapter builds it."""
-    return printers.current().screen_command(slot, material, hex_code)
+    return (adapter or printers.current()).screen_command(slot, material, hex_code)
+
+
+def _printer_adapter(printer_id: str | None):
+    """One roster entry's adapter bound to its own settings view (#335); None when no printer is named."""
+    if not printer_id:
+        return None
+    from print_buddy import settings
+    return printers.get(settings.by_id(printer_id)["model"], settings.view_for(printer_id))
+
+
+def _pending_path(pending_path: Path | None, printer_id: str | None) -> Path:
+    """The deferred-screen queue for one printer (#335): per-printer, so a queued
+    update can never be flushed to another printer's screen."""
+    if pending_path is not None:
+        return Path(pending_path)
+    if not printer_id:
+        return Path(PENDING_SCREEN)
+    return Path(PENDING_SCREEN).parent / "printers" / printer_id / Path(PENDING_SCREEN).name
 
 
 # ---------------------------------------------------------------- printer side
@@ -189,14 +220,15 @@ def printer_state(mr: Client = moonraker) -> str:
 
 
 def push_screen(slot: int, material: str, hex_code: str, *, mr: Client = moonraker,
-                pending_path: Path | None = None) -> str:
+                pending_path: Path | None = None, adapter=None) -> str:
     """Tell the screen what Spoolman says. Deferred while printing; flushed when idle.
 
     Returns 'pushed', 'deferred', 'unsupported' (the printer has no screen), or raises SpoolError for unmappable data.
     """
-    if not printers.current().multi_slot:
+    printer = adapter or printers.current()
+    if not printer.multi_slot:
         return "unsupported"  # stock Klipper has no screen to tell
-    command = screen_command(slot, material, hex_code)
+    command = screen_command(slot, material, hex_code, adapter=printer)
     pending = Path(pending_path or PENDING_SCREEN)
     if printer_state(mr) in ("printing", "unknown"):
         queued = _read_json(pending)
@@ -355,7 +387,12 @@ def bind_slot(slot: int, spool_id: int, *, client: Client = spoolman, mr: Client
         usage = f"NOT updated ({exc})"
     if push_screen_update:
         try:
-            screen = push_screen(slot, record["material"], record["hex"], mr=mr, pending_path=pending_path)
+            if printer_id:
+                screen = push_screen(slot, record["material"], record["hex"], mr=mr,
+                                     pending_path=_pending_path(pending_path, printer_id),
+                                     adapter=_printer_adapter(printer_id))
+            else:
+                screen = push_screen(slot, record["material"], record["hex"], mr=mr, pending_path=pending_path)
         except Exception as exc:
             screen = f"not updated ({exc})"
     else:
@@ -377,8 +414,8 @@ def bind_text(result: dict[str, Any]) -> str:
 
 
 def sync_all_screens(*, mr: Client = moonraker, state_path: Path | None = None,
-                     pending_path: Path | None = None) -> list[str]:
-    state = load_state(state_path)
+                     pending_path: Path | None = None, printer_id: str | None = None) -> list[str]:
+    state = load_state(state_path, printer_id=printer_id)
     out = []
     for slot in SLOTS:
         rec = (state.get("ifs_slots") or {}).get(str(slot)) or {}
@@ -386,7 +423,13 @@ def sync_all_screens(*, mr: Client = moonraker, state_path: Path | None = None,
             out.append(f"Slot {slot}: no spool mapped, screen left alone")
             continue
         try:
-            out.append(f"Slot {slot}: {push_screen(slot, rec.get('material') or '', rec.get('hex') or '', mr=mr, pending_path=pending_path)}")
+            if printer_id:
+                pushed = push_screen(slot, rec.get('material') or '', rec.get('hex') or '', mr=mr,
+                                      pending_path=_pending_path(pending_path, printer_id),
+                                      adapter=_printer_adapter(printer_id))
+            else:
+                pushed = push_screen(slot, rec.get('material') or '', rec.get('hex') or '', mr=mr, pending_path=pending_path)
+            out.append(f"Slot {slot}: {pushed}")
         except Exception as exc:
             out.append(f"Slot {slot}: {exc}")
     return out
@@ -394,8 +437,9 @@ def sync_all_screens(*, mr: Client = moonraker, state_path: Path | None = None,
 
 # ---------------------------------------------------------------- inventory
 
-def list_text(*, client: Client = spoolman, state_path: Path | None = None) -> str:
-    state = load_state(state_path)
+def list_text(*, client: Client = spoolman, state_path: Path | None = None,
+              printer_id: str | None = None) -> str:
+    state = load_state(state_path, printer_id=printer_id)
     spools = client("GET", "/api/v1/spool?allow_archived=false", None) or []
     by_id = {s.get("id"): s for s in spools if isinstance(s, dict)}
     lines = ["**Loaded**"]

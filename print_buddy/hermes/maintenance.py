@@ -68,12 +68,12 @@ def save(data: dict[str, Any], path: Path | str | None = None, *, printer_id: st
     os.replace(tmp, target)
 
 
-def append_run(record: dict[str, Any], *, state_path: Path | str = PROFILE_STATE,
-               vault_path: Path | str = VAULT_LOG) -> dict[str, Any]:
-    data = load(state_path)
+def append_run(record: dict[str, Any], *, state_path: Path | str | None = None,
+               vault_path: Path | str = VAULT_LOG, printer_id: str | None = None) -> dict[str, Any]:
+    data = load(state_path, printer_id=printer_id)
     entry = {**record, "at": record.get("at") or datetime.now(timezone.utc).isoformat()}
     data["runs"].append(entry)
-    save(data, state_path)
+    save(data, state_path, printer_id=printer_id)
     vault = Path(vault_path)
     vault.parent.mkdir(parents=True, exist_ok=True)
     with vault.open("a", encoding="utf-8") as stream:
@@ -81,13 +81,14 @@ def append_run(record: dict[str, Any], *, state_path: Path | str = PROFILE_STATE
     return entry
 
 
-def begin_session(kind: str, state: dict[str, Any], *, path: Path | str = PROFILE_STATE) -> dict[str, Any]:
+def begin_session(kind: str, state: dict[str, Any], *, path: Path | str | None = None,
+                  printer_id: str | None = None) -> dict[str, Any]:
     if kind not in {"full", "quick"}:
         raise ValueError("maintenance kind must be full or quick")
     session = {"kind": kind, "steps": [None] * (4 if kind == "full" else 2), "problems": [],
                "cold_pull": None, "created_at": datetime.now(timezone.utc).isoformat()}
     state["pending"] = session
-    save(state, path)
+    save(state, path, printer_id=printer_id)
     return session
 
 
@@ -98,9 +99,10 @@ def checklist_step(session: dict[str, Any], index: int, action: str) -> dict[str
     return session
 
 
-def save_session(session: dict[str, Any], state: dict[str, Any], *, path: Path | str = PROFILE_STATE) -> None:
+def save_session(session: dict[str, Any], state: dict[str, Any], *, path: Path | str | None = None,
+                 printer_id: str | None = None) -> None:
     state["pending"] = session
-    save(state, path)
+    save(state, path, printer_id=printer_id)
 
 
 def due(hours_now: float, runs: list[dict[str, Any]], *, now: datetime | None = None) -> dict[str, Any]:

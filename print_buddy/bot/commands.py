@@ -46,6 +46,8 @@ COMMANDS = (
     Command("print-troubleshoot", "Guided step-by-step physical troubleshooting (advice only, sends nothing)",
             (Option("flow", "Which problem", ("first-layer", "clog", "heat-creep", "bed-level", "ringing")),),
             "/print-troubleshoot [first-layer | clog | heat-creep | bed-level | ringing]"),
+    Command("print-macros", "List the macros your Moonraker printer actually defines (read-only, sends nothing)",
+            usage="/print-macros"),
     Command("print-buddy", "Guided setup and read-only debugging (never prints)",
             (Option("action", "setup, debugging, status, cancel or help",
                     ("setup", "debugging", "status", "cancel", "help")),),

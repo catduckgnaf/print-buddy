@@ -20,6 +20,7 @@ Do not run both Discord modes with the same token. Installing, enabling services
 - [Guided setup and debugging in Discord](GUIDED-SETUP-DEBUGGING.md): the `/print-buddy setup` checklist (resumable, consent-gated, never collects the token) and the read-only, redacted `/print-buddy debugging` checks.
 - [Settings reference](SETTINGS.md): every setting with its YAML key, environment variable and Docker value, plus Docker build arguments and secrets.
 - [Detailed project reference](PROJECT-REFERENCE.md): workflow examples, commands, printer models, spool identity rules, monitoring and updates.
+- [Printer macros](MACROS.md): `/print-macros` live macro discovery on Moonraker printers, and the per-vendor macro matrix.
 - [Printer profiles and offline delivery](PRINTER-PROFILES.md): vendor/model inheritance, supported delivery methods and verification limitations.
 - [AD5X integration contract](AD5X-CONTRACT.md): printer-specific behavior and limitations.
 - [OctoPrint/Marlin notes](OCTOPRINT-MARLIN.md): read the integration-specific limits before assuming Moonraker feature parity.

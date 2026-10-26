@@ -186,16 +186,21 @@ def test_knowledge_package_has_no_printer_or_network_imports():
 def test_bot_commands_registered():
     assert bot_commands.by_name("print-lookup") is not None
     assert bot_commands.by_name("print-troubleshoot") is not None
+    assert bot_commands.by_name("print-macros") is not None
     assert bot_commands.as_text("print-lookup", {"query": "M600"}) == "/print-lookup M600"
     assert bot_commands.as_text("print-troubleshoot", {"flow": "clog"}) == "/print-troubleshoot clog"
+    assert bot_commands.as_text("print-macros", {}) == "/print-macros"
     help_text = bot_commands.help_text()
     assert "/print-lookup" in help_text and "/print-troubleshoot" in help_text
+    assert "/print-macros" in help_text
 
 
 def test_llm_may_only_name_the_read_only_commands():
     assert llm.allowed_command("/print-lookup m600") == "/print-lookup m600"
     assert llm.allowed_command("/print-troubleshoot clog") == "/print-troubleshoot clog"
     assert llm.allowed_command("/print-troubleshoot delete everything") is None
+    assert llm.allowed_command("/print-macros") == "/print-macros"
+    assert llm.allowed_command("/print-macros run PRINT_START") is None
 
 
 class FakeAdapter:

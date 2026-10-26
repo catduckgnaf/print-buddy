@@ -140,6 +140,7 @@ Required environment: `PRINT_BUDDY__BOT__MODE=standalone`, `DISCORD_BOT_TOKEN`, 
   buttons. "print it" after a link, and "print the last one again", work.
 * Slash commands: `/print-next`, `/print-stop`, `/print-resume`, `/print-again`, `/print-reboot`,
   `/print-coldpull`, `/print-maintenance`, `/print-colors`, `/spool`, `/print-lookup`, `/print-troubleshoot`,
+  `/print-macros` (Moonraker printers only; lists the macros the printer defines, read-only),
   `/print-buddy` (guided setup and read-only debugging), `/print-help`. Typing the same text works too.
 * Listener posts (started, complete, failed, timelapse) and alert buttons (Resume, Cancel, spool questions, IFS
   insertion, plate picker) work with the Hermes gateway stopped.

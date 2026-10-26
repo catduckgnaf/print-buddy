@@ -25,6 +25,7 @@ ALLOWED = (
     re.compile(r"/print-maintenance(?: (?:full|quick))?"),
     re.compile(r"/print-lookup(?: [\w .#/-]{1,80})?"),
     re.compile(r"/print-troubleshoot(?: (?:first-layer|clog|heat-creep|bed-level|ringing))?"),
+    re.compile(r"/print-macros"),
 )
 
 

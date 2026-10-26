@@ -79,6 +79,7 @@ A bed-clear approval starts one print. Starting the same G-code again needs a ne
 * `/print-maintenance` guided checklist and reminders by print hours and days.
 * `/print-coldpull` runs an operator confirmed cold pull at configured temperatures.
 * `/print-lookup` searches the root [knowledge, firmware and printer registries](TROUBLESHOOTING.md) for commands, macros, errors, symptoms and printer facts. Read-only; it sends nothing.
+* `/print-macros` lists the macros the configured Moonraker printer actually defines, read live from `/printer/objects/list` and classified against the registry (see [printer macros](MACROS.md)). Read-only; it sends nothing. Non-Moonraker printers get a plain explanation.
 * `/print-troubleshoot` walks a guided physical troubleshooting flow (first layer, clog, heat creep, bed level, ringing) one question at a time. Advice only; it never commands the printer.
 
 ## Settings

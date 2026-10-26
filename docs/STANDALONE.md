@@ -4,6 +4,10 @@ Print Buddy can talk to Discord itself. Links, dropped 3MF and STL files, color 
 bed-clear start button, slash commands and printer alerts all run from Python with a Discord bot token. No
 Hermes and no LLM are needed. An OpenAI-compatible LLM is an optional extra for replying to free text.
 
+It can also run on Telegram instead (#164): set `bot.platform` to `telegram` and follow
+[Telegram bot setup](TELEGRAM-BOT-SETUP.md). The Telegram bot is a pure bot with no LLM at all — unmatched
+text gets the command list even when `[llm]` is configured for another platform.
+
 The standalone bot runs the same handlers as the Hermes plugin, in the same order: `print_buddy.bot.router`
 loads `plugins/print-feedback` through its own `register()` hook. A new command added to the plugin works in
 both modes. Every safety gate is unchanged: nothing heats, moves or starts without a button press from an
@@ -27,7 +31,12 @@ message. `python3 -m print_buddy.doctor` warns when a Hermes profile holds the s
 | Key | Default | What it does |
 |---|---|---|
 | `bot.mode` | `hermes` | `standalone` runs `python3 -m print_buddy.bot` with no Hermes. `hermes` keeps the gateway plugin |
-| `bot.platform` | `discord` | The chat platform the standalone bot talks to (#164). Only `discord` is implemented so far; `telegram` and `matrix` are accepted names whose implementations land in later stages, and `check` fails clearly until then. A config without this key keeps `discord` |
+| `bot.platform` | `discord` | The chat platform the standalone bot talks to (#164): `discord` or `telegram`. `matrix` is an accepted name whose implementation lands in a later stage, and `check` fails clearly until then. A config without this key keeps `discord` |
+| `telegram.token_env` | `TELEGRAM_BOT_TOKEN` | Name of the environment variable that holds the Telegram bot token |
+| `telegram.chat_id` | empty | The print chat. Group and channel IDs are negative. The bot ignores every other chat (forum topics inside it work like threads) |
+| `telegram.allowed_user_ids` | empty | Telegram user IDs allowed to use the bot, separated by commas or spaces |
+| `telegram.approval_user_id` | empty | Always allowed as well |
+| `telegram.upload_max_bytes` | `50000000` | Largest file the Telegram bot uploads (the Bot API cloud limit) |
 | `bot.health_port` | `0` | Serve `GET /healthz` on this port (200 healthy, 503 not). `0` turns the HTTP check off |
 | `bot.health_stale_s` | `120` | The health check fails when the heartbeat is older than this |
 | `bot.sync_commands` | `true` | Register the slash commands with Discord at startup |
@@ -78,7 +87,7 @@ services:
 | `python3 -m print_buddy.bot` (or `... run`) | Start the bot. Refuses to start, and lists why, unless every check below passes |
 | `python3 -m print_buddy.bot check` | Offline setup check: mode, token present, channel, allowed users, discord.py, handlers loaded, no Hermes module imported, state folder writable, LLM. Exit 1 on any FAIL |
 | `python3 -m print_buddy.bot health` | Exit 0 only while a running bot reports a fresh heartbeat, is logged in, its process is alive and no Hermes module is loaded in it |
-| `python3 -m print_buddy.hermes.moonraker_event_listener` | The printer listener, unchanged. In standalone mode it posts over Discord REST with the bot token |
+| `python3 -m print_buddy.hermes.moonraker_event_listener` | The printer listener, unchanged. In standalone mode it posts over the configured platform's REST API with that platform's bot token (Discord REST, or the Telegram Bot API when `bot.platform` is `telegram`; its Discord button posts degrade to plain text there) |
 | `python3 -m print_buddy.doctor` | Also reports the bot mode, the Discord login and a token shared with a Hermes profile |
 
 The bot writes its heartbeat to `<paths.hermes_home>/state/bot_health.json` every 15 seconds. `health` and

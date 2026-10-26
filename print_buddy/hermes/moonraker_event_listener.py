@@ -1632,7 +1632,12 @@ class Listener:
         old = self.state
         identity = _notification_identity({"start_time": start_claim_time(self.filename),
                                            **self.last_stats, "filename": self.filename})
-        phase = "start" if new_state == "printing" and old != "paused" else ("terminal" if old in ("printing", "paused") and new_state in TERMINAL else None)
+        # A job that ends into standby (printer-side stop, job removed, Klipper
+        # or printer restart during a long pause) never passes through a
+        # TERMINAL state, but the job is just as over: #370. Treat it as a
+        # terminal transition so it gets the same single claimed notice.
+        gone = old in ("printing", "paused") and new_state == "standby"
+        phase = "start" if new_state == "printing" and old != "paused" else ("terminal" if old in ("printing", "paused") and (new_state in TERMINAL or gone) else None)
         if phase and not _claim_notification(identity, phase):
             log(f"suppressed duplicate {phase} notice identity={identity!r}")
             self.state = new_state
@@ -1672,20 +1677,25 @@ class Listener:
             else:
                 self.pause_context = None
                 await asyncio.to_thread(post_alert, paused_message(self.filename), "paused", self.filename)
-        elif old in ("printing", "paused") and new_state in TERMINAL:
+        elif old in ("printing", "paused") and (new_state in TERMINAL or gone):
             self.last_pause_was_runout = False
-            if new_state == "cancelled":
+            # Ended into standby gets the cancelled notice: the print stopped
+            # at the printer without completing, which is what the operator
+            # needs to hear (#370). The Bambu listener maps the same
+            # transition to "cancelled" ("a stop returns the printer to idle").
+            effective = "cancelled" if gone else new_state
+            if effective == "cancelled":
                 await maintenance_cancel_reminder()
             # Completion, records, snapshot, and session reset stay in the announcer.
             # The announcer also owns the sole completion Discord post.
-            if new_state == "cancelled":
+            if effective == "cancelled":
                 # Acknowledge promptly; collecting the full Klipper report may block.
                 await asyncio.to_thread(post, print_summary.format_event("cancelled", self.filename))
                 task = asyncio.create_task(asyncio.to_thread(post_cancel_report, self.filename))
                 self.background_tasks.add(task)
                 task.add_done_callback(self.background_tasks.discard)
                 from . import klipper_report
-                if not klipper_report.cancelled_by_bot():
+                if new_state == "cancelled" and not klipper_report.cancelled_by_bot():
                     self.start_screen_cancel_reboot("moonraker cancelled")
             elif new_state != "complete":
                 await asyncio.to_thread(post, print_summary.format_event(new_state, self.filename))
@@ -1694,7 +1704,34 @@ class Listener:
             self.visual_watch.reset()
             self.visual_frames.pop(self.filename, None)
             self._capture_end(new_state)
+            await self._retire_paused_prompt(new_state)
             await self.after_print(new_state)
+
+    async def _retire_paused_prompt(self, new_state):
+        """Retire this job's paused prompt now that the job has ended (#370).
+
+        The prompt's Resume/Cancel buttons act on a live paused job. Left
+        live, a later tap is the first anyone hears that the job ended —
+        the operator discovers it is gone only by pressing Cancel. Discord
+        only: buttonless platforms never recorded a prompt. Never raises
+        into the status flow.
+        """
+        if _buttonless_standalone():
+            return
+        headline = {
+            "complete": "Print complete.",
+            "cancelled": "Print cancelled.",
+            "error": "Print stopped with an error.",
+            "standby": "Print ended at the printer.",
+        }.get(new_state, "Print ended.")
+        try:
+            from . import print_alert_buttons as pab
+            await asyncio.to_thread(
+                pab.retire_alerts, _bot_token(), self.filename,
+                "This paused prompt is closed; its buttons no longer act on a live job.",
+                ("paused",), headline=headline)
+        except Exception as exc:
+            log(f"retire paused prompt failed file={self.filename!r}: {exc!r}")
 
     def start_screen_cancel_reboot(self, why):
         """Fire once per cancel, in the background, and only when the bot did not cancel it."""

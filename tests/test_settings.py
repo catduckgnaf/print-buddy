@@ -176,6 +176,7 @@ class OverrideTests(unittest.TestCase):
             "slicer": {"flash_studio_path"},
             "flashforge_stock": {"host"},
             "prusa": {"link_host", "api_key_env"},
+            "elegoo_sdcp": {"host"},
             "paths": {"hermes_home", "archive", "records_vault", "cache", "hermes_bin", "ffmpeg",
                       "hermes_agent", "hermes_restart_helper"},
             "services": {"moonraker_url", "moonraker_ws_url", "camera_snapshot_url", "spoolman_url",

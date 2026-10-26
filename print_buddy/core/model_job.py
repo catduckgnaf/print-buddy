@@ -4057,6 +4057,88 @@ def _print_bambu(adapter, state, gcode, job, job_path, wait_s, reprint):
     return out
 
 
+def _print_elegoo_sdcp(adapter, state, gcode, job, job_path, wait_s, reprint):
+    """The SDCP print path (#243), mirroring _print_prusa's guard order.
+
+    Every check that can refuse cleanly runs before the submission lease: SDCP configured,
+    live status idle with no readiness problems, G-code verified, single-tool only. Inside
+    the lease the status is read again and the bed-clear approval is consumed; only then does
+    anything reach the printer: the verified chunked-HTTP upload (the client read the size
+    back), then the SDCP start command for that exact file. Acceptance is confirmed from a
+    fresh status answer, never assumed; an unconfirmed start is uncertain and is never
+    resubmitted. SDCP has no authentication, so nothing here can add any.
+    """
+    def refuse(exc):
+        return SystemExit(f"REFUSED: {' '.join(str(exc).split())}. Nothing uploaded or started.")
+
+    try:
+        client = adapter.client()
+    except RuntimeError as exc:
+        raise refuse(exc) from exc
+
+    def ready_status():
+        raw = client.status()
+        problems = adapter.readiness_problems(state, raw)
+        norm = adapter.normalize_status(raw)
+        if norm["state"] not in ("standby", "complete"):
+            problems.append(f"printer state is {norm['state']!r}, not idle")
+        if problems:
+            raise RuntimeError("; ".join(dict.fromkeys(problems)))
+        return raw, norm
+
+    try:
+        _raw, observed_norm = ready_status()
+        verify_gcode(gcode)
+        _refuse_multicolor(gcode.read_text(errors="ignore"))
+    except RuntimeError as exc:
+        raise refuse(exc) from exc
+    sha = file_sha256(gcode)
+    remote = remote_name(gcode, sha, job)
+    lease = launch_state.acquire(_printer_key(state), job_json=job_path, gcode_sha256=sha, remote=remote,
+                                 observed_file=observed_norm.get("filename"))
+    try:
+        try:
+            ready_status()  # again inside the lease
+        except RuntimeError as exc:
+            raise refuse(exc) from exc
+        if job_path is not None:
+            _consume_approval(job_path, job, gcode, reprint=reprint)
+    except BaseException:
+        lease.release()
+        raise
+    lease.submitting()
+    try:
+        client.upload(gcode, remote)
+        client.start_print(remote)
+    except BaseException as exc:
+        lease.uncertain(f"SDCP submission did not complete: {exc!r}")
+        if isinstance(exc, RuntimeError):
+            raise SystemExit(f"SDCP submission failed or uncertain: {exc}. Do not resubmit without "
+                             "checking printer status.") from exc
+        raise
+    live = {}
+    try:
+        live = adapter.normalize_status(client.status())
+    except RuntimeError:
+        pass
+    confirmed = live.get("state") == "printing" and live.get("filename") == remote
+    if confirmed:
+        lease.release()
+    else:
+        lease.uncertain("submitted, awaiting confirmation")
+    out = {"started": confirmed, "accepted": True, "file": remote, "method": "elegoo_sdcp",
+           "phase": "executing" if confirmed else "awaiting_confirmation",
+           "outcome": "printing" if confirmed else "unconfirmed", "live": live,
+           "message": "printing" if confirmed else "submitted, awaiting confirmation; do not resubmit"}
+    if confirmed:
+        try:
+            out["record_path"] = record_start(gcode, remote)
+        except Exception as exc:
+            print(f"WARNING: start record failed: {exc}")
+    print(("PRINT STARTED " if confirmed else "START SUBMITTED; AWAITING CONFIRMATION ") + json.dumps(out))
+    return out
+
+
 def _print_prusa(adapter, state, gcode, job, job_path, wait_s, reprint):
     """The PrusaLink print path (#242), mirroring _print_octoprint's guard order.
 
@@ -4308,6 +4390,18 @@ def print_now(target, wait_s=25, accept_default_z_offset=False, reprint=False, r
                          f"'printer' to [delivery] methods to print over PrusaLink; the link status alone is "
                          f"read-only). {g} passed offline checks; move the file yourself (not yet tested on "
                          "a printer). Nothing uploaded or started.")
+    if getattr(adapter, 'transport', None) == 'elegoo_sdcp':
+        from . import delivery as _delivery
+        if 'printer' in _delivery.methods():
+            return _print_elegoo_sdcp(adapter, st, g, job, job_path, wait_s, reprint)
+        try:
+            verify_gcode(g)
+        except RuntimeError as exc:
+            raise SystemExit("REFUSED: " + " ".join(str(exc).split()) + ". Nothing uploaded or started.")
+        raise SystemExit(f"REFUSED: {adapter.label} print delivery is not enabled in Print Buddy (add "
+                         f"'printer' to [delivery] methods to print over SDCP; status alone is "
+                         f"read-only). {g} passed offline checks; move the file yourself (not yet tested on "
+                        "a printer). Nothing uploaded or started.")
     if getattr(adapter, 'transport', None) == 'bambulab_lan':
         from . import delivery as _delivery
         if 'printer' in _delivery.methods():

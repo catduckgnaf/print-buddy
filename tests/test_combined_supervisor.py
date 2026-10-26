@@ -20,6 +20,28 @@ def wait_for(predicate, timeout=10.0):
     return predicate()
 
 
+def pid_stopped(pid):
+    """Gone, or a zombie awaiting init's reap: either way it is stopped.
+
+    A listener child whose supervisor loop has exited is reaped by init,
+    not by supervise.sh, so existence alone does not mean it still runs.
+    """
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return True
+    try:
+        state = Path(f'/proc/{pid}/stat').read_text().rsplit(')', 1)[1].split()[0]
+        return state == 'Z'
+    except OSError:
+        return True
+
+
+def assert_pid_stopped(testcase, pid, timeout=5.0):
+    testcase.assertTrue(wait_for(lambda: pid_stopped(pid), timeout),
+                        f'pid {pid} still running')
+
+
 class CombinedSupervisorTests(unittest.TestCase):
     def environment(self, directory, child, listener_child=None):
         fake = Path(directory, 'python3')
@@ -94,8 +116,7 @@ class CombinedSupervisorTests(unittest.TestCase):
                 process.send_signal(signal.SIGTERM)
                 process.communicate(timeout=15)
                 self.assertEqual(process.returncode, 0)
-                with self.assertRaises(ProcessLookupError):
-                    os.kill(pid, 0)
+                assert_pid_stopped(self, pid)
             finally:
                 if process.poll() is None:
                     process.kill()
@@ -221,8 +242,7 @@ class MultiPrinterSupervisorTests(unittest.TestCase):
             finally:
                 self.stop_cleanly(process)
             for pid in pids:
-                with self.assertRaises(ProcessLookupError):
-                    os.kill(pid, 0)
+                assert_pid_stopped(self, pid)
 
     def test_killing_one_listener_restarts_only_that_child(self):
         with tempfile.TemporaryDirectory() as directory:

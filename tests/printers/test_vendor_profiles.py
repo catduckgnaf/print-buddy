@@ -27,6 +27,7 @@ def without_added(data):
         data.get("bambu", {}).pop(key, None)
     data.get("bambu", {}).pop("start_confirm_s", None)  # added by #271, after capture
     data.get("bot", {}).pop("platform", None)  # added by #164, after the golden files were captured
+    data.pop("webui", None)  # added by #286 stage 1, after the golden files were captured
     data.pop("telegram", None)  # added by #164 stage 2, after the golden files were captured
     data.pop("matrix", None)  # added by #164 stage 3, after the golden files were captured
     data.get("slicer", {}).pop("flash_studio_path", None)  # added by the Flash Studio config, after capture

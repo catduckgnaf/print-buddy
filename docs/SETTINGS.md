@@ -111,6 +111,10 @@ Schema, validation limits and TOML migration: [CONFIGURATION-YAML.md](CONFIGURAT
 | `timelapse.max_bytes` | `PRINT_BUDDY__TIMELAPSE__MAX_BYTES` | `209715200` | Largest timelapse kept |
 | `timelapse.local_retention_days` | `PRINT_BUDDY__TIMELAPSE__LOCAL_RETENTION_DAYS` | `1` | Local copy retention |
 | `timelapse.plan_clip_retention_days` | `PRINT_BUDDY__TIMELAPSE__PLAN_CLIP_RETENTION_DAYS` | `14` | Plan clip retention |
+| `webui.enabled` | `PRINT_BUDDY__WEBUI__ENABLED` | `false` | Optional Web UI (#286) switch; off by default, and nothing listens while disabled |
+| `webui.host` | `PRINT_BUDDY__WEBUI__HOST` | `127.0.0.1` | Host the Web UI binds to when enabled; a plain IP address or hostname |
+| `webui.port` | `PRINT_BUDDY__WEBUI__PORT` | `0` | Port the Web UI binds to when enabled; `0` means no port has been chosen yet |
+| `webui.access_token_env` | `PRINT_BUDDY__WEBUI__ACCESS_TOKEN_ENV` | `WEBUI_ACCESS_TOKEN` | Name of the environment variable holding the optional Web UI access token; the token itself is never a setting |
 | `logging.level` | `PRINT_BUDDY__LOGGING__LEVEL` | `INFO` | `DEBUG`, `INFO`, `WARNING` or `ERROR` |
 | `logging.format` | `PRINT_BUDDY__LOGGING__FORMAT` | `text` | `text` (one readable line per event) or `json` (one JSON object per line) |
 | `logging.file` | `PRINT_BUDDY__LOGGING__FILE` | empty | Also write a rotating log file (5 MiB, 3 backups) at this path, for example under `/data/hermes/logs`; empty logs to stderr only |

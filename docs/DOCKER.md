@@ -18,6 +18,20 @@ Persist `/data/spoolman` separately, including database, config, logs and backup
 
 For an existing external instance set `PRINT_BUDDY__SERVICES__SPOOLMAN_URL=http://spoolman.example:8000`. Its data is not migrated or reset; the local database remains separate. Optionally set `PRINT_BUDDY_BUNDLED_SPOOLMAN=false` to skip the local API, requiring a nonlocal URL. Healthcheck then checks the external API. Changing a URL never moves or deletes a database.
 
+## Chat platform
+
+The bot runs on one chat platform, chosen with `PRINT_BUDDY__BOT__PLATFORM` (`bot.platform` in `config/docker.yaml` / `[bot]` in `config/docker.toml`): `discord` (the default), `telegram` or `matrix`. Compose and the Unraid template both carry the selector and each platform's non-secret settings; the tokens are secrets and reach the container only through the `.env` file.
+
+| Platform | Token secret (`.env`) | Chat and user settings | Setup guide |
+|---|---|---|---|
+| `discord` | `DISCORD_BOT_TOKEN` | `PRINT_BUDDY__DISCORD__CHAT_ID`, `PRINT_BUDDY__DISCORD__ALLOWED_USER_IDS`, `PRINT_BUDDY__DISCORD__APPROVAL_USER_ID` | [Discord bot setup](DISCORD-BOT-SETUP.md) |
+| `telegram` | `TELEGRAM_BOT_TOKEN` | `PRINT_BUDDY__TELEGRAM__CHAT_ID`, `PRINT_BUDDY__TELEGRAM__ALLOWED_USER_IDS`, `PRINT_BUDDY__TELEGRAM__APPROVAL_USER_ID` | [Telegram bot setup](TELEGRAM-BOT-SETUP.md) |
+| `matrix` | `MATRIX_ACCESS_TOKEN` | `PRINT_BUDDY__MATRIX__HOMESERVER_URL`, `PRINT_BUDDY__MATRIX__ROOM_ID`, `PRINT_BUDDY__MATRIX__ALLOWED_USER_IDS`, `PRINT_BUDDY__MATRIX__APPROVAL_USER_ID`, `PRINT_BUDDY__MATRIX__BOT_USER_ID` | [Matrix bot setup](MATRIX-BOT-SETUP.md) |
+
+The supervisor starts the bot only when the chosen platform's token is set, and the healthcheck mirrors that rule: an empty token leaves the bot idle while the listener and Spoolman run, and the container still reports healthy. Which environment variable holds the token comes from the platform's settings (`discord.token_env`, `telegram.token_env`, `matrix.access_token_env`), so a renamed token variable is honoured by the bot, the supervisor and the healthcheck alike. Switching platform means setting the new platform's token and IDs and clearing the old ones; nothing else in the container changes.
+
+Telegram and Matrix are pure bots: they never use the optional `[llm]` free-text fallback, whatever the LLM settings say — unmatched text gets the command list. The LLM settings only apply to the Discord standalone bot.
+
 ## Camera watch (visual_watch)
 
 While a print runs, the listener checks the printer camera at layer 2, layer 5 and then periodically. A vision model classifies each frame; spaghetti, a detached part, an empty bed, a stalled print, an uncertain frame or a failed check posts the camera photo to Discord with **Pause** and **It's fine** buttons. The watchdog is alert-only and never controls the printer: pausing, resuming or cancelling is always an operator tap (the paused post offers Resume and Cancel). A camera classification is not a guarantee of safe unattended printing.

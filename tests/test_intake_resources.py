@@ -13,7 +13,7 @@ def test_large_mesh_streams_successfully(tmp_path):
     import tracemalloc
 
     source = tmp_path / 'large.3mf'
-    # Andrew's still-print contract replaces the obsolete 32 MiB refusal:
+    # catduck's still-print contract replaces the obsolete 32 MiB refusal:
     # ordinary large geometry must succeed, not merely fail cheaply.
     count = 900_000
     with zipfile.ZipFile(source, 'w', zipfile.ZIP_DEFLATED) as archive:

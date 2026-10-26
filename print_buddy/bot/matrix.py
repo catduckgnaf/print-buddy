@@ -352,17 +352,25 @@ class MatrixClient:
 
     async def close(self):
         self.connected = False
+        loop = asyncio.get_running_loop()
         for item in self._background:
             if isinstance(item, asyncio.Task):
                 item.cancel()
             else:
                 item.close()
-        tasks = [item for item in self._background if isinstance(item, asyncio.Task)]
+        # Only tasks owned by this loop can be awaited here; a task from a
+        # previous loop (close called after a restart, or from a test's
+        # second asyncio.run) is cancelled above and left to its own loop.
+        tasks = [item for item in self._background
+                 if isinstance(item, asyncio.Task) and item.get_loop() is loop]
         if tasks:
             await asyncio.gather(*tasks, return_exceptions=True)
         for item in self._background:
             if not isinstance(item, asyncio.Task):
-                await item.wait_closed()
+                try:
+                    await item.wait_closed()
+                except RuntimeError:
+                    pass  # the health server belonged to a previous loop
         self._background.clear()
         try:
             from print_buddy.core import owned_worker

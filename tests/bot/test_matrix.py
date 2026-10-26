@@ -204,26 +204,34 @@ def _sync_result(events, room=ROOM, next_batch="s2"):
 def test_first_run_starts_from_now_and_persists_the_token(cfg, tmp_path):
     stub = HomeserverStub(sync_script=[_sync_result([text_event("old history")], next_batch="s100")])
     client = matrix.MatrixClient(cfg, HOMESERVER, TOKEN, opener=stub, state_path=tmp_path / "since")
-    with mock.patch.object(matrix.health, "write", lambda status: None):
-        run(client.start())
-    # The snapshot sync was called with no since and its events were NOT replayed.
-    assert stub.payloads("sync")[0].get("since") is None
-    assert client._since == "s100"
-    assert (tmp_path / "since").read_text() == "s100"
-    assert client.core is not None and client.core.chat_id == ROOM
-    assert client.user.id == BOT  # bot_user_id was configured: no whoami needed
-    assert "whoami" not in stub.routes()
-    run(client.close())
+
+    async def boot():
+        with mock.patch.object(matrix.health, "write", lambda status: None):
+            await client.start()
+            # The snapshot sync was called with no since and its events were NOT replayed.
+            assert stub.payloads("sync")[0].get("since") is None
+            assert client._since == "s100"
+            assert (tmp_path / "since").read_text() == "s100"
+            assert client.core is not None and client.core.chat_id == ROOM
+            assert client.user.id == BOT  # bot_user_id was configured: no whoami needed
+            assert "whoami" not in stub.routes()
+            await client.close()
+
+    run(boot())
 
 
 def test_start_asks_whoami_when_the_bot_id_is_not_configured(cfg, tmp_path):
     cfg["matrix"]["bot_user_id"] = ""
     stub = HomeserverStub()
     client = matrix.MatrixClient(cfg, HOMESERVER, TOKEN, opener=stub, state_path=tmp_path / "since")
-    with mock.patch.object(matrix.health, "write", lambda status: None):
-        run(client.start())
-    assert client.bot_user_id == BOT and "whoami" in stub.routes()
-    run(client.close())
+
+    async def boot():
+        with mock.patch.object(matrix.health, "write", lambda status: None):
+            await client.start()
+            assert client.bot_user_id == BOT and "whoami" in stub.routes()
+            await client.close()
+
+    run(boot())
 
 
 def test_poll_once_serves_only_the_configured_room_and_allowed_senders(cfg, tmp_path):

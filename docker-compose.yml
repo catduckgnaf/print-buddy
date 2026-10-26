@@ -25,10 +25,10 @@ services:
       PRINT_BUDDY__SERVICES__CAMERA_SNAPSHOT_URL: ${PRINT_BUDDY__SERVICES__CAMERA_SNAPSHOT_URL:-}
       PRINT_BUDDY__VISION__MODEL: ${PRINT_BUDDY__VISION__MODEL:-gemini-latest}
       PRINT_BUDDY__VISION__ROAST_ENABLED: ${PRINT_BUDDY__VISION__ROAST_ENABLED:-true}
-      # In-container timelapse capture (#246): on the full image only, starts the
-      # bundled go2rtc (loopback-only stream normalisation). Off by default;
-      # the light image has no go2rtc, so enabling it there fails the healthcheck
-      # with that reason instead of running.
+      # In-container timelapse capture (#246): starts the bundled go2rtc
+      # (loopback-only stream normalisation). Off by default; a local
+      # WITH_GO2RTC=false build has no go2rtc, so enabling it there fails
+      # the healthcheck with that reason instead of running.
       PRINT_BUDDY__TIMELAPSE__CAPTURE_ENABLED: ${PRINT_BUDDY__TIMELAPSE__CAPTURE_ENABLED:-false}
       PRINT_BUDDY__TIMELAPSE__CAPTURE_SOURCE_URL: ${PRINT_BUDDY__TIMELAPSE__CAPTURE_SOURCE_URL:-}
       # Stage 2 frame capture knobs (#246): trigger interval (default) | layer | both,
@@ -54,6 +54,26 @@ services:
       PRINT_BUDDY__WEBUI__ENABLED: ${PRINT_BUDDY__WEBUI__ENABLED:-false}
       PRINT_BUDDY__WEBUI__HOST: ${PRINT_BUDDY__WEBUI__HOST:-127.0.0.1}
       PRINT_BUDDY__WEBUI__PORT: ${PRINT_BUDDY__WEBUI__PORT:-0}
+      # Live camera in Discord (#311, docs/DOCKER.md "Live camera in Discord"):
+      # off by default. ENABLED=true plus a voice channel, the tunnel's https
+      # activity origin and a loopback PORT (for example 8091) starts the
+      # supervised Activity server and the go2rtc camera fan-out. The Discord
+      # application ID is a plain identifier (it appears in invite URLs); the
+      # client secret, the session secret and the tunnel token are secrets:
+      # they reach the containers through the .env env_file only, never an
+      # environment: entry here. The tunnel itself is the optional
+      # cloudflared sidecar below (profile "live-stream").
+      PRINT_BUDDY__LIVE_STREAM__ENABLED: ${PRINT_BUDDY__LIVE_STREAM__ENABLED:-false}
+      PRINT_BUDDY__LIVE_STREAM__VOICE_CHANNEL_ID: ${PRINT_BUDDY__LIVE_STREAM__VOICE_CHANNEL_ID:-}
+      PRINT_BUDDY__LIVE_STREAM__AUTO_START_ON_PRINT: ${PRINT_BUDDY__LIVE_STREAM__AUTO_START_ON_PRINT:-false}
+      PRINT_BUDDY__LIVE_STREAM__MAX_HEIGHT: ${PRINT_BUDDY__LIVE_STREAM__MAX_HEIGHT:-720}
+      PRINT_BUDDY__LIVE_STREAM__FPS: ${PRINT_BUDDY__LIVE_STREAM__FPS:-15}
+      PRINT_BUDDY__LIVE_STREAM__MAX_BITRATE_KBPS: ${PRINT_BUDDY__LIVE_STREAM__MAX_BITRATE_KBPS:-2500}
+      PRINT_BUDDY__LIVE_STREAM__ENCODER: ${PRINT_BUDDY__LIVE_STREAM__ENCODER:-auto}
+      PRINT_BUDDY__LIVE_STREAM__EMPTY_TIMEOUT_S: ${PRINT_BUDDY__LIVE_STREAM__EMPTY_TIMEOUT_S:-300}
+      PRINT_BUDDY__LIVE_STREAM__ACTIVITY_ORIGIN: ${PRINT_BUDDY__LIVE_STREAM__ACTIVITY_ORIGIN:-}
+      PRINT_BUDDY__LIVE_STREAM__PORT: ${PRINT_BUDDY__LIVE_STREAM__PORT:-0}
+      DISCORD_CLIENT_ID: ${DISCORD_CLIENT_ID:-}
       SPOOLMAN_DIR_DATA: /data/spoolman
       SPOOLMAN_DIR_CONFIG: /data/spoolman/config
       SPOOLMAN_DIR_LOGS: /data/spoolman/logs
@@ -100,3 +120,26 @@ services:
       timeout: 10s
       start_period: 90s
       retries: 3
+  # Optional Cloudflare Tunnel connector for the live view (#311): a named
+  # tunnel with a stable hostname, run only under the "live-stream" profile
+  # (docker compose --profile live-stream up -d). It is a sidecar, never
+  # part of the Print Buddy image: it shares the combined container's
+  # network namespace so it can reach the Activity server and go2rtc on
+  # loopback, and if the tunnel is down only the live view is unreachable —
+  # the bot, listener and Spoolman are unaffected. The tunnel token is a
+  # secret: set TUNNEL_TOKEN in .env (never here, never in a settings
+  # file), and point the tunnel's ingress at
+  # http://127.0.0.1:${PRINT_BUDDY__LIVE_STREAM__PORT:-8091} in the
+  # Cloudflare dashboard. CLOUDFLARED_IMAGE names the connector image the
+  # operator tested (a pinned tag or digest).
+  cloudflared:
+    image: ${CLOUDFLARED_IMAGE:?Set CLOUDFLARED_IMAGE to a tested cloudflared image digest or local tag}
+    profiles: ["live-stream"]
+    restart: unless-stopped
+    network_mode: "service:combined"
+    depends_on:
+      combined:
+        condition: service_healthy
+    environment:
+      TUNNEL_TOKEN: ${TUNNEL_TOKEN:?Set TUNNEL_TOKEN in .env to the named tunnel's token}
+    command: ["tunnel", "--no-autoupdate", "run"]

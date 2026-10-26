@@ -138,7 +138,8 @@ Schema, validation limits and TOML migration: [CONFIGURATION-YAML.md](CONFIGURAT
 | `live_stream.max_bitrate_kbps` | `PRINT_BUDDY__LIVE_STREAM__MAX_BITRATE_KBPS` | `2500` | Live feed bitrate cap in kbit/s (100-20000) |
 | `live_stream.encoder` | `PRINT_BUDDY__LIVE_STREAM__ENCODER` | `auto` | Encoder preference for the live feed: `auto`, `vaapi`, `qsv`, `nvenc` or `cpu` (the plan in `print_buddy/live_stream.py`) |
 | `live_stream.empty_timeout_s` | `PRINT_BUDDY__LIVE_STREAM__EMPTY_TIMEOUT_S` | `300` | Seconds the voice channel may stay empty of viewers before the live session ends itself |
-| `live_stream.activity_origin` | `PRINT_BUDDY__LIVE_STREAM__ACTIVITY_ORIGIN` | empty | Public https origin the Discord Activity page is served from; how it is reached (URL mapping, tunnel) is deployment wiring (#311 stage 4), empty until deployed |
+| `live_stream.activity_origin` | `PRINT_BUDDY__LIVE_STREAM__ACTIVITY_ORIGIN` | empty | Public https origin the Discord Activity page is served from: the named Cloudflare Tunnel's hostname, mapped in the Discord Developer Portal (see DISCORD-BOT-SETUP.md); empty until deployed |
+| `live_stream.port` | `PRINT_BUDDY__LIVE_STREAM__PORT` | `0` | Loopback port the supervised Activity server binds inside the deployment; `0` means no port has been chosen yet, so the server does not start |
 | `logging.level` | `PRINT_BUDDY__LOGGING__LEVEL` | `INFO` | `DEBUG`, `INFO`, `WARNING` or `ERROR` |
 | `logging.format` | `PRINT_BUDDY__LOGGING__FORMAT` | `text` | `text` (one readable line per event) or `json` (one JSON object per line) |
 | `logging.file` | `PRINT_BUDDY__LOGGING__FILE` | empty | Also write a rotating log file (5 MiB, 3 backups) at this path, for example under `/data/hermes/logs`; empty logs to stderr only |
@@ -197,6 +198,8 @@ These configure the Compose deployment, not Print Buddy itself. Set them in `.en
 | `PRINT_BUDDY_DATA` | `./data` | Host folder holding the `hermes`, `archive`, `records` and `cache` volumes |
 | `PRINT_BUDDY_SPOOLMAN_DATA` | `./data/spoolman` | Host folder for the bundled Spoolman database, config, logs and backups |
 | `PRINT_BUDDY_CONFIG` | `/app/config/docker.yaml` | Settings file Print Buddy reads (YAML, or legacy `.toml`) |
+| `DISCORD_CLIENT_ID` | empty | The Discord application's ID for the live view (#311): a plain identifier (it appears in invite URLs), not a secret. The Activity server refuses to start without it when live viewing is enabled |
+| `CLOUDFLARED_IMAGE` | none, required for the sidecar | Image the optional `cloudflared` sidecar runs (Compose profile `live-stream`): a locally tested tag or immutable digest of the Cloudflare Tunnel connector |
 | `TZ` | `UTC` | Container timezone (IANA name), used by the bundled Spoolman; Print Buddy itself uses `discord.timezone` |
 
 ## Runtime environment
@@ -236,6 +239,9 @@ Secrets come from the environment only (Docker: `.env`, never committed or share
 | `TELEGRAM_BOT_TOKEN` | Telegram standalone bot token. The variable name is `telegram.token_env` |
 | `MATRIX_ACCESS_TOKEN` | Matrix standalone bot access token. The variable name is `matrix.access_token_env` |
 | `WEBUI_ACCESS_TOKEN` | Optional Web UI (#286) access token, required when it binds beyond loopback. The variable name is `webui.access_token_env` |
+| `DISCORD_CLIENT_SECRET` | Live camera in Discord (#311): the Discord application's client secret, used server-side for the Activity OAuth exchange. Never a setting |
+| `LIVE_STREAM_SESSION_SECRET` | Live camera in Discord (#311): signs the Activity session markers. Never a setting |
+| `TUNNEL_TOKEN` | Live camera in Discord (#311): the named Cloudflare Tunnel's token. Read only by the optional `cloudflared` sidecar; Print Buddy itself never uses it |
 | `LLM_API_KEY` | Optional key for `llm.chat_url`. The variable name is `llm.api_key_env` |
 | `OCTOPRINT_API_KEY` | `octoprint.marlin` printers: OctoPrint application key |
 | `BAMBU_LAN_PASSWORD` | Bambu Lab printers: the LAN access code for read-only status. The variable name is `bambu.lan_access_code_env` |

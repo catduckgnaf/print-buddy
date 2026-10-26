@@ -153,24 +153,128 @@ printed instructions in [standalone systemd setup](STANDALONE.md#systemd) before
 Print Buddy can show the printer camera live inside a Discord voice channel. The bot itself
 cannot send video — Discord's bot API is audio-only — so the live view is an **Activity**: a
 small web page that runs inside the voice channel, served by the *same* Discord application as
-the bot (no second bot, no second token).
+the bot (no second bot, no second token). The page plays the container's go2rtc restream of
+the camera (MSE over WebSocket, proxied by the Activity server itself, so go2rtc stays on
+loopback and is never exposed raw).
 
-- In the [Developer Portal](https://discord.com/developers/applications), open the same
-  application and enable **Activities**. The Activity is launched from the voice channel's
-  activity shelf, so server members also need the **Use Activities** permission in that channel.
-- Use a **private voice channel** limited to your household. `/print-live start` only ever
-  names the one channel in `[live_stream] voice_channel_id`, but whoever can open the
-  Activity and sign in must also be on the Activity's allowlist (checked server-side against
-  your Discord user ID), which is what actually gates the camera.
-- Turn it on with `[live_stream] enabled` and the channel ID (see
-  [SETTINGS.md](SETTINGS.md)); `/print-live start|stop|status` then runs the viewing session.
-  Nothing is recorded, and the bot joins no voice channel and captures no audio.
+> **Honest status — read this first.** The Stage 0 live Discord spike has **not run yet**:
+> everything below is built and covered by offline contract tests, but none of it has been
+> exercised live against Discord, a real tunnel or a real camera. Portal screens and labels
+> may differ from the current Developer Portal. Treat the feature as **unverified** until
+> the live sitting happens and its result is recorded on issue #311. The bot-token-only rule
+> is absolute: if any step ever seems to need a user token or a selfbot library, stop — that
+> path is a no-go by design, not a workaround.
 
-Honest status: the command, the settings and the Activity page/auth core are in the bot now,
-but the page is not publicly served yet — reaching it from Discord (Developer Portal URL
-mappings and a tunnel to the container) is deployment wiring that lands with the container
-stage of #311. Until then `/print-live` reports the configuration and session state truthfully
-and no camera feed leaves your network.
+### What you set up, in order
+
+Four pieces, in four places. Nothing here is automatic: creating the Discord application
+changes, the tunnel and its credentials are operator steps (they are listed as manual
+follow-ups on the #311 stage 4 PR), and Print Buddy only consumes the results.
+
+**1. A private voice channel.** Create (or pick) a voice channel limited to your household —
+the camera can see your home, so this channel is the privacy boundary. Note its ID
+(Developer Mode on, right-click → Copy Channel ID) for `[live_stream] voice_channel_id`.
+Server members need the **Use Embedded Activities** permission in that channel to launch
+the Activity. `/print-live` only ever names this one channel.
+
+**2. The Developer Portal (the same application as the bot).**
+
+- Open the application → **Activities** → enable Activities for the app.
+- **OAuth2 → General**: note the **Client ID** (the application ID) and generate/copy the
+  **Client Secret**. The secret goes only into the deployment environment
+  (`DISCORD_CLIENT_SECRET`, next step) — never into a settings file, a screenshot or a chat.
+- **Activities → URL Mappings**: map the root prefix `/` to your tunnel hostname (step 3),
+  for example `pb-live.example.com`. One mapping is enough: the page, its sign-in endpoint
+  and the feed all live behind the same origin, and the Activity server proxies the feed
+  to go2rtc itself.
+- The bot needs no new token and no new invite for this; the Activity runs under the same
+  application the bot already belongs to.
+
+**3. A named Cloudflare Tunnel.** Quick tunnels change hostname on every start and are for
+experiments only; the product setup is a **named** tunnel on a domain whose DNS is on
+Cloudflare, so the hostname survives restarts:
+
+- In the Cloudflare dashboard (Zero Trust → Networks → Tunnels), create a tunnel and note
+  its **token** — a credential, handled like the bot token: environment only
+  (`TUNNEL_TOKEN`), never a settings value, never in logs or screenshots.
+- Add a public hostname for the tunnel (the same hostname you mapped in step 2) with its
+  service pointed at the Activity server on loopback: `http://127.0.0.1:<live port>`
+  (`8091` in the examples — `[live_stream] port`, which the Unraid template pre-fills).
+- Run the connector beside Print Buddy: with Compose, the profiled sidecar does it
+  (`docker compose --profile live-stream up -d`, with `CLOUDFLARED_IMAGE` set to a tested
+  connector image); on Unraid, run a separate `cloudflared` container with the same token.
+  If the tunnel is down, only the live view is unreachable — the bot and prints are
+  unaffected. Set `[live_stream] activity_origin` to the hostname's https origin, for
+  example `https://pb-live.example.com`.
+
+**4. The deployment settings and secrets.** In the Web UI's **Live camera (Discord)** group,
+a config file, or environment variables (all of them are in [SETTINGS.md](SETTINGS.md)):
+
+| Piece | Where it goes |
+|---|---|
+| `live_stream.enabled = true` | settings |
+| `live_stream.voice_channel_id` | settings — the private channel from step 1 |
+| `live_stream.activity_origin` | settings — the tunnel's https origin from step 3 |
+| `live_stream.port` | settings — the loopback port from step 3 (`8091` in the examples) |
+| `DISCORD_CLIENT_ID` | environment — the application ID from step 2 (a plain identifier, not a secret) |
+| `DISCORD_CLIENT_SECRET` | environment, secret — from step 2 |
+| `LIVE_STREAM_SESSION_SECRET` | environment, secret — a long random value you generate; it signs the Activity sessions |
+| `TUNNEL_TOKEN` | `.env` only — read by the cloudflared sidecar, never by Print Buddy |
+
+Restart the container after changing them: settings are read once at start. The supervisor
+starts the Activity server only when **all** of them are present (the live gate's report,
+mirrored in the container healthcheck, names whatever is missing); enabled but incomplete
+is a healthy, reported state, not a crash.
+
+### The allowlist: who may watch
+
+Signing in is checked **server-side**, never trusted from the page: the Activity hands the
+server a one-time code, the server exchanges it with Discord itself, reads your Discord
+user ID from Discord, and admits only IDs on the allowlist — the same users the bot already
+trusts: `[discord] approval_user_id` plus `allowed_user_ids`. Anyone else gets a plain
+refusal, and a leaked Activity URL without a signed-in session serves nothing: the page
+and the feed both require the session the sign-in sets. Keep `allowed_user_ids` to your
+household, exactly as you would for print approvals.
+
+### Using it
+
+- `/print-live start` opens the viewing session and posts the pointer: join the configured
+  voice channel and launch the **Print Buddy** activity from its activity shelf.
+  `/print-live stop` ends it; `/print-live status` reports it.
+- With `live_stream.auto_start_on_print = true` (off by default), a print start opens the
+  session and posts the pointer automatically, and the session ends when that print ends.
+- A session with nobody watching ends itself after `live_stream.empty_timeout_s`
+  (default 300 s): viewer presence is counted from authenticated page loads, and leaving
+  the Activity notes the leave. Enforcement happens as the session is touched — a
+  `/print-live` command, a print transition, or the Activity server's own periodic check
+  while it runs — there is no other background timer to know about.
+- The bot joins no voice channel and captures no audio; it is never "in the call". Its
+  presence signal is the session itself: when a session is live, the feed is available to
+  allowlisted viewers in that one channel.
+
+### Privacy notes
+
+- The configured private channel only — the feature names no other channel, ever.
+- Nothing is recorded or archived: the feed is pass-through, and stopping the session (or
+  the print ending, or the empty timeout) ends it.
+- go2rtc and the Activity server bind loopback inside the deployment; the only public
+  surface is the tunnel hostname, behind the allowlist sign-in. Camera credentials stay
+  between Print Buddy, go2rtc (loopback) and the camera on your LAN, redacted in logs as
+  everywhere else in Print Buddy.
+- One bot serves one printer's camera per instance (the multi-instance rule): a second
+  printer is a second Print Buddy instance with its own channel, tunnel hostname and
+  settings.
+
+### Support and verification matrix
+
+| Piece | Status |
+|---|---|
+| Moonraker cameras (incl. Fluidd/Mainsail households — the same Moonraker webcam registry) | Source resolution proven offline (webcams-API fixtures, derived-URL fallback); **not live-verified** |
+| OctoPrint cameras | Source resolution proven offline (settings fixtures); **not live-verified** |
+| Snapshot-only cameras | Valid live source of kind `snapshot` (still-image sequence, labelled as such); **not live-verified** |
+| Bambu / Prusa / SDCP / stock-Flashforge cameras | Not in v1 — they join through the same camera-source seam once their stills/stream sources are verified (see #294/#295) |
+| Encoder plan (VAAPI / QSV / NVENC / CPU) | Command construction pinned by offline tests per vendor; **no GPU path verified on real hardware** |
+| The Activity in Discord (desktop / mobile) | **Unverified** — the Stage 0 live spike has not run; the first live result belongs on issue #311, not in this table's wording |
 
 ## Recovery
 

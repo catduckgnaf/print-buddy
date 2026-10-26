@@ -959,10 +959,12 @@ def _validate_live_stream(data):
     picks the channel; the bot never names another channel. The encoder
     preference reuses the stage 2 plan's names in print_buddy.live_stream.
     activity_origin is the public https origin the Discord Activity page
-    is served from (Discord URL mapping / tunnel wiring is stage 4
-    deployment work); the Activity server itself binds loopback. No
-    secret is a setting here: the Discord client secret and the Activity
-    session secret live only in the environment (print_buddy.live_activity).
+    is served from (reached through the named Cloudflare Tunnel and the
+    Developer Portal URL mapping, stage 4); port is the loopback port
+    the supervised Activity server binds inside the deployment, 0 when
+    no port has been chosen yet. No secret is a setting here: the
+    Discord client secret and the Activity session secret live only in
+    the environment (print_buddy.live_activity).
     """
     live = data.setdefault("live_stream", {})
     enabled = live.setdefault("enabled", False)
@@ -997,6 +999,10 @@ def _validate_live_stream(data):
     live["encoder"] = encoder
     live.setdefault("empty_timeout_s", 300)
     live["empty_timeout_s"] = _positive(data, "live_stream", "empty_timeout_s", int)
+    live.setdefault("port", 0)
+    port = live["port"]
+    if isinstance(port, bool) or not isinstance(port, int) or not 0 <= port <= 65535:
+        raise SettingsError(f"[live_stream] port must be a whole number from 0 to 65535, got {port!r}")
     origin = str(live.setdefault("activity_origin", "") or "").strip().rstrip("/")
     if origin and not origin.startswith("https://"):
         raise SettingsError(f"[live_stream] activity_origin must be an https URL or empty, got {origin!r}")

@@ -76,7 +76,11 @@ class DockerReleaseContract(unittest.TestCase):
         """#214: one Compose service runs Print Buddy plus the bundled Spoolman API on loopback."""
         compose = yaml.safe_load((ROOT / "docker-compose.yml").read_text())
         services = compose["services"]
-        self.assertEqual(list(services), ["combined"])
+        # One container runs Print Buddy; the only other service is the
+        # optional profile-gated cloudflared sidecar (#311), which runs no
+        # Print Buddy code and shares the combined network namespace.
+        self.assertEqual(list(services), ["combined", "cloudflared"])
+        self.assertEqual(services["cloudflared"]["profiles"], ["live-stream"])
         service = services["combined"]
         self.assertNotIn("command", service)
         self.assertNotIn("ports", service)

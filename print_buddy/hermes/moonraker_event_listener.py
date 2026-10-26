@@ -397,6 +397,57 @@ def start_message_with_roast(filename, archive=None, context_path=None):
     return f"{message}\n\n{roast}" if roast else message
 
 
+def _live_auto_on_print_start():
+    """Auto-start the live view on a print start (#311 stage 4), fail-soft.
+
+    When [live_stream] auto_start_on_print is on and the feature is
+    configured, the shared session record (print_buddy.live_stream) is
+    started and the Activity pointer is posted as its own line, like
+    the no-mesh alert. This listener is the process that sees every
+    Moonraker print start — claimed by the intake or started at the
+    printer — so it is where the trigger lives; the bot and the
+    Activity server read the same record. Anything wrong here (live
+    view off, unconfigured, a torn record) is a silent no-op: a viewer
+    feature never disturbs a print announcement (#235 posture).
+    """
+    try:
+        from print_buddy import live_stream
+
+        cfg = _config.cfg()
+        section = cfg.get("live_stream") or {}
+        path = live_stream.session_file_path(cfg)
+        session = live_stream.read_session_file(path)
+        text = live_stream.auto_start(session, section, now=time.time())
+        if text is None:
+            return
+        live_stream.write_session_file(session, path)
+        post(text)
+    except Exception:
+        pass
+
+
+def _live_auto_on_print_end():
+    """End an auto-started live session when its print ends (#311 stage 4).
+
+    Only a session the auto-start trigger itself opened is ended here;
+    a session a user started with /print-live is theirs to stop (the
+    empty timeout still applies to it). Fail-soft, like the start hook.
+    """
+    try:
+        from print_buddy import live_stream
+
+        cfg = _config.cfg()
+        path = live_stream.session_file_path(cfg)
+        if not path.exists():
+            return
+        session = live_stream.read_session_file(path)
+        if session.is_live and session.started_by == live_stream.AUTO_STARTED_BY:
+            session.stop(now=time.time())
+            live_stream.write_session_file(session, path)
+    except Exception:
+        pass
+
+
 def paused_message(filename, runout=False):
     """One alert when a print pauses. Never pauses, resumes, or cancels anything itself."""
     where = ""
@@ -1759,6 +1810,9 @@ class Listener:
                     await asyncio.to_thread(announce_warmup_done, self.filename)
                 else:
                     await asyncio.to_thread(post, start_message_with_roast(self.filename))
+                # The live view's auto-start trigger (#311 stage 4):
+                # fail-soft, and a no-op unless auto_start_on_print is on.
+                await asyncio.to_thread(_live_auto_on_print_start)
         elif old == "printing" and new_state == "paused":
             self.last_pause_was_runout, slot = await self.classify_runout()
             if self.last_pause_was_runout:
@@ -1794,6 +1848,8 @@ class Listener:
             self.visual_watch.reset()
             self.visual_frames.pop(self.filename, None)
             self._capture_end(new_state)
+            # An auto-started live session ends with its print (#311 stage 4).
+            await asyncio.to_thread(_live_auto_on_print_end)
             await self._retire_paused_prompt(new_state)
             await self.after_print(new_state)
 

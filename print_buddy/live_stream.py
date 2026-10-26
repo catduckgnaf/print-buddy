@@ -74,15 +74,32 @@ been empty for the configured timeout. The ``start_problem`` /
 from a ``[live_stream]`` settings section. Everything here is still
 pure: no connection is opened, no channel is joined, no camera is
 touched.
+
+Stage 4 — deployment wiring. The session gains a shared on-disk record
+(:func:`session_file_path`, :func:`read_session_file`,
+:func:`write_session_file`) so the processes that each see one side of
+the feature — the bot (``/print-live``), the printer listener (print
+starts and ends) and the Activity server (authenticated page loads) —
+share one session instead of three private ones. The two lifecycle
+helpers the stage promised live here too: :func:`auto_start` (the
+auto-start-on-print trigger) and :func:`expire_empty` (the
+leave-when-empty enforcement). The go2rtc stream the Activity page
+plays is named by :data:`GO2RTC_STREAM_NAME`, the one name
+``print_buddy.go2rtc`` renders and ``print_buddy.live_activity``
+requests, so the two can never drift apart.
 """
 from __future__ import annotations
 
+import json
+import os
 from dataclasses import dataclass
+from pathlib import Path
 from urllib.parse import parse_qsl, urlencode, urljoin, urlsplit, urlunsplit
 
 __all__ = [
     "CAMERA_KINDS",
     "ENCODER_PREFERENCES",
+    "GO2RTC_STREAM_NAME",
     "TARGET_CODECS",
     "VAAPI_DEVICE",
     "CameraSource",
@@ -91,25 +108,35 @@ __all__ = [
     "LiveStreamError",
     "LiveStreamSession",
     "SESSION_STATES",
+    "auto_start",
     "build_ffmpeg_args",
     "build_ffmpeg_command",
     "camera_source_from_moonraker",
     "camera_source_from_octoprint",
     "derive_from_snapshot_url",
     "encoder_candidates",
+    "expire_empty",
     "plan_encoders",
     "pointer_text",
+    "read_session_file",
     "redact_url",
     "resolve_moonraker_camera_source",
     "resolve_octoprint_camera_source",
+    "session_file_path",
     "session_text",
     "start_problem",
+    "write_session_file",
 ]
 
 CAMERA_KINDS = ("mjpeg", "rtsp", "webrtc", "snapshot")
 TARGET_CODECS = ("h264", "vp8")
 ENCODER_PREFERENCES = ("auto", "vaapi", "qsv", "nvenc", "cpu")
 VAAPI_DEVICE = "/dev/dri/renderD128"
+# The one go2rtc stream name for the printer camera (#311 stage 4):
+# print_buddy.go2rtc renders its generated config under this name and
+# the Activity page (print_buddy.live_activity) requests it, so the
+# page can never ask for a stream the container does not publish.
+GO2RTC_STREAM_NAME = "camera"
 
 _SENSITIVE_QUERY_KEYS = frozenset({
     "token", "api_key", "apikey", "api-key", "access_token", "access-token",
@@ -767,8 +794,8 @@ def pointer_text(session, section):
         lines.append(f"Activity page: {origin}")
     else:
         lines.append("The Activity page has no public origin configured yet "
-                     "(`[live_stream] activity_origin`); reaching it from Discord is "
-                     "deployment wiring that lands with the container stage.")
+                     "(`[live_stream] activity_origin`); set it to the tunnel origin "
+                     "from the live-view setup in docs/DISCORD-BOT-SETUP.md.")
     lines.append(_plan_line(section))
     lines.append("`/print-live stop` ends the view. Nothing is recorded.")
     return "\n".join(lines)
@@ -794,3 +821,110 @@ def session_text(session, section, *, now):
     return (f"Live camera view is on in {_channel_mention(section)}, started by "
             f"{_user_mention(session.started_by)} {elapsed} ago, {viewers}. "
             f"{_plan_line(section)} `/print-live stop` ends it.")
+
+
+# --------------------------------------------------------------------- stage 4: lifecycle + shared record
+
+#: Who the shared record credits when a print start opens the session.
+AUTO_STARTED_BY = "auto-start on print"
+
+
+def auto_start(session, section, *, now):
+    """The auto-start-on-print trigger (#311 stage 4).
+
+    When ``[live_stream] auto_start_on_print`` is on and the feature is
+    otherwise configured (:func:`start_problem` has nothing to say),
+    start `session` and return the pointer text to post; in every other
+    case — the switch off, the feature unconfigured, a session already
+    live — change nothing and return None. The caller owns posting the
+    text; this helper never raises for a configuration problem, because
+    a live-view trigger must never disturb a print announcement.
+    """
+    if not _section_value(section, "auto_start_on_print", False):
+        return None
+    if session.is_live or start_problem(section) is not None:
+        return None
+    session.start(AUTO_STARTED_BY, now=now)
+    return pointer_text(session, section)
+
+
+def expire_empty(session, section, *, now):
+    """The leave-when-empty enforcement (#311 stage 4).
+
+    End `session` when it has been live with no viewers for at least
+    ``[live_stream] empty_timeout_s``; return True when this call ended
+    it. Viewer presence reaches the session through
+    :meth:`LiveStreamSession.note_viewers` — the Activity server notes
+    a viewer on every authenticated page load — so a session nobody has
+    opened, or whose viewers have all left, ends itself here. Callers
+    run this wherever the session is next touched (a ``/print-live``
+    command, a print transition, an Activity page load); there is no
+    background timer, and the wording in the operator guide says so.
+    """
+    timeout = _section_value(section, "empty_timeout_s", 300)
+    if session.empty_expired(timeout, now=now):
+        session.stop(now=now)
+        return True
+    return False
+
+
+def session_file_path(data=None):
+    """Where the shared live-session record lives: ``<state dir>/live_session.json``.
+
+    The state dir follows the same rule as every other Print Buddy
+    state file (``print_buddy.settings.state_dir``); the import is
+    local so this module stays importable without the settings loader.
+    """
+    from . import settings
+
+    return settings.state_dir(data) / "live_session.json"
+
+
+def write_session_file(session, path):
+    """Persist `session` to `path` atomically (tmp file + replace).
+
+    The record holds only session bookkeeping — state, starter,
+    timestamps, viewer count — never a URL, a credential or a token.
+    """
+    path = Path(path)
+    payload = {
+        "state": session.state,
+        "started_by": session.started_by,
+        "started_at": session.started_at,
+        "viewers": session.viewers,
+        "empty_since": session.empty_since,
+    }
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_name(path.name + ".tmp")
+    tmp.write_text(json.dumps(payload, indent=1) + "\n")
+    os.replace(tmp, path)
+    return path
+
+
+def read_session_file(path):
+    """The session recorded at `path`, or a fresh idle session.
+
+    A missing, unreadable or malformed record is an idle session, never
+    an error: the record is a cache of bookkeeping shared between
+    processes, and a live view must degrade to "not running" rather
+    than fail a command or an announcement over a torn write.
+    """
+    session = LiveStreamSession()
+    try:
+        payload = json.loads(Path(path).read_text())
+    except (OSError, ValueError):
+        return session
+    if not isinstance(payload, dict) or payload.get("state") not in SESSION_STATES:
+        return session
+    if payload["state"] == "live":
+        session.state = "live"
+        session.started_by = str(payload.get("started_by") or "")
+        try:
+            session.started_at = float(payload["started_at"])
+            session.empty_since = (None if payload.get("empty_since") is None
+                                   else float(payload["empty_since"]))
+            viewers = int(payload.get("viewers") or 0)
+        except (KeyError, TypeError, ValueError):
+            return LiveStreamSession()
+        session.viewers = viewers if viewers > 0 else 0
+    return session

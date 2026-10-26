@@ -191,6 +191,45 @@ class Go2rtcGateAndConfigTests(unittest.TestCase):
         self.assertFalse(ok)
 
 
+def make_live_data(**live):
+    section = {"enabled": True}
+    section.update(live)
+    data = make_data(capture_enabled=False)
+    data["live_stream"] = section
+    return data
+
+
+class Go2rtcLiveGateTests(unittest.TestCase):
+    """#311 stage 4: live viewing alone starts the same one go2rtc child."""
+
+    def test_live_viewing_alone_opens_the_gate(self):
+        self.assertEqual(go2rtc.gate(make_live_data()), 0)
+        self.assertEqual(go2rtc.needed_by(make_live_data()), ("live viewing",))
+
+    def test_both_features_share_the_one_gate(self):
+        data = make_live_data()
+        data["timelapse"]["capture_enabled"] = True
+        self.assertEqual(go2rtc.needed_by(data), ("timelapse capture", "live viewing"))
+        self.assertEqual(go2rtc.gate(data), 0)
+
+    def test_live_viewing_without_a_source_degrades_off(self):
+        data = make_live_data()
+        data["services"]["camera_snapshot_url"] = ""
+        self.assertEqual(go2rtc.gate(data), 3)
+
+    def test_neither_feature_needs_go2rtc(self):
+        data = make_data(capture_enabled=False)
+        data["live_stream"] = {"enabled": False}
+        self.assertEqual(go2rtc.gate(data), 3)
+
+    def test_the_stream_name_is_the_one_the_activity_page_requests(self):
+        from print_buddy import live_activity, live_stream
+        config = go2rtc.render_config(go2rtc.resolve_source(make_live_data()))
+        self.assertIn(f"  {live_stream.GO2RTC_STREAM_NAME}: ", config)
+        self.assertEqual(live_activity.DEFAULT_STREAM_NAME,
+                         live_stream.GO2RTC_STREAM_NAME)
+
+
 class SupervisorGo2rtcGateTests(unittest.TestCase):
     """supervise.sh starts go2rtc only when the gate says so (fake children)."""
 
@@ -202,6 +241,7 @@ class SupervisorGo2rtcGateTests(unittest.TestCase):
             "  *print_buddy.listener_gate*--roster*) printf 'printer1\\n'; exit 0 ;;\n"
             "  *print_buddy.listener_gate*) exit 3 ;;\n"
             "  *print_buddy.webui_gate*) exit 3 ;;\n"
+            "  *print_buddy.live_gate*) exit 3 ;;\n"
             "  *print_buddy.go2rtc*--write-config*) printf '%s\\n' \"$GO2RTC_TEST_CONFIG\" ;;\n"
             f"  *print_buddy.go2rtc*) exit {gate_code} ;;\n"
             "  *) echo 'unexpected python3 call: $*' >&2; exit 9 ;;\n"

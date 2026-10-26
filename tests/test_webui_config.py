@@ -115,6 +115,35 @@ class CatalogTests(unittest.TestCase):
         self.assertEqual(source.kind, "picker")
         self.assertEqual(choices_for(source), tuple(settings.CAMERA_SOURCES))
 
+    def test_live_stream_fields_are_in_the_catalog_under_the_live_group(self):
+        # #311 stage 4: the whole [live_stream] section is editable here —
+        # the Web UI is the settings surface — with the loader's own
+        # bounds, and the encoder picker carries the settings choice set.
+        numbers = {"live_stream.max_height": (144, 2160), "live_stream.fps": (1, 60),
+                   "live_stream.max_bitrate_kbps": (100, 20000),
+                   "live_stream.empty_timeout_s": (1, None),
+                   "live_stream.port": (0, 65535)}
+        for field_id, (minimum, maximum) in numbers.items():
+            with self.subTest(field=field_id):
+                field = field_by_id(field_id)
+                self.assertIsNotNone(field)
+                self.assertEqual(field.kind, "number")
+                self.assertEqual((field.minimum, field.maximum), (minimum, maximum))
+                self.assertEqual(field.group, "live")
+        for field_id, kind in (("live_stream.enabled", "toggle"),
+                               ("live_stream.auto_start_on_print", "toggle"),
+                               ("live_stream.voice_channel_id", "text"),
+                               ("live_stream.activity_origin", "url")):
+            with self.subTest(field=field_id):
+                field = field_by_id(field_id)
+                self.assertIsNotNone(field)
+                self.assertEqual(field.kind, kind)
+                self.assertEqual(field.group, "live")
+        encoder = field_by_id("live_stream.encoder")
+        self.assertIsNotNone(encoder)
+        self.assertEqual(encoder.kind, "picker")
+        self.assertEqual(choices_for(encoder), tuple(settings.LIVE_STREAM_ENCODERS))
+
     def test_catalog_groups_cover_every_field_and_pin_the_slicing_group(self):
         # Stage 3 renders the catalog by group: every field has exactly one,
         # and the slicing group is exactly the vendor-choice pair.

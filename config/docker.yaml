@@ -86,6 +86,7 @@ live_stream:
   encoder: auto
   empty_timeout_s: 300
   activity_origin: ""
+  port: 0
 visual_watch:
   # Camera watchdog: alert-only spaghetti, detached-part, empty-bed and stall checks
   # (docs/DOCKER.md "Camera watch"). Override with PRINT_BUDDY__VISUAL_WATCH__SENSITIVITY /

@@ -33,6 +33,20 @@ browser form posts — and on loopback with no access token configured
 the form token is still required, so a cross-origin page in the
 operator's browser cannot change settings. The form token is generated
 at server start, kept only in memory, and is not the access token.
+
+Browser login: a browser cannot send the ``X-WebUI-Token`` header, so
+``GET /login`` (reachable without auth — it is the entry point) renders
+a token form when a token is configured, and ``POST /login`` trades a
+correct token for a session cookie (``SESSION_COOKIE``, HttpOnly,
+SameSite=Strict). A valid, unexpired session cookie authorises GETs
+exactly like the header; it never authorises a config POST on its own
+(those still need the header or the form token, so login cannot be
+turned into a CSRF path). Sessions live only in server memory with a
+``SESSION_TTL_S`` lifetime — a restart signs everyone out — and
+``POST /logout`` ends the caller's own session. ``/healthz`` stays
+unauthenticated: the container healthcheck probes it. With no token
+configured there is nothing to log in to: ``/login`` redirects to ``/``
+and the loopback posture is otherwise unchanged.
 """
 from __future__ import annotations
 
@@ -43,6 +57,8 @@ import json
 import os
 import secrets
 import sys
+import time
+from http.cookies import SimpleCookie
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, urlparse
 
@@ -54,6 +70,12 @@ from . import status as status_module
 
 TOKEN_HEADER = "X-WebUI-Token"
 LOOPBACK_NAMES = frozenset({"localhost"})
+# Browser login sessions: the cookie carries only an opaque id; the
+# id -> expiry map lives in server memory (see make_server), so nothing
+# is persisted and a restart signs everyone out. No Secure flag: the
+# documented posture is plain HTTP on a trusted LAN (Unraid WebUI link).
+SESSION_COOKIE = "webui_session"
+SESSION_TTL_S = 12 * 60 * 60  # 12 hours
 
 
 class WebUIServerError(RuntimeError):
@@ -169,11 +191,13 @@ class _Handler(BaseHTTPRequestHandler):
     def log_message(self, *args):  # keep stdout clean; errors still surface as 500s
         pass
 
-    def _send(self, code, body, content_type):
+    def _send(self, code, body, content_type, headers=()):
         data = body.encode() if isinstance(body, str) else body
         self.send_response(code)
         self.send_header("Content-Type", content_type)
         self.send_header("Content-Length", str(len(data)))
+        for name, value in headers:
+            self.send_header(name, value)
         self.end_headers()
         if self.command != "HEAD":
             self.wfile.write(data)
@@ -182,12 +206,52 @@ class _Handler(BaseHTTPRequestHandler):
         self._send(code, json.dumps(payload, indent=1, sort_keys=True, default=str),
                    "application/json")
 
-    def _authorized(self):
+    def _redirect(self, location, headers=()):
+        self._send(303, "", "text/html; charset=utf-8",
+                   headers=[("Location", location), *headers])
+
+    # -- auth ---------------------------------------------------------------
+    def _header_authorized(self):
+        """The access-token header alone (the stage 2 rule)."""
         token = self.server.webui_token
         if not token:
             return True
         provided = self.headers.get(TOKEN_HEADER) or ""
         return hmac.compare_digest(provided, token)
+
+    def _session_id(self):
+        """The session id from the Cookie header, or "" (garbage = none)."""
+        raw = self.headers.get("Cookie") or ""
+        if not raw:
+            return ""
+        jar = SimpleCookie()
+        try:
+            jar.load(raw)
+        except Exception:  # a malformed Cookie header carries no session
+            return ""
+        morsel = jar.get(SESSION_COOKIE)
+        return morsel.value if morsel is not None else ""
+
+    def _session_authorized(self):
+        """A valid, unexpired login-session cookie. Expired ids are
+        pruned on sight; unknown or expired cookies are simply
+        unauthenticated."""
+        session_id = self._session_id()
+        if not session_id:
+            return False
+        expiry = self.server.sessions.get(session_id)
+        if expiry is None:
+            return False
+        if expiry <= time.time():
+            del self.server.sessions[session_id]
+            return False
+        return True
+
+    def _authorized(self):
+        """GET auth: no token configured, the header, or a login session."""
+        if not self.server.webui_token:
+            return True
+        return self._header_authorized() or self._session_authorized()
 
     def _field_values(self):
         return config_api.read_fields(environ=self.server.webui_environ)
@@ -200,26 +264,76 @@ class _Handler(BaseHTTPRequestHandler):
     # -- routes -----------------------------------------------------------
     def do_GET(self):
         try:
+            path = urlparse(self.path).path
+            if path == "/healthz":
+                # Unauthenticated by design: the container healthcheck
+                # probes this route (it sends the header when it has the
+                # token, but liveness must not depend on that).
+                code, body = healthz(self.server.settings_data)
+                self._json(code, body)
+                return
+            if path == "/login":
+                self._login_page()
+                return
             if not self._authorized():
                 self._json(401, {"ok": False, "reason": f"missing or wrong {TOKEN_HEADER}"})
                 return
-            path = urlparse(self.path).path
             if path == "/":
                 snap = self.server.snapshot_func()
                 self._send(200, render_status_html(snap), "text/html; charset=utf-8")
             elif path == "/api/status":
                 self._json(200, self.server.snapshot_func())
-            elif path == "/healthz":
-                code, body = healthz(self.server.settings_data)
-                self._json(code, body)
             elif path == "/config":
                 self._send(200, self._config_html(self._field_values()),
                            "text/html; charset=utf-8")
             else:
                 self._json(404, {"ok": False,
-                                 "reason": "try /, /api/status, /healthz or /config"})
+                                 "reason": "try /, /api/status, /healthz, /config or /login"})
         except Exception as exc:  # a broken snapshot is a 500, never a dropped connection
             self._json(500, {"ok": False, "reason": f"{type(exc).__name__}: {exc}"})
+
+    # -- browser login ------------------------------------------------------
+    def _login_page(self):
+        if not self.server.webui_token:
+            # No token configured: nothing to log in to (loopback posture).
+            self._redirect("/")
+            return
+        self._send(200, pages.render_login_page(), "text/html; charset=utf-8")
+
+    def _login_submit(self):
+        form, error = self._read_form()
+        if error:
+            self._json(error[0], {"ok": False, "reason": error[1]})
+            return
+        if not self.server.webui_token:
+            self._redirect("/")
+            return
+        provided = (form.get(pages.LOGIN_TOKEN_FIELD) or [""])[0]
+        # The submitted token is compared, never logged or reflected.
+        if not provided or not hmac.compare_digest(provided, self.server.webui_token):
+            self._send(401, pages.render_login_page(
+                error="That token was not accepted. Try again."),
+                "text/html; charset=utf-8")
+            return
+        now = time.time()
+        sessions = self.server.sessions
+        for stale in [sid for sid, expiry in sessions.items() if expiry <= now]:
+            del sessions[stale]
+        session_id = secrets.token_urlsafe(32)
+        sessions[session_id] = now + SESSION_TTL_S
+        cookie = (f"{SESSION_COOKIE}={session_id}; HttpOnly; "
+                  "SameSite=Strict; Path=/")
+        self._redirect("/", headers=[("Set-Cookie", cookie)])
+
+    def _logout(self):
+        # Ends only the caller's own session, so no form token is needed:
+        # the worst a cross-origin post can do is sign the operator out.
+        session_id = self._session_id()
+        if session_id:
+            self.server.sessions.pop(session_id, None)
+        cookie = (f"{SESSION_COOKIE}=; HttpOnly; SameSite=Strict; "
+                  "Path=/; Max-Age=0")
+        self._redirect("/login", headers=[("Set-Cookie", cookie)])
 
     # -- config writes (stage 3) -------------------------------------------
     def _read_form(self):
@@ -240,8 +354,11 @@ class _Handler(BaseHTTPRequestHandler):
         """A config POST needs the access-token header (stage 2's rule) or
         the form token embedded in the page. With no access token set the
         header authorizes nothing, so the form token is always required
-        then — a cross-origin page cannot mint one."""
-        if self.server.webui_token and self._authorized():
+        then — a cross-origin page cannot mint one. A login session
+        cookie deliberately does NOT authorise a POST on its own: the
+        form token is the CSRF guard, and a cookie-authenticated user
+        reaches it through GET /config like any browser."""
+        if self.server.webui_token and self._header_authorized():
             return True
         provided = (form.get(pages.CSRF_FIELD) or [""])[0]
         return bool(provided) and hmac.compare_digest(provided, self.server.form_token)
@@ -264,7 +381,11 @@ class _Handler(BaseHTTPRequestHandler):
     def do_POST(self):
         try:
             path = urlparse(self.path).path
-            if path == "/config/preview":
+            if path == "/login":
+                self._login_submit()
+            elif path == "/logout":
+                self._logout()
+            elif path == "/config/preview":
                 self._config_preview()
             elif path == "/config":
                 self._config_save()
@@ -376,6 +497,9 @@ def make_server(data=None, *, environ=None, host=None, port=None, snapshot_func=
     # Per-server form token for config POSTs (pages.CSRF_FIELD): generated
     # here, kept only in memory, never the access token.
     server.form_token = secrets.token_urlsafe(32)
+    # Browser login sessions: {session id: expiry epoch}. Memory only —
+    # a restart signs everyone out; nothing about a session is persisted.
+    server.sessions = {}
     server.snapshot_func = snapshot_func or (
         lambda: status_module.snapshot(data, environ=environ))
     return server

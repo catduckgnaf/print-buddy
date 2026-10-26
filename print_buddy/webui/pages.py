@@ -46,6 +46,10 @@ from .catalog import choices_for, field_by_id
 
 CSRF_FIELD = "_csrf"
 CONFIRM_FIELD = "confirm"
+# The login form's token field (POST /login). The submitted value is
+# compared against the access token by the server and is never rendered
+# back into any page, logged, or stored.
+LOGIN_TOKEN_FIELD = "token"
 # Hidden field on the confirm form listing the field ids the preview
 # parsed; the save POST parses exactly those, no others.
 FIELDS_FIELD = "_fields"
@@ -173,6 +177,31 @@ def _page(title, body):
     return ("<!DOCTYPE html>\n<html><head><meta charset=\"utf-8\">"
             f"<title>Print Buddy — {_esc(title)}</title></head><body>"
             f"<h1>Print Buddy {_esc(title)}</h1>{body}</body></html>\n")
+
+
+def render_login_page(error=None):
+    """The GET /login page: a single password field for the access token.
+
+    A browser cannot send the ``X-WebUI-Token`` header, so this form is
+    how a person signs in: a correct POST /login earns a session cookie
+    (see server.py). ``error`` is a fixed message chosen by the server;
+    the submitted token is never reflected here.
+    """
+    parts = [
+        '<p>This Web UI is protected by an access token (the value of the '
+        'environment variable the <code>[webui] access_token_env</code> '
+        'setting names). Enter it once and this browser stays signed in '
+        'until the session expires or the server restarts.</p>',
+    ]
+    if error:
+        parts.append(f'<p class="error">{_esc(error)}</p>')
+    parts.append(
+        f'<form method="post" action="/login">'
+        f'<p><label for="f-{LOGIN_TOKEN_FIELD}">Access token</label> '
+        f'<input type="password" id="f-{LOGIN_TOKEN_FIELD}" '
+        f'name="{LOGIN_TOKEN_FIELD}" autocomplete="current-password" required></p>'
+        '<p><button type="submit">Log in</button></p></form>')
+    return _page("log in", "".join(parts))
 
 
 def render_config_page(field_values, *, data, form_token, errors=None,
@@ -393,7 +422,7 @@ def attribute_error(message, changes, *, environ=None):
 
 __all__ = [
     "CONFIRM_FIELD", "CSRF_FIELD", "FIELDS_FIELD", "GROUPS",
-    "PROVENANCE_LABELS", "attribute_error", "parse_form",
-    "render_config_page", "render_preview_page", "render_result_page",
-    "validate_change_set",
+    "LOGIN_TOKEN_FIELD", "PROVENANCE_LABELS", "attribute_error", "parse_form",
+    "render_config_page", "render_login_page", "render_preview_page",
+    "render_result_page", "validate_change_set",
 ]

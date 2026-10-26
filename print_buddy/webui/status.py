@@ -42,6 +42,12 @@ from ..bot import health as bot_health
 # anything secret-shaped a future field might add) out of the snapshot.
 HEARTBEAT_KEYS = ("connected", "user", "handlers", "mode", "platform", "heartbeat_at")
 
+# Default for snapshot()/healthz()'s heartbeat argument: read the record
+# from disk. An explicit None means "there is no heartbeat" — the two must
+# not be conflated, or a caller reporting a missing heartbeat silently
+# gets whatever stale file another process left behind.
+READ_HEARTBEAT = object()
+
 SPOOLMAN_HEALTH_PATH = "/api/v1/health"
 _PROBE_TIMEOUT_S = 2
 
@@ -155,18 +161,18 @@ def doctor_checks(data):
     return rows
 
 
-def snapshot(data=None, *, environ=None, heartbeat=None, probe=None, checks=None):
+def snapshot(data=None, *, environ=None, heartbeat=READ_HEARTBEAT, probe=None, checks=None):
     """The full status snapshot as a JSON-safe dict.
 
     ``data`` is a loaded settings dict (``settings.load()`` when omitted).
-    ``heartbeat`` overrides the bot heartbeat record (``bot_health.read()``
-    when omitted); ``probe`` overrides the Spoolman probe; ``checks``
-    overrides the doctor rows. The overrides exist for tests and for the
-    server embedding this in another process.
+    ``heartbeat`` overrides the bot heartbeat record (read from disk when
+    omitted; an explicit None means no heartbeat); ``probe`` overrides the
+    Spoolman probe; ``checks`` overrides the doctor rows. The overrides
+    exist for tests and for the server embedding this in another process.
     """
     environ = os.environ if environ is None else environ
     data = settings.load(environ=environ) if data is None else data
-    if heartbeat is None:
+    if heartbeat is READ_HEARTBEAT:
         try:
             heartbeat = bot_health.read()
         except Exception:  # an unreadable heartbeat file reads as no heartbeat

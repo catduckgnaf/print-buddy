@@ -88,7 +88,7 @@ def check_start(data, environ=None):
     return host, port, token
 
 
-def healthz(data=None, heartbeat=None):
+def healthz(data=None, heartbeat=status_module.READ_HEARTBEAT):
     """(http_code, body_dict) for /healthz: the bot-health evaluation.
 
     Mirrors print_buddy.bot.health.serve: 200 when evaluate() passes,
@@ -96,7 +96,7 @@ def healthz(data=None, heartbeat=None):
     is whitelisted to the same safe keys the snapshot shows.
     """
     data = settings.load() if data is None else data
-    if heartbeat is None:
+    if heartbeat is status_module.READ_HEARTBEAT:
         try:
             heartbeat = bot_health.read()
         except Exception:  # an unreadable heartbeat file reads as no heartbeat

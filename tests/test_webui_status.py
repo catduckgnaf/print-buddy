@@ -84,6 +84,22 @@ class SnapshotTests(unittest.TestCase):
         self.assertIn("no heartbeat", missing["bot"]["reason"])
         self.assertFalse(stale["ok"])
 
+    def test_heartbeat_default_reads_disk_but_explicit_none_means_missing(self):
+        # Regression: None must not fall back to reading whatever heartbeat
+        # file another process left in the shared state dir (in the full
+        # suite the bot tests write a real one, which made CI read it).
+        with tempfile.TemporaryDirectory() as tmp:
+            data = load_settings(tmp)
+            with mock.patch.object(status.bot_health, "read",
+                                   return_value=fresh_heartbeat()):
+                from_disk = status.snapshot(data, environ={}, probe=ok_probe,
+                                            checks=OK_CHECKS)
+                explicit = status.snapshot(data, environ={}, heartbeat=None,
+                                           probe=ok_probe, checks=OK_CHECKS)
+        self.assertTrue(from_disk["bot"]["ok"])
+        self.assertFalse(explicit["bot"]["ok"])
+        self.assertIn("no heartbeat", explicit["bot"]["reason"])
+
     def test_spoolman_down_is_data_and_bundled_rule(self):
         with tempfile.TemporaryDirectory() as tmp:
             data = load_settings(tmp, "services:\n  spoolman_url: http://127.0.0.1:8000\n")

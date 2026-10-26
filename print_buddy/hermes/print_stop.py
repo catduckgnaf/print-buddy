@@ -40,9 +40,21 @@ def status() -> dict[str, Any]:
         if not adapter.lan_configured():
             raise RuntimeError("Bambu LAN status is not configured ([bambu] lan_host and lan_serial plus the access code)")
         live = adapter.normalize_status(adapter.client().snapshot())
-        return {"state": str(live.get("state") or "unknown"), "filename": live.get("filename") or "",
-                "layer": live.get("layer"), "total_layer": live.get("total_layer"),
-                "progress": live.get("progress"), "print_duration": None}
+        st = {"state": str(live.get("state") or "unknown"), "filename": live.get("filename") or "",
+              "layer": live.get("layer"), "total_layer": live.get("total_layer"),
+              "progress": live.get("progress"), "print_duration": None}
+        # Camera parity (#294): a status read also tries the printer's camera.
+        # Best-effort — the outcome rides along as a saved frame path or a plain
+        # note, and a camera problem never fails the status read itself.
+        try:
+            from . import bambu_watch
+            path, note = bambu_watch.status_camera(adapter)
+            st["camera_image_path"] = str(path) if path else None
+            st["camera_note"] = note
+        except Exception:
+            st["camera_image_path"] = None
+            st["camera_note"] = ""
+        return st
     data = _call("/printer/objects/query?print_stats&virtual_sdcard=progress")
     s = (data.get("result") or {}).get("status") or {}
     ps = s.get("print_stats") or {}
@@ -96,3 +108,4 @@ def cancel(expected_filename: str, wait_s: float = 20, poll_s: float = 1.0) -> t
         # A Bambu printer reports a stopped job as FAILED until the operator clears it on the screen.
         return True, "Stopped. The printer shows the cancelled job as an error until you acknowledge it on its screen."
     return True, f"Stopped. Printer now reports {after['state']}."
+

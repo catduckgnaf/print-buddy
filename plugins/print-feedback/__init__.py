@@ -1051,6 +1051,13 @@ async def print_stop_dispatch(event, gateway, **kwargs):
     _seen[key] = time.monotonic()
     try:
         st = await asyncio.to_thread(print_stop.status)
+        if st.get('camera_image_path'):
+            # Bambu camera parity (#294): show the camera image alongside the status.
+            try:
+                await adapter.send(chat_id=source.chat_id, metadata=metadata,
+                                   content=f"Camera now — {st['filename'] or 'current print'}:\nMEDIA:{st['camera_image_path']}")
+            except Exception:
+                pass
         if st['state'] not in print_stop.ACTIVE:
             message = f"Nothing to stop: printer is {st['state']}. Nothing sent."
         else:

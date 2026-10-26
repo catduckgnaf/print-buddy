@@ -925,7 +925,7 @@ def _sync_active_spool(st, slot):
     if current == sid and st.get('spool', {}).get('spoolman_id') == sid:
         return {'spool_id': sid, 'changed': False}
     try:
-        spool = request_json(f"{st['spoolman_url']}/api/v1/spool/{sid}")
+        spool = request_json(f"{printer_state.spoolman_url(st)}/api/v1/spool/{sid}")
     except Exception as exc:
         raise RuntimeError(f'Spoolman spool #{sid} lookup failed: {exc}; nothing uploaded or started') from exc
     filament = spool.get('filament') or {}
@@ -1061,18 +1061,31 @@ def _verify_offline(gcode_path, state):
     return {'offline': True, 'connection': printers.current().connection}
 
 
+def _print_check_warnings(facts):
+    """Surface non-blocking check warnings (Spoolman, #235) without refusing work.
+
+    Warnings go to stderr, the channel #240 established for verify_gcode, so
+    every caller of this helper reports each warning exactly once.
+    """
+    for warning in (facts or {}).get("warnings") or []:
+        print(f"WARNING: {warning}", file=sys.stderr, flush=True)
+
+
 def verify_gcode(gcode_path):
-    """Check a G-code artifact against live nozzle, spool and temperature state."""
-    def report_warnings(facts):
-        for warning in facts.get("warnings", []):
-            print(f"WARNING: {warning}", file=sys.stderr, flush=True)
+    """Check a G-code artifact against live nozzle, spool and temperature state.
+
+    Spoolman is never a gate here (#235): printer_state.check reports its
+    outcomes as warnings, and verification proceeds on the recorded state —
+    the spool's recorded material/density and the recorded temperatures are
+    the fallback when Spoolman is unreachable.
+    """
     if printers.current().connection in ('offline', 'bambulab_lan'):
         st = printer_state.load(); ok, probs, facts = printer_state.check(st)
-        report_warnings(facts)
+        _print_check_warnings(facts)
         if not ok: raise RuntimeError("hardware record check failed:\n  " + "\n  ".join(probs))
         return _verify_offline(gcode_path, st)
     st=printer_state.load(); ok, probs, facts=printer_state.check(st)
-    report_warnings(facts)
+    _print_check_warnings(facts)
     if not ok: raise RuntimeError("live hardware check failed:\n  " + "\n  ".join(probs))
     p=Path(gcode_path); raw=p.read_bytes(); text=raw.decode(errors="ignore")
     errors=[]
@@ -4532,7 +4545,8 @@ def _main():
     if a.cmd=="finalize-gcode":
         finalize = printers.current().native.finalize
         st = printer_state.load()
-        ok, probs, _ = printer_state.check(st)
+        ok, probs, facts = printer_state.check(st)
+        _print_check_warnings(facts)
         if not ok:
             raise RuntimeError('live hardware check failed: ' + '; '.join(probs))
         path = Path(a.gcode)
@@ -4586,7 +4600,8 @@ def _main():
         out=slice_job(a.job_json, brim_override=a.brim)
         if a.print_now: print_now(out, **pn_kw)
         return
-    ok,probs,_=printer_state.check(st)
+    ok,probs,facts=printer_state.check(st)
+    _print_check_warnings(facts)
     if not ok: raise SystemExit("REFUSED: live hardware check failed:\n  " + "\n  ".join(probs))
     selection = None
     filament_specified = (a.filament_slot is not None or a.filament_color is not None or

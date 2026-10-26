@@ -2,7 +2,7 @@
 
 Nightly is a floating channel: the `nightly` branch is a pointer that only
 ever names a commit on `main` whose CI run completed successfully, and the
-workflow publishes that commit as the `nightly` / `nightly-light` GHCR tags.
+workflow publishes that commit as the `nightly` GHCR tag.
 These tests pin that contract so the channel cannot quietly start publishing
 unverified code or overwriting release tags.
 """
@@ -81,7 +81,8 @@ class NightlyWorkflowContract(unittest.TestCase):
         run = next(s["run"] for s in manifest["steps"] if "run" in s
                    and "imagetools create" in s["run"])
         self.assertIn('-t "$IMAGE:nightly"', run)
-        self.assertIn('-t "$IMAGE:nightly-light"', run)
+        self.assertNotIn("nightly-light", run)
+        self.assertNotIn("-light", run)
         self.assertNotIn(":latest", run)
         self.assertNotIn("$PUBLISH_VERSION", run)
 

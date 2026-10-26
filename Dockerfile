@@ -18,8 +18,8 @@ RUN mkdir -p /out && \
 
 # go2rtc (#246 stage 1) is a pinned official prebuilt too: one static binary
 # per architecture, SHA256 verified before installation
-# (docker/go2rtc-prebuilt.sh). WITH_GO2RTC=false (the #192 light image)
-# produces an empty /out, so the runtime COPY below is a no-op there.
+# (docker/go2rtc-prebuilt.sh). WITH_GO2RTC=false produces an empty /out, so
+# the runtime COPY below is a no-op there.
 FROM debian:13-slim AS go2rtc-prebuilt
 ARG WITH_GO2RTC=true
 ARG TARGETARCH
@@ -118,8 +118,8 @@ COPY --from=orca-prebuilt /out/ /
 COPY --from=go2rtc-prebuilt /out/ /
 # VAAPI is the hardware-encoder baseline for in-container timelapse work
 # (#246): Intel iGPU and AMD via /dev/dri when the operator grants it. It
-# ships only with the full image, under the same WITH_GO2RTC toggle as the
-# go2rtc binary; the light image carries neither. No CUDA toolkit is baked
+# ships under the same WITH_GO2RTC toggle as the go2rtc binary; a
+# WITH_GO2RTC=false build carries neither. No CUDA toolkit is baked
 # in: NVENC/QSV activate only when the host runtime provides the device.
 RUN case "$WITH_GO2RTC" in true|false) ;; *) echo 'WITH_GO2RTC must be true or false' >&2; exit 2;; esac && \
     if [ "$WITH_GO2RTC" = true ]; then \

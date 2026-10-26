@@ -47,7 +47,7 @@ def binary_path(environ=None) -> str:
 
 
 def binary_present(environ=None) -> bool:
-    """True when this image bundles go2rtc (the #192 light image does not)."""
+    """True when this image bundles go2rtc (a WITH_GO2RTC=false build does not)."""
     return os.access(binary_path(environ), os.X_OK)
 
 

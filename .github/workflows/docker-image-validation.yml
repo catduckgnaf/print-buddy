@@ -1,7 +1,7 @@
 name: Docker image validation (manual)
 
-# INERT until a maintainer dispatches it: no push, pull_request or schedule trigger. It builds ONE
-# image variant for ONE architecture on the matching native hosted runner and runs
+# INERT until a maintainer dispatches it: no push, pull_request or schedule trigger. It builds the
+# image for ONE architecture on the matching native hosted runner and runs
 # tests/docker/image_acceptance.sh against it offline.
 # It never pushes or publishes an image, tags, releases or deploys, and never contacts Discord, a
 # printer or an external Spoolman server (the included Spoolman runs only inside the
@@ -20,11 +20,6 @@ on:
         type: choice
         options: [amd64, arm64]
         default: amd64
-      variant:
-        description: Image variant (full includes OrcaSlicer; light omits both slicers)
-        type: choice
-        options: [full, light]
-        default: full
 
 permissions:
   contents: read
@@ -36,8 +31,7 @@ concurrency:
 jobs:
   validate:
     # Pinned runner labels: ubuntu-latest moves to 26 on 2026-10-19. arm64 uses
-    # the native ARM runner, the same family ci.yml already uses for
-    # light-install-arm64; no QEMU emulation is used for any variant.
+    # the native ARM runner; no QEMU emulation is used.
     runs-on: ${{ inputs.architecture == 'arm64' && 'ubuntu-24.04-arm' || 'ubuntu-24.04' }}
     timeout-minutes: 330   # below the 6 h hosted-job limit; the build is bounded inside it
     env:
@@ -45,13 +39,11 @@ jobs:
       # Inputs reach the shell only as environment variables, never interpolated into scripts.
       APP_CHANNEL: ${{ inputs.app_channel }}
       ARCHITECTURE: ${{ inputs.architecture }}
-      VARIANT: ${{ inputs.variant }}
       PLATFORM: ${{ inputs.architecture == 'arm64' && 'linux/arm64' || 'linux/amd64' }}
-      # The variant decides the slicer toggles: full is WITH_ORCA=true, light is
-      # WITH_ORCA=false (and WITH_GO2RTC follows the same variant rule, #246);
-      # Bambu Studio stays out of the published matrix.
-      WITH_ORCA: ${{ inputs.variant == 'full' && 'true' || 'false' }}
-      WITH_GO2RTC: ${{ inputs.variant == 'full' && 'true' || 'false' }}
+      # One image is published (#353): the full image, WITH_ORCA=true and
+      # WITH_GO2RTC=true; Bambu Studio stays out of the published image.
+      WITH_ORCA: "true"
+      WITH_GO2RTC: "true"
       WITH_BAMBU: "false"
       # Spoolman is included in the stack (#214); acceptance always exercises it.
       SPOOLMAN_MODE: included
@@ -69,10 +61,9 @@ jobs:
           [ "$(grep -cE 'asset_(amd64|arm64)=' docker/orca-prebuilt.sh)" = 4 ] || { echo "expected four pinned Orca assets (two channels x two architectures)"; exit 1; }
           mkdir -p evidence
           { echo "source_sha=$GITHUB_SHA"; grep -E 'version=|revision=|sha256_|asset_' docker/orca-prebuilt.sh
-            echo "app_channel=$APP_CHANNEL architecture=$ARCHITECTURE platform=$PLATFORM variant=$VARIANT with_orca=$WITH_ORCA with_go2rtc=$WITH_GO2RTC with_bambu=$WITH_BAMBU spoolman=$SPOOLMAN_MODE"
+            echo "app_channel=$APP_CHANNEL architecture=$ARCHITECTURE platform=$PLATFORM with_orca=$WITH_ORCA with_go2rtc=$WITH_GO2RTC with_bambu=$WITH_BAMBU spoolman=$SPOOLMAN_MODE"
           } | tee evidence/pins.txt
       - name: Free runner disk
-        if: inputs.variant == 'full'
         run: |
           df -h /
           sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL
@@ -96,7 +87,6 @@ jobs:
             docker run --rm --entrypoint sh "$IMAGE" -c 'cat /orca-stable-build-info 2>/dev/null || echo orca-stable=absent; cat /orca-alpha-build-info 2>/dev/null || echo orca-alpha=absent; cat /bambu-build-info 2>/dev/null || echo bambu=absent'
           } | tee evidence/identity.txt
       - name: Headless slice with each bundled Orca channel
-        if: inputs.variant == 'full'
         run: |
           set -euo pipefail
           for channel in stable alpha; do

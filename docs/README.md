@@ -4,8 +4,7 @@
 
 ## 1. Install one mode
 
-- [Light install](INSTALL-LIGHT.md): one command for a Raspberry Pi or Debian/Ubuntu machine; asks about your printer and sets up the standalone bot or a Hermes profile. Needs a [Discord bot](DISCORD-BOT-SETUP.md).
-- [Standalone bot](STANDALONE.md): Discord without Hermes or a required LLM; token permissions, configuration, setup checks and systemd services.
+- [Standalone bot](STANDALONE.md): Discord without Hermes or a required LLM; token permissions, configuration, setup checks and systemd services. Needs a [Discord bot](DISCORD-BOT-SETUP.md).
 - [Telegram bot setup](TELEGRAM-BOT-SETUP.md): run the standalone bot on Telegram instead of Discord (#164); a pure bot with no LLM, long polling, inline-keyboard prompts. Also covers pairing with ZMod's moonraker-telegram-bot as a companion for live control, notifications and timelapse (#300).
 - [Matrix bot setup](MATRIX-BOT-SETUP.md): run the standalone bot in a Matrix room instead (#164); a pure bot with no LLM, /sync polling, numbered-list prompts, unencrypted room required.
 - [Hermes installation](INSTALL.md): profile installation, private overlays and listener setup.

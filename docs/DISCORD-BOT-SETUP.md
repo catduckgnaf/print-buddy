@@ -4,7 +4,7 @@ Print Buddy talks to you through a Discord bot you own. Use this page for the st
 Hermes users can follow the Discord application steps, then use [Hermes installation](INSTALL.md).
 Allow about 15 minutes after installing Print Buddy and its Python requirements. Start in the
 repository root with the installation's Python environment activated. For installation itself,
-use [light install](INSTALL-LIGHT.md) or [standalone bot](STANDALONE.md).
+use the [standalone bot](STANDALONE.md) or [Docker](DOCKER.md).
 
 The [wiki setup entry](https://github.com/catduckgnaf/print-buddy/wiki/Discord-Bot-Setup)
 links here: this versioned page is the authoritative guide.
@@ -45,7 +45,7 @@ nothing more:
 
 ## 4. Give them to Print Buddy
 
-The light installer asks for the channel ID, the user IDs and the token. The token is typed hidden and saved
+The setup wizard asks for the channel ID, the user IDs and the token. The token is typed hidden and saved
 only to the data folder's `.env` file (mode 600); it is never printed or written to `config/local.yaml`.
 
 Doing it by hand instead:

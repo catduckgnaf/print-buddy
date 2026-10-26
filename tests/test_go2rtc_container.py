@@ -62,7 +62,7 @@ class Go2rtcPrebuiltTests(unittest.TestCase):
 
 
 class RuntimeImageGo2rtcTests(unittest.TestCase):
-    """The full image bundles go2rtc + VAAPI; the light image excludes both."""
+    """The published image bundles go2rtc + VAAPI; a WITH_GO2RTC=false build excludes both."""
 
     def test_go2rtc_stage_and_runtime_copy(self):
         self.assertIn("AS go2rtc-prebuilt", DOCKERFILE)
@@ -80,21 +80,19 @@ class RuntimeImageGo2rtcTests(unittest.TestCase):
         self.assertNotIn("cuda-toolkit", runtime)
         self.assertNotIn("nvidia-", runtime)
 
-    def test_workflows_follow_the_variant_for_with_go2rtc(self):
+    def test_workflows_build_the_published_image_with_go2rtc(self):
+        """#353: one published image; every publisher leg builds it with go2rtc."""
         for name in ("docker-publish.yml", "nightly.yml"):
             with self.subTest(workflow=name):
                 workflow = yaml.safe_load((ROOT / ".github/workflows" / name).read_text())
                 jobs = workflow["jobs"]
                 build = next(j for j in jobs.values() if "matrix" in j.get("strategy", {}))
                 entries = build["strategy"]["matrix"]["include"]
-                for entry in entries:
-                    expected = "true" if entry["variant"] == "full" else "false"
-                    self.assertEqual(entry["with_go2rtc"], expected,
-                                     f"{name} {entry['variant']}/{entry['arch']}")
-                    self.assertEqual(entry["with_go2rtc"], entry["with_orca"])
-                self.assertEqual(build["env"]["WITH_GO2RTC"], "${{ matrix.with_go2rtc }}")
+                self.assertEqual({entry["arch"] for entry in entries}, {"amd64", "arm64"})
+                self.assertEqual(build["env"]["WITH_GO2RTC"], "true")
+                self.assertEqual(build["env"]["WITH_GO2RTC"], build["env"]["WITH_ORCA"])
         validation = (ROOT / ".github/workflows/docker-image-validation.yml").read_text()
-        self.assertIn("WITH_GO2RTC: ${{ inputs.variant == 'full' && 'true' || 'false' }}", validation)
+        self.assertIn('WITH_GO2RTC: "true"', validation)
         self.assertIn('--build-arg "WITH_GO2RTC=$WITH_GO2RTC"', validation)
 
 

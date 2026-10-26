@@ -20,10 +20,17 @@ with only the transport edges faked (Moonraker JSON, the MP4 download, the
 ssh executable, the final post capture). The route tests fail against the
 pre-fix code and pass with the fix; the working-path and archive-off tests
 pin behaviour that must not change.
+
+CI posture: the route tests are about the marker/attach/no-silent-drop
+logic, not the encode, so they serve dummy video bytes and stub only the
+platform sizing encode — they EXECUTE in the slim offline CI environment
+(no ffmpeg there). The working-path test keeps the real encode end to end
+and skips where ffmpeg/ffprobe are absent, the #377 fixture pattern.
 """
 import contextlib
 import io
 import os
+import shutil
 import subprocess
 import time
 
@@ -31,6 +38,10 @@ import pytest
 
 from print_buddy.hermes import moonraker_discord_announcements as watcher
 from print_buddy.hermes import moonraker_event_listener as mel
+
+FFMPEG = shutil.which("ffmpeg")
+FFPROBE = shutil.which("ffprobe")
+FAKE_MP4 = b"\x00\x00\x00\x18ftypmp42" + bytes(256)
 
 SHA = "aabbccddeeff00112233445566778899" * 2
 GCODE = f"Print-in-Place-Bag-Clip_plate_1_{SHA}.gcode"
@@ -70,9 +81,13 @@ def _tiny_mp4(path):
 
 @pytest.fixture
 def world(tmp_path, monkeypatch):
-    """A fake Moonraker + archive host around the real announcer/listener."""
-    mp4_bytes = _tiny_mp4(tmp_path / "rendered.mp4")
-    state = {"phase": "printing", "listing": [RENDERED]}
+    """A fake Moonraker + archive host around the real announcer/listener.
+
+    Serves dummy video bytes (state["mp4_bytes"], replaceable): the sizing
+    encode is stubbed in the route tests, so no real MP4 is needed for the
+    delivery logic to run end to end.
+    """
+    state = {"phase": "printing", "listing": [RENDERED], "mp4_bytes": FAKE_MP4}
     logs, sent = [], []
 
     def fake_get_json(path, timeout=10):
@@ -93,7 +108,7 @@ def world(tmp_path, monkeypatch):
             if self._done:
                 return b""
             self._done = True
-            return mp4_bytes
+            return state["mp4_bytes"]
 
         def __enter__(self):
             self._done = False
@@ -138,10 +153,17 @@ def _complete(monkeypatch, thread_cls):
     mel.run_announcer("start")
 
 
-def test_completion_post_carries_printer_rendered_timelapse(world):
+@pytest.mark.skipif(not (FFMPEG and FFPROBE), reason="needs ffmpeg and ffprobe on PATH")
+def test_completion_post_carries_printer_rendered_timelapse(world, tmp_path):
     """The working path (#57's shape): Print Buddy job, printer-rendered
-    timelapse present -> ONE completion post carrying the MEDIA attachment."""
+    timelapse present -> ONE completion post carrying the MEDIA attachment.
+
+    The one genuinely encode-verifying test: a real tiny MP4 through the
+    real platform sizing. Skipped where ffmpeg/ffprobe are absent (#377
+    pattern); every other test in this module runs everywhere.
+    """
     state, sent, logs = world
+    state["mp4_bytes"] = _tiny_mp4(tmp_path / "rendered.mp4")
     mel.run_announcer("start")
     state["phase"] = "complete"
     mel.run_announcer("completion")
@@ -158,6 +180,9 @@ def test_restart_during_render_wait_still_attaches_timelapse(world, monkeypatch)
     post: the next pass must re-drive the video leg for the persisted job,
     not post the pending text bare (#373's silent route)."""
     state, sent, logs = world
+    # The sizing encode is not this test's subject (the retry logic is);
+    # stubbing it lets the route execute where no ffmpeg exists (CI).
+    monkeypatch.setattr(mel, "platform_sized_video", lambda path: path)
     _complete(monkeypatch, DeadThread)
     state["phase"] = "complete"
     mel.run_announcer("completion")  # arms pending + marker; thread never runs

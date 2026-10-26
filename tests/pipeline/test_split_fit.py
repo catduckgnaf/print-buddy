@@ -794,7 +794,7 @@ def test_reorientation_does_not_cure_the_issue_76_stand(tmp_path):
 
 
 def test_rank_reorientation_candidates_orders_by_fit_quality():
-    # Andrew's steering — fit as much as possible — as a deterministic
+    # catduck's steering — fit as much as possible — as a deterministic
     # order over proved candidates: bed margin first, then no-supports
     # over supports, then larger bed contact; axis name breaks exact ties.
     base = {'axis': '+X', 'rotation': [1, 0, 0, 0, 1, 0, 0, 0, 1], 'yaw_deg': 0.0,

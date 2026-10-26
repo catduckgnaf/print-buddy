@@ -1,9 +1,14 @@
-"""The standalone bot's message flow, independent of the discord.py client so tests can drive it.
+"""The standalone bot's message flow, independent of any chat client so tests can drive it.
 
-A Discord message from an allowed user in the print channel becomes the same event the Hermes
+A message from an allowed user in the print channel, on whichever platform
+``[bot] platform`` names, becomes the same event the Hermes
 gateway hands the plugin: ``source`` (who and where), ``text``, ``media_urls`` (dropped model files,
 saved locally) and ``message_id``. The router runs the plugin's handlers on it. What no handler takes
 answers an open button question of the same person, or else gets the optional LLM or the command list.
+
+The core talks to the chat service only through the platform interface in
+``print_buddy.bot.platform``; the Discord entry point passes exactly the
+values it always used, so Discord sessions, sources and replies are unchanged.
 """
 from __future__ import annotations
 
@@ -19,8 +24,7 @@ from types import SimpleNamespace
 from .. import settings
 from ..core import prompts
 from ..hermes import _config
-from . import commands, llm
-from .adapter import StandaloneAdapter
+from . import commands, llm, platform
 from .router import Router
 
 logger = logging.getLogger(__name__)
@@ -33,21 +37,29 @@ UPLOAD_KEEP_S = 7 * 24 * 3600
 HELP_WORDS = {"/print-help", "/help", "help"}
 
 
-def allowed_users(cfg):
-    ids = settings.user_ids(cfg["discord"].get("allowed_user_ids"))
-    approver = str(cfg["discord"].get("approval_user_id") or "").strip()
+def allowed_users(cfg, section="discord"):
+    """Allowed user IDs from a platform's settings section, plus its approver."""
+    ids = settings.user_ids(cfg[section].get("allowed_user_ids"))
+    approver = str(cfg[section].get("approval_user_id") or "").strip()
     if approver and approver not in ids:
         ids.append(approver)
     return ids
 
 
+def platform_name_of(source):
+    """The platform name a source came from ('discord' for sources that do not say)."""
+    value = getattr(getattr(source, "platform", None), "value", None) or getattr(source, "platform", None)
+    return str(value or "discord")
+
+
 def session_key(source):
     """One live session per person per channel or thread, like the gateway's group sessions."""
-    return f"discord:{source.chat_id}:{source.thread_id or ''}:{source.user_id}"
+    return f"{platform_name_of(source)}:{source.chat_id}:{source.thread_id or ''}:{source.user_id}"
 
 
-def make_source(user_id, chat_id, thread_id=None, is_bot=False):
-    return SimpleNamespace(platform=SimpleNamespace(value="discord"), profile=PROFILE, user_id=str(user_id),
+def make_source(user_id, chat_id, thread_id=None, is_bot=False, platform_name="discord"):
+    return SimpleNamespace(platform=SimpleNamespace(value=str(platform_name)), profile=PROFILE,
+                           user_id=str(user_id),
                            chat_id=str(chat_id), thread_id=str(thread_id) if thread_id else None,
                            is_bot=bool(is_bot), profile_route_rejected=False)
 
@@ -89,19 +101,44 @@ class Gateway:
 
 
 class BotCore:
-    def __init__(self, client, cfg=None, *, router=None, llm_opener=None):
+    def __init__(self, client, cfg=None, *, router=None, llm_opener=None, platform_name=None,
+                 adapter=None, chat_id=None):
+        """Run the handlers against one platform adapter.
+
+        With no ``adapter`` the adapter is built for ``platform_name`` (or
+        ``[bot] platform``, default Discord) from that platform's settings
+        section — for Discord exactly the values used before the interface
+        existed. Tests and later platform stages pass their own adapter
+        implementing ``print_buddy.bot.platform``; the core then never
+        touches a platform library.
+        """
         self.cfg = cfg if cfg is not None else _config.cfg()
         prompts.activate()  # our buttons resolve the core registry, even if Hermes is importable
         self.client = client
-        self.chat_id = str(self.cfg["discord"]["chat_id"] or "")
-        self.adapter = StandaloneAdapter(client, allowed_users(self.cfg))
+        self.platform_name = str(platform_name or (self.cfg.get("bot") or {}).get("platform")
+                                 or getattr(adapter, "name", None) or "discord")
+        section = self.cfg.get(self.platform_name) if isinstance(self.cfg.get(self.platform_name), dict) else {}
+        discord = self.cfg.get("discord") or {}
+        if adapter is not None:
+            self.adapter = adapter
+        else:
+            module = platform.platform_module(self.platform_name)
+            if module is None:
+                raise ValueError(f"platform {self.platform_name!r} is not implemented yet (#164)")
+            self.adapter = module.StandaloneAdapter(
+                client, allowed_users(self.cfg, self.platform_name if section else "discord"),
+                upload_max_bytes=section.get("upload_max_bytes") or discord.get("upload_max_bytes"))
+        self.chat_id = str(chat_id if chat_id is not None
+                           else section.get("chat_id") or (discord.get("chat_id") if not section else "")
+                           or "")
         self.gateway = Gateway(self.adapter, self.chat_id)
         self.router = router if router is not None else Router()
-        self.router.attach_platform("discord", client, self.adapter)
-        client.add_listener(self.on_interaction, "on_interaction")
-        self.upload_dir = Path(self.cfg["paths"]["cache"]) / "discord-uploads"
+        self.router.attach_platform(self.platform_name, client, self.adapter)
+        if client is not None and hasattr(client, "add_listener") and hasattr(self.adapter, "handle_click"):
+            client.add_listener(self.on_interaction, "on_interaction")
+        self.upload_dir = Path(self.cfg["paths"]["cache"]) / f"{self.platform_name}-uploads"
         self.llm_opener = llm_opener
-        self.bot_name = str(self.cfg["discord"].get("bot_name") or "").strip() or "Print Buddy"
+        self.bot_name = str(section.get("bot_name") or discord.get("bot_name") or "").strip() or "Print Buddy"
         self.help = commands.help_text(self.bot_name)
         self.started_at = time.time()
 
@@ -115,7 +152,7 @@ class BotCore:
         chat_id, thread_id = channel_scope(message.channel)
         if not self.chat_id or chat_id != self.chat_id:
             return None
-        source = make_source(author.id, chat_id, thread_id)
+        source = make_source(author.id, chat_id, thread_id, platform_name=self.platform_name)
         if not self.gateway._is_user_authorized_for_source(source):
             return None  # the gateway ignores people who are not allowed; so do we
         media = await self.save_attachments(message)
@@ -201,7 +238,8 @@ class BotCore:
         """A slash command runs as its typed text, after the same channel and user checks."""
         user = interaction.user
         chat_id, thread_id = channel_scope(interaction.channel)
-        source = make_source(user.id, chat_id, thread_id, getattr(user, "bot", False))
+        source = make_source(user.id, chat_id, thread_id, getattr(user, "bot", False),
+                             platform_name=self.platform_name)
         if not self.chat_id or chat_id != self.chat_id:
             await interaction.response.send_message(f"{self.bot_name} only works in its print channel.", ephemeral=True)
             return None

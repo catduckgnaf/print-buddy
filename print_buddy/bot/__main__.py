@@ -11,9 +11,9 @@ from .. import logs, settings
 
 
 def checks(cfg):
-    """[(label, ok, detail)]. Offline: nothing here contacts Discord."""
+    """[(label, ok, detail)]. Offline: nothing here contacts the chat platform."""
     from ..hermes import _config
-    from . import health, llm
+    from . import health, llm, platform
     from .runtime import allowed_users
     rows = []
 
@@ -23,19 +23,21 @@ def checks(cfg):
     mode = cfg["bot"]["mode"]
     add("mode", mode == "standalone", mode if mode == "standalone" else
         f"{mode}; set PRINT_BUDDY__BOT__MODE=standalone (or [bot] mode) to run without Hermes")
-    token_env = cfg["discord"]["token_env"]
-    add("token", bool(_config.discord_token()), f"${token_env} is set" if _config.discord_token()
-        else f"${token_env} is empty; put the Discord bot token in that environment variable")
-    chat = str(cfg["discord"]["chat_id"] or "")
-    add("print channel", chat.isdigit(), chat or "discord.chat_id is empty")
-    users = allowed_users(cfg)
-    add("allowed users", bool(users), f"{len(users)} user(s)" if users
-        else "none: set discord.allowed_user_ids (or approval_user_id); everyone is refused")
-    try:
-        import discord
-        add("discord.py", True, discord.__version__)
-    except ImportError:
-        add("discord.py", False, "not installed: pip install -r requirements.txt")
+    name = str(cfg["bot"].get("platform") or "discord")
+    implemented = platform.platform_module(name) is not None
+    add("platform", implemented, name if implemented else
+        f"{name}; platform {name!r} is not implemented yet (#164) — only discord is available")
+    if name == "discord":
+        token_env = cfg["discord"]["token_env"]
+        add("token", bool(_config.discord_token()), f"${token_env} is set" if _config.discord_token()
+            else f"${token_env} is empty; put the Discord bot token in that environment variable")
+        chat = str(cfg["discord"]["chat_id"] or "")
+        add("print channel", chat.isdigit(), chat or "discord.chat_id is empty")
+        users = allowed_users(cfg)
+        add("allowed users", bool(users), f"{len(users)} user(s)" if users
+            else "none: set discord.allowed_user_ids (or approval_user_id); everyone is refused")
+    label, available, detail = platform.library_status(name)
+    add(label, available, detail)
     try:
         from .router import Router
         names = Router().handler_names()
@@ -77,19 +79,13 @@ def run():
     if check(sys.stderr):
         print("Not starting: fix the FAIL lines above.", file=sys.stderr)
         return 2
-    import discord
-    from ..hermes import _config
-    from .client import PrintBuddyBot
-    try:
-        PrintBuddyBot(settings.current()).run(_config.discord_token(), log_handler=None)
-    except discord.LoginFailure as exc:
-        print(f"Discord refused the bot token: {exc}", file=sys.stderr)
-        return 3
-    except discord.PrivilegedIntentsRequired:
-        print("Turn on the Message Content intent for this bot in the Discord developer portal "
-              "(Bot > Privileged Gateway Intents).", file=sys.stderr)
-        return 3
-    return 0
+    cfg = settings.current()
+    name = str(cfg["bot"].get("platform") or "discord")
+    if name != "discord":  # unreachable while checks report it, kept as a guard
+        print(f"Platform {name!r} is not implemented yet (#164).", file=sys.stderr)
+        return 2
+    from .client import run_bot
+    return run_bot(cfg)
 
 
 def main(argv):

@@ -1,6 +1,7 @@
 """The discord.py client for the standalone bot: gateway events, slash commands, heartbeat."""
 import asyncio
 import logging
+import sys
 from typing import Optional
 
 import discord
@@ -13,6 +14,25 @@ from .runtime import BotCore
 logger = logging.getLogger(__name__)
 
 HEARTBEAT_S = 15
+
+
+def run_bot(cfg):
+    """Start the Discord bot for ``cfg``; the entry point ``print_buddy.bot.run`` delegates here.
+
+    Kept in the Discord client module so platform-specific login failures are
+    translated where ``discord`` is imported (#164).
+    """
+    from ..hermes import _config
+    try:
+        PrintBuddyBot(cfg).run(_config.discord_token(), log_handler=None)
+    except discord.LoginFailure as exc:
+        print(f"Discord refused the bot token: {exc}", file=sys.stderr)
+        return 3
+    except discord.PrivilegedIntentsRequired:
+        print("Turn on the Message Content intent for this bot in the Discord developer portal "
+              "(Bot > Privileged Gateway Intents).", file=sys.stderr)
+        return 3
+    return 0
 
 
 def _slash(core_ref, command):

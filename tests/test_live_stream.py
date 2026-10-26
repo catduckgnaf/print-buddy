@@ -446,3 +446,75 @@ def test_plan_then_build_round_trip_for_each_codec():
             assert argv[0] == "ffmpeg"
             assert argv[-1] == OUT
             assert argv[argv.index("-c:v") + 1] == candidate.encoder
+
+
+# --------------------------------------------------------------------- stage 3: the viewing session
+
+ENABLED_SECTION = {"enabled": True, "voice_channel_id": "123456789012345678",
+                   "auto_start_on_print": False, "max_height": 720, "fps": 15,
+                   "max_bitrate_kbps": 2500, "encoder": "auto", "empty_timeout_s": 300,
+                   "activity_origin": ""}
+
+
+def test_session_starts_idle_and_start_records_who_and_when():
+    session = ls.LiveStreamSession()
+    assert session.state == "idle" and not session.is_live
+    assert ls.SESSION_STATES == ("idle", "live")
+    session.start("42", now=1000.0)
+    assert session.is_live and session.started_by == "42" and session.started_at == 1000.0
+    assert session.viewers == 0 and session.empty_since == 1000.0
+
+
+def test_session_double_start_and_idle_stop_are_refused():
+    session = ls.LiveStreamSession()
+    with pytest.raises(ls.LiveStreamError):
+        session.stop()
+    session.start("42", now=0.0)
+    with pytest.raises(ls.LiveStreamError):
+        session.start("43", now=1.0)
+    session.stop(now=2.0)
+    assert session.state == "idle" and session.started_by == "" and session.started_at is None
+
+
+def test_session_viewer_hook_drives_empty_expiry():
+    session = ls.LiveStreamSession().start("42", now=0.0)
+    assert session.empty_expired(300, now=299.0) is False
+    assert session.empty_expired(300, now=300.0) is True
+    session.note_viewers(2, now=400.0)
+    assert session.viewers == 2 and session.empty_since is None
+    assert session.empty_expired(300, now=10_000.0) is False
+    session.note_viewers(0, now=500.0)
+    assert session.empty_expired(300, now=799.0) is False
+    assert session.empty_expired(300, now=800.0) is True
+    with pytest.raises(ls.LiveStreamError):
+        session.note_viewers(-1, now=0.0)
+
+
+def test_start_problem_gates_on_enabled_then_channel():
+    assert "off" in ls.start_problem({})
+    assert "off" in ls.start_problem({"enabled": False, "voice_channel_id": "1"})
+    assert "no voice channel" in ls.start_problem({"enabled": True})
+    assert ls.start_problem(ENABLED_SECTION) is None
+
+
+def test_pointer_text_names_the_channel_the_activity_and_the_plan():
+    session = ls.LiveStreamSession().start("42", now=0.0)
+    text = ls.pointer_text(session, ENABLED_SECTION)
+    assert "<#123456789012345678>" in text and "activity" in text
+    assert "720p at 15 fps" in text and "2500 kbit/s" in text
+    section = dict(ENABLED_SECTION, activity_origin="https://pb.example")
+    assert "https://pb.example" in ls.pointer_text(session, section)
+
+
+def test_session_text_reports_off_ready_and_live_states():
+    assert "off" in ls.session_text(ls.LiveStreamSession(), {}, now=0.0)
+    assert "no voice channel" in ls.session_text(
+        ls.LiveStreamSession(), {"enabled": True}, now=0.0)
+    ready = ls.session_text(ls.LiveStreamSession(), ENABLED_SECTION, now=0.0)
+    assert "ready but not running" in ready and "<#123456789012345678>" in ready
+    session = ls.LiveStreamSession().start("42", now=1000.0)
+    live = ls.session_text(session, ENABLED_SECTION, now=1125.0)
+    assert "is on" in live and "<@42>" in live and "2 min 5 s" in live
+    assert "nobody in the channel yet" in live
+    session.note_viewers(3, now=1130.0)
+    assert "3 watching" in ls.session_text(session, ENABLED_SECTION, now=1130.0)

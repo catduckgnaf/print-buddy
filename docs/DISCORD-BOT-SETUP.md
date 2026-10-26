@@ -144,6 +144,30 @@ readiness. Stop a foreground bot with Ctrl+C. Do not run a second copy alongside
 For user services, `scripts/install-standalone.sh` renders units but enables nothing; review its
 printed instructions in [standalone systemd setup](STANDALONE.md#systemd) before enabling services.
 
+## 7. Live camera Activity (optional, #311)
+
+Print Buddy can show the printer camera live inside a Discord voice channel. The bot itself
+cannot send video — Discord's bot API is audio-only — so the live view is an **Activity**: a
+small web page that runs inside the voice channel, served by the *same* Discord application as
+the bot (no second bot, no second token).
+
+- In the [Developer Portal](https://discord.com/developers/applications), open the same
+  application and enable **Activities**. The Activity is launched from the voice channel's
+  activity shelf, so server members also need the **Use Activities** permission in that channel.
+- Use a **private voice channel** limited to your household. `/print-live start` only ever
+  names the one channel in `[live_stream] voice_channel_id`, but whoever can open the
+  Activity and sign in must also be on the Activity's allowlist (checked server-side against
+  your Discord user ID), which is what actually gates the camera.
+- Turn it on with `[live_stream] enabled` and the channel ID (see
+  [SETTINGS.md](SETTINGS.md)); `/print-live start|stop|status` then runs the viewing session.
+  Nothing is recorded, and the bot joins no voice channel and captures no audio.
+
+Honest status: the command, the settings and the Activity page/auth core are in the bot now,
+but the page is not publicly served yet — reaching it from Discord (Developer Portal URL
+mappings and a tunnel to the container) is deployment wiring that lands with the container
+stage of #311. Until then `/print-live` reports the configuration and session state truthfully
+and no camera feed leaves your network.
+
 ## Recovery
 
 | Symptom | Safe next step |

@@ -98,6 +98,11 @@ OPTIONAL_KEYS = {("printer", "nozzle_type"): str, ("printer", "tool_count"): int
                  ("webui", "port"): int, ("webui", "access_token_env"): str,
                  ("timelapse", "mode"): str,
                  ("services", "camera_source"): str,
+                 ("live_stream", "enabled"): bool, ("live_stream", "voice_channel_id"): str,
+                 ("live_stream", "auto_start_on_print"): bool, ("live_stream", "max_height"): int,
+                 ("live_stream", "fps"): int, ("live_stream", "max_bitrate_kbps"): int,
+                 ("live_stream", "encoder"): str, ("live_stream", "empty_timeout_s"): int,
+                 ("live_stream", "activity_origin"): str,
                  ("flashforge_stock", "host"): str,
                  ("prusa", "link_host"): str, ("prusa", "api_key_env"): str,
                  ("elegoo_sdcp", "host"): str}
@@ -511,6 +516,63 @@ def _validate_camera_source(data):
     services["camera_source"] = source
 
 
+LIVE_STREAM_ENCODERS = ("auto", "vaapi", "qsv", "nvenc", "cpu")
+
+
+def _validate_live_stream(data):
+    """The [live_stream] section (#311 stage 3). Absent in an older config means the defaults.
+
+    Live camera viewing in Discord is optional and off by default; while
+    enabled is false the bot's /print-live command only reports that.
+    voice_channel_id is the one Discord voice channel the live Activity is
+    launched in — a snowflake kept as a string, empty until the operator
+    picks the channel; the bot never names another channel. The encoder
+    preference reuses the stage 2 plan's names in print_buddy.live_stream.
+    activity_origin is the public https origin the Discord Activity page
+    is served from (Discord URL mapping / tunnel wiring is stage 4
+    deployment work); the Activity server itself binds loopback. No
+    secret is a setting here: the Discord client secret and the Activity
+    session secret live only in the environment (print_buddy.live_activity).
+    """
+    live = data.setdefault("live_stream", {})
+    enabled = live.setdefault("enabled", False)
+    if not isinstance(enabled, bool):
+        raise SettingsError(f"[live_stream] enabled must be true or false, got {enabled!r}")
+    auto = live.setdefault("auto_start_on_print", False)
+    if not isinstance(auto, bool):
+        raise SettingsError(f"[live_stream] auto_start_on_print must be true or false, got {auto!r}")
+    channel = str(live.setdefault("voice_channel_id", "") or "").strip()
+    if channel and not channel.isdigit():
+        raise SettingsError(f"[live_stream] voice_channel_id must be a numeric Discord channel ID, got {channel!r}")
+    live["voice_channel_id"] = channel
+    live.setdefault("max_height", 720)
+    height = _positive(data, "live_stream", "max_height", int)
+    if not 144 <= height <= 2160:
+        raise SettingsError(f"[live_stream] max_height must be between 144 and 2160, got {height!r}")
+    live["max_height"] = height
+    live.setdefault("fps", 15)
+    fps = _positive(data, "live_stream", "fps", int)
+    if fps > 60:
+        raise SettingsError(f"[live_stream] fps must be at most 60, got {fps!r}")
+    live["fps"] = fps
+    live.setdefault("max_bitrate_kbps", 2500)
+    bitrate = _positive(data, "live_stream", "max_bitrate_kbps", int)
+    if not 100 <= bitrate <= 20000:
+        raise SettingsError(f"[live_stream] max_bitrate_kbps must be between 100 and 20000, got {bitrate!r}")
+    live["max_bitrate_kbps"] = bitrate
+    encoder = str(live.setdefault("encoder", "auto") or "auto").strip().lower()
+    if encoder not in LIVE_STREAM_ENCODERS:
+        raise SettingsError(f"[live_stream] encoder must be one of {', '.join(LIVE_STREAM_ENCODERS)}, "
+                            f"got {live['encoder']!r}")
+    live["encoder"] = encoder
+    live.setdefault("empty_timeout_s", 300)
+    live["empty_timeout_s"] = _positive(data, "live_stream", "empty_timeout_s", int)
+    origin = str(live.setdefault("activity_origin", "") or "").strip().rstrip("/")
+    if origin and not origin.startswith("https://"):
+        raise SettingsError(f"[live_stream] activity_origin must be an https URL or empty, got {origin!r}")
+    live["activity_origin"] = origin
+
+
 def _validate_logging(data):
     """The [logging] section (#150). Absent in a hand-made home file means the defaults."""
     logging_cfg = data.setdefault("logging", {})
@@ -669,6 +731,7 @@ def validate(data):
     _validate_webui(data)
     _validate_timelapse(data)
     _validate_camera_source(data)
+    _validate_live_stream(data)
     templates = data.get("orca", {}).get("templates")
     if templates == "" and model.generated_templates:
         templates = str(generated_templates_dir(model, data))

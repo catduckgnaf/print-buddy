@@ -990,6 +990,77 @@ async def macros_dispatch(event, gateway, **kwargs):
     return {'action': 'skip', 'reason': 'print macros run handled'}
 
 
+_LIVE_SESSION = None
+
+
+def _live_session():
+    global _LIVE_SESSION
+    if _LIVE_SESSION is None:
+        from print_buddy import live_stream
+        _LIVE_SESSION = live_stream.LiveStreamSession()
+    return _LIVE_SESSION
+
+
+async def live_dispatch(event, gateway, **kwargs):
+    """/print-live [start|stop|status]: the live camera viewing session (issue #311, stage 3).
+
+    Discord only, and deliberately not a voice connection: the Stage 0
+    audit found Discord's bot API cannot send video (the custom-sender
+    lineage is selfbot-only, which Print Buddy will never use), and the
+    chosen transport is the Embedded App (Activity) in the voice
+    channel. So start/stop drive the LiveStreamSession state machine in
+    print_buddy.live_stream and answer with the Activity pointer for
+    the one configured voice channel; other platforms get no command
+    surface at all — the dispatch returns None for their sources, like
+    an unknown command. The [live_stream] activity page and its OAuth
+    allowlist live in print_buddy.live_activity; serving that page
+    publicly (URL mapping / tunnel) is stage 4 deployment wiring.
+    """
+    source, adapter = _control_preamble(event, gateway, '/print-live', with_args=True)
+    if source is None:
+        return None
+    if _platform_value(source) != 'discord':
+        return None
+    if adapter is None:
+        return {'action': 'skip', 'reason': 'live UI delivery unavailable'}
+    from print_buddy import live_stream
+    metadata = {'thread_id': source.thread_id} if source.thread_id else None
+    section = _config.cfg().get('live_stream') or {}
+    args = str(getattr(event, 'text', '')).strip()[len('/print-live'):].split()
+    verb = args[0].casefold() if args else 'status'
+    session = _live_session()
+    now = time.time()
+    if verb == 'start':
+        problem = live_stream.start_problem(section)
+        if problem is not None:
+            message, reason = problem, 'print live not configured'
+        elif session.is_live:
+            message = live_stream.session_text(session, section, now=now)
+            reason = 'print live already live'
+        else:
+            session.start(str(source.user_id), now=now)
+            message = live_stream.pointer_text(session, section)
+            reason = 'print live started'
+    elif verb == 'stop':
+        if not session.is_live:
+            message = 'The live camera view is not running. `/print-live start` starts it.'
+            reason = 'print live not running'
+        else:
+            session.stop(now=now)
+            message = ('Live camera view stopped. The feed is off and nothing was recorded. '
+                       '`/print-live start` starts it again.')
+            reason = 'print live stopped'
+    elif verb == 'status':
+        message = live_stream.session_text(session, section, now=now)
+        reason = 'print live status shown'
+    else:
+        message = ('Use `/print-live start`, `/print-live stop` or `/print-live status`. '
+                   'Nothing changed.')
+        reason = 'print live usage shown'
+    await adapter.send(chat_id=source.chat_id, metadata=metadata, content=message)
+    return {'action': 'skip', 'reason': reason}
+
+
 TROUBLESHOOT_STOP_LABEL = 'Stop here'
 
 
@@ -2009,6 +2080,7 @@ def register(ctx):
     ctx.register_hook('pre_gateway_dispatch', print_again_dispatch)
     ctx.register_hook('pre_gateway_dispatch', spool_dispatch)
     ctx.register_hook('pre_gateway_dispatch', print_reboot_dispatch)
+    ctx.register_hook('pre_gateway_dispatch', live_dispatch)
     ctx.register_hook('pre_gateway_dispatch', receive_ack)
     ctx.register_hook('post_tool_call', clarify_ack)
     ctx.register_hook('pre_tool_call', cap_discord_clarifications)

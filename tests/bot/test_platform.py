@@ -106,6 +106,19 @@ def test_discord_adapter_reports_its_capabilities(cfg):
     assert isinstance(adapter, BasePlatformAdapter)
 
 
+def test_live_stream_is_a_discord_only_capability():
+    # #311: the live camera view is a Discord Activity. Discord opts in;
+    # the base default and the Telegram/Matrix adapters stay False, so
+    # those platforms expose no /print-live command or stub.
+    from print_buddy.bot import adapter as discord_adapter
+    from print_buddy.bot import matrix as matrix_adapter
+    from print_buddy.bot import telegram as telegram_adapter
+    assert platform.BasePlatformAdapter.supports_live_stream is False
+    assert discord_adapter.StandaloneAdapter.supports_live_stream is True
+    assert telegram_adapter.StandaloneAdapter.supports_live_stream is False
+    assert matrix_adapter.StandaloneAdapter.supports_live_stream is False
+
+
 def test_prompt_ids_round_trip_through_the_interface():
     cid = "ab" * 16
     assert platform.custom_id(cid, 3) == f"pbq:{cid}:3"
@@ -153,6 +166,7 @@ def test_botcore_builds_the_matrix_adapter(cfg):
     core = runtime.BotCore(FakeClient(), cfg, chat_id="!prints:example.org")
     assert core.adapter.name == "matrix" and core.adapter.uses_llm is False
     assert core.adapter.supports_buttons is False
+    assert core.adapter.supports_live_stream is False
 
 
 # ---------------------------------------------------------------------- full intake on a fake transport

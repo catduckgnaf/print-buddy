@@ -2467,6 +2467,7 @@ def _slice_full_size_split(job, job_path, src, manifest, decisions, st):
         fit, yaw_deg, placement_mm = None, None, None
         reorientation, supports = None, None
         shared_yaw_by_object = None
+        shared_reorientation_by_object = None
         if turned:
             if len(turned) == 1 and {key_to_object[key] for key in keys} == turned:
                 # The exporter turns a whole derived plate rigidly about one
@@ -2519,70 +2520,103 @@ def _slice_full_size_split(job, job_path, src, manifest, decisions, st):
                                    f'{bed_x:g} x {bed_y:g} mm bed; refusing to slice it as authored')
             fit = {**(fit or {'scale': 1.0}), 'placement_mm': placement_mm}
         if reoriented:
-            # A reorientation is realized through the exporter's whole-plate
-            # fit, which turns one plate rigidly about one origin, so the
-            # recorded rotation is only realizable for that part alone —
-            # and it is the object's only transform record: the matrix
-            # already contains its bed turn, and placement/shifts for a
-            # rotated footprint are not part of the proved plan (#221 R1).
-            # Fail closed on anything else instead of slicing as authored.
-            if len(reoriented) != 1 or {key_to_object[key] for key in keys} != reoriented:
-                raise RuntimeError('full-size split plan records a reorientation for a plate '
-                                   'that is not that part alone; refusing to slice it as authored')
-            reoriented_oid = next(iter(reoriented))
-            if reoriented_oid in yaw_by_object or reoriented_oid in placement_by_object:
-                raise RuntimeError('full-size split plan records a reorientation for an object '
-                                   'that also records a turn or a placement; refusing to slice '
-                                   'it as authored')
-            if shifts_by_plate and shifts_by_plate[index - 1] is not None:
-                raise RuntimeError('full-size split plan records a reorientation for a plate '
-                                   'that also records shifts; refusing to slice it as authored')
-            record = reorientation_by_object[reoriented_oid]
-            if not isinstance(record, dict):
-                raise RuntimeError('full-size split plan reorientation record must be a '
-                                   f'mapping, got {record!r}')
-            axis = record.get('axis')
-            if axis not in UP_AXES:
-                raise RuntimeError('full-size split plan reorientation axis must be one of '
-                                   f'{sorted(UP_AXES)}, got {axis!r}')
-            try:
-                yaw_value = float(record.get('yaw_deg'))
-            except (TypeError, ValueError) as exc:
-                raise RuntimeError('full-size split plan reorientation yaw_deg must be '
-                                   f"numeric, got {record.get('yaw_deg')!r}") from exc
-            if not math.isfinite(yaw_value) or not 0 <= yaw_value <= 90:
-                raise RuntimeError('full-size split plan reorientation yaw_deg must be a '
-                                   f'cardinal bed turn (0 or 90 degrees), got {yaw_value!r}')
-            raw_rotation = record.get('rotation')
-            if not isinstance(raw_rotation, (list, tuple)) or len(raw_rotation) != 9:
-                raise RuntimeError('full-size split plan reorientation rotation must be a '
-                                   f'9-value matrix, got {raw_rotation!r}')
-            try:
-                matrix = [float(v) for v in raw_rotation]
-            except (TypeError, ValueError) as exc:
-                raise RuntimeError('full-size split plan reorientation rotation must be '
-                                   f'numeric, got {raw_rotation!r}') from exc
-            if not all(math.isfinite(v) for v in matrix):
-                raise RuntimeError('full-size split plan reorientation rotation must be finite')
-            try:
-                _check_rotation(matrix)
-            except ValueError as exc:
-                raise RuntimeError(f'full-size split plan reorientation {exc}') from exc
-            expected_matrix = _matmul(_yaw(yaw_value), UP_AXES[axis][1])
-            if any(abs(a - b) > 1e-6 for a, b in zip(matrix, expected_matrix)):
-                raise RuntimeError('full-size split plan reorientation rotation is not the '
-                                   'recorded face change composed with its bed turn; refusing '
-                                   'to slice it as authored')
-            if not isinstance(record.get('supports'), bool) \
-                    or not isinstance(record.get('brim_recommended'), bool):
-                raise RuntimeError('full-size split plan reorientation record must carry '
-                                   'boolean supports and brim_recommended decisions')
-            reorientation = {**record, 'rotation': matrix, 'yaw_deg': yaw_value}
-            # The recorded supports decision — named in the intake offer, so
-            # choosing the split approved it — is passed to the slicer for
-            # this plate only; other plates keep today's default (None).
-            supports = record['supports']
-            fit = {'scale': 1.0, 'rotation': matrix}
+            # Every reorientation record is validated exactly as in R1: a
+            # known axis, a cardinal bed turn, a finite rigid matrix that is
+            # exactly that face change composed with the turn, and boolean
+            # supports/brim decisions. A reorientation is always the object's
+            # only transform record — the matrix already contains its bed
+            # turn, so a yaw entry for the same object refuses. What R3 adds
+            # is only how a valid record is realized beyond the solo plate:
+            # alone, it goes through the exporter's whole-plate fit, with a
+            # placement recorded for that same object composed into the same
+            # fit (the proved exclusion-avoiding landing, #221 R3); on a
+            # shared plate it goes through the exporter's per-object fit
+            # channel composed with the plate's recorded shifts — the proved
+            # shared placement — and without those shifts there is nothing
+            # that realizes the rotation, so refuse instead of slicing the
+            # plate as authored.
+            validated_reorientations = {}
+            for reoriented_oid in sorted(reoriented):
+                if reoriented_oid in yaw_by_object:
+                    raise RuntimeError('full-size split plan records a reorientation for an object '
+                                       'that also records a turn; refusing to slice it as authored')
+                record = reorientation_by_object[reoriented_oid]
+                if not isinstance(record, dict):
+                    raise RuntimeError('full-size split plan reorientation record must be a '
+                                       f'mapping, got {record!r}')
+                axis = record.get('axis')
+                if axis not in UP_AXES:
+                    raise RuntimeError('full-size split plan reorientation axis must be one of '
+                                       f'{sorted(UP_AXES)}, got {axis!r}')
+                try:
+                    yaw_value = float(record.get('yaw_deg'))
+                except (TypeError, ValueError) as exc:
+                    raise RuntimeError('full-size split plan reorientation yaw_deg must be '
+                                       f"numeric, got {record.get('yaw_deg')!r}") from exc
+                if not math.isfinite(yaw_value) or yaw_value not in (0.0, 90.0):
+                    raise RuntimeError('full-size split plan reorientation yaw_deg must be a '
+                                       'cardinal bed turn of 0 or 90 degrees, '
+                                       f'got {record.get("yaw_deg")!r}')
+                raw_rotation = record.get('rotation')
+                if not isinstance(raw_rotation, (list, tuple)) or len(raw_rotation) != 9:
+                    raise RuntimeError('full-size split plan reorientation rotation must be a '
+                                       f'9-value matrix, got {raw_rotation!r}')
+                try:
+                    matrix = [float(v) for v in raw_rotation]
+                except (TypeError, ValueError) as exc:
+                    raise RuntimeError('full-size split plan reorientation rotation must be '
+                                       f'numeric, got {raw_rotation!r}') from exc
+                if not all(math.isfinite(v) for v in matrix):
+                    raise RuntimeError('full-size split plan reorientation rotation must be finite')
+                try:
+                    _check_rotation(matrix)
+                except ValueError as exc:
+                    raise RuntimeError(f'full-size split plan reorientation {exc}') from exc
+                expected_matrix = _matmul(_yaw(yaw_value), UP_AXES[axis][1])
+                if any(abs(a - b) > 1e-6 for a, b in zip(matrix, expected_matrix)):
+                    raise RuntimeError('full-size split plan reorientation rotation is not the '
+                                       'recorded face change composed with its bed turn; refusing '
+                                       'to slice it as authored')
+                if not isinstance(record.get('supports'), bool) \
+                        or not isinstance(record.get('brim_recommended'), bool):
+                    raise RuntimeError('full-size split plan reorientation record must carry '
+                                       'boolean supports and brim_recommended decisions')
+                validated_reorientations[reoriented_oid] = {**record, 'rotation': matrix,
+                                                            'yaw_deg': yaw_value}
+            if len(reoriented) == 1 and {key_to_object[key] for key in keys} == reoriented:
+                # Solo (#221 R1): the exporter's whole-plate fit turns the
+                # plate rigidly about one origin; a placement recorded for
+                # this same object composes into the same fit (#221 R3).
+                if shifts_by_plate and shifts_by_plate[index - 1] is not None:
+                    raise RuntimeError('full-size split plan records a reorientation for a plate '
+                                       'that also records shifts; refusing to slice it as authored')
+                reorientation = validated_reorientations[next(iter(reoriented))]
+                # The recorded supports decision — named in the intake offer,
+                # so choosing the split approved it — is passed to the slicer
+                # for this plate only; other plates keep today's default (None).
+                supports = reorientation['supports']
+                fit = {'scale': 1.0, 'rotation': reorientation['rotation'],
+                       **({'placement_mm': placement_mm} if placement_mm is not None else {})}
+            else:
+                # Shared (#221 R3): realized per object through fit_by_object
+                # composed with the plate's recorded shifts, validated below.
+                if not shifts_by_plate or shifts_by_plate[index - 1] is None:
+                    raise RuntimeError('full-size split plan records a reorientation for a plate '
+                                       'that is not that part alone, without the recorded shifts '
+                                       'that realize a shared reorientation; refusing to slice '
+                                       'it as authored')
+                shared_reorientation_by_object = validated_reorientations
+                # One supports decision per plate, from the members' named
+                # records: a member that needs supports turns them on for the
+                # plate; when every member carries a record and none needs
+                # supports, the records govern and supports stay off; when
+                # non-reoriented members share the plate they keep today's
+                # default (None) — a co-tenant's record never takes supports
+                # away from a part that has none of its own.
+                if any(row['supports'] for row in validated_reorientations.values()):
+                    supports = True
+                elif {key_to_object[key] for key in keys} == reoriented:
+                    supports = False
         shifts_entry = shifts_by_plate[index - 1] if shifts_by_plate else None
         item_shifts = None
         if shifts_entry is not None:
@@ -2600,14 +2634,13 @@ def _slice_full_size_split(job, job_path, src, manifest, decisions, st):
             if len(keys) < 2:
                 raise RuntimeError('full-size split plan records shifts for a plate that is not '
                                    'shared; refusing to slice it as authored')
-            if placed or reoriented:
+            if placed:
                 raise RuntimeError('full-size split plan records shifts for a plate that also '
-                                   'records a placement or a reorientation; refusing '
-                                   'to slice it as authored')
-            # A turn on this plate is the shared form validated above
-            # (#221 R2): its members' yaw entries are realized per object,
-            # composed with these shifts. (A solo turn with shifts was
-            # already refused by the not-shared check.)
+                                   'records a placement; refusing to slice it as authored')
+            # A turn or a reorientation on this plate is the shared form
+            # validated above (#221 R2/R3): its members' records are realized
+            # per object, composed with these shifts. (A solo turn or
+            # reorientation with shifts was already refused above.)
             item_shifts = {}
             for oid, raw in shifts_entry.items():
                 if not isinstance(raw, (list, tuple)) or len(raw) != 3:
@@ -2623,12 +2656,19 @@ def _slice_full_size_split(job, job_path, src, manifest, decisions, st):
                                        f'finite, got {raw!r}')
                 item_shifts[oid] = values
         fit_by_object = None
+        member_rotations = {}
         if shared_yaw_by_object:
             fit_by_object = {}
             for oid, degrees in shared_yaw_by_object.items():
                 rad = math.radians(degrees)
                 c, s = math.cos(rad), math.sin(rad)
                 fit_by_object[oid] = {'rotation': [c, -s, 0.0, s, c, 0.0, 0.0, 0.0, 1.0]}
+                member_rotations[oid] = fit_by_object[oid]['rotation']
+        if shared_reorientation_by_object:
+            fit_by_object = fit_by_object or {}
+            for oid, row in shared_reorientation_by_object.items():
+                fit_by_object[oid] = {'rotation': row['rotation']}
+                member_rotations[oid] = row['rotation']
         report = export_single_color_plate(src, plate, view, keys, bed=int(st['bed_mm'][0]),
                                            slot_colors=st.get('ifs_slots') or {},
                                            **({'fit': fit} if fit is not None else {}),
@@ -2638,23 +2678,23 @@ def _slice_full_size_split(job, job_path, src, manifest, decisions, st):
         if item_shifts is not None:
             # Re-read the derived plate: every object must have landed at
             # exactly the recorded shift, or the plate is not the proved
-            # polygon placement and must not be sliced. A turned member
-            # (#221 R2) must land at its rotated authored bounds plus the
-            # shift, with the rotated extents — a plate that turned it by
-            # any other angle, or not at all, is not the recorded plan.
+            # polygon placement and must not be sliced. A rotated member
+            # (#221 R2 shared yaw, #221 R3 shared reorientation) must land at
+            # its rotated authored bounds plus the shift, with the rotated
+            # extents — a plate that rotated it by any other matrix, or not
+            # at all, is not the recorded plan.
             from .color_geometry import _world_bounds as _bounds_of
             from .color_geometry import _world_points as _points_of
             from .orca_adapter import _rotate as _rotate_point
             with zipfile.ZipFile(src) as archive:
                 authored = {oid: _bounds_of(archive, {oid})[0] for oid in item_shifts}
-                turned_points = {oid: _points_of(archive, {oid})
-                                 for oid in (shared_yaw_by_object or {})}
+                rotated_points = {oid: _points_of(archive, {oid}) for oid in member_rotations}
             with zipfile.ZipFile(plate) as archive:
                 landed_boxes = {oid: _bounds_of(archive, {oid})[0] for oid in item_shifts}
             for oid, values in item_shifts.items():
-                if shared_yaw_by_object and oid in shared_yaw_by_object:
-                    rotated = [_rotate_point(point, fit_by_object[oid]['rotation'])
-                               for point in turned_points[oid]]
+                if oid in member_rotations:
+                    rotated = [_rotate_point(point, member_rotations[oid])
+                               for point in rotated_points[oid]]
                     base_min = [min(point[a] for point in rotated) for a in range(3)]
                     base_extent = [max(point[a] for point in rotated) - base_min[a]
                                    for a in range(3)]
@@ -2663,6 +2703,11 @@ def _slice_full_size_split(job, job_path, src, manifest, decisions, st):
                     if any(abs(landed[a][0] - (base_min[a] + values[a])) > 2e-3 for a in range(3)) \
                             or any(abs(got - want) > 2e-3
                                    for got, want in zip(landed_extent, base_extent)):
+                        if shared_reorientation_by_object \
+                                and oid in shared_reorientation_by_object:
+                            raise RuntimeError('derived plate did not land at the recorded '
+                                               'shared reorientation; refusing to slice '
+                                               'it as reoriented')
                         raise RuntimeError('derived plate did not land at the recorded shared '
                                            'turn; refusing to slice it as turned')
                     continue
@@ -2712,6 +2757,8 @@ def _slice_full_size_split(job, job_path, src, manifest, decisions, st):
                              if shared_yaw_by_object else {}),
                           **({'placement_mm': placement_mm} if placement_mm is not None else {}),
                           **({'reorientation': reorientation} if reorientation is not None else {}),
+                          **({'reorientation_by_object': shared_reorientation_by_object}
+                             if shared_reorientation_by_object else {}),
                           **({'shifts_by_object': item_shifts} if item_shifts is not None else {}),
                           'offline_check': check, 'plate_report': report, 'provenance': provenance,
                           'slice_config': [str(path) for path in configs]})

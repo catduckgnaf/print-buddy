@@ -263,9 +263,11 @@ def test_per_part_fit_rectangle_mesh_matches_the_rectangle_sweep(tmp_path):
 def test_per_part_fit_exclusion_blocks_when_no_placement_avoids_it(tmp_path):
     # A 200 x 200 mm part fits the 204 mm usable area, but on a bed whose
     # front-left 18 x 28 mm is excluded every legal placement overlaps the
-    # exclusion, so it must not count as fitting (#221).
+    # exclusion, so it must not count as fitting (#221). The part is a cube,
+    # so a face change cannot help either: its reoriented footprint is the
+    # same 200 x 200 mm and is just as unplaceable (#221 R3).
     source = tmp_path / 'nearly-full.3mf'
-    _mesh_source(source, {'1': _rect_points(200, 200, 10)}, [['1']])
+    _mesh_source(source, {'1': _rect_points(200, 200, 200)}, [['1']])
     (open_row,) = split_fit.per_part_fit(source, 220, exclusions=[])
     assert open_row['fits_full_size'] is True and open_row['placement_mm'] is None
     (row,) = split_fit.per_part_fit(source, 220, exclusions=[(0, 0, 18, 28)])
@@ -310,9 +312,10 @@ def test_split_plan_on_an_exclusion_bed_records_avoiding_placements(tmp_path):
 def test_split_plan_on_an_exclusion_bed_still_blocks_without_a_placement(tmp_path):
     # A part whose footprint fits the usable bed only inside the exclusion
     # has no avoiding placement: it stays blocking (naming the exclusion) and
-    # no split plan is offered (#221).
+    # no split plan is offered (#221). The blocking part is a cube, so a face
+    # change cannot place it either (#221 R3).
     source = tmp_path / 'blocked.3mf'
-    _mesh_source(source, {'1': _rect_points(200, 200, 10), '2': _rect_points(150, 150, 10)},
+    _mesh_source(source, {'1': _rect_points(200, 200, 200), '2': _rect_points(150, 150, 10)},
                  [['1', '2']])
     rows = {row['object_id']: row for row in split_fit.per_part_fit(source, 220, exclusions=[(0, 0, 18, 28)])}
     assert rows['1']['fits_full_size'] is False
@@ -815,19 +818,28 @@ def test_rank_reorientation_candidates_orders_by_fit_quality():
     assert [c['axis'] for c in tied] == ['-Y', '+X', '-X']
 
 
-def test_reorientation_candidates_require_a_single_build_item(tmp_path):
-    # R1 eligibility, the same rule the polygon stages use: a grouped or
-    # multi-item object gets no reorientation, because only a single build
-    # item's flat landing under one rigid whole-plate turn is proved.
+def test_reorientation_candidates_prove_each_item_of_a_multi_item_object(tmp_path):
+    # R3 eligibility: the candidate proof is per build item, so a multi-item
+    # object is proved exactly like a single-item one — the one rigid
+    # rotation is checked against every item's own rotated floor. Two copies
+    # of the same item, both landing flat, get the same candidates as one;
+    # a second item offset so it would hover under the turn (shifted in X
+    # and Y, so every face change leaves one item in the air) gets none.
     from print_buddy.core import color_geometry
     source = tmp_path / 'box.3mf'
     _solid_source(source, {'1': _box_tris(0, 230, 0, 190, 0, 30)}, [['1']])
     with zipfile.ZipFile(source) as archive:
         items = color_geometry._world_item_points(archive, {'1'})
     assert len(items) == 1
-    assert split_fit._reorientation_candidates(source, '1', items, (204.0, 204.0), 250.0)
+    single = split_fit._reorientation_candidates(source, '1', items, (204.0, 204.0), 250.0)
+    assert single
+    doubled = split_fit._reorientation_candidates(
+        source, '1', items + items, (204.0, 204.0), 250.0)
+    assert [c['axis'] for c in doubled] == [c['axis'] for c in single]
+    assert [c['dims_mm'] for c in doubled] == [c['dims_mm'] for c in single]
+    hovering = [[(x + 30.0, y + 30.0, z) for x, y, z in item] for item in items]
     assert split_fit._reorientation_candidates(
-        source, '1', items + items, (204.0, 204.0), 250.0) == []
+        source, '1', items + hovering, (204.0, 204.0), 250.0) == []
 
 
 def test_reorientation_records_supports_and_slicing_passes_them_for_that_plate_only(tmp_path, monkeypatch):
@@ -904,8 +916,6 @@ def test_slicing_refuses_unproved_or_mixed_reorientations(tmp_path, monkeypatch)
          'not that part alone'),
         ({'plates': plates, 'yaw_by_object': {'1': 30.0},
           'reorientation_by_object': {'1': record}}, 'also records a turn'),
-        ({'plates': plates, 'placement_by_object': {'1': [18.0, 8.0]},
-          'reorientation_by_object': {'1': record}}, 'also records a turn or a placement'),
         ({'plates': plates, 'shifts_by_plate': [{'1': [0.0, 0.0, 0.0]}, None],
           'reorientation_by_object': {'1': record}}, 'also records shifts'),
         ({'plates': plates, 'reorientation_by_object': {'1': mirrored}}, 'mirror'),
@@ -934,19 +944,42 @@ def test_fit_choice_rows_carry_the_split_reorientation():
     assert split['reorientation_by_object'] == {'1': record}
 
 
-def test_exclusion_bed_offers_no_reorientation(tmp_path):
-    # R1 withholds reorientation on exclusion beds: every fitting row there
-    # carries a placement, and a placement for a rotated footprint is
-    # deferred — the part stays blocking instead of being offered a
-    # rotation the plan cannot land.
+def test_exclusion_bed_offers_a_placed_reorientation(tmp_path):
+    # R3 lifts the R1 withholding: on an exclusion bed a reorientation
+    # candidate is proved only with a placement of the reoriented footprint
+    # that avoids the exclusion, and the plan records that placement for the
+    # reoriented part exactly as for any placed part.
     source = tmp_path / 'side-box.3mf'
     _solid_source(source, {'1': _box_tris(0, 230, 0, 190, 0, 30),
                            '2': _box_tris(0, 150, 0, 150, 0, 10)}, [['1'], ['2']])
     rows = {row['object_id']: row for row in split_fit.per_part_fit(
         source, bed=220, height=250, exclusions=[(0, 0, 18, 28)])}
+    assert rows['1']['fits_full_size'] is True and rows['1']['reorientation'] is not None
+    assert rows['1']['reorientation']['dims_mm'] == [30.0, 190.0, 230.0]
+    # The 30 x 190 reoriented footprint lands flush against the exclusion's
+    # right edge, on the bed edge — the same spot the yaw path would choose.
+    assert rows['1']['placement_mm'] == [18.0, 8.0]
+    plan = split_fit.split_plan_100(source, bed=220, height=250,
+                                    exclusions=[(0, 0, 18, 28)])
+    assert plan is not None and sorted(plan['plates']) == [['1:1'], ['2:1']]
+    assert plan['reorientation_by_object']['1'] == rows['1']['reorientation']
+    assert plan['placement_by_object']['1'] == [18.0, 8.0]
+
+
+def test_exclusion_bed_reorientation_stays_blocking_without_a_placement(tmp_path):
+    # The other half of the R3 rule: when no placement of the reoriented
+    # footprint avoids the exclusion either, the part stays blocking and its
+    # reason names the exclusion — no offer the plan cannot land.
+    source = tmp_path / 'side-box.3mf'
+    _solid_source(source, {'1': _box_tris(0, 230, 0, 190, 0, 30),
+                           '2': _box_tris(0, 150, 0, 150, 0, 10)}, [['1'], ['2']])
+    rows = {row['object_id']: row for row in split_fit.per_part_fit(
+        source, bed=220, height=250, exclusions=[(0, 0, 200, 220)])}
     assert rows['1']['fits_full_size'] is False and rows['1']['reorientation'] is None
+    assert 'only reoriented' in rows['1']['blocking_reason']
+    assert 'exclusion' in rows['1']['blocking_reason']
     assert split_fit.split_plan_100(source, bed=220, height=250,
-                                    exclusions=[(0, 0, 18, 28)]) is None
+                                    exclusions=[(0, 0, 200, 220)]) is None
 
 
 def test_brim_budget_can_remove_the_reorientation_offer(tmp_path):
@@ -1154,7 +1187,7 @@ def test_slicing_refuses_unproved_shared_yaws(tmp_path, monkeypatch):
         # One transform record per object: a turn plus a reorientation.
         ({'plates': plates, 'yaw_by_object': {'1': 30.0},
           'shifts_by_plate': [good_shifts, None],
-          'reorientation_by_object': {'1': record}}, 'not that part alone'),
+          'reorientation_by_object': {'1': record}}, 'also records a turn'),
     ]
     for plan, match in bad_plans:
         job_path = _split_job(tmp_path, source, plan)
@@ -1185,3 +1218,274 @@ def test_exporter_refuses_a_per_object_fit_combined_with_a_whole_plate_fit(tmp_p
             source, tmp_path / 'out.3mf', {}, [],
             fit={'scale': 1.0, 'rotation': rotation},
             fit_by_object={'1': {'rotation': rotation}})
+
+
+# --- #221 R3: reorientation beyond solo plates ------------------------------
+# The frame fixture (210 x 190 x 40, fits only stood on its -X face at
+# 40 x 190, with supports) shares a plate with a 150 mm box when both are on
+# the same authored plate; before R3 the frame always went solo.
+
+def _reorientation_share_source(path):
+    _solid_source(path, {'1': _frame_tris(210, 190, 40, 80, 130, 60, 140),
+                         '2': _box_tris(0, 150, 0, 150, 0, 10),
+                         '3': _box_tris(0, 150, 0, 150, 0, 10)}, [['1', '2'], ['3']])
+
+
+def test_split_plan_reoriented_part_can_share_a_plate(tmp_path):
+    source = tmp_path / 'reorientation-share.3mf'
+    _reorientation_share_source(source)
+    plan = split_fit.split_plan_100(source, 220)
+    assert plan is not None
+    assert {frozenset(plate) for plate in plan['plates']} == \
+        {frozenset({'1:1', '2:1'}), frozenset({'3:1'})}
+    assert plan['reorientation_by_object']['1']['axis'] == '-X'
+    shifts = _shared_shifts(plan, {'1:1', '2:1'})
+    assert set(shifts) == {'1', '2'}
+    # The reoriented member's shift is measured from its reoriented bounds:
+    # its Z shift is the recorded face change's floor (+235 for the frame's
+    # authored placement), not its authored Z minimum (0).
+    assert shifts['1'][2] == 235.0 and shifts['2'][2] == 0.0
+    # One transform record per object: the shared member keeps its
+    # reorientation record and gains no yaw or placement entry.
+    assert '1' not in plan.get('yaw_by_object', {})
+    assert '1' not in plan.get('placement_by_object', {})
+
+
+def test_split_plan_prefers_a_shared_reorientation_over_solo_plates(tmp_path):
+    # Fit ranking (#221): a proved shared plate fits more parts per plate
+    # than the solo fallback, so it wins — this fixture's pre-R3 plan was
+    # three plates (frame solo reoriented, both boxes solo).
+    source = tmp_path / 'reorientation-share.3mf'
+    _reorientation_share_source(source)
+    plan = split_fit.split_plan_100(source, 220)
+    assert plan is not None and len(plan['plates']) == 2
+
+
+def test_split_plan_two_reoriented_parts_can_share_a_plate(tmp_path):
+    # Two identical 230 x 190 x 30 boxes each fit only stood on an end
+    # (30 x 190); reoriented together, their footprints pack onto one plate.
+    source = tmp_path / 'reorientation-pair.3mf'
+    _solid_source(source, {'1': _box_tris(0, 230, 0, 190, 0, 30),
+                           '2': _box_tris(0, 230, 0, 190, 0, 30),
+                           '3': _box_tris(0, 150, 0, 150, 0, 10)}, [['1', '2'], ['3']])
+    plan = split_fit.split_plan_100(source, bed=220, height=250)
+    assert plan is not None
+    assert {frozenset(plate) for plate in plan['plates']} == \
+        {frozenset({'1:1', '2:1'}), frozenset({'3:1'})}
+    assert set(plan['reorientation_by_object']) == {'1', '2'}
+    assert set(_shared_shifts(plan, {'1:1', '2:1'})) == {'1', '2'}
+
+
+def test_split_plan_reoriented_part_falls_back_to_solo_when_sharing_cannot_pack(tmp_path):
+    # A 190 mm box fills its bin too far for the frame's 40 x 190 reoriented
+    # footprint to join it, and no other reoriented part can pair with it:
+    # the frame keeps its R1 solo reoriented plate, with no shifts recorded.
+    source = tmp_path / 'reorientation-solo.3mf'
+    _solid_source(source, {'1': _frame_tris(210, 190, 40, 80, 130, 60, 140),
+                           '2': _box_tris(0, 190, 0, 190, 0, 10),
+                           '3': _box_tris(0, 150, 0, 150, 0, 10)}, [['1', '2'], ['3']])
+    plan = split_fit.split_plan_100(source, 220)
+    assert plan is not None
+    assert sorted(plan['plates']) == [['1:1'], ['2:1'], ['3:1']]
+    assert set(plan['reorientation_by_object']) == {'1'}
+    assert 'shifts_by_plate' not in plan
+
+
+def test_slicing_a_shared_reorientation_lands_at_the_recorded_rotation(tmp_path, monkeypatch):
+    import json
+
+    import pytest
+
+    from print_buddy.core import color_geometry, model_job, orca_adapter
+    from print_buddy.core.orca_adapter import _rotate
+    source = tmp_path / 'reorientation-share.3mf'
+    _reorientation_share_source(source)
+    plan = split_fit.split_plan_100(source, 220)
+    record = plan['reorientation_by_object']['1']
+    assert record['supports'] is True
+    job_path = _split_job(tmp_path, source, plan)
+    fake = _fake_slice_recording_supports()
+    monkeypatch.setattr(orca_adapter, 'slice_model', fake)
+    paths = model_job.slice_job(job_path)
+    assert len(paths) == 2 and len(fake.calls) == 2
+    saved = json.loads(job_path.read_text())
+    shared = next(row for row in saved['derived_plates']
+                  if set(row['part_keys']) == {'1:1', '2:1'})
+    assert shared['reorientation_by_object']['1']['axis'] == record['axis']
+    assert shared['reorientation_by_object']['1']['rotation'] == \
+        pytest.approx(record['rotation'])
+    assert set(shared['plate_report']['fit_by_object']) == {'1'}
+    assert shared['shifts_by_object'] == _shared_shifts(plan, {'1:1', '2:1'})
+    # The frame's recorded supports decision reaches the slicer for the
+    # shared plate (its only reoriented member needs supports); the other
+    # plate keeps today's default.
+    by_printable = {tuple(call['printable']): call['supports'] for call in fake.calls}
+    assert by_printable[('1', '2')] is True and by_printable[('3',)] is None
+    # Independent re-read: the frame landed at its rotated authored bounds
+    # plus its recorded shift; the box at its authored bounds plus its shift.
+    shifts = shared['shifts_by_object']
+    with zipfile.ZipFile(source) as archive:
+        authored_points = color_geometry._world_points(archive, {'1'})
+        authored_box = color_geometry._world_bounds(archive, {'2'})[0]
+    rotated = [_rotate(point, record['rotation']) for point in authored_points]
+    rotated_min = [min(p[a] for p in rotated) for a in range(3)]
+    rotated_extent = [max(p[a] for p in rotated) - rotated_min[a] for a in range(3)]
+    with zipfile.ZipFile(Path(shared['plate'])) as archive:
+        landed_frame = color_geometry._world_bounds(archive, {'1'})[0]
+        landed_box = color_geometry._world_bounds(archive, {'2'})[0]
+    for a in range(3):
+        assert landed_frame[a][0] == pytest.approx(rotated_min[a] + shifts['1'][a], abs=2e-3)
+        assert landed_frame[a][1] - landed_frame[a][0] == \
+            pytest.approx(rotated_extent[a], abs=2e-3)
+        assert landed_box[a][0] == pytest.approx(authored_box[a][0] + shifts['2'][a], abs=2e-3)
+
+
+def test_slicing_refuses_unproved_shared_reorientations(tmp_path, monkeypatch):
+    import pytest
+
+    from print_buddy.core import model_job, orca_adapter
+    from .test_plate_merge import _fake_slice
+    source = tmp_path / 'reorientation-share.3mf'
+    _reorientation_share_source(source)
+    plan = split_fit.split_plan_100(source, 220)
+    record = plan['reorientation_by_object']['1']
+    plates = [['1:1', '2:1'], ['3:1']]
+    good_shifts = {'1': [0.0, 0.0, 0.0], '2': [0.0, 0.0, 0.0]}
+    bad_plans = [
+        # A shared reorientation with no recorded shifts to realize it.
+        ({'plates': plates, 'reorientation_by_object': {'1': record}}, 'not that part alone'),
+        # Shifts that do not name exactly the plate's objects.
+        ({'plates': plates, 'reorientation_by_object': {'1': record},
+          'shifts_by_plate': [{'1': [0.0, 0.0, 0.0]}, None]}, 'do not name exactly'),
+        # A reorientation record for an unknown object, shared form.
+        ({'plates': plates, 'reorientation_by_object': {'9': record},
+          'shifts_by_plate': [good_shifts, None]}, 'unknown object'),
+    ]
+    for bad_plan, match in bad_plans:
+        job_path = _split_job(tmp_path, source, bad_plan)
+        monkeypatch.setattr(orca_adapter, 'slice_model', _fake_slice())
+        with pytest.raises((RuntimeError, ValueError), match=match):
+            model_job.slice_job(job_path)
+    # Swapped shifts: each object would land somewhere its recorded
+    # orientation was never proved for — refused at export or re-read.
+    index = next(i for i, plate in enumerate(plan['plates']) if set(plate) == {'1:1', '2:1'})
+    shifts = plan['shifts_by_plate'][index]
+    plan['shifts_by_plate'][index] = {'1': shifts['2'], '2': shifts['1']}
+    job_path = _split_job(tmp_path, source, plan)
+    monkeypatch.setattr(orca_adapter, 'slice_model', _fake_slice())
+    with pytest.raises(RuntimeError, match='(does not fit|did not land)'):
+        model_job.slice_job(job_path)
+
+
+def test_slicing_a_placed_reorientation_lands_at_the_recorded_placement(tmp_path, monkeypatch):
+    import json
+
+    import pytest
+
+    from print_buddy.core import model_job, orca_adapter
+    source = tmp_path / 'placed-frame.3mf'
+    _solid_source(source, {'1': _frame_tris(210, 190, 40, 80, 130, 60, 140),
+                           '2': _box_tris(0, 150, 0, 150, 0, 10)}, [['1'], ['2']])
+    plan = split_fit.split_plan_100(source, 220, exclusions=[(0, 0, 18, 28)])
+    assert plan is not None and plan['placement_by_object']['1'] == [18.0, 8.0]
+    record = plan['reorientation_by_object']['1']
+    job_path = _split_job(tmp_path, source, plan)
+    fake = _fake_slice_recording_supports()
+    monkeypatch.setattr(orca_adapter, 'slice_model', fake)
+    paths = model_job.slice_job(job_path)
+    assert len(paths) == 2 and len(fake.calls) == 2
+    saved = json.loads(job_path.read_text())
+    row = next(r for r in saved['derived_plates'] if r['part_keys'] == ['1:1'])
+    assert row['placement_mm'] == [18.0, 8.0] and row['reorientation']['axis'] == record['axis']
+    # One fit carries both the recorded rotation and the recorded placement,
+    # and the plate lands exactly there at the rotated extents.
+    fit = row['plate_report']['fit']
+    assert fit['rotation'] == pytest.approx(record['rotation'])
+    assert fit['placement_mm'] == [18.0, 8.0]
+    placed = row['plate_report']['placed_bounds_mm']
+    assert placed[0][0] == 18.0 and placed[1][0] == 8.0
+    assert placed[0][1] - placed[0][0] == pytest.approx(record['dims_mm'][0], abs=2e-3)
+    assert placed[1][1] - placed[1][0] == pytest.approx(record['dims_mm'][1], abs=2e-3)
+    # The recorded supports decision still reaches the slicer for this plate
+    # only; the placed authored plate keeps today's default.
+    by_printable = {tuple(call['printable']): call['supports'] for call in fake.calls}
+    assert by_printable[('1',)] is True and by_printable[('2',)] is None
+
+
+def test_split_plan_reoriented_part_can_share_with_a_turned_part(tmp_path):
+    # A turned part that settled for a solo yaw plate can still pair with a
+    # reoriented part on a fresh plate: the bar (205 x 20, fits only turned
+    # 45 degrees) and the thin frame (fits only stood on its -X face,
+    # 25 x 190) pack by their recorded-orientation hulls onto one plate.
+    source = tmp_path / 'mixed-share.3mf'
+    _solid_source(source, {'1': _box_tris(0, 205, 0, 20, 0, 10),
+                           '2': _frame_tris(210, 190, 25, 80, 130, 60, 140),
+                           '3': _box_tris(0, 150, 0, 150, 0, 10)}, [['1', '2'], ['3']])
+    plan = split_fit.split_plan_100(source, 220)
+    assert plan is not None
+    assert {frozenset(plate) for plate in plan['plates']} == \
+        {frozenset({'1:1', '2:1'}), frozenset({'3:1'})}
+    assert plan['yaw_by_object'] == {'1': 45.0}
+    assert set(plan['reorientation_by_object']) == {'2'}
+    assert set(_shared_shifts(plan, {'1:1', '2:1'})) == {'1', '2'}
+
+
+def test_slicing_a_mixed_turned_and_reoriented_plate(tmp_path, monkeypatch):
+    import json
+
+    from print_buddy.core import model_job, orca_adapter
+    source = tmp_path / 'mixed-share.3mf'
+    _solid_source(source, {'1': _box_tris(0, 205, 0, 20, 0, 10),
+                           '2': _frame_tris(210, 190, 25, 80, 130, 60, 140),
+                           '3': _box_tris(0, 150, 0, 150, 0, 10)}, [['1', '2'], ['3']])
+    plan = split_fit.split_plan_100(source, 220)
+    assert plan['reorientation_by_object']['2']['supports'] is True
+    job_path = _split_job(tmp_path, source, plan)
+    fake = _fake_slice_recording_supports()
+    monkeypatch.setattr(orca_adapter, 'slice_model', fake)
+    paths = model_job.slice_job(job_path)
+    assert len(paths) == 2 and len(fake.calls) == 2
+    saved = json.loads(job_path.read_text())
+    shared = next(row for row in saved['derived_plates']
+                  if set(row['part_keys']) == {'1:1', '2:1'})
+    # Both transform kinds are realized per object on the one plate, and
+    # the re-read proof inside slice_job has verified both landings.
+    assert shared['yaw_by_object'] == {'1': 45.0}
+    assert set(shared['reorientation_by_object']) == {'2'}
+    assert set(shared['plate_report']['fit_by_object']) == {'1', '2'}
+    by_printable = {tuple(call['printable']): call['supports'] for call in fake.calls}
+    assert by_printable[('1', '2')] is True and by_printable[('3',)] is None
+
+
+def test_slicing_a_shared_reorientation_without_supports_keeps_the_plate_default(tmp_path, monkeypatch):
+    # Two plain boxes fit only stood on an end (20 x 100 footprints, no
+    # supports measured) and join the authored 100 mm box's plate. Their
+    # records govern only themselves: with a non-reoriented member on the
+    # plate, the slicer keeps today's default for the plate — a co-tenant's
+    # no-supports record never takes supports away from a part that has no
+    # record of its own.
+    import json
+
+    from print_buddy.core import model_job, orca_adapter
+    source = tmp_path / 'shared-no-supports.3mf'
+    _solid_source(source, {'1': _box_tris(0, 210, 0, 100, 0, 20),
+                           '2': _box_tris(0, 210, 0, 100, 0, 20),
+                           '3': _box_tris(0, 100, 0, 100, 0, 10),
+                           '4': _box_tris(0, 150, 0, 150, 0, 10)}, [['1', '2', '3'], ['4']])
+    plan = split_fit.split_plan_100(source, 220)
+    assert plan is not None
+    assert {frozenset(plate) for plate in plan['plates']} == \
+        {frozenset({'1:1', '2:1', '3:1'}), frozenset({'4:1'})}
+    assert {oid: row['supports'] for oid, row in plan['reorientation_by_object'].items()} == \
+        {'1': False, '2': False}
+    job_path = _split_job(tmp_path, source, plan)
+    fake = _fake_slice_recording_supports()
+    monkeypatch.setattr(orca_adapter, 'slice_model', fake)
+    paths = model_job.slice_job(job_path)
+    assert len(paths) == 2 and len(fake.calls) == 2
+    by_printable = {tuple(call['printable']): call['supports'] for call in fake.calls}
+    assert by_printable[('1', '2', '3')] is None and by_printable[('4',)] is None
+    saved = json.loads(job_path.read_text())
+    shared = next(row for row in saved['derived_plates']
+                  if set(row['part_keys']) == {'1:1', '2:1', '3:1'})
+    assert set(shared['reorientation_by_object']) == {'1', '2'}

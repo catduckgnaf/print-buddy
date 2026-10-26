@@ -92,6 +92,11 @@ vision:
   model: gemini-latest
   roast_model: luna-latest
 visual_watch:
+  # Camera watchdog sensitivity, 1 (quietest) to 5 (most alerts). 3 is the original behavior.
+  # Periodic camera checks run every 1800, 1200, 900, 600 or 450 seconds for levels 1 to 5;
+  # a stall alerts after 8, 5, 3, 3 or 2 unchanged layers, and at levels 1-2 a vision "ok"
+  # cancels a stall alert. Spaghetti, detached, empty-bed, uncertain and failed checks alert
+  # at every level. The full table is in docs/PROJECT-REFERENCE.md (Camera stall sensitivity).
   sensitivity: 3
   enabled: true
 timelapse:

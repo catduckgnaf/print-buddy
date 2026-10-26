@@ -84,8 +84,8 @@ Schema, validation limits and TOML migration: [CONFIGURATION-YAML.md](CONFIGURAT
 | `listener.start_claim_ttl_s` | `PRINT_BUDDY__LISTENER__START_CLAIM_TTL_S` | `1800` | How long a start button stays claimed |
 | `vision.model` | `PRINT_BUDDY__VISION__MODEL` | `gemini-latest` | Model for camera checks |
 | `vision.roast_model` | `PRINT_BUDDY__VISION__ROAST_MODEL` | `luna-latest` | Model for the print-start roast |
-| `visual_watch.sensitivity` | `PRINT_BUDDY__VISUAL_WATCH__SENSITIVITY` | `3` | Stall alert sensitivity, 1 (quiet) to 5 |
-| `visual_watch.enabled` | `PRINT_BUDDY__VISUAL_WATCH__ENABLED` | `true` | Camera monitoring switch |
+| `visual_watch.sensitivity` | `PRINT_BUDDY__VISUAL_WATCH__SENSITIVITY` | `3` | Camera watchdog sensitivity, 1 (quietest) to 5 (most alerts); also sets the periodic check interval and stall threshold, see the [project reference](PROJECT-REFERENCE.md#camera-stall-sensitivity) |
+| `visual_watch.enabled` | `PRINT_BUDDY__VISUAL_WATCH__ENABLED` | `true` | Camera monitoring switch; the watchdog is alert-only and never controls the printer |
 | `timelapse.archive_host` | `PRINT_BUDDY__TIMELAPSE__ARCHIVE_HOST` | empty | SSH host for the timelapse archive; empty disables it |
 | `timelapse.archive_dir` | `PRINT_BUDDY__TIMELAPSE__ARCHIVE_DIR` | empty | Archive folder on that host |
 | `timelapse.ssh_key` | `PRINT_BUDDY__TIMELAPSE__SSH_KEY` | empty | Path of the SSH key in the container (mount it read-only) |

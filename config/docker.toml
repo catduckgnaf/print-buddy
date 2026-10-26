@@ -39,3 +39,12 @@ stock_api_port = 8898
 [printer]
 # Override with PRINT_BUDDY__PRINTER__MODEL=sovol.sv06 etc.
 model = "flashforge.ad5x"
+
+[visual_watch]
+# Camera watchdog: alert-only spaghetti, detached-part, empty-bed and stall checks
+# (docs/DOCKER.md "Camera watch"). Override with PRINT_BUDDY__VISUAL_WATCH__SENSITIVITY /
+# PRINT_BUDDY__VISUAL_WATCH__ENABLED. Sensitivity 1 (quietest) to 5 (most alerts);
+# 3 is the original behavior. Periodic checks run every 1800, 1200, 900, 600 or
+# 450 seconds for levels 1 to 5.
+sensitivity = 3
+enabled = true

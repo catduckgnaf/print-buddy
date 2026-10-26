@@ -102,7 +102,7 @@ class Gateway:
 
 class BotCore:
     def __init__(self, client, cfg=None, *, router=None, llm_opener=None, platform_name=None,
-                 adapter=None, chat_id=None):
+                 adapter=None, chat_id=None, use_llm=None):
         """Run the handlers against one platform adapter.
 
         With no ``adapter`` the adapter is built for ``platform_name`` (or
@@ -137,6 +137,10 @@ class BotCore:
         if client is not None and hasattr(client, "add_listener") and hasattr(self.adapter, "handle_click"):
             client.add_listener(self.on_interaction, "on_interaction")
         self.upload_dir = Path(self.cfg["paths"]["cache"]) / f"{self.platform_name}-uploads"
+        # Pure-bot platforms (the adapter reports uses_llm=False, Telegram in
+        # #164 stage 2) never reach the LLM fallback, even when [llm] is
+        # configured: their unmatched text gets the command list only (#73).
+        self.use_llm = bool(getattr(self.adapter, "uses_llm", True)) if use_llm is None else bool(use_llm)
         self.llm_opener = llm_opener
         self.bot_name = str(section.get("bot_name") or discord.get("bot_name") or "").strip() or "Print Buddy"
         self.help = commands.help_text(self.bot_name)
@@ -183,7 +187,7 @@ class BotCore:
         """No handler took it. With an LLM: a worded reply and maybe one allowed command. Else the help."""
         source = event.source
         metadata = {"thread_id": source.thread_id} if source.thread_id else None
-        if allow_llm and llm.configured(self.cfg):
+        if allow_llm and self.use_llm and llm.configured(self.cfg):
             try:
                 reply, command = await asyncio.to_thread(llm.ask, event.text, self.help, cfg=self.cfg,
                                                          opener=self.llm_opener)
@@ -256,8 +260,9 @@ class BotCore:
         from . import health
         user = getattr(self.client, "user", None)
         return {"mode": "standalone", "pid": os.getpid(), "started_at": self.started_at,
+                "platform": self.platform_name,
                 "heartbeat_at": time.time(), "connected": bool(connected),
                 "user": str(user) if user else None, "chat_id": self.chat_id,
                 "allowed_users": len(self.adapter.allowed), "handlers": len(self.router.dispatch_hooks),
-                "llm": llm.configured(self.cfg), "open_prompts": prompts.open_count(),
+                "llm": bool(self.use_llm and llm.configured(self.cfg)), "open_prompts": prompts.open_count(),
                 "hermes_modules": health.hermes_modules_loaded()}

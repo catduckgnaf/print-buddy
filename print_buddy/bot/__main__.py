@@ -1,6 +1,6 @@
 """python3 -m print_buddy.bot [run | check | health]
 
-run     start the standalone Discord bot (the default). Refuses unless [bot] mode is standalone.
+run     start the standalone bot on the [bot] platform (the default). Refuses unless [bot] mode is standalone.
 check   validate settings, token, channel, users and handlers offline. Exit 1 on a problem.
 health  exit 0 only while a running bot reports a fresh heartbeat with no Hermes loaded.
 """
@@ -26,7 +26,7 @@ def checks(cfg):
     name = str(cfg["bot"].get("platform") or "discord")
     implemented = platform.platform_module(name) is not None
     add("platform", implemented, name if implemented else
-        f"{name}; platform {name!r} is not implemented yet (#164) — only discord is available")
+        f"{name}; platform {name!r} is not implemented yet (#164) — discord and telegram are available")
     if name == "discord":
         token_env = cfg["discord"]["token_env"]
         add("token", bool(_config.discord_token()), f"${token_env} is set" if _config.discord_token()
@@ -36,6 +36,17 @@ def checks(cfg):
         users = allowed_users(cfg)
         add("allowed users", bool(users), f"{len(users)} user(s)" if users
             else "none: set discord.allowed_user_ids (or approval_user_id); everyone is refused")
+    elif name == "telegram":
+        from .telegram import telegram_token
+        token_env = cfg["telegram"]["token_env"]
+        add("token", bool(telegram_token(cfg)), f"${token_env} is set" if telegram_token(cfg)
+            else f"${token_env} is empty; put the Telegram bot token in that environment variable")
+        chat = str(cfg["telegram"]["chat_id"] or "")
+        add("print channel", bool(chat) and chat.lstrip("-").isdigit() and chat != "-",
+            chat or "telegram.chat_id is empty")
+        users = allowed_users(cfg, "telegram")
+        add("allowed users", bool(users), f"{len(users)} user(s)" if users
+            else "none: set telegram.allowed_user_ids (or approval_user_id); everyone is refused")
     label, available, detail = platform.library_status(name)
     add(label, available, detail)
     try:
@@ -55,8 +66,13 @@ def checks(cfg):
         add("state dir", True, str(state))
     except OSError as exc:
         add("state dir", False, f"not writable: {exc}")
-    add("llm", True, f"{cfg['llm']['model']} at {cfg['llm']['chat_url']}" if llm.configured(cfg)
-        else "off (unmatched messages get the command list)")
+    if name == "telegram":
+        # Telegram is a pure bot (#164 stage 2, #73): the LLM fallback is
+        # never wired for it, whatever [llm] says for other platforms.
+        add("llm", True, "off (Telegram is a pure bot: no LLM; unmatched messages get the command list)")
+    else:
+        add("llm", True, f"{cfg['llm']['model']} at {cfg['llm']['chat_url']}" if llm.configured(cfg)
+            else "off (unmatched messages get the command list)")
     return rows
 
 
@@ -81,11 +97,14 @@ def run():
         return 2
     cfg = settings.current()
     name = str(cfg["bot"].get("platform") or "discord")
-    if name != "discord":  # unreachable while checks report it, kept as a guard
-        print(f"Platform {name!r} is not implemented yet (#164).", file=sys.stderr)
-        return 2
-    from .client import run_bot
-    return run_bot(cfg)
+    if name == "discord":
+        from .client import run_bot
+        return run_bot(cfg)
+    if name == "telegram":
+        from .telegram import run_bot
+        return run_bot(cfg)
+    print(f"Platform {name!r} is not implemented yet (#164).", file=sys.stderr)  # unreachable while checks report it, kept as a guard
+    return 2
 
 
 def main(argv):

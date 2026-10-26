@@ -322,6 +322,51 @@ def _validate_telegram(data):
     telegram["upload_max_bytes"] = _positive(data, "telegram", "upload_max_bytes", int)
 
 
+MATRIX_ID = r"@[A-Za-z0-9._=+/\-]+:[A-Za-z0-9.\-]+(?::[0-9]+)?"
+
+
+def matrix_user_ids(value, section="matrix"):
+    """Matrix user IDs from a comma or space separated string of full @user:server IDs."""
+    ids = [part for part in re.split(r"[\s,]+", str(value or "").strip()) if part]
+    for part in ids:
+        if not re.fullmatch(MATRIX_ID, part):
+            raise SettingsError(f"[{section}] allowed_user_ids must be full Matrix user IDs "
+                                f"like '@name:matrix.org', got {part!r}")
+    return ids
+
+
+def _validate_matrix(data):
+    """The [matrix] section (#164 stage 3). Absent in an older config means the defaults.
+
+    Matrix user IDs are full ``@user:server`` IDs, not numbers, and a room ID
+    starts with ``!``. The access token itself is never a setting:
+    access_token_env names the environment variable holding it, the same
+    indirection as [discord] token_env.
+    """
+    matrix = data.setdefault("matrix", {})
+    url = str(matrix.setdefault("homeserver_url", "") or "").strip().rstrip("/")
+    if url and not url.startswith(("http://", "https://")):
+        raise SettingsError(f"[matrix] homeserver_url must be an http(s) URL, got {url!r}")
+    matrix["homeserver_url"] = url
+    matrix.setdefault("access_token_env", "MATRIX_ACCESS_TOKEN")
+    if not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", str(matrix["access_token_env"])):
+        raise SettingsError(f"[matrix] access_token_env must be an environment variable name, "
+                            f"got {matrix['access_token_env']!r}")
+    room = str(matrix.setdefault("room_id", "") or "").strip()
+    if room and not room.startswith("!"):
+        raise SettingsError(f"[matrix] room_id must be a Matrix room ID starting with '!', got {room!r}")
+    matrix["room_id"] = room
+    matrix_user_ids(matrix.setdefault("allowed_user_ids", ""))
+    for key in ("approval_user_id", "bot_user_id"):
+        value = str(matrix.setdefault(key, "") or "").strip()
+        if value and not re.fullmatch(MATRIX_ID, value):
+            raise SettingsError(f"[matrix] {key} must be a full Matrix user ID like "
+                                f"'@name:matrix.org', got {value!r}")
+        matrix[key] = value
+    matrix.setdefault("upload_max_bytes", 50_000_000)
+    matrix["upload_max_bytes"] = _positive(data, "matrix", "upload_max_bytes", int)
+
+
 def _validate_logging(data):
     """The [logging] section (#150). Absent in a hand-made home file means the defaults."""
     logging_cfg = data.setdefault("logging", {})
@@ -364,6 +409,7 @@ def _validate_bot(data):
         raise SettingsError(f"[discord] token_env must be an environment variable name, got {discord['token_env']!r}")
     user_ids(discord.setdefault("allowed_user_ids", ""))
     _validate_telegram(data)
+    _validate_matrix(data)
     llm = data.setdefault("llm", {})
     for key, default in (("chat_url", ""), ("model", ""), ("api_key_env", "LLM_API_KEY")):
         llm.setdefault(key, default)

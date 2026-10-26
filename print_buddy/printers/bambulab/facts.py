@@ -193,8 +193,8 @@ P1S = {
 # moves in the flattened vendor start/end/timelapse/change-filament blocks, widened to cover the
 # bed. Dual-nozzle models (H2D, H2D Pro, X2D) are in the Stage 2 section below (#308): their
 # machine profiles carry two nozzle_diameter entries, handled by the extruder-aware identity and
-# guard checks. H2C is not here: it has no profile at all in the pinned OrcaSlicer 2.4.2 BBL index
-# (checked 2026-10-26), so no checked identity can be established for it; see #308.
+# guard checks. The H2C is not here either: it arrived with OrcaSlicer v2.5.0-alpha, so it is
+# registered with the A2L in the #356 section at the end of this file.
 
 _IDENTITY_LABEL = "OrcaSlicer 2.4.2 (BBL vendor profiles 02.01.00.19)"
 
@@ -533,4 +533,111 @@ X2D = {
     "ams": Fact(("AMS 2 Pro", 4), "BAMBU", False),
     "enclosed": Fact(True, "BAMBU", False),
     "extruders": Fact(2, "ORCA", True),
+}
+
+
+# --- #356: the H2C and A2L ---------------------------------------------------------------
+# These two models exist only in OrcaSlicer v2.5.0-alpha's BBL index (02.08.00.15) — there is
+# no 2.4.2 identity for them. Same derivation as the other models: identities computed by
+# running profiles.flatten + profiles.sha256 over the alpha tree and its packed preset cache.
+# Motion envelopes are DERIVED the A1 way from the flattened vendor blocks' literal XY
+# extremes, widened to cover the bed (the method reproduces the recorded A1/H2D/H2S envelopes
+# exactly). Temperatures, nozzle sizes, materials, AMS and enclosure are Bambu's published
+# specs (store/blog pages, read from search-result extracts 2026-10-26; unverified against
+# bambulab.com directly, like the other models' BAMBU facts).
+
+H2C = {
+    "printer_model": Fact("Bambu Lab H2C", "ORCA", True),
+    "orca_profiles": Fact({"machine": "Bambu Lab H2C 0.4 nozzle", "process": "0.20mm Standard @BBL H2C",
+                           "filament": "Bambu PLA Basic @BBL H2C"}, "ORCA", True),
+    # One checked vendor filament profile per base polymer (#264), as on the H2D. PLA is the
+    # default profile above. Upstream's unsuffixed Generic H2C profiles cover the 0.6/0.8
+    # nozzles only; the 0.4 nozzle has its own variants (the X2D pattern), which are these.
+    "orca_filaments": Fact({"PLA": "Bambu PLA Basic @BBL H2C", "PETG": "Generic PETG @BBL H2C 0.4 nozzle",
+                            "TPU": "Generic TPU @BBL H2C 0.4 nozzle", "PVA": "Generic PVA @BBL H2C 0.4 nozzle"}, "ORCA", True),
+    "orca_identity": Fact(({
+        "label": _IDENTITY_LABEL_25A,
+        "vendor_version": "02.08.00.15",
+        "sha256": {"machine": "405faf64d1ff9406a378cc8c4b0740d7ca0d798a1f09b940a754b1ab6c5db264",
+                   "process": "947c68de98aed246c4a892b606a5d8e40ffa7d03626c0a9745b95ce8ea19b3b5",
+                   "filament": "d53f3a5be35ae45ae26403cdc042f97b100d4fc9f72d4d16ee086f649c4ea026"},
+        "filaments": {"Generic PETG @BBL H2C 0.4 nozzle": "36dbad1ec60a775cf589fc6432527cdfee05b6886cdbe6eea624a0fb21ab479c",
+                      "Generic TPU @BBL H2C 0.4 nozzle": "7fe7c81c22d3f44eba82a8cdf9e0b78b43d7a168e781dd6c4b0fda5c1c23e42a",
+                      "Generic PVA @BBL H2C 0.4 nozzle": "96da27366756213ec43d9aca8f19d5658ec0206c2ea8ba52a91c91e6a5f4478b"},
+    }, {
+        "label": _IDENTITY_LABEL_25A_PACKED,
+        "vendor_version": "02.08.00.15",
+        "sha256": {"machine": "100bca9cbfa3cdbb7b076f607e1c511410c71b29de53265f4ab66b953fc7df9d",
+                   "process": "5d9588c952d23fab29c2bd4dbdf0a488de1abd30670facffaf22866d962360d0",
+                   "filament": "6c035e64cb3044adc392d0d982b363412ac5596bfe7529cdcb537f6892c33d22"},
+        "filaments": {"Generic PETG @BBL H2C 0.4 nozzle": "62824703c5abe70a5d45632c72eadb1d4c936b40f4370e8e379649ca758cdc09",
+                      "Generic PVA @BBL H2C 0.4 nozzle": "3a900f27d846edf1bdd5655b12133dd44d181543a29e28fed62a7157d880f127",
+                      "Generic TPU @BBL H2C 0.4 nozzle": "d8af6ae7686f2c851cc8e1567aa2025d5294a26bbef811421658edea9edc64eb"},
+    }), "ORCA", True),
+    "bed_mm": Fact((330.0, 320.0), "ORCA", True),
+    "max_print_height_mm": Fact(325.0, "ORCA", True),
+    "bed_exclude_area": Fact((), "ORCA", True),
+    "motion_envelope_mm": Fact((0.0, -16.0, 330.0, 320.0), "DERIVED", False),
+    "travel_z_headroom_mm": Fact(1.0, "DERIVED", False),
+    "default_plate": Fact("Textured PEI Plate", "ORCA", True),
+    "stock_nozzle": Fact((0.4, "hardened_steel"), "ORCA", True),
+    "nozzle_sizes_mm": Fact((0.2, 0.4, 0.6, 0.8), "BAMBU", False),
+    "max_hotend_c": Fact(350, "BAMBU", False),
+    "max_bed_c": Fact(120, "BAMBU", False),
+    "ideal_materials": Fact(("PLA", "PETG", "TPU", "ABS", "ASA", "PC", "PA"), "BAMBU", False),
+    "not_recommended_materials": Fact((), "BAMBU", False),
+    # AMS 2 Pro on the combo unit; Print Buddy drives a single path only.
+    "ams": Fact(("AMS 2 Pro", 4), "BAMBU", False),
+    "enclosed": Fact(True, "BAMBU", False),
+    # The H2C is a dual-nozzle model: its machine profile carries two nozzle_diameter entries.
+    "extruders": Fact(2, "ORCA", True),
+}
+
+A2L = {
+    "printer_model": Fact("Bambu Lab A2L", "ORCA", True),
+    "orca_profiles": Fact({"machine": "Bambu Lab A2L 0.4 nozzle", "process": "0.20mm Standard @BBL A2L",
+                           "filament": "Bambu PLA Basic @BBL A2L 0.4 nozzle"}, "ORCA", True),
+    # One checked vendor filament profile per base polymer (#264), as on the A1. PLA is the
+    # default profile above.
+    "orca_filaments": Fact({"PLA": "Bambu PLA Basic @BBL A2L 0.4 nozzle", "PETG": "Generic PETG @BBL A2L",
+                            "TPU": "Generic TPU @BBL A2L", "PVA": "Generic PVA @BBL A2L"}, "ORCA", True),
+    "orca_identity": Fact(({
+        "label": _IDENTITY_LABEL_25A,
+        "vendor_version": "02.08.00.15",
+        "sha256": {"machine": "e222c487abe7f8d5adc007d974dd1c7c850c24c8837d811c05ee19efe81cd892",
+                   "process": "ba8c077fca0c56fdcd6e04d2483522b25675ffdae60143d7f582bd8255e6758d",
+                   "filament": "363699a477dc236c5b38db80327dbe970aadc1dfa0a4f6e97d16f6b451af7890"},
+        "filaments": {"Generic PETG @BBL A2L": "476a7ed35e7fb2e59a9268cb73d67a3bb104add0706fc51d02ba0fd52ae4fff2",
+                      "Generic TPU @BBL A2L": "246c29130ab6b8dfbfffd9d7fa843ce55554cbaa05fb2e52665c35dc612201d9",
+                      "Generic PVA @BBL A2L": "b62bba232f0cd9679033bf8750ee92e5e1d7abcf12d13bfeb0715efcf46b4f05"},
+    }, {
+        "label": _IDENTITY_LABEL_25A_PACKED,
+        "vendor_version": "02.08.00.15",
+        "sha256": {"machine": "41625a52ffdbae16666c7cc768857267dbf4f1f0922cff991f107baf01def1af",
+                   "process": "d80799664eb252664bb49a27562d934524c3123dffbaf4de4e6dd56c9c990d46",
+                   "filament": "40051ec9d3d2e30ec02a15944d5c7f0f07383ce444f4d05591e009a0d17e7bf8"},
+        "filaments": {"Generic PETG @BBL A2L": "ae3cc62a13b141407efb39a4b3bf7b2ec218190bf392269257923db853b39c03",
+                      "Generic PVA @BBL A2L": "321ba79c4e66d26a3e94d8d3c8418a713c1d508f1928319a8b8c9b25e5e5657a",
+                      "Generic TPU @BBL A2L": "ea0187f0b785b7555538d79c1db05f137ef485bcdc52308e48cb4fbf9db9c891"},
+    }), "ORCA", True),
+    # The A2L is the large-format A-series bed-slinger: 330 x 320 mm bed, 325 mm height, and —
+    # as its machine profile declares — a single 0.4 nozzle (nozzle_diameter has one entry).
+    "bed_mm": Fact((330.0, 320.0), "ORCA", True),
+    "max_print_height_mm": Fact(325.0, "ORCA", True),
+    "bed_exclude_area": Fact((), "ORCA", True),
+    "motion_envelope_mm": Fact((-20.0, -10.0, 330.0, 320.0), "DERIVED", False),
+    "travel_z_headroom_mm": Fact(1.0, "DERIVED", False),
+    "default_plate": Fact("Textured PEI Plate", "ORCA", True),
+    "stock_nozzle": Fact((0.4, "stainless_steel"), "ORCA", True),
+    "nozzle_sizes_mm": Fact((0.2, 0.4, 0.6, 0.8), "BAMBU", False),
+    "max_hotend_c": Fact(300, "BAMBU", False),
+    "max_bed_c": Fact(80, "BAMBU", False),
+    # Bambu lists PLA, PETG, TPU and support materials as ideal for the open-frame A2L; the
+    # high-temperature materials are not recommended (as on the A1).
+    "ideal_materials": Fact(("PLA", "PETG", "TPU", "PVA"), "BAMBU", False),
+    "not_recommended_materials": Fact(("ABS", "ASA", "PC", "PA", "PET"), "BAMBU", False),
+    # AMS Lite, as on the A1; not driven by Print Buddy.
+    "ams": Fact(("AMS Lite", 4), "BAMBU", False),
+    # Open frame.
+    "enclosed": Fact(False, "BAMBU", False),
 }

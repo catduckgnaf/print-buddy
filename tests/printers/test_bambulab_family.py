@@ -2,9 +2,12 @@
 
 Every model shares the bambulab vendor and LAN client; what is per-model is its facts,
 its pinned OrcaSlicer identity, and its MODEL. These tests pin all three offline: the
-recorded identities are the real OrcaSlicer 2.4.2 hashes (computed with profiles.flatten
-over the pinned release; the pipeline reproduces A1/P1S exactly), while profile install
+recorded identities are the real OrcaSlicer hashes (computed with profiles.flatten over
+the pinned releases; the pipeline reproduces A1/P1S exactly), while profile install
 and the guard are exercised against invented fixture resources, as for the P1S.
+
+The #356 section at the bottom covers the H2C and A2L, which exist only in OrcaSlicer
+v2.5.0-alpha and so record only that release's two packaging identities.
 """
 import json
 import re
@@ -133,7 +136,77 @@ def test_lan_unconfigured_by_default_and_status_normalizes(key):
 def test_model_set_is_stage1_plus_the_registered_dual_nozzle_models():
     bambu = {k for k in printers.MODELS if k.startswith("bambulab.")}
     assert bambu == {"bambulab.a1", "bambulab.p1s"} | set(MODELS) | {"bambulab.h2d", "bambulab.h2dpro",
-                                                                     "bambulab.x2d"}
-    # H2C and A2L stay absent (#308): neither has a profile in the pinned OrcaSlicer
-    # 2.4.2 BBL index, so no checked identity can be established for them.
-    assert not ({"bambulab.h2c", "bambulab.a2l"} & bambu)
+                                                                     "bambulab.x2d"} | set(MODELS_356)
+
+
+# --- #356: H2C and A2L (OrcaSlicer v2.5.0-alpha only) ---------------------------------------------
+
+MODELS_356 = {
+    "bambulab.h2c": ("H2C", "bambulab_h2c"),
+    "bambulab.a2l": ("A2L", "bambulab_a2l"),
+}
+
+
+def facts_356(key):
+    return getattr(facts, MODELS_356[key][0])
+
+
+@pytest.mark.parametrize("key", sorted(MODELS_356))
+def test_356_model_registration_and_defaults(key):
+    model = printers.MODELS[key]
+    assert model.vendor is VENDOR and model.templates == MODELS_356[key][1]
+    assert model.generated_templates is True
+    assert model.baseline == f"protected-settings-baseline.{key}.json"
+    a = adapter_for(key)
+    assert isinstance(a, BambuAdapter)
+    assert (a.connection, a.slot_count, a.multi_slot) == ("bambulab_lan", 1, False)
+    f = facts_356(key)
+    assert a.build_volume().bed_mm == tuple(float(v) for v in f["bed_mm"].value)
+
+
+@pytest.mark.parametrize("key", sorted(MODELS_356))
+def test_356_recorded_identity_is_a_real_pin(key):
+    f = facts_356(key)
+    entries = f["orca_identity"].value
+    # No 2.4.2 identity exists for these models: v2.5.0-alpha's tree and packed cache only.
+    assert [known["vendor_version"] for known in entries] == ["02.08.00.15", "02.08.00.15"]
+    assert "packed cache" in entries[1]["label"] and "packed" not in entries[0]["label"]
+    for known in entries:
+        assert set(known["sha256"]) == {"machine", "process", "filament"}
+        assert set(known["filaments"]) == set(f["orca_filaments"].value.values()) - {f["orca_profiles"].value["filament"]}
+        for digest in list(known["sha256"].values()) + list(known["filaments"].values()):
+            assert re.fullmatch(r"[0-9a-f]{64}", digest)
+    names = f["orca_profiles"].value
+    assert names["machine"] == f"{f['printer_model'].value} 0.4 nozzle"
+    assert all(fixture.identity(f)["sha256"] != known["sha256"] for known in entries)
+
+
+@pytest.mark.parametrize("key", sorted(MODELS_356))
+def test_356_fixture_profile_install_and_guard(key, monkeypatch):
+    f = facts_356(key)
+    a = adapter_for(key)
+    fixture.trust(type(a), f, monkeypatch.setattr)
+    folder = fixture.install(a, f)
+    assert profiles.problems(a) == []
+    machine = json.loads((folder / "machine.json").read_text())
+    assert machine["printer_model"] == f["printer_model"].value
+    start = a.machine_start_gcode(machine["machine_start_gcode"])
+    assert start == machine["machine_start_gcode"]
+    with pytest.raises(ForeignStartCode):
+        a.machine_start_gcode("PRINT_START BED=60\n")
+
+
+@pytest.mark.parametrize("key", sorted(MODELS_356))
+def test_356_motion_envelope_covers_bed(key):
+    f = facts_356(key)
+    xmin, ymin, xmax, ymax = f["motion_envelope_mm"].value
+    (w, d) = f["bed_mm"].value
+    assert xmin <= 0 and ymin <= 0 and xmax >= w and ymax >= d
+
+
+def test_h2c_is_dual_and_a2l_is_single():
+    # The profiles say so: H2C's nozzle_diameter has two entries, A2L's one (#356) -
+    # the A2L is registered exactly as its profile declares, not as a dual.
+    assert adapter_for("bambulab.h2c").extruder_count() == 2
+    assert adapter_for("bambulab.a2l").extruder_count() == 1
+    assert "extruders" not in facts_356("bambulab.a2l")

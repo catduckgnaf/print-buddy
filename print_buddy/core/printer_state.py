@@ -126,7 +126,8 @@ def _material_temperature_contract(state):
 
 def load():
     with open(STATE) as f:
-        return json.load(f)
+        state = json.load(f)
+    return state
 
 
 def save(st):
@@ -232,7 +233,7 @@ def offset_authority_problems(st, variables, native):
 
 
 def _check_spoolman(st, probs, facts):
-    """The recorded spool against its Spoolman record; failures are appended to probs."""
+    """Enrich facts from Spoolman when available; accounting lookup is warning-only."""
     try:
         sp = _get(f"{st['spoolman_url']}/api/v1/spool/{st['spool']['spoolman_id']}")
         facts["spool_name"] = sp["filament"]["name"]
@@ -243,7 +244,7 @@ def _check_spoolman(st, probs, facts):
         if sp["filament"]["name"] != st["spool"]["name"]:
             probs.append(f"Spoolman #{sp['id']} is '{sp['filament']['name']}', state says '{st['spool']['name']}'")
     except Exception as e:
-        probs.append(f"Spoolman lookup failed: {e}")
+        facts.setdefault("warnings", []).append(f"Spoolman lookup failed: {e}")
 
 
 def check(st=None):
@@ -305,7 +306,7 @@ def check(st=None):
         if facts["moonraker_active_spool"] != st["spool"]["spoolman_id"]:
             facts["active_spool_mismatch"] = f"Moonraker active spool {facts['moonraker_active_spool']} != state #{st['spool']['spoolman_id']}"
     except Exception as e:
-        probs.append(f"Moonraker spoolman status failed: {e}")
+        facts.setdefault("warnings", []).append(f"Moonraker active spool lookup failed: {e}")
     _check_spoolman(st, probs, facts)
     try:
         if not native:

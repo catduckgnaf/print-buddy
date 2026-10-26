@@ -12,6 +12,12 @@ No secret ever appears here. A secret *value* is never a setting, and no
 ``*_env`` key (which only names the environment variable holding a secret)
 is editable through the catalog either.
 
+Per-printer fields are deliberately absent (#337, stage 2e decision): the
+catalog addresses global fields only in v1 — a ``[[printers]]`` roster is
+declared in the config file or through the setup surfaces, and the status
+page shows it read-only. Per-printer catalog addressing is a future stage's
+decision, not this one's; see docs/WEBUI.md.
+
 Settings are read once at process start (``settings.current()`` is
 cached), so every field is honestly marked ``restart_required``.
 """

@@ -33,6 +33,8 @@ The status page reports:
 - the other configured service URLs; and
 - the doctor checks as rows, each with an `ok`, `skip`, `fail`, or `warn` status and its detail.
 
+With a multi-printer roster configured, the status page also lists the roster read-only — each printer's id, name, model, connection, channel and endpoint — and `/api/status` carries the same rows under `printers`. **Stage 2e decision (#337): the roster is not editable here.** The field catalog addresses global fields only in this version, so per-printer changes stay where the roster is declared: the config file, the CLI setup wizard, or the guided setup's review step. A per-printer addressing scheme for the catalog is a future stage's decision, deliberately not pre-empted by this one.
+
 The Web UI doctor rows reuse the local doctor checks — settings, printer model, Orca templates, core modules, hardware record, Orca CLI, configured Moonraker and Spoolman services, bot mode, and stray state files. Two command-line doctor checks are deliberately not run by the page: Discord login and the shared-token comparison. Both need the bot token, and the login check can make a live network call; run `python3 -m print_buddy.doctor` when you want those checks.
 
 `/healthz` is narrower than the status page. It evaluates the bot heartbeat only: a `503` can mean the bot heartbeat is missing or stale while the Web UI itself is still serving. The Docker healthcheck therefore treats either a `200` or a `503` answer from `/healthz` as proof that the Web UI is serving, while the separate bot row owns the heartbeat verdict. An unreachable Web UI, an unresolved configuration, or any other HTTP status makes the Web UI healthcheck row fail.
@@ -188,7 +190,7 @@ If the selected settings file is a legacy TOML file, the Web UI refuses to rewri
 - It cannot control a printer: no print, pause, resume, cancel, movement, heating, macro, or job-management actions.
 - It cannot display, accept, or write secret values. Bot tokens, API keys, passwords, access codes and the Web UI token itself stay in the environment. Settings that merely name an environment variable, such as `webui.access_token_env`, are not picker fields.
 - It cannot edit the environment, the home configuration, or any layer other than the selected settings file.
-- It cannot edit settings outside the catalog. File-only tables and lists such as `material_temps` and `nozzle_temp_offsets` remain YAML/TOML edits; `delivery.methods` is in the catalog because it has a vendor-defined picker.
+- It cannot edit settings outside the catalog. File-only tables and lists such as `material_temps`, `nozzle_temp_offsets` and the `[[printers]]` roster remain YAML/TOML edits (or the setup wizard / guided setup for the roster); `delivery.methods` is in the catalog because it has a vendor-defined picker.
 - It does not replace Discord, Telegram, Matrix, or the CLI setup wizard. Those surfaces and the Web UI work over the same settings; see [guided setup and debugging](GUIDED-SETUP-DEBUGGING.md) and [YAML configuration](CONFIGURATION-YAML.md).
 - The timelapse archive `ssh_key` field is only a filesystem path. It never contains or uploads private-key contents.
 

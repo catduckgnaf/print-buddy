@@ -9,6 +9,15 @@ config/local.yaml (existing keys always win; you see a diff first) and the secre
 
 Menus come from the printer registry, so a new printer model shows up here without editing this file.
 Every question can be answered ahead of time with --answers (YAML or KEY=value) for an unattended install.
+
+More than one printer (#337): after the first printer the wizard asks "Add another printer?"
+(answers keys add_printer_2, add_printer_3, ...). Saying yes asks the first printer's id and own
+channel (printer1_id, printer1_chat_id) and then, per added printer, the same brand/model and
+connection questions with p2_/p3_-prefixed answer keys (p2_brand, p2_model, p2_lan_host, ...),
+its id (p2_id) and its own channel (p2_chat_id; empty means the main print channel). Two or more
+printers write a [[printers]] roster instead of the legacy single-printer sections. And an
+existing config file is only ever rewritten when it parses and re-emits faithfully — a file the
+wizard cannot round-trip is left byte-for-byte unchanged with instructions (see merge_config).
 """
 from __future__ import annotations
 
@@ -232,11 +241,15 @@ def registry():
     return printers.VENDORS, printers.MODELS
 
 
-def choose_printer(w):
-    """Brand, then model (or Other / generic). Returns (model key, printer overrides, display name)."""
+def choose_printer(w, prefix=""):
+    """Brand, then model (or Other / generic). Returns (model key, printer overrides, display name).
+
+    ``prefix`` namespaces the answer keys ("" for the first printer, "p2_" for the
+    second, and so on) so an answers file can describe every printer in the
+    add-a-printer loop without the answers colliding."""
     vendors, models = registry()
     brands = list(vendors) + [OTHER]
-    brand = w.menu("brand", "Printer brand:", brands, brands[0],
+    brand = w.menu(prefix + "brand", "Printer brand:", brands, brands[0],
                    [vendors[k].label for k in vendors] + ["Other / generic"])
     generic = brand == OTHER
     if not generic:
@@ -244,7 +257,7 @@ def choose_printer(w):
         options = keys + [OTHER]
         labels = [getattr(models[k], "label", "") or models[k].key.split(".", 1)[1].upper() for k in keys]
         labels.append(f"Other / generic {vendors[brand].label}")
-        picked = w.menu("model", f"{vendors[brand].label} model:", options, keys[0] if keys else OTHER, labels)
+        picked = w.menu(prefix + "model", f"{vendors[brand].label} model:", options, keys[0] if keys else OTHER, labels)
         generic = picked == OTHER
         if not generic:
             model = models[picked]
@@ -254,22 +267,48 @@ def choose_printer(w):
     # Other / generic: pick the firmware family, then describe the machine.
     families = [("klipper", "klipper.generic"), ("octoprint", "octoprint.marlin"), ("bambulab", "bambulab.a1")]
     families = [(f, m) for f, m in families if m in models]
-    family = w.menu("firmware", "Printer firmware:", [f for f, _ in families], families[0][0],
+    family = w.menu(prefix + "firmware", "Printer firmware:", [f for f, _ in families], families[0][0],
                     ["Klipper (Moonraker)", "Marlin with OctoPrint", "Bambu Lab (offline: slice and check only)"][:len(families)])
     key = dict(families)[family]
-    name = w.ask("printer_name", "Printer name (for messages)",
+    name = w.ask(prefix + "printer_name", "Printer name (for messages)",
                  vendors[brand].label + " printer" if brand != OTHER else "My printer")
     defaults = models[key].defaults()["printer"]
-    x = float(w.ask("bed_x", "Bed size X (mm)", f"{defaults['bed_mm'][0]:g}", _positive))
-    y = float(w.ask("bed_y", "Bed size Y (mm)", f"{defaults['bed_mm'][1]:g}", _positive))
-    z = float(w.ask("bed_z", "Max print height (mm)", f"{defaults['max_print_height_mm']:g}", _positive))
+    x = float(w.ask(prefix + "bed_x", "Bed size X (mm)", f"{defaults['bed_mm'][0]:g}", _positive))
+    y = float(w.ask(prefix + "bed_y", "Bed size Y (mm)", f"{defaults['bed_mm'][1]:g}", _positive))
+    z = float(w.ask(prefix + "bed_z", "Max print height (mm)", f"{defaults['max_print_height_mm']:g}", _positive))
     return key, {"bed_mm": [x, y], "max_print_height_mm": z, "name": name}, name
 
 
-def build_plan(w, *, hermes_found=False, existing_profiles=()):
-    """Ask every question. Returns a plan dict; nothing is written or run here."""
+def _slug_id(name):
+    """The roster id a display name suggests: the settings loader's own slug rule."""
+    slug = re.sub(r"[^a-z0-9_-]+", "-", str(name or "").lower()).strip("-_")
+    return slug or "printer"
+
+
+def _printer_id_error(value, taken):
+    """Validate a roster id against the settings rule (settings.PRINTER_ID) plus uniqueness."""
+    if not re.fullmatch(r"[a-z0-9][a-z0-9_-]*", value or ""):
+        return "printer ids are slugs: lowercase letters, digits, - or _, starting with a letter or digit"
+    if value in taken:
+        return f"printer id {value!r} is already used by another printer in this setup"
+    return None
+
+
+def _ids_or_empty(value):
+    if not str(value or "").strip():
+        return None
+    return _ids(value)
+
+
+def _ask_printer(w, prefix="", roster=False):
+    """One printer's questions: identity, connection, nozzle (and, for the first
+    printer, filament and slicer). Returns a record dict; the global questions
+    (Spoolman, Discord, Hermes) live in build_plan. ``roster`` is set for printers
+    after the first in the add-a-printer loop: only what a [[printers]] entry can
+    express is asked (model, connection, nozzle type) — nozzle size, slicer and
+    main filament are model defaults there, not roster keys."""
     vendors, models = registry()
-    key, printer, display = choose_printer(w)
+    key, printer, display = choose_printer(w, prefix)
     model = models[key]
     vendor = model.vendor
     printer = {"model": key, **printer}
@@ -287,10 +326,10 @@ def build_plan(w, *, hermes_found=False, existing_profiles=()):
     if connection == "bambulab_lan":
         notes.append(f"{vendor.label}: Print Buddy slices, checks G-code and packages the file; you start "
                      "the print yourself. Read-only LAN status is optional and never starts anything.")
-        if w.confirm("bambu_lan", "Enable read-only LAN status for this printer (MQTT telemetry)?", default=False):
-            bambu_lan = {"lan_host": w.ask("lan_host", "Printer LAN IP address or hostname", "", _host),
-                         "lan_serial": w.ask("lan_serial", "Printer serial number (on the printer / Settings > WLAN)", "", _serial)}
-            bambu_code = w.secret("bambu_lan_password", "Printer LAN access code (Settings > WLAN; stored as a secret)")
+        if w.confirm(prefix + "bambu_lan", "Enable read-only LAN status for this printer (MQTT telemetry)?", default=False):
+            bambu_lan = {"lan_host": w.ask(prefix + "lan_host", "Printer LAN IP address or hostname", "", _host),
+                         "lan_serial": w.ask(prefix + "lan_serial", "Printer serial number (on the printer / Settings > WLAN)", "", _serial)}
+            bambu_code = w.secret(prefix + "bambu_lan_password", "Printer LAN access code (Settings > WLAN; stored as a secret)")
             notes.append("LAN status needs the printer in LAN Mode (Bambu Handy then cannot reach it) and "
                          "the access code above; Print Buddy only reads status in this stage.")
     if connection == "flashforge_stock":
@@ -300,35 +339,35 @@ def build_plan(w, *, hermes_found=False, existing_profiles=()):
         # Empty is valid: the printer stays offline until [flashforge_stock] host is set.
         # A typed value still has to be a plain address, the same rule as the Bambu LAN host.
         host = w.ask(
-            "stock_host",
+            prefix + "stock_host",
             "Printer LAN IP address or hostname (port 8898; Enter to leave offline)",
             "",
             lambda value: _host(value) if str(value or "").strip() else None,
         )
         if str(host or "").strip():
             stock_lan = {"host": host.strip()}
-            stock_serial = w.ask("stock_serial", "Printer serial number (on the printer; stored as a secret)", "", _serial)
-            stock_code = w.secret("stock_check_code", "Printer check code (stored as a secret)")
+            stock_serial = w.ask(prefix + "stock_serial", "Printer serial number (on the printer; stored as a secret)", "", _serial)
+            stock_code = w.secret(prefix + "stock_check_code", "Printer check code (stored as a secret)")
     if connection == "prusalink":
         notes.append(f"{vendor.label}: Print Buddy slices and checks the file; with the printer's "
                      "PrusaLink address set it can also read status, upload the verified file and "
                      "start it after the usual confirmation. Leave the address blank to stay offline.")
         host = w.ask(
-            "prusa_host",
+            prefix + "prusa_host",
             "Printer LAN IP address or hostname (PrusaLink; Enter to leave offline)",
             "",
             lambda value: _host(value) if str(value or "").strip() else None,
         )
         if str(host or "").strip():
             prusa_link = {"link_host": host.strip()}
-            prusa_key = w.secret("prusa_link_api_key", "PrusaLink API key (printer display, Settings > Network > PrusaLink; stored as a secret)")
+            prusa_key = w.secret(prefix + "prusa_link_api_key", "PrusaLink API key (printer display, Settings > Network > PrusaLink; stored as a secret)")
     if connection == "elegoo_sdcp":
         notes.append(f"{vendor.label}: Print Buddy slices and checks the file; with the printer's "
                      "LAN address set it can also read status, upload the verified file and start "
                      "it after the usual confirmation. SDCP has no password or key — the printer "
                      "must be on a network you trust. Leave the address blank to stay offline.")
         host = w.ask(
-            "elegoo_sdcp_host",
+            prefix + "elegoo_sdcp_host",
             "Printer LAN IP address or hostname (SDCP; Enter to leave offline)",
             "",
             lambda value: _host(value) if str(value or "").strip() else None,
@@ -337,36 +376,95 @@ def build_plan(w, *, hermes_found=False, existing_profiles=()):
             elegoo_sdcp_host = {"host": host.strip()}
     has_software = True
     if connection == "moonraker":
-        has_software = w.confirm("has_printer_software", "Is Klipper with Moonraker already running on the printer?")
-        services["moonraker_url"] = w.ask("moonraker_url", "Moonraker URL", "http://printer.local:7125", _url)
+        has_software = w.confirm(prefix + "has_printer_software", "Is Klipper with Moonraker already running on the printer?")
+        services["moonraker_url"] = w.ask(prefix + "moonraker_url", "Moonraker URL", "http://printer.local:7125", _url)
         if not has_software:
             actions.append(("Install Klipper, Moonraker and Mainsail with KIAUH (official, menu-driven)", KIAUH))
     elif connection == "octoprint":
-        has_software = w.confirm("has_printer_software", "Is OctoPrint already running?")
-        services["octoprint_url"] = w.ask("octoprint_url", "OctoPrint URL", "http://octopi.local", _url)
+        has_software = w.confirm(prefix + "has_printer_software", "Is OctoPrint already running?")
+        services["octoprint_url"] = w.ask(prefix + "octoprint_url", "OctoPrint URL", "http://octopi.local", _url)
         if not has_software:
             actions.append(("Install OctoPrint into ~/OctoPrint/venv (official pip install)", OCTOPRINT))
-    octoprint_key = w.secret("octoprint_api_key", "OctoPrint API key") if connection == "octoprint" else ""
+    octoprint_key = w.secret(prefix + "octoprint_api_key", "OctoPrint API key") if connection == "octoprint" else ""
 
     # Nozzle and filament
-    sizes = [f"{s:g}" for s in model.supported_nozzle_sizes]
-    size = w.menu("nozzle_diameter_mm", "Nozzle size (mm):", sizes, "0.4" if "0.4" in sizes else sizes[0])
-    printer["nozzle_diameter_mm"] = float(size)
+    material, slicer, flatpaks = "", "", []
+    if not roster:
+        sizes = [f"{s:g}" for s in model.supported_nozzle_sizes]
+        size = w.menu(prefix + "nozzle_diameter_mm", "Nozzle size (mm):", sizes, "0.4" if "0.4" in sizes else sizes[0])
+        printer["nozzle_diameter_mm"] = float(size)
     types = list(model.supported_nozzle_types)
-    printer["nozzle_type"] = w.menu("nozzle_type", "Nozzle material:", types, types[0],
-                                    [t.replace("_", " ") for t in types])
-    material = w.menu("material", "Main filament:", list(MATERIALS), "PLA")
+    printer["nozzle_type"] = w.menu(prefix + "nozzle_type", "Nozzle material:", types, types[0],
+                                     [t.replace("_", " ") for t in types])
+    if not roster:
+        material = w.menu(prefix + "material", "Main filament:", list(MATERIALS), "PLA")
 
-    # Slicer: Bambu Lab uses Bambu Studio, everything else OrcaSlicer.
-    slicers = list(vendor.slicers)
-    slicer = slicers[0]
-    if len(slicers) > 1:
-        slicer = w.menu("slicer", "Slicer:", slicers, slicers[0], [SLICER_LABEL[s] for s in slicers])
-    printer["slicer"] = slicer
-    install_slicer = w.confirm("install_slicer", f"Install {SLICER_LABEL[slicer]} from Flathub if missing?")
-    flatpaks = [FLATPAK[slicer]] if install_slicer else []
+        # Slicer: Bambu Lab uses Bambu Studio, everything else OrcaSlicer.
+        slicers = list(vendor.slicers)
+        slicer = slicers[0]
+        if len(slicers) > 1:
+            slicer = w.menu(prefix + "slicer", "Slicer:", slicers, slicers[0], [SLICER_LABEL[s] for s in slicers])
+        printer["slicer"] = slicer
+        install_slicer = w.confirm(prefix + "install_slicer", f"Install {SLICER_LABEL[slicer]} from Flathub if missing?")
+        flatpaks = [FLATPAK[slicer]] if install_slicer else []
 
-    # Spoolman
+    return {
+        "key": key, "printer": printer, "display": display, "model": model, "vendor": vendor,
+        "connection": connection, "services": services, "notes": notes, "actions": actions,
+        "bambu_lan": bambu_lan, "bambu_code": bambu_code, "stock_lan": stock_lan,
+        "stock_serial": stock_serial, "stock_code": stock_code, "prusa_link": prusa_link,
+        "prusa_key": prusa_key, "elegoo_sdcp_host": elegoo_sdcp_host,
+        "octoprint_key": octoprint_key, "has_software": has_software,
+        "material": material, "slicer": slicer, "flatpaks": flatpaks,
+        "id": "", "chat_id": "",
+    }
+
+
+def _ask_camera(w, rec, prefix=""):
+    """The camera/timelapse questions for one printer record (mutates its services/notes)."""
+    services, notes = rec["services"], rec["notes"]
+    if w.confirm(prefix + "camera", "Do you have a printer camera?", default=False):
+        default_cam = ""
+        if services.get("moonraker_url"):
+            host = services["moonraker_url"].split("://", 1)[1].split("/", 1)[0].rsplit(":", 1)[0]
+            default_cam = f"http://{host}/webcam/?action=snapshot"
+        cam = w.ask(prefix + "camera_snapshot_url", "Camera snapshot URL", default_cam, _url)
+        if cam:
+            services["camera_snapshot_url"] = cam
+        if rec["connection"] == "moonraker" and w.confirm(prefix + "timelapse", "Post timelapse videos after prints?", default=False):
+            notes.append("Timelapse needs moonraker-timelapse on the printer (KIAUH > Install > Timelapse). "
+                         "Print Buddy posts the finished video; archiving is optional (timelapse.* settings).")
+
+
+def _claim_secret(secrets, notes, name, value, rec):
+    """Store a secret under a name shared by every printer (the stock Flashforge and
+    OctoPrint secrets have one global env name in this version). The first value
+    wins — update_env would keep it anyway — and a differing later value is called
+    out in the notes instead of being silently dropped."""
+    if not value:
+        return
+    if name in secrets and secrets[name] != value:
+        notes.append(f"{rec['display']}: its {name} value differs from an earlier printer's; the .env "
+                     "keeps the first value, so set this printer's secret by hand if they must differ.")
+        return
+    secrets[name] = value
+
+
+def build_plan(w, *, hermes_found=False, existing_profiles=()):
+    """Ask every question. Returns a plan dict; nothing is written or run here."""
+    first = _ask_printer(w)
+    key, printer, display = first["key"], first["printer"], first["display"]
+    model, vendor = first["model"], first["vendor"]
+    services, notes, actions = first["services"], first["notes"], first["actions"]
+    bambu_lan, bambu_code = first["bambu_lan"], first["bambu_code"]
+    stock_lan, stock_serial, stock_code = first["stock_lan"], first["stock_serial"], first["stock_code"]
+    prusa_link, prusa_key = first["prusa_link"], first["prusa_key"]
+    elegoo_sdcp_host = first["elegoo_sdcp_host"]
+    octoprint_key = first["octoprint_key"]
+    material, slicer = first["material"], first["slicer"]
+    flatpaks = first["flatpaks"]
+
+    # Spoolman: one inventory for the whole household, so a global question.
     spool = w.menu("spoolman", "Spoolman (filament inventory):", ["skip", "existing", "install"], "skip",
                    ["Skip", "I already run Spoolman", "Install Spoolman on this machine (official installer)"])
     if spool == "existing":
@@ -375,18 +473,8 @@ def build_plan(w, *, hermes_found=False, existing_profiles=()):
         services["spoolman_url"] = "http://localhost:7912"
         actions.append(("Install Spoolman into ~/Spoolman (official release and scripts/install.sh)", SPOOLMAN))
 
-    # Camera and timelapse
-    if w.confirm("camera", "Do you have a printer camera?", default=False):
-        default_cam = ""
-        if services.get("moonraker_url"):
-            host = services["moonraker_url"].split("://", 1)[1].split("/", 1)[0].rsplit(":", 1)[0]
-            default_cam = f"http://{host}/webcam/?action=snapshot"
-        cam = w.ask("camera_snapshot_url", "Camera snapshot URL", default_cam, _url)
-        if cam:
-            services["camera_snapshot_url"] = cam
-        if connection == "moonraker" and w.confirm("timelapse", "Post timelapse videos after prints?", default=False):
-            notes.append("Timelapse needs moonraker-timelapse on the printer (KIAUH > Install > Timelapse). "
-                         "Print Buddy posts the finished video; archiving is optional (timelapse.* settings).")
+    # Camera and timelapse for the first printer.
+    _ask_camera(w, first)
 
     # Discord
     w.say()
@@ -407,33 +495,125 @@ def build_plan(w, *, hermes_found=False, existing_profiles=()):
     profile = ""
     if hermes:
         profile = w.ask("profile", "Hermes profile name", "3dprinting", profile_name_error)
+    # Add-a-printer loop (#337): a second printer turns the plan into a [[printers]]
+    # roster. The first printer's id and channel are only needed then, so they are
+    # asked when the loop is first entered.
+    records = [first]
+    taken_ids = set()
+    fallback_owner = display  # the main channel is the first printer's unless it claims its own
+    number = 1
+    while w.confirm(f"add_printer_{number + 1}", "Add another printer?", default=False):
+        number += 1
+        prefix = f"p{number}_"
+        if number == 2:
+            first["id"] = w.ask("printer1_id", "Give the first printer an id (its state folder and channel binding use it)",
+                                _slug_id(display), lambda v: _printer_id_error(v, taken_ids))
+            taken_ids.add(first["id"])
+            first["chat_id"] = w.ask("printer1_chat_id",
+                                     "First printer's own channel ID (Enter = the main print channel above)", "", _ids_or_empty)
+            fallback_owner = display if not first["chat_id"] else ""
+        rec = _ask_printer(w, prefix, roster=True)
+        rec["id"] = w.ask(prefix + "id", f"Printer {number} id (its state folder and channel binding use it)",
+                          _slug_id(rec["display"]), lambda v: _printer_id_error(v, taken_ids))
+        taken_ids.add(rec["id"])
+
+        def chat_error(value, owner=fallback_owner):
+            # Only one printer may ride the main channel: two entries claiming it
+            # are refused at load, so the wizard never writes that config.
+            error = _ids_or_empty(value)
+            if error:
+                return error
+            if not value.strip() and owner:
+                return (f"the main print channel already belongs to {owner} — "
+                        "give this printer its own channel ID")
+            return None
+
+        rec["chat_id"] = w.ask(prefix + "chat_id",
+                               f"Printer {number}'s own channel ID (Enter = the main print channel)", "", chat_error)
+        if not rec["chat_id"]:
+            fallback_owner = rec["display"]
+        _ask_camera(w, rec, prefix)
+        records.append(rec)
+        notes.extend(rec["notes"])
+        actions.extend(rec["actions"])
+
     timezone = detect_timezone()
     discord = {"chat_id": chat_id, "allowed_user_ids": users, "bot_name": bot_name, "timezone": timezone}
     data_home = f"~/.hermes/profiles/{profile}" if hermes else "~/.local/share/print-buddy"
-    config = {
-        "printer": printer,
-        "services": services,
-        "discord": {k: v for k, v in discord.items() if v},
-        "bot": {"mode": "hermes" if hermes else "standalone"},
-        "paths": {"hermes_home": data_home},
-    }
-    if bambu_lan:
-        config["bambu"] = bambu_lan
-    if stock_lan:
-        config["flashforge_stock"] = stock_lan
-    if prusa_link:
-        config["prusa"] = prusa_link
-    if elegoo_sdcp_host:
-        config["elegoo_sdcp"] = elegoo_sdcp_host
+    roster_rows = []
+    if len(records) == 1:
+        config = {
+            "printer": printer,
+            "services": services,
+            "discord": {k: v for k, v in discord.items() if v},
+            "bot": {"mode": "hermes" if hermes else "standalone"},
+            "paths": {"hermes_home": data_home},
+        }
+        if bambu_lan:
+            config["bambu"] = bambu_lan
+        if stock_lan:
+            config["flashforge_stock"] = stock_lan
+        if prusa_link:
+            config["prusa"] = prusa_link
+        if elegoo_sdcp_host:
+            config["elegoo_sdcp"] = elegoo_sdcp_host
+        secrets = {"DISCORD_BOT_TOKEN": token, "OCTOPRINT_API_KEY": octoprint_key,
+                   "BAMBU_LAN_PASSWORD": bambu_code, "AD5X_SERIAL": stock_serial,
+                   "AD5X_CHECK_CODE": stock_code, "PRUSA_LINK_API_KEY": prusa_key}
+    else:
+        entries, secrets = [], {"DISCORD_BOT_TOKEN": token}
+        for rec in records:
+            entry = {"id": rec["id"], "name": rec["display"], "model": rec["key"]}
+            if rec["chat_id"]:
+                entry["chat_id"] = rec["chat_id"]
+            for svc_key in ("moonraker_url", "octoprint_url", "camera_snapshot_url"):
+                if rec["services"].get(svc_key):
+                    entry[svc_key] = rec["services"][svc_key]
+            if rec["printer"].get("nozzle_type"):
+                entry["nozzle_type"] = rec["printer"]["nozzle_type"]
+            if rec["bambu_lan"]:
+                env_name = "BAMBU_LAN_PASSWORD_" + rec["id"].upper().replace("-", "_")
+                entry.update(rec["bambu_lan"])
+                entry["lan_access_code_env"] = env_name
+                if rec["bambu_code"]:
+                    secrets[env_name] = rec["bambu_code"]
+            if rec["stock_lan"]:
+                entry.update(rec["stock_lan"])
+                _claim_secret(secrets, notes, "AD5X_SERIAL", rec["stock_serial"], rec)
+                _claim_secret(secrets, notes, "AD5X_CHECK_CODE", rec["stock_code"], rec)
+            if rec["prusa_link"]:
+                env_name = "PRUSA_LINK_API_KEY_" + rec["id"].upper().replace("-", "_")
+                entry.update(rec["prusa_link"])
+                entry["api_key_env"] = env_name
+                if rec["prusa_key"]:
+                    secrets[env_name] = rec["prusa_key"]
+            if rec["elegoo_sdcp_host"]:
+                entry.update(rec["elegoo_sdcp_host"])
+            _claim_secret(secrets, notes, "OCTOPRINT_API_KEY", rec["octoprint_key"], rec)
+            entries.append(entry)
+            roster_rows.append({"id": rec["id"], "display": rec["display"], "model": rec["key"],
+                                "chat_id": rec["chat_id"]})
+        config = {
+            "printers": entries,
+            "services": {k: v for k, v in services.items() if k == "spoolman_url"},
+            "discord": {k: v for k, v in discord.items() if v},
+            "bot": {"mode": "hermes" if hermes else "standalone"},
+            "paths": {"hermes_home": data_home},
+        }
+        notes.append("Multi-printer: the roster lives in the config file (it cannot come from the "
+                     "environment); any entry value can be overridden later with the indexed spelling "
+                     "PRINT_BUDDY__PRINTERS__<ID>__<KEY>. Each printer's channel is its own — "
+                     "approvals in a channel can only start that channel's printer.")
+        notes.append("Multi-printer: nozzle size, slicer and main filament are each model's defaults "
+                     "in a roster config; they are not per-printer keys in this version.")
     return {
         "config": config, "display": display, "material": material, "slicer": slicer, "flatpaks": flatpaks,
         "actions": actions, "notes": notes, "hermes": hermes, "profile": profile,
         "profile_exists": profile in existing_profiles, "data_home": data_home, "timezone": timezone,
-        "secrets": {"DISCORD_BOT_TOKEN": token, "OCTOPRINT_API_KEY": octoprint_key,
-                    "BAMBU_LAN_PASSWORD": bambu_code, "AD5X_SERIAL": stock_serial,
-                    "AD5X_CHECK_CODE": stock_code, "PRUSA_LINK_API_KEY": prusa_key},
+        "secrets": secrets,
         "hermes_env": {"DISCORD_ALLOWED_USERS": users.replace(" ", ""), "DISCORD_HOME_CHANNEL": chat_id},
         "spoolman": spool,
+        "printers": roster_rows,
     }
 
 
@@ -485,12 +665,20 @@ def hermes_profiles(env=None, which=shutil.which):
 
 def summary(plan):
     c = plan["config"]
-    p = c["printer"]
-    lines = [
-        "Summary",
-        f"  Printer:     {plan['display']} ({p['model']}), nozzle {p['nozzle_diameter_mm']:g} mm "
-        f"{p['nozzle_type'].replace('_', ' ')}, main filament {plan['material']}",
-        f"  Slicer:      {SLICER_LABEL[plan['slicer']]}" + (" (install from Flathub)" if plan["flatpaks"] else ""),
+    lines = ["Summary"]
+    if plan.get("printers"):
+        for row in plan["printers"]:
+            lines.append(f"  Printer:     {row['display']} ({row['model']}), id {row['id']}, "
+                         f"channel {row['chat_id'] or 'the main print channel'}")
+        lines.append("  Slicer:      each model's default (multi-printer configs carry no per-printer slicer)")
+    else:
+        p = c["printer"]
+        lines += [
+            f"  Printer:     {plan['display']} ({p['model']}), nozzle {p['nozzle_diameter_mm']:g} mm "
+            f"{p['nozzle_type'].replace('_', ' ')}, main filament {plan['material']}",
+            f"  Slicer:      {SLICER_LABEL[plan['slicer']]}" + (" (install from Flathub)" if plan["flatpaks"] else ""),
+        ]
+    lines += [
         f"  Services:    " + (", ".join(f"{k}={v}" for k, v in c["services"].items()) or "none"),
         f"  Discord:     channel {c['discord'].get('chat_id') or '(not set)'}, "
         f"users {c['discord'].get('allowed_user_ids') or '(not set)'}, "
@@ -520,6 +708,38 @@ def _merge_missing(existing, proposed):
     return out
 
 
+def _load_for_rewrite(text):
+    """Parse an existing config file for a wizard rewrite, or return None when the file
+    cannot be re-emitted faithfully: it does not parse, it repeats a key, its top level
+    is not a mapping, or a parse -> dump -> parse round trip changes the data. A None
+    result means the round-trip rule applies: the file is left byte-for-byte unchanged
+    (#337 — setup write-back is the one place configs are written, so a config the
+    wizard cannot round-trip is never partially rewritten)."""
+    import yaml
+
+    class _StrictLoader(yaml.SafeLoader):
+        def construct_mapping(self, node, deep=False):
+            keys = [k.value for k, _ in node.value if isinstance(k, yaml.ScalarNode)]
+            if len(keys) != len(set(keys)):
+                raise ValueError("duplicate key in mapping")
+            return super().construct_mapping(node, deep=deep)
+
+    try:
+        data = yaml.load(text, Loader=_StrictLoader)
+    except (yaml.YAMLError, ValueError):
+        return None
+    if data is None:
+        return {}
+    if not isinstance(data, dict):
+        return None
+    try:
+        if yaml.safe_load(_dump(data)) != data:
+            return None
+    except yaml.YAMLError:
+        return None
+    return data
+
+
 def merge_config(target, new, w, dry_run=False):
     """Write config/local.yaml. Existing keys always win; an existing file changes only after a yes."""
     target = Path(target)
@@ -533,11 +753,16 @@ def merge_config(target, new, w, dry_run=False):
         _atomic_write(target, text, 0o644)
         w.say(f"wrote {target}")
         return True
-    import yaml
     old_text = target.read_text(encoding="utf-8")
-    merged = _merge_missing(yaml.safe_load(old_text) or {}, new)
+    existing = _load_for_rewrite(old_text)
+    if existing is None:
+        w.say(f"{target} was left unchanged: it cannot be rewritten safely (it does not parse, "
+              "repeats a key, or would change meaning when re-emitted). Fix it by hand "
+              "(docs/CONFIGURATION-YAML.md), or move it aside and re-run setup to start fresh.")
+        return False
+    merged = _merge_missing(existing, new)
     new_text = _dump(merged)
-    if (yaml.safe_load(old_text) or {}) == merged:
+    if existing == merged:
         w.say(f"{target} already has every setting; left unchanged.")
         return True
     w.say("".join(difflib.unified_diff(old_text.splitlines(True), new_text.splitlines(True),

@@ -166,6 +166,21 @@ def render_status_html(snap):
     services = "".join(
         f"<tr><th>{esc(key)}</th><td>{esc(str(value))}</td></tr>"
         for key, value in snap["services"].items())
+    roster = snap.get("printers") or []
+    roster_table = ""
+    if len(roster) > 1:  # the read-only roster appears only when there is a roster (#337)
+        body = "".join(
+            "<tr><td>{}</td><td>{}</td><td>{}</td><td>{}</td><td>{}</td><td>{}</td></tr>".format(
+                esc(row["id"]) + (" (default)" if row["default"] else ""),
+                esc(row["name"]), esc(row["model"]), esc(row["connection"]),
+                esc(row["chat_id"] or "main channel"),
+                esc(row.get("moonraker_url") or row.get("octoprint_url")
+                    or row.get("lan_host") or row.get("link_host") or row.get("host") or ""))
+            for row in roster)
+        roster_table = ("<h2>Printers (read-only)</h2><p>The roster is edited in the config "
+                        "file or the setup wizard, not here (stage 2e decision, docs/WEBUI.md).</p>"
+                        "<table><tr><th>id</th><th>name</th><th>model</th><th>connection</th>"
+                        f"<th>channel</th><th>endpoint</th></tr>{body}</table>")
     doctor = "".join(
         f"<tr><td>{esc(row['label'])}</td><td>{esc(row['status'])}</td>"
         f"<td>{esc(row['detail'])}</td></tr>" for row in snap["doctor"])
@@ -178,6 +193,7 @@ def render_status_html(snap):
             "settings are changed on the <a href=\"/config\">configuration page</a>, "
             "which writes the YAML settings file)</p>"
             f"<table>{main_rows}</table>"
+            + roster_table
             + (f"<h2>Services</h2><table>{services}</table>" if services else "")
             + f"<h2>Doctor checks</h2><table>{doctor}</table>"
             "</body></html>\n")

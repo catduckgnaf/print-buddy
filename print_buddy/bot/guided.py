@@ -40,7 +40,7 @@ STORE_NAME = "guided-setup.json"
 SESSION_TIMEOUT_S = 24 * 3600
 
 HELP = """**Print Buddy setup and debugging** — neither flow prints, moves, or authorizes a printer.
-- `/print-buddy setup`: guided setup in small steps. Your checklist is saved, so you can stop and resume later.
+- `/print-buddy setup`: guided setup in small steps. Your checklist is saved, so you can stop and resume later. At the review step, reply `add` to set up more printers — each gets its own channel and state folder.
 - `/print-buddy debugging`: read-only checks (configuration, bot login, permissions, connectivity, executables, state and logs). Secrets and private paths are redacted.
 - `/print-buddy status`: show the saved setup checklist.
 - `/print-buddy cancel`: pause setup; the saved checklist is kept for resuming.
@@ -199,6 +199,81 @@ def steps(token_env="DISCORD_BOT_TOKEN"):
 STEP_LABELS = {s.key: s.label for s in steps()}
 
 
+# ---------------------------------------------------------------------- add-a-printer loop (#337)
+
+def _taken_ids(answers):
+    ids = {p["id"] for p in answers.get("printers") or [] if isinstance(p, dict) and p.get("id")}
+    if answers.get("printer_id"):
+        ids.add(answers["printer_id"])
+    return ids
+
+
+def _validate_first_id(value, answers):
+    from ..setup_wizard import _printer_id_error
+    error = _printer_id_error(value.strip(), _taken_ids(answers))
+    if error:
+        raise ValueError(error)
+    return value.strip()
+
+
+def _validate_new_id(value, answers):
+    from ..setup_wizard import _printer_id_error
+    error = _printer_id_error(value.strip(), _taken_ids(answers))
+    if error:
+        raise ValueError(error)
+    return value.strip()
+
+
+def _validate_new_chat_id(value, _answers):
+    # An added printer always needs its OWN channel in this flow: the main
+    # channel is the first printer's fallback claim, and two entries claiming
+    # one channel are refused at load (design §2.3).
+    return _one_id(value.strip(), "channel")
+
+
+def _add_step_defs():
+    model_list = ", ".join(sorted(printers.MODELS))
+    return {
+        "first_id": Step("first_id", "First printer's id",
+                         "Your first printer needs an id too — it names its state folder and "
+                         "binds its channel. Reply with a short slug (lowercase letters, digits, "
+                         "- or _), for example `garage-a1`.", _validate_first_id),
+        "id": Step("id", "Printer id",
+                   "Give the new printer an id (a short slug, for example `workshop-ad5x`). "
+                   "It names its state folder and binds its channel.", _validate_new_id),
+        "model": Step("model", "Printer model",
+                      f"Which printer? Reply with its model key, one of: {model_list}.",
+                      _validate_model),
+        "chat_id": Step("chat_id", "Printer channel",
+                        "Reply with the new printer's own channel ID. It cannot share the main "
+                        "print channel — that one is the first printer's, and approvals in a "
+                        "channel can only start that channel's printer.", _validate_new_chat_id),
+        "moonraker_url": Step("moonraker_url", "Moonraker URL (optional)",
+                              "If this printer runs Klipper/Moonraker, reply with its URL (for "
+                              "example http://printer.local:7125). Otherwise reply `skip`.",
+                              _validate_service_url),
+    }
+
+
+def _add_keys(session):
+    """The step keys of one add-a-printer cycle, frozen when the cycle starts.
+
+    The first cycle also asks the first printer's id (the base flow never needed
+    one); freezing the list keeps the step index stable as answers land."""
+    keys = ["id", "model", "chat_id", "moonraker_url"]
+    if "printer_id" not in (session.get("answers") or {}):
+        keys.insert(0, "first_id")
+    return keys
+
+
+def _add_prompt_text(session, note=""):
+    keys = session["add_keys"]
+    step = _add_step_defs()[keys[session["add_step"]]]
+    head = f"**Add a printer ({session['add_step'] + 1} of {len(keys)}): {step.label}**\n{step.prompt}"
+    return (note + "\n" if note else "") + head + "\n\n" + checklist_text(session) + \
+        "\n\nReply with the answer, or `/print-buddy cancel` to pause (your checklist is saved)."
+
+
 # ---------------------------------------------------------------------- session store
 
 class SetupStore:
@@ -245,7 +320,7 @@ def _new_session(key, now):
 
 
 def _expired(session, now):
-    return (session["status"] in ("in_progress", "awaiting_consent")
+    return (session["status"] in ("in_progress", "awaiting_consent", "adding_printer")
             and now - float(session.get("updated_at") or 0) > SESSION_TIMEOUT_S)
 
 
@@ -261,6 +336,9 @@ def checklist_text(session):
         else:
             mark = "☐"
         lines.append(f"{mark} {step.label}")
+    for extra in answers.get("printers") or []:
+        if isinstance(extra, dict) and extra.get("id"):
+            lines.append(f"☑ Added printer {extra['id']} ({extra.get('model', '?')})")
     if session["status"] == "awaiting_consent":
         lines.append("▶ Review and choose how to apply")
     return "\n".join(lines)
@@ -282,22 +360,47 @@ def _review_text(session):
              "- Print channel and allowed users: the IDs you entered (not repeated here)",
              f"- Moonraker URL: {answers.get('moonraker_url') or 'not set'}",
              f"- Spoolman URL: {answers.get('spoolman_url') or 'not set'}",
-             f"- Bot token: {'stored in its environment variable' if answers.get('token_stored') else 'not stored yet — the bot cannot log in until it is'}",
-             "", checklist_text(session), "",
-             "Reply `apply` to write these settings to config/local.yaml (values already there "
-             "always win; the token is never written). Reply `manual` for precise steps to do it "
-             "yourself instead, or `/print-buddy cancel` to leave setup unfinished and resume later."]
+             f"- Bot token: {'stored in its environment variable' if answers.get('token_stored') else 'not stored yet — the bot cannot log in until it is'}"]
+    roster = answers.get("printers") or []
+    if roster:
+        lines.append(f"- First printer id: `{answers.get('printer_id')}`")
+        for extra in roster:
+            lines.append(f"- Added printer: `{extra['id']}` — model `{extra.get('model')}`, "
+                         f"channel {'its own' if extra.get('chat_id') else 'the main print channel'}"
+                         + (f", Moonraker {extra['moonraker_url']}" if extra.get('moonraker_url') else ""))
+    lines += ["", checklist_text(session), "",
+              "Reply `apply` to write these settings to config/local.yaml (values already there "
+              "always win; the token is never written). Reply `add` to add another printer — it "
+              "gets its own channel and state folder. Reply `manual` for precise steps to do it "
+              "yourself instead, or `/print-buddy cancel` to leave setup unfinished and resume later."]
     return "\n".join(lines)
 
 
 def _manual_text(session):
     answers = session["answers"]
+    roster = answers.get("printers") or []
     lines = ["**Manual setup steps** — nothing was changed for you.",
-             "1. In the Print Buddy folder, create or edit `config/local.yaml` with:",
-             f"   - `[printer] model` = `{answers.get('model')}`",
-             f"   - `[bot] mode` = `{answers.get('mode')}`",
-             "   - `[discord] chat_id` and `allowed_user_ids` = the numeric IDs you entered above"]
-    if answers.get("moonraker_url"):
+             "1. In the Print Buddy folder, create or edit `config/local.yaml` with:"]
+    if roster:
+        lines.append("   - a `printers:` list (TOML spelling: `[[printers]]`), one entry per printer:")
+        first = f"     - `id` = `{answers.get('printer_id')}`, `model` = `{answers.get('model')}`"
+        if answers.get("moonraker_url"):
+            first += ", `moonraker_url` = the URL you entered above"
+        lines.append(first)
+        for extra in roster:
+            entry = f"     - `id` = `{extra['id']}`, `model` = `{extra.get('model')}`"
+            if extra.get("chat_id"):
+                entry += ", `chat_id` = the channel ID you entered above"
+            if extra.get("moonraker_url"):
+                entry += ", `moonraker_url` = the URL you entered above"
+            lines.append(entry)
+        lines.append("   - entry values can be overridden later with PRINT_BUDDY__PRINTERS__<ID>__<KEY>; "
+                     "the list itself is file-only (docs/SETTINGS.md, 'Printers list')")
+    else:
+        lines.append(f"   - `[printer] model` = `{answers.get('model')}`")
+    lines += [f"   - `[bot] mode` = `{answers.get('mode')}`",
+              "   - `[discord] chat_id` and `allowed_user_ids` = the numeric IDs you entered above"]
+    if answers.get("moonraker_url") and not roster:
         lines.append("   - `[services] moonraker_url` = the URL you entered above")
     if answers.get("spoolman_url"):
         lines.append("   - `[services] spoolman_url` = the URL you entered above")
@@ -311,12 +414,66 @@ def _manual_text(session):
     return "\n".join(lines)
 
 
+def _roster_config(answers):
+    """The [[printers]] config for a roster apply (#337): the first printer plus
+    every added one, with Spoolman kept as the one shared inventory service."""
+    first = {"id": answers["printer_id"], "model": answers["model"]}
+    if answers.get("moonraker_url"):
+        first["moonraker_url"] = answers["moonraker_url"]
+    entries = [first]
+    for extra in answers["printers"]:
+        entry = {"id": extra["id"], "model": extra["model"]}
+        if extra.get("chat_id"):
+            entry["chat_id"] = extra["chat_id"]
+        if extra.get("moonraker_url"):
+            entry["moonraker_url"] = extra["moonraker_url"]
+        entries.append(entry)
+    config = {"printers": entries, "bot": {"mode": answers["mode"]},
+              "discord": {"chat_id": answers["chat_id"], "allowed_user_ids": answers["user_ids"]}}
+    if answers.get("spoolman_url"):
+        config["services"] = {"spoolman_url": answers["spoolman_url"]}
+    return config
+
+
+def _refuse_unsafe_roster_target(config_path):
+    """A roster apply never merges into a file that already describes printers.
+
+    The wizard merge is existing-keys-win, so a roster merged into a file with a
+    legacy [printer] shape (or an existing roster) would be silently dropped or
+    clash; and a file the wizard cannot round-trip is never rewritten at all.
+    Both cases raise with the file left byte-for-byte unchanged."""
+    from .. import setup_wizard
+    path = Path(config_path)
+    if not path.exists():
+        return
+    parsed = setup_wizard._load_for_rewrite(path.read_text(encoding="utf-8"))
+    if parsed is None:
+        raise RuntimeError("the existing config/local.yaml cannot be safely rewritten (it does "
+                           "not parse and re-emit faithfully), so it was left unchanged. Fix it "
+                           "by hand or move it aside, then reply `apply` again.")
+    printer = parsed.get("printer") if isinstance(parsed.get("printer"), dict) else {}
+    services = parsed.get("services") if isinstance(parsed.get("services"), dict) else {}
+    legacy = ("printers" in parsed or bool(printer.get("model") or printer.get("name"))
+              or any(services.get(k) for k in ("moonraker_url", "octoprint_url", "camera_snapshot_url"))
+              or any(isinstance(parsed.get(section), dict)
+                     and any(parsed[section].get(k) for k in ("lan_host", "link_host", "host"))
+                     for section in ("bambu", "prusa", "elegoo_sdcp", "flashforge_stock")))
+    if legacy:
+        raise RuntimeError("the existing config/local.yaml already describes a printer, so guided "
+                           "setup will not merge a roster into it; the file was left unchanged. "
+                           "Edit it by hand (docs/SETTINGS.md, 'Printers list') or move it aside, "
+                           "then reply `apply` again.")
+
+
 def _apply_answers(answers, config_path):
     """Write the collected settings after the explicit `apply` consent.
 
     Only config/local.yaml is touched, through the setup wizard's merge (existing keys win).
     No secret is written: the token step collected none. Installing software, restarting
-    services, and changing network exposure are never done by this flow.
+    services, and changing network exposure are never done by this flow. When printers were
+    added, the write is the [[printers]] roster form instead, and it refuses (leaving the
+    file untouched) when the existing file already describes printers or cannot be
+    round-tripped by the wizard (#337).
     """
     from .. import setup_wizard
 
@@ -331,19 +488,29 @@ def _apply_answers(answers, config_path):
         def confirm(self, _key, _prompt, default=True):
             return True
 
-    config = {"printer": {"model": answers["model"]}, "bot": {"mode": answers["mode"]},
-              "discord": {"chat_id": answers["chat_id"], "allowed_user_ids": answers["user_ids"]}}
-    services = {}
-    if answers.get("moonraker_url"):
-        services["moonraker_url"] = answers["moonraker_url"]
-    if answers.get("spoolman_url"):
-        services["spoolman_url"] = answers["spoolman_url"]
-    if services:
-        config["services"] = services
+    roster = bool(answers.get("printers"))
+    if roster:
+        _refuse_unsafe_roster_target(config_path)
+        config = _roster_config(answers)
+    else:
+        config = {"printer": {"model": answers["model"]}, "bot": {"mode": answers["mode"]},
+                  "discord": {"chat_id": answers["chat_id"], "allowed_user_ids": answers["user_ids"]}}
+        services = {}
+        if answers.get("moonraker_url"):
+            services["moonraker_url"] = answers["moonraker_url"]
+        if answers.get("spoolman_url"):
+            services["spoolman_url"] = answers["spoolman_url"]
+        if services:
+            config["services"] = services
     writer = _Consent()
-    setup_wizard.merge_config(Path(config_path), config, writer)
-    return ("Settings written to config/local.yaml (any values already there were kept). "
-            "The bot token was not written anywhere by this flow. Nothing was installed, "
+    if not setup_wizard.merge_config(Path(config_path), config, writer):
+        detail = writer.notes[-1] if writer.notes else "the wizard merge declined to write"
+        raise RuntimeError("the settings were not written: " + detail)
+    lead = (f"Settings written to config/local.yaml as a [[printers]] roster "
+            f"({len(answers['printers']) + 1} printers; any values already there were kept). "
+            if roster else
+            "Settings written to config/local.yaml (any values already there were kept). ")
+    return (lead + "The bot token was not written anywhere by this flow. Nothing was installed, "
             "restarted, or exposed on the network. Next: `python3 -m print_buddy.bot check`, "
             "then `/print-buddy debugging`.")
 
@@ -373,7 +540,8 @@ def handle_text(key, text, *, store, now=None, token_env="DISCORD_BOT_TOKEN",
         if rest == "status":
             if session is None:
                 return "No guided setup has been started here. `/print-buddy setup` begins one."
-            state = {"in_progress": "in progress", "awaiting_consent": "waiting for your review choice",
+            state = {"in_progress": "in progress", "adding_printer": "adding another printer",
+                     "awaiting_consent": "waiting for your review choice",
                      "cancelled": "paused (cancelled)", "complete": "complete"}[session["status"]]
             return f"**Guided setup: {state}**\n" + checklist_text(session)
         if rest == "cancel":
@@ -396,6 +564,12 @@ def handle_text(key, text, *, store, now=None, token_env="DISCORD_BOT_TOKEN",
                 note = "**Welcome back — resuming your saved checklist.**"
             elif _expired(session, now):
                 note = "**Your previous session timed out; your saved answers were kept.** Resuming:"
+            if session.get("add_keys") is not None and session.get("draft") is not None:
+                # paused mid add-a-printer cycle: resume the cycle, not the base flow
+                session["status"] = "adding_printer"
+                session["updated_at"] = now
+                store.save(session)
+                return _add_prompt_text(session, note)
             session["status"] = "in_progress" if session["status"] != "awaiting_consent" else "awaiting_consent"
             session["updated_at"] = now
             store.save(session)
@@ -404,7 +578,7 @@ def handle_text(key, text, *, store, now=None, token_env="DISCORD_BOT_TOKEN",
             return _prompt_text(session, note)
         return "Use `/print-buddy setup`, `/print-buddy debugging`, `/print-buddy status`, or `/print-buddy cancel`."
 
-    if session is None or session["status"] not in ("in_progress", "awaiting_consent"):
+    if session is None or session["status"] not in ("in_progress", "awaiting_consent", "adding_printer"):
         return None
     if raw.startswith("/"):
         return None  # another command; setup stays open for a later plain reply
@@ -430,7 +604,46 @@ def handle_text(key, text, *, store, now=None, token_env="DISCORD_BOT_TOKEN",
             session["updated_at"] = now
             store.save(session)
             return _manual_text(session)
-        return "Reply `apply` to write the settings, `manual` for precise manual steps, or `/print-buddy cancel` to pause."
+        if low == "add":
+            session["status"] = "adding_printer"
+            session["draft"] = {}
+            session["add_keys"] = _add_keys(session)
+            session["add_step"] = 0
+            session["updated_at"] = now
+            store.save(session)
+            return _add_prompt_text(session, "**Adding another printer.** Same idea: a few "
+                                    "questions, and nothing is written until you reply `apply`.")
+        return "Reply `apply` to write the settings, `add` to add another printer, `manual` for precise manual steps, or `/print-buddy cancel` to pause."
+
+    if session["status"] == "adding_printer":
+        defs = _add_step_defs()
+        key = session["add_keys"][session["add_step"]]
+        step = defs[key]
+        context = dict(session["answers"])
+        if key == "moonraker_url" and session["draft"].get("model"):
+            context["model"] = session["draft"]["model"]  # validate against the new printer's model
+        try:
+            value = step.validate(raw, context)
+        except ValueError as exc:
+            return f"That answer does not work: {exc}\n\n" + _add_prompt_text(session)
+        if key == "first_id":
+            session["answers"]["printer_id"] = value
+        else:
+            session["draft"][key] = value
+        session["add_step"] += 1
+        session["updated_at"] = now
+        if session["add_step"] >= len(session["add_keys"]):
+            draft = session["draft"]
+            session["answers"].setdefault("printers", []).append(
+                {"id": draft["id"], "model": draft["model"],
+                 "chat_id": draft.get("chat_id", ""), "moonraker_url": draft.get("moonraker_url", "")})
+            session["status"] = "awaiting_consent"
+            for scratch in ("draft", "add_keys", "add_step"):
+                session.pop(scratch, None)
+            store.save(session)
+            return (f"Saved: printer {draft['id']}.\n\n" + _review_text(session))
+        store.save(session)
+        return _add_prompt_text(session, f"Saved: {step.label}.")
 
     flow = steps(token_env)
     step = flow[session["step"]]

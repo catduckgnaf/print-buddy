@@ -272,7 +272,11 @@ behave identically for every existing install, and a one-entry
 addressing global fields only in v1: its dotted-path field model cannot
 name a list entry (`webui/catalog.py:171-180`), so per-printer fields
 are read-only there until a per-printer addressing scheme is designed
-(stage 2e decides or explicitly defers it). The settings-parity tests
+(stage 2e decides or explicitly defers it — **decided in stage 2e
+(#337): explicitly deferred**. The catalog keeps addressing global
+fields only; the status page lists the roster read-only, and roster
+edits stay in the config file and the setup surfaces. Recorded in
+docs/WEBUI.md). The settings-parity tests
 need one deliberate change: the inventory walk must treat `[printers]`
 explicitly (validate its shape in tests) rather than silently ignoring
 a table that is not in the defaults tree; `docs/SETTINGS.md` gains a

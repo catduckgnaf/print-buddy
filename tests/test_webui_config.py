@@ -79,6 +79,33 @@ class CatalogTests(unittest.TestCase):
             with self.subTest(field=field_id):
                 self.assertIsNotNone(field_by_id(field_id))
 
+    def test_timelapse_and_image_fields_are_in_the_catalog(self):
+        # #286 scope addition: timelapses and images get first-class fields.
+        numbers = {"timelapse.render_wait_s": 1, "timelapse.render_poll_s": 1,
+                   "timelapse.max_bytes": 1, "timelapse.local_retention_days": 0,
+                   "timelapse.plan_clip_retention_days": 0}
+        for field_id, minimum in numbers.items():
+            with self.subTest(field=field_id):
+                field = field_by_id(field_id)
+                self.assertIsNotNone(field)
+                self.assertEqual(field.kind, "number")
+                self.assertEqual(field.minimum, minimum)
+        for field_id, kind in (("timelapse.archive_host", "host"),
+                               ("timelapse.archive_dir", "text"),
+                               # A path only, never key contents (see catalog comment).
+                               ("timelapse.ssh_key", "text"),
+                               ("services.camera_snapshot_url", "url"),
+                               ("services.vision_chat_url", "url"),
+                               ("vision.model", "text")):
+            with self.subTest(field=field_id):
+                field = field_by_id(field_id)
+                self.assertIsNotNone(field)
+                self.assertEqual(field.kind, kind)
+        # The type/source pickers from #246/#294/#295 are NOT catalog fields
+        # yet: no mode/source setting exists for them to bind to.
+        self.assertIsNone(field_by_id("timelapse.mode"))
+        self.assertIsNone(field_by_id("services.camera_source"))
+
     def test_no_secret_or_env_name_fields_in_the_catalog(self):
         for field in CATALOG:
             with self.subTest(field=field.id):
@@ -198,6 +225,57 @@ class WriteAPITests(unittest.TestCase):
                     write_changes(changes, config_path=self.local, environ={})
                 self.assertEqual(self.local.read_bytes(), before)
                 self.assertFalse(list(Path(self.tmp.name).glob("*.bak-*")))
+
+    def test_timelapse_and_image_write_round_trips_through_the_loader(self):
+        self.write_file("timelapse:\n  render_wait_s: 900\\n")
+        changed = write_changes(
+            {"timelapse.render_wait_s": 600, "timelapse.render_poll_s": 5,
+             "timelapse.max_bytes": 100_000_000, "timelapse.local_retention_days": 3,
+             "timelapse.plan_clip_retention_days": 7,
+             "timelapse.archive_host": "nas.local", "timelapse.archive_dir": "/backups/prints",
+             "timelapse.ssh_key": "/data/keys/timelapse_ed25519",
+             "services.camera_snapshot_url": "http://cam.local/snapshot.jpg",
+             "services.vision_chat_url": "http://vision.local/v1/chat",
+             "vision.model": "vision-test-model"},
+            config_path=self.local, environ={}, timestamp="20261026-120000")
+        self.assertEqual(len(changed), 11)
+        data = settings.load(local=self.local, environ={})
+        self.assertEqual(data["timelapse"]["render_wait_s"], 600)
+        self.assertEqual(data["timelapse"]["render_poll_s"], 5)
+        self.assertEqual(data["timelapse"]["max_bytes"], 100_000_000)
+        self.assertEqual(data["timelapse"]["local_retention_days"], 3)
+        self.assertEqual(data["timelapse"]["plan_clip_retention_days"], 7)
+        self.assertEqual(data["timelapse"]["archive_host"], "nas.local")
+        self.assertEqual(data["timelapse"]["archive_dir"], "/backups/prints")
+        self.assertEqual(data["timelapse"]["ssh_key"], "/data/keys/timelapse_ed25519")
+        self.assertEqual(data["services"]["camera_snapshot_url"],
+                         "http://cam.local/snapshot.jpg")
+        self.assertEqual(data["services"]["vision_chat_url"], "http://vision.local/v1/chat")
+        self.assertEqual(data["vision"]["model"], "vision-test-model")
+        values = values_by_id(local=self.local, environ={})
+        self.assertEqual(values["timelapse.render_wait_s"].provenance, SETTINGS_FILE)
+        self.assertEqual(values["services.camera_snapshot_url"].provenance, SETTINGS_FILE)
+
+    def test_invalid_timelapse_and_image_values_are_rejected_unchanged(self):
+        before = self.write_file("timelapse:\n  render_wait_s: 900\\n")
+        for changes in ({"timelapse.render_wait_s": "soon"},   # not a number
+                        {"timelapse.render_poll_s": True},     # bool is not a number here
+                        {"timelapse.max_bytes": "200MB"},
+                        {"timelapse.local_retention_days": "a week"},
+                        {"timelapse.plan_clip_retention_days": None},
+                        {"timelapse.archive_host": 42},        # not a string
+                        {"services.camera_snapshot_url": "cam.local/snap"},  # no scheme
+                        {"services.vision_chat_url": "vision.local"}):
+            with self.subTest(changes=changes):
+                with self.assertRaises(WebUIConfigError):
+                    write_changes(changes, config_path=self.local, environ={})
+                self.assertEqual(self.local.read_bytes(), before)
+                self.assertFalse(list(Path(self.tmp.name).glob("*.bak-*")))
+        # A legacy environment name overrides a timelapse field too.
+        with self.assertRaisesRegex(WebUIConfigError, "overridden by the environment"):
+            write_changes({"timelapse.render_wait_s": 60}, config_path=self.local,
+                          environ={"PRINT_TIMELAPSE_RENDER_WAIT_SECONDS": "60"})
+        self.assertEqual(self.local.read_bytes(), before)
 
     def test_env_overridden_field_write_is_refused(self):
         before = self.write_file("visual_watch:\n  sensitivity: 3\n")

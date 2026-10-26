@@ -763,10 +763,9 @@ def _vertical_short_attachment(video, job_key):
 
     Warn-only by contract: any failure logs and returns None, so the
     completion post always carries the timelapse itself. The short is
-    clamped to the configured platform's upload limit via
-    core.delivery.upload_limit (#314's resolution — not the Discord
-    constant the timelapse shrink still uses); a short that cannot fit
-    is dropped, never the timelapse.
+    clamped to the configured platform's effective upload limit
+    (_media_upload_limit, #314 — the same cap the timelapse shrink
+    uses); a short that cannot fit is dropped, never the timelapse.
     """
     try:
         cfg = _config.cfg()
@@ -778,9 +777,9 @@ def _vertical_short_attachment(video, job_key):
             mode=str(timelapse_cfg.get("vertical_short_mode") or "pad"),
             overlay=bool(timelapse_cfg.get("vertical_short_overlay", True)),
             ffmpeg=FFMPEG_BIN)
-        limit = delivery.upload_limit(cfg)
+        limit = _media_upload_limit()
         if Path(str(short)).stat().st_size > limit:
-            short = discord_sized_video(short, max_bytes=limit)
+            short = platform_sized_video(short, max_bytes=limit)
         if Path(str(short)).stat().st_size > limit:
             log(f"vertical short for {job_key!r} is still over the {limit}-byte platform limit; dropping it")
             return None
@@ -847,7 +846,7 @@ def _plan_timelapse_post(job_key, completion_message, tl_plan):
             log(f"combined timelapse archive failed for plan {plan!r}: {exc!r}")
         video = combined
         try:
-            video = discord_sized_video(combined)
+            video = platform_sized_video(combined)
         except Exception as exc:
             log(f"combined timelapse shrink failed for plan {plan!r}: {exc!r}")
         message = f"{note}\nMEDIA:{video}"
@@ -856,7 +855,7 @@ def _plan_timelapse_post(job_key, completion_message, tl_plan):
             message += f"\nMEDIA:{short}"
         if not _post_completion(message, completion_message):
             log(f"combined timelapse attach failed for plan {plan!r}; posting text only")
-            _post_completion(f"{note}\nCombined timelapse too big for Discord.", completion_message)
+            _post_completion(f"{note}\n{_timelapse_too_big_text(combined=True)}", completion_message)
     finally:
         plan_timelapse.clear(plan)
         with contextlib.suppress(Exception):
@@ -872,26 +871,70 @@ def _timelapse_post(job_key, completion_message):
             return
         local_video = announcer.materialize_archived_timelapse(archived)
         try:
-            local_video = discord_sized_video(local_video)
-        except Exception as exc:  # oversize source still gets a try; the text fallback covers a 413
+            local_video = platform_sized_video(local_video)
+        except Exception as exc:  # oversize source still gets a try; the text fallback covers a refusal
             log(f"timelapse shrink failed for {job_key!r}: {exc!r}")
         message = f"{completion_message}\nMEDIA:{local_video}"
         short = _vertical_short_attachment(local_video, job_key)
         if short is not None:
             message += f"\nMEDIA:{short}"
         if not _post_completion(message, completion_message):
-            # Never lose the completion notice because Discord refused the attachment.
+            # Never lose the completion notice because the platform refused the attachment.
             log(f"timelapse attach failed for {job_key!r}; posting text only")
-            _post_completion(f"{completion_message}\nTimelapse archived but too big for Discord: {Path(str(archived)).name}", completion_message)
+            _post_completion(f"{completion_message}\n{_timelapse_too_big_text(Path(str(archived)).name)}", completion_message)
     except Exception as exc:
         log(f"timelapse postprocess failed for {job_key!r}: {exc!r}")
         _post_completion(completion_message, completion_message)
 
 
-# Discord rejects bot uploads above the server limit (10 MiB unboosted) with HTTP 413.
-DISCORD_UPLOAD_MAX_BYTES = int(_config.cfg()["discord"]["upload_max_bytes"])
 # paths.ffmpeg: a bare name is looked up on PATH, a path is used as is.
 FFMPEG_BIN = (shutil.which(_config.ffmpeg_bin()) or _config.ffmpeg_bin()) if "/" not in _config.ffmpeg_bin() else _config.ffmpeg_bin()
+
+
+def _media_upload_limit():
+    """The timelapse size cap in bytes for the configured platform (#314).
+
+    The one resolution every listener video goes through: bot-core
+    delivery's rule (core.delivery.upload_limit — the configured
+    platform's [platform] upload_max_bytes, that platform's settings
+    default, [discord] as the fallback), tightened for a standalone
+    Matrix install by the homeserver's own m.upload.size when the
+    server reports one — the same runtime clamp the bot's Matrix
+    adapter applies. Discord's resolution is exactly what it was, so
+    Discord sizing is unchanged. A failed clamp lookup degrades to the
+    configured limit; it never blocks a completion post.
+    """
+    limit = delivery.upload_limit(_config.cfg())
+    if _matrix_standalone():
+        try:
+            from print_buddy.bot import matrix_rest
+            server_limit = matrix_rest.media_config(_matrix_homeserver(), _matrix_token())
+        except Exception:
+            server_limit = None
+        if server_limit:
+            limit = min(limit, int(server_limit))
+    return limit
+
+
+def _timelapse_too_big_text(archived_name=None, *, combined=False):
+    """Why a timelapse is missing from a completion post, in the platform's terms (#314).
+
+    Discord's lines are the ones it has always posted. On Matrix the
+    sentence names the real cause — the server's upload limit — so a
+    household whose server cannot take the video is told the timelapse
+    was recorded but cannot be delivered, instead of it silently never
+    arriving. A failed attachment is never reported as delivered.
+    """
+    platform = _platform_name() if _config.standalone() else "discord"
+    if platform == "matrix":
+        subject = "Combined timelapse" if combined else "Timelapse"
+        return f"{subject} was recorded but is too large for this Matrix server's upload limit."
+    if platform == "telegram":
+        subject = "Combined timelapse" if combined else "Timelapse"
+        return f"{subject} was recorded but is too large for Telegram's upload limit."
+    if combined:
+        return "Combined timelapse too big for Discord."
+    return f"Timelapse archived but too big for Discord: {archived_name}"
 
 
 def _video_duration(path):
@@ -901,13 +944,19 @@ def _video_duration(path):
     return float(out)
 
 
-def discord_sized_video(path, max_bytes=None):
-    """Return a copy of path re-encoded under the Discord upload cap, or path if it already fits."""
-    max_bytes = max_bytes or DISCORD_UPLOAD_MAX_BYTES
+def platform_sized_video(path, max_bytes=None):
+    """Return a copy of path re-encoded under the platform upload cap, or path if it already fits.
+
+    The cap defaults to _media_upload_limit() (#314): the configured
+    platform's effective upload limit, not always Discord's. The
+    two-attempt bitrate strategy is unchanged from the Discord-only
+    sizing this generalises.
+    """
+    max_bytes = max_bytes or _media_upload_limit()
     source = Path(str(path))
     if source.stat().st_size <= max_bytes:
         return source
-    target = source.with_name(f"{source.stem}.discord.mp4")
+    target = source.with_name(f"{source.stem}.sized.mp4")
     if target.is_file() and 0 < target.stat().st_size <= max_bytes:
         return target
     duration = max(1.0, _video_duration(source))

@@ -417,16 +417,16 @@ def test_listener_shrinks_video_and_never_drops_completion_on_rejected_upload(mo
     monkeypatch.setattr(mel.announcer, "archive_completed_timelapse", lambda key: "/volume1/x/stand.mp4")
     monkeypatch.setattr(mel.threading, "Thread", _InlineThread)
     monkeypatch.setattr(mel.announcer, "materialize_archived_timelapse", lambda path: "/cache/stand.mp4")
-    monkeypatch.setattr(mel, "discord_sized_video", lambda path: "/cache/stand.discord.mp4")
+    monkeypatch.setattr(mel, "platform_sized_video", lambda path, max_bytes=None: "/cache/stand.sized.mp4")
     mel.run_announcer("test")
-    assert posted[0] == "Print complete: Stand\nMEDIA:/cache/stand.discord.mp4"
+    assert posted[0] == "Print complete: Stand\nMEDIA:/cache/stand.sized.mp4"
     assert posted[1].startswith("Print complete: Stand\n") and "MEDIA:" not in posted[1]
 
 
-def test_discord_sized_video_passes_small_files_through(tmp_path):
+def test_platform_sized_video_passes_small_files_through(tmp_path):
     small = tmp_path / "a.mp4"
     small.write_bytes(b"x" * 10)
-    assert mel.discord_sized_video(small, max_bytes=100) == small
+    assert mel.platform_sized_video(small, max_bytes=100) == small
 
 
 def test_materialize_archived_timelapse_uses_local_media_cache(tmp_path, monkeypatch):

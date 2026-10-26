@@ -5,15 +5,18 @@
 **What users can do now:**
 - Set `logging.level`, `logging.format` (`text` or `json`) and an optional `logging.file` to control how much Print Buddy logs and where. Log lines carry a time with offset, severity and component, and the intake id while an intake runs.
 - Find slicing trouble in the logs: each OrcaSlicer or Bambu Studio run records its exit code and elapsed time, and a switch to the Bambu fallback is a warning with the reason.
+- On Telegram and Matrix installs, completion timelapses are now sized to that platform's own upload limit instead of Discord's: Telegram keeps up to its 50 MB instead of being squeezed to about 9.5 MB, and a Matrix homeserver with a smaller limit gets a video shrunk to fit it.
 
 **Fixes and reliability:**
 - Intake failures, fit check failures and slice failures now log the full traceback instead of only a short message in the receipt.
 - Credentials are redacted from every log line and traceback.
+- A Matrix homeserver whose upload limit is below the smallest shrinkable timelapse no longer loses the video silently: the completion post says the timelapse was recorded but is too large for that server's upload limit.
 
 **Technical details:**
 - New `print_buddy/logs.py` (`configure`, `bind`, `stage`, `redact`). The standalone bot and the listener call `configure()`; the Hermes plugin path does not, so the gateway's own logging is untouched.
 - The listener's `log()` helper still writes its legacy file and also feeds the shared logger, so existing tests and `listener.log` readers are unaffected.
 - Issue: #150. Offline tests: `tests/test_logs.py`.
+- The listener resolves one effective cap in `_media_upload_limit()` (bot-core `core.delivery.upload_limit`, plus the Matrix homeserver's reported `m.upload.size` as a runtime clamp) and `discord_sized_video()` is generalised to `platform_sized_video()`, writing `<name>.sized.mp4`; shrunk files cached under the old `.discord.mp4` name are simply re-shrunk once. Discord's cap, bitrate strategy and fallback wording are unchanged. No live Telegram/Matrix testing was possible (needs the operator's tokens); all proof is offline. Issue: #314. Offline tests: `tests/hermes/test_platform_media_sizing.py`.
 
 # Version 2.0.6
 

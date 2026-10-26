@@ -40,14 +40,14 @@ message. `python3 -m print_buddy.doctor` warns when a Hermes profile holds the s
 | `telegram.chat_id` | empty | The print chat. Group and channel IDs are negative. The bot ignores every other chat (forum topics inside it work like threads) |
 | `telegram.allowed_user_ids` | empty | Telegram user IDs allowed to use the bot, separated by commas or spaces |
 | `telegram.approval_user_id` | empty | Always allowed as well |
-| `telegram.upload_max_bytes` | `50000000` | Largest file the Telegram bot uploads (the Bot API cloud limit) |
+| `telegram.upload_max_bytes` | `50000000` | Largest file the Telegram bot uploads (the Bot API cloud limit); timelapse video is shrunk to this value, not Discord's |
 | `matrix.homeserver_url` | empty | The Matrix homeserver base URL (matrix.org or self-hosted) |
 | `matrix.access_token_env` | `MATRIX_ACCESS_TOKEN` | Name of the environment variable that holds the Matrix access token |
 | `matrix.room_id` | empty | The print room's ID (starts with `!`). The room must be unencrypted; the bot ignores every other room |
 | `matrix.allowed_user_ids` | empty | Matrix user IDs allowed to use the bot, full `@user:server` form, separated by commas or spaces |
 | `matrix.approval_user_id` | empty | Always allowed as well |
 | `matrix.bot_user_id` | empty | The bot's own Matrix user ID. Empty: asked from the homeserver at startup |
-| `matrix.upload_max_bytes` | `50000000` | Largest file the Matrix bot uploads; lowered to the homeserver's media limit when it reports a smaller one |
+| `matrix.upload_max_bytes` | `50000000` | Largest file the Matrix bot uploads; lowered to the homeserver's media limit when it reports a smaller one. Timelapse video is shrunk to that limit; if it still cannot fit, the completion post says so instead of attaching the video |
 | `bot.health_port` | `0` | Serve `GET /healthz` on this port (200 healthy, 503 not). `0` turns the HTTP check off |
 | `bot.health_stale_s` | `120` | The health check fails when the heartbeat is older than this |
 | `bot.sync_commands` | `true` | Register the slash commands with Discord at startup |

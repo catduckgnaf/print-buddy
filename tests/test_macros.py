@@ -104,6 +104,22 @@ def test_classify_splits_known_printer_defined_and_internal(registry):
     assert listing.internal == ("_PARK_HELPERS",)
 
 
+def test_classify_stage3_entries_are_known(registry):
+    listing = macros.classify(
+        ["COLDPULL", "PAUSE", "PRINT_BUDDY", "SET_PAUSE_AT_LAYER", "SET_ACTIVE_SPOOL"],
+        registry=registry)
+    known = {name: entry.id for name, entry in listing.known}
+    assert known == {
+        "COLDPULL": "zmod.coldpull",
+        "PAUSE": "klipper.pause",
+        "PRINT_BUDDY": "zmod.print-buddy",
+        "SET_PAUSE_AT_LAYER": "klipper.set-pause-at-layer",
+        "SET_ACTIVE_SPOOL": "zmod.set-active-spool",
+    }
+    assert listing.printer_defined == ()
+    assert listing.internal == ()
+
+
 def test_classify_matches_case_insensitively(registry):
     listing = macros.classify(["print_start"], registry=registry)
     assert [name for name, _ in listing.known] == ["print_start"]

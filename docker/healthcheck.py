@@ -4,6 +4,12 @@ import os
 import sys
 import urllib.request
 
+# Installed as /usr/local/bin/print-buddy-healthcheck: for a script invocation Python
+# puts the SCRIPT's directory on sys.path, not /app, so without this the probe dies
+# with ModuleNotFoundError (the combined container could never report healthy).
+# Same pattern as tests/docker/image_probe.py and docker/slicer-smoke.py.
+sys.path.insert(0, "/app")
+
 from print_buddy.bot.health import check as bot_check
 from print_buddy.healthcheck import check as listener_check
 

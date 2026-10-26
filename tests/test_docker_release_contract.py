@@ -20,6 +20,12 @@ class DockerReleaseContract(unittest.TestCase):
         self.assertIn('ENTRYPOINT ["/usr/bin/tini", "-g", "--", "/app/docker/entrypoint.sh", '
                       '"/usr/local/bin/print-buddy-supervise"]', dockerfile)
         self.assertIn('CMD ["python3", "/usr/local/bin/print-buddy-healthcheck"]', dockerfile)
+        # The probe is installed outside /app; a script invocation puts the script's
+        # own directory on sys.path, so it must add /app itself before importing
+        # print_buddy (regression: the combined container could never report healthy).
+        probe = (ROOT / "docker" / "healthcheck.py").read_text()
+        self.assertLess(probe.index('sys.path.insert(0, "/app")'),
+                        probe.index("from print_buddy.bot.health import"))
         supervisor = (ROOT / "docker" / "supervise.sh").read_text()
         for process in ("python3 -m print_buddy.bot", "python3 -m print_buddy.hermes.moonraker_event_listener",
                         "uvicorn spoolman.main:app"):

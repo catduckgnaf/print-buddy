@@ -139,6 +139,8 @@ Slicer choice, file delivery, printer handoff and print authorization are separa
 
 Every file is one message with one `MEDIA:` attachment, labelled "Plate n of m". A summary line follows: "Sent n of m file(s) here. Too big for Discord: ... Failed: ...".
 
+**Said before the button, not after (#272).** The post-slice menu sizes each file before it offers "Send the files here". A plain `.gcode` over the cap is deflated once, in memory, to learn what its zip would weigh; a `.gcode.3mf` package counts as is. A file that cannot fit in any form is named in the same message with its size, the cap and its path on the Print Buddy host (for a Bambu package, `<archive>/<job>/sliced/.../bambu/plate_1.gcode.3mf`), and when nothing fits the button is left out, so the operator never picks a download that fails. Files under the cap are attached exactly as before. The per-file check at send time stays as a safety net for a borderline file. The cap is [`discord.upload_max_bytes`](SETTINGS.md) (`PRINT_BUDDY__DISCORD__UPLOAD_MAX_BYTES`); raise it only when your server's boost level allows larger uploads. Large files stay on the host; Print Buddy has no download server, so fetch them from the archive path it names.
+
 **Failures and retries.** A failed upload (the adapter reports `success=False`, or the send raises) is reported with the error, and the option stays in the menu. A retry sends only the files not yet delivered. Too-big files cannot be fixed by a retry, so they count as reported and the option closes. Every attempt is recorded under `deliveries` in the intake receipt. Expiry and cancellation behave as before.
 
 ## Bambu Lab

@@ -466,6 +466,10 @@ def handle_click(action: str, alert: dict[str, Any] | None) -> str:
         if action == "acknowledge":
             return "Visual check acknowledged. Monitoring continues; nothing sent to the printer."
         if action == "pause":
+            if print_stop._lan_adapter() is not None:
+                # Bambu camera watch (#294): the same button, the Bambu pause —
+                # print_stop.pause re-reads the LAN state and checks the file itself.
+                return print_stop.pause(filename)[1]
             st = pc.status()
             if st.get("klippy") != "ready":
                 return f"The printer's controller is {st.get('klippy')}. Nothing sent."

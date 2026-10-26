@@ -4219,6 +4219,15 @@ def _print_bambu(adapter, state, gcode, job, job_path, wait_s, reprint):
             out["record_path"] = record_start(gcode, remote)
         except Exception as exc:
             print(f"WARNING: start record failed: {exc}")
+        # Camera parity (#294): a monitor watches this launched print — it makes
+        # the completion post with the final camera image and runs the camera
+        # watchdog. Bambu has no listener (#256), so the print path starts it;
+        # a monitor that cannot start never fails the print.
+        try:
+            from print_buddy.hermes import bambu_watch
+            bambu_watch.start_monitor(adapter, remote)
+        except Exception as exc:
+            print(f"WARNING: camera monitor did not start: {exc}")
     print(("PRINT STARTED " if confirmed else "START SUBMITTED; AWAITING CONFIRMATION ") + json.dumps(out))
     return out
 

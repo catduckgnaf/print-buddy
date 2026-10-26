@@ -40,9 +40,21 @@ def status() -> dict[str, Any]:
         if not adapter.lan_configured():
             raise RuntimeError("Bambu LAN status is not configured ([bambu] lan_host and lan_serial plus the access code)")
         live = adapter.normalize_status(adapter.client().snapshot())
-        return {"state": str(live.get("state") or "unknown"), "filename": live.get("filename") or "",
-                "layer": live.get("layer"), "total_layer": live.get("total_layer"),
-                "progress": live.get("progress"), "print_duration": None}
+        st = {"state": str(live.get("state") or "unknown"), "filename": live.get("filename") or "",
+              "layer": live.get("layer"), "total_layer": live.get("total_layer"),
+              "progress": live.get("progress"), "print_duration": None}
+        # Camera parity (#294): a status read also tries the printer's camera.
+        # Best-effort — the outcome rides along as a saved frame path or a plain
+        # note, and a camera problem never fails the status read itself.
+        try:
+            from . import bambu_watch
+            path, note = bambu_watch.status_camera(adapter)
+            st["camera_image_path"] = str(path) if path else None
+            st["camera_note"] = note
+        except Exception:
+            st["camera_image_path"] = None
+            st["camera_note"] = ""
+        return st
     data = _call("/printer/objects/query?print_stats&virtual_sdcard=progress")
     s = (data.get("result") or {}).get("status") or {}
     ps = s.get("print_stats") or {}
@@ -96,3 +108,39 @@ def cancel(expected_filename: str, wait_s: float = 20, poll_s: float = 1.0) -> t
         # A Bambu printer reports a stopped job as FAILED until the operator clears it on the screen.
         return True, "Stopped. The printer shows the cancelled job as an error until you acknowledge it on its screen."
     return True, f"Stopped. Printer now reports {after['state']}."
+
+
+def pause(expected_filename: str, wait_s: float = 20, poll_s: float = 1.0) -> tuple[bool, str]:
+    """One Bambu LAN pause, only if the same file is still printing. Returns (sent, truthful text).
+
+    The watchdog alert's Pause button lands here (#294 stage 3): the press is
+    the operator's, the state is re-read first, exactly one control("pause")
+    is sent, and the result is what the next snapshots actually report —
+    the same discipline as cancel(). Bambu only: the Moonraker pause path
+    lives in print_control.
+    """
+    adapter = _lan_adapter()
+    if adapter is None:
+        return False, "Pause is not available for this printer here. Nothing sent."
+    before = status()
+    if before["state"] != "printing":
+        return False, f"Nothing to pause: printer is {before['state']}. Nothing sent."
+    if expected_filename and before["filename"] != expected_filename:
+        return False, "A different print is running now than the one in this alert. Nothing sent."
+    adapter.control("pause")  # one LAN MQTT pause; the printer answers on the next snapshot
+    deadline = time.monotonic() + wait_s
+    after = before
+    while time.monotonic() < deadline:
+        time.sleep(poll_s)
+        try:
+            after = status()
+        except Exception:
+            continue
+        if after["state"] != "printing":
+            break
+    if after["state"] == "paused":
+        return True, "Paused. Check the printer screen for the current state."
+    if after["state"] == "printing":
+        return True, (f"Pause sent, but the printer still reports printing after {wait_s:.0f}s. "
+                      "Check the printer screen. Not retrying.")
+    return True, f"Pause sent. Printer now reports {after['state']}."

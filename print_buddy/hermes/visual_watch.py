@@ -1,0 +1,160 @@
+"""Shared camera-watchdog pieces: sensitivity profiles, the vision verdict call, and the trigger policy.
+
+This module is the one implementation of the visual check the Moonraker
+listener has always run, lifted out unchanged (#294) so the Bambu camera
+watch (bambu_watch.py) runs the *same* verdict path, the *same*
+[visual_watch] sensitivity profiles, and the *same* trigger policy instead
+of a Bambu-specific copy. The listener imports these names back, so its
+behaviour — and every existing reference to them — is unchanged.
+
+Nothing here controls a printer: the verdict path only looks at a frame, and
+VisualPrintWatch only decides when a check is due.
+"""
+from __future__ import annotations
+
+import base64
+import json
+import os
+import urllib.request
+
+from . import _config
+
+VISUAL_VERDICTS = {"ok", "air", "spaghetti", "detached", "empty_idle", "uncertain"}
+VISUAL_ALERT_VERDICTS = {"air", "spaghetti", "detached", "uncertain"}
+VISUAL_HEALTHY_VERDICTS = {"ok", "safe"}
+VISUAL_SUSPICIOUS_VERDICTS = {"air", "spaghetti", "detached", "uncertain", "no", "unsafe"}
+
+# Camera stall alert presets for [visual_watch] sensitivity, 1 (quietest) to 5 (loudest).
+# Level 3 is the original hard-coded behavior. diff is the mean 64x48 grayscale difference a
+# frame needs to count as changed; stall_layers is how many layers an unchanged frame may span;
+# vision_veto lets an "ok" or "safe" vision verdict cancel a pixel-diff stall alert.
+VISUAL_SENSITIVITY = {
+    1: {"diff": 1.5, "stall_layers": 8, "periodic_s": 1800, "vision_veto": True},
+    2: {"diff": 2.0, "stall_layers": 5, "periodic_s": 1200, "vision_veto": True},
+    3: {"diff": 3.0, "stall_layers": 3, "periodic_s": 900, "vision_veto": False},
+    4: {"diff": 4.0, "stall_layers": 3, "periodic_s": 600, "vision_veto": False},
+    5: {"diff": 5.0, "stall_layers": 2, "periodic_s": 450, "vision_veto": False},
+}
+
+
+def _visual_level(level=None):
+    """The configured sensitivity level, 1 to 5 (3 when unset)."""
+    if level is None:
+        level = _config.cfg().get("visual_watch", {}).get("sensitivity", 3)
+    level = int(level)
+    if level not in VISUAL_SENSITIVITY:
+        raise ValueError(f"visual_watch sensitivity must be 1 to 5, got {level!r}")
+    return level
+
+
+def _visual_profile(level=None):
+    return VISUAL_SENSITIVITY[_visual_level(level)]
+
+
+def _frame_changed(before, after, threshold=None):
+    """Cheap whole-frame perceptual difference; false means visually unchanged."""
+    from PIL import Image, ImageChops, ImageStat
+    import io as _io
+    a = Image.open(_io.BytesIO(before)).convert("L").resize((64, 48))
+    b = Image.open(_io.BytesIO(after)).convert("L").resize((64, 48))
+    if threshold is None:
+        threshold = _visual_profile()["diff"]
+    return ImageStat.Stat(ImageChops.difference(a, b)).mean[0] >= threshold
+
+
+def _strip_json_fence(text):
+    raw = str(text or "").strip()
+    if raw.startswith("```"):
+        raw = raw.split("\n", 1)[-1].rsplit("```", 1)[0]
+    return raw.strip()
+
+
+def visual_verdict(image, prompt, *, chat_url, model, api_key, context):
+    """Judge one frame through the configured vision endpoint. Returns (verdict, detail).
+
+    This is the listener's verdict call with its process-specific values
+    injected: ``chat_url`` and ``api_key`` are zero-argument callables (so a
+    missing setting fails inside the guarded body exactly as before), ``model``
+    and ``context`` are the caller's strings. A PRINT_VISION_URL endpoint, when
+    set, takes the simple {image, prompt} shape; otherwise the
+    OpenAI-compatible chat endpoint is used with the env-named key. Any failure
+    degrades to ("uncertain", ...) — an uncertain frame alerts, it never
+    silently passes.
+    """
+    endpoint = os.environ.get("PRINT_VISION_URL")
+    try:
+        if endpoint:
+            payload = json.dumps({"image": base64.b64encode(image).decode(), "prompt": prompt}).encode()
+            req = urllib.request.Request(endpoint, data=payload, headers={"Content-Type": "application/json"})
+            with urllib.request.urlopen(req, timeout=30) as response:
+                result = json.loads(response.read())
+            return str(result.get("verdict", "uncertain")).casefold(), str(result.get("reason", ""))[:300]
+        key = api_key()
+        if not key:
+            return "uncertain", "vision key is not configured"
+        encoded = base64.b64encode(image).decode()
+        body = {"model": model, "temperature": 0, "max_tokens": 200,
+                "messages": [{"role": "user", "content": [{"type": "text", "text": context + str(prompt)},
+                             {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{encoded}"}}]}]}
+        req = urllib.request.Request(chat_url(),
+                                     data=json.dumps(body).encode(),
+                                     headers={"Authorization": f"Bearer {key}", "Content-Type": "application/json"})
+        with urllib.request.urlopen(req, timeout=60) as response:
+            result = json.loads(response.read())
+        parsed = json.loads(_strip_json_fence(result["choices"][0]["message"]["content"]))
+        return str(parsed.get("verdict", "uncertain")).casefold(), str(parsed.get("reason", ""))[:300]
+    except Exception as exc:
+        return "uncertain", f"vision check failed: {exc!r}"
+
+
+class VisualPrintWatch:
+    """Pure trigger policy for periodic visual checks; never controls the printer."""
+    def __init__(self, sensitivity=None):
+        self.sensitivity = _visual_level(sensitivity)
+        self.profile = VISUAL_SENSITIVITY[self.sensitivity]
+        self.reset()
+
+    def reset(self):
+        self.last_layer = None
+        self.last_check_at = 0.0
+        self.last_snapshot = None
+        self.last_snapshot_layer = 0
+        self.progress_seen_layer = 0
+        self.alerted_stall_layer = None
+        self.layer2_checked = False
+        self.layer5_checked = False
+        self.last_alert_at = 0.0
+
+    def due(self, layer, now, *, snapshot_changed=None):
+        if not isinstance(layer, int) or layer < 1:
+            return None
+        if layer >= 2 and not self.layer2_checked:
+            self.layer2_checked = True
+            self.last_check_at = now
+            return "layer2"
+        if layer >= 5 and not self.layer5_checked:
+            self.layer5_checked = True
+            self.last_check_at = now
+            return "layer5"
+        stall_layers = self.profile["stall_layers"]
+        if now - self.last_check_at >= self.profile["periodic_s"]:
+            self.last_check_at = now
+            reason = "stalled_layers" if snapshot_changed is False and self.last_layer is not None and layer - self.last_layer >= stall_layers else "periodic"
+            return reason
+        if snapshot_changed is False and self.last_snapshot_layer and layer - self.last_snapshot_layer >= stall_layers and self.alerted_stall_layer is None:
+            self.alerted_stall_layer = layer
+            self.last_layer = layer
+            self.last_check_at = now
+            return "stalled_layers"
+        if snapshot_changed is None and layer >= 5 and self.alerted_stall_layer is None and self.last_snapshot_layer and layer - self.last_snapshot_layer >= stall_layers:
+            self.last_layer = layer
+            return "layer_progress"
+        return None
+
+    def record(self, layer, now, snapshot=None):
+        if isinstance(layer, int):
+            self.last_layer = layer
+        self.last_check_at = now
+        self.last_snapshot = snapshot
+        if isinstance(layer, int):
+            self.last_snapshot_layer = layer

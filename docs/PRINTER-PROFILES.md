@@ -33,6 +33,13 @@ print_buddy/printers/
     a1mini.py, p1p.py, x1.py, x1c.py, x1e.py, p2s.py, h2s.py
                          MODEL   #127 Stage 1: the remaining single-nozzle models, same shape as the P1S
                                  (dual-nozzle H2D/H2D Pro/H2C/X2D are Stage 2 and absent)
+  prusa/
+    __init__.py          VENDOR  Prusa: PrusaLink LAN, slicer-owned start code, OrcaSlicer, .gcode/.bgcode
+    mk4s.py              MODEL   prusa.mk4s: 250 x 210 mm bed, 220 mm height, single tool
+    coreone.py           MODEL   prusa.coreone: 250 x 220 mm bed, 270 mm height, enclosed
+    xl.py                MODEL   prusa.xl: 360 mm cube, 5 toolheads (single-tool jobs only)
+    miniplus.py          MODEL   prusa.miniplus: 180 mm cube, Orca MINI profiles
+                                 (adapter.py, client.py, guard.py, facts.py, profiles.py; see PRUSA.md)
 templates/orca/<folder>/ machine.json, process.json, filament.json per printer; a model with
                          generated_templates (the A1) ships none: <state>/orca-profiles/<folder>
 ```

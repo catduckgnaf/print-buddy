@@ -279,6 +279,7 @@ def build_plan(w, *, hermes_found=False, existing_profiles=()):
     connection = vendor.connection
     bambu_lan, bambu_code = {}, ""
     stock_lan, stock_serial, stock_code = {}, "", ""
+    prusa_link, prusa_key = {}, ""
     if connection == "offline":
         notes.append(f"{vendor.label}: no live printer connection. Print Buddy slices, checks G-code and "
                      "packages the file; you start the print yourself.")
@@ -307,6 +308,19 @@ def build_plan(w, *, hermes_found=False, existing_profiles=()):
             stock_lan = {"host": host.strip()}
             stock_serial = w.ask("stock_serial", "Printer serial number (on the printer; stored as a secret)", "", _serial)
             stock_code = w.secret("stock_check_code", "Printer check code (stored as a secret)")
+    if connection == "prusalink":
+        notes.append(f"{vendor.label}: Print Buddy slices and checks the file; with the printer's "
+                     "PrusaLink address set it can also read status, upload the verified file and "
+                     "start it after the usual confirmation. Leave the address blank to stay offline.")
+        host = w.ask(
+            "prusa_host",
+            "Printer LAN IP address or hostname (PrusaLink; Enter to leave offline)",
+            "",
+            lambda value: _host(value) if str(value or "").strip() else None,
+        )
+        if str(host or "").strip():
+            prusa_link = {"link_host": host.strip()}
+            prusa_key = w.secret("prusa_link_api_key", "PrusaLink API key (printer display, Settings > Network > PrusaLink; stored as a secret)")
     has_software = True
     if connection == "moonraker":
         has_software = w.confirm("has_printer_software", "Is Klipper with Moonraker already running on the printer?")
@@ -393,13 +407,15 @@ def build_plan(w, *, hermes_found=False, existing_profiles=()):
         config["bambu"] = bambu_lan
     if stock_lan:
         config["flashforge_stock"] = stock_lan
+    if prusa_link:
+        config["prusa"] = prusa_link
     return {
         "config": config, "display": display, "material": material, "slicer": slicer, "flatpaks": flatpaks,
         "actions": actions, "notes": notes, "hermes": hermes, "profile": profile,
         "profile_exists": profile in existing_profiles, "data_home": data_home, "timezone": timezone,
         "secrets": {"DISCORD_BOT_TOKEN": token, "OCTOPRINT_API_KEY": octoprint_key,
                     "BAMBU_LAN_PASSWORD": bambu_code, "AD5X_SERIAL": stock_serial,
-                    "AD5X_CHECK_CODE": stock_code},
+                    "AD5X_CHECK_CODE": stock_code, "PRUSA_LINK_API_KEY": prusa_key},
         "hermes_env": {"DISCORD_ALLOWED_USERS": users.replace(" ", ""), "DISCORD_HOME_CHANNEL": chat_id},
         "spoolman": spool,
     }

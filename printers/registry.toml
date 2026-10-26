@@ -205,3 +205,56 @@ max_height_mm = 340.0
 filament_slots = 1
 profile = "print_buddy/printers/bambulab/h2s.py"
 notes = "Single-nozzle H2 model with a 350 C hotend. Dual-nozzle H2D/H2C are not yet supported (#127 Stage 2)."
+
+[[printer]]
+key = "prusa.mk4s"
+label = "Prusa MK4S"
+vendor = "prusa"
+firmware = "Prusa Buddy (PrusaLink)"
+firmware_family = "none"
+connection = "prusalink"
+kinematics = "Cartesian (moving bed)"
+bed_mm = [250.0, 210.0]
+max_height_mm = 220.0
+filament_slots = 1
+profile = "print_buddy/printers/prusa/mk4s.py"
+notes = "PrusaLink LAN (status, verified upload, gated start) when configured; otherwise slicing/checks/Discord delivery only. Not tested on hardware."
+[[printer]]
+key = "prusa.coreone"
+label = "Prusa CORE One"
+vendor = "prusa"
+firmware = "Prusa Buddy (PrusaLink)"
+firmware_family = "none"
+connection = "prusalink"
+kinematics = "CoreXY"
+bed_mm = [250.0, 220.0]
+max_height_mm = 270.0
+filament_slots = 1
+profile = "print_buddy/printers/prusa/coreone.py"
+notes = "Enclosed CoreXY on PrusaLink. Chamber is not driven. Not tested on hardware."
+[[printer]]
+key = "prusa.xl"
+label = "Prusa XL (5-tool)"
+vendor = "prusa"
+firmware = "Prusa Buddy (PrusaLink)"
+firmware_family = "none"
+connection = "prusalink"
+kinematics = "CoreXY"
+bed_mm = [360.0, 360.0]
+max_height_mm = 360.0
+filament_slots = 1
+profile = "print_buddy/printers/prusa/xl.py"
+notes = "Five toolheads; Print Buddy slices single-tool (tool 0) jobs only. PrusaLink as the other Prusa models."
+[[printer]]
+key = "prusa.miniplus"
+label = "Prusa MINI+"
+vendor = "prusa"
+firmware = "Prusa Buddy (PrusaLink)"
+firmware_family = "none"
+connection = "prusalink"
+kinematics = "Cartesian (moving bed)"
+bed_mm = [180.0, 180.0]
+max_height_mm = 180.0
+filament_slots = 1
+profile = "print_buddy/printers/prusa/miniplus.py"
+notes = "Runs Orca MINI profiles (printer_model Prusa MINI). PrusaLink as the other Prusa models."

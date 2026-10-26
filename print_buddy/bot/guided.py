@@ -125,7 +125,7 @@ def _validate_service_url(value, answers):
     if text.lower() in ("", "skip", "none"):
         return ""
     model = printers.MODELS.get(answers.get("model"))
-    if model is not None and model.vendor.connection in ("offline", "bambulab_lan", "flashforge_stock"):
+    if model is not None and model.vendor.connection in ("offline", "bambulab_lan", "flashforge_stock", "prusalink", "elegoo_sdcp"):
         raise ValueError("this printer model has no Moonraker connection (Print Buddy would refuse the "
                          "setting); reply `skip`")
     from ..setup_wizard import _url

@@ -20,22 +20,45 @@ STOP_LABEL = "Stop print now"
 KEEP_LABEL = "Keep printing"
 
 
-def _call(path: str, method: str = "GET", timeout: float = 10) -> dict[str, Any]:
-    req = urllib.request.Request(_config.require(BASE, "services.moonraker_url") + path, method=method, data=b"" if method == "POST" else None)
+def _base_for(printer_id: str | None) -> str:
+    """The Moonraker base URL for a roster printer (#335); the configured one when printer_id is None."""
+    if not printer_id:
+        return BASE
+    from print_buddy import settings
+    return str(settings.view_for(printer_id)["services"]["moonraker_url"])
+
+
+def _call(path: str, method: str = "GET", timeout: float = 10, base: str | None = None) -> dict[str, Any]:
+    req = urllib.request.Request(_config.require(BASE if base is None else base, "services.moonraker_url") + path, method=method, data=b"" if method == "POST" else None)
     with urllib.request.urlopen(req, timeout=timeout) as resp:
         return json.loads(resp.read() or b"{}")
 
 
-def _lan_adapter():
-    """The configured printer's adapter when it talks Bambu Lab LAN MQTT; None for Moonraker printers (#276)."""
+def _send(path: str, method: str = "GET", timeout: float = 10, printer_id: str | None = None) -> dict[str, Any]:
+    """_call against one printer's Moonraker; the no-printer call shape is unchanged."""
+    if printer_id:
+        return _call(path, method=method, timeout=timeout, base=_base_for(printer_id))
+    return _call(path, method=method, timeout=timeout)
+
+
+def _lan_adapter(printer_id: str | None = None):
+    """A printer's adapter when it talks Bambu Lab LAN MQTT; None for Moonraker printers (#276).
+
+    Without a printer_id this is the configured printer, exactly as before;
+    with one it is that roster entry's adapter, bound to its own settings view.
+    """
     from print_buddy import printers
-    adapter = printers.current()
+    if not printer_id:
+        adapter = printers.current()
+    else:
+        from print_buddy import settings
+        adapter = printers.get(settings.by_id(printer_id)["model"], settings.view_for(printer_id))
     return adapter if getattr(adapter, "transport", None) == "bambulab_lan" else None
 
 
-def status() -> dict[str, Any]:
+def status(printer_id: str | None = None) -> dict[str, Any]:
     """state, filename, layer, total_layer, progress (0..1), print_duration."""
-    adapter = _lan_adapter()
+    adapter = _lan_adapter() if printer_id is None else _lan_adapter(printer_id)
     if adapter is not None:
         if not adapter.lan_configured():
             raise RuntimeError("Bambu LAN status is not configured ([bambu] lan_host and lan_serial plus the access code)")
@@ -55,7 +78,7 @@ def status() -> dict[str, Any]:
             st["camera_image_path"] = None
             st["camera_note"] = ""
         return st
-    data = _call("/printer/objects/query?print_stats&virtual_sdcard=progress")
+    data = _send("/printer/objects/query?print_stats&virtual_sdcard=progress", printer_id=printer_id)
     s = (data.get("result") or {}).get("status") or {}
     ps = s.get("print_stats") or {}
     info = ps.get("info") or {}
@@ -74,14 +97,15 @@ def where_text(st: dict[str, Any]) -> str:
     return ", ".join(bits)
 
 
-def cancel(expected_filename: str, wait_s: float = 20, poll_s: float = 1.0) -> tuple[bool, str]:
+def cancel(expected_filename: str, wait_s: float = 20, poll_s: float = 1.0,
+           printer_id: str | None = None) -> tuple[bool, str]:
     """One cancel, only if the same file is still printing or paused. Returns (sent, truthful text)."""
-    before = status()
+    before = status(printer_id)
     if before["state"] not in ACTIVE:
         return False, f"Nothing to stop: printer is {before['state']}. Nothing sent."
     if expected_filename and before["filename"] != expected_filename:
         return False, "A different print is running now than the one you confirmed. Nothing sent."
-    adapter = _lan_adapter()
+    adapter = _lan_adapter() if printer_id is None else _lan_adapter(printer_id)
     if adapter is not None:
         adapter.control("stop")  # one LAN MQTT stop; the printer answers on the next snapshot
     else:
@@ -90,13 +114,13 @@ def cancel(expected_filename: str, wait_s: float = 20, poll_s: float = 1.0) -> t
             klipper_report.mark_bot_cancel()
         except Exception:
             pass
-        _call("/printer/print/cancel", method="POST", timeout=15)
+        _send("/printer/print/cancel", method="POST", timeout=15, printer_id=printer_id)
     deadline = time.monotonic() + wait_s
     after = before
     while time.monotonic() < deadline:
         time.sleep(poll_s)
         try:
-            after = status()
+            after = status(printer_id)
         except Exception:
             continue
         if after["state"] not in ACTIVE:
@@ -110,7 +134,8 @@ def cancel(expected_filename: str, wait_s: float = 20, poll_s: float = 1.0) -> t
     return True, f"Stopped. Printer now reports {after['state']}."
 
 
-def pause(expected_filename: str, wait_s: float = 20, poll_s: float = 1.0) -> tuple[bool, str]:
+def pause(expected_filename: str, wait_s: float = 20, poll_s: float = 1.0,
+          printer_id: str | None = None) -> tuple[bool, str]:
     """One Bambu LAN pause, only if the same file is still printing. Returns (sent, truthful text).
 
     The watchdog alert's Pause button lands here (#294 stage 3): the press is
@@ -119,10 +144,10 @@ def pause(expected_filename: str, wait_s: float = 20, poll_s: float = 1.0) -> tu
     the same discipline as cancel(). Bambu only: the Moonraker pause path
     lives in print_control.
     """
-    adapter = _lan_adapter()
+    adapter = _lan_adapter() if printer_id is None else _lan_adapter(printer_id)
     if adapter is None:
         return False, "Pause is not available for this printer here. Nothing sent."
-    before = status()
+    before = status(printer_id)
     if before["state"] != "printing":
         return False, f"Nothing to pause: printer is {before['state']}. Nothing sent."
     if expected_filename and before["filename"] != expected_filename:
@@ -133,7 +158,7 @@ def pause(expected_filename: str, wait_s: float = 20, poll_s: float = 1.0) -> tu
     while time.monotonic() < deadline:
         time.sleep(poll_s)
         try:
-            after = status()
+            after = status(printer_id)
         except Exception:
             continue
         if after["state"] != "printing":

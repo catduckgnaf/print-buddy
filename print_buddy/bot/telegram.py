@@ -209,6 +209,15 @@ class StandaloneAdapter(BasePlatformAdapter):
         if not self._is_allowed_user(user_id, S(bot=bool(sender.get("is_bot")))):
             await answer("Not allowed. Nothing changed.")
             return True
+        # A prompt is answered in the chat it was asked in (#335): the chat
+        # is the approval's target, so a callback from another chat never
+        # resolves this chat's question.
+        row = self._prompts.get(cid)
+        asked_chat = str((row or {}).get("chat_id") or "")
+        press_chat = str(((query.get("message") or {}).get("chat") or {}).get("id") or "")
+        if asked_chat and press_chat and press_chat != asked_chat:
+            await answer("Not allowed. Nothing changed.")
+            return True
         label = await self.answer_choice(cid, index, user_id=user_id)
         if label is None:
             await answer("That question already closed. Nothing changed.")

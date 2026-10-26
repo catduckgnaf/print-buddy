@@ -52,6 +52,14 @@ Print Buddy's allowed-user list.
    profile. Collect the ID of every person who may print, plus the
    approver's. Matrix IDs are never numbers.
 
+With several printers (a `printers:` list, see
+[SETTINGS.md](SETTINGS.md)), create one room per printer, invite the bot
+to each, and put each room's ID in that printer's `chat_id` entry: each
+room then drives only its own printer, end to end. The `[matrix] room_id`
+below remains the fallback room for the one entry that sets no `chat_id`
+(the first, default printer). A room no printer claims gets silence, and
+two entries claiming one room refuse startup.
+
 ## 3. Configure Print Buddy
 
 ```yaml

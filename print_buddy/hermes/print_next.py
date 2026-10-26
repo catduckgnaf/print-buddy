@@ -250,11 +250,46 @@ def question_text(target: Mapping[str, Any]) -> str:
             "Starting uploads and prints immediately. Confirm the bed is clear.")
 
 
-def live_idle_check() -> None:
-    """Fresh read-only printer state query. Raises unless the printer is provably idle."""
+def _target_printer_id(target: Mapping[str, Any]) -> str | None:
+    """The roster printer a start target's job belongs to, from its JOB.json (#335).
+
+    print-now keys everything off the job record; the pre-start idle check
+    must look at the same printer. A target without a readable job record
+    names no printer and the check falls back to the configured one.
+    """
+    job_json = target.get("job_json") if isinstance(target, Mapping) else None
+    if not job_json:
+        return None
+    try:
+        job = json.loads(Path(str(job_json)).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    pid = job.get("printer_id") if isinstance(job, dict) else None
+    return str(pid) if pid else None
+
+
+def live_idle_check(printer_id: str | None = None) -> None:
+    """Fresh read-only printer state query. Raises unless the printer is provably idle.
+
+    With a printer_id (#335) the query is that roster printer's: its adapter,
+    its state record, its Moonraker. Checking the configured printer instead
+    would wave through — or block — a start on the wrong machine.
+    """
     from print_buddy import printers
     from print_buddy.core import printer_state
     from print_buddy.core.model_job import _printer_phase
+
+    if printer_id:
+        from print_buddy import settings
+        entry = settings.by_id(printer_id)
+        adapter = printers.get(entry["model"], settings.view_for(printer_id))
+        ok, problems, facts = printer_state.check(printer_state.load(printer_id),
+                                                  printer_id=printer_id, adapter=adapter)
+        if getattr(adapter, "transport", None) == "bambulab_lan" and not facts.get("lan_configured"):
+            raise RuntimeError("Bambu LAN status is not configured ([bambu] lan_host and lan_serial plus the access code)")
+        if not ok:
+            raise RuntimeError("; ".join(problems) or "printer readiness problems")
+        return
 
     transport = getattr(printers.current(), "transport", None)
     if transport in ("bambulab_lan", "octoprint"):
@@ -367,8 +402,13 @@ async def start(target: Mapping[str, Any], model_job: Path | None = None,
     gcode = Path(target["gcode"])
     if not gcode.is_file() or _sha256(gcode) != target["gcode_sha256"]:
         return False, "REFUSED: the next plate's G-code changed after the prompt. Nothing uploaded or started."
+    if idle_check is not None:
+        check = idle_check
+    else:
+        target_printer = _target_printer_id(target)
+        check = (lambda: live_idle_check(target_printer)) if target_printer else live_idle_check
     try:
-        await asyncio.to_thread(idle_check or live_idle_check)
+        await asyncio.to_thread(check)
     except Exception as exc:  # fail closed on any read error
         return False, f"REFUSED: fresh printer check failed: {exc}. Nothing uploaded or started."
     claim = claim_path(target, claims_dir)

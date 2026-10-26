@@ -29,6 +29,7 @@ from .. import settings
 from ..core import prompts
 from . import health
 from . import matrix_rest as mx
+from . import routing
 from .platform import BasePlatformAdapter, SendResult
 from .rest import chunks, split_media
 
@@ -250,12 +251,29 @@ class MatrixClient:
 
     # -------------------------------------------------------------- event routing
 
-    def parse(self, event):
-        bot_id = self.bot_user_id or (str(self.user.id) if self.user is not None else "")
-        return parse_event(event, self.room_id, bot_id)
+    def _served_rooms(self):
+        """The rooms this bot answers in (#335): every room the roster maps to a
+        printer, plus the configured home room. Without a roster map that is
+        the home room alone, exactly as before."""
+        rooms = set()
+        core_map = getattr(self.core, "channel_printers", None) if self.core is not None else None
+        if core_map:
+            rooms.update(core_map)
+        else:
+            try:
+                rooms.update(routing.channel_map(self.cfg, "matrix"))
+            except Exception:
+                pass  # BotCore's own map build reports a bad roster loudly at startup
+        if self.room_id:
+            rooms.add(self.room_id)
+        return rooms
 
-    async def handle_event(self, event):
-        parsed = self.parse(event)
+    def parse(self, event, room_id=None):
+        bot_id = self.bot_user_id or (str(self.user.id) if self.user is not None else "")
+        return parse_event(event, room_id or self.room_id, bot_id)
+
+    async def handle_event(self, event, room_id=None):
+        parsed = self.parse(event, room_id)
         if parsed is None or self.core is None:
             return None
         return await self.core.handle_message(self._bind(parsed))
@@ -263,31 +281,38 @@ class MatrixClient:
     def _room_events(self, data):
         rooms = (data or {}).get("rooms") or {}
         joined = rooms.get("join") or {}
-        room = joined.get(self.room_id) or {}
-        timeline = room.get("timeline") or {}
-        events = timeline.get("events")
-        return events if isinstance(events, list) else []
+        served = self._served_rooms()
+        out = []
+        for room_id, room in joined.items():
+            if room_id not in served:
+                continue
+            timeline = (room or {}).get("timeline") or {}
+            events = timeline.get("events")
+            if isinstance(events, list):
+                out.extend((room_id, event) for event in events)
+        return out
 
     async def _maybe_join(self, data):
-        """Accept an invitation to the print room when one shows up in /sync."""
+        """Accept invitations to served rooms when they show up in /sync."""
         invited = ((data or {}).get("rooms") or {}).get("invite") or {}
-        if self.room_id not in invited:
-            return
-        try:
-            await asyncio.to_thread(mx.join_room, self.homeserver, self.token, self.room_id,
-                                    opener=self.opener)
-            logger.info("joined the print room %s", self.room_id)
-        except Exception:
-            logger.warning("could not join the print room %s", self.room_id, exc_info=True)
+        for room_id in invited:
+            if room_id not in self._served_rooms():
+                continue
+            try:
+                await asyncio.to_thread(mx.join_room, self.homeserver, self.token, room_id,
+                                        opener=self.opener)
+                logger.info("joined the print room %s", room_id)
+            except Exception:
+                logger.warning("could not join the print room %s", room_id, exc_info=True)
 
     async def poll_once(self):
         data = await asyncio.to_thread(mx.sync, self.homeserver, self.token, self._since,
                                        timeout_ms=SYNC_TIMEOUT_MS, opener=self.opener)
         await self._maybe_join(data)
         handled = 0
-        for event in self._room_events(data):
+        for room_id, event in self._room_events(data):
             try:
-                if await self.handle_event(event) is not None:
+                if await self.handle_event(event, room_id) is not None:
                     handled += 1
             except Exception:
                 logger.exception("Matrix event handling failed")

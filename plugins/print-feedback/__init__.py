@@ -81,6 +81,63 @@ def _is_print_discord_event(event):
             and not getattr(source, 'profile_route_rejected', False))
 
 
+def _routed_printer_id(source, gateway=None):
+    """The roster printer this event's channel routes to (#335), or None.
+
+    None means the configured single/default printer, and every handler then
+    takes its legacy path unchanged — including a channel routed to the
+    DEFAULT printer, whose state, lease and control paths are the legacy
+    ones (Stage 2b). Routing engages only for the other printers. The
+    standalone gateway knows the channel map; a bot-runtime source also
+    carries the id stamped on it. Falling back to "the current printer"
+    for a channel that routes elsewhere would be a wrong-printer defect,
+    so an id found here is always honoured, never re-derived.
+    """
+    pid = None
+    if gateway is not None:
+        printer_for = getattr(gateway, 'printer_id_for', None)
+        if printer_for is not None:
+            try:
+                pid = printer_for(source)
+            except Exception:
+                pid = None
+    if not pid:
+        pid = getattr(source, 'printer_id', None)
+    if not isinstance(pid, str) or not pid:
+        return None  # only a real stamped id routes; anything else is the legacy path
+    try:
+        from print_buddy import settings
+        if str(pid) == str(settings.default_printer_id(_config.cfg())):
+            return None
+    except Exception:
+        pass
+    return str(pid)
+
+
+def _pkw(pid):
+    """Call kwargs carrying a routed printer: {} when unrouted, so legacy call shapes stay exact."""
+    return {'printer_id': pid} if pid else {}
+
+
+def _printer_label(pid):
+    """A routed printer's display name for user-facing text (the default printer is named, design §6.1)."""
+    try:
+        from print_buddy import settings
+        entry = settings.by_id(pid, _config.cfg())
+        return entry.get('name') or str(pid)
+    except Exception:
+        return str(pid)
+
+
+def _job_owner_pid(job_json):
+    """The roster printer a JOB.json belongs to: its recorded printer_id, else the default printer."""
+    try:
+        from print_buddy.core import model_job
+        return model_job._job_printer_id(json.loads(Path(job_json).read_text()))
+    except Exception:
+        return None
+
+
 async def upload_wait_dispatch(event, gateway, **kwargs):
     """Freeze a Discord intake while uploads arrive; only an explicit resume releases it."""
     if not _is_print_discord_event(event):
@@ -406,7 +463,14 @@ async def color_selection_dispatch(event, gateway, **kwargs):
     try:
         if path.name != 'JOB.json' or not path.is_relative_to(ARCHIVE.resolve()):
             raise ValueError('color command requires an archived JOB.json')
-        result = await collect(path, printer_state.load(), adapter, source.chat_id,
+        # Colors bind against the JOB's printer (#335): its recorded
+        # printer_id picks the state record, never the channel's or the
+        # configured printer's.
+        try:
+            job_pid = model_job._job_printer_id(json.loads(path.read_text()))
+        except Exception:
+            job_pid = None
+        result = await collect(path, printer_state.load(**_pkw(job_pid)), adapter, source.chat_id,
                                f'print-colors:{source.chat_id}:{source.thread_id}', metadata)
         message = json.dumps(result)
     except PromptCancelled:
@@ -478,6 +542,7 @@ async def print_next_dispatch(event, gateway, **kwargs):
     args = text[len('/print-next'):].split()
     plan_id = args[0] if args else ''
     part_id = args[1] if len(args) > 1 else None
+    pid = _routed_printer_id(source, gateway)
     key = ('print-next', plan_id)
     if key in _seen:
         await adapter.send(chat_id=source.chat_id, metadata=metadata,
@@ -489,6 +554,16 @@ async def print_next_dispatch(event, gateway, **kwargs):
             raise print_next.NextPlateError('usage: /print-next <plan_id> [part_id]')
         plan = print_next.load_plan(plan_id)
         target = print_next.resolve_next(plan) if part_id is None else print_next.resolve_next(plan, part_id=part_id)
+        if pid:
+            # The channel is the target (#335): a plan whose job belongs to
+            # another printer is refused here, before any prompt is shown.
+            from print_buddy.core import model_job as _mj
+            _job = json.loads(Path(target['job_json']).read_text())
+            _job_pid = _mj._job_printer_id(_job)
+            if _job_pid != pid:
+                raise print_next.NextPlateError(
+                    f"that plan belongs to {_printer_label(_job_pid)}, not this channel's printer "
+                    f"({_printer_label(pid)})")
         from print_buddy.hermes import discord_print_summary as print_summary
         job, plate = print_summary.find_job(target['gcode'])
         seconds = (plate or {}).get('seconds')
@@ -525,7 +600,8 @@ async def print_next_dispatch(event, gateway, **kwargs):
                        else f"Did not start {target['label']}. Not retrying.\n{detail}")
             if not ok and _start_refused_needs_restart(detail):
                 from print_buddy.hermes import print_control as pc
-                message += '\n' + await _offer_force_restart(adapter, source, metadata, pc, detail)
+                message += '\n' + await _offer_force_restart(adapter, source, metadata, pc, detail,
+                                                             **_pkw(pid))
     except print_next.NextPlateError as exc:
         message = f'No next plate: {exc}. Nothing uploaded or started.'
     except Exception as exc:
@@ -551,9 +627,10 @@ def _discord_operator(event, gateway):
     return source
 
 
-def _maintenance_hours_now():
+def _maintenance_hours_now(printer_id=None):
     from print_buddy.hermes import print_control
-    payload = print_control._call('/server/history/totals')
+    payload = (print_control._send('/server/history/totals', printer_id=printer_id)
+               if printer_id else print_control._call('/server/history/totals'))
     result = payload.get('result') or {}
     seconds = result.get('total_time', result.get('print_time'))
     if seconds is None:
@@ -569,10 +646,17 @@ def _cold_pull_temps():
     return pla_hot, pla_cold, petg_hot, petg_cold, pla_cold + 5
 
 
-async def _coldpull_workflow(adapter, source, metadata, *, source_tag, initial_cold=None, selected_material=None):
+async def _coldpull_workflow(adapter, source, metadata, *, source_tag, initial_cold=None, selected_material=None,
+                             printer_id=None):
     """Shared user interaction for the standalone and maintenance cold-pull paths."""
     from print_buddy.hermes import maintenance
     from print_buddy.hermes import print_control as pc
+
+    if printer_id is None:
+        # No explicit printer (the standalone /print-coldpull call): the
+        # source itself carries the channel's routed printer (#335).
+        _route = globals().get('_routed_printer_id')
+        printer_id = _route(source) if _route else None
 
     pla_hot, pla_cold, petg_hot, petg_cold, retry_cold = _cold_pull_temps()
     answer = selected_material
@@ -586,7 +670,7 @@ async def _coldpull_workflow(adapter, source, metadata, *, source_tag, initial_c
     temp, cold = (pla_hot, pla_cold) if is_pla else (petg_hot, petg_cold)
     if is_pla and (answer.endswith(f'{pla_hot}/{retry_cold}') or initial_cold == retry_cold):
         cold = retry_cold
-    state = maintenance.load()
+    state = maintenance.load(**_pkw(printer_id))
     pulls = [r.get('cold_pull', {}) for r in state.get('runs', []) if r.get('cold_pull')]
     prior = pulls[-1] if pulls else {}
     if is_pla and (initial_cold == retry_cold or prior.get('next_cold') == retry_cold):
@@ -616,26 +700,26 @@ async def _coldpull_workflow(adapter, source, metadata, *, source_tag, initial_c
     import time as _time
     # Capture authorization only after the successful button response.
     confirmed_at = _time.time()
-    ok, detail = await asyncio.to_thread(pc.coldpull, temp, cold, confirmed_at=confirmed_at)
+    ok, detail = await asyncio.to_thread(pc.coldpull, temp, cold, confirmed_at=confirmed_at, **_pkw(printer_id))
     record = {'kind': 'coldpull', 'source': source_tag,
               'cold_pull': {'temp': temp, 'cold': cold, 'result': 'awaiting_tip' if ok else 'failed', 'detail': detail}}
     if not ok:
-        record['hours_total'] = await asyncio.to_thread(_maintenance_hours_now)
-        maintenance.append_run(record)
+        record['hours_total'] = await (asyncio.to_thread(_maintenance_hours_now, printer_id) if printer_id else asyncio.to_thread(_maintenance_hours_now))
+        maintenance.append_run(record, **_pkw(printer_id))
         return record, detail
     tip = await _confirm(adapter, source, metadata, f'{source_tag}-tip', 'How did the pulled tip look?',
                          ['Clean', 'Dirty', 'Snapped', "Didn't release"], (globals().get('_config').cold_pull_outcome_s() if globals().get('_config') else 1800))
     result = {'Clean': 'clean', 'Dirty': 'dirty', 'Snapped': 'snapped', "Didn't release": 'didnt_release'}.get(tip)
     if not result:
-        record['hours_total'] = await asyncio.to_thread(_maintenance_hours_now)
-        maintenance.append_run(record)
+        record['hours_total'] = await (asyncio.to_thread(_maintenance_hours_now, printer_id) if printer_id else asyncio.to_thread(_maintenance_hours_now))
+        maintenance.append_run(record, **_pkw(printer_id))
         return record, 'Cold pull finished; heater target is 0, but the tip result was not recorded.'
     guidance = maintenance.result_guidance(result, dirty_count)
     record['cold_pull'].update({'result': result, **guidance})
     if guidance['offer_cold_95'] and temp == pla_hot:
         record['cold_pull']['next_cold'] = retry_cold
-    record['hours_total'] = await asyncio.to_thread(_maintenance_hours_now)
-    maintenance.append_run(record)
+    record['hours_total'] = await (asyncio.to_thread(_maintenance_hours_now, printer_id) if printer_id else asyncio.to_thread(_maintenance_hours_now))
+    maintenance.append_run(record, **_pkw(printer_id))
     message = detail
     if guidance['offer_repeat']:
         message += ' One dirty pull can be repeated.'
@@ -653,13 +737,18 @@ async def coldpull_dispatch(event, gateway, **kwargs):
     if adapter is None:
         return {'action': 'skip', 'reason': 'cold-pull UI delivery unavailable'}
     metadata = {'thread_id': source.thread_id} if source.thread_id else None
-    key = ('coldpull',)
+    key = ('coldpull', source.chat_id, source.thread_id)
     if key in _seen:
         await adapter.send(chat_id=source.chat_id, metadata=metadata, content='A cold pull is already in progress. Nothing sent.')
         return {'action': 'skip', 'reason': 'cold-pull prompt already active'}
     _seen[key] = time.monotonic()
     try:
-        _record, message = await _coldpull_workflow(adapter, source, metadata, source_tag='coldpull')
+        pid = _routed_printer_id(source, gateway)
+        if pid:
+            _record, message = await _coldpull_workflow(adapter, source, metadata, source_tag='coldpull',
+                                                        printer_id=pid)
+        else:
+            _record, message = await _coldpull_workflow(adapter, source, metadata, source_tag='coldpull')
     except Exception as exc:
         logger.exception('/print-coldpull failed')
         message = f'Cold pull stopped: {exc}. Do not retry unless printer state is checked.'
@@ -680,6 +769,7 @@ async def maintenance_dispatch(event, gateway, **kwargs):
     import uuid
     from print_buddy.hermes import maintenance
     metadata = {'thread_id': source.thread_id} if source.thread_id else None
+    pid = _routed_printer_id(source, gateway)
     mode = str(getattr(event, 'text', '')).strip()[len('/print-maintenance'):].strip().casefold() or 'full'
     if adapter is None:
         return {'action': 'skip', 'reason': 'maintenance UI delivery unavailable'}
@@ -694,15 +784,15 @@ async def maintenance_dispatch(event, gateway, **kwargs):
     _seen[key] = time.monotonic()
     try:
         from print_buddy.hermes import print_control as pc
-        st = await asyncio.to_thread(pc.status)
+        st = await asyncio.to_thread(pc.status, **_pkw(pid))
         if st.get('state') in {'printing', 'paused'}:
             message = f"Maintenance is unavailable while the printer is {st['state']}. Nothing changed."
         else:
-            state = maintenance.load()
+            state = maintenance.load(**_pkw(pid))
             session = state.get('pending')
             count = 4 if mode == 'full' else 2
             if not isinstance(session, dict) or session.get('kind') != mode:
-                session = maintenance.begin_session(mode, state)
+                session = maintenance.begin_session(mode, state, **_pkw(pid))
             instructions = [
                 'Extruder gears: open the tension lever, brush out filament dust, and check the last filament end for a ground notch.',
                 '4-in-1 connector and slot tubes: pull them and clear any broken filament.',
@@ -721,9 +811,9 @@ async def maintenance_dispatch(event, gateway, **kwargs):
                 session['steps'][i] = action
                 if action == 'problem':
                     session['problems'].append(instruction)
-                maintenance.save_session(session, state)
+                maintenance.save_session(session, state, **_pkw(pid))
             if mode == 'full':
-                cold_pull_runs = [r for r in maintenance.load().get('runs', []) if r.get('cold_pull')]
+                cold_pull_runs = [r for r in maintenance.load(**_pkw(pid)).get('runs', []) if r.get('cold_pull')]
                 last_pull = cold_pull_runs[-1].get('cold_pull', {}) if cold_pull_runs else {}
                 pla_hot, pla_cold, petg_hot, petg_cold, retry_cold = _cold_pull_temps()
                 options = [f'Run PLA (trial) cold pull {pla_hot}/{pla_cold}',
@@ -736,7 +826,7 @@ async def maintenance_dispatch(event, gateway, **kwargs):
                     cold = retry_cold if answer.endswith(f'{pla_hot}/{retry_cold}') else None
                     record, _cold_message = await _coldpull_workflow(
                         adapter, source, metadata, source_tag='maintenance', initial_cold=cold,
-                        selected_material=answer)
+                        selected_material=answer, **_pkw(pid))
                     session['cold_pull'] = record.get('cold_pull') if record else {'result': 'cancelled'}
                     if session.get('cold_pull'):
                         session['cold_pull']['source'] = 'maintenance'
@@ -746,12 +836,12 @@ async def maintenance_dispatch(event, gateway, **kwargs):
                         # Maintenance completion must not append a duplicate record.
                         session['cold_pull_record_persisted'] = True
             session['completed'] = True
-            session['hours_total'] = await asyncio.to_thread(_maintenance_hours_now)
+            session['hours_total'] = await (asyncio.to_thread(_maintenance_hours_now, pid) if pid else asyncio.to_thread(_maintenance_hours_now))
             final_record = session.pop('cold_pull_record', None) or session
             if not session.pop('cold_pull_record_persisted', False):
-                maintenance.append_run(final_record)
+                maintenance.append_run(final_record, **_pkw(pid))
             state.pop('pending', None)
-            maintenance.save(state)
+            maintenance.save(state, **_pkw(pid))
             message = f'{mode.title()} maintenance checklist saved. '
             if session.get('cold_pull', {}).get('result') == 'failed':
                 message += f" Cold pull failed: {session['cold_pull'].get('detail', 'check printer')}"
@@ -783,6 +873,11 @@ async def runout_intake_dispatch(event, gateway, **kwargs):
     from print_buddy.hermes import moonraker_event_listener as listener
     context = listener.load_runout_pause()
     if context is None:
+        return None
+    if _routed_printer_id(source, gateway):
+        # The pending runout belongs to the listener's printer — the default
+        # printer until the listener itself is per-printer (Stage 2d). A
+        # routed channel must not answer it or bind its printer's slots.
         return None
     choice = listener.parse_runout_reply(text)
     if text.strip().casefold() in ('same', 'same spool', 'no change'):
@@ -857,17 +952,21 @@ async def spool_dispatch(event, gateway, **kwargs):
         return {'action': 'skip', 'reason': 'spool UI delivery unavailable'}
     from print_buddy.hermes import spool_sync
     metadata = {'thread_id': source.thread_id} if source.thread_id else None
+    pid = _routed_printer_id(source, gateway)
+    # A routed channel's spool state and screen pushes are that printer's:
+    # its hardware record and its own Moonraker (#335). Spoolman itself is shared.
+    mr_kw = {'mr': spool_sync.moonraker_for(pid), 'printer_id': pid} if pid else {}
     args = str(getattr(event, 'text', '')).strip()[len('/spool'):].strip()
     verb, _, rest = args.partition(' ')
     verb = verb.casefold()
     try:
         if verb in ('', 'list', 'ls'):
-            message = await asyncio.to_thread(spool_sync.list_text)
+            message = await asyncio.to_thread(spool_sync.list_text, **_pkw(pid))
         elif verb in ('change', 'set', 'load'):
             parts = rest.replace('#', ' ').split()
             if len(parts) != 2 or not all(p.isdigit() for p in parts):
                 raise spool_sync.SpoolError('format: /spool change <slot 1-4> <spool#>')
-            result = await asyncio.to_thread(spool_sync.bind_slot, int(parts[0]), int(parts[1]))
+            result = await asyncio.to_thread(spool_sync.bind_slot, int(parts[0]), int(parts[1]), **mr_kw)
             message = spool_sync.bind_text(result)
         elif verb in ('new', 'add'):
             made = await asyncio.to_thread(spool_sync.create_spool, spool_sync.parse_new(rest))
@@ -875,7 +974,7 @@ async def spool_dispatch(event, gateway, **kwargs):
                        f"{' (existing filament type reused)' if made['reused_filament'] else ''}. "
                        f"Load it with `/spool change <slot> {made['spool_id']}`.")
         elif verb == 'sync':
-            message = 'Printer screen from Spoolman:\n' + '\n'.join(await asyncio.to_thread(spool_sync.sync_all_screens))
+            message = 'Printer screen from Spoolman:\n' + '\n'.join(await asyncio.to_thread(spool_sync.sync_all_screens, **mr_kw))
         else:
             message = ('`/spool list` · `/spool change <slot> <spool#>` · '
                        '`/spool new brand, material, color, grams[, hex]` · `/spool sync`')
@@ -930,9 +1029,16 @@ async def macros_dispatch(event, gateway, **kwargs):
     from print_buddy import macros, printers
     from print_buddy.hermes import spool_sync
     metadata = {'thread_id': source.thread_id} if source.thread_id else None
+    pid = _routed_printer_id(source, gateway)
+    mr = spool_sync.moonraker_for(pid)
     args = str(getattr(event, 'text', '')).strip()[len('/print-macros'):].split()
     try:
-        connection = printers.current().connection
+        if pid:
+            from print_buddy import settings
+            connection = printers.get(settings.by_id(pid, _config.cfg())["model"],
+                                      settings.view_for(pid, _config.cfg())).connection
+        else:
+            connection = printers.current().connection
     except Exception:
         logger.exception('/print-macros could not resolve the configured printer')
         connection = None
@@ -942,7 +1048,7 @@ async def macros_dispatch(event, gateway, **kwargs):
         return {'action': 'skip', 'reason': 'print macros not applicable to this printer'}
     if not args:
         try:
-            listing = await asyncio.to_thread(macros.discover, spool_sync.moonraker)
+            listing = await asyncio.to_thread(macros.discover, mr)
             message = macros.listing_text(listing)
         except Exception:
             logger.exception('/print-macros failed')
@@ -964,7 +1070,7 @@ async def macros_dispatch(event, gateway, **kwargs):
     _seen[key] = time.monotonic()
     try:
         try:
-            prepared = await asyncio.to_thread(macros.prepare_run, spool_sync.moonraker,
+            prepared = await asyncio.to_thread(macros.prepare_run, mr,
                                                args[1], args[2:])
         except (macros.MacroRefusal, macros.MacroError) as exc:
             message = str(exc)
@@ -978,7 +1084,7 @@ async def macros_dispatch(event, gateway, **kwargs):
                 message = 'Macro not run. Nothing sent.'
             else:
                 try:
-                    message = await asyncio.to_thread(macros.send_run, spool_sync.moonraker, prepared)
+                    message = await asyncio.to_thread(macros.send_run, mr, prepared)
                 except (macros.MacroRefusal, macros.MacroError) as exc:
                     message = str(exc)
     except Exception:
@@ -1159,14 +1265,15 @@ async def print_stop_dispatch(event, gateway, **kwargs):
     from print_buddy.hermes import print_stop
     from print_buddy.hermes import discord_print_summary as summary
     metadata = {'thread_id': source.thread_id} if source.thread_id else None
-    key = ('print-stop',)
+    pid = _routed_printer_id(source, gateway)
+    key = ('print-stop', source.chat_id, source.thread_id)
     if key in _seen:
         await adapter.send(chat_id=source.chat_id, metadata=metadata,
                            content='A stop prompt is already open. Nothing sent.')
         return {'action': 'skip', 'reason': 'stop prompt already active'}
     _seen[key] = time.monotonic()
     try:
-        st = await asyncio.to_thread(print_stop.status)
+        st = await asyncio.to_thread(print_stop.status, **_pkw(pid))
         if st.get('camera_image_path'):
             # Bambu camera parity (#294): show the camera image alongside the status.
             try:
@@ -1198,7 +1305,7 @@ async def print_stop_dispatch(event, gateway, **kwargs):
             if answer != print_stop.STOP_LABEL:
                 message = 'Kept printing. Nothing sent.'
             else:
-                _sent, message = await asyncio.to_thread(print_stop.cancel, st['filename'])
+                _sent, message = await asyncio.to_thread(print_stop.cancel, st['filename'], **_pkw(pid))
     except Exception as exc:
         logger.exception('print-stop failed')
         message = f'Stop failed: {exc}. Check the printer screen.'
@@ -1251,13 +1358,14 @@ async def print_resume_dispatch(event, gateway, **kwargs):
     from print_buddy.hermes import print_control as pc
     from print_buddy.hermes import discord_print_summary as summary
     metadata = {'thread_id': source.thread_id} if source.thread_id else None
-    key = ('print-resume',)
+    pid = _routed_printer_id(source, gateway)
+    key = ('print-resume', source.chat_id, source.thread_id)
     if key in _seen:
         await adapter.send(chat_id=source.chat_id, metadata=metadata, content='A resume prompt is already open. Nothing sent.')
         return {'action': 'skip', 'reason': 'resume prompt already active'}
     _seen[key] = time.monotonic()
     try:
-        st = await asyncio.to_thread(pc.status)
+        st = await asyncio.to_thread(pc.status, **_pkw(pid))
         if not pc.resumable(st):
             message = pc.not_resumable_text(st)
         else:
@@ -1269,7 +1377,7 @@ async def print_resume_dispatch(event, gateway, **kwargs):
             if answer != pc.RESUME_LABEL:
                 message = 'Left it paused. Nothing sent.'
             else:
-                _sent, message = await asyncio.to_thread(pc.resume, st['filename'])
+                _sent, message = await asyncio.to_thread(pc.resume, st['filename'], **_pkw(pid))
     except Exception as exc:
         logger.exception('print-resume failed')
         message = f'Resume failed: {exc}. Check the printer screen.'
@@ -1289,18 +1397,29 @@ async def print_again_dispatch(event, gateway, **kwargs):
     from print_buddy.hermes import print_control as pc
     from print_buddy.hermes import print_next
     metadata = {'thread_id': source.thread_id} if source.thread_id else None
+    pid = _routed_printer_id(source, gateway)
     query = str(getattr(event, 'text', '')).strip()[len('/print-again'):].strip()
     if query.casefold() in ('list', 'ls', 'history'):
         rows = await asyncio.to_thread(pc.printed_jobs)
+        if pid:
+            # A routed channel lists only its own printer's prints (#335).
+            rows = [row for row in rows if _job_owner_pid(row['job_json']) == pid]
         await adapter.send(chat_id=source.chat_id, metadata=metadata, content=pc.printed_list_text(rows))
         return {'action': 'skip', 'reason': 'print again list handled'}
     if query.casefold() in ('stop', 'cancel', 'clear'):
+        if pid:
+            pending = await asyncio.to_thread(pc.pending_copy)
+            if pending and _job_owner_pid(pending['job_json']) != pid:
+                await adapter.send(chat_id=source.chat_id, metadata=metadata,
+                                   content=f"The queued copies belong to {_printer_label(_job_owner_pid(pending['job_json']))}, "
+                                           "not this channel's printer. Nothing dropped.")
+                return {'action': 'skip', 'reason': 'print again queue belongs to another printer'}
         had = await asyncio.to_thread(pc.cancel_copies)
         await adapter.send(chat_id=source.chat_id, metadata=metadata,
                            content='Remaining copies dropped. The current print is untouched.' if had
                            else 'No copies were queued.')
         return {'action': 'skip', 'reason': 'print again queue cleared'}
-    key = ('print-again',)
+    key = ('print-again', source.chat_id, source.thread_id)
     if key in _seen:
         await adapter.send(chat_id=source.chat_id, metadata=metadata, content='A print again prompt is already open. Nothing started.')
         return {'action': 'skip', 'reason': 'print again prompt already active'}
@@ -1316,6 +1435,12 @@ async def print_again_dispatch(event, gateway, **kwargs):
             target = await asyncio.to_thread(pc.resolve_print, query)
             target['copies'] = copies
             question = pc.again_question(target)
+        if pid and _job_owner_pid(target['job_json']) != pid:
+            # The channel is the target (#335): never offer another printer's
+            # job for a bed-clear confirmation in this channel.
+            raise print_next.NextPlateError(
+                f"that print belongs to {_printer_label(_job_owner_pid(target['job_json']))}, "
+                f"not this channel's printer ({_printer_label(pid)})")
         answer = await _confirm(adapter, source, metadata, 'print-again', question,
                                 [pc.AGAIN_LABEL, pc.AGAIN_CANCEL_LABEL], (globals().get('_config').question_timeout_s() if globals().get('_config') else 1800))
         if answer != pc.AGAIN_LABEL:
@@ -1340,7 +1465,8 @@ async def print_again_dispatch(event, gateway, **kwargs):
             message = (None if ok
                        else f"Did not start {target['title']}. Not retrying.\n{detail}")
             if not ok and _start_refused_needs_restart(detail):
-                message += '\n' + await _offer_force_restart(adapter, source, metadata, pc, detail)
+                message += '\n' + await _offer_force_restart(adapter, source, metadata, pc, detail,
+                                                             **_pkw(pid))
     except print_next.NextPlateError as exc:
         message = f'Nothing to print again: {exc}. Nothing uploaded or started.'
     except Exception as exc:
@@ -1372,7 +1498,7 @@ def _start_refused_needs_restart(detail):
                                          'stale', 'retained job', 'not idle', 'state is error'))
 
 
-async def _offer_force_restart(adapter, source, metadata, pc, reason):
+async def _offer_force_restart(adapter, source, metadata, pc, reason, printer_id=None):
     """Offer the existing confirmation flow after a safe-to-restart start refusal."""
     answer = await _confirm(adapter, source, metadata, 'print-reboot',
         f"{reason} Force restart clears a stuck screen or heaters and wipes any Resume the printer screen is offering. Retry the print manually afterward.",
@@ -1381,7 +1507,7 @@ async def _offer_force_restart(adapter, source, metadata, pc, reason):
         return 'Not restarted. Nothing sent; retry the print only after checking the printer.'
     await adapter.send(chat_id=source.chat_id, metadata=metadata,
                        content='Restarting the printer now. The print will not start automatically; retry it after restart.')
-    _ok, message = await asyncio.to_thread(pc.force_reboot)
+    _ok, message = await asyncio.to_thread(pc.force_reboot, **_pkw(printer_id))
     return message + (' Retry the print manually.' if _ok else '')
 
 
@@ -1404,18 +1530,23 @@ async def print_reboot_dispatch(event, gateway, **kwargs):
         return {'action': 'skip', 'reason': 'print reboot UI delivery unavailable'}
     from print_buddy.hermes import print_control as pc
     metadata = {'thread_id': source.thread_id} if source.thread_id else None
-    key = ('print-reboot',)
+    # The routing helpers are resolved defensively: an offline regression
+    # test execs this function alone in a bare namespace (test_reboot_standby).
+    _route = globals().get('_routed_printer_id')
+    pid = _route(source, gateway) if _route else None
+    pkw = {'printer_id': pid} if pid else {}
+    key = ('print-reboot', source.chat_id, source.thread_id)
     if key in _seen:
         await adapter.send(chat_id=source.chat_id, metadata=metadata, content='A restart is already open or running. Nothing sent.')
         return {'action': 'skip', 'reason': 'reboot already active'}
     _seen[key] = time.monotonic()
     try:
-        st = await asyncio.to_thread(pc.status)
+        st = await asyncio.to_thread(pc.status, **pkw)
         if st.get('klippy') == 'shutdown' and st.get('state') != 'printing':
             # Emergency stop: REBOOT is a G-code macro Klipper rejects while shut down.
             # One FIRMWARE_RESTART clears it; no motion, no heat. Still needs the confirm button.
             from print_buddy.hermes import print_alert_buttons as pab
-            reason = await asyncio.to_thread(pab.shutdown_message)
+            reason = await asyncio.to_thread(pab.shutdown_message, **pkw)
             answer = await _confirm(adapter, source, metadata, 'print-reboot',
                                     "The printer is in an emergency stop. " + pab.explain(reason)
                                     + "\nClear it with one firmware restart? No motion or heat. This ends the "
@@ -1426,8 +1557,8 @@ async def print_reboot_dispatch(event, gateway, **kwargs):
             else:
                 await adapter.send(chat_id=source.chat_id, metadata=metadata,
                                    content='Clearing the emergency stop now. Up to a minute.')
-                _ok, message = await asyncio.to_thread(pab.clear_shutdown)
-                after = await asyncio.to_thread(pc.status)
+                _ok, message = await asyncio.to_thread(pab.clear_shutdown, **pkw)
+                after = await asyncio.to_thread(pc.status, **pkw)
                 message += f" Job state now {after.get('state')!r}."
         elif st.get('state') not in {'idle', 'standby', 'complete', 'cancelled', 'error'} or st.get('klippy') != 'ready':
             message = (f"Refused: printer job state is {st.get('state')!r}, controller state is "
@@ -1442,7 +1573,7 @@ async def print_reboot_dispatch(event, gateway, **kwargs):
             else:
                 await adapter.send(chat_id=source.chat_id, metadata=metadata,
                                    content='Restarting the printer now. About two minutes.')
-                _ok, message = await asyncio.to_thread(pc.force_reboot)
+                _ok, message = await asyncio.to_thread(pc.force_reboot, **pkw)
     except Exception as exc:
         logger.exception('print-reboot failed')
         message = f'Restart failed: {exc}. Check the printer screen.'
@@ -1565,8 +1696,12 @@ async def model_link_dispatch(event, gateway, **kwargs):
     from print_buddy.core import printer_state
     from print_buddy.core.link_intake import PromptCancelled
     root = _state_dir() / 'model-link-intakes'
+    pid = _routed_printer_id(source, gateway)
     try:
-        return await collect_link(event, adapter, printer_state.load(), root, reuse=reuse)
+        # The intake channel's printer owns the job end to end (#335): its
+        # state record feeds the flow and its id is stamped on the job.
+        return await collect_link(event, adapter, printer_state.load(**_pkw(pid)), root,
+                                  reuse=reuse, **_pkw(pid))
     except PromptCancelled:
         await adapter.send(chat_id=source.chat_id,
             content='Cancelled. Nothing sliced, nothing uploaded, nothing started. '

@@ -41,16 +41,31 @@ _CONTROL_LOCK = __import__('threading').Lock()
 COLD_PULL_PROFILES = {name: (int(pair[0]), int(pair[1])) for name, pair in _config.cfg()["cold_pull"].items()}
 
 
-def firmware_name() -> str:
+def _adapter_for(printer_id: str | None):
+    """The configured printer's adapter, or one roster entry's adapter bound to its own view (#335)."""
+    from print_buddy import printers
+    if not printer_id:
+        return printers.current()
+    from print_buddy import settings
+    return printers.get(settings.by_id(printer_id)["model"], settings.view_for(printer_id))
+
+
+def _base_for(printer_id: str | None) -> str:
+    """The Moonraker base URL for a roster printer (#335); the configured one when printer_id is None."""
+    if not printer_id:
+        return BASE
+    from print_buddy import settings
+    return str(settings.view_for(printer_id)["services"]["moonraker_url"])
+
+
+def firmware_name(printer_id: str | None = None) -> str:
     """Configured firmware name for short user-facing status messages."""
-    from print_buddy import printers
-    return printers.current().firmware_name
+    return _adapter_for(printer_id).firmware_name
 
 
-def display_name() -> str:
+def display_name(printer_id: str | None = None) -> str:
     """Configured printer name for short user-facing status messages."""
-    from print_buddy import printers
-    return printers.current().display_name
+    return _adapter_for(printer_id).display_name
 
 
 def cold_pull_allowed(temp: int, cold: int) -> bool:
@@ -62,7 +77,8 @@ def cold_pull_allowed(temp: int, cold: int) -> bool:
     return (temp, cold) in allowed
 
 
-def coldpull(temp: int, cold: int, *, confirmed_at: float, gcode_sender=None, reader=None) -> tuple[bool, str]:
+def coldpull(temp: int, cold: int, *, confirmed_at: float, gcode_sender=None, reader=None,
+             printer_id: str | None = None) -> tuple[bool, str]:
     """Run one operator-confirmed cold pull, fail-closed on fresh state and readback."""
     if not cold_pull_allowed(temp, cold):
         return False, 'Refused: unsupported cold-pull temperatures.'
@@ -74,7 +90,8 @@ def coldpull(temp: int, cold: int, *, confirmed_at: float, gcode_sender=None, re
         if reader:
             st = reader()
         else:
-            data = _call('/printer/objects/query?print_stats&filament_switch_sensor%20head_switch_sensor&extruder')
+            data = _send('/printer/objects/query?print_stats&filament_switch_sensor%20head_switch_sensor&extruder',
+                         printer_id=printer_id)
             st = ((data.get('result') or {}).get('status') or {})
         job_state = ((st.get('print_stats') or {}).get('state') or 'unknown').casefold()
         sensor = (st.get('filament_switch_sensor head_switch_sensor') or {}).get('filament_detected')
@@ -89,8 +106,9 @@ def coldpull(temp: int, cold: int, *, confirmed_at: float, gcode_sender=None, re
             gcode_sender(script)
             after = reader() if reader else {}
         else:
-            _call('/printer/gcode/script', method='POST', data={'script': script}, timeout=600)
-            after = ((_call('/printer/objects/query?extruder').get('result') or {}).get('status') or {})
+            _send('/printer/gcode/script', method='POST', data={'script': script}, timeout=600,
+                  printer_id=printer_id)
+            after = ((_send('/printer/objects/query?extruder', printer_id=printer_id).get('result') or {}).get('status') or {})
         extruder = after.get('extruder') or {}
         target = extruder.get('target')
         if target != 0:
@@ -105,7 +123,8 @@ INTERRUPTED_HINT = ("If the printer screen offers Resume, tap it there. Don't re
                     "clear the bed and type /print-again.")
 
 
-def _call(path: str, method: str = "GET", data: dict[str, Any] | None = None, timeout: float = 10) -> dict[str, Any]:
+def _call(path: str, method: str = "GET", data: dict[str, Any] | None = None, timeout: float = 10,
+          base: str | None = None) -> dict[str, Any]:
     body = None
     headers = {}
     if data is not None:
@@ -113,17 +132,28 @@ def _call(path: str, method: str = "GET", data: dict[str, Any] | None = None, ti
         headers["Content-Type"] = "application/json"
     elif method == "POST":
         body = b""
-    req = urllib.request.Request(_config.require(BASE, "services.moonraker_url") + path, method=method, data=body, headers=headers)
+    req = urllib.request.Request(_config.require(BASE if base is None else base, "services.moonraker_url") + path, method=method, data=body, headers=headers)
     with urllib.request.urlopen(req, timeout=timeout) as resp:
         return json.loads(resp.read() or b"{}")
 
 
-def status() -> dict[str, Any]:
+def _send(path: str, method: str = "GET", data: dict[str, Any] | None = None, timeout: float = 10,
+          printer_id: str | None = None) -> dict[str, Any]:
+    """_call against one printer's Moonraker; the no-printer call shape is unchanged."""
+    if printer_id:
+        return _call(path, method=method, data=data, timeout=timeout, base=_base_for(printer_id))
+    if data is None:
+        return _call(path, method=method, timeout=timeout)
+    return _call(path, method=method, data=data, timeout=timeout)
+
+
+def status(printer_id: str | None = None) -> dict[str, Any]:
     """Moonraker job state plus Klipper host state (ready, shutdown, error, startup)."""
     try:
-        data = _call("/printer/objects/query?print_stats&virtual_sdcard=progress&webhooks")
+        data = _send("/printer/objects/query?print_stats&virtual_sdcard=progress&webhooks",
+                     printer_id=printer_id)
     except Exception:
-        info = (_call("/server/info").get("result") or {})
+        info = (_send("/server/info", printer_id=printer_id).get("result") or {})
         return {"state": "unknown", "klippy": str(info.get("klippy_state") or "unknown"), "filename": "",
                 "layer": None, "total_layer": None, "progress": None, "print_duration": None}
     s = (data.get("result") or {}).get("status") or {}
@@ -162,20 +192,21 @@ def not_resumable_text(st: dict[str, Any]) -> str:
     return f"Nothing paused to resume (printer is {st.get('state')}). Nothing sent.\n{INTERRUPTED_HINT}"
 
 
-def resume(expected_filename: str = "", wait_s: float = 20, poll_s: float = 1.0) -> tuple[bool, str]:
+def resume(expected_filename: str = "", wait_s: float = 20, poll_s: float = 1.0,
+           printer_id: str | None = None) -> tuple[bool, str]:
     """One Moonraker resume for the confirmed paused file, then read back. Never retried."""
-    before = status()
+    before = status(printer_id)
     if not resumable(before):
         return False, not_resumable_text(before)
     if expected_filename and before["filename"] and before["filename"] != expected_filename:
         return False, "A different print is paused than the one you confirmed. Nothing sent."
-    _call("/printer/print/resume", method="POST", timeout=15)
+    _send("/printer/print/resume", method="POST", timeout=15, printer_id=printer_id)
     deadline = time.monotonic() + wait_s
     after = before
     while time.monotonic() < deadline:
         time.sleep(poll_s)
         try:
-            after = status()
+            after = status(printer_id)
         except Exception:
             continue
         if after["state"] == "printing":
@@ -463,6 +494,21 @@ def next_copy_prompt(finished_filename: str, path: Path | None = None) -> str | 
             "`/print-again stop` drops the remaining copies.")
 
 
+def _moonraker_idle_view(printer_id: str) -> dict[str, Any]:
+    """The clear_job.safe_idle Moonraker shape, read from one roster printer's Moonraker (#335).
+
+    clear_job.moonraker() shells to the configured printer's control tool, so
+    a routed reboot reads the same facts (Klipper ready, print standby, heater
+    targets) from the target printer's own Moonraker instead.
+    """
+    data = _send("/printer/objects/query?print_stats&extruder&heater_bed&webhooks", printer_id=printer_id)
+    s = (data.get("result") or {}).get("status") or {}
+    return {"state": str((s.get("webhooks") or {}).get("state") or "unknown"),
+            "print": {"state": str((s.get("print_stats") or {}).get("state") or "unknown")},
+            "extruder": {"target": (s.get("extruder") or {}).get("target")},
+            "bed": {"target": (s.get("heater_bed") or {}).get("target")}}
+
+
 def force_reboot(
     wait_grace_s: float = 30,
     max_wait_s: float = 120,
@@ -471,9 +517,10 @@ def force_reboot(
     moonraker_reader=None,
     native_reader=None,
     state_reader=None,
+    printer_id: str | None = None,
 ) -> tuple[bool, str]:
     """Send the ZMod REBOOT macro once, then require Moonraker and native idle with zero targets."""
-    st = (state_reader or status)()
+    st = (state_reader or (lambda: status(printer_id)))()
     if st.get("state") == "printing":
         return False, "Refused: it's actively printing. Use /print-stop first if you really want it dead. Nothing sent."
     from print_buddy.core.clear_job import safe_idle
@@ -482,18 +529,21 @@ def force_reboot(
         gcode_sender("REBOOT")
     else:
         try:
-            _call("/printer/gcode/script", method="POST", data={"script": "REBOOT"}, timeout=15)
+            _send("/printer/gcode/script", method="POST", data={"script": "REBOOT"}, timeout=15,
+                  printer_id=printer_id)
         except Exception:
             pass  # the macro drops the connection as it reboots; readback below decides the outcome
 
     def default_mr():
+        if printer_id:
+            return _moonraker_idle_view(printer_id)
         from print_buddy.core.clear_job import moonraker
         return moonraker()
 
     def default_native():
         from print_buddy.core import printer_state
         from print_buddy.core.model_job import read_stock_detail
-        return read_stock_detail(printer_state.load())
+        return read_stock_detail(printer_state.load(printer_id))
 
     mr_read = moonraker_reader or default_mr
     nat_read = native_reader or default_native

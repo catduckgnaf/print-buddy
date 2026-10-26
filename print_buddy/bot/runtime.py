@@ -24,7 +24,7 @@ from types import SimpleNamespace
 from .. import settings
 from ..core import prompts
 from ..hermes import _config
-from . import commands, llm, platform
+from . import commands, llm, platform, routing
 from .router import Router
 
 logger = logging.getLogger(__name__)
@@ -60,11 +60,15 @@ def session_key(source):
     return f"{platform_name_of(source)}:{source.chat_id}:{source.thread_id or ''}:{source.user_id}"
 
 
-def make_source(user_id, chat_id, thread_id=None, is_bot=False, platform_name="discord"):
+def make_source(user_id, chat_id, thread_id=None, is_bot=False, platform_name="discord",
+                printer_id=None):
+    # printer_id is the roster printer this source's channel routes to (#335);
+    # None means the configured single/default printer, as before routing existed.
     return SimpleNamespace(platform=SimpleNamespace(value=str(platform_name)), profile=PROFILE,
                            user_id=str(user_id),
                            chat_id=str(chat_id), thread_id=str(thread_id) if thread_id else None,
-                           is_bot=bool(is_bot), profile_route_rejected=False)
+                           is_bot=bool(is_bot), profile_route_rejected=False,
+                           printer_id=str(printer_id) if printer_id else None)
 
 
 def make_event(source, text, message_id, media_urls=(), metadata=None):
@@ -86,15 +90,30 @@ def safe_name(name):
 
 
 class Gateway:
-    """The three gateway calls the handlers make: may this person act, where do replies go, which session."""
+    """The gateway calls the handlers make: may this person act, where do replies go, which session.
 
-    def __init__(self, adapter, chat_id):
+    Channel scope is the routing map (#335): a source is in scope when its
+    chat is one a roster printer claims. With no roster map (a config that
+    carries no [[printers]] list) the legacy single-chat check applies.
+    """
+
+    def __init__(self, adapter, chat_id, channel_printers=None):
         self.adapter = adapter
         self.chat_id = str(chat_id)
+        self.channel_printers = dict(channel_printers or {})
 
     def _is_user_authorized_for_source(self, source):
-        return (str(getattr(source, "chat_id", "")) == self.chat_id
-                and self.adapter.is_allowed_id(getattr(source, "user_id", None)))
+        chat = str(getattr(source, "chat_id", ""))
+        routed = chat in self.channel_printers if self.channel_printers else chat == self.chat_id
+        return routed and self.adapter.is_allowed_id(getattr(source, "user_id", None))
+
+    def printer_id_for(self, source):
+        """The roster printer a source's channel routes to (#335), else None (the default printer)."""
+        pid = self.channel_printers.get(str(getattr(source, "chat_id", "")))
+        if pid:
+            return pid
+        pid = getattr(source, "printer_id", None)
+        return str(pid) if pid else None
 
     def _delivery_adapter_for(self, source):
         return self.adapter
@@ -134,7 +153,10 @@ class BotCore:
         self.chat_id = str(chat_id if chat_id is not None
                            else section.get("chat_id") or (discord.get("chat_id") if not section else "")
                            or "")
-        self.gateway = Gateway(self.adapter, self.chat_id)
+        # The channel → printer map (#335): built once at startup; a
+        # duplicate claim raises RoutingError here, before anything is served.
+        self.channel_printers = routing.channel_map(self.cfg, self.platform_name)
+        self.gateway = Gateway(self.adapter, self.chat_id, self.channel_printers)
         self.router = router if router is not None else Router()
         self.router.attach_platform(self.platform_name, client, self.adapter)
         if client is not None and hasattr(client, "add_listener") and hasattr(self.adapter, "handle_click"):
@@ -149,6 +171,23 @@ class BotCore:
         self.help = commands.help_text(self.bot_name)
         self.started_at = time.time()
 
+    # ------------------------------------------------------------------ routing
+
+    def printer_for_chat(self, chat_id):
+        """(routed, printer_id) for one chat. Unrouted chats are dropped silently (#335).
+
+        With a roster map, a chat routes exactly when a printer claims it and
+        the id is that printer's. Without one (no roster in the config) the
+        legacy single chat routes, to the configured single printer (None).
+        """
+        chat_id = str(chat_id)
+        if self.channel_printers:
+            pid = self.channel_printers.get(chat_id)
+            return pid is not None, pid
+        if self.chat_id and chat_id == self.chat_id:
+            return True, None
+        return False, None
+
     # ------------------------------------------------------------------ messages
 
     async def handle_message(self, message):
@@ -157,9 +196,11 @@ class BotCore:
         if author is None or getattr(author, "bot", False) or (me is not None and author.id == me):
             return None
         chat_id, thread_id = channel_scope(message.channel)
-        if not self.chat_id or chat_id != self.chat_id:
+        routed, printer_id = self.printer_for_chat(chat_id)
+        if not routed:
             return None
-        source = make_source(author.id, chat_id, thread_id, platform_name=self.platform_name)
+        source = make_source(author.id, chat_id, thread_id, platform_name=self.platform_name,
+                             printer_id=printer_id)
         if not self.gateway._is_user_authorized_for_source(source):
             return None  # the gateway ignores people who are not allowed; so do we
         media = await self.save_attachments(message)
@@ -245,9 +286,10 @@ class BotCore:
         """A slash command runs as its typed text, after the same channel and user checks."""
         user = interaction.user
         chat_id, thread_id = channel_scope(interaction.channel)
+        routed, printer_id = self.printer_for_chat(chat_id)
         source = make_source(user.id, chat_id, thread_id, getattr(user, "bot", False),
-                             platform_name=self.platform_name)
-        if not self.chat_id or chat_id != self.chat_id:
+                             platform_name=self.platform_name, printer_id=printer_id)
+        if not routed:
             await interaction.response.send_message(f"{self.bot_name} only works in its print channel.", ephemeral=True)
             return None
         if not self.gateway._is_user_authorized_for_source(source):
@@ -266,6 +308,7 @@ class BotCore:
                 "platform": self.platform_name,
                 "heartbeat_at": time.time(), "connected": bool(connected),
                 "user": str(user) if user else None, "chat_id": self.chat_id,
+                "channel_printers": dict(self.channel_printers),
                 "allowed_users": len(self.adapter.allowed), "handlers": len(self.router.dispatch_hooks),
                 "llm": bool(self.use_llm and llm.configured(self.cfg)), "open_prompts": prompts.open_count(),
                 "hermes_modules": health.hermes_modules_loaded()}

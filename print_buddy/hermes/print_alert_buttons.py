@@ -31,16 +31,24 @@ TTL = 24 * 3600
 _LOCK = threading.Lock()
 
 
-def _call(path: str, method: str = "GET", timeout: float = 10) -> dict[str, Any]:
-    req = urllib.request.Request(_config.require(BASE, "services.moonraker_url") + path, method=method, data=b"" if method == "POST" else None)
+def _base_for(printer_id: str | None) -> str:
+    """The Moonraker base URL for a roster printer (#335); the configured one when printer_id is None."""
+    if not printer_id:
+        return BASE
+    from print_buddy import settings
+    return str(settings.view_for(printer_id)["services"]["moonraker_url"])
+
+
+def _call(path: str, method: str = "GET", timeout: float = 10, printer_id: str | None = None) -> dict[str, Any]:
+    req = urllib.request.Request(_config.require(_base_for(printer_id), "services.moonraker_url") + path, method=method, data=b"" if method == "POST" else None)
     with urllib.request.urlopen(req, timeout=timeout) as resp:
         return json.loads(resp.read() or b"{}")
 
 
-def shutdown_message() -> str:
+def shutdown_message(printer_id: str | None = None) -> str:
     """Printer firmware's own reason for the stop. Empty when it can't be read."""
     try:
-        s = (_call("/printer/objects/query?webhooks=state_message").get("result") or {}).get("status") or {}
+        s = (_call("/printer/objects/query?webhooks=state_message", printer_id=printer_id).get("result") or {}).get("status") or {}
         return str((s.get("webhooks") or {}).get("state_message") or "")
     except Exception:
         return ""
@@ -433,12 +441,18 @@ def parse_spool_question_custom_id(custom_id: str) -> tuple[str, str] | None:
     return None
 
 
-def clear_shutdown(wait_s: float = 60, poll_s: float = 2.0, *, caller=None, reader=None) -> tuple[bool, str]:
+def clear_shutdown(wait_s: float = 60, poll_s: float = 2.0, *, caller=None, reader=None,
+                   printer_id: str | None = None) -> tuple[bool, str]:
     """FIRMWARE_RESTART once after an emergency stop, then wait for Klipper ready. No motion, no heat."""
     from . import print_control as pc
-    firmware = pc.firmware_name()
-    call = caller or _call
-    read = reader or pc.status
+    firmware = pc.firmware_name(printer_id)
+    if caller is not None:
+        call = caller
+    elif printer_id:
+        call = lambda path, method="GET", timeout=10: _call(path, method, timeout, printer_id=printer_id)
+    else:
+        call = _call
+    read = reader or (lambda: pc.status(printer_id))
     try:
         call("/printer/firmware_restart", method="POST", timeout=15)
     except Exception:

@@ -41,6 +41,14 @@ Forum groups (topics enabled) work: the bot scopes each topic like a
 Discord thread, so a prompt opened in one topic is answered in that
 topic.
 
+With several printers (a `printers:` list, see
+[SETTINGS.md](SETTINGS.md)), give each printer its own group and put that
+group's chat ID in the printer's `chat_id` entry: each chat then drives
+only its own printer, end to end. The `[telegram] chat_id` above remains
+the fallback channel for the one entry that sets no `chat_id` (the first,
+default printer). A chat no printer claims gets silence, and two entries
+claiming one chat refuse startup.
+
 ## 3. Configure Print Buddy
 
 ```yaml

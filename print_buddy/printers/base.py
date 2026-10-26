@@ -5,6 +5,8 @@ printer model inside it. The [printer] model key is "<vendor>.<printer>", the pa
 
     flashforge/__init__.py   VENDOR: Moonraker, ZMod START_PRINT start code, OrcaSlicer, .gcode
     flashforge/ad5x.py       MODEL for "flashforge.ad5x"; adapter.py (ZMod adapter); zmod/ (AD5X-only code)
+    flashforge/ad5m.py, ad5m_pro.py  MODELs for the single-extruder ZMod printers (no IFS);
+                             adapter.py (ZmodSingleExtruderAdapter: ZMod start code, IFS off)
     klipper/__init__.py      VENDOR: Moonraker, PRINT_START/PRINT_END macros, OrcaSlicer, .gcode
     klipper/generic.py       MODEL for "klipper.generic"; adapter.py (the stock Klipper adapter)
     sovol/__init__.py        VENDOR: the Klipper vendor profile under the Sovol name

@@ -108,6 +108,15 @@ docker pull ghcr.io/catduckgnaf/print-buddy:VERSION-light
 
 Replace `VERSION` with a published release version. The manifest scheme starts with the first release published after this support landed; the earlier single-arch amd64 tags (2.1.1, 2.1.2 and 2.1.3 era) are unchanged and are never republished or overwritten. No image is published by a source change alone — publication is the separate maintainer dispatch described under Validation and publication, and no multi-arch image is claimed published or validated on hardware until that dispatch's evidence exists.
 
+There is also a floating **nightly** channel for trying current code between releases:
+
+```bash
+docker pull ghcr.io/catduckgnaf/print-buddy:nightly
+docker pull ghcr.io/catduckgnaf/print-buddy:nightly-light
+```
+
+Nightly is built from the `nightly` branch, which is a pointer, not a development branch: it only ever names a commit on `main` whose CI run completed successfully (see the nightly workflow under Validation and publication). Nightly images carry the same offline acceptance as release images, but they are development builds — features may be unfinished and settings may change without a release note. Pin a release `VERSION` for anything you rely on.
+
 ### What light omits, and what happens when a slicer is needed
 
 Light contains no OrcaSlicer and no Bambu Studio. Everything that does not slice still runs: the Discord bot, the Moonraker listener, the bundled Spoolman API and OpenSCAD-based CAD splitting are identical to the full image. Slicing fails closed, exactly as a `WITH_ORCA=false` image already behaves: the configured slicer executable (`/usr/local/bin/orca-slicer-stable` or `-alpha`, selected by `PRINT_BUDDY_ORCA_CHANNEL`) is absent, so a slicing attempt raises `FileNotFoundError`, produces no G-code and sends nothing to a printer. The offline acceptance harness proves this behaviour for a no-Orca image (its slice probe requires the refusal and checks that no `.gcode` file was written). Choose full on any host that must slice; choose light for a small host that only monitors, manages spools or relays an externally sliced workflow.
@@ -127,6 +136,8 @@ The official prebuilt archives are downloaded and extracted only inside approved
 ## Validation and publication
 
 The manual `.github/workflows/docker-image-validation.yml` validates ONE architecture/variant combination per dispatch: choose `architecture` (`amd64` or `arm64`, built on the matching native runner) and `variant` (`full` or `light`). It builds without pushing, runs the headless slicer smoke for the full variant, and runs `tests/docker/image_acceptance.sh` against that leg's image.
+
+The scheduled `.github/workflows/nightly.yml` publishes the nightly channel. Its promote job fast-forwards the `nightly` branch to the newest `main` commit with a successful CI run — it refuses to move the branch to anything that is not a descendant of its current commit, and it never forces the ref — then the build and manifest jobs repeat the release publisher's matrix, acceptance and push-by-digest flow for that exact commit and publish the two floating tags `:nightly` (full) and `:nightly-light` (light). A scheduled run whose promotion moved nothing builds nothing. A maintainer can also dispatch it manually (`promote` and `publish` both default to true; `publish=false` is the no-push candidate mode). This workflow never creates or moves release tags or `latest`.
 
 The manual `.github/workflows/docker-publish.yml` covers the whole matrix in one dispatch. Its build job runs all four legs (amd64/arm64 × full/light) on native runners; each leg builds its platform image, runs the headless slicer smoke (full legs only) and the offline runtime acceptance for that arch/variant. Only with `publish=true`, and only after that leg's acceptance succeeded, does a leg log in and push — by digest only, never by tag. A final manifest job (publication dispatches only, after every leg succeeded) combines the pushed digests with `docker buildx imagetools create` into the four tags: `:VERSION` and `:latest` (full), `:VERSION-light` and `:latest-light` (light), and writes the manifest digests to the step summary and the uploaded evidence. With `publish=false` (candidate mode) every leg still builds and must pass acceptance, and nothing is pushed and no manifest is created. Candidate inputs for the next release are `version=<next MAJOR.MINOR.PATCH>`, `publish=false`. Preserve every existing tag (2.1.1, 2.1.2, 2.1.3 era tags included); never overwrite or republish an existing tag.
 

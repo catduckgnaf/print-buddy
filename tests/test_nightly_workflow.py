@@ -85,6 +85,19 @@ class NightlyWorkflowContract(unittest.TestCase):
         self.assertNotIn(":latest", run)
         self.assertNotIn("$PUBLISH_VERSION", run)
 
+    def test_publishers_use_a_driver_that_can_push_by_digest(self):
+        # Regression pin for nightly run 40330775729: every leg passed
+        # acceptance and then failed at the push step with "push-by-digest is
+        # currently not implemented for docker driver". Both workflows that
+        # push by digest must configure a docker-container builder.
+        for name in ("nightly.yml", "docker-publish.yml"):
+            workflow = yaml.load(
+                (ROOT / ".github" / "workflows" / name).read_text(),
+                Loader=yaml.BaseLoader)
+            setup = next(s for s in workflow["jobs"]["build"]["steps"]
+                         if s.get("uses", "").startswith("docker/setup-buildx-action@"))
+            self.assertEqual(setup["with"]["driver"], "docker-container", name)
+
     def test_default_permissions_are_read_only_and_actions_pinned(self):
         workflow = load_workflow()
         self.assertEqual(workflow["permissions"], {"contents": "read"})

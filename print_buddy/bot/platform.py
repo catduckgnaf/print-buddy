@@ -21,9 +21,10 @@ registry in ``print_buddy.core.prompts`` under ``pbq:<clarify_id>:<index>``
 ids, so no platform code touches intake state directly.
 
 Per-platform limits live on the adapter as class attributes: ``name``,
-``message_limit``, ``upload_max_bytes``, ``supports_buttons`` and
-``max_buttons``. Callers that chunk text or size an upload read them from
-the platform instead of hard-coding one service's numbers.
+``message_limit``, ``upload_max_bytes``, ``supports_buttons``,
+``max_buttons`` and ``supports_live_stream``. Callers that chunk text or
+size an upload read them from the platform instead of hard-coding one
+service's numbers.
 
 Discord is the first implementation (``print_buddy.bot.adapter``),
 Telegram the second (``print_buddy.bot.telegram``) and Matrix the third
@@ -116,6 +117,7 @@ class ChatPlatform(Protocol):
     upload_max_bytes: int | None
     supports_buttons: bool
     max_buttons: int
+    supports_live_stream: bool
 
     async def send(self, chat_id, content, reply_to=None, metadata=None) -> SendResult: ...
     async def send_clarify(self, chat_id, question, choices, clarify_id, session_key,
@@ -143,6 +145,10 @@ class BasePlatformAdapter:
     # Pure-bot platforms set this False: BotCore then never calls the LLM
     # fallback for them, even when [llm] is configured (#164 stage 2, #73).
     uses_llm = True
+    # Live camera viewing (#311) is a Discord Activity: only the Discord
+    # adapter reports True. Other platforms expose no /print-live command,
+    # no stub and no config surface for it.
+    supports_live_stream = False
 
     def __init__(self, allowed, *, registry=prompts):
         self.allowed = {str(u) for u in allowed}

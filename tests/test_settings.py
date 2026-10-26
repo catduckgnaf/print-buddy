@@ -198,6 +198,8 @@ class OverrideTests(unittest.TestCase):
                           "vertical_short", "vertical_short_mode", "vertical_short_overlay"},
             "logging": {"level", "format", "file"},
             "webui": {"enabled", "host", "port", "access_token_env"},
+            "live_stream": {"enabled", "voice_channel_id", "auto_start_on_print", "max_height", "fps",
+                            "max_bitrate_kbps", "encoder", "empty_timeout_s", "activity_origin"},
             "maintenance": {"quick_hours", "full_hours", "full_days"},
             "delivery": {"methods"},
             "nozzle_temp_offsets": {"brass", "hardened_steel", "stainless_steel", "ruby", "tungsten_carbide", "diamond"},
@@ -472,3 +474,55 @@ class SettingsCliTests(unittest.TestCase):
 
     def test_unknown_key_fails(self):
         self.assertNotEqual(self.run_cli("get", "services.nope").returncode, 0)
+
+
+class LiveStreamSettingsTests(unittest.TestCase):
+    """The [live_stream] section (#311 stage 3): off by default, older configs load unchanged."""
+
+    DEFAULTS = {"enabled": False, "voice_channel_id": "", "auto_start_on_print": False,
+                "max_height": 720, "fps": 15, "max_bitrate_kbps": 2500, "encoder": "auto",
+                "empty_timeout_s": 300, "activity_origin": ""}
+
+    def test_absent_section_yields_the_defaults(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            local = Path(tmp) / "local.yaml"
+            local.write_text("visual_watch:\n  sensitivity: 3\n")
+            data = settings.load(local=local, environ={})
+        self.assertEqual(data["live_stream"], self.DEFAULTS)
+
+    def test_section_values_and_env_override_load(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            local = Path(tmp) / "local.yaml"
+            local.write_text("live_stream:\n  enabled: true\n  voice_channel_id: '123456789012345678'\n"
+                             "  encoder: NVENC\n  activity_origin: https://pb.example/\n")
+            data = settings.load(local=local, environ={})
+            self.assertEqual(data["live_stream"]["voice_channel_id"], "123456789012345678")
+            self.assertEqual(data["live_stream"]["encoder"], "nvenc")
+            self.assertEqual(data["live_stream"]["activity_origin"], "https://pb.example")
+            env = {"PRINT_BUDDY__LIVE_STREAM__ENABLED": "false", "PRINT_BUDDY__LIVE_STREAM__FPS": "30"}
+            data = settings.load(local=local, environ=env)
+            self.assertEqual((data["live_stream"]["enabled"], data["live_stream"]["fps"]), (False, 30))
+
+    def test_encoder_names_match_the_stage_2_plan(self):
+        from print_buddy import live_stream
+        self.assertEqual(settings.LIVE_STREAM_ENCODERS, live_stream.ENCODER_PREFERENCES)
+
+    def test_bad_values_are_rejected(self):
+        for text in ("live_stream:\n  enabled: sometimes\n",
+                     "live_stream:\n  auto_start_on_print: maybe\n",
+                     "live_stream:\n  voice_channel_id: not-a-channel\n",
+                     "live_stream:\n  max_height: 100\n", "live_stream:\n  max_height: 4000\n",
+                     "live_stream:\n  max_height: 12.5\n",
+                     "live_stream:\n  fps: 0\n", "live_stream:\n  fps: 61\n",
+                     "live_stream:\n  max_bitrate_kbps: 50\n",
+                     "live_stream:\n  max_bitrate_kbps: 99999\n",
+                     "live_stream:\n  encoder: av1\n",
+                     "live_stream:\n  empty_timeout_s: 0\n",
+                     "live_stream:\n  activity_origin: http://insecure.example\n"):
+            with self.subTest(text=text), tempfile.TemporaryDirectory() as tmp:
+                local = Path(tmp) / "local.yaml"
+                local.write_text(text)
+                with self.assertRaises(settings.SettingsError):
+                    settings.load(local=local, environ={})
+        with self.assertRaisesRegex(settings.SettingsError, "encoder"):
+            settings.load(local=False, environ={"PRINT_BUDDY__LIVE_STREAM__ENCODER": "vp9"})

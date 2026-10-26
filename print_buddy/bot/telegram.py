@@ -101,6 +101,7 @@ class StandaloneAdapter(BasePlatformAdapter):
     supports_buttons = True
     max_buttons = MAX_BUTTONS
     uses_llm = False
+    supports_live_stream = False
 
     def __init__(self, client, allowed, *, registry=prompts, upload_max_bytes=None, token=None, opener=None):
         super().__init__(allowed, registry=registry)

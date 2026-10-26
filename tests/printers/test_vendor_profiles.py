@@ -30,6 +30,7 @@ def without_added(data):
     for key in ("vertical_short", "vertical_short_mode", "vertical_short_overlay"):  # added by #317, after capture
         data.get("timelapse", {}).pop(key, None)
     data.pop("webui", None)  # added by #286 stage 1, after the golden files were captured
+    data.pop("live_stream", None)  # added by #311 stage 3, after the golden files were captured
     data.pop("telegram", None)  # added by #164 stage 2, after the golden files were captured
     data.pop("matrix", None)  # added by #164 stage 3, after the golden files were captured
     data.get("slicer", {}).pop("flash_studio_path", None)  # added by the Flash Studio config, after capture

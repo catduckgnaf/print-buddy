@@ -61,6 +61,19 @@ adds no muxer, RTP or Discord-specific flags. A later transport stage
 supplies that output target (for example a pipe target it owns) and any
 muxer flags its transport needs; this module does not invent a Discord
 transport.
+
+Stage 3 — the viewing session. The Stage 0 audit concluded native bot
+video is a no-go (Discord's bot API is audio-only; the custom-sender
+lineage is selfbot-only), and the chosen fallback is the Discord
+Embedded App (Activity): :class:`LiveStreamSession` is the small state
+machine the ``/print-live`` bot command drives — ``idle`` / ``live``,
+who started it, when, and a viewer-count hook the transport reports
+through so a later stage can end a session whose voice channel has
+been empty for the configured timeout. The ``start_problem`` /
+``pointer_text`` / ``session_text`` helpers word the command's replies
+from a ``[live_stream]`` settings section. Everything here is still
+pure: no connection is opened, no channel is joined, no camera is
+touched.
 """
 from __future__ import annotations
 
@@ -76,6 +89,8 @@ __all__ = [
     "EncoderCandidate",
     "EncoderProbe",
     "LiveStreamError",
+    "LiveStreamSession",
+    "SESSION_STATES",
     "build_ffmpeg_args",
     "build_ffmpeg_command",
     "camera_source_from_moonraker",
@@ -83,9 +98,12 @@ __all__ = [
     "derive_from_snapshot_url",
     "encoder_candidates",
     "plan_encoders",
+    "pointer_text",
     "redact_url",
     "resolve_moonraker_camera_source",
     "resolve_octoprint_camera_source",
+    "session_text",
+    "start_problem",
 ]
 
 CAMERA_KINDS = ("mjpeg", "rtsp", "webrtc", "snapshot")
@@ -617,3 +635,162 @@ def build_ffmpeg_args(candidate, *, input_url, target_codec=None, max_height=720
 def build_ffmpeg_command(*args, **kwargs) -> list:
     """Alias for :func:`build_ffmpeg_args`."""
     return build_ffmpeg_args(*args, **kwargs)
+
+
+# --------------------------------------------------------------------- stage 3: the viewing session
+
+SESSION_STATES = ("idle", "live")
+
+
+class LiveStreamSession:
+    """The one live-viewing session's state (issue #311, stage 3).
+
+    ``idle`` means nobody is being shown the camera; ``live`` means a
+    start was accepted and the Activity pointer posted. The session
+    records who started it and when (wall-clock seconds, supplied by the
+    caller as ``now=`` so the machine stays pure and offline-testable),
+    plus the viewer count the transport reports through
+    :meth:`note_viewers`: a later stage ends the session once the voice
+    channel has held no viewers for the configured timeout
+    (:meth:`empty_expired`). A session that starts with no viewers is
+    already "empty" from its start, so a start nobody joins can expire
+    the same way. Nothing here opens a connection, joins a channel or
+    touches a camera.
+    """
+
+    def __init__(self):
+        self.state = "idle"
+        self.started_by = ""
+        self.started_at = None
+        self.viewers = 0
+        self.empty_since = None
+
+    @property
+    def is_live(self):
+        return self.state == "live"
+
+    def start(self, user_id, *, now):
+        """idle -> live, started by `user_id` at wall-clock `now`."""
+        if self.state == "live":
+            raise LiveStreamError("the live view is already running")
+        self.state = "live"
+        self.started_by = str(user_id)
+        self.started_at = float(now)
+        self.viewers = 0
+        self.empty_since = float(now)
+        return self
+
+    def stop(self, *, now=None):
+        """live -> idle, clearing the start record. `now` is accepted for symmetry."""
+        if self.state != "live":
+            raise LiveStreamError("the live view is not running")
+        self.state = "idle"
+        self.started_by = ""
+        self.started_at = None
+        self.viewers = 0
+        self.empty_since = None
+        return self
+
+    def note_viewers(self, count, *, now):
+        """The transport's viewer-count hook: how many humans are in the channel."""
+        if isinstance(count, bool) or not isinstance(count, int) or count < 0:
+            raise LiveStreamError(f"viewer count must be a whole number from 0 up, got {count!r}")
+        self.viewers = count
+        if count > 0:
+            self.empty_since = None
+        elif self.empty_since is None:
+            self.empty_since = float(now)
+        return self
+
+    def empty_expired(self, timeout_s, *, now):
+        """True when live and viewer-less for at least `timeout_s` seconds."""
+        return (self.state == "live" and self.empty_since is not None
+                and float(now) - self.empty_since >= float(timeout_s))
+
+
+def _section_value(section, key, default):
+    value = (section or {}).get(key, default)
+    return default if value is None else value
+
+
+def start_problem(section):
+    """Why /print-live start cannot proceed, or None when it can.
+
+    `section` is the ``[live_stream]`` settings mapping; missing keys read
+    as the validated defaults, so a hand-built section in a test behaves
+    like an older config.
+    """
+    if not _section_value(section, "enabled", False):
+        return ("Live camera viewing is off. Set `[live_stream] enabled = true` "
+                "(or PRINT_BUDDY__LIVE_STREAM__ENABLED) to allow it; nothing was started.")
+    if not str(_section_value(section, "voice_channel_id", "") or "").strip():
+        return ("Live camera viewing is on, but no voice channel is configured. "
+                "Set `[live_stream] voice_channel_id` to the ID of the private voice "
+                "channel the Activity is launched in; nothing was started.")
+    return None
+
+
+def _channel_mention(section):
+    channel = str(_section_value(section, "voice_channel_id", "") or "").strip()
+    return f"<#{channel}>" if channel else "the configured voice channel"
+
+
+def _user_mention(user_id):
+    user_id = str(user_id or "")
+    return f"<@{user_id}>" if user_id.isdigit() else (user_id or "someone")
+
+
+def _duration(seconds):
+    seconds = max(0, int(seconds))
+    if seconds < 60:
+        return f"{seconds} s"
+    minutes, rest = divmod(seconds, 60)
+    if minutes < 60:
+        return f"{minutes} min" if not rest else f"{minutes} min {rest} s"
+    hours, minutes = divmod(minutes, 60)
+    return f"{hours} h {minutes} min" if minutes else f"{hours} h"
+
+
+def _plan_line(section):
+    return (f"Feed plan: {_section_value(section, 'encoder', 'auto')} encoder, "
+            f"{_section_value(section, 'max_height', 720)}p at "
+            f"{_section_value(section, 'fps', 15)} fps, "
+            f"{_section_value(section, 'max_bitrate_kbps', 2500)} kbit/s cap.")
+
+
+def pointer_text(session, section):
+    """The /print-live start reply: the Activity pointer for the configured channel."""
+    lines = [f"Live camera view is on. Join {_channel_mention(section)} and launch the "
+             "**Print Buddy** activity in that channel to watch the printer camera live."]
+    origin = str(_section_value(section, "activity_origin", "") or "").strip()
+    if origin:
+        lines.append(f"Activity page: {origin}")
+    else:
+        lines.append("The Activity page has no public origin configured yet "
+                     "(`[live_stream] activity_origin`); reaching it from Discord is "
+                     "deployment wiring that lands with the container stage.")
+    lines.append(_plan_line(section))
+    lines.append("`/print-live stop` ends the view. Nothing is recorded.")
+    return "\n".join(lines)
+
+
+def session_text(session, section, *, now):
+    """The /print-live status reply (also the already-live answer to a second start)."""
+    problem = start_problem(section)
+    if problem and not session.is_live:
+        # Off or unconfigured: the problem text is the honest status, but
+        # worded as a status, not a refusal of a start nobody asked for.
+        if not _section_value(section, "enabled", False):
+            return ("Live camera viewing is off (`[live_stream] enabled = false`). "
+                    "Nothing is streaming.")
+        return ("Live camera viewing is on, but no voice channel is configured "
+                "(`[live_stream] voice_channel_id` is empty). Nothing is streaming.")
+    if not session.is_live:
+        return (f"Live camera viewing is ready but not running. `/print-live start` "
+                f"points viewers at {_channel_mention(section)}. {_plan_line(section)}")
+    elapsed = _duration(float(now) - float(session.started_at or now))
+    viewers = (f"{session.viewers} watching" if session.viewers
+               else "nobody in the channel yet")
+    return (f"Live camera view is on in {_channel_mention(section)}, started by "
+            f"{_user_mention(session.started_by)} {elapsed} ago, {viewers}. "
+            f"{_plan_line(section)} `/print-live stop` ends it.")

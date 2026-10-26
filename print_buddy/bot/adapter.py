@@ -40,6 +40,7 @@ class StandaloneAdapter(BasePlatformAdapter):
     message_limit = rest.LIMIT
     supports_buttons = True
     max_buttons = MAX_BUTTONS
+    supports_live_stream = True
 
     def __init__(self, client, allowed, *, registry=prompts, upload_max_bytes=None):
         super().__init__(allowed, registry=registry)

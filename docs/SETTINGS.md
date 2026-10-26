@@ -121,6 +121,15 @@ Schema, validation limits and TOML migration: [CONFIGURATION-YAML.md](CONFIGURAT
 | `webui.host` | `PRINT_BUDDY__WEBUI__HOST` | `127.0.0.1` | Host the Web UI binds to when enabled; a plain IP address or hostname |
 | `webui.port` | `PRINT_BUDDY__WEBUI__PORT` | `0` | Port the Web UI binds to when enabled; `0` means no port has been chosen yet |
 | `webui.access_token_env` | `PRINT_BUDDY__WEBUI__ACCESS_TOKEN_ENV` | `WEBUI_ACCESS_TOKEN` | Name of the environment variable holding the optional Web UI access token; the token itself is never a setting |
+| `live_stream.enabled` | `PRINT_BUDDY__LIVE_STREAM__ENABLED` | `false` | Live camera viewing in Discord (#311) switch; off by default, and `/print-live` only reports that while disabled |
+| `live_stream.voice_channel_id` | `PRINT_BUDDY__LIVE_STREAM__VOICE_CHANNEL_ID` | empty | The one Discord voice channel the live Activity is launched in; the bot never names another channel. Keep it a private channel (see DISCORD-BOT-SETUP.md) |
+| `live_stream.auto_start_on_print` | `PRINT_BUDDY__LIVE_STREAM__AUTO_START_ON_PRINT` | `false` | Offer the live view automatically when a print starts; the viewing session itself still starts only from Discord |
+| `live_stream.max_height` | `PRINT_BUDDY__LIVE_STREAM__MAX_HEIGHT` | `720` | Live feed height cap in pixels (144-2160); width follows the camera's aspect |
+| `live_stream.fps` | `PRINT_BUDDY__LIVE_STREAM__FPS` | `15` | Live feed frame-rate cap (1-60) |
+| `live_stream.max_bitrate_kbps` | `PRINT_BUDDY__LIVE_STREAM__MAX_BITRATE_KBPS` | `2500` | Live feed bitrate cap in kbit/s (100-20000) |
+| `live_stream.encoder` | `PRINT_BUDDY__LIVE_STREAM__ENCODER` | `auto` | Encoder preference for the live feed: `auto`, `vaapi`, `qsv`, `nvenc` or `cpu` (the plan in `print_buddy/live_stream.py`) |
+| `live_stream.empty_timeout_s` | `PRINT_BUDDY__LIVE_STREAM__EMPTY_TIMEOUT_S` | `300` | Seconds the voice channel may stay empty of viewers before the live session ends itself |
+| `live_stream.activity_origin` | `PRINT_BUDDY__LIVE_STREAM__ACTIVITY_ORIGIN` | empty | Public https origin the Discord Activity page is served from; how it is reached (URL mapping, tunnel) is deployment wiring (#311 stage 4), empty until deployed |
 | `logging.level` | `PRINT_BUDDY__LOGGING__LEVEL` | `INFO` | `DEBUG`, `INFO`, `WARNING` or `ERROR` |
 | `logging.format` | `PRINT_BUDDY__LOGGING__FORMAT` | `text` | `text` (one readable line per event) or `json` (one JSON object per line) |
 | `logging.file` | `PRINT_BUDDY__LOGGING__FILE` | empty | Also write a rotating log file (5 MiB, 3 backups) at this path, for example under `/data/hermes/logs`; empty logs to stderr only |

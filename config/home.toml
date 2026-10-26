@@ -220,6 +220,22 @@ host = "127.0.0.1"
 port = 0
 access_token_env = "WEBUI_ACCESS_TOKEN"
 
+[live_stream]
+# Live camera viewing in Discord (#311): off by default. The bot cannot
+# send video itself; /print-live starts a viewing session and points at
+# the Discord Activity launched in voice_channel_id. The Discord client
+# secret and the Activity session secret are environment secrets, never
+# settings here.
+enabled = false
+voice_channel_id = ""
+auto_start_on_print = false
+max_height = 720
+fps = 15
+max_bitrate_kbps = 2500
+encoder = "auto"
+empty_timeout_s = 300
+activity_origin = ""
+
 [maintenance]
 quick_hours = 25
 full_hours = 75

@@ -217,7 +217,7 @@ The A1 vendor profile's default plate is the Textured PEI Plate, and its start G
 
 The A1 has its own baseline file, `config/protected-settings-baseline.bambulab.a1.json`. It does not exist yet, so the baseline check only warns.
 
-`config/protected-settings-baseline.bambulab.a1.proposed.json` is a proposal. It records what OrcaSlicer 2.4.2 writes for the A1's protected keys, and the real-slicer CI test checks that the supported slicer's output matches it. Nothing reads it as an approval. (The A1's vendor start/end G-code changed in OrcaSlicer v2.5.0-alpha, so expect this proposal to need a deliberate regeneration from the new slicer's output — #356.)
+`config/protected-settings-baseline.bambulab.a1.proposed.json` is a proposal. It records what OrcaSlicer 2.4.2 writes for the A1's protected keys, and the real-slicer CI test checks that the supported slicer's output matches it. Nothing reads it as an approval. (The A1's vendor start/end G-code changed in OrcaSlicer v2.5.0-alpha; the proposal was regenerated from the new slicer's output as part of #356, after a line-by-line review of the changed blocks — see the PR discussion. The changes are Bambu's: a 220 °C flush temperature for PLA on non-0.2 nozzles in the start block, and in the end block a removed fixed retract, an explicit G90 and a 0.4 mm Z drop.)
 
 Approving it is a separate, deliberate maintainer step:
 
@@ -272,7 +272,7 @@ What this repository holds, and what it does not:
 | Profile names, the `ORCA_OVERRIDES` keys and values, settings-ID keys | Yes, `facts.py` | Original: identifiers and Print Buddy's own settings |
 | SHA-256 identity of the checked profiles and hardware numbers | Yes, `facts.py` | Facts: hashes and measurements, no profile text |
 | The material to filament-profile names (`orca_filaments`) and their hashes | Yes, `facts.py` | Identifiers and hashes, no profile text |
-| `config/protected-settings-baseline.bambulab.a1.proposed.json` | Yes | SHA-256 of the start and end G-code OrcaSlicer 2.4.2 writes, plus `post_process` (empty) and `printer_technology` (`FFF`); no G-code. Recorded under 2.4.2; the 2.5.0-alpha regeneration is pending (#356) |
+| `config/protected-settings-baseline.bambulab.a1.proposed.json` | Yes | SHA-256 of the start and end G-code OrcaSlicer 2.4.2 writes, plus `post_process` (empty) and `printer_technology` (`FFF`); no G-code. Regenerated from OrcaSlicer v2.5.0-alpha output in #356 (originally recorded under 2.4.2) |
 | `profiles.py`, `scripts/bambu-templates.py`, adapter, guard, tests | Yes | Original |
 | `tests/printers/fixtures/orca_resources` | Yes | Original, invented for the tests (see its README); no OrcaSlicer or Bambu content |
 

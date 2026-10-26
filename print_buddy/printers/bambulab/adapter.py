@@ -107,9 +107,9 @@ class BambuAdapter(PrinterAdapter):
 
         This is the same internal snapshot seam the Moonraker path fills from
         `services.camera_snapshot_url`: callers get JPEG bytes or a plain
-        BambuLanError, never a half answer. X1-family stills ride the RTSPS
-        path that arrives with #246's go2rtc work, and say so; a model with
-        no verified camera protocol says that instead of guessing.
+        BambuLanError, never a half answer. X1-family stills are deferred by
+        decision to #246's go2rtc path (recorded on #294), and say so; a
+        model with no verified camera protocol says that instead of guessing.
         """
         from . import camera
         kind = self.camera_kind()
@@ -117,8 +117,8 @@ class BambuAdapter(PrinterAdapter):
             raise BambuLanError(f"{self.label}: Print Buddy has not verified a camera protocol for this model; "
                                 "no snapshot was taken")
         if kind == "rtsps":
-            raise BambuLanError(f"{self.label}: camera stills for this model come from its RTSP stream, which "
-                                "Print Buddy reads through the go2rtc path in #246; that path has not landed, "
+            raise BambuLanError(f"{self.label}: camera stills for this model come from its RTSP stream; "
+                                "X1 stills are deferred by decision to #246's go2rtc path, "
                                 "so no snapshot was taken")
         if not self.lan_configured():
             raise BambuLanError(f"{self.label}: the camera is not configured; set [bambu] lan_host and "

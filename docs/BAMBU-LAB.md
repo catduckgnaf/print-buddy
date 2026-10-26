@@ -132,7 +132,7 @@ With LAN status configured, the camera shows where a Moonraker printer's camera 
 
 The A1/P1 camera is a proprietary stills protocol: one JPEG frame over TCP port 6000, authenticated by a packet that embeds the LAN access code — the same secret as status, via the same `lan_access_code_env` indirection; there is no separate camera setting. Snapshots are bounded (8 MiB) and JPEG-validated before use, exactly like the Moonraker camera path, and camera errors never include the access code.
 
-Not covered: the X1 family's RTSPS camera (port 322) — Print Buddy does not embed an RTSP client; X1 stills wait for #246's bundled go2rtc to land, and until then an X1 status says so plainly. P2S/H2 camera protocols are not in the verified connectivity survey, so those models report no verified camera protocol rather than guessing. Timelapse is #295, not this section.
+Not covered: the X1 family's RTSPS camera (port 322) — Print Buddy does not embed an RTSP client; X1 stills are deferred by decision to #246's go2rtc path (recorded on #294), and until that lands an X1 status says so plainly. P2S/H2 camera protocols are not in the verified connectivity survey, so those models report no verified camera protocol rather than guessing. Timelapse is #295, not this section.
 
 **None of this has been run against a real Bambu printer yet.** The 6000 protocol is implemented from the maintained clients cited in [BAMBU-CONNECTIVITY.md](BAMBU-CONNECTIVITY.md) and covered by fake-transport tests; treat the first live use as a test.
 

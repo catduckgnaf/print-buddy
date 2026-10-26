@@ -12,9 +12,10 @@ facts, not copied, and — like every Bambu LAN path in Print Buddy — it has
 **not been run against a real printer yet**.
 
 X1-family printers serve RTSPS on port 322 instead. Print Buddy deliberately
-grows no RTSP stack for a still image: X1 stills arrive through the go2rtc
-path in #246, and until then ``camera_kind`` reports them as ``"rtsps"`` so
-callers can say exactly that instead of failing obscurely. Models whose camera
+grows no RTSP stack for a still image: X1 stills are deferred by decision to
+the go2rtc path in #246 (recorded on #294), and until that lands
+``camera_kind`` reports them as ``"rtsps"`` so callers can say exactly that
+instead of failing obscurely. Models whose camera
 protocol is not documented in the research (P2S, H2 family) report ``None`` —
 unverified is stated, never guessed.
 

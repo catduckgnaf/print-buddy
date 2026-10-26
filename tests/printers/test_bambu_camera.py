@@ -144,7 +144,7 @@ def test_adapter_snapshot_without_lan_configuration_is_a_plain_note(monkeypatch)
     assert "camera is not configured" in str(excinfo.value)
 
 
-def test_adapter_snapshot_for_x1_names_the_pending_rtsp_path(monkeypatch):
+def test_adapter_snapshot_for_x1_names_the_deferred_rtsp_path(monkeypatch):
     adapter = _adapter("bambulab.x1", monkeypatch)
     with pytest.raises(BambuLanError) as excinfo:
         adapter.camera_snapshot()

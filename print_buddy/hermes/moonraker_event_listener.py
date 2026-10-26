@@ -68,14 +68,32 @@ def log(line):
                exc_info=sys.exc_info() if sys.exc_info()[0] else None)
 
 
+def _platform_name():
+    """The standalone bot's chat platform ([bot] platform, #164); 'discord' unless configured."""
+    return str(_config.cfg()["bot"].get("platform") or "discord")
+
+
+def _telegram_standalone():
+    return _config.standalone() and _platform_name() == "telegram"
+
+
+def _telegram_token():
+    """The Telegram bot token, from the variable [telegram] token_env names."""
+    return _profile_env_value(str(_config.cfg()["telegram"].get("token_env") or "TELEGRAM_BOT_TOKEN"))
+
+
+def _telegram_chat_id():
+    return str(_config.cfg()["telegram"].get("chat_id") or "")
+
+
 def post(message):
-    """Deliver physical print lifecycle text to #3d-printer only, with no agent."""
+    """Deliver physical print lifecycle text to the print chat only, with no agent."""
+    if _config.standalone():
+        return _post_rest(message)
     target = DISCORD_TARGET
     if target == "discord:":
         log("post skipped: discord.chat_id is not configured")
         return False
-    if _config.standalone():
-        return _post_rest(message)
     try:
         result = subprocess.run(
             [HERMES_BIN, "-p", "3dprinting", "send", "--quiet", "--to", target, message],
@@ -89,7 +107,21 @@ def post(message):
 
 
 def _post_rest(message):
-    """Standalone mode: Discord REST with the bot token. Works with no gateway connected."""
+    """Standalone mode: the configured platform's REST sender with its bot token.
+
+    Works with no gateway connected. Discord is the original path; Telegram
+    (#164 stage 2) posts text and MEDIA files through telegram_rest.
+    """
+    if _platform_name() == "telegram":
+        from print_buddy.bot import telegram_rest
+        chat = _telegram_chat_id()
+        if not chat:
+            log("post skipped: telegram.chat_id is not configured")
+            return False
+        ok, detail = telegram_rest.send(_telegram_token(), chat, message)
+        log(f"post rest target=telegram:{chat} ok={ok} {message.splitlines()[0][:120] if message else ''!r}"
+            f"{'' if ok else ' ' + str(detail)[:200]}")
+        return ok
     from print_buddy.bot import rest
     ok, detail = rest.send(_bot_token(), announcer.DISCORD_CHAT_ID, message)
     log(f"post rest target={DISCORD_TARGET} ok={ok} {message.splitlines()[0][:120] if message else ''!r}"
@@ -98,7 +130,14 @@ def _post_rest(message):
 
 
 def post_alert(message, kind, filename):
-    """Post with Resume/Cancel buttons; fall back to plain text if Discord refuses."""
+    """Post with Resume/Cancel buttons; fall back to plain text if Discord refuses.
+
+    On Telegram (#164 stage 2) the Discord-shaped button posts do not
+    apply: the alert goes out as plain text and the operator answers with
+    the typed commands the text names.
+    """
+    if _telegram_standalone():
+        return post(message)
     try:
         from . import print_alert_buttons as pab
         if pab.post_with_buttons(_bot_token(), announcer.DISCORD_CHAT_ID,
@@ -113,6 +152,8 @@ def post_alert(message, kind, filename):
 
 def post_plate_picker(plan_id):
     """Post the interactive remaining-plate picker; name the command only when it cannot be delivered."""
+    if _telegram_standalone():
+        return post(f"To start the next plate, type `/print-next {plan_id}`.")
     try:
         from . import print_alert_buttons as pab
         from . import print_next
@@ -134,6 +175,8 @@ def post_plate_picker(plan_id):
 
 def post_insertion_confirmation(slot):
     """Offer an answer-only IFS insertion UI, then retain the command-text fallback."""
+    if _telegram_standalone():
+        return post(insertion_prompt(slot))
     try:
         from . import print_alert_buttons as pab
         text = insertion_confirmation_text(slot)
@@ -149,6 +192,11 @@ def post_insertion_confirmation(slot):
 
 def post_spool_question(record, nag=False):
     """Post once or refresh a paused-spool question without stacking nag messages."""
+    if _telegram_standalone():
+        if nag:  # no Discord message to refresh; never stack a second question
+            log("spool question nag skipped on telegram: no message refresh")
+            return False
+        return post(spool_question_text(record))
     try:
         from . import print_alert_buttons as pab
         previous = str(record.get("discord_message_id") or "") if nag else ""
@@ -219,7 +267,7 @@ def screen_cancel_reboot(filename, *, status_reader=None, rebooter=None, clearer
         say(f"Screen cancel on {label}. Force restarting the printer now, about two minutes.")
         ok, msg = (rebooter or print_control.force_reboot)()
     log(f"screen cancel reboot ok={ok}: {msg}")
-    if ok and clearer is None and rebooter is None:  # real run only; tests inject fakes
+    if ok and clearer is None and rebooter is None and not _telegram_standalone():  # real run only; tests inject fakes
         with contextlib.suppress(Exception):
             pab.retire_alerts(_bot_token(), filename, "Cleared after the screen cancel; nothing to do.")
     say(msg)
@@ -1110,6 +1158,9 @@ def _visual_alert(filename, image, reason):
     path = target / f"{int(time.time())}-{Path(filename or 'print').stem}.jpg"
     path.write_bytes(image)
     text = f"Print camera check: {clean(filename)}\n{reason}"
+    if _telegram_standalone():
+        post(text + f"\n{path}\nMEDIA:{path}")
+        return path
     try:
         from . import print_alert_buttons as pab
         if pab.post_visual_alert(_bot_token(), announcer.DISCORD_CHAT_ID,

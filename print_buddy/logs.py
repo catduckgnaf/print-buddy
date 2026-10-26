@@ -40,6 +40,9 @@ _context: contextvars.ContextVar[dict] = contextvars.ContextVar("print_buddy_log
 
 _SECRET_ENV_SUFFIXES = ("_TOKEN", "_KEY", "_SECRET", "_PASSWORD")
 _PATTERNS = (
+    # Telegram bot token: bot id, colon, secret. Also fires inside an
+    # api.telegram.org/bot<token>/ URL, where the token is in the path.
+    (re.compile(r"\d{5,16}:[A-Za-z0-9_-]{30,40}\b"), REDACTED),
     # Discord bot token: base64 user id, timestamp, hmac.
     (re.compile(r"[MNO][A-Za-z0-9_-]{23,28}\.[A-Za-z0-9_-]{6,7}\.[A-Za-z0-9_-]{27,}"), REDACTED),
     (re.compile(r"(?i)\b(bearer|bot|basic)\s+[A-Za-z0-9._~+/=-]{8,}"), r"\1 " + REDACTED),

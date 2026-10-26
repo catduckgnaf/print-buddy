@@ -287,13 +287,39 @@ LOG_LEVELS = ("DEBUG", "INFO", "WARNING", "ERROR")
 LOG_FORMATS = ("text", "json")
 
 
-def user_ids(value):
-    """Discord user IDs from a comma or space separated string. A non-numeric entry is an error."""
+def user_ids(value, section="discord", platform_label="Discord"):
+    """User IDs from a comma or space separated string. A non-numeric entry is an error."""
     ids = [part for part in re.split(r"[\s,]+", str(value or "").strip()) if part]
     for part in ids:
         if not part.isdigit():
-            raise SettingsError(f"[discord] allowed_user_ids must be numeric Discord user IDs, got {part!r}")
+            raise SettingsError(f"[{section}] allowed_user_ids must be numeric {platform_label} user IDs, got {part!r}")
     return ids
+
+
+def _validate_telegram(data):
+    """The [telegram] section (#164 stage 2). Absent in an older config means the defaults.
+
+    Telegram group and channel IDs are negative, so chat_id is a signed
+    integer kept as a string; user IDs are positive integers. The token
+    itself is never a setting: token_env names the environment variable
+    holding it, the same indirection as [discord] token_env.
+    """
+    telegram = data.setdefault("telegram", {})
+    telegram.setdefault("token_env", "TELEGRAM_BOT_TOKEN")
+    if not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", str(telegram["token_env"])):
+        raise SettingsError(f"[telegram] token_env must be an environment variable name, got {telegram['token_env']!r}")
+    chat = str(telegram.setdefault("chat_id", "") or "").strip()
+    if chat and not re.fullmatch(r"-?\d+", chat):
+        raise SettingsError(f"[telegram] chat_id must be a numeric Telegram chat ID "
+                            f"(group and channel IDs are negative), got {chat!r}")
+    telegram["chat_id"] = chat
+    user_ids(telegram.setdefault("allowed_user_ids", ""), "telegram", "Telegram")
+    approver = str(telegram.setdefault("approval_user_id", "") or "").strip()
+    if approver and not approver.isdigit():
+        raise SettingsError(f"[telegram] approval_user_id must be a numeric Telegram user ID, got {approver!r}")
+    telegram["approval_user_id"] = approver
+    telegram.setdefault("upload_max_bytes", 50_000_000)
+    telegram["upload_max_bytes"] = _positive(data, "telegram", "upload_max_bytes", int)
 
 
 def _validate_logging(data):
@@ -337,6 +363,7 @@ def _validate_bot(data):
     if not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", str(discord["token_env"])):
         raise SettingsError(f"[discord] token_env must be an environment variable name, got {discord['token_env']!r}")
     user_ids(discord.setdefault("allowed_user_ids", ""))
+    _validate_telegram(data)
     llm = data.setdefault("llm", {})
     for key, default in (("chat_url", ""), ("model", ""), ("api_key_env", "LLM_API_KEY")):
         llm.setdefault(key, default)

@@ -42,12 +42,11 @@ Unconfigured LAN: when ``[bambu] lan_host``/``lan_serial`` are not set, the
 configured Bambu printer behaves exactly as it did before this listener
 existed — slicing and handoff, no telemetry. The supervisor starts this
 module for every ``bambulab_lan`` configuration (the registry gate cannot
-see inside the vendor config), and a listener process that exits would
-stop the container (the supervisor treats any child exit as fatal, #256),
-so the unconfigured listener instead stays alive, beats its heartbeat with
-``printer_connected=False``, and never touches the network. That is the
-Moonraker listener's pattern: liveness is the process, printer
-connectivity is reported, not required.
+see inside the vendor config), and the healthcheck requires this
+instance's heartbeat, so the unconfigured listener instead stays alive,
+beats its heartbeat with ``printer_connected=False``, and never touches
+the network. That is the Moonraker listener's pattern: liveness is the
+process, printer connectivity is reported, not required.
 
 Nothing here has been run against a real Bambu printer; the transport is
 injectable and every behaviour above is pinned by offline fake-MQTT tests.
@@ -92,8 +91,11 @@ class BambuListener:
     """
 
     def __init__(self, adapter, *, lan_client=_UNSET, mqtt_factory=None, emit=None,
-                 clock=time.monotonic, sleep=time.sleep, beat=None):
+                 clock=time.monotonic, sleep=time.sleep, beat=None, printer_id=None):
         self.adapter = adapter
+        # The roster id of the printer this instance serves (#336); events
+        # carry it so consumers route by printer without knowing the domain.
+        self.printer_id = printer_id
         if lan_client is _UNSET:
             lan_client = adapter.client() if adapter.lan_configured() else None
         self._lan = lan_client
@@ -125,6 +127,8 @@ class BambuListener:
     # ------------------------------------------------------------ events
     def _emit(self, kind, status, **details):
         event = {"kind": kind, "status": status, **details}
+        if self.printer_id is not None:
+            event["printer_id"] = self.printer_id
         self.events.append(event)
         if len(self.events) > _EVENTS_KEPT:
             del self.events[:len(self.events) - _EVENTS_KEPT]
@@ -354,14 +358,15 @@ def main():
         log(f"configured printer uses connection {adapter.vendor.connection!r}, "
             "not bambulab_lan; nothing to listen to")
         return 3
+    printer_id = listeners.instance_printer_id()
     try:
-        listener = BambuListener(adapter)
+        listener = BambuListener(adapter, printer_id=printer_id)
     except BambuLanError as exc:
         # e.g. host/serial set but the access-code secret is missing: the
         # client cannot even be built. Idle like the unconfigured case
         # rather than crash-looping the container; the log names the fix.
         log(f"LAN client cannot be built: {exc}; listener idling with heartbeat")
-        listener = BambuListener(adapter, lan_client=None)
+        listener = BambuListener(adapter, lan_client=None, printer_id=printer_id)
     return listener.run_forever()
 
 

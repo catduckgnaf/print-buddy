@@ -69,9 +69,12 @@ pins the core shape in tests.
 
 **Liveness.** A running listener writes the listener heartbeat
 (`listener_health.json`, see `print_buddy.healthcheck`) under its domain's
-registered runtime identity. The container healthcheck requires that
-heartbeat exactly when the registry says the configured instance's domain
-is implemented, and reports "not required for this printer connection"
+registered runtime identity. Since #336 the heartbeat lives in the
+printer's own state directory (`state/printers/<id>/listener_health.json`)
+and the record names its printer; a legacy single-printer configuration
+keeps the historical root-level path. The container healthcheck requires
+that heartbeat exactly when the registry says the printer's domain is
+implemented, and reports "not required for this printer connection"
 otherwise.
 
 ## The Bambu domain listener (#299 Stage B)
@@ -104,9 +107,33 @@ domain had a listener. See [Bambu Lab printers](BAMBU-LAB.md#lan-status-read-onl
 
 ## Instances
 
-Today one container serves one printer (see [More than one
-printer](MULTI-INSTANCE.md)), so one listener instance runs at most. The
-registry, gate and supervisor already speak of the *configured printer
-instance's* listener rather than a single global listener, so the
-multi-printer work in #257 adds instances per printer without redesigning
-this layer.
+Since #336 (multi-printer Stage 2d) the supervisor runs **one listener
+instance per roster printer** whose domain has an implementation:
+
+- The supervisor enumerates the roster
+  (`python3 -m print_buddy.listener_gate --roster`), gates each printer
+  (`--printer <id>`: 0 = start, 3 = the domain has no listener, anything
+  else = unresolved configuration, which stops the container with the
+  settings error), and starts
+  `python3 -m print_buddy.listeners --printer <id>` for each printer
+  that passes.
+- An instance runs against its printer's settings view (the Stage 2b
+  `view_for` projection) with the roster entry's channel claim applied,
+  so its completion posts and questions land in the **owning printer's
+  channel**; deferred screen updates queued for that printer (Stage 2c)
+  flush through its listener. Its heartbeat and state live under
+  `state/printers/<id>/`.
+- Listener instances are **not required children**. When one exits, the
+  supervisor restarts only that printer's listener, with backoff
+  (5 s doubling to a 60 s cap) and a restart budget (5 restarts per
+  10 minutes). A listener that exhausts its budget stays down and the
+  healthcheck reports that printer unhealthy — a listener failure can
+  never restart the container or disturb the bot, Spoolman, or another
+  printer's listener. The bot and bundled Spoolman remain the required
+  children whose exit ends the container.
+- The container healthcheck prints one listener row per roster printer.
+  A single-printer (or legacy) configuration keeps exactly the
+  historical process tree and the single health row.
+
+Running several containers, one per printer, remains available — see
+[More than one printer](MULTI-INSTANCE.md).

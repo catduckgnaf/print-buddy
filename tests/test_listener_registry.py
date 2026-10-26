@@ -128,6 +128,79 @@ class LauncherTests(unittest.TestCase):
             self.assertEqual(listeners.main(), 2)
 
 
+class MultiPrinterLaunchTests(unittest.TestCase):
+    """#336: a per-printer launch resolves that printer's settings view,
+    applies its channel claim, and records the instance identity."""
+
+    ROSTER_YAML = (
+        "discord:\n  chat_id: \"111\"\n"
+        "printers:\n"
+        "  - id: moon-two\n    model: klipper.generic\n    chat_id: \"chat-two\"\n"
+        "  - id: bambu-two\n    model: bambulab.a1\n")
+
+    def roster(self):
+        import tempfile
+        from pathlib import Path
+        with tempfile.TemporaryDirectory() as td:
+            local = Path(td, "local.yaml")
+            local.write_text(self.ROSTER_YAML)
+            return settings.load(home=settings.HOME, local=local, environ={})
+
+    def tearDown(self):
+        settings.set_override(None)
+        listeners._set_instance_printer_id(None)
+
+    def test_launch_runs_the_domain_module_for_that_printer(self):
+        with mock.patch.object(listeners.runpy, "run_module") as run_module:
+            self.assertEqual(
+                listeners.launch(self.roster(), printer_id="moon-two"), 0)
+        run_module.assert_called_once_with(
+            "print_buddy.hermes.moonraker_event_listener", run_name="__main__")
+        self.assertEqual(listeners.instance_printer_id(), "moon-two")
+
+    def test_launch_installs_the_printer_view_with_its_channel_claim(self):
+        seen = {}
+
+        def fake_run_module(module, run_name=None):
+            seen["chat_id"] = settings.current()["discord"]["chat_id"]
+            seen["model"] = settings.current()["printer"]["model"]
+
+        with mock.patch.object(listeners.runpy, "run_module",
+                               side_effect=fake_run_module):
+            self.assertEqual(
+                listeners.launch(self.roster(), printer_id="moon-two"), 0)
+        self.assertEqual(seen, {"chat_id": "chat-two", "model": "klipper.generic"})
+
+    def test_bambu_printer_launches_the_bambu_module(self):
+        with mock.patch.object(listeners.runpy, "run_module") as run_module:
+            self.assertEqual(
+                listeners.launch(self.roster(), printer_id="bambu-two"), 0)
+        run_module.assert_called_once_with(
+            "print_buddy.printers.bambulab.listener", run_name="__main__")
+        self.assertEqual(listeners.instance_printer_id(), "bambu-two")
+
+    def test_unknown_printer_id_is_a_configuration_failure(self):
+        with self.assertRaises(settings.SettingsError):
+            listeners.launch(self.roster(), printer_id="ghost")
+        self.assertIsNone(listeners.instance_printer_id())
+        with mock.patch.object(settings, "current", return_value=self.roster()):
+            self.assertEqual(listeners.main(["--printer", "ghost"]), 2)
+
+    def test_printer_without_a_listener_domain_is_nothing_to_run(self):
+        roster = {"printers": [{"id": "prusa-two", "model": "prusa.mk4s"}]}
+        with mock.patch.object(listeners.runpy, "run_module") as run_module:
+            self.assertEqual(listeners.launch(roster, printer_id="prusa-two"), 3)
+        run_module.assert_not_called()
+
+    def test_main_parses_the_printer_flag(self):
+        with mock.patch.object(listeners, "launch", return_value=0) as launch:
+            self.assertEqual(listeners.main(["--printer", "moon-two"]), 0)
+        launch.assert_called_once_with(printer_id="moon-two")
+
+    def test_main_printer_flag_without_a_value_is_a_usage_error(self):
+        self.assertEqual(listeners.main(["--printer"]), 2)
+
+
 class StatusContractTests(unittest.TestCase):
     def test_adapter_normalised_statuses_fit_the_contract(self):
         from print_buddy.printers.bambulab.adapter import BambuAdapter

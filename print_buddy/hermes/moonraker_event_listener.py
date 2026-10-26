@@ -1807,7 +1807,16 @@ class Listener:
         self.slot_tracker.reset()
         try:
             from . import spool_sync
-            flushed = await asyncio.to_thread(spool_sync.flush_pending_screen)
+            # A listener instance (#336) flushes only its own printer's
+            # deferred-screen queue (#335 keyed the queues per printer, so
+            # an update can never reach another printer's screen); with no
+            # instance identity (direct/Hermes runs) the legacy queue is
+            # flushed exactly as before.
+            from .. import listeners as _listeners
+            instance_id = _listeners.instance_printer_id()
+            pending = spool_sync._pending_path(None, instance_id) if instance_id else None
+            flushed = await asyncio.to_thread(
+                spool_sync.flush_pending_screen, pending_path=pending)
             if flushed:
                 log(f"deferred screen sync applied to slots {flushed}")
         except Exception as exc:

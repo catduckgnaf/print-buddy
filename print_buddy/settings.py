@@ -1245,10 +1245,33 @@ def load(home=None, local=None, environ=None):
     return validate(data)
 
 
+_override = None
+
+
+def set_override(data):
+    """Install `data` as this process's settings, replacing current().
+
+    A listener instance process (#336) serves exactly one roster printer:
+    the registry launcher resolves that printer's view (view_for) and
+    installs it here, so every settings consumer in the process — adapters,
+    the Hermes _config fallback, the healthcheck — reads the printer it
+    serves. Tests use it the same way hermes._config.set_override is used.
+    Pass None to clear.
+    """
+    global _override
+    _override = data
+
+
 @lru_cache(maxsize=1)
+def _load_cached():
+    return load()
+
+
 def current():
     """Settings for this process, read once."""
-    return load()
+    if _override is not None:
+        return _override
+    return _load_cached()
 
 
 def printers(data=None):

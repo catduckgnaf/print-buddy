@@ -199,6 +199,7 @@ class SupervisorGo2rtcGateTests(unittest.TestCase):
         fake_python.write_text(
             "#!/bin/bash\n"
             "case \"$*\" in\n"
+            "  *print_buddy.listener_gate*--roster*) printf 'printer1\\n'; exit 0 ;;\n"
             "  *print_buddy.listener_gate*) exit 3 ;;\n"
             "  *print_buddy.webui_gate*) exit 3 ;;\n"
             "  *print_buddy.go2rtc*--write-config*) printf '%s\\n' \"$GO2RTC_TEST_CONFIG\" ;;\n"

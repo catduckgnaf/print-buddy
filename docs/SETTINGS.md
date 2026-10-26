@@ -28,6 +28,7 @@ Schema, validation limits and TOML migration: [CONFIGURATION-YAML.md](CONFIGURAT
 | `printer.max_print_height_mm` | `PRINT_BUDDY__PRINTER__MAX_PRINT_HEIGHT_MM` | `220.0` *model* | Tallest allowed print |
 | `printer.nozzle_diameter_mm` | `PRINT_BUDDY__PRINTER__NOZZLE_DIAMETER_MM` | `0.4` *model* | Installed nozzle; slicing refuses any other |
 | `printer.ifs_slots` | `PRINT_BUDDY__PRINTER__IFS_SLOTS` | `4` *model* | Filament slots; 1 for a single extruder |
+| `printer.tool_count` | `PRINT_BUDDY__PRINTER__TOOL_COUNT` | `1` *model* | Independent toolheads on a tool-changer model (Creator 5 / 5 Pro: 4); slicer tool *i* is toolhead *i*, never an IFS slot |
 | `printer.model` | `PRINT_BUDDY__PRINTER__MODEL` | `flashforge.ad5x` | Printer brand and model: `flashforge.ad5x`, `sovol.sv06`, `klipper.generic`, `octoprint.marlin`, `bambulab.a1`, `bambulab.p1s` (Bambu Lab models are offline only). Sets every model default marked *model* |
 | `printer.vendor` | `PRINT_BUDDY__PRINTER__VENDOR` | `flashforge` *model* | Vendor part of the model key, set by the model; `vendor` plus a bare printer name is also accepted |
 | `printer.slicer` | `PRINT_BUDDY__PRINTER__SLICER` | `orca` *model* | Slicer: `orca` everywhere; Bambu Lab printers default to `bambu_studio` and may pick `orca` |

@@ -65,7 +65,7 @@ A bed-clear approval starts one print. Starting the same G-code again needs a ne
 * `/print-again` reprints an archived job exactly, with no re-slice. A job sliced before slice recipes were recorded is refused until it is re-sliced once.
 * `/print-stop` and `/print-resume` each send at most one Moonraker command behind a confirm button.
 * `/print-reboot` uses the safe ZMod reboot flow.
-* Printer models: `flashforge.ad5x`, `flashforge.ad5m`, `flashforge.ad5m_pro`, `sovol.sv06`, `klipper.generic`, `octoprint.marlin`, `bambulab.a1`, `bambulab.p1s` (offline only, see [Bambu Lab printers](BAMBU-LAB.md)). Each job records the model it was sliced for and refuses another.
+* Printer models: `flashforge.ad5x`, `flashforge.ad5m`, `flashforge.ad5m_pro`, `flashforge.creator5`, `flashforge.creator5_pro`, `sovol.sv06`, `klipper.generic`, `octoprint.marlin`, `bambulab.a1`, `bambulab.p1s` (offline only, see [Bambu Lab printers](BAMBU-LAB.md)). Each job records the model it was sliced for and refuses another.
 
 **Monitoring**
 * Event driven Moonraker listener: start, pause, error, and completion posts with stats.
@@ -144,12 +144,13 @@ Without the file, MakerWorld intake stops before the model summary with a messag
 |---|---|---|---|
 | `printer` | `name`, `firmware` | from the model | Shown in job summaries |
 | | `nozzle_type` | from the model or unset | Optional nozzle material; use a type supported by the selected printer model |
-| | `model` | `flashforge.ad5x` | Printer model: `flashforge.ad5x`, `flashforge.ad5m`, `flashforge.ad5m_pro`, `sovol.sv06`, `klipper.generic`, `octoprint.marlin`, `bambulab.a1`, `bambulab.p1s`. Sets every default below |
+| | `model` | `flashforge.ad5x` | Printer model: `flashforge.ad5x`, `flashforge.ad5m`, `flashforge.ad5m_pro`, `flashforge.creator5`, `flashforge.creator5_pro`, `sovol.sv06`, `klipper.generic`, `octoprint.marlin`, `bambulab.a1`, `bambulab.p1s`. Sets every default below |
 | | `start_macro`, `end_macro` | `PRINT_START`, `PRINT_END` | Start and end macros for stock Klipper models |
 | | `bed_mm` | `[220, 220]` | Usable print area |
 | | `max_print_height_mm` | `220` | Tallest allowed print |
 | | `nozzle_diameter_mm` | `0.4` | Slicing refuses any other nozzle |
 | | `ifs_slots` | `4` | Filament slots; 1 for a single extruder |
+| | `tool_count` | `1` | Independent toolheads on a tool-changer model (Creator 5 / 5 Pro: 4); slicer tool *i* is toolhead *i*, never an IFS slot |
 | `layout` | `single_copy_edge_mm`, `multi_copy_edge_mm` | `1`, `3` | Distance from the bed edge |
 | | `merge_edge_margin_mm`, `merge_spacing_mm` | `8`, `10` | Gaps when merging plates |
 | | `max_merged_hours` | `12` | Longer merged plates stay separate |
@@ -270,6 +271,8 @@ Private cases use the same offline flow and skip only the public redistribution-
 This section is AD5X-only: the macro and the spool matching below describe the IFS
 printer. The AD5M and AD5M Pro run the same ZMod firmware family and Print Buddy
 supports them as single-extruder models, but they have no IFS and no spool matching;
+the Creator 5 and Creator 5 Pro are toolhead machines whose spools bind per
+toolhead rather than per IFS slot, which this macro's slot model does not cover;
 see [ZMod printers](ZMOD.md) for all five ZMod models and their differences.
 
 ZMod switches to a backup spool mid-print only when another slot holds the exact same color and material. The `print-buddy.cfg` macro lets you check that before a job starts:

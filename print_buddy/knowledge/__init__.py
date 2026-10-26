@@ -61,9 +61,10 @@ def _format_match(match: Match) -> str:
     if match.kind == "flow":
         return (f"**Guided flow: {item.title}**\n"
                 f"Step-by-step, with safety warnings first: `/print-troubleshoot {item.id}`")
+    positions = f"{item.tools} independent toolhead(s)" if item.tools else f"{item.filament_slots} filament slot(s)"
     return (f"**Printer: {item.label}** (`{item.key}`)\n"
             f"{item.firmware} over {item.connection}; bed {item.bed_mm[0]:g} x {item.bed_mm[1]:g} mm, "
-            f"height {item.max_height_mm:g} mm, {item.filament_slots} filament slot(s). {item.notes}")
+            f"height {item.max_height_mm:g} mm, {positions}. {item.notes}")
 
 
 def lookup_text(query, *, firmware=None, printer=None, registry=None) -> str:

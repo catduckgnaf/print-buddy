@@ -50,7 +50,13 @@ def test_printer_registry_matches_code_profiles(registry):
         assert entry.connection == model.vendor.connection
         assert entry.bed_mm == tuple(float(v) for v in defaults["bed_mm"])
         assert entry.max_height_mm == float(defaults["max_print_height_mm"])
-        assert entry.filament_slots == int(defaults["ifs_slots"])
+        if entry.tools:
+            # Toolhead machines record tools, not IFS slots: the model's tool_count
+            # is the authority and its ifs_slots stays 1 (see #301 stage 2).
+            assert entry.tools == int(defaults["tool_count"])
+            assert entry.filament_slots == 0
+        else:
+            assert entry.filament_slots == int(defaults["ifs_slots"])
         assert (ROOT / entry.profile).is_file()
 
 

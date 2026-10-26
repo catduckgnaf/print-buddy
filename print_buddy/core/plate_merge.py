@@ -10,6 +10,17 @@ convex hulls (translation only, authored yaw; see #221 P1). That fallback
 is additive only: rectangle verdicts and placements never change, and a
 polygon placement flows into the same per-object shifts the exporters
 already realize.
+
+When rectangle and polygon packing both fail, one last fallback packs the
+hulls with per-object yaw (#221 R2b): an object that fits the usable bed
+only when turned in the bed plane is packed by its hull rotated to the
+yaw the shared per-object sweep records for it — the split path's
+``yaw_by_object`` semantics — while objects that fit as authored keep
+their authored hull. A turned object's shift is measured from its
+rotated bounds, like the split path's shared-yaw shifts, and slicing
+realizes each recorded turn through the exporters' per-object fit
+channels composed with those shifts (see ``model_job._slice_merged``),
+re-proving the landed placement before accepting the merged output.
 """
 import math
 import re
@@ -330,6 +341,110 @@ def _object_hulls(source, object_ids):
     return hulls if non_rectangular else None
 
 
+def _object_hulls_all(source, object_ids):
+    """Authored hull per object for the yawed fallback, or None.
+
+    The same single-build-item eligibility as :func:`_object_hulls` — a
+    hull per object id is not a faithful footprint for grouped or
+    multi-item objects — but without the non-rectangular gate: a turned
+    rectangle is the canonical yawed-merge case, so rectangle hulls are
+    kept. Any ineligible object makes the whole attempt unavailable,
+    because the merged bed is one packing problem over every object.
+    """
+    from . import color_geometry
+    hulls = {}
+    try:
+        with zipfile.ZipFile(source) as archive:
+            for oid in object_ids:
+                items = color_geometry._world_hull_xy(archive, {oid})
+                if len(items) != 1:
+                    return None
+                hulls[oid] = items[0][0]
+    except RuntimeError:
+        return None
+    return hulls
+
+
+def _solo_yaw(hull, usable):
+    """The yaw one object's hull needs to fit the usable bed area, or None.
+
+    0.0 when the authored envelope already fits — authored orientation is
+    always preferred, exactly as on the split path. Otherwise the first
+    fitting candidate of the shared 1-degree sweep
+    (``split_fit.mesh_yaw_candidates``: best worst-ratio order, smallest
+    angle on ties), which is the choice ``split_fit.per_part_fit`` records
+    for a part that fits only turned. None when no checked yaw fits: such
+    an object cannot share the merged bed turned either, because any
+    packing must still fit its rotated envelope inside the same usable
+    area. The sweep is numerical evidence, not a continuous-angle proof.
+    """
+    from .split_fit import mesh_yaw_candidates
+    xs = [p[0] for p in hull]
+    ys = [p[1] for p in hull]
+    if max(xs) - min(xs) <= usable + 1e-9 and max(ys) - min(ys) <= usable + 1e-9:
+        return 0.0
+    for _ratio, degrees, envelope in mesh_yaw_candidates(hull, usable, usable):
+        if degrees > 0 and envelope[0] <= usable + 1e-9 and envelope[1] <= usable + 1e-9:
+            return float(degrees)
+    return None
+
+
+def _yawed_merge_attempt(source, object_ids, extents, bed, spacing, reserve):
+    """Proved one-bed packing with solo-needing objects turned, or None.
+
+    Returns (corners, tower_xy, yaw_by_object, trial_hulls): corners in
+    the :func:`pack_polygon` shape (placed hull AABB lower-lefts),
+    ``yaw_by_object`` naming exactly the turned objects, and the hulls as
+    packed (rotated for turned objects) so the caller measures their
+    shifts and placed bounds from the rotated bounds. The tower rules are
+    the authored polygon fallback's: the reserved strip is tried first,
+    and a placement that wins only by using it needs the same
+    ``prime_tower_xy`` proof on the placed AABBs (rotated AABBs for
+    turned objects — conservative supersets of the rotated hulls).
+    """
+    from . import color_geometry
+    from .split_fit import _rotate_hull_xy
+    hulls = _object_hulls_all(source, object_ids)
+    if hulls is None:
+        return None
+    usable = float(bed) - 2 * EDGE_MARGIN_MM
+    yaw_by_object, trial = {}, {}
+    for oid in object_ids:
+        degrees = _solo_yaw(hulls[oid], usable)
+        if degrees is None:
+            return None
+        if degrees > 0:
+            yaw_by_object[oid] = degrees
+            trial[oid] = _rotate_hull_xy(hulls[oid], degrees)
+        else:
+            trial[oid] = hulls[oid]
+    if not yaw_by_object:
+        # Nothing needs a turn: the authored verdicts above stand.
+        return None
+    placed = pack_polygon(trial, bed, spacing, reserve_y=reserve)
+    if placed is not None:
+        return placed, None, yaw_by_object, trial
+    if reserve:
+        loose = pack_polygon(trial, bed, spacing)
+        if loose is not None:
+            loose_bounds = []
+            for oid, (px, py) in loose.items():
+                if oid in yaw_by_object:
+                    hull = trial[oid]
+                    extent = (max(p[0] for p in hull) - min(p[0] for p in hull),
+                              max(p[1] for p in hull) - min(p[1] for p in hull))
+                else:
+                    extent = extents[oid]
+                loose_bounds.append(((px, px + extent[0]), (py, py + extent[1]), (0.0, 0.0)))
+            try:
+                tower_xy = color_geometry.prime_tower_xy(loose_bounds, bed=bed)
+            except RuntimeError:
+                tower_xy = None
+            else:
+                return loose, tower_xy, yaw_by_object, trial
+    return None
+
+
 def full_size_split_possible(source, manifest, bed=None, edge=EDGE_MARGIN_MM):
     """Whether source-assigned plate groups fit individually at authored size.
 
@@ -368,7 +483,8 @@ def plan(source, manifest, plates, slots, state, bed=None, spacing=SPACING_MM, j
     """Return a merge plan or a split decision with a human reason.
 
     manifest: source_colors.inventory(source); plates: model_job.plate_manifest(source)['plates'];
-    slots: {part_key: slot}. Result keys: mode ('merge'|'split'), reason, shifts, ...
+    slots: {part_key: slot}. Result keys: mode ('merge'|'split'), reason, shifts, ...;
+    a merge proved only with turned objects also carries yaw_by_object (#221 R2b).
     """
     from . import color_geometry
     bed = int(bed or state['bed_mm'][0])
@@ -444,6 +560,17 @@ def plan(source, manifest, plates, slots, state, bed=None, spacing=SPACING_MM, j
                         tower_xy = None
                     else:
                         placed, packing = loose, 'polygon'
+    yaw_by_object, yaw_hulls = {}, None
+    if placed is None:
+        # Yawed merge fallback (#221 R2b): rectangle and authored hull
+        # packing both failed. Pack the hulls with each solo-needing
+        # object rotated to its recorded yaw (see _yawed_merge_attempt);
+        # the proved corners flow into the same realizable shifts, with a
+        # turned object's shift measured from its rotated bounds.
+        attempt = _yawed_merge_attempt(source, object_ids, extents, bed, spacing, reserve)
+        if attempt is not None:
+            placed, tower_xy, yaw_by_object, yaw_hulls = attempt
+            packing = 'polygon'
     if placed is None:
         out['reason'] = (f'{len(extents)} parts do not fit one {bed}x{bed} mm bed with {spacing:g} mm spacing'
                          + (' and a prime tower' if reserve else ''))
@@ -451,11 +578,20 @@ def plan(source, manifest, plates, slots, state, bed=None, spacing=SPACING_MM, j
     shifts, bounds = {}, {}
     for oid, (px, py) in placed.items():
         box = boxes[oid]
-        shifts[oid] = [px - box[0][0], py - box[1][0], -box[2][0]]
-        bounds[oid] = [(px, px + extents[oid][0]), (py, py + extents[oid][1]),
+        if oid in yaw_by_object:
+            hull = yaw_hulls[oid]
+            base = (min(p[0] for p in hull), min(p[1] for p in hull))
+            extent = (max(p[0] for p in hull) - base[0], max(p[1] for p in hull) - base[1])
+        else:
+            base = (box[0][0], box[1][0])
+            extent = extents[oid]
+        shifts[oid] = [px - base[0], py - base[1], -box[2][0]]
+        bounds[oid] = [(px, px + extent[0]), (py, py + extent[1]),
                        (0.0, box[2][1] - box[2][0])]
     out.update({'mode': 'merge', 'shifts': shifts, 'placed_bounds_mm': bounds, 'slots': used,
                 'packing': packing, 'objects_out': sorted(shifts, key=str)})
+    if yaw_by_object:
+        out['yaw_by_object'] = yaw_by_object
     if tower_xy is not None:
         out['prime_tower_xy_mm'] = list(tower_xy)
     return out

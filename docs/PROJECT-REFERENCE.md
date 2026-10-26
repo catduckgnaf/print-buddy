@@ -55,6 +55,7 @@ A bed-clear approval starts one print. Starting the same G-code again needs a ne
 * Colors matched to loaded IFS slots from Spoolman. PLA+ is accepted in a PLA slot.
 * Filament estimates split across parts that share a spool, never multiplied.
 * `/spool` lists, changes, creates, and syncs spools without moving the printer.
+* `/print-colors <JOB.json>` opens the color selection flow for an archived job. Preparation only: it slices nothing, uploads nothing and starts nothing, and the path must be an archived `JOB.json`.
 * A swapped spool can finish a job sliced for the old one, by explicit choice.
 * `PRINT_BUDDY` Klipper macro confirms ZMod can fall back to a matching backup slot.
 
@@ -80,6 +81,7 @@ A bed-clear approval starts one print. Starting the same G-code again needs a ne
 * `/print-coldpull` runs an operator confirmed cold pull at configured temperatures.
 * `/print-lookup` searches the root [knowledge, firmware and printer registries](TROUBLESHOOTING.md) for commands, macros, errors, symptoms and printer facts. Read-only; it sends nothing.
 * `/print-troubleshoot` walks a guided physical troubleshooting flow (first layer, clog, heat creep, bed level, ringing) one question at a time. Advice only; it never commands the printer.
+* `/print-help` answers with what Print Buddy can do and the commands it registers. Read-only.
 
 ## Settings
 

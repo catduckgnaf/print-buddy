@@ -16,6 +16,23 @@ RUN mkdir -p /out && \
       rm -rf /var/lib/apt/lists/*; \
     fi
 
+# go2rtc (#246 stage 1) is a pinned official prebuilt too: one static binary
+# per architecture, SHA256 verified before installation
+# (docker/go2rtc-prebuilt.sh). WITH_GO2RTC=false (the #192 light image)
+# produces an empty /out, so the runtime COPY below is a no-op there.
+FROM debian:13-slim AS go2rtc-prebuilt
+ARG WITH_GO2RTC=true
+ARG TARGETARCH
+ENV DEBIAN_FRONTEND=noninteractive
+COPY docker/go2rtc-prebuilt.sh /usr/local/bin/go2rtc-prebuilt
+RUN mkdir -p /out && \
+    case "$WITH_GO2RTC" in true|false) ;; *) echo 'WITH_GO2RTC must be true or false' >&2; exit 2;; esac && \
+    if [ "$WITH_GO2RTC" = true ]; then \
+      apt-get update && apt-get install -y --no-install-recommends ca-certificates curl && \
+      sh /usr/local/bin/go2rtc-prebuilt "$TARGETARCH" && \
+      rm -rf /var/lib/apt/lists/*; \
+    fi
+
 FROM debian:13-slim AS bambu-build
 ARG WITH_BAMBU=false
 ARG BAMBU_REF=926a7192574bcb9b3a732e1ec59a46d79cb45466
@@ -87,6 +104,7 @@ RUN git init . && git remote add origin https://github.com/Donkie/Spoolman.git &
     printf '%s\n' 'Spoolman is managed by Print Buddy; use /api/v1.' > client_v2/build/200.html && \
     printf '%s\n' "$SPOOLMAN_REF" > source-revision
 FROM debian:13-slim AS runtime
+ARG WITH_GO2RTC=true
 ENV DEBIAN_FRONTEND=noninteractive PYTHONUNBUFFERED=1 PATH=/opt/venv/bin:$PATH
 RUN apt-get update && apt-get install -y --no-install-recommends \
     python3 python3-venv ca-certificates curl jq ffmpeg xvfb xauth tini openscad \
@@ -97,6 +115,18 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 RUN python3 -m venv /opt/venv && useradd --uid 1000 --create-home buddy
 COPY --from=spoolman-build /opt/spoolman /opt/spoolman
 COPY --from=orca-prebuilt /out/ /
+COPY --from=go2rtc-prebuilt /out/ /
+# VAAPI is the hardware-encoder baseline for in-container timelapse work
+# (#246): Intel iGPU and AMD via /dev/dri when the operator grants it. It
+# ships only with the full image, under the same WITH_GO2RTC toggle as the
+# go2rtc binary; the light image carries neither. No CUDA toolkit is baked
+# in: NVENC/QSV activate only when the host runtime provides the device.
+RUN case "$WITH_GO2RTC" in true|false) ;; *) echo 'WITH_GO2RTC must be true or false' >&2; exit 2;; esac && \
+    if [ "$WITH_GO2RTC" = true ]; then \
+      apt-get update && apt-get install -y --no-install-recommends \
+        intel-media-va-driver mesa-va-drivers libva-drm2 vainfo && \
+      rm -rf /var/lib/apt/lists/*; \
+    fi
 ENV LD_LIBRARY_PATH=/opt/orca-stable/lib/orca-runtime:/opt/orca-stable/bin
 COPY --from=bambu-build /out/ /
 RUN if [ -x /usr/local/bin/orca-slicer-stable ]; then \

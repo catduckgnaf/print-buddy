@@ -64,6 +64,33 @@ Enable it in the mounted YAML (`webui` in `config/docker.yaml`), in TOML (`[webu
 
 To reach the Web UI from another machine, all four pieces are needed: enable it with a port (the examples use 8080), bind `0.0.0.0` instead of loopback, publish the port, and set the `WEBUI_ACCESS_TOKEN` secret in `.env`. **A non-loopback bind without the token is refused** — the Web UI child exits with that reason and the supervisor stops the container; set the token (requests send it as the `X-WebUI-Token` header). Compose ships the port mapping commented out; the Unraid template carries a Web UI port mapping (8080) plus the same variables, with the bind host defaulting to `0.0.0.0` and the token as a masked field, and its WebUI link then opens the status page. Keep the Web UI on the LAN only: never forward its port from a router or expose it publicly. Settings changes saved in the Web UI take effect on the next container start; settings are read once at start. The full guide — pages, save flow, limits and troubleshooting — is [Web UI](WEBUI.md).
 
+## Timelapse capture (go2rtc, #246 stage 1)
+
+Stage 1 of #246 is plumbing only — no frames are captured yet (that is Stage 2) and no hardware encode happens yet (Stage 3). What this stage adds is the machinery both will use, off by default:
+
+- The **full image** bundles **go2rtc** (upstream AlexxIT/go2rtc v1.9.15, one static binary per architecture, downloaded at build time and verified by SHA256 in `docker/go2rtc-prebuilt.sh`, like the OrcaSlicer prebuilts) and the **VAAPI driver stack** (`intel-media-va-driver`, `mesa-va-drivers`, `libva-drm2`, `vainfo`). Both are under the `WITH_GO2RTC` build toggle, which follows the image variant: full builds set it, **the light image excludes go2rtc and the VAAPI stack entirely**.
+- With `timelapse.capture_enabled` set (`PRINT_BUDDY__TIMELAPSE__CAPTURE_ENABLED=true`, or `timelapse.capture_enabled` in the config file), the supervisor starts go2rtc as a supervised child and the healthcheck covers it. The gate is resolved from settings (`python3 -m print_buddy.go2rtc`), never guessed: capture disabled — or enabled with no camera source configured — starts nothing and is a healthy state, reported in the healthcheck like the disabled-bot case. Enabling capture in the light image fails the healthcheck with that reason, because the binary is not there.
+- The supervisor generates go2rtc's config from settings — no hand-edited YAML for the standard case. The source is `[timelapse] capture_source_url` when set (an MJPEG/RTSP URL or a go2rtc `ffmpeg:` source), otherwise it derives from `services.camera_snapshot_url` / the Moonraker webcam exactly like the camera watchdog's source. The generated file lives at `<cache>/go2rtc/go2rtc.yaml`, is written `0600`, and holds the raw camera URL, which may carry credentials; Print Buddy's own logs only ever show it redacted.
+- go2rtc does stream normalisation only: it restreams the camera on **loopback**. Its API (1984) and RTSP (8554) bind `127.0.0.1` inside the container, are never published by Compose or the Unraid template, and its WebUI is not exposed.
+
+### GPU passthrough and supported combinations
+
+Hardware encoding is opportunistic and never required; without a GPU everything falls back to CPU encoding, and the container starts and runs with no GPU present:
+
+| Combination | What you grant | Notes |
+|---|---|---|
+| Intel iGPU / AMD GPU (VAAPI) | `/dev/dri` passthrough (below) | The baseline. The full image carries the VAAPI drivers; `vainfo` in the image reports what the granted device supports. |
+| NVIDIA (NVENC) | The host NVIDIA driver plus the NVIDIA container toolkit passthrough | No CUDA toolkit or driver is baked into the image; Debian's ffmpeg already carries the `h264_nvenc` encoder, which activates only when the host runtime provides the device and driver. |
+| Intel Quick Sync (QSV) | `/dev/dri` passthrough | The `h264_qsv` encoder is in Debian's ffmpeg; it activates only when the host device/driver supports it. |
+| Anything else | Nothing | CPU (`libx264`) encoding, as today. |
+
+**Not verified on real hardware:** no GPU path above has been run on physical hardware yet. The plumbing is covered by offline contract tests (pins, gates, loopback binds, image contents); VAAPI/NVENC/QSV encoding itself is Stage 3 work and will be labelled with whatever verification exists when it lands.
+
+**Security note:** granting `/dev/dri` widens the container's access to the host — a device is not a network port, and a compromised container with GPU device access has more host surface than one without. That is why passthrough is opt-in and off by default in both deployment files, exactly like a host capability the operator chooses to grant.
+
+- Compose: uncomment the `devices:` / `group_add:` block in `docker-compose.yml` and set `group_add` to the host's render group GID (`getent group render`).
+- Unraid: add `--device=/dev/dri` to the template's Extra Parameters and make sure the container user can use the host render group; the shipped template passes no device.
+
 ## First-run configuration
 
 1. Copy `.env.example` to a private `.env`. Set `PRINT_BUDDY_IMAGE` to a tested digest. Configure Moonraker with `PRINT_BUDDY__SERVICES__MOONRAKER_URL`; do not use a real printer for offline validation.
@@ -110,8 +137,8 @@ Published images come in two variants on two platforms. Every combination is a m
 
 | Variant | Build toggles | Tags | Contents |
 |---|---|---|---|
-| full | `WITH_ORCA=true`, `WITH_BAMBU=false` | `ghcr.io/catduckgnaf/print-buddy:VERSION` and `:latest` | Discord bot, Moonraker listener, bundled Spoolman API, OpenSCAD and both pinned OrcaSlicer channels (stable and alpha) |
-| light | `WITH_ORCA=false`, `WITH_BAMBU=false` | `ghcr.io/catduckgnaf/print-buddy:VERSION-light` and `:latest-light` | Discord bot, Moonraker listener, bundled Spoolman API and OpenSCAD — no slicers |
+| full | `WITH_ORCA=true`, `WITH_GO2RTC=true`, `WITH_BAMBU=false` | `ghcr.io/catduckgnaf/print-buddy:VERSION` and `:latest` | Discord bot, Moonraker listener, bundled Spoolman API, OpenSCAD, both pinned OrcaSlicer channels (stable and alpha), go2rtc and the VAAPI stack (#246) |
+| light | `WITH_ORCA=false`, `WITH_GO2RTC=false`, `WITH_BAMBU=false` | `ghcr.io/catduckgnaf/print-buddy:VERSION-light` and `:latest-light` | Discord bot, Moonraker listener, bundled Spoolman API and OpenSCAD — no slicers, no go2rtc/VAAPI |
 
 Platforms are `linux/amd64` and `linux/arm64` for both variants. There is no `linux/arm/v7` image: upstream OrcaSlicer ships no 32-bit ARM Linux build, and 32-bit hosts are out of scope.
 
@@ -135,7 +162,7 @@ Nightly is built from the `nightly` branch, which is a pointer, not a developmen
 
 ### What light omits, and what happens when a slicer is needed
 
-Light contains no OrcaSlicer and no Bambu Studio. Everything that does not slice still runs: the Discord bot, the Moonraker listener, the bundled Spoolman API and OpenSCAD-based CAD splitting are identical to the full image. Slicing fails closed, exactly as a `WITH_ORCA=false` image already behaves: the configured slicer executable (`/usr/local/bin/orca-slicer-stable` or `-alpha`, selected by `PRINT_BUDDY_ORCA_CHANNEL`) is absent, so a slicing attempt raises `FileNotFoundError`, produces no G-code and sends nothing to a printer. The offline acceptance harness proves this behaviour for a no-Orca image (its slice probe requires the refusal and checks that no `.gcode` file was written). Choose full on any host that must slice; choose light for a small host that only monitors, manages spools or relays an externally sliced workflow.
+Light contains no OrcaSlicer, no Bambu Studio, and no go2rtc or VAAPI drivers (#246) — in-container timelapse capture is a full-image feature; the printer-rendered timelapse path works in light exactly as before. Everything that does not slice still runs: the Discord bot, the Moonraker listener, the bundled Spoolman API and OpenSCAD-based CAD splitting are identical to the full image. Slicing fails closed, exactly as a `WITH_ORCA=false` image already behaves: the configured slicer executable (`/usr/local/bin/orca-slicer-stable` or `-alpha`, selected by `PRINT_BUDDY_ORCA_CHANNEL`) is absent, so a slicing attempt raises `FileNotFoundError`, produces no G-code and sends nothing to a printer. The offline acceptance harness proves this behaviour for a no-Orca image (its slice probe requires the refusal and checks that no `.gcode` file was written). Choose full on any host that must slice; choose light for a small host that only monitors, manages spools or relays an externally sliced workflow.
 
 ### How the ARM images are built
 

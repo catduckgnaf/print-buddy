@@ -201,6 +201,13 @@ vertical_short = false
 # pad = blurred background fill (default); crop = centre crop.
 vertical_short_mode = "pad"
 vertical_short_overlay = true
+# In-container timelapse capture (#246): off by default; existing behaviour
+# (printer-rendered timelapses only) is unchanged while this is false.
+capture_enabled = false
+# Optional explicit camera source for capture (an MJPEG/RTSP URL or a
+# go2rtc ffmpeg: source). Empty derives the source from
+# services.camera_snapshot_url / the Moonraker webcam.
+capture_source_url = ""
 
 [logging]
 # Verbosity: DEBUG, INFO, WARNING or ERROR. DEBUG adds diagnostic detail; INFO is the normal level.

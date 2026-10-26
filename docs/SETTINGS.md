@@ -117,6 +117,8 @@ Schema, validation limits and TOML migration: [CONFIGURATION-YAML.md](CONFIGURAT
 | `timelapse.vertical_short` | `PRINT_BUDDY__TIMELAPSE__VERTICAL_SHORT` | `false` | Also post a 9:16 vertical version of each finished timelapse (#317), alongside the timelapse itself |
 | `timelapse.vertical_short_mode` | `PRINT_BUDDY__TIMELAPSE__VERTICAL_SHORT_MODE` | `pad` | `pad` fills the 9:16 frame with a blurred background; `crop` centre-crops |
 | `timelapse.vertical_short_overlay` | `PRINT_BUDDY__TIMELAPSE__VERTICAL_SHORT_OVERLAY` | `true` | Burn the print title / printer / filament / time overlay into the vertical short |
+| `timelapse.capture_enabled` | `PRINT_BUDDY__TIMELAPSE__CAPTURE_ENABLED` | `false` | In-container timelapse capture (#246): starts the bundled go2rtc (full Docker image only) to normalise the camera source on loopback. Off keeps today's printer-rendered behaviour |
+| `timelapse.capture_source_url` | `PRINT_BUDDY__TIMELAPSE__CAPTURE_SOURCE_URL` | empty | Explicit capture camera source (MJPEG/RTSP URL or a go2rtc `ffmpeg:` source). Empty derives it from `services.camera_snapshot_url` / the Moonraker webcam |
 | `webui.enabled` | `PRINT_BUDDY__WEBUI__ENABLED` | `false` | Optional Web UI (#286) switch; off by default, and nothing listens while disabled |
 | `webui.host` | `PRINT_BUDDY__WEBUI__HOST` | `127.0.0.1` | Host the Web UI binds to when enabled; a plain IP address or hostname |
 | `webui.port` | `PRINT_BUDDY__WEBUI__PORT` | `0` | Port the Web UI binds to when enabled; `0` means no port has been chosen yet |
@@ -161,6 +163,7 @@ Image build inputs (`docker build --build-arg NAME=value`), not runtime settings
 |---|---|---|
 | `APP_CHANNEL` | `development` | Application provenance label, `stable` or `development`; it does not change the source checkout |
 | `WITH_ORCA` | `false` | `true` installs both pinned official prebuilt OrcaSlicer releases (stable 2.4.2 and alpha 2.5.0-alpha, each SHA256 verified in `docker/orca-prebuilt.sh`); OrcaSlicer is never built from source; `false` omits it and slicing fails closed |
+| `WITH_GO2RTC` | `true` | `true` installs the pinned official go2rtc prebuilt (v1.9.15, SHA256 verified in `docker/go2rtc-prebuilt.sh`) and the VAAPI driver stack for in-container timelapse capture (#246); the published full images set it and the light images set `false`, which omits both |
 | `SPOOLMAN_REF` | `bed3f14ee77a3a571d31b14215d54b0b88a7519c` | Pinned Spoolman v0.27.0 source commit; only its Python API backend is installed, never the web UI |
 | `ORCA_BUILD_JOBS` | `auto` | Bambu Studio source build only: parallel compile jobs, `auto` (memory-aware, below the CPU count) or a whole number from 1 to 64 |
 | `ORCA_BUILD_MEM_PER_JOB_MIB` | `2560` | Bambu Studio source build only: memory budgeted per job by `auto`, at least 256 |

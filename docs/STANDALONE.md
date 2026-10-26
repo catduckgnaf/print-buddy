@@ -63,7 +63,7 @@ message. `python3 -m print_buddy.doctor` warns when a Hermes profile holds the s
 | `llm.model` | empty | Model name, required when `chat_url` is set |
 | `llm.api_key_env` | `LLM_API_KEY` | Name of the environment variable that holds the LLM API key, if it needs one |
 | `llm.timeout_s` | `20` | LLM request timeout |
-| `vision.roast_enabled` | `true` | The one-line roast on print-started and print-complete posts. On by default whenever an LLM/vision endpoint is available (`services.vision_chat_url` plus `CLIPROXY_API_KEY`), on every platform — Telegram and Matrix included, even though their chat never uses `[llm]`. `false` turns roasts off; camera checks are unaffected |
+| `vision.roast_enabled` | `true` | The one-line roast on the print-started post only (never on the completion post). On by default whenever an LLM/vision endpoint is available (`services.vision_chat_url` plus `CLIPROXY_API_KEY`), on every platform — Telegram and Matrix included, even though their chat never uses `[llm]`. `false` turns roasts off; camera checks are unaffected |
 | `vision.roast_model` | `luna-latest` | Model that writes the roast |
 
 Every key can come from the environment as `PRINT_BUDDY__SECTION__KEY`, for example

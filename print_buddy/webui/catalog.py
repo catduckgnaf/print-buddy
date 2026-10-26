@@ -202,7 +202,8 @@ CATALOG = (
     _field("vision", "roast_model", "Roast model", "text",
            "Model the vision endpoint uses for the one-line roast on print posts."),
     _field("vision", "roast_enabled", "Roast", "toggle",
-           "The one-line roast on print-started and print-complete posts, on every "
+           "The one-line roast on the print-started post only (one per print, "
+           "added when printing begins; never on the completion post), on every "
            "platform (Telegram included). On by default: it runs whenever an "
            "LLM/vision endpoint is available; off turns roasts off without "
            "disabling camera checks.",

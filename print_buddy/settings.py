@@ -88,7 +88,8 @@ OPTIONAL_KEYS = {("printer", "nozzle_type"): str, ("visual_watch", "enabled"): b
                  ("bambu", "lan_host"): str, ("bambu", "lan_serial"): str,
                  ("bambu", "lan_access_code_env"): str,
                  ("slicer", "flash_studio_path"): str,
-                 ("flashforge_stock", "host"): str}
+                 ("flashforge_stock", "host"): str,
+                 ("prusa", "link_host"): str, ("prusa", "api_key_env"): str}
 DEFAULT_MATERIAL_TEMPS = {
     "PLA": {"nozzle": 210, "bed": 60}, "PETG": {"nozzle": 240, "bed": 85},
     "ABS": {"nozzle": 245, "bed": 100}, "ASA": {"nozzle": 260, "bed": 105},
@@ -282,6 +283,24 @@ def _validate_stock_lan(data, model):
     section["host"] = host
 
 
+def _validate_prusa_link(data, model):
+    """[prusa] PrusaLink keys (#242): a plain host, Prusa models only.
+
+    The API key itself is never a setting: [prusa] api_key_env names the environment variable
+    that holds it, the same indirection as [bambu] lan_access_code_env.
+    """
+    prusa = data.setdefault("prusa", {})
+    host = str(prusa.setdefault("link_host", "") or "").strip()
+    env_name = str(prusa.setdefault("api_key_env", "PRUSA_LINK_API_KEY") or "PRUSA_LINK_API_KEY")
+    if host and model.vendor.key != "prusa":
+        raise SettingsError("[prusa] link_host only applies to Prusa printers")
+    if host and not re.fullmatch(r"[A-Za-z0-9._-]+", host):
+        raise SettingsError(f"[prusa] link_host must be a plain IP address or hostname without scheme or port, got {host!r}")
+    if not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", env_name):
+        raise SettingsError(f"[prusa] api_key_env must be an environment variable name, got {env_name!r}")
+    prusa["link_host"], prusa["api_key_env"] = host, env_name
+
+
 BOT_MODES = ("hermes", "standalone")
 LOG_LEVELS = ("DEBUG", "INFO", "WARNING", "ERROR")
 LOG_FORMATS = ("text", "json")
@@ -405,12 +424,13 @@ def validate(data):
     for key, value in services.items():
         if key.endswith("_url") and value and not value.startswith(("ws://", "wss://") if key == "moonraker_ws_url" else ("http://", "https://")):
             raise SettingsError(f"[services] {key} must be a URL, got {value!r}")
-    if model.vendor.connection in ("offline", "bambulab_lan", "flashforge_stock") and (services["moonraker_url"] or services.get("octoprint_url")):
+    if model.vendor.connection in ("offline", "bambulab_lan", "flashforge_stock", "prusalink", "elegoo_sdcp") and (services["moonraker_url"] or services.get("octoprint_url")):
         # The listener, /print-stop and /print-resume would otherwise act on whatever answers at that URL.
         raise SettingsError(f"[services] moonraker_url and octoprint_url must be empty for model {model.key!r}: "
                             "Print Buddy has no Moonraker or OctoPrint connection to it")
     _validate_bambu_lan(data, model)
     _validate_stock_lan(data, model)
+    _validate_prusa_link(data, model)
     if services["moonraker_url"]:
         base = services["moonraker_url"].rstrip("/")
         host = base.split("://", 1)[1].split("/", 1)[0].rsplit(":", 1)[0]

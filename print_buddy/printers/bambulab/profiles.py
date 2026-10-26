@@ -43,17 +43,17 @@ def install_hint(adapter):
             "(see docs/BAMBU-LAB.md)")
 
 
-def find_vendor(resources):
-    """The vendor profile folder (holding BBL.json and BBL/) under an OrcaSlicer resources folder, or raise."""
+def find_vendor(resources, vendor=VENDOR):
+    """The vendor profile folder (holding <vendor>.json and <vendor>/) under a resources folder, or raise."""
     root = Path(resources).expanduser()
     for profiles in (root / "profiles", root):
-        if (profiles / f"{VENDOR}.json").is_file() and (profiles / VENDOR).is_dir():
+        if (profiles / f"{vendor}.json").is_file() and (profiles / vendor).is_dir():
             return profiles
-        if (profiles / f"{VENDOR}.opc").is_file():
-            raise ProfileError(f"{profiles} holds packed vendor profiles ({VENDOR}.opc, OrcaSlicer 2.5+); "
-                               "only an OrcaSlicer whose resources hold BBL.json and BBL/ JSON profiles is supported")
-    raise ProfileError(f"no OrcaSlicer {VENDOR} vendor profiles under {root} "
-                       f"(expected profiles/{VENDOR}.json and profiles/{VENDOR}/)")
+        if (profiles / f"{vendor}.opc").is_file():
+            raise ProfileError(f"{profiles} holds packed vendor profiles ({vendor}.opc, OrcaSlicer 2.5+); "
+                               f"only an OrcaSlicer whose resources hold {vendor}.json and {vendor}/ JSON profiles is supported")
+    raise ProfileError(f"no OrcaSlicer {vendor} vendor profiles under {root} "
+                       f"(expected profiles/{vendor}.json and profiles/{vendor}/)")
 
 
 def _read(path):
@@ -63,21 +63,21 @@ def _read(path):
         raise ProfileError(f"cannot read {path}: {exc}") from None
 
 
-def flatten(resources, names):
+def flatten(resources, names, vendor=VENDOR):
     """{kind: profile} for the named vendor profiles, `inherits` and `include` resolved, as Orca loads them."""
-    profiles = find_vendor(resources)
-    index = _read(profiles / f"{VENDOR}.json")
+    profiles = find_vendor(resources, vendor)
+    index = _read(profiles / f"{vendor}.json")
     paths = {entry["name"]: entry["sub_path"] for key in INDEX_LISTS.values() for entry in index.get(key, [])}
 
     def resolve(name, seen=()):
         if name not in paths:
-            raise ProfileError(f"{VENDOR} vendor profile {name!r} is not in {profiles / (VENDOR + '.json')}")
+            raise ProfileError(f"{vendor} vendor profile {name!r} is not in {profiles / (vendor + '.json')}")
         if name in seen:
-            raise ProfileError(f"{VENDOR} vendor profile {name!r} inherits itself")
-        data = _read(profiles / VENDOR / paths[name])
+            raise ProfileError(f"{vendor} vendor profile {name!r} inherits itself")
+        data = _read(profiles / vendor / paths[name])
         out = resolve(data["inherits"], (*seen, name)) if data.get("inherits") else {}
         for include in data.get("include", []):
-            out.update({k: v for k, v in _read(profiles / VENDOR / paths[include]).items()
+            out.update({k: v for k, v in _read(profiles / vendor / paths[include]).items()
                         if k not in ("type", "name", "instantiation", "from")})
         out.update(data)
         out.pop("inherits", None)

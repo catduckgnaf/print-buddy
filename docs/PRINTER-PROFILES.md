@@ -30,6 +30,13 @@ print_buddy/printers/
     a1.py                MODEL   bambulab.a1: 256 mm bed, 0.4 mm nozzle, single filament, slicing offline
                                  (adapter.py, guard.py, facts.py, profiles.py; see BAMBU-LAB.md)
     p1s.py               MODEL   bambulab.p1s: 256 mm bed, 250 mm Orca height, 0.4 mm nozzle, single filament, slicing offline
+  prusa/
+    __init__.py          VENDOR  Prusa: PrusaLink LAN, slicer-owned start code, OrcaSlicer, .gcode/.bgcode
+    mk4s.py              MODEL   prusa.mk4s: 250 x 210 mm bed, 220 mm height, single tool
+    coreone.py           MODEL   prusa.coreone: 250 x 220 mm bed, 270 mm height, enclosed
+    xl.py                MODEL   prusa.xl: 360 mm cube, 5 toolheads (single-tool jobs only)
+    miniplus.py          MODEL   prusa.miniplus: 180 mm cube, Orca MINI profiles
+                                 (adapter.py, client.py, guard.py, facts.py, profiles.py; see PRUSA.md)
 templates/orca/<folder>/ machine.json, process.json, filament.json per printer; a model with
                          generated_templates (the A1) ships none: <state>/orca-profiles/<folder>
 ```

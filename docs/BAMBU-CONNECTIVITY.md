@@ -164,7 +164,7 @@ Each needs a real A1 (then P1S), a separately approved test plan, and the printe
 3. TLS: does the test printer's certificate chain to the Bambu CA in OpenBambuAPI/pybambu, with CN = serial, under Python's strict verification — and does the TLS-1.2 cap matter for A1/P1S?
 4. MQTT contention on the A1: what happens to Print Buddy's session when Bambu Studio or Handy connects, and does the pushall-on-reconnect behaviour recover full state cleanly?
 5. `sequence_id` semantics on the wire: is `"0"` accepted for `project_file`, or must IDs increment and be matched to the report echo to confirm acceptance?
-6. AMS reporting on the specific A1: AMS Lite vs a regular AMS, `tray_now` encoding, and humidity/temperature availability.
+6. AMS reporting on the specific A1: AMS Lite vs a regular AMS, `tray_now` encoding, and humidity/temperature availability. (#307 now decodes the AMS block from the recorded payload shapes — unit kind from the get_version module list, presence from `tray_exist_bits`, humidity from `humidity_raw` only — so what remains unknown is whether a real A1's report matches those shapes, not how Print Buddy would read it.)
 7. `project_file` calibration flags on A1/P1S: what `bed_leveling` / `flow_cali` / `vibration_cali` true actually triggers, and confirmation that false skips them.
 8. Whether `pushall` cadence limits observed on P1P apply to the P1S at the watchdog/reconnect rates the design uses.
 

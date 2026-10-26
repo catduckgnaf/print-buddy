@@ -291,6 +291,13 @@ channel: dev
 is_system_service: False
 ```
 
+On Telegram, a ZMod household can also run moonraker-telegram-bot — the
+bot ZMod itself uses — alongside Print Buddy's Telegram bot for live
+printer control, notifications and timelapse: see
+[Telegram bot setup](TELEGRAM-BOT-SETUP.md#pairing-with-moonraker-telegram-bot-zmod-companion)
+for the division of labour, the two-token rule and how to keep only one
+bot posting progress notifications.
+
 ## Repository structure
 
 * `config/home.yaml`: default settings. Legacy TOML remains supported during migration. See Settings.

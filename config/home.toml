@@ -70,6 +70,9 @@ hermes_restart_helper = "~/.hermes/skills/autonomous-ai-agents/hermes-safe-resta
 moonraker_url = ""
 # Derived from moonraker_url when empty.
 moonraker_ws_url = ""
+# Which camera still images come from (#294): auto follows the printer
+# vendor's rule; or pin moonraker, bambu, go2rtc, or none.
+camera_source = "auto"
 camera_snapshot_url = ""
 spoolman_url = ""
 openviking_url = ""
@@ -179,6 +182,10 @@ roast_model = "luna-latest"
 sensitivity = 3
 
 [timelapse]
+# Mode (#246/#295): rendered = the printer renders it (moonraker-timelapse),
+# container = Print Buddy captures and encodes it in-container, off = none.
+# Empty derives: rendered when a Moonraker URL is configured, else off.
+mode = ""
 # Remote archive over ssh. Empty host disables the copy.
 archive_host = ""
 archive_dir = ""

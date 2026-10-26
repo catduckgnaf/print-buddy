@@ -93,6 +93,8 @@ OPTIONAL_KEYS = {("printer", "nozzle_type"): str, ("printer", "tool_count"): int
                  ("slicer", "flash_studio_path"): str,
                  ("webui", "enabled"): bool, ("webui", "host"): str,
                  ("webui", "port"): int, ("webui", "access_token_env"): str,
+                 ("timelapse", "mode"): str,
+                 ("services", "camera_source"): str,
                  ("flashforge_stock", "host"): str,
                  ("prusa", "link_host"): str, ("prusa", "api_key_env"): str,
                  ("elegoo_sdcp", "host"): str}
@@ -346,6 +348,15 @@ def _validate_elegoo_sdcp(data, model):
 BOT_MODES = ("hermes", "standalone")
 LOG_LEVELS = ("DEBUG", "INFO", "WARNING", "ERROR")
 LOG_FORMATS = ("text", "json")
+# [timelapse] mode (#246/#295): "rendered" keeps the printer-rendered
+# moonraker-timelapse path, "container" is #246's in-container capture,
+# "off" disables timelapses. An empty file value derives in validate():
+# "rendered" when a Moonraker URL is configured, else "off".
+TIMELAPSE_MODES = ("rendered", "container", "off")
+# [services] camera_source (#294): which camera the still images come
+# from. "auto" follows the printer vendor's rule; the explicit values pin
+# one source; "none" turns camera images off.
+CAMERA_SOURCES = ("auto", "moonraker", "bambu", "go2rtc", "none")
 
 
 def user_ids(value, section="discord", platform_label="Discord"):
@@ -454,6 +465,33 @@ def _validate_webui(data):
     if not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", env_name):
         raise SettingsError(f"[webui] access_token_env must be an environment variable name, got {env_name!r}")
     webui["access_token_env"] = env_name
+
+
+def _validate_timelapse(data):
+    """The [timelapse] mode (#246/#295). Absent or empty in a config derives
+    from the configured services: "rendered" (the printer-rendered
+    moonraker-timelapse path) when a Moonraker URL is set, else "off".
+    An explicit value always wins, including "container" for #246's
+    in-container capture."""
+    timelapse = data.setdefault("timelapse", {})
+    raw = timelapse.setdefault("mode", "")
+    mode = str(raw or "").strip().lower()
+    if not mode:
+        mode = "rendered" if data["services"].get("moonraker_url") else "off"
+    if mode not in TIMELAPSE_MODES:
+        raise SettingsError(f"[timelapse] mode must be one of {', '.join(TIMELAPSE_MODES)}, got {raw!r}")
+    timelapse["mode"] = mode
+
+
+def _validate_camera_source(data):
+    """The [services] camera_source (#294): "auto" follows the configured
+    printer vendor's camera rule; an explicit value pins one source."""
+    services = data.setdefault("services", {})
+    raw = services.setdefault("camera_source", "auto")
+    source = str(raw or "auto").strip().lower()
+    if source not in CAMERA_SOURCES:
+        raise SettingsError(f"[services] camera_source must be one of {', '.join(CAMERA_SOURCES)}, got {raw!r}")
+    services["camera_source"] = source
 
 
 def _validate_logging(data):
@@ -612,6 +650,8 @@ def validate(data):
     _validate_bot(data)
     _validate_logging(data)
     _validate_webui(data)
+    _validate_timelapse(data)
+    _validate_camera_source(data)
     templates = data.get("orca", {}).get("templates")
     if templates == "" and model.generated_templates:
         templates = str(generated_templates_dir(model, data))

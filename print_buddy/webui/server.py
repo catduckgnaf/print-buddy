@@ -1,17 +1,21 @@
-"""Read-only Web UI status server (#286, stage 2).
+"""Web UI HTTP server (#286, stages 2-3).
 
 A stdlib-only HTTP server (``http.server``; no new dependency, no build
-step) serving three read-only routes:
+step) serving:
 
 - ``GET /`` — a simple server-rendered status page (plain HTML, every
   interpolated value escaped, no JavaScript);
 - ``GET /api/status`` — the status snapshot as JSON
   (:mod:`print_buddy.webui.status`);
 - ``GET /healthz`` — the bot heartbeat evaluation, with the same
-  200/503 + JSON shape as the standalone bot's own health server.
+  200/503 + JSON shape as the standalone bot's own health server;
+- ``GET /config`` — the picker configuration page
+  (:mod:`print_buddy.webui.pages`), the one write surface in the Web UI.
 
-Anything else is 404, and any non-GET method is 405: this stage writes
-nothing. The picker configuration page is stage 3.
+Unknown GET paths are 404. Writes happen only through the config page's
+two POSTs (``POST /config/preview`` renders the diff and writes nothing;
+``POST /config`` with the confirm field performs the validated write);
+every other non-GET method or path is 405.
 
 The server starts only when ``[webui] enabled`` is true and ``port`` is
 above 0. Access control: the access token lives only in the environment
@@ -22,6 +26,13 @@ loopback, a token is mandatory — an empty token refuses the start with a
 clear error, because a LAN-reachable status page must not be open. On
 loopback the token is optional, and honoured when set. The token value
 itself is never rendered, logged, or included in any response.
+
+POSTs additionally accept the per-server form token the config pages
+embed (``pages.CSRF_FIELD``) instead of the header — that is how a
+browser form posts — and on loopback with no access token configured
+the form token is still required, so a cross-origin page in the
+operator's browser cannot change settings. The form token is generated
+at server start, kept only in memory, and is not the access token.
 """
 from __future__ import annotations
 
@@ -30,12 +41,15 @@ import html
 import ipaddress
 import json
 import os
+import secrets
 import sys
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-from urllib.parse import urlparse
+from urllib.parse import parse_qs, urlparse
 
 from .. import settings
 from ..bot import health as bot_health
+from . import config as config_api
+from . import pages
 from . import status as status_module
 
 TOKEN_HEADER = "X-WebUI-Token"
@@ -139,7 +153,8 @@ def render_status_html(snap):
             f"<title>Print Buddy {esc(snap['version'])} — status</title></head><body>"
             "<h1>Print Buddy status</h1>"
             f"<p>Overall: {'ok' if snap['ok'] else 'attention needed'} (read-only page; "
-            "configuration happens in the YAML settings file)</p>"
+            "settings are changed on the <a href=\"/config\">configuration page</a>, "
+            "which writes the YAML settings file)</p>"
             f"<table>{main_rows}</table>"
             + (f"<h2>Services</h2><table>{services}</table>" if services else "")
             + f"<h2>Doctor checks</h2><table>{doctor}</table>"
@@ -174,6 +189,14 @@ class _Handler(BaseHTTPRequestHandler):
         provided = self.headers.get(TOKEN_HEADER) or ""
         return hmac.compare_digest(provided, token)
 
+    def _field_values(self):
+        return config_api.read_fields(environ=self.server.webui_environ)
+
+    def _config_html(self, field_values, **kwargs):
+        return pages.render_config_page(
+            field_values, data=self.server.settings_data,
+            form_token=self.server.form_token, **kwargs)
+
     # -- routes -----------------------------------------------------------
     def do_GET(self):
         try:
@@ -189,16 +212,137 @@ class _Handler(BaseHTTPRequestHandler):
             elif path == "/healthz":
                 code, body = healthz(self.server.settings_data)
                 self._json(code, body)
+            elif path == "/config":
+                self._send(200, self._config_html(self._field_values()),
+                           "text/html; charset=utf-8")
             else:
-                self._json(404, {"ok": False, "reason": "try /, /api/status or /healthz"})
+                self._json(404, {"ok": False,
+                                 "reason": "try /, /api/status, /healthz or /config"})
         except Exception as exc:  # a broken snapshot is a 500, never a dropped connection
             self._json(500, {"ok": False, "reason": f"{type(exc).__name__}: {exc}"})
 
+    # -- config writes (stage 3) -------------------------------------------
+    def _read_form(self):
+        """(form, None) or (None, (code, reason)) for a urlencoded POST body."""
+        content_type = self.headers.get("Content-Type") or ""
+        if content_type and not content_type.startswith("application/x-www-form-urlencoded"):
+            return None, (415, "POST bodies must be application/x-www-form-urlencoded")
+        try:
+            length = int(self.headers.get("Content-Length") or 0)
+        except ValueError:
+            return None, (400, "bad Content-Length")
+        if length < 0 or length > 65536:
+            return None, (413, "form body too large")
+        raw = self.rfile.read(length) if length else b""
+        return parse_qs(raw.decode("utf-8", "replace"), keep_blank_values=True), None
+
+    def _post_authorized(self, form):
+        """A config POST needs the access-token header (stage 2's rule) or
+        the form token embedded in the page. With no access token set the
+        header authorizes nothing, so the form token is always required
+        then — a cross-origin page cannot mint one."""
+        if self.server.webui_token and self._authorized():
+            return True
+        provided = (form.get(pages.CSRF_FIELD) or [""])[0]
+        return bool(provided) and hmac.compare_digest(provided, self.server.form_token)
+
+    def _config_form(self):
+        """(form, field_values) for an authorized config POST, else None
+        (the refusal response has already been sent)."""
+        form, error = self._read_form()
+        if error:
+            self._json(error[0], {"ok": False, "reason": error[1]})
+            return None
+        if not self._post_authorized(form):
+            self._json(403, {"ok": False,
+                             "reason": f"missing or wrong form token: POST /config "
+                                       f"requires the {TOKEN_HEADER} header or the "
+                                       f"form's own {pages.CSRF_FIELD} token"})
+            return None
+        return form, self._field_values()
+
+    def do_POST(self):
+        try:
+            path = urlparse(self.path).path
+            if path == "/config/preview":
+                self._config_preview()
+            elif path == "/config":
+                self._config_save()
+            else:
+                self._read_only()
+        except Exception as exc:  # a broken write is a 500, never a dropped connection
+            self._json(500, {"ok": False, "reason": f"{type(exc).__name__}: {exc}"})
+
+    def _config_preview(self):
+        got = self._config_form()
+        if got is None:
+            return
+        form, field_values = got
+        changes, submitted, errors = pages.parse_form(form, field_values)
+        if not errors and changes:
+            field_errors, general = pages.validate_change_set(
+                changes, environ=self.server.webui_environ)
+            errors.update(field_errors)
+            if general:
+                errors["_general"] = general
+        if errors:
+            self._send(400, self._config_html(field_values, errors=errors,
+                                              submitted=submitted),
+                       "text/html; charset=utf-8")
+            return
+        if not changes:
+            self._send(200, self._config_html(
+                field_values, submitted=submitted,
+                notice="No changes: every submitted value already matches "
+                       "the effective settings."), "text/html; charset=utf-8")
+            return
+        effective = {fv.field: fv.value for fv in field_values}
+        entries = [(field, effective[field], value) for field, value in changes.items()]
+        self._send(200, pages.render_preview_page(
+            entries, submitted, form_token=self.server.form_token),
+            "text/html; charset=utf-8")
+
+    def _config_save(self):
+        got = self._config_form()
+        if got is None:
+            return
+        form, field_values = got
+        if (form.get(pages.CONFIRM_FIELD) or [""])[0] != "yes":
+            self._json(400, {"ok": False,
+                             "reason": "saving needs the preview step: POST to "
+                                       "/config/preview first, then confirm"})
+            return
+        # The confirm form names the fields the preview parsed; re-parse
+        # exactly those, so hidden-input absence keeps its preview meaning.
+        named = (form.get(pages.FIELDS_FIELD) or [""])[0]
+        only = {part for part in named.split(",") if part} or None
+        changes, submitted, errors = pages.parse_form(form, field_values, only=only)
+        if errors:
+            self._send(400, self._config_html(field_values, errors=errors,
+                                              submitted=submitted),
+                       "text/html; charset=utf-8")
+            return
+        try:
+            changed = config_api.write_changes(
+                {field.id: value for field, value in changes.items()},
+                environ=self.server.webui_environ)
+        except config_api.WebUIConfigError as exc:
+            field_errors, general = pages.attribute_error(
+                str(exc), changes, environ=self.server.webui_environ)
+            errors = dict(field_errors)
+            if general:
+                errors["_general"] = general
+            self._send(400, self._config_html(field_values, errors=errors,
+                                              submitted=submitted),
+                       "text/html; charset=utf-8")
+            return
+        self._send(200, pages.render_result_page(changed), "text/html; charset=utf-8")
+
     def _read_only(self):
         self._json(405, {"ok": False,
-                         "reason": "the Web UI status server is read-only (GET only)"})
+                         "reason": "the Web UI is read-only here (GET only; "
+                                   "configuration posts go to /config)"})
 
-    do_POST = _read_only
     do_PUT = _read_only
     do_DELETE = _read_only
     do_PATCH = _read_only
@@ -226,6 +370,12 @@ def make_server(data=None, *, environ=None, host=None, port=None, snapshot_func=
     server = ThreadingHTTPServer((bind_host, bind_port), _Handler)
     server.settings_data = data
     server.webui_token = token
+    # The config page reads and writes through the same environment the
+    # settings were loaded with (PRINT_BUDDY_CONFIG resolution included).
+    server.webui_environ = environ
+    # Per-server form token for config POSTs (pages.CSRF_FIELD): generated
+    # here, kept only in memory, never the access token.
+    server.form_token = secrets.token_urlsafe(32)
     server.snapshot_func = snapshot_func or (
         lambda: status_module.snapshot(data, environ=environ))
     return server
@@ -239,7 +389,8 @@ def serve(data=None, *, environ=None):
         print(str(exc), file=sys.stderr)
         return 2
     host, port = server.server_address[:2]
-    print(f"webui: status server on http://{host}:{port}/ (read-only, Ctrl-C to stop)")
+    print(f"webui: server on http://{host}:{port}/ (status page; "
+          f"configuration at /config, Ctrl-C to stop)")
     try:
         server.serve_forever()
     except KeyboardInterrupt:

@@ -101,10 +101,29 @@ class CatalogTests(unittest.TestCase):
                 field = field_by_id(field_id)
                 self.assertIsNotNone(field)
                 self.assertEqual(field.kind, kind)
-        # The type/source pickers from #246/#294/#295 are NOT catalog fields
-        # yet: no mode/source setting exists for them to bind to.
-        self.assertIsNone(field_by_id("timelapse.mode"))
-        self.assertIsNone(field_by_id("services.camera_source"))
+        # The type/source pickers bind to the [timelapse] mode and
+        # [services] camera_source settings (#246/#294/#295 contracts):
+        # pickers carrying the settings-owned choice sets.
+        mode = field_by_id("timelapse.mode")
+        self.assertIsNotNone(mode)
+        self.assertEqual(mode.kind, "picker")
+        self.assertEqual(choices_for(mode), tuple(settings.TIMELAPSE_MODES))
+        source = field_by_id("services.camera_source")
+        self.assertIsNotNone(source)
+        self.assertEqual(source.kind, "picker")
+        self.assertEqual(choices_for(source), tuple(settings.CAMERA_SOURCES))
+
+    def test_catalog_groups_cover_every_field_and_pin_the_slicing_group(self):
+        # Stage 3 renders the catalog by group: every field has exactly one,
+        # and the slicing group is exactly the vendor-choice pair.
+        for field in CATALOG:
+            with self.subTest(field=field.id):
+                self.assertTrue(field.group)
+        slicing = {field.id for field in CATALOG if field.group == "slicing"}
+        self.assertEqual(slicing, {"printer.slicer", "delivery.methods"})
+        self.assertEqual(field_by_id("timelapse.mode").group, "timelapse")
+        self.assertEqual(field_by_id("services.camera_source").group, "images")
+        self.assertEqual(field_by_id("printer.model").group, "printer")
 
     def test_no_secret_or_env_name_fields_in_the_catalog(self):
         for field in CATALOG:

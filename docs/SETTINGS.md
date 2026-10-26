@@ -56,6 +56,7 @@ Schema, validation limits and TOML migration: [CONFIGURATION-YAML.md](CONFIGURAT
 | `paths.hermes_restart_helper` | `PRINT_BUDDY__PATHS__HERMES_RESTART_HELPER` | `/data/hermes/restart_hermes.py` | Hermes restart helper (Hermes installs only) |
 | `services.moonraker_url` | `PRINT_BUDDY__SERVICES__MOONRAKER_URL` | empty | Klipper printers: Moonraker HTTP URL, e.g. `http://printer.example:7125`. Required by the listener |
 | `services.moonraker_ws_url` | `PRINT_BUDDY__SERVICES__MOONRAKER_WS_URL` | empty | Moonraker websocket; derived from `moonraker_url` when empty |
+| `services.camera_source` | `PRINT_BUDDY__SERVICES__CAMERA_SOURCE` | `auto` | Which camera still images come from (#294): `auto` follows the printer vendor's rule, or pin `moonraker`, `bambu`, `go2rtc`, or `none` |
 | `services.camera_snapshot_url` | `PRINT_BUDDY__SERVICES__CAMERA_SNAPSHOT_URL` | empty | Camera snapshot URL; derived from the Moonraker host when empty |
 | `services.spoolman_url` | `PRINT_BUDDY__SERVICES__SPOOLMAN_URL` | empty | Spoolman URL. The Docker config and Compose default to `http://127.0.0.1:8000`, the bundled Spoolman API in the same container. Set another URL, plus `PRINT_BUDDY_BUNDLED_SPOOLMAN=false`, to use an existing external Spoolman instead |
 | `services.openviking_url` | `PRINT_BUDDY__SERVICES__OPENVIKING_URL` | empty | Optional OpenViking memory store |
@@ -104,6 +105,7 @@ Schema, validation limits and TOML migration: [CONFIGURATION-YAML.md](CONFIGURAT
 | `vision.roast_model` | `PRINT_BUDDY__VISION__ROAST_MODEL` | `luna-latest` | Model for the print-start roast |
 | `visual_watch.sensitivity` | `PRINT_BUDDY__VISUAL_WATCH__SENSITIVITY` | `3` | Camera watchdog sensitivity, 1 (quietest) to 5 (most alerts); also sets the periodic check interval and stall threshold, see the [project reference](PROJECT-REFERENCE.md#camera-stall-sensitivity) |
 | `visual_watch.enabled` | `PRINT_BUDDY__VISUAL_WATCH__ENABLED` | `true` | Camera monitoring switch; the watchdog is alert-only and never controls the printer |
+| `timelapse.mode` | `PRINT_BUDDY__TIMELAPSE__MODE` | derived | Timelapse mode (#246/#295): `rendered` (the printer renders it, moonraker-timelapse), `container` (in-container capture) or `off`. Empty in a file derives: `rendered` when a Moonraker URL is configured, else `off` |
 | `timelapse.archive_host` | `PRINT_BUDDY__TIMELAPSE__ARCHIVE_HOST` | empty | SSH host for the timelapse archive; empty disables it |
 | `timelapse.archive_dir` | `PRINT_BUDDY__TIMELAPSE__ARCHIVE_DIR` | empty | Archive folder on that host |
 | `timelapse.ssh_key` | `PRINT_BUDDY__TIMELAPSE__SSH_KEY` | empty | Path of the SSH key in the container (mount it read-only) |

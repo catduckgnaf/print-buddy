@@ -15,19 +15,21 @@ import sys
 import time
 from pathlib import Path
 
-from . import printers, settings
+from . import listeners, printers, settings
 
 HEARTBEAT_S = 30
-RUNTIME = "moonraker_event_listener"
 
-# The only vendor connection the Moonraker event listener serves (#256). The
-# listener is a Moonraker websocket client: its URL derives from
-# services.moonraker_url alone, and nothing under print_buddy/hermes speaks
-# OctoPrint. Every other connection (octoprint, offline, bambulab_lan,
-# flashforge_stock, and any future LAN connection) has no listener to run:
-# the container supervisor must not start it and the container healthcheck
-# must not require its heartbeat.
-LISTENER_CONNECTIONS = ("moonraker",)
+# The listener registry (print_buddy.listeners, #299) is the one place that
+# maps a vendor connection to its listener domain. Today only the moonraker
+# domain is implemented: that listener is a Moonraker websocket client whose
+# URL derives from services.moonraker_url alone. Every other domain is
+# planned or none, so no listener runs for it: the container supervisor must
+# not start one and the container healthcheck must not require a heartbeat.
+LISTENER_CONNECTIONS = listeners.implemented_connections()
+
+# Heartbeat identity of the one implemented listener domain, kept as a name
+# for the listener process and its existing callers.
+RUNTIME = listeners.DOMAINS["moonraker"].runtime
 
 
 def listener_connection(data=None):
@@ -36,9 +38,19 @@ def listener_connection(data=None):
     return printers.MODELS[data["printer"]["model"]].vendor.connection
 
 
+def listener_domain(data=None):
+    """Listener domain of the configured printer instance (print_buddy.listeners).
+
+    None when the connection has no registered domain; settings problems
+    propagate as SettingsError, the gate's unresolved case (#256).
+    """
+    return listeners.domain_for_connection(listener_connection(data))
+
+
 def listener_required(data=None):
-    """True when the configured model's connection uses the Moonraker listener."""
-    return listener_connection(data) in LISTENER_CONNECTIONS
+    """True when the configured instance's listener domain is implemented."""
+    domain = listener_domain(data)
+    return bool(domain and domain.implemented)
 
 
 def heartbeat_path(data=None):

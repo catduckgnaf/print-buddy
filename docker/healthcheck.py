@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Container readiness across the bot, Moonraker listener and local Spoolman."""
+"""Container readiness across the bot, the printer listener and local Spoolman."""
 import os
 import sys
 import urllib.request
@@ -13,7 +13,7 @@ sys.path.insert(0, "/app")
 from print_buddy import settings
 from print_buddy.bot.health import check as bot_check
 from print_buddy.healthcheck import check as listener_check
-from print_buddy.healthcheck import listener_required
+from print_buddy.healthcheck import listener_domain, listener_required
 
 
 def main():
@@ -23,8 +23,9 @@ def main():
     else:
         print("ok  Discord bot disabled by empty token")
     # The listener is required exactly when the supervisor started it: the
-    # configured model's connection decides (#256), mirroring the disabled-bot
-    # branch above. An unresolved configuration fails instead of passing.
+    # listener registry (print_buddy.listeners, #299) decides from the
+    # configured instance's domain, mirroring the disabled-bot branch above.
+    # An unresolved configuration fails instead of passing.
     try:
         required = listener_required()
     except settings.SettingsError as exc:
@@ -35,7 +36,16 @@ def main():
         print(f"{'ok' if ok else 'FAIL'}  listener: {reason}")
         healthy &= ok
     elif required is not None:
-        print("ok  listener: not required for this printer connection")
+        detail = ""
+        try:
+            domain = listener_domain()
+        except Exception:
+            domain = None
+        if domain is not None:
+            state = "has no listener yet" if domain.availability == "planned" \
+                else "has no listener"
+            detail = f" (domain {domain.name!r} {state})"
+        print(f"ok  listener: not required for this printer connection{detail}")
     try:
         url = ("http://127.0.0.1:" + os.environ.get("SPOOLMAN_PORT", "8000")
                if os.environ.get("PRINT_BUDDY_BUNDLED_SPOOLMAN", "true") == "true"

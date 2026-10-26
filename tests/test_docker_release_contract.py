@@ -27,7 +27,9 @@ class DockerReleaseContract(unittest.TestCase):
         self.assertLess(probe.index('sys.path.insert(0, "/app")'),
                         probe.index("from print_buddy.bot.health import"))
         supervisor = (ROOT / "docker" / "supervise.sh").read_text()
-        for process in ("python3 -m print_buddy.bot", "python3 -m print_buddy.hermes.moonraker_event_listener",
+        # #299: the supervisor starts the printer listener through the
+        # listener registry launcher, not a hard-coded domain module.
+        for process in ("python3 -m print_buddy.bot", "python3 -m print_buddy.listeners",
                         "uvicorn spoolman.main:app"):
             with self.subTest(process=process):
                 self.assertIn(process, supervisor)

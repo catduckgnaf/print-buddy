@@ -9,8 +9,9 @@ and stores the frames under the cache discipline:
     <paths.cache>/timelapse/<job>/frames/frame-000001.jpg
     <paths.cache>/timelapse/<job>/capture.json     (the manifest)
 
-Stage 3 will encode those frames into the timelapse MP4 and deliver it;
-this module never encodes and never posts anything.
+Stage 3 (:mod:`print_buddy.hermes.timelapse_encode`) encodes those
+frames into the timelapse MP4 for the completion post; this module
+never encodes and never posts anything.
 
 Capture mechanics (the Stage 2 evaluation in #246): snapshot polling
 through go2rtc won over ffmpeg stream extraction — it reuses the existing
@@ -267,7 +268,7 @@ class CaptureSession:
         return True
 
     def stop(self, state="complete") -> dict | None:
-        """End the session and stamp the manifest. Frames stay for Stage 3."""
+        """End the session and stamp the manifest. Frames stay for the Stage 3 encode."""
         if self.state == "capturing":
             self.state = str(state or "complete")
             self._finished_at = self._now()

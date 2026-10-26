@@ -125,7 +125,7 @@ Schema, validation limits and TOML migration: [CONFIGURATION-YAML.md](CONFIGURAT
 | `timelapse.capture_interval_s` | `PRINT_BUDDY__TIMELAPSE__CAPTURE_INTERVAL_S` | `5.0` | Seconds between captured frames for the interval trigger (above 0, at most 3600) |
 | `timelapse.capture_max_frames` | `PRINT_BUDDY__TIMELAPSE__CAPTURE_MAX_FRAMES` | `3600` | Per-job cap on captured frames; capture stops at the cap and keeps the frames already taken. `0` disables the cap |
 | `timelapse.capture_max_bytes` | `PRINT_BUDDY__TIMELAPSE__CAPTURE_MAX_BYTES` | `536870912` | Per-job cap on captured frame bytes; capture stops at the cap and keeps the frames already taken. `0` disables the cap |
-| `timelapse.capture_encoder` | `PRINT_BUDDY__TIMELAPSE__CAPTURE_ENCODER` | `auto` | Encoder preference for the Stage 3 encode (#246): `auto`, `vaapi`, `nvenc`, `qsv` or `cpu`. Capture itself never encodes; the value is recorded now so Stage 3 needs no settings change |
+| `timelapse.capture_encoder` | `PRINT_BUDDY__TIMELAPSE__CAPTURE_ENCODER` | `auto` | Encoder preference for the Stage 3 assembly encode (#246): `auto` (VAAPI → NVENC → QSV → CPU), `vaapi`, `nvenc`, `qsv` or `cpu`. A failing or unavailable hardware encoder falls back to CPU; GPU paths are not verified on real hardware |
 | `webui.enabled` | `PRINT_BUDDY__WEBUI__ENABLED` | `false` | Optional Web UI (#286) switch; off by default, and nothing listens while disabled |
 | `webui.host` | `PRINT_BUDDY__WEBUI__HOST` | `127.0.0.1` | Host the Web UI binds to when enabled; a plain IP address or hostname |
 | `webui.port` | `PRINT_BUDDY__WEBUI__PORT` | `0` | Port the Web UI binds to when enabled; `0` means no port has been chosen yet |

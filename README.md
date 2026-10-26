@@ -2,9 +2,9 @@
 
 [![CI](https://github.com/catduckgnaf/print-buddy/actions/workflows/ci.yml/badge.svg)](https://github.com/catduckgnaf/print-buddy/actions/workflows/ci.yml)
 
-**Prepare and manage 3D prints from Discord, with an explicit confirmation before starting a print.**
+**Prepare and manage 3D prints from Discord, Telegram or Matrix, with an explicit confirmation before starting a print.**
 
-Share a MakerWorld or Printables link, or upload an STL or 3MF. Print Buddy guides you through model preparation, filament choices and slicing with OrcaSlicer. For configured printers, it can submit an approved job through Moonraker and report progress back to Discord.
+Share a MakerWorld or Printables link, or upload an STL or 3MF. Print Buddy guides you through model preparation, filament choices and slicing with OrcaSlicer. For configured printers, it can submit an approved job through Moonraker and report progress back to your chat.
 
 [Get started](#get-started) · [Documentation](docs/README.md) · [Contribute](CONTRIBUTING.md) · [Releases](https://github.com/catduckgnaf/print-buddy/releases)
 
@@ -12,7 +12,7 @@ Share a MakerWorld or Printables link, or upload an STL or 3MF. Print Buddy guid
 
 - **Printers:** built-in profiles for Flashforge AD5X with ZMod, Sovol SV06, Prusa MK4S, CORE One, XL and MINI+ (PrusaLink LAN, opt-in) and Elegoo Neptune 4, 4 Pro, 4 Plus and 4 Max (Moonraker) plus the Centauri Carbon (SDCP LAN, opt-in), plus a generic Klipper/Moonraker adapter. A generic adapter is not a tuned or physically verified profile for every printer. The Bambu Lab A1, A1 mini, P1P, P1S, P2S, X1, X1 Carbon, X1E and H2S are supported for slicing, G-code checks and Bambu packaging, with opt-in LAN status, upload and gated print start; none has been tested on Bambu hardware, and the dual-nozzle H2D, H2D Pro, H2C and X2D are not supported yet. Bambu Lab printers slice with Bambu Studio by default (set `printer.slicer: orca` to use OrcaSlicer); everything else uses OrcaSlicer. See [Bambu Lab printers](docs/BAMBU-LAB.md), [Prusa printers](docs/PRUSA.md) and [Elegoo printers](docs/ELEGOO.md).
 - **Computers:** Raspberry Pi 4 or 5 with 64-bit Raspberry Pi OS, or any 64-bit Debian or Ubuntu machine.
-- **Discord:** run the standalone Python bot without Hermes or an LLM, or use the Hermes plugin. Use only one mode with a given bot token.
+- **Chat platforms:** the standalone Python bot runs on Discord, Telegram or Matrix with the same handlers, prompts and safety gates; only the transport changes. The Telegram and Matrix bots are pure bots with no LLM: unmatched text gets the command list, and no LLM setting is consulted for them. On Discord you can instead use the Hermes plugin. Use only one mode with a given bot token. See [Discord bot setup](docs/DISCORD-BOT-SETUP.md), [Telegram bot setup](docs/TELEGRAM-BOT-SETUP.md) and [Matrix bot setup](docs/MATRIX-BOT-SETUP.md).
 - **Slicing:** requires a compatible OrcaSlicer CLI and the correct printer, process and filament profiles. A Python install alone does not provide a slicer.
 - **Offline delivery:** vendor profiles can offer Discord file delivery or an offline Bambu package after slicing. Delivery does not authorize printing. Bambu packaging is not verified in Bambu Studio or on hardware. See [printer profiles](docs/PRINTER-PROFILES.md).
 - **Optional integrations:** Spoolman for filament records, camera checks, timelapses and Obsidian records. Requirements depend on the features you enable.
@@ -41,13 +41,13 @@ One container runs the three parts of Print Buddy, started and watched by a supe
 
 | Part | What it does |
 |---|---|
-| Discord bot | The interface: links, uploads, guided slicing, spool commands and print confirmation |
-| Moonraker listener | Follows printer events and reports progress, alerts and timelapses back to Discord |
+| Chat bot | The interface on the configured platform (Discord, Telegram or Matrix): links, uploads, guided slicing, spool commands and print confirmation |
+| Moonraker listener | Follows printer events and reports progress, alerts and timelapses back to the chat |
 | Spoolman API | Bundled Spoolman 0.27.0 backend for filament and spool records. Print Buddy is its interface: no Spoolman web UI is included, and the API listens only on `127.0.0.1:8000` inside the container |
 
 If any part stops, the container stops so Docker can restart it. The health check covers all three.
 
-1. Copy `.env.example` to `.env` and fill in the Discord token, channel and allowed users.
+1. Copy `.env.example` to `.env` and fill in the token, channel/room and allowed users for your chat platform (Discord by default; set `PRINT_BUDDY__BOT__PLATFORM` for Telegram or Matrix).
 2. Pin the image by digest, not a tag: set `PRINT_BUDDY_IMAGE=ghcr.io/catduckgnaf/print-buddy@sha256:<digest>`. The digest will be in the publish run summary and that release's notes.
 3. Set `PRINT_BUDDY_DATA` to a persistent directory owned by UID 1000. Spoolman data lives in `PRINT_BUDDY_DATA/spoolman` unless you set `PRINT_BUDDY_SPOOLMAN_DATA`.
 4. Run `docker compose up -d`.
@@ -66,7 +66,7 @@ See [Docker setup](docs/DOCKER.md) for health checks, upgrades and rollback.
 
 ### Manual install
 
-1. **Choose a mode:** the [light installer](docs/INSTALL-LIGHT.md) above is recommended. For a manual setup, the [standalone Discord bot](docs/STANDALONE.md) is the direct route without Hermes, and the [Hermes installation](docs/INSTALL.md) is for existing Hermes users. Both require Python 3.11 or newer. For Docker, see [Docker](#docker) below.
+1. **Choose a mode:** the [light installer](docs/INSTALL-LIGHT.md) above is recommended. For a manual setup, the [standalone bot](docs/STANDALONE.md) is the direct route without Hermes — on Discord, or on [Telegram](docs/TELEGRAM-BOT-SETUP.md) or [Matrix](docs/MATRIX-BOT-SETUP.md) instead — and the [Hermes installation](docs/INSTALL.md) is for existing Hermes users. Both require Python 3.11 or newer. For Docker, see [Docker](#docker) below.
 2. **Configure your printer and access:** follow the chosen guide, then use [configuration](docs/CONFIGURATION-YAML.md) to set your printer model, Discord channel and authorized users, service addresses and slicer command. Keep local settings and tokens out of Git.
 3. **Check before enabling printing:** confirm the selected printer profile, bed dimensions, nozzle, filament and service permissions. Review the guide's checks before starting the bot or listener. The doctor can contact configured services; it is not an offline-only check.
 
@@ -95,6 +95,7 @@ Only use models you are allowed to download and process. Never attach private mo
 | --- | --- |
 | Install and configure | [Documentation home](docs/README.md) |
 | Run Print Buddy for two or more printers | [More than one printer](docs/MULTI-INSTANCE.md) |
+| Set up the bot on Telegram or Matrix | [Telegram bot setup](docs/TELEGRAM-BOT-SETUP.md) · [Matrix bot setup](docs/MATRIX-BOT-SETUP.md) |
 | Understand commands, settings and integrations | [Detailed project reference](docs/PROJECT-REFERENCE.md) |
 | Report a problem or contribute | [Contribution guide](CONTRIBUTING.md) · [Issues](https://github.com/catduckgnaf/print-buddy/issues) |
 | Read shipped changes | [GitHub releases](https://github.com/catduckgnaf/print-buddy/releases) |

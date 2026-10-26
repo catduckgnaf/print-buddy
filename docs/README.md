@@ -22,6 +22,8 @@ Do not run both Discord modes with the same token. Installing, enabling services
 - [Settings reference](SETTINGS.md): every setting with its YAML key, environment variable and Docker value, plus Docker build arguments and secrets.
 - [Detailed project reference](PROJECT-REFERENCE.md): workflow examples, commands, printer models, spool identity rules, monitoring and updates.
 - [Printer profiles and offline delivery](PRINTER-PROFILES.md): vendor/model inheritance, supported delivery methods and verification limitations.
+- [Optional Flash Studio slicer](FLASH-STUDIO.md): opt-in, user-installed Flash Studio executable for Flashforge printers; an empty path keeps the normal OrcaSlicer choice.
+- [Home Assistant panic and printer controls](home-assistant-panic.md): direct, no-LLM AD5X/ZMod printer controls from a Home Assistant dashboard, including the emergency-stop panic restart; no extra daemon.
 - [AD5X integration contract](AD5X-CONTRACT.md): printer-specific behavior and limitations.
 - [OctoPrint/Marlin notes](OCTOPRINT-MARLIN.md): read the integration-specific limits before assuming Moonraker feature parity.
 - [Bambu Lab printers](BAMBU-LAB.md): profiles for every single-nozzle Bambu Lab printer (A1, A1 mini, P1P, P1S, P2S, X1, X1 Carbon, X1E, H2S), generating slicer profiles from your own OrcaSlicer, the G-code guard, opt-in read-only LAN status, unverified values, and the licensing basis awaiting approval.
@@ -54,6 +56,15 @@ Do not run both Discord modes with the same token. Installing, enabling services
 - [CAD evaluation](KICAD-EVALUATION.md) and [reuse map](REUSE-MAP.md) for technical background, not promises of shipped capability.
 
 These versioned repository pages are the documentation home. Update them with behavior changes so readers can use the documentation for their checked-out revision.
+
+## 5. Internal and historical records
+
+These pages are kept as records of past work, not instructions to follow. Do not use them as setup or configuration guidance; the guides above are authoritative.
+
+- [Docker #117 acceptance record](DOCKER-117-ACCEPTANCE.md): historical acceptance record for the #117 Docker packaging work.
+- [Docker #117 progress record](DOCKER-117-PROGRESS.md): historical progress log for the #117 Docker packaging work.
+- [Issue #126 timelapse record](ISSUE-126-TIMELAPSE.md): historical record of the #126 timelapse delivery contract.
+- [Hardcoded values inventory](hardcoded-inventory.md): internal inventory of hardcoded values, kept for maintainers.
 
 ## Documentation ownership and wiki policy
 

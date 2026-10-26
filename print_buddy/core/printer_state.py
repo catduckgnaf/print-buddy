@@ -1,7 +1,11 @@
 #!/usr/bin/env python3
 """Installed nozzle + loaded spool: single source of truth and live cross-check.
 
-State file: <state_dir>/printer_hardware.json (settings paths.hermes_home)
+State file: <state_dir>/printers/<printer_id>/printer_hardware.json (#334, design §2.4);
+with no printer named, the legacy root-level <state_dir>/printer_hardware.json, exactly as
+before. A printer whose per-printer file does not exist yet reads the legacy file (the
+default printer only — it was the singleton's record); new writes go to the per-printer
+location and the legacy file is left in place for one release.
 Live checks: Klipper (via Moonraker) nozzle_diameter + probe z_offset, Moonraker
 active Spoolman spool, Spoolman spool record.
 
@@ -17,6 +21,7 @@ marked verified just because a config number was readable.
   python3 -m print_buddy.core.printer_state set --sync-z   -> record live probe.z_offset as the probe store only
 """
 import argparse, datetime, json, os, re, sys, urllib.request
+from pathlib import Path
 
 from .. import printers, settings
 
@@ -124,18 +129,50 @@ def _material_temperature_contract(state):
         raise RuntimeError(f"Unsupported filament material {material!r}; no PLA fallback is allowed")
 
 
-def load():
-    with open(STATE) as f:
+def state_path(printer_id=None):
+    """The hardware record for one printer: <state>/printers/<id>/printer_hardware.json.
+
+    Derived from STATE's folder (the module's one state seam, which tests
+    patch) rather than from settings, so the per-printer layout follows the
+    same root the legacy record lives in. No printer named: the legacy path.
+    """
+    if printer_id is None:
+        return Path(STATE)
+    return Path(STATE).parent / "printers" / printer_id / "printer_hardware.json"
+
+
+def _read_path(printer_id=None):
+    """Where a load reads: the per-printer file, or the legacy file it adopts.
+
+    Adoption is read-only and belongs to the default printer alone: a second
+    printer must never inherit the singleton's loaded spool and nozzle.
+    """
+    target = state_path(printer_id)
+    if printer_id is None or target.exists():
+        return target
+    try:
+        default_id = settings.default_printer_id()
+    except Exception:
+        default_id = None
+    if printer_id == default_id and Path(STATE).is_file():
+        return Path(STATE)
+    return target
+
+
+def load(printer_id=None):
+    with open(_read_path(printer_id)) as f:
         state = json.load(f)
     return state
 
 
-def save(st):
-    tmp = STATE + ".tmp"
+def save(st, printer_id=None):
+    target = state_path(printer_id)
+    target.parent.mkdir(parents=True, exist_ok=True)
+    tmp = str(target) + ".tmp"
     with open(tmp, "w") as f:
         json.dump(st, f, indent=2)
         f.write("\n")
-    os.replace(tmp, STATE)
+    os.replace(tmp, target)
 
 
 def _get(url, data=None, method=None, timeout=6):
@@ -326,20 +363,38 @@ def _check_spoolman(st, warnings, facts):
         warnings.append(f"Spoolman lookup failed: {e}")
 
 
-def check(st=None):
+def check(st=None, printer_id=None, adapter=None):
     """Return (ok, problems, facts). Never raises on network errors; reports them.
 
     Spoolman outcomes never affect `ok`: they are collected in
     facts["warnings"] (alias facts["spoolman_warnings"]) so callers can surface
     them without refusing work (#235). Problems are the real hardware gates:
     Moonraker/Klipper state, nozzle, calibration authority and adapter readiness.
+
+    With a `printer_id` (#334) the record and the adapter are that roster
+    entry's — the adapter is built on the entry's settings view — and the
+    result's facts name the printer ("printer_id", "printer_name"). Without
+    one, this is the configured default printer, exactly as before.
     """
-    st = st or load()
+    st = st or load(printer_id)
     probs, facts = [], {}
     warnings = []
     facts["warnings"] = warnings
     facts["spoolman_warnings"] = warnings
-    adapter = printers.current()
+    if adapter is None:
+        if printer_id is not None:
+            entry = settings.by_id(printer_id)
+            adapter = printers.get(entry["model"], settings.view_for(printer_id))
+            facts["printer_id"], facts["printer_name"] = entry["id"], entry["name"]
+        else:
+            adapter = printers.current()
+            try:
+                entry = settings.printers()[0]
+                facts["printer_id"], facts["printer_name"] = entry["id"], entry["name"]
+            except Exception:
+                pass
+    elif printer_id is not None:
+        facts["printer_id"] = printer_id
     if getattr(adapter, 'transport', None) == 'octoprint':
         try:
             snapshot = adapter.client().status()

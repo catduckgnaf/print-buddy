@@ -1876,8 +1876,40 @@ def _recipe_changed(job, latest):
     return recipe_sha256(current) != job['slice_recipe']['sha256']
 
 
+def stamp_job_printer(job):
+    """Record the creating printer's roster id on a new job (#334, design §2.2).
+
+    A job learns its printer at creation and never re-derives it: every later
+    path (state, lease, approval, adapter) keys off JOB.json's printer_id.
+    Jobs written before the upgrade carry no id and belong to the configured
+    single printer — see _job_printer_id.
+    """
+    if isinstance(job, dict) and not job.get("printer_id"):
+        try:
+            job["printer_id"] = settings.default_printer_id()
+        except Exception:
+            pass
+    return job
+
+
+def _job_printer_id(job):
+    """The roster printer id a job belongs to: its recorded printer_id, else the default printer."""
+    if isinstance(job, dict) and job.get("printer_id"):
+        return job["printer_id"]
+    return settings.default_printer_id()
+
+
 def _job_adapter(job):
-    """Adapter for the model a job is prepared for: its recorded override, else the configured model."""
+    """Adapter for the printer a job belongs to.
+
+    With a recorded printer_id (#334) the adapter is that roster entry's —
+    its model, built on the entry's settings view (the uploaded-G-code path's
+    record-first resolution, generalised). Without one, the model the job was
+    prepared for: its recorded override, else the configured model.
+    """
+    if isinstance(job, dict) and job.get("printer_id"):
+        entry = settings.by_id(job["printer_id"])
+        return printers.get(entry["model"], settings.view_for(entry["id"]))
     key = job.get("printer_model") if isinstance(job, dict) else None
     if not key or key == printers.current().key:
         return printers.current()
@@ -3349,6 +3381,7 @@ def prepare_first_layer(slot, color, material, spoolman_id, slicer="orca"):
            "audit": {"size_x": 50, "size_y": 50, "size_z": 0.2, "parts": 1},
            "provenance": provenance,
            "next_action": "Live readiness and verify-gcode required before authorized print-now"}
+    stamp_job_printer(job)
     write_job(folder, job)
     print("PREPARED OFFLINE (not verified live, not uploaded): " + str(output))
     return output
@@ -3921,7 +3954,7 @@ def _consume_approval(job_path, job, gcode, reprint=False):
     Check and record run in one launch-state transaction on the current JOB.json, never the caller's
     possibly stale snapshot; the database copy survives another writer saving an older JOB.json."""
     sha=file_sha256(gcode); key=str(Path(job_path).resolve())
-    with launch_state.transaction() as con:
+    with launch_state.transaction(_job_printer_id(job)) as con:
         current=json.loads(Path(job_path).read_text())
         require_current_artifact(current, gcode)
         now=time.strftime("%Y-%m-%dT%H:%M:%S%z")
@@ -3937,9 +3970,14 @@ def _consume_approval(job_path, job, gcode, reprint=False):
     job.clear(); job.update(current)
 
 
-def _printer_key(st):
-    """One submission lease per printer this profile drives."""
-    return st.get("moonraker_url") or printers.current().key
+def _printer_key(st=None, job=None):
+    """The submission-lease identity for a launch: the job's roster printer id (#334).
+
+    Kept under its old name for the callers and tests that keyed a lease by
+    the hardware record; the record no longer names the lease — the job's
+    printer does, and a job without one belongs to the default printer.
+    """
+    return _job_printer_id(job)
 
 
 def _require_idle_before_mapped_launch(require_idle_settled, read_moonraker, read_native):
@@ -3955,12 +3993,13 @@ def _require_idle_before_mapped_launch(require_idle_settled, read_moonraker, rea
 
 def print_mapped_native(g, st, mesh, mapping, job, job_path, wait_s, reprint):
     """Native explicit mapping route; exactly one SET_ZCOLOR submission, no fallback."""
-    require_idle_settled = printers.current().native.require_idle_settled
+    adapter = _job_adapter(job)
+    require_idle_settled = adapter.native.require_idle_settled
     require_current_artifact(job, g)
     if mesh.get('display_off') != 0:
         raise RuntimeError('explicit mapped launch currently requires native screen mode')
     text = g.read_text()
-    _embedded = printers.current().native.embedded_mapping
+    _embedded = adapter.native.embedded_mapping
     _embedded(text, st)  # refuses a spool swapped since slicing, before any printer I/O
     validate_saved_mesh_start(text, mesh)
     response = _mr(st, '/printer/objects/query?webhooks&print_stats&extruder&heater_bed&zmod_color&filament_switch_sensor%20head_switch_sensor')
@@ -3981,7 +4020,7 @@ def print_mapped_native(g, st, mesh, mapping, job, job_path, wait_s, reprint):
     # installed runout/jam protections stay intact; do not actuate sensor overrides.
     configured = status.get('zmod_color', {}).get('slots', [])
     occupancy = read_stock_ifs_slots_from_detail(detail)
-    normalize_mapping = printers.current().native.normalize_mapping
+    normalize_mapping = adapter.native.normalize_mapping
     mapped = normalize_mapping(mapping, st)
     for tool, slot in mapped.items():
         expected = st['ifs_slots'][str(slot)]
@@ -3999,7 +4038,7 @@ def print_mapped_native(g, st, mesh, mapping, job, job_path, wait_s, reprint):
                 raise RuntimeError(f'T{tool} slot {slot} occupancy is unknown or unconfirmed')
     sha = file_sha256(g)
     remote = remote_name(g, sha, job)
-    lease = launch_state.acquire(_printer_key(st), job_json=job_path, gcode_sha256=sha, remote=remote,
+    lease = launch_state.acquire(_printer_key(st, job), job_json=job_path, gcode_sha256=sha, remote=remote,
                                  observed_file=(status.get('print_stats') or {}).get('filename'))
     try:
         # Again inside the lease: the first read may predate another job's start.
@@ -4213,7 +4252,7 @@ def _print_octoprint(adapter, state, gcode, job, job_path, wait_s, reprint):
         raise SystemExit(f'REFUSED: {exc}. Nothing uploaded or started.') from exc
     sha = file_sha256(gcode)
     remote = remote_name(gcode, sha, job)
-    lease = launch_state.acquire(_printer_key(state), job_json=job_path, gcode_sha256=sha, remote=remote,
+    lease = launch_state.acquire(_printer_key(state, job), job_json=job_path, gcode_sha256=sha, remote=remote,
                                  observed_file=observed)
     try:
         try:
@@ -4377,7 +4416,7 @@ def _print_bambu(adapter, state, gcode, job, job_path, wait_s, reprint):
         raise refuse(exc) from exc
     remote = package.name
     sha = file_sha256(gcode)
-    lease = launch_state.acquire(_printer_key(state), job_json=job_path, gcode_sha256=sha, remote=remote,
+    lease = launch_state.acquire(_printer_key(state, job), job_json=job_path, gcode_sha256=sha, remote=remote,
                                  observed_file=observed_norm.get("filename"))
     # AMS mapping (#308): resolved inside the lease, against the fresh snapshot, BEFORE the
     # bed-clear approval is consumed — a job whose filaments cannot be mapped refuses with the
@@ -4484,7 +4523,7 @@ def _print_elegoo_sdcp(adapter, state, gcode, job, job_path, wait_s, reprint):
         raise refuse(exc) from exc
     sha = file_sha256(gcode)
     remote = remote_name(gcode, sha, job)
-    lease = launch_state.acquire(_printer_key(state), job_json=job_path, gcode_sha256=sha, remote=remote,
+    lease = launch_state.acquire(_printer_key(state, job), job_json=job_path, gcode_sha256=sha, remote=remote,
                                  observed_file=observed_norm.get("filename"))
     try:
         try:
@@ -4565,7 +4604,7 @@ def _print_prusa(adapter, state, gcode, job, job_path, wait_s, reprint):
         raise refuse(exc) from exc
     sha = file_sha256(gcode)
     remote = remote_name(gcode, sha, job)
-    lease = launch_state.acquire(_printer_key(state), job_json=job_path, gcode_sha256=sha, remote=remote,
+    lease = launch_state.acquire(_printer_key(state, job), job_json=job_path, gcode_sha256=sha, remote=remote,
                                  observed_file=observed_norm.get("filename"))
     try:
         try:
@@ -4670,7 +4709,7 @@ def _print_flashforge_stock(adapter, state, gcode, job, job_path, wait_s, reprin
     remote = remote_name(gcode, sha, job)
     if not remote.endswith(".gcode"):
         remote += ".gcode"
-    lease = launch_state.acquire(_printer_key(state), job_json=job_path, gcode_sha256=sha, remote=remote,
+    lease = launch_state.acquire(_printer_key(state, job), job_json=job_path, gcode_sha256=sha, remote=remote,
                                  observed_file=observed.get("filename"))
     try:
         try:
@@ -4755,15 +4794,31 @@ def print_now(target, wait_s=25, accept_default_z_offset=False, reprint=False, r
                          f"run print-now {job_path} instead. Nothing uploaded or started.")
     require_current_artifact(job, g)
     if not g.is_file(): raise SystemExit(f"REFUSED: no G-code at {g}")
-    try:
-        if isinstance(job, dict): printers.check_job_model(job)
-    except printers.JobModelMismatch as exc:
-        raise SystemExit(f"REFUSED: {exc}. Reslice it for the configured printer; nothing uploaded or started.")
-    adapter = printers.current()
+    # The job's printer (#334): a recorded printer_id resolves the roster entry, its adapter
+    # and its hardware record; a record written before the upgrade has no id and prints on
+    # the configured single printer, exactly as it always has.
+    printer_id = job.get("printer_id") if isinstance(job, dict) else None
+    if printer_id:
+        from print_buddy import settings as _pb_settings  # this function shadows `settings` locally below
+        try:
+            entry = _pb_settings.by_id(printer_id)
+        except _pb_settings.SettingsError as exc:
+            raise SystemExit(f"REFUSED: {exc}. Nothing uploaded or started.")
+        have = printers.job_model(job)
+        if have != entry["model"]:
+            raise SystemExit(f"REFUSED: this job was prepared for {have}, but printer {printer_id!r} is an "
+                             f"{entry['model']}. Nothing uploaded or started.")
+        adapter = printers.get(entry["model"], _pb_settings.view_for(printer_id))
+    else:
+        try:
+            if isinstance(job, dict): printers.check_job_model(job)
+        except printers.JobModelMismatch as exc:
+            raise SystemExit(f"REFUSED: {exc}. Reslice it for the configured printer; nothing uploaded or started.")
+        adapter = printers.current()
     _timing(job_path, 'print_now_start')
     # accept_default_z_offset is kept for CLI compatibility only. With display_off=0 ZMod applies the
     # native screen zProbeOffset, which is the correct calibrated value; no Z_OFFSET in START_PRINT is fine.
-    st=printer_state.load()
+    st=printer_state.load(printer_id) if printer_id else printer_state.load()
     if getattr(adapter, 'transport', None) == 'octoprint':
         return _print_octoprint(adapter, st, g, job, job_path, wait_s, reprint)
     if getattr(adapter, 'transport', None) == 'flashforge_stock':
@@ -4826,8 +4881,8 @@ def print_now(target, wait_s=25, accept_default_z_offset=False, reprint=False, r
         selection = job.get("filament_selection") if isinstance(job, dict) else None
         _timing(job_path, 'preflight_verify_done')
         if adapter.multi_slot:
-            embedded_mapping = printers.current().native.embedded_mapping
-            normalize_mapping = printers.current().native.normalize_mapping
+            embedded_mapping = adapter.native.embedded_mapping
+            normalize_mapping = adapter.native.normalize_mapping
             raw_mapping = embedded_mapping(g.read_text(), st)
             mapping = normalize_mapping(raw_mapping, st) if raw_mapping is not None else None
         else:
@@ -4854,7 +4909,7 @@ def print_now(target, wait_s=25, accept_default_z_offset=False, reprint=False, r
             validate_native_start(read_stock_detail(st), selection)
         except Exception as exc:
             raise SystemExit(f'REFUSED: native preflight: {exc}. Nothing uploaded or started.') from exc
-    lease=launch_state.acquire(_printer_key(st), job_json=job_path, gcode_sha256=sha, remote=remote, observed_file=fn)
+    lease=launch_state.acquire(_printer_key(st, job), job_json=job_path, gcode_sha256=sha, remote=remote, observed_file=fn)
     try:
         _require_idle(st)  # again inside the lease: the first read may predate another job's start
         if job_path is not None: _consume_approval(job_path, job, g, reprint=reprint)
@@ -5195,6 +5250,7 @@ def _main():
     if not job.get("sources"):
         raise SystemExit("REFUSED: source inventory contains no selectable files or profiles")
     job["url"],job["hardware"],job["fetched_at"]=a.url,st,time.strftime("%Y-%m-%dT%H:%M:%S%z")
+    stamp_job_printer(job)
     if a.printer: job["printer_model"]=a.printer
     for n,x in enumerate(job["sources"],1): x["n"]=n
     if selection is not None:

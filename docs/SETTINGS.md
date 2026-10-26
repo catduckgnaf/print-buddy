@@ -152,6 +152,8 @@ Each entry is validated against its own model with the same rules as the legacy 
 
 Scalar keys of a *declared* entry can be overridden from the environment with the indexed spelling `PRINT_BUDDY__PRINTERS__<ID>__<KEY>` — the entry's `id` uppercased in the `<ID>` position, the key in the `<KEY>` position. The environment can never create an entry, and `id` and `model` cannot be overridden: they are the entry's identity in the file.
 
+Each printer's runtime state lives in its own folder, `state/printers/<id>/` under the profile's state directory (#334): its hardware record (`printer_hardware.json`), its launch database (`jobs.db` — the print lease and consumed bed-clear approvals), and its maintenance record (`maintenance.json`). Job folders stay in the shared archive; a job's `JOB.json` records the `printer_id` it belongs to. On the first start after upgrading, the default printer adopts the previous root-level state files — a held lease and the hardware record carry over intact, new writes go to the per-printer folder, and the old files are left in place for one release so a rollback still finds them.
+
 | YAML key | Environment variable | Docker value | What it does |
 |---|---|---|---|
 | `printers.id` | file only | — | Required. The printer's stable identity: a slug of `a-z`, `0-9`, `-` and `_` starting with a letter or digit, unique in the list. Renaming an `id` makes it a different printer as far as its state is concerned |

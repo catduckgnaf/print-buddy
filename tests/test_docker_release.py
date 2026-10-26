@@ -36,7 +36,7 @@ DEPLOYMENT_FILES = [".env.example", "docker-compose.yml", "Dockerfile",
                     "docker/supervise.sh", "docker/healthcheck.py", "config/docker.yaml", "config/docker.toml",
                     "docs/DOCKER.md", "docs/SETTINGS.md", "tests/docker/compose.acceptance.yml"]
 SECRETS = {"DISCORD_BOT_TOKEN", "TELEGRAM_BOT_TOKEN", "MATRIX_ACCESS_TOKEN", "LLM_API_KEY", "OCTOPRINT_API_KEY", "MOONRAKER_API_KEY", "CLIPROXY_API_KEY",
-           "OPENVIKING_API_KEY", "BAMBU_LAN_PASSWORD", "AD5X_SERIAL", "AD5X_CHECK_CODE"}
+           "OPENVIKING_API_KEY", "BAMBU_LAN_PASSWORD", "AD5X_SERIAL", "AD5X_CHECK_CODE", "WEBUI_ACCESS_TOKEN"}
 COMPOSE_VARS = {"PRINT_BUDDY_IMAGE", "PRINT_BUDDY_DATA", "PRINT_BUDDY_SPOOLMAN_DATA", "PRINT_BUDDY_CONFIG", "TZ"}
 RUNTIME_ENV_VARS = {"PRINT_BUDDY_ORCA_CHANNEL", "PRINT_BUDDY_BUNDLED_SPOOLMAN", "SPOOLMAN_HOST"}
 DATA_TARGETS = {"/data/hermes", "/data/archive", "/data/records", "/data/cache"}
@@ -149,7 +149,10 @@ class SanitizedExamplesTests(unittest.TestCase):
             with self.subTest(file=path):
                 for raw in re.findall(r"(?<![\d.])(\d{1,3}(?:\.\d{1,3}){3})(?![\d.])", text):
                     address = ipaddress.ip_address(raw)
-                    self.assertFalse(address.is_private and not address.is_loopback, f"{path}: LAN address {raw}")
+                    # The unspecified address (0.0.0.0) is a bind wildcard for
+                    # the optional Web UI (#286), not a machine's LAN address.
+                    self.assertFalse(address.is_private and not address.is_loopback
+                                     and not address.is_unspecified, f"{path}: LAN address {raw}")
                 self.assertIsNone(re.search(r"/(home|Users)/(?!app/)[a-z]", text), f"{path}: machine path")
                 self.assertIsNone(re.search(r"/mnt/user/(?!appdata/)", text), f"{path}: personal share")
                 self.assertIsNone(re.search(r"(?<![0-9a-f])(?!100000000000000001|200000000000000002)\d{17,20}(?![0-9a-f])",
@@ -362,12 +365,16 @@ class UnraidTemplateTests(unittest.TestCase):
         self.assertEqual(["CMD", *shlex.split(health)], self.service["healthcheck"]["test"])
         self.assertEqual(UNRAID.findtext("Repository"), "REPLACE_WITH_TESTED_IMAGE")
         self.assertEqual(UNRAID.findtext("Privileged"), "false")
-        # The bundled Spoolman API stays on loopback: no published port and no WebUI.
+        # The bundled Spoolman API stays on loopback: Compose publishes no port
+        # at all (the Web UI mapping below is a commented example only), and the
+        # template's single Port config is the optional Web UI's (#286 stage 5).
         self.assertNotIn("ports", self.service)
         self.assertNotIn("-p", self.params)
         self.assertFalse(any(p.startswith("--publish") for p in self.params))
-        self.assertFalse(self.configs(UNRAID, "Port"))
-        self.assertFalse(UNRAID.findtext("WebUI"))
+        ports = self.configs(UNRAID, "Port")
+        self.assertEqual(set(ports), {"8080"})
+        self.assertEqual(ports["8080"].text, "8080")
+        self.assertEqual(UNRAID.findtext("WebUI"), "http://[IP]:[PORT:8080]/")
 
     def test_hardening_and_limits_match_compose(self):
         value, service = self.flags, self.service
@@ -416,6 +423,55 @@ class UnraidTemplateTests(unittest.TestCase):
         self.assertEqual(variables["PRINT_BUDDY_ORCA_CHANNEL"].text, "stable")
         self.assertEqual(compose_env["PRINT_BUDDY_ORCA_CHANNEL"], "${PRINT_BUDDY_ORCA_CHANNEL:-stable}")
         self.assertRegex(ENV_EXAMPLE, r"(?m)^PRINT_BUDDY_ORCA_CHANNEL=stable$")
+
+
+class WebuiContainerTests(unittest.TestCase):
+    """#286 stages 4-5: the optional Web UI is a gated supervised child, a
+    healthcheck row, Compose opt-in variables and Unraid template fields —
+    and stays off everywhere by default."""
+
+    def variables(self):
+        return {c.get("Target"): c for c in UNRAID.findall("Config") if c.get("Type") == "Variable"}
+
+    def test_compose_webui_variables_default_to_off(self):
+        compose_env = COMPOSE["services"]["combined"]["environment"]
+        self.assertEqual(compose_env["PRINT_BUDDY__WEBUI__ENABLED"],
+                         "${PRINT_BUDDY__WEBUI__ENABLED:-false}")
+        self.assertEqual(compose_env["PRINT_BUDDY__WEBUI__HOST"],
+                         "${PRINT_BUDDY__WEBUI__HOST:-127.0.0.1}")
+        self.assertEqual(compose_env["PRINT_BUDDY__WEBUI__PORT"],
+                         "${PRINT_BUDDY__WEBUI__PORT:-0}")
+        # The token is a secret: .env env_file only, never a Compose default.
+        self.assertNotIn("WEBUI_ACCESS_TOKEN", compose_env)
+        # The port publication stays a commented example in the file text.
+        text = (ROOT / "docker-compose.yml").read_text()
+        self.assertIn('#   - "8080:${PRINT_BUDDY__WEBUI__PORT:-8080}"', text)
+
+    def test_unraid_webui_variables_and_masked_token(self):
+        variables = self.variables()
+        self.assertEqual(variables["PRINT_BUDDY__WEBUI__ENABLED"].text, "false")
+        # The template binds all interfaces so the port mapping and WebUI link
+        # work once enabled; the token below is then mandatory (the server
+        # refuses a non-loopback bind without it).
+        self.assertEqual(variables["PRINT_BUDDY__WEBUI__HOST"].text, "0.0.0.0")
+        self.assertEqual(variables["PRINT_BUDDY__WEBUI__PORT"].text, "8080")
+        token = variables["WEBUI_ACCESS_TOKEN"]
+        self.assertEqual(token.get("Mask"), "true")
+        self.assertFalse(token.text)
+
+    def test_supervisor_and_healthcheck_carry_the_gate_and_row(self):
+        supervisor = (ROOT / "docker" / "supervise.sh").read_text()
+        self.assertIn("python3 -m print_buddy.webui_gate", supervisor)
+        self.assertIn("python3 -m print_buddy.webui &", supervisor)
+        probe = (ROOT / "docker" / "healthcheck.py").read_text()
+        self.assertIn("from print_buddy.webui_gate import webui_config", probe)
+        self.assertIn("webui: ", probe)
+
+    def test_webui_is_documented_in_the_docker_guide(self):
+        docker_doc = (ROOT / "docs" / "DOCKER.md").read_text()
+        self.assertIn("## Web UI (optional, #286)", docker_doc)
+        self.assertIn("PRINT_BUDDY__WEBUI__ENABLED", docker_doc)
+        self.assertIn("WEBUI_ACCESS_TOKEN", docker_doc)
 
 
 class CameraWatchVisibilityTests(unittest.TestCase):

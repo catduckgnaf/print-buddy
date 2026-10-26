@@ -73,6 +73,25 @@ if [ -n "${DISCORD_BOT_TOKEN:-}" ]; then
 else
     echo 'DISCORD_BOT_TOKEN is empty; bot disabled.'
 fi
+# The optional Web UI (#286) runs only when [webui] enabled is true and a
+# port is chosen: the gate resolves the effective configuration, never an
+# environment guess. Gate status: 0 = start the Web UI, 3 = disabled or no
+# port (start nothing), anything else = the configuration could not be
+# resolved; stop instead of guessing. The gate never bypasses the
+# server's own start rules: enabling the Web UI on a non-loopback host
+# without the WEBUI_ACCESS_TOKEN secret makes the child refuse to start,
+# which stops the container like any other required child's exit.
+webui_gate=0
+python3 -m print_buddy.webui_gate || webui_gate=$?
+if [ "$webui_gate" -eq 0 ]; then
+    python3 -m print_buddy.webui &
+    children+=("$!")
+elif [ "$webui_gate" -eq 3 ]; then
+    echo 'Web UI not started: disabled or no port configured.'
+else
+    echo "Web UI gate failed (status $webui_gate); configuration unresolved, stopping container." >&2
+    exit "$webui_gate"
+fi
 if [ "${#children[@]}" -eq 0 ]; then
     # Nothing to supervise for this configuration (no listener, no bot, no
     # bundled Spoolman): stay up idling instead of exiting into a restart loop.

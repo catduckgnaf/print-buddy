@@ -625,7 +625,7 @@ def _world_bounds(archive, object_ids, fit=None):
             for item_points in _world_item_points(archive, object_ids, fit)]
 
 
-def export_single_color_plate(source, target, decisions, part_keys, bed=BED_MM, slot_colors=None, item_shifts=None, fit=None):
+def export_single_color_plate(source, target, decisions, part_keys, bed=BED_MM, slot_colors=None, item_shifts=None, fit=None, fit_by_object=None):
     """Derive one single-slot production plate without deleting source XML.
 
     Orca 2.4.2 refuses to load a package whose object or mesh blocks were
@@ -655,6 +655,18 @@ def export_single_color_plate(source, target, decisions, part_keys, bed=BED_MM, 
     kept as authored or centered; the caller owns proving that placement
     avoids any declared bed exclusion, and the bounds are still checked
     against the bed here.
+
+    fit_by_object ({object_id: {'rotation': [9]}}) turns individual selected
+    objects instead of the whole plate (#221 R2): each named object's build
+    items are composed with its own rotation (at authored scale; the
+    rotation is about the world origin, and the object's item_shifts entry
+    — or the group shift when no shifts are given — then places the rotated
+    bounds, which is equivalent to turning about the object's own centre).
+    It composes with item_shifts, unlike the whole-plate fit, but never
+    with fit or a fit placement. A per-object rotation must land its own
+    object flat: every build item of a turned object shares that object's
+    rotated Z minimum within the same 0.05 mm tolerance the whole-plate
+    fit uses, or the export refuses.
     """
     manifest = inventory(source)
     world = fit_transform(fit)
@@ -673,6 +685,26 @@ def export_single_color_plate(source, target, decisions, part_keys, bed=BED_MM, 
             raise RuntimeError('a placed plate cannot reuse merge shifts planned without the placement')
     if world is not None and item_shifts is not None:
         raise RuntimeError('a resized plate cannot reuse merge shifts planned at authored size')
+    worlds = {}
+    raw_fits = {}
+    if fit_by_object is not None:
+        if world is not None or placement is not None:
+            raise RuntimeError('a per-object fit cannot be combined with a whole-plate fit or placement')
+        if not isinstance(fit_by_object, dict) or not fit_by_object:
+            raise RuntimeError('fit_by_object must be a mapping of object id to a per-object fit')
+        for raw_id, raw_fit in fit_by_object.items():
+            if not isinstance(raw_fit, dict):
+                raise RuntimeError('per-object fit must be a mapping with a rotation')
+            try:
+                scale = float(raw_fit.get('scale') or 1.0)
+            except (TypeError, ValueError) as exc:
+                raise RuntimeError('per-object fit scale must be numeric') from exc
+            if scale != 1.0:
+                raise RuntimeError('per-object fit must keep the authored scale')
+            matrix = fit_transform(raw_fit)
+            if matrix is not None:
+                worlds[str(raw_id)] = matrix
+                raw_fits[str(raw_id)] = raw_fit
     if decisions.get('source_sha256') != manifest['source_sha256'] or decisions.get('mode') != 'per_part':
         raise RuntimeError('single-color plate requires exact-source per_part decisions')
     if decisions.get('schema') not in (None, 'part_slots_v1'):
@@ -705,17 +737,41 @@ def export_single_color_plate(source, target, decisions, part_keys, bed=BED_MM, 
         names = archive.namelist()
         if 'Metadata/model_settings.config' not in names or '3D/3dmodel.model' not in names:
             raise RuntimeError('single-color plate requires production model settings')
-        boxes = _world_bounds(archive, selected, world)
+        own_boxes = {}
+        if worlds:
+            unknown_fits = sorted(set(worlds) - {str(oid) for oid in selected})
+            if unknown_fits:
+                raise RuntimeError('per-object fit names object(s) that are not selected: '
+                                   + ','.join(unknown_fits))
+            for oid in selected:
+                own_boxes[oid] = _world_bounds(archive, {oid}, worlds.get(str(oid)))
+            boxes = [box for oid in sorted(own_boxes, key=str) for box in own_boxes[oid]]
+        else:
+            boxes = _world_bounds(archive, selected, world)
         payload = {name: archive.read(name) for name in names}
     minimum = [min(box[axis][0] for box in boxes) for axis in range(3)]
     maximum = [max(box[axis][1] for box in boxes) for axis in range(3)]
     margin = _S['layout']['single_copy_edge_mm']
+    # A per-object turn must land its own object flat, whichever placement
+    # branch runs: every build item of a turned object shares that object's
+    # rotated Z minimum (a bed-plane yaw satisfies this by construction).
+    for oid, item_boxes in own_boxes.items():
+        if str(oid) in worlds:
+            floor = min(box[2][0] for box in item_boxes)
+            if any(box[2][0] - floor > 0.05 for box in item_boxes):
+                raise RuntimeError('per-object fit lifts a part off the bed')
     if item_shifts is not None:
         if {str(k) for k in item_shifts} != set(selected):
             raise RuntimeError('item shifts must name exactly the selected objects')
         shift = {str(k): [float(v) for v in vals] for k, vals in item_shifts.items()}
         with zipfile.ZipFile(source) as archive:
-            single = {oid: _world_bounds(archive, {oid})[0] for oid in selected}
+            if worlds:
+                single = {oid: [(min(box[a][0] for box in own), max(box[a][1] for box in own))
+                                 for a in range(3)]
+                          for oid, own in ((oid, _world_bounds(archive, {oid}, worlds.get(str(oid))))
+                                           for oid in selected)}
+            else:
+                single = {oid: _world_bounds(archive, {oid})[0] for oid in selected}
         moved = [[(box[a][0] + shift[oid][a], box[a][1] + shift[oid][a]) for a in range(3)]
                  for oid, box in single.items()]
         if any(b[a][0] < 0 or b[a][1] > bed - margin for b in moved for a in range(2)) or any(b[2][0] < -1e-3 for b in moved):
@@ -755,7 +811,8 @@ def export_single_color_plate(source, target, decisions, part_keys, bed=BED_MM, 
             low, high = _world_bounds(archive, {oid})[0][0]
             if low < bed + 50:
                 park[oid] = float(bed + 50 - low)
-    model_out, kept = _select_build_items(model_bytes, selected, shift, park, world)
+    model_out, kept = _select_build_items(model_bytes, selected, shift, park, world,
+                                          fit_by_object=worlds or None)
     if sorted(kept) != sorted(selected):
         raise RuntimeError('derived plate dropped or duplicated a selected object')
     settings_out = _single_logical_filament(settings_bytes)
@@ -787,6 +844,9 @@ def export_single_color_plate(source, target, decisions, part_keys, bed=BED_MM, 
             'slot': slot, 'logical_filament': 1, 'translation_mm': shift,
             **({'fit': {'scale': float(fit.get('scale') or 1.0), 'rotation': fit.get('rotation'), 'item_transform': world,
                         **({'placement_mm': placement} if placement is not None else {})}} if world or placement is not None else {}),
+            **({'fit_by_object': {oid: {'rotation': raw_fits[oid].get('rotation'),
+                                          'item_transform': matrix}
+                                   for oid, matrix in worlds.items()}} if worlds else {}),
             **({'placement_mm': placement} if placement is not None else {}), 'merged_placement': item_shifts is not None, 'bounds_mm': boxes,
             'placed_bounds_mm': placed, 'bed_mm': bed, 'changed_entries': changed,
             'policy': 'production package copy; every object, mesh and relationship kept; unselected build items printable=0; all extruders logical 1; selected transforms kept unless the group must shift to fit',
@@ -797,11 +857,13 @@ def _build_ids(model_bytes):
     return {match.decode() for match in re.findall(br'<item\b[^>]*\bobjectid="(\d+)"', model_bytes)}
 
 
-def _select_build_items(model_bytes, selected, shift, park=None, fit=None):
+def _select_build_items(model_bytes, selected, shift, park=None, fit=None, fit_by_object=None):
     """Flip printable on build items only. Resource XML and meshes stay byte for byte.
 
     fit is composed into selected item transforms (item first, then fit), then
-    the placement shift is added to the translation.
+    the placement shift is added to the translation. fit_by_object maps an
+    object id to its own fit matrix, composed the same way for that object's
+    items only (#221 R2); an object named there ignores the whole-plate fit.
     """
     kept = []
 
@@ -823,15 +885,18 @@ def _select_build_items(model_bytes, selected, shift, park=None, fit=None):
             return line
         kept.append(object_id)
         item_shift = shift.get(object_id, [0.0, 0.0, 0.0]) if isinstance(shift, dict) else shift
-        if any(item_shift) or fit:
+        item_fit = fit
+        if fit_by_object and object_id in fit_by_object:
+            item_fit = fit_by_object[object_id]
+        if any(item_shift) or item_fit:
             transform = re.search(br'transform="([^"]+)"', line)
             if transform is None:
                 raise RuntimeError('selected build item has no transform')
             values = list(map(float, transform.group(1).split()))
             if len(values) != 12:
                 raise RuntimeError('invalid 3MF transform')
-            if fit:
-                values = _compose(fit, values)
+            if item_fit:
+                values = _compose(item_fit, values)
             for axis in range(3):
                 values[9 + axis] += item_shift[axis]
             line = line[:transform.start(1)] + b' '.join(repr(v).encode() for v in values) + line[transform.end(1):]

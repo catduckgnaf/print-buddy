@@ -75,6 +75,7 @@ discord:
   allowed_user_ids: ''
 bot:
   mode: hermes
+  platform: discord
   health_port: 0
   health_stale_s: 120
   sync_commands: true

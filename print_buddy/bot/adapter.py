@@ -1,66 +1,53 @@
-"""Discord delivery for the standalone bot: the two calls the handlers make, plus the user check.
+"""Discord delivery for the standalone bot: the Discord implementation of the platform interface.
 
 ``send`` and ``send_clarify`` have the signatures of Hermes' Discord adapter, so the print-feedback
 handlers run unchanged. A ``MEDIA:/path`` marker becomes an attachment. A button press resolves the
-core prompt registry (print_buddy.core.prompts); the click handler lives here too.
+core prompt registry (print_buddy.core.prompts); the click handler lives here too. The shared
+interface and prompt bookkeeping live in ``print_buddy.bot.platform`` (#164); this module is the
+only adapter module that imports ``discord``.
 """
 from __future__ import annotations
 
 import logging
-from dataclasses import dataclass
 from typing import Any
 
 from ..core import prompts
 from . import rest
+from .platform import (CUSTOM_PREFIX, BasePlatformAdapter, SendResult, custom_id, parse_custom_id)
+
+__all__ = ["CUSTOM_PREFIX", "MAX_BUTTONS", "LABEL_LIMIT", "SendResult", "StandaloneAdapter",
+           "custom_id", "parse_custom_id"]
 
 logger = logging.getLogger(__name__)
 
-CUSTOM_PREFIX = "pbq:"
 MAX_BUTTONS = 25
 LABEL_LIMIT = 80
 
 
-@dataclass
-class SendResult:
-    success: bool
-    message_id: str | None = None
-    error: str | None = None
+def library_status():
+    """(label, available, version-or-detail) for discord.py, reported to the offline check."""
+    try:
+        import discord
+    except ImportError:
+        return ("discord.py", False, "not installed: pip install -r requirements.txt")
+    return ("discord.py", True, discord.__version__)
 
 
-def custom_id(clarify_id, index):
-    return f"{CUSTOM_PREFIX}{clarify_id}:{index}"
-
-
-def parse_custom_id(value):
-    """(clarify_id, index) for a prompt button, else None."""
-    value = str(value or "")
-    if not value.startswith(CUSTOM_PREFIX):
-        return None
-    cid, _, index = value[len(CUSTOM_PREFIX):].rpartition(":")
-    if not cid or not index.isdigit():
-        return None
-    return cid, int(index)
-
-
-class StandaloneAdapter:
+class StandaloneAdapter(BasePlatformAdapter):
     """Sends through a discord.py client. ``allowed`` holds the Discord user IDs that may act."""
 
-    def __init__(self, client, allowed, *, registry=prompts):
+    name = "discord"
+    message_limit = rest.LIMIT
+    supports_buttons = True
+    max_buttons = MAX_BUTTONS
+
+    def __init__(self, client, allowed, *, registry=prompts, upload_max_bytes=None):
+        super().__init__(allowed, registry=registry)
         self.client = client
-        self.allowed = {str(u) for u in allowed}
-        self.registry = registry
+        # [discord] upload_max_bytes when BotCore builds this adapter; None
+        # means the caller sizes uploads from settings itself.
+        self.upload_max_bytes = upload_max_bytes
         self._prompts: dict[str, dict[str, Any]] = {}
-
-    # ------------------------------------------------------------------ who may act
-
-    def is_allowed_id(self, user_id):
-        return str(user_id or "") in self.allowed
-
-    def _is_allowed_user(self, uid, user=None, guild=None, channel_ids=None):
-        """The check the listener alert buttons call (same name as the Hermes adapter's)."""
-        if getattr(user, "bot", False):
-            return False
-        return self.is_allowed_id(uid)
 
     # ------------------------------------------------------------------ delivery
 
@@ -116,31 +103,12 @@ class StandaloneAdapter:
         except Exception as exc:
             logger.warning("Discord button question failed: %r", exc)
             return SendResult(False, error=str(exc))
-        self._prompts[str(clarify_id)] = {"message": message, "choices": labels, "question": pieces[-1]}
-        self._forget_closed()
+        self._record_prompt(clarify_id, {"message": message, "choices": labels, "question": pieces[-1]})
         return SendResult(True, message_id=str(message.id))
-
-    def _forget_closed(self):
-        for cid in [c for c in self._prompts if not self.registry.is_open(c)]:
-            self._prompts.pop(cid, None)
 
     # ------------------------------------------------------------------ answers
 
-    def open_prompt(self, session_key):
-        """The newest open button question asked under ``session_key``, else None."""
-        # The registry key is the live chat session (who asked, where); send_clarify's key names the flow.
-        hits = [cid for cid in self._prompts if self.registry.session_key(cid) == str(session_key)]
-        return hits[-1] if hits else None
-
-    async def answer_typed(self, session_key, text):
-        """A typed reply to the open question of this session (Hermes routes these the same way)."""
-        cid = self.open_prompt(session_key)
-        if cid is None or not self.registry.resolve_gateway_clarify(cid, str(text)):
-            return False
-        await self._close_buttons(cid, f"Answered by message: {str(text)[:100]}")
-        return True
-
-    async def _close_buttons(self, cid, note):
+    async def close_prompt(self, cid, note):
         row = self._prompts.pop(str(cid), None)
         if not row:
             return
@@ -148,6 +116,9 @@ class StandaloneAdapter:
             await row["message"].edit(content=f"{row['question']}\n> {note}"[:rest.LIMIT], view=None)
         except Exception:
             logger.debug("could not strip answered buttons", exc_info=True)
+
+    # The pre-interface name for closing a prompt's buttons.
+    _close_buttons = close_prompt
 
     async def handle_click(self, interaction):
         """Resolve a prompt button. Returns False when the interaction is not one of ours."""

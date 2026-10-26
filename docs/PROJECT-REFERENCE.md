@@ -74,6 +74,8 @@ A bed-clear approval starts one print. Starting the same G-code again needs a ne
 * Klipper report posted when a print is cancelled.
 * Timelapse per print, or one combined video for a multi plate plan, sized to fit Discord.
 
+Live camera streaming (#311, stages 1–2) starts with a delivery-agnostic core in `print_buddy/live_stream.py`: it resolves one normalised camera source from Moonraker's webcams API — the same Moonraker path whether the household runs Fluidd, Mainsail or neither, since both are frontends over Moonraker's webcam registry — with a stream URL derived from the existing snapshot URL as fallback, from OctoPrint's webcam settings, or as a snapshot-only source, and it plans a codec-aware ffmpeg encode (H.264: VAAPI, NVENC, QSV, then CPU `libx264`; VP8: VAAPI, then CPU `libvpx`; NVENC never serves VP8) from an injected hardware probe. No Discord transport, settings or command uses this core yet; those are later #311 stages.
+
 **Records and upkeep**
 * Every finished job written to an Obsidian vault and the job archive.
 * Nightly catch up against Moonraker job history so nothing is missed.

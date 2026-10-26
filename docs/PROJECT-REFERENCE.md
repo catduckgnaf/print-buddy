@@ -262,7 +262,7 @@ Private cases use the same offline flow and skip only the public redistribution-
 
 ## ZMod plugin and spool matching
 
-ZMod switches to a backup spool mid-print only when another slot holds the exact same color and material. The `print_buddy.cfg` macro checks that before a job starts:
+ZMod switches to a backup spool mid-print only when another slot holds the exact same color and material. The `print-buddy.cfg` macro lets you check that before a job starts:
 ```gcode
 PRINT_BUDDY SLOT=1
 ```
@@ -301,7 +301,7 @@ is_system_service: False
 * `print_buddy/bot/`: standalone bot. `platform.py` is the chat-platform interface (#164: `send`, `send_clarify`, `answer_typed`, `close_prompt`, `is_allowed_id`, per-platform limits on the adapter); `adapter.py` is its Discord implementation over discord.py, `telegram.py`/`telegram_rest.py` its Telegram implementation over the standard-library Bot API (long polling, inline keyboards) and `matrix.py`/`matrix_rest.py` its Matrix implementation over the standard-library Client-Server API (/sync long polling with a persisted next_batch token, media repo uploads/downloads, numbered-list prompts — Matrix has no buttons — and auto-join of the print room on invite), selected by `[bot] platform` (default `discord`). The Telegram and Matrix adapters are pure bots (`uses_llm = False`): BotCore never calls the LLM fallback for them. Plus the router, health check and optional LLM; `systemd/` holds its units.
 * `hermes/`: profile templates and skills installed by `scripts/install-hermes.sh`.
 * `scripts/`: `install-hermes.sh`, `install-standalone.sh`, `home-update.sh`, and `migrate-names.sh` (one-shot, see `docs/RENAME-MIGRATION.md`).
-* `print_buddy.cfg`, `install.sh`, `uninstall.sh`, `update.sh`: ZMod plugin macro and lifecycle scripts.
+* `print-buddy.cfg`, `install.sh`, `uninstall.sh`, `update.sh`: ZMod plugin macro and lifecycle scripts. The cfg file name must match the plugin name (`print-buddy`) or ZMod refuses to enable the plugin (#289).
 * `tests/`: offline suite, real slicer checks, the Discord flow corpus (`tests/corpus/`), and the Klipper macro tests.
 * `docs/`: install guide and AD5X integration specs.
 

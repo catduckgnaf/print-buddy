@@ -6,7 +6,7 @@
 
 Share a MakerWorld or Printables link, or upload an STL or 3MF. Print Buddy guides you through model preparation, filament choices and slicing with OrcaSlicer. For configured printers, it can submit an approved job through Moonraker and report progress back to your chat.
 
-[Get started](#get-started) · [Documentation](docs/README.md) · [Contribute](CONTRIBUTING.md) · [Releases](https://github.com/catduckgnaf/print-buddy/releases)
+[Get started](#get-started) · [Documentation](https://catduckgnaf.github.io/print-buddy-docs/) · [Contribute](CONTRIBUTING.md) · [Releases](https://github.com/catduckgnaf/print-buddy/releases)
 
 ## Is it for your setup?
 
@@ -93,7 +93,7 @@ Only use models you are allowed to download and process. Never attach private mo
 
 | Task | Guide |
 | --- | --- |
-| Install and configure | [Documentation home](docs/README.md) |
+| Install and configure | [Documentation site](https://catduckgnaf.github.io/print-buddy-docs/) · [Documentation home (source)](docs/README.md) |
 | Run Print Buddy for two or more printers | [More than one printer](docs/MULTI-INSTANCE.md) |
 | Set up the bot on Telegram or Matrix | [Telegram bot setup](docs/TELEGRAM-BOT-SETUP.md) · [Matrix bot setup](docs/MATRIX-BOT-SETUP.md) |
 | Understand commands, settings and integrations | [Detailed project reference](docs/PROJECT-REFERENCE.md) |

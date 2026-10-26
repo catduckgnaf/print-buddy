@@ -154,3 +154,155 @@ def test_start_monitor_with_injected_parts_uses_the_given_thread_factory():
     assert len(ran) == 1 and "MEDIA:" in ran[0]
 
 
+# -- Stage 3: the camera watchdog ----------------------------------------------
+
+from print_buddy.hermes import visual_watch as vw
+
+
+def _watch_monitor(*, sensitivity=3, verdict=("ok", "looks fine"), changed=True):
+    alerts = []
+    clock = FakeClock()
+    monitor = bambu_watch.BambuPrintMonitor(
+        REMOTE, status_fn=scripted([st("complete")]), camera_fn=lambda: JPEG,
+        post=lambda text: None,
+        watch=vw.VisualPrintWatch(sensitivity=sensitivity),
+        verdict=lambda image, prompt: verdict,
+        alert=lambda filename, image, reason: alerts.append((filename, image, reason)),
+        changed=lambda before, after: changed,
+        clock=clock, wall=clock, sleep=clock.sleep, poll_s=10)
+    return monitor, alerts, clock
+
+
+def test_watchdog_alerts_on_a_suspicious_verdict_with_the_snapshot():
+    monitor, alerts, _clock = _watch_monitor(verdict=("spaghetti", "tangled mess under the nozzle"))
+    monitor.poll_active(st("printing", layer=1))
+    assert alerts == []
+    monitor.poll_active(st("printing", layer=2))
+    assert len(alerts) == 1
+    filename, image, reason = alerts[0]
+    assert filename == REMOTE and image == JPEG
+    assert "layer2" in reason and "spaghetti" in reason
+
+
+def test_watchdog_stays_quiet_on_a_healthy_verdict():
+    monitor, alerts, _clock = _watch_monitor(verdict=("ok", "plastic on the bed"))
+    monitor.poll_active(st("printing", layer=2))
+    monitor.poll_active(st("printing", layer=5))
+    assert alerts == []
+
+
+def test_watchdog_never_controls_the_printer_itself():
+    # The monitor is not even given a control callable: with a suspicious
+    # verdict the only outward effects are the alert and (later) posts.
+    monitor, alerts, _clock = _watch_monitor(verdict=("detached", "part on the floor"))
+    assert not hasattr(monitor, "control")
+    monitor.poll_active(st("printing", layer=2))
+    assert len(alerts) == 1
+
+
+def test_stall_alerts_at_level_5_even_with_a_healthy_verdict():
+    # Layer 2 and layer 5 checks run first (baselines recorded); the next
+    # advance over an unchanged frame is the layer_progress stall probe.
+    monitor, alerts, _clock = _watch_monitor(sensitivity=5, verdict=("ok", "looks fine"), changed=False)
+    monitor.poll_active(st("printing", layer=2))
+    monitor.poll_active(st("printing", layer=5))
+    monitor.poll_active(st("printing", layer=8))
+    assert len(alerts) == 1 and "stalled_layers" in alerts[0][2]
+
+
+def test_stall_is_vetoed_by_a_healthy_verdict_at_level_1():
+    monitor, alerts, _clock = _watch_monitor(sensitivity=1, verdict=("ok", "looks fine"), changed=False)
+    monitor.poll_active(st("printing", layer=2))
+    monitor.poll_active(st("printing", layer=5))
+    monitor.poll_active(st("printing", layer=13))
+    assert alerts == []
+
+
+def test_periodic_checks_still_run_when_the_firmware_reports_no_layer():
+    verdicts = []
+
+    def verdict(image, prompt):
+        verdicts.append(prompt)
+        return "ok", "fine"
+
+    clock = FakeClock()
+    clock.t = 1000.0
+    monitor = bambu_watch.BambuPrintMonitor(
+        REMOTE, status_fn=scripted([st("complete")]), camera_fn=lambda: JPEG,
+        post=lambda text: None,
+        watch=vw.VisualPrintWatch(sensitivity=5),  # periodic_s = 450
+        verdict=verdict, alert=lambda *args: None, changed=lambda a, b: True,
+        clock=clock, wall=clock, sleep=clock.sleep, poll_s=10)
+    no_layer = st("printing", layer=None)
+    monitor.poll_active(no_layer)
+    assert verdicts == []
+    clock.t += 500
+    monitor.poll_active(no_layer)
+    assert len(verdicts) == 1
+
+
+def test_visual_alert_delivery_posts_buttons_like_the_moonraker_alert(monkeypatch):
+    from print_buddy.hermes import print_alert_buttons as pab
+    seen = {}
+    monkeypatch.setattr(pab, "post_visual_alert",
+                        lambda token, chat, text, filename, path: seen.update(
+                            token=token, chat=chat, text=text, filename=filename, path=path) or True)
+    path = bambu_watch.deliver_visual_alert(REMOTE, JPEG, "layer2: spaghetti; test",
+                                            post=lambda text: (_ for _ in ()).throw(AssertionError("fallback used")),
+                                            token="tok", chat_id="42", buttonless=None)
+    assert seen["path"] == path and seen["filename"] == REMOTE
+    assert "Print camera check" in seen["text"]
+
+
+def test_visual_alert_delivery_buttonless_posts_plain_media(monkeypatch):
+    posts = []
+    path = bambu_watch.deliver_visual_alert(REMOTE, JPEG, "periodic: uncertain; test",
+                                            post=posts.append, token="tok", chat_id="42", buttonless="telegram")
+    assert len(posts) == 1 and f"MEDIA:{path}" in posts[0]
+
+
+# -- Stage 3: the alert's Pause button on Bambu ---------------------------------
+
+def test_pause_sends_one_lan_pause_for_the_alerted_file(monkeypatch):
+    from unittest import mock
+    adapter, _client = _bambu_pause(monkeypatch, [bst2("printing"), bst2("paused")])
+    with mock.patch.object(print_stop.time, "sleep"):
+        sent, text = print_stop.pause("plate_1.gcode.3mf", wait_s=5)
+    assert sent and "Paused" in text
+    adapter.control.assert_called_once_with("pause")
+
+
+def test_pause_refuses_a_different_file_without_sending(monkeypatch):
+    from unittest import mock
+    adapter, _client = _bambu_pause(monkeypatch, [bst2("printing", filename="other.gcode.3mf")])
+    sent, text = print_stop.pause("plate_1.gcode.3mf")
+    assert not sent and "different print" in text
+    adapter.control.assert_not_called()
+
+
+def test_handle_click_visual_pause_routes_to_the_bambu_pause(monkeypatch):
+    from unittest import mock
+    from print_buddy.hermes import print_alert_buttons as pab
+    adapter, _client = _bambu_pause(monkeypatch, [bst2("printing"), bst2("paused")])
+    with mock.patch.object(print_stop.time, "sleep"):
+        text = pab.handle_click("pause", {"kind": "visual", "filename": "plate_1.gcode.3mf"})
+    assert "Paused" in text
+    adapter.control.assert_called_once_with("pause")
+
+
+def bst2(state, filename="plate_1.gcode.3mf", layer=1, total=513, progress=0.01):
+    return {"state": state, "filename": filename, "layer": layer, "total_layer": total, "progress": progress}
+
+
+def _bambu_pause(monkeypatch, snapshots):
+    """Route print_stop through a fake Bambu LAN adapter, as in test_print_stop.py."""
+    from unittest import mock
+    from print_buddy import printers
+    client = mock.Mock()
+    client.snapshot.side_effect = list(snapshots)
+    adapter = types.SimpleNamespace(
+        transport="bambulab_lan", lan_configured=lambda: True, client=lambda: client,
+        normalize_status=lambda raw: raw, control=mock.Mock(),
+        camera_snapshot=mock.Mock(side_effect=BambuLanError("no camera in this fake")))
+    monkeypatch.setattr(printers, "current", lambda: adapter)
+    return adapter, client

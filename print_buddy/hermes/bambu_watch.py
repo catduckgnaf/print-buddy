@@ -37,6 +37,9 @@ from pathlib import Path
 from .. import logs
 from . import _config
 from . import discord_print_summary as print_summary
+from . import visual_watch as _vw
+
+WATCH_PROMPT = "Is there plastic on the bed under the nozzle, or is there spaghetti/detachment?"
 
 logger = logging.getLogger(__name__)
 
@@ -101,6 +104,56 @@ def status_with_camera(adapter) -> dict:
     return st
 
 
+def vision_context(adapter) -> str:
+    """The verdict context for a Bambu frame: the listener's wording, this printer's name.
+
+    The Moonraker context names its printer ("Flashforge AD5X"); a Bambu
+    frame judged against another printer's description would be a wrong
+    prompt, so the context is built from the configured printer's label.
+    """
+    label = getattr(adapter, "label", None) or "Bambu Lab printer"
+    return (f"Printer: {label}, enclosed, smooth PEI plate. "
+            "Reply with JSON only, no markdown: {\"verdict\":\"ok|air|spaghetti|detached|empty_idle|uncertain\",\"reason\":\"short\"}. "
+            "ok means plastic is on the bed and printing normally. "
+            "air means the bed is empty while a print should be there. "
+            "spaghetti means a tangled failed extrusion. "
+            "detached means a printed part has come off the plate. "
+            "empty_idle means the printer is idle and the bed is empty. "
+            "uncertain means the frame is not clear enough to judge.")
+
+
+def deliver_visual_alert(filename, image, reason, *, post=None, token=None, chat_id=None, buttonless=None):
+    """Post one watchdog alert with its snapshot, the Moonraker alert's shape (#294 stage 3).
+
+    Same delivery as the listener's _visual_alert: the button post
+    (print_alert_buttons.post_visual_alert — Pause / "It's fine") when the
+    platform has buttons, a plain MEDIA: post on buttonless standalone
+    platforms, and a plain post as the fallback when the button post fails.
+    Returns the saved frame path.
+    """
+    path = write_frame(filename, image)
+    text = f"Print camera check: {print_summary.safe_label(filename, 'print')}\n{reason}"
+    if post is None or token is None or chat_id is None or buttonless is None:
+        from . import moonraker_discord_announcements as announcer
+        from . import moonraker_event_listener as mel
+        post = post or mel.post
+        token = token if token is not None else mel._bot_token()
+        chat_id = chat_id if chat_id is not None else announcer.DISCORD_CHAT_ID
+        buttonless = mel._buttonless_standalone() if buttonless is None else buttonless
+    if buttonless:
+        post(text + f"\n{path}\nMEDIA:{path}")
+        return path
+    try:
+        from . import print_alert_buttons as pab
+        if pab.post_visual_alert(token, chat_id, text, filename, path):
+            return path
+        log("bambu visual button post failed; falling back to text")
+    except Exception as exc:
+        log(f"bambu visual button post error: {exc!r}")
+    post(text + f"\n{path}\nMEDIA:{path}")
+    return path
+
+
 class BambuPrintMonitor:
     """Poll one launched Bambu print to its end; post its completion, with the final image.
 
@@ -111,15 +164,22 @@ class BambuPrintMonitor:
     """
 
     def __init__(self, filename, *, status_fn, camera_fn, post,
+                 watch=None, verdict=None, alert=None, changed=None,
                  clock=time.monotonic, wall=time.time, sleep=time.sleep, poll_s=POLL_S):
         self.filename = filename or ""
         self._status_fn = status_fn
         self._camera_fn = camera_fn
         self._post = post
+        self._watch = watch
+        self._verdict = verdict
+        self._alert = alert
+        self._changed = changed or _frame_changed_safe
         self._clock = clock
         self._wall = wall
         self._sleep = sleep
         self._poll_s = poll_s
+        self._last_frame = None
+        self._last_periodic_at = None
         self.outcome = None
 
     def _terminal_post(self, state):
@@ -163,7 +223,97 @@ class BambuPrintMonitor:
         return None
 
     def poll_active(self, st):
-        """One active-print poll. The camera watchdog hooks in here (#294 stage 3)."""
+        """One active-print poll: the camera watchdog's trigger (#294 stage 3).
+
+        Mirrors the Moonraker listener: while the print is printing, the
+        shared VisualPrintWatch policy decides from layer and time when a
+        check is due (layer 2, layer 5, periodic, stall probes). Where the
+        firmware reports no layer, the policy cannot run — the periodic
+        interval from the same sensitivity profile still applies, driven
+        by the poll cadence, exactly as the issue specifies.
+        """
+        if self._watch is None or self._verdict is None or self._alert is None:
+            return
+        if st.get("state") != "printing":
+            return
+        layer = st.get("layer")
+        layer = layer if isinstance(layer, int) and not isinstance(layer, bool) else None
+        now = self._wall()
+        if layer is not None:
+            reason = self._watch.due(layer, now, snapshot_changed=None)
+        else:
+            if self._last_periodic_at is None:
+                self._last_periodic_at = now
+                return
+            if now - self._last_periodic_at < self._watch.profile["periodic_s"]:
+                return
+            self._last_periodic_at = now
+            reason = "periodic"
+        if reason:
+            self.visual_check(reason, layer)
+
+    def visual_check(self, reason, layer):
+        """Capture and classify one frame; notify humans only, never actuate.
+
+        The Moonraker watchdog's rules, unchanged: a suspicious verdict
+        (missing plastic, spaghetti, detached, uncertain) alerts with the
+        snapshot; layers that advanced over an unchanged frame are promoted
+        to a stall; at sensitivity 1–2 a healthy verdict vetoes a stall.
+        """
+        image = None
+        try:
+            image = self._camera_fn()
+            prior = self._last_frame
+            changed = None if prior is None else self._changed(prior, image)
+            watch = self._watch
+            snapshot_before = watch.last_snapshot_layer
+            stall = (reason in {"layer_progress", "periodic"} and changed is False
+                     and isinstance(layer, int) and layer >= 5
+                     and snapshot_before and layer - snapshot_before >= watch.profile["stall_layers"]
+                     and watch.alerted_stall_layer is None)
+            if stall:
+                reason = "stalled_layers"
+                watch.alerted_stall_layer = layer
+            if reason != "layer_progress":
+                self._last_frame = image
+                watch.record(layer, self._wall(), image)
+            if reason == "layer_progress":
+                # A layer-progress probe that is not a stall adopts the new
+                # frame as the baseline without moving the periodic clock.
+                self._last_frame = image
+                watch.last_snapshot = image
+                if isinstance(layer, int):
+                    watch.last_snapshot_layer = max(watch.last_snapshot_layer, layer)
+                    watch.progress_seen_layer = layer
+                return
+            verdict, detail = self._verdict(image, WATCH_PROMPT)
+            suspicious = verdict in _vw.VISUAL_SUSPICIOUS_VERDICTS
+            if reason == "stalled_layers" and changed is False:
+                suspicious = not (watch.profile["vision_veto"] and verdict in _vw.VISUAL_HEALTHY_VERDICTS)
+            if verdict == "uncertain":
+                suspicious = True
+            log(f"bambu visual check file={self.filename!r} reason={reason} layer={layer} "
+                f"changed={changed} verdict={verdict} detail={detail!r}")
+            if suspicious:
+                self._alert(self.filename, image,
+                            f"{reason} at layer {layer or 'unknown'}: {verdict}; "
+                            f"{detail or 'visual check needs operator review'}")
+        except Exception as exc:
+            log(f"bambu visual check failed file={self.filename!r} reason={reason}: {exc!r}")
+            if image is not None:
+                try:
+                    self._alert(self.filename, image,
+                                f"{reason} at layer {layer or 'unknown'}: vision check failed: {exc!r}")
+                except Exception as alert_exc:
+                    log(f"bambu visual alert failed file={self.filename!r}: {alert_exc!r}")
+
+
+def _frame_changed_safe(before, after):
+    """visual_watch._frame_changed, or None when the frames cannot be compared."""
+    try:
+        return _vw._frame_changed(before, after)
+    except Exception:
+        return None
 
 
 def _default_post(message):
@@ -193,6 +343,18 @@ def _post_target_configured():
         return False
 
 
+def _default_verdict(adapter):
+    """The shared vision verdict call with this printer's context (visual_watch.visual_verdict)."""
+    from . import moonraker_event_listener as mel
+
+    def verdict(image, prompt):
+        return _vw.visual_verdict(
+            image, prompt, chat_url=mel._vision_chat_url, model=mel._VISION_MODEL,
+            api_key=lambda: mel._profile_env_value("CLIPROXY_API_KEY"), context=vision_context(adapter))
+
+    return verdict
+
+
 def start_monitor(adapter, filename, *, post=None, camera_fn=None, status_fn=None, thread_factory=None):
     """Start a BambuPrintMonitor for a just-launched print on a daemon thread.
 
@@ -203,11 +365,17 @@ def start_monitor(adapter, filename, *, post=None, camera_fn=None, status_fn=Non
         log(f"bambu monitor not started for {filename!r}: no chat is configured to post to")
         return None
     try:
+        watch = verdict = alert = None
+        if _config.cfg()["visual_watch"]["enabled"]:
+            watch = _vw.VisualPrintWatch()
+            verdict = _default_verdict(adapter)
+            alert = deliver_visual_alert
         monitor = BambuPrintMonitor(
             filename,
             status_fn=status_fn or (lambda: adapter.normalize_status(adapter.client().snapshot())),
             camera_fn=camera_fn or adapter.camera_snapshot,
-            post=post or _default_post)
+            post=post or _default_post,
+            watch=watch, verdict=verdict, alert=alert)
         factory = thread_factory or (lambda target: threading.Thread(target=target, daemon=True,
                                                                      name=f"bambu-watch-{filename}"))
         thread = factory(monitor.run)

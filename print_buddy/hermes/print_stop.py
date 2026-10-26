@@ -109,3 +109,38 @@ def cancel(expected_filename: str, wait_s: float = 20, poll_s: float = 1.0) -> t
         return True, "Stopped. The printer shows the cancelled job as an error until you acknowledge it on its screen."
     return True, f"Stopped. Printer now reports {after['state']}."
 
+
+def pause(expected_filename: str, wait_s: float = 20, poll_s: float = 1.0) -> tuple[bool, str]:
+    """One Bambu LAN pause, only if the same file is still printing. Returns (sent, truthful text).
+
+    The watchdog alert's Pause button lands here (#294 stage 3): the press is
+    the operator's, the state is re-read first, exactly one control("pause")
+    is sent, and the result is what the next snapshots actually report —
+    the same discipline as cancel(). Bambu only: the Moonraker pause path
+    lives in print_control.
+    """
+    adapter = _lan_adapter()
+    if adapter is None:
+        return False, "Pause is not available for this printer here. Nothing sent."
+    before = status()
+    if before["state"] != "printing":
+        return False, f"Nothing to pause: printer is {before['state']}. Nothing sent."
+    if expected_filename and before["filename"] != expected_filename:
+        return False, "A different print is running now than the one in this alert. Nothing sent."
+    adapter.control("pause")  # one LAN MQTT pause; the printer answers on the next snapshot
+    deadline = time.monotonic() + wait_s
+    after = before
+    while time.monotonic() < deadline:
+        time.sleep(poll_s)
+        try:
+            after = status()
+        except Exception:
+            continue
+        if after["state"] != "printing":
+            break
+    if after["state"] == "paused":
+        return True, "Paused. Check the printer screen for the current state."
+    if after["state"] == "printing":
+        return True, (f"Pause sent, but the printer still reports printing after {wait_s:.0f}s. "
+                      "Check the printer screen. Not retrying.")
+    return True, f"Pause sent. Printer now reports {after['state']}."

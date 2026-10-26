@@ -196,6 +196,7 @@ class OverrideTests(unittest.TestCase):
             "timelapse": {"archive_host", "archive_dir", "ssh_key", "render_wait_s", "render_poll_s",
                           "max_bytes", "local_retention_days", "plan_clip_retention_days"},
             "logging": {"level", "format", "file"},
+            "webui": {"enabled", "host", "port", "access_token_env"},
             "maintenance": {"quick_hours", "full_hours", "full_days"},
             "delivery": {"methods"},
             "nozzle_temp_offsets": {"brass", "hardened_steel", "stainless_steel", "ruby", "tungsten_carbide", "diamond"},

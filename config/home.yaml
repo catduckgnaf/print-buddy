@@ -148,6 +148,15 @@ logging:
   level: INFO
   format: text
   file: ''
+webui:
+  # Optional Web UI (#286): off by default; nothing listens while disabled.
+  # Port 0 means no port has been chosen yet. The access token itself never
+  # goes in a file here; access_token_env names the environment variable
+  # holding it.
+  enabled: false
+  host: 127.0.0.1
+  port: 0
+  access_token_env: WEBUI_ACCESS_TOKEN
 maintenance:
   quick_hours: 25
   full_hours: 75

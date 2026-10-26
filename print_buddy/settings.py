@@ -90,6 +90,8 @@ OPTIONAL_KEYS = {("printer", "nozzle_type"): str, ("visual_watch", "enabled"): b
                  ("bambu", "lan_access_code_env"): str,
                  ("bambu", "start_confirm_s"): int,
                  ("slicer", "flash_studio_path"): str,
+                 ("webui", "enabled"): bool, ("webui", "host"): str,
+                 ("webui", "port"): int, ("webui", "access_token_env"): str,
                  ("flashforge_stock", "host"): str,
                  ("prusa", "link_host"): str, ("prusa", "api_key_env"): str,
                  ("elegoo_sdcp", "host"): str}
@@ -425,6 +427,34 @@ def _validate_matrix(data):
     matrix["upload_max_bytes"] = _positive(data, "matrix", "upload_max_bytes", int)
 
 
+def _validate_webui(data):
+    """The [webui] section (#286). Absent in an older config means the defaults.
+
+    The Web UI is optional and off by default. ``port`` 0 means no port has
+    been chosen yet (the same convention as [bot] health_port); a later
+    stage's server only listens when enabled is true. The access token
+    itself is never a setting: access_token_env names the environment
+    variable holding it, the same indirection as [discord] token_env.
+    """
+    webui = data.setdefault("webui", {})
+    enabled = webui.setdefault("enabled", False)
+    if not isinstance(enabled, bool):
+        raise SettingsError(f"[webui] enabled must be true or false, got {enabled!r}")
+    host = str(webui.setdefault("host", "127.0.0.1") or "").strip()
+    if not host:
+        host = "127.0.0.1"
+    if not re.fullmatch(r"[A-Za-z0-9._-]+", host):
+        raise SettingsError(f"[webui] host must be a plain IP address or hostname without scheme or port, got {host!r}")
+    webui["host"] = host
+    port = webui.setdefault("port", 0)
+    if isinstance(port, bool) or not isinstance(port, int) or not 0 <= port <= 65535:
+        raise SettingsError(f"[webui] port must be a port number from 0 to 65535, got {port!r}")
+    env_name = str(webui.setdefault("access_token_env", "WEBUI_ACCESS_TOKEN") or "WEBUI_ACCESS_TOKEN")
+    if not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", env_name):
+        raise SettingsError(f"[webui] access_token_env must be an environment variable name, got {env_name!r}")
+    webui["access_token_env"] = env_name
+
+
 def _validate_logging(data):
     """The [logging] section (#150). Absent in a hand-made home file means the defaults."""
     logging_cfg = data.setdefault("logging", {})
@@ -574,6 +604,7 @@ def validate(data):
         data["discord"][key] = _positive(data, "discord", key, int)
     _validate_bot(data)
     _validate_logging(data)
+    _validate_webui(data)
     templates = data.get("orca", {}).get("templates")
     if templates == "" and model.generated_templates:
         templates = str(generated_templates_dir(model, data))

@@ -20,15 +20,16 @@ from . import listeners, printers, settings
 HEARTBEAT_S = 30
 
 # The listener registry (print_buddy.listeners, #299) is the one place that
-# maps a vendor connection to its listener domain. Today only the moonraker
-# domain is implemented: that listener is a Moonraker websocket client whose
-# URL derives from services.moonraker_url alone. Every other domain is
-# planned or none, so no listener runs for it: the container supervisor must
-# not start one and the container healthcheck must not require a heartbeat.
+# maps a vendor connection to its listener domain. Implemented domains
+# (moonraker, bambulab_lan) run a listener: the container supervisor must
+# start it and the container healthcheck must require its heartbeat. Every
+# other domain is planned or none, so no listener runs for it.
 LISTENER_CONNECTIONS = listeners.implemented_connections()
 
-# Heartbeat identity of the one implemented listener domain, kept as a name
-# for the listener process and its existing callers.
+# Heartbeat identity of the first implemented listener domain, kept as the
+# default for beat() and as the fallback expectation when the configured
+# instance's domain cannot be resolved here. Each listener beats under its
+# own domain's registered runtime (see expected_runtime).
 RUNTIME = listeners.DOMAINS["moonraker"].runtime
 
 
@@ -51,6 +52,21 @@ def listener_required(data=None):
     """True when the configured instance's listener domain is implemented."""
     domain = listener_domain(data)
     return bool(domain and domain.implemented)
+
+
+def expected_runtime(data=None):
+    """The heartbeat runtime identity the configured instance's listener beats under.
+
+    The registry names one runtime per implemented domain (moonraker,
+    bambulab_lan, ...); check() must expect the configured domain's, not a
+    single hard-coded one (#299 Stage B). Falls back to RUNTIME when the
+    domain cannot be resolved in this process.
+    """
+    try:
+        domain = listener_domain(data)
+    except Exception:
+        domain = None
+    return domain.runtime if domain is not None and domain.runtime else RUNTIME
 
 
 def heartbeat_path(data=None):
@@ -81,11 +97,12 @@ def check(data=None, now=None):
         age = (time.time() if now is None else now) - float(record["time"])
         if not math.isfinite(age) or age < -5 or age > 90:
             return False, "listener heartbeat stale or invalid"
-        if record["runtime"] != RUNTIME or record["host"] != socket.gethostname():
+        if record["runtime"] != expected_runtime(data) or record["host"] != socket.gethostname():
             return False, "heartbeat belongs to another service or container"
         if int(record["pid"]) <= 0 or process_identity(record["pid"]) != record["process_start"]:
             return False, "listener process is gone or replaced"
-        return True, "listener event loop alive; printer_connected=" + str(record.get("moonraker_connected", False))
+        connected = record.get("printer_connected", record.get("moonraker_connected", False))
+        return True, "listener event loop alive; printer_connected=" + str(connected)
     except (OSError, ValueError, TypeError, KeyError, IndexError, OverflowError, settings.SettingsError):
         return False, "listener heartbeat missing, unreadable or invalid"
 

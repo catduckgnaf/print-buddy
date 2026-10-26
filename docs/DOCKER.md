@@ -15,9 +15,10 @@ Which children the supervisor starts depends on the configured printer instance'
 | Listener domain (connection) | Printer listener | Discord bot | Bundled Spoolman |
 |---|---|---|---|
 | `moonraker` (Flashforge AD5X, Klipper, Sovol, Elegoo Neptune) | runs | with a token | unless disabled |
-| anything else (`bambulab_lan`, `prusalink`, `elegoo_sdcp`, `octoprint`, `flashforge_stock`, `offline`) | **not started** — the domain has no listener yet, or none by definition | with a token | unless disabled |
+| `bambulab_lan` (Bambu Lab) | runs — the Bambu listener; it idles without network contact when LAN is not configured | with a token | unless disabled |
+| anything else (`prusalink`, `elegoo_sdcp`, `octoprint`, `flashforge_stock`, `offline`) | **not started** — the domain has no listener yet, or none by definition | with a token | unless disabled |
 
-Only the `moonraker` domain has a listener implementation today; the full domain list and the normalised status/event contract every domain listener reports through are in [Listener domains](LISTENERS.md). The healthcheck mirrors the same registry decision: a listener that was not started reports "not required for this printer connection" instead of failing, while a configuration whose domain has a listener with a stale or missing heartbeat still fails. If the configuration cannot be resolved at all, the supervisor stops with the settings error rather than guessing which children to run. A configuration with no children at all (no listener, no bot token, external Spoolman) idles instead of exiting.
+The `moonraker` and `bambulab_lan` domains have listener implementations today; the full domain list and the normalised status/event contract every domain listener reports through are in [Listener domains](LISTENERS.md). The healthcheck mirrors the same registry decision: a listener that was not started reports "not required for this printer connection" instead of failing, while a configuration whose domain has a listener with a stale or missing heartbeat still fails. If the configuration cannot be resolved at all, the supervisor stops with the settings error rather than guessing which children to run. A configuration with no children at all (no listener, no bot token, external Spoolman) idles instead of exiting.
 
 ## Included Spoolman
 

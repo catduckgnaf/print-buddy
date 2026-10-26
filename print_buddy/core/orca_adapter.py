@@ -254,6 +254,99 @@ def _parse_3mf_triangles(source):
     return result
 
 
+def _object_triangles(source, object_id):
+    """World-space triangles of one build object, for per-part surface stats.
+
+    The per-object companion to :func:`_parse_3mf_triangles`: same component
+    walk and transform composition, restricted to the build items of a single
+    object id, returned as a plain [(a, b, c), ...] list of world-space
+    vertex triples. Returns [] when the object has no build item. Used by the
+    split fit check (#221 R1), which needs one part's faces — not the whole
+    model's — to measure bed contact and overhang for a reorientation.
+    """
+    object_id = str(object_id)
+
+    def local(tag):
+        return tag.split('}')[-1]
+
+    def children(node, name):
+        return [child for child in node if local(child.tag) == name]
+
+    def child(node, name):
+        found = children(node, name)
+        return found[0] if found else None
+
+    with zipfile.ZipFile(source) as archive:
+        models = {}
+
+        def model(name):
+            # Elements are matched by local name, exactly as
+            # color_geometry._world_item_points reads the same packages:
+            # namespace-less and core-namespace files both parse.
+            name = name.lstrip('/')
+            if name not in models:
+                root = ET.fromstring(archive.read(name))
+                if root.get('unit', 'millimeter') != 'millimeter':
+                    raise RuntimeError('only millimeter 3MF geometry supported')
+                objects = {}
+                for resources in children(root, 'resources'):
+                    for obj in children(resources, 'object'):
+                        objects[obj.get('id')] = obj
+                models[name] = (root, objects)
+            return models[name]
+
+        def apply(point, t):
+            x, y, z = point
+            return (0 + x * t[0] + y * t[3] + z * t[6] + t[9],
+                    0 + x * t[1] + y * t[4] + z * t[7] + t[10],
+                    0 + x * t[2] + y * t[5] + z * t[8] + t[11])
+
+        def transform(node):
+            values = list(map(float, node.get('transform', ' '.join(map(str, IDENTITY))).split()))
+            if len(values) != 12:
+                raise RuntimeError('invalid 3MF transform')
+            return values
+
+        def collect(name, oid, chain, active):
+            key = (name, oid)
+            if key in active:
+                raise RuntimeError('cyclic 3MF component reference')
+            obj = model(name)[1][oid]
+            out = []
+            mesh = child(obj, 'mesh')
+            if mesh is not None:
+                vertex_nodes = []
+                for vertices_node in children(mesh, 'vertices'):
+                    vertex_nodes.extend(children(vertices_node, 'vertex'))
+                vertices = [tuple(float(v.get(k)) for k in ('x', 'y', 'z')) for v in vertex_nodes]
+                for t in chain:
+                    vertices = [apply(p, t) for p in vertices]
+                for triangles_node in children(mesh, 'triangles'):
+                    for tri in children(triangles_node, 'triangle'):
+                        a, b, c = (int(tri.get(i)) for i in ('v1', 'v2', 'v3'))
+                        out.append((vertices[a], vertices[b], vertices[c]))
+            components = []
+            for wrapper in children(obj, 'components'):
+                components.extend(children(wrapper, 'component'))
+            for component in components:
+                external = next((v for k, v in component.attrib.items()
+                                 if k.split('}')[-1] == 'path'), name)
+                out.extend(collect(external.lstrip('/'), component.get('objectid'),
+                                   [transform(component)] + chain, active | {key}))
+            return out
+
+        root, _objects = model('3D/3dmodel.model')
+        result = []
+        for build in children(root, 'build'):
+            for item in children(build, 'item'):
+                if item.get('objectid') != object_id:
+                    continue
+                if item.get('printable', '1') != '1':
+                    raise RuntimeError('nonprintable build item requires explicit selection')
+                result.extend(collect('3D/3dmodel.model', object_id, [transform(item)], set()))
+        return result
+
+
 def _check_rotation(rotation):
     if rotation is None:
         return None

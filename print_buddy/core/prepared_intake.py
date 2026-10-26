@@ -1707,15 +1707,24 @@ async def prepare_link(event, adapter, state, root, timeout=None, reuse=None, pr
                            start_prompt_message_id=start_context.get('start_prompt_message_id', ''))
         receipt_path.write_text(json.dumps(receipt, indent=2) + '\n')
         warming = ok and print_next.still_preparing(tail)
+        # The remote file this start claimed, when warmup is still running. Only a
+        # warming start with a known file can be edited by the listener later, so
+        # only that start defers its roast (#374).
+        remote = print_next.started_file(tail) if warming else None
         if ok:
             message = print_summary.format_started(exact_job, exact_plate) + later
-            # No warming line and no later edit: the roast is always the last thing in this one post.
-            with contextlib.suppress(Exception):
-                roast = await asyncio.wait_for(asyncio.to_thread(
-                    _external.load('moonraker_event_listener').generate_roast,
-                    (exact_job or {}).get('title') or '', (exact_job or {}).get('summary') or ''), 8)
-                if roast:
-                    message += f'\n\n{roast}'
+            if remote is None:
+                # Already printing (or warmup cannot be tracked for an edit): this
+                # post is the canonical start announcement and carries the one
+                # roast now. A tracked warming start gets no roast here — the
+                # listener adds exactly one when it edits this post on the
+                # warmup-to-printing transition. Refusals below never roast.
+                with contextlib.suppress(Exception):
+                    roast = await asyncio.wait_for(asyncio.to_thread(
+                        _external.load('moonraker_event_listener').generate_roast,
+                        (exact_job or {}).get('title') or '', (exact_job or {}).get('summary') or ''), 8)
+                    if roast:
+                        message += f'\n\n{roast}'
         else:
             message = print_summary.scrub(_refusal_text(tail))
             if _restart_helps(tail):
@@ -1723,13 +1732,12 @@ async def prepare_link(event, adapter, state, root, timeout=None, reuse=None, pr
             elif start_context.get('prompt_handled'):
                 return {'action': 'skip', 'reason': 'start refused; prompt shows the reason and Retry'}
         sent = await adapter.send(chat_id=source.chat_id, content=message, metadata=metadata)
-        remote = None  # nothing edits this post later; warmup finishing stays silent
         message_id = getattr(sent, 'message_id', None)
         if remote and message_id:
             try:
                 print_next.record_start_message(remote, message_id)
             except OSError:
-                pass  # the listener then posts a short distinct follow-up instead of editing
+                pass  # no recorded id: the listener leaves the start post as is
         return {'action': 'skip', 'reason': 'sliced and start handled by button flow'}
     except (IntakeCancelled, Stopped) as exc:
         logger.warning('intake stopped by operator: %s', type(exc).__name__)

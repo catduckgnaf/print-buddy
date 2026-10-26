@@ -445,8 +445,19 @@ def test_intake_recognizes_real_print_now_output():
     assert print_next.started_file(REAL_AWAITING) == 'ghost_plate_1_abc.gcode'
 
 
-def test_start_still_preparing_posts_one_start_without_warming_line(env, monkeypatch, tmp_path):
+def test_start_still_preparing_posts_one_start_without_roast_and_records_its_id(env, monkeypatch, tmp_path):
+    """#374: a warming start posts its canonical start message with NO roast and
+    does not invoke the roast generator at all. Its message id is recorded for
+    the claimed file, so the listener can edit that one post — adding the
+    warmup-complete line and exactly one roast — when printing begins."""
     monkeypatch.setattr(print_next, 'START_MESSAGES', tmp_path / 'start_messages.json')
+    mel = external('moonraker_event_listener')
+    roast_calls = []
+
+    def fake_roast(title, summary=''):
+        roast_calls.append((title, summary))
+        return 'Roast that must not appear yet'
+    monkeypatch.setattr(mel, 'generate_roast', fake_roast)
 
     async def preparing(target):
         env.starts.append(target)
@@ -461,7 +472,58 @@ def test_start_still_preparing_posts_one_start_without_warming_line(env, monkeyp
     assert receipt['status'] == 'STARTED' and len(env.starts) == 1
     starts = [m for m in adapter.sent if m.startswith('Print started')]
     assert len(starts) == 1 and 'Warming up' not in starts[0]
+    assert 'Roast that must not appear yet' not in starts[0] and roast_calls == []
+    assert print_next.take_start_message('ghost_plate_1_abc.gcode') == f'm{len(adapter.sent)}'
+
+
+def test_start_already_printing_posts_exactly_one_roast_and_records_nothing(env, monkeypatch, tmp_path):
+    """#374: a start that is already printing gets its one roast in the intake's
+    canonical start post, right away — there is no later warmup edit."""
+    monkeypatch.setattr(print_next, 'START_MESSAGES', tmp_path / 'start_messages.json')
+    mel = external('moonraker_event_listener')
+    roast_calls = []
+
+    def fake_roast(title, summary=''):
+        roast_calls.append((title, summary))
+        return 'One roast for the Ghost Stand'
+    monkeypatch.setattr(mel, 'generate_roast', fake_roast)
+
+    async def printing(target):
+        env.starts.append(target)
+        return True, 'PRINT STARTED {"started": true, "file": "ghost_plate_1_abc.gcode"}'
+    monkeypatch.setattr(print_next, 'start', printing)
+
+    async def send(self, chat_id, content, reply_to=None, metadata=None):
+        self.sent.append(content)
+        return S(success=True, message_id=f'm{len(self.sent)}')
+    monkeypatch.setattr(Adapter, 'send', send)
+    adapter, result, receipt = run_flow(env, [1, 0, 0])
+    assert receipt['status'] == 'STARTED' and len(env.starts) == 1
+    starts = [m for m in adapter.sent if m.startswith('Print started')]
+    assert len(starts) == 1 and starts[0].count('One roast for the Ghost Stand') == 1
+    assert len(roast_calls) == 1
     assert print_next.take_start_message('ghost_plate_1_abc.gcode') is None
+
+
+def test_start_refused_posts_no_roast(env, monkeypatch, tmp_path):
+    """#374: refusals and failed starts never invoke the roast generator."""
+    monkeypatch.setattr(print_next, 'START_MESSAGES', tmp_path / 'start_messages.json')
+    mel = external('moonraker_event_listener')
+    roast_calls = []
+
+    def fake_roast(title, summary=''):
+        roast_calls.append((title, summary))
+        return 'Roast that must not appear'
+    monkeypatch.setattr(mel, 'generate_roast', fake_roast)
+
+    async def refused(target):
+        env.starts.append(target)
+        return False, 'REFUSED: printer is busy with another job. Nothing uploaded or started.'
+    monkeypatch.setattr(print_next, 'start', refused)
+    adapter, result, receipt = run_flow(env, [1, 0, 0])
+    assert receipt['status'] == 'START_REFUSED' and receipt['started'] is False
+    assert roast_calls == []
+    assert not any('Roast that must not appear' in m for m in adapter.sent)
 
 
 def test_preparation_metadata_mismatch_never_blocks_start(env, monkeypatch):

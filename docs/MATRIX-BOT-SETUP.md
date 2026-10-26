@@ -6,7 +6,7 @@ platform; only the transport changes. The Matrix bot is a **pure bot: it
 has no LLM**. Unmatched text gets the command list, and no `[llm]` setting
 is ever consulted for Matrix — deliberate, the same no-LLM posture Telegram
 proved first. One-way posts are the exception, as on Telegram: the
-print-started and print-complete posts carry the one-line **roast** when
+print-started posts carry the one-line **roast** (completion posts never do) when
 an LLM/vision endpoint is configured — `vision.roast_enabled`, on by
 default whenever that endpoint is available; set it `false` to turn
 roasts off. See [The roast](TELEGRAM-BOT-SETUP.md#the-roast).

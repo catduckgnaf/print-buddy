@@ -86,8 +86,9 @@ def checks(cfg):
     else:
         add("llm", True, f"{cfg['llm']['model']} at {cfg['llm']['chat_url']}" if llm.configured(cfg)
             else "off (unmatched messages get the command list)")
-    # The roast is separate from the chat fallback above: print-started and
-    # print-complete posts gain a one-line roast on every platform (Telegram
+    # The roast is separate from the chat fallback above: the print-started
+    # post gains a one-line roast (exactly one per print, when printing
+    # begins; the completion post never does) on every platform (Telegram
     # and Matrix included) whenever [vision] roast_enabled is on — the
     # default — and an LLM/vision endpoint is available.
     vision = cfg.get("vision") or {}

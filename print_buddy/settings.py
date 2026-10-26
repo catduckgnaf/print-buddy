@@ -1008,7 +1008,8 @@ def _validate_vision(data):
 
     ``roast_enabled`` is on by default: whenever an LLM/vision endpoint is
     available (``services.vision_chat_url`` set, with its ``CLIPROXY_API_KEY``),
-    the print-started and print-complete posts gain the one-line roast, on
+    the print-started post gains the one-line roast — exactly one per print,
+    added when printing begins, never on the completion post — on
     every platform — Telegram included, even though Telegram never uses the
     ``[llm]`` chat fallback. Set it false to turn roasts off without
     disabling the camera watchdog, which shares the same endpoint. Absent

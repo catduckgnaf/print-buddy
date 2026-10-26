@@ -103,7 +103,7 @@ The actual token still comes from the variable named by `token_env` (default `DI
 not a `discord.token` field. `PRINT_BUDDY_CONFIG` selects an explicit configuration file.
 See [settings and optional LLM/logging fields](STANDALONE.md#settings) and
 [configuration load order](CONFIGURATION-YAML.md). Leave `llm.chat_url` empty for command-list replies
-with no LLM. Separate from that chat LLM, the print-started and print-complete posts carry the
+with no LLM. Separate from that chat LLM, the print-started post carries the
 one-line **roast** whenever an LLM/vision endpoint is configured (`services.vision_chat_url` plus
 `CLIPROXY_API_KEY`): `vision.roast_enabled` is on by default, and setting it `false` (or
 `PRINT_BUDDY__VISION__ROAST_ENABLED=false`) turns roasts off. See

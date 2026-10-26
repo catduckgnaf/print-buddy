@@ -1256,8 +1256,13 @@ def start_claimed(filename, now=None):
 def announce_warmup_done(filename):
     """A claimed start already has its one "Print started" post: edit it, never post another.
 
-    Edits the intake's message in place when its id was recorded; otherwise (or if Discord
-    refuses the edit) posts one short, distinct line that is not a second "Print started".
+    This is the single roast point for a warming start (#374): the intake
+    posted its start message without a roast and recorded its id, and this
+    edit adds the warmup-complete line plus exactly one roast, keeping the
+    canonical start details. The recorded id is consumed, so a replayed
+    transition cannot add a second roast. With no recorded id, or when
+    Discord refuses the edit, the start post is left as is — no second
+    post and no roast is posted elsewhere.
     """
     text = print_summary.format_event("started", filename)
     text += "\nWarmup complete, now printing."

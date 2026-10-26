@@ -192,6 +192,48 @@ def test_claimed_start_edits_existing_message_and_posts_no_second_start(job, tmp
     assert not HEX.search(text)
 
 
+def test_claimed_start_warmup_edit_includes_exactly_one_roast(job, tmp_path, monkeypatch):
+    """#374: the warmup-to-printing edit is the warming start's single roast point.
+
+    The edit keeps the canonical start details, adds the warmup-complete line,
+    and ends with exactly one roast; no second start post is made."""
+    roast_calls = []
+
+    def fake_roast(title, summary=""):
+        roast_calls.append((title, summary))
+        return f"Roast for {title}"
+    monkeypatch.setattr(mel, "generate_roast", fake_roast)
+    edits = _claimed_listener(monkeypatch, tmp_path, job)
+    posted = _drive_listener(monkeypatch, job.hashed, ["standby", "printing"], claimed=True)
+    assert posted == []
+    assert len(edits) == 1 and edits[0][0] == "777"
+    text = edits[0][1]
+    assert TITLE in text and "Parts: Stand" in text and "Approx. finish:" in text
+    assert "Warmup complete, now printing." in text
+    assert text.count(f"Roast for {TITLE}") == 1 and text.endswith(f"Roast for {TITLE}")
+    assert len(roast_calls) == 1
+
+
+def test_replayed_claimed_start_generates_no_second_roast(job, tmp_path, monkeypatch):
+    """#374: a reconnect replay of the same claimed transition is deduped before
+    announce_warmup_done runs again — no second edit and no second roast call.
+    The recorded start-message id is also consumed, so a direct replay of the
+    warmup handler itself cannot roast again either."""
+    roast_calls = []
+
+    def fake_roast(title, summary=""):
+        roast_calls.append((title, summary))
+        return f"Roast for {title}"
+    monkeypatch.setattr(mel, "generate_roast", fake_roast)
+    edits = _claimed_listener(monkeypatch, tmp_path, job)
+    first = _drive_listener(monkeypatch, job.hashed, ["standby", "printing"], claimed=True)
+    replay = _drive_listener(monkeypatch, job.hashed, ["standby", "printing"], claimed=True)
+    assert first == [] and replay == [] and len(edits) == 1 and len(roast_calls) == 1
+    # Direct replay: the one recorded message id was already taken.
+    assert mel.announce_warmup_done(job.hashed) is False
+    assert len(edits) == 1 and len(roast_calls) == 1
+
+
 def test_claimed_start_edit_failure_posts_distinct_short_line(job, tmp_path, monkeypatch):
     edits = _claimed_listener(monkeypatch, tmp_path, job, edit_ok=False)
     posted = _drive_listener(monkeypatch, job.hashed, ["standby", "printing"], claimed=True)
@@ -541,6 +583,45 @@ def test_announcer_completion_uses_model_title_not_hash(job, tmp_path, monkeypat
     assert not HEX.search(posted)
     record = next((tmp_path / "Prints").glob("*.md")).read_text()
     assert TITLE in record
+
+
+def test_announcer_completion_has_no_roast_and_never_calls_the_generator(job, tmp_path, monkeypatch, capsys):
+    """#374: completion announcements carry no roast and do not invoke the
+    roast generator at all — the one roast per print belongs to the start."""
+    roast_calls = []
+
+    def fake_roast(title, summary=""):
+        roast_calls.append((title, summary))
+        return "Completion roast that must not appear"
+    monkeypatch.setattr(mel, "generate_roast", fake_roast)
+    monkeypatch.setattr(records, "PRINTS_DIR", tmp_path / "Prints")
+    monkeypatch.setattr(records, "PLANS_DIR", tmp_path / "Plans")
+    monkeypatch.setattr(watcher, "STATE_PATH", tmp_path / "state.json")
+    monkeypatch.setattr(watcher, "PROFILE_HOME", tmp_path / "profile")
+    context_path = tmp_path / "context.json"
+    context_path.write_text(json.dumps({"jobs": {job.hashed: {"selected_option": records.NATIVE_PRINT_OPTIONS[0],
+                                                              "discord_session_id": "s1", "discord_chat_id": "1"}}}))
+    monkeypatch.setenv("PRINT_BUDDY_CONTEXT_PATH", str(context_path))
+    file_row = {"path": job.hashed, "display": job.hashed}
+    responses = iter((
+        {"job": {"file": file_row}, "progress": {"completion": 25}, "state": "Printing", "stats": {"state": "printing"}},
+        {"job": {"file": file_row}, "progress": {"completion": 100}, "state": "Completed",
+         "stats": {"state": "complete", "print_duration": 30}},
+    ))
+    monkeypatch.setattr(watcher, "get_job", lambda: next(responses))
+    monkeypatch.setattr(watcher, "_queued_jobs", lambda: [])
+    monkeypatch.setattr(watcher, "get_file_metadata", lambda filename: {"slicer_settings": {"layer_height": 0.2}})
+    monkeypatch.setattr(watcher, "get_active_spool", lambda: {})
+    monkeypatch.setattr(watcher, "write_and_verify_print_memory", lambda *args: (True, "memory recorded"))
+    monkeypatch.setattr(watcher.time, "time", lambda: 12345.0)
+    assert watcher.main() == 0
+    capsys.readouterr()
+    assert watcher.main() == 0
+    out = capsys.readouterr().out
+    posted = "\n".join(line for line in out.splitlines() if not line.startswith("TIMELAPSE_POSTPROCESS:"))
+    assert "Print complete" in posted and TITLE in posted
+    assert "Completion roast that must not appear" not in posted
+    assert roast_calls == []
 
 
 def test_print_record_title_resolves_from_hashed_name(job, monkeypatch):

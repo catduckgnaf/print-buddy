@@ -863,17 +863,10 @@ def main():
         marker = _timelapse_marker(job_key)
         if marker:
             print(f"TIMELAPSE_POSTPROCESS:{marker}")
+        # No roast here (#374): the one roast per print belongs to the start
+        # announcement, added when printing begins. Completion never invokes
+        # the roast generator.
         message = print_summary.format_event("complete", filename)
-        try:
-            from .moonraker_event_listener import generate_roast
-            job_info, _ = print_summary.find_job(filename)
-            title = (job_info or {}).get("title")
-            summary = (job_info or {}).get("summary")
-            roast = generate_roast(title, summary)
-            if roast:
-                message += f"\n\n{roast}"
-        except Exception:
-            pass
         try:
             queue_completion_record(previous, job_key, filename, payload.get("stats") or {})
         except Exception as exc:

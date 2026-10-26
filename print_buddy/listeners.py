@@ -89,8 +89,9 @@ DOMAINS = {
         module="print_buddy.hermes.moonraker_event_listener",
         runtime="moonraker_event_listener", transport="Moonraker websocket"),
     "bambulab_lan": ListenerDomain(
-        name="bambulab_lan", connection="bambulab_lan", availability=PLANNED,
-        transport="Bambu LAN MQTT (long-lived; #299 Stage B)"),
+        name="bambulab_lan", connection="bambulab_lan", availability=IMPLEMENTED,
+        module="print_buddy.printers.bambulab.listener",
+        runtime="bambu_event_listener", transport="Bambu LAN MQTT (long-lived)"),
     "prusalink": ListenerDomain(
         name="prusalink", connection="prusalink", availability=PLANNED,
         transport="PrusaLink HTTP polling (#299 Stage C)"),

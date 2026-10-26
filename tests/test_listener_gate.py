@@ -27,20 +27,27 @@ class ListenerGateDecisionTests(unittest.TestCase):
             with self.subTest(model=model):
                 self.assertTrue(healthcheck.listener_required(data(model)))
 
-    def test_non_moonraker_models_do_not(self):
-        # bambulab_lan and flashforge_stock forbid a Moonraker URL in settings;
-        # octoprint never populates the listener's websocket URL. All three
-        # SystemExited the listener before #256.
-        for model in ("bambulab.a1", "bambulab.p1s", "flashforge_stock.ad5x",
-                      "octoprint.marlin"):
+    def test_bambu_models_require_the_listener(self):
+        # #299 Stage B: bambulab_lan has its own listener domain now.
+        for model in ("bambulab.a1", "bambulab.p1s"):
+            with self.subTest(model=model):
+                self.assertTrue(healthcheck.listener_required(data(model)))
+
+    def test_non_listener_models_do_not(self):
+        # flashforge_stock forbids a Moonraker URL in settings; octoprint
+        # never populates the listener's websocket URL. Both SystemExited
+        # the listener before #256, and neither has a domain listener yet.
+        for model in ("flashforge_stock.ad5x", "octoprint.marlin"):
             with self.subTest(model=model):
                 self.assertFalse(healthcheck.listener_required(data(model)))
 
     def test_every_registered_model_is_classified_by_its_connection(self):
+        from print_buddy import listeners
         for key, model in printers.MODELS.items():
             with self.subTest(model=key):
+                domain = listeners.DOMAINS[model.vendor.connection]
                 self.assertEqual(healthcheck.listener_required(data(key)),
-                                 model.vendor.connection == "moonraker")
+                                 domain.implemented)
 
 
 class ListenerGateCliTests(unittest.TestCase):
@@ -52,8 +59,12 @@ class ListenerGateCliTests(unittest.TestCase):
     def test_moonraker_connection_starts_the_listener(self):
         self.assertEqual(self.run_gate("moonraker"), 0)
 
+    def test_bambulab_connection_starts_the_listener(self):
+        self.assertEqual(self.run_gate("bambulab_lan"), 0)
+
     def test_other_connections_skip_the_listener(self):
-        for connection in ("bambulab_lan", "flashforge_stock", "octoprint", "offline"):
+        for connection in ("flashforge_stock", "octoprint", "offline",
+                           "prusalink", "elegoo_sdcp"):
             with self.subTest(connection=connection):
                 self.assertEqual(self.run_gate(connection), 3)
 

@@ -736,6 +736,17 @@ LOG_FORMATS = ("text", "json")
 # "off" disables timelapses. An empty file value derives in validate():
 # "rendered" when a Moonraker URL is configured, else "off".
 TIMELAPSE_MODES = ("rendered", "container", "off")
+# [timelapse] capture_trigger (#246 stage 2): how in-container frame capture
+# decides a frame is due. "interval" is the default (printer-agnostic);
+# "layer" captures on Moonraker layer changes (moonraker-timelapse
+# semantics); "both" fires on either. The owner's trigger preference on
+# #246 is still open, so the trigger is a setting, not a hard-coded choice.
+CAPTURE_TRIGGERS = ("interval", "layer", "both")
+# [timelapse] capture_encoder (#246): the Stage 3 encode preference,
+# validated now so Stage 3 needs no settings migration. Capture itself
+# (Stage 2) never encodes; "auto" will probe in the order vaapi, nvenc,
+# qsv and fall back to cpu.
+CAPTURE_ENCODERS = ("auto", "vaapi", "nvenc", "qsv", "cpu")
 # [services] camera_source (#294): which camera the still images come
 # from. "auto" follows the printer vendor's rule; the explicit values pin
 # one source; "none" turns camera images off.
@@ -878,6 +889,35 @@ def _validate_timelapse(data):
         raise SettingsError(
             f"[timelapse] vertical_short_mode must be one of {', '.join(VERTICAL_SHORT_MODES)}, got {short_mode!r}")
     timelapse["vertical_short_mode"] = short_mode
+    # In-container capture (#246 stages 1-2). capture_enabled and
+    # capture_source_url arrived with Stage 1 (the go2rtc gate reads them
+    # with its own defaults); the Stage 2 keys are normalised here so a
+    # config file that predates them — including config/docker.yaml, which
+    # carries only [timelapse] mode — still loads with the defaults.
+    timelapse.setdefault("capture_enabled", False)
+    timelapse.setdefault("capture_source_url", "")
+    trigger = str(timelapse.setdefault("capture_trigger", "interval") or "interval").strip().lower()
+    if trigger not in CAPTURE_TRIGGERS:
+        raise SettingsError(
+            f"[timelapse] capture_trigger must be one of {', '.join(CAPTURE_TRIGGERS)}, got {trigger!r}")
+    timelapse["capture_trigger"] = trigger
+    encoder = str(timelapse.setdefault("capture_encoder", "auto") or "auto").strip().lower()
+    if encoder not in CAPTURE_ENCODERS:
+        raise SettingsError(
+            f"[timelapse] capture_encoder must be one of {', '.join(CAPTURE_ENCODERS)}, got {encoder!r}")
+    timelapse["capture_encoder"] = encoder
+    interval = timelapse.setdefault("capture_interval_s", 5.0)
+    if isinstance(interval, bool) or not isinstance(interval, (int, float)) \
+            or not 0 < float(interval) <= 3600:
+        raise SettingsError(
+            f"[timelapse] capture_interval_s must be a number of seconds above 0 and at most 3600, "
+            f"got {interval!r}")
+    timelapse["capture_interval_s"] = float(interval)
+    for key, default in (("capture_max_frames", 3600), ("capture_max_bytes", 512 * 1024 * 1024)):
+        value = timelapse.setdefault(key, default)
+        if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+            raise SettingsError(
+                f"[timelapse] {key} must be a whole number, 0 or more (0 disables the cap), got {value!r}")
 
 
 def _validate_camera_source(data):

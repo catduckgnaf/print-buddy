@@ -8,6 +8,17 @@ Tini owns orphan reaping and process-group signals. The supervisor waits for the
 
 An empty `DISCORD_BOT_TOKEN` disables only the Discord consumer for staging. Never run duplicate consumers/listeners against the same state. HEALTHCHECK verifies listener heartbeat, enabled bot readiness and Spoolman `/api/v1/health`. An offline printer does not make a reconnecting listener unhealthy. Dummy credentials do not prove Discord login.
 
+## Which processes run
+
+Which children the supervisor starts depends on the configured printer model's connection (#256), decided from the resolved configuration (`python3 -m print_buddy.listener_gate`), never from whether a Moonraker URL is filled in:
+
+| Printer connection | Moonraker listener | Discord bot | Bundled Spoolman |
+|---|---|---|---|
+| `moonraker` (Flashforge AD5X, Klipper, Sovol) | runs | with a token | unless disabled |
+| anything else (`bambulab_lan`, `flashforge_stock`, `octoprint`, `offline`, PrusaLink, Elegoo SDCP) | **not started** | with a token | unless disabled |
+
+The listener is a Moonraker websocket client; other connections have no Moonraker for it to connect to, and settings forbid a Moonraker URL for them, so starting it could only fail. The healthcheck mirrors the same decision: a listener that was not started reports "not required for this printer connection" instead of failing, while a Moonraker configuration with a stale or missing listener heartbeat still fails. If the configuration cannot be resolved at all, the supervisor stops with the settings error rather than guessing which children to run. A configuration with no children at all (no listener, no bot token, external Spoolman) idles instead of exiting.
+
 ## Included Spoolman
 
 Spoolman 0.27.0 is built from exact upstream revision `bed3f14ee77a3a571d31b14215d54b0b88a7519c` with its committed uv.lock, isolated from Print Buddy dependencies. No third-party source is patched. No Node, npm or web UI assets are built or copied. A local static placeholder satisfies upstream's static-directory check. Print Buddy spool commands and slicing lookups are the interface; `/api/v1` remains available.

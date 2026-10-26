@@ -94,6 +94,7 @@ Only use models you are allowed to download and process. Never attach private mo
 | Task | Guide |
 | --- | --- |
 | Install and configure | [Documentation home](docs/README.md) |
+| Run Print Buddy for two or more printers | [More than one printer](docs/MULTI-INSTANCE.md) |
 | Understand commands, settings and integrations | [Detailed project reference](docs/PROJECT-REFERENCE.md) |
 | Report a problem or contribute | [Contribution guide](CONTRIBUTING.md) · [Issues](https://github.com/catduckgnaf/print-buddy/issues) |
 | Read shipped changes | [GitHub releases](https://github.com/catduckgnaf/print-buddy/releases) |

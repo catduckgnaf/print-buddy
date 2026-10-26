@@ -10,6 +10,8 @@ from __future__ import annotations
 from ..elegoo.facts import Fact
 
 _IDENTITY_LABEL = "OrcaSlicer 2.4.2 (Elegoo vendor profiles 02.04.00.06)"
+_IDENTITY_LABEL_25A = "OrcaSlicer 2.5.0-alpha (Elegoo vendor profiles 02.04.00.11)"
+_IDENTITY_LABEL_25A_PACKED = "OrcaSlicer 2.5.0-alpha (Elegoo vendor profiles 02.04.00.11, packed cache)"
 
 CENTAURI_CARBON = {
     "printer_model": Fact("Elegoo Centauri Carbon", "ORCA", True),
@@ -19,7 +21,15 @@ CENTAURI_CARBON = {
     "orca_identity": Fact(({"label": _IDENTITY_LABEL, "vendor_version": "02.04.00.06",
                             "sha256": {"machine": "89d9362556251bb8e8ba86fd3c5292250cdbf3939386a5e0cc6b2886d3875c6b",
                                        "process": "63138f2262732f8770dfeaee574cdc9f91f7fa0656031d2a557b0843411c89f5",
-                                       "filament": "0aa0ddc000c02228370c550fce2f7d0fe491c86ac3daf167e529fd457455d749"}},), "ORCA", True),
+                                       "filament": "0aa0ddc000c02228370c550fce2f7d0fe491c86ac3daf167e529fd457455d749"}},
+                            {"label": _IDENTITY_LABEL_25A, "vendor_version": "02.04.00.11",
+                             "sha256": {"machine": "70f1b4d4377b6f92d42302c628170456defa4d1693c14329c67f2601571ca883",
+                                        "process": "d99f691eb9794c990f98ca73a1d0458e831295e0053cb82fe4aea9096aab0fdc",
+                                        "filament": "f2fdeb168e039edf7369f1f73b77d5af5ceb5bec42d6b53089ff87402300df7e"}},
+                            {"label": _IDENTITY_LABEL_25A_PACKED, "vendor_version": "02.04.00.11",
+                             "sha256": {"machine": "7eac4681e9e8312e8c1681979073f9e951c169584bae356764530fec385bc830",
+                                        "process": "55e608da19547db3aa9c8a172080100493ec8caf5fb84e0bd7b200875ae43fe1",
+                                        "filament": "de18dd7ee58713720ccf27b186d06b222a2723b1224188cf9e1483017efa8097"}}), "ORCA", True),
     "bed_mm": Fact((256.0, 256.0), "ORCA", True),
     "max_print_height_mm": Fact(256.0, "ORCA", True),
     # Orca lists the exclusion as its four corners: (246,0) (256,0) (256,20) (246,20).

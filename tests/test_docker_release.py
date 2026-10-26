@@ -262,12 +262,9 @@ class OrcaPrebuiltTests(unittest.TestCase):
 
     def test_both_channels_are_pinned_prebuilts(self):
         helper = (ROOT / "docker" / "orca-prebuilt.sh").read_text()
-        for pin in ("version=2.4.2", "revision=8500fcdccaa10b5099ac20d252af3a7c560046f1",
-                    "sha256_amd64=d12fb8c8eac1aecd2dfb6377acd48f994f8fa439ed5292fa532dd82880f029fd",
-                    "asset_amd64=OrcaSlicer_Linux_AppImage_Ubuntu2404_V2.4.2.AppImage",
-                    "sha256_arm64=e1a07275a25f176626c55a5df39e91bc4476d8c28ee4a3192ff758e29dd5c3ba",
-                    "asset_arm64=OrcaSlicer_Linux_AppImage_Ubuntu2404_aarch64_V2.4.2.AppImage",
-                    "version=2.5.0-alpha", "revision=3880f2c58ec392ed2bd5938ab31c9c7c496c0eb2",
+        # Both channels pin OrcaSlicer v2.5.0-alpha (#356): it is the shipped slicer,
+        # and the alpha channel converges on it until upstream publishes a newer alpha.
+        for pin in ("version=2.5.0-alpha", "revision=3880f2c58ec392ed2bd5938ab31c9c7c496c0eb2",
                     "sha256_amd64=386a5ef38991a4fc32ae2e35ee4261bea43d983683ac675a2c2e2395ab2bc7bb",
                     "asset_amd64=OrcaSlicer_Linux_AppImage_Ubuntu2404_V2.5.0-alpha.AppImage",
                     "sha256_arm64=b64c705537a80ca0f4a5d0b51fa21d1f789191141f54b7f3599d2f2b9bfad0be",
@@ -292,11 +289,11 @@ class OrcaPrebuiltTests(unittest.TestCase):
         blocks = dict(re.findall(r"(stable|alpha)\)\n(.*?)\n        ;;", helper, re.S))
         self.assertEqual(set(blocks), {"stable", "alpha"})
         expected = {
-            "stable": ("2.4.2", "8500fcdccaa10b5099ac20d252af3a7c560046f1", {
-                "amd64": ("OrcaSlicer_Linux_AppImage_Ubuntu2404_V2.4.2.AppImage",
-                          "d12fb8c8eac1aecd2dfb6377acd48f994f8fa439ed5292fa532dd82880f029fd"),
-                "arm64": ("OrcaSlicer_Linux_AppImage_Ubuntu2404_aarch64_V2.4.2.AppImage",
-                          "e1a07275a25f176626c55a5df39e91bc4476d8c28ee4a3192ff758e29dd5c3ba"),
+            "stable": ("2.5.0-alpha", "3880f2c58ec392ed2bd5938ab31c9c7c496c0eb2", {
+                "amd64": ("OrcaSlicer_Linux_AppImage_Ubuntu2404_V2.5.0-alpha.AppImage",
+                          "386a5ef38991a4fc32ae2e35ee4261bea43d983683ac675a2c2e2395ab2bc7bb"),
+                "arm64": ("OrcaSlicer_Linux_AppImage_Ubuntu2404_aarch64_V2.5.0-alpha.AppImage",
+                          "b64c705537a80ca0f4a5d0b51fa21d1f789191141f54b7f3599d2f2b9bfad0be"),
             }),
             "alpha": ("2.5.0-alpha", "3880f2c58ec392ed2bd5938ab31c9c7c496c0eb2", {
                 "amd64": ("OrcaSlicer_Linux_AppImage_Ubuntu2404_V2.5.0-alpha.AppImage",

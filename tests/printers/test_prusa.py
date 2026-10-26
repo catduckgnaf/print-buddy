@@ -77,10 +77,12 @@ def test_prusa_settings_validation():
 @pytest.mark.parametrize("key", sorted(MODELS))
 def test_recorded_identity_is_a_real_pin(key):
     f = model_facts(key)
-    (known,) = f["orca_identity"].value
-    assert known["vendor_version"] == "02.04.00.03"
-    assert all(re.fullmatch(r"[0-9a-f]{64}", d) for d in known["sha256"].values())
-    assert fixture.identity(f)["sha256"] != known["sha256"]
+    entries = f["orca_identity"].value
+    # One pin per checked packaging (#356): 2.4.2's tree, then 2.5.0-alpha's tree and packed cache.
+    assert [known["vendor_version"] for known in entries] == ["02.04.00.03", "02.04.00.17", "02.04.00.17"]
+    for known in entries:
+        assert all(re.fullmatch(r"[0-9a-f]{64}", d) for d in known["sha256"].values())
+    assert all(fixture.identity(f)["sha256"] != known["sha256"] for known in entries)
 
 
 @pytest.mark.parametrize("key", sorted(MODELS))

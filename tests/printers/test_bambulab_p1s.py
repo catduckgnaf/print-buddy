@@ -114,7 +114,7 @@ def test_p1s_has_a_distinct_generated_profile_folder_and_offline_calls_fail(p1s_
 def test_p1s_profile_defaults_identity_and_provenance_match_installed_orca_resources(p1s_profiles):
     names = facts.P1S["orca_profiles"].value
     assert names == {"machine": "Bambu Lab P1S 0.4 nozzle", "process": "0.20mm Standard @BBL X1C",
-                     "filament": "Bambu PLA Basic @BBL X1C"}
+                     "filament": "Bambu PLA Basic @BBL P1S 0.4 nozzle"}
     machine = template()
     assert machine["printer_model"] == "Bambu Lab P1S"
     assert machine["printable_area"] == ["0x0", "256x0", "256x256", "0x256"]
@@ -194,7 +194,7 @@ def test_p1s_fit_uses_model_specific_working_volume(p1s_profiles):
 
 
 def test_profile_defaults_reference_orca_profile_names_and_sources(p1s_profiles):
-    assert facts.ORCA_RELEASE == ("v2.4.2", "8500fcdccaa10b5099ac20d252af3a7c560046f1")
+    assert facts.ORCA_RELEASE == ("v2.5.0-alpha", "3880f2c58ec392ed2bd5938ab31c9c7c496c0eb2")
     assert all(fact.source in {"ORCA", "BAMBU", "DERIVED"} for fact in facts.P1S.values())
 
 

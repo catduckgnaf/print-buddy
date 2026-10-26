@@ -16,12 +16,17 @@ case "$arch" in
 esac
 case "$channel" in
     stable)
-        version=2.4.2
-        revision=8500fcdccaa10b5099ac20d252af3a7c560046f1
-        sha256_amd64=d12fb8c8eac1aecd2dfb6377acd48f994f8fa439ed5292fa532dd82880f029fd
-        sha256_arm64=e1a07275a25f176626c55a5df39e91bc4476d8c28ee4a3192ff758e29dd5c3ba
-        asset_amd64=OrcaSlicer_Linux_AppImage_Ubuntu2404_V2.4.2.AppImage
-        asset_arm64=OrcaSlicer_Linux_AppImage_Ubuntu2404_aarch64_V2.4.2.AppImage
+        # Print Buddy ships OrcaSlicer v2.5.0-alpha (#356): it is the first release whose
+        # BBL vendor profiles cover the H2C and A2L, and the profiles pipeline reads its
+        # packed preset caches (profiles/<Vendor>.opc) directly. There is no newer
+        # upstream release, so the alpha channel below currently pins the same build;
+        # the channels diverge again when upstream publishes a newer alpha.
+        version=2.5.0-alpha
+        revision=3880f2c58ec392ed2bd5938ab31c9c7c496c0eb2
+        sha256_amd64=386a5ef38991a4fc32ae2e35ee4261bea43d983683ac675a2c2e2395ab2bc7bb
+        sha256_arm64=b64c705537a80ca0f4a5d0b51fa21d1f789191141f54b7f3599d2f2b9bfad0be
+        asset_amd64=OrcaSlicer_Linux_AppImage_Ubuntu2404_V2.5.0-alpha.AppImage
+        asset_arm64=OrcaSlicer_Linux_AppImage_Ubuntu2404_aarch64_V2.5.0-alpha.AppImage
         ;;
     alpha)
         version=2.5.0-alpha

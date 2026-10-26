@@ -21,6 +21,12 @@ with no checked profile is refused, never sliced with another material's profile
 model's default profile (PLA), so a folder generated before #264 keeps slicing PLA until it is regenerated. A model
 without `orca_filaments` has only that default.
 
+OrcaSlicer 2.5+ packs each vendor's profiles into one binary preset cache (`profiles/<Vendor>.opc`) instead of
+the JSON tree; `preset_cache.py` decodes it back into source dicts and the same resolution runs on them. The
+cache is Orca's own build of the profiles (its option renames applied, options its config definitions do not
+know dropped), so the packed packaging flattens differently from a source checkout of the same release and
+carries its own recorded identities in facts.py, labelled "(packed cache)".
+
     python3 scripts/bambu-templates.py --printer a1 --resources <OrcaSlicer resources folder>
 """
 from __future__ import annotations
@@ -33,7 +39,7 @@ import shutil
 import tempfile
 from pathlib import Path
 
-from . import facts
+from . import facts, preset_cache
 
 KINDS = ("machine", "process", "filament")
 INDEX_LISTS = {"machine": "machine_list", "process": "process_list", "filament": "filament_list"}
@@ -53,16 +59,21 @@ def install_hint(adapter):
 
 
 def find_vendor(resources, vendor=VENDOR):
-    """The vendor profile folder (holding <vendor>.json and <vendor>/) under a resources folder, or raise."""
+    """The vendor profile folder under a resources folder, or raise.
+
+    Two layouts are served: the JSON tree (`<vendor>.json` and `<vendor>/`, OrcaSlicer up to
+    2.4 and source checkouts) and the packed preset cache (`<vendor>.opc`, OrcaSlicer 2.5+).
+    The JSON tree wins where both sit side by side.
+    """
     root = Path(resources).expanduser()
     for profiles in (root / "profiles", root):
         if (profiles / f"{vendor}.json").is_file() and (profiles / vendor).is_dir():
             return profiles
         if (profiles / f"{vendor}.opc").is_file():
-            raise ProfileError(f"{profiles} holds packed vendor profiles ({vendor}.opc, OrcaSlicer 2.5+); "
-                               f"only an OrcaSlicer whose resources hold {vendor}.json and {vendor}/ JSON profiles is supported")
+            return profiles
     raise ProfileError(f"no OrcaSlicer {vendor} vendor profiles under {root} "
-                       f"(expected profiles/{vendor}.json and profiles/{vendor}/)")
+                       f"(expected profiles/{vendor}.json and profiles/{vendor}/, "
+                       f"or the packed profiles/{vendor}.opc)")
 
 
 def _read(path):
@@ -84,27 +95,54 @@ def flatten_filaments(resources, names):
     return {name: resolve(name) for name in names}
 
 
-def _resolver(resources, vendor=VENDOR):
+def _sources(resources, vendor=VENDOR):
+    """(version, {name: source dict}) for the vendor under a resources folder, either layout.
+
+    The JSON tree is read straight from its files; the packed cache is decoded whole by
+    preset_cache (a corrupt or foreign cache is refused here, with its reason).
+    """
     profiles = find_vendor(resources, vendor)
-    index = _read(profiles / f"{vendor}.json")
-    paths = {entry["name"]: entry["sub_path"] for key in INDEX_LISTS.values() for entry in index.get(key, [])}
+    if (profiles / f"{vendor}.json").is_file() and (profiles / vendor).is_dir():
+        index = _read(profiles / f"{vendor}.json")
+        paths = {entry["name"]: entry["sub_path"] for key in INDEX_LISTS.values()
+                 for entry in index.get(key, [])}
+        sources = {}
+
+        def source(name):
+            if name not in sources:
+                sources[name] = _read(profiles / vendor / paths[name])
+            return sources[name]
+
+        return index.get("version"), set(paths), source
+    try:
+        cache = preset_cache.load(profiles / f"{vendor}.opc", vendor)
+    except preset_cache.CacheError as exc:
+        raise ProfileError(f"{profiles} holds packed vendor profiles ({vendor}.opc, OrcaSlicer 2.5+) "
+                           f"that Print Buddy cannot read: {exc}") from None
+    return cache.version, set(cache.sources), cache.source
+
+
+def _resolver(resources, vendor=VENDOR):
+    version, names, source = _sources(resources, vendor)
 
     def resolve(name, seen=()):
-        if name not in paths:
-            raise ProfileError(f"{vendor} vendor profile {name!r} is not in {profiles / (vendor + '.json')}")
+        if name not in names:
+            raise ProfileError(f"{vendor} vendor profile {name!r} is not in the {vendor} vendor profiles")
         if name in seen:
             raise ProfileError(f"{vendor} vendor profile {name!r} inherits itself")
-        data = _read(profiles / vendor / paths[name])
+        data = source(name)
         out = resolve(data["inherits"], (*seen, name)) if data.get("inherits") else {}
         for include in data.get("include", []):
-            out.update({k: v for k, v in _read(profiles / vendor / paths[include]).items()
+            if include not in names:
+                raise ProfileError(f"{vendor} vendor profile {include!r} is not in the {vendor} vendor profiles")
+            out.update({k: v for k, v in source(include).items()
                         if k not in ("type", "name", "instantiation", "from")})
         out.update(data)
         out.pop("inherits", None)
         out.pop("include", None)
         return out
 
-    return resolve, index.get("version")
+    return resolve, version
 
 
 def _dump(data):

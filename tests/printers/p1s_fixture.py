@@ -7,8 +7,9 @@ from print_buddy.printers.bambulab import facts, profiles
 from print_buddy.printers.bambulab.p1s import P1SAdapter
 
 HERMES = Path(tempfile.mkdtemp(prefix="p1s-test-profile-"))
-NAMES = {"machine": "Bambu Lab P1S 0.4 nozzle", "process": "0.20mm Standard @BBL X1C",
-         "filament": "Bambu PLA Basic @BBL X1C"}
+# The checked profile names are whatever facts.P1S selects (the default filament became the
+# dedicated P1S profile in OrcaSlicer 2.5.0-alpha; the process is still the X1C one).
+NAMES = dict(facts.P1S["orca_profiles"].value)
 FILAMENTS = {m: n for m, n in facts.P1S["orca_filaments"].value.items() if n != NAMES["filament"]}
 
 

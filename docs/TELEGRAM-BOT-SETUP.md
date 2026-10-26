@@ -163,6 +163,8 @@ require_confirmation`) and the project's `bot/configuration.py` /
   files up to 50 MB through the Bot API. Model files (.3mf/.stl) arrive
   as documents; previews and timelapses are sent back as photos/videos
   when Telegram has a native type for them, everything else as a
-  document.
+  document. Timelapse video is sized to `telegram.upload_max_bytes`
+  (50 MB by default), not to Discord's smaller cap, so Telegram keeps
+  the quality Discord's limit would have thrown away.
 - **Commands** arrive as text: `/print-next plan-1`. A trailing
   `@YourBot` suffix that group chats add is stripped automatically.

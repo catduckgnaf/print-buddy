@@ -110,7 +110,11 @@ into the same room through the Client-Server API instead of Discord REST.
 - **Limits**: messages are split at 16000 characters (well under
   Matrix's 64 KB event cap), files up to 50 MB, lowered automatically to
   the homeserver's own media limit when the server reports a smaller
-  one. Model files (.3mf/.stl) arrive as file events; previews and
+  one. Timelapse video is shrunk to that effective limit; if the
+  server's limit is below the smallest video the shrink can produce,
+  the completion post explains that the timelapse was recorded but is
+  too large for this server's upload limit, instead of the video
+  silently never arriving. Model files (.3mf/.stl) arrive as file events; previews and
   timelapses are sent back as image/video events when Matrix has a
   native type for them, everything else as a file event.
 - **Edits are not messages**: editing a message never re-runs a command.

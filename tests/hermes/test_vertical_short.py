@@ -166,7 +166,7 @@ def _wire_post(monkeypatch, tmp_path):
     video = tmp_path / "stand.mp4"
     video.write_bytes(b"v" * 100)
     monkeypatch.setattr(announcer, "materialize_archived_timelapse", lambda path: str(video))
-    monkeypatch.setattr(mel, "discord_sized_video", lambda path, max_bytes=None: path)
+    monkeypatch.setattr(mel, "platform_sized_video", lambda path, max_bytes=None: path)
     monkeypatch.setattr(mel, "log", lambda text: None)
     posted = []
     monkeypatch.setattr(mel, "post", lambda text: posted.append(text) or True)
@@ -226,7 +226,7 @@ def test_oversize_short_is_dropped_not_the_timelapse(monkeypatch, tmp_path):
     def cannot_shrink(path, max_bytes=None):
         raise RuntimeError("cannot shrink")
 
-    monkeypatch.setattr(mel, "discord_sized_video", cannot_shrink)
+    monkeypatch.setattr(mel, "platform_sized_video", cannot_shrink)
     mel._timelapse_post("stand", "Print complete: Stand")
     media = [line for line in posted[0].splitlines() if line.startswith("MEDIA:")]
     assert len(media) == 1

@@ -65,7 +65,7 @@ Schema, validation limits and TOML migration: [CONFIGURATION-YAML.md](CONFIGURAT
 | `services.octoprint_url` | `PRINT_BUDDY__SERVICES__OCTOPRINT_URL` | empty | OctoPrint printers (`octoprint.marlin`): OctoPrint URL. API key: `OCTOPRINT_API_KEY` secret |
 | `discord.chat_id` | `PRINT_BUDDY__DISCORD__CHAT_ID` | empty | Discord channel ID |
 | `discord.approval_user_id` | `PRINT_BUDDY__DISCORD__APPROVAL_USER_ID` | empty | Discord user ID allowed to approve |
-| `discord.upload_max_bytes` | `PRINT_BUDDY__DISCORD__UPLOAD_MAX_BYTES` | `9500000` | Largest upload per file: video is shrunk to it, and a sliced file or Bambu package over it is reported with its host path instead of offered for sending (see [PRINTER-PROFILES.md](PRINTER-PROFILES.md)). Keep it under your server's Discord cap (10 MB unboosted) |
+| `discord.upload_max_bytes` | `PRINT_BUDDY__DISCORD__UPLOAD_MAX_BYTES` | `9500000` | Largest upload per file on Discord: video is shrunk to it, and a sliced file or Bambu package over it is reported with its host path instead of offered for sending (see [PRINTER-PROFILES.md](PRINTER-PROFILES.md)). Keep it under your server's Discord cap (10 MB unboosted). This row governs Discord only — Telegram and Matrix posts are sized to their own `upload_max_bytes` rows below |
 | `discord.post_print_quiet_s` | `PRINT_BUDDY__DISCORD__POST_PRINT_QUIET_S` | `7200` | Quiet time before a chat session resets |
 | `discord.daily_reset_hour` | `PRINT_BUDDY__DISCORD__DAILY_RESET_HOUR` | `4` | Hour of the daily session reset |
 | `discord.timezone` | `PRINT_BUDDY__DISCORD__TIMEZONE` | `America/New_York` | Display and reset time zone (IANA name) |
@@ -80,14 +80,14 @@ Schema, validation limits and TOML migration: [CONFIGURATION-YAML.md](CONFIGURAT
 | `telegram.chat_id` | `PRINT_BUDDY__TELEGRAM__CHAT_ID` | empty | Telegram chat (group) ID; group and channel IDs are negative |
 | `telegram.allowed_user_ids` | `PRINT_BUDDY__TELEGRAM__ALLOWED_USER_IDS` | empty | Telegram user IDs allowed to use the standalone bot, comma or space separated |
 | `telegram.approval_user_id` | `PRINT_BUDDY__TELEGRAM__APPROVAL_USER_ID` | empty | Telegram user ID allowed to approve |
-| `telegram.upload_max_bytes` | `PRINT_BUDDY__TELEGRAM__UPLOAD_MAX_BYTES` | `50000000` | Largest file the Telegram bot uploads (the Bot API cloud limit) |
+| `telegram.upload_max_bytes` | `PRINT_BUDDY__TELEGRAM__UPLOAD_MAX_BYTES` | `50000000` | Largest file the Telegram bot uploads (the Bot API cloud limit); timelapse video is shrunk to this value, not to Discord's smaller cap |
 | `matrix.homeserver_url` | `PRINT_BUDDY__MATRIX__HOMESERVER_URL` | empty | Matrix homeserver base URL, for example `https://matrix.org` or a self-hosted server |
 | `matrix.access_token_env` | `PRINT_BUDDY__MATRIX__ACCESS_TOKEN_ENV` | `MATRIX_ACCESS_TOKEN` | Name of the environment variable holding the Matrix access token |
 | `matrix.room_id` | `PRINT_BUDDY__MATRIX__ROOM_ID` | empty | Matrix room ID of the print room (starts with `!`); the room must be unencrypted |
 | `matrix.allowed_user_ids` | `PRINT_BUDDY__MATRIX__ALLOWED_USER_IDS` | empty | Matrix user IDs allowed to use the standalone bot, full `@user:server` form, comma or space separated |
 | `matrix.approval_user_id` | `PRINT_BUDDY__MATRIX__APPROVAL_USER_ID` | empty | Matrix user ID allowed to approve |
 | `matrix.bot_user_id` | `PRINT_BUDDY__MATRIX__BOT_USER_ID` | empty | The bot's own Matrix user ID; empty asks the homeserver (whoami) at startup |
-| `matrix.upload_max_bytes` | `PRINT_BUDDY__MATRIX__UPLOAD_MAX_BYTES` | `50000000` | Largest file the Matrix bot uploads; lowered to the homeserver's media limit when the server reports a smaller one |
+| `matrix.upload_max_bytes` | `PRINT_BUDDY__MATRIX__UPLOAD_MAX_BYTES` | `50000000` | Largest file the Matrix bot uploads; lowered to the homeserver's media limit when the server reports a smaller one. Timelapse video is shrunk to that resulting limit; if even the smallest shrink cannot fit it, the completion post says the timelapse was recorded but is too large for the server instead of attaching the video |
 | `bot.mode` | `PRINT_BUDDY__BOT__MODE` | `hermes`; `standalone` in the image | `hermes` or `standalone`; the image and Compose set `standalone` |
 | `bot.platform` | `PRINT_BUDDY__BOT__PLATFORM` | `discord` | Chat platform for the standalone bot (#164): `discord`, `telegram` or `matrix` |
 | `bot.health_port` | `PRINT_BUDDY__BOT__HEALTH_PORT` | `0` | Serve `GET /healthz` on this port; `0` turns the HTTP check off |

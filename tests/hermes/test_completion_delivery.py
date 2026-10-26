@@ -39,7 +39,7 @@ def test_video_success_acknowledges_pending_completion(monkeypatch, tmp_path):
     announcer.save_state({"pending_completion_message": "Print complete: Stand"})
     monkeypatch.setattr(announcer, "archive_completed_timelapse", lambda key: "/archive/stand.mp4")
     monkeypatch.setattr(announcer, "materialize_archived_timelapse", lambda path: "/cache/stand.mp4")
-    monkeypatch.setattr(listener, "discord_sized_video", lambda path: path)
+    monkeypatch.setattr(listener, "platform_sized_video", lambda path, max_bytes=None: path)
     monkeypatch.setattr(listener, "post", lambda text: True)
     listener._timelapse_post("stand", "Print complete: Stand")
     assert not announcer.load_state().get("pending_completion_message")

@@ -41,11 +41,22 @@ exactly one instance.
 
 ### Chat separation
 
-Use a **separate Discord bot (token) per printer** where you can — it is the cleanest form
-of rule 2. The minimum is a separate channel **and** a separate approval user per instance,
-because prompts, approvals and "send the files here" delivery are all scoped to the
-configured channel and approval user. The same applies per platform: a separate Telegram
-chat or Matrix room per instance, never one chat watched by two instances.
+**One Discord bot token may serve every instance.** That is safe because of how the bot
+scopes itself, not because of the token: the bot core drops every message and every button
+press whose channel is not its configured `discord.chat_id`, and within that channel it
+only acts for users in its own `discord.allowed_user_ids`. Two instances logged in as the
+same bot therefore cannot see, answer or approve anything in each other's channels — each
+one only ever reads its own. (Both instances register the same slash commands at start-up,
+which is harmless: the command set is identical.) The hard minimum per instance is a
+separate channel **and** a separate approval user, because prompts, approvals and "send
+the files here" delivery are all scoped to the configured channel and approval user.
+
+A **separate bot (token) per printer** is still the cleaner form where you can: each
+printer gets its own bot name in the member list, and a token can be revoked or rotated
+for one printer without touching the others. But it is the channel scoping above, not the
+token, that keeps instances apart — never let two instances share a channel, whichever
+token arrangement you choose. The same applies per platform: a separate Telegram chat or
+Matrix room per instance, never one chat watched by two instances.
 
 ## Sharing Spoolman (the one shared piece)
 
@@ -79,6 +90,30 @@ However you share it:
   loaded spool in its own state. Do not record the same physical spool as loaded on two
   printers; two printers printing concurrently from *different* spools is the normal case
   the shared inventory is for.
+
+## A worked example: a Bambu A1 next to a Flashforge AD5X
+
+The motivating mixed household, end to end. Two Compose stacks from this repository's
+Compose file, one standalone Spoolman (Option A above), one Discord server:
+
+| | Instance A | Instance B |
+| --- | --- | --- |
+| Compose project | `print-buddy-a1` | `print-buddy-ad5x` |
+| Printer | `bambulab.a1`, name `Garage A1` | `flashforge.ad5x`, name `Workshop AD5X` |
+| Connection | `[bambu] lan_host` set; `services.moonraker_url` stays empty | `services.moonraker_url` set to the AD5X |
+| Channel | `#a1-prints` | `#ad5x-prints` |
+| Data | Its own `PRINT_BUDDY_DATA` (for example `./data-a1`) | Its own `PRINT_BUDDY_DATA` (for example `./data-ad5x`) |
+| Spoolman | Bundled disabled; URL = the shared standalone Spoolman | Bundled disabled; URL = the shared standalone Spoolman |
+| Container children | The bot only — **no Moonraker listener runs** for a Bambu connection, and the bundled Spoolman is disabled | The Moonraker listener and the bot (bundled Spoolman disabled) |
+
+The last row is the [Which processes run](DOCKER.md#which-processes-run) table applied: the
+supervisor starts the listener only where the configured connection is Moonraker (#256),
+so instance A has no listener to keep healthy and instance B does — neither needs any
+per-instance process tuning. The two instances may use the same Discord bot token (see
+Chat separation): an approval tapped in `#a1-prints` can only ever start the A1, because
+instance B never reads that channel and instance A only acts there. Filament questions in
+either channel resolve against the one shared Spoolman inventory, so a spool moved from
+the A1 to the AD5X keeps its identity and remaining weight.
 
 ## Unraid
 

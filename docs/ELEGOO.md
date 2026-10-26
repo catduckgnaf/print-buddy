@@ -31,6 +31,8 @@ The Neptunes run stock Klipper, so everything Moonraker-shaped works the way it 
 
 Elegoo's Neptune start G-code is a self-contained sequence in the file (their profiles do not call a `PRINT_START` macro), so the guard checks the file carries that template start, names this model, and stays within the model's published limits (300 °C nozzle, 110 °C bed) — and refuses other ecosystems' start code, including a bare `PRINT_START` macro call.
 
+In the combined Docker container the Neptune models behave like any other Moonraker printer: the supervisor starts the Moonraker listener and the healthcheck requires its heartbeat (#256) — see [Which processes run](DOCKER.md#which-processes-run).
+
 ## Centauri Carbon (SDCP, opt-in)
 
 The Centauri line runs closed firmware and speaks **SDCP v3.0** on the LAN: a WebSocket on port 3030 for status and control, a UDP broadcast (`M99999`, port 3000) for discovery, and chunked HTTP for file uploads. **SDCP has no authentication at all** and is plaintext: anyone on the network can control the printer. Print Buddy cannot change that; run the printer on a trusted network only.
@@ -52,6 +54,8 @@ delivery:
 The print path then runs the usual sequence: readiness from a live status answer → offline G-code verification (right model, single tool, temperatures within limits — 320 °C nozzle, 110 °C bed — no foreign start code) → launch lease → bed-clear approval inside the lease → a second status read → upload (1 MiB chunks with the file's MD5, the size read back and required to match before anything starts) → start command for that exact file → confirmation from a fresh status answer. An unconfirmed start is recorded as uncertain and is never resubmitted. Pause/resume/stop map to SDCP commands 129/131/130. Start requests carry `Calibration_switch: 0`: Print Buddy never starts a calibration the operator did not ask for.
 
 `services.moonraker_url` and `services.octoprint_url` must stay empty for a Centauri model; settings refuse to load otherwise.
+
+In the combined Docker container the supervisor honours that (#256): for a Centauri Carbon model it does not start the Moonraker listener at all, and the healthcheck does not require one, so the container starts, stays up and reports healthy with just the bot (with a token) and the bundled Spoolman — see [Which processes run](DOCKER.md#which-processes-run).
 
 ## What is not supported
 

@@ -46,6 +46,8 @@ The print path then runs the usual sequence: readiness from a live snapshot → 
 
 Both `.gcode` and the binary `.bgcode` form are accepted file types; what OrcaSlicer produces here is `.gcode`. `services.moonraker_url` and `services.octoprint_url` must stay empty for a Prusa model; settings refuse to load otherwise.
 
+In the combined Docker container the supervisor honours that (#256): for a Prusa model it does not start the Moonraker listener at all, and the healthcheck does not require one, so the container starts, stays up and reports healthy with just the bot (with a token) and the bundled Spoolman — see [Which processes run](DOCKER.md#which-processes-run).
+
 ## What is not supported
 
 - PrusaConnect cloud (any model) — LAN only, the same decision as Bambu Lab in #187.

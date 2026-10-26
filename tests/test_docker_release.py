@@ -95,7 +95,23 @@ class SettingsParityTests(unittest.TestCase):
         for name in self.rows:
             section, key = name.split(".")
             with self.subTest(row=name):
+                if section == "printers":
+                    # The [[printers]] roster (#333) never appears in the defaults tree, so it
+                    # is not in the inventory; its rows are pinned explicitly below instead.
+                    continue
                 self.assertIn((section, None if key.startswith("<") else key), self.inventory)
+
+    def test_printers_roster_rows_document_every_entry_key(self):
+        # [printers] is file-only and absent from the defaults tree, so the inventory walk
+        # cannot see it; treat it explicitly (design §2.1): every entry key has a SETTINGS.md
+        # row, and neither the docs nor .env.example spell a concrete indexed env name.
+        for key in sorted(settings.PRINTER_ENTRY_KEYS):
+            with self.subTest(entry_key=key):
+                self.assertIn(f"printers.{key}", self.rows)
+        self.assertNotIn("PRINT_BUDDY__PRINTERS__", ENV_EXAMPLE)
+        for name, env in self.rows.items():
+            if name.startswith("printers."):
+                self.assertNotRegex(env, r"PRINT_BUDDY__PRINTERS__[A-Z0-9_]+__")
 
     def test_env_example_lists_every_scalar_setting(self):
         for (section, key), value in self.inventory.items():

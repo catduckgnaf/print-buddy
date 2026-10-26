@@ -70,6 +70,8 @@ def test_docker_scalar_environment_parity_for_every_schema_key():
     env = {}
     keys = []
     for section, values in base.items():
+        if not isinstance(values, dict):
+            continue  # the [[printers]] roster (#333) is a file-only list, not a section of scalars
         for key, value in values.items():
             if isinstance(value, (list, dict)):
                 continue

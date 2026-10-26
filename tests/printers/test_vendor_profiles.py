@@ -31,6 +31,7 @@ def without_added(data):
         data.get("timelapse", {}).pop(key, None)
     data.pop("webui", None)  # added by #286 stage 1, after the golden files were captured
     data.pop("live_stream", None)  # added by #311 stage 3, after the golden files were captured
+    data.pop("printers", None)  # added by #333 (the [[printers]] roster), after the golden files were captured
     data.pop("telegram", None)  # added by #164 stage 2, after the golden files were captured
     data.pop("matrix", None)  # added by #164 stage 3, after the golden files were captured
     data.get("slicer", {}).pop("flash_studio_path", None)  # added by the Flash Studio config, after capture
@@ -140,6 +141,12 @@ def test_existing_printer_loaded_settings_are_unchanged(key):
     assert without_added(norm(got)) == want
     assert got["printer"]["vendor"] == key.split(".")[0] and got["printer"]["slicer"] == "orca"
     assert got["delivery"]["methods"] == ["printer"]
+    # The roster (#333) synthesised from this legacy load mirrors the golden-checked sections;
+    # without_added above is what proves those sections themselves are unchanged.
+    (entry,) = got["printers"]
+    assert entry["model"] == key and entry["name"] == got["printer"]["name"]
+    assert entry["moonraker_url"] == got["services"]["moonraker_url"]
+    assert entry["lan_host"] == got["bambu"]["lan_host"]
 
 
 # ----------------------------------------------------------------------------- config compatibility

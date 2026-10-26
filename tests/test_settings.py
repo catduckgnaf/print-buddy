@@ -206,11 +206,21 @@ class OverrideTests(unittest.TestCase):
             "nozzle_temp_offsets": {"brass", "hardened_steel", "stainless_steel", "ruby", "tungsten_carbide", "diamond"},
             "material_temps": {"PLA", "PETG", "ABS", "ASA", "TPU", "PA", "PC"},
         }
-        self.assertEqual(set(inventory), set(expected))
+        # "printers" is the resolved [[printers]] roster (#333): a list, not a section, so it is
+        # pinned separately below rather than as another expected section.
+        self.assertEqual(set(inventory), set(expected) | {"printers"})
         for section, keys in expected.items():
             with self.subTest(section=section):
                 self.assertEqual(set(inventory[section]), keys)
         self.assertTrue(all("security" not in key and "safety" not in key for key in inventory))
+        # The roster synthesised from this legacy config mirrors the legacy view above: one
+        # entry for the AD5X, its id the slug of the resolved [printer] name.
+        roster = inventory["printers"]
+        self.assertEqual(len(roster), 1)
+        self.assertEqual(roster[0]["id"], "flashforge-ad5x")
+        self.assertEqual(roster[0]["model"], inventory["printer"]["model"])
+        self.assertEqual(roster[0]["name"], inventory["printer"]["name"])
+        self.assertEqual(roster[0]["moonraker_url"], inventory["services"]["moonraker_url"])
 
     def test_bambu_start_confirm_window_defaults_and_limits(self):
         home = self.toml(Path(settings.LEGACY_HOME).read_text(), "legacy-home.toml")

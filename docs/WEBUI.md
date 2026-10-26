@@ -1,0 +1,212 @@
+# Web UI
+
+[Documentation home](README.md) · [Settings reference](SETTINGS.md) · [YAML configuration](CONFIGURATION-YAML.md) · [Docker](DOCKER.md) · [Guided setup and debugging](GUIDED-SETUP-DEBUGGING.md)
+
+The Web UI is an optional local page for two jobs:
+
+- **Status:** whether Print Buddy, its bot, printer listener and Spoolman are up, plus the doctor checks.
+- **Configuration:** a picker-based editor for the catalogued settings in the same YAML settings file Print Buddy already loads.
+
+It is **off by default**. While `[webui] enabled` is false, or no port has been chosen, the standalone server does not start and nothing listens. In the combined Docker container, the supervisor likewise starts no Web UI child in that state.
+
+The YAML file remains the only source of truth. The Web UI does not keep a second copy of the configuration: its status comes from the effective settings, and a confirmed configuration save writes only the settings-file layer — the file named by `PRINT_BUDDY_CONFIG`, or `config/local.yaml` when no file is named. See [YAML configuration](CONFIGURATION-YAML.md) for the full precedence order.
+
+## Pages and routes
+
+| Route | What it returns |
+|---|---|
+| `GET /` | The status page |
+| `GET /config` | The picker configuration page |
+| `GET /api/status` | The same status snapshot as JSON |
+| `GET /healthz` | The standalone bot heartbeat verdict: `200` when it passes, `503` when it does not |
+
+### Status page
+
+The status page reports:
+
+- an overall **ok** or **attention needed** result;
+- the Print Buddy version and host;
+- the configured printer name, model and connection;
+- the bot platform and mode, its heartbeat reason, and whether the heartbeat says it is connected;
+- whether the printer listener is required, and its health result when it is;
+- whether Spoolman is bundled or external, its configured URL, and the result of its `/api/v1/health` probe;
+- the other configured service URLs; and
+- the doctor checks as rows, each with an `ok`, `skip`, `fail`, or `warn` status and its detail.
+
+The Web UI doctor rows reuse the local doctor checks — settings, printer model, Orca templates, core modules, hardware record, Orca CLI, configured Moonraker and Spoolman services, bot mode, and stray state files. Two command-line doctor checks are deliberately not run by the page: Discord login and the shared-token comparison. Both need the bot token, and the login check can make a live network call; run `python3 -m print_buddy.doctor` when you want those checks.
+
+`/healthz` is narrower than the status page. It evaluates the bot heartbeat only: a `503` can mean the bot heartbeat is missing or stale while the Web UI itself is still serving. The Docker healthcheck therefore treats either a `200` or a `503` answer from `/healthz` as proof that the Web UI is serving, while the separate bot row owns the heartbeat verdict. An unreachable Web UI, an unresolved configuration, or any other HTTP status makes the Web UI healthcheck row fail.
+
+## Enable it on a light or manual install
+
+Add a `[webui]` section to the installation's settings file. For the usual light install, that is `config/local.yaml`:
+
+```yaml
+webui:
+  enabled: true
+  host: 127.0.0.1
+  port: 8080
+  access_token_env: WEBUI_ACCESS_TOKEN
+```
+
+`8080` is only an example; any free port from `1` to `65535` works. The code default is `port: 0`, which means no port has been chosen yet. Do not edit the checked-in `config/home.yaml` for a local choice if a local settings file is available.
+
+From the repository root, start the server in the foreground:
+
+```bash
+python3 -m print_buddy.webui
+```
+
+Then open `http://127.0.0.1:8080/`. The command keeps running until Ctrl-C. It is a separate process from the bot and listener; starting the Web UI does not start either of them.
+
+This loopback example needs no access token because only the same machine can reach the listener. To bind a LAN address instead, set `host` to the machine's LAN address or `0.0.0.0`, and put a token in the environment the server process inherits:
+
+```bash
+export WEBUI_ACCESS_TOKEN='<choose-a-long-random-token>'
+python3 -m print_buddy.webui
+```
+
+Never put the token value in YAML. If Print Buddy runs under systemd or another service manager, the token belongs in that service's protected environment, not in the settings file; restart the Web UI process after changing its environment.
+
+## Enable it with Docker Compose
+
+The container path is covered in [Docker](DOCKER.md#web-ui-optional-286). In `.env`, set:
+
+```dotenv
+PRINT_BUDDY__WEBUI__ENABLED=true
+PRINT_BUDDY__WEBUI__HOST=0.0.0.0
+PRINT_BUDDY__WEBUI__PORT=8080
+WEBUI_ACCESS_TOKEN=<choose-a-long-random-token>
+```
+
+Then uncomment the Web UI port example in `docker-compose.yml`:
+
+```yaml
+ports:
+  - "8080:${PRINT_BUDDY__WEBUI__PORT:-8080}"
+```
+
+Recreate the container:
+
+```bash
+docker compose up -d
+```
+
+On startup, the supervisor's Web UI gate reads the resolved configuration. It starts `python3 -m print_buddy.webui` only when the Web UI is enabled and a port is set. If the configuration cannot be resolved, the gate stops the container rather than guessing. If the Web UI is enabled on a non-loopback host without its access-token secret, the server child refuses to start and the container stops — that visible failure is deliberate.
+
+The Web UI can also be enabled in the selected Docker YAML or TOML file (`webui` in `config/docker.yaml`, or `[webui]` in `config/docker.toml`). Environment values override the file, so an environment setting left at the Compose default can be the reason a file change appears to have no effect; the configuration page marks those fields as environment-overridden.
+
+## Enable it on Unraid
+
+In the in-repo Unraid template:
+
+1. Set **Web UI** (`PRINT_BUDDY__WEBUI__ENABLED`) to `true`.
+2. Leave **Web UI bind host** at the template default `0.0.0.0` when the page must be reachable through the port mapping.
+3. Keep **Web UI port setting** (`PRINT_BUDDY__WEBUI__PORT`) and the **Web UI port** mapping matched; the template uses `8080` for both.
+4. Set the masked **Web UI access token** (`WEBUI_ACCESS_TOKEN`) to a long random value.
+5. Apply/restart the container.
+
+The template's **WebUI** link points at the mapped port and the status page. The port mapping exists even while the Web UI is disabled; with the Web UI off, nothing answers on it.
+
+The published Community Applications template is separate from the in-repo template and follows the normal release-time sync; do not treat this guide as proof that a published template has already picked up a source change.
+
+## Access token and browser access
+
+The token's value is a secret held only in the environment variable named by `webui.access_token_env`. The default name is `WEBUI_ACCESS_TOKEN`.
+
+- **Loopback bind** (`127.0.0.1`, another loopback address, `::1`, or `localhost`): the token is optional. If the named environment variable is set, the token is still required for requests.
+- **Any other bind host:** the token is required. If it is empty, the server refuses to start.
+- Requests that need the access token send it as the `X-WebUI-Token` header. For example:
+
+  ```bash
+  curl -H "X-WebUI-Token: $WEBUI_ACCESS_TOKEN" http://127.0.0.1:8080/api/status
+  ```
+
+- A missing or wrong header returns `401` JSON with `missing or wrong X-WebUI-Token`.
+
+There is no login form, account, cookie session, or HTTPS listener in the Web UI server. A normal browser cannot add a custom `X-WebUI-Token` header to an address-bar request, so a token-protected instance answers an ordinary browser request with the `401` response above; the Unraid WebUI link supplies the address, not the header. Use a client that can set the header, or keep the server on loopback and use it from that host. Do not remove the token from a LAN-reachable bind just to make a page load.
+
+Configuration form posts have a second, narrower credential: the server generates a form token when it starts, keeps it only in memory, and embeds it as the `_csrf` hidden field. A `POST` is accepted with either the `X-WebUI-Token` header or that form token. The form token is not the access token and does not authorize `GET` requests. On loopback with no access token configured, the form token is still required for posts, so another page in the operator's browser cannot silently submit configuration changes.
+
+Keep the Web UI on a trusted LAN or reach it over a VPN. Never forward its port from a router or expose it directly to the public internet.
+
+## Use the configuration page
+
+Open `/config`, or follow the **configuration page** link from the status page. The form is built from the Web UI field catalog and is grouped as:
+
+- Printer
+- Platform and chat
+- Services
+- Timelapse
+- Images and camera watch
+- Slicing and delivery
+- Logging
+- Web UI
+
+Pickers appear wherever the setting has a defined choice set — for example the printer registry, bot mode and platform, slicer and delivery methods offered by the configured printer's vendor, timezone, log level and format, and the timelapse and camera type pickers. Toggles are checkboxes. Numbers use bounded numeric inputs; genuinely free values such as IDs, hosts and URLs remain text inputs and are checked by the same settings validators Print Buddy uses at startup.
+
+The two type pickers are explicit settings, not page-only choices. **Timelapse mode** is `rendered` (the printer renders it with moonraker-timelapse), `container` (Print Buddy captures and encodes it in the container), or `off`; an empty file value derives `rendered` when a Moonraker URL is configured, otherwise `off`. **Camera source** is `auto` (follow the configured printer vendor's rule), `moonraker`, `bambu`, `go2rtc`, or `none`.
+
+Every field shows its effective value and a provenance badge:
+
+| Badge | Meaning |
+|---|---|
+| `model default` | Supplied by the selected printer model's defaults |
+| `home config` | Supplied by `config/home.yaml` or its legacy TOML fallback |
+| `settings file` | Supplied by the selected settings file |
+| `environment override` | Supplied by an environment variable |
+| `default` | Supplied by settings validation when no layer names the key |
+
+### Save flow
+
+1. Change one or more fields and choose **Preview changes**. This sends `POST /config/preview`; it writes nothing.
+2. Conversion errors — for example a non-number in a numeric field — return the form with the error beside that field.
+3. If the values convert, the change set is validated through the real settings loader on a throwaway copy of the settings file. A refusal returns the form with the loader's message beside the field that fails on its own, or as a general error when the failure belongs to the combination. The real file stays byte-identical and no backup is made.
+4. A valid preview shows the exact setting, current value and new value for every change. If nothing differs, the form says so instead of showing an empty preview.
+5. Choose **Save changes** only from that preview. It sends the confirmation form to `POST /config`; a direct save without the preview confirmation is refused.
+6. The write is validated again, then landed atomically. When an existing settings file is replaced, the previous file is kept beside it as `<settings-file>.bak-YYYYMMDD-HHMMSS` (with a numeric suffix if that name is already used).
+7. The result page lists the exact `section.key` pairs that changed, or says that the file already held the submitted values.
+
+The preview form carries the parsed state forward as hidden inputs, and the confirmation re-parses exactly the fields the preview named. That preserves details such as an unchecked toggle or an emptied multi-select instead of treating their absence as “not part of this save.”
+
+### Environment overrides stay locked
+
+A field whose effective value comes from the environment renders disabled and is labelled as overridden. It is skipped when the form is parsed — even a hand-crafted submission naming it changes nothing. To change that setting, change or unset the `PRINT_BUDDY__SECTION__KEY` variable (or its supported legacy name), then restart Print Buddy. The Web UI never shadow-writes an env-overridden value into the file merely to make the file look complete.
+
+### Restart required
+
+Every configuration change needs a restart of the process or container that uses it. Settings are read once at process start; the result page says **Restart required** and never claims a change was applied live. This includes changes to the Web UI's own `enabled`, `host` and `port`: the already-running server does not rebind, stop, or pick up a new access-token environment until it is restarted.
+
+### Comments and file shape
+
+A save rewrites the settings file from its parsed mappings. Comments in a hand-edited file are **not guaranteed to survive**, and list or table values outside the catalog are preserved as parsed data rather than as their original text. The page states this before saving. Keep a separate copy when the comments in a hand-maintained file matter.
+
+If the selected settings file is a legacy TOML file, the Web UI refuses to rewrite it as YAML. Point `PRINT_BUDDY_CONFIG` at a YAML file, or edit the TOML file by hand.
+
+## What the Web UI cannot do
+
+- It cannot control a printer: no print, pause, resume, cancel, movement, heating, macro, or job-management actions.
+- It cannot display, accept, or write secret values. Bot tokens, API keys, passwords, access codes and the Web UI token itself stay in the environment. Settings that merely name an environment variable, such as `webui.access_token_env`, are not picker fields.
+- It cannot edit the environment, the home configuration, or any layer other than the selected settings file.
+- It cannot edit settings outside the catalog. File-only tables and lists such as `material_temps` and `nozzle_temp_offsets` remain YAML/TOML edits; `delivery.methods` is in the catalog because it has a vendor-defined picker.
+- It does not replace Discord, Telegram, Matrix, or the CLI setup wizard. Those surfaces and the Web UI work over the same settings; see [guided setup and debugging](GUIDED-SETUP-DEBUGGING.md) and [YAML configuration](CONFIGURATION-YAML.md).
+- The timelapse archive `ssh_key` field is only a filesystem path. It never contains or uploads private-key contents.
+
+## Troubleshooting
+
+| Symptom | Check |
+|---|---|
+| `webui: not started: [webui] enabled is false` | Set `webui.enabled` to `true` in the effective settings file, or `PRINT_BUDDY__WEBUI__ENABLED=true`; then restart the process/container. |
+| `webui: not started: [webui] port is 0 (unset)` | Port `0` means no port has been chosen. Set `webui.port` (the deployment examples use `8080`), then restart. |
+| `webui: refusing to bind ... a non-loopback bind requires an access token` | Set the secret named by `webui.access_token_env` (default `WEBUI_ACCESS_TOKEN`) in the server/container environment, or bind `127.0.0.1`. In Docker, an enabled non-loopback Web UI without the token stops the container by design. |
+| `401` with `missing or wrong X-WebUI-Token` | Send the exact token value in the `X-WebUI-Token` header. An ordinary browser address-bar request cannot add that header; see [Access token and browser access](#access-token-and-browser-access). |
+| `403` with `missing or wrong form token` on a configuration post | Load `/config` from the running server and submit its own form, so the current in-memory `_csrf` value is included. Restarting the server creates a new form token, so an old page must be reloaded. |
+| The Docker container stops after enabling the Web UI | Read the container log for the gate or server refusal. The usual causes are an unresolved settings file, a non-loopback bind with no `WEBUI_ACCESS_TOKEN`, or a port conflict. Fix the named setting and restart. |
+| The Web UI healthcheck row says `enabled but no port chosen; not started` | This is an `ok` row, not a serving Web UI. Choose a port and restart if you intended to run it. |
+| The Web UI healthcheck row says `disabled` | This is an `ok` skip. Nothing is listening, as configured. |
+| The status page says **attention needed**, but `/healthz` is `200` | They answer different questions: `/healthz` is only the bot heartbeat, while the status page also includes the listener, Spoolman and doctor rows. Read the failing row on `/` or `/api/status`. |
+| `/healthz` is `503` | The Web UI answered, but the bot heartbeat is missing, stale, invalid, disconnected, or otherwise fails the bot-health evaluation. Check the bot row and the standalone bot process. |
+| A field cannot be edited | Its badge says `environment override`, or the value is not in the catalog. Change the environment variable and restart, or edit the YAML directly for an uncatalogued setting. |
+| A save is refused and the file did not change | Read the error beside the field or at the top of the form. Invalid combinations are rejected before the atomic write; the file remains byte-identical. Correct the value and preview again. |
+| Saving worked, but behaviour did not change | Restart the Print Buddy process or container that consumes the setting. A running process keeps the settings it loaded at start. |
+| A legacy TOML save is refused | The Web UI writes YAML only. Select a YAML settings file with `PRINT_BUDDY_CONFIG`, or keep editing the TOML file manually. |

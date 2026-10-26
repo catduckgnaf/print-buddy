@@ -77,6 +77,77 @@ Printer event posts (started, complete, failed, timelapse) come from the
 listener, unchanged: in standalone mode with `platform: telegram` it
 posts through the Telegram Bot API instead of Discord REST.
 
+## Pairing with moonraker-telegram-bot (ZMod companion)
+
+If your printer runs ZMod (an AD5X, say), you may already run
+[moonraker-telegram-bot](https://github.com/nlef/moonraker-telegram-bot)
+by nlef. It is the bot ZMod itself uses — on a separate host, in place
+of moonraker-timelapse — and the two bots are complements: they run
+side by side against the same Moonraker, each with its own token.
+
+| Job | Which bot |
+| --- | --- |
+| Prepare a print: link or file in, colour/fit questions, slicing, and a confirmation before anything prints | Print Buddy |
+| Operate the running printer: status, pause, resume, cancel, emergency stop, macro buttons, power devices | moonraker-telegram-bot |
+| Push notifications with camera photos while a print runs | Either — pick one notifier (below) |
+| A rendered timelapse video in the chat | moonraker-telegram-bot (frames by time interval or Z-height, rendered at 15 fps by default) |
+
+Boundaries, stated plainly:
+
+- moonraker-telegram-bot is a **separate upstream project**. Print
+  Buddy does not bundle it, does not require it, and does not support
+  it — report its problems to its own tracker. It works with
+  **Moonraker printers only**.
+- Its control commands **act on the printer as soon as they are
+  tapped**. Only the commands in its `[telegram_ui]
+  require_confirmation` list ask first (by default that list covers
+  cancel, emergency stop, shutdown, restarts and power; pause, resume
+  and status are not in it). That is a different safety model from
+  Print Buddy's, where a prepared job prints only after an explicit
+  confirmation. Decide on purpose which bot may control your printer.
+- Print Buddy's Telegram bot stays a prep bot: it has no live printer
+  control commands, and pairing changes nothing about that.
+
+### Two bots, two tokens — never share one
+
+Create **two** bots with BotFather and give each program its own
+token. A Telegram bot token supports exactly one `getUpdates` poller;
+if both programs poll the same token they steal each other's updates
+and both misbehave. Print Buddy's token goes in `TELEGRAM_BOT_TOKEN`
+(or the `[telegram] token_env` you configured), the companion's in the
+`bot_token` of its own `telegram.conf`. Both bots can sit in the same
+Telegram chat.
+
+### Pick one notifier
+
+Both bots can post print-started, progress and print-finished messages,
+so an unconfigured pair posts everything twice. Choose one notifier and
+silence the other:
+
+- **The companion notifies; Print Buddy stays quiet.** Do not run Print
+  Buddy's listener: in a standalone install, start
+  `print-buddy-bot.service` but not `print-buddy-listener.service`.
+  Print Buddy has no per-message notification switch — the `[listener]`
+  settings only set timing intervals, and every event post (started,
+  complete, failed, timelapse) plus the camera-watch alerts and spool
+  questions comes from that one process, so those go quiet too. In
+  Docker the listener is part of the supervised container, so silence
+  the companion instead (next bullet).
+- **Print Buddy notifies; the companion stays quiet.** Remove the whole
+  `[progress_notification]` section from the companion's
+  `telegram.conf` (or never add it). Its notifier is enabled by that
+  section existing at all; without it, the bot sends no print-started,
+  progress or print-finished posts. Its on-demand commands (`/status`
+  and the buttons) and its timelapse still work, and it still reports
+  printer errors.
+
+Companion-side sources, checked 2026-10-26: the upstream
+[sample-config wiki page](https://github.com/nlef/moonraker-telegram-bot/wiki/Sample-config)
+(`[progress_notification]`, `[timelapse]`, `[telegram_ui]
+require_confirmation`) and the project's `bot/configuration.py` /
+`bot/notifications.py`, where the notifier's enabled flag is exactly
+"the `[progress_notification]` section is present".
+
 ## How Telegram differs from Discord here
 
 - **Buttons**: prompts are inline keyboards. Answering edits the message

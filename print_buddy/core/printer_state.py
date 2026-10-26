@@ -126,7 +126,8 @@ def _material_temperature_contract(state):
 
 def load():
     with open(STATE) as f:
-        return json.load(f)
+        state = json.load(f)
+    return state
 
 
 def save(st):
@@ -348,7 +349,7 @@ def check(st=None):
         if facts["moonraker_active_spool"] != st["spool"]["spoolman_id"]:
             facts["active_spool_mismatch"] = f"Moonraker active spool {facts['moonraker_active_spool']} != state #{st['spool']['spoolman_id']}"
     except Exception as e:
-        probs.append(f"Moonraker spoolman status failed: {e}")
+        warnings.append(f"Moonraker active spool lookup failed: {e}")
     _check_spoolman(st, warnings, facts)
     try:
         if not native:

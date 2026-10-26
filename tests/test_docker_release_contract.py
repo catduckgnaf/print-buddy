@@ -32,6 +32,36 @@ class DockerReleaseContract(unittest.TestCase):
             with self.subTest(process=process):
                 self.assertIn(process, supervisor)
 
+    def test_runtime_installs_tools_required_by_shipped_shell_wrappers(self):
+        """#236: moonrakerctl uploads with curl and parses with jq; missing tools broke native prints.
+
+        The shipped shell wrappers declare their non-base external tools here. Every
+        declared tool must actually be used by its wrapper (so the declaration cannot
+        go stale) and must be installed by the runtime stage (so a wrapper gaining a
+        new tool dependency without a Dockerfile update fails this test). Tools the
+        wrappers use from the Debian base system (bash, coreutils, mawk as awk, tar,
+        gzip and util-linux as flock) and python3/xvfb-run, which the runtime stage
+        installs for other reasons, are not repeated here.
+        """
+        wrappers = {
+            "bin/moonrakerctl": {"curl", "jq"},
+            # Sourced by moonrakerctl for mesh-run.
+            "bin/mesh-routine.sh": {"jq"},
+            "bin/restart_gateway_after_print.sh": {"curl"},
+        }
+        dockerfile = (ROOT / "Dockerfile").read_text()
+        runtime = dockerfile.split("AS runtime", 1)[1]
+        install = re.search(r"apt-get install -y --no-install-recommends\s+(.*?)\s*&& rm -rf",
+                            runtime, re.S)
+        self.assertIsNotNone(install)
+        packages = set(install.group(1).replace("\\", " ").split())
+        for wrapper, tools in wrappers.items():
+            text = (ROOT / wrapper).read_text()
+            for tool in sorted(tools):
+                with self.subTest(wrapper=wrapper, tool=tool):
+                    self.assertRegex(text, rf"\b{tool}\b")
+                    self.assertIn(tool, packages)
+
     def test_docker_examples_use_source_installed_slicer(self):
         for suffix in ("yaml", "toml"):
             with self.subTest(format=suffix):

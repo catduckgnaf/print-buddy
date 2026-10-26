@@ -180,9 +180,11 @@ def test_verify_gcode_proceeds_and_warns_when_spoolman_down(monkeypatch, tmp_pat
         gcode = tmp_path / "plate_1.gcode"
         gcode.write_text(GCODE)
         assert model_job.verify_gcode(gcode) is True
-    out = capsys.readouterr().out
-    assert "WARNING: Spoolman lookup failed" in out
-    assert "G-CODE OK" in out
+    captured = capsys.readouterr()
+    # Warning channel unified with #240 during the merge of origin/main:
+    # check warnings are reported on stderr, the G-code verdict stays on stdout.
+    assert "WARNING: Spoolman lookup failed" in captured.err
+    assert "G-CODE OK" in captured.out
 
 
 # --------------------------------------------------------------------- orca slot check

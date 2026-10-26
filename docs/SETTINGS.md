@@ -71,6 +71,7 @@ Schema, validation limits and TOML migration: [CONFIGURATION-YAML.md](CONFIGURAT
 | `discord.token_env` | `PRINT_BUDDY__DISCORD__TOKEN_ENV` | `DISCORD_BOT_TOKEN` | Name of the environment variable holding the bot token |
 | `discord.allowed_user_ids` | `PRINT_BUDDY__DISCORD__ALLOWED_USER_IDS` | empty | Discord user IDs allowed to use the standalone bot, comma or space separated |
 | `bot.mode` | `PRINT_BUDDY__BOT__MODE` | `hermes`; `standalone` in the image | `hermes` or `standalone`; the image and Compose set `standalone` |
+| `bot.platform` | `PRINT_BUDDY__BOT__PLATFORM` | `discord` | Chat platform for the standalone bot (#164); only `discord` is implemented so far, `telegram` and `matrix` land in later stages |
 | `bot.health_port` | `PRINT_BUDDY__BOT__HEALTH_PORT` | `0` | Serve `GET /healthz` on this port; `0` turns the HTTP check off |
 | `bot.health_stale_s` | `PRINT_BUDDY__BOT__HEALTH_STALE_S` | `120` | Bot health fails when its heartbeat is older than this |
 | `bot.sync_commands` | `PRINT_BUDDY__BOT__SYNC_COMMANDS` | `true` | Register the slash commands with Discord at startup |

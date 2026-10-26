@@ -23,6 +23,7 @@ def without_added(data):
     data.pop("flashforge_stock", None)  # added for the stock LAN vendor, after capture
     for key in ("lan_host", "lan_serial", "lan_access_code_env"):  # added by #187, after capture
         data.get("bambu", {}).pop(key, None)
+    data.get("bot", {}).pop("platform", None)  # added by #164, after the golden files were captured
     data.get("slicer", {}).pop("flash_studio_path", None)  # added by the Flash Studio config, after capture
     if data.get("slicer") == {}:
         data.pop("slicer", None)

@@ -1,3 +1,8 @@
+# More than one printer (#257 Stage 2): a config file may declare a roster
+# instead of the single [printer] shape below — `printers:` here, [[printers]]
+# in TOML — one entry per printer with its own connection keys and chat_id.
+# The list is file-only; one entry value can be overridden with
+# PRINT_BUDDY__PRINTERS__<ID>__<KEY>. See docs/SETTINGS.md, "Printers list".
 printer:
   model: flashforge.ad5x
 nozzle_temp_offsets:

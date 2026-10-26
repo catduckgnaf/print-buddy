@@ -1,5 +1,25 @@
 # Docker defaults for Print Buddy. Override with PRINT_BUDDY__SECTION__KEY.
 # Legacy config/docker.toml remains supported when explicitly selected.
+#
+# More than one printer (#257 Stage 2): declare a roster in YOUR mounted config
+# file instead of the single-printer sections above — the list is file-only.
+# Copy this file, delete the per-printer sections (printer/services URLs/bambu/
+# prusa/elegoo_sdcp/flashforge_stock values), and write entries like:
+#
+# printers:
+#   - id: garage-a1            # slug; names its state folder under state/printers/
+#     name: Garage A1
+#     model: bambulab.a1
+#     chat_id: "<a1-channel-id>"   # its own channel; empty = the global chat
+#     lan_host: "<a1-lan-ip>"
+#     lan_serial: "<a1-serial>"
+#   - id: workshop-ad5x
+#     name: Workshop AD5X
+#     model: flashforge.ad5x
+#     moonraker_url: "http://<ad5x-lan-ip>:7125"
+#
+# One entry value can be overridden with PRINT_BUDDY__PRINTERS__<ID>__<KEY>.
+# Full reference: docs/SETTINGS.md, "Printers list".
 orca:
   # Source-installed binary; requires WITH_ORCA=true at image build time
   command:

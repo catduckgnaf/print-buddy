@@ -212,11 +212,47 @@ def snapshot(data=None, *, environ=None, heartbeat=READ_HEARTBEAT, probe=None, c
         },
         "bot": bot,
         "listener": listener,
+        "printers": _roster_section(data),
         "spoolman": spoolman,
         "services": services,
         "doctor": rows,
         "ok": ok,
     }
+
+
+def _roster_section(data):
+    """The printer roster, read-only (#337).
+
+    Stage 2e decision, recorded in docs/WEBUI.md: the catalog keeps addressing
+    global fields only in v1, so the status page lists the roster (id, name,
+    model, vendor, connection and non-secret endpoints) but nothing here edits
+    it — roster edits stay in the config file / setup wizard. Secret material
+    is excluded by construction: no ``*_env`` variable names and no serial or
+    access-code values, matching the module docstring's rule.
+    """
+    rows = []
+    try:
+        entries = settings.printers(data)
+        default_id = settings.default_printer_id(data)
+    except Exception:  # a broken roster never breaks the status page
+        return rows
+    for entry in entries:
+        view = settings.view_for(entry["id"], data)
+        row = {
+            "id": entry["id"],
+            "name": entry.get("name") or "",
+            "model": entry.get("model") or "",
+            "vendor": view["printer"].get("vendor") or "",
+            "connection": healthcheck.listener_connection(view),
+            "chat_id": entry.get("chat_id") or "",
+            "default": entry["id"] == default_id,
+        }
+        for key in ("moonraker_url", "octoprint_url", "camera_snapshot_url",
+                    "lan_host", "link_host", "host"):
+            if entry.get(key):
+                row[key] = entry[key]
+        rows.append(row)
+    return rows
 
 
 def snapshot_json(**kwargs):

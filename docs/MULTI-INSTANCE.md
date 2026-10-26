@@ -1,20 +1,19 @@
-# More than one printer: run one Print Buddy instance per printer
+# More than one printer: one instance per printer (the isolation alternative)
 
 [Documentation home](README.md) · [Docker](DOCKER.md) · Issue [#257](https://github.com/catduckgnaf/print-buddy/issues/257)
 
-Print Buddy is **one printer per instance** today: `[printer] model` is singular, and the
-hardware record, launch lease, job state, listener and approval flow all assume exactly one
-machine. True multi-printer support in a single instance is Stage 2 of
-[#257](https://github.com/catduckgnaf/print-buddy/issues/257) and is not implemented; its
-design — a `[[printers]]` roster, channel-per-printer routing, per-printer state and
-leases — is written up in [Multi-printer design](MULTI-PRINTER-DESIGN.md). When it lands,
-this recipe remains the alternative deployment for households that want hard process
-isolation between printers.
+Since Stage 2 of [#257](https://github.com/catduckgnaf/print-buddy/issues/257) shipped, **one
+Print Buddy instance serves a whole roster of printers**: a `[[printers]]` list in the config
+file, channel-per-printer routing, per-printer state and leases, and one listener per
+Moonraker printer — see [SETTINGS.md — Printers list](SETTINGS.md#printers-list) and the
+[Multi-printer design](MULTI-PRINTER-DESIGN.md). For most households that is the answer, and
+it is the only setup this page is *not* about.
 
-The supported pattern for a mixed household — a Bambu Lab next to a Klipper machine, say —
-is **one instance per printer**. This page is that recipe (Stage 0 of #257). Each instance is
-an ordinary single-printer install; what matters is what must be kept separate, and the one
-thing that is designed to be shared: Spoolman.
+This page is the alternative that remains: **one instance per printer**, for households
+that want hard process isolation between printers — separate processes, separate data
+directories, separately revocable bot tokens, and a failure in one instance that cannot
+touch another. Each instance is an ordinary single-printer install; what matters is what
+must be kept separate, and the one thing that is designed to be shared: Spoolman.
 
 ## The two rules
 
@@ -97,8 +96,10 @@ However you share it:
 
 ## A worked example: a Bambu A1 next to a Flashforge AD5X
 
-The motivating mixed household, end to end. Two Compose stacks from this repository's
-Compose file, one standalone Spoolman (Option A above), one Discord server:
+The motivating mixed household, end to end — the same pair the roster shape serves in
+[the design walkthrough](MULTI-PRINTER-DESIGN.md), here as two instances. Two Compose
+stacks from this repository's Compose file, one standalone Spoolman (Option A above),
+one Discord server:
 
 | | Instance A | Instance B |
 | --- | --- | --- |
@@ -146,10 +147,13 @@ immediately instead of during a print approval.
 
 ## What this does not give you
 
-- One bot serving two printers, cross-printer job routing, or a combined status view —
-  that is #257 Stage 2, designed in [Multi-printer design](MULTI-PRINTER-DESIGN.md) and
-  tracked by the stage issues linked from it.
+- One bot serving two printers or a combined status view — that is exactly what the
+  roster in one instance gives you (per-printer listeners, a combined health report and
+  the roster on the status page); this recipe trades it for process isolation.
+- Cross-printer job routing: deliberately not a feature in either shape. A channel is
+  bound to one printer and approvals in a channel can never start another printer.
 - Shared job history or records: each instance keeps its own archive and records, by
-  design (rule 1).
+  design (rule 1). (In the roster shape, history lives side by side under
+  `state/printers/<id>/` in the one instance.)
 - Any change to print safety: every instance keeps its own confirmation, readiness,
   lease and bed-clear gates for its own printer, unchanged.

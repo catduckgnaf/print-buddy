@@ -1,0 +1,129 @@
+"""Setup wizard (#337): the add-a-printer loop and the config round-trip rule.
+
+Driven entirely from --answers dictionaries, the way an unattended install
+runs it. The wizard's one-printer output must stay the legacy shape; two
+printers must come out as a [[printers]] roster that the real settings
+loader resolves; and merge_config must never rewrite a file it cannot
+parse and re-emit faithfully — the refusal leaves the file byte-identical.
+"""
+import io
+from pathlib import Path
+
+import pytest
+import yaml
+
+from print_buddy import settings
+from print_buddy.bot import routing
+from print_buddy.setup_wizard import Wizard, build_plan, merge_config
+
+
+def _wizard(answers):
+    return Wizard(answers=answers, input_stream=io.StringIO(""), output=io.StringIO())
+
+
+ONE_PRINTER = {
+    "brand": "flashforge", "model": "flashforge.ad5x",
+    "has_printer_software": "yes", "moonraker_url": "http://192.168.1.61:7125",
+    "nozzle_diameter_mm": "0.4", "nozzle_type": "hardened_steel", "material": "PLA",
+    "slicer": "orca", "install_slicer": "no",
+    "spoolman": "existing", "spoolman_url": "http://spoolman.home:7912",
+    "camera": "no",
+    "have_bot": "yes", "discord_app_id": "", "discord_chat_id": "100000000000000001",
+    "discord_user_ids": "200000000000000002", "bot_name": "Print Buddy",
+    "discord_bot_token": "tok", "hermes": "no",
+    "add_printer_2": "no",
+}
+
+TWO_PRINTERS = {
+    **ONE_PRINTER,
+    "add_printer_2": "yes",
+    "printer1_id": "workshop-ad5x", "printer1_chat_id": "",
+    "p2_brand": "bambulab", "p2_model": "bambulab.a1",
+    "p2_bambu_lan": "yes", "p2_lan_host": "192.168.1.60", "p2_lan_serial": "00M00A000000000",
+    "p2_bambu_lan_password": "code2", "p2_nozzle_type": "stainless_steel",
+    "p2_id": "garage-a1", "p2_chat_id": "100000000000000003", "p2_camera": "no",
+    "add_printer_3": "no",
+}
+
+
+def test_one_printer_plan_keeps_the_legacy_shape():
+    plan = build_plan(_wizard(ONE_PRINTER), hermes_found=False)
+    assert plan["printers"] == []
+    config = plan["config"]
+    assert "printers" not in config
+    assert config["printer"]["model"] == "flashforge.ad5x"
+    assert config["services"]["moonraker_url"] == "http://192.168.1.61:7125"
+
+
+def test_two_printer_plan_writes_a_resolvable_roster(tmp_path):
+    plan = build_plan(_wizard(TWO_PRINTERS), hermes_found=False)
+    config = plan["config"]
+    assert "printer" not in config and "bambu" not in config
+    first, second = config["printers"]
+    assert first == {"id": "workshop-ad5x", "name": "Flashforge AD5X (ZMod)",
+                     "model": "flashforge.ad5x",
+                     "moonraker_url": "http://192.168.1.61:7125",
+                     "nozzle_type": "hardened_steel"}
+    assert second["id"] == "garage-a1" and second["chat_id"] == "100000000000000003"
+    assert second["lan_access_code_env"] == "BAMBU_LAN_PASSWORD_GARAGE_A1"
+    # Spoolman stays the one global service; per-printer secrets are per-printer.
+    assert config["services"] == {"spoolman_url": "http://spoolman.home:7912"}
+    assert plan["secrets"]["BAMBU_LAN_PASSWORD_GARAGE_A1"] == "code2"
+    assert "BAMBU_LAN_PASSWORD" not in plan["secrets"]
+    assert [row["id"] for row in plan["printers"]] == ["workshop-ad5x", "garage-a1"]
+
+    local = tmp_path / "local.yaml"
+    assert merge_config(local, config, _wizard({}))
+    data = settings.load(local=local, environ={})
+    assert [p["id"] for p in settings.printers(data)] == ["workshop-ad5x", "garage-a1"]
+    assert settings.default_printer_id(data) == "workshop-ad5x"
+    assert routing.channel_map(data, "discord") == {
+        "100000000000000001": "workshop-ad5x", "100000000000000003": "garage-a1"}
+    assert routing.printer_for_chat(data, "discord", "100000000000000001") == "workshop-ad5x"
+
+
+def test_duplicate_printer_id_is_rejected_by_the_answers_gate():
+    bad = {**TWO_PRINTERS, "p2_id": "workshop-ad5x"}
+    with pytest.raises(SystemExit):  # Wizard.ask fails the run on an invalid recorded answer
+        build_plan(_wizard(bad), hermes_found=False)
+
+
+def test_two_printers_may_not_both_ride_the_main_channel():
+    # The first printer falls back to the main channel, so the second one must
+    # claim its own — two entries claiming one channel are refused at load.
+    bad = {**TWO_PRINTERS, "p2_chat_id": ""}
+    with pytest.raises(SystemExit):
+        build_plan(_wizard(bad), hermes_found=False)
+
+
+# ---------------------------------------------------------------------- the round-trip rule
+
+def test_merge_writes_a_fresh_file(tmp_path):
+    target = tmp_path / "local.yaml"
+    assert merge_config(target, {"bot": {"mode": "standalone"}}, _wizard({}))
+    assert yaml.safe_load(target.read_text()) == {"bot": {"mode": "standalone"}}
+
+
+def test_merge_keeps_existing_values_and_adds_new_ones(tmp_path):
+    target = tmp_path / "local.yaml"
+    target.write_text("bot:\n  mode: hermes\n")
+    assert merge_config(target, {"bot": {"mode": "standalone"}, "discord": {"chat_id": "1"}},
+                        _wizard({"merge_config": "yes"}))  # the merge consent defaults to no
+    merged = yaml.safe_load(target.read_text())
+    assert merged["bot"]["mode"] == "hermes"  # existing keys win
+    assert merged["discord"]["chat_id"] == "1"
+
+
+@pytest.mark.parametrize("content", [
+    "printer: [unclosed\n",                                   # does not parse
+    "printer:\n  model: flashforge.ad5x\n  model: bambulab.a1\n",  # duplicate key
+    "- just\n- a\n- list\n",                                   # parses, but not a mapping
+])
+def test_merge_refuses_a_file_it_cannot_round_trip(tmp_path, content):
+    target = tmp_path / "local.yaml"
+    target.write_text(content)
+    out = io.StringIO()
+    w = Wizard(answers={}, input_stream=io.StringIO(""), output=out)
+    assert merge_config(target, {"bot": {"mode": "standalone"}}, w) is False
+    assert target.read_text() == content  # byte-for-byte unchanged
+    assert "left unchanged" in out.getvalue()

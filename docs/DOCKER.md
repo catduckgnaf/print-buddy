@@ -32,7 +32,27 @@ For an existing external instance set `PRINT_BUDDY__SERVICES__SPOOLMAN_URL=http:
 
 ## More than one printer
 
-One container serves one printer. For a second printer, run a second instance — its own Compose project, `.env`, config and `PRINT_BUDDY_DATA` directory, and its own chat channel — with one Spoolman shared between them. The full recipe, including the Unraid form and the two never-share rules (state directory, approval channel), is [More than one printer](MULTI-INSTANCE.md) (#257 Stage 0).
+One container serves the whole roster (#257 Stage 2). Declare every printer in the mounted config file with a `[[printers]]` list — the list itself is file-only, because list values cannot come from environment variables:
+
+```toml
+[[printers]]
+id = "garage-a1"
+model = "bambulab.a1"
+chat_id = "<a1-channel-id>"
+lan_host = "<a1-lan-ip>"
+lan_serial = "<a1-serial>"
+
+[[printers]]
+id = "workshop-ad5x"
+model = "flashforge.ad5x"
+moonraker_url = "http://<ad5x-lan-ip>:7125"
+```
+
+The first entry is the default printer and is named wherever output talks about "the printer". Each printer keeps its own state folder and job queue under `state/printers/<id>/` inside the one data directory, gets its own listener child under the supervisor (a dead listener never takes the bot or a sibling listener down), and is bound to its own chat channel — an approval in a channel can only start that channel's printer. The healthcheck reports every listener, and the Web UI status page lists the roster read-only. Spoolman stays one shared inventory for all printers. The full roster reference is [SETTINGS.md — Printers list](SETTINGS.md#printers-list).
+
+On Unraid the template has no per-printer variables (the roster is file-only), so mount a config file: copy `config/docker.yaml`, replace its `[printer]` section with your `[[printers]]` list, mount the file and point `PRINT_BUDDY_CONFIG` at it. Any single value inside a declared entry can still be overridden from the environment with the indexed spelling `PRINT_BUDDY__PRINTERS__<ID>__<KEY>` — the entry's `id` uppercased in the `<ID>` position, the key in the `<KEY>` position.
+
+Run a second *instance* instead only when you want hard process isolation between printers; that remains an alternative, not the only answer — see [More than one printer](MULTI-INSTANCE.md).
 
 ## Camera watch (visual_watch)
 

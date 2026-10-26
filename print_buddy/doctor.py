@@ -22,14 +22,21 @@ SERVICE_PATHS = {"moonraker_url": "/printer/info", "spoolman_url": "/api/v1/heal
 
 def check_settings(data):
     printer = data["printer"]
+    positions = (f"{printer['tool_count']} toolhead(s)" if printer.get("tool_count", 1) != 1
+                 else f"{printer['ifs_slots']} slot(s)")
     return (f"{printer['name']}, bed {printer['bed_mm'][0]:g}x{printer['bed_mm'][1]:g} mm, "
-                  f"{printer['ifs_slots']} slot(s), {printer['nozzle_diameter_mm']:g} mm nozzle")
+                  f"{positions}, {printer['nozzle_diameter_mm']:g} mm nozzle")
 
 
 def check_model(data):
     from . import printers
     adapter = printers.get(data["printer"]["model"], data)
-    kind = f"{adapter.slot_count} slots (multi-slot)" if adapter.multi_slot else "single extruder"
+    if adapter.multi_slot:
+        kind = f"{adapter.slot_count} slots (multi-slot)"
+    elif adapter.multi_tool:
+        kind = f"{adapter.tool_count} toolheads (multi-tool)"
+    else:
+        kind = "single extruder"
     return f"{adapter.key} ({adapter.label}), {kind}"
 
 

@@ -70,6 +70,9 @@ class PrinterEntry:
     filament_slots: int
     profile: str
     notes: str = ""
+    # Independent toolheads (a tool changer) when the model has them; 0 means the
+    # model's filament positions are its filament_slots (or a single extruder).
+    tools: int = 0
 
 
 @dataclass(frozen=True)
@@ -290,7 +293,7 @@ def load_registry(root=ROOT) -> Registry:
             connection=str(raw.get("connection", "")).strip(),
             kinematics=str(raw.get("kinematics", "")).strip(),
             bed_mm=(float(bed[0]), float(bed[1])), max_height_mm=float(raw.get("max_height_mm") or 0),
-            filament_slots=int(raw.get("filament_slots") or 0),
+            filament_slots=int(raw.get("filament_slots") or 0), tools=int(raw.get("tools") or 0),
             profile=str(raw.get("profile", "")).strip(), notes=str(raw.get("notes", "")).strip())
         where = f"printer {printer.key or '?'}"
         if printer.firmware_family not in (*FIRMWARES, "none"):

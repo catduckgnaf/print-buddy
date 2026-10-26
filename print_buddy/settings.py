@@ -556,6 +556,12 @@ def validate(data):
         # Occupancy is checked at print start; this is not a multicolor profile.
         if model.key != "flashforge_stock.ad5x" or data["printer"]["ifs_slots"] != 4:
             raise SettingsError(f"[printer] ifs_slots must be 1 for model {key!r} (single extruder)")
+    if "tool_count" in data["printer"]:
+        # Independent toolheads (a tool changer) are tools, not IFS slots: the count
+        # is only meaningful on a multi-tool model, where ifs_slots still stays 1.
+        data["printer"]["tool_count"] = _positive(data, "printer", "tool_count", int)
+        if data["printer"]["tool_count"] != 1 and not model.adapter.multi_tool:
+            raise SettingsError(f"[printer] tool_count must be 1 for model {key!r} (single tool)")
     _validate_vendor_choices(data, model)
     for key, default in (("start_macro", "PRINT_START"), ("end_macro", "PRINT_END")):
         macro = data["printer"].setdefault(key, default)

@@ -7,6 +7,8 @@ printer model inside it. The [printer] model key is "<vendor>.<printer>", the pa
     flashforge/ad5x.py       MODEL for "flashforge.ad5x"; adapter.py (ZMod adapter); zmod/ (AD5X-only code)
     flashforge/ad5m.py, ad5m_pro.py  MODELs for the single-extruder ZMod printers (no IFS);
                              adapter.py (ZmodSingleExtruderAdapter: ZMod start code, IFS off)
+    flashforge/creator5.py, creator5_pro.py  MODELs for the 4-toolhead ZMod printers;
+                             adapter.py (ZmodMultiToolAdapter: tools, not IFS slots)
     klipper/__init__.py      VENDOR: Moonraker, PRINT_START/PRINT_END macros, OrcaSlicer, .gcode
     klipper/generic.py       MODEL for "klipper.generic"; adapter.py (the stock Klipper adapter)
     sovol/__init__.py        VENDOR: the Klipper vendor profile under the Sovol name
@@ -58,6 +60,12 @@ Runtime decisions that follow the adapter (core/model_job, printer_state, orca_a
   - multi_slot False (generic/sovol): no IFS selection or spool-slot validation, no multicolor finalization,
     no native_startup/native_idle, no mapped-native launch; slicing refuses multicolor and multi-plate sources
     with MultiColorUnsupported (a REFUSED line).
+  - multi_tool True (flashforge.creator5, creator5_pro): ifs_slots stays 1, so every multi_slot gate above
+    stays off; the tools live at the adapter contract instead — normalize_tool_mapping accepts only the
+    identity tool -> toolhead map for T0..T{tool_count-1} and refuses anything else, readiness and status
+    are per-toolhead (extruder..extruder3, zmod_color.active_tool_id), and a job's G-code tool changes are
+    the sliced file's own T lines. The IFS-shaped colour-question seam in core still refuses a
+    multi-colour source that needs choices rather than guessing a toolhead for a colour.
   - has_native_screen False: no display_off/LOAD_ZOFFSET/Adventurer5M offset authority, no ZMod MD5, no stock
     /detail polling, no screen-cancel firmware restart, no mesh-profile readiness (the printer owns its mesh).
   - readiness (readiness_problems), the start request (moonraker_start_commands) and the multicolor refusal
@@ -250,6 +258,10 @@ class PrinterAdapter(ABC):
     """What call sites need from a printer model. Build with a settings dict (default: process settings)."""
 
     multi_slot: bool = False
+    # Independent toolheads (a tool changer), as opposed to one extruder fed by multi_slot
+    # IFS slots: tools are fixed positions (slicer tool i always prints with toolhead i),
+    # each with its own filament. [printer] tool_count names them; ifs_slots stays 1.
+    multi_tool: bool = False
     # ZMod-style native screen: display_off modes, saved/screen Z offset authority, MD5 gcode, stock /detail.
     has_native_screen: bool = False
     # (xmin, ymin, xmax, ymax) when vendor start/end G-code moves off the bed; None holds every move to the bed.

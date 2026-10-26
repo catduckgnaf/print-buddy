@@ -24,6 +24,7 @@ one place, for lookups, troubleshooting and humans browsing the repository.
 | `kinematics` | Motion system, or `unspecified` for the generic placeholder profiles. |
 | `bed_mm`, `max_height_mm` | Usable print area and height from the model's defaults. |
 | `filament_slots` | Independent filament paths the profile drives. |
+| `tools` | Independent toolheads (a tool changer) when the model has them; toolhead models record `tools` instead of `filament_slots`. |
 | `profile` | Path of the profile module that is the source of truth. |
 | `notes` | Quirks a troubleshooter should know before trusting the numbers. |
 

@@ -12,6 +12,8 @@ print_buddy/printers/
     ad5x.py              MODEL   flashforge.ad5x: 220 mm bed, 4-slot IFS, 0.25 to 0.8 mm nozzles
     ad5m.py              MODEL   flashforge.ad5m: 220 mm bed, single extruder (no IFS), 0.25 to 0.8 mm nozzles
     ad5m_pro.py          MODEL   flashforge.ad5m_pro: the AD5M geometry; enclosure, camera and filtration
+    creator5.py          MODEL   flashforge.creator5: 256 mm bed, 4 independent toolheads (tools, not IFS slots)
+    creator5_pro.py      MODEL   flashforge.creator5_pro: the Creator 5 toolheads; enclosure, chamber heat and filtration
   flashforge_stock/
     __init__.py          VENDOR  Flashforge stock: LAN HTTP on port 8898, slicer-owned start code, OrcaSlicer, .gcode
     ad5x.py              MODEL   flashforge_stock.ad5x: the AD5X bed, one tool, four IFS bays, no Moonraker.

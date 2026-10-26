@@ -53,6 +53,34 @@ profile = "print_buddy/printers/flashforge/ad5m_pro.py"
 notes = "Single extruder, no IFS. The Pro adds the enclosure, camera and air filtration over the AD5M; print geometry is identical."
 
 [[printer]]
+key = "flashforge.creator5"
+label = "Flashforge Creator 5 (ZMod)"
+vendor = "flashforge"
+firmware = "ZMod Klipper"
+firmware_family = "zmod"
+connection = "moonraker"
+kinematics = "CoreXY"
+bed_mm = [256.0, 256.0]
+max_height_mm = 256.0
+tools = 4
+profile = "print_buddy/printers/flashforge/creator5.py"
+notes = "Four independent toolheads (a tool changer, T0-T3), not an IFS feeder: tools are recorded under tools, and there are no filament_slots. No active chamber heating. ZMod documents no Klipper 13 support on the Creator models. Print start is not verified on a live printer."
+
+[[printer]]
+key = "flashforge.creator5_pro"
+label = "Flashforge Creator 5 Pro (ZMod)"
+vendor = "flashforge"
+firmware = "ZMod Klipper"
+firmware_family = "zmod"
+connection = "moonraker"
+kinematics = "CoreXY"
+bed_mm = [256.0, 256.0]
+max_height_mm = 256.0
+tools = 4
+profile = "print_buddy/printers/flashforge/creator5_pro.py"
+notes = "Four independent toolheads (a tool changer, T0-T3), not an IFS feeder: tools are recorded under tools, and there are no filament_slots. The Pro adds the enclosed frame, active chamber heating and air filtration over the Creator 5; print geometry is identical. ZMod documents no Klipper 13 support on the Creator models. Print start is not verified on a live printer."
+
+[[printer]]
 key = "flashforge_stock.ad5x"
 label = "Flashforge Adventurer 5X (stock)"
 vendor = "flashforge_stock"

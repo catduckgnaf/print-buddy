@@ -86,6 +86,7 @@ class ContractTests(unittest.TestCase):
     def test_registry_finds_every_model_file(self):
         self.assertEqual(set(MODELS), {AD5X, GENERIC, SV06, OCTOPRINT, BAMBU_A1, BAMBU_P1S, "flashforge_stock.ad5x",
                                        "flashforge.ad5m", "flashforge.ad5m_pro",
+                                       "flashforge.creator5", "flashforge.creator5_pro",
                                        "bambulab.a1mini", "bambulab.p1p", "bambulab.x1", "bambulab.x1c",
                                        "bambulab.x1e", "bambulab.p2s", "bambulab.h2s",
                                        "prusa.mk4s", "prusa.coreone", "prusa.xl", "prusa.miniplus",
@@ -116,6 +117,10 @@ class ContractTests(unittest.TestCase):
                 if family == "flashforge_stock.ad5x":
                     # One tool and four physical IFS bays. That is not multicolor.
                     self.assertEqual((a.slot_count, a.multi_slot), (4, False))
+                elif a.multi_tool:
+                    # Toolheads are filament positions without being IFS slots:
+                    # slot_count counts them, multi_slot stays off, multi_tool is on.
+                    self.assertEqual((a.slot_count, a.multi_slot), (a.tool_count, False))
                 else:
                     self.assertEqual(a.multi_slot, a.slot_count > 1)
                 folder = a.templates_dir()
@@ -266,6 +271,112 @@ class ZmodSingleExtruderTests(unittest.TestCase):
             machine = json.loads((adapter_for(family).templates_dir() / "machine.json").read_text())
             self.assertEqual(machine["printable_area"], ["0x0", "220x0", "220x220", "0x220"])
             self.assertEqual(machine["printable_height"], "220")
+
+
+# The Creator's own artifacts: zmod_color is legitimate here (it carries the active
+# tool); IFS machinery is not.
+TOOL_ARTIFACTS = re.compile(r"SET_EXTRUDER_SLOT|CHANGE_ZCOLOR|\bIFS\b|zmod_ifs|8898|/detail", re.I)
+
+
+def _tool_status(**overrides):
+    status = {"print_stats": {"state": "standby"}, "webhooks": {"state": "ready"},
+              "extruder": {"temperature": 25.0}, "extruder1": {"temperature": 24.0},
+              "extruder2": {"temperature": 26.0}, "extruder3": {"temperature": 25.0},
+              "zmod_color": {"active_tool_id": 2}}
+    status.update(overrides)
+    return status
+
+
+class ZmodMultiToolTests(unittest.TestCase):
+    """Creator 5 / 5 Pro (#301 stage 2): 4 toolheads modelled as tools, never IFS slots."""
+
+    FAMILIES = ("flashforge.creator5", "flashforge.creator5_pro")
+
+    def test_tools_not_slots(self):
+        for family in self.FAMILIES:
+            with self.subTest(family=family):
+                a = adapter_for(family)
+                self.assertEqual((a.tool_count, a.slot_count), (4, 4))
+                self.assertEqual((a.multi_tool, a.multi_slot, a.has_native_screen), (True, False, False))
+                # The settings pin the same split: tool_count names the heads,
+                # ifs_slots stays 1 so no IFS behaviour in core switches on.
+                self.assertEqual(a.config["printer"]["tool_count"], 4)
+                self.assertEqual(a.config["printer"]["ifs_slots"], 1)
+                with self.assertRaises(MultiColorUnsupported):
+                    a.native
+
+    def test_zmod_start_and_telemetry_without_ifs(self):
+        for family in self.FAMILIES:
+            with self.subTest(family=family):
+                a = adapter_for(family)
+                self.assertIn("START_PRINT BED_TEMP=60 EXTRUDER_TEMP=215 MESH=auto", a.start_plan(60, 215)[-1])
+                out = a.machine_start_gcode("START_PRINT MESH=auto", "bed_a")
+                self.assertTrue(out.startswith("M190 S[bed_temperature_initial_layer_single]\n"
+                                               "M104 S[nozzle_temperature_initial_layer] T0\n"))
+                self.assertIn("MESH=bed_a", out)
+                objects = a.moonraker_objects()
+                self.assertEqual([o for o in objects if o.startswith("extruder")],
+                                 ["extruder", "extruder1", "extruder2", "extruder3"])
+                self.assertIn("zmod_color", objects)
+                self.assertIsNone(a.screen_command(1, "PLA", "FF0000"))
+                self.assertIsNone(a.stock_api_url("printer.test"))
+                for text in (*a.start_plan(60, 215), " ".join(objects)):
+                    self.assertIsNone(TOOL_ARTIFACTS.search(text), text)
+
+    def test_identity_tool_mapping_only(self):
+        for family in self.FAMILIES:
+            a = adapter_for(family)
+            self.assertEqual(a.normalize_tool_mapping({"0": 1}, {}), {"0": 1})
+            self.assertEqual(a.normalize_tool_mapping({"0": 1, "1": 2, "2": 3, "3": 4}, {}),
+                             {"0": 1, "1": 2, "2": 3, "3": 4})
+            # A tool remapped to another head cannot be represented: refused.
+            with self.assertRaises(MultiColorUnsupported):
+                a.normalize_tool_mapping({"0": 2}, {})
+            with self.assertRaises(MultiColorUnsupported):
+                a.normalize_tool_mapping({"0": 1, "1": 1}, {})
+            # A fifth tool does not exist: refused, not dropped.
+            with self.assertRaises(MultiColorUnsupported):
+                a.normalize_tool_mapping({"0": 1, "4": 5}, {})
+
+    def test_readiness_is_per_toolhead(self):
+        for family in self.FAMILIES:
+            a = adapter_for(family)
+            self.assertEqual(a.readiness_problems({}, _tool_status()), [])
+            self.assertTrue(a.readiness_problems({}, _tool_status(print_stats={"state": "printing"})))
+            missing = _tool_status()
+            del missing["extruder2"]
+            self.assertTrue(any("toolhead 3" in p for p in a.readiness_problems({}, missing)))
+            self.assertTrue(any("active tool" in p for p in
+                                a.readiness_problems({}, _tool_status(zmod_color={"active_tool_id": 7}))))
+            self.assertTrue(a.readiness_problems({}, {}))
+
+    def test_status_reports_toolheads_and_active_tool(self):
+        for family in self.FAMILIES:
+            a = adapter_for(family)
+            out = a.normalize_status({"print_stats": {"state": "printing"},
+                                      "extruder": {"temperature": 210.0}, "extruder2": {"temperature": 215.0},
+                                      "zmod_color": {"active_tool_id": 2}})
+            self.assertEqual(out["active_tool"], 2)
+            self.assertEqual([h["temperature"] for h in out["toolheads"]], [210.0, None, 215.0, None])
+            self.assertNotIn("slots", out)
+
+    def test_templates_are_four_tool_and_ifs_free(self):
+        folders = {adapter_for(f).templates_dir() for f in self.FAMILIES}
+        self.assertEqual(len(folders), 2)
+        for family in self.FAMILIES:
+            folder = adapter_for(family).templates_dir()
+            machine = json.loads((folder / "machine.json").read_text())
+            self.assertEqual(machine["printable_area"], ["0x0", "256x0", "256x256", "0x256"])
+            self.assertEqual(machine["printable_height"], "256")
+            self.assertEqual(machine["nozzle_diameter"], ["0.4"] * 4)
+            self.assertEqual(machine["single_extruder_multi_material"], "0")
+            for name in ("machine", "process", "filament"):
+                text = (folder / f"{name}.json").read_text()
+                self.assertIsNone(TOOL_ARTIFACTS.search(text), (family, name))
+        pro = json.loads((adapter_for("flashforge.creator5_pro").templates_dir() / "machine.json").read_text())
+        base = json.loads((adapter_for("flashforge.creator5").templates_dir() / "machine.json").read_text())
+        self.assertEqual((pro["support_chamber_temp_control"], pro["support_air_filtration"]), ("1", "1"))
+        self.assertEqual((base["support_chamber_temp_control"], base["support_air_filtration"]), ("0", "0"))
 
 
 class GenericKlipperTests(unittest.TestCase):

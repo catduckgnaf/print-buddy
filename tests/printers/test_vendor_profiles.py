@@ -27,6 +27,8 @@ def without_added(data):
         data.get("bambu", {}).pop(key, None)
     data.get("bambu", {}).pop("start_confirm_s", None)  # added by #271, after capture
     data.get("bot", {}).pop("platform", None)  # added by #164, after the golden files were captured
+    for key in ("vertical_short", "vertical_short_mode", "vertical_short_overlay"):  # added by #317, after capture
+        data.get("timelapse", {}).pop(key, None)
     data.pop("webui", None)  # added by #286 stage 1, after the golden files were captured
     data.pop("telegram", None)  # added by #164 stage 2, after the golden files were captured
     data.pop("matrix", None)  # added by #164 stage 3, after the golden files were captured

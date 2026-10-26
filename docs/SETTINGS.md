@@ -112,6 +112,9 @@ Schema, validation limits and TOML migration: [CONFIGURATION-YAML.md](CONFIGURAT
 | `timelapse.max_bytes` | `PRINT_BUDDY__TIMELAPSE__MAX_BYTES` | `209715200` | Largest timelapse kept |
 | `timelapse.local_retention_days` | `PRINT_BUDDY__TIMELAPSE__LOCAL_RETENTION_DAYS` | `1` | Local copy retention |
 | `timelapse.plan_clip_retention_days` | `PRINT_BUDDY__TIMELAPSE__PLAN_CLIP_RETENTION_DAYS` | `14` | Plan clip retention |
+| `timelapse.vertical_short` | `PRINT_BUDDY__TIMELAPSE__VERTICAL_SHORT` | `false` | Also post a 9:16 vertical version of each finished timelapse (#317), alongside the timelapse itself |
+| `timelapse.vertical_short_mode` | `PRINT_BUDDY__TIMELAPSE__VERTICAL_SHORT_MODE` | `pad` | `pad` fills the 9:16 frame with a blurred background; `crop` centre-crops |
+| `timelapse.vertical_short_overlay` | `PRINT_BUDDY__TIMELAPSE__VERTICAL_SHORT_OVERLAY` | `true` | Burn the print title / printer / filament / time overlay into the vertical short |
 | `webui.enabled` | `PRINT_BUDDY__WEBUI__ENABLED` | `false` | Optional Web UI (#286) switch; off by default, and nothing listens while disabled |
 | `webui.host` | `PRINT_BUDDY__WEBUI__HOST` | `127.0.0.1` | Host the Web UI binds to when enabled; a plain IP address or hostname |
 | `webui.port` | `PRINT_BUDDY__WEBUI__PORT` | `0` | Port the Web UI binds to when enabled; `0` means no port has been chosen yet |

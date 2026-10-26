@@ -31,6 +31,15 @@ services:
       PRINT_BUDDY__DISCORD__TIMEZONE: ${PRINT_BUDDY__DISCORD__TIMEZONE:-America/New_York}
       PRINT_BUDDY__LLM__CHAT_URL: ${PRINT_BUDDY__LLM__CHAT_URL:-}
       PRINT_BUDDY__LLM__MODEL: ${PRINT_BUDDY__LLM__MODEL:-}
+      # Optional Web UI (#286, docs/DOCKER.md "Web UI"): off by default. To serve
+      # it beyond the container, set ENABLED=true and PORT (for example 8080),
+      # set HOST=0.0.0.0, publish the port below, and set WEBUI_ACCESS_TOKEN in
+      # .env — a non-loopback bind without the token is refused. The token is a
+      # secret: it reaches the container through the .env env_file only, never
+      # an environment: entry here.
+      PRINT_BUDDY__WEBUI__ENABLED: ${PRINT_BUDDY__WEBUI__ENABLED:-false}
+      PRINT_BUDDY__WEBUI__HOST: ${PRINT_BUDDY__WEBUI__HOST:-127.0.0.1}
+      PRINT_BUDDY__WEBUI__PORT: ${PRINT_BUDDY__WEBUI__PORT:-0}
       SPOOLMAN_DIR_DATA: /data/spoolman
       SPOOLMAN_DIR_CONFIG: /data/spoolman/config
       SPOOLMAN_DIR_LOGS: /data/spoolman/logs
@@ -44,6 +53,11 @@ services:
       - ${PRINT_BUDDY_DATA:-./data}/records:/data/records
       - ${PRINT_BUDDY_DATA:-./data}/cache:/data/cache
       - ${PRINT_BUDDY_SPOOLMAN_DATA:-./data/spoolman}:/data/spoolman
+    # No port is published by default. To reach the optional Web UI from the
+    # host when it is enabled above, uncomment (host port 8080 to the Web UI
+    # port) — keep it on the LAN only, never forward it from a router:
+    # ports:
+    #   - "8080:${PRINT_BUDDY__WEBUI__PORT:-8080}"
     user: "1000:1000"
     init: true
     cap_drop: [ALL]

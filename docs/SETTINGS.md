@@ -173,6 +173,7 @@ Secrets come from the environment only (Docker: `.env`, never committed or share
 | `DISCORD_BOT_TOKEN` | Standalone bot token. The variable name is `discord.token_env` |
 | `TELEGRAM_BOT_TOKEN` | Telegram standalone bot token. The variable name is `telegram.token_env` |
 | `MATRIX_ACCESS_TOKEN` | Matrix standalone bot access token. The variable name is `matrix.access_token_env` |
+| `WEBUI_ACCESS_TOKEN` | Optional Web UI (#286) access token, required when it binds beyond loopback. The variable name is `webui.access_token_env` |
 | `LLM_API_KEY` | Optional key for `llm.chat_url`. The variable name is `llm.api_key_env` |
 | `OCTOPRINT_API_KEY` | `octoprint.marlin` printers: OctoPrint application key |
 | `BAMBU_LAN_PASSWORD` | Bambu Lab printers: the LAN access code for read-only status. The variable name is `bambu.lan_access_code_env` |

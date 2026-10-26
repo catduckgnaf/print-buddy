@@ -30,6 +30,7 @@ from pathlib import Path
 import websockets
 
 from .. import healthcheck, logs, printers
+from ..core import delivery
 from . import _config
 from . import moonraker_discord_announcements as announcer
 from . import discord_print_summary as print_summary
@@ -37,6 +38,8 @@ from . import plan_timelapse
 from . import print_control
 from . import visual_watch as _visual_watch
 from . import print_markers
+from . import print_records
+from . import vertical_short
 INTERRUPTED_HINT = print_control.INTERRUPTED_HINT
 try:
     from . import maintenance as maintenance_state
@@ -734,6 +737,59 @@ def run_announcer(reason):
                      name="timelapse-postprocess").start()
 
 
+def _short_meta(job_key):
+    """Overlay metadata for a vertical short, from what the listener already knows (#317)."""
+    context = {}
+    try:
+        context = print_records.load_context(job_key) if job_key else {}
+    except Exception:
+        context = {}
+    printer_name = ""
+    try:
+        printer_name = printers.current().display_name
+    except Exception:
+        printer_name = ""
+    return {
+        "title": context.get("title") or clean(job_key or "print"),
+        "printer": printer_name,
+        "material": context.get("filament_material") or context.get("material"),
+        "elapsed_s": context.get("print_duration") or context.get("elapsed_s"),
+        "outcome": "Done",
+    }
+
+
+def _vertical_short_attachment(video, job_key):
+    """Build the #317 vertical short for a sized timelapse; None when off, failed, or oversize.
+
+    Warn-only by contract: any failure logs and returns None, so the
+    completion post always carries the timelapse itself. The short is
+    clamped to the configured platform's upload limit via
+    core.delivery.upload_limit (#314's resolution — not the Discord
+    constant the timelapse shrink still uses); a short that cannot fit
+    is dropped, never the timelapse.
+    """
+    try:
+        cfg = _config.cfg()
+        timelapse_cfg = cfg.get("timelapse") or {}
+        if not timelapse_cfg.get("vertical_short"):
+            return None
+        short = vertical_short.build_short(
+            video, meta=_short_meta(job_key),
+            mode=str(timelapse_cfg.get("vertical_short_mode") or "pad"),
+            overlay=bool(timelapse_cfg.get("vertical_short_overlay", True)),
+            ffmpeg=FFMPEG_BIN)
+        limit = delivery.upload_limit(cfg)
+        if Path(str(short)).stat().st_size > limit:
+            short = discord_sized_video(short, max_bytes=limit)
+        if Path(str(short)).stat().st_size > limit:
+            log(f"vertical short for {job_key!r} is still over the {limit}-byte platform limit; dropping it")
+            return None
+        return Path(str(short))
+    except Exception as exc:
+        log(f"vertical short for {job_key!r} failed; posting timelapse only: {exc!r}")
+        return None
+
+
 def _timelapse_postprocess(job_key, completion_message, plan_id=None, tl_plan=None):
     try:
         if tl_plan:
@@ -794,7 +850,11 @@ def _plan_timelapse_post(job_key, completion_message, tl_plan):
             video = discord_sized_video(combined)
         except Exception as exc:
             log(f"combined timelapse shrink failed for plan {plan!r}: {exc!r}")
-        if not _post_completion(f"{note}\nMEDIA:{video}", completion_message):
+        message = f"{note}\nMEDIA:{video}"
+        short = _vertical_short_attachment(video, job_key or plan)
+        if short is not None:
+            message += f"\nMEDIA:{short}"
+        if not _post_completion(message, completion_message):
             log(f"combined timelapse attach failed for plan {plan!r}; posting text only")
             _post_completion(f"{note}\nCombined timelapse too big for Discord.", completion_message)
     finally:
@@ -815,7 +875,11 @@ def _timelapse_post(job_key, completion_message):
             local_video = discord_sized_video(local_video)
         except Exception as exc:  # oversize source still gets a try; the text fallback covers a 413
             log(f"timelapse shrink failed for {job_key!r}: {exc!r}")
-        if not _post_completion(f"{completion_message}\nMEDIA:{local_video}", completion_message):
+        message = f"{completion_message}\nMEDIA:{local_video}"
+        short = _vertical_short_attachment(local_video, job_key)
+        if short is not None:
+            message += f"\nMEDIA:{short}"
+        if not _post_completion(message, completion_message):
             # Never lose the completion notice because Discord refused the attachment.
             log(f"timelapse attach failed for {job_key!r}; posting text only")
             _post_completion(f"{completion_message}\nTimelapse archived but too big for Discord: {Path(str(archived)).name}", completion_message)

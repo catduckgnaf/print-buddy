@@ -189,6 +189,11 @@ max_bytes = 209715200
 local_retention_days = 1
 # Clips held for a multi-plate plan that never finishes (abandoned) are dropped after this many days.
 plan_clip_retention_days = 14
+# Vertical short (#317): also post a 9:16 version of each finished timelapse. Off by default.
+vertical_short = false
+# pad = blurred background fill (default); crop = centre crop.
+vertical_short_mode = "pad"
+vertical_short_overlay = true
 
 [logging]
 # Verbosity: DEBUG, INFO, WARNING or ERROR. DEBUG adds diagnostic detail; INFO is the normal level.

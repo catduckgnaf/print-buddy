@@ -214,14 +214,17 @@ def test_snapshot_merges_partial_ams_frames_before_decoding():
 
 
 def test_project_file_payload_is_unchanged_by_ams_read():
-    # The print-start payload is pinned literally: AMS read must not move a byte of it
-    # (real mapping is #308, behind its own gates).
-    assert project_file_payload("job.gcode.3mf") == {
-        "print": {"sequence_id": "0", "command": "project_file", "param": "Metadata/plate_1.gcode",
+    # The print-start payload is pinned literally: AMS read must not move a byte of it.
+    # The pin tracks the #308 payload shape (sequence "20000", both ams_mapping
+    # forms, empty md5); the submission id is passed explicitly, as in
+    # test_bambu_print.py, because the default is a fresh id per call.
+    assert project_file_payload("job.gcode.3mf", submission_id="0") == {
+        "print": {"sequence_id": "20000", "command": "project_file", "param": "Metadata/plate_1.gcode",
                   "file": "job.gcode.3mf", "url": "ftp:///job.gcode.3mf", "bed_type": "auto",
                   "timelapse": False, "bed_leveling": False, "flow_cali": False,
                   "vibration_cali": False, "layer_inspect": False, "use_ams": False,
-                  "ams_mapping": [0], "subtask_name": "job.gcode.3mf", "profile_id": "0",
+                  "ams_mapping": [0], "ams_mapping2": [{"ams_id": 0, "slot_id": 0}], "md5": "",
+                  "subtask_name": "job.gcode.3mf", "profile_id": "0",
                   "project_id": "0", "subtask_id": "0", "task_id": "0"}}
 
 

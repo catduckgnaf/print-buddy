@@ -545,6 +545,43 @@ def canonical_prompts(manifest):
     return rows
 
 
+def prompt_source_colour(manifest, row):
+    """The (color, material) identity of one colour question row, from its
+    source extruder. Rows sharing an identity print the same source colour."""
+    ext = row.get('source_extruder')
+    if ext is None and str(row.get('key') or '').startswith('filament:'):
+        try:
+            ext = int(str(row['key']).split(':', 1)[1])
+        except ValueError:
+            ext = None
+    if ext is None and str(row.get('key') or '').startswith('part:'):
+        part = next((p for p in manifest.get('parts') or [] if p['key'] == str(row['key'])[5:]), {})
+        ext = part.get('source_extruder')
+    filament = next((f for f in manifest.get('filaments') or []
+                     if f.get('source_extruder') == ext), {})
+    return (str(filament.get('color') or '').strip().casefold(),
+            str(filament.get('material') or '').strip().casefold())
+
+
+def distinct_source_colours(manifest):
+    """The distinct (color, material) pairs a source actually prints with.
+
+    Counted over the source filaments its parts or painted regions use, so two
+    source extruders sharing one colour count once. A multi_tool printer needs
+    one toolhead per entry here (#346).
+    """
+    filaments = {f.get('source_extruder'): f for f in manifest.get('filaments') or []}
+    used = {p.get('source_extruder') for p in manifest.get('parts') or [] if p.get('source_extruder')}
+    if manifest.get('painted'):
+        used |= {ext for ext in filaments if ext}
+    colours = set()
+    for ext in used:
+        filament = filaments.get(ext) or {}
+        colours.add((str(filament.get('color') or '').strip().casefold(),
+                     str(filament.get('material') or '').strip().casefold()))
+    return colours
+
+
 def _family_key(name):
     """'Stencil 2 (Circle) - Tabs.stl' -> 'stencil # - tabs'. Parenthetical variants and numbers are ignored."""
     stem = re.sub(r'\.(stl|3mf|obj|step|stp)$', '', str(name or '').strip(), flags=re.I)

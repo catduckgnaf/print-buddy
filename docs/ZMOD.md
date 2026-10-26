@@ -49,9 +49,16 @@ The filament system is where they part:
   and status are per toolhead, and Spoolman spools bind per toolhead — the
   toolhead is the identity unit, never an IFS slot. A job that asks for a tool remapped to another head, or a fifth
   tool, is refused rather than approximated. Multi-colour slicing uses the
-  four-extruder Orca templates; the Discord colour-question flow is still the
-  AD5X/IFS-shaped one, so a multi-colour source that needs colour choices is
-  refused with an explanation instead of a guessed assignment. The `PRINT_BUDDY`
+  four-extruder Orca templates, and the Discord colour questions are per
+  toolhead: for a source with two to four colours, intake asks one question
+  per colour — which toolhead prints it — showing each toolhead's loaded
+  spool, and a toolhead already assigned a different colour is not offered
+  again. The recorded picks are the identity mapping (slicer tool *i* prints
+  with toolhead *i*), so nothing is remapped. A source with more colours
+  than toolheads is refused with that explanation; printing everything in
+  one colour on one toolhead stays available. Multi-colour jobs print as one
+  merged plate; a source that cannot merge onto one bed is refused rather
+  than split into per-toolhead plates. The `PRINT_BUDDY`
   plugin macro stays AD5X-only — ZMod's endless-spool feature exists on the
   Creator too, but the macro's slot model is the IFS one. The Pro adds the
   enclosed frame, active chamber heating (65 °C) and air filtration over the base

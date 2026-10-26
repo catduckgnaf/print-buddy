@@ -64,8 +64,15 @@ Runtime decisions that follow the adapter (core/model_job, printer_state, orca_a
     stays off; the tools live at the adapter contract instead — normalize_tool_mapping accepts only the
     identity tool -> toolhead map for T0..T{tool_count-1} and refuses anything else, readiness and status
     are per-toolhead (extruder..extruder3, zmod_color.active_tool_id), and a job's G-code tool changes are
-    the sliced file's own T lines. The IFS-shaped colour-question seam in core still refuses a
-    multi-colour source that needs choices rather than guessing a toolhead for a colour.
+    the sliced file's own T lines. The colour-question seam in core is tool-shaped for these models (#346):
+    prepared_intake, discord_color_intake and link_intake ask one question per colour with toolhead
+    labels (model_job.build_tool_labels), a toolhead already assigned a different source colour is not
+    offered again, more distinct colours than tool_count is refused, and model_job.position_limit
+    bounds selections by the adapter's slot_count. Slicing honours the picks as the identity mapping:
+    color_geometry exports in identity_tools mode, orca_adapter loads one filament profile per toolhead
+    through the model's own multi-extruder templates (no SEMM flip, no native finalize), and
+    model_job._slice_merged_multi_tool checks the recorded mapping against normalize_tool_mapping
+    unchanged. Split (non-merged) plates stay refused: they are IFS-shaped.
   - has_native_screen False: no display_off/LOAD_ZOFFSET/Adventurer5M offset authority, no ZMod MD5, no stock
     /detail polling, no screen-cancel firmware restart, no mesh-profile readiness (the printer owns its mesh).
   - readiness (readiness_problems), the start request (moonraker_start_commands) and the multicolor refusal

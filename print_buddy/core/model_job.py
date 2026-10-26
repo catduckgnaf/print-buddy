@@ -604,7 +604,7 @@ def format_color_title(c):
     return ' '.join(w.upper() if w.casefold() in {'pla', 'pla+', 'petg', 'petg-cf', 'abs', 'tpu'} else w.capitalize() for w in str(c or '').split())
 
 
-def build_slot_labels(selections):
+def _build_position_labels(selections, noun):
     counts = {}
     for s in selections:
         c_title = format_color_title(s.get('color'))
@@ -617,23 +617,51 @@ def build_slot_labels(selections):
         mat = str(s.get('material', '')).strip()
         name = c_title if mat and c_title.casefold().endswith(mat.casefold()) else f'{c_title} {mat}'.strip()
         if counts[name] > 1:
-            labels.append(f'{name} (Slot {s["slot"]})')
+            labels.append(f'{name} ({noun} {s["slot"]})')
         else:
             labels.append(name)
     return labels
 
 
-def validate_filament_selection(selection, spool_optional=False):
+def build_slot_labels(selections):
+    return _build_position_labels(selections, 'Slot')
+
+
+def build_tool_labels(selections):
+    """Choice labels for a multi_tool printer: positions are toolheads, never slots (#346)."""
+    return _build_position_labels(selections, 'Toolhead')
+
+
+def position_limit(adapter=None):
+    """Highest colour position a selection may name on the printer.
+
+    An IFS printer bounds selections by [printer] ifs_slots; a multi_tool
+    printer's positions are its toolheads (the adapter's slot_count) even
+    though ifs_slots stays 1 there, so the bound is whichever the printer
+    actually has. Every other printer keeps exactly the bound it has today.
+    """
+    limit = IFS_SLOTS
+    try:
+        limit = max(limit, int((adapter or printers.current()).slot_count or 1))
+    except Exception:
+        pass
+    return limit
+
+
+def validate_filament_selection(selection, spool_optional=False, limit=None):
     """Validate a job-bound, user-confirmed filament selection.
 
     `spool_optional` admits a selection with no Spoolman ID; only a single-extruder printer's unbound spool
-    gets it (resolve_filament_selection, #263).
+    gets it (resolve_filament_selection, #263). `limit` is the printer's colour-position bound
+    (position_limit); the default keeps the configured IFS bound.
     """
+    if limit is None:
+        limit = IFS_SLOTS
     if not isinstance(selection, dict):
         raise ValueError("explicit filament selection is required (use 'filament-select' command)")
     slot = selection.get("slot")
-    if not isinstance(slot, int) or isinstance(slot, bool) or not 1 <= slot <= IFS_SLOTS:
-        raise ValueError(f"filament slot must be an integer from 1 through {IFS_SLOTS}")
+    if not isinstance(slot, int) or isinstance(slot, bool) or not 1 <= slot <= limit:
+        raise ValueError(f"filament slot must be an integer from 1 through {limit}")
     for key in ("color", "material"):
         if not isinstance(selection.get(key), str) or not selection[key].strip():
             raise ValueError(f"filament {key} is required")
@@ -672,12 +700,13 @@ def resolve_filament_selection(state, selection):
     An unmapped slot requires an explicit spool ID rather than an inferred one. A single-extruder
     printer's slot whose spool has no Spoolman binding needs none (#263); Spoolman is advisory (#235).
     """
+    limit = position_limit()
     if not isinstance(selection, dict):
-        return validate_filament_selection(selection)
+        return validate_filament_selection(selection, limit=limit)
     selection = dict(selection)
     slot = selection.get("slot")
-    if not isinstance(slot, int) or isinstance(slot, bool) or not 1 <= slot <= IFS_SLOTS:
-        raise ValueError(f"filament slot must be an integer from 1 through {IFS_SLOTS}")
+    if not isinstance(slot, int) or isinstance(slot, bool) or not 1 <= slot <= limit:
+        raise ValueError(f"filament slot must be an integer from 1 through {limit}")
     mappings = configured_slots(state)
     configured = mappings.get(str(slot), {}) if isinstance(mappings, dict) else {}
     if not isinstance(configured, dict):
@@ -691,7 +720,7 @@ def resolve_filament_selection(state, selection):
     for key in ("color", "material"):
         if selection.get(key) is None and configured.get(key) is not None:
             selection[key] = configured[key]
-    selection = validate_filament_selection(selection, spool_optional=unbound)
+    selection = validate_filament_selection(selection, spool_optional=unbound, limit=limit)
     if mapped_id is not None and selection["spoolman_id"] != mapped_id:
         raise ValueError(f"slot {slot} spool mismatch: requested #{selection['spoolman_id']}, configured #{mapped_id}")
     def canonical_color(value):
@@ -712,7 +741,7 @@ def save_filament_selection(job_path, selection):
     job = json.loads(path.read_text())
     if not isinstance(job, dict) or not job.get("model_id"):
         raise ValueError("not a model JOB.json")
-    job["filament_selection"] = validate_filament_selection(selection)
+    job["filament_selection"] = validate_filament_selection(selection, limit=position_limit(_job_adapter(job)))
     tmp = path.with_suffix(path.suffix + ".tmp")
     tmp.write_text(json.dumps(job, indent=2) + "\n")
     os.replace(tmp, path)
@@ -1855,20 +1884,35 @@ def _job_adapter(job):
     return printers.get(key)
 
 
+def _check_tool_assignments(manifest, rows, selections):
+    """One colour per toolhead (#346): prompts whose source colours differ must
+    not share a toolhead. Prompts sharing a source colour may share one."""
+    from .source_colors import prompt_source_colour
+    seen = {}
+    for row, selection in zip(rows, selections):
+        slot = selection['slot']
+        colour = prompt_source_colour(manifest, row)
+        if slot in seen and seen[slot] != colour:
+            raise ValueError(f"toolhead {slot} is already assigned another color in this job; "
+                             "one toolhead prints one color per job")
+        seen[slot] = colour
+
+
 def intake_color_choices(job_path, state, mode=None, slots=None, interactive=False):
     """Normal intake gate: ask per part/palette and persist exact-source choices.
 
     Noninteractive callers receive a structured button-ready question packet.
     They resume the same JOB via slice; no JSON file authoring is required.
     """
-    from .source_colors import inventory, prompts, canonical_prompts, validate_decisions
+    from .source_colors import inventory, prompts, canonical_prompts, validate_decisions, distinct_source_colours
     path = Path(job_path)
     job = json.loads(path.read_text())
     manifest = inventory(job['downloaded_file'])
     if not manifest.get('source_sha256'):
         manifest['source_sha256'] = file_sha256(job['downloaded_file'])
     adapter = _job_adapter(job)
-    if not adapter.multi_slot:
+    multi_tool = adapter.multi_tool
+    if not adapter.multi_slot and not multi_tool:
         if manifest['requires_choices']:
             raise MultiColorUnsupported(
                 f"{adapter.label} has a single extruder; this source has several parts or colors that need a "
@@ -1878,7 +1922,8 @@ def intake_color_choices(job_path, state, mode=None, slots=None, interactive=Fal
     available = []
     for slot, label in sorted(state.get('ifs_slots', {}).items()):
         selection = resolve_filament_selection(state, dict(label, slot=int(slot)))
-        available.append({'label': f"Slot {slot}: {selection['color']} {selection['material']} (configured label)",
+        noun = 'Toolhead' if multi_tool else 'Slot'
+        available.append({'label': f"{noun} {slot}: {selection['color']} {selection['material']} (configured label)",
                           'selection': selection})
     job['color_manifest'], job['color_prompts'] = manifest, questions
     job['color_questions'] = [dict(q, choices=available) for q in questions]
@@ -1905,13 +1950,26 @@ def intake_color_choices(job_path, state, mode=None, slots=None, interactive=Fal
         mode = answer
     if mode not in ('per_part', 'single_color'):
         raise ValueError('color mode must be per_part or single_color')
-    rows = questions if mode == 'per_part' else [{'question': 'Choose one slot for ALL parts and source colors'}]
+    if multi_tool and mode == 'per_part':
+        # One colour per toolhead (#346): more distinct source colours than
+        # toolheads can never be assigned. (single_color stays available:
+        # one toolhead prints everything.)
+        colours = distinct_source_colours(manifest)
+        if len(colours) > adapter.tool_count:
+            raise MultiColorUnsupported(
+                f"{adapter.label} has {adapter.tool_count} toolheads and prints one color per toolhead; "
+                f"this source uses {len(colours)} colors. Reduce the source to at most "
+                f"{adapter.tool_count} colors or use a printer with more toolheads")
+    rows = questions if mode == 'per_part' else [
+        {'question': f"Choose one {'toolhead' if multi_tool else 'slot'} for ALL parts and source colors"}]
     if slots is None and interactive:
         print('\n'.join(choice['label'] for choice in available))
         slots = [int(input(row['question'] + ': ')) for row in rows]
     if not slots or len(slots) != len(rows):
         raise ValueError('supply one --color-slot for every displayed question (one for single_color)')
     selections = [resolve_filament_selection(state, dict(state.get('ifs_slots', {}).get(str(slot), {}), slot=slot)) for slot in slots]
+    if multi_tool and mode == 'per_part':
+        _check_tool_assignments(manifest, rows, selections)
     decisions = {'source_sha256': manifest['source_sha256'], 'mode': mode}
     if job.get('color_schema') == 'part_slots_v1':
         decisions['schema'] = 'part_slots_v1'
@@ -2109,14 +2167,20 @@ def slice_multi_plate(job, job_path, src, manifest, decisions, st, brim_override
     elif mode == 'merge':
         verdict = plate_merge.plan(src, manifest, plates, slots, st, job=job)
         if verdict['mode'] == 'merge':
+            merged_slice = (_slice_merged_multi_tool if _job_adapter(job).multi_tool else _slice_merged)
             try:
-                result = _slice_merged(job, job_path, src, manifest, decisions, view, verdict, st, brim_override, work)
+                result = merged_slice(job, job_path, src, manifest, decisions, view, verdict, st, brim_override, work)
             except plate_merge.SplitNeeded as exc:
                 verdict = {**verdict, 'mode': 'split', 'reason': str(exc)}
             else:
                 return result
     job['plate_merge'] = {k: v for k, v in verdict.items()
                           if k not in ('shifts', 'placed_bounds_mm', 'yaw_by_object')}
+    if _job_adapter(job).multi_tool:
+        # The split fallbacks below are IFS-shaped (per-slot plates finalized
+        # through the native slot contract). A toolhead printer prints a
+        # multi-colour job as one merged plate or not at all (#346).
+        raise ImplicitPlateSplit(job['plate_merge'])
     if manifest.get('painted') and len(set(slots.values())) > 1:
         # Painted colors live inside one mesh; a per-slot split would print the
         # same body twice. Split by authored plate instead, each one multicolor.
@@ -2371,6 +2435,113 @@ def _slice_merged(job, job_path, src, manifest, decisions, view, verdict, st, br
     job['artifact_binding'] = {**_recipe_binding(job), 'source_sha256': source_sha, 'decisions_sha256': decision_sha, 'gcode_sha256': file_sha256(out)}
     job.update({'slice_config': [str(p) for p in configs], 'gcode': str(out), 'provenance': provenance,
                 'gcode_verified': True, 'offline_check': check, 'merged': extra,
+                'sliced_at': time.strftime('%Y-%m-%dT%H:%M:%S%z')})
+    write_job(work, job)
+    print(f"SLICED merged {summary['objects_in']} objects from {summary['plates_in']} plates onto one bed (not uploaded): {out}")
+    return out
+
+
+def _slice_merged_multi_tool(job, job_path, src, manifest, decisions, view, verdict, st, brim_override, work):
+    """One merged G-code for a multi_tool printer (#346).
+
+    The merged-colour exporter runs in identity mode: slicer tool T(n-1) is
+    toolhead n, the position the operator picked for that colour. The picks
+    are checked against the adapter's identity-only tool-mapping contract
+    unchanged, and Orca slices through the model's own multi-extruder
+    templates — there is no IFS finalize step on a toolhead printer.
+    """
+    import uuid
+    from . import plate_merge
+    from .orca_adapter import slice_model
+    adapter = _job_adapter(job)
+    source_sha = file_sha256(src); decision_sha = decisions_digest(decisions)
+    slice_dir = work / 'sliced' / 'orca' / uuid.uuid4().hex
+    slots = sorted(set(_part_slots(view, manifest).values()))
+    yaw_by_object = verdict.get('yaw_by_object') or {}
+    if not isinstance(yaw_by_object, dict):
+        raise RuntimeError('merge plan yaw_by_object must be a mapping of object id to degrees')
+    fit_by_object = {}
+    if yaw_by_object:
+        if not verdict.get('shifts'):
+            raise RuntimeError('merge plan records a turn without the recorded shifts that realize it; '
+                               'refusing to slice it as authored')
+        from .orca_adapter import _yaw
+        unknown_yaw = sorted(set(yaw_by_object) - {str(p['object_id']) for p in manifest['parts']}, key=str)
+        if unknown_yaw:
+            raise RuntimeError(f"merge plan records a turn for unknown object(s) {','.join(unknown_yaw)}")
+        for oid in sorted(yaw_by_object, key=str):
+            try:
+                value = float(yaw_by_object[oid])
+            except (TypeError, ValueError) as exc:
+                raise RuntimeError(f'merge plan turn for object {oid} must be numeric, '
+                                   f'got {yaw_by_object[oid]!r}') from exc
+            if not math.isfinite(value) or not 0 < value <= 90:
+                raise RuntimeError(f'merge plan turn must be between 0 and 90 degrees, got {value!r}')
+            fit_by_object[str(oid)] = {'rotation': _yaw(value)}
+    out, provenance, configs = slice_model(src, slice_dir, st, brim_override,
+                                           color_decisions=view if manifest.get('painted') else decisions,
+                                           item_shifts=verdict['shifts'],
+                                           **({'fit_by_object': fit_by_object} if fit_by_object else {}))
+    mapping = {str(tool): int(slot) for tool, slot in (provenance.get('tool_mapping') or {}).items()}
+    # The recorded mapping must pass the adapter's identity contract exactly
+    # as recorded: tool T(n-1) prints with toolhead n, nothing remapped (#346).
+    adapter.normalize_tool_mapping(mapping, st)
+    geometry = provenance.get('geometry') or {}
+    placed_keys = sorted(row['part_key'] for row in geometry.get('parts', []))
+    if placed_keys != sorted(p['key'] for p in manifest['parts']):
+        raise RuntimeError('merged geometry dropped or duplicated a source part')
+    if fit_by_object:
+        from .color_geometry import _world_points as _points_of
+        from .orca_adapter import _rotate as _rotate_point
+        object_of_key = {p['key']: str(p['object_id']) for p in manifest['parts']}
+        placed_by_object = {}
+        for row in geometry.get('parts', []):
+            oid = object_of_key[row['part_key']]
+            box = row['bounds_mm']
+            if oid in placed_by_object:
+                prev = placed_by_object[oid]
+                box = [(min(prev[a][0], box[a][0]), max(prev[a][1], box[a][1])) for a in range(3)]
+            placed_by_object[oid] = box
+        shifts = {str(k): v for k, v in verdict['shifts'].items()}
+        with zipfile.ZipFile(src) as archive:
+            turned_points = {oid: _points_of(archive, {oid}) for oid in fit_by_object}
+        for oid, entry in fit_by_object.items():
+            rotated = [_rotate_point(point, entry['rotation']) for point in turned_points[oid]]
+            base_min = [min(p[a] for p in rotated) for a in range(3)]
+            base_extent = [max(p[a] for p in rotated) - base_min[a] for a in range(3)]
+            landed = placed_by_object[oid]
+            landed_extent = [landed[a][1] - landed[a][0] for a in range(3)]
+            values = shifts[oid]
+            if any(abs(landed[a][0] - (base_min[a] + float(values[a]))) > 2e-3 for a in range(3)) \
+                    or any(abs(got - want) > 2e-3 for got, want in zip(landed_extent, base_extent)):
+                raise RuntimeError(f'merged geometry did not land at the recorded turn for object {oid}; '
+                                   'refusing to slice it as turned')
+    placed_ids = sorted({p['object_id'] for p in manifest['parts'] if p['key'] in placed_keys}, key=str)
+    text = Path(out).read_text(errors='ignore')
+    estimate = gcode_estimate_s(text)
+    if estimate is not None and estimate > plate_merge.MAX_MERGED_S:
+        raise plate_merge.SplitNeeded(f'merged estimate {human_dur(estimate)} exceeds the {plate_merge.MAX_MERGED_S / 3600:g} h limit')
+    if placed_ids != verdict['objects_in']:
+        raise RuntimeError('merged output does not account for every source object')
+    labelled = _gcode_object_count(text)
+    if labelled and labelled != len(manifest['parts']):
+        raise RuntimeError(f'merged G-code prints {labelled} objects but the source has {len(manifest["parts"])}')
+    check = verify_gcode_offline(out, st)
+    latest = json.loads(Path(job_path).read_text())
+    if file_sha256(src) != source_sha or decisions_digest(latest.get('color_decisions')) != decision_sha or _recipe_changed(job, latest):
+        raise RuntimeError('source, decisions or slice recipe changed during slicing; artifact not made ready')
+    summary = {'mode': 'merge', 'reason': None, 'plates_in': verdict['plates_in'], 'objects_in': len(verdict['objects_in']),
+               'objects_out': len(placed_ids), 'parts_in': len(manifest['parts']), 'bed_mm': verdict['bed_mm'],
+               'spacing_mm': verdict['spacing_mm'], 'fits_bed': True, 'slots': slots,
+               'placed_bounds_mm': verdict['placed_bounds_mm'], 'estimate_s': estimate,
+               'estimate': human_dur(estimate) if estimate else None, 'gcode_objects_labelled': labelled or None,
+               **({'yaw_by_object': yaw_by_object} if yaw_by_object else {})}
+    job.pop('derived_plates', None); job.pop('refused_plates', None); job.pop('multipart_plan', None)
+    job['plate_merge'] = summary
+    job['tool_mapping'] = mapping
+    job['artifact_binding'] = {**_recipe_binding(job), 'source_sha256': source_sha, 'decisions_sha256': decision_sha, 'gcode_sha256': file_sha256(out)}
+    job.update({'slice_config': [str(p) for p in configs], 'gcode': str(out), 'provenance': provenance,
+                'gcode_verified': True, 'offline_check': check, 'merged': {'geometry_report': geometry},
                 'sliced_at': time.strftime('%Y-%m-%dT%H:%M:%S%z')})
     write_job(work, job)
     print(f"SLICED merged {summary['objects_in']} objects from {summary['plates_in']} plates onto one bed (not uploaded): {out}")
@@ -2828,6 +2999,11 @@ def slice_job(job_path, brim_override=None, copies=None, scale=None, recipe_sha2
     job = json.loads(Path(job_path).read_text()); st = printer_state.load()
     adapter = _job_adapter(job)
     generic = not adapter.multi_slot
+    # A multi_tool printer stays "generic" for the IFS-shaped gates below, but
+    # its per-toolhead colour decisions are honoured (#346): the refusal gate
+    # and the decisions drop both exempt it, and per-part decisions route to
+    # the identity tool-mapping slice.
+    multi_tool = adapter.multi_tool
     job["printer_model"] = adapter.key  # print-now refuses a job sliced for another model
     _timing(job_path, 'slice_start')
     if copies is None:
@@ -2875,9 +3051,13 @@ def slice_job(job_path, brim_override=None, copies=None, scale=None, recipe_sha2
             raise RuntimeError(f'multi-plate 3MF cannot be merged or split: {exc}; no slicing attempted') from exc
         raise
     if generic and (multi_plate or manifest['requires_choices'] or job.get('full_size_split_plan')):
-        raise MultiColorUnsupported(
-            f"{adapter.label} has a single extruder; multi-plate, multi-part or multi-color sources need a "
-            "multi-slot printer. Slice one single-color plate instead")
+        # A multi_tool printer honours multi-colour and multi-plate sources
+        # through the identity tool mapping (#346); a full-size split plan is
+        # still IFS-shaped and stays refused here.
+        if not multi_tool or job.get('full_size_split_plan'):
+            raise MultiColorUnsupported(
+                f"{adapter.label} has a single extruder; multi-plate, multi-part or multi-color sources need a "
+                "multi-slot printer. Slice one single-color plate instead")
     # STL has no source palette; bind decisions to the exact file bytes, as intake does.
     if not manifest.get('source_sha256'):
         manifest['source_sha256'] = file_sha256(src)
@@ -2885,7 +3065,7 @@ def slice_job(job_path, brim_override=None, copies=None, scale=None, recipe_sha2
     write_job(Path(job_path).parent, job)
     _timing(job_path, 'inventory_done')
     job['slice_recipe'] = recipe  # persisted only with the artifact it describes
-    decisions = None if generic else job.get('color_decisions')
+    decisions = None if (generic and not multi_tool) else job.get('color_decisions')
     if decisions is not None:
         decisions = validate_decisions(manifest, decisions, st, resolve_filament_selection)
     if manifest['requires_choices'] and not decisions:
@@ -2902,14 +3082,35 @@ def slice_job(job_path, brim_override=None, copies=None, scale=None, recipe_sha2
     if multi_plate:
         # Several source plates: merge onto one bed by default, otherwise one
         # derived plate per source plate. Never an unexplained refusal.
-        result = slice_multi_plate(job, job_path, src, manifest, decisions, st, brim_override)
+        try:
+            result = slice_multi_plate(job, job_path, src, manifest, decisions, st, brim_override)
+        except ImplicitPlateSplit as exc:
+            if not adapter.multi_tool:
+                raise
+            raise RuntimeError(
+                f"{adapter.label} prints a multi-color job as one merged plate; this source does not "
+                f"merge onto one bed ({exc.verdict.get('reason')}). No slicing attempted") from exc
         _timing(job_path, 'slice_done', path='multi_plate')
         return result
     if decisions and decisions['mode'] == 'single_color':
         selection = decisions['selection']
-        _validate_slot_selection(st, selection)
+        if not multi_tool:
+            # The IFS slot verification is slot-shaped; a toolhead pick was
+            # already resolved against the recorded toolheads (#346).
+            _validate_slot_selection(st, selection)
         job['filament_selection'] = selection
     elif decisions and decisions['mode'] == 'per_part':
+        if adapter.multi_tool:
+            # Independent toolheads (#346): one merged G-code through the
+            # identity tool mapping, or a stated refusal — never the IFS
+            # per-slot split below, whose plates finalize through a native
+            # slot contract this printer does not have.
+            try:
+                return slice_multi_plate(job, job_path, src, manifest, decisions, st, brim_override)
+            except ImplicitPlateSplit as exc:
+                raise RuntimeError(
+                    f"{adapter.label} prints a multi-color job as one merged plate; this source does not "
+                    f"merge onto one bed ({exc.verdict.get('reason')}). No slicing attempted") from exc
         if src.suffix.lower() == '.3mf':
             # Single-plate per-part decisions use the same merge planner as
             # multi-plate sources: one multicolor G-code unless a stated reason splits.
@@ -3381,13 +3582,13 @@ def intake_spool_weights(state, spool_ids, fetch=None):
     return weights
 
 
-def format_spool_projection(rows):
+def format_spool_projection(rows, position_noun='Slot'):
     """One short line per spool: needed, available, left after. Unknowns stay unknown."""
     lines = []
     for r in rows:
         label = ' '.join(str(x) for x in (r.get('color'), r.get('material')) if x) or 'filament'
         if r.get('slot') is not None:
-            label = f"Slot {r['slot']} {label}"
+            label = f"{position_noun} {r['slot']} {label}"
         line = f"{label}: needs about {r['estimated_used_g']:g} g"
         if r.get('remaining_g') is None:
             line += '; spool weight unknown.'

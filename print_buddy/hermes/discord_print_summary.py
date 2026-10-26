@@ -212,9 +212,20 @@ def _print_number(job):
         return None
 
 
+def _position_noun(job):
+    """'Toolhead' for a multi_tool job's positions, 'Slot' for every other printer (#346)."""
+    try:
+        from .. import printers
+        model = (job or {}).get("printer_model")
+        adapter = printers.get(model) if model else printers.current()
+        return "Toolhead" if adapter.multi_tool else "Slot"
+    except Exception:
+        return "Slot"
+
+
 def format_confirmed_print(*, model, parts=(), plate=None, slot=None, color=None, material=None,
                            filament_g=None, seconds=None, finish=None, kind="started", plates_total=None,
-                           print_number=None):
+                           print_number=None, position_noun="Slot"):
     """Human readable, hash free message for one print event."""
     details = [f"{VERBS.get(kind, VERBS['started'])}: {safe_label(model)}"]
     if print_number:
@@ -225,7 +236,7 @@ def format_confirmed_print(*, model, parts=(), plate=None, slot=None, color=None
     if plate is not None:
         details.append(f"Plate {plate}" + (f" of {plates_total}" if plates_total and plates_total > 1 else ""))
     if slot is not None or color or material:
-        prefix = f"Slot {slot}: " if slot is not None else "Filament: "
+        prefix = f"{position_noun} {slot}: " if slot is not None else "Filament: "
         details.append(prefix + f"{safe_label(color, 'color unknown')} {safe_label(material, 'material unknown')}")
     if filament_g is not None:
         details.append(f"Filament: {filament_g:g} g")
@@ -263,7 +274,7 @@ def format_preparation(job, plate=None):
         slot=row.get("slot"), color=row.get("color"), material=row.get("material"),
         filament_g=row.get("filament_g"), seconds=row.get("seconds"), kind="slice",
         plates_total=len((job or {}).get("derived_plates") or []) or None,
-        print_number=_print_number(job or {}))
+        print_number=_print_number(job or {}), position_noun=_position_noun(job))
 
 
 def format_started(job, plate=None, now=None):
@@ -276,7 +287,7 @@ def format_started(job, plate=None, now=None):
         filament_g=row.get("filament_g"), seconds=seconds,
         finish=finish_text(seconds, now), kind="started",
         plates_total=len((job or {}).get("derived_plates") or []) or None,
-        print_number=_print_number(job or {}))
+        print_number=_print_number(job or {}), position_noun=_position_noun(job))
 
 
 def format_event(kind, filename, now=None, archive=None, context_path=None, extra=None):
@@ -292,7 +303,8 @@ def format_event(kind, filename, now=None, archive=None, context_path=None, extr
             slot=(plate or {}).get("slot"), color=(plate or {}).get("color"),
             material=(plate or {}).get("material"), filament_g=(plate or {}).get("filament_g"),
             seconds=seconds, finish=finish_text(seconds, now) if kind == "started" else None,
-            kind=kind, plates_total=total, print_number=_print_number(job))
+            kind=kind, plates_total=total, print_number=_print_number(job),
+            position_noun=_position_noun(job))
     if extra:
         message += "\n" + scrub(extra)
     return scrub(message)
@@ -440,10 +452,11 @@ def format_slice_summary(job, now=None):
     total_filament = 0.0
     filament_known = True
     known = True
+    noun = _position_noun(job).lower()
     for row in rows:
         label = f"Plate {row['plate']}" if row.get("plate") is not None else "Plate"
         parts = ", ".join(row["parts"]) or "all parts"
-        slot = f"slot {row['slot']}" if row.get("slot") is not None else "slot unknown"
+        slot = f"{noun} {row['slot']}" if row.get("slot") is not None else f"{noun} unknown"
         fil = f"{safe_label(row['color'], 'color unknown')} {safe_label(row['material'], 'material unknown')}, {slot}"
         est = human(row["seconds"]) if row.get("seconds") is not None else "estimate unknown"
         grams = row.get("filament_g")

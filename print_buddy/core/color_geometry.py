@@ -17,9 +17,15 @@ CORE = 'http://schemas.microsoft.com/3dmanufacturing/core/2015/02'
 IDENTITY = [1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0]
 
 
-def export_color_geometry(source, target, decisions, item_shifts=None, object_ids=None, scale=None, fit_by_object=None):
+def export_color_geometry(source, target, decisions, item_shifts=None, object_ids=None, scale=None, fit_by_object=None,
+                          identity_tools=False):
     """object_ids limits export to those build objects (one authored plate);
     scale shrinks the selection uniformly before bed centering.
+
+    identity_tools (#346, multi_tool printers): a part assigned to position
+    n exports as slicer tool n-1 — the toolhead itself — instead of the
+    compacted tool order the IFS merge uses, and the returned mapping is
+    the identity {tool: position}.
 
     fit_by_object ({object_id: {'rotation': [9]}}) turns individual
     exported objects in the bed plane (#221 R2b, the merge path's analogue
@@ -75,7 +81,8 @@ def export_color_geometry(source, target, decisions, item_shifts=None, object_id
         if missing:
             raise RuntimeError(f'painted source filament(s) {missing} have no slot choice')
         slots = sorted({choices[f'filament:{n}']['slot'] for n in used})
-        paint_table = {n: slots.index(choices[f'filament:{n}']['slot']) + 1 for n in used}
+        paint_table = {n: (choices[f'filament:{n}']['slot'] if identity_tools
+                           else slots.index(choices[f'filament:{n}']['slot']) + 1) for n in used}
     else:
         for part in manifest['parts']:
             palette = choices.get(f"filament:{part['source_extruder']}")
@@ -84,7 +91,8 @@ def export_color_geometry(source, target, decisions, item_shifts=None, object_id
         slots = sorted({choices['part:' + part['key']]['slot'] for part in manifest['parts']})
     if not slots or len(slots) > 4:
         raise RuntimeError('multipart selection requires one to four IFS slots')
-    mapping = {str(i): slot for i, slot in enumerate(slots)}
+    mapping = ({str(slot - 1): slot for slot in slots} if identity_tools
+               else {str(i): slot for i, slot in enumerate(slots)})
     with zipfile.ZipFile(source) as archive:
         models = {}
         for name in archive.namelist():
@@ -223,10 +231,10 @@ def export_color_geometry(source, target, decisions, item_shifts=None, object_id
         part = next(p for p in manifest['parts'] if p['instance_key'] == key)
         if painted:
             tool = paint_table[base_state[part['key']]] - 1
-            slot = slots[tool]
+            slot = choices[f'filament:{base_state[part["key"]]}']['slot'] if identity_tools else slots[tool]
         else:
             slot = choices['part:' + part['key']]['slot']
-            tool = slots.index(slot)
+            tool = slot - 1 if identity_tools else slots.index(slot)
         mesh_id = str(i)
         group = group_of.get(item_of(part['instance_key']))
         obj = ET.SubElement(resources, tag('object'), id=mesh_id, type='model', name=part['name'])

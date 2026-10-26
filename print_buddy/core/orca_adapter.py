@@ -828,11 +828,17 @@ def slice_model(source, folder, state, brim=None, first_layer=False, color_decis
                        if color_decisions else None)
     mapping = None
     mapped_profile = False
+    # A multi_tool printer slices per-part colours as true multi-extruder
+    # output: tools are toolheads (identity mapping), the model's templates
+    # already describe every extruder, and no native IFS finalize applies (#346).
+    multi_tool = bool(color_decisions and color_decisions.get('mode') == 'per_part'
+                      and getattr(printer, 'multi_tool', False))
     if color_decisions and color_decisions.get('mode') == 'per_part':
         from .color_geometry import export_color_geometry
         input_path = folder / 'geometry.3mf'
         mapping, geometry = export_color_geometry(source, input_path, color_decisions, item_shifts=item_shifts,
-                                                  object_ids=object_ids, scale=scale, fit_by_object=fit_by_object)
+                                                  object_ids=object_ids, scale=scale, fit_by_object=fit_by_object,
+                                                  identity_tools=multi_tool)
         with zipfile.ZipFile(source) as archive:
             if 'Metadata/project_settings.config' in archive.namelist():
                 author = json.loads(archive.read('Metadata/project_settings.config'))
@@ -992,7 +998,41 @@ def slice_model(source, folder, state, brim=None, first_layer=False, color_decis
         path.write_text(json.dumps(data, indent=2) + '\n')
         configs.append(path)
     filament_paths = [configs[2]]
-    if mapping:
+    if mapping and multi_tool:
+        import copy
+        from .printer_state import same_material
+        # One filament profile per toolhead, in toolhead order: Orca's
+        # multi-extruder templates pair filament i with extruder i, and the
+        # identity mapping means filament i must describe toolhead i+1's
+        # recorded spool. Unused toolheads keep the base profile. The machine
+        # and process templates are the model's own (already multi-extruder):
+        # no single-extruder-multi-material flip and no forced prime tower.
+        used = {int(tool): int(position) for tool, position in mapping.items()}
+        materials = []
+        active_material = (state.get('spool') or {}).get('material')
+        filament_paths = []
+        for tool in range(int(printer.tool_count)):
+            data = copy.deepcopy(filament)
+            position = tool + 1
+            if tool in used:
+                record = state['ifs_slots'][str(position)]
+                if active_material is not None and not same_material(record['material'], active_material):
+                    raise RuntimeError('mixed material requires independently calibrated per-toolhead temperatures/density')
+                materials.append(record['material'])
+                hex_color = record.get('hex')
+                data.update({'name': f"Hermes toolhead {position} {record['material']}",
+                             'filament_settings_id': [f"Hermes toolhead {position} {record['material']}"],
+                             'filament_colour': ['#' + hex_color.lstrip('#').upper()] if hex_color
+                                                else filament['filament_colour'],
+                             'filament_is_support': ['0']})
+            path = folder / f'filament_tool_{tool}.json'
+            path.write_text(json.dumps(data, indent=2) + '\n')
+            filament_paths.append(path)
+        if len({str(m).strip().casefold() for m in materials}) > 1:
+            raise RuntimeError('mixed material requires independently calibrated per-toolhead temperatures/density')
+        configs.extend(filament_paths)
+        mapped_profile = True
+    elif mapping:
         import copy
         machine.update({'single_extruder_multi_material': '1', 'change_filament_gcode': ''})
         tower_x, tower_y = geometry['prime_tower_xy_mm']
@@ -1091,6 +1131,10 @@ def slice_model(source, folder, state, brim=None, first_layer=False, color_decis
     # A single-color plate records T0 for provenance only. The pre-slice guard
     # compares map size with filament count, so it must not see that one-tool map.
     guard_mapping = mapping if mapped_profile else None
+    if multi_tool:
+        # Every toolhead is a guard-visible filament (four profiles were
+        # loaded), and the mapping is the identity over all of them (#346).
+        guard_mapping = {tool: tool + 1 for tool in range(int(printer.tool_count))}
     selected_slot = filament_slot or 1
     tool_slots = {int(tool): int(slot) for tool, slot in guard_mapping.items()} if guard_mapping else {0: int(selected_slot)}
     # Protected-key differences here include adapter-sanctioned profile assembly
@@ -1109,7 +1153,7 @@ def slice_model(source, folder, state, brim=None, first_layer=False, color_decis
         used_materials = filament.get('filament_type') or [state.get('spool', {}).get('material')]
     gate = pre_slice(bounds=bounds_xy, bed=bed, profile=effective_profile,
                      before_profile=None, filaments=len(filament_paths),
-                     ifs_slots=IFS_SLOTS, tool_slots=tool_slots,
+                     ifs_slots=(int(printer.slot_count) if multi_tool else IFS_SLOTS), tool_slots=tool_slots,
                      nozzle_type=nozzle_type, materials=used_materials,
                      nozzle_temp=effective_nozzle_temp, nozzle_temp_is_effective=True)
     if gate.status == 'blocked':
@@ -1304,7 +1348,11 @@ def slice_model(source, folder, state, brim=None, first_layer=False, color_decis
             raise RuntimeError('Flash Studio did not generate recognized G-code; see '
                                f'{_keep_failure_logs(folder) / "flash-studio.log"}')
         raise RuntimeError(f'output is not generated by {slicer}')
-    if mapped_profile or mapping:
+    if multi_tool:
+        # No finalize: Orca's output already addresses the toolheads
+        # directly, and a multi_tool printer has no native slot contract (#346).
+        pass
+    elif mapped_profile or mapping:
         # Explicit T0 (one physical slot) and per-part maps share the mapped
         # finalizer: one slot record, one zmod_color_data line, one checksum.
         # mapped_profile stays the prime-tower flag; this branch does not
@@ -1314,7 +1362,7 @@ def slice_model(source, folder, state, brim=None, first_layer=False, color_decis
         finalize_zmod(output, filament['filament_colour'][0], state['spool']['material'], printer)
     result_path = folder / 'result.json'
     post_gate = post_slice(output, result_json=None if slicer != 'OrcaSlicer' else (result_path if result_path.is_file() else None),
-                           bed=bed, ifs_slots=IFS_SLOTS, tool_slots=tool_slots,
+                           bed=bed, ifs_slots=(int(printer.slot_count) if multi_tool else IFS_SLOTS), tool_slots=tool_slots,
                            templates=templates, profile_paths=filament_paths,
                            envelope=printer.motion_envelope_mm)
     # Each vendor runs only its own start code: e.g. no Klipper/ZMod macro reaches a Bambu Lab printer.

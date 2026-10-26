@@ -23,6 +23,8 @@ ROUTES = {
                       "software_version": "fake"},
     "/server/info": {"klippy_connected": True, "klippy_state": "ready", "moonraker_version": "fake"},
     "/printer/objects/query": {"eventtime": 0, "status": IDLE},
+    "/printer/objects/list": {"objects": ["toolhead", "extruder", "gcode_macro PRINT_START",
+                                         "gcode_macro PRINT_END", "gcode_macro _FAKE_HELPER"]},
     "/server/history/list": {"count": 0, "jobs": []},
     "/server/history/totals": {"job_totals": {"total_jobs": 0, "total_time": 0, "total_print_time": 0,
                                               "total_filament_used": 0, "longest_job": 0, "longest_print": 0}},

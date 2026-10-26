@@ -909,6 +909,42 @@ async def lookup_dispatch(event, gateway, **kwargs):
     return {'action': 'skip', 'reason': 'print lookup handled'}
 
 
+async def macros_dispatch(event, gateway, **kwargs):
+    """/print-macros: list the macros the configured Moonraker printer actually defines (issue #291, stage 1).
+
+    Read-only: one GET of Moonraker's /printer/objects/list through the spool
+    client, classified against firmware/commands.toml. Running a macro is
+    stage 2 and is not implemented here; this handler never sends a macro or
+    any other command. Printers whose connection is not Moonraker have no
+    macro namespace and get a plain explanation instead of an error.
+    """
+    source, adapter = _control_preamble(event, gateway, '/print-macros', with_args=True)
+    if source is None:
+        return None
+    if adapter is None:
+        return {'action': 'skip', 'reason': 'macros UI delivery unavailable'}
+    from print_buddy import macros, printers
+    from print_buddy.hermes import spool_sync
+    metadata = {'thread_id': source.thread_id} if source.thread_id else None
+    try:
+        connection = printers.current().connection
+    except Exception:
+        logger.exception('/print-macros could not resolve the configured printer')
+        connection = None
+    if connection != 'moonraker':
+        await adapter.send(chat_id=source.chat_id, metadata=metadata,
+                           content=macros.not_moonraker_text(connection))
+        return {'action': 'skip', 'reason': 'print macros not applicable to this printer'}
+    try:
+        listing = await asyncio.to_thread(macros.discover, spool_sync.moonraker)
+        message = macros.listing_text(listing)
+    except Exception:
+        logger.exception('/print-macros failed')
+        message = macros.COULD_NOT_READ_TEXT
+    await adapter.send(chat_id=source.chat_id, metadata=metadata, content=message)
+    return {'action': 'skip', 'reason': 'print macros handled'}
+
+
 TROUBLESHOOT_STOP_LABEL = 'Stop here'
 
 
@@ -1909,6 +1945,7 @@ def register(ctx):
     ctx.register_hook('pre_gateway_dispatch', coldpull_dispatch)
     ctx.register_hook('pre_gateway_dispatch', lookup_dispatch)
     ctx.register_hook('pre_gateway_dispatch', troubleshoot_dispatch)
+    ctx.register_hook('pre_gateway_dispatch', macros_dispatch)
     ctx.register_hook('pre_gateway_dispatch', typed_quantity_dispatch)
     ctx.register_hook('pre_gateway_dispatch', upload_wait_dispatch)
     ctx.register_hook('pre_gateway_dispatch', model_link_dispatch)

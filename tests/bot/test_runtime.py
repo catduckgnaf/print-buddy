@@ -43,10 +43,10 @@ async def press(discord, label):
 def test_router_runs_the_plugin_handlers_in_plugin_order_without_the_agent_receipt():
     router = Router()
     names = router.handler_names()
-    assert names[:7] == ["guided_dispatch", "maintenance_dispatch", "coldpull_dispatch",
-                         "lookup_dispatch", "troubleshoot_dispatch", "typed_quantity_dispatch",
-                         "upload_wait_dispatch"]
-    assert "receive_ack" not in names and len(names) == 16
+    assert names[:8] == ["guided_dispatch", "maintenance_dispatch", "coldpull_dispatch",
+                         "lookup_dispatch", "troubleshoot_dispatch", "macros_dispatch",
+                         "typed_quantity_dispatch", "upload_wait_dispatch"]
+    assert "receive_ack" not in names and len(names) == 17
     assert router.platform_handlers["discord"], "listener button handlers were not registered"
 
 
@@ -226,7 +226,7 @@ def test_dropped_model_file_is_saved_where_the_intake_reads_it(cfg, tmp_path):
 def test_status_reports_no_hermes_modules(cfg):
     discord, core = make(cfg)
     status = core.status(True)
-    assert status["mode"] == "standalone" and status["handlers"] == 16
+    assert status["mode"] == "standalone" and status["handlers"] == 17
     assert status["chat_id"] == cfg["discord"]["chat_id"] and status["allowed_users"] == 1
 
 

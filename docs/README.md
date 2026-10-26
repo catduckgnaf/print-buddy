@@ -21,6 +21,7 @@ Do not run both Discord modes with the same token. Installing, enabling services
 - [Guided setup and debugging in Discord](GUIDED-SETUP-DEBUGGING.md): the `/print-buddy setup` checklist (resumable, consent-gated, never collects the token) and the read-only, redacted `/print-buddy debugging` checks.
 - [Settings reference](SETTINGS.md): every setting with its YAML key, environment variable and Docker value, plus Docker build arguments and secrets.
 - [Detailed project reference](PROJECT-REFERENCE.md): workflow examples, commands, printer models, spool identity rules, monitoring and updates.
+- [Printer macros](MACROS.md): `/print-macros` live macro discovery on Moonraker printers, and the per-vendor macro matrix.
 - [Printer profiles and offline delivery](PRINTER-PROFILES.md): vendor/model inheritance, supported delivery methods and verification limitations.
 - [Optional Flash Studio slicer](FLASH-STUDIO.md): opt-in, user-installed Flash Studio executable for Flashforge printers; an empty path keeps the normal OrcaSlicer choice.
 - [Home Assistant panic and printer controls](home-assistant-panic.md): direct, no-LLM AD5X/ZMod printer controls from a Home Assistant dashboard, including the emergency-stop panic restart; no extra daemon.

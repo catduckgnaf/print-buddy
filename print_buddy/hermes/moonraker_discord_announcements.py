@@ -863,6 +863,11 @@ def main():
         marker = _timelapse_marker(job_key)
         if marker:
             print(f"TIMELAPSE_POSTPROCESS:{marker}")
+            # Remember which job the pending completion's video leg belongs
+            # to, so a listener restart during the render wait can re-drive
+            # the retrieval instead of posting the pending text bare and
+            # losing the video (#373).
+            previous["pending_timelapse_job_key"] = job_key
         # No roast here (#374): the one roast per print belongs to the start
         # announcement, added when printing begins. Completion never invokes
         # the roast generator.

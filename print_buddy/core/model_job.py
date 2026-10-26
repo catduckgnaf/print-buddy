@@ -4758,6 +4758,16 @@ def _print_flashforge_stock(adapter, state, gcode, job, job_path, wait_s, reprin
             out["record_path"] = record_start(gcode, remote)
         except Exception as exc:
             print(f"WARNING: start record failed: {exc}")
+        # Timelapse (#373): a monitor watches this launched print — stock
+        # firmware has no listener (#299), so the print path starts it; it
+        # captures frames from the camera source the printer advertises
+        # and makes the completion post with the timelapse attached. A
+        # monitor that cannot start never fails the print.
+        try:
+            from print_buddy.hermes import stock_watch
+            stock_watch.start_monitor(adapter, remote)
+        except Exception as exc:
+            print(f"WARNING: timelapse monitor did not start: {exc}")
     print(("PRINT STARTED " if confirmed else "START SUBMITTED; AWAITING CONFIRMATION ") + json.dumps(out))
     return out
 

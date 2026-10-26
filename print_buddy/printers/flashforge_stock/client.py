@@ -23,6 +23,7 @@ from urllib.request import Request, urlopen
 
 STOCK_PORT = 8898
 DETAIL_PATH = "/detail"
+CONTROL_PATH = "/control"
 UPLOAD_PATH = "/uploadGcode"
 PRINT_PATH = "/printGcode"
 # Firmware code: the printer is already doing something. See ff-5mp-api FlashNetwork.h.
@@ -78,6 +79,18 @@ class StockClient:
         if not isinstance(detail, dict):
             raise StockLanError("stock LAN /detail refused")
         return detail
+
+    def control(self, cmd, args=None):
+        """One /control command ({payload: {cmd, args}}). A non-zero code is a refusal.
+
+        Dumb transport like the rest of this client: which commands exist and
+        what they actuate is the caller's protocol knowledge (see camera.py
+        for streamCtrl_cmd). The check code rides in the body, as always.
+        """
+        serial, code = _credentials()
+        body = {"serialNumber": serial, "checkCode": code,
+                "payload": {"cmd": str(cmd), "args": dict(args or {})}}
+        return self._send(CONTROL_PATH, body)
 
     def upload(self, path, filename):
         """Upload one .gcode and return its remote name. Never starts it (print=false)."""

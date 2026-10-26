@@ -70,4 +70,5 @@ The filament system is where they part:
 Set `[printer] model` to the key from the table (or `PRINT_BUDDY__PRINTER__MODEL` in
 Docker). The setup wizard and the Web UI picker list these models from the printer
 registry, so no other configuration names them. Stock (non-ZMod) firmware is a
-separate path — only the AD5X has one today (`flashforge_stock.ad5x`).
+separate path — only the AD5X has one today (`flashforge_stock.ad5x`,
+see [Stock Flashforge printers](FLASHFORGE-STOCK.md)).

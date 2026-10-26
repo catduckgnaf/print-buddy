@@ -111,6 +111,47 @@ def fetch_frame(url, timeout=8) -> bytes:
     return image
 
 
+# An MJPEG stream's per-part headers and boundary lines ride in front of
+# each frame; the scan window allows one maximum-size frame plus slack
+# for them, so a source that never produces a frame cannot stream
+# unbounded data into memory either.
+MJPEG_SCAN_SLACK = 256 * 1024
+JPEG_END = bytes((0xFF, 0xD9))
+
+
+def fetch_mjpeg_frame(url, timeout=8) -> bytes:
+    """The first complete JPEG frame from an MJPEG (multipart) stream.
+
+    For camera sources that serve only a stream — the stock Flashforge
+    ``cameraStreamUrl`` is one (``?action=stream``, no documented snapshot
+    route). Reads until the first frame's end marker, bounded like
+    fetch_frame; raises on any transport or format problem, and
+    CaptureSession treats every raise as a soft capture failure.
+    """
+    request = urllib.request.Request(url)
+    buffer = bytearray()
+    with urllib.request.urlopen(request, timeout=timeout) as response:
+        while len(buffer) <= MAX_FRAME_BYTES + MJPEG_SCAN_SLACK:
+            chunk = response.read(64 * 1024)
+            if not chunk:
+                break
+            buffer += chunk
+            start = buffer.find(JPEG_MAGIC)
+            if start < 0:
+                # No frame start yet: keep only a possible split marker.
+                del buffer[:-1]
+                continue
+            end = buffer.find(JPEG_END, start + 2)
+            if end >= 0:
+                frame = bytes(buffer[start:end + 2])
+                if len(frame) > MAX_FRAME_BYTES:
+                    raise ValueError("MJPEG frame exceeds the bounded snapshot size")
+                return frame
+            if start:
+                del buffer[:start]
+    raise ValueError("MJPEG stream produced no complete JPEG frame")
+
+
 class IntervalTrigger:
     """A frame every interval seconds. The first frame is due immediately."""
 
@@ -346,19 +387,27 @@ class CaptureSession:
             pass
 
 
-def begin(job_key, filename="", *, data=None, fetch=None, log=None, environ=None) -> CaptureSession | None:
+def begin(job_key, filename="", *, data=None, fetch=None, log=None, environ=None,
+          url=None) -> CaptureSession | None:
     """Open a capture session for a job, or None when capture cannot run.
 
     None — never an exception — when capture is disabled, when no camera
     source resolves, or when the session cannot be created: the caller
     (the listener) treats every one of those as "no capture for this job"
     and carries on exactly as before.
+
+    ``url`` names an explicit frame source instead of the settings-derived
+    one: a caller whose camera source is per-printer state rather than a
+    setting (the stock Flashforge monitor reads the stream URL the printer
+    advertises in /detail, #373) passes it together with a matching
+    ``fetch``. The capture_enabled gate, the knobs, the storage discipline
+    and the pruning are unchanged either way.
     """
     data = _config.cfg() if data is None else data
     try:
         if not go2rtc.capture_enabled(data):
             return None
-        url = frame_url(data, environ)
+        url = url or frame_url(data, environ)
         if not url:
             return None
         knobs = capture_settings(data)

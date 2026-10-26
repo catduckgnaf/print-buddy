@@ -231,25 +231,68 @@ def offset_authority_problems(st, variables, native):
     return ["calibration mode is unknown; no offset substitution permitted"]
 
 
-def _check_spoolman(st, probs, facts):
-    """The recorded spool against its Spoolman record; failures are appended to probs."""
+def spoolman_url(st=None):
+    """The Spoolman base URL to use: configured settings win over the hardware record.
+
+    `services.spoolman_url` in settings (which includes the
+    PRINT_BUDDY__SERVICES__SPOOLMAN_URL and legacy SPOOLMAN_URL environment
+    variables) is the operator's current configuration. The copy cached in
+    printer_hardware.json can go stale during migrations — it kept pointing at
+    a decommissioned host while the bundled Spoolman lived on 127.0.0.1:8000
+    (#235) — so it is only a fallback for when settings do not name a URL.
+    """
     try:
-        sp = _get(f"{st['spoolman_url']}/api/v1/spool/{st['spool']['spoolman_id']}")
-        facts["spool_name"] = sp["filament"]["name"]
-        facts["spool_material"] = sp["filament"].get("material")
+        configured = (settings.current().get("services") or {}).get("spoolman_url")
+    except Exception:
+        configured = None
+    for candidate in (configured, (st or {}).get("spoolman_url")):
+        if isinstance(candidate, str) and candidate.strip():
+            return candidate.strip().rstrip("/")
+    return ""
+
+
+def _check_spoolman(st, warnings, facts):
+    """The recorded spool against its Spoolman record; every outcome is a warning (#235).
+
+    Spoolman is inventory/accounting, never a hardware gate: a lookup failure,
+    timeout, missing record, archived spool or name drift must warn and let
+    slicing and printing proceed on the recorded state (material, density and
+    temperatures already live in printer_hardware.json). Nothing here appends
+    to the caller's problems list.
+    """
+    spool_id = (st.get("spool") or {}).get("spoolman_id")
+    base = spoolman_url(st)
+    if not base or spool_id is None:
+        warnings.append("Spoolman check skipped: no Spoolman URL or no recorded spool; "
+                        "continuing on the recorded spool state")
+        return
+    try:
+        sp = _get(f"{base}/api/v1/spool/{spool_id}")
+        filament = sp["filament"]
+        facts["spool_name"] = filament["name"]
+        facts["spool_material"] = filament.get("material")
         facts["spool_remaining_g"] = round(sp.get("remaining_weight") or 0)
         if sp.get("archived"):
-            probs.append(f"Spoolman spool #{sp['id']} is archived")
-        if sp["filament"]["name"] != st["spool"]["name"]:
-            probs.append(f"Spoolman #{sp['id']} is '{sp['filament']['name']}', state says '{st['spool']['name']}'")
+            warnings.append(f"Spoolman spool #{sp['id']} is archived")
+        if filament["name"] != st["spool"]["name"]:
+            warnings.append(f"Spoolman #{sp['id']} is '{filament['name']}', state says '{st['spool']['name']}'")
     except Exception as e:
-        probs.append(f"Spoolman lookup failed: {e}")
+        warnings.append(f"Spoolman lookup failed: {e}")
 
 
 def check(st=None):
-    """Return (ok, problems, facts). Never raises on network errors; reports them."""
+    """Return (ok, problems, facts). Never raises on network errors; reports them.
+
+    Spoolman outcomes never affect `ok`: they are collected in
+    facts["warnings"] (alias facts["spoolman_warnings"]) so callers can surface
+    them without refusing work (#235). Problems are the real hardware gates:
+    Moonraker/Klipper state, nozzle, calibration authority and adapter readiness.
+    """
     st = st or load()
     probs, facts = [], {}
+    warnings = []
+    facts["warnings"] = warnings
+    facts["spoolman_warnings"] = warnings
     adapter = printers.current()
     if getattr(adapter, 'transport', None) == 'octoprint':
         try:
@@ -275,13 +318,13 @@ def check(st=None):
                 probs.append(str(exc))
         else:
             probs.extend(adapter.readiness_problems(st, {}))
-        _check_spoolman(st, probs, facts)
+        _check_spoolman(st, warnings, facts)
         return (not probs), probs, facts
     if adapter.connection == 'offline':
         # No printer connection: the hardware record and Spoolman only, never Moonraker.
         facts["connection"] = "offline"
         probs.extend(adapter.readiness_problems(st, {}))
-        _check_spoolman(st, probs, facts)
+        _check_spoolman(st, warnings, facts)
         return (not probs), probs, facts
     native = adapter.has_native_screen  # offset authority is a ZMod screen concept
     mr = st["moonraker_url"]
@@ -306,7 +349,7 @@ def check(st=None):
             facts["active_spool_mismatch"] = f"Moonraker active spool {facts['moonraker_active_spool']} != state #{st['spool']['spoolman_id']}"
     except Exception as e:
         probs.append(f"Moonraker spoolman status failed: {e}")
-    _check_spoolman(st, probs, facts)
+    _check_spoolman(st, warnings, facts)
     try:
         if not native:
             return (not probs), probs, facts
@@ -371,10 +414,12 @@ def main():
               (f", {facts.get('spool_remaining_g')} g left" if "spool_remaining_g" in facts else ""))
         for p in probs:
             print("  - " + p)
+        for w in facts.get("warnings") or []:
+            print("  - warning: " + w)
         sys.exit(0 if ok else 2)
     # set
     if a.spool is not None:
-        sp = _get(f"{st['spoolman_url']}/api/v1/spool/{a.spool}")
+        sp = _get(f"{spoolman_url(st)}/api/v1/spool/{a.spool}")
         f = sp["filament"]
         st["spool"] = {"spoolman_id": a.spool, "name": f["name"], "material": f.get("material"),
                        "diameter_mm": f.get("diameter", 1.75), "density": f.get("density", 1.24)}

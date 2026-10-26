@@ -588,7 +588,8 @@ async def _spool_projection_text(mj, job, manifest, state, copies):
         if not ids:
             return ''
         fetch = None
-        base = (state or {}).get('spoolman_url')
+        from .printer_state import spoolman_url
+        base = spoolman_url(state)
         if base:
             from . import spool_lifecycle
 

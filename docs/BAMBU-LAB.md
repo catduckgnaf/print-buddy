@@ -76,6 +76,8 @@ The P1S is `bambulab/p1s.py`: its facts in `facts.P1S` (profile names, checked i
 
 Supported firmware and authentication modes for live use: LAN Mode with the printer's LAN access code for status (the setup wizard collects both); printing additionally requires Developer Mode — see [Printing over LAN](#printing-over-lan-opt-in). `services.moonraker_url` and `services.octoprint_url` must stay empty for a Bambu Lab model; settings refuse to load otherwise. The Moonraker listener, camera watchdog, timelapse download and cold pull do not apply.
 
+In the combined Docker container the supervisor honours that (#256): for a Bambu Lab model it does not start the Moonraker listener at all, and the healthcheck does not require one, so the container starts, stays up and reports healthy with just the bot (with a token) and the bundled Spoolman.
+
 ## LAN status (read-only, opt-in)
 
 Off by default. To enable it, set both keys and supply the secret:

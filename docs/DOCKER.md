@@ -47,6 +47,16 @@ Use `docker/unraid/print-buddy.xml`, replacing the prior three templates. One en
 
 The runtime selector `PRINT_BUDDY_ORCA_CHANNEL` (Compose, `.env.example` and the template) defaults to `stable` and accepts `alpha`; any other value stops container startup.
 
+The template and the Compose environment also carry the feature-enabling variables (#252) — the ones that turn a feature on, as opposed to tuning settings, which stay in a mounted YAML pointed to by `PRINT_BUDDY_CONFIG`:
+
+- **Camera watch:** `PRINT_BUDDY__SERVICES__VISION_CHAT_URL`, `PRINT_BUDDY__SERVICES__CAMERA_SNAPSHOT_URL`, `PRINT_BUDDY__VISION__MODEL` and the `CLIPROXY_API_KEY` secret; see [Camera watch](#camera-watch-visual_watch).
+- **Stock Flashforge LAN:** `PRINT_BUDDY__FLASHFORGE_STOCK__HOST` with the `AD5X_SERIAL` and `AD5X_CHECK_CODE` secrets.
+- **Bambu Lab LAN status:** `PRINT_BUDDY__BAMBU__LAN_HOST`, `PRINT_BUDDY__BAMBU__LAN_SERIAL` and the `BAMBU_LAN_PASSWORD` secret. The template's printer model list includes `bambulab.a1` and `bambulab.p1s` (offline only).
+- **Key-protected Moonraker:** the `MOONRAKER_API_KEY` secret.
+- **Discord and LLM:** `PRINT_BUDDY__DISCORD__APPROVAL_USER_ID`, `PRINT_BUDDY__DISCORD__TIMEZONE`, `PRINT_BUDDY__LLM__CHAT_URL`, `PRINT_BUDDY__LLM__MODEL` and the `LLM_API_KEY` secret.
+
+In Compose, the settings are environment entries with their documented defaults and the secrets reach the container through the `.env` file, like `DISCORD_BOT_TOKEN`. In the template, secrets are masked fields. Leaving every one of them at its default or empty changes nothing about a running install.
+
 This source template does not prove a Community Applications listing or an exercised Unraid installation. The host owner verifies deployment and final network mapping.
 
 ## Supported platforms and variants (#192)

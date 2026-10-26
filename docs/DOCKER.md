@@ -40,6 +40,8 @@ While a print runs, the listener checks the printer camera at layer 2, layer 5 a
 
 It needs a Moonraker URL, a camera snapshot (`PRINT_BUDDY__SERVICES__CAMERA_SNAPSHOT_URL`; derived from the Moonraker host when empty) and a vision endpoint (`PRINT_BUDDY__SERVICES__VISION_CHAT_URL` plus the `CLIPROXY_API_KEY` secret in `.env`; an empty vision URL disables camera checks and roasts).
 
+The same endpoint powers the **roast**: the one-line joke added to print-started and print-complete posts on every platform, Telegram included. It is **enabled by default whenever an LLM/vision endpoint is available** — `PRINT_BUDDY__VISION__ROAST_ENABLED` defaults to `true` in Compose and the Unraid template (`vision.roast_enabled` in YAML). Set it to `false` to turn roasts off; camera checks keep working.
+
 Two settings tune it, settable in the mounted YAML (`visual_watch` in `config/docker.yaml`), in TOML (`[visual_watch]` in `config/docker.toml`), or as Compose/`.env` variables — Compose and the Unraid template both carry them:
 
 | YAML key | Environment variable | Default | What it does |

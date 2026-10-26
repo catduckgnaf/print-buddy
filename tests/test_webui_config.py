@@ -96,7 +96,9 @@ class CatalogTests(unittest.TestCase):
                                ("timelapse.ssh_key", "text"),
                                ("services.camera_snapshot_url", "url"),
                                ("services.vision_chat_url", "url"),
-                               ("vision.model", "text")):
+                               ("vision.model", "text"),
+                               ("vision.roast_model", "text"),
+                               ("vision.roast_enabled", "toggle")):
             with self.subTest(field=field_id):
                 field = field_by_id(field_id)
                 self.assertIsNotNone(field)

@@ -86,6 +86,20 @@ def checks(cfg):
     else:
         add("llm", True, f"{cfg['llm']['model']} at {cfg['llm']['chat_url']}" if llm.configured(cfg)
             else "off (unmatched messages get the command list)")
+    # The roast is separate from the chat fallback above: print-started and
+    # print-complete posts gain a one-line roast on every platform (Telegram
+    # and Matrix included) whenever [vision] roast_enabled is on — the
+    # default — and an LLM/vision endpoint is available.
+    vision = cfg.get("vision") or {}
+    vision_url = str((cfg.get("services") or {}).get("vision_chat_url") or "")
+    if not vision.get("roast_enabled", True):
+        add("roast", True, "off (vision.roast_enabled is false)")
+    elif vision_url:
+        add("roast", True, f"on ({vision.get('roast_model') or 'luna-latest'} at {vision_url}; "
+                           "set vision.roast_enabled=false to turn roasts off)")
+    else:
+        add("roast", True, "on by default, but no LLM/vision endpoint is available "
+                           "(services.vision_chat_url is empty); set it to enable roasts")
     return rows
 
 

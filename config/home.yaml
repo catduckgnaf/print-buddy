@@ -130,6 +130,12 @@ listener:
 vision:
   model: gemini-latest
   roast_model: luna-latest
+  # The one-line roast on print-started and print-complete posts. On by
+  # default: it runs whenever an LLM/vision endpoint is available
+  # (services.vision_chat_url plus CLIPROXY_API_KEY), on every platform,
+  # Telegram included. Set false to turn roasts off; camera checks keep
+  # using the same endpoint either way.
+  roast_enabled: true
 visual_watch:
   # Camera watchdog sensitivity, 1 (quietest) to 5 (most alerts). 3 is the original behavior.
   # Periodic camera checks run every 1800, 1200, 900, 600 or 450 seconds for levels 1 to 5;

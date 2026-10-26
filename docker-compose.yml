@@ -24,6 +24,7 @@ services:
       PRINT_BUDDY__SERVICES__VISION_CHAT_URL: ${PRINT_BUDDY__SERVICES__VISION_CHAT_URL:-}
       PRINT_BUDDY__SERVICES__CAMERA_SNAPSHOT_URL: ${PRINT_BUDDY__SERVICES__CAMERA_SNAPSHOT_URL:-}
       PRINT_BUDDY__VISION__MODEL: ${PRINT_BUDDY__VISION__MODEL:-gemini-latest}
+      PRINT_BUDDY__VISION__ROAST_ENABLED: ${PRINT_BUDDY__VISION__ROAST_ENABLED:-true}
       # In-container timelapse capture (#246): on the full image only, starts the
       # bundled go2rtc (loopback-only stream normalisation). Off by default;
       # the light image has no go2rtc, so enabling it there fails the healthcheck

@@ -191,7 +191,7 @@ class OverrideTests(unittest.TestCase):
             "bot": {"mode", "platform", "health_port", "health_stale_s", "sync_commands"},
             "llm": {"chat_url", "model", "api_key_env", "timeout_s"},
             "listener": {"tick_s", "ifs_presence_poll_s", "spool_nag_s", "start_claim_ttl_s"},
-            "vision": {"model", "roast_model"},
+            "vision": {"model", "roast_model", "roast_enabled"},
             "visual_watch": {"enabled", "sensitivity"},
             "timelapse": {"mode", "encoder", "archive_host", "archive_dir", "ssh_key", "render_wait_s", "render_poll_s",
                           "max_bytes", "local_retention_days", "plan_clip_retention_days",
@@ -391,6 +391,20 @@ class RuntimeSettingsTests(unittest.TestCase):
                          ("safety_confirm_timeout_s", "1.5"), ("cold_pull_outcome_s", "nope")]:
             with self.subTest(key=key), self.assertRaises(settings.SettingsError):
                 settings.load(local=False, environ={f"PRINT_BUDDY__DISCORD__{key.upper()}": raw})
+
+    def test_roast_is_enabled_by_default_and_can_be_turned_off(self):
+        """[vision] roast_enabled: on by default (roasts run whenever an LLM/vision
+        endpoint is available), off via file or env, and a non-boolean is refused."""
+        self.assertIs(settings.load(local=False, environ={})["vision"]["roast_enabled"], True)
+        data = settings.load(local=False, environ={"PRINT_BUDDY__VISION__ROAST_ENABLED": "false"})
+        self.assertIs(data["vision"]["roast_enabled"], False)
+        with tempfile.TemporaryDirectory() as tmp:
+            local = Path(tmp) / "local.yaml"
+            local.write_text("vision:\n  roast_enabled: false\n")
+            self.assertIs(settings.load(local=local, environ={})["vision"]["roast_enabled"], False)
+            local.write_text("vision:\n  roast_enabled: sometimes\n")
+            with self.assertRaisesRegex(settings.SettingsError, "roast_enabled"):
+                settings.load(local=local, environ={})
 
     def test_visual_watch_sensitivity_is_one_to_five(self):
         self.assertEqual(settings.load(local=False, environ={})["visual_watch"]["sensitivity"], 3)

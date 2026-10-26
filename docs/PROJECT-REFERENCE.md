@@ -14,7 +14,7 @@ Print Buddy is an automated 3D printing pipeline driven from a Discord channel, 
 
 Print Buddy is almost entirely Python. Downloading, plate merging, color matching, slicing, job start, printer monitoring, spool sync, timelapses, and print records are all plain scripts with fixed rules, so they are fast and make no LLM calls.
 
-The Discord side runs one of two ways. As a **standalone bot** (`python3 -m print_buddy.bot`), Print Buddy talks to Discord itself with a bot token: links, files, buttons, slash commands, slicing, print start and printer alerts need no Hermes and no LLM; an OpenAI-compatible model can optionally word replies to free text. See [Standalone bot](../docs/STANDALONE.md). Or the conversation runs on [Hermes Agent](https://github.com/NousResearch/hermes-agent) using Luna at medium reasoning, with the same handlers loaded as a Hermes plugin. Two optional extras also call a model: the camera watchdog asks a vision model to classify a print frame, and the "print started" post adds a one line roast. Leave `services.vision_chat_url` empty and neither runs.
+The Discord side runs one of two ways. As a **standalone bot** (`python3 -m print_buddy.bot`), Print Buddy talks to Discord itself with a bot token: links, files, buttons, slash commands, slicing, print start and printer alerts need no Hermes and no LLM; an OpenAI-compatible model can optionally word replies to free text. See [Standalone bot](../docs/STANDALONE.md). Or the conversation runs on [Hermes Agent](https://github.com/NousResearch/hermes-agent) using Luna at medium reasoning, with the same handlers loaded as a Hermes plugin. Two optional extras also call a model: the camera watchdog asks a vision model to classify a print frame, and the "print started" post adds a one line roast. Leave `services.vision_chat_url` empty and neither runs. The roast is its own switch, `vision.roast_enabled`, **on by default whenever an LLM/vision endpoint is available**, and it applies on every platform — the Telegram and Matrix bots are pure bots for chat (no `[llm]` fallback), but their print-started and print-complete posts carry the roast just like Discord's. Set `vision.roast_enabled` to `false` to turn roasts off while keeping camera checks.
 
 Supported printers:
 * **Sovol** on stock Klipper, where Print Buddy started, plus any other Klipper printer with Moonraker. Single extruder.
@@ -188,6 +188,7 @@ Without the file, MakerWorld intake stops before the model summary with a messag
 | | `spool_nag_s` | `600` | Reminder interval for an unanswered spool question |
 | | `start_claim_ttl_s` | `1800` | How long a start button stays claimed |
 | `vision` | `model`, `roast_model` | `gemini-latest`, `luna-latest` | Models for camera checks and roasts |
+| | `roast_enabled` | `true` | The print-post roast switch: on by default whenever an LLM/vision endpoint is available, on every platform including Telegram; `false` turns roasts off, camera checks unaffected |
 | `visual_watch` | `enabled`, `sensitivity` | `true`, `3` | Camera monitoring switch; sensitivity from 1 to 5 |
 | `timelapse` | `archive_host`, `archive_dir`, `ssh_key` | empty | Remote timelapse copy; empty host disables it |
 | | `render_wait_s`, `render_poll_s` | `900`, `10` | Wait for the printer to render the timelapse |

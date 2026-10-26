@@ -89,6 +89,7 @@ OPEN_SECTIONS = {"cold_pull", "nozzle_temp_offsets", "material_temps"}
 # Keys that can be optionally specified even if absent from base home.toml.
 OPTIONAL_KEYS = {("printer", "nozzle_type"): str, ("printer", "tool_count"): int,
                  ("visual_watch", "enabled"): bool,
+                 ("vision", "roast_enabled"): bool,
                  ("services", "octoprint_url"): str,
                  ("bambu", "lan_host"): str, ("bambu", "lan_serial"): str,
                  ("bambu", "lan_access_code_env"): str,
@@ -1002,6 +1003,23 @@ def _validate_live_stream(data):
     live["activity_origin"] = origin
 
 
+def _validate_vision(data):
+    """The [vision] section: camera-check and roast models, and the roast switch.
+
+    ``roast_enabled`` is on by default: whenever an LLM/vision endpoint is
+    available (``services.vision_chat_url`` set, with its ``CLIPROXY_API_KEY``),
+    the print-started and print-complete posts gain the one-line roast, on
+    every platform — Telegram included, even though Telegram never uses the
+    ``[llm]`` chat fallback. Set it false to turn roasts off without
+    disabling the camera watchdog, which shares the same endpoint. Absent
+    in an older config means the default (on).
+    """
+    vision = data.setdefault("vision", {})
+    enabled = vision.setdefault("roast_enabled", True)
+    if not isinstance(enabled, bool):
+        raise SettingsError(f"[vision] roast_enabled must be true or false, got {enabled!r}")
+
+
 def _validate_logging(data):
     """The [logging] section (#150). Absent in a hand-made home file means the defaults."""
     logging_cfg = data.setdefault("logging", {})
@@ -1164,6 +1182,7 @@ def validate(data):
     for key in ("question_timeout_s", "safety_confirm_timeout_s", "upload_wait_s", "cold_pull_outcome_s"):
         data["discord"][key] = _positive(data, "discord", key, int)
     _validate_bot(data)
+    _validate_vision(data)
     _validate_logging(data)
     _validate_webui(data)
     _validate_timelapse(data)

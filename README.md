@@ -10,7 +10,7 @@ Share a MakerWorld or Printables link, or upload an STL or 3MF. Print Buddy guid
 
 ## Is it for your setup?
 
-- **Printers:** built-in profiles for Flashforge AD5X with ZMod and Sovol SV06, plus a generic Klipper/Moonraker adapter. A generic adapter is not a tuned or physically verified profile for every printer. The Bambu Lab A1 and P1S are supported offline only: slicing, G-code checks and an untested Bambu package, no printer connection. Bambu Lab printers slice with Bambu Studio by default (set `printer.slicer: orca` to use OrcaSlicer); everything else uses OrcaSlicer. See [Bambu Lab printers](docs/BAMBU-LAB.md).
+- **Printers:** built-in profiles for Flashforge AD5X with ZMod and Sovol SV06, plus a generic Klipper/Moonraker adapter. A generic adapter is not a tuned or physically verified profile for every printer. The Bambu Lab A1, A1 mini, P1P, P1S, P2S, X1, X1 Carbon, X1E and H2S are supported for slicing, G-code checks and Bambu packaging, with opt-in LAN status, upload and gated print start; none has been tested on Bambu hardware, and the dual-nozzle H2D, H2D Pro, H2C and X2D are not supported yet. Bambu Lab printers slice with Bambu Studio by default (set `printer.slicer: orca` to use OrcaSlicer); everything else uses OrcaSlicer. See [Bambu Lab printers](docs/BAMBU-LAB.md).
 - **Computers:** Raspberry Pi 4 or 5 with 64-bit Raspberry Pi OS, or any 64-bit Debian or Ubuntu machine.
 - **Discord:** run the standalone Python bot without Hermes or an LLM, or use the Hermes plugin. Use only one mode with a given bot token.
 - **Slicing:** requires a compatible OrcaSlicer CLI and the correct printer, process and filament profiles. A Python install alone does not provide a slicer.
@@ -59,7 +59,7 @@ The image also includes:
 | Item | Detail |
 |---|---|
 | OrcaSlicer | Stable and alpha. `PRINT_BUDDY_ORCA_CHANNEL=stable` (default) or `alpha` picks one at startup, no rebuild. Any other value stops the container. Used for Flashforge and Sovol |
-| Bambu Studio | Default slicer for every Bambu Lab printer (A1, P1S) |
+| Bambu Studio | Default slicer for every Bambu Lab printer |
 | OpenSCAD | For CAD splitting (`cad_split.py --execute`) |
 
 See [Docker setup](docs/DOCKER.md) for health checks, upgrades and rollback.

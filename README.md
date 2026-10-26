@@ -35,7 +35,7 @@ The setup wizard asks for your printer brand and model (or Other / generic), the
 
 ### Docker
 
-The single-container image ships with 2.1.3 (see [#117](https://github.com/catduckgnaf/print-buddy/issues/117) and [#214](https://github.com/catduckgnaf/print-buddy/issues/214)); the published 2.1.1 image keeps the older three-container stack. The 2.1.3 image is at `ghcr.io/catduckgnaf/print-buddy` (amd64 only), built and checked offline by the publish workflow before it is pushed.
+The single-container image ships with 2.1.3 (see [#117](https://github.com/catduckgnaf/print-buddy/issues/117) and [#214](https://github.com/catduckgnaf/print-buddy/issues/214)); the published 2.1.1 image keeps the older three-container stack. The 2.1.3 image is at `ghcr.io/catduckgnaf/print-buddy` (amd64 only), built and checked offline by the publish workflow before it is pushed. From the next release the publish workflow also builds `linux/arm64` and a slicer-free `-light` variant under multi-arch manifests ([#192](https://github.com/catduckgnaf/print-buddy/issues/192)); see [Docker](docs/DOCKER.md#supported-platforms-and-variants-192) for the platform/variant matrix — no multi-arch tag exists until that release is actually published.
 
 One container runs the three parts of Print Buddy, started and watched by a supervisor:
 

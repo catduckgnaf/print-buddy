@@ -157,9 +157,13 @@ class DockerReleaseContract(unittest.TestCase):
         for pin in ("OrcaSlicer_Linux_AppImage_Ubuntu2404_V2.4.2.AppImage",
                     "d12fb8c8eac1aecd2dfb6377acd48f994f8fa439ed5292fa532dd82880f029fd",
                     "8500fcdccaa10b5099ac20d252af3a7c560046f1",
+                    "OrcaSlicer_Linux_AppImage_Ubuntu2404_aarch64_V2.4.2.AppImage",
+                    "e1a07275a25f176626c55a5df39e91bc4476d8c28ee4a3192ff758e29dd5c3ba",
                     "OrcaSlicer_Linux_AppImage_Ubuntu2404_V2.5.0-alpha.AppImage",
                     "386a5ef38991a4fc32ae2e35ee4261bea43d983683ac675a2c2e2395ab2bc7bb",
-                    "3880f2c58ec392ed2bd5938ab31c9c7c496c0eb2"):
+                    "3880f2c58ec392ed2bd5938ab31c9c7c496c0eb2",
+                    "OrcaSlicer_Linux_AppImage_Ubuntu2404_aarch64_V2.5.0-alpha.AppImage",
+                    "b64c705537a80ca0f4a5d0b51fa21d1f789191141f54b7f3599d2f2b9bfad0be"):
             with self.subTest(pin=pin):
                 self.assertIn(pin, prebuilt)
         self.assertIn("sha256sum --check --strict -", prebuilt)
@@ -204,6 +208,40 @@ class DockerReleaseContract(unittest.TestCase):
         self.assertIn("docker/orca-prebuilt.sh", workflow)
         self.assertIn("for channel in stable alpha", workflow)
         self.assertIn("AS orca-prebuilt", dockerfile)
+        # The pin counts match the per-arch pin structure: revisions are per
+        # channel (2); SHA256 digests and asset names are per arch (4 each).
+        self.assertIn("grep -cE 'sha256_(amd64|arm64)=[0-9a-f]{64}' docker/orca-prebuilt.sh", workflow)
+        self.assertIn("grep -cE 'asset_(amd64|arm64)=' docker/orca-prebuilt.sh", workflow)
+
+    def test_validation_workflow_offers_arch_and_variant_on_native_runners(self):
+        workflow = yaml.load((ROOT / ".github" / "workflows" / "docker-image-validation.yml").read_text(),
+                             Loader=yaml.BaseLoader)
+        self.assertEqual(list(workflow["on"]), ["workflow_dispatch"])
+        inputs = workflow["on"]["workflow_dispatch"]["inputs"]
+        self.assertEqual(inputs["architecture"]["options"], ["amd64", "arm64"])
+        self.assertEqual(inputs["architecture"]["default"], "amd64")
+        self.assertEqual(inputs["variant"]["options"], ["full", "light"])
+        self.assertEqual(inputs["variant"]["default"], "full")
+        job = workflow["jobs"]["validate"]
+        # arm64 validates on the native ARM runner, amd64 on the x86 runner.
+        self.assertIn("ubuntu-24.04-arm", job["runs-on"])
+        self.assertIn("ubuntu-24.04", job["runs-on"])
+        self.assertIn("inputs.architecture", job["runs-on"])
+        env = job["env"]
+        self.assertIn("linux/arm64", env["PLATFORM"])
+        self.assertIn("linux/amd64", env["PLATFORM"])
+        # The variant, not a free slicer toggle, decides WITH_ORCA; Bambu is out.
+        self.assertIn("inputs.variant == 'full'", env["WITH_ORCA"])
+        self.assertEqual(env["WITH_BAMBU"], "false")
+        build = next(step for step in job["steps"] if step.get("name") == "Build (no push)")
+        self.assertIn('--platform "$PLATFORM"', build["run"])
+        self.assertIn("image_acceptance.sh", job["steps"][-2]["run"])
+        smoke = next(step for step in job["steps"]
+                     if step.get("name") == "Headless slice with each bundled Orca channel")
+        self.assertEqual(smoke["if"], "inputs.variant == 'full'")
+        for step in job["steps"]:
+            if "uses" in step:
+                self.assertRegex(step["uses"], r"^[^@]+@[0-9a-f]{40}$")
 
     def test_publish_workflow_has_no_orca_revision_selector(self):
         publish_text = (ROOT / ".github" / "workflows" / "docker-publish.yml").read_text()
@@ -215,13 +253,15 @@ class DockerReleaseContract(unittest.TestCase):
         self.assertEqual(list(workflow["on"]), ["workflow_dispatch"])
         inputs = workflow["on"]["workflow_dispatch"]["inputs"]
         self.assertEqual(inputs["version"]["required"], "true")
-        self.assertEqual(inputs["with_orca"]["default"], "true")
-        self.assertEqual(inputs["with_bambu"]["default"], "false")
         self.assertNotIn("orca_source", inputs)
+        # The variant matrix replaces free slicer toggles: full/light are fixed
+        # per leg (WITH_BAMBU=false everywhere), not dispatch inputs.
+        self.assertNotIn("with_orca", inputs)
+        self.assertNotIn("with_bambu", inputs)
         # Candidate validation must not authenticate or push without explicit opt-in.
         self.assertEqual(inputs["publish"]["type"], "boolean")
         self.assertEqual(inputs["publish"]["default"], "false")
-        steps = workflow["jobs"]["publish"]["steps"]
+        steps = workflow["jobs"]["build"]["steps"]
         acceptance = next(i for i, step in enumerate(steps) if step.get("id") == "acceptance")
         publish = next(i for i, step in enumerate(steps) if step.get("id") == "publish")
         self.assertLess(acceptance, publish)
@@ -230,15 +270,88 @@ class DockerReleaseContract(unittest.TestCase):
         login = next(step for step in steps
                      if step.get("uses", "").startswith("docker/login-action@"))
         self.assertEqual(login["if"], publish_gate)
-        self.assertIn("docker push", steps[publish]["run"])
+        # Build legs push by digest only; no tag is ever pushed from a leg.
+        self.assertIn("push-by-digest=true", steps[publish]["run"])
+        self.assertNotIn("docker push", steps[publish]["run"])
+        self.assertNotIn("docker tag", steps[publish]["run"])
         self.assertIn("image_acceptance.sh", steps[acceptance]["run"])
         smoke = next(step for step in steps if step.get("name") == "Headless slice with each bundled Orca channel")
+        self.assertEqual(smoke["if"], "matrix.with_orca == 'true'")
         self.assertIn('channels="stable alpha"', smoke["run"])
         self.assertNotIn("ORCA_SOURCE", smoke["run"])
         self.assertIn("--network none", smoke["run"])
-        for step in steps:
-            if "uses" in step:
-                self.assertRegex(step["uses"], r"^[^@]+@[0-9a-f]{40}$")
+        for job in workflow["jobs"].values():
+            for step in job["steps"]:
+                if "uses" in step:
+                    self.assertRegex(step["uses"], r"^[^@]+@[0-9a-f]{40}$")
+
+    def test_publish_matrix_is_native_both_arches_and_both_variants(self):
+        """#192: linux/amd64 + linux/arm64, full + light, native runners, no QEMU, no arm/v7."""
+        workflow = yaml.load((ROOT / ".github" / "workflows" / "docker-publish.yml").read_text(),
+                             Loader=yaml.BaseLoader)
+        text = (ROOT / ".github" / "workflows" / "docker-publish.yml").read_text()
+        job = workflow["jobs"]["build"]
+        self.assertEqual(job["runs-on"], "${{ matrix.runner }}")
+        self.assertEqual(job["timeout-minutes"], "350")  # BaseLoader: scalars are strings
+        legs = {(leg["arch"], leg["variant"]): leg
+                for leg in job["strategy"]["matrix"]["include"]}
+        self.assertEqual(set(legs), {("amd64", "full"), ("arm64", "full"),
+                                     ("amd64", "light"), ("arm64", "light")})
+        runners = {"amd64": "ubuntu-24.04", "arm64": "ubuntu-24.04-arm"}
+        for (arch, variant), leg in legs.items():
+            with self.subTest(arch=arch, variant=variant):
+                self.assertEqual(leg["runner"], runners[arch])
+                self.assertEqual(leg["platform"], f"linux/{arch}")
+                self.assertEqual(leg["with_orca"], "true" if variant == "full" else "false")
+                self.assertEqual(leg["with_bambu"], "false")
+        self.assertNotIn("arm/v7", text)
+        self.assertNotIn("setup-qemu", text.lower())
+        build = next(step for step in job["steps"] if step.get("name") == "Build image once (no push)")
+        self.assertIn('--platform "$PLATFORM"', build["run"])
+        self.assertIn('--load -t "$LOCAL_IMAGE"', build["run"])
+
+    def test_publish_manifest_job_combines_accepted_digests_into_the_four_tags(self):
+        workflow = yaml.load((ROOT / ".github" / "workflows" / "docker-publish.yml").read_text(),
+                             Loader=yaml.BaseLoader)
+        manifest = workflow["jobs"]["manifest"]
+        # Publication only, gated on every build leg (each leg is itself
+        # acceptance-gated before its digest push).
+        self.assertEqual(manifest["needs"], "build")
+        self.assertEqual(manifest["if"], "inputs.publish")
+        create = next(step for step in manifest["steps"]
+                      if step.get("name") == "Create and push the multi-arch manifests")
+        run = create["run"]
+        self.assertIn("docker buildx imagetools create", run)
+        for tag in ('"$IMAGE:$PUBLISH_VERSION"', '"$IMAGE:latest"',
+                    '"$IMAGE:$PUBLISH_VERSION-light"', '"$IMAGE:latest-light"'):
+            with self.subTest(tag=tag):
+                self.assertIn(f"-t {tag}", run)
+        for digest_var in ("full_amd64", "full_arm64", "light_amd64", "light_arm64"):
+            with self.subTest(digest=digest_var):
+                self.assertIn(f'"$IMAGE@${digest_var}"', run)
+        # Manifest digests land in the step summary and the evidence.
+        self.assertIn("GITHUB_STEP_SUMMARY", run)
+        self.assertIn("evidence/manifests.txt", run)
+        download = manifest["steps"][0]
+        self.assertTrue(download["uses"].startswith("actions/download-artifact@"))
+        self.assertEqual(download["with"]["pattern"], "digest-*")
+
+    def test_light_variant_is_the_no_slicer_combined_image(self):
+        """Light = bot + listener + bundled Spoolman + OpenSCAD, no slicers.
+
+        The definition lives in the publish matrix (WITH_ORCA=false,
+        WITH_BAMBU=false); the runtime behaviour it relies on is the existing
+        no-Orca behaviour: non-slicing commands run, slicing fails closed
+        (tests/docker/image_probe.py proves no G-code is written).
+        """
+        docs = (ROOT / "docs" / "DOCKER.md").read_text()
+        self.assertIn("VERSION-light", docs)
+        self.assertIn("WITH_ORCA=false", docs)
+        self.assertIn("WITH_BAMBU=false", docs)
+        probe = (ROOT / "tests" / "docker" / "image_probe.py").read_text()
+        self.assertIn("FileNotFoundError", probe)
+        dockerfile = (ROOT / "Dockerfile").read_text()
+        self.assertIn("openscad", dockerfile.split("AS runtime", 1)[1])
 
 
 if __name__ == "__main__":

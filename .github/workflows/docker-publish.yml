@@ -1,6 +1,9 @@
 name: Publish Docker image to GHCR (manual)
 
-# Inert until a maintainer dispatches it. Builds once, validates offline, and only then publishes.
+# Inert until a maintainer dispatches it. Builds every platform/variant leg on a
+# native runner, validates each one offline, and only then pushes by digest.
+# A final manifest job combines the accepted per-architecture digests into the
+# published multi-arch tags. See docs/DOCKER.md for the supported matrix.
 on:
   workflow_dispatch:
     inputs:
@@ -9,15 +12,7 @@ on:
         type: string
         required: true
       publish:
-        description: Push version and latest only after validation (false is a no-push candidate)
-        type: boolean
-        default: false
-      with_orca:
-        description: Include pinned official prebuilt OrcaSlicer (stable and alpha)
-        type: boolean
-        default: true
-      with_bambu:
-        description: Build the pinned Bambu Studio from source (separate optional build)
+        description: Push by digest and publish manifests only after every leg passes acceptance (false is a no-push candidate)
         type: boolean
         default: false
 
@@ -30,17 +25,56 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  publish:
-    runs-on: ubuntu-24.04  # amd64 only
+  build:
+    name: Build ${{ matrix.variant }} (${{ matrix.arch }})
+    # Native runners only: arm64 builds run on a real arm64 runner, never under
+    # QEMU emulation. The matrix is the supported platform/variant matrix:
+    # full = WITH_ORCA=true, light = WITH_ORCA=false, Bambu Studio stays out of
+    # the published matrix (WITH_BAMBU=false on every leg).
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: amd64
+            platform: linux/amd64
+            runner: ubuntu-24.04
+            variant: full
+            with_orca: "true"
+            with_bambu: "false"
+          - arch: arm64
+            platform: linux/arm64
+            runner: ubuntu-24.04-arm
+            variant: full
+            with_orca: "true"
+            with_bambu: "false"
+          - arch: amd64
+            platform: linux/amd64
+            runner: ubuntu-24.04
+            variant: light
+            with_orca: "false"
+            with_bambu: "false"
+          - arch: arm64
+            platform: linux/arm64
+            runner: ubuntu-24.04-arm
+            variant: light
+            with_orca: "false"
+            with_bambu: "false"
+    runs-on: ${{ matrix.runner }}
     timeout-minutes: 350
     env:
       IMAGE: ghcr.io/catduckgnaf/print-buddy
       APP_CHANNEL: stable
       # Inputs reach the shell only as environment variables, never interpolated into scripts.
       PUBLISH_VERSION: ${{ inputs.version }}
-      WITH_ORCA: ${{ inputs.with_orca }}
-      WITH_BAMBU: ${{ inputs.with_bambu }}
+      # Matrix values reach the shell only as environment variables too.
+      ARCH: ${{ matrix.arch }}
+      RUNNER_LABEL: ${{ matrix.runner }}
+      PLATFORM: ${{ matrix.platform }}
+      VARIANT: ${{ matrix.variant }}
+      WITH_ORCA: ${{ matrix.with_orca }}
+      WITH_BAMBU: ${{ matrix.with_bambu }}
       SPOOLMAN_MODE: included
+      LOCAL_IMAGE: print-buddy-publish-candidate:${{ inputs.version }}-${{ matrix.variant }}-${{ matrix.arch }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
       - name: Validate release version and prepare evidence
@@ -54,10 +88,11 @@ jobs:
           {
             echo "source_sha=$GITHUB_SHA"
             echo "version=$PUBLISH_VERSION"
+            echo "arch=$ARCH platform=$PLATFORM variant=$VARIANT runner=$RUNNER_LABEL"
             echo "app_channel=$APP_CHANNEL with_orca=$WITH_ORCA with_bambu=$WITH_BAMBU spoolman=$SPOOLMAN_MODE"
           } | tee evidence/pins.txt
-      - name: Free runner disk for the source build
-        if: inputs.with_orca || inputs.with_bambu
+      - name: Free runner disk for the slicer build
+        if: matrix.with_orca == 'true'
         run: |
           df -h /
           sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL
@@ -65,11 +100,11 @@ jobs:
       - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069  # v4.4.1
         with:
           driver: docker
-      - name: Build amd64 image once (no push)
+      - name: Build image once (no push)
         run: |
           set -euo pipefail
           start=$(date -u +%FT%TZ)
-          docker buildx build --platform linux/amd64 --progress=plain --load -t "$IMAGE:$PUBLISH_VERSION" \
+          docker buildx build --platform "$PLATFORM" --progress=plain --load -t "$LOCAL_IMAGE" \
             --build-arg "APP_CHANNEL=$APP_CHANNEL" \
             --build-arg "WITH_ORCA=$WITH_ORCA" \
             --build-arg "WITH_BAMBU=$WITH_BAMBU" \
@@ -80,11 +115,11 @@ jobs:
           {
             echo "build_start=$start"
             echo "build_end=$(date -u +%FT%TZ)"
-            echo "image_id=$(docker image inspect --format '{{.Id}}' "$IMAGE:$PUBLISH_VERSION")"
-            docker image inspect --format 'platform={{.Os}}/{{.Architecture}} size={{.Size}}' "$IMAGE:$PUBLISH_VERSION"
+            echo "image_id=$(docker image inspect --format '{{.Id}}' "$LOCAL_IMAGE")"
+            docker image inspect --format 'platform={{.Os}}/{{.Architecture}} size={{.Size}}' "$LOCAL_IMAGE"
           } | tee evidence/identity.txt
       - name: Headless slice with each bundled Orca channel
-        if: inputs.with_orca
+        if: matrix.with_orca == 'true'
         run: |
           set -euo pipefail
           channels="stable alpha"
@@ -93,44 +128,138 @@ jobs:
               --cap-drop ALL --security-opt no-new-privileges:true \
               --tmpfs /data:uid=1000,gid=1000,size=512m \
               -e "PRINT_BUDDY_ORCA_CHANNEL=$channel" \
-              "$IMAGE:$PUBLISH_VERSION" python3 /app/docker/slicer-smoke.py \
+              "$LOCAL_IMAGE" python3 /app/docker/slicer-smoke.py \
               2>&1 | tee "evidence/slicer-$channel.log"
           done
       - name: Offline runtime acceptance
         id: acceptance
-        run: tests/docker/image_acceptance.sh "$IMAGE:$PUBLISH_VERSION" "$SPOOLMAN_MODE" evidence/acceptance
+        run: tests/docker/image_acceptance.sh "$LOCAL_IMAGE" "$SPOOLMAN_MODE" evidence/acceptance
       - uses: docker/login-action@74a5d142397b4f367a81961eba4e8cd7edddf772  # v3.4.0
         if: inputs.publish && steps.acceptance.outcome == 'success'
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
-      - name: Tag and publish accepted image
+      - name: Push accepted image by digest only
         id: publish
         if: inputs.publish && steps.acceptance.outcome == 'success'
         run: |
           set -euo pipefail
-          docker tag "$IMAGE:$PUBLISH_VERSION" "$IMAGE:latest"
-          docker push "$IMAGE:$PUBLISH_VERSION" 2>&1 | tee evidence/push.log
-          digest=$(sed -nE 's/.*digest: (sha256:[0-9a-f]{64}).*/\1/p' evidence/push.log | tail -n 1)
+          # The identical build is pushed by digest only: no tag is pushed from a
+          # build leg. Tags are created later, by the manifest job, from digests.
+          docker buildx build --platform "$PLATFORM" --progress=plain \
+            --output "type=image,name=$IMAGE,push-by-digest=true,name-canonical=true,push=true" \
+            --metadata-file "evidence/metadata-$VARIANT-$ARCH.json" \
+            --build-arg "APP_CHANNEL=$APP_CHANNEL" \
+            --build-arg "WITH_ORCA=$WITH_ORCA" \
+            --build-arg "WITH_BAMBU=$WITH_BAMBU" \
+            --label "org.opencontainers.image.source=https://github.com/catduckgnaf/print-buddy" \
+            --label "org.opencontainers.image.version=$PUBLISH_VERSION" \
+            --label "org.opencontainers.image.revision=$GITHUB_SHA" \
+            . 2>&1 | tee evidence/push.log
+          digest=$(python3 -c "import json; print(json.load(open('evidence/metadata-$VARIANT-$ARCH.json'))['containerimage.digest'])")
           [[ "$digest" =~ ^sha256:[0-9a-f]{64}$ ]] || {
             echo "Could not read the pushed image digest" >&2
             exit 1
           }
-          docker push --quiet "$IMAGE:latest"
-          printf '%s\n' "$digest" | tee evidence/digest.txt
+          mkdir -p digest-out
+          printf '%s\n' "$digest" | tee "digest-out/digest-$VARIANT-$ARCH.txt" evidence/digest.txt
           {
-            echo "### GHCR image published"
+            echo "### GHCR image pushed by digest"
             echo
-            echo "- Version: \`$IMAGE:$PUBLISH_VERSION\`"
-            echo "- Latest: \`$IMAGE:latest\`"
+            echo "- Variant: \`$VARIANT\`"
+            echo "- Platform: \`$PLATFORM\`"
             echo "- Digest: \`$IMAGE@$digest\`"
             echo "- Source revision: \`$GITHUB_SHA\`"
           } >> "$GITHUB_STEP_SUMMARY"
+      - name: Upload pushed digest for the manifest job
+        if: inputs.publish && steps.publish.outcome == 'success'
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9  # v7.0.2
+        with:
+          name: digest-${{ matrix.variant }}-${{ matrix.arch }}
+          path: digest-out/
+          retention-days: 30
       - name: Upload build and acceptance evidence
         if: always()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9  # v7.0.2
         with:
-          name: docker-publish-${{ github.run_id }}-${{ github.run_attempt }}
+          name: docker-publish-${{ github.run_id }}-${{ github.run_attempt }}-${{ matrix.variant }}-${{ matrix.arch }}
+          path: evidence/
+          retention-days: 30
+
+  manifest:
+    name: Publish multi-arch manifests
+    # Runs only for a real publication and only when every build leg succeeded;
+    # a leg succeeds only when its own acceptance passed before its digest push.
+    needs: build
+    if: inputs.publish
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    env:
+      IMAGE: ghcr.io/catduckgnaf/print-buddy
+      # Inputs reach the shell only as environment variables, never interpolated into scripts.
+      PUBLISH_VERSION: ${{ inputs.version }}
+    steps:
+      - name: Download the pushed per-arch digests
+        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131  # v7.0.0
+        with:
+          pattern: digest-*
+          path: digests
+          merge-multiple: true
+      - uses: docker/login-action@74a5d142397b4f367a81961eba4e8cd7edddf772  # v3.4.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Create and push the multi-arch manifests
+        run: |
+          set -euo pipefail
+          [[ "$PUBLISH_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || {
+            echo "Version must use MAJOR.MINOR.PATCH numeric form" >&2
+            exit 1
+          }
+          mkdir -p evidence
+          read_digest() {
+            local file="digests/digest-$1-$2.txt"
+            [[ -f "$file" ]] || { echo "missing pushed digest for variant $1 arch $2" >&2; exit 1; }
+            local digest
+            digest=$(tr -d '[:space:]' < "$file")
+            [[ "$digest" =~ ^sha256:[0-9a-f]{64}$ ]] || { echo "invalid digest in $file" >&2; exit 1; }
+            printf '%s' "$digest"
+          }
+          full_amd64=$(read_digest full amd64)
+          full_arm64=$(read_digest full arm64)
+          light_amd64=$(read_digest light amd64)
+          light_arm64=$(read_digest light arm64)
+          {
+            echo "full_amd64=$full_amd64"
+            echo "full_arm64=$full_arm64"
+            echo "light_amd64=$light_amd64"
+            echo "light_arm64=$light_arm64"
+          } | tee evidence/digests.txt
+          # Full variant: the default tags. Light variant: the -light tags.
+          docker buildx imagetools create -t "$IMAGE:$PUBLISH_VERSION" \
+            "$IMAGE@$full_amd64" "$IMAGE@$full_arm64" 2>&1 | tee evidence/manifest-version.log
+          docker buildx imagetools create -t "$IMAGE:latest" \
+            "$IMAGE@$full_amd64" "$IMAGE@$full_arm64" 2>&1 | tee evidence/manifest-latest.log
+          docker buildx imagetools create -t "$IMAGE:$PUBLISH_VERSION-light" \
+            "$IMAGE@$light_amd64" "$IMAGE@$light_arm64" 2>&1 | tee evidence/manifest-version-light.log
+          docker buildx imagetools create -t "$IMAGE:latest-light" \
+            "$IMAGE@$light_amd64" "$IMAGE@$light_arm64" 2>&1 | tee evidence/manifest-latest-light.log
+          {
+            echo "### GHCR multi-arch manifests published"
+            echo
+            for tag in "$PUBLISH_VERSION" latest "$PUBLISH_VERSION-light" latest-light; do
+              manifest_digest="sha256:$(docker buildx imagetools inspect --raw "$IMAGE:$tag" | sha256sum | cut -d ' ' -f 1)"
+              echo "- \`$IMAGE:$tag\` manifest digest: \`$manifest_digest\`"
+              echo "$tag=$manifest_digest"
+            done
+            echo "- Source revision: \`$GITHUB_SHA\`"
+          } | tee evidence/manifests.txt >> "$GITHUB_STEP_SUMMARY"
+      - name: Upload manifest evidence
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9  # v7.0.2
+        with:
+          name: docker-publish-manifests-${{ github.run_id }}-${{ github.run_attempt }}
           path: evidence/
           retention-days: 30

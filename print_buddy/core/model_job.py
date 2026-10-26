@@ -1063,11 +1063,16 @@ def _verify_offline(gcode_path, state):
 
 def verify_gcode(gcode_path):
     """Check a G-code artifact against live nozzle, spool and temperature state."""
+    def report_warnings(facts):
+        for warning in facts.get("warnings", []):
+            print(f"WARNING: {warning}", file=sys.stderr, flush=True)
     if printers.current().connection in ('offline', 'bambulab_lan'):
-        st = printer_state.load(); ok, probs, _ = printer_state.check(st)
+        st = printer_state.load(); ok, probs, facts = printer_state.check(st)
+        report_warnings(facts)
         if not ok: raise RuntimeError("hardware record check failed:\n  " + "\n  ".join(probs))
         return _verify_offline(gcode_path, st)
-    st=printer_state.load(); ok, probs, _=printer_state.check(st)
+    st=printer_state.load(); ok, probs, facts=printer_state.check(st)
+    report_warnings(facts)
     if not ok: raise RuntimeError("live hardware check failed:\n  " + "\n  ".join(probs))
     p=Path(gcode_path); raw=p.read_bytes(); text=raw.decode(errors="ignore")
     errors=[]

@@ -103,6 +103,9 @@ allowed_user_ids = ""
 # standalone: python3 -m print_buddy.bot talks to Discord directly. No Hermes, no LLM needed.
 # Use one mode per bot token.
 mode = "hermes"
+# Standalone bot only: the chat platform ([bot] platform, #164). discord is the default;
+# telegram and matrix implementations land in later stages of #164.
+platform = "discord"
 # Standalone bot: serve GET /healthz on this port. 0 turns the HTTP check off; the health file still works.
 health_port = 0
 # The health check fails when the bot's heartbeat is older than this, in seconds.

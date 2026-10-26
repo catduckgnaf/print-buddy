@@ -318,6 +318,14 @@ def _validate_bot(data):
     bot.setdefault("mode", "hermes")
     if bot["mode"] not in BOT_MODES:
         raise SettingsError(f"[bot] mode must be one of {', '.join(BOT_MODES)}, got {bot['mode']!r}")
+    # The chat platform the standalone bot talks to (#164). The known set is
+    # owned by print_buddy.bot.platform; a config without the key (every
+    # config written before #164) keeps the Discord default.
+    from .bot.platform import KNOWN_PLATFORMS
+    platform = str(bot.setdefault("platform", "discord")).strip().lower()
+    if platform not in KNOWN_PLATFORMS:
+        raise SettingsError(f"[bot] platform must be one of {', '.join(KNOWN_PLATFORMS)}, got {bot['platform']!r}")
+    bot["platform"] = platform
     port = bot.setdefault("health_port", 0)
     if isinstance(port, bool) or not isinstance(port, int) or not 0 <= port <= 65535:
         raise SettingsError(f"[bot] health_port must be a port number from 0 to 65535, got {port!r}")

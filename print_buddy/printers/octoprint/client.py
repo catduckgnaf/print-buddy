@@ -73,6 +73,29 @@ class OctoPrintClient:
         self.request('POST', '/api/printer/command', {'commands': [f'M190 S{temps[0]:g}', f'M109 S{temps[1]:g}']})
         self.request('POST', '/api/files/local/' + quote(filename, safe=''), {'command': 'select', 'print': True})
 
+    def timelapse_movies(self):
+        """The rendered timelapse movies OctoPrint reports, as served.
+
+        OctoPrint renders a print's timelapse itself (when its timelapse
+        feature is enabled) and lists the finished movies at
+        GET /api/timelapse; each entry carries at least name and url.
+        """
+        result = self.request('GET', '/api/timelapse')
+        movies = result.get('movies') if isinstance(result, dict) else None
+        return movies if isinstance(movies, list) else []
+
+    def download(self, path):
+        """Raw bytes of a server-relative path (e.g. a movie's url)."""
+        if not isinstance(path, str) or not path.startswith('/') or path.startswith('//'):
+            raise OctoPrintError('OctoPrint download path must be server-relative')
+        req = Request(self.url + path, method='GET', headers={'X-Api-Key': self.api_key})
+        try:
+            with self.opener(req, timeout=120) as response:
+                return response.read()
+        except Exception as exc:
+            # Same no-leak, no-retry posture as request().
+            raise OctoPrintError(f'OctoPrint GET {path.split("?")[0]} failed; not retried') from exc
+
     def control(self, action):
         bodies = {'pause': {'command': 'pause', 'action': 'pause'},
                   'resume': {'command': 'pause', 'action': 'resume'}, 'cancel': {'command': 'cancel'}}

@@ -910,13 +910,17 @@ async def lookup_dispatch(event, gateway, **kwargs):
 
 
 async def macros_dispatch(event, gateway, **kwargs):
-    """/print-macros: list the macros the configured Moonraker printer actually defines (issue #291, stage 1).
+    """/print-macros [run <name> [KEY=VALUE ...]]: the configured Moonraker printer's macros (issue #291).
 
-    Read-only: one GET of Moonraker's /printer/objects/list through the spool
-    client, classified against firmware/commands.toml. Running a macro is
-    stage 2 and is not implemented here; this handler never sends a macro or
-    any other command. Printers whose connection is not Moonraker have no
-    macro namespace and get a plain explanation instead of an error.
+    Bare form (stage 1) lists what the printer actually defines: one GET of
+    Moonraker's /printer/objects/list through the spool client, classified
+    against firmware/commands.toml. The run form (stage 2) re-discovers that
+    set at run time and runs only a name from it — never a typed name on
+    trust, never free-typed G-code, never an internal (_-prefixed) macro —
+    behind the usual _confirm button, with the printer's print state checked
+    before the prompt and again immediately before the single
+    /printer/gcode/script POST. Printers whose connection is not Moonraker
+    have no macro namespace and get a plain explanation instead of an error.
     """
     source, adapter = _control_preamble(event, gateway, '/print-macros', with_args=True)
     if source is None:
@@ -926,6 +930,7 @@ async def macros_dispatch(event, gateway, **kwargs):
     from print_buddy import macros, printers
     from print_buddy.hermes import spool_sync
     metadata = {'thread_id': source.thread_id} if source.thread_id else None
+    args = str(getattr(event, 'text', '')).strip()[len('/print-macros'):].split()
     try:
         connection = printers.current().connection
     except Exception:
@@ -935,14 +940,54 @@ async def macros_dispatch(event, gateway, **kwargs):
         await adapter.send(chat_id=source.chat_id, metadata=metadata,
                            content=macros.not_moonraker_text(connection))
         return {'action': 'skip', 'reason': 'print macros not applicable to this printer'}
+    if not args:
+        try:
+            listing = await asyncio.to_thread(macros.discover, spool_sync.moonraker)
+            message = macros.listing_text(listing)
+        except Exception:
+            logger.exception('/print-macros failed')
+            message = macros.COULD_NOT_READ_TEXT
+        await adapter.send(chat_id=source.chat_id, metadata=metadata, content=message)
+        return {'action': 'skip', 'reason': 'print macros handled'}
+    if args[0].casefold() != 'run' or len(args) < 2:
+        await adapter.send(chat_id=source.chat_id, metadata=metadata,
+                           content=('Use `/print-macros` to list the macros your printer defines, or '
+                                    '`/print-macros run <name> [KEY=VALUE ...]` to run one of them '
+                                    '(it asks first, and refuses while a print is running). '
+                                    'Nothing was sent to the printer.'))
+        return {'action': 'skip', 'reason': 'print macros usage shown'}
+    key = ('print-macros-run', source.chat_id, source.thread_id)
+    if key in _seen:
+        await adapter.send(chat_id=source.chat_id, metadata=metadata,
+                           content='A macro run prompt is already open here. Nothing sent.')
+        return {'action': 'skip', 'reason': 'macro run prompt already active'}
+    _seen[key] = time.monotonic()
     try:
-        listing = await asyncio.to_thread(macros.discover, spool_sync.moonraker)
-        message = macros.listing_text(listing)
+        try:
+            prepared = await asyncio.to_thread(macros.prepare_run, spool_sync.moonraker,
+                                               args[1], args[2:])
+        except (macros.MacroRefusal, macros.MacroError) as exc:
+            message = str(exc)
+        else:
+            answer = await _confirm(adapter, source, metadata, 'print-macros',
+                                    macros.run_prompt_text(prepared),
+                                    [macros.RUN_LABEL, macros.CANCEL_LABEL],
+                                    (globals().get('_config').safety_confirm_timeout_s()
+                                     if globals().get('_config') else 600))
+            if answer != macros.RUN_LABEL:
+                message = 'Macro not run. Nothing sent.'
+            else:
+                try:
+                    message = await asyncio.to_thread(macros.send_run, spool_sync.moonraker, prepared)
+                except (macros.MacroRefusal, macros.MacroError) as exc:
+                    message = str(exc)
     except Exception:
-        logger.exception('/print-macros failed')
-        message = macros.COULD_NOT_READ_TEXT
+        logger.exception('/print-macros run failed')
+        message = 'The macro run stopped on an error. No confirmation was completed, so nothing was sent.'
+    finally:
+        _seen.pop(key, None)
     await adapter.send(chat_id=source.chat_id, metadata=metadata, content=message)
-    return {'action': 'skip', 'reason': 'print macros handled'}
+    return {'action': 'skip', 'reason': 'print macros run handled'}
 
 
 TROUBLESHOOT_STOP_LABEL = 'Stop here'

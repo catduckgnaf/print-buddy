@@ -82,7 +82,7 @@ Live camera streaming (#311, stages 1–2) starts with a delivery-agnostic core 
 * `/print-maintenance` guided checklist and reminders by print hours and days.
 * `/print-coldpull` runs an operator confirmed cold pull at configured temperatures.
 * `/print-lookup` searches the root [knowledge, firmware and printer registries](TROUBLESHOOTING.md) for commands, macros, errors, symptoms and printer facts. Read-only; it sends nothing.
-* `/print-macros` lists the macros the configured Moonraker printer actually defines, read live from `/printer/objects/list` and classified against the registry (see [printer macros](MACROS.md)). Read-only; it sends nothing. Non-Moonraker printers get a plain explanation.
+* `/print-macros` lists the macros the configured Moonraker printer actually defines, read live from `/printer/objects/list` and classified against the registry (see [printer macros](MACROS.md)). The listing is read-only. `/print-macros run <name> [KEY=VALUE ...]` runs one live-discovered macro behind a confirmation that shows the exact script line, refusing internal (`_`-prefixed) names, unknown names, and any run while a print is running or paused. Non-Moonraker printers get a plain explanation.
 * `/print-troubleshoot` walks a guided physical troubleshooting flow (first layer, clog, heat creep, bed level, ringing) one question at a time. Advice only; it never commands the printer.
 * `/print-help` answers with what Print Buddy can do and the commands it registers. Read-only.
 

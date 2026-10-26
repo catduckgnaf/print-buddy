@@ -1,10 +1,12 @@
-"""Offline tests for live macro discovery and the /print-macros handler (issue #291, stage 1).
+"""Offline tests for live macro discovery and the /print-macros handler (issue #291).
 
-No printer or network: discovery runs against recorded Moonraker response
-shapes through a fake transport, and the dispatch tests use a fake adapter
-that records sends, in the style of the /print-lookup tests in
-tests/test_knowledge.py. The fake transport records every call so the tests
-can prove the only request ever made is one read-only GET.
+No printer or network: discovery and runs run against recorded Moonraker
+response shapes through a fake transport, and the dispatch tests use a fake
+adapter that records sends, in the style of the /print-lookup tests in
+tests/test_knowledge.py. Stage 1 tests prove the listing's only request is
+one read-only GET; stage 2 tests prove a run makes exactly one POST, with
+the exact confirmed script line, and only after both idle checks pass and
+the operator confirms.
 """
 import asyncio
 import importlib.util
@@ -241,3 +243,294 @@ def test_macros_dispatch_reports_a_malformed_response_the_same_way():
 def test_macros_dispatch_ignores_other_text():
     assert asyncio.run(plugin.macros_dispatch(_event("/print-macrosx"), _gateway(FakeAdapter()))) is None
     assert asyncio.run(plugin.macros_dispatch(_event("print-macros"), _gateway(FakeAdapter()))) is None
+
+
+# ------------------------------------------------------------------ stage 2: run
+
+STATE_SHAPE = {"result": {"status": {"print_stats": {"state": "standby"}}}}
+
+
+class RunTransport(FakeTransport):
+    """Fake transport with a print state (repeatable sequence) and a script POST."""
+
+    def __init__(self, states=("standby",), post_error=None, state_payload=None, **kwargs):
+        super().__init__(**kwargs)
+        self.states = list(states)
+        self.post_error = post_error
+        self.state_payload = state_payload
+        self.posts = []
+
+    def __call__(self, method, path, body=None):
+        if path == macros.PRINT_STATE_PATH:
+            self.calls.append((method, path, body))
+            if self.state_payload is not None:
+                return self.state_payload
+            state = self.states.pop(0) if len(self.states) > 1 else self.states[0]
+            return {"result": {"status": {"print_stats": {"state": state}}}}
+        if method == "POST":
+            self.calls.append((method, path, body))
+            self.posts.append(body)
+            if self.post_error is not None:
+                raise self.post_error
+            return {"result": "ok"}
+        return super().__call__(method, path, body)
+
+
+def test_print_state_reads_the_print_stats_shape():
+    assert macros.print_state(RunTransport()) == "standby"
+    assert macros.print_state(RunTransport(states=("Printing",))) == "printing"
+
+
+def test_print_state_rejects_an_unreadable_response():
+    with pytest.raises(macros.MacroError):
+        macros.print_state(RunTransport(state_payload={"result": {"status": {}}}))
+    with pytest.raises(macros.MacroError):
+        macros.print_state(FakeTransport(error=OSError("unreachable")))
+
+
+def test_prepare_run_canonicalises_the_name_and_builds_the_exact_script():
+    transport = RunTransport()
+    prepared = macros.prepare_run(transport, "print_start")
+    assert prepared.name == "PRINT_START"
+    assert prepared.script == "PRINT_START"
+    assert prepared.entry is not None and prepared.entry.id == "klipper.print-start"
+    assert transport.calls == [("GET", "/printer/objects/list", None),
+                               ("GET", macros.PRINT_STATE_PATH, None)]
+    assert transport.posts == []
+
+
+def test_prepare_run_appends_validated_arguments_in_order():
+    prepared = macros.prepare_run(RunTransport(), "START_PRINT",
+                                  ["BED_TEMP=60", "EXTRUDER_TEMP=210.5", "MESH=default"])
+    assert prepared.script == "START_PRINT BED_TEMP=60 EXTRUDER_TEMP=210.5 MESH=default"
+
+
+@pytest.mark.parametrize("token", ["BED_TEMP", "BED_TEMP=", "=60", "BED TEMP=60",
+                                   "BED_TEMP=60;M104", 'BED_TEMP="60"', "BED_TEMP=6 0"])
+def test_prepare_run_rejects_a_malformed_argument(token):
+    with pytest.raises(macros.MacroRefusal):
+        macros.prepare_run(RunTransport(), "PRINT_START", [token])
+
+
+def test_prepare_run_rejects_a_duplicate_argument():
+    with pytest.raises(macros.MacroRefusal):
+        macros.prepare_run(RunTransport(), "PRINT_START", ["SPEED=1", "speed=2"])
+
+
+def test_prepare_run_refuses_an_unknown_name_and_sends_nothing():
+    transport = RunTransport()
+    with pytest.raises(macros.MacroRefusal) as refused:
+        macros.prepare_run(transport, "NOT_A_MACRO")
+    assert "does not define a macro named" in str(refused.value)
+    assert transport.posts == []
+
+
+def test_prepare_run_refuses_an_internal_macro():
+    transport = RunTransport()
+    with pytest.raises(macros.MacroRefusal) as refused:
+        macros.prepare_run(transport, "_park_helpers")
+    assert "internal helper macro" in str(refused.value)
+    assert transport.posts == []
+
+
+@pytest.mark.parametrize("state", ["printing", "paused"])
+def test_prepare_run_refuses_while_the_printer_is_busy(state):
+    transport = RunTransport(states=(state,))
+    with pytest.raises(macros.MacroRefusal) as refused:
+        macros.prepare_run(transport, "PRINT_START")
+    assert state in str(refused.value)
+    assert transport.posts == []
+
+
+def test_prepare_run_refuses_an_unreadable_state():
+    with pytest.raises(macros.MacroError):
+        macros.prepare_run(RunTransport(state_payload={"result": {}}), "PRINT_START")
+
+
+def test_prepare_run_reports_an_unreachable_printer_as_could_not_read():
+    with pytest.raises(macros.MacroError) as failed:
+        macros.prepare_run(RunTransport(error=OSError("unreachable")), "PRINT_START")
+    assert str(failed.value) == macros.RUN_COULD_NOT_READ_TEXT
+
+
+def test_run_prompt_for_a_known_macro_carries_the_registry_safety(registry):
+    prepared = macros.prepare_run(RunTransport(), "PRINT_START", registry=registry)
+    prompt = macros.run_prompt_text(prepared)
+    entry = next(e for e in registry.firmware_entries if e.id == "klipper.print-start")
+    assert "`PRINT_START`" in prompt
+    assert f"Safety: {entry.safety}" in prompt
+
+
+def test_run_prompt_for_a_printer_defined_macro_says_not_described():
+    prepared = macros.prepare_run(RunTransport(), "WIPE_NOZZLE_CUSTOM")
+    assert prepared.entry is None
+    prompt = macros.run_prompt_text(prepared)
+    assert macros.NOT_DESCRIBED_WORDING in prompt
+    assert "Safety:" not in prompt
+
+
+def test_send_run_rechecks_state_then_posts_the_exact_line_once():
+    transport = RunTransport()
+    prepared = macros.prepare_run(transport, "WIPE_NOZZLE_CUSTOM", ["SPEED=2"])
+    message = macros.send_run(transport, prepared)
+    assert transport.calls == [("GET", "/printer/objects/list", None),
+                               ("GET", macros.PRINT_STATE_PATH, None),
+                               ("GET", macros.PRINT_STATE_PATH, None),
+                               ("POST", "/printer/gcode/script", {"script": "WIPE_NOZZLE_CUSTOM SPEED=2"})]
+    assert message.startswith("Sent `WIPE_NOZZLE_CUSTOM SPEED=2`")
+
+
+def test_send_run_refuses_when_the_recheck_finds_the_printer_busy():
+    transport = RunTransport(states=("standby", "printing"))
+    prepared = macros.prepare_run(transport, "PRINT_START")
+    with pytest.raises(macros.MacroRefusal):
+        macros.send_run(transport, prepared)
+    assert transport.posts == []
+
+
+def test_send_run_refuses_when_the_recheck_is_unreadable():
+    class FlakyState(RunTransport):
+        def __init__(self):
+            super().__init__()
+            self.state_calls = 0
+
+        def __call__(self, method, path, body=None):
+            if path == macros.PRINT_STATE_PATH:
+                self.state_calls += 1
+                if self.state_calls > 1:
+                    self.calls.append((method, path, body))
+                    return {"result": {"status": {}}}
+            return super().__call__(method, path, body)
+
+    transport = FlakyState()
+    prepared = macros.prepare_run(transport, "PRINT_START")
+    with pytest.raises(macros.MacroRefusal):
+        macros.send_run(transport, prepared)
+    assert transport.posts == []
+
+
+def test_send_run_reports_a_failed_post_as_uncertain_never_as_ran():
+    transport = RunTransport(post_error=OSError("connection reset"))
+    prepared = macros.prepare_run(transport, "PRINT_START")
+    with pytest.raises(macros.MacroError) as failed:
+        macros.send_run(transport, prepared)
+    assert "not known whether the printer received" in str(failed.value)
+
+
+# ------------------------------------------------------------- handler: run flow
+
+class ConfirmRecorder:
+    """Stands in for the plugin's _confirm: records the prompt, answers as queued."""
+
+    def __init__(self, answer):
+        self.answer = answer
+        self.prompts = []
+
+    async def __call__(self, adapter, source, metadata, prefix, question, choices, timeout):
+        self.prompts.append((question, choices))
+        return self.answer
+
+
+def _run_dispatch(text, transport, confirm, connection="moonraker"):
+    adapter = FakeAdapter()
+    with _configured(connection), mock.patch.object(spool_sync, "moonraker", transport), \
+            mock.patch.object(plugin, "_confirm", confirm):
+        out = asyncio.run(plugin.macros_dispatch(_event(text), _gateway(adapter)))
+    return out, adapter
+
+
+def test_macros_run_happy_path_posts_the_confirmed_line_once():
+    transport = RunTransport()
+    confirm = ConfirmRecorder(macros.RUN_LABEL)
+    out, adapter = _run_dispatch("/print-macros run wipe_nozzle_custom SPEED=2", transport, confirm)
+    assert out == {"action": "skip", "reason": "print macros run handled"}
+    assert transport.posts == [{"script": "WIPE_NOZZLE_CUSTOM SPEED=2"}]
+    question, choices = confirm.prompts[0]
+    assert "`WIPE_NOZZLE_CUSTOM SPEED=2`" in question
+    assert macros.NOT_DESCRIBED_WORDING in question
+    assert choices == [macros.RUN_LABEL, macros.CANCEL_LABEL]
+    assert adapter.sent[-1].startswith("Sent `WIPE_NOZZLE_CUSTOM SPEED=2`")
+
+
+def test_macros_run_prompt_for_a_known_macro_includes_its_safety_note(registry):
+    transport = RunTransport()
+    confirm = ConfirmRecorder(macros.CANCEL_LABEL)
+    _run_dispatch("/print-macros run PRINT_START", transport, confirm)
+    entry = next(e for e in registry.firmware_entries if e.id == "klipper.print-start")
+    assert f"Safety: {entry.safety}" in confirm.prompts[0][0]
+
+
+@pytest.mark.parametrize("answer", [macros.CANCEL_LABEL, None])
+def test_macros_run_declined_or_timed_out_sends_nothing(answer):
+    transport = RunTransport()
+    confirm = ConfirmRecorder(answer)
+    _out, adapter = _run_dispatch("/print-macros run PRINT_START", transport, confirm)
+    assert transport.posts == []
+    assert adapter.sent[-1] == "Macro not run. Nothing sent."
+
+
+def test_macros_run_unknown_name_never_prompts_and_sends_nothing():
+    transport = RunTransport()
+    confirm = ConfirmRecorder(macros.RUN_LABEL)
+    _out, adapter = _run_dispatch("/print-macros run NOPE_MACRO", transport, confirm)
+    assert confirm.prompts == [] and transport.posts == []
+    assert "does not define a macro named" in adapter.sent[-1]
+
+
+def test_macros_run_internal_name_never_prompts_and_sends_nothing():
+    transport = RunTransport()
+    confirm = ConfirmRecorder(macros.RUN_LABEL)
+    _out, adapter = _run_dispatch("/print-macros run _PARK_HELPERS", transport, confirm)
+    assert confirm.prompts == [] and transport.posts == []
+    assert "internal helper macro" in adapter.sent[-1]
+
+
+def test_macros_run_busy_at_the_first_check_never_prompts():
+    transport = RunTransport(states=("paused",))
+    confirm = ConfirmRecorder(macros.RUN_LABEL)
+    _out, adapter = _run_dispatch("/print-macros run PRINT_START", transport, confirm)
+    assert confirm.prompts == [] and transport.posts == []
+    assert "paused" in adapter.sent[-1]
+
+
+def test_macros_run_busy_at_the_second_check_sends_nothing():
+    transport = RunTransport(states=("standby", "printing"))
+    confirm = ConfirmRecorder(macros.RUN_LABEL)
+    _out, adapter = _run_dispatch("/print-macros run PRINT_START", transport, confirm)
+    assert len(confirm.prompts) == 1 and transport.posts == []
+    assert "printing" in adapter.sent[-1]
+
+
+def test_macros_run_on_a_non_moonraker_printer_sends_nothing():
+    transport = RunTransport()
+    confirm = ConfirmRecorder(macros.RUN_LABEL)
+    out, adapter = _run_dispatch("/print-macros run PRINT_START", transport, confirm,
+                                 connection="bambulab_lan")
+    assert out["reason"] == "print macros not applicable to this printer"
+    assert transport.calls == [] and confirm.prompts == []
+    assert "no Moonraker macro namespace" in adapter.sent[-1]
+
+
+@pytest.mark.parametrize("text", ["/print-macros run", "/print-macros frobnicate"])
+def test_macros_run_usage_errors_send_nothing(text):
+    transport = RunTransport()
+    confirm = ConfirmRecorder(macros.RUN_LABEL)
+    out, adapter = _run_dispatch(text, transport, confirm)
+    assert out == {"action": "skip", "reason": "print macros usage shown"}
+    assert transport.calls == [] and confirm.prompts == []
+    assert "Nothing was sent to the printer." in adapter.sent[-1]
+
+
+def test_llm_may_name_the_listing_but_never_a_run():
+    # Stage 2 decision, matching the allow-list's treatment of the mutating
+    # /print-again verbs: a state-changing, argument-bearing form is not
+    # LLM-nameable. The operator types and confirms a run personally.
+    from print_buddy.bot import llm
+    assert llm.allowed_command("/print-macros") == "/print-macros"
+    assert llm.allowed_command("/print-macros run PRINT_START") is None
+
+
+def test_bot_command_text_for_a_run():
+    from print_buddy.bot import commands as bot_commands
+    assert bot_commands.as_text("print-macros", {"args": "run PRINT_START"}) == "/print-macros run PRINT_START"
+    assert bot_commands.as_text("print-macros", {}) == "/print-macros"

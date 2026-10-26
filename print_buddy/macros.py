@@ -1,4 +1,4 @@
-"""Live printer macro discovery from Moonraker (issue #291, stage 1).
+"""Live printer macro discovery and guarded macro runs from Moonraker (issue #291).
 
 Moonraker's ``GET /printer/objects/list`` returns one ``gcode_macro <NAME>``
 object per macro defined in the printer's own Klipper config, so the printer —
@@ -12,12 +12,15 @@ names and classifies each one against the descriptive registry in
 - **printer-defined** — the printer defines it but the registry does not:
   listed by name only; no description is invented for it.
 - **internal** — the name starts with ``_`` (the Klipper helper convention):
-  separated from the operator list, never presented as an operator macro.
+  separated from the operator list, never presented as an operator macro, and
+  never runnable from the bot.
 
-Stage 1 is read-only. The only request this module can make is the GET of
-the objects list; there is no code path here that sends a macro or any other
-command to a printer. Running a discovered macro is stage 2 and needs its
-own confirmation design on issue #291.
+Stage 1 (list) is read-only: its only request is the GET of the objects list.
+Stage 2 (run) adds exactly one write: after the operator confirms the exact
+script line, ``send_run`` re-checks the printer is not printing or paused and
+POSTs that single line to ``/printer/gcode/script``. A run name is only ever
+taken from the live discovered set — never trusted as typed, never free-typed
+G-code — and internal macros are refused even when discovered.
 """
 from __future__ import annotations
 
@@ -25,16 +28,40 @@ import re
 from dataclasses import dataclass
 
 OBJECTS_LIST_PATH = "/printer/objects/list"
+GCODE_SCRIPT_PATH = "/printer/gcode/script"
+PRINT_STATE_PATH = "/printer/objects/query?print_stats=state"
 MACRO_PREFIX = "gcode_macro "
 
 COULD_NOT_READ_TEXT = ("Could not read the printer's macros from Moonraker. "
                        "Nothing was sent to the printer.")
-READ_ONLY_NOTE = ("Read-only: this list came from the printer itself. Print Buddy sent nothing but "
-                  "the objects-list request, and running a macro from the bot is not available yet.")
+READ_ONLY_NOTE = ("Read-only: this list came from the printer itself, and Print Buddy sent nothing "
+                  "but the objects-list request to build it. To run one of these macros, use "
+                  "`/print-macros run <name>` — it asks first and refuses while a print is running.")
+RUN_COULD_NOT_READ_TEXT = ("Could not read the printer's macros from Moonraker, so there is no "
+                           "discovered set to run from. Nothing was sent to the printer.")
+NOT_DESCRIBED_WORDING = ("This macro is defined by your printer's own config and is not described "
+                         "by Print Buddy — Print Buddy cannot say what it does. Only run it if "
+                         "you know what it does from the printer's config.")
+RUN_LABEL = "Run macro now"
+CANCEL_LABEL = "Cancel"
+
+# Klipper print_stats states in which no job is on the printer, mirroring the
+# cold-pull guard's allowed set. Anything else — printing, paused, or a state
+# Print Buddy does not recognise — refuses the run (fail closed).
+IDLE_STATES = frozenset({"standby", "complete", "cancelled", "error"})
+BUSY_STATES = frozenset({"printing", "paused"})
+
+_NAME_RE = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
+_ARG_KEY_RE = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
+_ARG_VALUE_RE = re.compile(r"-?[A-Za-z0-9][A-Za-z0-9._+-]*")
 
 
 class MacroError(RuntimeError):
     """The printer's macros could not be read. Nothing was sent when this is raised."""
+
+
+class MacroRefusal(RuntimeError):
+    """A run was refused before anything was sent; the message is user-ready."""
 
 
 @dataclass(frozen=True)
@@ -129,6 +156,160 @@ def discover(transport, registry=None) -> MacroListing:
     except Exception as exc:
         raise MacroError(f"the objects-list request failed: {exc}") from exc
     return classify(parse_macro_names(payload), registry=registry)
+
+
+# --------------------------------------------------------------------- stage 2: run
+
+@dataclass(frozen=True)
+class PreparedRun:
+    """One validated run: the discovered name, its registry entry if known, the exact line."""
+
+    name: str               # the macro name exactly as the printer reports it
+    script: str             # the single script line the confirmation shows and the POST sends
+    entry: object = None    # the registry FirmwareEntry for a known macro, else None
+
+
+def print_state(transport) -> str:
+    """The printer's print_stats state, case-folded, through `transport`.
+
+    A response without a readable state is a MacroError, not a guess: the
+    run guards treat "unreadable" exactly like "busy".
+    """
+    try:
+        payload = transport("GET", PRINT_STATE_PATH)
+    except MacroError:
+        raise
+    except Exception as exc:
+        raise MacroError(f"the print-state request failed: {exc}") from exc
+    try:
+        state = payload["result"]["status"]["print_stats"]["state"]
+    except (TypeError, KeyError):
+        raise MacroError("Moonraker's print-state response had no print_stats state") from None
+    if not isinstance(state, str) or not state.strip():
+        raise MacroError("Moonraker's print-state response had no print_stats state")
+    return state.strip().casefold()
+
+
+def _require_idle(state, *, recheck=False):
+    if state in IDLE_STATES:
+        return
+    when = "On the re-check just now, the" if recheck else "The"
+    if state in BUSY_STATES:
+        raise MacroRefusal(f"{when} printer is {state}, and a macro must not run while a print is "
+                           "running or paused. Nothing was sent.")
+    raise MacroRefusal(f"{when} printer reported an unrecognised state ({state!r}), so Print Buddy "
+                       "cannot confirm it is idle. Nothing was sent.")
+
+
+def _validate_args(arg_tokens) -> tuple:
+    """Validate KEY=VALUE tokens; return them as typed, in order.
+
+    Values are restricted to one unquoted word of letters, digits and
+    ``. _ + -`` (optionally led by ``-``), so a token can never smuggle a
+    second command, a comment or whitespace into the script line.
+    """
+    validated, seen = [], set()
+    for token in arg_tokens:
+        key, sep, value = str(token).partition("=")
+        if not sep or not _ARG_KEY_RE.fullmatch(key) or not _ARG_VALUE_RE.fullmatch(value or ""):
+            raise MacroRefusal(f"{token!r} is not a KEY=VALUE argument. Arguments look like "
+                               "`BED_TEMP=60` — one word each, no spaces, quotes or symbols "
+                               "beyond letters, digits and . _ + -. Nothing was sent.")
+        if key.casefold() in seen:
+            raise MacroRefusal(f"The argument {key!r} was given twice. Nothing was sent.")
+        seen.add(key.casefold())
+        validated.append(str(token))
+    return tuple(validated)
+
+
+def prepare_run(transport, name_token, arg_tokens=(), registry=None) -> PreparedRun:
+    """Validate one run request against the live printer; send nothing.
+
+    Re-discovers the macro set at run time (the printer is the authority —
+    a name typed from memory is never trusted), resolves the typed name
+    against the discovered names case-insensitively (Klipper's own macro
+    name convention), refuses internal and unknown names, validates the
+    KEY=VALUE arguments, and checks the printer is not printing or paused.
+    The returned PreparedRun carries the exact script line the operator
+    will be asked to confirm.
+    """
+    try:
+        listing = discover(transport, registry=registry)
+    except MacroError:
+        raise MacroError(RUN_COULD_NOT_READ_TEXT) from None
+    name_token = str(name_token or "").strip()
+    if not _NAME_RE.fullmatch(name_token):
+        raise MacroRefusal(f"{name_token!r} is not a macro name. Run one of the names "
+                           "`/print-macros` lists, exactly as one word. Nothing was sent.")
+    wanted = name_token.casefold()
+    entry = None
+    canonical = None
+    for known_name, known_entry in listing.known:
+        if known_name.casefold() == wanted:
+            canonical, entry = known_name, known_entry
+            break
+    if canonical is None and name_token.startswith("_"):
+        if any(internal_name.casefold() == wanted for internal_name in listing.internal):
+            raise MacroRefusal(f"{name_token} is an internal helper macro (names starting with _ "
+                               "are the printer config's own machinery). Internal macros are never "
+                               "runnable from Print Buddy. Nothing was sent.")
+    if canonical is None:
+        for defined_name in listing.printer_defined:
+            if defined_name.casefold() == wanted:
+                canonical = defined_name
+                break
+    if canonical is None:
+        raise MacroRefusal(f"The printer does not define a macro named {name_token!r}. Run "
+                           "`/print-macros` to see the names it actually defines — a typed name "
+                           "is never sent on trust. Nothing was sent.")
+    args = _validate_args(arg_tokens)
+    script = " ".join((canonical, *args))
+    try:
+        state = print_state(transport)
+    except MacroError:
+        raise MacroError("Could not read the printer's state from Moonraker, so Print Buddy "
+                         "cannot confirm it is idle. Nothing was sent.") from None
+    _require_idle(state)
+    return PreparedRun(name=canonical, script=script, entry=entry)
+
+
+def run_prompt_text(prepared: PreparedRun) -> str:
+    """The confirmation question: the exact line, plus what is known about the macro."""
+    lines = [f"Run macro **{prepared.name}** on the printer?",
+             "",
+             "This sends exactly one line to the printer:",
+             f"`{prepared.script}`",
+             ""]
+    if prepared.entry is not None:
+        lines.append(f"Safety: {prepared.entry.safety}")
+    else:
+        lines.append(NOT_DESCRIBED_WORDING)
+    lines.append("The printer's state is checked again immediately before sending; if a print "
+                 "has started, nothing is sent.")
+    return "\n".join(lines)
+
+
+def send_run(transport, prepared: PreparedRun) -> str:
+    """Re-check the printer is idle, then POST the one confirmed script line.
+
+    The state can change while the operator decides, so the check in
+    prepare_run is repeated here; a busy or unreadable re-check sends
+    nothing. A failed POST is reported as failed/uncertain — Moonraker
+    accepting the script is the only success this claims.
+    """
+    try:
+        state = print_state(transport)
+    except MacroError:
+        raise MacroRefusal("Could not re-check the printer's state just now, so the macro was "
+                           "not sent. Nothing was sent.") from None
+    _require_idle(state, recheck=True)
+    try:
+        transport("POST", GCODE_SCRIPT_PATH, {"script": prepared.script})
+    except Exception as exc:
+        raise MacroError(f"The send did not succeed ({exc}). It is not known whether the printer "
+                         "received or ran anything — check the printer before trying again.") from exc
+    return (f"Sent `{prepared.script}` — Moonraker accepted the script. Print Buddy cannot confirm "
+            "the macro's own actions have finished, so watch the printer.")
 
 
 def not_moonraker_text(connection) -> str:

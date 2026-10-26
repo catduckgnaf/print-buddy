@@ -85,6 +85,7 @@ class ContractTests(unittest.TestCase):
 
     def test_registry_finds_every_model_file(self):
         self.assertEqual(set(MODELS), {AD5X, GENERIC, SV06, OCTOPRINT, BAMBU_A1, BAMBU_P1S, "flashforge_stock.ad5x",
+                                       "flashforge.ad5m", "flashforge.ad5m_pro",
                                        "bambulab.a1mini", "bambulab.p1p", "bambulab.x1", "bambulab.x1c",
                                        "bambulab.x1e", "bambulab.p2s", "bambulab.h2s",
                                        "prusa.mk4s", "prusa.coreone", "prusa.xl", "prusa.miniplus",
@@ -203,6 +204,68 @@ class ZmodTests(unittest.TestCase):
         self.assertEqual(self.a.screen_command(2, "PLA", "ff0000"), "CHANGE_ZCOLOR SLOT=2 TYPE=PLA HEX=FF0000")
         self.assertEqual(self.a.stock_api_url("printer.test"), "http://printer.test:8898/detail")
         self.assertIn("START_PRINT BED_TEMP=60 EXTRUDER_TEMP=215 MESH=auto", self.a.start_plan(60, 215)[-1])
+
+
+IFS_ARTIFACTS = re.compile(r"SET_EXTRUDER_SLOT|CHANGE_ZCOLOR|\bIFS\b|zmod_color|zmod_ifs|8898|/detail", re.I)
+
+
+class ZmodSingleExtruderTests(unittest.TestCase):
+    """AD5M / AD5M Pro (#301): ZMod start code and Moonraker transport, IFS fully off."""
+
+    FAMILIES = ("flashforge.ad5m", "flashforge.ad5m_pro")
+
+    def test_zmod_start_but_no_ifs(self):
+        for family in self.FAMILIES:
+            with self.subTest(family=family):
+                a = adapter_for(family)
+                self.assertEqual((a.slot_count, a.multi_slot, a.has_native_screen), (1, False, False))
+                # The ZMod start sequence is shared with the AD5X...
+                self.assertIn("START_PRINT BED_TEMP=60 EXTRUDER_TEMP=215 MESH=auto", a.start_plan(60, 215)[-1])
+                out = a.machine_start_gcode("START_PRINT MESH=auto", "bed_a")
+                self.assertTrue(out.startswith("M190 S[bed_temperature_initial_layer_single]\n"
+                                               "M104 S[nozzle_temperature_initial_layer] T0\n"))
+                self.assertIn("MESH=bed_a", out)
+                # ...but nothing IFS/native-mode leaks in: no screen sync, no stock API,
+                # no IFS telemetry objects, and status carries no slots.
+                self.assertIsNone(a.screen_command(1, "PLA", "FF0000"))
+                self.assertIsNone(a.stock_api_url("printer.test"))
+                self.assertNotIn("slots", a.normalize_status({}))
+                texts = [*a.start_plan(60, 215), " ".join(a.moonraker_objects()),
+                         json.dumps(a.normalize_status({}))]
+                for text in texts:
+                    self.assertIsNone(IFS_ARTIFACTS.search(text), text)
+                with self.assertRaises(MultiColorUnsupported):
+                    a.native
+
+    def test_templates_have_no_ifs_artifacts(self):
+        for family in self.FAMILIES:
+            folder = adapter_for(family).templates_dir()
+            for name in ("machine", "process", "filament"):
+                text = (folder / f"{name}.json").read_text()
+                self.assertIsNone(IFS_ARTIFACTS.search(text), (family, name))
+
+    def test_multicolor_is_refused_and_single_is_accepted(self):
+        for family in self.FAMILIES:
+            a = adapter_for(family)
+            self.assertEqual(a.normalize_tool_mapping({"0": 1}, {}), {"0": 1})
+            with self.assertRaises(MultiColorUnsupported):
+                a.normalize_tool_mapping({"0": 1, "1": 2}, {})
+
+    def test_readiness_is_the_plain_check(self):
+        for family in self.FAMILIES:
+            a = adapter_for(family)
+            self.assertEqual(a.readiness_problems({}, {"print_stats": {"state": "standby"},
+                                                       "webhooks": {"state": "ready"}}), [])
+            self.assertTrue(a.readiness_problems({}, {"print_stats": {"state": "printing"}}))
+            self.assertTrue(a.readiness_problems({}, {}))
+
+    def test_each_model_has_its_own_templates(self):
+        folders = {adapter_for(f).templates_dir() for f in self.FAMILIES}
+        self.assertEqual(len(folders), 2)
+        for family in self.FAMILIES:
+            machine = json.loads((adapter_for(family).templates_dir() / "machine.json").read_text())
+            self.assertEqual(machine["printable_area"], ["0x0", "220x0", "220x220", "0x220"])
+            self.assertEqual(machine["printable_height"], "220")
 
 
 class GenericKlipperTests(unittest.TestCase):

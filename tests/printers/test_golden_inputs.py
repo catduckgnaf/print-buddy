@@ -18,7 +18,8 @@ ROOT = Path(__file__).resolve().parents[2]
 GOLDEN = Path(__file__).parent / "golden"
 STATE = ROOT / "tests" / "pipeline" / "fixtures" / "printer_hardware.json"
 CASES = ROOT / "tests" / "corpus" / "cases"
-MODELS = {"ad5x": "flashforge.ad5x", "sv06": "sovol.sv06"}
+MODELS = {"ad5x": "flashforge.ad5x", "sv06": "sovol.sv06",
+          "ad5m": "flashforge.ad5m", "ad5m_pro": "flashforge.ad5m_pro"}
 SOURCES = {"single-part": {}, "parts-one-plate": {"copies": 2}}
 # Identity keys that legitimately changed with the refactor (family became model, per-model names), and
 # the vendor profile's identity and slicer choice (not Orca inputs; the argv below pins the slicer).

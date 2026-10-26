@@ -2521,7 +2521,9 @@ def _slice_full_size_split(job, job_path, src, manifest, decisions, st):
             fit = {**(fit or {'scale': 1.0}), 'placement_mm': placement_mm}
         if reoriented:
             # Every reorientation record is validated exactly as in R1: a
-            # known axis, a cardinal bed turn, a finite rigid matrix that is
+            # known axis, a bed turn in [0, 90] degrees (a cardinal turn, or
+            # a diagonal one when no cardinal turn fit — #221 diagonal), a
+            # finite rigid matrix that is
             # exactly that face change composed with the turn, and boolean
             # supports/brim decisions. A reorientation is always the object's
             # only transform record — the matrix already contains its bed
@@ -2553,9 +2555,9 @@ def _slice_full_size_split(job, job_path, src, manifest, decisions, st):
                 except (TypeError, ValueError) as exc:
                     raise RuntimeError('full-size split plan reorientation yaw_deg must be '
                                        f"numeric, got {record.get('yaw_deg')!r}") from exc
-                if not math.isfinite(yaw_value) or yaw_value not in (0.0, 90.0):
+                if not math.isfinite(yaw_value) or not 0.0 <= yaw_value <= 90.0:
                     raise RuntimeError('full-size split plan reorientation yaw_deg must be a '
-                                       'cardinal bed turn of 0 or 90 degrees, '
+                                       'bed turn between 0 and 90 degrees, '
                                        f'got {record.get("yaw_deg")!r}')
                 raw_rotation = record.get('rotation')
                 if not isinstance(raw_rotation, (list, tuple)) or len(raw_rotation) != 9:

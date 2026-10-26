@@ -73,19 +73,26 @@ def test_yaw_envelope_is_dimension_preserving():
     assert round(w, 1) == round(d, 1) == 99.0
 
 
-def test_per_part_fit_names_the_stand_from_issue_76_as_blocking(tmp_path):
-    # The retained case from #76: a 130 x 230 mm stand on a 220 mm bed fits at
-    # no in-plane yaw, so separate plates are not a remedy for it.
+def test_per_part_fit_names_the_stand_from_issue_76_as_fitting_only_diagonally(tmp_path):
+    # The retained case from #76: a 130 x 230 mm stand on a 220 mm bed fits
+    # at no in-plane yaw, so separate plates are not a remedy for it in the
+    # bed plane — the in-plane facts below are unchanged. What changed in
+    # #221's diagonal stage is the last preference: stood on its end at a
+    # 45-degree bed turn it fits reoriented, so it is no longer named
+    # blocking (the full proof is pinned in
+    # test_reorientation_with_a_diagonal_turn_cures_the_issue_76_stand).
     source = tmp_path / 'stand.3mf'
-    _source(source, {'1': (130, 230, 30), '2': (195, 200, 119.8)}, [['1', '2']])
+    _solid_source(source, {'1': _box_tris(0, 130, 0, 230, 0, 30),
+                           '2': _box_tris(0, 195, 0, 200, 0, 119.8)}, [['1'], ['2']])
     rows = {row['object_id']: row for row in split_fit.per_part_fit(source, 220)}
     stand, base = rows['1'], rows['2']
-    assert stand['fits_full_size'] is False
+    assert stand['fits_authored'] is False and stand['fits_full_size'] is True
+    assert stand['blocking_reason'] is None
+    assert stand['reorientation']['yaw_deg'] == 45.0
     assert stand['usable_mm'] == [204.0, 204.0]  # 8 mm edge clearance, applied once per axis
-    assert 'exceeds the usable' in stand['blocking_reason']
     assert min(stand['best_extent_mm'][:2]) >= 130 and max(stand['best_extent_mm'][:2]) > 204
     assert base['fits_full_size'] is True
-    assert split_fit.split_plan_100(source, 220) is None
+    assert split_fit.split_plan_100(source, 220) is not None
 
 
 def test_per_part_fit_finds_a_yaw_the_authored_extent_misses(tmp_path):
@@ -99,8 +106,12 @@ def test_per_part_fit_finds_a_yaw_the_authored_extent_misses(tmp_path):
 
 
 def test_per_part_fit_uses_the_real_height_limit_not_the_bed_size(tmp_path):
+    # A real 50 x 50 x 250 box: stood on a face its 50 x 250 footprint
+    # fits the 204 mm usable bed at no bed turn, cardinal or diagonal
+    # (its tightest envelope is 212 mm at 45 degrees), so the height
+    # limit alone decides every assertion below.
     source = tmp_path / 'tall.3mf'
-    _source(source, {'1': (50, 50, 250)}, [['1']])
+    _solid_source(source, {'1': _box_tris(0, 50, 0, 50, 0, 250)}, [['1']])
     (row,) = split_fit.per_part_fit(source, bed=220, height=220)
     assert row['fits_full_size'] is False
     assert 'height 250' in row['blocking_reason']
@@ -119,8 +130,13 @@ def test_per_part_fit_uses_the_real_height_limit_not_the_bed_size(tmp_path):
 
 def test_fit_options_reports_blocking_parts_before_any_scale(tmp_path, monkeypatch):
     from print_buddy.core import orca_adapter as oa
+    # A 250 mm part blocks at every orientation: no in-plane yaw fits, and
+    # reoriented it would stand 250 tall, over the 220 mm limit. (The #76
+    # Stand was this test's fixture until #221's diagonal stage: it now
+    # fits reoriented at a 45-degree turn, so it can no longer stand in
+    # for a blocking part — see the diagonal Stand tests.)
     source = tmp_path / 'stand.3mf'
-    _source(source, {'1': (130, 230, 30)}, [['1']])
+    _source(source, {'1': (250, 250, 10)}, [['1']])
     monkeypatch.setattr(oa, 'verified_scale_choices', lambda *a, **k: [])
     monkeypatch.setattr(oa, 'rotation_alternatives', lambda *a, **k: [])
     options = oa.fit_options(source, {'bed_mm': [220, 220], 'max_print_height_mm': 220,
@@ -157,10 +173,17 @@ def test_split_plan_without_yaw_records_no_yaw(tmp_path):
 
 
 def test_split_plan_yaw_does_not_cure_the_issue_76_stand(tmp_path):
-    # The retained Stand fits at no yaw, so a yaw-aware plan still refuses it.
+    # The retained Stand fits at no in-plane yaw, so yaw alone still does
+    # not cure it: the plan that exists since #221's diagonal stage
+    # carries no yaw record for it — it fits only reoriented, stood on its
+    # end at a 45-degree bed turn (see the diagonal Stand test).
     source = tmp_path / 'stand.3mf'
-    _source(source, {'1': (130, 230, 30), '2': (150, 150, 10)}, [['1', '2']])
-    assert split_fit.split_plan_100(source, 220) is None
+    _solid_source(source, {'1': _box_tris(0, 130, 0, 230, 0, 30),
+                           '2': _box_tris(0, 150, 0, 150, 0, 10)}, [['1'], ['2']])
+    plan = split_fit.split_plan_100(source, 220)
+    assert plan is not None
+    assert '1' not in plan.get('yaw_by_object', {})
+    assert plan['reorientation_by_object']['1']['yaw_deg'] == 45.0
 
 
 def test_fit_choice_rows_carry_the_split_yaw():
@@ -406,8 +429,14 @@ def test_feature_edge_budget_is_zero_without_a_policy_and_includes_travel_sweep(
 
 
 def test_per_part_fit_brim_blocks_a_part_that_fits_only_without_it(tmp_path):
+    # A 200 mm cube: every orientation has a 200 x 200 footprint, so no
+    # yaw — cardinal or diagonal, in-plane or reoriented — can rescue it
+    # from the brimmed usable area. (A flat 200 x 200 x 10 plate was this
+    # fixture until #221's diagonal stage: it now fits with the brim by
+    # standing on edge at a 45-degree turn, so it no longer pins the
+    # brim as the blocker.)
     source = tmp_path / 'brim-tight.3mf'
-    _mesh_source(source, {'1': _rect_points(200, 200, 10)}, [['1']])
+    _mesh_source(source, {'1': _rect_points(200, 200, 200)}, [['1']])
     (plain,) = split_fit.per_part_fit(source, 220)
     assert plain['fits_full_size'] is True and plain['feature_edge_mm'] == 0.0
     assert plain['usable_mm'] == [204.0, 204.0]
@@ -423,10 +452,19 @@ def test_per_part_fit_brim_blocks_a_part_that_fits_only_without_it(tmp_path):
 
 
 def test_split_plan_brim_blocks_where_no_brim_plan_exists(tmp_path):
+    # The no-brim split plan exists (two plates); with the brim there is
+    # still no split plan — but since #221's diagonal stage the reason is
+    # not a block: the 200 mm part fits only reoriented at a diagonal
+    # turn, and in that orientation the pair packs onto ONE proved shared
+    # plate, so the planner returns None by its not-a-split rule (a
+    # one-plate plan is no split), not because any part fails to fit.
+    # Both rows fitting is what distinguishes the two outcomes.
     source = tmp_path / 'brim-split.3mf'
     _source(source, {'1': (200, 200, 10), '2': (150, 150, 10)}, [['1', '2']])
     plan = split_fit.split_plan_100(source, 220)
     assert plan is not None and len(plan['plates']) == 2
+    rows = split_fit.per_part_fit(source, 220, brim_policy=_BRIM_10, state=_BRIM_STATE)
+    assert all(row['fits_full_size'] for row in rows)
     assert split_fit.split_plan_100(source, 220, brim_policy=_BRIM_10, state=_BRIM_STATE) is None
 
 
@@ -465,10 +503,15 @@ def test_per_part_fit_brim_and_exclusion_compose(tmp_path):
     assert row['placement_mm'] == [23.0, 13.0]
     px, py = row['placement_mm']
     assert px - 5.0 >= 18  # the brim itself clears the exclusion's right edge
-    # Blocking: a 190 mm part has an avoiding placement without a brim, but the
-    # brim budget alone makes it not fit, and the reason names the brim.
+    # Blocking: a 190 mm cube has an avoiding placement without a brim, but
+    # the brim budget alone makes it not fit, and the reason names the brim.
+    # (A flat 190 x 190 x 10 plate was this fixture until #221's diagonal
+    # stage: stood on edge at a diagonal turn its footprint fits the
+    # brimmed usable area and places clear of the exclusion, so it no
+    # longer pins the brim as the blocker; the cube's footprint is
+    # 190 x 190 in every orientation.)
     tight = tmp_path / 'brim-exclusion-tight.3mf'
-    _mesh_source(tight, {'1': _rect_points(190, 190, 10)}, [['1']])
+    _mesh_source(tight, {'1': _rect_points(190, 190, 190)}, [['1']])
     (plain,) = split_fit.per_part_fit(tight, 220, exclusions=exclusions)
     assert plain['fits_full_size'] is True and plain['placement_mm'] is not None
     (row,) = split_fit.per_part_fit(tight, 220, exclusions=exclusions,
@@ -785,15 +828,49 @@ def test_reorientation_never_chosen_when_authored_or_yaw_fits(tmp_path):
     assert all(row['reorientation'] is None for row in rows.values())
 
 
-def test_reorientation_does_not_cure_the_issue_76_stand(tmp_path):
-    # About X the retained Stand would stand 230 tall — over the 220 mm
-    # limit; about Y its 30 x 230 end footprint fits at neither cardinal
-    # bed turn. It stays blocking at every orientation (#221 R1).
+def test_reorientation_with_a_diagonal_turn_cures_the_issue_76_stand(tmp_path):
+    # THE #221 DIAGONAL VERDICT CHANGE, named and deliberate. Through R3
+    # this test asserted the retained Stand stays blocking at every
+    # orientation, and it did: about X it would stand 230 tall — over
+    # the 220 mm limit — and about Y its 30 x 230 end footprint fits at
+    # neither cardinal bed turn (230 mm against the 204 mm usable bed).
+    # With diagonal bed turns the about-Y candidate fits: at 45 degrees
+    # the end footprint's envelope is 183.8 x 183.8 mm, inside the usable
+    # bed with the edge margin charged exactly once, standing 130 tall.
+    # The Stand is therefore offered reoriented — a feature, announced
+    # here and on #221/#76, not a smuggled relaxation: every proof
+    # (flat landing, height, footprint, once-only margins) is the R1
+    # proof; only the bed turn is no longer restricted to cardinals.
     source = tmp_path / 'stand.3mf'
-    _source(source, {'1': (130, 230, 30), '2': (195, 200, 119.8)}, [['1', '2']])
+    _solid_source(source, {'1': _box_tris(0, 130, 0, 230, 0, 30),
+                           '2': _box_tris(0, 195, 0, 200, 0, 119.8)}, [['1'], ['2']])
     rows = {row['object_id']: row for row in split_fit.per_part_fit(source, 220)}
-    assert rows['1']['fits_full_size'] is False and rows['1']['reorientation'] is None
-    assert split_fit.split_plan_100(source, 220) is None
+    stand = rows['1']
+    assert stand['fits_authored'] is False and stand['fits_full_size'] is True
+    record = stand['reorientation']
+    assert record['axis'] == '-X' and record['yaw_deg'] == 45.0
+    assert record['dims_mm'] == [183.848, 183.848, 130.0]
+    assert record['supports'] is False and record['brim_recommended'] is False
+    # The proof in one place, from the same sweep the planner checks: the
+    # 30 x 230 end footprint at 45 degrees, and at the cardinal turns.
+    w, d = split_fit.yaw_envelope(30, 230, 45)
+    assert (round(w, 3), round(d, 3)) == (183.848, 183.848) == tuple(record['dims_mm'][:2])
+    assert split_fit.yaw_envelope(30, 230, 0)[1] > 204
+    assert split_fit.yaw_envelope(30, 230, 90)[0] > 204
+    # About X still yields no candidate at any turn: the binding
+    # constraint there is the height proof (it would stand 230 tall),
+    # not the turn — exactly one candidate is proved for the Stand.
+    from print_buddy.core import color_geometry
+    with zipfile.ZipFile(source) as archive:
+        items = color_geometry._world_item_points(archive, {'1'})
+    proved = split_fit._reorientation_candidates(source, '1', items, (204.0, 204.0), 220.0)
+    assert [c['axis'] for c in proved] == ['-X']
+    plan = split_fit.split_plan_100(source, 220)
+    assert plan is not None and sorted(plan['plates']) == [['1:1'], ['2:1']]
+    assert plan['reorientation_by_object'] == {'1': record}
+    # One transform record per object: never also a yaw or a placement.
+    assert '1' not in plan.get('yaw_by_object', {})
+    assert '1' not in plan.get('placement_by_object', {})
 
 
 def test_rank_reorientation_candidates_orders_by_fit_quality():
@@ -990,14 +1067,26 @@ def test_brim_budget_can_remove_the_reorientation_offer(tmp_path):
                 if r['object_id'] == '1']
     assert plain['reorientation'] is not None
     # With a 10 mm brim the usable area is 184 mm: the 190 mm side of the
-    # rotated footprint no longer fits, so the offer goes away (the budget
-    # is applied once, inside the same usable area as every other verdict).
+    # rotated footprint no longer fits at a cardinal turn — but since
+    # #221's diagonal stage the offer survives as a diagonal turn (the
+    # 30 x 190 footprint at 45 degrees occupies 155.6 mm), which is the
+    # budget applied once, inside the same usable area as every verdict.
     (row,) = [r for r in split_fit.per_part_fit(source, bed=220, height=250,
                                                brim_policy=_BRIM_10, state=_BRIM_STATE)
               if r['object_id'] == '1']
+    assert row['fits_full_size'] is True and row['reorientation'] is not None
+    assert row['reorientation']['yaw_deg'] == 45.0
+    assert row['reorientation']['dims_mm'] == [155.563, 155.563, 230.0]
+    # A 30 mm brim shrinks the usable area to 144 mm, below even the
+    # diagonal envelope, so the offer does go away (again: budget applied
+    # exactly once).
+    brim_30 = {'type': 'outer_only', 'width_mm': 30.0, 'label': 'Outer-only brim, 30 mm'}
+    (row,) = [r for r in split_fit.per_part_fit(source, bed=220, height=250,
+                                               brim_policy=brim_30, state=_BRIM_STATE)
+              if r['object_id'] == '1']
     assert row['fits_full_size'] is False and row['reorientation'] is None
     assert split_fit.split_plan_100(source, bed=220, height=250,
-                                    brim_policy=_BRIM_10, state=_BRIM_STATE) is None
+                                    brim_policy=brim_30, state=_BRIM_STATE) is None
 
 
 def test_changing_the_reorientation_record_changes_the_slice_recipe_sha():
@@ -1012,6 +1101,140 @@ def test_changing_the_reorientation_record_changes_the_slice_recipe_sha():
     changed = {**base, 'full_size_split_plan': {
         **base['full_size_split_plan'], 'reorientation_by_object': {'1': record}}}
     assert slice_binding(changed, 'source-a') != slice_binding(base, 'source-a')
+
+
+# --- #221 diagonal: free-yaw bed turns in reorientation ------------------
+# In-plane yaw has recorded sweep angles (diagonals included) since the
+# mesh-hull evaluation; the diagonal stage lifts the one cardinal-only
+# confinement left, the bed turn composed into a reorientation record.
+# The rules pinned below: a diagonal turn is an additional candidate
+# class — proved only when no cardinal turn fits, ranked after every
+# cardinal-turn candidate — and slicing accepts exactly the records the
+# planner can prove (finite yaw in [0, 90], matrix matching the record).
+
+
+def test_diagonal_reorientation_never_displaces_a_cardinal_candidate(tmp_path):
+    # The side box proves two reorientation candidates: stood on its end
+    # at a cardinal turn (30 x 190 footprint, 14 mm margin) and — only
+    # since the diagonal stage — the other face at 45 degrees, whose
+    # margin is LARGER (20.2 mm). The recorded winner is still the
+    # cardinal one: diagonal turns add fits, they never replace a verdict
+    # a cardinal plan already achieved.
+    from print_buddy.core import color_geometry
+    source = tmp_path / 'side-box.3mf'
+    _solid_source(source, {'1': _box_tris(0, 230, 0, 190, 0, 30),
+                           '2': _box_tris(0, 150, 0, 150, 0, 10)}, [['1'], ['2']])
+    with zipfile.ZipFile(source) as archive:
+        items = color_geometry._world_item_points(archive, {'1'})
+    proved = split_fit._reorientation_candidates(source, '1', items, (204.0, 204.0), 250.0)
+    by_yaw = {c['yaw_deg']: c for c in proved}
+    assert set(by_yaw) == {0.0, 45.0}
+    assert by_yaw[45.0]['margin_mm'] > by_yaw[0.0]['margin_mm']
+    ranked = split_fit._ranked_reorientation_candidates(proved)
+    assert ranked[0]['yaw_deg'] == 0.0
+    (row,) = [r for r in split_fit.per_part_fit(source, bed=220, height=250)
+              if r['object_id'] == '1']
+    assert row['reorientation']['yaw_deg'] == 0.0
+    assert row['reorientation']['dims_mm'] == [30.0, 190.0, 230.0]
+
+
+def test_slicing_a_diagonal_reorientation_lands_at_the_recorded_rotation(tmp_path, monkeypatch):
+    import json
+
+    import pytest
+
+    from print_buddy.core import color_geometry, model_job, orca_adapter
+    source = tmp_path / 'stand.3mf'
+    _solid_source(source, {'1': _box_tris(0, 130, 0, 230, 0, 30),
+                           '2': _box_tris(0, 195, 0, 200, 0, 119.8)}, [['1'], ['2']])
+    plan = split_fit.split_plan_100(source, 220)
+    record = plan['reorientation_by_object']['1']
+    assert record['yaw_deg'] == 45.0
+    job_path = _split_job(tmp_path, source, plan)
+    fake = _fake_slice_recording_supports()
+    monkeypatch.setattr(orca_adapter, 'slice_model', fake)
+    paths = model_job.slice_job(job_path)
+    assert len(paths) == 2 and len(fake.calls) == 2
+    # The record's supports decision (False for the plain Stand) reaches
+    # the slicer for the diagonal plate only.
+    by_printable = {tuple(call['printable']): call['supports'] for call in fake.calls}
+    assert by_printable[('1',)] is False and by_printable[('2',)] is None
+    saved = json.loads(job_path.read_text())
+    row = next(r for r in saved['derived_plates'] if r['part_keys'] == ['1:1'])
+    assert row['reorientation']['yaw_deg'] == 45.0
+    assert row['reorientation']['rotation'] == pytest.approx(record['rotation'])
+    assert row['plate_report']['fit']['rotation'] is not None
+    # Independent re-read: the derived plate's part measures exactly the
+    # diagonally rotated authored extents and sits on the bed.
+    with zipfile.ZipFile(Path(row['plate'])) as archive:
+        box = color_geometry._world_bounds(archive, {'1'})[0]
+    extents = [box[a][1] - box[a][0] for a in range(3)]
+    assert extents == pytest.approx(record['dims_mm'], abs=2e-3)
+    assert abs(box[2][0]) <= 2e-3
+
+
+def test_slicing_refuses_diagonal_reorientation_records_that_do_not_prove(tmp_path, monkeypatch):
+    import pytest
+
+    from print_buddy.core import model_job, orca_adapter
+    from print_buddy.core.orca_adapter import UP_AXES, _matmul, _yaw
+    source = tmp_path / 'stand.3mf'
+    _solid_source(source, {'1': _box_tris(0, 130, 0, 230, 0, 30),
+                           '2': _box_tris(0, 195, 0, 200, 0, 119.8)}, [['1'], ['2']])
+    plan = split_fit.split_plan_100(source, 220)
+    record = plan['reorientation_by_object']['1']
+    plates = plan['plates']
+    up = UP_AXES[record['axis']][1]
+    mismatched = {**record, 'rotation': _matmul(_yaw(0.0), up)}
+    bad_plans = [
+        # A 45-degree record whose matrix is the cardinal composition.
+        ({'plates': plates, 'reorientation_by_object': {'1': mismatched}},
+         'not the recorded face change'),
+        # Angles outside the legal set refuse, however tidy the matrix.
+        ({'plates': plates, 'reorientation_by_object': {
+            '1': {**record, 'yaw_deg': 120.0, 'rotation': _matmul(_yaw(120.0), up)}}},
+         'between 0 and 90 degrees'),
+        ({'plates': plates, 'reorientation_by_object': {
+            '1': {**record, 'yaw_deg': -5.0, 'rotation': _matmul(_yaw(-5.0), up)}}},
+         'between 0 and 90 degrees'),
+    ]
+    for bad_plan, match in bad_plans:
+        job_path = _split_job(tmp_path, source, bad_plan)
+        monkeypatch.setattr(orca_adapter, 'slice_model', _fake_slice_recording_supports())
+        with pytest.raises((RuntimeError, ValueError), match=match):
+            model_job.slice_job(job_path)
+
+
+def test_split_plan_diagonal_reorientation_can_share_a_plate(tmp_path, monkeypatch):
+    # R3's shared machinery carries a diagonal record unchanged: the
+    # Stand, reoriented at 45 degrees, packs by its reoriented hull
+    # alongside the authored 60 mm box on one plate (the corner beside
+    # the diagonal bar is genuinely free — hull-true packing, not AABB).
+    import json
+
+    from print_buddy.core import model_job, orca_adapter
+    source = tmp_path / 'diagonal-share.3mf'
+    _solid_source(source, {'1': _box_tris(0, 130, 0, 230, 0, 30),
+                           '2': _box_tris(0, 60, 0, 60, 0, 10),
+                           '3': _box_tris(0, 150, 0, 150, 0, 10)}, [['1', '2'], ['3']])
+    plan = split_fit.split_plan_100(source, 220)
+    assert plan is not None
+    assert {frozenset(plate) for plate in plan['plates']} == \
+        {frozenset({'1:1', '2:1'}), frozenset({'3:1'})}
+    assert plan['reorientation_by_object']['1']['yaw_deg'] == 45.0
+    assert set(_shared_shifts(plan, {'1:1', '2:1'})) == {'1', '2'}
+    job_path = _split_job(tmp_path, source, plan)
+    monkeypatch.setattr(orca_adapter, 'slice_model', _fake_slice_recording_supports())
+    paths = model_job.slice_job(job_path)
+    assert len(paths) == 2
+    saved = json.loads(job_path.read_text())
+    shared = next(row for row in saved['derived_plates']
+                  if set(row['part_keys']) == {'1:1', '2:1'})
+    # The re-read proof inside slice_job has verified the diagonal
+    # member landed at its rotated bounds plus its recorded shift.
+    assert shared['reorientation_by_object']['1']['yaw_deg'] == 45.0
+    assert set(shared['plate_report']['fit_by_object']) == {'1'}
+    assert shared['shifts_by_object'] == _shared_shifts(plan, {'1:1', '2:1'})
 
 
 # --- #221 R2: per-object yaw on shared split plates (the deferred P3) -----

@@ -64,7 +64,33 @@ The A1 and P1S each have one checked OrcaSlicer filament profile per material. A
 - **Generated, not shipped.** `bambu-templates.py` generates all four from your OrcaSlicer. It refuses, and writes nothing, unless each one hashes to the identity recorded in `facts.py`, has the expected `filament_type` and lists the printer in `compatible_printers`. The default stays `filament.json`; the others go to `filaments/<MATERIAL>.json`, with their flattened vendor copies in `upstream/filaments/`. Each is verified again whenever it is used.
 - **Refused:** a material with no checked profile (for example ABS, ASA, PA or wood fill) is refused before the slicer runs. The message lists the checked materials. Bambu lists ABS, ASA, PC, PA and PET as not recommended on the A1, and the guard refuses them anyway.
 - **Other models** (A1 mini, P1P, X1 family, P2S, H2S) still have only their PLA default. A PETG record on them is refused with the same message rather than sliced as PLA.
-- **Not yet:** choosing another vendor profile for a material (for example `Bambu PETG HF @BBL A1`), and using your own Bambu Studio or OrcaSlicer filament presets. Both are planned as a second phase of #264. An `[orca] templates` override may carry its own `filaments/<MATERIAL>.json`, but it is never the reference: the guard still holds the output to the generated profiles.
+- **Not yet:** choosing another vendor profile for a material (for example `Bambu PETG HF @BBL A1`). Your own presets are supported — see [Your own filament presets](#your-own-filament-presets-264-phase-2). An `[orca] templates` override may carry its own `filaments/<MATERIAL>.json`, but it is never the reference: the guard still holds the output to the generated profiles.
+
+### Your own filament presets (#264 phase 2)
+
+A vendor profile is one size for everyone. If you tune filament in Bambu Studio or OrcaSlicer — your own temperatures, flow, retraction — you can register that preset with Print Buddy, and slicing then uses it for its material instead of the vendor profile:
+
+1. In Bambu Studio or OrcaSlicer, save your filament preset and export it (the preset JSON).
+2. Register it against the same installed OrcaSlicer you generated the templates from:
+
+   ```bash
+   python3 scripts/bambu-templates.py --printer a1 --resources <OrcaSlicer resources folder> --import-filament <preset.json>
+   ```
+
+   `--material PETG` may be added to confirm the material; it is checked against the preset, never chosen by it.
+3. To go back to the vendor profile: `python3 scripts/bambu-templates.py --printer a1 --remove-filament PETG`. Re-running the import replaces a registered preset. Regenerating the templates keeps it.
+
+**How a preset earns trust.** A preset is partial: an `inherits` parent plus your overrides. It is flattened against your installed OrcaSlicer and refused, with nothing written, unless:
+
+- its parent is one of the printer's checked filament profiles (for example `Generic PETG @BBL A1`) — a preset over an unchecked parent is refused;
+- it sets only filament settings its parent has — a machine or process setting (layer height, printer model, …) refuses the import;
+- its `filament_type` stays its parent's material, and that material is not one Bambu lists as not recommended for the model;
+- it does not change the filament start or end G-code — those stay the checked parent's, so the guard's vendor-block checks are unchanged;
+- its values stay inside the model's recorded limits: nozzle and bed temperatures within `max_hotend_c` / `max_bed_c`, fan speeds 0–100 %, retraction and maximum volumetric speed positive.
+
+**Where it lives, and how it is held to account.** The flattened preset, its template and a manifest entry (preset name, parent, SHA-256) are written under the generated folder's `operator/` subfolder (`<state>/orca-profiles/bambulab_a1/operator/`) — on your machine only, never in the repository. While a preset is registered it replaces the vendor profile for its material everywhere the material selects a profile; a file that names the vendor profile in `filament_settings_id` is still checked against the vendor profile itself. Every use re-verifies the preset exactly like a generated template: the flattened copy must hash to the manifest, the template must be that copy plus Print Buddy's overrides, and its filament G-code must still equal the checked parent's. An edited or stale preset refuses the slice with the re-import command. The Discord preview names it: "Black PETG, your preset 'PETG fast'" instead of the vendor profile name.
+
+One preset per material, and it applies to the Bambu model it was imported for (`--printer` chooses which). The preset's settings (flow, cooling, speeds, retraction) come from the preset; the hardware record still sets the material label, density, nozzle and bed temperatures and the colour, exactly as with a vendor profile.
 
 ## How the A1 fits the vendor and printer profiles
 
@@ -99,7 +125,7 @@ The P1S is `bambulab/p1s.py`: its facts in `facts.P1S` (profile names, checked i
 | Discord color question | The configured spool in `printer_hardware.json` (`spool.color` or `spool.name`, and `spool.material`) is offered as slot 1, so no `ifs_slots` entry and no Spoolman spool are needed (#263). With `spool.spoolman_id: null` the job records no Spoolman ID; a spool bound to Spoolman keeps its ID on the job, and Spoolman lookups only warn (#235). The material, nozzle and temperature checks still apply |
 | AMS Lite multi-color | Not supported at intake: per-part colour jobs are refused, as are multi-part and multi-plate sources. A prepared multi-filament file reaches the LAN print gates through `print-now` — see the AMS mapping notes under [Printing over LAN](#printing-over-lan-opt-in) |
 | P1S | Supported offline, like the A1: `bambulab.p1s`, with profiles generated by `--printer p1s` from the pinned OrcaSlicer (v2.5.0-alpha; a 2.4.2 folder keeps verifying). Note the P1S's default filament is the dedicated `Bambu PLA Basic @BBL P1S 0.4 nozzle` profile in 2.5.0-alpha — the X1C profile no longer lists the P1S as compatible — so regenerate P1S templates from 2.5.0-alpha rather than reusing a folder whose profile names no longer resolve. Not tested on a P1S |
-| Materials | A1 and P1S: PLA, PETG, TPU and PVA, each with its own checked vendor filament profile (see [Filament profiles per material](#filament-profiles-per-material-264)). Other models: PLA only. Your own filament presets: not yet. Only the offline tests and a profile generation from the pinned OrcaSlicer v2.5.0-alpha (tree and packed cache) have exercised PETG, TPU and PVA; no real-slicer or printer run yet |
+| Materials | A1 and P1S: PLA, PETG, TPU and PVA, each with its own checked vendor filament profile (see [Filament profiles per material](#filament-profiles-per-material-264)). Other models: PLA only. Your own Bambu Studio / OrcaSlicer filament presets can be imported as the checked profile for their material (see [Your own filament presets](#your-own-filament-presets-264-phase-2)). Only the offline tests and a profile generation from the pinned OrcaSlicer v2.5.0-alpha (tree and packed cache) have exercised PETG, TPU and PVA; no real-slicer or printer run yet |
 | A1 mini, P1P, X1, X1 Carbon, X1E, P2S, H2S | Supported the same way (#127 Stage 1): one model module and one facts block each, profiles generated by `--printer a1mini` / `p1p` / `x1` / `x1c` / `x1e` / `p2s` / `h2s`. Not tested on hardware |
 | H2D, H2D Pro, X2D | Supported the same way (#127 Stage 2, #308): dual-nozzle models with per-slot AMS mapping at print start. Not tested on hardware |
 | H2C | Supported the same way (#356): `bambulab.h2c`, dual nozzle with per-slot AMS mapping, profiles generated by `--printer h2c` from OrcaSlicer v2.5.0-alpha (tree or packed cache). Not tested on hardware |

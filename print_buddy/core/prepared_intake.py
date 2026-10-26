@@ -330,7 +330,7 @@ def _printer_name(job=None):
         return printers.current().display_name
 
 
-def preview_sentence(job, row):
+def preview_sentence(job, row, filament_note=None):
     title = re.sub(r'\s+', ' ', str((job or {}).get('title') or '')).strip()
     if not title:
         return None
@@ -338,11 +338,13 @@ def preview_sentence(job, row):
     profile = _preview_profile(row)
     est = _preview_estimate(row)
     named_profile = bool(profile and str((row or {}).get('title') or '').strip())
-    if not desc and not est and not named_profile:
+    if not desc and not est and not named_profile and not filament_note:
         return None  # a bare title or filename echo adds nothing; a named profile does
     text = f'That looks like {title}' + (f', {desc}' if desc else '') + '.'
     if profile and profile.casefold() != title.casefold():
         text += f' I will use the selected profile: {profile}.'
+    if filament_note:
+        text += f' Filament: {filament_note}.'
     if est:
         from . import model_job as mj
         text += (f' {_printer_name(job)} estimated print time about {mj.human_dur(est[0])}, plus ~5 min '
@@ -360,10 +362,24 @@ def preview_sentence(job, row):
     return text
 
 
-async def send_preview(adapter, source, job, row, metadata):
+def _filament_note(job, state):
+    """The job printer's own description of the loaded filament and its profile (#264), when it has one.
+
+    Display only: printers without a filament_summary (every non-Bambu printer today) add nothing.
+    """
+    try:
+        from . import model_job as mj
+        printer = mj._job_adapter(job if isinstance(job, dict) else None)
+        describe = getattr(printer, "filament_summary", None)
+        return describe(state) if describe else None
+    except Exception:
+        return None
+
+
+async def send_preview(adapter, source, job, row, metadata, state=None):
     """Best effort, display only: no printer, Moonraker, Spoolman, HA or persistence I/O."""
     try:
-        text = preview_sentence(job, row)
+        text = preview_sentence(job, row, _filament_note(job, state) if state is not None else None)
         if text:
             await adapter.send(chat_id=source.chat_id, content=text, metadata=metadata)
     except Exception:
@@ -973,7 +989,7 @@ async def prepare_link(event, adapter, state, root, timeout=None, reuse=None, pr
                 if len(hits) != 1:
                     raise ValueError(f'"{pick}" matched {len(hits)} of {len(rows)} profiles; send the link again and give a profile number or a more specific name')
                 chosen = hits[0]
-        await send_preview(adapter, source, job, chosen, metadata)
+        await send_preview(adapter, source, job, chosen, metadata, state=state)
         folder = mj.intake_folder(mj.ARCHIVE, job['slug'], iid)
         folder.mkdir(parents=True, exist_ok=False)
         job.update(url=url, intake_id=iid, hardware=state, selected_source=chosen)

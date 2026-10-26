@@ -191,6 +191,36 @@ class BambuAdapter(PrinterAdapter):
                                         f"profile (its filament.json is {kind}). Nothing was sliced")
         return default
 
+    def filament_summary(self, state):
+        """How the loaded filament will be named in summaries (#264): "Black PETG, your preset 'PETG fast'"
+        with an operator preset registered for the material, "Black PETG (Generic PETG @BBL A1)" with the
+        checked vendor profile, or None when the record names no material or no checked profile serves it.
+        Display only; never raises.
+        """
+        try:
+            spool = (state or {}).get("spool") or {}
+            material = spool.get("material")
+            if not material:
+                return None
+            colour = next((v.strip() for v in (spool.get("color"), spool.get("name"))
+                           if isinstance(v, str) and v.strip()), "")
+            base = f"{colour} {material}" if colour else str(material)
+            key = profiles.material_key(material)
+            try:
+                entry = profiles.operator_presets(self).get(key)
+            except profiles.ProfileError:
+                entry = None
+            if entry:
+                return f"{base}, your preset '{entry['name']}'"
+            names = profiles.filament_set(self)
+            if key in names:
+                return f"{base} ({names[key]})"
+            if not names and key == "PLA":
+                return f"{base} ({self.fact('orca_profiles')['filament']})"
+            return None
+        except Exception:
+            return None
+
     def gcode_problems(self, text, state=None):
         return guard.gcode_problems(text, self, state=state)
 

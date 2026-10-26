@@ -27,6 +27,16 @@ cache is Orca's own build of the profiles (its option renames applied, options i
 know dropped), so the packed packaging flattens differently from a source checkout of the same release and
 carries its own recorded identities in facts.py, labelled "(packed cache)".
 
+Operator filament presets (#264 phase 2): the operator may register one exported Bambu Studio / OrcaSlicer
+filament preset per material (`import_filament`, via scripts/bambu-templates.py --import-filament). A preset is
+partial — an `inherits` parent plus overrides — and is trusted only over a checked vendor parent: it is flattened
+against the installed OrcaSlicer, may set only that parent's filament settings, must keep the parent's
+filament_type and filament start/end G-code, and its values must stay inside the model's limits in facts.py.
+The flattened preset, its template and a manifest entry (name, parent, SHA-256) live under the generated
+folder's `operator/` subfolder, never the repository. While registered, a preset replaces the vendor profile
+for its material; every use re-verifies it exactly like a generated template (hash, template text, material,
+and its filament G-code still equalling the checked parent's), and regenerating the vendor templates keeps it.
+
     python3 scripts/bambu-templates.py --printer a1 --resources <OrcaSlicer resources folder>
 """
 from __future__ import annotations
@@ -46,6 +56,16 @@ INDEX_LISTS = {"machine": "machine_list", "process": "process_list", "filament":
 UPSTREAM = "upstream"
 FILAMENTS = "filaments"
 VENDOR = "BBL"
+OPERATOR = "operator"
+OPERATOR_MANIFEST = "manifest.json"
+# Bookkeeping keys an exported user preset may carry that are not settings; flattening drops them.
+_PRESET_META = {"inherits", "include", "setting_id", "filament_settings_id"}
+# Filament settings bounded at preset import (#264): nozzle and bed temperatures by the model's facts,
+# fan speeds as percentages, retraction and volumetric speed positive.
+_NOZZLE_TEMP_KEYS = ("nozzle_temperature", "nozzle_temperature_initial_layer")
+_BED_TEMP_KEYS = tuple(f"{plate}_temp{suffix}" for plate in ("cool_plate", "eng_plate", "hot_plate", "textured_plate")
+                       for suffix in ("", "_initial_layer"))
+_FAN_KEYS = ("fan_min_speed", "fan_max_speed", "overhang_fan_speed")
 
 
 class ProfileError(RuntimeError):
@@ -292,6 +312,10 @@ def install(adapter, resources, folder=None):
              "identity": known.get("label"), "sha256": {kind: sha256(upstream[kind]) for kind in KINDS},
              "filaments": {material: {"name": name, "sha256": filament_hashes(adapter, known)[name]}
                            for material, name in filament_set(adapter).items()}}, indent=2) + "\n")
+        # Operator presets (#264 phase 2) are the operator's own state, not generated output: regenerating
+        # the vendor templates keeps them. Each use re-verifies a preset against the regenerated parent.
+        if (folder / OPERATOR).is_dir():
+            shutil.copytree(folder / OPERATOR, work / OPERATOR)
         old = folder.with_name(f".{folder.name}-old")
         if folder.exists():
             shutil.rmtree(old, ignore_errors=True)
@@ -340,9 +364,18 @@ def filament_template(adapter, material, folder=None):
     """The verified generated filament template for the hardware record's material, or ProfileError.
 
     The profile is the one the printer's `orca_filaments` fact names for the material's base polymer, and its files
-    must still be the checked vendor profile plus overrides. A material with no checked profile is refused.
+    must still be the checked vendor profile plus overrides. A material with no checked profile is refused. An
+    operator preset registered for the material (#264 phase 2) replaces the vendor profile, verified the same way.
     """
     folder = require(adapter, folder)
+    operator = operator_template(adapter, material_key(material), folder)
+    if operator is not None:
+        return operator
+    return _vendor_filament_template(adapter, material, folder)
+
+
+def _vendor_filament_template(adapter, material, folder):
+    """The checked vendor profile's template for a material, in an already-required generated folder."""
     key, names = material_key(material), filament_set(adapter)
     default = folder / "filament.json"
     if not names:
@@ -378,6 +411,10 @@ def filament_template(adapter, material, folder=None):
 
 def filament_for_settings_id(adapter, settings_id, folder=None):
     """The verified filament template whose profile name a sliced file's filament_settings_id names, or ProfileError."""
+    folder = Path(folder or adapter.pinned_templates_folder())
+    for material, entry in operator_presets(adapter, folder).items():
+        if entry["name"] == settings_id:
+            return operator_template(adapter, material, folder)
     names = filament_set(adapter) or {None: adapter.fact("orca_profiles")["filament"]}
     material = next((m for m, name in names.items() if name == settings_id), False)
     if material is False:
@@ -385,4 +422,250 @@ def filament_for_settings_id(adapter, settings_id, folder=None):
                            f"profile ({', '.join(names.values())})")
     if material is None:
         return require(adapter, folder) / "filament.json"
-    return filament_template(adapter, material, folder)
+    # A file that names the vendor profile is checked against that profile, even while an operator
+    # preset replaces it for slicing: replacement governs selection by material, not lookup by name.
+    return _vendor_filament_template(adapter, material, require(adapter, folder))
+
+
+# --- Operator filament presets (#264 phase 2) ----------------------------------------------------
+# One exported user preset per material, living in the generated folder's operator/ subfolder:
+# operator/manifest.json records {material: {name, parent, sha256}} and is the trust anchor,
+# operator/upstream/<MATERIAL>.json is the flattened preset it identifies, and
+# operator/<MATERIAL>.json is that preset as a template (Print Buddy's overrides applied).
+
+
+def operator_presets(adapter, folder=None):
+    """{material: {name, parent, sha256}} the operator has registered for this printer; {} when none.
+
+    A manifest that exists but cannot be read or is malformed refuses: Print Buddy cannot tell
+    which presets it is being asked to trust.
+    """
+    folder = Path(folder or adapter.pinned_templates_folder())
+    path = folder / OPERATOR / OPERATOR_MANIFEST
+    if not path.is_file():
+        return {}
+    try:
+        presets = json.loads(path.read_text())["presets"]
+        if not isinstance(presets, dict):
+            raise ValueError("presets is not an object")
+        out = {}
+        for material, entry in presets.items():
+            if not isinstance(entry, dict) or not all(
+                    isinstance(entry.get(k), str) and entry[k] for k in ("name", "parent", "sha256")):
+                raise ValueError(f"the {material} entry is malformed")
+            out[material] = {k: entry[k] for k in ("name", "parent", "sha256")}
+        return out
+    except (OSError, ValueError, KeyError, TypeError) as exc:
+        raise ProfileError(f"{adapter.label} operator filament presets in {path} cannot be verified ({exc}); "
+                           f"re-import them or remove the {OPERATOR} folder. Nothing was sliced") from None
+
+
+def _write_operator_manifest(folder, presets):
+    path = Path(folder) / OPERATOR / OPERATOR_MANIFEST
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps({"presets": presets}, indent=2) + "\n")
+
+
+def _checked_parent_flat(adapter, folder, entry, material):
+    """The flattened checked vendor profile an operator preset was imported against, from the generated folder.
+
+    The preset stays trusted only while its parent is still the checked profile for its material.
+    """
+    names = filament_set(adapter)
+    default = adapter.fact("orca_profiles")["filament"]
+    if names:
+        if names.get(material) != entry["parent"]:
+            raise ProfileError(f"operator preset {entry['name']!r} was imported over {entry['parent']!r}, which is "
+                               f"no longer the checked {adapter.label} profile for {material}; re-import it")
+        path = (folder / UPSTREAM / "filament.json" if entry["parent"] == default
+                else folder / UPSTREAM / FILAMENTS / f"{material}.json")
+    else:
+        if entry["parent"] != default:
+            raise ProfileError(f"operator preset {entry['name']!r} was imported over {entry['parent']!r}, which is "
+                               f"not the checked {adapter.label} profile; re-import it")
+        path = folder / UPSTREAM / "filament.json"
+    try:
+        return json.loads(path.read_text())
+    except (OSError, ValueError) as exc:
+        raise ProfileError(f"{adapter.label} checked profile for {material} in {path} is unreadable ({exc}); "
+                           f"{install_hint(adapter)}") from None
+
+
+def operator_template(adapter, material, folder=None):
+    """The verified operator preset template for a material (base polymer), or None when none is registered.
+
+    The preset is trusted only while its flattened copy still hashes to the manifest entry recorded at
+    import, its template is exactly that copy plus the overrides, it still describes this printer and
+    material, and its filament G-code still equals its checked parent's.
+    """
+    folder = Path(folder or adapter.pinned_templates_folder())
+    entry = operator_presets(adapter, folder).get(material)
+    if entry is None:
+        return None
+    base = folder / OPERATOR
+    upstream_path, path = base / UPSTREAM / f"{material}.json", base / f"{material}.json"
+    hint = f"re-import it (python3 scripts/bambu-templates.py --printer {adapter.model.printer_key} " \
+           f"--import-filament <preset>) or remove it (--remove-filament {material})"
+    if not (upstream_path.is_file() and path.is_file()):
+        raise ProfileError(f"{adapter.label} operator preset {entry['name']!r} for {material} is registered in "
+                           f"{base} but its files are missing; {hint}")
+    try:
+        data, text = json.loads(upstream_path.read_text()), path.read_text()
+    except (OSError, ValueError) as exc:
+        raise ProfileError(f"{adapter.label} operator preset for {material} in {base} is unreadable ({exc}); "
+                           f"{hint}") from None
+    if data.get("name") != entry["name"] or sha256(data) != entry["sha256"]:
+        raise ProfileError(f"{upstream_path} is not the operator preset {entry['name']!r} recorded at import "
+                           f"(edited?); {hint}")
+    if text != template_text("filament", data):
+        raise ProfileError(f"{path} is not the imported operator preset template (edited?); {hint}")
+    found = filament_problems(adapter, material, data)
+    if found:
+        raise ProfileError("; ".join(found))
+    parent = _checked_parent_flat(adapter, folder, entry, material)
+    if (_first(data.get("filament_start_gcode")) != _first(parent.get("filament_start_gcode"))
+            or _first(data.get("filament_end_gcode")) != _first(parent.get("filament_end_gcode"))):
+        raise ProfileError(f"operator preset {entry['name']!r} filament G-code no longer matches its checked "
+                           f"parent {entry['parent']!r}; {hint}")
+    return path
+
+
+def _preset_numbers(data, key):
+    """Every value of a numeric filament setting as floats; None when a value is not a number, [] when unset."""
+    if key not in data:
+        return []
+    values = data[key] if isinstance(data[key], list) else [data[key]]
+    out = []
+    for value in values:
+        try:
+            out.append(float(value))
+        except (TypeError, ValueError):
+            return None
+    return out
+
+
+def _preset_bound_problems(adapter, flat):
+    """Imported preset values outside the model's recorded limits (facts.py); empty when all are inside."""
+    out = []
+    for key in _NOZZLE_TEMP_KEYS:
+        values = _preset_numbers(flat, key)
+        if values is None:
+            out.append(f"{key} is not numeric")
+        elif values and (min(values) < 0 or max(values) > adapter.fact("max_hotend_c")):
+            out.append(f"{key} reaches {max(values):g} C, outside 0..{adapter.fact('max_hotend_c')} C "
+                       f"for the {adapter.label}")
+    for key in _BED_TEMP_KEYS:
+        values = _preset_numbers(flat, key)
+        if values is None:
+            out.append(f"{key} is not numeric")
+        elif values and (min(values) < 0 or max(values) > adapter.fact("max_bed_c")):
+            out.append(f"{key} reaches {max(values):g} C, outside 0..{adapter.fact('max_bed_c')} C "
+                       f"for the {adapter.label}")
+    for key in _FAN_KEYS:
+        values = _preset_numbers(flat, key)
+        if values is None:
+            out.append(f"{key} is not numeric")
+        elif values and (min(values) < 0 or max(values) > 100):
+            out.append(f"{key} reaches {max(values):g}%, outside 0..100%")
+    for key in ("filament_retraction_length", "filament_max_volumetric_speed"):
+        values = _preset_numbers(flat, key)
+        if values is None:
+            out.append(f"{key} is not numeric")
+        elif values and min(values) <= 0:
+            out.append(f"{key} must be positive, got {min(values):g}")
+    return out
+
+
+def import_filament(adapter, resources, preset_file, material=None, folder=None):
+    """Register an exported Bambu Studio / OrcaSlicer filament preset for its material; return its manifest entry.
+
+    The preset is flattened against the installed OrcaSlicer (check_resources rules: only a checked
+    OrcaSlicer qualifies). It is refused, and nothing is written, unless its parent is one of the
+    printer's checked filament profiles, it sets only that parent's filament settings, it keeps the
+    parent's filament_type and filament start/end G-code, its material is not one Bambu lists as not
+    recommended for the model, and its values stay inside the model's limits.
+    """
+    folder = Path(folder or adapter.pinned_templates_folder())
+    try:
+        preset = json.loads(Path(preset_file).read_text())
+    except (OSError, ValueError) as exc:
+        raise ProfileError(f"cannot read filament preset {preset_file}: {exc}") from None
+    if not isinstance(preset, dict):
+        raise ProfileError(f"{preset_file} is not a filament preset (expected a JSON object of settings)")
+    upstream, filaments, _version, _known = check_resources(adapter, resources)
+    default = adapter.fact("orca_profiles")["filament"]
+    parents = {default: upstream["filament"]}
+    for mat, name in filament_set(adapter).items():
+        if name != default:
+            parents[name] = filaments[mat]
+    name, parent_name = preset.get("name"), preset.get("inherits")
+    structural = []
+    if not isinstance(name, str) or not name.strip():
+        structural.append(f"{preset_file} names no preset (a 'name' is required)")
+    if "type" in preset and preset["type"] != "filament":
+        structural.append(f"{preset_file} is a {preset['type']!r} preset, not a filament preset")
+    if not isinstance(parent_name, str) or parent_name not in parents:
+        structural.append(f"the preset inherits {parent_name!r}, which is not a checked {adapter.label} filament "
+                          f"profile ({', '.join(sorted(parents))}); a preset is trusted only over a checked "
+                          "vendor parent")
+    if structural:
+        raise ProfileError("; ".join(structural) + ". Nothing was written")
+    parent = parents[parent_name]
+    key = material_key(_first(parent.get("filament_type")))
+    problems = []
+    if material is not None and material_key(material) != key:
+        problems.append(f"--material {material} does not match the parent profile {parent_name!r}, "
+                        f"which is a {key} profile")
+    unknown = sorted(k for k in preset if k not in _PRESET_META and k not in parent)
+    if unknown:
+        problems.append(f"the preset sets {', '.join(unknown)}, which are not filament settings of "
+                        f"{parent_name!r}; machine and process settings cannot be imported")
+    flat = dict(parent)
+    for k, value in preset.items():
+        if k not in _PRESET_META:
+            flat[k] = value
+    flat.pop("inherits", None)
+    flat.pop("include", None)
+    if _first(flat.get("filament_type")) != _first(parent.get("filament_type")):
+        problems.append(f"the preset's filament_type {_first(flat.get('filament_type'))!r} is not its parent's "
+                        f"{_first(parent.get('filament_type'))!r}; a preset keeps its parent's material")
+    for bad in {material_key(_first(flat.get("filament_type"))), key} & set(adapter.fact("not_recommended_materials")):
+        problems.append(f"{bad} is not recommended by Bambu Lab for the {adapter.label}; "
+                        "a preset for it is refused")
+    if (_first(flat.get("filament_start_gcode")) != _first(parent.get("filament_start_gcode"))
+            or _first(flat.get("filament_end_gcode")) != _first(parent.get("filament_end_gcode"))):
+        problems.append("the preset changes the filament start or end G-code; those stay the checked "
+                        "parent's, unchanged")
+    problems += filament_problems(adapter, key, flat)
+    problems += _preset_bound_problems(adapter, flat)
+    if name in parents:
+        problems.append(f"the preset name {name!r} is a checked vendor profile name; rename the preset")
+    existing = operator_presets(adapter, folder)
+    for other, entry in existing.items():
+        if entry["name"] == name and other != key:
+            problems.append(f"an operator preset named {name!r} is already registered for {other}")
+    if problems:
+        raise ProfileError("; ".join(problems) + ". Nothing was written")
+    entry = {"name": name, "parent": parent_name, "sha256": sha256(flat)}
+    base = folder / OPERATOR
+    (base / UPSTREAM).mkdir(parents=True, exist_ok=True)
+    (base / UPSTREAM / f"{key}.json").write_text(_dump(flat))
+    (base / f"{key}.json").write_text(template_text("filament", flat))
+    existing[key] = entry
+    _write_operator_manifest(folder, existing)
+    return {**entry, "material": key}
+
+
+def remove_filament(adapter, material, folder=None):
+    """Remove the operator preset registered for a material (base polymer); return its manifest entry."""
+    folder = Path(folder or adapter.pinned_templates_folder())
+    key = material_key(material)
+    presets = operator_presets(adapter, folder)
+    entry = presets.pop(key, None)
+    if entry is None:
+        raise ProfileError(f"no operator filament preset is registered for {key} on the {adapter.label}")
+    base = folder / OPERATOR
+    for path in (base / f"{key}.json", base / UPSTREAM / f"{key}.json"):
+        path.unlink(missing_ok=True)
+    _write_operator_manifest(folder, presets)
+    return {**entry, "material": key}

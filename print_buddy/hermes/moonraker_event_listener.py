@@ -945,13 +945,48 @@ def _video_duration(path):
     return float(out)
 
 
+def _timelapse_encoder():
+    """The [timelapse] encoder choice for the sizing shrink (#314): "cpu" unless configured.
+
+    One of vertical_short.ENCODERS; anything unexpected resolves to
+    "cpu" here as well as in settings validation, so a bad value can
+    cost hardware acceleration but never an encode.
+    """
+    try:
+        encoder = str((_config.cfg().get("timelapse") or {}).get("encoder") or "cpu").strip().lower()
+    except Exception:
+        return "cpu"
+    return encoder if encoder in vertical_short.ENCODERS else "cpu"
+
+
+def _encode_sized(source, partial, kbps, encoder):
+    """One ffmpeg encode of source toward partial at kbps, with the seam's codec for encoder.
+
+    ffmpeg is the compressor — there is no other shrink mechanism. The
+    codec choice comes from vertical_short's encoder seam (#246/#311
+    names); the bitrate budget that makes the output fit is the sizing
+    strategy and stays here.
+    """
+    subprocess.run([FFMPEG_BIN, "-y", "-v", "error", *vertical_short.encoder_input_args(encoder),
+                    "-i", str(source), "-an",
+                    "-vf", vertical_short.encoder_filter(encoder, "scale='min(1280,iw)':-2"),
+                    *vertical_short.encoder_args(encoder),
+                    "-b:v", f"{kbps}k", "-maxrate", f"{kbps}k", "-bufsize", f"{kbps * 2}k",
+                    "-movflags", "+faststart", str(partial)],
+                   capture_output=True, timeout=600, check=True)
+
+
 def platform_sized_video(path, max_bytes=None):
     """Return a copy of path re-encoded under the platform upload cap, or path if it already fits.
 
     The cap defaults to _media_upload_limit() (#314): the configured
     platform's effective upload limit, not always Discord's. The
     two-attempt bitrate strategy is unchanged from the Discord-only
-    sizing this generalises.
+    sizing this generalises. The encode is ffmpeg's, with the
+    [timelapse] encoder choice (CPU libx264 by default; VAAPI/QSV/NVENC
+    when configured), and any hardware-encode failure retries the same
+    attempt with the CPU encoder — it never fails the shrink, let alone
+    the completion post.
     """
     max_bytes = max_bytes or _media_upload_limit()
     source = Path(str(path))
@@ -963,16 +998,21 @@ def platform_sized_video(path, max_bytes=None):
     duration = max(1.0, _video_duration(source))
     # 90% of the budget for video; timelapses carry no audio.
     kbps = max(200, int(max_bytes * 8 * 0.90 / duration / 1000))
+    encoder = _timelapse_encoder()
     for attempt_kbps in (kbps, int(kbps * 0.7)):
         partial = target.with_name(f".{target.name}.partial.mp4")
-        subprocess.run([FFMPEG_BIN, "-y", "-v", "error", "-i", str(source), "-an",
-                        "-vf", "scale='min(1280,iw)':-2", "-c:v", "libx264", "-preset", "veryfast",
-                        "-b:v", f"{attempt_kbps}k", "-maxrate", f"{attempt_kbps}k", "-bufsize", f"{attempt_kbps * 2}k",
-                        "-movflags", "+faststart", str(partial)],
-                       capture_output=True, timeout=600, check=True)
+        used = encoder
+        try:
+            _encode_sized(source, partial, attempt_kbps, encoder)
+        except Exception:
+            if encoder == "cpu":
+                raise
+            log(f"timelapse {encoder} encode failed for {source.name}; retrying with the CPU encoder")
+            used = "cpu"
+            _encode_sized(source, partial, attempt_kbps, "cpu")
         if partial.stat().st_size <= max_bytes:
             os.replace(partial, target)
-            log(f"timelapse shrunk {source.stat().st_size} -> {target.stat().st_size} bytes at {attempt_kbps}k")
+            log(f"timelapse shrunk {source.stat().st_size} -> {target.stat().st_size} bytes at {attempt_kbps}k ({used})")
             return target
         partial.unlink(missing_ok=True)
     raise RuntimeError(f"could not shrink {source.name} under {max_bytes} bytes")

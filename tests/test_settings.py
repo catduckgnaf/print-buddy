@@ -193,7 +193,7 @@ class OverrideTests(unittest.TestCase):
             "listener": {"tick_s", "ifs_presence_poll_s", "spool_nag_s", "start_claim_ttl_s"},
             "vision": {"model", "roast_model"},
             "visual_watch": {"enabled", "sensitivity"},
-            "timelapse": {"mode", "archive_host", "archive_dir", "ssh_key", "render_wait_s", "render_poll_s",
+            "timelapse": {"mode", "encoder", "archive_host", "archive_dir", "ssh_key", "render_wait_s", "render_poll_s",
                           "max_bytes", "local_retention_days", "plan_clip_retention_days",
                           "vertical_short", "vertical_short_mode", "vertical_short_overlay",
                           "capture_enabled", "capture_source_url", "capture_trigger",

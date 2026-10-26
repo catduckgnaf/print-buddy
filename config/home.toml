@@ -196,6 +196,10 @@ max_bytes = 209715200
 local_retention_days = 1
 # Clips held for a multi-plate plan that never finishes (abandoned) are dropped after this many days.
 plan_clip_retention_days = 14
+# ffmpeg encoder for the timelapse sizing shrink (#314): cpu (libx264),
+# vaapi, qsv or nvenc. Hardware choices need the GPU passed through (see
+# docs/DOCKER.md); a failed hardware encode falls back to cpu.
+encoder = "cpu"
 # Vertical short (#317): also post a 9:16 version of each finished timelapse. Off by default.
 vertical_short = false
 # pad = blurred background fill (default); crop = centre crop.

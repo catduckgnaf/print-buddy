@@ -39,6 +39,29 @@ def test_output_is_9_16():
     assert vs.OUT_W * 16 == vs.OUT_H * 9
 
 
+# --- encoder seam (#314: the sizing shrink's hardware choice) -------------
+
+def test_encoder_seam_defaults_to_cpu():
+    assert vs.encoder_args() == ["-c:v", "libx264", "-preset", "veryfast", "-pix_fmt", "yuv420p"]
+    assert vs.encoder_input_args() == []
+    assert vs.encoder_filter("cpu", "scale=2") == "scale=2"
+
+
+@pytest.mark.parametrize("encoder,ffmpeg_name",
+                         [("vaapi", "h264_vaapi"), ("qsv", "h264_qsv"), ("nvenc", "h264_nvenc")])
+def test_encoder_seam_hardware_choices(encoder, ffmpeg_name):
+    assert ffmpeg_name in vs.encoder_args(encoder)
+
+
+def test_encoder_seam_vaapi_device_and_upload():
+    assert vs.encoder_input_args("vaapi") == ["-vaapi_device", "/dev/dri/renderD128"]
+    assert vs.encoder_filter("vaapi", "scale=2") == "scale=2,format=nv12,hwupload"
+
+
+def test_encoder_seam_unknown_choice_is_cpu():
+    assert vs.encoder_args("bogus") == vs.encoder_args("cpu")
+
+
 def test_final_frame_hold_default_and_optional():
     assert "tpad=stop_mode=clone:stop_duration=1" in vs.filter_graph(1920, 1080, "pad")
     assert "tpad" not in vs.filter_graph(1920, 1080, "pad", hold_s=0)

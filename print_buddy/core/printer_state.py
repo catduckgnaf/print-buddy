@@ -252,6 +252,51 @@ def spoolman_url(st=None):
     return ""
 
 
+def _hex_color(value):
+    """A colour value canonicalised to 6-digit upper-case hex, or None when it is not
+    hex at all (a colour name, an empty value, a non-string)."""
+    if not isinstance(value, str):
+        return None
+    text = value.strip().lstrip("#").upper()
+    return text if re.fullmatch(r"[0-9A-F]{6}", text) else None
+
+
+def _ams_disagreements(st, facts):
+    """The Bambu printer's own AMS report (#307) against the configured spool record.
+
+    Advisory only, on the #235 pattern: the decoded active tray (ams.py, surfaced on
+    facts["bambu"]["ams"]) is an additional source next to the record, never a
+    replacement for it — the configured record stays authoritative, so a disagreement
+    is appended to facts["warnings"] to be shown, never silently resolved, and never
+    a readiness problem. Colour is compared only when both sides are 6-digit hex:
+    the record usually carries a colour name while the printer reports hex only, and
+    comparing those would warn on every check.
+    """
+    decoded = (facts.get("bambu") or {}).get("ams") or {}
+    active = None
+    if decoded.get("active_tray") == 254:  # the external spool is the active tray
+        active = decoded.get("external")
+    else:
+        for unit in decoded.get("units") or []:
+            for tray in unit.get("trays") or []:
+                if tray.get("active"):
+                    active = tray
+    if not active or not active.get("present"):
+        return
+    spool = st.get("spool") or {}
+    warnings = facts["warnings"]
+    live_material, recorded_material = active.get("material"), spool.get("material")
+    if (live_material and recorded_material
+            and not same_material(live_material, recorded_material)):
+        warnings.append(f"the printer reports its active Bambu tray holds {live_material}, "
+                        f"but the recorded spool is {recorded_material}; the record is kept — "
+                        "check what is loaded before printing")
+    live_color, recorded_color = _hex_color(active.get("color")), _hex_color(spool.get("color"))
+    if live_color and recorded_color and live_color != recorded_color:
+        warnings.append(f"the printer reports its active Bambu tray colour is #{live_color}, "
+                        f"but the recorded spool colour is #{recorded_color}; the record is kept")
+
+
 def _check_spoolman(st, warnings, facts):
     """The recorded spool against its Spoolman record; every outcome is a warning (#235).
 
@@ -315,6 +360,7 @@ def check(st=None):
                 snapshot = adapter.client().snapshot()
                 facts["bambu"] = adapter.normalize_status(snapshot)
                 probs.extend(adapter.readiness_problems(st, snapshot))
+                _ams_disagreements(st, facts)
             except RuntimeError as exc:
                 probs.append(str(exc))
         else:

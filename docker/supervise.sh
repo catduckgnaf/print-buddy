@@ -48,19 +48,21 @@ else
         http://127.0.0.1:*|http://localhost:*) echo 'External Spoolman URL required when bundled API is disabled' >&2; exit 2;;
     esac
 fi
-# The Moonraker listener runs only when the configured printer model's
-# connection uses one (#256): the gate resolves the effective configuration
-# (model -> vendor connection), never the presence of a Moonraker URL, which
-# settings forbid for the other connections. Gate status: 0 = start the
-# listener, 3 = no listener for this connection, anything else = the
-# configuration could not be resolved; stop instead of guessing.
+# The configured printer instance's listener runs only when its listener
+# domain (print_buddy.listeners, #299) has an implementation: the gate
+# resolves the effective configuration (model -> vendor connection ->
+# domain), never the presence of a service URL, which settings forbid for
+# most connections. Gate status: 0 = start the instance's listener through
+# the registry launcher, 3 = the domain has no listener (yet, or by
+# definition), anything else = the configuration could not be resolved;
+# stop instead of guessing.
 listener_gate=0
 python3 -m print_buddy.listener_gate || listener_gate=$?
 if [ "$listener_gate" -eq 0 ]; then
-    python3 -m print_buddy.hermes.moonraker_event_listener &
+    python3 -m print_buddy.listeners &
     children+=("$!")
 elif [ "$listener_gate" -eq 3 ]; then
-    echo 'Moonraker listener not started: the configured printer connection does not use one.'
+    echo 'Printer listener not started: the configured printer instance has no listener for its domain.'
 else
     echo "Listener gate failed (status $listener_gate); configuration unresolved, stopping container." >&2
     exit "$listener_gate"

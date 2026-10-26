@@ -486,5 +486,74 @@ class ListenerCaptureHookTests(unittest.IsolatedAsyncioTestCase):
             listener._capture_end("complete")
 
 
+def _mjpeg_stream(*frames):
+    """A recorded multipart MJPEG body: one part per frame, then the closing boundary."""
+    parts = []
+    for frame in frames:
+        parts.append(b"--frame\r\nContent-Type: image/jpeg\r\n\r\n" + frame + b"\r\n")
+    return b"".join(parts) + b"--frame--\r\n"
+
+
+class FetchMjpegFrameTests(unittest.TestCase):
+    """#373: stream-only camera sources (the stock Flashforge cameraStreamUrl)."""
+
+    def serve(self, payload, content_type="multipart/x-mixed-replace; boundary=frame"):
+        class Handler(BaseHTTPRequestHandler):
+            def do_GET(self):
+                self.send_response(200)
+                self.send_header("Content-Type", content_type)
+                self.end_headers()
+                self.wfile.write(payload)
+
+            def log_message(self, *args):
+                pass
+
+        server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+        self.addCleanup(server.shutdown)
+        import threading
+        threading.Thread(target=server.serve_forever, daemon=True).start()
+        return f"http://127.0.0.1:{server.server_port}/?action=stream"
+
+    def test_returns_the_first_complete_frame(self):
+        url = self.serve(_mjpeg_stream(JPEG, JPEG))
+        self.assertEqual(timelapse_capture.fetch_mjpeg_frame(url), JPEG)
+
+    def test_a_stream_with_no_frame_raises(self):
+        with self.assertRaises(ValueError):
+            timelapse_capture.fetch_mjpeg_frame(self.serve(b"<html>not a camera</html>", "text/html"))
+
+    def test_an_oversized_frame_raises(self):
+        big = b"\xff\xd8" + b"x" * 64 + b"\xff\xd9"
+        with mock.patch.object(timelapse_capture, "MAX_FRAME_BYTES", 8):
+            with self.assertRaises(ValueError):
+                timelapse_capture.fetch_mjpeg_frame(self.serve(_mjpeg_stream(big)))
+
+
+class BeginExplicitUrlTests(unittest.TestCase):
+    """#373: a caller with a per-printer camera source passes it explicitly."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.cache = Path(self.tmp.name) / "cache"
+
+    def test_explicit_url_skips_the_settings_source(self):
+        data = make_data(self.cache)
+        data["services"]["camera_snapshot_url"] = ""  # no settings source at all
+        session = timelapse_capture.begin(
+            "job:9", "a.gcode", data=data,
+            url="http://192.0.2.10:8080/?action=stream", fetch=lambda url: JPEG)
+        self.assertIsNotNone(session)
+        self.assertEqual(session.url, "http://192.0.2.10:8080/?action=stream")
+        session.stop()
+
+    def test_explicit_url_still_honours_the_capture_gate(self):
+        data = make_data(self.cache, capture_enabled=False)
+        self.assertIsNone(timelapse_capture.begin(
+            "job:9", "a.gcode", data=data,
+            url="http://192.0.2.10:8080/?action=stream", fetch=lambda url: JPEG))
+        self.assertFalse((self.cache / "timelapse").exists())
+
+
 if __name__ == "__main__":
     unittest.main()

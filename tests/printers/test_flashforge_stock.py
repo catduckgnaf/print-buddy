@@ -275,3 +275,32 @@ def test_stock_print_starts_only_the_occupied_slot(monkeypatch, tmp_path):
     assert out["started"] is True
     assert out["file"] == fake.started[0]
     assert events[:3] == ["acquire", "consume", "submitting"]
+
+
+def test_stock_print_starts_the_timelapse_monitor_on_a_confirmed_start(monkeypatch, tmp_path):
+    """#373: the launched-print monitor is the stock family's completion/timelapse path."""
+    from print_buddy.hermes import stock_watch
+
+    started = []
+    monkeypatch.setattr(stock_watch, "start_monitor",
+                        lambda adapter, remote: started.append(remote))
+    idle = _bays({1})
+    out, fake, _events = _stock_print(monkeypatch, tmp_path, [idle, idle], slot=1)
+    assert out["started"] is True
+    assert started == [out["file"]]
+
+
+def test_stock_print_starts_no_monitor_when_the_start_is_unconfirmed(monkeypatch, tmp_path):
+    from print_buddy.hermes import stock_watch
+
+    started = []
+    monkeypatch.setattr(stock_watch, "start_monitor",
+                        lambda adapter, remote: started.append(remote))
+    idle = _bays({1})
+    after = {"status": "ready", "printFileName": "plate.gcode",
+             "hasMatlStation": True,
+             "matlStationInfo": {"slotInfos": [
+                 {"slotId": n, "hasFilament": True} for n in (1, 2, 3, 4)]}}
+    out, _fake, _events = _stock_print(monkeypatch, tmp_path, [idle, idle], slot=1, after=after)
+    assert out["started"] is False
+    assert started == []

@@ -176,7 +176,9 @@ def describe_problems(adapter, upstream):
     if machine.get("printer_model") != adapter.fact("printer_model"):
         out.append(f"machine profile is for {machine.get('printer_model')!r}, not {adapter.fact('printer_model')!r}")
     (w, d), height = adapter.fact("bed_mm"), adapter.fact("max_print_height_mm")
-    if machine.get("printable_area") != ["0x0", f"{w:g}x0", f"{w:g}x{d:g}", f"0x{d:g}"]:
+    # Orca 2.4.2's X2D profile writes one bound with a trailing space ("0x256 ");
+    # bounds compare whitespace-stripped, the recorded fact stays clean (#308).
+    if [str(v).strip() for v in machine.get("printable_area") or []] != ["0x0", f"{w:g}x0", f"{w:g}x{d:g}", f"0x{d:g}"]:
         out.append(f"machine printable_area {machine.get('printable_area')} is not 0..{w:g} x 0..{d:g} mm")
     # The Orca machine profile may be shorter than the vendor volume (P1S: 250 of 256 mm); default to the volume.
     orca_height = adapter.facts["orca_profile_height_mm"].value if "orca_profile_height_mm" in adapter.facts else height
@@ -192,7 +194,11 @@ def describe_problems(adapter, upstream):
         out.append(f"machine bed_exclude_area {machine.get('bed_exclude_area')} is not "
                    f"{expected_exclusion or 'empty'}")
     nozzle = machine.get("nozzle_diameter")
-    if [str(v) for v in (nozzle if isinstance(nozzle, list) else [nozzle])] != [f"{adapter.fact('stock_nozzle')[0]:g}"]:
+    # A dual-nozzle profile lists one diameter per extruder; the recorded fact is
+    # the same stock size for each (#308, facts' "extruders" count).
+    extruders = adapter.facts["extruders"].value if "extruders" in adapter.facts else 1
+    if [str(v) for v in (nozzle if isinstance(nozzle, list) else [nozzle])] != \
+            [f"{adapter.fact('stock_nozzle')[0]:g}"] * extruders:
         out.append(f"machine nozzle_diameter {nozzle} is not {adapter.fact('stock_nozzle')[0]:g} mm")
     return out
 

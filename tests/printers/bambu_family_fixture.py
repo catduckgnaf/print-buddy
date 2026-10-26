@@ -38,7 +38,9 @@ def resources(root, facts):
     machine = {
         "type": "machine", "name": names["machine"], "from": "system", "instantiation": "true",
         "printer_model": facts["printer_model"].value, "printer_variant": "0.4",
-        "nozzle_diameter": [f"{nozzle_diameter:g}"], "nozzle_type": [nozzle_type, nozzle_type],
+        # One diameter entry per extruder: dual-nozzle profiles carry two (#308).
+        "nozzle_diameter": [f"{nozzle_diameter:g}"] * (facts["extruders"].value if "extruders" in facts else 1),
+        "nozzle_type": [nozzle_type, nozzle_type],
         "printable_area": _area(bed), "printable_height": f"{height:g}",
         "bed_exclude_area": [f"{x:g}x{y:g}" for x, y in exclusion],
         "machine_start_gcode": "G90\nM140 S[bed_temperature_initial_layer_single]\n"
@@ -58,14 +60,31 @@ def resources(root, facts):
                 "compatible_printers": [names["machine"]]}
     for kind, data in (("machine", machine), ("process", process), ("filament", filament)):
         (bbl / kind / f"{kind}.json").write_text(json.dumps(data))
+    # Per-material filament profiles (#264 sets): a model with orca_filaments needs a
+    # resource for each, or profiles.install cannot flatten its checked set.
+    extra = {material: name for material, name in
+             (facts["orca_filaments"].value if "orca_filaments" in facts else {}).items()
+             if name != names["filament"]}
+    for material, name in extra.items():
+        data = {**filament, "name": name, "filament_type": [material]}
+        (bbl / "filament" / f"filament_{material}.json").write_text(json.dumps(data))
+        index["filament_list"].append({"name": name, "sub_path": f"filament/filament_{material}.json"})
+    if extra:
+        (root / "profiles" / "BBL.json").write_text(json.dumps(index))
     return root
 
 
 def identity(facts, root=None):
     root = resources(root or Path(tempfile.mkdtemp(prefix="bambu-family-resources-")), facts)
     upstream, version = profiles.flatten(root, facts["orca_profiles"].value)
-    return {"label": "Print Buddy invented family fixture (not OrcaSlicer)", "vendor_version": version,
-            "sha256": {kind: profiles.sha256(upstream[kind]) for kind in profiles.KINDS}}
+    out = {"label": "Print Buddy invented family fixture (not OrcaSlicer)", "vendor_version": version,
+           "sha256": {kind: profiles.sha256(upstream[kind]) for kind in profiles.KINDS}}
+    extra = {name for name in (facts["orca_filaments"].value.values() if "orca_filaments" in facts else ())
+             if name != facts["orca_profiles"].value["filament"]}
+    if extra:
+        flat = profiles.flatten_filaments(root, sorted(extra))
+        out["filaments"] = {name: profiles.sha256(flat[name]) for name in sorted(extra)}
+    return out
 
 
 def fixture_facts(facts):

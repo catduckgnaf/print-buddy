@@ -1,4 +1,4 @@
-"""Bambu Lab H2S (inherits bambulab VENDOR). The H2S is the single-nozzle H2 model: a 340 x 320 mm bed and 340 mm height, a 350 C hotend, and no bed exclusion. (The dual-nozzle H2D/H2C are Stage 2 on #127.) Its AMS 2 Pro / AMS HT are not driven; jobs are single-color.
+"""Bambu Lab H2S (inherits bambulab VENDOR). The H2S is the single-nozzle H2 model: a 340 x 320 mm bed and 340 mm height, a 350 C hotend, and no bed exclusion. (The dual-nozzle H2D is registered separately, #308; H2C has no profile in the pinned OrcaSlicer.) Its AMS 2 Pro / AMS HT are not driven; jobs are single-color.
 
 Sourced values: facts.py (H2S); docs/BAMBU-LAB.md. Templates: generated on the operator's
 machine from their own OrcaSlicer into <state>/orca-profiles/bambulab_h2s (profiles.py); none are shipped.

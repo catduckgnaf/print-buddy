@@ -55,10 +55,26 @@ def _wait_key(source):
             str(getattr(source, 'thread_id', '') or ''))
 
 
+# Platforms whose standalone sources these handlers serve (#164): Discord
+# and, since stage 2, Telegram. The gate was never really "is this Discord"
+# but "is this our bot's print source"; Hermes gateway behaviour for the
+# Discord profile is unchanged, and Telegram sources only exist when an
+# operator runs the Telegram standalone bot (or a Telegram gateway).
+BOT_PLATFORMS = frozenset({'discord', 'telegram'})
+
+
+def _platform_value(source):
+    return getattr(getattr(source, 'platform', None), 'value', None)
+
+
+def _is_bot_platform(source):
+    return _platform_value(source) in BOT_PLATFORMS
+
+
 def _is_print_discord_event(event):
     source = getattr(event, 'source', None)
     return (source is not None
-            and getattr(getattr(source, 'platform', None), 'value', None) == 'discord'
+            and _is_bot_platform(source)
             and getattr(source, 'profile', None) == '3dprinting'
             and not getattr(event, 'internal', False)
             and not getattr(source, 'is_bot', False)
@@ -162,7 +178,7 @@ async def receive_ack(event, gateway, **kwargs):
     if source is None:
         return None
     platform = getattr(getattr(source, 'platform', None), 'value', None)
-    if (platform != 'discord' or getattr(source, 'profile', None) != '3dprinting'
+    if (platform not in BOT_PLATFORMS or getattr(source, 'profile', None) != '3dprinting'
             or getattr(event, 'internal', False) or getattr(source, 'is_bot', False)
             or getattr(source, 'profile_route_rejected', False)):
         return None
@@ -366,7 +382,7 @@ async def color_selection_dispatch(event, gateway, **kwargs):
     text = str(getattr(event, 'text', '')).strip()
     if not text.startswith('/print-colors '):
         return None
-    if (source is None or getattr(getattr(source, 'platform', None), 'value', None) != 'discord'
+    if (source is None or not _is_bot_platform(source)
             or getattr(source, 'profile', None) != '3dprinting'
             or getattr(event, 'internal', False) or getattr(source, 'is_bot', False)
             or getattr(source, 'profile_route_rejected', False)):
@@ -446,7 +462,7 @@ async def print_next_dispatch(event, gateway, **kwargs):
     text = str(getattr(event, 'text', '')).strip()
     if not (text == '/print-next' or text.startswith('/print-next ')):
         return None
-    if (source is None or getattr(getattr(source, 'platform', None), 'value', None) != 'discord'
+    if (source is None or not _is_bot_platform(source)
             or getattr(source, 'profile', None) != '3dprinting'
             or getattr(event, 'internal', False) or getattr(source, 'is_bot', False)
             or getattr(source, 'profile_route_rejected', False)):
@@ -525,7 +541,7 @@ async def print_next_dispatch(event, gateway, **kwargs):
 def _discord_operator(event, gateway):
     """True for an authorized human Discord message in this profile."""
     source = getattr(event, 'source', None)
-    if (source is None or getattr(getattr(source, 'platform', None), 'value', None) != 'discord'
+    if (source is None or not _is_bot_platform(source)
             or getattr(source, 'profile', None) != '3dprinting'
             or getattr(event, 'internal', False) or getattr(source, 'is_bot', False)
             or getattr(source, 'profile_route_rejected', False)):
@@ -977,7 +993,7 @@ async def print_stop_dispatch(event, gateway, **kwargs):
     text = str(getattr(event, 'text', '')).strip()
     if text != '/print-stop':
         return None
-    if (source is None or getattr(getattr(source, 'platform', None), 'value', None) != 'discord'
+    if (source is None or not _is_bot_platform(source)
             or getattr(source, 'profile', None) != '3dprinting'
             or getattr(event, 'internal', False) or getattr(source, 'is_bot', False)
             or getattr(source, 'profile_route_rejected', False)):
@@ -1039,7 +1055,7 @@ def _control_preamble(event, gateway, command, with_args=False):
     text = str(getattr(event, 'text', '')).strip()
     if not (text == command or with_args and text.startswith(command + ' ')):
         return None, None
-    if (source is None or getattr(getattr(source, 'platform', None), 'value', None) != 'discord'
+    if (source is None or not _is_bot_platform(source)
             or getattr(source, 'profile', None) != '3dprinting'
             or getattr(event, 'internal', False) or getattr(source, 'is_bot', False)
             or getattr(source, 'profile_route_rejected', False)):
@@ -1350,7 +1366,7 @@ def _is_affirmative_followup(text: str) -> bool:
 
 async def model_link_dispatch(event, gateway, **kwargs):
     source = getattr(event, 'source', None)
-    if (source is None or getattr(getattr(source, 'platform', None), 'value', None) != 'discord'
+    if (source is None or not _is_bot_platform(source)
             or getattr(source, 'profile', None) != '3dprinting'
             or getattr(event, 'internal', False) or getattr(source, 'is_bot', False)
             or getattr(source, 'profile_route_rejected', False)):

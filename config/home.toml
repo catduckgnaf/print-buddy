@@ -98,13 +98,26 @@ token_env = "DISCORD_BOT_TOKEN"
 # approval_user_id is always allowed. Empty with no approval_user_id refuses everyone.
 allowed_user_ids = ""
 
+[telegram]
+# Standalone bot only, when [bot] platform is telegram (#164). The token itself
+# never goes in a file here; token_env names the environment variable holding it.
+token_env = "TELEGRAM_BOT_TOKEN"
+# Chat (group) ID the bot posts to. Telegram group and channel IDs are negative.
+chat_id = ""
+# Telegram user IDs allowed to use the bot, separated by commas or spaces.
+# approval_user_id is always allowed. Empty with no approval_user_id refuses everyone.
+allowed_user_ids = ""
+approval_user_id = ""
+# Largest file the bot uploads: the Telegram Bot API cloud limit.
+upload_max_bytes = 50000000
+
 [bot]
 # hermes: the Hermes gateway runs the print-feedback plugin (the default).
 # standalone: python3 -m print_buddy.bot talks to Discord directly. No Hermes, no LLM needed.
 # Use one mode per bot token.
 mode = "hermes"
 # Standalone bot only: the chat platform ([bot] platform, #164). discord is the default;
-# telegram and matrix implementations land in later stages of #164.
+# telegram is implemented (#164 stage 2); matrix lands in a later stage of #164.
 platform = "discord"
 # Standalone bot: serve GET /healthz on this port. 0 turns the HTTP check off; the health file still works.
 health_port = 0

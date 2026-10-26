@@ -70,8 +70,13 @@ Schema, validation limits and TOML migration: [CONFIGURATION-YAML.md](CONFIGURAT
 | `discord.cold_pull_outcome_s` | `PRINT_BUDDY__DISCORD__COLD_PULL_OUTCOME_S` | `1800` | How long a cold-pull outcome prompt stays open |
 | `discord.token_env` | `PRINT_BUDDY__DISCORD__TOKEN_ENV` | `DISCORD_BOT_TOKEN` | Name of the environment variable holding the bot token |
 | `discord.allowed_user_ids` | `PRINT_BUDDY__DISCORD__ALLOWED_USER_IDS` | empty | Discord user IDs allowed to use the standalone bot, comma or space separated |
+| `telegram.token_env` | `PRINT_BUDDY__TELEGRAM__TOKEN_ENV` | `TELEGRAM_BOT_TOKEN` | Name of the environment variable holding the Telegram bot token |
+| `telegram.chat_id` | `PRINT_BUDDY__TELEGRAM__CHAT_ID` | empty | Telegram chat (group) ID; group and channel IDs are negative |
+| `telegram.allowed_user_ids` | `PRINT_BUDDY__TELEGRAM__ALLOWED_USER_IDS` | empty | Telegram user IDs allowed to use the standalone bot, comma or space separated |
+| `telegram.approval_user_id` | `PRINT_BUDDY__TELEGRAM__APPROVAL_USER_ID` | empty | Telegram user ID allowed to approve |
+| `telegram.upload_max_bytes` | `PRINT_BUDDY__TELEGRAM__UPLOAD_MAX_BYTES` | `50000000` | Largest file the Telegram bot uploads (the Bot API cloud limit) |
 | `bot.mode` | `PRINT_BUDDY__BOT__MODE` | `hermes`; `standalone` in the image | `hermes` or `standalone`; the image and Compose set `standalone` |
-| `bot.platform` | `PRINT_BUDDY__BOT__PLATFORM` | `discord` | Chat platform for the standalone bot (#164); only `discord` is implemented so far, `telegram` and `matrix` land in later stages |
+| `bot.platform` | `PRINT_BUDDY__BOT__PLATFORM` | `discord` | Chat platform for the standalone bot (#164): `discord` or `telegram`; `matrix` lands in a later stage |
 | `bot.health_port` | `PRINT_BUDDY__BOT__HEALTH_PORT` | `0` | Serve `GET /healthz` on this port; `0` turns the HTTP check off |
 | `bot.health_stale_s` | `PRINT_BUDDY__BOT__HEALTH_STALE_S` | `120` | Bot health fails when its heartbeat is older than this |
 | `bot.sync_commands` | `PRINT_BUDDY__BOT__SYNC_COMMANDS` | `true` | Register the slash commands with Discord at startup |
@@ -150,6 +155,7 @@ Secrets come from the environment only (Docker: `.env`, never committed or share
 | Variable | Used for |
 |---|---|
 | `DISCORD_BOT_TOKEN` | Standalone bot token. The variable name is `discord.token_env` |
+| `TELEGRAM_BOT_TOKEN` | Telegram standalone bot token. The variable name is `telegram.token_env` |
 | `LLM_API_KEY` | Optional key for `llm.chat_url`. The variable name is `llm.api_key_env` |
 | `OCTOPRINT_API_KEY` | `octoprint.marlin` printers: OctoPrint application key |
 | `BAMBU_LAN_PASSWORD` | Bambu Lab printers: the LAN access code for read-only status. The variable name is `bambu.lan_access_code_env` |

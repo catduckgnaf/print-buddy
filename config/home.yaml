@@ -73,6 +73,18 @@ discord:
   cold_pull_outcome_s: 1800
   token_env: DISCORD_BOT_TOKEN
   allowed_user_ids: ''
+telegram:
+  # Standalone bot only, when [bot] platform is telegram (#164). The token itself
+  # never goes in a file here; token_env names the environment variable holding it.
+  token_env: TELEGRAM_BOT_TOKEN
+  # Chat (group) ID the bot posts to. Telegram group and channel IDs are negative.
+  chat_id: ''
+  # Telegram user IDs allowed to use the bot, separated by commas or spaces.
+  # approval_user_id is always allowed. Empty with no approval_user_id refuses everyone.
+  allowed_user_ids: ''
+  approval_user_id: ''
+  # Largest file the bot uploads: the Telegram Bot API cloud limit.
+  upload_max_bytes: 50000000
 bot:
   mode: hermes
   platform: discord

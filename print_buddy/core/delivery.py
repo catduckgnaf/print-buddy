@@ -97,8 +97,18 @@ def _fmt_mb(size):
 
 
 def upload_limit(config=None):
-    """Largest Discord attachment in bytes ([discord] upload_max_bytes)."""
-    return int((config or settings.current())["discord"]["upload_max_bytes"])
+    """Largest chat attachment in bytes for the configured platform (#164).
+
+    Discord reads [discord] upload_max_bytes, exactly as before; Telegram
+    reads [telegram] upload_max_bytes (the Bot API cloud limit). Platforms
+    without a section of their own keep the Discord value.
+    """
+    config = config or settings.current()
+    platform = str((config.get("bot") or {}).get("platform") or "discord")
+    section = config.get(platform)
+    if isinstance(section, dict) and section.get("upload_max_bytes"):
+        return int(section["upload_max_bytes"])
+    return int(config["discord"]["upload_max_bytes"])
 
 
 def discord_plan(files, limit, workdir):

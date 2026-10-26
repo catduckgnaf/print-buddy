@@ -122,6 +122,8 @@ def test_library_status_is_platform_reported():
     label, available, detail = platform.library_status("discord")
     assert label == "discord.py" and available is True and detail
     label, available, detail = platform.library_status("telegram")
+    assert label == "telegram" and available is True and detail == "standard library client"
+    label, available, detail = platform.library_status("matrix")
     assert available is False and "not implemented yet" in detail
 
 
@@ -136,9 +138,9 @@ def test_a_config_without_the_platform_key_still_yields_discord(tmp_path):
 
 
 def test_known_but_unimplemented_platform_validates_and_fails_the_check(tmp_path):
-    data = settings.load(local=False, environ={"PRINT_BUDDY__BOT__PLATFORM": "telegram",
+    data = settings.load(local=False, environ={"PRINT_BUDDY__BOT__PLATFORM": "matrix",
                                                "PRINT_BUDDY__BOT__MODE": "standalone"})
-    assert data["bot"]["platform"] == "telegram"
+    assert data["bot"]["platform"] == "matrix"
     rows = {label: (ok, detail) for label, ok, detail in bot_main.checks(data)}
     assert rows["platform"][0] is False and "not implemented yet" in rows["platform"][1]
     assert bot_main.check.__module__  # the check itself ran offline, above

@@ -224,3 +224,13 @@ def test_listener_log_writes_the_legacy_file_and_the_shared_logger(tmp_path, mon
     ok, lost = caplog.records
     assert (ok.levelno, lost.levelno) == (logging.INFO, logging.WARNING)
     assert lost.exc_info and "abc12345secret" not in lost.getMessage()
+
+
+def test_redact_hides_telegram_bot_tokens_including_in_api_urls():
+    # Built from parts so no token shaped string sits in the source.
+    token = "123456" + "789:" + "AA" + "x" * 33
+    url = f"https://api.telegram.org/bot{token}/sendMessage"
+    cleaned = logs.redact(f"POST {url} failed; token was {token}")
+    assert token not in cleaned and "AA" + "x" * 33 not in cleaned
+    assert "https://api.telegram.org/bot***/sendMessage" in cleaned
+    assert logs.redact("Print started at 12:34 for cube.stl") == "Print started at 12:34 for cube.stl"

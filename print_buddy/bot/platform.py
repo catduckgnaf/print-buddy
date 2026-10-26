@@ -25,10 +25,11 @@ Per-platform limits live on the adapter as class attributes: ``name``,
 ``max_buttons``. Callers that chunk text or size an upload read them from
 the platform instead of hard-coding one service's numbers.
 
-Discord is the first implementation (``print_buddy.bot.adapter``). Telegram
-and Matrix are known platform names whose implementations land in later
-stages of #164; selecting one before its stage lands fails the bot's
-offline check with a clear message instead of starting half a bot.
+Discord is the first implementation (``print_buddy.bot.adapter``),
+Telegram the second (``print_buddy.bot.telegram``). Matrix is a known
+platform name whose implementation lands in a later stage of #164;
+selecting it before its stage lands fails the bot's offline check with a
+clear message instead of starting half a bot.
 
 Adding a platform: implement the methods above in a new module under
 ``print_buddy/bot/`` (its adapter class is named ``StandaloneAdapter``,
@@ -84,6 +85,9 @@ def platform_module(name):
     if name == "discord":
         from . import adapter
         return adapter
+    if name == "telegram":
+        from . import telegram
+        return telegram
     return None
 
 
@@ -135,6 +139,9 @@ class BasePlatformAdapter:
     upload_max_bytes: int | None = None
     supports_buttons = False
     max_buttons = 0
+    # Pure-bot platforms set this False: BotCore then never calls the LLM
+    # fallback for them, even when [llm] is configured (#164 stage 2, #73).
+    uses_llm = True
 
     def __init__(self, allowed, *, registry=prompts):
         self.allowed = {str(u) for u in allowed}

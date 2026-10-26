@@ -15,7 +15,7 @@ import subprocess
 import time
 from pathlib import Path
 
-from . import _config
+from . import _config, vertical_short
 from .print_records import _plan_parts, _safe_slug
 
 # Stdout line from the announcer: TIMELAPSE_PLAN:<plan_id>:<more|final|partial>:<order>
@@ -160,10 +160,43 @@ def combine(plan_id):
         subprocess.run(base + ["-c", "copy", "-an", "-movflags", "+faststart", str(partial)],
                        capture_output=True, timeout=600, check=True)
     except (subprocess.CalledProcessError, subprocess.TimeoutExpired):
-        # Codecs, sizes or timebases differ: re-encode every clip to one common format.
-        subprocess.run(base + ["-an", "-vf", "scale=1280:720:force_original_aspect_ratio=decrease,"
-                               "pad=1280:720:(ow-iw)/2:(oh-ih)/2,setsar=1,fps=30",
-                               "-c:v", "libx264", "-preset", "veryfast", "-movflags", "+faststart", str(partial)],
-                       capture_output=True, timeout=1800, check=True)
+        # Codecs, sizes or timebases differ: re-encode every clip to one
+        # common format, through the shared encoder seam (#246 stage 3:
+        # the [timelapse] encoder choice, CPU by default — the same
+        # libx264 argv as before — with a hardware failure retrying on
+        # CPU, never failing the combine over an encoder).
+        filt = ("scale=1280:720:force_original_aspect_ratio=decrease,"
+                "pad=1280:720:(ow-iw)/2:(oh-ih)/2,setsar=1,fps=30")
+        encoder = _combine_encoder()
+        try:
+            _reencode(listing, filt, encoder, partial)
+        except (subprocess.CalledProcessError, subprocess.TimeoutExpired):
+            if encoder == "cpu":
+                raise
+            _reencode(listing, filt, "cpu", partial)
     os.replace(partial, target)
     return target
+
+
+def _combine_encoder():
+    """The [timelapse] encoder choice for the combine re-encode (#314 names).
+
+    "cpu" unless configured; anything unexpected resolves to "cpu" so a
+    bad value can cost hardware acceleration but never the combine.
+    """
+    try:
+        encoder = str((_config.cfg().get("timelapse") or {}).get("encoder") or "cpu").strip().lower()
+    except Exception:
+        return "cpu"
+    return encoder if encoder in vertical_short.ENCODERS else "cpu"
+
+
+def _reencode(listing, filt, encoder, partial):
+    # Built from scratch rather than extending the stream-copy command:
+    # the seam's input args (VAAPI's -vaapi_device) must precede -i.
+    subprocess.run([_ffmpeg(), "-y", "-v", "error", *vertical_short.encoder_input_args(encoder),
+                    "-f", "concat", "-safe", "0", "-i", str(listing), "-an",
+                    "-vf", vertical_short.encoder_filter(encoder, filt),
+                    *vertical_short.encoder_args(encoder),
+                    "-movflags", "+faststart", str(partial)],
+                   capture_output=True, timeout=1800, check=True)

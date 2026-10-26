@@ -36,6 +36,7 @@ from . import moonraker_discord_announcements as announcer
 from . import discord_print_summary as print_summary
 from . import plan_timelapse
 from . import timelapse_capture
+from . import timelapse_encode
 from . import print_control
 from . import visual_watch as _visual_watch
 from . import print_markers
@@ -804,6 +805,23 @@ def _vertical_short_attachment(video, job_key):
         return None
 
 
+def _captured_timelapse(job_key):
+    """The in-container captured timelapse for a job, or None (#246 stage 3).
+
+    Stage 3's half of the delivery fallback order: a finished capture
+    that assembles under the platform cap wins; anything else — capture
+    off, no capture for this job, every encoder failed — returns None
+    and the caller uses the printer-rendered path exactly as before.
+    Never raises.
+    """
+    try:
+        return timelapse_encode.captured_video(
+            job_key, data=_config.cfg(), max_bytes=_media_upload_limit(), log=log)
+    except Exception as exc:
+        log(f"captured timelapse lookup failed for {job_key!r}: {exc!r}")
+        return None
+
+
 def _timelapse_postprocess(job_key, completion_message, plan_id=None, tl_plan=None):
     try:
         if tl_plan:
@@ -826,12 +844,16 @@ def _plan_timelapse_post(job_key, completion_message, tl_plan):
     clip = None
     if job_key and stage in ("more", "final"):
         try:
-            archived = announcer.archive_completed_timelapse(job_key)
-            if archived:
-                clip = Path(str(announcer.materialize_archived_timelapse(archived)))
-                plan_timelapse.add_clip(plan, order, clip)
+            captured = _captured_timelapse(job_key)
+            if captured is not None:
+                clip = plan_timelapse.add_clip(plan, order, captured)
             else:
-                log(f"timelapse not rendered for {job_key!r} within the wait")
+                archived = announcer.archive_completed_timelapse(job_key)
+                if archived:
+                    clip = Path(str(announcer.materialize_archived_timelapse(archived)))
+                    plan_timelapse.add_clip(plan, order, clip)
+                else:
+                    log(f"timelapse not rendered for {job_key!r} within the wait")
         except Exception as exc:
             log(f"plan timelapse clip for {job_key!r} unavailable: {exc!r}")
             clip = None
@@ -879,6 +901,20 @@ def _plan_timelapse_post(job_key, completion_message, tl_plan):
 
 def _timelapse_post(job_key, completion_message):
     try:
+        captured = _captured_timelapse(job_key)
+        if captured is not None:
+            # The captured video is already assembled under the platform
+            # cap by timelapse_encode; it skips the archive + shrink the
+            # printer-rendered path needs.
+            message = f"{completion_message}\nMEDIA:{captured}"
+            short = _vertical_short_attachment(captured, job_key)
+            if short is not None:
+                message += f"\nMEDIA:{short}"
+            if not _post_completion(message, completion_message):
+                log(f"captured timelapse attach failed for {job_key!r}; posting text only")
+                _post_completion(f"{completion_message}\n{_timelapse_too_big_text(captured.name)}",
+                                 completion_message)
+            return
         archived = announcer.archive_completed_timelapse(job_key)
         if not archived:
             log(f"timelapse not rendered for {job_key!r} within the wait")

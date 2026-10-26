@@ -66,9 +66,9 @@ Enable it in the mounted YAML (`webui` in `config/docker.yaml`), in TOML (`[webu
 
 To reach the Web UI from another machine, all four pieces are needed: enable it with a port (the examples use 8080), bind `0.0.0.0` instead of loopback, publish the port, and set the `WEBUI_ACCESS_TOKEN` secret in `.env`. **A non-loopback bind without the token is refused** — the Web UI child exits with that reason and the supervisor stops the container; set the token (requests send it as the `X-WebUI-Token` header). Compose ships the port mapping commented out; the Unraid template carries a Web UI port mapping (8080) plus the same variables, with the bind host defaulting to `0.0.0.0` and the token as a masked field, and its WebUI link then opens the status page. Keep the Web UI on the LAN only: never forward its port from a router or expose it publicly. Settings changes saved in the Web UI take effect on the next container start; settings are read once at start. The full guide — pages, save flow, limits and troubleshooting — is [Web UI](WEBUI.md).
 
-## Timelapse capture (go2rtc, #246 stage 1)
+## Timelapse capture (go2rtc, #246)
 
-Stage 1 of #246 is plumbing only — no frames are captured yet (that is Stage 2) and no hardware encode happens yet (Stage 3). What this stage adds is the machinery both will use, off by default:
+All three stages of #246 have landed: Stage 1 is the container plumbing below, Stage 2 captures frames during a print, and Stage 3 encodes and delivers the video with the completion post. Everything here is off by default; what Stage 1 adds is the machinery both later stages use:
 
 - The image bundles **go2rtc** (upstream AlexxIT/go2rtc v1.9.15, one static binary per architecture, downloaded at build time and verified by SHA256 in `docker/go2rtc-prebuilt.sh`, like the OrcaSlicer prebuilts) and the **VAAPI driver stack** (`intel-media-va-driver`, `mesa-va-drivers`, `libva-drm2`, `vainfo`). Both are under the `WITH_GO2RTC` build toggle, which the published image sets; a local `WITH_GO2RTC=false` build omits both.
 - With `timelapse.capture_enabled` set (`PRINT_BUDDY__TIMELAPSE__CAPTURE_ENABLED=true`, or `timelapse.capture_enabled` in the config file), the supervisor starts go2rtc as a supervised child and the healthcheck covers it. The gate is resolved from settings (`python3 -m print_buddy.go2rtc`), never guessed: capture disabled — or enabled with no camera source configured — starts nothing and is a healthy state, reported in the healthcheck like the disabled-bot case. Enabling capture in an image built without go2rtc fails the healthcheck with that reason, because the binary is not there.
@@ -77,14 +77,24 @@ Stage 1 of #246 is plumbing only — no frames are captured yet (that is Stage 2
 
 ### Frame capture (stage 2)
 
-With `timelapse.capture_enabled` on, the Moonraker listener also captures frames for each print (Stage 2 of #246). Nothing is encoded or posted yet — assembling and delivering the MP4 is Stage 3 — and with capture off nothing in this section happens at all.
+With `timelapse.capture_enabled` on, the Moonraker listener also captures frames for each print (Stage 2 of #246) and delivers the assembled video with the completion post (Stage 3, below). With capture off nothing in this section happens at all.
 
 - **Lifecycle:** a capture session opens when a print starts (the same listener lifecycle and job identity as the completion notifications) and closes on completion, failure or cancel. It follows the print through pauses; a print already running when the listener reconnects starts capturing from the reconnect.
 - **Mechanics:** snapshot polling. The listener polls a JPEG snapshot of the go2rtc-normalised stream (`http://127.0.0.1:1984/api/frame.jpeg?src=camera`) — outside the container image, where there is no bundled go2rtc, it polls the camera source's own snapshot URL directly. Capture is GPU-independent; no ffmpeg runs in this stage.
 - **Trigger:** `timelapse.capture_trigger` chooses what makes a frame due — `interval` (default: every `timelapse.capture_interval_s` seconds, 5.0 by default), `layer` (each Moonraker layer change, the moonraker-timelapse semantics), or `both` (an interval floor plus layer events). The owner's trigger preference on #246 is still an open question, so it stays a setting rather than a hard-coded choice; the interval default is the printer-agnostic one.
 - **Storage:** frames land under the existing cache discipline at `<cache>/timelapse/<job>/frames/frame-000001.jpg`, with a `capture.json` manifest (job, trigger, frame/byte counts, final state) beside them — per-plate jobs keep separate directories, so the Stage 3 encode and the plan combine keep working per plate. Per-job caps `timelapse.capture_max_frames` (3600) and `timelapse.capture_max_bytes` (512 MiB) bound the storage (0 disables a cap); capture stops at a cap and keeps the frames already taken. Finished and abandoned capture directories are pruned under `timelapse.local_retention_days`, like the other local timelapse copies.
 - **Failure posture:** capture is a side feature and fails soft, like the Spoolman warning-only rule (#235). A dead camera, a stopped go2rtc or a full disk costs frames — logged, with the source URL redacted — and never delays, blocks or fails a print or its completion post.
-- **Encoder preference:** `timelapse.capture_encoder` (`auto` | `vaapi` | `nvenc` | `qsv` | `cpu`) is recorded from this stage on so the Stage 3 encode needs no settings change; nothing reads it yet.
+- **Encoder preference:** `timelapse.capture_encoder` (`auto` | `vaapi` | `nvenc` | `qsv` | `cpu`) chooses the Stage 3 assembly encoder; `auto` tries VAAPI, then NVENC, then QSV, then CPU.
+
+### Encode and delivery (stage 3)
+
+When a print finishes, the captured frames are assembled into the timelapse the completion post carries:
+
+- **Assembly:** frames play back at 30 fps into one H.264 MP4 (scaled to at most 1280 wide, `+faststart`, no audio — the same shape Discord clients already play). The encoder is picked by probing the real ffmpeg and the devices present: `timelapse.capture_encoder` is the preference (`auto` = VAAPI → NVENC → QSV → CPU), and a hardware encoder that fails — or whose output misses the size cap on both bitrate attempts (budget-derived, then 70%, the sizing shrink's strategy) — falls through to the next candidate. CPU `libx264` is always the last candidate, so a missing GPU can never fail a timelapse.
+- **One selection, three call sites:** the same encoder selection and the same encoder seam drive the frame assembly, the Discord sizing shrink (`timelapse.encoder`, #314) and the multi-plate plan combine re-encode. The final video still has to fit the platform upload cap (`discord.upload_max_bytes`, 9,500,000 bytes by default on Discord) — the cap is unchanged.
+- **Fallback order:** the completion post carries the in-container captured video when capture produced one; otherwise the printer-rendered moonraker-timelapse download, exactly as before (that path is not removed); otherwise no video. Any capture or encode failure degrades to the next step, and a total failure posts the completion text alone — a failed attachment is never reported as delivered, and the completion acknowledgement is unaffected.
+- **Per plate:** in a multi-plate plan each plate's clip is its own captured video when one exists (its printer-rendered clip otherwise), and the clips combine into the one posted video as before.
+- **Verification:** assembly, sizing and combine are covered by offline tests, including a real-ffmpeg assembly from generated frames (ffprobe-valid H.264 under the cap). The VAAPI/NVENC/QSV paths are pinned by command-construction tests and are **not verified on real hardware** — no GPU was available when this landed; the CPU path is the one exercised end to end.
 
 ### GPU passthrough and supported combinations
 
@@ -97,7 +107,7 @@ Hardware encoding is opportunistic and never required; without a GPU everything 
 | Intel Quick Sync (QSV) | `/dev/dri` passthrough | The `h264_qsv` encoder is in Debian's ffmpeg; it activates only when the host device/driver supports it. |
 | Anything else | Nothing | CPU (`libx264`) encoding, as today. |
 
-**Not verified on real hardware:** no GPU path above has been run on physical hardware yet. The plumbing is covered by offline contract tests (pins, gates, loopback binds, image contents); VAAPI/NVENC/QSV encoding itself is Stage 3 work and will be labelled with whatever verification exists when it lands.
+**Not verified on real hardware:** no GPU path above has been run on physical hardware yet. The plumbing is covered by offline contract tests (pins, gates, loopback binds, image contents), and Stage 3's VAAPI/NVENC/QSV encoding is pinned by command-construction tests with the CPU fallback proven — but no hardware encode has been executed on a real GPU, and this section will say so until one has.
 
 **Security note:** granting `/dev/dri` widens the container's access to the host — a device is not a network port, and a compromised container with GPU device access has more host surface than one without. That is why passthrough is opt-in and off by default in both deployment files, exactly like a host capability the operator chooses to grant.
 

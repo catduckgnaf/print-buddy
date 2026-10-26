@@ -95,9 +95,10 @@ plate's shifts alone do not describe its orientation) while losing any
 Reorientation is the last fit preference (#221 R1), evaluated only for a
 part that fits neither as authored nor at any bed-plane yaw: one face
 change from ``orca_adapter.UP_AXES`` (a 90-degree turn about X or Y that
-lands the part flat on another authored face), composed with the best
-cardinal bed turn (0 or 90 degrees) of the rotated footprint. The plan
-records the full rotation in ``reorientation_by_object``; slicing applies
+lands the part flat on another authored face), composed with a bed
+turn of the rotated footprint — a cardinal turn (0 or 90 degrees) when
+one fits, else the best diagonal turn of the same sweep (#221 diagonal,
+below). The plan records the full rotation in ``reorientation_by_object``; slicing applies
 exactly that rotation (see ``model_job._slice_full_size_split``) and
 passes the record's measured ``supports`` decision to the slicer for that
 plate. The recorded ``brim_recommended`` is advisory only: it never
@@ -105,12 +106,13 @@ changes the job's brim policy. No offer is made at all when the per-part
 supports/brim measurement (``orca_adapter._surface_stats``, the same
 heuristics ``rotation_alternatives`` uses) cannot be performed. Arbitrary
 tilts, upside-down flips and poses that do not land flat are never
-candidates. Among the proved candidates for a part, the choice is ranked
-by fit quality — most bed margin, then no-supports over supports, then
-larger measured bed contact (see :func:`_rank_reorientation_candidates`):
-the goal is always to fit as much as possible, but ranking only ever
-orders proved candidates; it never overrides a proof, a guard or the
-once-only budgets above.
+candidates. Among the proved candidates for a part, cardinal-turn
+candidates rank ahead of diagonal-turn ones, and each class is ranked by
+fit quality — most bed margin, then no-supports over supports, then
+larger measured bed contact (see
+:func:`_ranked_reorientation_candidates`): the goal is always to fit as
+much as possible, but ranking only ever orders proved candidates; it
+never overrides a proof, a guard or the once-only budgets above.
 
 A reoriented part alone on its plate is realized through the exporter's
 whole-plate fit channel, as in R1. Beyond solo plates (#221 R3), a
@@ -143,6 +145,28 @@ several build items is refused for every fit verdict in this module, not
 just reorientation; and an object whose items could be read separately
 would still have no single hull here, so it could be reoriented solo but
 never join a hull-packed shared plate.
+
+Diagonal bed turns (#221, final stage). Every yaw in this module comes
+from one bounded sweep: :func:`mesh_yaw_candidates` checks 0–90 degrees
+in 1-degree steps with envelopes computed from the hull vertices — 91
+angles per footprint, deterministic, the same budget on every path.
+In-plane yaw has recorded sweep angles, diagonals included, since the
+mesh-hull evaluation (a 45-degree turn is the canonical shared-yaw case);
+what this stage adds is the bed turn composed into a reorientation. A
+reorientation candidate first tries the cardinal turns and takes a
+diagonal turn only when neither cardinal fits, and among a part's proved
+candidates a cardinal-turn candidate always outranks a diagonal-turn one
+(see :func:`_ranked_reorientation_candidates`), so no verdict a cardinal
+plan already achieved ever changes — diagonal turns only add fits. This
+deliberately revisits the pinned #76 Stand verdict: the retained Stand
+(130 x 230 x 30) fits at no in-plane yaw and at no cardinal reorientation
+(about X it would stand 230 mm tall, over a 220 mm limit; about Y its
+30 x 230 end footprint fits at neither cardinal turn), but stood on that
+end at a 45-degree bed turn its envelope is 183.8 x 183.8 mm, inside the
+204 mm usable bed — so it is now offered reoriented about Y at 45
+degrees, its proof pinned in tests. Slicing validates a reorientation
+record's yaw as any finite angle in [0, 90] whose composed matrix
+matches the record exactly (see ``model_job._slice_full_size_split``).
 """
 import math
 import zipfile
@@ -310,6 +334,23 @@ def _rank_reorientation_candidates(candidates):
                                              -c['bed_contact_mm2'], c['axis']))
 
 
+def _ranked_reorientation_candidates(candidates):
+    """Proved reorientation candidates in offer order (#221 diagonal).
+
+    Candidates whose bed turn is cardinal (0 or 90 degrees) rank ahead of
+    candidates that need a diagonal turn — each class internally in the
+    fit-quality order of :func:`_rank_reorientation_candidates`. A diagonal
+    turn is an additional candidate class, never a replacement: when any
+    cardinal-turn candidate is proved, the winner is exactly the one R1
+    would have recorded, and diagonal candidates only ever add fits for
+    parts no cardinal reorientation could fit.
+    """
+    cardinal = [c for c in candidates if c['yaw_deg'] in (0.0, 90.0)]
+    diagonal = [c for c in candidates if c['yaw_deg'] not in (0.0, 90.0)]
+    return (_rank_reorientation_candidates(cardinal)
+            + _rank_reorientation_candidates(diagonal))
+
+
 def _reorientation_candidates(source, oid, item_points, usable, height_limit):
     """Proved face-change candidates for one object (#221 R1), best pair first.
 
@@ -320,8 +361,9 @@ def _reorientation_candidates(source, oid, item_points, usable, height_limit):
     candidate is proved only when the rotated part lands flat (every build
     item's rotated Z minimum within the exporter's 0.05 mm lift tolerance
     of the object's), its rotated height is within the limit, and its
-    rotated footprint fits the usable area at a cardinal bed turn (0 or 90
-    degrees — a diagonal turn of a reoriented part is not offered).
+    rotated footprint fits the usable area at a bed turn: a cardinal turn
+    (0 or 90 degrees) when one fits, else the best fitting diagonal turn
+    of the same bounded 1-degree sweep (#221 diagonal).
     The composed matrix is yaw-after-face-change, ``_matmul(_yaw, up)``,
     exactly as the single-plate path records it. ``supports`` and
     ``brim_recommended`` reuse ``rotation_alternatives``' heuristics
@@ -360,13 +402,27 @@ def _reorientation_candidates(source, oid, item_points, usable, height_limit):
         if height > height_limit + 1e-9:
             continue
         hull = _hull([(p[0], p[1]) for p in rotated])
+        # Bed turn for the reoriented footprint: a cardinal turn (0 or 90
+        # degrees) is always preferred — the first fitting cardinal in the
+        # sweep's fit-quality order is exactly the R1 choice. Only when
+        # neither cardinal turn fits does the best fitting diagonal turn of
+        # the same bounded sweep become this pair's candidate (#221
+        # diagonal): a diagonal turn is an additional candidate class, so
+        # it can make a part fit that no cardinal reorientation could, and
+        # it never displaces a proved cardinal candidate.
+        sweep = mesh_yaw_candidates(hull, usable[0], usable[1])
         chosen = None
-        for _ratio, degrees, envelope in mesh_yaw_candidates(hull, usable[0], usable[1]):
+        for _ratio, degrees, envelope in sweep:
             if degrees not in (0.0, 90.0):
                 continue
             if envelope[0] <= usable[0] + 1e-9 and envelope[1] <= usable[1] + 1e-9:
                 chosen = (degrees, envelope)
                 break
+        if chosen is None:
+            for _ratio, degrees, envelope in sweep:
+                if envelope[0] <= usable[0] + 1e-9 and envelope[1] <= usable[1] + 1e-9:
+                    chosen = (degrees, envelope)
+                    break
         if chosen is None:
             continue
         degrees, envelope = chosen
@@ -523,7 +579,7 @@ def per_part_fit(source, bed=None, height=None, exclusions=None, brim_policy=Non
                     proved = []
                 if proved and exclusions:
                     winner = None
-                    for candidate in _rank_reorientation_candidates(proved):
+                    for candidate in _ranked_reorientation_candidates(proved):
                         envelope = candidate['dims_mm'][:2]
                         if feature:
                             grown = (envelope[0] + 2 * feature, envelope[1] + 2 * feature)
@@ -541,7 +597,7 @@ def per_part_fit(source, bed=None, height=None, exclusions=None, brim_policy=Non
                     else:
                         proved = [winner]
                 if proved:
-                    winner = _rank_reorientation_candidates(proved)[0]
+                    winner = _ranked_reorientation_candidates(proved)[0]
                     reorientation = {key: winner[key] for key in
                                      ('axis', 'rotation', 'yaw_deg', 'dims_mm', 'supports',
                                       'brim_recommended', 'bed_contact_mm2', 'overhang_mm2')}

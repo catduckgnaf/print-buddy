@@ -37,7 +37,7 @@ except ImportError:  # pragma: no cover
 from functools import lru_cache
 from pathlib import Path
 
-from . import printers
+from . import printers as printer_registry
 
 ROOT = Path(__file__).resolve().parent.parent
 HOME = ROOT / "config" / "home.yaml"
@@ -111,6 +111,21 @@ OPTIONAL_KEYS = {("printer", "nozzle_type"): str, ("printer", "tool_count"): int
 # only. [delivery] methods is here so a Docker operator can opt into the Bambu LAN print button without
 # replacing the image's docker.yaml (#270); the value is validated exactly like the YAML list.
 ENV_LISTS = {("delivery", "methods")}
+# [[printers]] entry keys (#257 Stage 2a, #333; design docs/MULTI-PRINTER-DESIGN.md §2.1). The
+# roster is a list, so it is file-only like every other list; scalar keys of a *declared* entry may
+# be overridden from the environment with the indexed spelling PRINT_BUDDY__PRINTERS__<ID>__<KEY>
+# (see _from_env). moonraker_ws_url is an entry key even though the design's table names only the
+# other three [services] URLs: it is a settable legacy [services] key today, and omitting it would
+# make a config with an explicit websocket URL inexpressible in the roster shape.
+PRINTER_ENTRY_STR_KEYS = ("name", "moonraker_url", "moonraker_ws_url", "octoprint_url",
+                          "camera_snapshot_url", "lan_host", "lan_serial", "lan_access_code_env",
+                          "link_host", "api_key_env", "host", "nozzle_type")
+PRINTER_ENTRY_INT_KEYS = ("start_confirm_s", "tool_count")
+PRINTER_ENTRY_KEYS = frozenset({"id", "model", "chat_id",
+                                *PRINTER_ENTRY_STR_KEYS, *PRINTER_ENTRY_INT_KEYS})
+PRINTER_ENTRY_ENV_TYPES = {key: str for key in ("chat_id", *PRINTER_ENTRY_STR_KEYS)}
+PRINTER_ENTRY_ENV_TYPES.update({key: int for key in PRINTER_ENTRY_INT_KEYS})
+PRINTER_ID = re.compile(r"[a-z0-9][a-z0-9_-]*")
 DEFAULT_MATERIAL_TEMPS = {
     "PLA": {"nozzle": 210, "bed": 60}, "PETG": {"nozzle": 240, "bed": 85},
     "ABS": {"nozzle": 245, "bed": 100}, "ASA": {"nozzle": 260, "bed": 105},
@@ -167,6 +182,13 @@ def _unknown(source, section, key):
 def _check_keys(home, extra, source):
     """Reject keys home.toml does not define, and values of the wrong type."""
     for section, values in extra.items():
+        if section == "printers":
+            # The roster is a list, not a table, and never appears in the defaults tree; its
+            # entries are shape-checked in validate() (_check_roster).
+            if not isinstance(values, list) or not all(isinstance(entry, dict) for entry in values):
+                raise SettingsError(f"{source}: [printers] must be a list of printer entries "
+                                    "([[printers]] in TOML, a list under printers: in YAML)")
+            continue
         if section not in home or not isinstance(values, dict):
             raise SettingsError(f"{source}: unknown section [{section}]")
         for key, value in values.items():
@@ -210,11 +232,37 @@ def _split_list(raw):
     return [part for part in re.split(r"[\s,]+", raw.strip()) if part]
 
 
-def _from_env(home, environ):
+def _from_env(home, environ, declared=None):
     out = {}
+    # Indexed [[printers]] overrides (#333): `declared` is the roster the config files declare.
+    # The environment may retarget scalar keys of a declared entry, never create one — the same
+    # refusal _from_env gives an unknown section/key, applied to entry ids.
+    declared_ids = {entry.get("id") for entry in declared
+                    if isinstance(entry, dict) and isinstance(entry.get("id"), str)} \
+        if isinstance(declared, list) else set()
+    roster = None
     for name, raw in environ.items():
         if name.startswith("PRINT_BUDDY__"):
             parts = name[len("PRINT_BUDDY__"):].lower().split("__")
+            if len(parts) == 3 and parts[0] == "printers":
+                pid, key = parts[1], parts[2]
+                if pid not in declared_ids:
+                    raise SettingsError(f"${name}: no printer with id {pid!r} is declared in the config "
+                                        "file; the environment can override a declared [[printers]] "
+                                        "entry but never create one")
+                if key in ("id", "model"):
+                    raise SettingsError(f"${name}: [printers] {key} is part of the entry's identity in "
+                                        "the config file and cannot be overridden from the environment")
+                if key not in PRINTER_ENTRY_ENV_TYPES:
+                    raise SettingsError(f"${name}: unknown [printers] entry key {key!r} "
+                                        f"(entry keys: {', '.join(sorted(PRINTER_ENTRY_KEYS))})")
+                if roster is None:
+                    roster = copy.deepcopy(declared)
+                    out["printers"] = roster
+                entry = next(entry for entry in roster
+                             if isinstance(entry, dict) and entry.get("id") == pid)
+                entry[key] = _coerce(PRINTER_ENTRY_ENV_TYPES[key](), raw, name)
+                continue
             if len(parts) != 2:
                 raise SettingsError(f"${name} must look like PRINT_BUDDY__SECTION__KEY")
             section, key = parts
@@ -253,7 +301,7 @@ def _positive(data, section, key, kind=float):
 
 def _model_key(model, vendor=None):
     try:
-        return printers.resolve_key(model, vendor)
+        return printer_registry.resolve_key(model, vendor)
     except ValueError as exc:
         raise SettingsError(str(exc)) from None
 
@@ -351,6 +399,333 @@ def _validate_elegoo_sdcp(data, model):
     if host and not re.fullmatch(r"[A-Za-z0-9._-]+", host):
         raise SettingsError(f"[elegoo_sdcp] host must be a plain IP address or hostname without scheme or port, got {host!r}")
     section["host"] = host
+
+
+def _check_service_urls(services):
+    for key, value in services.items():
+        if key.endswith("_url") and value and not value.startswith(("ws://", "wss://") if key == "moonraker_ws_url" else ("http://", "https://")):
+            raise SettingsError(f"[services] {key} must be a URL, got {value!r}")
+
+
+def _check_connection_urls(services, model):
+    if model.vendor.connection in ("offline", "bambulab_lan", "flashforge_stock", "prusalink", "elegoo_sdcp") and (services["moonraker_url"] or services.get("octoprint_url")):
+        # The listener, /print-stop and /print-resume would otherwise act on whatever answers at that URL.
+        raise SettingsError(f"[services] moonraker_url and octoprint_url must be empty for model {model.key!r}: "
+                            "Print Buddy has no Moonraker or OctoPrint connection to it")
+
+
+def _derive_service_urls(services):
+    if services["moonraker_url"]:
+        base = services["moonraker_url"].rstrip("/")
+        host = base.split("://", 1)[1].split("/", 1)[0].rsplit(":", 1)[0]
+        services["moonraker_ws_url"] = services["moonraker_ws_url"] or base.replace("http", "ws", 1) + "/websocket"
+        services["camera_snapshot_url"] = services["camera_snapshot_url"] or f"http://{host}/webcam/?action=snapshot"
+
+
+# ---------------------------------------------------------------------------
+# [[printers]]: the multi-printer roster (#257 Stage 2a, #333).
+#
+# A config file may declare its printers as a list of entries instead of the
+# legacy singleton sections. Loading resolves the roster AND keeps the legacy
+# singleton view (data["printer"], the [services] URLs, the vendor sections)
+# populated from the first entry, so every existing consumer sees exactly what
+# it sees today; with no [[printers]] in the file, validate() synthesises a
+# one-entry roster from the legacy sections. Migration is in memory only —
+# config files are never rewritten by loading. Design:
+# docs/MULTI-PRINTER-DESIGN.md §2.1.
+
+
+def _printer_id_slug(name):
+    """The synthesised entry id for a legacy config: slug of [printer] name, else "printer"."""
+    slug = re.sub(r"[^a-z0-9_-]+", "-", str(name or "").lower()).strip("-_")
+    return slug or "printer"
+
+
+def _check_roster(raw):
+    """Shape-check a [[printers]] list from a config file; return entry stubs.
+
+    A stub carries only the keys the file actually set (chat_id normalised to
+    a string, model resolved to its full registry key). _project_entry folds
+    the first stub into the legacy sections; _validate_entry checks the rest.
+    Every refusal names the entry.
+    """
+    if not isinstance(raw, list):
+        raise SettingsError("[printers] must be a list of printer entries "
+                            "([[printers]] in TOML, a list under printers: in YAML)")
+    if not raw:
+        raise SettingsError("[printers] must name at least one printer")
+    stubs, seen = [], set()
+    for index, entry in enumerate(raw):
+        if not isinstance(entry, dict):
+            raise SettingsError(f"[printers] entry {index + 1} must be a table of keys, got {entry!r}")
+        pid = entry.get("id")
+        label = f"[printers] entry {pid!r}" if isinstance(pid, str) and pid else f"[printers] entry {index + 1}"
+        unknown = sorted(set(entry) - PRINTER_ENTRY_KEYS)
+        if unknown:
+            raise SettingsError(f"{label}: unknown key(s) {', '.join(unknown)} "
+                                f"(entry keys: {', '.join(sorted(PRINTER_ENTRY_KEYS))})")
+        if not isinstance(pid, str) or not PRINTER_ID.fullmatch(pid):
+            raise SettingsError(f"[printers] entry {index + 1}: id is required and must be a slug "
+                                f"(a-z, 0-9, '-' and '_', starting with a letter or digit), got {pid!r}")
+        if pid in seen:
+            raise SettingsError(f"[printers] duplicate printer id {pid!r}")
+        seen.add(pid)
+        if "model" not in entry:
+            raise SettingsError(f"[printers] entry {pid!r}: model is required")
+        stub = {"id": pid, "model": _model_key(entry["model"])}
+        model = printer_registry.MODELS[stub["model"]]
+        if entry.get("host") and model.vendor.key not in ("elegoo_sdcp", "flashforge_stock"):
+            raise SettingsError(f"[printers] entry {pid!r}: host only applies to Elegoo SDCP and stock "
+                                "Flashforge printers (it is the [elegoo_sdcp] / [flashforge_stock] host)")
+        for key, value in entry.items():
+            if key in ("id", "model"):
+                continue
+            if key == "chat_id":
+                if isinstance(value, bool) or not isinstance(value, (str, int)):
+                    raise SettingsError(f"[printers] entry {pid!r}: chat_id must be a channel ID, got {value!r}")
+                stub[key] = str(value)
+            else:
+                stub[key] = value
+        stubs.append(stub)
+    return stubs
+
+
+def _project_entry(data, stub):
+    """Fold the default (first) roster entry into the legacy singleton sections.
+
+    After this, validate()'s existing checks run on the entry exactly as they
+    run on a legacy config, and every legacy consumer reads the entry's values.
+    Connection keys the entry does not set are cleared in the vendor sections
+    (not left at a value inherited from elsewhere); the vendor validators
+    re-apply their own scalar defaults.
+    """
+    model = printer_registry.MODELS[stub["model"]]
+    printer = data.setdefault("printer", {})
+    printer["model"], printer["vendor"] = stub["model"], model.vendor.key
+    if "name" in stub:
+        printer["name"] = stub["name"]
+    # nozzle_type / tool_count are [printer] overrides: set only when the entry sets them. The
+    # defaults base is built from this entry's model (see load()), so a value already there is
+    # that model's own default — the same value a legacy config for the model resolves to.
+    for key in ("nozzle_type", "tool_count"):
+        if key in stub:
+            printer[key] = stub[key]
+    services = data.setdefault("services", {})
+    for key in ("moonraker_url", "moonraker_ws_url", "camera_snapshot_url"):
+        services[key] = stub.get(key, "")
+    # octoprint_url is an optional key, absent from the defaults tree: the legacy view only
+    # carries it when it is set, so the projection must not invent it for an entry without one.
+    if "octoprint_url" in stub:
+        services["octoprint_url"] = stub["octoprint_url"]
+    else:
+        services.pop("octoprint_url", None)
+    bambu = data.setdefault("bambu", {})
+    bambu["lan_host"], bambu["lan_serial"] = stub.get("lan_host", ""), stub.get("lan_serial", "")
+    for key in ("lan_access_code_env", "start_confirm_s"):
+        if key in stub:
+            bambu[key] = stub[key]
+        else:
+            bambu.pop(key, None)
+    prusa = data.setdefault("prusa", {})
+    prusa["link_host"] = stub.get("link_host", "")
+    if "api_key_env" in stub:
+        prusa["api_key_env"] = stub["api_key_env"]
+    else:
+        prusa.pop("api_key_env", None)
+    host = stub.get("host", "")
+    data.setdefault("elegoo_sdcp", {})["host"] = host if model.vendor.key == "elegoo_sdcp" else ""
+    data.setdefault("flashforge_stock", {})["host"] = host if model.vendor.key == "flashforge_stock" else ""
+
+
+def _capture_entry(data, stub):
+    """The resolved roster entry for a fully validated settings-shaped view.
+
+    `data` is the real settings for the default entry (or a legacy config's
+    one synthesised entry, stub=None) and a scratch view for the rest; either
+    way the per-printer values are read back out of the normalised legacy
+    sections, so the entry and the legacy view can never disagree.
+    """
+    model = printer_registry.MODELS[data["printer"]["model"]]
+    printer, services = data["printer"], data["services"]
+    bambu, prusa = data.get("bambu", {}), data.get("prusa", {})
+    if model.vendor.key == "elegoo_sdcp":
+        host = data.get("elegoo_sdcp", {}).get("host", "")
+    elif model.vendor.key == "flashforge_stock":
+        host = data.get("flashforge_stock", {}).get("host", "")
+    else:
+        host = ""
+    entry = {
+        "id": stub["id"] if stub else _printer_id_slug(printer.get("name")),
+        "model": data["printer"]["model"],
+        "name": printer.get("name") or model.label,
+        "chat_id": stub.get("chat_id", "") if stub else "",
+        "moonraker_url": services.get("moonraker_url", ""),
+        "moonraker_ws_url": services.get("moonraker_ws_url", ""),
+        "octoprint_url": services.get("octoprint_url", ""),
+        "camera_snapshot_url": services.get("camera_snapshot_url", ""),
+        "lan_host": bambu.get("lan_host", ""),
+        "lan_serial": bambu.get("lan_serial", ""),
+        "lan_access_code_env": bambu.get("lan_access_code_env", "BAMBU_LAN_PASSWORD"),
+        "start_confirm_s": bambu.get("start_confirm_s", 90),
+        "link_host": prusa.get("link_host", ""),
+        "api_key_env": prusa.get("api_key_env", "PRUSA_LINK_API_KEY"),
+        "host": host,
+    }
+    for key in ("nozzle_type", "tool_count"):
+        if key in printer:
+            entry[key] = printer[key]
+    return entry
+
+
+def _entry_default_name(model):
+    """An entry's display name when the file does not set one: the name the model's own
+    defaults give [printer] (the same string a legacy config for that model resolves to),
+    falling back to the registry label."""
+    return (model.defaults().get("printer") or {}).get("name") or model.label
+
+
+def _validate_entry_overrides(scratch, model):
+    """An entry's nozzle_type / tool_count overrides, checked as [printer]'s are in validate()."""
+    printer = scratch["printer"]
+    nozzle_type = printer.get("nozzle_type")
+    if nozzle_type is not None:
+        from .core.nozzle import NozzleError, normalize_nozzle_type
+        try:
+            norm_type = normalize_nozzle_type(nozzle_type)
+        except NozzleError as exc:
+            raise SettingsError(f"[printer] nozzle_type: {exc}") from None
+        if norm_type not in model.supported_nozzle_types:
+            supported_types = ", ".join(sorted(model.supported_nozzle_types))
+            raise SettingsError(f"[printer] nozzle_type {nozzle_type!r} is not supported by model {model.key!r} (supported: {supported_types})")
+        printer["nozzle_type"] = norm_type
+    if "tool_count" in printer:
+        printer["tool_count"] = _positive(scratch, "printer", "tool_count", int)
+        if printer["tool_count"] != 1 and not model.adapter.multi_tool:
+            raise SettingsError(f"[printer] tool_count must be 1 for model {model.key!r} (single tool)")
+
+
+def _validate_entry(stub):
+    """Validate one non-default [[printers]] entry against its own model.
+
+    The entry is rebuilt as a scratch view shaped like today's singleton
+    sections, so the existing vendor validators (which already take a model)
+    check it unchanged; the normalised entry is captured back out of the
+    scratch view, exactly as the default entry is captured from the real one.
+    """
+    model = printer_registry.MODELS[stub["model"]]
+    scratch = {
+        "printer": {"model": stub["model"], "vendor": model.vendor.key,
+                    "name": stub.get("name") or _entry_default_name(model)},
+        "services": {key: stub.get(key, "") for key in
+                     ("moonraker_url", "moonraker_ws_url", "octoprint_url", "camera_snapshot_url")},
+        "bambu": {"lan_host": stub.get("lan_host", ""), "lan_serial": stub.get("lan_serial", "")},
+        "prusa": {"link_host": stub.get("link_host", "")},
+        "elegoo_sdcp": {"host": stub.get("host", "") if model.vendor.key == "elegoo_sdcp" else ""},
+        "flashforge_stock": {"host": stub.get("host", "") if model.vendor.key == "flashforge_stock" else ""},
+    }
+    for key in ("lan_access_code_env", "start_confirm_s"):
+        if key in stub:
+            scratch["bambu"][key] = stub[key]
+    if "api_key_env" in stub:
+        scratch["prusa"]["api_key_env"] = stub["api_key_env"]
+    for key in ("nozzle_type", "tool_count"):
+        if key in stub:
+            scratch["printer"][key] = stub[key]
+    try:
+        _check_service_urls(scratch["services"])
+        _check_connection_urls(scratch["services"], model)
+        _validate_bambu_lan(scratch, model)
+        _validate_stock_lan(scratch, model)
+        _validate_prusa_link(scratch, model)
+        _validate_elegoo_sdcp(scratch, model)
+        _derive_service_urls(scratch["services"])
+        _validate_entry_overrides(scratch, model)
+    except SettingsError as exc:
+        raise SettingsError(f"[printers] entry {stub['id']!r}: {exc}") from None
+    return _capture_entry(scratch, stub)
+
+
+def _check_chat_claims(data, entries):
+    """Two entries may not claim the same channel (design §2.3): an entry's claim is its
+    own chat_id, or the global [discord] chat_id it falls back to. The routing behaviour
+    itself is Stage 2c (#335); the refusal lives here, at config level."""
+    fallback = str(data.get("discord", {}).get("chat_id") or "")
+    claims = {}
+    for entry in entries:
+        claim = entry["chat_id"] or fallback
+        if not claim:
+            continue
+        if claim in claims:
+            raise SettingsError(f"[printers] entries {claims[claim]!r} and {entry['id']!r} both claim "
+                                f"discord chat_id {claim}: give each printer its own chat_id")
+        claims[claim] = entry["id"]
+
+
+# Legacy per-printer locations a declared roster replaces, as environment names.
+_MIXED_ENV_NAMES = ("PRINT_BUDDY__PRINTER__MODEL", "PRINT_BUDDY__PRINTER__NAME",
+                    "PRINT_BUDDY__PRINTER__VENDOR", "PRINT_BUDDY__PRINTER__NOZZLE_TYPE",
+                    "PRINT_BUDDY__PRINTER__TOOL_COUNT", "PRINT_BUDDY__SERVICES__MOONRAKER_URL",
+                    "PRINT_BUDDY__SERVICES__MOONRAKER_WS_URL", "PRINT_BUDDY__SERVICES__OCTOPRINT_URL",
+                    "PRINT_BUDDY__SERVICES__CAMERA_SNAPSHOT_URL", "PRINT_BUDDY__BAMBU__LAN_HOST",
+                    "PRINT_BUDDY__BAMBU__LAN_SERIAL", "PRINT_BUDDY__BAMBU__START_CONFIRM_S",
+                    "PRINT_BUDDY__PRUSA__LINK_HOST", "PRINT_BUDDY__ELEGOO_SDCP__HOST",
+                    "PRINT_BUDDY__FLASHFORGE_STOCK__HOST", "MOONRAKER_URL", "MOONRAKER_WS_URL")
+_MIXED_ENV_DEFAULTED = (("PRINT_BUDDY__BAMBU__LAN_ACCESS_CODE_ENV", "BAMBU_LAN_PASSWORD"),
+                        ("PRINT_BUDDY__PRUSA__API_KEY_ENV", "PRUSA_LINK_API_KEY"))
+
+
+def _check_mixed_shape(extra, environ):
+    """Refuse a config that declares [[printers]] AND sets legacy per-printer locations.
+
+    Only the operator's own layers are checked — the local file and the
+    environment. The shipped defaults tree (config/home.yaml) always carries
+    legacy values; those are the base the roster replaces, not a second
+    roster. The refusal names every offending location.
+    """
+    def section(name):
+        values = extra.get(name)
+        return values if isinstance(values, dict) else {}
+
+    offenders = []
+    printer = section("printer")
+    for key in ("model", "name", "vendor"):
+        if printer.get(key):
+            offenders.append(f"[printer] {key}")
+    for key in ("nozzle_type", "tool_count"):
+        if printer.get(key) is not None:
+            offenders.append(f"[printer] {key}")
+    services = section("services")
+    for key in ("moonraker_url", "moonraker_ws_url", "octoprint_url", "camera_snapshot_url"):
+        if services.get(key):
+            offenders.append(f"[services] {key}")
+    bambu = section("bambu")
+    for key in ("lan_host", "lan_serial"):
+        if bambu.get(key):
+            offenders.append(f"[bambu] {key}")
+    if bambu.get("lan_access_code_env") not in (None, "", "BAMBU_LAN_PASSWORD"):
+        offenders.append("[bambu] lan_access_code_env")
+    if bambu.get("start_confirm_s") is not None:
+        offenders.append("[bambu] start_confirm_s")
+    prusa = section("prusa")
+    if prusa.get("link_host"):
+        offenders.append("[prusa] link_host")
+    if prusa.get("api_key_env") not in (None, "", "PRUSA_LINK_API_KEY"):
+        offenders.append("[prusa] api_key_env")
+    if section("elegoo_sdcp").get("host"):
+        offenders.append("[elegoo_sdcp] host")
+    if section("flashforge_stock").get("host"):
+        offenders.append("[flashforge_stock] host")
+    for name in _MIXED_ENV_NAMES:
+        if environ.get(name):
+            offenders.append(f"${name}")
+    for name, default in _MIXED_ENV_DEFAULTED:
+        value = environ.get(name)
+        if value and value != default:
+            offenders.append(f"${name}")
+    if offenders:
+        raise SettingsError("[[printers]] is declared, so the legacy per-printer settings must be "
+                            "absent or empty; move these into the [[printers]] entry they belong to: "
+                            + ", ".join(offenders))
 
 
 BOT_MODES = ("hermes", "standalone")
@@ -629,6 +1004,13 @@ def _validate_bot(data):
 
 def validate(data):
     """Normalize types and fail loudly on a typo instead of slicing with a bad bed."""
+    # [[printers]] (#333): an explicit roster projects its first (default) entry into the legacy
+    # singleton sections, so every check below validates that entry exactly as it validates a
+    # legacy config; the resolved roster itself is captured once those sections are normalised.
+    raw_roster = data.pop("printers", None)
+    stubs = _check_roster(raw_roster) if raw_roster is not None else None
+    if stubs is not None:
+        _project_entry(data, stubs[0])
     material_temps = data.setdefault("material_temps", {})
     for family, defaults in DEFAULT_MATERIAL_TEMPS.items():
         profile = material_temps.setdefault(family, defaults.copy())
@@ -652,7 +1034,7 @@ def validate(data):
             raise SettingsError(f"[nozzle_temp_offsets] {name} must be between -10 and +15 °C, got {raw_offset!r}")
         data["nozzle_temp_offsets"][name] = float(raw_offset)
     key = _model_key(data["printer"].get("model"), data["printer"].get("vendor"))
-    model = printers.MODELS[key]
+    model = printer_registry.MODELS[key]
     data["printer"]["model"], data["printer"]["vendor"] = key, model.vendor.key
     nozzle_size = data["printer"]["nozzle_diameter_mm"]
     if nozzle_size not in model.supported_nozzle_sizes:
@@ -695,22 +1077,23 @@ def validate(data):
         if not isinstance(command, list) or not command or not all(isinstance(v, str) and v for v in command):
             raise SettingsError(f"[{section}] command must be a list of strings, like [\"flatpak\", \"run\", \"com.orcaslicer.OrcaSlicer\"]")
     services = data["services"]
-    for key, value in services.items():
-        if key.endswith("_url") and value and not value.startswith(("ws://", "wss://") if key == "moonraker_ws_url" else ("http://", "https://")):
-            raise SettingsError(f"[services] {key} must be a URL, got {value!r}")
-    if model.vendor.connection in ("offline", "bambulab_lan", "flashforge_stock", "prusalink", "elegoo_sdcp") and (services["moonraker_url"] or services.get("octoprint_url")):
-        # The listener, /print-stop and /print-resume would otherwise act on whatever answers at that URL.
-        raise SettingsError(f"[services] moonraker_url and octoprint_url must be empty for model {model.key!r}: "
-                            "Print Buddy has no Moonraker or OctoPrint connection to it")
+    _check_service_urls(services)
+    _check_connection_urls(services, model)
     _validate_bambu_lan(data, model)
     _validate_stock_lan(data, model)
     _validate_prusa_link(data, model)
     _validate_elegoo_sdcp(data, model)
-    if services["moonraker_url"]:
-        base = services["moonraker_url"].rstrip("/")
-        host = base.split("://", 1)[1].split("/", 1)[0].rsplit(":", 1)[0]
-        services["moonraker_ws_url"] = services["moonraker_ws_url"] or base.replace("http", "ws", 1) + "/websocket"
-        services["camera_snapshot_url"] = services["camera_snapshot_url"] or f"http://{host}/webcam/?action=snapshot"
+    _derive_service_urls(services)
+    # The legacy per-printer sections are now fully normalised, so the roster is captured from
+    # them: the default entry IS the legacy view, further entries are validated against their
+    # own models, and a legacy config synthesises its single entry here (#333).
+    if stubs is not None:
+        entries = [_capture_entry(data, stubs[0])]
+        entries.extend(_validate_entry(stub) for stub in stubs[1:])
+        _check_chat_claims(data, entries)
+    else:
+        entries = [_capture_entry(data, None)]
+    data["printers"] = entries
     for key, value in data["paths"].items():
         if key == "ffmpeg" and "/" not in value:
             continue  # a bare name is looked up on PATH
@@ -765,16 +1148,27 @@ def load(home=None, local=None, environ=None):
         elif LEGACY_LOCAL.is_file():
             local = LEGACY_LOCAL
     extra = _read(local) if local else {}
+    declared = _merge(home_data, extra).get("printers")
+    if declared is not None:
+        # A declared roster replaces the legacy per-printer locations; setting both is refused
+        # with the offenders named (#333). Only the operator's layers are checked: home.yaml's
+        # own legacy values are the defaults base, not a second roster.
+        _check_mixed_shape(extra, environ)
     def pick(name):
         return (environ.get(f"PRINT_BUDDY__PRINTER__{name.upper()}") or extra.get("printer", {}).get(name)
                 or home_data.get("printer", {}).get(name))
-    key = _model_key(pick("model"), pick("vendor"))
-    data = _merge(printers.MODELS[key].defaults(), home_data)
+    first = declared[0] if isinstance(declared, list) and declared and isinstance(declared[0], dict) else None
+    if first is not None and first.get("model"):
+        # The defaults base (bed geometry, vendor sections) belongs to the default entry's model.
+        key = _model_key(first["model"])
+    else:
+        key = _model_key(pick("model"), pick("vendor"))
+    data = _merge(printer_registry.MODELS[key].defaults(), home_data)
     base = copy.deepcopy(data)
     if local:
         _check_keys(base, extra, local)
         data = _merge(data, extra)
-    data = _merge(data, _from_env(base, environ))
+    data = _merge(data, _from_env(base, environ, declared))
     return validate(data)
 
 
@@ -782,6 +1176,25 @@ def load(home=None, local=None, environ=None):
 def current():
     """Settings for this process, read once."""
     return load()
+
+
+def printers(data=None):
+    """The resolved [[printers]] roster (#333): one entry per configured printer.
+
+    The first entry is the default printer — the one the legacy singleton
+    view (data["printer"], the [services] URLs, printers.current()) is
+    populated from. Nothing consumes the roster at runtime yet; it is the
+    config model the later multi-printer stages (#334 onward) build on.
+    """
+    return list((data or current())["printers"])
+
+
+def by_id(printer_id, data=None):
+    """The roster entry with id `printer_id`; an unknown id is a SettingsError naming it."""
+    for entry in printers(data):
+        if entry["id"] == printer_id:
+            return entry
+    raise SettingsError(f"no printer with id {printer_id!r} is configured")
 
 
 def state_dir(data=None):

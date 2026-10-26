@@ -142,6 +142,36 @@ Schema, validation limits and TOML migration: [CONFIGURATION-YAML.md](CONFIGURAT
 | `material_temps.<MATERIAL>` | file only | see `config/home.yaml` | `{nozzle, bed}` fallback temperatures for PLA, PETG, ABS, ASA, TPU, PA, PC; Spoolman filament values win |
 | `cold_pull.<profile>` | file only | from the vendor profile *model* | Hot and cold cold-pull temperatures; profile names are yours |
 
+## Printers list
+
+By default Print Buddy runs one printer, described by the `[printer]`, `[services]`, `[bambu]`, `[prusa]`, `[elegoo_sdcp]` and `[flashforge_stock]` settings above. A config file may instead declare a **list of printers** — `printers:` in YAML, `[[printers]]` in TOML — one entry per printer, each carrying its own connection keys (#333; design: [MULTI-PRINTER-DESIGN.md](MULTI-PRINTER-DESIGN.md)). The list itself is file only: it cannot come from the environment.
+
+The **first entry is the default printer**: the legacy single-printer settings are populated from it, so everything that reads `[printer]`, the `[services]` URLs or a vendor section sees the first entry. When a list is declared, the legacy per-printer locations must be absent or empty in the same file and in the environment — setting both is refused at startup, with the offending locations named. A config with no list behaves exactly as before: loading synthesises a one-entry roster from the legacy settings, its `id` the slug of `printer.name` (or `printer` when there is no name).
+
+Each entry is validated against its own model with the same rules as the legacy sections: a Bambu entry may not carry a Moonraker URL, `lan_host` and `lan_serial` come as a pair, a `host` belongs only to Elegoo SDCP and stock Flashforge entries, and so on. Two entries may not share an `id`, and two entries may not claim the same `chat_id` (an entry without one falls back to `discord.chat_id`).
+
+Scalar keys of a *declared* entry can be overridden from the environment with the indexed spelling `PRINT_BUDDY__PRINTERS__<ID>__<KEY>` — the entry's `id` uppercased in the `<ID>` position, the key in the `<KEY>` position. The environment can never create an entry, and `id` and `model` cannot be overridden: they are the entry's identity in the file.
+
+| YAML key | Environment variable | Docker value | What it does |
+|---|---|---|---|
+| `printers.id` | file only | — | Required. The printer's stable identity: a slug of `a-z`, `0-9`, `-` and `_` starting with a letter or digit, unique in the list. Renaming an `id` makes it a different printer as far as its state is concerned |
+| `printers.model` | file only | — | Required. A registry model key, spelled exactly as `printer.model` |
+| `printers.name` | `PRINT_BUDDY__PRINTERS__<ID>__NAME` | — | Display name for this printer; defaults to the name the model's own defaults give `printer.name` |
+| `printers.chat_id` | `PRINT_BUDDY__PRINTERS__<ID>__CHAT_ID` | — | This printer's Discord channel ID; empty falls back to `discord.chat_id`. Two entries may not claim the same channel |
+| `printers.moonraker_url` | `PRINT_BUDDY__PRINTERS__<ID>__MOONRAKER_URL` | — | This entry's `services.moonraker_url`; must be empty for offline, Bambu LAN, stock Flashforge, PrusaLink and SDCP models |
+| `printers.moonraker_ws_url` | `PRINT_BUDDY__PRINTERS__<ID>__MOONRAKER_WS_URL` | — | This entry's `services.moonraker_ws_url`; derived from `moonraker_url` when empty |
+| `printers.octoprint_url` | `PRINT_BUDDY__PRINTERS__<ID>__OCTOPRINT_URL` | — | This entry's `services.octoprint_url`, for OctoPrint models |
+| `printers.camera_snapshot_url` | `PRINT_BUDDY__PRINTERS__<ID>__CAMERA_SNAPSHOT_URL` | — | This entry's `services.camera_snapshot_url`; derived from `moonraker_url` when empty |
+| `printers.lan_host` | `PRINT_BUDDY__PRINTERS__<ID>__LAN_HOST` | — | This entry's `bambu.lan_host` (Bambu Lab models only); set together with `lan_serial` |
+| `printers.lan_serial` | `PRINT_BUDDY__PRINTERS__<ID>__LAN_SERIAL` | — | This entry's `bambu.lan_serial` (Bambu Lab models only); set together with `lan_host` |
+| `printers.lan_access_code_env` | `PRINT_BUDDY__PRINTERS__<ID>__LAN_ACCESS_CODE_ENV` | — | This entry's `bambu.lan_access_code_env`: the environment variable holding the printer's LAN access code |
+| `printers.start_confirm_s` | `PRINT_BUDDY__PRINTERS__<ID>__START_CONFIRM_S` | — | This entry's `bambu.start_confirm_s` |
+| `printers.link_host` | `PRINT_BUDDY__PRINTERS__<ID>__LINK_HOST` | — | This entry's `prusa.link_host` (Prusa models only) |
+| `printers.api_key_env` | `PRINT_BUDDY__PRINTERS__<ID>__API_KEY_ENV` | — | This entry's `prusa.api_key_env`: the environment variable holding the PrusaLink API key |
+| `printers.host` | `PRINT_BUDDY__PRINTERS__<ID>__HOST` | — | This entry's `elegoo_sdcp.host` or `flashforge_stock.host`, chosen by the entry's model; no other model takes a `host` |
+| `printers.nozzle_type` | `PRINT_BUDDY__PRINTERS__<ID>__NOZZLE_TYPE` | — | This entry's `printer.nozzle_type` override, limited to the model's supported types |
+| `printers.tool_count` | `PRINT_BUDDY__PRINTERS__<ID>__TOOL_COUNT` | — | This entry's `printer.tool_count` override, for multi-tool models |
+
 ## Compose variables
 
 These configure the Compose deployment, not Print Buddy itself. Set them in `.env`.

@@ -1,14 +1,15 @@
 """Bambu Lab A1 with the real Orca CLI: profiles generated from the installed OrcaSlicer, the production slice path,
 the A1 guards on real output, the baseline proposal.
 
-Skipped unless PRINT_BUDDY_REAL_SLICER=1; CI's real-slicer jobs run tests/slicer with the Flathub OrcaSlicer 2.4.2
-and the pinned 2.5.0-alpha bundle. The A1 templates are generated (profiles.install, production identities only)
-from that OrcaSlicer's own resources folder: PB_ORCA_RESOURCES, else the Flatpak's install location. OrcaSlicer
-2.5 packs its vendor profiles (BBL.opc); the A1 refuses to generate from it, which test_packed_profiles_fail_closed
-records, and the slicing tests skip with that reason. Locally: PRINT_BUDDY_REAL_SLICER=1 python3 -m pytest -s
-tests/slicer/test_orca_real_bambu_a1.py with a supported OrcaSlicer as the configured [orca] command (PB_ORCA_CMD
-overrides it). Printed lines record the slicer version, profile identity, effective settings and exact toolpath
-bounds for the review log.
+Skipped unless PRINT_BUDDY_REAL_SLICER=1; CI's real-slicer jobs run tests/slicer with the pinned
+OrcaSlicer v2.5.0-alpha bundle (#356: the shipped slicer). The A1 templates are generated
+(profiles.install, production identities only) from that OrcaSlicer's own resources folder:
+PB_ORCA_RESOURCES, else the Flatpak's install location. OrcaSlicer 2.5 packs its vendor profiles
+into a preset cache (BBL.opc); print_buddy reads the cache directly (preset_cache), which
+test_generation_from_the_installed_tree records. Locally: PRINT_BUDDY_REAL_SLICER=1 python3 -m
+pytest -s tests/slicer/test_orca_real_bambu_a1.py with a supported OrcaSlicer as the configured
+[orca] command (PB_ORCA_CMD overrides it). Printed lines record the slicer version, profile
+identity, effective settings and exact toolpath bounds for the review log.
 """
 import json
 import os
@@ -67,8 +68,6 @@ def adapter_for(key, hermes=None):
 @pytest.fixture
 def a1(work):
     """The A1 adapter with templates generated from the installed OrcaSlicer (production identities only)."""
-    if packed():
-        pytest.skip("this OrcaSlicer packs its vendor profiles (BBL.opc); A1 profile generation refuses it")
     adapter = adapter_for("bambulab.a1", work / "hermes")
     known = profiles.install(adapter, installed_resources())
     print(f"\nA1 profiles: {known['label']} from {installed_resources()}")
@@ -120,11 +119,13 @@ def textured_plate_patterns(start):
     return guard.template_patterns(branch.group(1))
 
 
-def test_packed_profiles_fail_closed(work):
-    if not packed():
-        pytest.skip("this OrcaSlicer ships JSON vendor profiles")
-    with pytest.raises(profiles.ProfileError, match="packed vendor profiles"):
-        profiles.install(adapter_for("bambulab.a1", work / "hermes"), installed_resources())
+def test_generation_from_the_installed_tree(work):
+    """#356: generation works from whichever layout the installed OrcaSlicer ships: the JSON
+    vendor tree, or (OrcaSlicer 2.5+) the packed preset cache — the recorded identity says which."""
+    adapter = adapter_for("bambulab.a1", work / "hermes")
+    known = profiles.install(adapter, installed_resources())
+    print(f"\nA1 generated from {installed_resources()}: {known['label']}")
+    assert ("packed cache" in known["label"]) == packed()
 
 
 def test_motion_envelope_covers_every_literal_vendor_move(a1):

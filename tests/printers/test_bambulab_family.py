@@ -74,16 +74,20 @@ def test_model_registration_and_defaults(key):
 @pytest.mark.parametrize("key", sorted(MODELS))
 def test_recorded_identity_is_a_real_pin(key):
     f = model_facts(key)
-    (known,) = f["orca_identity"].value
-    assert known["vendor_version"] == "02.01.00.19"
-    assert set(known["sha256"]) == {"machine", "process", "filament"}
-    for digest in known["sha256"].values():
-        assert re.fullmatch(r"[0-9a-f]{64}", digest)
+    entries = f["orca_identity"].value
+    # One pin per checked packaging (#356): OrcaSlicer 2.4.2's JSON tree, then
+    # 2.5.0-alpha's tree and its packed preset cache, which flatten differently.
+    assert [known["vendor_version"] for known in entries] == ["02.01.00.19", "02.08.00.15", "02.08.00.15"]
+    assert "packed cache" in entries[2]["label"] and "packed" not in entries[1]["label"]
+    for known in entries:
+        assert set(known["sha256"]) == {"machine", "process", "filament"}
+        for digest in known["sha256"].values():
+            assert re.fullmatch(r"[0-9a-f]{64}", digest)
     names = f["orca_profiles"].value
     assert names["machine"] == f"{f['printer_model'].value} 0.4 nozzle"
-    # The invented fixture must NOT match the recorded identity: install refuses it
-    # until a test swaps the identity in, which proves the pin is checked.
-    assert fixture.identity(f)["sha256"] != known["sha256"]
+    # The invented fixture must NOT match any recorded identity: install refuses it
+    # until a test swaps the identity in, which proves the pins are checked.
+    assert all(fixture.identity(f)["sha256"] != known["sha256"] for known in entries)
 
 
 @pytest.mark.parametrize("key", sorted(MODELS))

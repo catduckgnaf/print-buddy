@@ -26,7 +26,7 @@ class Fact:
 
 # OrcaSlicer release whose BBL vendor profiles were checked: (tag, commit). A provenance reference only; the
 # profiles (AGPL-3.0) are not in this repository. See docs/BAMBU-LAB.md "Provenance and licence".
-ORCA_RELEASE = ("v2.4.2", "8500fcdccaa10b5099ac20d252af3a7c560046f1")
+ORCA_RELEASE = ("v2.5.0-alpha", "3880f2c58ec392ed2bd5938ab31c9c7c496c0eb2")
 ORCA_PROFILE_ROOT = "resources/profiles/BBL"
 # Print Buddy's only changes to the flattened vendor profiles, by kind. The shared post-slice guard allows only
 # Normal Lift and no arc fitting; settings IDs let it match the effective settings Orca writes back.
@@ -39,6 +39,13 @@ ORCA_OVERRIDES = {
     "filament": {"filament_colour": ["#FFFFFF"], "filament_z_hop_types": ["Normal Lift"]},
 }
 SETTINGS_IDS = {"machine": "printer_settings_id", "process": "print_settings_id", "filament": "filament_settings_id"}
+
+# The 2.5.0-alpha identities recorded below come in two packagings per model: the JSON tree
+# a source checkout serves, and the packed preset cache (profiles/BBL.opc) an installed
+# OrcaSlicer 2.5+ serves. Orca's cache build applies its option renames and drops options
+# its config definitions do not know, so the packagings flatten differently.
+_IDENTITY_LABEL_25A = "OrcaSlicer 2.5.0-alpha (BBL vendor profiles 02.08.00.15)"
+_IDENTITY_LABEL_25A_PACKED = "OrcaSlicer 2.5.0-alpha (BBL vendor profiles 02.08.00.15, packed cache)"
 
 # Vendor-wide claims, documented here only; VENDOR holds the behaviour.
 VENDOR_FACTS = {
@@ -72,7 +79,25 @@ A1 = {
         "filaments": {"Generic PETG @BBL A1": "eb5c733468d29eb92ae2f0176b65880a6880e1ccc38ea91cd7de9e536fffc4d4",
                       "Generic TPU @BBL A1": "d30fd112cfbfdcc79e8946c6874354d20f41a72353e65566bf5888c1eaaea8c9",
                       "Generic PVA @BBL A1": "1974432a9cc01611daea0b34759fb3284ae1aa4d204114b3ead8ee2ded28dc80"},
-    },), "ORCA", True),
+    }, {
+        "label": _IDENTITY_LABEL_25A,
+        "vendor_version": "02.08.00.15",
+        "sha256": {"machine": "982b916f4f6ed74ca380cbf0d9738c65d6cbe144310c17b02c0266d702adf5f6",
+                   "process": "cac0280f0ad75060d5930d96ad73d192859ee818daf312fb3e2718c914b6c14a",
+                   "filament": "64846c80d1b94a90f41a1026e7103f1d372514e2f94e33fdc003b4d51f202e0b"},
+        "filaments": {"Generic PETG @BBL A1": "a9dcd1a3adccd30c8b0c61fd1b83759657f92ab58119372c1c6faf6b90ed4915",
+                      "Generic PVA @BBL A1": "965e1ee07a0f342ca72b54af5992c772a1a4ee0d79bb71833a3d6bb9724c1cfc",
+                      "Generic TPU @BBL A1": "a945ed4f30f4e949287b37803c01a1cbcd56dcd7f383fff792d985cb6e7bd2f1"}
+    }, {
+        "label": _IDENTITY_LABEL_25A_PACKED,
+        "vendor_version": "02.08.00.15",
+        "sha256": {"machine": "d121f19dd6a78ccff3ccc19131579ef1f7d04ac57730565cc97ae2d57b754c95",
+                   "process": "70e676b3b06f6468dd0fe51cc5f8629871896121efbf280ad1bcfda01caacf33",
+                   "filament": "762a61b2f6473216631fc946d7857ae0a363066f34df366bbef0aea92e53c173"},
+        "filaments": {"Generic PETG @BBL A1": "657d44a63229e52b00290484828cf4a366ef0b40abf87e7e6431e35a85ea2736",
+                      "Generic PVA @BBL A1": "971372674affbc3434155859c32401b10c522e92b4ff1623da5c7e73735a4f9a",
+                      "Generic TPU @BBL A1": "f5c6fc63f9d62c2e214563791a9d1db1b6edfc2d2b03cae3c9d3eece026fa99a"}
+    }), "ORCA", True),
     # printable_area 0x0..256x256 and printable_height 256; Bambu also publishes 256 x 256 x 256 mm.
     "bed_mm": Fact((256.0, 256.0), "ORCA", True),
     "max_print_height_mm": Fact(256.0, "ORCA", True),
@@ -98,14 +123,18 @@ A1 = {
 }
 
 
-# P1S system profiles selected from the checked OrcaSlicer BBL index. The selected process and filament are the
-# P1S machine profile's actual 0.20 mm / PLA defaults; the X1C profiles explicitly list P1S compatibility.
+# P1S system profiles selected from the checked OrcaSlicer BBL index. The selected process is the
+# P1S machine profile's actual 0.20 mm default (an X1C profile). The default filament was the X1C
+# PLA profile under 2.4.2, which listed P1S compatibility; 2.5.0-alpha dropped the P1S from that
+# profile and added a dedicated P1S one, which is the checked name below — so the recorded 2.4.2
+# identity now serves folders already generated from it, and generation needs 2.5.0-alpha.
 P1S = {
     "printer_model": Fact("Bambu Lab P1S", "ORCA", True),
     "orca_profiles": Fact({"machine": "Bambu Lab P1S 0.4 nozzle", "process": "0.20mm Standard @BBL X1C",
-                           "filament": "Bambu PLA Basic @BBL X1C"}, "ORCA", True),
-    # As on the A1 (#264), from the same Bambu-branded X1C family as the default PLA profile; each lists the P1S.
-    "orca_filaments": Fact({"PLA": "Bambu PLA Basic @BBL X1C", "PETG": "Bambu PETG Basic @BBL X1C",
+                           "filament": "Bambu PLA Basic @BBL P1S 0.4 nozzle"}, "ORCA", True),
+    # As on the A1 (#264). The PETG/TPU/PVA profiles are the Bambu-branded X1C family; each still
+    # lists the P1S in the 2.5.0-alpha tree. The PLA profile is the default above.
+    "orca_filaments": Fact({"PLA": "Bambu PLA Basic @BBL P1S 0.4 nozzle", "PETG": "Bambu PETG Basic @BBL X1C",
                             "TPU": "Bambu TPU 95A @BBL X1C", "PVA": "Bambu PVA @BBL X1C"}, "ORCA", True),
     "orca_identity": Fact(({
         "label": "OrcaSlicer 2.4.2 (BBL vendor profiles 02.01.00.19)",
@@ -116,7 +145,25 @@ P1S = {
         "filaments": {"Bambu PETG Basic @BBL X1C": "dbf3b8e6a26bd2a9202b97e3f0501219c4883caf639b950757050ef6a0004d60",
                       "Bambu TPU 95A @BBL X1C": "e01de656a3c239354f989b625c0411f209f5779ed60c2190f0532cf5de0ee245",
                       "Bambu PVA @BBL X1C": "619f13393e86b02f8613c8a9c5bf7cd79793a4262068f1355bb935765702dfcf"},
-    },), "ORCA", True),
+    }, {
+        "label": _IDENTITY_LABEL_25A,
+        "vendor_version": "02.08.00.15",
+        "sha256": {"machine": "06b95a4f135d60354f4fcf40a58f7bc42488bac87d23a725c12d98bcd86c10e7",
+                   "process": "e84477df8e71b87ee3a0161ebf96c5b7587eec3d9e8fdc0d080d18058b0bdc15",
+                   "filament": "ac0e13bc450f16258e22fcc4d079d125a4a7483a66e2b30bd0cb042cb16433db"},
+        "filaments": {"Bambu PETG Basic @BBL X1C": "ef6d3405e1d22983670d782d421099dd587337307ba1c824c11aacac04479559",
+                      "Bambu PVA @BBL X1C": "c24079a4ddd4973aa438963647957a4323933ace6f8f6977b4566e40c69a04cb",
+                      "Bambu TPU 95A @BBL X1C": "7f87a5c5cdead8963ca7c33d7b5c3741d3d62b630d345856f3af60c507bb1eae"}
+    }, {
+        "label": _IDENTITY_LABEL_25A_PACKED,
+        "vendor_version": "02.08.00.15",
+        "sha256": {"machine": "d680536a52477d09a04ca1c6bb61745278ae3426b4beb94a91b3370bfd6a3bb7",
+                   "process": "9418fb34abdb33a94050f6c5215ac151f3d93a326728c2128d909a76269db36e",
+                   "filament": "131be523c92dc278e1975f46f1767cb906081d25f9800e1f1e1cb8116a619ec8"},
+        "filaments": {"Bambu PETG Basic @BBL X1C": "dc3bc18e1f0b3e399b552541928598e4e74b0d009bbc1e8eef99a3edc2a2cd4a",
+                      "Bambu PVA @BBL X1C": "2753beff2620b47767fed31ed13b817e401de3ce3fe0e407b3b2525c9228b183",
+                      "Bambu TPU 95A @BBL X1C": "d9f049a97aa7579bd84825a190558995d172de6ef1c74bc6019e26dee29a1302"}
+    }), "ORCA", True),
     "bed_mm": Fact((256.0, 256.0), "BAMBU", True),
     "max_print_height_mm": Fact(256.0, "BAMBU", True),
     # Orca's conservative machine profile limits slices to Z=250 although Bambu lists a 256 mm volume.
@@ -141,7 +188,7 @@ P1S = {
 
 # --- #127 Stage 1: the remaining single-nozzle models ---------------------------------------------
 # Same derivation as A1/P1S: profile names and identities computed by running profiles.flatten +
-# profiles.sha256 over OrcaSlicer v2.4.2 at ORCA_RELEASE (the pipeline reproduces the A1 and P1S
+# profiles.sha256 over the pinned OrcaSlicer releases (the pipeline reproduces the A1 and P1S
 # identities above exactly). Motion envelopes are DERIVED the A1 way: extremes of the literal XY
 # moves in the flattened vendor start/end/timelapse/change-filament blocks, widened to cover the
 # bed. Dual-nozzle models (H2D, H2D Pro, X2D) are in the Stage 2 section below (#308): their
@@ -152,18 +199,28 @@ P1S = {
 _IDENTITY_LABEL = "OrcaSlicer 2.4.2 (BBL vendor profiles 02.01.00.19)"
 
 
-def _identity(machine, process, filament):
-    return Fact(({"label": _IDENTITY_LABEL, "vendor_version": "02.01.00.19",
-                  "sha256": {"machine": machine, "process": process, "filament": filament}},), "ORCA", True)
+def _entry(label, vendor_version, machine, process, filament):
+    return {"label": label, "vendor_version": vendor_version,
+            "sha256": {"machine": machine, "process": process, "filament": filament}}
+
+
+def _identities(release_242, alpha_tree, alpha_packed):
+    """The checked identities for a model, oldest first: OrcaSlicer 2.4.2's JSON tree, then
+    OrcaSlicer 2.5.0-alpha's tree and its packed preset cache. The two 2.5 packagings flatten
+    differently (the cache applies Orca's option renames and drops unknown options), so each
+    carries its own hashes; templates generated from any of them stay valid."""
+    return Fact((_entry(_IDENTITY_LABEL, "02.01.00.19", *release_242),
+                 _entry(_IDENTITY_LABEL_25A, "02.08.00.15", *alpha_tree),
+                 _entry(_IDENTITY_LABEL_25A_PACKED, "02.08.00.15", *alpha_packed)), "ORCA", True)
 
 
 A1MINI = {
     "printer_model": Fact("Bambu Lab A1 mini", "ORCA", True),
     "orca_profiles": Fact({"machine": "Bambu Lab A1 mini 0.4 nozzle", "process": "0.20mm Standard @BBL A1M",
                            "filament": "Bambu PLA Basic @BBL A1M"}, "ORCA", True),
-    "orca_identity": _identity("044aaabe61a992dd5611ac4b58d91ab3f17f71213fb07d6d61092b87d55a7d7a",
-                               "6e04aa942c3afb3f112ae98c9b418e67c2a8c1f50f655b29394b01748fe24a17",
-                               "1567b1027fe09e6adac7347b77eca107e1677aae9935b9d2e076fb034649ef2e"),
+    "orca_identity": _identities(("044aaabe61a992dd5611ac4b58d91ab3f17f71213fb07d6d61092b87d55a7d7a", "6e04aa942c3afb3f112ae98c9b418e67c2a8c1f50f655b29394b01748fe24a17", "1567b1027fe09e6adac7347b77eca107e1677aae9935b9d2e076fb034649ef2e"),
+                                 ("c73aad55e349ea8762bba56744e62e10d65946d68a9d61fa1ee3b2a7de03dfc1", "72bddeffb89aae83373bbfd8848ff8fb7efe5dfdd9643b37e0dee697de816978", "ce98149758d7abdf93c99a10ca4f03388cf7ed2ddfdef56f9dd3c9a5d65a0561"),
+                                 ("cc9d2ed2507c11543837b9ed722b5ddd9e96f04c7f9451849a3911db742d81aa", "1d366be667115e0a5e275f0c1a03ba433f1a86e9e6ad0d49355a1b9d61e1ff49", "b27fe07d92fcd20fee2f1ef536d8adc7116bca9907e1a73db0e4453b8ef381c2")),
     "bed_mm": Fact((180.0, 180.0), "ORCA", True),
     "max_print_height_mm": Fact(180.0, "ORCA", True),
     "bed_exclude_area": Fact((), "ORCA", True),
@@ -185,9 +242,9 @@ P1P = {
     "printer_model": Fact("Bambu Lab P1P", "ORCA", True),
     "orca_profiles": Fact({"machine": "Bambu Lab P1P 0.4 nozzle", "process": "0.20mm Standard @BBL P1P",
                            "filament": "Bambu PLA Basic @BBL P1P"}, "ORCA", True),
-    "orca_identity": _identity("511d2d5a976e36d2e2d2009efe352668a40113a3207b1f40a3970d4e28d52706",
-                               "359b0093641490765cd659320eb8ddfcaf72904c4ee7e9b39758da932754e92f",
-                               "228c186abd2a0e25cc30dd41d19a55fc88e0fa8c89870eed51924efe4db1249e"),
+    "orca_identity": _identities(("511d2d5a976e36d2e2d2009efe352668a40113a3207b1f40a3970d4e28d52706", "359b0093641490765cd659320eb8ddfcaf72904c4ee7e9b39758da932754e92f", "228c186abd2a0e25cc30dd41d19a55fc88e0fa8c89870eed51924efe4db1249e"),
+                                 ("ab75923826b4ec70908c8f4f74056a8654c2140bc86b6814b0935d542359ae80", "6c68c40619a3e40ee553759ada5a5555b5a7007378cbee5d6f4c4fb26f86f307", "95023034bed1d3c9545b398d34003302ab821ab4123619026697512295e9acbb"),
+                                 ("23f6946de5af6de2f8e28722ba07c088787f58c75b95bbec11a15e2ba8823199", "67013eefd251b38fa319e0fee85301f9ddafa9626a86d0d4308caa43218ce47b", "f4b9720450d21b4da0d9a8c32eae059ba2d95f0d654a27decaeaffeb7258721c")),
     "bed_mm": Fact((256.0, 256.0), "ORCA", True),
     "max_print_height_mm": Fact(256.0, "BAMBU", False),
     "orca_profile_height_mm": Fact(250.0, "ORCA", True),
@@ -231,9 +288,9 @@ X1 = {
     "printer_model": Fact("Bambu Lab X1", "ORCA", True),
     "orca_profiles": Fact({"machine": "Bambu Lab X1 0.4 nozzle", "process": "0.20mm Standard @BBL X1C",
                            "filament": "Bambu PLA Basic @BBL X1"}, "ORCA", True),
-    "orca_identity": _identity("8ab80fbf8f84e2962e5dd6f9b2c41955152ccfb27ad1bd592f860d7430720346",
-                               "bc4e02dad296e7584bf12143276bbbe2debf73f390f7e6dd2ec2aeac9e3d3c14",
-                               "df9074c5777e7a2cf0f3b73c54ebd8c9cf8dc2782f04b4698b10974039f5db19"),
+    "orca_identity": _identities(("8ab80fbf8f84e2962e5dd6f9b2c41955152ccfb27ad1bd592f860d7430720346", "bc4e02dad296e7584bf12143276bbbe2debf73f390f7e6dd2ec2aeac9e3d3c14", "df9074c5777e7a2cf0f3b73c54ebd8c9cf8dc2782f04b4698b10974039f5db19"),
+                                 ("45868aaf5548955e4eb3d000aeb2df28de4f275dabf371871cd3cd21c2c8340b", "e84477df8e71b87ee3a0161ebf96c5b7587eec3d9e8fdc0d080d18058b0bdc15", "818dae7922d64e9364a8d0d2f051870a2c3e35ed97eb603f751a1b6d2620da37"),
+                                 ("133c770b30ed9ce86aaac342c6f20bf8417fd16922f5f9385d4790526728d615", "9418fb34abdb33a94050f6c5215ac151f3d93a326728c2128d909a76269db36e", "94a9f2dcf31d194ee9b5f23dc3ff4c7c1749b56dcf18f17601f4a0936b620f40")),
     "stock_nozzle": Fact((0.4, "stainless_steel"), "ORCA", True),
 }
 
@@ -242,9 +299,9 @@ X1C = {
     "printer_model": Fact("Bambu Lab X1 Carbon", "ORCA", True),
     "orca_profiles": Fact({"machine": "Bambu Lab X1 Carbon 0.4 nozzle", "process": "0.20mm Standard @BBL X1C",
                            "filament": "Bambu PLA Basic @BBL X1C"}, "ORCA", True),
-    "orca_identity": _identity("c3ba8d3d84ed20abe5783cf5a54798ae35ef9cd06f84da3a60272ce08cb38396",
-                               "bc4e02dad296e7584bf12143276bbbe2debf73f390f7e6dd2ec2aeac9e3d3c14",
-                               "ff10a3d1ad9e7ed43f5dec36996248b6abb934eed6692c480732670848e0a403"),
+    "orca_identity": _identities(("c3ba8d3d84ed20abe5783cf5a54798ae35ef9cd06f84da3a60272ce08cb38396", "bc4e02dad296e7584bf12143276bbbe2debf73f390f7e6dd2ec2aeac9e3d3c14", "ff10a3d1ad9e7ed43f5dec36996248b6abb934eed6692c480732670848e0a403"),
+                                 ("1bc634e74d3f6279fd128bfaf00af4f2e6781b53e7b656cb4af92360843bd8ad", "e84477df8e71b87ee3a0161ebf96c5b7587eec3d9e8fdc0d080d18058b0bdc15", "a1f4774338164bcb7aad95caf84fdf90ca6413fe2f58a8f61aff92e46f5d08d4"),
+                                 ("ed41c845b3855281ce0d0b2b335826156210ab7c6c05a2036627813e08c3de52", "9418fb34abdb33a94050f6c5215ac151f3d93a326728c2128d909a76269db36e", "e0f9846909ae2cb55c1e832e788226ed82077c7befc8dbf387cfb9bf1d42ddd9")),
     # The X1 Carbon ships with a hardened steel hotend (Carbon = CF-ready).
     "stock_nozzle": Fact((0.4, "hardened_steel"), "ORCA", True),
 }
@@ -254,9 +311,9 @@ X1E = {
     "printer_model": Fact("Bambu Lab X1E", "ORCA", True),
     "orca_profiles": Fact({"machine": "Bambu Lab X1E 0.4 nozzle", "process": "0.20mm Standard @BBL X1C",
                            "filament": "Bambu PLA Basic @BBL X1C"}, "ORCA", True),
-    "orca_identity": _identity("75d3b7457906753319d74f2efc4d4d020154da2373ad73ca8a56a3fa506ef980",
-                               "bc4e02dad296e7584bf12143276bbbe2debf73f390f7e6dd2ec2aeac9e3d3c14",
-                               "ff10a3d1ad9e7ed43f5dec36996248b6abb934eed6692c480732670848e0a403"),
+    "orca_identity": _identities(("75d3b7457906753319d74f2efc4d4d020154da2373ad73ca8a56a3fa506ef980", "bc4e02dad296e7584bf12143276bbbe2debf73f390f7e6dd2ec2aeac9e3d3c14", "ff10a3d1ad9e7ed43f5dec36996248b6abb934eed6692c480732670848e0a403"),
+                                 ("36be52316970e3cc7bed84207d49f73c363027ea48255a7b14e6e3b996f2d3a0", "e84477df8e71b87ee3a0161ebf96c5b7587eec3d9e8fdc0d080d18058b0bdc15", "a1f4774338164bcb7aad95caf84fdf90ca6413fe2f58a8f61aff92e46f5d08d4"),
+                                 ("e7ca63c57c1d9419eecf2d05e51f57736ef71f81f0c013cc1869682451bb8827", "9418fb34abdb33a94050f6c5215ac151f3d93a326728c2128d909a76269db36e", "e0f9846909ae2cb55c1e832e788226ed82077c7befc8dbf387cfb9bf1d42ddd9")),
     "stock_nozzle": Fact((0.4, "hardened_steel"), "ORCA", True),
 }
 
@@ -264,9 +321,9 @@ P2S = {
     "printer_model": Fact("Bambu Lab P2S", "ORCA", True),
     "orca_profiles": Fact({"machine": "Bambu Lab P2S 0.4 nozzle", "process": "0.20mm Standard @BBL P2S",
                            "filament": "Bambu PLA Basic @BBL P2S"}, "ORCA", True),
-    "orca_identity": _identity("85e88eba88cb41d79620b99e7483bed8c6e94106089611f7ba17f2b998b3615e",
-                               "363db4359eb29d59313749d0d56b5985041ecd56cb5ed6f75626223b1c4199e9",
-                               "9dae1470940aaa6dfdd354644342722b675c8ae8c6805c3b109def21aba50d7c"),
+    "orca_identity": _identities(("85e88eba88cb41d79620b99e7483bed8c6e94106089611f7ba17f2b998b3615e", "363db4359eb29d59313749d0d56b5985041ecd56cb5ed6f75626223b1c4199e9", "9dae1470940aaa6dfdd354644342722b675c8ae8c6805c3b109def21aba50d7c"),
+                                 ("33852ae821a14d14d9822e0f31d2a1d2696c069dba17ac15618767d0d5ac80f4", "a6ea5ba26c140c5afe4595221bedb36fb3f4baa0a8cf3d3ad6d16319153a5e37", "54cfdfcae02170bf4aefdf7d279eb27244abf47fc8a372e1fe3c9ec67e1085a5"),
+                                 ("4683d0289ae67c03a1de311fcf7c974a118d07d2b27a1b8a7666f717da7c511f", "3a095f9ce05c94da8da1f57049fa69a7ebf8a199ec8f7832ffadc8343463a845", "43d0ca816a0bd0627413806b85f43a214299b0f43737dd3cbc02db7cd255f565")),
     "bed_mm": Fact((256.0, 256.0), "ORCA", True),
     # Unlike the P1/X1 platform, the P2S Orca profile uses the full listed 256 mm height.
     "max_print_height_mm": Fact(256.0, "ORCA", True),
@@ -289,9 +346,9 @@ H2S = {
     "printer_model": Fact("Bambu Lab H2S", "ORCA", True),
     "orca_profiles": Fact({"machine": "Bambu Lab H2S 0.4 nozzle", "process": "0.20mm Standard @BBL H2S",
                            "filament": "Bambu PLA Basic @BBL H2S"}, "ORCA", True),
-    "orca_identity": _identity("5956872ea1d691853fd08158134c67da1291fe7b89252e32be281e09a3541f23",
-                               "c7b55397a79d3bf03c2389ce868b50c49943f08b9e2f39e97e6e5f3bdf2db2c0",
-                               "781806ef94f4bdbcb30525df9d265e80a20e0858d92fe7511e20ac10dcb2ec10"),
+    "orca_identity": _identities(("5956872ea1d691853fd08158134c67da1291fe7b89252e32be281e09a3541f23", "c7b55397a79d3bf03c2389ce868b50c49943f08b9e2f39e97e6e5f3bdf2db2c0", "781806ef94f4bdbcb30525df9d265e80a20e0858d92fe7511e20ac10dcb2ec10"),
+                                 ("c7af5fdf1306bd6eea75bd3528437903b81450f1295045a869f892ca470c5356", "3bbb1ffeaaa5ce4076beaa5e6e07fcafd0a5d38f59b57cc726b2d09f7339981b", "12904f3897740660807c3a9cdd06f8e36a245e2540edc7a03a52bddb711679cb"),
+                                 ("e0a18de32010e80e9a706ebaa0f8f0957b1bf4903b6a82056a833d6bda55c9f0", "9e9f8176d4ea156dd66542941f4b0106fb8d9c0ceb156c1732bc6cd9651fd529", "c4846ddc03f8c88c760cb99dfb4fdca55f6fdb0beb016880547bafb68c738e75")),
     # Single-nozzle H2 variant: one 0.4 nozzle in the profile (the dual-nozzle H2D/H2C are Stage 2).
     "bed_mm": Fact((340.0, 320.0), "ORCA", True),
     "max_print_height_mm": Fact(340.0, "ORCA", True),
@@ -311,7 +368,7 @@ H2S = {
 
 # --- #127 Stage 2 / #308: the dual-nozzle models ---------------------------------------------------
 # Same derivation as Stage 1: identities computed by running profiles.flatten + profiles.sha256
-# over OrcaSlicer v2.4.2 at ORCA_RELEASE (the pipeline reproduces the A1 and P1S identities
+# over the pinned OrcaSlicer releases (the pipeline reproduces the A1 and P1S identities
 # exactly). Motion envelopes are DERIVED the A1 way from the flattened vendor blocks' literal XY
 # extremes, widened to cover the bed. "extruders" is the profile's nozzle_diameter entry count and
 # drives the extruder-aware identity/guard checks and the AMS mapping's nozzle filter.
@@ -335,7 +392,25 @@ H2D = {
         "filaments": {"Generic PETG @BBL H2D": "93e86898330e805436f9f4f03d5eb89cca141fea43754333bd3def9327c197aa",
                       "Generic TPU @BBL H2D": "05a1e6055eb3685900af5f86766d2fe922c06febd665db68814bcd86af3670b9",
                       "Generic PVA @BBL H2D": "fb40c97e52ec35c86d838295f2900ba61b8293236b23d6ea346e15848c09545f"},
-    },), "ORCA", True),
+    }, {
+        "label": _IDENTITY_LABEL_25A,
+        "vendor_version": "02.08.00.15",
+        "sha256": {"machine": "c815d18b3c39eac25393b4624d801d834d7186e5ead8a8bbea45f0fcea294f6e",
+                   "process": "c52c60748dbe16f6b79b8890f5e4e3bbea5bb19bec2532312fc2720aea04f5bc",
+                   "filament": "8e503828cd68583974be37859fa6f19b21365b1a84283917f21f0d6e146cfdec"},
+        "filaments": {"Generic PETG @BBL H2D": "e1362ec947f99b780b155780100635e9a36e80edcc7bcfc44f047e34a871690c",
+                      "Generic PVA @BBL H2D": "8a4bbaf623c69b1b075d873498c1066a24f0ea2ce00a2edd4d65ad2965b5fc2f",
+                      "Generic TPU @BBL H2D": "cda2f178be40f6c82f2d3505b945e4dec946a62bb7daa9650b3dcd3eb6ade5af"}
+    }, {
+        "label": _IDENTITY_LABEL_25A_PACKED,
+        "vendor_version": "02.08.00.15",
+        "sha256": {"machine": "d17ae7948c3def8f1e3e3e7af9e3712818e6453d73a6389ade51c40385f4441c",
+                   "process": "1ede83c7ac6c8b443042a0c00d7d792d40053e157d0579ac269d34ef7b94190e",
+                   "filament": "6925b9fb8f90ea0791de5f09904294ce4219a46b82c4d33732a0b689c8fc735f"},
+        "filaments": {"Generic PETG @BBL H2D": "3810c0c012b9c000e0d317cc6f56eff26f610cea3be1476f0bfc81c99aa6895c",
+                      "Generic PVA @BBL H2D": "2efcb2c4d156c392a3f3e430c03b9be71fc7ee8f90ed4a25ddb1c36f361dcfa8",
+                      "Generic TPU @BBL H2D": "416b78d992e00990ca624848a893c6769cd1a0785733dc1d08709348b76a5b2d"}
+    }), "ORCA", True),
     "bed_mm": Fact((350.0, 320.0), "ORCA", True),
     "max_print_height_mm": Fact(325.0, "ORCA", True),
     "bed_exclude_area": Fact((), "ORCA", True),
@@ -367,7 +442,25 @@ H2DPRO = {
         "filaments": {"Generic PETG @BBL H2DP": "3185372d4c336bd44769c5145f18e8b3eb400747db794e264505b656572f4dc9",
                       "Generic TPU @BBL H2DP": "9cd55060df6dc5a017705675cfec73eec3a97570d799c60bee1b989bf4815a51",
                       "Generic PVA @BBL H2DP": "44323c62943ea2b48a499f47e19f0981253a31354bd3f77eee5907ff43dcb7ae"},
-    },), "ORCA", True),
+    }, {
+        "label": _IDENTITY_LABEL_25A,
+        "vendor_version": "02.08.00.15",
+        "sha256": {"machine": "07ed55c78a15f342e6df14ddbf0897b100a5e39144aa358673ee4fda67fed09c",
+                   "process": "dcf0524db372846825f026042bac3ba95ec7e3b58cd295fa014f4b8be130bd40",
+                   "filament": "7d259d70d1b5174885b66dee001c18f7c0afd9c7009f73efe7f8a6af763f7900"},
+        "filaments": {"Generic PETG @BBL H2DP": "b35317e91f0cc4c219e22b0f2ce23f71e5c2752d75f5fcb594977d2d4032a343",
+                      "Generic PVA @BBL H2DP": "b7532db2add00fb6468b4e90dcb8a8d703d696bcaed5041edc02f9299340da7c",
+                      "Generic TPU @BBL H2DP": "9e79b641a6771207734cb1f0f2036354d5c4801cdcc42d393a00ca473a24e243"}
+    }, {
+        "label": _IDENTITY_LABEL_25A_PACKED,
+        "vendor_version": "02.08.00.15",
+        "sha256": {"machine": "ed06e1096dc40918e83e93e9d04d27a5930b84152d2bd47f3a6b3475dfb544da",
+                   "process": "3ac1d68e83a0fdb6a1ea84887b5e9e5b44025297506ef3056bac41cf48c57ccd",
+                   "filament": "6643cc9eb4ec716d806ec172f2f3ce7df4ebe0e4e2e3f80defec678a726613dc"},
+        "filaments": {"Generic PETG @BBL H2DP": "962662a49bbb46f1fbf273700b03165342b282591ae507152a19f303ba098c9b",
+                      "Generic PVA @BBL H2DP": "8991d68ce6e07be856de7db3e700c49421b03947b4aeb5a9a5ed13e16fa387c8",
+                      "Generic TPU @BBL H2DP": "37a3eab971f2577ff3a441d2d65321fc43f88b0ee046f859210504323004472a"}
+    }), "ORCA", True),
     "bed_mm": Fact((350.0, 320.0), "ORCA", True),
     "max_print_height_mm": Fact(325.0, "ORCA", True),
     "bed_exclude_area": Fact((), "ORCA", True),
@@ -406,7 +499,25 @@ X2D = {
         "filaments": {"Generic PETG @BBL X2D 0.4 nozzle": "81cb8d9fc131ed3961aa1c6b8e7a432e5dbad1bbc0d93ac1aecfc785b679757c",
                       "Generic TPU @BBL X2D 0.4 nozzle": "2c2a1b9dce7cc7c17961b9d84d2c11c20e9ca89890b0f9811364ffa0e340c0af",
                       "Generic PVA @BBL X2D 0.4 nozzle": "c3bad6320ef116a054f1eaf6832567589c162992a2027c45e5c09ce26f655c4a"},
-    },), "ORCA", True),
+    }, {
+        "label": _IDENTITY_LABEL_25A,
+        "vendor_version": "02.08.00.15",
+        "sha256": {"machine": "980cdbe38f293f29c74624e42a6de05b055f09c965e0302fdfc6b39665a6a07f",
+                   "process": "55401b1df522a3d2c3149d1d27f9b8e3d2424d89b2a816fbfe61254bea22458a",
+                   "filament": "93616a8fdc77a5be2420bcefcf68b72bb2eaa376b96bac4cbff6e012174d17f0"},
+        "filaments": {"Generic PETG @BBL X2D 0.4 nozzle": "591413dd707188052ea6514c6b0af88eb81bda427c11152a777910310d282aa1",
+                      "Generic PVA @BBL X2D 0.4 nozzle": "804b84c3f164125ed1fb9ac1649cce390d895230b7fb6766e7611435db324287",
+                      "Generic TPU @BBL X2D 0.4 nozzle": "2cc0b27c655d202a2fb9e3ab4df33c5abe90b192af6ebd90bacec9e437462679"}
+    }, {
+        "label": _IDENTITY_LABEL_25A_PACKED,
+        "vendor_version": "02.08.00.15",
+        "sha256": {"machine": "ea79b249feb45cb836ff2135bc1a0312a3a006497d0b8fb8d3f8e2d3bddedebb",
+                   "process": "9d93c29ddc772ebc03def8a2946bbd8858b17a86b09cc382e461d23e601a43de",
+                   "filament": "dce24e095da8d2ef716f3a2636ea0f26e1db74f3226e0d26c62da68d510fa678"},
+        "filaments": {"Generic PETG @BBL X2D 0.4 nozzle": "15f5ed29144c9a64fdf495e4caa24dee0cc1d00c3bcee1d0d3018e892049aac0",
+                      "Generic PVA @BBL X2D 0.4 nozzle": "0d2da5d848c9ca9449766f24276fd872fabbd319230d186823781e69f624695c",
+                      "Generic TPU @BBL X2D 0.4 nozzle": "a6759bfe22fcf919dbbca4b10bc316eb015edc6b11a09853274ca9edc939e04b"}
+    }), "ORCA", True),
     "bed_mm": Fact((256.0, 256.0), "ORCA", True),
     "max_print_height_mm": Fact(261.0, "ORCA", True),
     "bed_exclude_area": Fact((), "ORCA", True),

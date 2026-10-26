@@ -157,12 +157,7 @@ class DockerReleaseContract(unittest.TestCase):
         self.assertIn("openscad", runtime)
         self.assertIn("--no-install-recommends", runtime)
         prebuilt = (ROOT / "docker" / "orca-prebuilt.sh").read_text()
-        for pin in ("OrcaSlicer_Linux_AppImage_Ubuntu2404_V2.4.2.AppImage",
-                    "d12fb8c8eac1aecd2dfb6377acd48f994f8fa439ed5292fa532dd82880f029fd",
-                    "8500fcdccaa10b5099ac20d252af3a7c560046f1",
-                    "OrcaSlicer_Linux_AppImage_Ubuntu2404_aarch64_V2.4.2.AppImage",
-                    "e1a07275a25f176626c55a5df39e91bc4476d8c28ee4a3192ff758e29dd5c3ba",
-                    "OrcaSlicer_Linux_AppImage_Ubuntu2404_V2.5.0-alpha.AppImage",
+        for pin in ("OrcaSlicer_Linux_AppImage_Ubuntu2404_V2.5.0-alpha.AppImage",
                     "386a5ef38991a4fc32ae2e35ee4261bea43d983683ac675a2c2e2395ab2bc7bb",
                     "3880f2c58ec392ed2bd5938ab31c9c7c496c0eb2",
                     "OrcaSlicer_Linux_AppImage_Ubuntu2404_aarch64_V2.5.0-alpha.AppImage",

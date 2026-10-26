@@ -26,12 +26,16 @@ offer to slice at 100%, never a print-ready assurance, and separate plates
 are never offered as a remedy for a part that does not fit a plate on its
 own.
 
-A part that fits a plate only when turned in the bed plane gets a plate of
-its own, and the plan records the turn as ``yaw_by_object`` (object id to
-degrees). The exporter can apply one rigid turn to a whole derived plate, so
-a turned part is never packed with other parts; slicing applies exactly the
-recorded turn (see ``model_job._slice_full_size_split``) and refuses a plan
-that records a turn for a shared plate instead of slicing it as authored.
+A part that fits a plate only when turned in the bed plane has its turn
+recorded as ``yaw_by_object`` (object id to degrees). A turned part alone
+on a plate is realized by the exporter's whole-plate fit; a turned part
+may also share a plate when the shared packing is proved over the hulls
+rotated to their recorded turns (#221 R2, below), realized by the
+exporter's per-object fit channel composed with the plate's recorded
+``shifts_by_plate``. Slicing applies exactly the recorded turn (see
+``model_job._slice_full_size_split``) and refuses a plan that records a
+turn for a shared plate without the shifts that realize it, instead of
+slicing it as authored.
 
 Fit is evaluated from the part's actual mesh vertices, not its bounding
 rectangle (#221, following #76): at each checked yaw the envelope is the
@@ -69,6 +73,24 @@ polygon placement supersedes the solo placement for its members: a plate
 never carries both, and its members lose their ``placement_by_object``
 entries. When no such shared placement is proved, Stage 2 behaviour is
 unchanged.
+
+Shared plates may also carry turned parts (#221 R2, the deferred polygon
+P3): after the authored packing above, a part that fits only at its
+recorded yaw is tried, in order, into an existing open bin and into a new
+bin shared with other turned parts — in both cases by ``pack_polygon``
+over the hulls rotated to each member's recorded yaw (authored members
+keep their authored hulls), with the same exclusion checks and the same
+once-only brim budget charged as hull clearances. Only when no shared
+placement is proved does the turned part fall back to its solo turned
+plate, exactly as before. Trying shared placements first is the fit
+ranking — a proved shared plate fits more parts per plate than solo
+plates — and it never displaces a proved authored plan: authored bins are
+formed first and a turned part joins the layout they could not fill. The
+proved corners are recorded as ``shifts_by_plate`` like any polygon
+plate, measured from each member's rotated bounds for turned members, and
+a turned member of a shared plate keeps its ``yaw_by_object`` entry (the
+plate's shifts alone do not describe its orientation) while losing any
+``placement_by_object`` entry, as for any polygon member.
 
 Reorientation is the last fit preference (#221 R1), evaluated only for a
 part that fits neither as authored nor at any bed-plane yaw: one face
@@ -205,6 +227,19 @@ def _placement(envelope, bed_x, bed_y, edge, exclusions):
                    for x0, y0, x1, y1 in exclusions):
                 return (round(x, 3), round(y, 3))
     return None
+
+
+def _rotate_hull_xy(hull, degrees):
+    """Hull points turned in the bed plane by ``degrees``.
+
+    The same rotation convention as :func:`mesh_yaw_candidates` and the
+    slicing fit matrix: (x cos - y sin, x sin + y cos). Turning about any
+    centre differs only by a translation, which the packer's corner
+    normalization absorbs.
+    """
+    rad = math.radians(float(degrees))
+    c, s = math.cos(rad), math.sin(rad)
+    return [(x * c - y * s, x * s + y * c) for x, y in hull]
 
 
 def mesh_yaw_candidates(hull_xy, usable_x, usable_y):
@@ -495,10 +530,11 @@ def split_plan_100(source, bed=None, height=None, exclusions=None, brim_policy=N
     :func:`per_part_fit` (per-part mesh footprint at dimension-preserving yaws,
     and the printer's real Z limit): a part that fits no plate alone has no
     split plan, because separate plates cannot cure an individually oversized
-    part. An object that fits only at a turned yaw is planned alone on its own
-    plate and the turn is recorded in ``yaw_by_object``; objects that fit as
-    authored keep their authored orientation and are packed together as
-    before. When the bed has declared exclusions, every fitting object carries
+    part. An object that fits only at a turned yaw has the turn recorded in
+    ``yaw_by_object`` and is planned alone on its own plate, unless a proved
+    shared placement over the rotated hulls lets it share a plate instead
+    (#221 R2; see the module docstring); objects that fit as authored keep
+    their authored orientation and are packed together as before. When the bed has declared exclusions, every fitting object carries
     an avoiding placement from :func:`per_part_fit`: it is planned alone on
     its own plate and the placement is recorded in ``placement_by_object``,
     so slicing can land that plate exactly there (#221 stage 2) — unless a
@@ -585,6 +621,18 @@ def split_plan_100(source, bed=None, height=None, exclusions=None, brim_policy=N
             # the merge path. None for rectangle-only sources, grouped or
             # multi-item objects — those keep today's packing by construction.
             hulls = plate_merge._object_hulls(source, list(objects))
+            # Per-object hulls without that gate, for the shared-yaw attempt
+            # (#221 R2): a turned rectangle is exactly what shared yaw packs,
+            # so every single-item object's hull is read. Multi-item objects
+            # get no entry and can never join a rotated packing.
+            fit_hulls = {}
+            for oid in objects:
+                try:
+                    items = color_geometry._world_hull_xy(archive, {oid})
+                except RuntimeError:
+                    items = []
+                if len(items) == 1:
+                    fit_hulls[oid] = items[0][0]
             # Each bin: its objects, how it may still grow ('yaw' and solo
             # 'placement' bins are closed to rectangle packing; a placement
             # bin may still be superseded by a proved polygon placement),
@@ -598,18 +646,36 @@ def split_plan_100(source, bed=None, height=None, exclusions=None, brim_policy=N
                     {oid: hulls[oid] for oid in member_oids}, bed,
                     exclusions=exclusions_eff, feature=feature)
 
+            def yawed_corners(member_oids, yaws):
+                """Proved corners for a plate whose turned members are rotated.
+
+                ``yaws`` maps the turned members to their recorded yaw; every
+                other member keeps its authored hull. Exclusion checks and
+                the once-only brim budget are pack_polygon's, exactly as for
+                the authored polygon fallback.
+                """
+                trial = {}
+                for oid in member_oids:
+                    hull = fit_hulls.get(oid)
+                    if hull is None:
+                        return None
+                    trial[oid] = _rotate_hull_xy(hull, yaws[oid]) if oid in yaws else hull
+                return plate_merge.pack_polygon(trial, bed,
+                                                exclusions=exclusions_eff, feature=feature)
+
+            deferred_yaw = []
             for oid in sorted(extents, key=lambda key: -(extents[key][0] * extents[key][1])):
                 if oid in yaw_by_object:
-                    # A turned part is always alone: the exporter turns a
-                    # whole derived plate rigidly, so it cannot share one.
-                    bins.append({'objects': {oid: extents[oid]}, 'kind': 'yaw', 'corners': None})
+                    # Turned parts are binned after the authored packing:
+                    # first the shared attempts (#221 R2), solo only as the
+                    # fallback, exactly as this loop used to plan them.
+                    deferred_yaw.append(oid)
                     continue
                 if oid in reorientation_by_object:
-                    # Same rule as a turn, for the same reason: the rotation
-                    # is applied to a whole derived plate, so a reoriented
-                    # part is always alone on its plate (#221 R1).
+                    # The rotation is applied to a whole derived plate, so a
+                    # reoriented part is always alone on its plate (#221 R1).
                     bins.append({'objects': {oid: extents[oid]}, 'kind': 'reorientation',
-                                 'corners': None})
+                                 'corners': None, 'yaws': {}})
                     continue
                 placed = False
                 for current in bins:
@@ -636,15 +702,71 @@ def split_plan_100(source, bed=None, height=None, exclusions=None, brim_policy=N
                 if not placed:
                     kind = 'placement' if oid in placement_by_object else 'rect'
                     bins.append({'objects': {oid: extents[oid]}, 'kind': kind, 'corners': None})
+            # Shared-yaw attempts for the turned parts (#221 R2), in the
+            # authored bins' order: join an open bin, then pair with other
+            # turned parts, then the solo turned plate as before. A proved
+            # shared plate is the better fit — more parts per plate — so it
+            # is always tried before the solo fallback.
+            settled_yaw = set()
+            for oid in deferred_yaw:
+                if oid in settled_yaw:
+                    continue
+                placed = False
+                for current in bins:
+                    if current['kind'] in ('yaw', 'reorientation'):
+                        continue
+                    members = list(current['objects']) + [oid]
+                    trial_yaws = {**current.get('yaws', {}), oid: yaw_by_object[oid]}
+                    corners = yawed_corners(members, trial_yaws)
+                    if corners is not None:
+                        current['objects'][oid] = extents[oid]
+                        current['kind'] = 'polygon'
+                        current['corners'] = corners
+                        current['yaws'] = trial_yaws
+                        placed = True
+                        break
+                if not placed:
+                    members = [oid]
+                    trial_yaws = {oid: yaw_by_object[oid]}
+                    corners = None
+                    for other in deferred_yaw:
+                        if other == oid or other in settled_yaw:
+                            continue
+                        trial = {**trial_yaws, other: yaw_by_object[other]}
+                        proved = yawed_corners(members + [other], trial)
+                        if proved is not None:
+                            members.append(other)
+                            trial_yaws, corners = trial, proved
+                    if len(members) > 1:
+                        bins.append({'objects': {member: extents[member] for member in members},
+                                     'kind': 'polygon', 'corners': corners, 'yaws': trial_yaws})
+                        settled_yaw.update(members)
+                        placed = True
+                if placed:
+                    settled_yaw.add(oid)
+                else:
+                    bins.append({'objects': {oid: extents[oid]}, 'kind': 'yaw',
+                                 'corners': None, 'yaws': {}})
+                    settled_yaw.add(oid)
             for current in bins:
                 bin_objects = current['objects']
                 result.append([key for oid in bin_objects for key in objects[oid]])
                 if current['kind'] == 'polygon' and len(bin_objects) > 1:
                     corners = current['corners']
-                    shifts = {oid: [round(corners[oid][0] - boxes[oid][0][0], 3) + 0.0,
-                                    round(corners[oid][1] - boxes[oid][1][0], 3) + 0.0,
-                                    round(-boxes[oid][2][0], 3) + 0.0]
-                              for oid in bin_objects}
+                    shifts = {}
+                    for oid in bin_objects:
+                        if oid in current.get('yaws', {}):
+                            # A turned member's shift is measured from its
+                            # rotated bounds (the corner the packer proved is
+                            # the rotated hull's lower-left), not its authored
+                            # bounds (#221 R2).
+                            rotated = _rotate_hull_xy(fit_hulls[oid], current['yaws'][oid])
+                            base = (min(p[0] for p in rotated), min(p[1] for p in rotated))
+                        else:
+                            base = (boxes[oid][0][0], boxes[oid][1][0])
+                        shifts[oid] = [round(corners[oid][0] - base[0], 3) + 0.0,
+                                       round(corners[oid][1] - base[1], 3) + 0.0,
+                                       round(-boxes[oid][2][0], 3) + 0.0]
                     shifts_by_plate.append(shifts)
                     # The shared polygon placement supersedes Stage 2's solo
                     # placements for these objects: never both.

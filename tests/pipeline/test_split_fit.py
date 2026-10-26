@@ -979,3 +979,209 @@ def test_changing_the_reorientation_record_changes_the_slice_recipe_sha():
     changed = {**base, 'full_size_split_plan': {
         **base['full_size_split_plan'], 'reorientation_by_object': {'1': record}}}
     assert slice_binding(changed, 'source-a') != slice_binding(base, 'source-a')
+
+
+# --- #221 R2: per-object yaw on shared split plates (the deferred P3) -----
+# A 215 x 35 mm bar fits a 220 mm bed only turned (45 degrees, a 177 mm
+# envelope); a 60 mm square fits as authored but cannot shelf-pack with the
+# 150 mm square. Before R2 the bar always went solo: three plates. The
+# rotated bar and the small square pack by their true hulls, so R2 shares
+# one plate between them and leaves the big square to the other.
+
+def _yaw_share_source(path):
+    _mesh_source(path, {'1': _rect_points(215, 35, 10), '2': _rect_points(60, 60, 10),
+                        '3': _rect_points(150, 150, 10)}, [['1', '2'], ['3']])
+
+
+def _rotated_hull(source, oid, degrees):
+    import math
+
+    from print_buddy.core import color_geometry
+    with zipfile.ZipFile(source) as archive:
+        hull = color_geometry._world_hull_xy(archive, {oid})[0][0]
+    return split_fit._rotate_hull_xy(hull, degrees)
+
+
+def _shared_shifts(plan, keys):
+    index = next(i for i, plate in enumerate(plan['plates']) if set(plate) == set(keys))
+    return plan['shifts_by_plate'][index]
+
+
+def test_split_plan_yaw_part_can_share_a_plate(tmp_path):
+    source = tmp_path / 'yaw-share.3mf'
+    _yaw_share_source(source)
+    plan = split_fit.split_plan_100(source, 220)
+    assert plan is not None
+    assert {frozenset(plate) for plate in plan['plates']} == \
+        {frozenset({'1:1', '2:1'}), frozenset({'3:1'})}
+    assert plan['yaw_by_object'] == {'1': 45.0}
+    shifts = _shared_shifts(plan, {'1:1', '2:1'})
+    assert set(shifts) == {'1', '2'}
+    # The proved placement keeps true hull spacing: the bar's hull at its
+    # recorded turn, the square's as authored, each moved by its shift.
+    placed = {'1': [(x + shifts['1'][0], y + shifts['1'][1])
+                    for x, y in _rotated_hull(source, '1', 45.0)],
+              '2': [(x + shifts['2'][0], y + shifts['2'][1])
+                    for x, y in _rotated_hull(source, '2', 0.0)]}
+    assert plate_merge.hull_distance(placed['1'], placed['2']) >= \
+        plate_merge.SPACING_MM - 2e-3
+    for poly in placed.values():
+        # Recorded shifts are rounded to 0.001 mm, so the placed hull can
+        # sit that far inside the proved margin (the 2e-3 proof tolerance).
+        assert all(plate_merge.EDGE_MARGIN_MM - 2e-3 <= v
+                   <= 220 - plate_merge.EDGE_MARGIN_MM + 2e-3
+                   for point in poly for v in point)
+
+
+def test_split_plan_prefers_a_shared_yaw_plate_over_solo_plates(tmp_path):
+    # Fit ranking (#221): a proved shared plate fits more parts per plate
+    # than the solo fallback, so it wins — this fixture's pre-R2 plan was
+    # three plates (turned bar solo, both squares solo).
+    source = tmp_path / 'yaw-share.3mf'
+    _yaw_share_source(source)
+    plan = split_fit.split_plan_100(source, 220)
+    assert plan is not None and len(plan['plates']) == 2
+    shared = next(plate for plate in plan['plates'] if '1:1' in plate)
+    assert shared == ['2:1', '1:1'] or set(shared) == {'1:1', '2:1'}
+
+
+def test_split_plan_two_yaw_parts_can_share_a_plate(tmp_path):
+    # Two identical 215 x 30 mm right triangles each fit only turned
+    # (49 degrees); turned together, their hulls pack onto one plate.
+    tri = [(0, 0), (215, 0), (0, 30)]
+    source = tmp_path / 'yaw-pair.3mf'
+    _mesh_source(source, {'1': _tri_prism(tri), '2': _tri_prism(tri),
+                          '3': _rect_points(150, 150, 10)}, [['1', '2'], ['3']])
+    rows = {row['object_id']: row for row in split_fit.per_part_fit(source, 220)}
+    assert rows['1']['fits_authored'] is False and rows['1']['best_yaw_deg'] > 0
+    plan = split_fit.split_plan_100(source, 220)
+    assert plan is not None
+    assert {frozenset(plate) for plate in plan['plates']} == \
+        {frozenset({'1:1', '2:1'}), frozenset({'3:1'})}
+    assert plan['yaw_by_object'] == {'1': rows['1']['best_yaw_deg'],
+                                     '2': rows['2']['best_yaw_deg']}
+    assert set(_shared_shifts(plan, {'1:1', '2:1'})) == {'1', '2'}
+
+
+def test_split_plan_shared_yaw_composes_with_exclusions(tmp_path):
+    # On an exclusion bed the shared rotated placement supersedes the solo
+    # placements of its members (the P2 rule), the untouched big square
+    # keeps its Stage 2 placement, and no placed hull overlaps the exclusion.
+    source = tmp_path / 'yaw-share-exclusion.3mf'
+    _yaw_share_source(source)
+    plan = split_fit.split_plan_100(source, 220, exclusions=[(0, 0, 18, 28)])
+    assert plan is not None
+    assert {frozenset(plate) for plate in plan['plates']} == \
+        {frozenset({'1:1', '2:1'}), frozenset({'3:1'})}
+    assert plan['placement_by_object'] == {'3': [18.0, 8.0]}
+    shifts = _shared_shifts(plan, {'1:1', '2:1'})
+    exclusion = plate_merge._rect_polygon((0, 0, 18, 28))
+    for oid, degrees in (('1', 45.0), ('2', 0.0)):
+        placed = [(x + shifts[oid][0], y + shifts[oid][1])
+                  for x, y in _rotated_hull(source, oid, degrees)]
+        assert not plate_merge._polygons_overlap(placed, exclusion)
+
+
+def test_slicing_a_shared_yaw_split_lands_at_the_recorded_turn(tmp_path, monkeypatch):
+    import json
+    import math
+
+    import pytest
+
+    from print_buddy.core import color_geometry, model_job, orca_adapter
+    from .test_plate_merge import _fake_slice
+    source = tmp_path / 'yaw-share.3mf'
+    _yaw_share_source(source)
+    plan = split_fit.split_plan_100(source, 220)
+    assert plan and plan['yaw_by_object'] == {'1': 45.0}
+    job_path = _split_job(tmp_path, source, plan)
+    fake = _fake_slice()
+    monkeypatch.setattr(orca_adapter, 'slice_model', fake)
+    paths = model_job.slice_job(job_path)
+    assert len(paths) == 2 and len(fake.calls) == 2
+    saved = json.loads(job_path.read_text())
+    shared = next(row for row in saved['derived_plates']
+                  if set(row['part_keys']) == {'1:1', '2:1'})
+    assert shared['yaw_by_object'] == {'1': 45.0}
+    assert shared['shifts_by_object'] == _shared_shifts(plan, {'1:1', '2:1'})
+    assert set(shared['plate_report']['fit_by_object']) == {'1'}
+    solo = next(row for row in saved['derived_plates'] if row['part_keys'] == ['3:1'])
+    assert 'yaw_by_object' not in solo and 'shifts_by_object' not in solo
+    # Derived-plate re-read proof, per object: the bar landed at its
+    # rotated authored bounds plus its recorded shift; the square landed
+    # at its authored bounds plus its shift.
+    derived = Path(shared['plate'])
+    shifts = shared['shifts_by_object']
+    with zipfile.ZipFile(source) as archive:
+        authored_points = color_geometry._world_points(archive, {'1'})
+        authored_square = color_geometry._world_bounds(archive, {'2'})[0]
+    rad = math.radians(45.0)
+    c, s = math.cos(rad), math.sin(rad)
+    rotated = [(x * c - y * s, x * s + y * c, z) for x, y, z in authored_points]
+    rotated_min = [min(p[a] for p in rotated) for a in range(3)]
+    rotated_extent = [max(p[a] for p in rotated) - rotated_min[a] for a in range(3)]
+    with zipfile.ZipFile(derived) as archive:
+        landed_bar = color_geometry._world_bounds(archive, {'1'})[0]
+        landed_square = color_geometry._world_bounds(archive, {'2'})[0]
+    for a in range(3):
+        assert landed_bar[a][0] == pytest.approx(rotated_min[a] + shifts['1'][a], abs=2e-3)
+        assert landed_bar[a][1] - landed_bar[a][0] == pytest.approx(rotated_extent[a], abs=2e-3)
+        assert landed_square[a][0] == pytest.approx(authored_square[a][0] + shifts['2'][a],
+                                                    abs=2e-3)
+
+
+def test_slicing_refuses_unproved_shared_yaws(tmp_path, monkeypatch):
+    import pytest
+
+    from print_buddy.core import model_job, orca_adapter
+    from .test_plate_merge import _fake_slice
+    source = tmp_path / 'yaw-share.3mf'
+    _yaw_share_source(source)
+    plates = [['1:1', '2:1'], ['3:1']]
+    good_shifts = {'1': [0.0, 0.0, 0.0], '2': [0.0, 0.0, 0.0]}
+    record = {'axis': '-X', 'rotation': [0, 0, 1, 0, 1, 0, -1, 0, 0], 'yaw_deg': 0.0,
+              'supports': False, 'brim_recommended': False}
+    bad_plans = [
+        # A shared turn with no recorded shifts to realize it.
+        ({'plates': plates, 'yaw_by_object': {'1': 30.0}}, 'not that part alone'),
+        # A turn for an object the source does not have.
+        ({'plates': plates, 'yaw_by_object': {'9': 30.0},
+          'shifts_by_plate': [good_shifts, None]}, 'unknown'),
+        # A non-finite turn fails closed (split validation or the recipe
+        # serializer's strict JSON encoding, as for non-finite shifts).
+        ({'plates': plates, 'yaw_by_object': {'1': float('inf')},
+          'shifts_by_plate': [good_shifts, None]}, '(between 0 and 90|Out of range float)'),
+        # One transform record per object: a turn plus a reorientation.
+        ({'plates': plates, 'yaw_by_object': {'1': 30.0},
+          'shifts_by_plate': [good_shifts, None],
+          'reorientation_by_object': {'1': record}}, 'not that part alone'),
+    ]
+    for plan, match in bad_plans:
+        job_path = _split_job(tmp_path, source, plan)
+        monkeypatch.setattr(orca_adapter, 'slice_model', _fake_slice())
+        with pytest.raises((RuntimeError, ValueError), match=match):
+            model_job.slice_job(job_path)
+    # Swapped shifts: each object would land somewhere its recorded turn
+    # was never proved for — the exporter refuses the off-bed placement.
+    plan = split_fit.split_plan_100(source, 220)
+    index = next(i for i, plate in enumerate(plan['plates']) if set(plate) == {'1:1', '2:1'})
+    shifts = plan['shifts_by_plate'][index]
+    plan['shifts_by_plate'][index] = {'1': shifts['2'], '2': shifts['1']}
+    job_path = _split_job(tmp_path, source, plan)
+    monkeypatch.setattr(orca_adapter, 'slice_model', _fake_slice())
+    with pytest.raises(RuntimeError, match='(does not fit|did not land)'):
+        model_job.slice_job(job_path)
+
+
+def test_exporter_refuses_a_per_object_fit_combined_with_a_whole_plate_fit(tmp_path):
+    import pytest
+
+    from print_buddy.core import color_geometry
+    source = tmp_path / 'yaw-share.3mf'
+    _yaw_share_source(source)
+    rotation = [0.70710678, -0.70710678, 0.0, 0.70710678, 0.70710678, 0.0, 0.0, 0.0, 1.0]
+    with pytest.raises(RuntimeError, match='per-object fit cannot be combined'):
+        color_geometry.export_single_color_plate(
+            source, tmp_path / 'out.3mf', {}, [],
+            fit={'scale': 1.0, 'rotation': rotation},
+            fit_by_object={'1': {'rotation': rotation}})

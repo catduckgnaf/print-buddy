@@ -2364,19 +2364,39 @@ def _slice_full_size_split(job, job_path, src, manifest, decisions, st):
                       if key_to_object[key] in reorientation_by_object}
         fit, yaw_deg, placement_mm = None, None, None
         reorientation, supports = None, None
+        shared_yaw_by_object = None
         if turned:
-            # The exporter turns a whole derived plate rigidly about one origin,
-            # so a recorded turn is only realizable for that part alone. Refuse
-            # anything else instead of slicing the plate as authored (#76).
-            if len(turned) != 1 or {key_to_object[key] for key in keys} != turned:
-                raise RuntimeError('full-size split plan records a turn for a plate that is not '
-                                   'that part alone; refusing to slice it as authored')
-            yaw_deg = float(yaw_by_object[turned.pop()])
-            if not math.isfinite(yaw_deg) or not 0 < yaw_deg <= 90:
-                raise RuntimeError(f'full-size split plan turn must be between 0 and 90 degrees, got {yaw_deg!r}')
-            rad = math.radians(yaw_deg)
-            c, s = math.cos(rad), math.sin(rad)
-            fit = {'scale': 1.0, 'rotation': [c, -s, 0.0, s, c, 0.0, 0.0, 0.0, 1.0]}
+            if len(turned) == 1 and {key_to_object[key] for key in keys} == turned:
+                # The exporter turns a whole derived plate rigidly about one
+                # origin, so a recorded turn for that part alone is realized
+                # through the whole-plate fit (#76).
+                yaw_deg = float(yaw_by_object[turned.pop()])
+                if not math.isfinite(yaw_deg) or not 0 < yaw_deg <= 90:
+                    raise RuntimeError(f'full-size split plan turn must be between 0 and 90 degrees, got {yaw_deg!r}')
+                rad = math.radians(yaw_deg)
+                c, s = math.cos(rad), math.sin(rad)
+                fit = {'scale': 1.0, 'rotation': [c, -s, 0.0, s, c, 0.0, 0.0, 0.0, 1.0]}
+            else:
+                # A turn recorded for a shared plate (#221 R2) is realizable
+                # only as the exporter's per-object fit composed with the
+                # plate's recorded shifts — the proved shared placement.
+                # Without those shifts there is nothing that realizes the
+                # turn, so refuse instead of slicing the plate as authored.
+                if not shifts_by_plate or shifts_by_plate[index - 1] is None:
+                    raise RuntimeError('full-size split plan records a turn for a plate that is not '
+                                       'that part alone, without the recorded shifts that realize '
+                                       'a shared turn; refusing to slice it as authored')
+                shared_yaw_by_object = {}
+                for oid in sorted(turned):
+                    try:
+                        value = float(yaw_by_object[oid])
+                    except (TypeError, ValueError) as exc:
+                        raise RuntimeError(f'full-size split plan turn for object {oid} must be '
+                                           f'numeric, got {yaw_by_object[oid]!r}') from exc
+                    if not math.isfinite(value) or not 0 < value <= 90:
+                        raise RuntimeError('full-size split plan turn must be between 0 and 90 '
+                                           f'degrees, got {value!r}')
+                    shared_yaw_by_object[oid] = value
         if placed:
             # Same realizability rule as a turn: the exporter places a whole
             # derived plate rigidly, so a recorded placement is only
@@ -2478,10 +2498,14 @@ def _slice_full_size_split(job, job_path, src, manifest, decisions, st):
             if len(keys) < 2:
                 raise RuntimeError('full-size split plan records shifts for a plate that is not '
                                    'shared; refusing to slice it as authored')
-            if turned or placed or reoriented:
+            if placed or reoriented:
                 raise RuntimeError('full-size split plan records shifts for a plate that also '
-                                   'records a turn, a placement or a reorientation; refusing '
+                                   'records a placement or a reorientation; refusing '
                                    'to slice it as authored')
+            # A turn on this plate is the shared form validated above
+            # (#221 R2): its members' yaw entries are realized per object,
+            # composed with these shifts. (A solo turn with shifts was
+            # already refused by the not-shared check.)
             item_shifts = {}
             for oid, raw in shifts_entry.items():
                 if not isinstance(raw, (list, tuple)) or len(raw) != 3:
@@ -2496,20 +2520,50 @@ def _slice_full_size_split(job, job_path, src, manifest, decisions, st):
                     raise RuntimeError(f'full-size split plan shift for object {oid} must be '
                                        f'finite, got {raw!r}')
                 item_shifts[oid] = values
+        fit_by_object = None
+        if shared_yaw_by_object:
+            fit_by_object = {}
+            for oid, degrees in shared_yaw_by_object.items():
+                rad = math.radians(degrees)
+                c, s = math.cos(rad), math.sin(rad)
+                fit_by_object[oid] = {'rotation': [c, -s, 0.0, s, c, 0.0, 0.0, 0.0, 1.0]}
         report = export_single_color_plate(src, plate, view, keys, bed=int(st['bed_mm'][0]),
                                            slot_colors=st.get('ifs_slots') or {},
                                            **({'fit': fit} if fit is not None else {}),
+                                           **({'fit_by_object': fit_by_object}
+                                              if fit_by_object is not None else {}),
                                            **({'item_shifts': item_shifts} if item_shifts is not None else {}))
         if item_shifts is not None:
             # Re-read the derived plate: every object must have landed at
             # exactly the recorded shift, or the plate is not the proved
-            # polygon placement and must not be sliced.
+            # polygon placement and must not be sliced. A turned member
+            # (#221 R2) must land at its rotated authored bounds plus the
+            # shift, with the rotated extents — a plate that turned it by
+            # any other angle, or not at all, is not the recorded plan.
             from .color_geometry import _world_bounds as _bounds_of
+            from .color_geometry import _world_points as _points_of
+            from .orca_adapter import _rotate as _rotate_point
             with zipfile.ZipFile(src) as archive:
                 authored = {oid: _bounds_of(archive, {oid})[0] for oid in item_shifts}
+                turned_points = {oid: _points_of(archive, {oid})
+                                 for oid in (shared_yaw_by_object or {})}
             with zipfile.ZipFile(plate) as archive:
                 landed_boxes = {oid: _bounds_of(archive, {oid})[0] for oid in item_shifts}
             for oid, values in item_shifts.items():
+                if shared_yaw_by_object and oid in shared_yaw_by_object:
+                    rotated = [_rotate_point(point, fit_by_object[oid]['rotation'])
+                               for point in turned_points[oid]]
+                    base_min = [min(point[a] for point in rotated) for a in range(3)]
+                    base_extent = [max(point[a] for point in rotated) - base_min[a]
+                                   for a in range(3)]
+                    landed = landed_boxes[oid]
+                    landed_extent = [landed[a][1] - landed[a][0] for a in range(3)]
+                    if any(abs(landed[a][0] - (base_min[a] + values[a])) > 2e-3 for a in range(3)) \
+                            or any(abs(got - want) > 2e-3
+                                   for got, want in zip(landed_extent, base_extent)):
+                        raise RuntimeError('derived plate did not land at the recorded shared '
+                                           'turn; refusing to slice it as turned')
+                    continue
                 for axis in range(3):
                     expected_min = authored[oid][axis][0] + values[axis]
                     if abs(landed_boxes[oid][axis][0] - expected_min) > 2e-3:
@@ -2552,6 +2606,8 @@ def _slice_full_size_split(job, job_path, src, manifest, decisions, st):
         artifacts.append({'slot': slot, 'plate_id': index, 'binding_key': f'{index}:{slot}',
                           'part_keys': keys, 'plate': str(plate), 'gcode': str(out),
                           **({'yaw_deg': yaw_deg} if yaw_deg is not None else {}),
+                          **({'yaw_by_object': shared_yaw_by_object}
+                             if shared_yaw_by_object else {}),
                           **({'placement_mm': placement_mm} if placement_mm is not None else {}),
                           **({'reorientation': reorientation} if reorientation is not None else {}),
                           **({'shifts_by_object': item_shifts} if item_shifts is not None else {}),

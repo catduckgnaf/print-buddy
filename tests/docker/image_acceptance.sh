@@ -130,11 +130,21 @@ fi
 
 health() { docker inspect --format '{{if .State.Health}}{{.State.Health.Status}}{{end}} running={{.State.Running}} exit={{.State.ExitCode}}' "$1" 2>/dev/null || echo gone; }
 
+dump_health() {  # dump_health TAG: capture the combined container's own health-probe evidence
+    local cid
+    cid=$(compose ps -q combined 2>/dev/null || true)
+    if [ -n "$cid" ]; then
+        docker inspect --format '{{json .State.Health}}' "$cid" > "$out/health-$1.json" 2>&1 || true
+    fi
+    compose exec -T combined python3 /usr/local/bin/print-buddy-healthcheck > "$out/healthcheck-$1.txt" 2>&1 || true
+}
+
 log "combined container: listener and bundled Spoolman healthy, bot idle (empty token)"
 if compose up -d --wait --wait-timeout 240 fake-moonraker combined > "$out/up-1.txt" 2>&1; then
     record combined:healthy ok "compose up --wait passed; healthcheck covers listener and Spoolman"
 else
     record combined:healthy FAIL "see up-1.txt"
+    dump_health 1
 fi
 connected=false
 for _ in $(seq 30); do
@@ -200,7 +210,7 @@ fi
 
 log "recreate the container (down without -v, up again)"
 compose down > "$out/down-1.txt" 2>&1
-compose up -d --wait --wait-timeout 240 fake-moonraker combined > "$out/up-2.txt" 2>&1 || record recreate:combined FAIL "see up-2.txt"
+compose up -d --wait --wait-timeout 240 fake-moonraker combined > "$out/up-2.txt" 2>&1 || { record recreate:combined FAIL "see up-2.txt"; dump_health 2; }
 combined_after=$(compose ps -q combined)
 if [ -n "$combined_after" ] && [ "$combined_after" != "$combined_before" ] &&
     compose exec -T combined sh -c 'grep -qx accepted /data/archive/acceptance-marker && grep -qx accepted /data/records/acceptance-marker'; then
@@ -228,6 +238,7 @@ if compose up -d --wait --wait-timeout 240 fake-moonraker combined > "$out/up-3.
     record tagswitch:same-image ok "pb-accept-tagswitch:$run_id -> $image_id; data reused"
 else
     record tagswitch:same-image FAIL "see up-3.txt"
+    dump_health 3
 fi
 
 log "bot: dummy token, no route out; the container must never report healthy"

@@ -208,6 +208,16 @@ capture_enabled = false
 # go2rtc ffmpeg: source). Empty derives the source from
 # services.camera_snapshot_url / the Moonraker webcam.
 capture_source_url = ""
+# Stage 2 frame capture trigger: interval (default; every capture_interval_s
+# seconds), layer (on Moonraker layer changes), or both.
+capture_trigger = "interval"
+capture_interval_s = 5.0
+# Per-job storage caps for captured frames; 0 disables that cap.
+capture_max_frames = 3600
+capture_max_bytes = 536870912
+# Encoder preference for the Stage 3 encode (auto | vaapi | nvenc | qsv |
+# cpu). Capture itself never encodes.
+capture_encoder = "auto"
 
 [logging]
 # Verbosity: DEBUG, INFO, WARNING or ERROR. DEBUG adds diagnostic detail; INFO is the normal level.

@@ -39,6 +39,9 @@ def without_added(data):
     data.get("services", {}).pop("camera_source", None)  # added by #286 stage 3, after capture
     for key in ("capture_enabled", "capture_source_url"):  # added by #246 stage 1, after capture
         data.get("timelapse", {}).pop(key, None)
+    for key in ("capture_trigger", "capture_interval_s", "capture_max_frames",
+                "capture_max_bytes", "capture_encoder"):  # added by #246 stage 2, after capture
+        data.get("timelapse", {}).pop(key, None)
     if data.get("slicer") == {}:
         data.pop("slicer", None)
     for key in ADDED_PRINTER_KEYS:

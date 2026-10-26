@@ -167,6 +167,20 @@ timelapse:
   # services.camera_snapshot_url / the Moonraker webcam, as the camera
   # watchdog does.
   capture_source_url: ''
+  # Stage 2 frame capture: what makes the listener take a frame.
+  # interval = every capture_interval_s seconds (default; printer-agnostic);
+  # layer = on Moonraker layer changes (moonraker-timelapse semantics);
+  # both = either (an interval floor plus layer events).
+  capture_trigger: interval
+  capture_interval_s: 5.0
+  # Per-job storage caps for captured frames; 0 disables that cap. Capture
+  # stops at a cap and the frames already taken are kept for the encode.
+  capture_max_frames: 3600
+  capture_max_bytes: 536870912
+  # Encoder preference for the Stage 3 encode (auto | vaapi | nvenc | qsv |
+  # cpu). Capture itself never encodes; the value is recorded now so the
+  # encode stage needs no settings change.
+  capture_encoder: auto
 logging:
   level: INFO
   format: text

@@ -35,6 +35,7 @@ from . import _config
 from . import moonraker_discord_announcements as announcer
 from . import discord_print_summary as print_summary
 from . import plan_timelapse
+from . import timelapse_capture
 from . import print_control
 from . import visual_watch as _visual_watch
 from . import print_markers
@@ -1458,6 +1459,7 @@ class Listener:
         self.last_pause_was_runout = False
         self.pause_context = None
         self.native_error_alerted = None
+        self.capture_session = None  # #246 stage 2: active timelapse_capture session, if any
 
     async def read_slots(self):
         from print_buddy.core import printer_state
@@ -1638,6 +1640,11 @@ class Listener:
         self.state = new_state
         log(f"state {old} -> {new_state} file={self.filename!r} ({reason})")
         _record_transition_markers(old, new_state, self.filename, self.last_stats)
+        if new_state == "printing" and old != "paused" and self.capture_session is None:
+            # A fresh start (or a print already running when the listener
+            # (re)connected): open the #246 stage 2 capture session. A
+            # resume keeps the session the pause left open.
+            self._capture_begin(identity)
         if new_state == "printing" and _config.cfg()["visual_watch"]["enabled"]:
             layer = _visual_layer(self.last_stats)
             reason_due = self.visual_watch.due(layer, time.time(), snapshot_changed=None)
@@ -1686,6 +1693,7 @@ class Listener:
         if new_state in ("complete", "cancelled", "error", "standby") and old in ("printing", "paused"):
             self.visual_watch.reset()
             self.visual_frames.pop(self.filename, None)
+            self._capture_end(new_state)
             await self.after_print(new_state)
 
     def start_screen_cancel_reboot(self, why):
@@ -1719,6 +1727,45 @@ class Listener:
             if prompt:
                 await asyncio.to_thread(post, prompt)
 
+    # -- #246 stage 2: in-container timelapse capture ---------------------
+    # Capture is a side feature: every hook fails soft and, with
+    # timelapse.capture_enabled off (the default), begin() returns None
+    # and nothing here changes any existing behaviour.
+
+    def _capture_begin(self, job_key):
+        """Open a capture session for the job that just started. Never raises."""
+        self._capture_end("superseded")
+        try:
+            self.capture_session = timelapse_capture.begin(
+                job_key, self.filename, data=_config.cfg(), log=log)
+        except Exception as exc:  # begin() already fails soft; belt and braces
+            self.capture_session = None
+            log(f"timelapse capture begin failed file={self.filename!r}: {exc!r}")
+
+    def _capture_end(self, state):
+        """Close the active capture session, if any. Never raises."""
+        session, self.capture_session = self.capture_session, None
+        if session is not None:
+            try:
+                session.stop(state)
+            except Exception as exc:  # stop() already fails soft; belt and braces
+                log(f"timelapse capture end failed file={self.filename!r}: {exc!r}")
+
+    async def _capture_due(self, layer):
+        """Store a frame when the active session's trigger is due.
+
+        The due check is pure; only an actual capture (an HTTP fetch)
+        leaves the event loop. Never raises into the status flow.
+        """
+        session = self.capture_session
+        if session is None or self.state != "printing":
+            return
+        try:
+            if session.due(layer=layer):
+                await asyncio.to_thread(session.tick, layer)
+        except Exception as exc:
+            log(f"timelapse capture tick failed file={self.filename!r}: {exc!r}")
+
     async def session(self):
         self.ifs_monitor.baselined = False
         self.ifs_monitor.last_sample = {}
@@ -1742,10 +1789,12 @@ class Listener:
                         else:
                             status = ((msg.get("result") or {}).get("status") or {}).get("print_stats") or {}
                             await self.on_status(status, "subscribe")
+                            await self._capture_due(_visual_layer(self.last_stats))
                     elif method == "notify_status_update":
                         ps = (msg.get("params") or [{}])[0].get("print_stats")
                         if ps:
                             await self.on_status(ps, "event")
+                            await self._capture_due(_visual_layer(self.last_stats))
                             if self.state == "printing" and _config.cfg()["visual_watch"]["enabled"]:
                                 layer = _visual_layer(self.last_stats)
                                 reason_due = self.visual_watch.due(layer, time.time())

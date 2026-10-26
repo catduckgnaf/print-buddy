@@ -14,7 +14,7 @@ import os
 from pathlib import Path
 
 from ..base import MultiColorUnsupported, PrinterAdapter
-from . import guard, profiles
+from . import guard, hms, profiles
 from .client import BambuLanClient, BambuLanError, signature_required
 
 
@@ -202,14 +202,38 @@ class BambuAdapter(PrinterAdapter):
             if gcode_state in _BUSY_STATES:
                 problems.append(f"printer is busy ({gcode_state.lower()})")
             if payload.get("print_error"):
-                problems.append(f"printer reports a print error (code {payload['print_error']})")
-            hms = [h for h in (payload.get("hms") or []) if isinstance(h, dict) and h.get("attr", 0)]
-            if hms:
-                problems.append(f"printer reports {len(hms)} active HMS error(s)")
+                look = hms.lookup_error(payload["print_error"], self._hms_prefix())
+                if look.listed and look.text:
+                    problems.append(f"printer reports a print error: {look.text} (code {payload['print_error']})")
+                elif not look.listed:
+                    problems.append(f"printer reports a print error (code {payload['print_error']})")
+                # Listed-but-empty is not a fault (#306): Bambu lists the code with no text.
+            entries = [h for h in (payload.get("hms") or []) if isinstance(h, dict) and h.get("attr", 0)]
+            faults = []
+            for entry in entries:
+                look = hms.decode_entry(entry, self._hms_prefix())
+                if look is None or look.is_fault:
+                    faults.append((entry, look))
+            for entry, look in faults:
+                if look is not None and look.text:
+                    problems.append(f"printer reports an HMS error: {look.text} (HMS {look.key})")
+            unknown = [(e, l) for e, l in faults if l is None or not l.text]
+            if unknown:
+                codes = ", ".join(str(l.key) if l is not None else
+                                  f"attr={e.get('attr')} code={e.get('code')}" for e, l in unknown)
+                problems.append(f"printer reports {len(unknown)} active HMS error(s) (unknown code(s): {codes})")
             if signature_required(payload):
                 problems.append("printer firmware requires signed MQTT commands (Developer Mode is off): "
                                 "telemetry works, but upload and print control would be blocked")
         return problems
+
+    def _hms_prefix(self):
+        """The Bambu Studio device prefix for HMS texts: the first three characters of the
+        configured serial, when the generated HMS table carries that prefix; else None
+        (common texts apply)."""
+        serial = str(self._lan().get("lan_serial") or "").strip().upper()
+        prefix = serial[:3]
+        return prefix if prefix in hms.prefixes() else None
 
     def moonraker_objects(self):
         raise self._unsupported("Moonraker telemetry (this printer reports over Bambu LAN MQTT)")
@@ -241,7 +265,31 @@ class BambuAdapter(PrinterAdapter):
             "layer": payload.get("layer_num"),
             "total_layer": payload.get("total_layer_num"),
             "writes_blocked": signature_required(payload),
+            "hms_errors": self._decoded_hms(payload),
+            "print_error_text": self._decoded_print_error(payload),
         }
+
+    def _decoded_hms(self, payload):
+        """The payload's `hms[]` entries decoded (#306): each as {code, description, listed};
+        description None for an unlisted code, "" for a listed-but-empty one."""
+        out = []
+        for entry in payload.get("hms") or []:
+            if not isinstance(entry, dict) or not entry.get("attr", 0):
+                continue
+            look = hms.decode_entry(entry, self._hms_prefix())
+            if look is None:
+                out.append({"code": None, "description": None, "listed": False})
+            else:
+                out.append({"code": look.key, "description": look.text, "listed": look.listed})
+        return out
+
+    def _decoded_print_error(self, payload):
+        """The decoded `print_error` description (#306), or None when the value is absent,
+        unlisted, or listed-but-empty."""
+        if not payload.get("print_error"):
+            return None
+        look = hms.lookup_error(payload["print_error"], self._hms_prefix())
+        return look.text if look.listed and look.text else None
 
 
 def _print_payload(raw):

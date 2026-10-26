@@ -14,12 +14,32 @@ from print_buddy.bot.health import check as bot_check
 from print_buddy.healthcheck import check as listener_check
 
 
+def bot_token_env():
+    """(platform, token env var name) for the configured chat platform (#164).
+
+    Mirrors docker/supervise.sh: the platform and the name of the environment
+    variable holding its token come from Print Buddy's own settings. When the
+    settings cannot be loaded, the Discord default applies.
+    """
+    try:
+        from print_buddy import settings
+        cfg = settings.current()
+        platform = str(cfg["bot"].get("platform") or "discord")
+        if platform == "matrix":
+            return platform, str(cfg["matrix"]["access_token_env"])
+        return platform, str(cfg[platform]["token_env"])
+    except Exception:
+        return "discord", "DISCORD_BOT_TOKEN"
+
+
 def main():
     healthy = True
-    if os.environ.get("DISCORD_BOT_TOKEN"):
+    platform, token_env = bot_token_env()
+    if os.environ.get(token_env):
         healthy &= bot_check() == 0
     else:
-        print("ok  Discord bot disabled by empty token")
+        label = {"discord": "Discord", "telegram": "Telegram", "matrix": "Matrix"}.get(platform, platform)
+        print(f"ok  {label} bot disabled by empty token")
     ok, reason = listener_check()
     print(f"{'ok' if ok else 'FAIL'}  listener: {reason}")
     healthy &= ok

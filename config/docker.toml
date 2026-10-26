@@ -40,6 +40,39 @@ stock_api_port = 8898
 # Override with PRINT_BUDDY__PRINTER__MODEL=sovol.sv06 etc.
 model = "flashforge.ad5x"
 
+[bot]
+# Chat platform (#164): discord, telegram or matrix. Override with
+# PRINT_BUDDY__BOT__PLATFORM. The supervisor starts the bot only when the
+# chosen platform's token is set; an empty token leaves the bot idle while
+# the listener and Spoolman run.
+platform = "discord"
+
+[telegram]
+# Standalone bot only, when bot.platform is telegram (#164). The token itself
+# never goes in a file here; token_env names the environment variable holding it.
+token_env = "TELEGRAM_BOT_TOKEN"
+# Chat (group) ID the bot posts to. Telegram group and channel IDs are negative.
+chat_id = ""
+allowed_user_ids = ""
+approval_user_id = ""
+# Largest file the bot uploads: the Telegram Bot API cloud limit.
+upload_max_bytes = 50000000
+
+[matrix]
+# Standalone bot only, when bot.platform is matrix (#164). The access token
+# itself never goes in a file here; access_token_env names the environment
+# variable holding it. The room must be unencrypted.
+homeserver_url = ""
+access_token_env = "MATRIX_ACCESS_TOKEN"
+# Room ID of the print room (starts with '!'), from the room's settings.
+room_id = ""
+allowed_user_ids = ""
+approval_user_id = ""
+# The bot's own Matrix user ID (@user:server). Empty: asked from the
+# homeserver (whoami) at startup.
+bot_user_id = ""
+upload_max_bytes = 50000000
+
 [visual_watch]
 # Camera watchdog: alert-only spaghetti, detached-part, empty-bed and stall checks
 # (docs/DOCKER.md "Camera watch"). Override with PRINT_BUDDY__VISUAL_WATCH__SENSITIVITY /

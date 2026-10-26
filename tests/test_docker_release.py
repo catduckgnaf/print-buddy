@@ -413,6 +413,34 @@ class UnraidTemplateTests(unittest.TestCase):
         self.assertEqual(compose_env["PRINT_BUDDY_ORCA_CHANNEL"], "${PRINT_BUDDY_ORCA_CHANNEL:-stable}")
         self.assertRegex(ENV_EXAMPLE, r"(?m)^PRINT_BUDDY_ORCA_CHANNEL=stable$")
 
+    def test_template_variables_load_through_the_settings_loader(self):
+        """The template's FULL variable set (old and new) is a valid configuration,
+        with the chat platform set to each of discord, telegram and matrix (#164)."""
+        variables = self.configs(UNRAID, "Variable")
+        environ = {target: (config.text or "") for target, config in variables.items()
+                   if target.startswith("PRINT_BUDDY__")}
+        data = settings.load(local=ROOT / "config" / "docker.yaml", environ=environ)
+        self.assertEqual(data["bot"]["platform"], "discord")
+        self.assertEqual(data["bot"]["mode"], "standalone")
+        filled = {
+            "telegram": {"PRINT_BUDDY__TELEGRAM__CHAT_ID": "-1001234567890",
+                         "PRINT_BUDDY__TELEGRAM__ALLOWED_USER_IDS": "111111, 222222",
+                         "PRINT_BUDDY__TELEGRAM__APPROVAL_USER_ID": "111111"},
+            "matrix": {"PRINT_BUDDY__MATRIX__HOMESERVER_URL": "https://matrix.example.org",
+                       "PRINT_BUDDY__MATRIX__ROOM_ID": "!room:example.org",
+                       "PRINT_BUDDY__MATRIX__ALLOWED_USER_IDS": "@user:example.org",
+                       "PRINT_BUDDY__MATRIX__APPROVAL_USER_ID": "@user:example.org",
+                       "PRINT_BUDDY__MATRIX__BOT_USER_ID": "@printbuddy:example.org"},
+        }
+        for platform, extra in filled.items():
+            with self.subTest(platform=platform):
+                env = {**environ, "PRINT_BUDDY__BOT__PLATFORM": platform, **extra}
+                data = settings.load(local=ROOT / "config" / "docker.yaml", environ=env)
+                self.assertEqual(data["bot"]["platform"], platform)
+                for name, value in extra.items():
+                    section, key = name[len("PRINT_BUDDY__"):].lower().split("__")
+                    self.assertEqual(str(data[section][key]), value)
+
 
 class CameraWatchVisibilityTests(unittest.TestCase):
     """#248: the camera watchdog is advertised, and visual_watch sensitivity is explicit
@@ -536,6 +564,82 @@ class AcceptanceFixtureTests(unittest.TestCase):
         for check in ("spoolman:loopback-only", "spoolman:no-web-ui", "spoolman:persisted", "bot:fails-closed"):
             with self.subTest(check=check):
                 self.assertIn(check, script)
+
+
+PLATFORM_SETTINGS = {
+    "PRINT_BUDDY__BOT__PLATFORM": "discord",
+    "PRINT_BUDDY__TELEGRAM__CHAT_ID": "",
+    "PRINT_BUDDY__TELEGRAM__ALLOWED_USER_IDS": "",
+    "PRINT_BUDDY__TELEGRAM__APPROVAL_USER_ID": "",
+    "PRINT_BUDDY__MATRIX__HOMESERVER_URL": "",
+    "PRINT_BUDDY__MATRIX__ROOM_ID": "",
+    "PRINT_BUDDY__MATRIX__ALLOWED_USER_IDS": "",
+    "PRINT_BUDDY__MATRIX__APPROVAL_USER_ID": "",
+    "PRINT_BUDDY__MATRIX__BOT_USER_ID": "",
+}
+PLATFORM_SECRETS = {"TELEGRAM_BOT_TOKEN", "MATRIX_ACCESS_TOKEN"}
+
+
+class ChatPlatformDeploymentTests(unittest.TestCase):
+    """#164: the chat platform selector and the Telegram/Matrix settings are in the
+    Unraid template and the Compose environment with agreeing defaults; their
+    tokens are masked template fields only, and the shipped container configs
+    carry the platform sections the supervisor gates on."""
+
+    def variables(self):
+        return {c.get("Target"): c for c in UNRAID.findall("Config") if c.get("Type") == "Variable"}
+
+    def test_settings_are_in_template_and_compose_with_agreeing_defaults(self):
+        compose_env = COMPOSE["services"]["combined"]["environment"]
+        variables = self.variables()
+        for name, default in PLATFORM_SETTINGS.items():
+            with self.subTest(variable=name):
+                self.assertEqual(compose_env[name], "${%s:-%s}" % (name, default))
+                self.assertEqual(variables[name].text or "", default)
+                self.assertEqual(variables[name].get("Required"), "false")
+                self.assertEqual(variables[name].get("Mask"), "false")
+
+    def test_tokens_are_masked_template_fields_and_stay_out_of_compose_environment(self):
+        compose_env = COMPOSE["services"]["combined"]["environment"]
+        variables = self.variables()
+        for name in sorted(PLATFORM_SECRETS):
+            with self.subTest(secret=name):
+                self.assertIn(name, SECRETS)  # SETTINGS.md table and .env.example line, pinned by parity tests
+                self.assertEqual(variables[name].get("Mask"), "true")
+                self.assertEqual(variables[name].get("Required"), "false")
+                self.assertFalse(variables[name].text)
+                self.assertNotIn(name, compose_env)
+
+    def test_docker_configs_carry_the_platform_sections(self):
+        telegram = {"token_env": "TELEGRAM_BOT_TOKEN", "chat_id": "", "allowed_user_ids": "",
+                    "approval_user_id": "", "upload_max_bytes": 50000000}
+        matrix = {"homeserver_url": "", "access_token_env": "MATRIX_ACCESS_TOKEN", "room_id": "",
+                  "allowed_user_ids": "", "approval_user_id": "", "bot_user_id": "",
+                  "upload_max_bytes": 50000000}
+        docker_yaml = yaml.safe_load((ROOT / "config" / "docker.yaml").read_text())
+        self.assertEqual(docker_yaml["bot"], {"platform": "discord"})
+        self.assertEqual(docker_yaml["telegram"], telegram)
+        self.assertEqual(docker_yaml["matrix"], matrix)
+        docker_toml = tomllib.loads((ROOT / "config" / "docker.toml").read_text())
+        self.assertEqual(docker_toml["bot"], {"platform": "discord"})
+        self.assertEqual(docker_toml["telegram"], telegram)
+        self.assertEqual(docker_toml["matrix"], matrix)
+        loaded = settings.load(local=ROOT / "config" / "docker.yaml", environ={})
+        self.assertEqual(loaded["bot"]["platform"], "discord")
+        self.assertEqual(loaded["telegram"]["token_env"], "TELEGRAM_BOT_TOKEN")
+        self.assertEqual(loaded["matrix"]["access_token_env"], "MATRIX_ACCESS_TOKEN")
+
+    def test_supervisor_and_healthcheck_read_the_platform_from_settings(self):
+        supervisor = (ROOT / "docker" / "supervise.sh").read_text()
+        # One settings probe decides the gate; no platform->token mapping is
+        # hardcoded in shell, and the Discord idle message is unchanged.
+        self.assertIn("from print_buddy import settings", supervisor)
+        self.assertIn("access_token_env", supervisor)
+        self.assertNotIn('if [ -n "${DISCORD_BOT_TOKEN', supervisor)
+        self.assertIn("bot disabled; listener and Spoolman remain active.", supervisor)
+        probe = (ROOT / "docker" / "healthcheck.py").read_text()
+        self.assertIn("access_token_env", probe)
+        self.assertIn("token_env", probe)
 
 
 if __name__ == "__main__":

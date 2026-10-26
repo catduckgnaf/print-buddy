@@ -841,6 +841,12 @@ class EnglishAndPrintNowTests(unittest.TestCase):
         self.assertEqual(model_job.gcode_estimate_s("; estimated printing time (normal mode) = 11h 56m 20s\n"), 42980)
         self.assertEqual(model_job.human_dur(42980), "11h 56m")
         self.assertIsNone(model_job.gcode_estimate_s("nothing"))
+        # Bambu Studio writes the header form only (#271): printing time first, the slicer total as fallback.
+        bambu = "; HEADER_BLOCK_START\n; model printing time: 14h 22m 10s; total estimated time: 14h 31m 37s\n"
+        self.assertEqual(model_job.gcode_estimate_s(bambu), 51730)
+        self.assertEqual(model_job.gcode_estimate_s("; total estimated time: 9m\n"), 540)
+        both = bambu + "; estimated printing time (normal mode) = 11h 56m 20s\n"
+        self.assertEqual(model_job.gcode_estimate_s(both), 42980)
 
     def setUp(self):
         # live_snapshot reads the printer; keep every print_now test offline.

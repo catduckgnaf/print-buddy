@@ -172,7 +172,7 @@ class OverrideTests(unittest.TestCase):
             "prime_tower": {"size_mm", "part_clearance_mm", "edge_mm", "merge_slack_mm"},
             "cold_pull": {"pla_trial", "petg"},
             "orca": {"templates", "command"},
-            "bambu": {"command", "lan_host", "lan_serial", "lan_access_code_env"},
+            "bambu": {"command", "lan_host", "lan_serial", "lan_access_code_env", "start_confirm_s"},
             "slicer": {"flash_studio_path"},
             "flashforge_stock": {"host"},
             "paths": {"hermes_home", "archive", "records_vault", "cache", "hermes_bin", "ffmpeg",
@@ -204,6 +204,23 @@ class OverrideTests(unittest.TestCase):
             with self.subTest(section=section):
                 self.assertEqual(set(inventory[section]), keys)
         self.assertTrue(all("security" not in key and "safety" not in key for key in inventory))
+
+    def test_bambu_start_confirm_window_defaults_and_limits(self):
+        home = self.toml(Path(settings.LEGACY_HOME).read_text(), "legacy-home.toml")
+        self.assertEqual(settings.load(home=home, local=False, environ={})["bambu"]["start_confirm_s"], 90)
+        env = {"PRINT_BUDDY__BAMBU__START_CONFIRM_S": "120"}
+        self.assertEqual(settings.load(home=home, local=False, environ=env)["bambu"]["start_confirm_s"], 120)
+        # An older home file without the key still accepts it from the environment and from YAML.
+        older = self.toml(Path(settings.LEGACY_HOME).read_text().replace("start_confirm_s = 90\n", ""), "older-home.toml")
+        self.assertEqual(settings.load(home=older, local=False, environ={})["bambu"]["start_confirm_s"], 90)
+        self.assertEqual(settings.load(home=older, local=False, environ=env)["bambu"]["start_confirm_s"], 120)
+        local = self.toml("bambu:\n  start_confirm_s: 60\n", "local.yaml")
+        self.assertEqual(settings.load(home=older, local=local, environ={})["bambu"]["start_confirm_s"], 60)
+        for bad, message in (("0", "positive"), ("301", "at most 300")):
+            with self.assertRaisesRegex(settings.SettingsError, message):
+                settings.load(home=home, local=False, environ={"PRINT_BUDDY__BAMBU__START_CONFIRM_S": bad})
+        with self.assertRaisesRegex(settings.SettingsError, "whole number"):
+            settings.load(home=home, local=self.toml("bambu:\n  start_confirm_s: 12.5\n", "frac.yaml"), environ={})
 
     def test_docker_yaml_matches_legacy_toml_effective_settings(self):
         docker_yaml = settings.ROOT / "config" / "docker.yaml"

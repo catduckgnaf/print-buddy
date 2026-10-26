@@ -42,6 +42,9 @@ bambu:
   lan_host: ''
   lan_serial: ''
   lan_access_code_env: BAMBU_LAN_PASSWORD
+  # LAN print start: seconds to poll the printer for it to report the submitted file before
+  # the start is left as uncertain (#271). An A1 can take over a minute to unpack a large package.
+  start_confirm_s: 90
 paths:
   hermes_home: ~/.hermes/profiles/3dprinting
   archive: ~/3d-prints

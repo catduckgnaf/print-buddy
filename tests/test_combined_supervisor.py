@@ -64,6 +64,8 @@ class CombinedSupervisorTests(unittest.TestCase):
                 'exit "${PRINT_BUDDY_TEST_LISTENER_GATE:-0}";; '
                 '*print_buddy.webui_gate*) '
                 'exit "${PRINT_BUDDY_TEST_WEBUI_GATE:-3}";; '
+                '*print_buddy.live_gate*) '
+                'exit "${PRINT_BUDDY_TEST_LIVE_GATE:-3}";; '
                 '*print_buddy.listeners*) ' + listener_child + ';; '
                 'esac\n')
         fake.write_text('#!/bin/bash\n' + gate + child)
@@ -164,6 +166,28 @@ class CombinedSupervisorTests(unittest.TestCase):
                                     capture_output=True, text=True, timeout=15)
         self.assertEqual(result.returncode, 2, result.stderr)
         self.assertIn('Web UI gate failed', result.stderr)
+
+    def test_live_child_runs_only_when_the_gate_allows_it(self):
+        """Live gate 0 (#311): with no listener and no bot, the Activity server child runs and its exit rules."""
+        with tempfile.TemporaryDirectory() as directory:
+            env = self.environment(directory, 'exit 8\n')
+            env['PRINT_BUDDY_TEST_LISTENER_GATE'] = '3'
+            env['PRINT_BUDDY_TEST_LIVE_GATE'] = '0'
+            result = subprocess.run(['bash', str(SCRIPT)], env=env,
+                                    capture_output=True, text=True, timeout=15)
+        self.assertEqual(result.returncode, 8, result.stderr)
+        self.assertNotIn('idling', result.stdout)
+
+    def test_live_gate_failure_stops_container(self):
+        """An unresolved configuration at the live gate stops the supervisor before the child starts."""
+        with tempfile.TemporaryDirectory() as directory:
+            env = self.environment(directory, 'exit 9\n')
+            env['PRINT_BUDDY_TEST_LISTENER_GATE'] = '3'
+            env['PRINT_BUDDY_TEST_LIVE_GATE'] = '2'
+            result = subprocess.run(['bash', str(SCRIPT)], env=env,
+                                    capture_output=True, text=True, timeout=15)
+        self.assertEqual(result.returncode, 2, result.stderr)
+        self.assertIn('Live gate failed', result.stderr)
 
     def test_no_children_configuration_idles_until_terminated(self):
         """No listener, no bot token, external Spoolman: stay up, exit 0 on SIGTERM."""

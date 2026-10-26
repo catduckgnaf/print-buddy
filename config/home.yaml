@@ -224,6 +224,7 @@ live_stream:
   encoder: auto
   empty_timeout_s: 300
   activity_origin: ''
+  port: 0
 maintenance:
   quick_hours: 25
   full_hours: 75

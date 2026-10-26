@@ -212,3 +212,158 @@ def test_unknown_paths_and_methods(server):
     assert _request(instance, "GET", "/nope")[0] == 404
     assert _request(instance, "POST", "/nope", body="{}")[0] == 404
     assert _request(instance, "PUT", "/")[0] == 405
+
+
+# --------------------------------------------------------------------- presence callbacks
+
+def test_presence_callbacks_fire_on_exchange_page_and_leave():
+    seen, left = [], []
+    transport = FakeTransport()
+    instance = la.make_server("127.0.0.1", 0, transport=transport,
+                              allowlist=ALLOWLIST, secret=SECRET,
+                              on_viewer=seen.append, on_leave=left.append)
+    thread = threading.Thread(target=instance.serve_forever, daemon=True)
+    thread.start()
+    try:
+        status, headers, _ = _request(
+            instance, "POST", "/api/token", body=json.dumps({"code": CODE}),
+            headers={"Content-Type": "application/json"})
+        assert status == 200 and seen == ["42"]
+        cookie = headers["Set-Cookie"].split(";", 1)[0]
+        status, _, _ = _request(instance, "GET", "/", headers={"Cookie": cookie})
+        assert status == 200 and seen == ["42", "42"]
+        status, _, _ = _request(instance, "POST", "/api/leave", headers={"Cookie": cookie})
+        assert status == 200 and left == ["42"]
+        # The leave beacon without a session is refused, like the page.
+        assert _request(instance, "POST", "/api/leave")[0] == 403
+    finally:
+        instance.shutdown()
+        instance.server_close()
+
+
+# --------------------------------------------------------------------- the feed proxy
+
+import socket as _socket  # noqa: E402 — grouped with the proxy fixtures
+
+
+class FakeGo2rtc(threading.Thread):
+    """A one-shot fake go2rtc /api/ws: answers the upgrade, sends a frame,
+    and echoes back whatever the client sends (the proxy is a byte pipe)."""
+
+    def __init__(self):
+        super().__init__(daemon=True)
+        self.listener = _socket.socket()
+        self.listener.setsockopt(_socket.SOL_SOCKET, _socket.SO_REUSEADDR, 1)
+        self.listener.bind(("127.0.0.1", 0))
+        self.listener.listen(1)
+        self.port = self.listener.getsockname()[1]
+        self.request_head = b""
+
+    def run(self):
+        connection, _ = self.listener.accept()
+        with connection:
+            head = b""
+            while b"\r\n\r\n" not in head:
+                chunk = connection.recv(4096)
+                if not chunk:
+                    return
+                head += chunk
+            self.request_head = head
+            connection.sendall(b"HTTP/1.1 101 Switching Protocols\r\n"
+                               b"Upgrade: websocket\r\nConnection: Upgrade\r\n\r\n")
+            connection.sendall(b"\x82\x03fmp")
+            echo = connection.recv(4096)
+            if echo:
+                connection.sendall(b"echo:" + echo)
+            time.sleep(0.2)
+
+
+@pytest.fixture()
+def feed_server():
+    upstream = FakeGo2rtc()
+    upstream.start()
+    instance = la.make_server("127.0.0.1", 0, transport=FakeTransport(),
+                              allowlist=ALLOWLIST, secret=SECRET,
+                              feed_upstream=("127.0.0.1", upstream.port))
+    thread = threading.Thread(target=instance.serve_forever, daemon=True)
+    thread.start()
+    yield instance, upstream
+    instance.shutdown()
+    instance.server_close()
+    upstream.join(timeout=5)
+
+
+def _ws_handshake(server, path, cookie=None):
+    """Returns (connection, head, rest): `rest` is whatever arrived with the
+    headers (a fast upstream's first frame can share the segment, so a
+    test must not expect it from a later recv)."""
+    connection = _socket.create_connection(("127.0.0.1", server.server_address[1]), timeout=5)
+    lines = [f"GET {path} HTTP/1.1", "Host: 127.0.0.1", "Upgrade: websocket",
+             "Connection: Upgrade", "Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==",
+             "Sec-WebSocket-Version: 13"]
+    if cookie:
+        lines.append(f"Cookie: {cookie}")
+    connection.sendall(("\r\n".join(lines) + "\r\n\r\n").encode())
+    head = b""
+    while b"\r\n\r\n" not in head:
+        chunk = connection.recv(4096)
+        assert chunk, "server closed during the handshake"
+        head += chunk
+    head, _, rest = head.partition(b"\r\n\r\n")
+    return connection, head + b"\r\n\r\n", rest
+
+
+def _session_cookie(instance):
+    status, headers, _ = _request(
+        instance, "POST", "/api/token", body=json.dumps({"code": CODE}),
+        headers={"Content-Type": "application/json"})
+    assert status == 200
+    return headers["Set-Cookie"].split(";", 1)[0]
+
+
+def test_feed_proxy_requires_a_session_and_the_one_stream(feed_server):
+    instance, upstream = feed_server
+    # No session: refused before anything reaches the upstream.
+    connection, head, _ = _ws_handshake(instance, "/api/ws?src=camera")
+    assert b"403" in head.split(b"\r\n", 1)[0]
+    connection.close()
+    # A stream that is not the one published name: also refused.
+    cookie = _session_cookie(instance)
+    connection, head, _ = _ws_handshake(instance, "/api/ws?src=other", cookie=cookie)
+    assert b"404" in head.split(b"\r\n", 1)[0]
+    connection.close()
+    assert upstream.request_head == b""
+
+
+def test_feed_proxy_relays_the_handshake_and_frames(feed_server):
+    instance, upstream = feed_server
+    cookie = _session_cookie(instance)
+    connection, head, rest = _ws_handshake(instance, "/api/ws?src=camera", cookie=cookie)
+    try:
+        assert b"101" in head.split(b"\r\n", 1)[0]
+        frame = rest or connection.recv(4096)
+        assert frame == b"\x82\x03fmp"  # the upstream's frame, byte for byte
+        connection.sendall(b"mse-offer")
+        assert connection.recv(4096) == b"echo:mse-offer"
+    finally:
+        connection.close()
+    # The upstream saw the rebuilt request: the published stream path and
+    # no session cookie (go2rtc never learns the marker).
+    assert b"GET /api/ws?src=camera" in upstream.request_head
+    assert b"Cookie" not in upstream.request_head
+
+
+def test_feed_proxy_reports_a_dead_upstream_as_502():
+    instance = la.make_server("127.0.0.1", 0, transport=FakeTransport(),
+                              allowlist=ALLOWLIST, secret=SECRET,
+                              feed_upstream=("127.0.0.1", 1))
+    thread = threading.Thread(target=instance.serve_forever, daemon=True)
+    thread.start()
+    try:
+        cookie = _session_cookie(instance)
+        connection, head, _ = _ws_handshake(instance, "/api/ws?src=camera", cookie=cookie)
+        assert b"502" in head.split(b"\r\n", 1)[0]
+        connection.close()
+    finally:
+        instance.shutdown()
+        instance.server_close()

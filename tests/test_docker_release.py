@@ -36,8 +36,10 @@ DEPLOYMENT_FILES = [".env.example", "docker-compose.yml", "Dockerfile",
                     "docker/supervise.sh", "docker/healthcheck.py", "config/docker.yaml", "config/docker.toml",
                     "docs/DOCKER.md", "docs/SETTINGS.md", "tests/docker/compose.acceptance.yml"]
 SECRETS = {"DISCORD_BOT_TOKEN", "TELEGRAM_BOT_TOKEN", "MATRIX_ACCESS_TOKEN", "LLM_API_KEY", "OCTOPRINT_API_KEY", "MOONRAKER_API_KEY", "CLIPROXY_API_KEY",
-           "OPENVIKING_API_KEY", "BAMBU_LAN_PASSWORD", "AD5X_SERIAL", "AD5X_CHECK_CODE", "WEBUI_ACCESS_TOKEN"}
-COMPOSE_VARS = {"PRINT_BUDDY_IMAGE", "PRINT_BUDDY_DATA", "PRINT_BUDDY_SPOOLMAN_DATA", "PRINT_BUDDY_CONFIG", "TZ"}
+           "OPENVIKING_API_KEY", "BAMBU_LAN_PASSWORD", "AD5X_SERIAL", "AD5X_CHECK_CODE", "WEBUI_ACCESS_TOKEN",
+           "DISCORD_CLIENT_SECRET", "LIVE_STREAM_SESSION_SECRET", "TUNNEL_TOKEN"}
+COMPOSE_VARS = {"PRINT_BUDDY_IMAGE", "PRINT_BUDDY_DATA", "PRINT_BUDDY_SPOOLMAN_DATA", "PRINT_BUDDY_CONFIG", "TZ",
+                "DISCORD_CLIENT_ID", "CLOUDFLARED_IMAGE"}
 RUNTIME_ENV_VARS = {"PRINT_BUDDY_ORCA_CHANNEL", "PRINT_BUDDY_BUNDLED_SPOOLMAN", "SPOOLMAN_HOST"}
 DATA_TARGETS = {"/data/hermes", "/data/archive", "/data/records", "/data/cache"}
 
@@ -370,7 +372,14 @@ class UnraidTemplateTests(unittest.TestCase):
         self.flags = {flag: params[i + 1] for i, flag in enumerate(params[:-1]) if flag.startswith("--")}
 
     def test_template_runs_the_combined_compose_service(self):
-        self.assertEqual(list(COMPOSE["services"]), ["combined"])
+        # The combined service is the template's container; the only other
+        # Compose service is the optional cloudflared sidecar (#311), which
+        # is profile-gated, shares the combined network namespace and is a
+        # separate Unraid container there — never part of this template.
+        self.assertEqual(list(COMPOSE["services"]), ["combined", "cloudflared"])
+        sidecar = COMPOSE["services"]["cloudflared"]
+        self.assertEqual(sidecar["profiles"], ["live-stream"])
+        self.assertEqual(sidecar["network_mode"], "service:combined")
         self.assertEqual(UNRAID.findtext("Name"), "print-buddy")
         self.assertFalse(UNRAID.findtext("PostArgs"))
         self.assertNotIn("command", self.service)
@@ -487,6 +496,66 @@ class WebuiContainerTests(unittest.TestCase):
         self.assertIn("WEBUI_ACCESS_TOKEN", docker_doc)
 
 
+class LiveContainerTests(unittest.TestCase):
+    """#311 stage 4: the live-view Activity server is a gated supervised
+    child, a healthcheck row, Compose opt-in variables, an optional
+    profile-gated cloudflared sidecar and Unraid template fields — and
+    stays off everywhere by default."""
+
+    def variables(self):
+        return {c.get("Target"): c for c in UNRAID.findall("Config") if c.get("Type") == "Variable"}
+
+    def test_compose_live_variables_default_to_off(self):
+        compose_env = COMPOSE["services"]["combined"]["environment"]
+        self.assertEqual(compose_env["PRINT_BUDDY__LIVE_STREAM__ENABLED"],
+                         "${PRINT_BUDDY__LIVE_STREAM__ENABLED:-false}")
+        self.assertEqual(compose_env["PRINT_BUDDY__LIVE_STREAM__PORT"],
+                         "${PRINT_BUDDY__LIVE_STREAM__PORT:-0}")
+        self.assertEqual(compose_env["DISCORD_CLIENT_ID"], "${DISCORD_CLIENT_ID:-}")
+        # The secrets reach the container through the .env env_file only,
+        # never a Compose environment entry.
+        for secret in ("DISCORD_CLIENT_SECRET", "LIVE_STREAM_SESSION_SECRET"):
+            self.assertNotIn(secret, compose_env)
+
+    def test_cloudflared_sidecar_is_profile_gated_and_shares_loopback(self):
+        sidecar = COMPOSE["services"]["cloudflared"]
+        self.assertEqual(sidecar["profiles"], ["live-stream"])
+        self.assertEqual(sidecar["network_mode"], "service:combined")
+        # Render-safe ${VAR:-default} forms, never :? guards: a required
+        # variable on a profile-gated service breaks the bare
+        # `docker compose config` render (the docker-static CI job). The
+        # token has no safe default; the profile is the opt-in and
+        # cloudflared itself exits when started without one.
+        self.assertEqual(sidecar["environment"]["TUNNEL_TOKEN"], "${TUNNEL_TOKEN:-}")
+        self.assertEqual(sidecar["image"], "${CLOUDFLARED_IMAGE:-cloudflare/cloudflared:latest}")
+        self.assertNotIn("ports", sidecar)
+
+    def test_unraid_live_variables_and_masked_secrets(self):
+        variables = self.variables()
+        self.assertEqual(variables["PRINT_BUDDY__LIVE_STREAM__ENABLED"].text, "false")
+        # The template pre-fills the fixed tunnel target port (the Web UI
+        # port precedent); the settings default itself stays 0.
+        self.assertEqual(variables["PRINT_BUDDY__LIVE_STREAM__PORT"].text, "8091")
+        for secret in ("DISCORD_CLIENT_SECRET", "LIVE_STREAM_SESSION_SECRET", "TUNNEL_TOKEN"):
+            with self.subTest(secret=secret):
+                self.assertEqual(variables[secret].get("Mask"), "true")
+                self.assertFalse(variables[secret].text)
+
+    def test_supervisor_and_healthcheck_carry_the_gate_and_row(self):
+        supervisor = (ROOT / "docker" / "supervise.sh").read_text()
+        self.assertIn("python3 -m print_buddy.live_gate", supervisor)
+        self.assertIn("python3 -m print_buddy.live_activity &", supervisor)
+        probe = (ROOT / "docker" / "healthcheck.py").read_text()
+        self.assertIn("from print_buddy.live_gate import live_config", probe)
+        self.assertIn("live view: ", probe)
+
+    def test_live_view_is_documented_in_the_docker_guide(self):
+        docker_doc = (ROOT / "docs" / "DOCKER.md").read_text()
+        self.assertIn("## Live camera in Discord (optional, #311)", docker_doc)
+        self.assertIn("PRINT_BUDDY__LIVE_STREAM__ENABLED", docker_doc)
+        self.assertIn("TUNNEL_TOKEN", docker_doc)
+
+
 class CameraWatchVisibilityTests(unittest.TestCase):
     """#248: the camera watchdog is advertised, and visual_watch sensitivity is explicit
     and configurable in the shipped YAML/TOML Docker configs, Compose and Unraid."""
@@ -542,9 +611,23 @@ FEATURE_SETTINGS = {
     "PRINT_BUDDY__DISCORD__TIMEZONE": "America/New_York",
     "PRINT_BUDDY__LLM__CHAT_URL": "",
     "PRINT_BUDDY__LLM__MODEL": "",
+    # Live camera in Discord (#311): every [live_stream] setting except the
+    # port — the template pre-fills 8091 as the fixed tunnel target while
+    # the settings/Compose default stays 0 (the Web UI port precedent),
+    # pinned separately in LiveContainerTests below.
+    "PRINT_BUDDY__LIVE_STREAM__ENABLED": "false",
+    "PRINT_BUDDY__LIVE_STREAM__VOICE_CHANNEL_ID": "",
+    "PRINT_BUDDY__LIVE_STREAM__AUTO_START_ON_PRINT": "false",
+    "PRINT_BUDDY__LIVE_STREAM__MAX_HEIGHT": "720",
+    "PRINT_BUDDY__LIVE_STREAM__FPS": "15",
+    "PRINT_BUDDY__LIVE_STREAM__MAX_BITRATE_KBPS": "2500",
+    "PRINT_BUDDY__LIVE_STREAM__ENCODER": "auto",
+    "PRINT_BUDDY__LIVE_STREAM__EMPTY_TIMEOUT_S": "300",
+    "PRINT_BUDDY__LIVE_STREAM__ACTIVITY_ORIGIN": "",
 }
 FEATURE_SECRETS = {"CLIPROXY_API_KEY", "AD5X_SERIAL", "AD5X_CHECK_CODE",
-                   "BAMBU_LAN_PASSWORD", "MOONRAKER_API_KEY", "LLM_API_KEY"}
+                   "BAMBU_LAN_PASSWORD", "MOONRAKER_API_KEY", "LLM_API_KEY",
+                   "DISCORD_CLIENT_SECRET", "LIVE_STREAM_SESSION_SECRET", "TUNNEL_TOKEN"}
 
 
 class DockerFeatureVariablesTests(unittest.TestCase):

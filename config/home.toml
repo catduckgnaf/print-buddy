@@ -260,6 +260,7 @@ max_bitrate_kbps = 2500
 encoder = "auto"
 empty_timeout_s = 300
 activity_origin = ""
+port = 0
 
 [maintenance]
 quick_hours = 25

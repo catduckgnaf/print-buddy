@@ -30,6 +30,7 @@ class DockerReleaseContract(unittest.TestCase):
         # #299: the supervisor starts the printer listener through the
         # listener registry launcher, not a hard-coded domain module.
         for process in ("python3 -m print_buddy.bot", "python3 -m print_buddy.listeners",
+                        "python3 -m print_buddy.webui_gate", "python3 -m print_buddy.webui",
                         "uvicorn spoolman.main:app"):
             with self.subTest(process=process):
                 self.assertIn(process, supervisor)

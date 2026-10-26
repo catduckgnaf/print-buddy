@@ -2,6 +2,7 @@
 """Container readiness across the bot, the printer listener and local Spoolman."""
 import os
 import sys
+import urllib.error
 import urllib.request
 
 # Installed as /usr/local/bin/print-buddy-healthcheck: for a script invocation Python
@@ -14,6 +15,7 @@ from print_buddy import settings
 from print_buddy.bot.health import check as bot_check
 from print_buddy.healthcheck import check as listener_check
 from print_buddy.healthcheck import listener_domain, listener_required
+from print_buddy.webui_gate import webui_config
 
 
 def main():
@@ -56,6 +58,46 @@ def main():
     except Exception as exc:
         print(f"FAIL  Spoolman: {exc}")
         healthy = False
+    # The Web UI row mirrors the supervisor's webui gate (#286 stage 4):
+    # skipped when disabled or portless, exactly like the listener row
+    # above. When the supervisor started the server, any HTTP answer from
+    # /healthz proves it is up: the status code itself is the bot
+    # heartbeat's verdict (200 healthy, 503 stale), which the bot row
+    # above already owns, so both mean the Web UI is serving. A token is
+    # sent when the environment carries one, matching the server's rule
+    # that a configured token guards every route.
+    try:
+        webui_enabled, webui_host, webui_port, webui_env_name = webui_config()
+        webui_resolved = True
+    except settings.SettingsError as exc:
+        print(f"FAIL  webui: configuration unresolved: {exc}")
+        webui_enabled, webui_resolved, healthy = False, False, False
+    if webui_resolved and webui_enabled and webui_port > 0:
+        probe_host = "127.0.0.1" if webui_host in ("0.0.0.0", "::") else webui_host
+        request = urllib.request.Request(
+            f"http://{probe_host}:{webui_port}/healthz")
+        token = os.environ.get(webui_env_name, "")
+        if token:
+            request.add_header("X-WebUI-Token", token)
+        status = None
+        try:
+            with urllib.request.urlopen(request, timeout=3) as response:
+                status = response.status
+        except urllib.error.HTTPError as exc:
+            status = exc.code
+        except Exception as exc:
+            print(f"FAIL  webui: {exc}")
+            healthy = False
+        if status is not None:
+            if status in (200, 503):
+                print(f"ok  webui: serving on {webui_host}:{webui_port} (HTTP {status})")
+            else:
+                print(f"FAIL  webui: HTTP {status} from /healthz")
+                healthy = False
+    elif webui_resolved and webui_enabled:
+        print("ok  webui: enabled but no port chosen; not started")
+    elif webui_resolved:
+        print("ok  webui: disabled")
     return 0 if healthy else 1
 
 

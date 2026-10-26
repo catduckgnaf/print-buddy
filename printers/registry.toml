@@ -260,7 +260,49 @@ bed_mm = [340.0, 320.0]
 max_height_mm = 340.0
 filament_slots = 1
 profile = "print_buddy/printers/bambulab/h2s.py"
-notes = "Single-nozzle H2 model with a 350 C hotend. Dual-nozzle H2D/H2C are not yet supported (#127 Stage 2)."
+notes = "Single-nozzle H2 model with a 350 C hotend. The dual-nozzle H2D is registered separately (#308); H2C has no profile in the pinned OrcaSlicer 2.4.2."
+
+[[printer]]
+key = "bambulab.h2d"
+label = "Bambu Lab H2D"
+vendor = "bambulab"
+firmware = "Bambu Lab (offline handoff only)"
+firmware_family = "none"
+connection = "bambulab_lan"
+kinematics = "CoreXY"
+bed_mm = [350.0, 320.0]
+max_height_mm = 325.0
+filament_slots = 1
+profile = "print_buddy/printers/bambulab/h2d.py"
+notes = "Dual-nozzle flagship (two extruders). Print starts resolve AMS trays per filament slot (#308). The 350 mm width spans both tools; a single tool reaches 305 mm."
+
+[[printer]]
+key = "bambulab.h2dpro"
+label = "Bambu Lab H2D Pro"
+vendor = "bambulab"
+firmware = "Bambu Lab (offline handoff only)"
+firmware_family = "none"
+connection = "bambulab_lan"
+kinematics = "CoreXY"
+bed_mm = [350.0, 320.0]
+max_height_mm = 325.0
+filament_slots = 1
+profile = "print_buddy/printers/bambulab/h2dpro.py"
+notes = "Pro variant of the dual-nozzle H2D, with its own Orca profiles and identity (#308)."
+
+[[printer]]
+key = "bambulab.x2d"
+label = "Bambu Lab X2D"
+vendor = "bambulab"
+firmware = "Bambu Lab (offline handoff only)"
+firmware_family = "none"
+connection = "bambulab_lan"
+kinematics = "CoreXY"
+bed_mm = [256.0, 256.0]
+max_height_mm = 261.0
+filament_slots = 1
+profile = "print_buddy/printers/bambulab/x2d.py"
+notes = "Dual-nozzle X-series model (two extruders). Print starts resolve AMS trays per filament slot (#308)."
 
 [[printer]]
 key = "prusa.mk4s"

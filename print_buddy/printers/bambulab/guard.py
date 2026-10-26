@@ -13,7 +13,9 @@ are generated on the operator's machine from their own OrcaSlicer (profiles.py) 
 flattened vendor profiles hash to an identity recorded in facts.py; an [orca] templates override is never the
 reference, and missing or unverified profiles refuse every file. The filament blocks are checked against the
 verified filament profile the file names in filament_settings_id, which must be the checked profile for the
-material its filament_type declares (#264).
+material its filament_type declares (#264) — applied per filament slot since #308, so a fully-mapped
+multi-filament file is checked slot by slot; whether the printer's loaded trays can serve those slots
+is a live decision in the print path (ams_mapping.py), not a text check.
 """
 from __future__ import annotations
 
@@ -129,12 +131,18 @@ def vendor_block_problems(block, patterns, what):
     return problems
 
 
-def _settings_id(text):
-    """The one filament profile name a sliced file says it used, or None."""
+def _settings_ids(text):
+    """The filament profile names a sliced file says it used, one per filament slot, or None.
+
+    Orca writes one slot as a single quoted name and several as quoted names
+    separated by ';' (`filament_settings_id = "A";"B"`), in slot order.
+    """
     value = _config(text, "filament_settings_id")
-    if value is None or ";" in value:
+    if value is None:
         return None
-    return value.strip().strip('"')
+    entries = [part.strip().strip('"') for part in value.split(";")]
+    entries = [entry for entry in entries if entry]
+    return entries or None
 
 
 def _templates(adapter, settings_id):
@@ -175,26 +183,49 @@ def gcode_problems(text, adapter, *, state=None):
                         "bounds cannot be checked")
     else:
         prelude, body, epilogue = split
-        settings_id = _settings_id(text)
+        settings_ids = _settings_ids(text)
+        declared_types = [t.strip() for t in (_config(text, "filament_type") or "").split(";") if t.strip()]
         try:
-            if settings_id is None:
+            if settings_ids is None:
                 raise profiles.ProfileError(f"G-code must name exactly one filament_settings_id, got "
                                             f"{_config(text, 'filament_settings_id')!r}")
-            start, end, profile = _templates(adapter, settings_id)
+            # The vendor blocks are matched against the first slot's filament profile (Orca emits
+            # the initial filament's blocks in the prelude/epilogue); every other slot's profile
+            # must still be a checked one for this printer.
+            start, end, profile = _templates(adapter, settings_ids[0])
+            slot_profiles = [profile] + [json.loads(profiles.filament_for_settings_id(
+                adapter, sid, adapter.pinned_templates()).read_text()) for sid in settings_ids[1:]]
         except profiles.ProfileError as exc:
             problems.append(f"vendor start and end G-code cannot be checked: {exc}")
         else:
             problems += vendor_block_problems(prelude, template_patterns(*start), "start G-code")
             problems += vendor_block_problems(epilogue, template_patterns(*end), "end G-code")
-            # The filament profile must be the one for the material the file declares: PETG sliced with a PLA
-            # profile (its cooling, flow and filament G-code) is refused even when filament_type says PETG.
-            declared, kind = _config(text, "filament_type"), profiles._first(profile.get("filament_type"))
-            if declared and ";" not in declared and profiles.material_key(declared) != profiles.material_key(kind):
-                problems.append(f"G-code filament_type {declared!r} was sliced with the {kind} filament profile "
-                                f"{settings_id!r}; reslice with the {profiles.material_key(declared)} profile")
+            if len(declared_types) != len(settings_ids):
+                problems.append(f"G-code names {len(settings_ids)} filament_settings_id value(s) for "
+                                f"{len(declared_types)} filament_type value(s); each filament slot needs "
+                                "its own checked profile")
+            else:
+                # The filament profile must be the one for the material the file declares, per slot:
+                # PETG sliced with a PLA profile (its cooling, flow and filament G-code) is refused
+                # even when filament_type says PETG.
+                for index, (declared, slot_profile, sid) in enumerate(
+                        zip(declared_types, slot_profiles, settings_ids)):
+                    kind = profiles._first(slot_profile.get("filament_type"))
+                    if profiles.material_key(declared) != profiles.material_key(kind):
+                        where = f" (filament slot {index + 1})" if len(settings_ids) > 1 else ""
+                        problems.append(f"G-code filament_type {declared!r} was sliced with the {kind} "
+                                        f"filament profile {sid!r}; reslice with the "
+                                        f"{profiles.material_key(declared)} profile{where}")
+        # Tool changes are mappable when they stay inside the file's declared filament slots;
+        # whether the printer's loaded trays can serve them is the print path's live decision
+        # (ams_mapping.py, #308). A tool outside the declared slots can never be mapped.
         tools = sorted({int(n) for n in re.findall(r"^[ \t]*T(\d+)\b", body, re.M)} - {0})
-        if tools:
-            problems.append(f"G-code changes to tools {tools}; {fact('ams')[0]} multi-color is not supported")
+        slots = len(settings_ids) if settings_ids else 1
+        unmappable = [tool for tool in tools if tool >= slots]
+        if unmappable:
+            problems.append(f"G-code changes to tools {unmappable}; the file declares {slots} filament "
+                            f"slot(s) (tools 0..{slots - 1}), so those tool changes cannot be mapped "
+                            "to a filament slot")
         plate = _config(text, "curr_bed_type")
         if plate != fact("default_plate"):
             problems.append(f"plate type must be {fact('default_plate')!r} (the only plate the {name} profile "
@@ -207,13 +238,25 @@ def gcode_problems(text, adapter, *, state=None):
         if over:
             problems.append(f"{command} S{max(over):g} exceeds the {name} limit of {limit} C")
     nozzle = _config(text, "nozzle_diameter")
-    try:
-        nozzle_mm = float(nozzle)
-    except (TypeError, ValueError):
-        problems.append(f"invalid embedded nozzle_diameter {nozzle!r}")
-        nozzle_mm = None
-    if nozzle_mm is not None and not any(math.isclose(nozzle_mm, s, abs_tol=1e-3) for s in nozzle_sizes):
-        problems.append(f"nozzle {nozzle_mm:g} mm has no {name} template here (supported: "
+    # Dual-nozzle profiles carry one diameter per extruder ("0.4,0.4"); every
+    # entry must be a supported size. The first is the file's nozzle diameter.
+    nozzle_entries = []
+    for piece in str(nozzle or "").split(","):
+        piece = piece.strip()
+        if not piece:
+            continue
+        try:
+            nozzle_entries.append(float(piece))
+        except ValueError:
+            problems.append(f"invalid embedded nozzle_diameter {nozzle!r}")
+            nozzle_entries = []
+            break
+    nozzle_mm = nozzle_entries[0] if nozzle_entries else None
+    if nozzle_mm is not None and any(
+            not any(math.isclose(entry, s, abs_tol=1e-3) for s in nozzle_sizes) for entry in nozzle_entries):
+        bad = next(entry for entry in nozzle_entries
+                   if not any(math.isclose(entry, s, abs_tol=1e-3) for s in nozzle_sizes))
+        problems.append(f"nozzle {bad:g} mm has no {name} template here (supported: "
                         f"{', '.join(f'{s:g}' for s in nozzle_sizes)})")
     try:
         nozzle_type = normalize_nozzle_type(_config(text, "nozzle_type") or "")
@@ -222,10 +265,11 @@ def gcode_problems(text, adapter, *, state=None):
         nozzle_type = None
     if nozzle_type is not None and nozzle_type not in nozzle_types:
         problems.append(f"nozzle type {nozzle_type} is not a {name} hotend option ({', '.join(nozzle_types)})")
-    material = _config(text, "filament_type")
-    if not material or ";" in material:
-        problems.append(f"G-code must name exactly one filament_type, got {material!r}")
-    else:
+    materials = [t.strip() for t in (_config(text, "filament_type") or "").split(";") if t.strip()]
+    if not materials:
+        problems.append(f"G-code must name a filament_type for every filament slot, got "
+                        f"{_config(text, 'filament_type')!r}")
+    for material in materials:
         family = material_family(material)
         if family.split("-", 1)[0] in fact("not_recommended_materials"):
             problems.append(f"{material} is not recommended by Bambu Lab for the {name}; refused")
@@ -234,12 +278,16 @@ def gcode_problems(text, adapter, *, state=None):
     if state:
         if nozzle_mm is not None and abs(nozzle_mm - float(state["nozzle"]["diameter_mm"])) > 1e-3:
             problems.append(f"G-code nozzle {nozzle_mm:g} != recorded {state['nozzle']['diameter_mm']}")
-        if material and not same_material(material, state["spool"]["material"]):
-            problems.append(f"G-code filament_type {material!r} != loaded {state['spool']['material']!r}")
+        # The recorded state is one loaded spool: it is compared only for a
+        # single-filament file. A multi-filament file's loaded-filament truth is
+        # the live AMS snapshot, checked in the print path (ams_mapping, #308).
+        if len(materials) == 1 and not same_material(materials[0], state["spool"]["material"]):
+            problems.append(f"G-code filament_type {materials[0]!r} != loaded {state['spool']['material']!r}")
         hotend = effective_nozzle_temperature(nozzle_type or "stainless_steel", float(state["temps_c"]["nozzle"]))
         bed_c = float(state["temps_c"]["bed"])
         if not any(math.isclose(v, bed_c, abs_tol=1e-3) for v in _numbers(text, "M140") + _numbers(text, "M190")):
             problems.append(f"no M140/M190 sets the recorded bed temperature {bed_c:g} C")
-        if not any(math.isclose(v, hotend, abs_tol=1e-3) for v in _numbers(text, "M104") + _numbers(text, "M109")):
+        if len(materials) == 1 and not any(
+                math.isclose(v, hotend, abs_tol=1e-3) for v in _numbers(text, "M104") + _numbers(text, "M109")):
             problems.append(f"no M104/M109 sets the effective nozzle temperature {hotend:g} C")
     return problems

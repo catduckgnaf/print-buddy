@@ -1,10 +1,11 @@
-"""#299 Stage A: the listener registry behind the gate, supervisor and healthcheck.
+"""#299: the listener registry behind the gate, supervisor and healthcheck.
 
 One registry (print_buddy.listeners) maps every vendor connection to its
-listener domain: implemented (moonraker today), planned (domain known, no
-listener yet) or none (offline). The planned/none distinction is what lets
-the supervisor idle a zero-listener configuration instead of failing it,
-while an unresolved configuration still fails distinctly (#256 semantics).
+listener domain: implemented (moonraker, and bambulab_lan since Stage B),
+planned (domain known, no listener yet) or none (offline). The planned/none
+distinction is what lets the supervisor idle a zero-listener configuration
+instead of failing it, while an unresolved configuration still fails
+distinctly (#256 semantics).
 Offline: registry, fake settings and mocks only.
 """
 import importlib.util
@@ -27,20 +28,31 @@ class RegistryShapeTests(unittest.TestCase):
                 self.assertEqual(domain.connection, connection)
                 self.assertEqual(domain.name, connection)
 
-    def test_only_moonraker_is_implemented_today(self):
+    def test_implemented_domains_are_moonraker_and_bambulab(self):
         implemented = [c for c, d in listeners.DOMAINS.items() if d.implemented]
-        self.assertEqual(implemented, ["moonraker"])
-        self.assertEqual(listeners.implemented_connections(), ("moonraker",))
+        self.assertEqual(implemented, ["moonraker", "bambulab_lan"])
+        self.assertEqual(listeners.implemented_connections(),
+                         ("moonraker", "bambulab_lan"))
         # Backwards-compatible name the #256 code and tests already use.
-        self.assertEqual(healthcheck.LISTENER_CONNECTIONS, ("moonraker",))
+        self.assertEqual(healthcheck.LISTENER_CONNECTIONS,
+                         ("moonraker", "bambulab_lan"))
 
     def test_implemented_domain_points_at_a_real_module_and_runtime(self):
-        domain = listeners.DOMAINS["moonraker"]
-        self.assertIsNotNone(importlib.util.find_spec(domain.module))
-        self.assertEqual(domain.runtime, healthcheck.RUNTIME)
+        for connection in ("moonraker", "bambulab_lan"):
+            with self.subTest(connection=connection):
+                domain = listeners.DOMAINS[connection]
+                self.assertIsNotNone(importlib.util.find_spec(domain.module))
+                self.assertIsNotNone(domain.runtime)
+        self.assertEqual(listeners.DOMAINS["moonraker"].runtime,
+                         healthcheck.RUNTIME)
+        from print_buddy.printers.bambulab import listener as bambu_listener
+        self.assertEqual(listeners.DOMAINS["bambulab_lan"].runtime,
+                         bambu_listener.RUNTIME)
+        self.assertEqual(listeners.DOMAINS["bambulab_lan"].module,
+                         "print_buddy.printers.bambulab.listener")
 
     def test_planned_and_none_are_distinct_states(self):
-        for connection in ("bambulab_lan", "prusalink", "elegoo_sdcp",
+        for connection in ("prusalink", "elegoo_sdcp",
                            "octoprint", "flashforge_stock"):
             with self.subTest(connection=connection):
                 domain = listeners.DOMAINS[connection]
@@ -68,8 +80,15 @@ class RegistryClassificationTests(unittest.TestCase):
             with self.subTest(model=model):
                 self.assertTrue(healthcheck.listener_required(data(model)))
 
+    def test_bambu_models_require_the_listener(self):
+        # #299 Stage B: bambulab_lan flipped from planned to implemented.
+        for model in ("bambulab.a1", "bambulab.p1s", "bambulab.x1c",
+                      "bambulab.h2s"):
+            with self.subTest(model=model):
+                self.assertTrue(healthcheck.listener_required(data(model)))
+
     def test_no_other_model_requires_a_listener_yet(self):
-        for model in ("bambulab.a1", "bambulab.p1s", "flashforge_stock.ad5x",
+        for model in ("flashforge_stock.ad5x",
                       "octoprint.marlin", "prusa.mk4s", "prusa.coreone",
                       "elegoo_sdcp.centauricarbon"):
             with self.subTest(model=model):
@@ -79,8 +98,16 @@ class RegistryClassificationTests(unittest.TestCase):
 class LauncherTests(unittest.TestCase):
     def test_planned_domain_is_nothing_to_run_not_a_failure(self):
         with mock.patch.object(healthcheck, "listener_domain",
-                               return_value=listeners.DOMAINS["bambulab_lan"]):
+                               return_value=listeners.DOMAINS["prusalink"]):
             self.assertEqual(listeners.launch({}), 3)
+
+    def test_bambu_domain_runs_its_registered_module(self):
+        with mock.patch.object(healthcheck, "listener_domain",
+                               return_value=listeners.DOMAINS["bambulab_lan"]), \
+                mock.patch.object(listeners.runpy, "run_module") as run_module:
+            self.assertEqual(listeners.launch({}), 0)
+        run_module.assert_called_once_with(
+            "print_buddy.printers.bambulab.listener", run_name="__main__")
 
     def test_none_domain_is_nothing_to_run(self):
         with mock.patch.object(healthcheck, "listener_domain",

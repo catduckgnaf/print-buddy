@@ -126,9 +126,10 @@ def test_lan_unconfigured_by_default_and_status_normalizes(key):
     assert a.normalize_status({})["state"] == "unknown"
 
 
-def test_stage1_model_set_is_exactly_the_single_nozzle_lineup():
+def test_model_set_is_stage1_plus_the_registered_dual_nozzle_models():
     bambu = {k for k in printers.MODELS if k.startswith("bambulab.")}
-    assert bambu == {"bambulab.a1", "bambulab.p1s"} | set(MODELS)
-    # Dual-nozzle models stay absent until Stage 2: the single-path adapter must
-    # never silently claim them.
-    assert not ({"bambulab.h2d", "bambulab.h2dpro", "bambulab.h2c", "bambulab.x2d"} & bambu)
+    assert bambu == {"bambulab.a1", "bambulab.p1s"} | set(MODELS) | {"bambulab.h2d", "bambulab.h2dpro",
+                                                                     "bambulab.x2d"}
+    # H2C and A2L stay absent (#308): neither has a profile in the pinned OrcaSlicer
+    # 2.4.2 BBL index, so no checked identity can be established for them.
+    assert not ({"bambulab.h2c", "bambulab.a2l"} & bambu)

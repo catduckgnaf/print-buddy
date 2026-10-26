@@ -39,6 +39,7 @@ KNOWN = (
     "print_buddy_launches.sqlite3",
     "print_buddy_start_claims.json",
     "print_buddy_start_messages.json",
+    "print_markers",
     "print_numbers.json",
     "printer_hardware.json",
     "recent_model_links.json",

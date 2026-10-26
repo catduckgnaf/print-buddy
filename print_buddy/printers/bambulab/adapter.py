@@ -14,7 +14,7 @@ import os
 from pathlib import Path
 
 from ..base import MultiColorUnsupported, PrinterAdapter
-from . import guard, hms, profiles
+from . import ams, guard, hms, profiles
 from .client import BambuLanClient, BambuLanError, signature_required
 
 
@@ -88,9 +88,17 @@ class BambuAdapter(PrinterAdapter):
                                 "printer; slice and package the job first (the Bambu package delivery does this)")
         return self.client().upload(local_path, remote_name)
 
-    def start_print(self, remote_name, plate="Metadata/plate_1.gcode"):
-        """Send the print-start command for an uploaded package. Gates live in the print path."""
-        return self.client().start_print(remote_name, plate)
+    def start_print(self, remote_name, plate="Metadata/plate_1.gcode", **kw):
+        """Send the print-start command for an uploaded package. Gates live in the print path.
+
+        Extra keyword arguments (ams_mapping, nozzle_mapping, submission_id) pass
+        through to the LAN client unchanged (#308).
+        """
+        return self.client().start_print(remote_name, plate, **kw)
+
+    def extruder_count(self) -> int:
+        """How many extruders this model prints with (1 unless its facts say more, #308)."""
+        return int(self.facts["extruders"].value) if "extruders" in self.facts else 1
 
     def control(self, action):
         """Pause, resume or stop the current print over LAN MQTT."""
@@ -273,11 +281,13 @@ class BambuAdapter(PrinterAdapter):
 
         Anything else (including a Moonraker-shaped dict) normalizes to unknown, as before.
         Temperatures come from the classic fields; newer firmware's packed `device.*.info.temp`
-        words are not decoded in this stage.
+        words are not decoded in this stage. The `ams` entry is the AMS state the printer
+        itself reports, decoded read-only by ams.py (#307); it changes no gate and no payload.
         """
         payload = _print_payload(raw)
         if payload is None:
-            return {"state": "unknown", "filename": "", "progress": None, "hotend_c": None, "bed_c": None}
+            return {"state": "unknown", "filename": "", "progress": None, "hotend_c": None, "bed_c": None,
+                    "ams": None}
         percent = payload.get("mc_percent")
         remaining = payload.get("mc_remaining_time")
         gcode_state = str(payload.get("gcode_state") or "").upper()
@@ -297,6 +307,10 @@ class BambuAdapter(PrinterAdapter):
             "writes_blocked": signature_required(payload),
             "hms_errors": self._decoded_hms(payload),
             "print_error_text": self._decoded_print_error(payload),
+            # AMS state the printer itself reports (#307): decoded trays / external spool /
+            # Filament Backup, read-only. None when the snapshot carried no AMS block.
+            # The get_version reply in the same snapshot types the units (AMS vs AMS Lite).
+            "ams": ams.decode_ams(payload, raw.get("info") if isinstance(raw, dict) else None),
         }
 
     def _decoded_hms(self, payload):

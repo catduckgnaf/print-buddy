@@ -116,15 +116,18 @@ RECORD = {"bed_mm": [256, 256], "max_print_height_mm": 256,
 def test_start_print_publishes_the_project_file_payload():
     fake = FakeMqtt()
     client = BambuLanClient("192.168.1.50", SERIAL, CODE, mqtt_factory=lambda h, s, c: fake, timeout_s=5)
-    client.start_print("benchy.gcode.3mf")
+    # The submission id is pinned: a real start mints a fresh one per call (#308 audit hygiene).
+    client.start_print("benchy.gcode.3mf", submission_id="1700000000000")
     [(topic, payload)] = fake.published
     assert topic == f"device/{SERIAL}/request"
-    assert payload == project_file_payload("benchy.gcode.3mf")
+    assert payload == project_file_payload("benchy.gcode.3mf", submission_id="1700000000000")
     body = payload["print"]
     assert body["param"] == "Metadata/plate_1.gcode" and body["file"] == "benchy.gcode.3mf"
     assert body["url"] == "ftp:///benchy.gcode.3mf"
-    # Print Buddy never asks for calibration passes it did not slice for, and never uses an AMS.
+    # Print Buddy never asks for calibration passes it did not slice for; the legacy default
+    # starts from the recorded spool with no AMS mapping and no nozzle_mapping (#308).
     assert not any(body[k] for k in ("bed_leveling", "flow_cali", "vibration_cali", "layer_inspect", "use_ams", "timelapse"))
+    assert body["sequence_id"] == "20000" and "nozzle_mapping" not in body and "cfg" not in body
 
 
 def test_control_payloads_and_validation():

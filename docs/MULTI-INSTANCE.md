@@ -5,7 +5,11 @@
 Print Buddy is **one printer per instance** today: `[printer] model` is singular, and the
 hardware record, launch lease, job state, listener and approval flow all assume exactly one
 machine. True multi-printer support in a single instance is Stage 2 of
-[#257](https://github.com/catduckgnaf/print-buddy/issues/257) and is not implemented.
+[#257](https://github.com/catduckgnaf/print-buddy/issues/257) and is not implemented; its
+design — a `[[printers]]` roster, channel-per-printer routing, per-printer state and
+leases — is written up in [Multi-printer design](MULTI-PRINTER-DESIGN.md). When it lands,
+this recipe remains the alternative deployment for households that want hard process
+isolation between printers.
 
 The supported pattern for a mixed household — a Bambu Lab next to a Klipper machine, say —
 is **one instance per printer**. This page is that recipe (Stage 0 of #257). Each instance is
@@ -143,7 +147,8 @@ immediately instead of during a print approval.
 ## What this does not give you
 
 - One bot serving two printers, cross-printer job routing, or a combined status view —
-  that is #257 Stage 2, which starts from a design spike, not from this recipe.
+  that is #257 Stage 2, designed in [Multi-printer design](MULTI-PRINTER-DESIGN.md) and
+  tracked by the stage issues linked from it.
 - Shared job history or records: each instance keeps its own archive and records, by
   design (rule 1).
 - Any change to print safety: every instance keeps its own confirmation, readiness,

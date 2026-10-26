@@ -23,7 +23,7 @@ supervisor or healthcheck edits.
 | Domain (connection) | Listener | Transport |
 |---|---|---|
 | `moonraker` | implemented: `print_buddy.hermes.moonraker_event_listener` | Moonraker websocket |
-| `bambulab_lan` | planned (#299 Stage B) | Bambu LAN MQTT, long-lived |
+| `bambulab_lan` | implemented: `print_buddy.printers.bambulab.listener` | Bambu LAN MQTT, long-lived |
 | `prusalink` | planned (#299 Stage C) | PrusaLink HTTP polling |
 | `elegoo_sdcp` | planned (#299 Stage C) | Elegoo SDCP websocket |
 | `octoprint` | planned (evaluated in Stage C) | OctoPrint HTTP |
@@ -73,6 +73,34 @@ registered runtime identity. The container healthcheck requires that
 heartbeat exactly when the registry says the configured instance's domain
 is implemented, and reports "not required for this printer connection"
 otherwise.
+
+## The Bambu domain listener (#299 Stage B)
+
+`print_buddy/printers/bambulab/listener.py` holds one Bambu LAN MQTT
+session open and merges the printer's delta pushes into a persistent
+state, normalising through the Bambu adapter. Its discipline comes from
+the #298 audit of Bambuddy (protocol facts only, no code copied):
+
+- `get_version` + `pushall` on every (re)connect, keepalive 30 s — and no
+  periodic pushall; the one extra request is at layer 1 when the layer
+  total is still unknown.
+- Only `push_status` frames (or frames with no `print.command`) are
+  telemetry; command acknowledgements never update state.
+- 60 s without a message is stale: the session is torn down and rebuilt
+  with a fresh MQTT client (hard reset, so a publish queued on the dead
+  client can never replay) after a 30 s reconnect cooldown.
+- Read-only: the only payloads it publishes are its own
+  `get_version`/`pushall` requests.
+- Events: gcode_state transitions become `status` events
+  (started/paused/resumed/cancelled), FINISH becomes `completion`, FAILED
+  becomes `error` with the decoded HMS entries attached, and the first
+  complete snapshot of a session emits `snapshot_available` when the
+  model has a verified camera protocol.
+
+With `[bambu] lan_host`/`lan_serial` unset, the Bambu listener starts but
+idles — heartbeat alive, `printer_connected=False`, no network contact —
+so an offline Bambu configuration behaves exactly as it did before the
+domain had a listener. See [Bambu Lab printers](BAMBU-LAB.md#lan-status-read-only-opt-in).
 
 ## Instances
 

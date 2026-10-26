@@ -15,9 +15,10 @@ Which children the supervisor starts depends on the configured printer instance'
 | Listener domain (connection) | Printer listener | Discord bot | Bundled Spoolman |
 |---|---|---|---|
 | `moonraker` (Flashforge AD5X, Klipper, Sovol, Elegoo Neptune) | runs | with a token | unless disabled |
-| anything else (`bambulab_lan`, `prusalink`, `elegoo_sdcp`, `octoprint`, `flashforge_stock`, `offline`) | **not started** — the domain has no listener yet, or none by definition | with a token | unless disabled |
+| `bambulab_lan` (Bambu Lab) | runs — the Bambu listener; it idles without network contact when LAN is not configured | with a token | unless disabled |
+| anything else (`prusalink`, `elegoo_sdcp`, `octoprint`, `flashforge_stock`, `offline`) | **not started** — the domain has no listener yet, or none by definition | with a token | unless disabled |
 
-Only the `moonraker` domain has a listener implementation today; the full domain list and the normalised status/event contract every domain listener reports through are in [Listener domains](LISTENERS.md). The healthcheck mirrors the same registry decision: a listener that was not started reports "not required for this printer connection" instead of failing, while a configuration whose domain has a listener with a stale or missing heartbeat still fails. If the configuration cannot be resolved at all, the supervisor stops with the settings error rather than guessing which children to run. A configuration with no children at all (no listener, no bot token, external Spoolman) idles instead of exiting.
+The `moonraker` and `bambulab_lan` domains have listener implementations today; the full domain list and the normalised status/event contract every domain listener reports through are in [Listener domains](LISTENERS.md). The healthcheck mirrors the same registry decision: a listener that was not started reports "not required for this printer connection" instead of failing, while a configuration whose domain has a listener with a stale or missing heartbeat still fails. If the configuration cannot be resolved at all, the supervisor stops with the settings error rather than guessing which children to run. A configuration with no children at all (no listener, no bot token, external Spoolman) idles instead of exiting.
 
 ## Included Spoolman
 
@@ -47,6 +48,21 @@ Two settings tune it, settable in the mounted YAML (`visual_watch` in `config/do
 | `visual_watch.sensitivity` | `PRINT_BUDDY__VISUAL_WATCH__SENSITIVITY` | `3` | How readily the watchdog alerts, 1 (quietest) to 5 (most alerts) |
 
 Sensitivity also sets the periodic check interval (30, 20, 15, 10 or 7.5 minutes for levels 1 to 5) and how many unchanged layers count as a stall; level 3 is the original behavior. The full per-level table is in the [project reference](PROJECT-REFERENCE.md#camera-stall-sensitivity), and every setting is listed in [SETTINGS.md](SETTINGS.md). Restart the container after a change; settings are read once at start.
+
+## Web UI (optional, #286)
+
+Print Buddy has an optional Web UI: a simple status page plus a picker configuration page that reads and writes the same YAML settings file as everything else. It is **off by default** — with it disabled the supervisor starts no extra child and nothing listens. The supervisor decides from the resolved configuration (`python3 -m print_buddy.webui_gate`, mirroring the listener gate), and the container healthcheck reports a Web UI row that is skipped while disabled.
+
+Enable it in the mounted YAML (`webui` in `config/docker.yaml`), in TOML (`[webui]` in `config/docker.toml`), or with Compose/`.env` variables — Compose and the Unraid template both carry them:
+
+| YAML key | Environment variable | Default | What it does |
+|---|---|---|---|
+| `webui.enabled` | `PRINT_BUDDY__WEBUI__ENABLED` | `false` | Web UI switch; `true` plus a port starts the supervised Web UI child |
+| `webui.host` | `PRINT_BUDDY__WEBUI__HOST` | `127.0.0.1` | Host the Web UI binds to inside the container |
+| `webui.port` | `PRINT_BUDDY__WEBUI__PORT` | `0` | Port the Web UI binds to; `0` means no port chosen, so nothing starts |
+| `webui.access_token_env` | `PRINT_BUDDY__WEBUI__ACCESS_TOKEN_ENV` | `WEBUI_ACCESS_TOKEN` | Name of the environment variable holding the access token; the token itself is never a setting |
+
+To reach the Web UI from another machine, all four pieces are needed: enable it with a port (the examples use 8080), bind `0.0.0.0` instead of loopback, publish the port, and set the `WEBUI_ACCESS_TOKEN` secret in `.env`. **A non-loopback bind without the token is refused** — the Web UI child exits with that reason and the supervisor stops the container; set the token (requests send it as the `X-WebUI-Token` header). Compose ships the port mapping commented out; the Unraid template carries a Web UI port mapping (8080) plus the same variables, with the bind host defaulting to `0.0.0.0` and the token as a masked field, and its WebUI link then opens the status page. Keep the Web UI on the LAN only: never forward its port from a router or expose it publicly. Settings changes saved in the Web UI take effect on the next container start; settings are read once at start. The full guide — pages, save flow, limits and troubleshooting — is [Web UI](WEBUI.md).
 
 ## First-run configuration
 

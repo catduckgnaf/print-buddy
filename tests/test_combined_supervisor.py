@@ -14,12 +14,16 @@ SCRIPT = ROOT / 'docker/supervise.sh'
 class CombinedSupervisorTests(unittest.TestCase):
     def environment(self, directory, child):
         fake = Path(directory, 'python3')
-        # The supervisor probes the listener gate (#256) before starting
-        # children; the fake answers it from PRINT_BUDDY_TEST_LISTENER_GATE
-        # (default 0 = a Moonraker model, listener required) and runs the
-        # child body for every other python3 invocation.
+        # The supervisor probes the listener gate (#256) and the Web UI
+        # gate (#286) before starting children; the fake answers them from
+        # PRINT_BUDDY_TEST_LISTENER_GATE (default 0 = a Moonraker model,
+        # listener required) and PRINT_BUDDY_TEST_WEBUI_GATE (default 3 =
+        # Web UI disabled), and runs the child body for every other
+        # python3 invocation.
         gate = ('case "$*" in *print_buddy.listener_gate*) '
-                'exit "${PRINT_BUDDY_TEST_LISTENER_GATE:-0}";; esac\n')
+                'exit "${PRINT_BUDDY_TEST_LISTENER_GATE:-0}";; '
+                '*print_buddy.webui_gate*) '
+                'exit "${PRINT_BUDDY_TEST_WEBUI_GATE:-3}";; esac\n')
         fake.write_text('#!/bin/bash\n' + gate + child)
         fake.chmod(0o755)
         return {**os.environ, 'PATH': directory + ':' + os.environ['PATH'],
@@ -91,6 +95,28 @@ class CombinedSupervisorTests(unittest.TestCase):
                                     capture_output=True, text=True, timeout=15)
         self.assertEqual(result.returncode, 2, result.stderr)
         self.assertIn('Listener gate failed', result.stderr)
+
+    def test_webui_child_runs_only_when_the_gate_allows_it(self):
+        """Web UI gate 0 (#286): with no listener and no bot, the Web UI child runs and its exit rules."""
+        with tempfile.TemporaryDirectory() as directory:
+            env = self.environment(directory, 'exit 6\n')
+            env['PRINT_BUDDY_TEST_LISTENER_GATE'] = '3'
+            env['PRINT_BUDDY_TEST_WEBUI_GATE'] = '0'
+            result = subprocess.run(['bash', str(SCRIPT)], env=env,
+                                    capture_output=True, text=True, timeout=15)
+        self.assertEqual(result.returncode, 6, result.stderr)
+        self.assertNotIn('idling', result.stdout)
+
+    def test_webui_gate_failure_stops_container(self):
+        """An unresolved configuration at the Web UI gate stops the supervisor before the child starts."""
+        with tempfile.TemporaryDirectory() as directory:
+            env = self.environment(directory, 'exit 9\n')
+            env['PRINT_BUDDY_TEST_LISTENER_GATE'] = '3'
+            env['PRINT_BUDDY_TEST_WEBUI_GATE'] = '2'
+            result = subprocess.run(['bash', str(SCRIPT)], env=env,
+                                    capture_output=True, text=True, timeout=15)
+        self.assertEqual(result.returncode, 2, result.stderr)
+        self.assertIn('Web UI gate failed', result.stderr)
 
     def test_no_children_configuration_idles_until_terminated(self):
         """No listener, no bot token, external Spoolman: stay up, exit 0 on SIGTERM."""

@@ -476,7 +476,7 @@ def test_supported_toolpath_motion_passes(lines):
     (body_with("G29\n"), "Unsupported command in the toolpath"),
     (body_with("G380 S3 Z-5\n"), "Unsupported command in the toolpath"),
     (body_with("G92 X0 Y0\n"), "Coordinate reset in the toolpath"),
-    (body_with("T1\nG1 X110 Y100 E1\n"), "AMS Lite multi-color is not supported"),
+    (body_with("T1\nG1 X110 Y100 E1\n"), "cannot be mapped to a filament slot"),
 ])
 def test_unsafe_or_ambiguous_toolpath_motion_is_refused(body, message):
     found = problems(a1_gcode(body))
@@ -501,7 +501,7 @@ def test_other_printers_keep_the_whole_file_bounds_check(tmp_path):
     ({"material": "ABS"}, "ABS is not recommended"),
     ({"material": "PA-CF", "nozzle_type": "hardened_steel"}, "PA-CF is not recommended"),
     ({"material": "PLA-CF"}, "needs a hardened steel nozzle"),
-    ({"material": "PLA;PETG"}, "exactly one filament_type"),
+    ({"material": "PLA;PETG"}, "each filament slot needs its own checked profile"),
     ({"nozzle": "0.6"}, "nozzle 0.6 mm has no Bambu Lab A1 template"),
     ({"nozzle_type": "brass"}, "nozzle type brass is not a Bambu Lab A1 hotend option"),
     ({"plate": "Cool Plate"}, "plate type must be 'Textured PEI Plate'"),
@@ -599,9 +599,10 @@ def test_a_profile_for_another_material_is_refused_by_the_guard():
 
 @pytest.mark.parametrize("settings_id, message", [
     ("Bambu PETG HF @BBL A1", "is not a checked Bambu Lab A1 vendor filament profile"),
-    ('Generic PLA @BBL A1";"Generic PETG @BBL A1', "exactly one filament_settings_id"),
+    # Two checked profiles for one declared filament_type: the slot counts disagree (#308).
+    ('Generic PLA @BBL A1";"Generic PETG @BBL A1', "each filament slot needs its own checked profile"),
 ])
-def test_unchecked_or_several_filament_profiles_are_refused(settings_id, message):
+def test_unchecked_or_mismatched_filament_profiles_are_refused(settings_id, message):
     text = a1_gcode().replace('filament_settings_id = "Generic PLA @BBL A1"', f'filament_settings_id = "{settings_id}"')
     assert any(message in p for p in problems(text)), problems(text)
     no_id = a1_gcode().replace('; filament_settings_id = "Generic PLA @BBL A1"\n', "")

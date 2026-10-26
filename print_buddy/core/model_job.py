@@ -4178,10 +4178,23 @@ def _print_bambu(adapter, state, gcode, job, job_path, wait_s, reprint):
     sha = file_sha256(gcode)
     lease = launch_state.acquire(_printer_key(state), job_json=job_path, gcode_sha256=sha, remote=remote,
                                  observed_file=observed_norm.get("filename"))
+    # AMS mapping (#308): resolved inside the lease, against the fresh snapshot, BEFORE the
+    # bed-clear approval is consumed — a job whose filaments cannot be mapped refuses with the
+    # approval intact. A JOB.json ams_mapping is trusted verbatim; anything else is recomputed
+    # from the snapshot's reported trays. A single-filament job that matches nothing reported
+    # keeps the pre-#308 payload (source "legacy"); a multi-filament one refuses loudly here.
+    from ..printers.bambulab import ams_mapping as _ams
     try:
         try:
-            ready_snapshot()  # again inside the lease: the first read may predate another start
+            live_snapshot, _norm2 = ready_snapshot()  # again inside the lease: the first read may predate another start
         except RuntimeError as exc:
+            raise refuse(exc) from exc
+        try:
+            ams_map, ams_source = _ams.resolve_for_print(
+                Path(gcode).read_text(errors="ignore"), live_snapshot,
+                job_mapping=(job.get("ams_mapping") if isinstance(job, dict) else None),
+                dual=adapter.extruder_count() > 1)
+        except _ams.MappingError as exc:
             raise refuse(exc) from exc
         if job_path is not None:
             _consume_approval(job_path, job, gcode, reprint=reprint)
@@ -4191,7 +4204,7 @@ def _print_bambu(adapter, state, gcode, job, job_path, wait_s, reprint):
     lease.submitting()
     try:
         client.upload(package, remote)
-        client.start_print(remote)
+        client.start_print(remote, ams_mapping=ams_map)
     except BaseException as exc:
         lease.uncertain(f"Bambu Lab submission did not complete: {exc!r}")
         if isinstance(exc, RuntimeError):
@@ -4212,6 +4225,7 @@ def _print_bambu(adapter, state, gcode, job, job_path, wait_s, reprint):
     out = {"started": confirmed, "accepted": True, "file": remote, "method": "bambulab_lan",
            "phase": "executing" if confirmed else "awaiting_confirmation",
            "outcome": "printing" if confirmed else "unconfirmed", "live": live,
+           "ams_mapping": ams_map, "ams_mapping_source": ams_source,
            "confirmation": {"snapshots": snapshots, "window_s": window_s},
            "message": "printing" if confirmed else "submitted, awaiting confirmation; do not resubmit"}
     if confirmed:

@@ -141,6 +141,33 @@ def test_listener_start_roast_is_appended_after_canonical_details(job, monkeypat
     assert posted[0].endswith(f"\n\nRoast for {TITLE}")
 
 
+def test_generate_roast_runs_by_default_and_stops_when_the_switch_is_off(monkeypatch):
+    """[vision] roast_enabled: on by default when an LLM/vision endpoint is
+    available (the conftest endpoint + key); off means no LLM call at all."""
+    calls = []
+
+    class Resp:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *exc):
+            return False
+
+        def read(self):
+            return json.dumps({"choices": [{"message": {"content": "A very roastable stand."}}]}).encode()
+
+    monkeypatch.setattr(mel, "_profile_env_value", lambda name: "test-key")
+    monkeypatch.setattr(mel, "log", lambda line: None)
+    monkeypatch.setattr("urllib.request.urlopen", lambda req, timeout=0: calls.append(req) or Resp())
+    assert mel.roast_enabled() is True
+    assert mel.generate_roast(TITLE) == "A very roastable stand."
+    assert len(calls) == 1
+    monkeypatch.setitem(mel._config.cfg()["vision"], "roast_enabled", False)
+    assert mel.roast_enabled() is False
+    assert mel.generate_roast(TITLE) == ""
+    assert len(calls) == 1  # the switch short-circuits before any LLM call
+
+
 def _claimed_listener(monkeypatch, tmp_path, job, *, message_id="777", edit_ok=True, claim_ts=1000):
     from print_buddy.hermes import print_alert_buttons as pab, print_next
     monkeypatch.setattr(print_next, "START_MESSAGES", tmp_path / "start_messages.json")

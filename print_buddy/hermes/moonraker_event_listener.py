@@ -336,10 +336,24 @@ def _bot_token():
     return _profile_env_value(str(_config.cfg()["discord"].get("token_env") or "DISCORD_BOT_TOKEN"))
 
 
+def roast_enabled(cfg=None):
+    """The roast switch: [vision] roast_enabled, on by default.
+
+    Roasts run whenever the switch is on AND an LLM/vision endpoint is
+    available (generate_roast's own checks below); the switch is the
+    operator's way to turn them off without losing the camera watchdog.
+    """
+    vision = (cfg or _config.cfg()).get("vision") or {}
+    return bool(vision.get("roast_enabled", True))
+
+
 def generate_roast(title, summary=""):
     """Generate a quick 1-sentence roast via Luna LLM for the bot persona. Best-effort."""
     title = str(title or "").strip()
     if not title:
+        return ""
+    if not roast_enabled():
+        log("roast skipped: vision.roast_enabled is false")
         return ""
     key = _profile_env_value("CLIPROXY_API_KEY")
     if not key:

@@ -87,6 +87,8 @@ GROUP_OF = {
     "services.camera_snapshot_url": "images",
     "services.vision_chat_url": "images",
     "vision.model": "images",
+    "vision.roast_model": "images",
+    "vision.roast_enabled": "images",
     "visual_watch.enabled": "images",
     "visual_watch.sensitivity": "images",
     "timelapse.mode": "timelapse",
@@ -191,6 +193,14 @@ CATALOG = (
            validator="settings services check"),
     _field("vision", "model", "Vision model", "text",
            "Model the vision endpoint uses for camera checks."),
+    _field("vision", "roast_model", "Roast model", "text",
+           "Model the vision endpoint uses for the one-line roast on print posts."),
+    _field("vision", "roast_enabled", "Roast", "toggle",
+           "The one-line roast on print-started and print-complete posts, on every "
+           "platform (Telegram included). On by default: it runs whenever an "
+           "LLM/vision endpoint is available; off turns roasts off without "
+           "disabling camera checks.",
+           validator="settings vision check"),
     # Camera watch.
     _field("visual_watch", "enabled", "Camera watch", "toggle",
            "Camera watchdog switch; the watchdog is alert-only and never controls the printer.",

@@ -63,6 +63,8 @@ message. `python3 -m print_buddy.doctor` warns when a Hermes profile holds the s
 | `llm.model` | empty | Model name, required when `chat_url` is set |
 | `llm.api_key_env` | `LLM_API_KEY` | Name of the environment variable that holds the LLM API key, if it needs one |
 | `llm.timeout_s` | `20` | LLM request timeout |
+| `vision.roast_enabled` | `true` | The one-line roast on print-started and print-complete posts. On by default whenever an LLM/vision endpoint is available (`services.vision_chat_url` plus `CLIPROXY_API_KEY`), on every platform — Telegram and Matrix included, even though their chat never uses `[llm]`. `false` turns roasts off; camera checks are unaffected |
+| `vision.roast_model` | `luna-latest` | Model that writes the roast |
 
 Every key can come from the environment as `PRINT_BUDDY__SECTION__KEY`, for example
 `PRINT_BUDDY__BOT__MODE=standalone` or `PRINT_BUDDY__DISCORD__ALLOWED_USER_IDS="111 222"`.
@@ -96,7 +98,7 @@ services:
 | Command | What it does |
 |---|---|
 | `python3 -m print_buddy.bot` (or `... run`) | Start the bot. Refuses to start, and lists why, unless every check below passes |
-| `python3 -m print_buddy.bot check` | Offline setup check: mode, token present, channel, allowed users, discord.py, handlers loaded, no Hermes module imported, state folder writable, LLM. Exit 1 on any FAIL |
+| `python3 -m print_buddy.bot check` | Offline setup check: mode, token present, channel, allowed users, discord.py, handlers loaded, no Hermes module imported, state folder writable, LLM, roast. Exit 1 on any FAIL |
 | `python3 -m print_buddy.bot health` | Exit 0 only while a running bot reports a fresh heartbeat, is logged in, its process is alive and no Hermes module is loaded in it |
 | `python3 -m print_buddy.hermes.moonraker_event_listener` | The printer listener, unchanged. In standalone mode it posts over the configured platform's REST API with that platform's bot token (Discord REST, the Telegram Bot API when `bot.platform` is `telegram`, or the Matrix Client-Server API when it is `matrix`; its Discord button posts degrade to plain text on Telegram and Matrix) |
 | `python3 -m print_buddy.doctor` | Also reports the bot mode, the Discord login and a token shared with a Hermes profile |

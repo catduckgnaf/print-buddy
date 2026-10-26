@@ -521,8 +521,13 @@ class LiveContainerTests(unittest.TestCase):
         sidecar = COMPOSE["services"]["cloudflared"]
         self.assertEqual(sidecar["profiles"], ["live-stream"])
         self.assertEqual(sidecar["network_mode"], "service:combined")
-        self.assertEqual(sidecar["environment"]["TUNNEL_TOKEN"],
-                         "${TUNNEL_TOKEN:?Set TUNNEL_TOKEN in .env to the named tunnel's token}")
+        # Render-safe ${VAR:-default} forms, never :? guards: a required
+        # variable on a profile-gated service breaks the bare
+        # `docker compose config` render (the docker-static CI job). The
+        # token has no safe default; the profile is the opt-in and
+        # cloudflared itself exits when started without one.
+        self.assertEqual(sidecar["environment"]["TUNNEL_TOKEN"], "${TUNNEL_TOKEN:-}")
+        self.assertEqual(sidecar["image"], "${CLOUDFLARED_IMAGE:-cloudflare/cloudflared:latest}")
         self.assertNotIn("ports", sidecar)
 
     def test_unraid_live_variables_and_masked_secrets(self):

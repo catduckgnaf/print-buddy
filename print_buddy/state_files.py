@@ -30,6 +30,7 @@ KNOWN = (
     "last_bot_cancel.json",
     "lifecycle_notifications.json",
     "listener_health.json",
+    "live_session.json",
     "maintenance.json",
     "model-link-intakes",
     "moonraker_discord_announcements.json",

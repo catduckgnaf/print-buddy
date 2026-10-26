@@ -131,9 +131,14 @@ services:
   # file), and point the tunnel's ingress at
   # http://127.0.0.1:${PRINT_BUDDY__LIVE_STREAM__PORT:-8091} in the
   # Cloudflare dashboard. CLOUDFLARED_IMAGE names the connector image the
-  # operator tested (a pinned tag or digest).
+  # operator tested (a pinned tag or digest). Both variables use the
+  # repo's ${VAR:-default} form on purpose: a token has no safe default
+  # and a required-variable guard here would break the bare
+  # `docker compose config` render for everyone, profile or not — the
+  # profile is the opt-in, and cloudflared itself exits at once when
+  # started without a token.
   cloudflared:
-    image: ${CLOUDFLARED_IMAGE:?Set CLOUDFLARED_IMAGE to a tested cloudflared image digest or local tag}
+    image: ${CLOUDFLARED_IMAGE:-cloudflare/cloudflared:latest}
     profiles: ["live-stream"]
     restart: unless-stopped
     network_mode: "service:combined"
@@ -141,5 +146,5 @@ services:
       combined:
         condition: service_healthy
     environment:
-      TUNNEL_TOKEN: ${TUNNEL_TOKEN:?Set TUNNEL_TOKEN in .env to the named tunnel's token}
+      TUNNEL_TOKEN: ${TUNNEL_TOKEN:-}
     command: ["tunnel", "--no-autoupdate", "run"]

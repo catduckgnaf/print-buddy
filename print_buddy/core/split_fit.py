@@ -96,15 +96,12 @@ Reorientation is the last fit preference (#221 R1), evaluated only for a
 part that fits neither as authored nor at any bed-plane yaw: one face
 change from ``orca_adapter.UP_AXES`` (a 90-degree turn about X or Y that
 lands the part flat on another authored face), composed with the best
-cardinal bed turn (0 or 90 degrees) of the rotated footprint. A part that
-fits only reoriented gets a plate of its own and the plan records the full
-rotation in ``reorientation_by_object``; slicing applies exactly that
-rotation to that plate alone through the exporter's whole-plate fit
-channel and passes the record's measured ``supports`` decision to the
-slicer for that plate (see ``model_job._slice_full_size_split``). The
-recorded ``brim_recommended`` is advisory only: it never changes the job's
-brim policy. Eligibility is conservative in R1 — single-build-item objects
-only, never on an exclusion bed, and no offer at all when the per-part
+cardinal bed turn (0 or 90 degrees) of the rotated footprint. The plan
+records the full rotation in ``reorientation_by_object``; slicing applies
+exactly that rotation (see ``model_job._slice_full_size_split``) and
+passes the record's measured ``supports`` decision to the slicer for that
+plate. The recorded ``brim_recommended`` is advisory only: it never
+changes the job's brim policy. No offer is made at all when the per-part
 supports/brim measurement (``orca_adapter._surface_stats``, the same
 heuristics ``rotation_alternatives`` uses) cannot be performed. Arbitrary
 tilts, upside-down flips and poses that do not land flat are never
@@ -114,6 +111,38 @@ larger measured bed contact (see :func:`_rank_reorientation_candidates`):
 the goal is always to fit as much as possible, but ranking only ever
 orders proved candidates; it never overrides a proof, a guard or the
 once-only budgets above.
+
+A reoriented part alone on its plate is realized through the exporter's
+whole-plate fit channel, as in R1. Beyond solo plates (#221 R3), a
+reoriented part may also share a split plate: after the authored packing
+and the shared-yaw attempts, it is tried into an existing open bin and
+into a new bin shared with other reoriented parts (or with a turned part
+still on its solo plate), in both cases by
+``pack_polygon`` over each member's footprint in its recorded orientation
+(the reoriented member's hull is its mesh hull after the recorded
+rotation), with the same exclusion checks and the same once-only brim
+budget charged as hull clearances. The proved corners are recorded as
+``shifts_by_plate`` measured from the member's reoriented bounds, and
+slicing realizes the member through the exporter's per-object fit channel
+composed with those shifts — the same channel R2 built for shared yaw,
+which accepts any rigid rotation, not only bed-plane turns. Only when no
+shared placement is proved does the reoriented part fall back to its solo
+plate. On an exclusion bed a reorientation candidate is proved only when
+a placement of the reoriented footprint (grown by the brim budget,
+exactly as for a yawed footprint) also avoids every exclusion; the winner
+then carries that placement in ``placement_by_object`` like any placed
+part, and a shared polygon placement supersedes it exactly as for yawed
+members. The reorientation proof itself is per build item (#221 R3): the
+one recorded rotation is applied rigidly to the whole object, flat
+landing is proved per item (every item's rotated Z minimum within the
+exporter's 0.05 mm lift tolerance of the object's), and the supports
+measurement is over the object's own triangles across all its items. Two
+bounds are inherited, not new: the shared geometry reader reads exactly
+one build item per object id, so a source that places one object as
+several build items is refused for every fit verdict in this module, not
+just reorientation; and an object whose items could be read separately
+would still have no single hull here, so it could be reoriented solo but
+never join a hull-packed shared plate.
 """
 import math
 import zipfile
@@ -292,18 +321,23 @@ def _reorientation_candidates(source, oid, item_points, usable, height_limit):
     item's rotated Z minimum within the exporter's 0.05 mm lift tolerance
     of the object's), its rotated height is within the limit, and its
     rotated footprint fits the usable area at a cardinal bed turn (0 or 90
-    degrees — a diagonal turn of a reoriented part is not offered in R1).
+    degrees — a diagonal turn of a reoriented part is not offered).
     The composed matrix is yaw-after-face-change, ``_matmul(_yaw, up)``,
     exactly as the single-plate path records it. ``supports`` and
     ``brim_recommended`` reuse ``rotation_alternatives``' heuristics
-    against the authored overhang. Eligibility: single-build-item objects
-    only, so the flat-landing check is per-item meaningful and the object's
-    internal relationships are preserved rigidly.
+    against the authored overhang. The proof is per build item, so a
+    multi-item object is measured exactly like a single-item one
+    (#221 R3): the rotation is one rigid transform of the whole object,
+    the flat-landing check below is per item (every item's rotated Z
+    minimum within 0.05 mm of the object's), and the surface measurement
+    is over the object's own triangles across all its items, so no item's
+    relationship to the others is ever altered. (Whether a multi-item
+    object's points can be read at all is the geometry reader's contract,
+    shared by every fit verdict; this function simply no longer refuses
+    a point set for having more than one item.)
     """
     from .orca_adapter import (IDENTITY_ROT, UP_AXES, _hull, _matmul,
                                _object_triangles, _rotate, _surface_stats, _yaw)
-    if len(item_points) != 1:
-        return []
     tris = _object_triangles(source, oid)
     if not tris:
         return []
@@ -387,7 +421,10 @@ def per_part_fit(source, bed=None, height=None, exclusions=None, brim_policy=Non
     orientation above is evaluated for a face change (see
     :func:`_reorientation_candidates`): when a proved candidate exists the
     row reports it as ``reorientation`` and counts as fitting, with the
-    candidate's measured supports/brim record attached. Parts are evaluated
+    candidate's measured supports/brim record attached; on an exclusion bed
+    the candidate is proved only with an avoiding placement of the
+    reoriented footprint, which the row then reports as ``placement_mm``
+    like any placed part. Parts are evaluated
     as authored: grouping, part colors and relationships are read, never
     altered, and a continuous part is never silently split.
     ``fits_full_size`` is False for a part that no separate-plate
@@ -465,20 +502,44 @@ def per_part_fit(source, bed=None, height=None, exclusions=None, brim_policy=Non
                             break
             fits = chosen is not None
             reorientation = None
-            if not fits and not exclusions:
-                # Last preference (#221 R1): a face change is evaluated only
-                # when neither the authored orientation nor any bed-plane
-                # yaw fits, so no existing verdict ever becomes a reoriented
-                # one. Exclusion beds are skipped (a fitting row there
-                # carries a placement; a placement for a rotated footprint
-                # is deferred), and if the per-part supports/brim
-                # measurement cannot be performed there is no offer at all
-                # — never a silent default either way.
+            reorientation_unplaced = False
+            if not fits:
+                # Last preference (#221 R1, extended by R3): a face change is
+                # evaluated only when neither the authored orientation nor
+                # any bed-plane yaw fits, so no existing verdict ever becomes
+                # a reoriented one. On an exclusion bed a candidate counts as
+                # proved only when a placement of its reoriented footprint —
+                # grown by the brim budget exactly as a yawed footprint is,
+                # so the budget is still charged once — also avoids every
+                # exclusion; candidates are tried in the ranked order and the
+                # winner's placement is recorded like any placed part's. And
+                # if the per-part supports/brim measurement cannot be
+                # performed there is no offer at all — never a silent default
+                # either way.
                 try:
                     proved = _reorientation_candidates(source, oid, item_points,
                                                        usable, height_limit)
                 except Exception:
                     proved = []
+                if proved and exclusions:
+                    winner = None
+                    for candidate in _rank_reorientation_candidates(proved):
+                        envelope = candidate['dims_mm'][:2]
+                        if feature:
+                            grown = (envelope[0] + 2 * feature, envelope[1] + 2 * feature)
+                            spot = _placement(grown, bed_x, bed_y, edge, exclusions)
+                            spot = (round(spot[0] + feature, 3),
+                                    round(spot[1] + feature, 3)) if spot else None
+                        else:
+                            spot = _placement(envelope, bed_x, bed_y, edge, exclusions)
+                        if spot is not None:
+                            winner, placement = candidate, spot
+                            break
+                    if winner is None:
+                        reorientation_unplaced = True
+                        proved = []
+                    else:
+                        proved = [winner]
                 if proved:
                     winner = _rank_reorientation_candidates(proved)[0]
                     reorientation = {key: winner[key] for key in
@@ -503,6 +564,12 @@ def per_part_fit(source, bed=None, height=None, exclusions=None, brim_policy=Non
                               f'{usable[0]:g} x {usable[1]:g} mm bed only where it would overlap '
                               f'the declared bed exclusion ({x0:g}, {y0:g}) to ({x1:g}, {y1:g}) mm; '
                               'no placement at a checked yaw avoids it')
+                elif exclusions and reorientation_unplaced:
+                    x0, y0, x1, y1 = exclusions[0]
+                    reason = (f'footprint {extent[0]:g} x {extent[1]:g} mm fits the usable '
+                              f'{usable[0]:g} x {usable[1]:g} mm bed only reoriented, but the '
+                              f'reoriented footprint cannot be placed clear of the declared '
+                              f'bed exclusion ({x0:g}, {y0:g}) to ({x1:g}, {y1:g}) mm')
                 else:
                     reason = (f'footprint {extent[0]:g} x {extent[1]:g} mm exceeds the usable '
                               f'{usable[0]:g} x {usable[1]:g} mm bed at every checked yaw '
@@ -549,8 +616,12 @@ def split_plan_100(source, bed=None, height=None, exclusions=None, brim_policy=N
     with footprints grown by the budget on every side, so shared plates keep
     the brimmed parts clear of the bed edge and of each other; the budget is
     applied exactly once in each check, never stacked. A part that fits only
-    reoriented (#221 R1) is planned alone on its own plate and its rotation
-    record is carried in ``reorientation_by_object``; an object appears in
+    reoriented (#221 R1) has its rotation record carried in
+    ``reorientation_by_object`` and is planned alone on its own plate,
+    unless a proved shared placement over the reoriented hulls lets it
+    share a plate instead (#221 R3; see the module docstring) — the shared
+    attempts run after the authored packing and the shared-yaw attempts,
+    and the solo reoriented plate remains the fallback. An object appears in
     at most one of the plan's transform records (``yaw_by_object``,
     ``placement_by_object``, ``reorientation_by_object`` or a
     ``shifts_by_plate`` entry). Geometry checks and packing use the
@@ -633,6 +704,30 @@ def split_plan_100(source, bed=None, height=None, exclusions=None, brim_policy=N
                     items = []
                 if len(items) == 1:
                     fit_hulls[oid] = items[0][0]
+            # Reoriented footprints for the shared-reorientation attempts
+            # (#221 R3): each reoriented object's mesh hull and bounds after
+            # its recorded rotation, read through the same fit transform the
+            # exporter composes. The single-item gate matches fit_hulls — a
+            # multi-item object has no one hull here, so it can be reoriented
+            # solo but never joins a hull-packed plate.
+            reoriented_hulls = {}
+            reoriented_bounds = {}
+            for oid, record in reorientation_by_object.items():
+                if oid not in objects:
+                    continue
+                fit = color_geometry.fit_transform({'rotation': record['rotation']})
+                if fit is None:
+                    continue
+                try:
+                    items = color_geometry._world_hull_xy(archive, {oid}, fit)
+                    item_boxes = color_geometry._world_bounds(archive, {oid}, fit)
+                except RuntimeError:
+                    continue
+                if len(items) == 1:
+                    reoriented_hulls[oid] = items[0][0]
+                    reoriented_bounds[oid] = [
+                        (min(box[a][0] for box in item_boxes),
+                         max(box[a][1] for box in item_boxes)) for a in range(3)]
             # Each bin: its objects, how it may still grow ('yaw' and solo
             # 'placement' bins are closed to rectangle packing; a placement
             # bin may still be superseded by a proved polygon placement),
@@ -663,7 +758,35 @@ def split_plan_100(source, bed=None, height=None, exclusions=None, brim_policy=N
                 return plate_merge.pack_polygon(trial, bed,
                                                 exclusions=exclusions_eff, feature=feature)
 
+            def transformed_corners(member_oids, yaws, reoriented):
+                """Proved corners for a plate with reoriented members (#221 R3).
+
+                ``yaws`` maps turned members to their recorded yaw and
+                ``reoriented`` names the members carrying a reorientation
+                record; every member's hull is its footprint in its recorded
+                orientation (authored hull, yaw-rotated hull, or the hull of
+                the mesh after the recorded face change). Exclusion checks
+                and the once-only brim budget are pack_polygon's, exactly as
+                for the authored and yawed attempts.
+                """
+                trial = {}
+                for oid in member_oids:
+                    if oid in reoriented:
+                        hull = reoriented_hulls.get(oid)
+                    elif oid in yaws:
+                        hull = fit_hulls.get(oid)
+                        if hull is not None:
+                            hull = _rotate_hull_xy(hull, yaws[oid])
+                    else:
+                        hull = fit_hulls.get(oid)
+                    if hull is None:
+                        return None
+                    trial[oid] = hull
+                return plate_merge.pack_polygon(trial, bed,
+                                                exclusions=exclusions_eff, feature=feature)
+
             deferred_yaw = []
+            deferred_reorientation = []
             for oid in sorted(extents, key=lambda key: -(extents[key][0] * extents[key][1])):
                 if oid in yaw_by_object:
                     # Turned parts are binned after the authored packing:
@@ -672,10 +795,11 @@ def split_plan_100(source, bed=None, height=None, exclusions=None, brim_policy=N
                     deferred_yaw.append(oid)
                     continue
                 if oid in reorientation_by_object:
-                    # The rotation is applied to a whole derived plate, so a
-                    # reoriented part is always alone on its plate (#221 R1).
-                    bins.append({'objects': {oid: extents[oid]}, 'kind': 'reorientation',
-                                 'corners': None, 'yaws': {}})
+                    # Reoriented parts are binned after the authored packing
+                    # and the shared-yaw attempts: first the shared attempts
+                    # (#221 R3), solo only as the fallback, exactly as R1
+                    # planned them.
+                    deferred_reorientation.append(oid)
                     continue
                 placed = False
                 for current in bins:
@@ -748,6 +872,76 @@ def split_plan_100(source, bed=None, height=None, exclusions=None, brim_policy=N
                     bins.append({'objects': {oid: extents[oid]}, 'kind': 'yaw',
                                  'corners': None, 'yaws': {}})
                     settled_yaw.add(oid)
+            # Shared-reorientation attempts (#221 R3), after the authored
+            # packing and the shared-yaw attempts, in the same shape as the
+            # yaw pass: join an open bin, then pair with other reoriented
+            # parts on a fresh plate, then the solo reoriented plate as
+            # before. A proved shared plate fits more parts per plate, so it
+            # is always tried before the solo fallback; it never displaces a
+            # proved authored or shared-yaw plan, which were formed first.
+            settled_reorientation = set()
+            for oid in deferred_reorientation:
+                if oid in settled_reorientation:
+                    continue
+                placed = False
+                for current in bins:
+                    if current['kind'] in ('yaw', 'reorientation'):
+                        continue
+                    members = list(current['objects']) + [oid]
+                    trial_reoriented = {*current.get('reoriented', ()), oid}
+                    corners = transformed_corners(members, current.get('yaws', {}),
+                                                  trial_reoriented)
+                    if corners is not None:
+                        current['objects'][oid] = extents[oid]
+                        current['kind'] = 'polygon'
+                        current['corners'] = corners
+                        current['reoriented'] = trial_reoriented
+                        placed = True
+                        break
+                if not placed:
+                    members = [oid]
+                    trial_reoriented = {oid}
+                    trial_yaws = {}
+                    corners = None
+                    # Pairing pool: other unsettled reoriented parts first,
+                    # then turned parts that settled for a solo yaw plate —
+                    # a mixed fresh plate is tried only after every
+                    # shared-yaw attempt above has had its chance, and a
+                    # proved pair dissolves the solo yaw bin it consumes.
+                    partner_pool = [(other, None) for other in deferred_reorientation
+                                    if other != oid and other not in settled_reorientation]
+                    partner_pool += [(next(iter(current['objects'])),
+                                      yaw_by_object[next(iter(current['objects']))])
+                                     for current in bins if current['kind'] == 'yaw']
+                    consumed_yaw = []
+                    for other, other_yaw in partner_pool:
+                        if other_yaw is None:
+                            trial_r, trial_y = {*trial_reoriented, other}, trial_yaws
+                        else:
+                            trial_r, trial_y = trial_reoriented, {**trial_yaws, other: other_yaw}
+                        proved = transformed_corners(members + [other], trial_y, trial_r)
+                        if proved is not None:
+                            members.append(other)
+                            trial_reoriented, trial_yaws, corners = trial_r, trial_y, proved
+                            if other_yaw is not None:
+                                consumed_yaw.append(other)
+                    if len(members) > 1:
+                        if consumed_yaw:
+                            bins[:] = [current for current in bins
+                                       if not (current['kind'] == 'yaw'
+                                               and next(iter(current['objects'])) in consumed_yaw)]
+                        bins.append({'objects': {member: extents[member] for member in members},
+                                     'kind': 'polygon', 'corners': corners, 'yaws': trial_yaws,
+                                     'reoriented': trial_reoriented})
+                        settled_reorientation.update(
+                            member for member in members if member in reorientation_by_object)
+                        placed = True
+                if placed:
+                    settled_reorientation.add(oid)
+                else:
+                    bins.append({'objects': {oid: extents[oid]}, 'kind': 'reorientation',
+                                 'corners': None, 'yaws': {}})
+                    settled_reorientation.add(oid)
             for current in bins:
                 bin_objects = current['objects']
                 result.append([key for oid in bin_objects for key in objects[oid]])
@@ -755,18 +949,27 @@ def split_plan_100(source, bed=None, height=None, exclusions=None, brim_policy=N
                     corners = current['corners']
                     shifts = {}
                     for oid in bin_objects:
-                        if oid in current.get('yaws', {}):
+                        if oid in current.get('reoriented', ()):
+                            # A reoriented member's shift is measured from its
+                            # reoriented bounds — XY and Z alike, since the
+                            # face change moves the part's floor — not its
+                            # authored bounds (#221 R3).
+                            base = (reoriented_bounds[oid][0][0], reoriented_bounds[oid][1][0])
+                            floor = reoriented_bounds[oid][2][0]
+                        elif oid in current.get('yaws', {}):
                             # A turned member's shift is measured from its
                             # rotated bounds (the corner the packer proved is
                             # the rotated hull's lower-left), not its authored
                             # bounds (#221 R2).
                             rotated = _rotate_hull_xy(fit_hulls[oid], current['yaws'][oid])
                             base = (min(p[0] for p in rotated), min(p[1] for p in rotated))
+                            floor = boxes[oid][2][0]
                         else:
                             base = (boxes[oid][0][0], boxes[oid][1][0])
+                            floor = boxes[oid][2][0]
                         shifts[oid] = [round(corners[oid][0] - base[0], 3) + 0.0,
                                        round(corners[oid][1] - base[1], 3) + 0.0,
-                                       round(-boxes[oid][2][0], 3) + 0.0]
+                                       round(-floor, 3) + 0.0]
                     shifts_by_plate.append(shifts)
                     # The shared polygon placement supersedes Stage 2's solo
                     # placements for these objects: never both.

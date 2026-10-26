@@ -20,19 +20,55 @@ printer reports, classified:
   registry does not describe it. Listed by name only; Print Buddy invents no
   description for a macro it has not verified.
 - **Internal helper macros** — names starting with `_`, the Klipper helper
-  convention. Listed separately and never presented as operator macros.
+  convention. Listed separately, never presented as operator macros, and
+  never runnable from the bot (Stage 2 included).
 
-Stage 1 sends nothing to the printer beyond that one read request. It cannot
-run a macro: running one is Stage 2 of
-[issue #291](https://github.com/catduckgnaf/print-buddy/issues/291) and will
-need its own confirmation design (a discovered name only, behind the usual
-confirm button, never while a print is running). If Moonraker is unreachable
-or answers something unreadable, the reply is "Could not read the printer's
-macros" and nothing is sent.
+The listing sends nothing to the printer beyond that one read request. If
+Moonraker is unreachable or answers something unreadable, the reply is
+"Could not read the printer's macros" and nothing is sent.
 
 On a printer whose connection is not Moonraker there is no macro namespace
 to read, and `/print-macros` says so plainly instead of failing — see the
 matrix below.
+
+## `/print-macros run <name> [KEY=VALUE ...]` — run one, guarded (Stage 2)
+
+```
+/print-macros run START_PRINT BED_TEMP=60 EXTRUDER_TEMP=210
+```
+
+Running a macro is deliberately narrow:
+
+- **Discovered names only.** The set of macros is read live from the
+  printer again at run time, and the typed name must match one of those
+  names (case-insensitively, Klipper's own convention). A name the printer
+  does not define is refused — Print Buddy never sends a typed name on
+  trust, and there is no way to type free G-code here. Internal
+  (`_`-prefixed) macros are refused even though they are discovered.
+- **Arguments are `KEY=VALUE` words only** — one word each, letters, digits
+  and `. _ + -` in the value, no spaces, quotes or other symbols, no key
+  twice. Anything else refuses the run before any prompt appears.
+- **The confirmation shows the exact line.** Before anything is sent, the
+  confirm prompt displays the single script line exactly as it will be
+  posted, plus the registry safety note for a known macro — or, for a
+  printer-defined macro, the explicit statement that it is defined by the
+  printer's own config and is not described by Print Buddy. Only the usual
+  confirm button runs it; declining or letting the prompt time out sends
+  nothing.
+- **Never while printing.** The printer's `print_stats` state is checked
+  before the prompt and again immediately before sending. Printing, paused,
+  an unrecognised state, or an unreadable state at either check refuses the
+  run and sends nothing.
+- **One POST, honestly reported.** A confirmed run makes one
+  `POST /printer/gcode/script` with that one line. Success means Moonraker
+  accepted the script — the reply says so and does not claim the macro's own
+  actions have finished. A failed send is reported as failed/uncertain,
+  never as "ran".
+
+The natural-language (LLM) helper may name only the bare, read-only
+`/print-macros` listing. It can never name a `run` form — running a macro is
+something a person types and confirms, the same treatment the other
+state-changing commands get in the allow-list.
 
 ## The per-vendor macro matrix, as it actually is
 
@@ -53,8 +89,11 @@ matrix below.
   `/print-macros` reads, live.
 - The **registry** (`firmware/commands.toml`) is the descriptive layer: it
   says what a known macro does and what to be careful about. It is advisory
-  reference data, also used by `/print-lookup`, and an entry is never sent to
-  a printer by the lookup, troubleshooting or macro-listing code.
+  reference data, also used by `/print-lookup`; the lookup, troubleshooting
+  and macro-listing code never sends an entry to a printer. The only send
+  path for a macro is the guarded `/print-macros run` flow above, and it
+  sends the operator-confirmed line for a live-discovered name — the
+  registry supplies the safety note in the prompt, never the command.
 - Registry entries are added only from verified firmware evidence (Stage 3
   of issue #291). An unverified name stays "defined by your printer's
   config" — present in the listing, without an invented description.

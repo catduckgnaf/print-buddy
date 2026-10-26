@@ -14,8 +14,11 @@ from print_buddy.printers.bambulab.p1s import P1SAdapter
 from print_buddy.printers.base import BuildVolume, MultiColorUnsupported, PrinterAdapter
 
 from print_buddy.printers.bambulab import facts as bambu_facts
+from print_buddy.printers.elegoo import facts as elegoo_facts
+from print_buddy.printers.elegoo_sdcp import facts as sdcp_facts
+from print_buddy.printers.prusa import facts as prusa_facts
 
-from . import a1_fixture, bambu_family_fixture, p1s_fixture
+from . import a1_fixture, bambu_family_fixture, elegoo_fixture, p1s_fixture, prusa_fixture
 
 AD5X_ARTIFACTS = re.compile(
     r"SET_EXTRUDER_SLOT|\bIFS\b|zmod|ZMOD|CHANGE_ZCOLOR|display_off|LOAD_ZOFFSET|START_PRINT|MESH=|8898|AD5X|/detail",
@@ -59,11 +62,34 @@ class ContractTests(unittest.TestCase):
             patcher.start()
             self.addCleanup(patcher.stop)
             bambu_family_fixture.install(adapter_for(key), model_facts)
+        # The Prusa models (#242) share the Prusa fixture: trust + install each one.
+        for key, fact_name in (("prusa.mk4s", "MK4S"), ("prusa.coreone", "COREONE"),
+                               ("prusa.xl", "XL"), ("prusa.miniplus", "MINIPLUS")):
+            model_facts = getattr(prusa_facts, fact_name)
+            patcher = mock.patch.object(printers.MODELS[key].adapter, "facts",
+                                        prusa_fixture.fixture_facts(model_facts))
+            patcher.start()
+            self.addCleanup(patcher.stop)
+            prusa_fixture.install(adapter_for(key), model_facts)
+        # The Elegoo models (#243) share the Elegoo fixture: trust + install each one.
+        for key, model_facts in (("elegoo.neptune4", elegoo_facts.NEPTUNE4),
+                                 ("elegoo.neptune4pro", elegoo_facts.NEPTUNE4PRO),
+                                 ("elegoo.neptune4plus", elegoo_facts.NEPTUNE4PLUS),
+                                 ("elegoo.neptune4max", elegoo_facts.NEPTUNE4MAX),
+                                 ("elegoo_sdcp.centauricarbon", sdcp_facts.CENTAURI_CARBON)):
+            patcher = mock.patch.object(printers.MODELS[key].adapter, "facts",
+                                        elegoo_fixture.fixture_facts(model_facts))
+            patcher.start()
+            self.addCleanup(patcher.stop)
+            elegoo_fixture.install(adapter_for(key), model_facts)
 
     def test_registry_finds_every_model_file(self):
         self.assertEqual(set(MODELS), {AD5X, GENERIC, SV06, OCTOPRINT, BAMBU_A1, BAMBU_P1S, "flashforge_stock.ad5x",
                                        "bambulab.a1mini", "bambulab.p1p", "bambulab.x1", "bambulab.x1c",
-                                       "bambulab.x1e", "bambulab.p2s", "bambulab.h2s"})
+                                       "bambulab.x1e", "bambulab.p2s", "bambulab.h2s",
+                                       "prusa.mk4s", "prusa.coreone", "prusa.xl", "prusa.miniplus",
+                                       "elegoo.neptune4", "elegoo.neptune4pro", "elegoo.neptune4plus",
+                                       "elegoo.neptune4max", "elegoo_sdcp.centauricarbon"})
         for key, model in printers.MODELS.items():
             self.assertEqual(model.key, key)
             shipped = settings.ROOT / "print_buddy" / "templates" / "orca" / model.templates
@@ -94,7 +120,7 @@ class ContractTests(unittest.TestCase):
                 folder = a.templates_dir()
                 for name in ("machine", "process", "filament"):
                     json.loads((folder / f"{name}.json").read_text())
-                if family not in (OCTOPRINT, "flashforge_stock.ad5x") and not family.startswith("bambulab."):
+                if family not in (OCTOPRINT, "flashforge_stock.ad5x") and not family.startswith(("bambulab.", "prusa.", "elegoo")):
                     self.assertIn("[bed_temperature_initial_layer_single]", a.machine_start_gcode("X MESH=auto", "auto"))
                 plan = a.start_plan(60, 215)
                 if family == "flashforge_stock.ad5x":
@@ -109,6 +135,22 @@ class ContractTests(unittest.TestCase):
                     self.assertRaises(Exception, a.moonraker_start_commands, "part.gcode")
                     self.assertRaises(Exception, a.moonraker_objects)
                     self.assertEqual(a.normalize_status({"print_stats": {"state": "printing"}})["state"], "unknown")
+                    continue
+                if family.startswith("prusa."):
+                    # Offline only: the slicer owns the start sequence, and nothing live is available.
+                    machine = json.loads((a.pinned_templates() / "machine.json").read_text())
+                    self.assertEqual(plan, str(machine["machine_start_gcode"]).splitlines())
+                    self.assertRaises(Exception, a.moonraker_start_commands, "part.gcode")
+                    self.assertRaises(Exception, a.moonraker_objects)
+                    self.assertIn("state", a.normalize_status({}))
+                    continue
+                if family == "elegoo_sdcp.centauricarbon":
+                    # Offline only: the slicer owns the start sequence, and nothing live is available.
+                    machine = json.loads((a.pinned_templates() / "machine.json").read_text())
+                    self.assertEqual(plan, str(machine["machine_start_gcode"]).splitlines())
+                    self.assertRaises(Exception, a.moonraker_start_commands, "part.gcode")
+                    self.assertRaises(Exception, a.moonraker_objects)
+                    self.assertIn("state", a.normalize_status({}))
                     continue
                 if family == OCTOPRINT:
                     self.assertEqual(plan, ["M190 S60", "M109 S215"])

@@ -21,6 +21,8 @@ def without_added(data):
     data.pop("delivery", None)
     data.pop("logging", None)  # added by #150, after the golden files were captured
     data.pop("flashforge_stock", None)  # added for the stock LAN vendor, after capture
+    data.pop("prusa", None)  # added for the PrusaLink vendor (#242), after capture
+    data.pop("elegoo_sdcp", None)  # added for the Elegoo SDCP vendor (#243), after capture
     for key in ("lan_host", "lan_serial", "lan_access_code_env"):  # added by #187, after capture
         data.get("bambu", {}).pop(key, None)
     data.get("bambu", {}).pop("start_confirm_s", None)  # added by #271, after capture
@@ -42,7 +44,7 @@ def load(environ=None, local=False):
 # ----------------------------------------------------------------------------- layout
 
 def test_every_printer_sits_under_its_vendor_package():
-    assert set(printers.VENDORS) == {"bambulab", "flashforge", "flashforge_stock", "klipper", "octoprint", "sovol"}
+    assert set(printers.VENDORS) == {"bambulab", "elegoo", "elegoo_sdcp", "flashforge", "flashforge_stock", "klipper", "octoprint", "prusa", "sovol"}
     for key, model in printers.MODELS.items():
         assert model.vendor is printers.VENDORS[model.vendor_key]
         assert key == f"{model.vendor.key}.{model.printer_key}"
@@ -64,7 +66,10 @@ def test_vendor_profiles_carry_the_shared_settings():
         assert vendor.slicers[0] == ("bambu_studio" if vendor.key == "bambulab" else "orca")
         if vendor.key != "bambulab":
             assert "bambu_handoff" not in vendor.delivery
-            assert vendor.default_delivery == ("printer",)
+            # Prusa (#242) and Elegoo SDCP (#243) are opt-in exceptions: `printer` is offered
+            # but not a default, so an untested LAN path never starts anything until the
+            # operator opts in.
+            assert vendor.default_delivery == (("discord",) if vendor.key in ("prusa", "elegoo_sdcp") else ("printer",))
 
 
 def test_printer_settings_override_vendor_settings_key_by_key():
@@ -182,7 +187,7 @@ def test_vendor_alias_and_mismatch():
     with pytest.raises(settings.SettingsError, match="does not match"):
         load({"PRINT_BUDDY__PRINTER__MODEL": "sovol.sv06", "PRINT_BUDDY__PRINTER__VENDOR": "flashforge"})
     with pytest.raises(settings.SettingsError, match="vendor must be one of"):
-        load({"PRINT_BUDDY__PRINTER__VENDOR": "prusa", "PRINT_BUDDY__PRINTER__MODEL": "mk4"})
+        load({"PRINT_BUDDY__PRINTER__VENDOR": "creality", "PRINT_BUDDY__PRINTER__MODEL": "mk4"})
     with pytest.raises(settings.SettingsError, match="model must be one of"):
         load({"PRINT_BUDDY__PRINTER__MODEL": "mk4"})
 

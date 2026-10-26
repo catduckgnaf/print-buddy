@@ -205,3 +205,127 @@ max_height_mm = 340.0
 filament_slots = 1
 profile = "print_buddy/printers/bambulab/h2s.py"
 notes = "Single-nozzle H2 model with a 350 C hotend. Dual-nozzle H2D/H2C are not yet supported (#127 Stage 2)."
+
+[[printer]]
+key = "prusa.mk4s"
+label = "Prusa MK4S"
+vendor = "prusa"
+firmware = "Prusa Buddy (PrusaLink)"
+firmware_family = "none"
+connection = "prusalink"
+kinematics = "Cartesian (moving bed)"
+bed_mm = [250.0, 210.0]
+max_height_mm = 220.0
+filament_slots = 1
+profile = "print_buddy/printers/prusa/mk4s.py"
+notes = "PrusaLink LAN (status, verified upload, gated start) when configured; otherwise slicing/checks/Discord delivery only. Not tested on hardware."
+[[printer]]
+key = "prusa.coreone"
+label = "Prusa CORE One"
+vendor = "prusa"
+firmware = "Prusa Buddy (PrusaLink)"
+firmware_family = "none"
+connection = "prusalink"
+kinematics = "CoreXY"
+bed_mm = [250.0, 220.0]
+max_height_mm = 270.0
+filament_slots = 1
+profile = "print_buddy/printers/prusa/coreone.py"
+notes = "Enclosed CoreXY on PrusaLink. Chamber is not driven. Not tested on hardware."
+[[printer]]
+key = "prusa.xl"
+label = "Prusa XL (5-tool)"
+vendor = "prusa"
+firmware = "Prusa Buddy (PrusaLink)"
+firmware_family = "none"
+connection = "prusalink"
+kinematics = "CoreXY"
+bed_mm = [360.0, 360.0]
+max_height_mm = 360.0
+filament_slots = 1
+profile = "print_buddy/printers/prusa/xl.py"
+notes = "Five toolheads; Print Buddy slices single-tool (tool 0) jobs only. PrusaLink as the other Prusa models."
+[[printer]]
+key = "prusa.miniplus"
+label = "Prusa MINI+"
+vendor = "prusa"
+firmware = "Prusa Buddy (PrusaLink)"
+firmware_family = "none"
+connection = "prusalink"
+kinematics = "Cartesian (moving bed)"
+bed_mm = [180.0, 180.0]
+max_height_mm = 180.0
+filament_slots = 1
+profile = "print_buddy/printers/prusa/miniplus.py"
+notes = "Runs Orca MINI profiles (printer_model Prusa MINI). PrusaLink as the other Prusa models."
+
+
+[[printer]]
+key = "elegoo.neptune4"
+label = "Elegoo Neptune 4"
+vendor = "elegoo"
+firmware = "Klipper"
+firmware_family = "klipper"
+connection = "moonraker"
+kinematics = "Cartesian"
+bed_mm = [230.0, 230.0]
+max_height_mm = 265.0
+filament_slots = 1
+profile = "print_buddy/printers/elegoo/neptune4.py"
+notes = "Stock Klipper + Moonraker. Marketed bed is 235 x 235 mm; the pinned Orca profile's printable area is 230 x 230 mm and is what is recorded."
+
+[[printer]]
+key = "elegoo.neptune4pro"
+label = "Elegoo Neptune 4 Pro"
+vendor = "elegoo"
+firmware = "Klipper"
+firmware_family = "klipper"
+connection = "moonraker"
+kinematics = "Cartesian"
+bed_mm = [230.0, 230.0]
+max_height_mm = 265.0
+filament_slots = 1
+profile = "print_buddy/printers/elegoo/neptune4pro.py"
+notes = "Stock Klipper + Moonraker. Marketed bed is 235 x 235 mm; the pinned Orca profile's printable area is 230 x 230 mm and is what is recorded."
+
+[[printer]]
+key = "elegoo.neptune4plus"
+label = "Elegoo Neptune 4 Plus"
+vendor = "elegoo"
+firmware = "Klipper"
+firmware_family = "klipper"
+connection = "moonraker"
+kinematics = "Cartesian"
+bed_mm = [325.0, 325.0]
+max_height_mm = 385.0
+filament_slots = 1
+profile = "print_buddy/printers/elegoo/neptune4plus.py"
+notes = "Stock Klipper + Moonraker. Marketed bed is 320 x 320 mm; the pinned Orca profile's printable area is 325 x 325 mm and is what is recorded."
+
+[[printer]]
+key = "elegoo.neptune4max"
+label = "Elegoo Neptune 4 Max"
+vendor = "elegoo"
+firmware = "Klipper"
+firmware_family = "klipper"
+connection = "moonraker"
+kinematics = "Cartesian"
+bed_mm = [426.0, 426.0]
+max_height_mm = 480.0
+filament_slots = 1
+profile = "print_buddy/printers/elegoo/neptune4max.py"
+notes = "Stock Klipper + Moonraker. Marketed bed is 420 x 420 mm; the pinned Orca profile's printable area is 426 x 426 mm and is what is recorded."
+
+[[printer]]
+key = "elegoo_sdcp.centauricarbon"
+label = "Elegoo Centauri Carbon"
+vendor = "elegoo_sdcp"
+firmware = "Elegoo SDCP"
+firmware_family = "none"
+connection = "elegoo_sdcp"
+kinematics = "CoreXY"
+bed_mm = [256.0, 256.0]
+max_height_mm = 256.0
+filament_slots = 1
+profile = "print_buddy/printers/elegoo_sdcp/centauricarbon.py"
+notes = "Closed firmware; SDCP v3.0 LAN protocol (unauthenticated). Marketed bed is 260 x 260 mm; the pinned Orca profile's printable area is 256 x 256 mm and is what is recorded."

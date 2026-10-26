@@ -42,6 +42,9 @@ Schema, validation limits and TOML migration: [CONFIGURATION-YAML.md](CONFIGURAT
 | `bambu.lan_access_code_env` | `PRINT_BUDDY__BAMBU__LAN_ACCESS_CODE_ENV` | `BAMBU_LAN_PASSWORD` | Name of the environment variable holding the printer's LAN access code; the code itself is never a setting |
 | `bambu.start_confirm_s` | `PRINT_BUDDY__BAMBU__START_CONFIRM_S` | `90` | Bambu Lab LAN print start (#271): how long, in whole seconds (1-300), the printer is polled every 10 s to report the submitted file as preparing or running before the start is left as uncertain; keep it well under the bot's 420 s start budget, which also covers the upload |
 | `flashforge_stock.host` | `PRINT_BUDDY__FLASHFORGE_STOCK__HOST` | `""` | Stock Flashforge printer LAN address; empty leaves the printer offline. The serial and check code stay in `AD5X_SERIAL` and `AD5X_CHECK_CODE`, never in a setting |
+| `prusa.link_host` | `PRINT_BUDDY__PRUSA__LINK_HOST` | `""` | Prusa printer LAN address for PrusaLink; empty leaves the printer offline (slicing, checks and Discord delivery only). Prusa models only |
+| `elegoo_sdcp.host` | `PRINT_BUDDY__ELEGOO_SDCP__HOST` | `""` | Centauri printer LAN address for SDCP; empty leaves the printer offline (slicing, checks and Discord delivery only). Elegoo SDCP models only. SDCP has no authentication; there is no key to configure |
+| `prusa.api_key_env` | `PRINT_BUDDY__PRUSA__API_KEY_ENV` | `"PRUSA_LINK_API_KEY"` | Name of the environment variable holding the PrusaLink API key. The key itself is never a setting |
 | `paths.hermes_home` | `PRINT_BUDDY__PATHS__HERMES_HOME` | `/data/hermes` | State folder (`state/`, `logs/`); the name is historical, Hermes is not required |
 | `paths.archive` | `PRINT_BUDDY__PATHS__ARCHIVE` | `/data/archive` | Job archive |
 | `paths.records_vault` | `PRINT_BUDDY__PATHS__RECORDS_VAULT` | `/data/records` | Obsidian print records |

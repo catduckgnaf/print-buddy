@@ -321,6 +321,40 @@ def check(st=None):
             probs.extend(adapter.readiness_problems(st, {}))
         _check_spoolman(st, warnings, facts)
         return (not probs), probs, facts
+    if getattr(adapter, 'transport', None) == 'prusalink':
+        # Prusa: the hardware record and Spoolman, plus read-only PrusaLink status when the
+        # operator configured [prusa] link_host. Never Moonraker. An unconfigured link is the
+        # offline behaviour, not an error.
+        facts["connection"] = "prusalink"
+        facts["link_configured"] = adapter.link_configured()
+        if adapter.link_configured():
+            try:
+                snapshot = adapter.client().snapshot()
+                facts["prusa"] = adapter.normalize_status(snapshot)
+                probs.extend(adapter.readiness_problems(st, snapshot))
+            except RuntimeError as exc:
+                probs.append(str(exc))
+        else:
+            probs.extend(adapter.readiness_problems(st, {}))
+        _check_spoolman(st, warnings, facts)
+        return (not probs), probs, facts
+    if getattr(adapter, 'transport', None) == 'elegoo_sdcp':
+        # Elegoo SDCP: the hardware record and Spoolman, plus read-only SDCP status when the
+        # operator configured [elegoo_sdcp] host. Never Moonraker. An unconfigured host is
+        # the offline behaviour, not an error.
+        facts["connection"] = "elegoo_sdcp"
+        facts["sdcp_configured"] = adapter.sdcp_configured()
+        if adapter.sdcp_configured():
+            try:
+                snapshot = adapter.client().status()
+                facts["elegoo_sdcp"] = adapter.normalize_status(snapshot)
+                probs.extend(adapter.readiness_problems(st, snapshot))
+            except RuntimeError as exc:
+                probs.append(str(exc))
+        else:
+            probs.extend(adapter.readiness_problems(st, {}))
+        _check_spoolman(st, warnings, facts)
+        return (not probs), probs, facts
     if adapter.connection == 'offline':
         # No printer connection: the hardware record and Spoolman only, never Moonraker.
         facts["connection"] = "offline"

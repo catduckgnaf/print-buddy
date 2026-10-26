@@ -13,7 +13,7 @@ import jinja2
 
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
-CFG = (ROOT / "print_buddy.cfg").read_text()
+CFG = (ROOT / "print-buddy.cfg").read_text()
 
 
 def macro_body() -> str:
@@ -103,6 +103,28 @@ class PrintBuddyReportTest(unittest.TestCase):
         install = (ROOT / "install.sh").read_text()
         self.assertNotIn("pre_tool_call", install)
         self.assertNotIn("__init__.py", install)
+
+
+class ZModPluginContractTest(unittest.TestCase):
+    """Pin the layout ZMod's plugins.sh requires (issue #289).
+
+    ENABLE_PLUGIN name=print-buddy makes ZMod look for exactly
+    mod_data/plugins/print-buddy/print-buddy.cfg (or a language variant),
+    and runs install.sh / uninstall.sh only when they are executable.
+    A differently named cfg (the old print_buddy.cfg) fails that check
+    and the plugin never enables.
+    """
+
+    def test_cfg_file_matches_the_plugin_name(self):
+        self.assertTrue((ROOT / "print-buddy.cfg").is_file())
+        self.assertFalse((ROOT / "print_buddy.cfg").exists())
+
+    def test_lifecycle_scripts_are_executable(self):
+        import stat
+
+        for name in ("install.sh", "uninstall.sh", "update.sh"):
+            mode = (ROOT / name).stat().st_mode
+            self.assertTrue(mode & stat.S_IXUSR, name)
 
 
 if __name__ == "__main__":

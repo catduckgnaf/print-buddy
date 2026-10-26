@@ -36,6 +36,7 @@ from . import discord_print_summary as print_summary
 from . import plan_timelapse
 from . import print_control
 from . import visual_watch as _visual_watch
+from . import print_markers
 INTERRUPTED_HINT = print_control.INTERRUPTED_HINT
 try:
     from . import maintenance as maintenance_state
@@ -894,6 +895,39 @@ def _claim_notification(identity, phase, path=None):
     atomic_write_json(target, state)
     return True
 
+def _record_transition_markers(old, new_state, filename, stats):
+    """Record #317 event markers for one print state transition.
+
+    print_markers.record() never raises for storage problems, so marker
+    recording can never break the listener or a post. When the #299
+    per-domain listener contract lands, its normalised events should call
+    print_markers.record() the same way; for now the Moonraker transitions
+    below are the only producer.
+    """
+    if not filename:
+        return
+    elapsed = stats.get("print_duration") if isinstance(stats, dict) else None
+    try:
+        elapsed = float(elapsed) if elapsed is not None else None
+    except (TypeError, ValueError):
+        elapsed = None
+    active = old in ("printing", "paused")
+    if new_state == "printing" and old == "paused":
+        print_markers.record(filename, print_markers.RESUME, elapsed_s=elapsed)
+    elif new_state == "printing" and not active:
+        print_markers.record(filename, print_markers.START, elapsed_s=elapsed)
+    elif new_state == "paused" and old == "printing":
+        print_markers.record(filename, print_markers.PAUSE, elapsed_s=elapsed)
+    elif active and new_state == "cancelled":
+        print_markers.record(filename, print_markers.CANCEL, elapsed_s=elapsed)
+        print_markers.record(filename, print_markers.COMPLETE, elapsed_s=elapsed, outcome="cancelled")
+    elif active and new_state == "error":
+        print_markers.record(filename, print_markers.ERROR, elapsed_s=elapsed)
+        print_markers.record(filename, print_markers.COMPLETE, elapsed_s=elapsed, outcome="failed")
+    elif active and new_state == "complete":
+        print_markers.record(filename, print_markers.COMPLETE, elapsed_s=elapsed, outcome="success")
+
+
 def clean(filename):
     return print_summary.safe_label(filename, "print")
 
@@ -1145,6 +1179,8 @@ def _visual_layer(stats):
 
 
 def _visual_alert(filename, image, reason):
+    # #317: a watchdog alert is blooper material; record() never raises.
+    print_markers.record(filename, print_markers.WATCHDOG_ALERT, detail=reason)
     target = Path(os.environ.get("PRINT_WATCH_FRAME_DIR") or _config.cache_dir() / "print-watch")
     target.mkdir(parents=True, exist_ok=True)
     path = target / f"{int(time.time())}-{Path(filename or 'print').stem}.jpg"
@@ -1488,6 +1524,7 @@ class Listener:
             return
         self.state = new_state
         log(f"state {old} -> {new_state} file={self.filename!r} ({reason})")
+        _record_transition_markers(old, new_state, self.filename, self.last_stats)
         if new_state == "printing" and _config.cfg()["visual_watch"]["enabled"]:
             layer = _visual_layer(self.last_stats)
             reason_due = self.visual_watch.due(layer, time.time(), snapshot_changed=None)

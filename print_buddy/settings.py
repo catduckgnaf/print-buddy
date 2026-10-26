@@ -90,7 +90,8 @@ OPTIONAL_KEYS = {("printer", "nozzle_type"): str, ("visual_watch", "enabled"): b
                  ("bambu", "lan_access_code_env"): str,
                  ("slicer", "flash_studio_path"): str,
                  ("flashforge_stock", "host"): str,
-                 ("prusa", "link_host"): str, ("prusa", "api_key_env"): str}
+                 ("prusa", "link_host"): str, ("prusa", "api_key_env"): str,
+                 ("elegoo_sdcp", "host"): str}
 # List settings that may also come from the environment, as a comma- or space-separated value
 # (PRINT_BUDDY__DELIVERY__METHODS=discord,bambu_handoff,printer). Every other list or table is file
 # only. [delivery] methods is here so a Docker operator can opt into the Bambu LAN print button without
@@ -318,6 +319,18 @@ def _validate_prusa_link(data, model):
     prusa["link_host"], prusa["api_key_env"] = host, env_name
 
 
+def _validate_elegoo_sdcp(data, model):
+    """[elegoo_sdcp] host (#243): a plain host, Elegoo SDCP models only. SDCP has no
+    credentials at all, so there is no secret to indirect through the environment."""
+    section = data.setdefault("elegoo_sdcp", {})
+    host = str(section.setdefault("host", "") or "").strip()
+    if host and model.vendor.key != "elegoo_sdcp":
+        raise SettingsError("[elegoo_sdcp] host only applies to Elegoo SDCP printers (the Centauri line)")
+    if host and not re.fullmatch(r"[A-Za-z0-9._-]+", host):
+        raise SettingsError(f"[elegoo_sdcp] host must be a plain IP address or hostname without scheme or port, got {host!r}")
+    section["host"] = host
+
+
 BOT_MODES = ("hermes", "standalone")
 LOG_LEVELS = ("DEBUG", "INFO", "WARNING", "ERROR")
 LOG_FORMATS = ("text", "json")
@@ -529,6 +542,7 @@ def validate(data):
     _validate_bambu_lan(data, model)
     _validate_stock_lan(data, model)
     _validate_prusa_link(data, model)
+    _validate_elegoo_sdcp(data, model)
     if services["moonraker_url"]:
         base = services["moonraker_url"].rstrip("/")
         host = base.split("://", 1)[1].split("/", 1)[0].rsplit(":", 1)[0]

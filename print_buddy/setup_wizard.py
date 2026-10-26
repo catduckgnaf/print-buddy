@@ -280,6 +280,7 @@ def build_plan(w, *, hermes_found=False, existing_profiles=()):
     bambu_lan, bambu_code = {}, ""
     stock_lan, stock_serial, stock_code = {}, "", ""
     prusa_link, prusa_key = {}, ""
+    elegoo_sdcp_host = {}
     if connection == "offline":
         notes.append(f"{vendor.label}: no live printer connection. Print Buddy slices, checks G-code and "
                      "packages the file; you start the print yourself.")
@@ -321,6 +322,19 @@ def build_plan(w, *, hermes_found=False, existing_profiles=()):
         if str(host or "").strip():
             prusa_link = {"link_host": host.strip()}
             prusa_key = w.secret("prusa_link_api_key", "PrusaLink API key (printer display, Settings > Network > PrusaLink; stored as a secret)")
+    if connection == "elegoo_sdcp":
+        notes.append(f"{vendor.label}: Print Buddy slices and checks the file; with the printer's "
+                     "LAN address set it can also read status, upload the verified file and start "
+                     "it after the usual confirmation. SDCP has no password or key — the printer "
+                     "must be on a network you trust. Leave the address blank to stay offline.")
+        host = w.ask(
+            "elegoo_sdcp_host",
+            "Printer LAN IP address or hostname (SDCP; Enter to leave offline)",
+            "",
+            lambda value: _host(value) if str(value or "").strip() else None,
+        )
+        if str(host or "").strip():
+            elegoo_sdcp_host = {"host": host.strip()}
     has_software = True
     if connection == "moonraker":
         has_software = w.confirm("has_printer_software", "Is Klipper with Moonraker already running on the printer?")
@@ -409,6 +423,8 @@ def build_plan(w, *, hermes_found=False, existing_profiles=()):
         config["flashforge_stock"] = stock_lan
     if prusa_link:
         config["prusa"] = prusa_link
+    if elegoo_sdcp_host:
+        config["elegoo_sdcp"] = elegoo_sdcp_host
     return {
         "config": config, "display": display, "material": material, "slicer": slicer, "flatpaks": flatpaks,
         "actions": actions, "notes": notes, "hermes": hermes, "profile": profile,

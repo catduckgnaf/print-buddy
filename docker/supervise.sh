@@ -48,6 +48,29 @@ else
         http://127.0.0.1:*|http://localhost:*) echo 'External Spoolman URL required when bundled API is disabled' >&2; exit 2;;
     esac
 fi
+# go2rtc (#246 stage 1) normalises the camera source on loopback for
+# in-container timelapse capture. It exists only in the full image (the
+# #192 light image has no binary, so the whole block is skipped there) and
+# runs only when [timelapse] capture_enabled is set. The gate resolves the
+# effective configuration (print_buddy.go2rtc), never an environment
+# guess: 0 = start it, 3 = not started (capture disabled, or no camera
+# source configured — the feature degrades off), anything else = the
+# configuration could not be resolved; stop instead of guessing.
+go2rtc_bin="${GO2RTC_BIN:-/usr/local/bin/go2rtc}"
+if [ -x "$go2rtc_bin" ]; then
+    go2rtc_gate=0
+    python3 -m print_buddy.go2rtc || go2rtc_gate=$?
+    if [ "$go2rtc_gate" -eq 0 ]; then
+        go2rtc_config="$(python3 -m print_buddy.go2rtc --write-config)"
+        "$go2rtc_bin" -config "$go2rtc_config" &
+        children+=("$!")
+    elif [ "$go2rtc_gate" -eq 3 ]; then
+        echo 'go2rtc not started: timelapse capture is disabled or has no camera source.'
+    else
+        echo "go2rtc gate failed (status $go2rtc_gate); configuration unresolved, stopping container." >&2
+        exit "$go2rtc_gate"
+    fi
+fi
 # The configured printer instance's listener runs only when its listener
 # domain (print_buddy.listeners, #299) has an implementation: the gate
 # resolves the effective configuration (model -> vendor connection ->

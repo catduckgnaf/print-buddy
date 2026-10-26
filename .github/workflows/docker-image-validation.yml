@@ -48,8 +48,10 @@ jobs:
       VARIANT: ${{ inputs.variant }}
       PLATFORM: ${{ inputs.architecture == 'arm64' && 'linux/arm64' || 'linux/amd64' }}
       # The variant decides the slicer toggles: full is WITH_ORCA=true, light is
-      # WITH_ORCA=false; Bambu Studio stays out of the published matrix.
+      # WITH_ORCA=false (and WITH_GO2RTC follows the same variant rule, #246);
+      # Bambu Studio stays out of the published matrix.
       WITH_ORCA: ${{ inputs.variant == 'full' && 'true' || 'false' }}
+      WITH_GO2RTC: ${{ inputs.variant == 'full' && 'true' || 'false' }}
       WITH_BAMBU: "false"
       # Spoolman is included in the stack (#214); acceptance always exercises it.
       SPOOLMAN_MODE: included
@@ -67,7 +69,7 @@ jobs:
           [ "$(grep -cE 'asset_(amd64|arm64)=' docker/orca-prebuilt.sh)" = 4 ] || { echo "expected four pinned Orca assets (two channels x two architectures)"; exit 1; }
           mkdir -p evidence
           { echo "source_sha=$GITHUB_SHA"; grep -E 'version=|revision=|sha256_|asset_' docker/orca-prebuilt.sh
-            echo "app_channel=$APP_CHANNEL architecture=$ARCHITECTURE platform=$PLATFORM variant=$VARIANT with_orca=$WITH_ORCA with_bambu=$WITH_BAMBU spoolman=$SPOOLMAN_MODE"
+            echo "app_channel=$APP_CHANNEL architecture=$ARCHITECTURE platform=$PLATFORM variant=$VARIANT with_orca=$WITH_ORCA with_go2rtc=$WITH_GO2RTC with_bambu=$WITH_BAMBU spoolman=$SPOOLMAN_MODE"
           } | tee evidence/pins.txt
       - name: Free runner disk
         if: inputs.variant == 'full'
@@ -85,6 +87,7 @@ jobs:
           docker buildx build --platform "$PLATFORM" --progress=plain --load -t "$IMAGE" \
             --build-arg "APP_CHANNEL=$APP_CHANNEL" \
             --build-arg "WITH_ORCA=$WITH_ORCA" \
+            --build-arg "WITH_GO2RTC=$WITH_GO2RTC" \
             --build-arg "WITH_BAMBU=$WITH_BAMBU" \
             . 2>&1 | tee evidence/build.log
           { echo "build_start=$start"; echo "build_end=$(date -u +%FT%TZ)"

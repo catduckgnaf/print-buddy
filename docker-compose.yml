@@ -24,6 +24,12 @@ services:
       PRINT_BUDDY__SERVICES__VISION_CHAT_URL: ${PRINT_BUDDY__SERVICES__VISION_CHAT_URL:-}
       PRINT_BUDDY__SERVICES__CAMERA_SNAPSHOT_URL: ${PRINT_BUDDY__SERVICES__CAMERA_SNAPSHOT_URL:-}
       PRINT_BUDDY__VISION__MODEL: ${PRINT_BUDDY__VISION__MODEL:-gemini-latest}
+      # In-container timelapse capture (#246): on the full image only, starts the
+      # bundled go2rtc (loopback-only stream normalisation). Off by default;
+      # the light image has no go2rtc, so enabling it there fails the healthcheck
+      # with that reason instead of running.
+      PRINT_BUDDY__TIMELAPSE__CAPTURE_ENABLED: ${PRINT_BUDDY__TIMELAPSE__CAPTURE_ENABLED:-false}
+      PRINT_BUDDY__TIMELAPSE__CAPTURE_SOURCE_URL: ${PRINT_BUDDY__TIMELAPSE__CAPTURE_SOURCE_URL:-}
       PRINT_BUDDY__FLASHFORGE_STOCK__HOST: ${PRINT_BUDDY__FLASHFORGE_STOCK__HOST:-}
       PRINT_BUDDY__BAMBU__LAN_HOST: ${PRINT_BUDDY__BAMBU__LAN_HOST:-}
       PRINT_BUDDY__BAMBU__LAN_SERIAL: ${PRINT_BUDDY__BAMBU__LAN_SERIAL:-}
@@ -59,6 +65,17 @@ services:
     # ports:
     #   - "8080:${PRINT_BUDDY__WEBUI__PORT:-8080}"
     user: "1000:1000"
+    # Optional GPU passthrough for hardware timelapse encoding (#246): opt-in
+    # only — the container runs fine with no GPU and falls back to CPU
+    # encoding. To grant an Intel/AMD iGPU, uncomment the two blocks below
+    # and set group_add to the host's render group GID (`getent group render`
+    # on the host; the name "render" also works on hosts that name it so).
+    # Granting a device widens the container's host access; see
+    # docs/DOCKER.md "Timelapse capture (go2rtc)".
+    # devices:
+    #   - /dev/dri:/dev/dri
+    # group_add:
+    #   - "992"
     init: true
     cap_drop: [ALL]
     security_opt: [no-new-privileges:true]

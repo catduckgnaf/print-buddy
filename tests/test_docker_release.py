@@ -132,9 +132,9 @@ class SettingsParityTests(unittest.TestCase):
         self.assertEqual(set(table("Compose variables")), COMPOSE_VARS)
         self.assertEqual(set(table("Runtime environment")), RUNTIME_ENV_VARS)
         self.assertEqual(set(table("Secrets")), SECRETS)
-        args = set(re.findall(r"(?m)^ARG ([A-Z_]+)", DOCKERFILE)) - {"TARGETARCH"}
+        args = set(re.findall(r"(?m)^ARG ([A-Z0-9_]+)", DOCKERFILE)) - {"TARGETARCH"}
         self.assertEqual(set(table("Build arguments")), args)
-        for name, default in re.findall(r"(?m)^ARG ([A-Z_]+)=(\S+)$", DOCKERFILE):
+        for name, default in re.findall(r"(?m)^ARG ([A-Z0-9_]+)=(\S+)$", DOCKERFILE):
             with self.subTest(arg=name):
                 self.assertEqual(table("Build arguments")[name].strip(), f"`{default}`")
         for name in SECRETS:
@@ -338,9 +338,9 @@ class OrcaPrebuiltTests(unittest.TestCase):
 
 class RuntimeImageTests(unittest.TestCase):
     def test_every_stage_uses_debian_stable(self):
-        """Debian 13 slim for every stage (Orca, Bambu, Spoolman, runtime); no stock UID 1000 user, so buddy takes 1000."""
+        """Debian 13 slim for every stage (Orca, go2rtc, Bambu, Spoolman, runtime); no stock UID 1000 user, so buddy takes 1000."""
         self.assertEqual(re.findall(r"^FROM (debian:13-slim)(?: AS [\w-]+)?$", DOCKERFILE, re.M),
-                         ["debian:13-slim"] * 4)
+                         ["debian:13-slim"] * 5)
         runtime = DOCKERFILE.split("FROM debian:13-slim AS runtime", 1)[1]
         self.assertIn("useradd --uid 1000 --create-home buddy", runtime)
         self.assertNotIn("ubuntu", DOCKERFILE)

@@ -11,7 +11,7 @@ import urllib.request
 # Same pattern as tests/docker/image_probe.py and docker/slicer-smoke.py.
 sys.path.insert(0, "/app")
 
-from print_buddy import settings
+from print_buddy import go2rtc, settings
 from print_buddy.bot.health import check as bot_check
 from print_buddy.healthcheck import check as listener_check
 from print_buddy.healthcheck import listener_domain, listener_required
@@ -48,6 +48,24 @@ def main():
                 else "has no listener"
             detail = f" (domain {domain.name!r} {state})"
         print(f"ok  listener: not required for this printer connection{detail}")
+    # go2rtc (#246 stage 1) is covered exactly when the supervisor started
+    # it: the same gate decision (print_buddy.go2rtc), mirroring the
+    # disabled-bot branch above. Capture disabled (or enabled with no
+    # camera source) is a healthy, reported state; enabled in an image
+    # without the binary (the #192 light image) fails with the reason.
+    gate = go2rtc.gate()
+    if gate == 2:
+        print("FAIL  go2rtc: configuration unresolved")
+        healthy = False
+    elif gate == 0:
+        if not go2rtc.binary_present():
+            print("FAIL  go2rtc: timelapse capture is enabled but go2rtc is "
+                  "not in this image (the light image excludes it)")
+            healthy = False
+        else:
+            ok, reason = go2rtc.check()
+            print(f"{'ok' if ok else 'FAIL'}  go2rtc: {reason}")
+            healthy &= ok
     try:
         url = ("http://127.0.0.1:" + os.environ.get("SPOOLMAN_PORT", "8000")
                if os.environ.get("PRINT_BUDDY_BUNDLED_SPOOLMAN", "true") == "true"

@@ -157,6 +157,16 @@ timelapse:
   # pad = blurred background fill (default); crop = centre crop.
   vertical_short_mode: pad
   vertical_short_overlay: true
+  # In-container timelapse capture (#246): off by default; existing behaviour
+  # (printer-rendered timelapses only) is unchanged while this is false.
+  # Turning it on starts the bundled go2rtc in the full Docker image, which
+  # normalises the camera source on loopback for the capture stage.
+  capture_enabled: false
+  # Optional explicit camera source for capture (an MJPEG/RTSP URL or a
+  # go2rtc ffmpeg: source). Empty derives the source from
+  # services.camera_snapshot_url / the Moonraker webcam, as the camera
+  # watchdog does.
+  capture_source_url: ''
 logging:
   level: INFO
   format: text

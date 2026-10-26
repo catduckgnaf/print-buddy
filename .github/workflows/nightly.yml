@@ -108,7 +108,8 @@ jobs:
     if: github.event_name == 'workflow_dispatch' || needs.promote.outputs.changed == 'true'
     # Native runners only: arm64 builds run on a real arm64 runner, never under
     # QEMU emulation. The matrix is the supported platform/variant matrix:
-    # full = WITH_ORCA=true, light = WITH_ORCA=false, Bambu Studio stays out of
+    # full = WITH_ORCA=true + WITH_GO2RTC=true, light = both false (#246: the light
+    # image also excludes go2rtc and the VAAPI stack), Bambu Studio stays out of
     # the published matrix (WITH_BAMBU=false on every leg).
     strategy:
       fail-fast: false
@@ -119,24 +120,28 @@ jobs:
             runner: ubuntu-24.04
             variant: full
             with_orca: "true"
+            with_go2rtc: "true"
             with_bambu: "false"
           - arch: arm64
             platform: linux/arm64
             runner: ubuntu-24.04-arm
             variant: full
             with_orca: "true"
+            with_go2rtc: "true"
             with_bambu: "false"
           - arch: amd64
             platform: linux/amd64
             runner: ubuntu-24.04
             variant: light
             with_orca: "false"
+            with_go2rtc: "false"
             with_bambu: "false"
           - arch: arm64
             platform: linux/arm64
             runner: ubuntu-24.04-arm
             variant: light
             with_orca: "false"
+            with_go2rtc: "false"
             with_bambu: "false"
     runs-on: ${{ matrix.runner }}
     permissions:
@@ -153,6 +158,7 @@ jobs:
       PLATFORM: ${{ matrix.platform }}
       VARIANT: ${{ matrix.variant }}
       WITH_ORCA: ${{ matrix.with_orca }}
+      WITH_GO2RTC: ${{ matrix.with_go2rtc }}
       WITH_BAMBU: ${{ matrix.with_bambu }}
       SPOOLMAN_MODE: included
       LOCAL_IMAGE: print-buddy-nightly-candidate:${{ matrix.variant }}-${{ matrix.arch }}
@@ -174,7 +180,7 @@ jobs:
             echo "source_sha=$NIGHTLY_SHA"
             echo "version=$nightly_version"
             echo "arch=$ARCH platform=$PLATFORM variant=$VARIANT runner=$RUNNER_LABEL"
-            echo "app_channel=$APP_CHANNEL with_orca=$WITH_ORCA with_bambu=$WITH_BAMBU spoolman=$SPOOLMAN_MODE"
+            echo "app_channel=$APP_CHANNEL with_orca=$WITH_ORCA with_go2rtc=$WITH_GO2RTC with_bambu=$WITH_BAMBU spoolman=$SPOOLMAN_MODE"
           } | tee evidence/pins.txt
       - name: Free runner disk for the slicer build
         if: matrix.with_orca == 'true'
@@ -196,6 +202,7 @@ jobs:
           docker buildx build --platform "$PLATFORM" --progress=plain --load -t "$LOCAL_IMAGE" \
             --build-arg "APP_CHANNEL=$APP_CHANNEL" \
             --build-arg "WITH_ORCA=$WITH_ORCA" \
+            --build-arg "WITH_GO2RTC=$WITH_GO2RTC" \
             --build-arg "WITH_BAMBU=$WITH_BAMBU" \
             --label "org.opencontainers.image.source=https://github.com/catduckgnaf/print-buddy" \
             --label "org.opencontainers.image.version=$NIGHTLY_VERSION" \
@@ -241,6 +248,7 @@ jobs:
             --metadata-file "evidence/metadata-$VARIANT-$ARCH.json" \
             --build-arg "APP_CHANNEL=$APP_CHANNEL" \
             --build-arg "WITH_ORCA=$WITH_ORCA" \
+            --build-arg "WITH_GO2RTC=$WITH_GO2RTC" \
             --build-arg "WITH_BAMBU=$WITH_BAMBU" \
             --label "org.opencontainers.image.source=https://github.com/catduckgnaf/print-buddy" \
             --label "org.opencontainers.image.version=$NIGHTLY_VERSION" \

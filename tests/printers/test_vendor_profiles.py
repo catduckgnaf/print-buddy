@@ -35,6 +35,8 @@ def without_added(data):
     data.get("slicer", {}).pop("flash_studio_path", None)  # added by the Flash Studio config, after capture
     data.get("timelapse", {}).pop("mode", None)  # added by #286 stage 3 (the type setting), after capture
     data.get("services", {}).pop("camera_source", None)  # added by #286 stage 3, after capture
+    for key in ("capture_enabled", "capture_source_url"):  # added by #246 stage 1, after capture
+        data.get("timelapse", {}).pop(key, None)
     if data.get("slicer") == {}:
         data.pop("slicer", None)
     for key in ADDED_PRINTER_KEYS:

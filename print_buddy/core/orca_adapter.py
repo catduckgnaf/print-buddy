@@ -789,7 +789,7 @@ def _run_slicer(command, name, folder):
     return result
 
 
-def slice_model(source, folder, state, brim=None, first_layer=False, color_decisions=None, preserve_layout=False, filament_slot=None, item_shifts=None, copies=None, scale=None, rotation=None, supports=None, object_ids=None, adapter=None, brim_policy=None):
+def slice_model(source, folder, state, brim=None, first_layer=False, color_decisions=None, preserve_layout=False, filament_slot=None, item_shifts=None, fit_by_object=None, copies=None, scale=None, rotation=None, supports=None, object_ids=None, adapter=None, brim_policy=None):
     source, folder = Path(source), Path(folder)
     # An explicit adapter (a job prepared for another model) brings its own templates; the default keeps TEMPLATES.
     printer = adapter or printers.current()
@@ -802,6 +802,8 @@ def slice_model(source, folder, state, brim=None, first_layer=False, color_decis
     if rotation is not None and (preserve_layout or item_shifts or
                                  (color_decisions and color_decisions.get('mode') == 'per_part')):
         raise ValueError('rotation is only supported for whole-model single-color slicing')
+    if fit_by_object is not None and not (color_decisions and color_decisions.get('mode') == 'per_part'):
+        raise ValueError('fit_by_object is only supported for per-part color decisions')
     folder.mkdir(parents=True, exist_ok=True)
     machine, process, filament = [json.loads((templates / f'{name}.json').read_text()) for name in ('machine', 'process', 'filament')]
     template_nozzle_dia = float(machine.get('nozzle_diameter', [NOZZLE_MM])[0] if isinstance(machine.get('nozzle_diameter'), list) else machine.get('nozzle_diameter', NOZZLE_MM))
@@ -823,7 +825,7 @@ def slice_model(source, folder, state, brim=None, first_layer=False, color_decis
         from .color_geometry import export_color_geometry
         input_path = folder / 'geometry.3mf'
         mapping, geometry = export_color_geometry(source, input_path, color_decisions, item_shifts=item_shifts,
-                                                  object_ids=object_ids, scale=scale)
+                                                  object_ids=object_ids, scale=scale, fit_by_object=fit_by_object)
         with zipfile.ZipFile(source) as archive:
             if 'Metadata/project_settings.config' in archive.namelist():
                 author = json.loads(archive.read('Metadata/project_settings.config'))

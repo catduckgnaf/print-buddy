@@ -2054,7 +2054,8 @@ def slice_multi_plate(job, job_path, src, manifest, decisions, st, brim_override
                 verdict = {**verdict, 'mode': 'split', 'reason': str(exc)}
             else:
                 return result
-    job['plate_merge'] = {k: v for k, v in verdict.items() if k not in ('shifts', 'placed_bounds_mm')}
+    job['plate_merge'] = {k: v for k, v in verdict.items()
+                          if k not in ('shifts', 'placed_bounds_mm', 'yaw_by_object')}
     if manifest.get('painted') and len(set(slots.values())) > 1:
         # Painted colors live inside one mesh; a per-slot split would print the
         # same body twice. Split by authored plate instead, each one multicolor.
@@ -2178,12 +2179,62 @@ def _slice_merged(job, job_path, src, manifest, decisions, view, verdict, st, br
     source_sha = file_sha256(src); decision_sha = decisions_digest(decisions)
     slice_dir = work / 'sliced' / 'orca' / uuid.uuid4().hex
     slots = sorted(set(_part_slots(view, manifest).values()))
+    yaw_by_object = verdict.get('yaw_by_object') or {}
+    if not isinstance(yaw_by_object, dict):
+        raise RuntimeError('merge plan yaw_by_object must be a mapping of object id to degrees')
+    fit_by_object = {}
+    if yaw_by_object:
+        # A recorded merge turn (#221 R2b) is realized only as the
+        # exporters' per-object fit composed with the plan's recorded
+        # shifts — the proved placement. Fail closed on anything else
+        # instead of slicing the objects as authored.
+        if not verdict.get('shifts'):
+            raise RuntimeError('merge plan records a turn without the recorded shifts that realize it; '
+                               'refusing to slice it as authored')
+        from .orca_adapter import _yaw
+        unknown_yaw = sorted(set(yaw_by_object) - {str(p['object_id']) for p in manifest['parts']}, key=str)
+        if unknown_yaw:
+            raise RuntimeError(f"merge plan records a turn for unknown object(s) {','.join(unknown_yaw)}")
+        for oid in sorted(yaw_by_object, key=str):
+            try:
+                value = float(yaw_by_object[oid])
+            except (TypeError, ValueError) as exc:
+                raise RuntimeError(f'merge plan turn for object {oid} must be numeric, '
+                                   f'got {yaw_by_object[oid]!r}') from exc
+            if not math.isfinite(value) or not 0 < value <= 90:
+                raise RuntimeError(f'merge plan turn must be between 0 and 90 degrees, got {value!r}')
+            fit_by_object[str(oid)] = {'rotation': _yaw(value)}
     if len(slots) == 1 and not manifest.get('painted'):
         from .color_geometry import export_single_color_plate
         derived = work / 'derived'; derived.mkdir(exist_ok=True)
         plate = derived / 'merged.3mf'
         report = export_single_color_plate(src, plate, view, [p['key'] for p in manifest['parts']], bed=int(st['bed_mm'][0]),
-                                           slot_colors=st.get('ifs_slots') or {}, item_shifts=verdict['shifts'])
+                                           slot_colors=st.get('ifs_slots') or {}, item_shifts=verdict['shifts'],
+                                           **({'fit_by_object': fit_by_object} if fit_by_object else {}))
+        if fit_by_object:
+            # Re-read the derived plate: every turned object must have
+            # landed at its rotated authored bounds plus its recorded
+            # shift, with the rotated extents — the shared split-plate
+            # proof (#221 R2) applied to the merged plate.
+            from .color_geometry import _world_bounds as _bounds_of
+            from .color_geometry import _world_points as _points_of
+            from .orca_adapter import _rotate as _rotate_point
+            shifts = {str(k): v for k, v in verdict['shifts'].items()}
+            with zipfile.ZipFile(src) as archive:
+                turned_points = {oid: _points_of(archive, {oid}) for oid in fit_by_object}
+            with zipfile.ZipFile(plate) as archive:
+                landed_boxes = {oid: _bounds_of(archive, {oid})[0] for oid in fit_by_object}
+            for oid, entry in fit_by_object.items():
+                rotated = [_rotate_point(point, entry['rotation']) for point in turned_points[oid]]
+                base_min = [min(p[a] for p in rotated) for a in range(3)]
+                base_extent = [max(p[a] for p in rotated) - base_min[a] for a in range(3)]
+                landed = landed_boxes[oid]
+                landed_extent = [landed[a][1] - landed[a][0] for a in range(3)]
+                values = shifts[oid]
+                if any(abs(landed[a][0] - (base_min[a] + float(values[a]))) > 2e-3 for a in range(3)) \
+                        or any(abs(got - want) > 2e-3 for got, want in zip(landed_extent, base_extent)):
+                    raise RuntimeError(f'merged plate did not land at the recorded turn for object {oid}; '
+                                       'refusing to slice it as turned')
         out, provenance, configs = slice_model(plate, slice_dir, st, brim_override, preserve_layout=True, filament_slot=slots[0])
         material = st.get('ifs_slots', {}).get(str(slots[0]), {}).get('material')
         if not material:
@@ -2196,11 +2247,43 @@ def _slice_merged(job, job_path, src, manifest, decisions, view, verdict, st, br
         # exporter, so pass the per-part view (it is exactly the user's choice).
         out, provenance, configs = slice_model(src, slice_dir, st, brim_override,
                                                color_decisions=view if manifest.get('painted') else decisions,
-                                               item_shifts=verdict['shifts'])
+                                               item_shifts=verdict['shifts'],
+                                               **({'fit_by_object': fit_by_object} if fit_by_object else {}))
         geometry = provenance.get('geometry') or {}
         placed_keys = sorted(row['part_key'] for row in geometry.get('parts', []))
         if placed_keys != sorted(p['key'] for p in manifest['parts']):
             raise RuntimeError('merged geometry dropped or duplicated a source part')
+        if fit_by_object:
+            # This route has no derived plate file to re-read: the
+            # multicolor exporter's report bounds are computed from the
+            # exact vertices it wrote, so they are the strongest available
+            # proof — every turned object's placed bounds must equal its
+            # rotated authored bounds plus its recorded shift (#221 R2b).
+            from .color_geometry import _world_points as _points_of
+            from .orca_adapter import _rotate as _rotate_point
+            object_of_key = {p['key']: str(p['object_id']) for p in manifest['parts']}
+            placed_by_object = {}
+            for row in geometry.get('parts', []):
+                oid = object_of_key[row['part_key']]
+                box = row['bounds_mm']
+                if oid in placed_by_object:
+                    prev = placed_by_object[oid]
+                    box = [(min(prev[a][0], box[a][0]), max(prev[a][1], box[a][1])) for a in range(3)]
+                placed_by_object[oid] = box
+            shifts = {str(k): v for k, v in verdict['shifts'].items()}
+            with zipfile.ZipFile(src) as archive:
+                turned_points = {oid: _points_of(archive, {oid}) for oid in fit_by_object}
+            for oid, entry in fit_by_object.items():
+                rotated = [_rotate_point(point, entry['rotation']) for point in turned_points[oid]]
+                base_min = [min(p[a] for p in rotated) for a in range(3)]
+                base_extent = [max(p[a] for p in rotated) - base_min[a] for a in range(3)]
+                landed = placed_by_object[oid]
+                landed_extent = [landed[a][1] - landed[a][0] for a in range(3)]
+                values = shifts[oid]
+                if any(abs(landed[a][0] - (base_min[a] + float(values[a]))) > 2e-3 for a in range(3)) \
+                        or any(abs(got - want) > 2e-3 for got, want in zip(landed_extent, base_extent)):
+                    raise RuntimeError(f'merged geometry did not land at the recorded turn for object {oid}; '
+                                       'refusing to slice it as turned')
         placed_ids = sorted({p['object_id'] for p in manifest['parts'] if p['key'] in placed_keys}, key=str)
         extra = {'geometry_report': geometry}
     text = Path(out).read_text(errors='ignore')
@@ -2220,7 +2303,8 @@ def _slice_merged(job, job_path, src, manifest, decisions, view, verdict, st, br
                'objects_out': len(placed_ids), 'parts_in': len(manifest['parts']), 'bed_mm': verdict['bed_mm'],
                'spacing_mm': verdict['spacing_mm'], 'fits_bed': True, 'slots': slots,
                'placed_bounds_mm': verdict['placed_bounds_mm'], 'estimate_s': estimate,
-               'estimate': human_dur(estimate) if estimate else None, 'gcode_objects_labelled': labelled or None}
+               'estimate': human_dur(estimate) if estimate else None, 'gcode_objects_labelled': labelled or None,
+               **({'yaw_by_object': yaw_by_object} if yaw_by_object else {})}
     job.pop('derived_plates', None); job.pop('refused_plates', None); job.pop('multipart_plan', None)
     job['plate_merge'] = summary
     job['artifact_binding'] = {**_recipe_binding(job), 'source_sha256': source_sha, 'decisions_sha256': decision_sha, 'gcode_sha256': file_sha256(out)}

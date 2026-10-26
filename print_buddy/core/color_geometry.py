@@ -11,15 +11,27 @@ import zipfile
 from .. import settings
 from . import source_colors
 from .source_colors import inventory
-from .orca_adapter import digest
+from .orca_adapter import _check_rotation, _rotate, digest
 
 CORE = 'http://schemas.microsoft.com/3dmanufacturing/core/2015/02'
 IDENTITY = [1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0]
 
 
-def export_color_geometry(source, target, decisions, item_shifts=None, object_ids=None, scale=None):
+def export_color_geometry(source, target, decisions, item_shifts=None, object_ids=None, scale=None, fit_by_object=None):
     """object_ids limits export to those build objects (one authored plate);
-    scale shrinks the selection uniformly before bed centering."""
+    scale shrinks the selection uniformly before bed centering.
+
+    fit_by_object ({object_id: {'rotation': [9]}}) turns individual
+    exported objects in the bed plane (#221 R2b, the merge path's analogue
+    of export_single_color_plate's per-object fit): each named object's
+    leaves — including its cutter volumes, so a turned object stays rigid
+    — rotate by the recorded matrix about the world origin, and the
+    object's item_shifts entry then places the rotated bounds, which is
+    the placement the merge plan proved. It therefore requires
+    item_shifts, refuses a resized export (the shifts were planned at
+    authored size), an unknown or unexported object, a non-authored
+    scale, and any rotation that is not a rigid rotation.
+    """
     manifest = inventory(source)
     full_parts = manifest['parts']
     if object_ids is not None:
@@ -124,6 +136,40 @@ def export_color_geometry(source, target, decisions, item_shifts=None, object_id
             visit(path, item.get('objectid'), [transform(item)], f'build:{i}')
     if scale != 1.0:
         leaves[:] = [(k, m, [tuple(c * scale for c in pt) for pt in pts]) for k, m, pts in leaves]
+    rotations = {}
+    if fit_by_object is not None:
+        if item_shifts is None:
+            raise RuntimeError('a per-object fit requires the recorded item shifts that place the turned objects')
+        if scale != 1.0:
+            raise RuntimeError('a per-object fit cannot be combined with a resized export')
+        if not isinstance(fit_by_object, dict) or not fit_by_object:
+            raise RuntimeError('fit_by_object must be a mapping of object id to a per-object fit')
+        exported = {str(p['object_id']) for p in manifest['parts']}
+        for raw_id, raw_fit in fit_by_object.items():
+            if str(raw_id) not in exported:
+                raise RuntimeError(f'per-object fit names object(s) that are not exported: {raw_id}')
+            if not isinstance(raw_fit, dict):
+                raise RuntimeError('per-object fit must be a mapping with a rotation')
+            try:
+                fit_scale = float(raw_fit.get('scale') or 1.0)
+            except (TypeError, ValueError) as exc:
+                raise RuntimeError('per-object fit scale must be numeric') from exc
+            if fit_scale != 1.0:
+                raise RuntimeError('per-object fit must keep the authored scale')
+            try:
+                matrix = _check_rotation(raw_fit.get('rotation'))
+            except (TypeError, ValueError) as exc:
+                raise RuntimeError(f'per-object fit {exc}') from exc
+            if matrix is None:
+                raise RuntimeError('per-object fit requires a rotation')
+            rotations[str(raw_id)] = matrix
+    if rotations:
+        object_of_leaf = {p['instance_key']: str(p['object_id']) for p in manifest['parts']}
+        object_of_leaf.update({c['instance_key']: str(c['object_id'])
+                               for c in manifest.get('cutters', [])})
+        leaves[:] = [(key, mesh, [_rotate(point, rotations[object_of_leaf[key]]) for point in points]
+                      if object_of_leaf.get(key) in rotations else points)
+                     for key, mesh, points in leaves]
     # Negative/modifier volumes ride along inside their own object, never as a
     # separate solid (a solid cutter collides with its body: Orca -101).
     cutter_rows = {c['instance_key']: c for c in manifest.get('cutters', [])
@@ -280,7 +326,10 @@ def export_color_geometry(source, target, decisions, item_shifts=None, object_id
     return mapping, {'source_sha256': digest(source), 'converted_sha256': digest(target), 'parts': records,
                      'build_bounds_mm': bounds, 'translation_mm': delta if item_shifts is None else None, 'merged_placement': item_shifts is not None, 'prime_tower_xy_mm': list(tower),
                      'prime_tower_candidates_mm': [list(t) for t in towers],
-                     'policy': 'all mesh leaves as independent build items; component transforms; one rigid translation; float64 XML'}
+                     **({'fit_by_object': {oid: {'rotation': matrix} for oid, matrix in rotations.items()}} if rotations else {}),
+                     'policy': 'all mesh leaves as independent build items; component transforms; one rigid translation; float64 XML'
+                     if not rotations else
+                     'all mesh leaves as independent build items; component transforms; per-object yaw rotations about the world origin, each composed with its per-object translation; float64 XML'}
 
 
 def export_volume_plate(source, target, scale=1.0, rotation=None):

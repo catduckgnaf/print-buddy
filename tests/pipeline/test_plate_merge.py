@@ -416,6 +416,303 @@ def test_plan_rectangle_only_sources_keep_todays_verdict(tmp_path):
     assert verdict['mode'] == 'split' and 'do not fit' in verdict['reason'] and 'packing' not in verdict
 
 
+# --- #221 R2b: per-object yaw on the one-bed merge path ---------------------
+# A 215 x 35 mm bar fits the 204 mm usable bed only turned (45 degrees, a
+# ~176.8 mm envelope); a 60 mm square fits as authored. Before R2b the merge
+# planner split this source: the bar exceeds the usable width as authored, so
+# rectangle packing fails, and both hulls are rectangles, so the polygon
+# fallback does not even run. The yawed fallback packs the bar's hull rotated
+# to its recorded yaw and the square into the notch beside it.
+
+YAW_BAR = [(0, 0), (215, 0), (215, 35), (0, 35)]
+YAW_SQ = [(0, 0), (60, 0), (60, 60), (0, 60)]
+
+
+def _yaw_merge_source(path):
+    _prism_source(path, {'1': (YAW_BAR, 10, (0, 0)), '2': (YAW_SQ, 10, (300, 300))}, [['1'], ['2']])
+
+
+def _placed_hull(source, verdict, oid):
+    from print_buddy.core import color_geometry, split_fit
+    with zipfile.ZipFile(source) as archive:
+        hull, _bounds = color_geometry._world_hull_xy(archive, {oid})[0]
+    if oid in (verdict.get('yaw_by_object') or {}):
+        hull = split_fit._rotate_hull_xy(hull, verdict['yaw_by_object'][oid])
+    shift = verdict['shifts'][oid]
+    return [(x + shift[0], y + shift[1]) for x, y in hull]
+
+
+def test_plan_yawed_merge_turns_a_part_that_only_fits_turned(tmp_path):
+    source = tmp_path / 'yaw-merge.3mf'
+    _yaw_merge_source(source)
+    # The authored verdicts this fallback supersedes: no rectangle packing,
+    # and rectangle hulls mean the polygon fallback never runs.
+    assert plate_merge.pack({'1': (215, 35), '2': (60, 60)}, 220) is None
+    verdict = _plan(source)
+    assert verdict['mode'] == 'merge' and verdict['packing'] == 'polygon'
+    assert verdict['yaw_by_object'] == {'1': 45.0}
+    placed = {oid: _placed_hull(source, verdict, oid) for oid in ('1', '2')}
+    assert plate_merge.hull_distance(placed['1'], placed['2']) >= plate_merge.SPACING_MM - 2e-3
+    for poly in placed.values():
+        assert all(plate_merge.EDGE_MARGIN_MM - 2e-3 <= v <= 220 - plate_merge.EDGE_MARGIN_MM + 2e-3
+                   for point in poly for v in point)
+    # The bar's placed bounds are its rotated extents, (215 + 35) / sqrt(2).
+    bounds = verdict['placed_bounds_mm']['1']
+    assert bounds[0][1] - bounds[0][0] == pytest.approx(176.777, abs=0.01)
+    assert bounds[1][1] - bounds[1][0] == pytest.approx(176.777, abs=0.01)
+    # The square keeps its authored extents and no yaw record.
+    bounds = verdict['placed_bounds_mm']['2']
+    assert bounds[0][1] - bounds[0][0] == 60 and bounds[1][1] - bounds[1][0] == 60
+    assert _plan(source) == verdict
+
+
+def test_plan_merges_that_need_no_turn_record_no_yaw(tmp_path):
+    # Authored rectangle merge wins first and stays exactly today's plan.
+    source = tmp_path / 'auth.3mf'
+    _prism_source(source, {'1': ([(0, 0), (180, 0), (180, 35), (0, 35)], 10, (0, 0)),
+                           '2': (YAW_SQ, 10, (300, 300))}, [['1'], ['2']])
+    verdict = _plan(source)
+    assert verdict['mode'] == 'merge' and verdict['packing'] == 'rectangle'
+    assert 'yaw_by_object' not in verdict
+    # The authored polygon fallback likewise records no yaw.
+    source = tmp_path / 'tri.3mf'
+    _prism_source(source, {'1': (TRI_A, 10, (20, 30)), '2': (TRI_B, 10, (100, 90))}, [['1'], ['2']])
+    verdict = _plan(source)
+    assert verdict['mode'] == 'merge' and verdict['packing'] == 'polygon'
+    assert 'yaw_by_object' not in verdict
+
+
+def test_plan_yawed_merge_still_refuses_a_part_that_fits_at_no_yaw(tmp_path):
+    # A 250 x 40 mm bar fits the usable bed at no checked yaw (its best
+    # envelope is ~205 mm), so the yawed fallback cannot merge it either.
+    source = tmp_path / 'never.3mf'
+    _prism_source(source, {'1': ([(0, 0), (250, 0), (250, 40), (0, 40)], 10, (0, 0)),
+                           '2': (YAW_SQ, 10, (300, 300))}, [['1'], ['2']])
+    verdict = _plan(source)
+    assert verdict['mode'] == 'split' and 'do not fit' in verdict['reason']
+    assert 'yaw_by_object' not in verdict
+
+
+def test_pack_polygon_rotated_hulls_charge_feature_and_exclusions_once():
+    from print_buddy.core import split_fit
+    bar = split_fit._rotate_hull_xy(YAW_BAR, 45.0)
+    placed = plate_merge.pack_polygon({'a': bar, 'b': YAW_SQ}, 220, feature=6.0,
+                                      exclusions=[(190, 8, 212, 60)])
+    assert placed is not None
+
+    def poly(hull, corner):
+        min_x = min(p[0] for p in hull)
+        min_y = min(p[1] for p in hull)
+        return [(x - min_x + corner[0], y - min_y + corner[1]) for x, y in hull]
+
+    polys = {'a': poly(bar, placed['a']), 'b': poly(YAW_SQ, placed['b'])}
+    # Charged exactly once, as for authored hulls: hull-to-hull is
+    # spacing + 2*feature, hull-to-edge is edge + feature, hull-to-exclusion
+    # is feature.
+    assert plate_merge.hull_distance(polys['a'], polys['b']) >= plate_merge.SPACING_MM + 12.0 - 1e-9
+    exclusion = plate_merge._rect_polygon((190, 8, 212, 60))
+    for placed_poly in polys.values():
+        assert plate_merge.hull_distance(placed_poly, exclusion) >= 6.0 - 1e-9
+        assert all(plate_merge.EDGE_MARGIN_MM + 6.0 - 1e-9 <= v
+                   <= 220 - plate_merge.EDGE_MARGIN_MM - 6.0 + 1e-9
+                   for point in placed_poly for v in point)
+    # A budget so large the rotated envelope alone exceeds the shrunken
+    # usable area refuses, rather than stacking or ignoring the budget.
+    assert plate_merge.pack_polygon({'a': bar}, 220, feature=20.0) is None
+
+
+def test_yawed_merge_slices_to_one_gcode_at_the_recorded_turn(tmp_path, monkeypatch):
+    from print_buddy.core import color_geometry
+    import math
+    source = tmp_path / 'yaw-merge.3mf'
+    _yaw_merge_source(source)
+    verdict = _plan(source)
+    assert verdict['yaw_by_object'] == {'1': 45.0}
+    job_path = _job(tmp_path, source)
+    fake = _fake_slice()
+    monkeypatch.setattr('print_buddy.core.orca_adapter.slice_model', fake)
+    out = model_job.slice_job(job_path)
+    saved = json.loads(job_path.read_text())
+    assert isinstance(out, (str, Path)) and len(fake.calls) == 1
+    assert saved['plate_merge']['mode'] == 'merge'
+    assert saved['plate_merge']['yaw_by_object'] == {'1': 45.0}
+    assert set(saved['merged']['plate_report']['fit_by_object']) == {'1'}
+    # Derived-plate re-read proof, per object: the bar landed at its rotated
+    # authored bounds plus its recorded shift, with the rotated extents; the
+    # square landed at its authored bounds plus its shift.
+    derived = Path(saved['merged']['plate'])
+    shifts = verdict['shifts']
+    with zipfile.ZipFile(source) as archive:
+        authored_points = color_geometry._world_points(archive, {'1'})
+        authored_square = color_geometry._world_bounds(archive, {'2'})[0]
+    rad = math.radians(45.0)
+    c, s = math.cos(rad), math.sin(rad)
+    rotated = [(x * c - y * s, x * s + y * c, z) for x, y, z in authored_points]
+    rotated_min = [min(p[a] for p in rotated) for a in range(3)]
+    rotated_extent = [max(p[a] for p in rotated) - rotated_min[a] for a in range(3)]
+    with zipfile.ZipFile(derived) as archive:
+        landed_bar = color_geometry._world_bounds(archive, {'1'})[0]
+        landed_square = color_geometry._world_bounds(archive, {'2'})[0]
+    for a in range(3):
+        assert landed_bar[a][0] == pytest.approx(rotated_min[a] + shifts['1'][a], abs=2e-3)
+        assert landed_bar[a][1] - landed_bar[a][0] == pytest.approx(rotated_extent[a], abs=2e-3)
+        assert landed_square[a][0] == pytest.approx(authored_square[a][0] + shifts['2'][a], abs=2e-3)
+    placed = {oid: _placed_hull(source, verdict, oid) for oid in ('1', '2')}
+    assert plate_merge.hull_distance(placed['1'], placed['2']) >= plate_merge.SPACING_MM - 2e-3
+
+
+def test_slicing_a_merge_refuses_unproved_yaws(tmp_path, monkeypatch):
+    source = tmp_path / 'yaw-merge.3mf'
+    _yaw_merge_source(source)
+    good = _plan(source)
+    assert good['mode'] == 'merge' and good['yaw_by_object'] == {'1': 45.0}
+    bad = [
+        ({'yaw_by_object': {'9': 30.0}}, 'unknown'),
+        ({'yaw_by_object': {'1': float('inf')}}, 'between 0 and 90'),
+        ({'yaw_by_object': {'1': 0.0}}, 'between 0 and 90'),
+        ({'yaw_by_object': [('1', 30.0)]}, 'must be a mapping'),
+        ({'yaw_by_object': {'1': 30.0}, 'shifts': None}, 'without the recorded shifts'),
+    ]
+    for overrides, match in bad:
+        verdict = {**good, **overrides}
+        monkeypatch.setattr(plate_merge, 'plan', lambda *a, **k: verdict)
+        job_path = _job(tmp_path, source)
+        fake = _fake_slice()
+        monkeypatch.setattr('print_buddy.core.orca_adapter.slice_model', fake)
+        with pytest.raises(RuntimeError, match=match):
+            model_job.slice_job(job_path)
+        assert fake.calls == []
+
+
+# The multicolor exporter additionally requires a prime-tower position
+# clearing every placed AABB by its clearance margin, so its fixtures use
+# a thinner turned strip (206 x 4 mm, a ~148 mm rotated envelope) whose
+# placed AABB leaves a tower lane on the bed.
+YAW_BAR_SMALL = [(0, 0), (206, 0), (206, 4), (0, 4)]
+YAW_SQ_SMALL = [(0, 0), (40, 0), (40, 40), (0, 40)]
+
+
+def _yaw_merge_small_source(path):
+    _prism_source(path, {'1': (YAW_BAR_SMALL, 10, (0, 0)), '2': (YAW_SQ_SMALL, 10, (300, 300))}, [['1'], ['2']])
+
+
+def test_multicolor_merge_export_rotates_the_turned_object(tmp_path):
+    from print_buddy.core import color_geometry
+    from print_buddy.core.orca_adapter import _rotate, _yaw
+    source = tmp_path / 'yaw-merge.3mf'
+    _yaw_merge_small_source(source)
+    verdict = _plan(source)
+    assert verdict['yaw_by_object'] == {'1': 45.0}
+    manifest = source_colors.inventory(source)
+    decisions = _two_slot_decisions(manifest)
+    target = tmp_path / 'merged.3mf'
+    _mapping, geometry = color_geometry.export_color_geometry(
+        source, target, decisions, item_shifts=verdict['shifts'],
+        fit_by_object={'1': {'rotation': _yaw(45.0)}})
+    assert geometry['fit_by_object'] == {'1': {'rotation': _yaw(45.0)}}
+    assert geometry['merged_placement'] is True
+    records = {row['part_key']: row for row in geometry['parts']}
+    object_of_key = {p['key']: str(p['object_id']) for p in manifest['parts']}
+    shifts = verdict['shifts']
+    with zipfile.ZipFile(source) as archive:
+        authored = {oid: color_geometry._world_points(archive, {oid}) for oid in ('1', '2')}
+    for key, row in records.items():
+        oid = object_of_key[key]
+        points = authored[oid]
+        if oid == '1':
+            points = [_rotate(p, _yaw(45.0)) for p in points]
+        for a in range(3):
+            expected = min(p[a] for p in points) + shifts[oid][a]
+            assert row['bounds_mm'][a][0] == pytest.approx(expected, abs=2e-3)
+            expected_extent = max(p[a] for p in points) - min(p[a] for p in points)
+            assert row['bounds_mm'][a][1] - row['bounds_mm'][a][0] == pytest.approx(expected_extent, abs=2e-3)
+
+
+def test_multicolor_merge_export_refuses_unproved_fits(tmp_path):
+    from print_buddy.core import color_geometry
+    from print_buddy.core.orca_adapter import _yaw
+    source = tmp_path / 'yaw-merge.3mf'
+    _yaw_merge_source(source)
+    verdict = _plan(source)
+    manifest = source_colors.inventory(source)
+    decisions = _two_slot_decisions(manifest)
+    target = tmp_path / 'x.3mf'
+    with pytest.raises(RuntimeError, match='not exported'):
+        color_geometry.export_color_geometry(source, target, decisions, item_shifts=verdict['shifts'],
+                                             fit_by_object={'9': {'rotation': _yaw(30.0)}})
+    with pytest.raises(RuntimeError, match='requires the recorded item shifts'):
+        color_geometry.export_color_geometry(source, target, decisions,
+                                             fit_by_object={'1': {'rotation': _yaw(30.0)}})
+    with pytest.raises(RuntimeError, match='authored scale'):
+        color_geometry.export_color_geometry(source, target, decisions, item_shifts=verdict['shifts'],
+                                             fit_by_object={'1': {'rotation': _yaw(30.0), 'scale': 0.5}})
+    with pytest.raises(RuntimeError, match='mirror'):
+        color_geometry.export_color_geometry(source, target, decisions, item_shifts=verdict['shifts'],
+                                             fit_by_object={'1': {'rotation': [-1, 0, 0, 0, 1, 0, 0, 0, 1]}})
+    with pytest.raises(RuntimeError, match='requires a rotation'):
+        color_geometry.export_color_geometry(source, target, decisions, item_shifts=verdict['shifts'],
+                                             fit_by_object={'1': {}})
+    with pytest.raises(RuntimeError, match='resized export'):
+        color_geometry.export_color_geometry(source, target, decisions, item_shifts=verdict['shifts'],
+                                             scale=0.9, fit_by_object={'1': {'rotation': _yaw(30.0)}})
+
+
+def test_multi_slot_yawed_merge_slices_with_the_recorded_turn(tmp_path, monkeypatch):
+    from print_buddy.core import color_geometry
+    from print_buddy.core.orca_adapter import _rotate, _yaw
+    source = tmp_path / 'yaw-merge.3mf'
+    _yaw_merge_small_source(source)
+    verdict = _plan(source)
+    assert verdict['yaw_by_object'] == {'1': 45.0}
+    manifest = source_colors.inventory(source)
+    decisions = _two_slot_decisions(manifest)
+    job = {'downloaded_file': str(source), 'audit': {'plates': 2}, 'color_decisions': decisions}
+    job_path = tmp_path / 'JOB.json'
+    job_path.write_text(json.dumps(job))
+    monkeypatch.setattr(plate_merge, 'plan', lambda *a, **k: verdict)
+    calls = []
+
+    def fake_slice(source_arg, folder, state, brim=None, first_layer=False, color_decisions=None,
+                   preserve_layout=False, filament_slot=None, item_shifts=None, fit_by_object=None):
+        # Only Orca itself is faked: the real multicolor export runs with the
+        # exact arguments _slice_merged passes, so the geometry report is
+        # the exporter's own record of the turned placement.
+        folder = Path(folder)
+        folder.mkdir(parents=True, exist_ok=True)
+        _mapping, geometry = color_geometry.export_color_geometry(
+            source_arg, folder / 'geometry.3mf', color_decisions,
+            item_shifts=item_shifts, fit_by_object=fit_by_object)
+        calls.append({'item_shifts': item_shifts, 'fit_by_object': fit_by_object, 'geometry': geometry})
+        out = folder / 'plate_1.gcode'
+        labels = ''.join(f'; printing object Part {p["object_id"]} id:{i} copy 0\n'
+                         for i, p in enumerate(manifest['parts']))
+        slot = state['ifs_slots']['1']
+        out.write_text(f'; filament_colour = {slot["hex"]}\n; nozzle_diameter = 0.4\n'
+                       '; estimated printing time (normal mode) = 2h 0m 0s\n'
+                       f'M190 S{state["temps_c"]["bed"]}\nM104 S{state["temps_c"]["nozzle"]} T0\n'
+                       f'START_PRINT BED_TEMP={state["temps_c"]["bed"]} EXTRUDER_TEMP={state["temps_c"]["nozzle"]}\n'
+                       f'{labels}G1 X10 Y10 Z0.2\nEND_PRINT\n')
+        return out, {'geometry': geometry}, []
+    monkeypatch.setattr('print_buddy.core.orca_adapter.slice_model', fake_slice)
+    out = model_job.slice_job(job_path)
+    saved = json.loads(job_path.read_text())
+    assert isinstance(out, (str, Path)) and len(calls) == 1
+    assert calls[0]['fit_by_object'] == {'1': {'rotation': _yaw(45.0)}}
+    assert saved['plate_merge']['mode'] == 'merge'
+    assert saved['plate_merge']['yaw_by_object'] == {'1': 45.0}
+    geometry = calls[0]['geometry']
+    assert geometry['fit_by_object'] == {'1': {'rotation': _yaw(45.0)}}
+    records = {row['part_key']: row for row in geometry['parts']}
+    object_of_key = {p['key']: str(p['object_id']) for p in manifest['parts']}
+    with zipfile.ZipFile(source) as archive:
+        points = color_geometry._world_points(archive, {'1'})
+    rotated = [_rotate(p, _yaw(45.0)) for p in points]
+    row = next(r for k, r in records.items() if object_of_key[k] == '1')
+    for a in range(3):
+        assert row['bounds_mm'][a][0] == pytest.approx(
+            min(p[a] for p in rotated) + verdict['shifts']['1'][a], abs=2e-3)
+
+
 def test_polygon_merge_slices_to_one_gcode_at_the_recorded_corners(tmp_path, monkeypatch):
     from print_buddy.core import color_geometry
     source = tmp_path / 'tri.3mf'

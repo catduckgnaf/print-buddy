@@ -3049,7 +3049,10 @@ def slice_job(job_path, brim_override=None, copies=None, scale=None, recipe_sha2
         preserved = (layout_report.get("preserved_3mf_package") or {}).get("preserved_3mf")
         slice_src = rearrange_dir / (preserved or layout_report["exported_3mf_geometry_only"])
         job["layout_report"] = str(rearrange_dir / "validation.json")
-    decision_sha = decisions_digest(decisions)
+    # A single-slot printer slices as `generic`, which leaves `decisions` as None, but the Discord
+    # intake has still written color_decisions into JOB.json. The post-slice check below hashes
+    # the file's decisions, so hash the same thing here or every such slice is refused (#268).
+    decision_sha = decisions_digest(decisions if not generic else job.get("color_decisions"))
     selected_slot = None if generic else (job.get("filament_selection") or {}).get("slot")
     scale_kw = {'scale': scale} if scale is not None else {}
     if adapter.key != printers.current().key:

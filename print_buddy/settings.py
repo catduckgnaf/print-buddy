@@ -1202,6 +1202,55 @@ def state_dir(data=None):
     return (data or current())["paths"]["hermes_home"] / "state"
 
 
+def default_printer_id(data=None):
+    """The roster id of the default (first) printer — the legacy singleton's identity (#334)."""
+    return printers(data)[0]["id"]
+
+
+def printer_state_dir(printer_id=None, data=None):
+    """One printer's state folder: <state>/printers/<id> (design §2.4, #334).
+
+    Everything that is about one machine — its hardware record, its launch
+    database, its maintenance record — lives under here from Stage 2b on, so
+    two printers sharing one instance never share a lease, an approval table
+    or a hardware record. The default is the default printer's folder.
+    """
+    return state_dir(data) / "printers" / (printer_id or default_printer_id(data))
+
+
+def view_for(printer_id, data=None):
+    """A settings-shaped view of one roster entry (#334).
+
+    A deep copy of the resolved settings with the entry projected into the
+    legacy singleton sections (the same projection validate() applies to the
+    first entry), so an adapter built on the view reads that printer's model,
+    geometry and connection keys. Global sections ([paths], [discord],
+    [services] spoolman, [delivery]) stay shared, exactly as the design
+    keeps them global; the roster itself is carried over unchanged. The
+    default printer's view is the resolved settings themselves.
+    """
+    data = data or current()
+    entry = by_id(printer_id, data)
+    if entry["id"] == default_printer_id(data):
+        return data
+    view = copy.deepcopy(data)
+    model = printer_registry.MODELS[entry["model"]]
+    defaults = model.defaults()
+    for section in ("printer", "layout", "prime_tower", "cold_pull"):
+        if section in defaults:
+            view[section] = copy.deepcopy(defaults[section])
+    _project_entry(view, dict(entry))
+    _derive_service_urls(view["services"])
+    templates = defaults.get("orca", {}).get("templates", "")
+    if model.generated_templates:
+        view["orca"]["templates"] = generated_templates_dir(model, view)
+    elif templates:
+        path = Path(templates).expanduser()
+        view["orca"]["templates"] = path if path.is_absolute() else ROOT / path
+    view["printers"] = data["printers"]
+    return view
+
+
 def generated_templates_dir(model, data=None):
     """Where a model's generated Orca templates live (never the repository): <state>/orca-profiles/<templates>."""
     return state_dir(data) / "orca-profiles" / model.templates

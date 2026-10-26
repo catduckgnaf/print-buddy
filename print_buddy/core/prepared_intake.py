@@ -990,6 +990,7 @@ async def prepare_link(event, adapter, state, root, timeout=None, reuse=None):
             manifest.update(source_sha256=await asyncio.to_thread(mj.file_sha256, path))
         job['color_manifest'] = manifest
         job['color_schema'] = 'part_slots_v1'
+        mj.stamp_job_printer(job)  # a new job learns its printer at creation (#334)
         jp = folder / 'JOB.json'
         mj.write_job(folder, job)
         receipt.update(job_json=str(jp), source_sha256=manifest['source_sha256'], status='AWAITING_COLOR')

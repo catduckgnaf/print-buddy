@@ -1,8 +1,15 @@
 """Transactional launch state: consumed bed-clear approvals and one submission lease per printer.
 
-A small SQLite database in the profile state folder, so the check and the write happen in one
-transaction across processes (the bot, print_next children, a CLI print-now). JOB.json keeps its
-human-readable approvals list; model archives stay ordinary files.
+One small SQLite database per printer, under <state>/printers/<id>/jobs.db (#334, design §2.4),
+so the check and the write happen in one transaction across processes (the bot, print_next
+children, a CLI print-now) and one printer's lease or approval table can never leak into
+another's. JOB.json keeps its human-readable approvals list; model archives stay ordinary files.
+
+Upgrade adoption: the first time the default printer's database is opened and it does not
+exist yet, the legacy single database (<state>/print_buddy_launches.sqlite3) is copied into
+place — held lease and consumed approvals intact — and the legacy file is left untouched for
+one release so a rollback still finds it. $PRINT_BUDDY_LAUNCH_DB keeps naming one explicit
+database and disables the per-printer layout (tests and operator overrides).
 
 Lease phases: ``leased`` (checks and upload, nothing started), ``submitting`` (persisted before the
 start request), ``uncertain`` (sent, outcome unknown). A confirmed or failed start deletes the row.
@@ -14,6 +21,7 @@ from __future__ import annotations
 
 import json
 import os
+import shutil
 import socket
 import sqlite3
 import time
@@ -32,8 +40,42 @@ SCHEMA = (
 )
 
 
-def db_path():
-    return Path(os.environ.get("PRINT_BUDDY_LAUNCH_DB") or settings.state_dir()/"print_buddy_launches.sqlite3")
+def _adopt_legacy_db(target, printer_id):
+    """Copy the legacy single launch database into the default printer's folder, once.
+
+    Only the default printer adopts it: the legacy database was the singleton
+    printer's, and copying it to a second printer would duplicate its held
+    lease and consumed approvals. The legacy file (and any WAL sidecars) is
+    left in place for one release.
+    """
+    if printer_id != settings.default_printer_id():
+        return
+    legacy = settings.state_dir() / "print_buddy_launches.sqlite3"
+    if target.exists() or not legacy.is_file():
+        return
+    target.parent.mkdir(parents=True, exist_ok=True)
+    tmp = target.with_name(target.name + ".adopting")
+    shutil.copy2(legacy, tmp)
+    for suffix in ("-wal", "-shm"):
+        sidecar = Path(str(legacy) + suffix)
+        if sidecar.is_file():
+            shutil.copy2(sidecar, Path(str(tmp) + suffix))
+    os.replace(tmp, target)
+    for suffix in ("-wal", "-shm"):
+        sidecar = Path(str(tmp) + suffix)
+        if sidecar.is_file():
+            os.replace(sidecar, Path(str(target) + suffix))
+
+
+def db_path(printer_id=None):
+    """The launch database for one printer: $PRINT_BUDDY_LAUNCH_DB, else its per-printer jobs.db."""
+    override = os.environ.get("PRINT_BUDDY_LAUNCH_DB")
+    if override:
+        return Path(override)
+    printer_id = printer_id or settings.default_printer_id()
+    target = settings.printer_state_dir(printer_id) / "jobs.db"
+    _adopt_legacy_db(target, printer_id)
+    return target
 
 
 def _now():
@@ -41,9 +83,12 @@ def _now():
 
 
 @contextmanager
-def transaction():
-    """One exclusive write transaction. Every launch-state check-then-write runs inside one."""
-    path = db_path()
+def transaction(printer_id=None):
+    """One exclusive write transaction on one printer's database.
+
+    Every launch-state check-then-write runs inside one.
+    """
+    path = db_path(printer_id)
     path.parent.mkdir(parents=True, exist_ok=True)
     con = sqlite3.connect(path, timeout=60, isolation_level=None)
     con.row_factory = sqlite3.Row
@@ -94,7 +139,7 @@ class Lease:
         self.printer, self.token = printer, token
 
     def _set(self, phase, detail=None):
-        with transaction() as con:
+        with transaction(self.printer) as con:
             con.execute("UPDATE leases SET phase=?, detail=?, updated_at=? WHERE printer=? AND token=?",
                         (phase, detail, _now(), self.printer, self.token))
 
@@ -106,13 +151,17 @@ class Lease:
         self._set("uncertain", str(detail)[-500:])
 
     def release(self):
-        with transaction() as con:
+        with transaction(self.printer) as con:
             con.execute("DELETE FROM leases WHERE printer=? AND token=?", (self.printer, self.token))
 
 
 def acquire(printer, *, job_json=None, gcode_sha256=None, remote=None, observed_file=None):
-    """Take the printer's lease or refuse. observed_file is the file the printer reports right now."""
-    with transaction() as con:
+    """Take the printer's lease or refuse. observed_file is the file the printer reports right now.
+
+    `printer` is the roster printer id (#334): the lease lives in that
+    printer's own database and its row is keyed by the id.
+    """
+    with transaction(printer) as con:
         row = con.execute("SELECT * FROM leases WHERE printer=?", (printer,)).fetchone()
         if row is not None:
             if row["phase"] == "leased" and not _owner_alive(row):
@@ -138,17 +187,27 @@ def acquire(printer, *, job_json=None, gcode_sha256=None, remote=None, observed_
 
 
 def pending(printer=None):
-    with transaction() as con:
-        rows = con.execute("SELECT * FROM leases" + (" WHERE printer=?" if printer else ""),
-                           (printer,) if printer else ()).fetchall()
-    return [dict(r) for r in rows]
+    """Held leases: one printer's, or every roster printer's when none is named."""
+    if printer is not None or os.environ.get("PRINT_BUDDY_LAUNCH_DB"):
+        with transaction(printer) as con:
+            rows = con.execute("SELECT * FROM leases" + (" WHERE printer=?" if printer else ""),
+                               (printer,) if printer else ()).fetchall()
+        return [dict(r) for r in rows]
+    found = []
+    for entry in settings.printers():
+        path = settings.printer_state_dir(entry["id"]) / "jobs.db"
+        if not path.is_file():
+            continue  # a printer that never launched has no database yet; reading must not create one
+        with transaction(entry["id"]) as con:
+            found += [dict(r) for r in con.execute("SELECT * FROM leases").fetchall()]
+    return found
 
 
 def resolve(printer, outcome):
     """Operator reconciliation of an uncertain start. Clears the lease; consumed approvals stay consumed."""
     if outcome not in ("started", "not_started"):
         raise ValueError("outcome must be started or not_started")
-    with transaction() as con:
+    with transaction(printer) as con:
         row = con.execute("SELECT * FROM leases WHERE printer=?", (printer,)).fetchone()
         if row is None:
             raise SystemExit("No launch is pending on this printer; nothing to reconcile.")

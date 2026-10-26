@@ -10,6 +10,41 @@ from typing import Any
 from . import _config
 
 PROFILE_STATE = _config.state_file("PRINTER_MAINTENANCE_STATE", "maintenance.json")
+
+
+def _state_path(path: Path | str | None, printer_id: str | None) -> Path:
+    """The maintenance record for one printer (#334, design §2.4).
+
+    An explicit path wins, then the operator's env override (PROFILE_STATE is
+    already env-resolved), then <state>/printers/<id>/maintenance.json. With
+    no printer named, PROFILE_STATE exactly as before.
+    """
+    if path is not None:
+        return Path(path)
+    if printer_id is None or os.environ.get("PRINTER_MAINTENANCE_STATE"):
+        return Path(PROFILE_STATE)
+    return _config.state_dir() / "printers" / printer_id / "maintenance.json"
+
+
+def _read_path(path: Path | str | None, printer_id: str | None) -> Path:
+    """Where a load reads: the per-printer file, or the legacy file it adopts.
+
+    Adoption is read-only and the default printer's alone (its record was the
+    singleton's); writes always go to the per-printer location and the legacy
+    file is left in place for one release.
+    """
+    target = _state_path(path, printer_id)
+    if printer_id is None or path is not None or target.exists():
+        return target
+    try:
+        default_id = _config.cfg()["printers"][0]["id"]
+    except Exception:
+        default_id = None
+    if printer_id == default_id and Path(PROFILE_STATE).is_file():
+        return Path(PROFILE_STATE)
+    return target
+
+
 VAULT_LOG = (Path(os.environ["PRINTER_MAINTENANCE_LOG"]) if os.environ.get("PRINTER_MAINTENANCE_LOG")
              else _config.records_vault() / "Maintenance" / "maintenance.jsonl")
 QUICK_HOURS = float(_config.cfg()["maintenance"]["quick_hours"])
@@ -17,16 +52,16 @@ FULL_HOURS = float(_config.cfg()["maintenance"]["full_hours"])
 FULL_DAYS = float(_config.cfg()["maintenance"]["full_days"])
 
 
-def load(path: Path | str = PROFILE_STATE) -> dict[str, Any]:
+def load(path: Path | str | None = None, *, printer_id: str | None = None) -> dict[str, Any]:
     try:
-        data = json.loads(Path(path).read_text())
+        data = json.loads(_read_path(path, printer_id).read_text())
         return data if isinstance(data, dict) else {"runs": []}
     except (OSError, ValueError):
         return {"runs": []}
 
 
-def save(data: dict[str, Any], path: Path | str = PROFILE_STATE) -> None:
-    target = Path(path)
+def save(data: dict[str, Any], path: Path | str | None = None, *, printer_id: str | None = None) -> None:
+    target = _state_path(path, printer_id)
     target.parent.mkdir(parents=True, exist_ok=True)
     tmp = target.with_suffix(target.suffix + ".tmp")
     tmp.write_text(json.dumps(data, indent=2) + "\n")

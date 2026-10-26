@@ -256,7 +256,9 @@ def test_operator_reconciles_an_uncertain_submission_without_replaying_it(printe
         model_job.print_now(a)
     simulate_restart()
     printer.mr.side_effect = None
-    assert launch_state.resolve(PRINTER, "not_started")["phase"] in ("submitting", "uncertain")
+    # Since #334 the lease row is keyed by the roster printer id, the same key
+    # the reconcile-launch CLI resolves with, not by the Moonraker URL.
+    assert launch_state.resolve(model_job._printer_key(), "not_started")["phase"] in ("submitting", "uncertain")
     assert leases() == []
     with pytest.raises(SystemExit, match="already used"):
         model_job.print_now(a)  # a new start needs a new explicit approval

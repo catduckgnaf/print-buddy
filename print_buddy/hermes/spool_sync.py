@@ -62,15 +62,97 @@ def moonraker(method: str, path: str, body: Any = None) -> Any:
 
 # ---------------------------------------------------------------- state file
 
-def load_state(path: Path | None = None) -> dict[str, Any]:
-    return json.loads(Path(path or HARDWARE_STATE).read_text())
+def _hardware_path(path: Path | None = None, printer_id: str | None = None) -> Path:
+    """The hardware record to write: an explicit path, else one printer's (#334).
+
+    Per-printer records live at <state>/printers/<id>/printer_hardware.json;
+    the env override behind HARDWARE_STATE wins over the layout, as it does
+    for the singleton path today. No printer named: HARDWARE_STATE as before.
+    """
+    if path is not None:
+        return Path(path)
+    if printer_id is None or os.environ.get("PRINTER_HARDWARE_STATE"):
+        return Path(HARDWARE_STATE)
+    return Path(HARDWARE_STATE).parent / "printers" / printer_id / "printer_hardware.json"
 
 
-def save_state(state: dict[str, Any], path: Path | None = None) -> None:
-    target = Path(path or HARDWARE_STATE)
+def _hardware_read_path(path: Path | None = None, printer_id: str | None = None) -> Path:
+    """Where a load reads: the per-printer record, or the legacy record it adopts.
+
+    Adoption is read-only and the default printer's alone; a second printer
+    must never inherit the singleton's loaded spool (design §2.4).
+    """
+    target = _hardware_path(path, printer_id)
+    if printer_id is None or path is not None or target.exists():
+        return target
+    try:
+        default_id = _config.cfg()["printers"][0]["id"]
+    except Exception:
+        default_id = None
+    if printer_id == default_id and Path(HARDWARE_STATE).is_file():
+        return Path(HARDWARE_STATE)
+    return target
+
+
+def load_state(path: Path | None = None, *, printer_id: str | None = None) -> dict[str, Any]:
+    return json.loads(_hardware_read_path(path, printer_id).read_text())
+
+
+def save_state(state: dict[str, Any], path: Path | None = None, *, printer_id: str | None = None) -> None:
+    target = _hardware_path(path, printer_id)
+    target.parent.mkdir(parents=True, exist_ok=True)
     tmp = target.with_suffix(target.suffix + ".tmp")
     tmp.write_text(json.dumps(state, indent=2) + "\n")
     os.replace(tmp, target)
+
+
+def _loaded_spool_ids(state: dict[str, Any]) -> set[int]:
+    """Every spool id a hardware record says is loaded: the active spool and the IFS slots."""
+    ids = set()
+    active = (state.get("spool") or {}).get("spoolman_id")
+    if active is not None:
+        ids.add(int(active))
+    for rec in (state.get("ifs_slots") or {}).values():
+        sid = (rec or {}).get("spoolman_id")
+        if sid is not None:
+            ids.add(int(sid))
+    return ids
+
+
+def spool_loaded_elsewhere(spool_id: int, *, state_path: Path | None = None,
+                           printer_id: str | None = None) -> str | None:
+    """The name of another printer whose record already loads this spool, or None (#334).
+
+    One physical spool sits on one printer. The scan covers the legacy
+    root-level record and every per-printer record under the same state
+    root, excluding the target printer's own record. Best-effort: a record
+    that cannot be read proves nothing and is skipped.
+    """
+    target = _hardware_path(state_path, printer_id)
+    root = target.parent
+    if target.parent.name and target.parent.parent.name == "printers":
+        root = target.parent.parent.parent  # <state>/printers/<id>/file -> <state>
+    candidates = [root / "printer_hardware.json"]
+    printers_dir = root / "printers"
+    if printers_dir.is_dir():
+        candidates += sorted(printers_dir.glob("*/printer_hardware.json"))
+    if target == root / "printer_hardware.json":
+        # The legacy root record IS the default printer's record (pre-adoption
+        # spelling of it): its per-printer copy is the same printer, not another.
+        try:
+            candidates.remove(root / "printers" / _config.cfg()["printers"][0]["id"] / "printer_hardware.json")
+        except Exception:
+            pass
+    for candidate in candidates:
+        if candidate == target:
+            continue
+        try:
+            other = json.loads(candidate.read_text())
+        except (OSError, ValueError):
+            continue
+        if isinstance(other, dict) and int(spool_id) in _loaded_spool_ids(other):
+            return candidate.parent.name if candidate.parent != root else "the default printer"
+    return None
 
 
 def _read_json(path: Path) -> dict[str, Any]:
@@ -218,11 +300,13 @@ def _slot_record(slot: int, spool: dict[str, Any], old: dict[str, Any] | None, n
 def bind_slot(slot: int, spool_id: int, *, client: Client = spoolman, mr: Client = moonraker,
               state_path: Path | None = None, pending_path: Path | None = None,
               prior_disposition: str = "shelf", note: str = "Bound from Discord /spool",
-              push_screen_update: bool = True) -> dict[str, Any]:
+              push_screen_update: bool = True, printer_id: str | None = None) -> dict[str, Any]:
     """Make `spool_id` the spool in `slot`, everywhere, with Spoolman winning.
 
     prior_disposition: 'shelf' puts the replaced spool on the shelf; 'keep' leaves
     its Spoolman record alone (the caller already handled it, e.g. depleted).
+    `printer_id` binds in that printer's own hardware record (#334) and refuses
+    a spool another printer's record already loads.
     """
     slot = int(slot)
     if slot not in SLOTS:
@@ -232,11 +316,15 @@ def bind_slot(slot: int, spool_id: int, *, client: Client = spoolman, mr: Client
         raise SpoolError(f"Spoolman has no spool #{spool_id}")
     if spool.get("archived"):
         raise SpoolError(f"spool #{spool_id} is archived (used up); pick a live one")
-    state = load_state(state_path)
+    state = load_state(state_path, printer_id=printer_id)
     slots = state.setdefault("ifs_slots", {})
     for key, rec in slots.items():
         if str(key) != str(slot) and (rec or {}).get("spoolman_id") == int(spool_id):
             raise SpoolError(f"spool #{spool_id} is already mapped to slot {key}. Move that slot first. Nothing changed")
+    elsewhere = spool_loaded_elsewhere(int(spool_id), state_path=state_path, printer_id=printer_id)
+    if elsewhere is not None:
+        raise SpoolError(f"spool #{spool_id} is already loaded on {elsewhere}. "
+                         "One spool cannot be loaded on two printers. Nothing changed")
     old = slots.get(str(slot)) or {}
     prior = old.get("spoolman_id")
     client("PATCH", f"/api/v1/spool/{int(spool_id)}", {"location": f"IFS Slot {slot}"})
@@ -257,7 +345,7 @@ def bind_slot(slot: int, spool_id: int, *, client: Client = spoolman, mr: Client
                           "material": filament.get("material") or old_spool.get("material"),
                           "density": filament.get("density") or old_spool.get("density"),
                           "diameter_mm": filament.get("diameter") or old_spool.get("diameter_mm")}
-    save_state(state, state_path)
+    save_state(state, state_path, printer_id=printer_id)
     usage = "unchanged"
     try:
         if prior is not None and active_usage_spool(mr) == prior and int(prior) != int(spool_id):

@@ -323,7 +323,8 @@ def test_print_path_dual_nozzle_routes_per_extruder(monkeypatch, rig):
 
 # --------------------------------------------------------------------- dual models + guard
 
-DUAL_MODELS = {"bambulab.h2d": "H2D", "bambulab.h2dpro": "H2DPRO", "bambulab.x2d": "X2D"}
+DUAL_MODELS = {"bambulab.h2d": "H2D", "bambulab.h2dpro": "H2DPRO", "bambulab.x2d": "X2D",
+               "bambulab.h2c": "H2C"}  # H2C joined with OrcaSlicer v2.5.0-alpha (#356)
 
 
 @pytest.mark.parametrize("key", sorted(DUAL_MODELS))

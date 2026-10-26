@@ -1,10 +1,10 @@
 """Bambu Lab vendor profile: slicing and packaging, plus opt-in LAN telemetry, upload and gated print start (#187, #127).
 
-Models: a1, a1mini, p1p, p1s, p2s, x1, x1c, x1e, h2s — every current single-nozzle Bambu Lab printer —
-plus the dual-nozzle h2d, h2dpro and x2d (#127 Stage 2, #308): their profiles carry two nozzles,
-handled by the extruder-aware checks, and their print starts resolve AMS trays per filament slot
-(ams_mapping.py). H2C is still unregistered: it has no profile in the pinned OrcaSlicer 2.4.2 BBL
-index, so no checked profile identity can be established for it (#308).
+Models: a1, a1mini, p1p, p1s, p2s, x1, x1c, x1e, h2s and a2l — every current single-nozzle Bambu Lab
+printer — plus the dual-nozzle h2d, h2dpro, x2d and h2c (#127 Stage 2, #308): their profiles carry two
+nozzles, handled by the extruder-aware checks, and their print starts resolve AMS trays per filament
+slot (ams_mapping.py). The h2c and a2l exist only in OrcaSlicer v2.5.0-alpha's BBL profiles and were
+registered when that release became the shipped slicer (#356).
 
 Print Buddy slices, validates and packages; a person moves the file. When the operator configures
 [bambu] lan_host/lan_serial and supplies the LAN access code as a secret, the adapter can also read

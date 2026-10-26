@@ -34,9 +34,11 @@ print_buddy/printers/
     a1.py                MODEL   bambulab.a1: 256 mm bed, 0.4 mm nozzle, single filament, slicing offline
                                  (adapter.py, guard.py, facts.py, profiles.py; see BAMBU-LAB.md)
     p1s.py               MODEL   bambulab.p1s: 256 mm bed, 250 mm Orca height, 0.4 mm nozzle, single filament, slicing offline
-    a1mini.py, p1p.py, x1.py, x1c.py, x1e.py, p2s.py, h2s.py
+    a1mini.py, p1p.py, x1.py, x1c.py, x1e.py, p2s.py, h2s.py, a2l.py
                          MODEL   #127 Stage 1: the remaining single-nozzle models, same shape as the P1S
-                                 (dual-nozzle H2D/H2D Pro/H2C/X2D are Stage 2 and absent)
+                                 (a2l.py joined in #356, from OrcaSlicer v2.5.0-alpha's profiles)
+    h2d.py, h2dpro.py, x2d.py, h2c.py
+                         MODEL   The dual-nozzle models (#127 Stage 2, #308; h2c.py joined in #356)
   prusa/
     __init__.py          VENDOR  Prusa: PrusaLink LAN, slicer-owned start code, OrcaSlicer, .gcode/.bgcode
     mk4s.py              MODEL   prusa.mk4s: 250 x 210 mm bed, 220 mm height, single tool

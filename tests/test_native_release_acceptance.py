@@ -99,9 +99,9 @@ def test_application_and_slicer_channels_are_independent_build_arguments():
     entrypoint = (ROOT / "docker" / "entrypoint.sh").read_text()
     assert 'case "$APP_CHANNEL" in stable|development)' in text
     assert 'ARG ORCA_CHANNEL=' not in text
-    assert "AS orca-stable" in text and "AS orca-alpha" in text
-    assert 'COPY --from=orca-stable /out/ /' in text
-    assert 'COPY --from=orca-alpha /out/ /' in text
+    assert "AS orca-prebuilt" in text
+    assert "AS orca-stable" not in text and "AS orca-alpha" not in text
+    assert 'COPY --from=orca-prebuilt /out/ /' in text
     assert 'openscad' in text.split('AS runtime', 1)[1]
     assert 'PRINT_BUDDY_ORCA_CHANNEL:-stable' in entrypoint
     assert 'export PB_ORCA_CMD="$selected"' in entrypoint

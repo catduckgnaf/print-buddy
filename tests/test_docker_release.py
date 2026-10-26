@@ -3,8 +3,9 @@
 Settings parity: every user-adjustable setting in the schema has a docs/SETTINGS.md row and, when it
 is a scalar, an .env.example line; every PRINT_BUDDY__ name in a deployment file is a real setting.
 Sanitization: public deployment files carry no LAN addresses, machine paths, IDs or credentials.
-Build: bounded, validated Orca parallelism and a cache keyed so channels, revisions, architectures
-and option profiles never mix. Unraid: both templates match the Compose runtime contract.
+Build: OrcaSlicer is prebuilt-only (both channels pinned by version, revision and SHA256);
+bounded, validated parallelism remains only for the Bambu Studio source build. Unraid: the
+single template matches the Compose runtime contract.
 """
 import ipaddress
 import json
@@ -27,17 +28,16 @@ ENV_EXAMPLE = (ROOT / ".env.example").read_text()
 DOCKERFILE = (ROOT / "Dockerfile").read_text()
 COMPOSE = yaml.safe_load((ROOT / "docker-compose.yml").read_text())
 JOBS = ROOT / "docker" / "orca-build-jobs.sh"
-UNRAID = {name: ET.parse(ROOT / "docker" / "unraid" / f"print-buddy-{name}.xml").getroot()
-          for name in ("bot", "listener")}
+UNRAID = ET.parse(ROOT / "docker" / "unraid" / "print-buddy.xml").getroot()
 # Public files a user copies or reads to deploy. All must be sanitized.
 DEPLOYMENT_FILES = [".env.example", "docker-compose.yml", "Dockerfile",
-                    "docker/entrypoint.sh", "docker/orca-build-jobs.sh", "docker/orca-build.sh", "docker/unraid/print-buddy-bot.xml",
-                    "docker/unraid/print-buddy-listener.xml", "docker/unraid/print-buddy-spoolman.xml", "config/docker.yaml", "config/docker.toml",
+                    "docker/entrypoint.sh", "docker/orca-build-jobs.sh", "docker/orca-prebuilt.sh", "docker/unraid/print-buddy.xml",
+                    "docker/supervise.sh", "docker/healthcheck.py", "config/docker.yaml", "config/docker.toml",
                     "docs/DOCKER.md", "docs/SETTINGS.md", "tests/docker/compose.acceptance.yml"]
 SECRETS = {"DISCORD_BOT_TOKEN", "LLM_API_KEY", "OCTOPRINT_API_KEY", "MOONRAKER_API_KEY", "CLIPROXY_API_KEY",
            "OPENVIKING_API_KEY", "BAMBU_LAN_PASSWORD"}
-COMPOSE_VARS = {"PRINT_BUDDY_IMAGE", "PRINT_BUDDY_DATA", "PRINT_BUDDY_CONFIG", "TZ"}
-RUNTIME_ENV_VARS = {"PRINT_BUDDY_ORCA_CHANNEL"}
+COMPOSE_VARS = {"PRINT_BUDDY_IMAGE", "PRINT_BUDDY_DATA", "PRINT_BUDDY_SPOOLMAN_DATA", "PRINT_BUDDY_CONFIG", "TZ"}
+RUNTIME_ENV_VARS = {"PRINT_BUDDY_ORCA_CHANNEL", "PRINT_BUDDY_BUNDLED_SPOOLMAN", "SPOOLMAN_HOST"}
 DATA_TARGETS = {"/data/hermes", "/data/archive", "/data/records", "/data/cache"}
 
 
@@ -210,62 +210,66 @@ class OrcaBuildJobsTests(unittest.TestCase):
                 self.assertIn("ORCA_BUILD_JOBS", result.stderr)
         self.assertEqual(self.run_jobs("auto", per_job=100).returncode, 2)
 
-    def test_jobs_apply_to_dependencies_and_the_application(self):
+    def test_jobs_apply_to_the_bambu_dependencies_and_application(self):
         build = DOCKERFILE.split("FROM debian:13-slim AS runtime")[0]
-        self.assertIn('orca-build-jobs "$ORCA_BUILD_JOBS" >/dev/null', build)  # validated even without Orca
+        self.assertIn('jobs="$(orca-build-jobs "$ORCA_BUILD_JOBS")"', build)      # Bambu Studio source build only
         self.assertIn('export CMAKE_BUILD_PARALLEL_LEVEL="$jobs"', build)       # every dependency's own build
         self.assertIn("cmake --build deps/build --parallel 1", build)             # one dependency at a time
         self.assertIn('cmake --build build --parallel "$jobs"', build)            # the application
         self.assertNotIn("$(nproc)", build)
 
 
-class OrcaCacheTests(unittest.TestCase):
-    def test_cache_ids_separate_channels_revisions_architecture_and_profile(self):
+class OrcaPrebuiltTests(unittest.TestCase):
+    """OrcaSlicer is never built from source: both channels are pinned official prebuilts."""
+
+    def test_no_orca_source_build_remains(self):
+        self.assertFalse((ROOT / "docker" / "orca-build.sh").exists())
+        for marker in ("ORCA_SOURCE", "ORCA_STABLE_REF", "ORCA_ALPHA_REF", "ORCA_BUILD_PROFILE",
+                       "AS orca-base", "AS orca-stable", "AS orca-alpha", "print-buddy-orca-"):
+            with self.subTest(marker=marker):
+                self.assertNotIn(marker, DOCKERFILE)
+        # The only remaining build cache is the Bambu Studio one.
         mounts = re.findall(r"--mount=type=cache,id=(\S+?),target=/cache,sharing=locked", DOCKERFILE)
-        mounts = [mount for mount in mounts if "print-buddy-orca-" in mount]
-        self.assertEqual(len(mounts), 2)
-        for channel, mount, ref in zip(("stable", "alpha"), mounts,
-                                       ("${ORCA_STABLE_REF}", "${ORCA_ALPHA_REF}")):
-            with self.subTest(channel=channel):
-                self.assertIn("${TARGETARCH}", mount)
-                self.assertIn(ref, mount)
-                self.assertIn("${ORCA_BUILD_PROFILE}", mount)
-                self.assertIn(f"-{channel}-", mount)
+        self.assertEqual(len(mounts), 1)
+        self.assertIn("print-buddy-bambu-", mounts[0])
+        self.assertIn('COPY --from=orca-prebuilt /out/ /', DOCKERFILE)
+        self.assertIn('sh /usr/local/bin/orca-prebuilt stable "$TARGETARCH"', DOCKERFILE)
+        self.assertIn('sh /usr/local/bin/orca-prebuilt alpha "$TARGETARCH"', DOCKERFILE)
 
-    def test_channel_builder_owns_install_prefix_but_wrappers_are_distinct(self):
-        helper = (ROOT / "docker" / "orca-build.sh").read_text()
-        self.assertIn('binary="/out/opt/orca-$channel/bin/orca-slicer"', helper)
+    def test_both_channels_are_pinned_prebuilts(self):
+        helper = (ROOT / "docker" / "orca-prebuilt.sh").read_text()
+        for pin in ("version=2.4.2", "revision=8500fcdccaa10b5099ac20d252af3a7c560046f1",
+                    "sha256=d12fb8c8eac1aecd2dfb6377acd48f994f8fa439ed5292fa532dd82880f029fd",
+                    "OrcaSlicer_Linux_AppImage_Ubuntu2404_V2.4.2.AppImage",
+                    "version=2.5.0-alpha", "revision=3880f2c58ec392ed2bd5938ab31c9c7c496c0eb2",
+                    "sha256=386a5ef38991a4fc32ae2e35ee4261bea43d983683ac675a2c2e2395ab2bc7bb",
+                    "OrcaSlicer_Linux_AppImage_Ubuntu2404_V2.5.0-alpha.AppImage"):
+            with self.subTest(pin=pin):
+                self.assertIn(pin, helper)
+        self.assertIn("set -eu", helper)
+        self.assertIn("sha256sum --check --strict -", helper)
+        self.assertLess(helper.index("sha256sum --check"), helper.index("--appimage-extract"))
+        self.assertIn("--appimage-extract", helper)
+        self.assertNotIn("--appimage-extract-and-run", helper)
+        self.assertNotIn("cmake", helper)
+
+    def test_each_channel_has_its_own_wrapper_and_identity(self):
+        helper = (ROOT / "docker" / "orca-prebuilt.sh").read_text()
+        self.assertIn('mv "squashfs-root" "/out/opt/orca-$channel"', helper)
         self.assertIn('"/out/usr/local/bin/orca-slicer-$channel"', helper)
-        self.assertIn('mkdir -p /out/usr/local/bin', helper)
-        self.assertIn('if [ "$channel" = stable ]; then ln -sf orca-slicer-stable /out/usr/local/bin/orca-slicer; fi', helper)
-        self.assertNotIn('ln -sf "orca-slicer-$channel" /out/usr/local/bin/orca-slicer', helper)
-        self.assertIn('> "/out/orca-$channel-build-info"', helper)
-        self.assertIn('-DCMAKE_INSTALL_PREFIX="/opt/orca-$channel"', helper)
-        self.assertIn("exec /opt/orca-%s/bin/orca-slicer", helper)
-        for marker in ("toolchain", "source-revision", "binary-path"):
-            self.assertIn(marker, helper)
-
-    def test_toolchain_change_resets_build_trees_and_source_is_unpatched(self):
-        helper = (ROOT / "docker" / "orca-build.sh").read_text()
-        self.assertIn('"$(gcc -dumpfullversion)"', helper)
-        self.assertIn('"$(cmake --version | head -n 1)" "$CC" "$CXX" "$profile"', helper)
-        self.assertIn("rm -rf /cache/orca/deps/build /cache/orca/build", helper)
-        self.assertIn('test "$(git rev-parse HEAD)" = "$ref"', helper)
-        self.assertIn('test -z "$(git status --porcelain --untracked-files=no)"', helper)
-        self.assertIn("CC=/usr/lib/ccache/gcc CXX=/usr/lib/ccache/g++", helper)
-        self.assertNotIn(".AppImage", helper)
-
-    def test_build_records_its_identity(self):
-        helper = (ROOT / "docker" / "orca-build.sh").read_text()
+        self.assertIn("exec /opt/orca-%s/AppRun", helper)
         self.assertIn('> "/out/orca-$channel-build-info"', helper)
         self.assertIn('> "/out/orca-$channel-source-revision"', helper)
+        # Only stable gets the default /usr/local/bin/orca-slicer symlink.
+        self.assertIn('if [ "$channel" = stable ]; then', helper)
+        self.assertIn("ln -s orca-slicer-stable /out/usr/local/bin/orca-slicer", helper)
 
 
 class RuntimeImageTests(unittest.TestCase):
     def test_every_stage_uses_debian_stable(self):
-        """Debian 13 slim for every stage; it has no stock UID 1000 user, so buddy takes 1000 directly."""
+        """Debian 13 slim for every stage (Orca, Bambu, Spoolman, runtime); no stock UID 1000 user, so buddy takes 1000."""
         self.assertEqual(re.findall(r"^FROM (debian:13-slim)(?: AS [\w-]+)?$", DOCKERFILE, re.M),
-                         ["debian:13-slim"] * 3)
+                         ["debian:13-slim"] * 4)
         runtime = DOCKERFILE.split("FROM debian:13-slim AS runtime", 1)[1]
         self.assertIn("useradd --uid 1000 --create-home buddy", runtime)
         self.assertNotIn("ubuntu", DOCKERFILE)
@@ -275,94 +279,83 @@ class UnraidTemplateTests(unittest.TestCase):
     def configs(self, root, kind):
         return {c.get("Target"): c for c in root.findall("Config") if c.get("Type") == kind}
 
-    def test_each_template_runs_its_compose_service(self):
-        for name, root in UNRAID.items():
-            service = COMPOSE["services"][name]
-            with self.subTest(service=name):
-                self.assertEqual(shlex.split(root.findtext("PostArgs")), service["command"])
-                params = shlex.split(root.findtext("ExtraParams"))
-                health = params[params.index("--health-cmd") + 1]
-                self.assertEqual(["CMD", *shlex.split(health)], service["healthcheck"]["test"])
-                self.assertEqual(root.findtext("Repository"), "REPLACE_WITH_TESTED_IMAGE")
-                self.assertEqual(root.findtext("Privileged"), "false")
+    def setUp(self):
+        self.service = COMPOSE["services"]["combined"]
+        params = shlex.split(UNRAID.findtext("ExtraParams"))
+        self.params = params
+        self.flags = {flag: params[i + 1] for i, flag in enumerate(params[:-1]) if flag.startswith("--")}
+
+    def test_template_runs_the_combined_compose_service(self):
+        self.assertEqual(list(COMPOSE["services"]), ["combined"])
+        self.assertEqual(UNRAID.findtext("Name"), "print-buddy")
+        self.assertFalse(UNRAID.findtext("PostArgs"))
+        self.assertNotIn("command", self.service)
+        health = self.flags["--health-cmd"]
+        self.assertEqual(["CMD", *shlex.split(health)], self.service["healthcheck"]["test"])
+        self.assertEqual(UNRAID.findtext("Repository"), "REPLACE_WITH_TESTED_IMAGE")
+        self.assertEqual(UNRAID.findtext("Privileged"), "false")
+        # The bundled Spoolman API stays on loopback: no published port and no WebUI.
+        self.assertNotIn("ports", self.service)
+        self.assertNotIn("-p", self.params)
+        self.assertFalse(any(p.startswith("--publish") for p in self.params))
+        self.assertFalse(self.configs(UNRAID, "Port"))
+        self.assertFalse(UNRAID.findtext("WebUI"))
 
     def test_hardening_and_limits_match_compose(self):
-        runtime = COMPOSE["x-runtime"]
-        for name, root in UNRAID.items():
-            params = shlex.split(root.findtext("ExtraParams"))
-            value = {flag: params[i + 1] for i, flag in enumerate(params[:-1]) if flag.startswith("--")}
-            logs = [params[i + 1] for i, flag in enumerate(params[:-1]) if flag == "--log-opt"]
-            with self.subTest(service=name):
-                self.assertEqual(value["--cap-drop"], "ALL")
-                self.assertIn(value["--security-opt"], runtime["security_opt"])
-                self.assertEqual(int(value["--pids-limit"]), runtime["pids_limit"])
-                self.assertEqual(value["--memory"], runtime["mem_limit"])
-                self.assertEqual(float(value["--cpus"]), float(runtime["cpus"]))
-                self.assertEqual(value["--shm-size"], runtime["shm_size"])
-                self.assertEqual(value["--restart"], runtime["restart"])
-                self.assertEqual(sorted(logs), sorted(f"{k}={v}" for k, v in runtime["logging"]["options"].items()))
+        value, service = self.flags, self.service
+        logs = [self.params[i + 1] for i, flag in enumerate(self.params[:-1]) if flag == "--log-opt"]
+        self.assertEqual(value["--user"], service["user"])
+        self.assertEqual(value["--cap-drop"], "ALL")
+        self.assertIn(value["--security-opt"], service["security_opt"])
+        self.assertEqual(int(value["--pids-limit"]), service["pids_limit"])
+        self.assertEqual(value["--memory"], service["mem_limit"])
+        self.assertEqual(float(value["--cpus"]), float(service["cpus"]))
+        self.assertEqual(value["--shm-size"], service["shm_size"])
+        self.assertEqual(value["--restart"], service["restart"])
+        self.assertEqual(sorted(logs), sorted(f"{k}={v}" for k, v in service["logging"]["options"].items()))
+        for flag, key in (("--health-interval", "interval"), ("--health-timeout", "timeout"),
+                          ("--health-start-period", "start_period"), ("--health-retries", "retries")):
+            with self.subTest(flag=flag):
+                self.assertEqual(str(value[flag]), str(service["healthcheck"][key]))
 
     def test_paths_and_variables_match_the_runtime(self):
-        compose_env = COMPOSE["x-runtime"]["environment"]
-        for name, root in UNRAID.items():
-            with self.subTest(service=name):
-                paths = self.configs(root, "Path")
-                self.assertEqual(set(paths), DATA_TARGETS)
-                self.assertTrue(all(p.text.startswith("/mnt/user/appdata/print-buddy/") for p in paths.values()))
-                variables = self.configs(root, "Variable")
-                for key in ("PRINT_BUDDY_CONFIG", "PRINT_BUDDY__BOT__MODE"):
-                    self.assertEqual(variables[key].text, compose_env[key].split(":-")[-1].rstrip("}"))
-                for target, config in variables.items():
-                    if target in SECRETS:
-                        self.assertEqual(config.get("Mask"), "true")
-                        self.assertFalse(config.text)
-                    elif target in RUNTIME_ENV_VARS:
-                        self.assertEqual(config.text, "stable")
-                    elif target.startswith("PRINT_BUDDY__"):
-                        section, key = target[len("PRINT_BUDDY__"):].lower().split("__")
-                        self.assertIn((section, key), inventory())
-                    else:
-                        self.assertIn(target, COMPOSE_VARS)
-                for required in ("DISCORD_BOT_TOKEN", "PRINT_BUDDY__DISCORD__CHAT_ID",
-                                 "PRINT_BUDDY__DISCORD__ALLOWED_USER_IDS"):
-                    self.assertEqual(variables[required].get("Required"), "true")
-                # The runtime Orca channel selector (#180): present in both templates,
-                # in the Compose runtime environment and as a settable .env.example line,
-                # so Docker and DockerMan users can both reach alpha without a rebuild.
-                self.assertEqual(variables["PRINT_BUDDY_ORCA_CHANNEL"].text, "stable")
-                self.assertEqual(compose_env["PRINT_BUDDY_ORCA_CHANNEL"],
-                                 "${PRINT_BUDDY_ORCA_CHANNEL:-stable}")
-                self.assertRegex(ENV_EXAMPLE, r"(?m)^PRINT_BUDDY_ORCA_CHANNEL=stable$")
-        self.assertEqual({c.get("Target"): c.text for c in UNRAID["bot"].findall("Config")},
-                         {c.get("Target"): c.text for c in UNRAID["listener"].findall("Config")})
-
-
-class UnraidSpoolmanTemplateTests(unittest.TestCase):
-    """#214: the included Spoolman has its own DockerMan template, matching Compose."""
-
-    def setUp(self):
-        self.root = ET.parse(ROOT / "docker" / "unraid" / "print-buddy-spoolman.xml").getroot()
-        self.compose = yaml.safe_load((ROOT / "docker-compose.yml").read_text())["services"]["spoolman"]
-
-    def test_repository_is_the_pinned_compose_image(self):
-        self.assertEqual(self.root.findtext("Repository"), self.compose["image"])
-        self.assertEqual(self.root.findtext("Name"), "spoolman")
-        self.assertEqual(self.root.findtext("Privileged"), "false")
-
-    def test_data_path_and_memory_match_compose(self):
-        paths = {c.get("Target"): c for c in self.root.findall("Config") if c.get("Type") == "Path"}
-        self.assertEqual(set(paths), {"/home/app/.local/share/spoolman"})
-        self.assertTrue(paths["/home/app/.local/share/spoolman"].text.startswith("/mnt/user/appdata/print-buddy/"))
-        params = shlex.split(self.root.findtext("ExtraParams"))
-        self.assertEqual(params[params.index("--memory") + 1], self.compose["mem_limit"])
-        self.assertEqual(params[params.index("--restart") + 1], self.compose["restart"])
+        compose_env = self.service["environment"]
+        paths = self.configs(UNRAID, "Path")
+        self.assertEqual(set(paths), DATA_TARGETS | {"/data/spoolman"})
+        self.assertEqual(set(paths), {v.split(":")[-1] for v in self.service["volumes"]})
+        self.assertTrue(all(p.text.startswith("/mnt/user/appdata/print-buddy/") for p in paths.values()))
+        variables = self.configs(UNRAID, "Variable")
+        for key in ("PRINT_BUDDY_CONFIG", "PRINT_BUDDY__BOT__MODE", "PRINT_BUDDY__SERVICES__SPOOLMAN_URL",
+                    "PRINT_BUDDY_BUNDLED_SPOOLMAN"):
+            with self.subTest(variable=key):
+                self.assertEqual(variables[key].text, str(compose_env[key]).split(":-")[-1].rstrip("}"))
+        for target, config in variables.items():
+            with self.subTest(variable=target):
+                if target in SECRETS:
+                    self.assertEqual(config.get("Mask"), "true")
+                    self.assertFalse(config.text)
+                elif target in RUNTIME_ENV_VARS:
+                    self.assertEqual(config.text, str(compose_env[target]).split(":-")[-1].rstrip("}"))
+                elif target.startswith("PRINT_BUDDY__"):
+                    section, key = target[len("PRINT_BUDDY__"):].lower().split("__")
+                    self.assertIn((section, key), inventory())
+                else:
+                    self.assertIn(target, COMPOSE_VARS)
+        # The bot token may be empty: the listener and Spoolman run while the bot idles.
+        self.assertEqual(variables["DISCORD_BOT_TOKEN"].get("Required"), "false")
+        # The runtime Orca channel selector (#180): in the template, the Compose runtime
+        # environment and as a settable .env.example line, so both reach alpha without a rebuild.
+        self.assertEqual(variables["PRINT_BUDDY_ORCA_CHANNEL"].text, "stable")
+        self.assertEqual(compose_env["PRINT_BUDDY_ORCA_CHANNEL"], "${PRINT_BUDDY_ORCA_CHANNEL:-stable}")
+        self.assertRegex(ENV_EXAMPLE, r"(?m)^PRINT_BUDDY_ORCA_CHANNEL=stable$")
 
 
 class AcceptanceFixtureTests(unittest.TestCase):
     def test_overlay_isolates_services_and_gives_the_fake_printer_a_readiness_check(self):
         overlay = yaml.safe_load((ROOT / "tests" / "docker" / "compose.acceptance.yml").read_text())
         self.assertTrue(overlay["networks"]["isolated"]["internal"])
-        for name in ("bot", "listener", "fake-moonraker"):
+        self.assertEqual(set(overlay["services"]), {"combined", "fake-moonraker"})
+        for name in ("combined", "fake-moonraker"):
             with self.subTest(service=name):
                 service = overlay["services"][name]
                 self.assertEqual(service["networks"], ["isolated"])
@@ -370,9 +363,8 @@ class AcceptanceFixtureTests(unittest.TestCase):
                 self.assertNotIn("ports", service)
         fake = overlay["services"]["fake-moonraker"]
         self.assertIn("/server/info", json.dumps(fake["healthcheck"]["test"]))
-        self.assertEqual(overlay["services"]["listener"]["depends_on"]["fake-moonraker"]["condition"], "service_healthy")
-        spoolman = yaml.safe_load((ROOT / "tests" / "docker" / "compose.acceptance-spoolman.yml").read_text())
-        self.assertEqual(spoolman["services"]["spoolman"]["networks"], ["isolated"])
+        self.assertEqual(overlay["services"]["combined"]["depends_on"]["fake-moonraker"]["condition"], "service_healthy")
+        self.assertFalse((ROOT / "tests" / "docker" / "compose.acceptance-spoolman.yml").exists())
 
     def test_harness_owns_its_names_and_publishes_no_port(self):
         script = (ROOT / "tests" / "docker" / "image_acceptance.sh").read_text()
@@ -381,6 +373,10 @@ class AcceptanceFixtureTests(unittest.TestCase):
         self.assertNotRegex(script, r"\s-p\s+\d|--publish")
         self.assertNotIn("prune", script)
         self.assertIn("not a version upgrade", script)
+        self.assertNotIn("print-buddy-bot.xml", script)
+        for check in ("spoolman:loopback-only", "spoolman:no-web-ui", "spoolman:persisted", "bot:fails-closed"):
+            with self.subTest(check=check):
+                self.assertIn(check, script)
 
 
 if __name__ == "__main__":

@@ -22,14 +22,24 @@ def main():
     assert binary.is_file() and os.access(binary, os.X_OK), binary
     revision = Path(f"/orca-{channel}-source-revision").read_text().strip()
     assert len(revision) == 40
-    closure = subprocess.run(["ldd", str(binary)], capture_output=True, text=True, check=True)
+    # Resolve this channel's private libraries, not the other channel's (the image
+    # default LD_LIBRARY_PATH names the stable tree).
+    env = dict(os.environ)
+    paths = [f"/opt/orca-{channel}/lib", f"/opt/orca-{channel}/bin"]
+    if env.get("LD_LIBRARY_PATH"):
+        paths.append(env["LD_LIBRARY_PATH"])
+    env["LD_LIBRARY_PATH"] = ":".join(paths)
+    closure = subprocess.run(["ldd", str(binary)], capture_output=True, text=True, check=True, env=env)
     assert "not found" not in closure.stdout, closure.stdout
     # Use the official environment helper for prebuilt distributions.
     command_path = f"/usr/local/bin/orca-slicer-{channel}"
-    subprocess.run([command_path, "--help"], check=True, timeout=120)
     config = settings.current()
     with tempfile.TemporaryDirectory(dir="/data/cache") as tmp:
         work = Path(tmp)
+        # OrcaSlicer 2.5 writes 00000.log into its working directory at startup and
+        # aborts when it cannot (the image's /app is not writable by the runtime
+        # user), so every Orca invocation runs from the writable work directory.
+        subprocess.run([command_path, "--help"], check=True, timeout=120, cwd=work)
         # Deterministic, locally generated closed cube; no model downloads.
         vertices = [(x, y, z) for x in (0, 20) for y in (0, 20) for z in (0, 20)]
         faces = [(0, 2, 3), (0, 3, 1), (4, 5, 7), (4, 7, 6),
@@ -48,7 +58,7 @@ def main():
                    "--load-filaments", str(templates / "filament.json"),
                    "--arrange", "1", "--orient", "0", "--ensure-on-bed",
                    "--allow-newer-file", "--slice", "0", "--outputdir", str(work), str(model)]
-        subprocess.run(command, check=True, timeout=900)
+        subprocess.run(command, check=True, timeout=900, cwd=work)
         gcode = work / "plate_1.gcode"
         assert gcode.is_file() and gcode.stat().st_size > 0
         result_json = work / "result.json"

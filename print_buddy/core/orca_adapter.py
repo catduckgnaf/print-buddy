@@ -680,7 +680,11 @@ def _run_slicer(command, name, folder):
     started = time.monotonic()
     logger.info('%s run started folder=%s', name, folder)
     try:
-        result = subprocess.run(command, capture_output=True, text=True, timeout=600)
+        # Run inside the job folder: OrcaSlicer 2.5 writes 00000.log into its working
+        # directory at startup and aborts when that directory is not writable (the
+        # Docker image's /app is not). The folder is also where _keep_failure_logs
+        # already collects 00000.log from.
+        result = subprocess.run(command, capture_output=True, text=True, timeout=600, cwd=folder)
     except (subprocess.TimeoutExpired, OSError):
         logger.exception('%s did not complete after %.1fs', name, time.monotonic() - started)
         raise
@@ -1460,7 +1464,7 @@ def orca_plate_capacity(source: Path, state: dict, spacing_mm: float = 10.0, edg
                 str(stl)
             ]
             try:
-                result = subprocess.run(cmd, capture_output=True, text=True, timeout=120)
+                result = subprocess.run(cmd, capture_output=True, text=True, timeout=120, cwd=probe_dir)
             except subprocess.TimeoutExpired as exc:
                 raise RuntimeError(f'Orca fit probe timed out for {copies} copies') from exc
             p3mf = probe_dir / 'probe.3mf'

@@ -35,21 +35,32 @@ The setup wizard asks for your printer brand and model (or Other / generic), the
 
 ### Docker
 
-Docker is not part of 2.1.0. No image has been published yet; the first image is planned for 2.1.1 (see [#117](https://github.com/catduckgnaf/print-buddy/issues/117)). Use the light installer above for now. The steps below describe the planned setup and will work once an image is published at `ghcr.io/catduckgnaf/print-buddy` (amd64 only), built and checked offline by the publish workflow before it is pushed.
+The single-container image ships with 2.1.2 (see [#117](https://github.com/catduckgnaf/print-buddy/issues/117) and [#214](https://github.com/catduckgnaf/print-buddy/issues/214)); the published 2.1.1 image keeps the older three-container stack. The 2.1.2 image is at `ghcr.io/catduckgnaf/print-buddy` (amd64 only), built and checked offline by the publish workflow before it is pushed.
 
-1. Pin the image by digest, not a tag: set `PRINT_BUDDY_IMAGE=ghcr.io/catduckgnaf/print-buddy@sha256:<digest>` in `.env`. The digest will be in the publish run summary and that release's notes.
-2. Copy `.env.example` to `.env` and fill in the Discord token, channel and allowed users. Set `PRINT_BUDDY_DATA` to a persistent directory owned by UID 1000.
-3. Run `docker compose up -d`. Spoolman is included: it starts with Print Buddy, already wired up, with its data under `PRINT_BUDDY_DATA/spoolman`. (Already run your own Spoolman? Set `PRINT_BUDDY__SERVICES__SPOOLMAN_URL` in `.env` and Print Buddy will use yours instead — nothing is migrated.)
+One container runs the three parts of Print Buddy, started and watched by a supervisor:
 
-What the image includes:
+| Part | What it does |
+|---|---|
+| Discord bot | The interface: links, uploads, guided slicing, spool commands and print confirmation |
+| Moonraker listener | Follows printer events and reports progress, alerts and timelapses back to Discord |
+| Spoolman API | Bundled Spoolman 0.27.0 backend for filament and spool records. Print Buddy is its interface: no Spoolman web UI is included, and the API listens only on `127.0.0.1:8000` inside the container |
+
+If any part stops, the container stops so Docker can restart it. The health check covers all three.
+
+1. Copy `.env.example` to `.env` and fill in the Discord token, channel and allowed users.
+2. Pin the image by digest, not a tag: set `PRINT_BUDDY_IMAGE=ghcr.io/catduckgnaf/print-buddy@sha256:<digest>`. The digest will be in the publish run summary and that release's notes.
+3. Set `PRINT_BUDDY_DATA` to a persistent directory owned by UID 1000. Spoolman data lives in `PRINT_BUDDY_DATA/spoolman` unless you set `PRINT_BUDDY_SPOOLMAN_DATA`.
+4. Run `docker compose up -d`.
+
+Already run your own Spoolman? Set `PRINT_BUDDY__SERVICES__SPOOLMAN_URL` to it and `PRINT_BUDDY_BUNDLED_SPOOLMAN=false` in `.env`. Nothing is migrated either way. Unraid users can start from `docker/unraid/print-buddy.xml`.
+
+The image also includes:
 
 | Item | Detail |
 |---|---|
 | OrcaSlicer | Stable and alpha. `PRINT_BUDDY_ORCA_CHANNEL=stable` (default) or `alpha` picks one at startup, no rebuild. Any other value stops the container. Used for Flashforge and Sovol |
 | Bambu Studio | Default slicer for every Bambu Lab printer (A1, P1S) |
 | OpenSCAD | For CAD splitting (`cad_split.py --execute`) |
-| Spoolman | Included as its own container in the Compose stack, pinned to `ghcr.io/donkie/spoolman:0.27.0`, data persisted under `PRINT_BUDDY_DATA/spoolman` |
-| Not included | KiCad (deferred) |
 
 See [Docker setup](docs/DOCKER.md) for health checks, upgrades and rollback.
 

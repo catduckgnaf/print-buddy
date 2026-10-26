@@ -44,8 +44,7 @@ jobs:
           export ACCEPTANCE_FIXTURES="$PWD/tests/docker" PRINT_BUDDY_IMAGE=print-buddy:static-check
           for files in \
               "docker-compose.yml" \
-              "docker-compose.yml tests/docker/compose.acceptance.yml" \
-              "docker-compose.yml tests/docker/compose.acceptance-spoolman.yml tests/docker/compose.acceptance.yml"; do
+              "docker-compose.yml tests/docker/compose.acceptance.yml"; do
             args=(); for f in $files; do args+=(-f "$f"); done
             echo "docker compose ${args[*]} config"
             docker compose "${args[@]}" config --quiet

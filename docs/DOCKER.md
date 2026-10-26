@@ -29,6 +29,10 @@ Persist `/data/spoolman` separately, including database, config, logs and backup
 
 For an existing external instance set `PRINT_BUDDY__SERVICES__SPOOLMAN_URL=http://spoolman.example:8000`. Its data is not migrated or reset; the local database remains separate. Optionally set `PRINT_BUDDY_BUNDLED_SPOOLMAN=false` to skip the local API, requiring a nonlocal URL. Healthcheck then checks the external API. Changing a URL never moves or deletes a database.
 
+## More than one printer
+
+One container serves one printer. For a second printer, run a second instance — its own Compose project, `.env`, config and `PRINT_BUDDY_DATA` directory, and its own chat channel — with one Spoolman shared between them. The full recipe, including the Unraid form and the two never-share rules (state directory, approval channel), is [More than one printer](MULTI-INSTANCE.md) (#257 Stage 0).
+
 ## Camera watch (visual_watch)
 
 While a print runs, the listener checks the printer camera at layer 2, layer 5 and then periodically. A vision model classifies each frame; spaghetti, a detached part, an empty bed, a stalled print, an uncertain frame or a failed check posts the camera photo to Discord with **Pause** and **It's fine** buttons. The watchdog is alert-only and never controls the printer: pausing, resuming or cancelling is always an operator tap (the paused post offers Resume and Cancel). A camera classification is not a guarantee of safe unattended printing.

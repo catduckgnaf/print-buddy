@@ -297,6 +297,24 @@ def _preview_profile(row):
     return _preview_description(label)
 
 
+def _printer_name(job=None):
+    """The selected printer's name for user-facing text; never a hard-coded model name (#273).
+
+    For the configured printer this is its display_name (the configured
+    [printer] name, #267); for a job recorded for a different model it is
+    that model's label, because display_name would leak the configured
+    printer's name from the shared settings.
+    """
+    try:
+        from . import model_job as mj
+        from .. import printers
+        adapter = mj._job_adapter(job if isinstance(job, dict) else None)
+        return adapter.display_name if adapter.key == printers.current().key else adapter.label
+    except Exception:
+        from .. import printers
+        return printers.current().display_name
+
+
 def preview_sentence(job, row):
     title = re.sub(r'\s+', ' ', str((job or {}).get('title') or '')).strip()
     if not title:
@@ -312,7 +330,7 @@ def preview_sentence(job, row):
         text += f' I will use the selected profile: {profile}.'
     if est:
         from . import model_job as mj
-        text += (f' AD5X estimated print time about {mj.human_dur(est[0])}, plus ~5 min '
+        text += (f' {_printer_name(job)} estimated print time about {mj.human_dur(est[0])}, plus ~5 min '
                  f'warmup ({mj.human_dur(est[0] + 300)} total), and {round(est[1])} g of filament before color selection.')
     else:
         from . import model_job as mj
@@ -321,7 +339,7 @@ def preview_sentence(job, row):
             plates = len((row or {}).get('plates') or [])
             text += (f" Model page estimate: about {mj.human_dur(site[0])}"
                      f" and {round(site[1])} g of filament{f' over {plates} plates' if plates > 1 else ''}."
-                     f' The {printers.current().display_name} figure after slicing will differ somewhat.')
+                     f' The {_printer_name(job)} figure after slicing will differ somewhat.')
         else:
             text += ' The model page gives no time or filament estimate; I will report both after slicing.'
     return text
@@ -462,7 +480,7 @@ def _fit_failure(job, capacity):
         plate = str(source.get('title') or source.get('name') or 'selected source')
     else:
         plate = str(source or 'selected source')
-    return (f'{model} using {plate} does not fit on one AD5X plate: calculated capacity is {capacity} copy with '
+    return (f'{model} using {plate} does not fit on one {_printer_name(job)} plate: calculated capacity is {capacity} copy with '
             '10 mm spacing and 8 mm edge margins. Choose a smaller profile, split it into plates, or scale it down.')
 
 
@@ -1093,7 +1111,7 @@ async def prepare_link(event, adapter, state, root, timeout=None, reuse=None):
             scale = fit.get('scale')
             if scale is None:
                 picked = [{'kind': 'cancel', 'label': 'Cancel'}]
-                prompt = (f"{title} does not fit the AD5X bed with its prime tower at 50% or larger, "
+                prompt = (f"{title} does not fit the {_printer_name()} bed with its prime tower at 50% or larger, "
                           'even split into its plates.')
             else:
                 plates = fit['plates']
@@ -1255,7 +1273,7 @@ async def prepare_link(event, adapter, state, root, timeout=None, reuse=None):
                             label += ')'
                         labels.append(label)
                     distribution.append(f"{', '.join(labels)} on plate {index}")
-                prompt = (f"{title} does not fit the AD5X bed full size as one plate. "
+                prompt = (f"{title} does not fit the {_printer_name()} bed full size as one plate. "
                           f"Full size works as {len(split_plan['plates'])} plates: " + '; '.join(distribution) +
                           '. Choose a fit option, or type split / 100% / shrink / cancel.')
             else:

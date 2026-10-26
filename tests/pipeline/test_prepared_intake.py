@@ -1467,3 +1467,12 @@ def test_small_stl_upload_inch_answer_records_25_4_provenance(env, monkeypatch):
     assert job['unit_provenance'] == {'units': 'inch', 'source': 'user_confirmation',
                                       'original_mm': [5.0, 2.0, 2.0], 'factor': 25.4}
     assert receipt['unit_decision']['units'] == 'inch'
+
+
+def test_preview_names_the_selected_printer_not_a_hard_coded_model(monkeypatch):
+    # #273: the summary said "The AD5X figure after slicing" on a Bambu A1.
+    job = {'title': 'Cavaletti', 'summary': 'A stackable cavaletti.', 'printer_model': 'bambulab.a1'}
+    text = prepared_intake.preview_sentence(job, {**AD5X_ROW, 'site_printer': 'P2S'})
+    assert 'The Bambu Lab A1 figure after slicing will differ somewhat.' in text
+    assert 'AD5X' not in text
+

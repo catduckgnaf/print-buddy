@@ -14,6 +14,7 @@ import re
 import shlex
 import subprocess
 import tempfile
+import tomllib
 import unittest
 import xml.etree.ElementTree as ET
 from pathlib import Path
@@ -411,6 +412,49 @@ class UnraidTemplateTests(unittest.TestCase):
         self.assertEqual(variables["PRINT_BUDDY_ORCA_CHANNEL"].text, "stable")
         self.assertEqual(compose_env["PRINT_BUDDY_ORCA_CHANNEL"], "${PRINT_BUDDY_ORCA_CHANNEL:-stable}")
         self.assertRegex(ENV_EXAMPLE, r"(?m)^PRINT_BUDDY_ORCA_CHANNEL=stable$")
+
+
+class CameraWatchVisibilityTests(unittest.TestCase):
+    """#248: the camera watchdog is advertised, and visual_watch sensitivity is explicit
+    and configurable in the shipped YAML/TOML Docker configs, Compose and Unraid."""
+
+    def test_docker_configs_carry_visual_watch_with_the_documented_defaults(self):
+        docker_yaml = yaml.safe_load((ROOT / "config" / "docker.yaml").read_text())
+        self.assertEqual(docker_yaml["visual_watch"], {"sensitivity": 3, "enabled": True})
+        docker_toml = tomllib.loads((ROOT / "config" / "docker.toml").read_text())
+        self.assertEqual(docker_toml["visual_watch"], {"sensitivity": 3, "enabled": True})
+        loaded = settings.load(local=ROOT / "config" / "docker.yaml", environ={})
+        self.assertEqual(loaded["visual_watch"]["sensitivity"], 3)
+        self.assertIs(loaded["visual_watch"]["enabled"], True)
+        overridden = settings.load(local=ROOT / "config" / "docker.yaml", environ={
+            "PRINT_BUDDY__VISUAL_WATCH__SENSITIVITY": "5",
+            "PRINT_BUDDY__VISUAL_WATCH__ENABLED": "false"})
+        self.assertEqual(overridden["visual_watch"]["sensitivity"], 5)
+        self.assertIs(overridden["visual_watch"]["enabled"], False)
+
+    def test_compose_and_unraid_defaults_agree(self):
+        compose_env = COMPOSE["services"]["combined"]["environment"]
+        self.assertEqual(compose_env["PRINT_BUDDY__VISUAL_WATCH__SENSITIVITY"],
+                         "${PRINT_BUDDY__VISUAL_WATCH__SENSITIVITY:-3}")
+        self.assertEqual(compose_env["PRINT_BUDDY__VISUAL_WATCH__ENABLED"],
+                         "${PRINT_BUDDY__VISUAL_WATCH__ENABLED:-true}")
+        variables = {c.get("Target"): c for c in UNRAID.findall("Config") if c.get("Type") == "Variable"}
+        for target, default in (("PRINT_BUDDY__VISUAL_WATCH__SENSITIVITY", "3"),
+                                ("PRINT_BUDDY__VISUAL_WATCH__ENABLED", "true")):
+            with self.subTest(variable=target):
+                self.assertEqual(variables[target].text, default)
+                self.assertEqual(variables[target].text,
+                                 str(compose_env[target]).split(":-")[-1].rstrip("}"))
+
+    def test_watchdog_is_advertised_where_users_look(self):
+        readme = (ROOT / "README.md").read_text()
+        self.assertIn("Camera watchdog", readme)
+        self.assertIn("spaghetti", readme.lower())
+        self.assertIn("PRINT_BUDDY__VISUAL_WATCH__SENSITIVITY", readme)
+        docker_doc = (ROOT / "docs" / "DOCKER.md").read_text()
+        self.assertIn("## Camera watch (visual_watch)", docker_doc)
+        self.assertIn("PRINT_BUDDY__VISUAL_WATCH__ENABLED", docker_doc)
+        self.assertIn("PRINT_BUDDY__VISUAL_WATCH__SENSITIVITY", docker_doc)
 
 
 class AcceptanceFixtureTests(unittest.TestCase):

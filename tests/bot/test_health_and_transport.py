@@ -110,7 +110,7 @@ def _load(text, tmp_path, environ=None):
 
 def test_bot_settings_defaults_and_validation(tmp_path):
     data = _load("", tmp_path)
-    assert data["bot"] == {"mode": "hermes", "health_port": 0, "health_stale_s": 120, "sync_commands": True}
+    assert data["bot"] == {"mode": "hermes", "platform": "discord", "health_port": 0, "health_stale_s": 120, "sync_commands": True}
     assert data["discord"]["token_env"] == "DISCORD_BOT_TOKEN" and data["discord"]["allowed_user_ids"] == ""
     assert data["llm"]["chat_url"] == "" and data["llm"]["api_key_env"] == "LLM_API_KEY"
     data = _load("bot:\n  mode: standalone\ndiscord:\n  allowed_user_ids: '1, 2 3'\n", tmp_path,
@@ -118,6 +118,7 @@ def test_bot_settings_defaults_and_validation(tmp_path):
     assert data["bot"]["mode"] == "standalone" and data["bot"]["health_port"] == 8080
     assert settings.user_ids(data["discord"]["allowed_user_ids"]) == ["1", "2", "3"]
     for text, error in (("bot:\n  mode: chatty\n", "mode must be one of"),
+                        ("bot:\n  platform: smoke-signals\n", "platform must be one of"),
                         ("discord:\n  allowed_user_ids: 'me'\n", "numeric Discord user IDs"),
                         ("llm:\n  chat_url: http://x\n", "model is required"),
                         ("discord:\n  token_env: 'not a name'\n", "environment variable name"),

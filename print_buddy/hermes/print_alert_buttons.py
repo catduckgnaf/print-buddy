@@ -343,7 +343,8 @@ def post_with_buttons(token: str, channel_id: str, content: str, kind: str, file
         return False
 
 
-def retire_alerts(token: str, filename: str | None, note: str, kinds: tuple[str, ...] = ("shutdown", "error", "pause")) -> int:
+def retire_alerts(token: str, filename: str | None, note: str, kinds: tuple[str, ...] = ("shutdown", "error", "pause", "paused"),
+                  *, headline: str = "Printer firmware stopped.") -> int:
     """Strip the buttons from stale alerts for this job and say why, so a dead Cancel button is not left behind."""
     retired = 0
     with _LOCK:
@@ -359,7 +360,7 @@ def retire_alerts(token: str, filename: str | None, note: str, kinds: tuple[str,
             continue
         req = urllib.request.Request(
             f"https://discord.com/api/v10/channels/{chan}/messages/{mid}",
-            data=json.dumps({"components": [], "content": f"~~Printer firmware stopped.~~ {note}"[:1990],
+            data=json.dumps({"components": [], "content": f"~~{headline}~~ {note}"[:1990],
                              "allowed_mentions": {"parse": []}}).encode(),
             method="PATCH", headers={"Authorization": f"Bot {token}", "Content-Type": "application/json",
                                      "User-Agent": "DiscordBot (hermes-3dprinting, 1.0)"})

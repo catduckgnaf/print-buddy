@@ -8,6 +8,7 @@
 - On Telegram and Matrix installs, completion timelapses are now sized to that platform's own upload limit instead of Discord's: Telegram keeps up to its 50 MB instead of being squeezed to about 9.5 MB, and a Matrix homeserver with a smaller limit gets a video shrunk to fit it.
 
 **Fixes and reliability:**
+- A print that ends at the printer while paused (stopped from the printer screen, job removed, or the printer restarted) now posts its cancelled notice in Discord instead of silence, and the paused message's Resume/Cancel buttons are retired when any print ends, so nobody can tap a button on a job that is already gone.
 - Intake failures, fit check failures and slice failures now log the full traceback instead of only a short message in the receipt.
 - Credentials are redacted from every log line and traceback.
 - A Matrix homeserver whose upload limit is below the smallest shrinkable timelapse no longer loses the video silently: the completion post says the timelapse was recorded but is too large for that server's upload limit.

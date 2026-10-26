@@ -204,3 +204,66 @@ def test_listener_falls_back_to_plain_post():
     with patch.object(pab, "post_with_buttons", return_value=False), patch.object(mel, "post", return_value=True) as p:
         assert mel.post_alert("hi", "paused", "f") is True
     p.assert_called_once_with("hi")
+
+
+class _RetireResponse:
+    status = 200
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *args):
+        return False
+
+
+def _record_with_message(kind, filename, message_id="m1", channel_id="c1"):
+    aid = pab.record(kind, filename)
+    data = pab._load()
+    data[aid].update(message_id=message_id, channel_id=channel_id)
+    pab._save(data)
+    return aid
+
+
+def test_retire_alerts_strips_paused_prompt_by_default(tmp_path):
+    # #370: the paused prompt (kind "paused") must be retired by the default
+    # kinds, or its Resume/Cancel buttons stay live on a dead job.
+    seen = {}
+
+    def fake_open(request, timeout):
+        seen["request"] = request
+        return _RetireResponse()
+
+    with patch.object(pab, "STATE", tmp_path / "alerts.json"), \
+            patch.object(pab.urllib.request, "urlopen", fake_open):
+        aid = _record_with_message("paused", "f.gcode")
+        assert pab.retire_alerts("token", "f.gcode", "This prompt is closed.") == 1
+        assert pab.peek(aid) is None
+    import json as _json
+    body = _json.loads(seen["request"].data)
+    assert body["components"] == []
+    assert body["content"].startswith("~~Printer firmware stopped.~~")
+    assert seen["request"].method == "PATCH"
+    assert "/channels/c1/messages/m1" in seen["request"].full_url
+
+
+def test_retire_alerts_custom_headline(tmp_path):
+    def fake_open(request, timeout):
+        fake_open.body = request.data
+        return _RetireResponse()
+
+    with patch.object(pab, "STATE", tmp_path / "alerts.json"), \
+            patch.object(pab.urllib.request, "urlopen", fake_open):
+        _record_with_message("paused", "f.gcode")
+        assert pab.retire_alerts("token", "f.gcode", "Closed.", ("paused",),
+                                 headline="Print cancelled.") == 1
+    import json as _json
+    assert _json.loads(fake_open.body)["content"].startswith("~~Print cancelled.~~ Closed.")
+
+
+def test_retire_alerts_leaves_other_jobs_and_kinds_alone(tmp_path):
+    with patch.object(pab, "STATE", tmp_path / "alerts.json"), \
+            patch.object(pab.urllib.request, "urlopen", lambda req, timeout: _RetireResponse()):
+        other = _record_with_message("paused", "other.gcode")
+        visual = _record_with_message("visual", "f.gcode")
+        assert pab.retire_alerts("token", "f.gcode", "Closed.", ("paused",)) == 0
+        assert pab.peek(other) is not None and pab.peek(visual) is not None

@@ -1,9 +1,14 @@
 """The discord.py client for the standalone bot: gateway events, slash commands, heartbeat."""
 import asyncio
+import errno
 import logging
+import random
+import socket
 import sys
+import time
 from typing import Optional
 
+import aiohttp
 import discord
 from discord import app_commands
 from discord.ext import commands as ext_commands
@@ -14,6 +19,66 @@ from .runtime import BotCore
 logger = logging.getLogger(__name__)
 
 HEARTBEAT_S = 15
+STARTUP_ATTEMPTS = 5
+_STARTUP_RETRY_BASE_S = 10.0
+_STARTUP_RETRY_MAX_S = 80.0
+_STARTUP_TRANSIENT_ERRNOS = frozenset({
+    getattr(socket, "EAI_AGAIN", -3),  # temporary DNS failure: "Temporary failure in name resolution"
+    errno.EAGAIN,
+    errno.EWOULDBLOCK,
+    errno.ECONNABORTED,
+    errno.ECONNREFUSED,
+    errno.ECONNRESET,
+    errno.EHOSTUNREACH,
+    errno.ENETUNREACH,
+    errno.ETIMEDOUT,
+})
+_startup_sleep = time.sleep
+
+
+def _is_transient_startup_error(exc):
+    """Whether ``exc`` is a bounded-retry candidate during Discord startup (#364).
+
+    Only connection establishment failures are retried: DNS and connector errors,
+    connection timeouts, and Discord gateway/HTTP failures with a transient
+    status. Certificate failures are configuration/trust failures, not network
+    weather, and connector errors are retried only when the underlying OS error
+    is itself transient. Login, privileged-intent, configuration and ordinary
+    programming errors are never retried.
+    """
+    if isinstance(exc, (discord.LoginFailure, discord.PrivilegedIntentsRequired,
+                        aiohttp.ClientConnectorCertificateError)):
+        return False
+    if isinstance(exc, aiohttp.ClientConnectorDNSError):
+        return True
+    if isinstance(exc, aiohttp.ClientConnectorError):
+        cause = exc.os_error
+        return cause is not None and _is_transient_startup_error(cause)
+    if isinstance(exc, discord.HTTPException):
+        status = exc.status or 0
+        return status == 429 or status >= 500
+    if isinstance(exc, discord.GatewayNotFound):
+        return True
+    if isinstance(exc, aiohttp.WSServerHandshakeError):
+        return exc.status == 429 or exc.status >= 500
+    if isinstance(exc, (asyncio.TimeoutError, TimeoutError)):
+        return True
+    if isinstance(exc, aiohttp.ClientConnectionError):
+        return True
+    if isinstance(exc, OSError):
+        return exc.errno in _STARTUP_TRANSIENT_ERRNOS
+    return False
+
+
+def _startup_retry_delay(attempt):
+    """Exponential backoff with jitter for the failed 1-based ``attempt``.
+
+    The nominal delays after attempts 1-4 are 10, 20, 40 and 80 seconds
+    (150 seconds total), jittered by +/-20%, so five attempts span roughly
+    two to three minutes when each connection attempt itself is fast.
+    """
+    base = min(_STARTUP_RETRY_MAX_S, _STARTUP_RETRY_BASE_S * (2 ** (attempt - 1)))
+    return random.uniform(base * 0.8, base * 1.2)
 
 
 def run_bot(cfg):
@@ -21,18 +86,41 @@ def run_bot(cfg):
 
     Kept in the Discord client module so platform-specific login failures are
     translated where ``discord`` is imported (#164).
+
+    Transient startup failures get up to ``STARTUP_ATTEMPTS`` fresh bot
+    instances with bounded backoff (#364). Auth and configuration failures
+    still exit immediately with code 3. If the final attempt fails, its
+    exception is re-raised exactly as before, leaving the process supervisor
+    and container restart policy as the outer backstop.
     """
     from ..hermes import _config
-    try:
-        PrintBuddyBot(cfg).run(_config.discord_token(), log_handler=None)
-    except discord.LoginFailure as exc:
-        print(f"Discord refused the bot token: {exc}", file=sys.stderr)
-        return 3
-    except discord.PrivilegedIntentsRequired:
-        print("Turn on the Message Content intent for this bot in the Discord developer portal "
-              "(Bot > Privileged Gateway Intents).", file=sys.stderr)
-        return 3
-    return 0
+    token = _config.discord_token()
+    for attempt in range(1, STARTUP_ATTEMPTS + 1):
+        try:
+            PrintBuddyBot(cfg).run(token, log_handler=None)
+        except discord.LoginFailure as exc:
+            print(f"Discord refused the bot token: {exc}", file=sys.stderr)
+            return 3
+        except discord.PrivilegedIntentsRequired:
+            print("Turn on the Message Content intent for this bot in the Discord developer portal "
+                  "(Bot > Privileged Gateway Intents).", file=sys.stderr)
+            return 3
+        except Exception as exc:
+            if not _is_transient_startup_error(exc):
+                raise
+            error_errno = getattr(exc, "errno", None)
+            if attempt >= STARTUP_ATTEMPTS:
+                logger.warning(
+                    "DISCORD_STARTUP_RETRY attempt %d/%d failed: %s (errno=%s); no retries left",
+                    attempt, STARTUP_ATTEMPTS, type(exc).__name__, error_errno)
+                raise
+            delay = _startup_retry_delay(attempt)
+            logger.warning(
+                "DISCORD_STARTUP_RETRY attempt %d/%d failed: %s (errno=%s); retrying in %.1f seconds",
+                attempt, STARTUP_ATTEMPTS, type(exc).__name__, error_errno, delay)
+            _startup_sleep(delay)
+        else:
+            return 0
 
 
 def _slash(core_ref, command):

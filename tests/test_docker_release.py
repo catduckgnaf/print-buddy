@@ -36,7 +36,7 @@ DEPLOYMENT_FILES = [".env.example", "docker-compose.yml", "Dockerfile",
                     "docker/supervise.sh", "docker/healthcheck.py", "config/docker.yaml", "config/docker.toml",
                     "docs/DOCKER.md", "docs/SETTINGS.md", "tests/docker/compose.acceptance.yml"]
 SECRETS = {"DISCORD_BOT_TOKEN", "LLM_API_KEY", "OCTOPRINT_API_KEY", "MOONRAKER_API_KEY", "CLIPROXY_API_KEY",
-           "OPENVIKING_API_KEY", "BAMBU_LAN_PASSWORD"}
+           "OPENVIKING_API_KEY", "BAMBU_LAN_PASSWORD", "AD5X_SERIAL", "AD5X_CHECK_CODE"}
 COMPOSE_VARS = {"PRINT_BUDDY_IMAGE", "PRINT_BUDDY_DATA", "PRINT_BUDDY_SPOOLMAN_DATA", "PRINT_BUDDY_CONFIG", "TZ"}
 RUNTIME_ENV_VARS = {"PRINT_BUDDY_ORCA_CHANNEL", "PRINT_BUDDY_BUNDLED_SPOOLMAN", "SPOOLMAN_HOST"}
 DATA_TARGETS = {"/data/hermes", "/data/archive", "/data/records", "/data/cache"}
@@ -455,6 +455,58 @@ class CameraWatchVisibilityTests(unittest.TestCase):
         self.assertIn("## Camera watch (visual_watch)", docker_doc)
         self.assertIn("PRINT_BUDDY__VISUAL_WATCH__ENABLED", docker_doc)
         self.assertIn("PRINT_BUDDY__VISUAL_WATCH__SENSITIVITY", docker_doc)
+
+
+FEATURE_SETTINGS = {
+    "PRINT_BUDDY__SERVICES__VISION_CHAT_URL": "",
+    "PRINT_BUDDY__SERVICES__CAMERA_SNAPSHOT_URL": "",
+    "PRINT_BUDDY__VISION__MODEL": "gemini-latest",
+    "PRINT_BUDDY__FLASHFORGE_STOCK__HOST": "",
+    "PRINT_BUDDY__BAMBU__LAN_HOST": "",
+    "PRINT_BUDDY__BAMBU__LAN_SERIAL": "",
+    "PRINT_BUDDY__DISCORD__APPROVAL_USER_ID": "",
+    "PRINT_BUDDY__DISCORD__TIMEZONE": "America/New_York",
+    "PRINT_BUDDY__LLM__CHAT_URL": "",
+    "PRINT_BUDDY__LLM__MODEL": "",
+}
+FEATURE_SECRETS = {"CLIPROXY_API_KEY", "AD5X_SERIAL", "AD5X_CHECK_CODE",
+                   "BAMBU_LAN_PASSWORD", "MOONRAKER_API_KEY", "LLM_API_KEY"}
+
+
+class DockerFeatureVariablesTests(unittest.TestCase):
+    """#252: the feature-enabling variables are in the Unraid template and the Compose
+    environment with agreeing defaults; their secrets are masked template fields only."""
+
+    def variables(self):
+        return {c.get("Target"): c for c in UNRAID.findall("Config") if c.get("Type") == "Variable"}
+
+    def test_settings_are_in_template_and_compose_with_agreeing_defaults(self):
+        compose_env = COMPOSE["services"]["combined"]["environment"]
+        variables = self.variables()
+        for name, default in FEATURE_SETTINGS.items():
+            with self.subTest(variable=name):
+                self.assertEqual(compose_env[name], "${%s:-%s}" % (name, default))
+                self.assertEqual(variables[name].text or "", default)
+                section, key = name[len("PRINT_BUDDY__"):].lower().split("__")
+                self.assertIn((section, key), inventory())
+
+    def test_secrets_are_masked_template_fields_and_stay_out_of_compose_environment(self):
+        compose_env = COMPOSE["services"]["combined"]["environment"]
+        variables = self.variables()
+        for name in sorted(FEATURE_SECRETS):
+            with self.subTest(secret=name):
+                self.assertIn(name, SECRETS)  # SETTINGS.md table and .env.example line, pinned by parity tests
+                self.assertEqual(variables[name].get("Mask"), "true")
+                self.assertFalse(variables[name].text)
+                self.assertNotIn(name, compose_env)
+
+    def test_template_model_list_names_every_supported_model(self):
+        model = self.variables()["PRINT_BUDDY__PRINTER__MODEL"]
+        for name in ("flashforge.ad5x", "sovol.sv06", "klipper.generic",
+                     "octoprint.marlin", "bambulab.a1", "bambulab.p1s"):
+            with self.subTest(model=name):
+                self.assertIn(name, model.get("Default"))
+                self.assertIn(name, model.get("Description"))
 
 
 class AcceptanceFixtureTests(unittest.TestCase):

@@ -69,6 +69,29 @@ polygon placement supersedes the solo placement for its members: a plate
 never carries both, and its members lose their ``placement_by_object``
 entries. When no such shared placement is proved, Stage 2 behaviour is
 unchanged.
+
+Reorientation is the last fit preference (#221 R1), evaluated only for a
+part that fits neither as authored nor at any bed-plane yaw: one face
+change from ``orca_adapter.UP_AXES`` (a 90-degree turn about X or Y that
+lands the part flat on another authored face), composed with the best
+cardinal bed turn (0 or 90 degrees) of the rotated footprint. A part that
+fits only reoriented gets a plate of its own and the plan records the full
+rotation in ``reorientation_by_object``; slicing applies exactly that
+rotation to that plate alone through the exporter's whole-plate fit
+channel and passes the record's measured ``supports`` decision to the
+slicer for that plate (see ``model_job._slice_full_size_split``). The
+recorded ``brim_recommended`` is advisory only: it never changes the job's
+brim policy. Eligibility is conservative in R1 — single-build-item objects
+only, never on an exclusion bed, and no offer at all when the per-part
+supports/brim measurement (``orca_adapter._surface_stats``, the same
+heuristics ``rotation_alternatives`` uses) cannot be performed. Arbitrary
+tilts, upside-down flips and poses that do not land flat are never
+candidates. Among the proved candidates for a part, the choice is ranked
+by fit quality — most bed margin, then no-supports over supports, then
+larger measured bed contact (see :func:`_rank_reorientation_candidates`):
+the goal is always to fit as much as possible, but ranking only ever
+orders proved candidates; it never overrides a proof, a guard or the
+once-only budgets above.
 """
 import math
 import zipfile
@@ -208,6 +231,91 @@ def mesh_yaw_candidates(hull_xy, usable_x, usable_y):
     return candidates
 
 
+def _rank_reorientation_candidates(candidates):
+    """Deterministic fit-quality order for proved reorientation candidates.
+
+    The steering for all fit work — fit as much as possible — applied among
+    proved candidates only: the most bed margin first, then a candidate
+    that needs no supports over one that does, then the larger measured bed
+    contact; the axis name breaks any remaining tie, so the order is total
+    and a given part always records the same winner. Ranking never creates
+    a candidate: every entry has already passed the flat-landing, footprint
+    and height proofs in :func:`_reorientation_candidates`.
+    """
+    return sorted(candidates, key=lambda c: (-c['margin_mm'], bool(c['supports']),
+                                             -c['bed_contact_mm2'], c['axis']))
+
+
+def _reorientation_candidates(source, oid, item_points, usable, height_limit):
+    """Proved face-change candidates for one object (#221 R1), best pair first.
+
+    One candidate per ``orca_adapter.UP_AXES`` axis pair, mirroring
+    ``rotation_alternatives``: within a pair (+Y/-Y, +X/-X) the face is
+    chosen by measured bed contact, then least overhang, from
+    ``orca_adapter._surface_stats`` over the object's own triangles. A
+    candidate is proved only when the rotated part lands flat (every build
+    item's rotated Z minimum within the exporter's 0.05 mm lift tolerance
+    of the object's), its rotated height is within the limit, and its
+    rotated footprint fits the usable area at a cardinal bed turn (0 or 90
+    degrees — a diagonal turn of a reoriented part is not offered in R1).
+    The composed matrix is yaw-after-face-change, ``_matmul(_yaw, up)``,
+    exactly as the single-plate path records it. ``supports`` and
+    ``brim_recommended`` reuse ``rotation_alternatives``' heuristics
+    against the authored overhang. Eligibility: single-build-item objects
+    only, so the flat-landing check is per-item meaningful and the object's
+    internal relationships are preserved rigidly.
+    """
+    from .orca_adapter import (IDENTITY_ROT, UP_AXES, _hull, _matmul,
+                               _object_triangles, _rotate, _surface_stats, _yaw)
+    if len(item_points) != 1:
+        return []
+    tris = _object_triangles(source, oid)
+    if not tris:
+        return []
+    _contact, authored_overhang = _surface_stats(tris, IDENTITY_ROT)
+    proved = []
+    for pair in (('+Y', '-Y'), ('+X', '-X')):
+        options = []
+        for axis in pair:
+            _name, up = UP_AXES[axis]
+            contact, overhang = _surface_stats(tris, up)
+            options.append((contact, -overhang, axis, up, overhang))
+        contact, _neg_overhang, axis, up, overhang = max(
+            options, key=lambda option: (option[0], option[1], option[2]))
+        rotated_items = [[_rotate(p, up) for p in item] for item in item_points]
+        floor = min(p[2] for item in rotated_items for p in item)
+        if any(min(p[2] for p in item) - floor > 0.05 for item in rotated_items):
+            continue  # some item would hover: not a flat landing, no candidate
+        rotated = [p for item in rotated_items for p in item]
+        height = max(p[2] for p in rotated) - floor
+        if height > height_limit + 1e-9:
+            continue
+        hull = _hull([(p[0], p[1]) for p in rotated])
+        chosen = None
+        for _ratio, degrees, envelope in mesh_yaw_candidates(hull, usable[0], usable[1]):
+            if degrees not in (0.0, 90.0):
+                continue
+            if envelope[0] <= usable[0] + 1e-9 and envelope[1] <= usable[1] + 1e-9:
+                chosen = (degrees, envelope)
+                break
+        if chosen is None:
+            continue
+        degrees, envelope = chosen
+        footprint = envelope[0] * envelope[1]
+        proved.append({
+            'axis': axis,
+            'rotation': [round(v, 9) for v in _matmul(_yaw(degrees), up)],
+            'yaw_deg': float(degrees),
+            'dims_mm': [round(envelope[0], 3), round(envelope[1], 3), round(height, 3)],
+            'supports': bool(overhang > authored_overhang * 1.5 + 100.0),
+            'brim_recommended': bool(contact < 400 or contact < 0.05 * footprint),
+            'bed_contact_mm2': round(contact),
+            'overhang_mm2': round(overhang),
+            'margin_mm': round(min(usable[0] - envelope[0], usable[1] - envelope[1]), 3),
+        })
+    return proved
+
+
 def _feature_edge_mm(brim_policy=None, state=None):
     """Brim/feature edge budget in mm for a supplied brim policy, else 0.
 
@@ -240,10 +348,15 @@ def per_part_fit(source, bed=None, height=None, exclusions=None, brim_policy=Non
     reports it as ``feature_edge_mm``, placements keep the brimmed footprint
     clear of exclusions as well as the bed edge, and a part that fits only
     without its brim does not count as fitting — its blocking reason names
-    the brim budget. Parts are evaluated as authored: grouping, part colors
-    and relationships are read, never altered, and a continuous part is never
-    silently split. ``fits_full_size`` is False for a part that no
-    separate-plate assignment can cure.
+    the brim budget. As a last preference, a part that fits in no
+    orientation above is evaluated for a face change (see
+    :func:`_reorientation_candidates`): when a proved candidate exists the
+    row reports it as ``reorientation`` and counts as fitting, with the
+    candidate's measured supports/brim record attached. Parts are evaluated
+    as authored: grouping, part colors and relationships are read, never
+    altered, and a continuous part is never silently split.
+    ``fits_full_size`` is False for a part that no separate-plate
+    assignment can cure.
     """
     from . import color_geometry
     from . import plate_merge
@@ -271,7 +384,8 @@ def per_part_fit(source, bed=None, height=None, exclusions=None, brim_policy=Non
         return rows
     with zipfile.ZipFile(source) as archive:
         for oid in sorted(keys, key=str):
-            points = color_geometry._world_points(archive, {oid})
+            item_points = color_geometry._world_item_points(archive, {oid})
+            points = [point for item in item_points for point in item]
             extent = [round(max(p[a] for p in points) - min(p[a] for p in points), 3)
                       for a in range(3)]
             hull = color_geometry._world_hull_xy(archive, {oid})[0][0]
@@ -315,6 +429,27 @@ def per_part_fit(source, bed=None, height=None, exclusions=None, brim_policy=Non
                             fits_without_brim = True
                             break
             fits = chosen is not None
+            reorientation = None
+            if not fits and not exclusions:
+                # Last preference (#221 R1): a face change is evaluated only
+                # when neither the authored orientation nor any bed-plane
+                # yaw fits, so no existing verdict ever becomes a reoriented
+                # one. Exclusion beds are skipped (a fitting row there
+                # carries a placement; a placement for a rotated footprint
+                # is deferred), and if the per-part supports/brim
+                # measurement cannot be performed there is no offer at all
+                # — never a silent default either way.
+                try:
+                    proved = _reorientation_candidates(source, oid, item_points,
+                                                       usable, height_limit)
+                except Exception:
+                    proved = []
+                if proved:
+                    winner = _rank_reorientation_candidates(proved)[0]
+                    reorientation = {key: winner[key] for key in
+                                     ('axis', 'rotation', 'yaw_deg', 'dims_mm', 'supports',
+                                      'brim_recommended', 'bed_contact_mm2', 'overhang_mm2')}
+                    fits = True
             yaw, envelope = chosen if chosen else (best_deg, best_envelope)
             reason = None
             if not fits:
@@ -345,6 +480,7 @@ def per_part_fit(source, bed=None, height=None, exclusions=None, brim_policy=Non
                          'fits_authored': bool(fits_authored),
                          'feature_edge_mm': round(feature, 3),
                          'fits_full_size': bool(fits),
+                         'reorientation': reorientation,
                          'placement_mm': list(placement) if placement else None,
                          'exclusions_mm': [[round(v, 3) for v in rect] for rect in exclusions],
                          'blocking_reason': reason})
@@ -376,9 +512,14 @@ def split_plan_100(source, bed=None, height=None, exclusions=None, brim_policy=N
     fits only without its brim has no plan — and packing checks each plate
     with footprints grown by the budget on every side, so shared plates keep
     the brimmed parts clear of the bed edge and of each other; the budget is
-    applied exactly once in each check, never stacked. Geometry checks and
-    packing use the printer's edge and spacing margins (see the module
-    docstring) and do not slice or contact the printer.
+    applied exactly once in each check, never stacked. A part that fits only
+    reoriented (#221 R1) is planned alone on its own plate and its rotation
+    record is carried in ``reorientation_by_object``; an object appears in
+    at most one of the plan's transform records (``yaw_by_object``,
+    ``placement_by_object``, ``reorientation_by_object`` or a
+    ``shifts_by_plate`` entry). Geometry checks and packing use the
+    printer's edge and spacing margins (see the module docstring) and do
+    not slice or contact the printer.
     """
     from . import color_geometry
     from . import model_job
@@ -396,7 +537,12 @@ def split_plan_100(source, bed=None, height=None, exclusions=None, brim_policy=N
     if any(not row['fits_full_size'] for row in report):
         return None
     yaw_by_object = {row['object_id']: row['best_yaw_deg'] for row in report
-                     if not row['fits_authored'] and row['best_yaw_deg'] > 0}
+                     if not row['fits_authored'] and row['best_yaw_deg'] > 0
+                     and not row.get('reorientation')}
+    # A reoriented part carries its full rotation in its own record (the
+    # matrix already contains its bed turn), never a yaw entry (#221 R1).
+    reorientation_by_object = {row['object_id']: row['reorientation'] for row in report
+                               if row.get('reorientation')}
     # On an exclusion bed every fitting row carries the avoiding placement
     # per_part_fit proved; a row without one would already have failed
     # fits_full_size above, so a missing placement here is impossible.
@@ -431,6 +577,7 @@ def split_plan_100(source, bed=None, height=None, exclusions=None, brim_policy=N
             extents = {oid: (box[0][1] - box[0][0] + 2 * feature, box[1][1] - box[1][0] + 2 * feature)
                        for oid, box in boxes.items()}
             if any(oid not in yaw_by_object and oid not in placement_by_object
+                   and oid not in reorientation_by_object
                    and plate_merge.pack({oid: extent}, bed) is None
                    for oid, extent in extents.items()):
                 return None
@@ -457,9 +604,16 @@ def split_plan_100(source, bed=None, height=None, exclusions=None, brim_policy=N
                     # whole derived plate rigidly, so it cannot share one.
                     bins.append({'objects': {oid: extents[oid]}, 'kind': 'yaw', 'corners': None})
                     continue
+                if oid in reorientation_by_object:
+                    # Same rule as a turn, for the same reason: the rotation
+                    # is applied to a whole derived plate, so a reoriented
+                    # part is always alone on its plate (#221 R1).
+                    bins.append({'objects': {oid: extents[oid]}, 'kind': 'reorientation',
+                                 'corners': None})
+                    continue
                 placed = False
                 for current in bins:
-                    if current['kind'] == 'yaw':
+                    if current['kind'] in ('yaw', 'reorientation'):
                         continue
                     members = list(current['objects']) + [oid]
                     if current['kind'] == 'rect' and oid not in placement_by_object:
@@ -503,6 +657,8 @@ def split_plan_100(source, bed=None, height=None, exclusions=None, brim_policy=N
     plan = {'plates': result}
     if yaw_by_object:
         plan['yaw_by_object'] = yaw_by_object
+    if reorientation_by_object:
+        plan['reorientation_by_object'] = reorientation_by_object
     if placement_by_object:
         plan['placement_by_object'] = placement_by_object
     if any(shifts_by_plate):

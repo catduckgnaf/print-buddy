@@ -105,8 +105,15 @@ def test_per_part_fit_uses_the_real_height_limit_not_the_bed_size(tmp_path):
     assert row['fits_full_size'] is False
     assert 'height 250' in row['blocking_reason']
     assert split_fit.split_plan_100(source, bed=220, height=220) is None
-    # A shorter printer limit is honored even on a larger bed.
+    # A shorter printer limit is honored even on a larger bed: at a 200 mm
+    # limit the part fits only lying on its side (#221 R1), and it is the
+    # reoriented height the limit checks...
     (row,) = split_fit.per_part_fit(source, bed=300, height=200)
+    assert row['fits_full_size'] is True
+    assert row['reorientation'] is not None
+    assert row['reorientation']['dims_mm'][2] <= 200
+    # ...while a limit below every orientation's height still blocks.
+    (row,) = split_fit.per_part_fit(source, bed=300, height=40)
     assert row['fits_full_size'] is False
 
 
@@ -642,3 +649,333 @@ def test_slicing_refuses_unproved_or_malformed_shifts(tmp_path, monkeypatch):
         monkeypatch.setattr(orca_adapter, 'slice_model', _fake_slice())
         with pytest.raises((RuntimeError, ValueError), match=match):
             model_job.slice_job(job_path)
+
+
+# --- #221 R1: reorientation (face change) for solo split plates ------------
+# These fixtures need real triangulated solids: the supports/brim record is
+# measured from the part's faces (_surface_stats), which the vertex-only
+# _mesh_source/_source meshes (one token triangle) cannot express.
+
+def _quad_tris(a, b, c, d):
+    return [(a, b, c), (a, c, d)]
+
+
+def _box_tris(x0, x1, y0, y1, z0, z1):
+    """The 12 outward-wound triangles of a solid box."""
+    tris = []
+    tris += _quad_tris((x0, y0, z0), (x0, y1, z0), (x1, y1, z0), (x1, y0, z0))  # bottom -z
+    tris += _quad_tris((x0, y0, z1), (x1, y0, z1), (x1, y1, z1), (x0, y1, z1))  # top +z
+    tris += _quad_tris((x0, y0, z0), (x1, y0, z0), (x1, y0, z1), (x0, y0, z1))  # front -y
+    tris += _quad_tris((x0, y1, z0), (x0, y1, z1), (x1, y1, z1), (x1, y1, z0))  # back +y
+    tris += _quad_tris((x0, y0, z0), (x0, y0, z1), (x0, y1, z1), (x0, y1, z0))  # left -x
+    tris += _quad_tris((x1, y0, z0), (x1, y1, z0), (x1, y1, z1), (x1, y0, z1))  # right +x
+    return tris
+
+
+def _frame_tris(x1, y1, z1, hx0, hx1, hy0, hy1):
+    """A flat plate (x1 x y1 x z1) with a rectangular through-hole along Z."""
+    tris = []
+    for rx0, rx1, ry0, ry1 in ((0, hx0, 0, y1), (hx1, x1, 0, y1),
+                               (hx0, hx1, 0, hy0), (hx0, hx1, hy1, y1)):
+        tris += _quad_tris((rx0, ry0, z1), (rx1, ry0, z1), (rx1, ry1, z1), (rx0, ry1, z1))  # top
+        tris += _quad_tris((rx0, ry0, 0), (rx0, ry1, 0), (rx1, ry1, 0), (rx1, ry0, 0))      # bottom
+    tris += _quad_tris((0, 0, 0), (x1, 0, 0), (x1, 0, z1), (0, 0, z1))        # outer front -y
+    tris += _quad_tris((0, y1, 0), (0, y1, z1), (x1, y1, z1), (x1, y1, 0))    # outer back +y
+    tris += _quad_tris((0, 0, 0), (0, 0, z1), (0, y1, z1), (0, y1, 0))        # outer left -x
+    tris += _quad_tris((x1, 0, 0), (x1, y1, 0), (x1, y1, z1), (x1, 0, z1))    # outer right +x
+    tris += _quad_tris((hx0, hy0, 0), (hx0, hy1, 0), (hx0, hy1, z1), (hx0, hy0, z1))  # hole wall +x
+    tris += _quad_tris((hx1, hy0, 0), (hx1, hy0, z1), (hx1, hy1, z1), (hx1, hy1, 0))  # hole wall -x
+    tris += _quad_tris((hx0, hy0, 0), (hx0, hy0, z1), (hx1, hy0, z1), (hx1, hy0, 0))  # hole wall +y
+    tris += _quad_tris((hx0, hy1, 0), (hx1, hy1, 0), (hx1, hy1, z1), (hx0, hy1, z1))  # hole wall -y
+    return tris
+
+
+def _solid_source(path, solids, plates):
+    """A 3MF whose meshes are explicit triangle lists {object_id: [(a, b, c), ...]}.
+
+    Same package shape as _mesh_source, but with complete triangulated
+    solids, so face-based measurements (bed contact, overhang) are real.
+    """
+    resources, items, objects = [], [], []
+    for oid, tris in solids.items():
+        vertices = sorted({p for tri in tris for p in tri})
+        index = {p: i for i, p in enumerate(vertices)}
+        body = ''.join(f'<vertex x="{x}" y="{y}" z="{z}"/>' for x, y, z in vertices)
+        faces = ''.join(f'<triangle v1="{index[a]}" v2="{index[b]}" v3="{index[c]}"/>'
+                        for a, b, c in tris)
+        model = (f'<model unit="millimeter"><resources><object id="1"><mesh><vertices>{body}</vertices>'
+                 f'<triangles>{faces}</triangles></mesh></object></resources></model>')
+        with zipfile.ZipFile(path, 'a') as archive:
+            archive.writestr(f'3D/Objects/object_{oid}.model', model)
+        resources.append(f'<object id="{oid}" name="Part {oid}"><components><component p:path="/3D/Objects/object_{oid}.model" objectid="1" transform="1 0 0 0 1 0 0 0 1 0 0 0"/></components></object>')
+        items.append(f'<item objectid="{oid}" transform="1 0 0 0 1 0 0 0 1 {20 + 5 * int(oid)} 30 0"/>')
+        objects.append(f'<object id="{oid}"><metadata key="name" value="Part {oid}"/><metadata key="extruder" value="1"/><part id="1"><metadata key="name" value="Part {oid}"/><metadata key="extruder" value="1"/></part></object>')
+    plate_xml = ''.join(
+        f'<plate><metadata key="plater_id" value="{i}"/>' +
+        ''.join(f'<model_instance><metadata key="object_id" value="{o}"/></model_instance>' for o in ids) + '</plate>'
+        for i, ids in enumerate(plates, 1))
+    with zipfile.ZipFile(path, 'a') as archive:
+        archive.writestr('3D/3dmodel.model', f'<model xmlns:p="http://schemas.microsoft.com/3dmanufacturing/production/2015/06" unit="millimeter"><resources>{"".join(resources)}</resources><build>{"".join(items)}</build></model>')
+        archive.writestr('Metadata/model_settings.config', f'<config>{"".join(objects)}{plate_xml}</config>')
+        archive.writestr('Metadata/project_settings.config', '{\n  "filament_colour": [\n    "#FFFFFF"\n  ],\n  "filament_type": [\n    "PLA"\n  ]\n}')
+        archive.writestr('3D/_rels/3dmodel.model.rels', '<Relationships>' + ''.join(f'<Relationship Target="/3D/Objects/object_{o}.model" Id="r{o}"/>' for o in solids) + '</Relationships>')
+        for i in range(1, len(plates) + 1):
+            archive.writestr(f'Metadata/plate_{i}.png', b'png')
+
+
+def _frame_source(path):
+    """The supports fixture: a 210 x 190 x 40 plate with a through-hole.
+
+    As authored its 210 mm side exceeds the 204 mm usable bed at every yaw.
+    Stood on an end (the +/-X face change) its footprint is 40 x 190 and it
+    stands 210 tall; one hole wall then faces down away from the bed, which
+    the surface measurement records as overhang needing supports.
+    """
+    _solid_source(path, {'1': _frame_tris(210, 190, 40, 80, 130, 60, 140),
+                         '2': _box_tris(0, 150, 0, 150, 0, 10)}, [['1'], ['2']])
+
+
+def _fake_slice_recording_supports():
+    from .test_plate_merge import _fake_slice
+    base = _fake_slice()
+    calls = []
+
+    def fake(source, folder, state, **kwargs):
+        supports = kwargs.pop('supports', None)
+        result = base(source, folder, state, **kwargs)
+        calls.append({'supports': supports, 'printable': base.calls[-1]['printable']})
+        return result
+
+    fake.calls = calls
+    return fake
+
+
+def test_part_that_fits_only_reoriented_gets_a_solo_plate(tmp_path):
+    # The worked fixture: a 230 x 190 x 30 box on a 220 bed (height limit
+    # 250) fits at no bed-plane yaw; stood on its end (about Y) its
+    # footprint is 30 x 190 and it stands 230 tall. About X its footprint
+    # keeps the 230 mm side in the bed plane at either cardinal turn.
+    source = tmp_path / 'side-box.3mf'
+    _solid_source(source, {'1': _box_tris(0, 230, 0, 190, 0, 30),
+                           '2': _box_tris(0, 150, 0, 150, 0, 10)}, [['1'], ['2']])
+    rows = {row['object_id']: row for row in split_fit.per_part_fit(source, bed=220, height=250)}
+    box = rows['1']
+    assert box['fits_authored'] is False and box['fits_full_size'] is True
+    record = box['reorientation']
+    assert record['axis'] == '-X' and record['yaw_deg'] == 0.0
+    assert record['dims_mm'] == [30.0, 190.0, 230.0]
+    assert record['supports'] is False and record['brim_recommended'] is False
+    plan = split_fit.split_plan_100(source, bed=220, height=250)
+    assert plan is not None and sorted(plan['plates']) == [['1:1'], ['2:1']]
+    assert plan['reorientation_by_object'] == {'1': record}
+    # One transform record per object: never also a yaw or a placement.
+    assert '1' not in plan.get('yaw_by_object', {})
+    assert '1' not in plan.get('placement_by_object', {})
+
+
+def test_reorientation_never_chosen_when_authored_or_yaw_fits(tmp_path):
+    source = tmp_path / 'no-reorientation.3mf'
+    _source(source, {'1': (230, 50, 20), '2': (150, 150, 10)}, [['1', '2']])
+    rows = {row['object_id']: row for row in split_fit.per_part_fit(source, 220)}
+    assert rows['1']['fits_full_size'] is True and rows['1']['best_yaw_deg'] > 0
+    assert rows['2']['fits_authored'] is True
+    assert all(row['reorientation'] is None for row in rows.values())
+
+
+def test_reorientation_does_not_cure_the_issue_76_stand(tmp_path):
+    # About X the retained Stand would stand 230 tall — over the 220 mm
+    # limit; about Y its 30 x 230 end footprint fits at neither cardinal
+    # bed turn. It stays blocking at every orientation (#221 R1).
+    source = tmp_path / 'stand.3mf'
+    _source(source, {'1': (130, 230, 30), '2': (195, 200, 119.8)}, [['1', '2']])
+    rows = {row['object_id']: row for row in split_fit.per_part_fit(source, 220)}
+    assert rows['1']['fits_full_size'] is False and rows['1']['reorientation'] is None
+    assert split_fit.split_plan_100(source, 220) is None
+
+
+def test_rank_reorientation_candidates_orders_by_fit_quality():
+    # Andrew's steering — fit as much as possible — as a deterministic
+    # order over proved candidates: bed margin first, then no-supports
+    # over supports, then larger bed contact; axis name breaks exact ties.
+    base = {'axis': '+X', 'rotation': [1, 0, 0, 0, 1, 0, 0, 0, 1], 'yaw_deg': 0.0,
+            'dims_mm': [10.0, 10.0, 10.0], 'supports': False, 'brim_recommended': False,
+            'bed_contact_mm2': 100, 'overhang_mm2': 0, 'margin_mm': 10.0}
+    roomy_supported = {**base, 'axis': '+Y', 'margin_mm': 30.0, 'supports': True,
+                       'bed_contact_mm2': 50}
+    snug_plain = {**base, 'axis': '-X', 'margin_mm': 20.0, 'bed_contact_mm2': 5000}
+    snug_supported = {**base, 'axis': '-Y', 'margin_mm': 20.0, 'supports': True,
+                      'bed_contact_mm2': 9000}
+    ranked = split_fit._rank_reorientation_candidates(
+        [snug_supported, snug_plain, roomy_supported])
+    assert [c['axis'] for c in ranked] == ['+Y', '-X', '-Y']
+    tied = split_fit._rank_reorientation_candidates(
+        [{**base, 'axis': '-X', 'bed_contact_mm2': 200},
+         {**base, 'axis': '+X', 'bed_contact_mm2': 200},
+         {**base, 'axis': '-Y', 'bed_contact_mm2': 300}])
+    assert [c['axis'] for c in tied] == ['-Y', '+X', '-X']
+
+
+def test_reorientation_candidates_require_a_single_build_item(tmp_path):
+    # R1 eligibility, the same rule the polygon stages use: a grouped or
+    # multi-item object gets no reorientation, because only a single build
+    # item's flat landing under one rigid whole-plate turn is proved.
+    from print_buddy.core import color_geometry
+    source = tmp_path / 'box.3mf'
+    _solid_source(source, {'1': _box_tris(0, 230, 0, 190, 0, 30)}, [['1']])
+    with zipfile.ZipFile(source) as archive:
+        items = color_geometry._world_item_points(archive, {'1'})
+    assert len(items) == 1
+    assert split_fit._reorientation_candidates(source, '1', items, (204.0, 204.0), 250.0)
+    assert split_fit._reorientation_candidates(
+        source, '1', items + items, (204.0, 204.0), 250.0) == []
+
+
+def test_reorientation_records_supports_and_slicing_passes_them_for_that_plate_only(tmp_path, monkeypatch):
+    import json
+
+    from print_buddy.core import model_job, orca_adapter
+    source = tmp_path / 'frame.3mf'
+    _frame_source(source)
+    (row,) = [r for r in split_fit.per_part_fit(source, 220) if r['object_id'] == '1']
+    record = row['reorientation']
+    assert record is not None and record['supports'] is True
+    assert record['overhang_mm2'] > 100  # the hole wall that ends up facing down, floating
+    plan = split_fit.split_plan_100(source, 220)
+    assert plan is not None and plan['reorientation_by_object']['1']['supports'] is True
+    job_path = _split_job(tmp_path, source, plan)
+    fake = _fake_slice_recording_supports()
+    monkeypatch.setattr(orca_adapter, 'slice_model', fake)
+    paths = model_job.slice_job(job_path)
+    assert len(paths) == 2 and len(fake.calls) == 2
+    by_printable = {tuple(call['printable']): call['supports'] for call in fake.calls}
+    # The recorded decision reaches the slicer for the reoriented plate
+    # only; the authored plate keeps today's default (no supports argument).
+    assert by_printable[('1',)] is True and by_printable[('2',)] is None
+    saved = json.loads(job_path.read_text())
+    assert saved['derived_plates']
+
+
+def test_slicing_a_reoriented_split_applies_the_recorded_rotation(tmp_path, monkeypatch):
+    import json
+
+    import pytest
+
+    from print_buddy.core import color_geometry, model_job, orca_adapter
+    source = tmp_path / 'frame.3mf'
+    _frame_source(source)
+    plan = split_fit.split_plan_100(source, 220)
+    record = plan['reorientation_by_object']['1']
+    job_path = _split_job(tmp_path, source, plan)
+    monkeypatch.setattr(orca_adapter, 'slice_model', _fake_slice_recording_supports())
+    model_job.slice_job(job_path)
+    saved = json.loads(job_path.read_text())
+    row = next(r for r in saved['derived_plates'] if r['part_keys'] == ['1:1'])
+    assert row['reorientation']['axis'] == record['axis']
+    assert row['reorientation']['rotation'] == pytest.approx(record['rotation'])
+    assert row['plate_report']['fit']['rotation'] is not None
+    # Independent re-read: the derived plate's part measures exactly the
+    # rotated authored extents and sits on the bed.
+    with zipfile.ZipFile(Path(row['plate'])) as archive:
+        box = color_geometry._world_bounds(archive, {'1'})[0]
+    extents = [box[a][1] - box[a][0] for a in range(3)]
+    assert extents == pytest.approx(record['dims_mm'], abs=2e-3)
+    assert abs(box[2][0]) <= 2e-3
+    other = next(r for r in saved['derived_plates'] if r['part_keys'] == ['2:1'])
+    assert 'reorientation' not in other and 'fit' not in other['plate_report']
+
+
+def test_slicing_refuses_unproved_or_mixed_reorientations(tmp_path, monkeypatch):
+    import pytest
+
+    from print_buddy.core import model_job, orca_adapter
+    source = tmp_path / 'frame.3mf'
+    _frame_source(source)
+    plan = split_fit.split_plan_100(source, 220)
+    record = plan['reorientation_by_object']['1']
+    plates = plan['plates']
+    mirrored = {**record, 'rotation': [1, 0, 0, 0, 1, 0, 0, 0, -1]}
+    scaled = {**record, 'rotation': [2, 0, 0, 0, 1, 0, 0, 0, 1]}
+    wrong_axis = {**record, 'axis': '+Y'}
+    short = {**record, 'rotation': [1, 0, 0, 0, 1, 0]}
+    unflagged = {**record, 'supports': 'yes'}
+    bad_plans = [
+        ({'plates': plates, 'reorientation_by_object': {'9': record}}, 'unknown object'),
+        ({'plates': [['1:1', '2:1']], 'reorientation_by_object': {'1': record}},
+         'not that part alone'),
+        ({'plates': plates, 'yaw_by_object': {'1': 30.0},
+          'reorientation_by_object': {'1': record}}, 'also records a turn'),
+        ({'plates': plates, 'placement_by_object': {'1': [18.0, 8.0]},
+          'reorientation_by_object': {'1': record}}, 'also records a turn or a placement'),
+        ({'plates': plates, 'shifts_by_plate': [{'1': [0.0, 0.0, 0.0]}, None],
+          'reorientation_by_object': {'1': record}}, 'also records shifts'),
+        ({'plates': plates, 'reorientation_by_object': {'1': mirrored}}, 'mirror'),
+        ({'plates': plates, 'reorientation_by_object': {'1': scaled}}, 'orthonormal'),
+        ({'plates': plates, 'reorientation_by_object': {'1': wrong_axis}},
+         'not the recorded face change'),
+        ({'plates': plates, 'reorientation_by_object': {'1': short}}, '9-value'),
+        ({'plates': plates, 'reorientation_by_object': {'1': unflagged}}, 'boolean supports'),
+    ]
+    for bad_plan, match in bad_plans:
+        job_path = _split_job(tmp_path, source, bad_plan)
+        monkeypatch.setattr(orca_adapter, 'slice_model', _fake_slice_recording_supports())
+        with pytest.raises((RuntimeError, ValueError), match=match):
+            model_job.slice_job(job_path)
+
+
+def test_fit_choice_rows_carry_the_split_reorientation():
+    from print_buddy.core.prepared_intake import fit_choice_rows
+    record = {'axis': '-X', 'rotation': [0, 0, 1, 0, 1, 0, -1, 0, 0], 'yaw_deg': 0.0,
+              'dims_mm': [40.0, 190.0, 210.0], 'supports': True, 'brim_recommended': False,
+              'bed_contact_mm2': 7600, 'overhang_mm2': 3200}
+    rows = fit_choice_rows({'scales': [], 'rotations': [],
+                            'split_plan': {'plates': [['1:1'], ['2:1']],
+                                           'reorientation_by_object': {'1': record}}})
+    (split,) = [row for row in rows if row['kind'] == 'split']
+    assert split['reorientation_by_object'] == {'1': record}
+
+
+def test_exclusion_bed_offers_no_reorientation(tmp_path):
+    # R1 withholds reorientation on exclusion beds: every fitting row there
+    # carries a placement, and a placement for a rotated footprint is
+    # deferred — the part stays blocking instead of being offered a
+    # rotation the plan cannot land.
+    source = tmp_path / 'side-box.3mf'
+    _solid_source(source, {'1': _box_tris(0, 230, 0, 190, 0, 30),
+                           '2': _box_tris(0, 150, 0, 150, 0, 10)}, [['1'], ['2']])
+    rows = {row['object_id']: row for row in split_fit.per_part_fit(
+        source, bed=220, height=250, exclusions=[(0, 0, 18, 28)])}
+    assert rows['1']['fits_full_size'] is False and rows['1']['reorientation'] is None
+    assert split_fit.split_plan_100(source, bed=220, height=250,
+                                    exclusions=[(0, 0, 18, 28)]) is None
+
+
+def test_brim_budget_can_remove_the_reorientation_offer(tmp_path):
+    source = tmp_path / 'side-box.3mf'
+    _solid_source(source, {'1': _box_tris(0, 230, 0, 190, 0, 30),
+                           '2': _box_tris(0, 150, 0, 150, 0, 10)}, [['1'], ['2']])
+    (plain,) = [r for r in split_fit.per_part_fit(source, bed=220, height=250)
+                if r['object_id'] == '1']
+    assert plain['reorientation'] is not None
+    # With a 10 mm brim the usable area is 184 mm: the 190 mm side of the
+    # rotated footprint no longer fits, so the offer goes away (the budget
+    # is applied once, inside the same usable area as every other verdict).
+    (row,) = [r for r in split_fit.per_part_fit(source, bed=220, height=250,
+                                               brim_policy=_BRIM_10, state=_BRIM_STATE)
+              if r['object_id'] == '1']
+    assert row['fits_full_size'] is False and row['reorientation'] is None
+    assert split_fit.split_plan_100(source, bed=220, height=250,
+                                    brim_policy=_BRIM_10, state=_BRIM_STATE) is None
+
+
+def test_changing_the_reorientation_record_changes_the_slice_recipe_sha():
+    from print_buddy.core.background_slice import slice_binding
+    record = {'axis': '-X', 'rotation': [0, 0, 1, 0, 1, 0, -1, 0, 0], 'yaw_deg': 0.0,
+              'dims_mm': [40.0, 190.0, 210.0], 'supports': True, 'brim_recommended': False,
+              'bed_contact_mm2': 7600, 'overhang_mm2': 3200}
+    base = {'color_decisions': {'mode': 'single_color', 'source_sha256': 'source-a',
+                                 'selection': {'slot': 1, 'color': 'white', 'material': 'PLA'}},
+            'scale': 1.0, 'copies': 1, 'plate_mode': 'separate',
+            'full_size_split_plan': {'plates': [['1:1'], ['2:1']]}}
+    changed = {**base, 'full_size_split_plan': {
+        **base['full_size_split_plan'], 'reorientation_by_object': {'1': record}}}
+    assert slice_binding(changed, 'source-a') != slice_binding(base, 'source-a')

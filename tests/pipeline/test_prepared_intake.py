@@ -813,6 +813,51 @@ def test_capacity_zero_full_size_split_saves_separate_mode_before_slice(env, mon
     assert [part['part_keys'] for part in job_data['derived_plates']] == [['1:1'], ['2:1']]
 
 
+def test_capacity_zero_full_size_split_names_the_reorientation_and_its_supports(env, monkeypatch):
+    # #221 R1: the split offer names the reorientation and its recorded
+    # supports; choosing the split is the approval of those supports.
+    from print_buddy.core import orca_adapter
+    from .test_split_fit import _frame_source
+    path = env.tmp / 'frame-and-box.3mf'
+    _frame_source(path)
+    monkeypatch.setattr(model_job, 'printables_download', lambda job, chosen, dest: _copy(path, dest))
+    monkeypatch.setattr(orca_adapter, 'orca_plate_capacity',
+                        lambda path, st, scale=1.0, copy_limit=16, **kw: 0 if scale == 1.0 else 1)
+    monkeypatch.setattr(orca_adapter, 'fit_options',
+                        lambda path, st: {'scales': [0.98, 0.75, 0.5], 'rotations': []})
+
+    def fake_split_slice(job_path, copies=None, recipe_sha256=None):
+        job_path = Path(job_path)
+        data = json.loads(job_path.read_text())
+        gcodes, rows = [], []
+        for index, keys in enumerate(data['full_size_split_plan']['plates'], 1):
+            gcode = job_path.parent / 'sliced' / f'plate_{index}.gcode'
+            gcode.parent.mkdir(parents=True, exist_ok=True)
+            gcode.write_text(f'; plate {index} at 100%\nG1 X1\n')
+            gcodes.append(gcode)
+            rows.append({'gcode': str(gcode), 'plate_id': index, 'slot': 1, 'part_keys': keys})
+        data['derived_plates'] = rows
+        model_job.write_job(Path(job_path).parent, data)
+        env.sliced.extend(map(str, gcodes))
+        return gcodes
+
+    monkeypatch.setattr(model_job, 'slice_job', fake_split_slice)
+    event = S(source=S(profile='3dprinting', chat_id='c1', thread_id=None, user_id='u'),
+              message_id='too-large-reorient', text='https://www.printables.com/model/1-ghost')
+    adapter = Adapter([1, 0, 0, 1, 2])  # ..., slice only, then Cancel in the plate picker
+    result = asyncio.run(prepared_intake.prepare_link(event, adapter, state(), env.root, timeout=1))
+    scale_prompt = next(q for q in adapter.questions if 'does not fit the' in q['question'])
+    assert scale_prompt['choices'][0] == '100% · split 2 plates'
+    assert 'Part 1 (reoriented: Rotate 90° on Y, needs supports) on plate 1' in scale_prompt['question']
+    assert 'Part 2 on plate 2' in scale_prompt['question']
+    job_data = json.loads(next(env.root.parent.glob('archive/*/JOB.json')).read_text())
+    assert job_data['full_size_split_plan']['plates'] == [['1:1'], ['2:1']]
+    record = job_data['full_size_split_plan']['reorientation_by_object']['1']
+    assert record['axis'] == '-X' and record['supports'] is True
+    assert result['reason'] == 'operator did not start the sliced plate'
+    assert len(env.sliced) == 2 and env.starts == []
+
+
 def test_capacity_zero_offers_rotation_alternative(env, monkeypatch):
     from print_buddy.core import orca_adapter
     monkeypatch.setattr(orca_adapter, 'orca_plate_capacity',

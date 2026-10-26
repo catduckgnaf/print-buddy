@@ -357,7 +357,9 @@ def fit_choice_rows(options):
                      **({'placement_by_object': split_plan['placement_by_object']}
                         if split_plan.get('placement_by_object') else {}),
                      **({'shifts_by_plate': split_plan['shifts_by_plate']}
-                        if split_plan.get('shifts_by_plate') else {})})
+                        if split_plan.get('shifts_by_plate') else {}),
+                     **({'reorientation_by_object': split_plan['reorientation_by_object']}
+                        if split_plan.get('reorientation_by_object') else {})})
     elif options.get('full_size_split') and len(rows) < 2:
         rows.append({'kind': 'split', 'label': 'Split plates at 100%', 'scale': 1.0})
     full_size_available = any(row['kind'] in ('split', 'rearrange') for row in rows)
@@ -1197,6 +1199,8 @@ async def prepare_link(event, adapter, state, root, timeout=None, reuse=None):
                 yaw_by_object = split_plan.get('yaw_by_object') or {}
                 placement_by_object = split_plan.get('placement_by_object') or {}
                 shifts_by_plate = split_plan.get('shifts_by_plate') or []
+                reorientation_by_object = split_plan.get('reorientation_by_object') or {}
+                from print_buddy.core.orca_adapter import UP_AXES as _UP_AXES
                 for index, part_keys in enumerate(split_plan['plates'], 1):
                     plate_shifts = (shifts_by_plate[index - 1]
                                     if index - 1 < len(shifts_by_plate) else None) or {}
@@ -1212,6 +1216,20 @@ async def prepare_link(event, adapter, state, root, timeout=None, reuse=None):
                                       'to avoid the bed exclusion)')
                         if object_by_key.get(part_key, '') in plate_shifts:
                             label += ' (rearranged on its shared plate by its actual mesh shape)'
+                        reorientation = reorientation_by_object.get(object_by_key.get(part_key, ''))
+                        if reorientation:
+                            # The offer names the reorientation and its
+                            # measured supports decision: choosing the split
+                            # is the approval for those supports (#221 R1).
+                            face = _UP_AXES[reorientation['axis']][0]
+                            label += f' (reoriented: {face}'
+                            if reorientation.get('yaw_deg'):
+                                label += f", turned {float(reorientation['yaw_deg']):g}° on the bed"
+                            if reorientation.get('supports'):
+                                label += ', needs supports'
+                            if reorientation.get('brim_recommended'):
+                                label += ', brim recommended'
+                            label += ')'
                         labels.append(label)
                     distribution.append(f"{', '.join(labels)} on plate {index}")
                 prompt = (f"{title} does not fit the AD5X bed full size as one plate. "
@@ -1268,7 +1286,9 @@ async def prepare_link(event, adapter, state, root, timeout=None, reuse=None):
                                                       **({'placement_by_object': row['placement_by_object']}
                                                          if row.get('placement_by_object') else {}),
                                                       **({'shifts_by_plate': row['shifts_by_plate']}
-                                                         if row.get('shifts_by_plate') else {})}
+                                                         if row.get('shifts_by_plate') else {}),
+                                                      **({'reorientation_by_object': row['reorientation_by_object']}
+                                                         if row.get('reorientation_by_object') else {})}
                 latest.pop('orientation', None)
                 latest.pop('full_size_rearrange_plan', None)
                 receipt['full_size_split'] = True

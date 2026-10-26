@@ -22,8 +22,12 @@ def _visible_choices(question, choices):
 async def collect(job_path, state, adapter, chat_id, session_key, metadata=None, timeout=None):
     from .prompts import gateway as _prompts
     cm = _prompts()
-    from .model_job import intake_color_choices, set_color_decisions, resolve_filament_selection, write_job, decisions_digest, build_slot_labels, configured_slots
-    from .source_colors import inventory, prompts, canonical_prompts, grouped_prompts, validate_decisions
+    from .. import printers
+    from .model_job import (intake_color_choices, set_color_decisions, resolve_filament_selection,
+                            write_job, decisions_digest, build_slot_labels, build_tool_labels,
+                            configured_slots, position_limit, _job_adapter)
+    from .source_colors import (inventory, prompts, canonical_prompts, grouped_prompts, validate_decisions,
+                                distinct_source_colours, prompt_source_colour)
     path = Path(job_path)
     timeout = settings.current()["discord"]["question_timeout_s"] if timeout is None else timeout
     job = json.loads(path.read_text())
@@ -35,11 +39,25 @@ async def collect(job_path, state, adapter, chat_id, session_key, metadata=None,
     questions = canonical_prompts(manifest) if schema == 'part_slots_v1' else prompts(manifest)
     if job.get('color_manifest', {}).get('source_sha256') != source_hash:
         raise ValueError('source changed before Discord presentation')
+    job_adapter = _job_adapter(job)
+    multi_tool = job_adapter.multi_tool
     selections = [resolve_filament_selection(state, dict(label, slot=int(slot)))
                   for slot, label in sorted(configured_slots(state).items())]
-    labels = build_slot_labels(selections)
-    if not labels or len(labels) > settings.current()['printer']['ifs_slots'] or len(set(labels)) != len(labels):
-        raise ValueError('Discord requires one to four distinct configured slots')
+    # A multi_tool printer's positions are toolheads, never slots (#346).
+    labels = build_tool_labels(selections) if multi_tool else build_slot_labels(selections)
+    if not labels or len(labels) > position_limit(job_adapter) or len(set(labels)) != len(labels):
+        raise ValueError('Discord requires one to four distinct configured toolheads' if multi_tool
+                         else 'Discord requires one to four distinct configured slots')
+
+    def refuse_over_capacity():
+        # One colour per toolhead (#346): more distinct source colours than
+        # toolheads can never be assigned; refuse before asking.
+        colours = distinct_source_colours(manifest)
+        if len(colours) > job_adapter.tool_count:
+            raise printers.MultiColorUnsupported(
+                f"{job_adapter.label} has {job_adapter.tool_count} toolheads and prints one color "
+                f"per toolhead; this source uses {len(colours)} colors. Reduce the source to at "
+                f"most {job_adapter.tool_count} colors or use a printer with more toolheads")
 
     async def ask(question, choices):
         from .link_intake import CANCEL_LABEL, PromptCancelled
@@ -63,13 +81,26 @@ async def collect(job_path, state, adapter, chat_id, session_key, metadata=None,
             cm.resolve_gateway_clarify(cid, cm.CANCELLED)
             cm.wait_for_response(cid, 0.001)
 
+    async def ask_one(row, taken):
+        """Ask one colour question. On a multi_tool printer a toolhead already
+        assigned a different source colour is not offered again (#346)."""
+        if not multi_tool:
+            return selections[await ask(row['question'], labels)]['slot']
+        colour = prompt_source_colour(manifest, row)
+        offered = [(label, sel) for label, sel in zip(labels, selections)
+                   if taken.get(sel['slot'], colour) == colour]
+        slot = offered[await ask(row['question'], [label for label, _ in offered])][1]['slot']
+        taken[slot] = colour
+        return slot
+
     async def ask_slots():
         # Numbered siblings (Stencil 1/2/3) share one question; answers expand back to canonical order.
+        taken = {}
         if schema != 'part_slots_v1':
-            return [selections[await ask(row['question'], labels)]['slot'] for row in questions]
+            return [await ask_one(row, taken) for row in questions]
         picked = {}
         for row in grouped_prompts(manifest):
-            slot = selections[await ask(row['question'], labels)]['slot']
+            slot = await ask_one(row, taken)
             for decision_key in row['keys']:
                 picked[decision_key] = slot
         return [picked[row['key']] for row in questions]
@@ -79,6 +110,8 @@ async def collect(job_path, state, adapter, chat_id, session_key, metadata=None,
         if (schema != 'part_slots_v1' or job['color_decisions'].get('mode') != 'per_part'):
             raise ValueError('source-bound color decisions already exist; refusing to replace or replay them')
         old_decisions = job['color_decisions']
+        if multi_tool:
+            refuse_over_capacity()
         slots = await ask_slots()
         latest = json.loads(path.read_text())
         if inventory(latest['downloaded_file'])['source_sha256'] != source_hash:
@@ -116,6 +149,8 @@ async def collect(job_path, state, adapter, chat_id, session_key, metadata=None,
         slots = [selections[await ask(f'Choose the one color for all {noun}', labels)]['slot']]
         mode = 'single_color'
     else:
+        if multi_tool:
+            refuse_over_capacity()
         slots = await ask_slots()
         mode = 'per_part'
     latest = json.loads(path.read_text())

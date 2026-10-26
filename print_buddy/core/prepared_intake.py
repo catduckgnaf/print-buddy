@@ -1,6 +1,12 @@
 """Source-first Discord intake. Downloads, records choices, then one button slices and optionally prints.
 
-Printing starts only from a button click that confirms the bed is clear. No typed approval is required."""
+Printing starts only from a button click that confirms the bed is clear. No typed approval is required.
+
+Colour questions follow the job printer's adapter (see the coupling map in
+print_buddy/printers/base.py): IFS printers get slot labels; a multi_tool
+printer (Creator 5 / 5 Pro, #346) gets one question per colour with toolhead
+labels, a toolhead already assigned a different colour is not offered again,
+and more distinct colours than toolheads is refused before asking."""
 import asyncio
 import contextlib
 import contextvars
@@ -615,7 +621,8 @@ async def _spool_projection_text(mj, job, manifest, state, copies):
                 return spool_lifecycle.fetch_spoolman_spool(sid, base_url=base)
         weights = await _heavy(mj.intake_spool_weights, state, ids, fetch)
         rows = mj.intake_spool_projection(job, weights, manifest, copies=copies)
-        return mj.format_spool_projection(rows)
+        return mj.format_spool_projection(
+            rows, position_noun='Toolhead' if mj._job_adapter(job).multi_tool else 'Slot')
     except Exception:
         return ''
 
@@ -1024,11 +1031,15 @@ async def prepare_link(event, adapter, state, root, timeout=None, reuse=None):
                                                'uploaded, or started.',
                                        metadata=metadata)
                     return {'action': 'skip', 'reason': 'inch-confirmed model exceeds printer volume'}
+        job_adapter = mj._job_adapter(job)
         selections = [mj.resolve_filament_selection(state, dict(label, slot=int(slot)))
                       for slot, label in sorted(mj.configured_slots(state).items())]
-        labels = mj.build_slot_labels(selections)
-        if not labels or len(labels) > IFS_SLOTS or len(set(labels)) != len(labels):
-            raise ValueError('requires one to four distinct configured slots')
+        # A multi_tool printer's positions are toolheads, never slots (#346).
+        labels = (mj.build_tool_labels(selections) if job_adapter.multi_tool
+                  else mj.build_slot_labels(selections))
+        if not labels or len(labels) > mj.position_limit(job_adapter) or len(set(labels)) != len(labels):
+            raise ValueError('requires one to four distinct configured toolheads' if job_adapter.multi_tool
+                             else 'requires one to four distinct configured slots')
         questions = canonical_prompts(manifest)
         grouped = grouped_prompts(manifest)
         families = [row for row in grouped if len(row['keys']) > 1]
@@ -1059,11 +1070,31 @@ async def prepare_link(event, adapter, state, root, timeout=None, reuse=None):
         decisions = {'source_sha256': manifest['source_sha256'], 'schema': 'part_slots_v1',
                      'mode': 'single_color' if mode == 1 else 'per_part'}
         if mode != 1:
+            if job_adapter.multi_tool:
+                # One colour per toolhead (#346): more distinct source colours
+                # than toolheads can never be assigned; refuse before asking.
+                from .source_colors import distinct_source_colours
+                colours = distinct_source_colours(manifest)
+                if len(colours) > job_adapter.tool_count:
+                    raise printers.MultiColorUnsupported(
+                        f"{job_adapter.label} has {job_adapter.tool_count} toolheads and prints one color "
+                        f"per toolhead; this source uses {len(colours)} colors. Reduce the source to at "
+                        f"most {job_adapter.tool_count} colors or use a printer with more toolheads")
             # Numbered siblings (Stencil 1/2/3) get one question unless the operator chose per part.
             rows = grouped if mode == 0 else [{**row, 'keys': [row['key']]} for row in questions]
             choices = {}
+            taken = {}  # toolhead -> source colour already assigned to it (multi_tool only)
             for row in rows:
-                picked = selections[await _ask(adapter, source, key, row['question'], labels, timeout)]
+                if job_adapter.multi_tool:
+                    from .source_colors import prompt_source_colour
+                    colour = prompt_source_colour(manifest, row)
+                    offered = [(label, sel) for label, sel in zip(labels, selections)
+                               if taken.get(sel['slot'], colour) == colour]
+                    picked = offered[await _ask(adapter, source, key, row['question'],
+                                                [label for label, _ in offered], timeout)][1]
+                    taken[picked['slot']] = colour
+                else:
+                    picked = selections[await _ask(adapter, source, key, row['question'], labels, timeout)]
                 for decision_key in row['keys']:
                     choices[decision_key] = picked
             decisions['choices'] = choices
@@ -1403,7 +1434,8 @@ async def prepare_link(event, adapter, state, root, timeout=None, reuse=None):
         def _color_of(sel):
             sel = sel or {}
             color = str(sel.get('color') or '').strip()
-            return ' '.join(v for v in (color[:1].upper() + color[1:], str(sel.get('material') or '')) if v) or f"Slot {sel.get('slot')}"
+            noun = 'Toolhead' if mj._job_adapter(latest).multi_tool else 'Slot'
+            return ' '.join(v for v in (color[:1].upper() + color[1:], str(sel.get('material') or '')) if v) or f"{noun} {sel.get('slot')}"
         if validated.get('mode') == 'single_color':
             names = _color_of(validated.get('selection'))
         else:
@@ -1572,13 +1604,23 @@ async def prepare_link(event, adapter, state, root, timeout=None, reuse=None):
         actual_estimate = mj.gcode_estimate_s(first.read_text())
         slot_lines = ''
         try:
-            if printers.current().multi_slot:  # a single extruder printer has no slot map
+            if printers.current().multi_tool:  # toolheads, not a slot map (#346)
+                mapping = (exact_job or {}).get('tool_mapping') or {}
+                if mapping:
+                    records = mj.configured_slots(state)
+                    lines = []
+                    for tool, position in sorted(mapping.items(), key=lambda kv: int(kv[0])):
+                        record = records.get(str(position), {})
+                        lines.append(f"T{tool} -> Toolhead {position}: "
+                                     f"{record.get('color') or 'unknown color'} {record.get('material') or 'unknown material'}")
+                    slot_lines = '\n'.join(lines)
+            elif printers.current().multi_slot:  # a single extruder printer has no slot map
                 native = printers.current().native
                 _map = native.embedded_mapping(first.read_text(), state)
                 if _map:
                     slot_lines = native.describe_mapping(_map, state)
         except Exception as exc:  # a bad map is refused later by print-now; show why now
-            slot_lines = f'Slot map problem: {exc}'
+            slot_lines = f'Position map problem: {exc}' if printers.current().multi_tool else f'Slot map problem: {exc}'
         estimate_text = (f"~{mj.human_dur(actual_estimate)} printing, ~{mj.human_dur(actual_estimate + 300)} total "
                          "including ~5 min warmup" if actual_estimate is not None else 'estimate unknown')
         target = {'plan_id': plan_id, 'part_id': parts[picked_plate]['id'] if split else 'plate1', 'copy': 1,

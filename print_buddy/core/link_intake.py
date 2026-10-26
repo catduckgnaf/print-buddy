@@ -177,7 +177,8 @@ async def ask(adapter, source, session_key, question, choices, timeout=None, all
 
 
 async def collect_link(event, adapter, state, root, timeout=300):
-    from .model_job import resolve_filament_selection, build_slot_labels, configured_slots
+    from .model_job import resolve_filament_selection, build_slot_labels, build_tool_labels, configured_slots, position_limit
+    from .. import printers
     source = event.source
     url = model_link(event.text)
     message_id = getattr(event, 'message_id', None)
@@ -197,11 +198,14 @@ async def collect_link(event, adapter, state, root, timeout=300):
     except FileExistsError:
         return {'action': 'skip', 'reason': 'duplicate model-link event'}
     try:
+        multi_tool = printers.current().multi_tool
         selections = [resolve_filament_selection(state, dict(label, slot=int(slot)))
                       for slot, label in sorted(configured_slots(state).items())]
-        labels = build_slot_labels(selections)
-        if not labels or len(labels) > settings.current()['printer']['ifs_slots'] or len(set(labels)) != len(labels):
-            raise ValueError('requires one to four distinct configured slots')
+        # A multi_tool printer's positions are toolheads, never slots (#346).
+        labels = build_tool_labels(selections) if multi_tool else build_slot_labels(selections)
+        if not labels or len(labels) > position_limit() or len(set(labels)) != len(labels):
+            raise ValueError('requires one to four distinct configured toolheads' if multi_tool
+                             else 'requires one to four distinct configured slots')
         session_key = 'model-link:' + intake_id
         mode = await ask(adapter, source, session_key,
             'New model request: print in one color, or choose colors per part after inspecting the source?',
@@ -209,7 +213,8 @@ async def collect_link(event, adapter, state, root, timeout=300):
         receipt['mode'] = 'single_color' if mode == 0 else 'per_part'
         if mode == 0:
             slot = await ask(adapter, source, session_key,
-                'Choose the color for this NEW request, even if this model was printed before. These are configured slot labels.',
+                'Choose the color for this NEW request, even if this model was printed before. '
+                f"These are configured {'toolhead' if multi_tool else 'slot'} labels.",
                 labels, timeout)
             receipt['filament_selection'] = selections[slot]
         receipt['status'] = 'COLOR_CONFIRMED' if mode == 0 else 'PART_COLORS_REQUIRED'

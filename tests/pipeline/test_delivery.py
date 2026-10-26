@@ -318,16 +318,27 @@ def test_changed_gcode_is_not_delivered(env, monkeypatch):  # noqa: F811
     assert not any("MEDIA:" in m for m in adapter.sent) and env.starts == []
 
 
+def _bambu_job(monkeypatch):
+    """The intake job is recorded for the test Bambu model from creation.
+
+    The shared env inventory names no printer, so a job created from it belongs to the
+    configured model (the AD5X default) and the slice recipe is bound to that model.
+    Recording the Bambu model at inventory time binds the recipe to it at slice launch,
+    at approval and at delivery alike; rewriting JOB.json after slicing instead would
+    race the slice-approval freshness guard, which rightly refuses a job whose model
+    changed mid-flow.
+    """
+    inventory = model_job.printables_inventory
+
+    def bambu_inventory(url):
+        return {**inventory(url), "printer_model": BAMBU_KEY}
+
+    monkeypatch.setattr(model_job, "printables_inventory", bambu_inventory)
+
+
 def test_bambu_printer_offers_no_print_and_hands_off_a_package(env, monkeypatch, bambu_model):  # noqa: F811
     use_config(monkeypatch, config_for(BAMBU_KEY))
-    real_slice = model_job.slice_job
-
-    def bambu_slice(job_path, **kw):
-        out = real_slice(job_path, **kw)
-        data = json.loads(Path(job_path).read_text())
-        model_job.write_job(Path(job_path).parent, {**data, "printer_model": BAMBU_KEY})
-        return out
-    monkeypatch.setattr(model_job, "slice_job", bambu_slice)
+    _bambu_job(monkeypatch)
     # one color, slot 1, "Slice only" (first button: no print button exists), package, send, (menu ends)
     adapter, result, receipt = run_flow(env, [1, 0, 0, 1, 0])
     first = [q for q in adapter.questions if "Slice only" in q["choices"]][0]
@@ -352,6 +363,7 @@ def test_bambu_package_over_the_limit_is_never_offered_for_download(env, monkeyp
     from a send that fails. The A1 package from the issue was 22.9 MB against a 9.5 MB limit."""
     limit = 100_000
     use_config(monkeypatch, config_for(BAMBU_KEY, upload_max_bytes=limit))
+    _bambu_job(monkeypatch)
     real_slice = model_job.slice_job
     rng = random.Random(272)
 
@@ -360,8 +372,6 @@ def test_bambu_package_over_the_limit_is_never_offered_for_download(env, monkeyp
         # Incompressible enough that the package stays well over the limit.
         Path(out[0]).write_text("".join(f"G1 X{rng.uniform(1, 99):.3f} Y{rng.uniform(1, 99):.3f} "
                                          f"E{rng.uniform(0, 1):.5f}\n" for _ in range(20000)))
-        data = json.loads(Path(job_path).read_text())
-        model_job.write_job(Path(job_path).parent, {**data, "printer_model": BAMBU_KEY})
         return out
     monkeypatch.setattr(model_job, "slice_job", bambu_slice)
     # one color, slot 1, "Slice only", package (the menu then ends: nothing is left to offer)

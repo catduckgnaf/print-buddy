@@ -73,6 +73,9 @@ LEGACY_ENV = {
     "PRINT_TIMELAPSE_MAX_BYTES": ("timelapse", "max_bytes"),
     "PRINT_TIMELAPSE_LOCAL_RETENTION_DAYS": ("timelapse", "local_retention_days"),
     "PRINT_TIMELAPSE_PLAN_CLIP_RETENTION_DAYS": ("timelapse", "plan_clip_retention_days"),
+    "PRINT_TIMELAPSE_VERTICAL_SHORT": ("timelapse", "vertical_short"),
+    "PRINT_TIMELAPSE_VERTICAL_SHORT_MODE": ("timelapse", "vertical_short_mode"),
+    "PRINT_TIMELAPSE_VERTICAL_SHORT_OVERLAY": ("timelapse", "vertical_short_overlay"),
     "MAINTENANCE_QUICK_HOURS": ("maintenance", "quick_hours"),
     "MAINTENANCE_FULL_HOURS": ("maintenance", "full_hours"),
     "MAINTENANCE_FULL_DAYS": ("maintenance", "full_days"),
@@ -467,12 +470,17 @@ def _validate_webui(data):
     webui["access_token_env"] = env_name
 
 
+VERTICAL_SHORT_MODES = ("pad", "crop")
+
+
 def _validate_timelapse(data):
-    """The [timelapse] mode (#246/#295). Absent or empty in a config derives
-    from the configured services: "rendered" (the printer-rendered
-    moonraker-timelapse path) when a Moonraker URL is set, else "off".
-    An explicit value always wins, including "container" for #246's
-    in-container capture."""
+    """The [timelapse] section: the capture mode (#246/#295) and the
+    vertical-short switches (#317). Absent keys get the defaults.
+
+    The mode derives from the configured services when absent or empty:
+    "rendered" (the printer-rendered moonraker-timelapse path) when a
+    Moonraker URL is set, else "off". An explicit value always wins,
+    including "container" for #246's in-container capture."""
     timelapse = data.setdefault("timelapse", {})
     raw = timelapse.setdefault("mode", "")
     mode = str(raw or "").strip().lower()
@@ -481,6 +489,15 @@ def _validate_timelapse(data):
     if mode not in TIMELAPSE_MODES:
         raise SettingsError(f"[timelapse] mode must be one of {', '.join(TIMELAPSE_MODES)}, got {raw!r}")
     timelapse["mode"] = mode
+    for key, default in (("vertical_short", False), ("vertical_short_overlay", True)):
+        value = timelapse.setdefault(key, default)
+        if not isinstance(value, bool):
+            raise SettingsError(f"[timelapse] {key} must be true or false, got {value!r}")
+    short_mode = str(timelapse.setdefault("vertical_short_mode", "pad") or "").strip().lower()
+    if short_mode not in VERTICAL_SHORT_MODES:
+        raise SettingsError(
+            f"[timelapse] vertical_short_mode must be one of {', '.join(VERTICAL_SHORT_MODES)}, got {short_mode!r}")
+    timelapse["vertical_short_mode"] = short_mode
 
 
 def _validate_camera_source(data):

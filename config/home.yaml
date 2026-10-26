@@ -151,6 +151,12 @@ timelapse:
   max_bytes: 209715200
   local_retention_days: 1
   plan_clip_retention_days: 14
+  # Vertical short (#317): also post a 9:16 version of each finished
+  # timelapse, for Shorts/Reels/TikTok-style sharing. Off by default.
+  vertical_short: false
+  # pad = blurred background fill (default); crop = centre crop.
+  vertical_short_mode: pad
+  vertical_short_overlay: true
 logging:
   level: INFO
   format: text

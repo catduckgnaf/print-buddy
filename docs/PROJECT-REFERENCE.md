@@ -284,7 +284,7 @@ is_system_service: False
 * `print_buddy/printers/`: one package per brand, one file per printer model; see `base.py` for what each one owns.
 * `print_buddy/templates/orca/<model folder>/`: Orca machine, process, and filament JSON per printer.
 * `plugins/print-feedback/`: the Discord command handlers and interaction guards, loaded by the Hermes gateway or by the standalone bot.
-* `print_buddy/bot/`: standalone Discord bot (discord.py adapter, router, health check, optional LLM); `systemd/` holds its units.
+* `print_buddy/bot/`: standalone bot. `platform.py` is the chat-platform interface (#164: `send`, `send_clarify`, `answer_typed`, `close_prompt`, `is_allowed_id`, per-platform limits on the adapter); `adapter.py` is its Discord implementation over discord.py, selected by `[bot] platform` (default `discord`). Plus the router, health check and optional LLM; `systemd/` holds its units.
 * `hermes/`: profile templates and skills installed by `scripts/install-hermes.sh`.
 * `scripts/`: `install-hermes.sh`, `install-standalone.sh`, `home-update.sh`, and `migrate-names.sh` (one-shot, see `docs/RENAME-MIGRATION.md`).
 * `print_buddy.cfg`, `install.sh`, `uninstall.sh`, `update.sh`: ZMod plugin macro and lifecycle scripts.

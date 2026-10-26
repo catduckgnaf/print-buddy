@@ -27,6 +27,7 @@ message. `python3 -m print_buddy.doctor` warns when a Hermes profile holds the s
 | Key | Default | What it does |
 |---|---|---|
 | `bot.mode` | `hermes` | `standalone` runs `python3 -m print_buddy.bot` with no Hermes. `hermes` keeps the gateway plugin |
+| `bot.platform` | `discord` | The chat platform the standalone bot talks to (#164). Only `discord` is implemented so far; `telegram` and `matrix` are accepted names whose implementations land in later stages, and `check` fails clearly until then. A config without this key keeps `discord` |
 | `bot.health_port` | `0` | Serve `GET /healthz` on this port (200 healthy, 503 not). `0` turns the HTTP check off |
 | `bot.health_stale_s` | `120` | The health check fails when the heartbeat is older than this |
 | `bot.sync_commands` | `true` | Register the slash commands with Discord at startup |
@@ -136,7 +137,7 @@ Required environment: `PRINT_BUDDY__BOT__MODE=standalone`, `DISCORD_BOT_TOKEN`, 
 |---|---|
 | `pre_gateway_dispatch` hook with the plugin's handlers | `print_buddy.bot.router.Router` calls the plugin's `register()` and runs the same handlers in the same order. `receive_ack` (a receipt promising an agent reply) is skipped, since no agent follows |
 | Gateway authorization (`_is_user_authorized_for_source`), delivery adapter, session key | `print_buddy.bot.runtime.Gateway`: allowed user IDs plus the print channel; replies go to the same channel or thread; one session per person per channel |
-| Adapter `send` / `send_clarify` | `print_buddy.bot.adapter.StandaloneAdapter`, same signatures over discord.py. `MEDIA:/path` becomes an attachment; long text is split at 2000 characters |
+| Adapter `send` / `send_clarify` | The platform interface in `print_buddy.bot.platform` (#164): `send`, `send_clarify`, `answer_typed`, `close_prompt`, `is_allowed_id`, plus per-platform limits (`message_limit`, `upload_max_bytes`, `supports_buttons`, `max_buttons`). Discord's implementation is `print_buddy.bot.adapter.StandaloneAdapter` over discord.py. `MEDIA:/path` becomes an attachment; long text is split at 2000 characters |
 | Clarify gateway (register, wait, resolve, cancelled) | `print_buddy.core.prompts`, the same API. `prompts.gateway()` picks Hermes' module under Hermes and this one in standalone mode, so the shared handlers work in both |
 | Platform handler registration and the adapter's `_is_allowed_user` | The router hands the plugin's `alert_button_handlers` our discord.py client; the adapter implements `_is_allowed_user` |
 | `hermes send` subprocess in the listener | `print_buddy.bot.rest.send`: Discord REST with the bot token, `MEDIA:` files as attachments. `hermes send` stays in Hermes mode |
@@ -156,6 +157,18 @@ Required environment: `PRINT_BUDDY__BOT__MODE=standalone`, `DISCORD_BOT_TOKEN`, 
 4. Run `python3 -m print_buddy.bot check`, then `scripts/install-standalone.sh` and enable both units.
 
 Going back is the reverse: `bot.mode: hermes`, stop the standalone units, start the gateway.
+
+## Adding a chat platform
+
+For contributors (#164): the bot core and the plugin handlers talk to a chat service only through
+`print_buddy.bot.platform` — `BotCore` is built with one platform adapter and never imports a platform
+library. A new platform is a new module under `print_buddy/bot/` holding a `StandaloneAdapter`-shaped
+implementation of `send` / `send_clarify` / `answer_typed` / `close_prompt` / `is_allowed_id` (prompt
+bookkeeping and choice resolution are shared in `BasePlatformAdapter`), a client that turns service
+events into `runtime.make_source` / `runtime.make_event` values, its name in `platform.KNOWN_PLATFORMS`
+and its module in `platform.platform_module`, a settings section validated in `settings.py`, and a fake
+in `tests/bot/` that drives a full intake with no network (see `tests/bot/test_platform.py`). Per-platform
+limits live on the adapter, not in callers. No handler or core change should be needed.
 
 ## Not covered yet
 

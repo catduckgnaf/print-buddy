@@ -13,7 +13,9 @@ from print_buddy.printers.bambulab.a1 import A1Adapter
 from print_buddy.printers.bambulab.p1s import P1SAdapter
 from print_buddy.printers.base import BuildVolume, MultiColorUnsupported, PrinterAdapter
 
-from . import a1_fixture, p1s_fixture
+from print_buddy.printers.bambulab import facts as bambu_facts
+
+from . import a1_fixture, bambu_family_fixture, p1s_fixture
 
 AD5X_ARTIFACTS = re.compile(
     r"SET_EXTRUDER_SLOT|\bIFS\b|zmod|ZMOD|CHANGE_ZCOLOR|display_off|LOAD_ZOFFSET|START_PRINT|MESH=|8898|AD5X|/detail",
@@ -47,9 +49,21 @@ class ContractTests(unittest.TestCase):
         patcher.start()
         self.addCleanup(patcher.stop)
         p1s_fixture.install(adapter_for(BAMBU_P1S))
+        # The #127 Stage 1 models share the family fixture: trust + install each one.
+        for key, fact_name in (("bambulab.a1mini", "A1MINI"), ("bambulab.p1p", "P1P"), ("bambulab.x1", "X1"),
+                               ("bambulab.x1c", "X1C"), ("bambulab.x1e", "X1E"), ("bambulab.p2s", "P2S"),
+                               ("bambulab.h2s", "H2S")):
+            model_facts = getattr(bambu_facts, fact_name)
+            patcher = mock.patch.object(printers.MODELS[key].adapter, "facts",
+                                        bambu_family_fixture.fixture_facts(model_facts))
+            patcher.start()
+            self.addCleanup(patcher.stop)
+            bambu_family_fixture.install(adapter_for(key), model_facts)
 
     def test_registry_finds_every_model_file(self):
-        self.assertEqual(set(MODELS), {AD5X, GENERIC, SV06, OCTOPRINT, BAMBU_A1, BAMBU_P1S, "flashforge_stock.ad5x"})
+        self.assertEqual(set(MODELS), {AD5X, GENERIC, SV06, OCTOPRINT, BAMBU_A1, BAMBU_P1S, "flashforge_stock.ad5x",
+                                       "bambulab.a1mini", "bambulab.p1p", "bambulab.x1", "bambulab.x1c",
+                                       "bambulab.x1e", "bambulab.p2s", "bambulab.h2s"})
         for key, model in printers.MODELS.items():
             self.assertEqual(model.key, key)
             shipped = settings.ROOT / "print_buddy" / "templates" / "orca" / model.templates
@@ -80,14 +94,14 @@ class ContractTests(unittest.TestCase):
                 folder = a.templates_dir()
                 for name in ("machine", "process", "filament"):
                     json.loads((folder / f"{name}.json").read_text())
-                if family not in (OCTOPRINT, BAMBU_A1, BAMBU_P1S, "flashforge_stock.ad5x"):
+                if family not in (OCTOPRINT, "flashforge_stock.ad5x") and not family.startswith("bambulab."):
                     self.assertIn("[bed_temperature_initial_layer_single]", a.machine_start_gcode("X MESH=auto", "auto"))
                 plan = a.start_plan(60, 215)
                 if family == "flashforge_stock.ad5x":
                     self.assertEqual(plan, [])  # the slicer file owns heating
                 else:
                     self.assertTrue(plan and all(isinstance(line, str) for line in plan))
-                if family in (BAMBU_A1, BAMBU_P1S):
+                if family.startswith("bambulab."):
                     # Offline only: the vendor start runs first, and nothing live is available.
                     machine = json.loads((a.pinned_templates() / "machine.json").read_text())
                     self.assertEqual(plan, machine["machine_start_gcode"].splitlines())

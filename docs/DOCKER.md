@@ -68,8 +68,8 @@ To reach the Web UI from another machine, all four pieces are needed: enable it 
 
 Stage 1 of #246 is plumbing only — no frames are captured yet (that is Stage 2) and no hardware encode happens yet (Stage 3). What this stage adds is the machinery both will use, off by default:
 
-- The **full image** bundles **go2rtc** (upstream AlexxIT/go2rtc v1.9.15, one static binary per architecture, downloaded at build time and verified by SHA256 in `docker/go2rtc-prebuilt.sh`, like the OrcaSlicer prebuilts) and the **VAAPI driver stack** (`intel-media-va-driver`, `mesa-va-drivers`, `libva-drm2`, `vainfo`). Both are under the `WITH_GO2RTC` build toggle, which follows the image variant: full builds set it, **the light image excludes go2rtc and the VAAPI stack entirely**.
-- With `timelapse.capture_enabled` set (`PRINT_BUDDY__TIMELAPSE__CAPTURE_ENABLED=true`, or `timelapse.capture_enabled` in the config file), the supervisor starts go2rtc as a supervised child and the healthcheck covers it. The gate is resolved from settings (`python3 -m print_buddy.go2rtc`), never guessed: capture disabled — or enabled with no camera source configured — starts nothing and is a healthy state, reported in the healthcheck like the disabled-bot case. Enabling capture in the light image fails the healthcheck with that reason, because the binary is not there.
+- The image bundles **go2rtc** (upstream AlexxIT/go2rtc v1.9.15, one static binary per architecture, downloaded at build time and verified by SHA256 in `docker/go2rtc-prebuilt.sh`, like the OrcaSlicer prebuilts) and the **VAAPI driver stack** (`intel-media-va-driver`, `mesa-va-drivers`, `libva-drm2`, `vainfo`). Both are under the `WITH_GO2RTC` build toggle, which the published image sets; a local `WITH_GO2RTC=false` build omits both.
+- With `timelapse.capture_enabled` set (`PRINT_BUDDY__TIMELAPSE__CAPTURE_ENABLED=true`, or `timelapse.capture_enabled` in the config file), the supervisor starts go2rtc as a supervised child and the healthcheck covers it. The gate is resolved from settings (`python3 -m print_buddy.go2rtc`), never guessed: capture disabled — or enabled with no camera source configured — starts nothing and is a healthy state, reported in the healthcheck like the disabled-bot case. Enabling capture in an image built without go2rtc fails the healthcheck with that reason, because the binary is not there.
 - The supervisor generates go2rtc's config from settings — no hand-edited YAML for the standard case. The source is `[timelapse] capture_source_url` when set (an MJPEG/RTSP URL or a go2rtc `ffmpeg:` source), otherwise it derives from `services.camera_snapshot_url` / the Moonraker webcam exactly like the camera watchdog's source. The generated file lives at `<cache>/go2rtc/go2rtc.yaml`, is written `0600`, and holds the raw camera URL, which may carry credentials; Print Buddy's own logs only ever show it redacted.
 - go2rtc does stream normalisation only: it restreams the camera on **loopback**. Its API (1984) and RTSP (8554) bind `127.0.0.1` inside the container, are never published by Compose or the Unraid template, and its WebUI is not exposed.
 
@@ -79,7 +79,7 @@ Hardware encoding is opportunistic and never required; without a GPU everything 
 
 | Combination | What you grant | Notes |
 |---|---|---|
-| Intel iGPU / AMD GPU (VAAPI) | `/dev/dri` passthrough (below) | The baseline. The full image carries the VAAPI drivers; `vainfo` in the image reports what the granted device supports. |
+| Intel iGPU / AMD GPU (VAAPI) | `/dev/dri` passthrough (below) | The baseline. The image carries the VAAPI drivers; `vainfo` in the image reports what the granted device supports. |
 | NVIDIA (NVENC) | The host NVIDIA driver plus the NVIDIA container toolkit passthrough | No CUDA toolkit or driver is baked into the image; Debian's ffmpeg already carries the `h264_nvenc` encoder, which activates only when the host runtime provides the device and driver. |
 | Intel Quick Sync (QSV) | `/dev/dri` passthrough | The `h264_qsv` encoder is in Debian's ffmpeg; it activates only when the host device/driver supports it. |
 | Anything else | Nothing | CPU (`libx264`) encoding, as today. |
@@ -131,42 +131,39 @@ In Compose, the settings are environment entries with their documented defaults 
 
 This source template does not prove a Community Applications listing or an exercised Unraid installation. The host owner verifies deployment and final network mapping.
 
-## Supported platforms and variants (#192)
+## Supported platforms (#192, #353)
 
-Published images come in two variants on two platforms. Every combination is a multi-arch manifest, so `docker pull` selects the right architecture automatically:
+One image is published, on two platforms. It is a multi-arch manifest, so `docker pull` selects the right architecture automatically:
 
-| Variant | Build toggles | Tags | Contents |
-|---|---|---|---|
-| full | `WITH_ORCA=true`, `WITH_GO2RTC=true`, `WITH_BAMBU=false` | `ghcr.io/catduckgnaf/print-buddy:VERSION` and `:latest` | Discord bot, Moonraker listener, bundled Spoolman API, OpenSCAD, both pinned OrcaSlicer channels (stable and alpha), go2rtc and the VAAPI stack (#246) |
-| light | `WITH_ORCA=false`, `WITH_GO2RTC=false`, `WITH_BAMBU=false` | `ghcr.io/catduckgnaf/print-buddy:VERSION-light` and `:latest-light` | Discord bot, Moonraker listener, bundled Spoolman API and OpenSCAD — no slicers, no go2rtc/VAAPI |
+| Build toggles | Tags | Contents |
+|---|---|---|
+| `WITH_ORCA=true`, `WITH_GO2RTC=true`, `WITH_BAMBU=false` | `ghcr.io/catduckgnaf/print-buddy:VERSION` and `:latest` | Discord bot, Moonraker listener, bundled Spoolman API, OpenSCAD, both pinned OrcaSlicer channels (stable and alpha), go2rtc and the VAAPI stack (#246) |
 
-Platforms are `linux/amd64` and `linux/arm64` for both variants. There is no `linux/arm/v7` image: upstream OrcaSlicer ships no 32-bit ARM Linux build, and 32-bit hosts are out of scope.
-
-Pull the full image (the default) or the light image:
+Platforms are `linux/amd64` and `linux/arm64`. There is no `linux/arm/v7` image: upstream OrcaSlicer ships no 32-bit ARM Linux build, and 32-bit hosts are out of scope.
 
 ```bash
 docker pull ghcr.io/catduckgnaf/print-buddy:VERSION
-docker pull ghcr.io/catduckgnaf/print-buddy:VERSION-light
 ```
 
 Replace `VERSION` with a published release version. The manifest scheme starts with the first release published after this support landed; the earlier single-arch amd64 tags (2.1.1, 2.1.2 and 2.1.3 era) are unchanged and are never republished or overwritten. No image is published by a source change alone — publication is the separate maintainer dispatch described under Validation and publication, and no multi-arch image is claimed published or validated on hardware until that dispatch's evidence exists.
+
+Up to 2.1.4 a second, slicer-free `-light` variant was also published (`:VERSION-light` and `:latest-light`). It is removed (#353): those tags remain exactly as published, as historical artifacts, and no new `-light` images are built. Anyone still pulling a `-light` tag should move to the full image, which runs on both architectures.
 
 There is also a floating **nightly** channel for trying current code between releases:
 
 ```bash
 docker pull ghcr.io/catduckgnaf/print-buddy:nightly
-docker pull ghcr.io/catduckgnaf/print-buddy:nightly-light
 ```
 
-Nightly is built from the `nightly` branch, which is a pointer, not a development branch: it only ever names a commit on `main` whose CI run completed successfully (see the nightly workflow under Validation and publication). Nightly images carry the same offline acceptance as release images, but they are development builds — features may be unfinished and settings may change without a release note. Pin a release `VERSION` for anything you rely on.
+Nightly is built from the `nightly` branch, which is a pointer, not a development branch: it only ever names a commit on `main` whose CI run completed successfully (see the nightly workflow under Validation and publication). Nightly images carry the same offline acceptance as release images, but they are development builds — features may be unfinished and settings may change without a release note. Pin a release `VERSION` for anything you rely on. (Nightly also had a `:nightly-light` tag up to this change; it is no longer published.)
 
-### What light omits, and what happens when a slicer is needed
+### What happens when a slicer is needed in a no-Orca build
 
-Light contains no OrcaSlicer, no Bambu Studio, and no go2rtc or VAAPI drivers (#246) — in-container timelapse capture is a full-image feature; the printer-rendered timelapse path works in light exactly as before. Everything that does not slice still runs: the Discord bot, the Moonraker listener, the bundled Spoolman API and OpenSCAD-based CAD splitting are identical to the full image. Slicing fails closed, exactly as a `WITH_ORCA=false` image already behaves: the configured slicer executable (`/usr/local/bin/orca-slicer-stable` or `-alpha`, selected by `PRINT_BUDDY_ORCA_CHANNEL`) is absent, so a slicing attempt raises `FileNotFoundError`, produces no G-code and sends nothing to a printer. The offline acceptance harness proves this behaviour for a no-Orca image (its slice probe requires the refusal and checks that no `.gcode` file was written). Choose full on any host that must slice; choose light for a small host that only monitors, manages spools or relays an externally sliced workflow.
+The published image always bundles OrcaSlicer. A locally built `WITH_ORCA=false` image (a supported build option, just not a published one) behaves exactly as it always has: slicing fails closed. The configured slicer executable (`/usr/local/bin/orca-slicer-stable` or `-alpha`, selected by `PRINT_BUDDY_ORCA_CHANNEL`) is absent, so a slicing attempt raises `FileNotFoundError`, produces no G-code and sends nothing to a printer, while everything that does not slice still runs. The offline acceptance harness proves this behaviour for a no-Orca image (its slice probe requires the refusal and checks that no `.gcode` file was written).
 
 ### How the ARM images are built
 
-Each architecture is built on a native runner — `ubuntu-24.04` for amd64 and `ubuntu-24.04-arm` for arm64, the same native ARM runner family CI already uses for the `light-install-arm64` job. No QEMU emulation is used for the slicer-containing image. OrcaSlicer is never source-built on either architecture: `docker/orca-prebuilt.sh` downloads the pinned official upstream AppImage for the target architecture (upstream spells arm64 as `aarch64` in the asset name) and verifies its per-architecture SHA256 before extraction. The build info recorded in the image (`/orca-<channel>-build-info`) carries the real target architecture.
+Each architecture is built on its matching native runner — `ubuntu-24.04` for amd64 and `ubuntu-24.04-arm` for arm64. No QEMU emulation is used for the slicer-containing image. OrcaSlicer is never source-built on either architecture: `docker/orca-prebuilt.sh` downloads the pinned official upstream AppImage for the target architecture (upstream spells arm64 as `aarch64` in the asset name) and verifies its per-architecture SHA256 before extraction. The build info recorded in the image (`/orca-<channel>-build-info`) carries the real target architecture.
 
 ## Build dimensions and slicers
 
@@ -178,11 +175,11 @@ The official prebuilt archives are downloaded and extracted only inside approved
 
 ## Validation and publication
 
-The manual `.github/workflows/docker-image-validation.yml` validates ONE architecture/variant combination per dispatch: choose `architecture` (`amd64` or `arm64`, built on the matching native runner) and `variant` (`full` or `light`). It builds without pushing, runs the headless slicer smoke for the full variant, and runs `tests/docker/image_acceptance.sh` against that leg's image.
+The manual `.github/workflows/docker-image-validation.yml` validates ONE architecture per dispatch: choose `architecture` (`amd64` or `arm64`, built on the matching native runner). It builds the published image without pushing, runs the headless slicer smoke, and runs `tests/docker/image_acceptance.sh` against that leg's image.
 
-The scheduled `.github/workflows/nightly.yml` publishes the nightly channel. Its promote job fast-forwards the `nightly` branch to the newest `main` commit with a successful CI run — it refuses to move the branch to anything that is not a descendant of its current commit, and it never forces the ref — then the build and manifest jobs repeat the release publisher's matrix, acceptance and push-by-digest flow for that exact commit and publish the two floating tags `:nightly` (full) and `:nightly-light` (light). A scheduled run whose promotion moved nothing builds nothing. A maintainer can also dispatch it manually (`promote` and `publish` both default to true; `publish=false` is the no-push candidate mode). This workflow never creates or moves release tags or `latest`.
+The scheduled `.github/workflows/nightly.yml` publishes the nightly channel. Its promote job fast-forwards the `nightly` branch to the newest `main` commit with a successful CI run — it refuses to move the branch to anything that is not a descendant of its current commit, and it never forces the ref — then the build and manifest jobs repeat the release publisher's matrix, acceptance and push-by-digest flow for that exact commit and publish the one floating tag `:nightly`. A scheduled run whose promotion moved nothing builds nothing. A maintainer can also dispatch it manually (`promote` and `publish` both default to true; `publish=false` is the no-push candidate mode). This workflow never creates or moves release tags or `latest`.
 
-The manual `.github/workflows/docker-publish.yml` covers the whole matrix in one dispatch. Its build job runs all four legs (amd64/arm64 × full/light) on native runners; each leg builds its platform image, runs the headless slicer smoke (full legs only) and the offline runtime acceptance for that arch/variant. Only with `publish=true`, and only after that leg's acceptance succeeded, does a leg log in and push — by digest only, never by tag. A final manifest job (publication dispatches only, after every leg succeeded) combines the pushed digests with `docker buildx imagetools create` into the four tags: `:VERSION` and `:latest` (full), `:VERSION-light` and `:latest-light` (light), and writes the manifest digests to the step summary and the uploaded evidence. With `publish=false` (candidate mode) every leg still builds and must pass acceptance, and nothing is pushed and no manifest is created. Candidate inputs for the next release are `version=<next MAJOR.MINOR.PATCH>`, `publish=false`. Preserve every existing tag (2.1.1, 2.1.2, 2.1.3 era tags included); never overwrite or republish an existing tag.
+The manual `.github/workflows/docker-publish.yml` covers the whole matrix in one dispatch. Its build job runs both legs (amd64 and arm64) on native runners; each leg builds its platform image, runs the headless slicer smoke and the offline runtime acceptance for that arch. Only with `publish=true`, and only after that leg's acceptance succeeded, does a leg log in and push — by digest only, never by tag. A final manifest job (publication dispatches only, after every leg succeeded) combines the pushed digests with `docker buildx imagetools create` into the two tags `:VERSION` and `:latest`, and writes the manifest digests to the step summary and the uploaded evidence. With `publish=false` (candidate mode) every leg still builds and must pass acceptance, and nothing is pushed and no manifest is created. Candidate inputs for the next release are `version=<next MAJOR.MINOR.PATCH>`, `publish=false`. Preserve every existing tag (2.1.1, 2.1.2, 2.1.3 era tags included); never overwrite or republish an existing tag.
 
 Each build leg has a 350 minute timeout. Buildx uses a `docker-container` builder: the publishing legs push by digest, which the Docker driver does not implement — nightly run 40330775729 proved it the hard way, with every leg passing acceptance and then failing at the push step with exactly that error (the no-push validation workflow still uses the Docker driver, which is fine because it never pushes). Runtime fixtures must remain isolated, use dummy credentials and clean up owned containers. Evidence is retained 30 days. No live Discord, printer, Home Assistant or household Spoolman endpoints are permitted. Native tests prove lifecycle logic, not image startup, migration or slicing. Report actual workflow evidence and immutable identities separately.
 

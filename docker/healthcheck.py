@@ -52,7 +52,7 @@ def main():
     # it: the same gate decision (print_buddy.go2rtc), mirroring the
     # disabled-bot branch above. Capture disabled (or enabled with no
     # camera source) is a healthy, reported state; enabled in an image
-    # without the binary (the #192 light image) fails with the reason.
+    # without the binary (a WITH_GO2RTC=false build) fails with the reason.
     gate = go2rtc.gate()
     if gate == 2:
         print("FAIL  go2rtc: configuration unresolved")
@@ -60,7 +60,7 @@ def main():
     elif gate == 0:
         if not go2rtc.binary_present():
             print("FAIL  go2rtc: timelapse capture is enabled but go2rtc is "
-                  "not in this image (the light image excludes it)")
+                  "not in this image (built with WITH_GO2RTC=false)")
             healthy = False
         else:
             ok, reason = go2rtc.check()

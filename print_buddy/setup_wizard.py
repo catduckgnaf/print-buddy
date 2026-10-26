@@ -1,4 +1,4 @@
-"""Interactive setup for the Print Buddy light install (Raspberry Pi or Debian/Ubuntu, no Docker).
+"""Interactive setup for a native Print Buddy install (Raspberry Pi or Debian/Ubuntu, no Docker).
 
     python3 -m print_buddy.setup_wizard [--answers FILE] [--dry-run] [--yes]
 

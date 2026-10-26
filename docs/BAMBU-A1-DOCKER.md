@@ -26,7 +26,7 @@ Some steps work around behaviour that is being fixed. Each such step names the i
 - The A1 on the same network, reachable from the container on TCP ports 8883 (MQTT over TLS) and 990 (implicit FTPS). Both are what `print_buddy/printers/bambulab/client.py` uses; nothing else is opened.
 - A Discord bot token, the print channel ID and your user ID; see [Discord bot setup](DISCORD-BOT-SETUP.md).
 - A MakerWorld account if you want MakerWorld links. Printables links need no account.
-- The full image, not `-light`: light contains no OrcaSlicer, so it cannot slice (see [Docker](DOCKER.md#supported-platforms-and-variants-192)).
+- The published image: it bundles OrcaSlicer, which the A1 workflow needs in order to slice (see [Docker](DOCKER.md#supported-platforms-192-353)).
 
 Paths below assume the checked-out `docker-compose.yml`, a private `.env` beside it and `PRINT_BUDDY_DATA=./data`. Everything under the data directory must be writable by UID/GID 1000:1000, the container user.
 

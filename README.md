@@ -23,23 +23,9 @@ Share a MakerWorld or Printables link, or upload an STL or 3MF. Print Buddy guid
 
 ## Get started
 
-### Quick install (Raspberry Pi or Debian/Ubuntu)
-
-```bash
-curl -fsSL https://raw.githubusercontent.com/catduckgnaf/print-buddy/main/scripts/install-light.sh | bash
-```
-
-To install a specific release instead of the latest code:
-
-```bash
-curl -fsSL https://raw.githubusercontent.com/catduckgnaf/print-buddy/main/scripts/install-light.sh | bash -s -- --ref 2.1.4
-```
-
-The setup wizard asks for your printer brand and model (or Other / generic), the connection, nozzle, filament, slicer, Spoolman, camera and timelapse, your Discord bot, and whether to run as a Hermes profile or a standalone bot. It installs the stock Flathub OrcaSlicer or Bambu Studio; it does not bundle Spoolman (it can run the official Spoolman installer if you ask). See [light install](docs/INSTALL-LIGHT.md) and [Discord bot setup](docs/DISCORD-BOT-SETUP.md).
-
 ### Docker
 
-The single-container image ships with 2.1.4 (see [#117](https://github.com/catduckgnaf/print-buddy/issues/117) and [#214](https://github.com/catduckgnaf/print-buddy/issues/214)); the published 2.1.1 image keeps the older three-container stack. The 2.1.4 image is at `ghcr.io/catduckgnaf/print-buddy` (amd64 only), built and checked offline by the publish workflow before it is pushed. From the next release the publish workflow also builds `linux/arm64` and a slicer-free `-light` variant under multi-arch manifests ([#192](https://github.com/catduckgnaf/print-buddy/issues/192)); see [Docker](docs/DOCKER.md#supported-platforms-and-variants-192) for the platform/variant matrix — no multi-arch tag exists until that release is actually published.
+The single-container image ships with 2.1.4 (see [#117](https://github.com/catduckgnaf/print-buddy/issues/117) and [#214](https://github.com/catduckgnaf/print-buddy/issues/214)); the published 2.1.1 image keeps the older three-container stack. The image is at `ghcr.io/catduckgnaf/print-buddy` as a multi-arch manifest for `linux/amd64` and `linux/arm64`, built and checked offline by the publish workflow before it is pushed; see [Docker](docs/DOCKER.md#supported-platforms-192-353) for the platform matrix. 2.1.4 also published a slicer-free `-light` variant; from the next release only the one full image is published ([#353](https://github.com/catduckgnaf/print-buddy/issues/353)).
 
 One container runs the three parts of Print Buddy, started and watched by a supervisor:
 
@@ -70,7 +56,7 @@ See [Docker setup](docs/DOCKER.md) for health checks, upgrades and rollback.
 
 ### Manual install
 
-1. **Choose a mode:** the [light installer](docs/INSTALL-LIGHT.md) above is recommended. For a manual setup, the [standalone bot](docs/STANDALONE.md) is the direct route without Hermes — on Discord, or on [Telegram](docs/TELEGRAM-BOT-SETUP.md) or [Matrix](docs/MATRIX-BOT-SETUP.md) instead — and the [Hermes installation](docs/INSTALL.md) is for existing Hermes users. Both require Python 3.11 or newer. For Docker, see [Docker](#docker) below.
+1. **Choose a mode:** [Docker](#docker) above is the packaged route. For a manual setup, the [standalone bot](docs/STANDALONE.md) is the direct route without Hermes — on Discord, or on [Telegram](docs/TELEGRAM-BOT-SETUP.md) or [Matrix](docs/MATRIX-BOT-SETUP.md) instead — and the [Hermes installation](docs/INSTALL.md) is for existing Hermes users. Both require Python 3.11 or newer.
 2. **Configure your printer and access:** follow the chosen guide, then use [configuration](docs/CONFIGURATION-YAML.md) to set your printer model, Discord channel and authorized users, service addresses and slicer command. Keep local settings and tokens out of Git.
 3. **Check before enabling printing:** confirm the selected printer profile, bed dimensions, nozzle, filament and service permissions. Review the guide's checks before starting the bot or listener. The doctor can contact configured services; it is not an offline-only check.
 

@@ -78,7 +78,7 @@ identity inside it is singular end to end:
   silently inherits those obligations; a section that never appears in
   the defaults is invisible to the inventory and needs explicit test
   treatment instead.
-- The setup surfaces hardcode the singleton: the light-install wizard
+- The setup surfaces hardcode the singleton: the setup wizard
   writes exactly four printer answers, one of them the model
   (`.env.example:26`, the wizard's `_ask_printer_model`), the guided
   setup asks one model / one Moonraker URL and names the file for "the

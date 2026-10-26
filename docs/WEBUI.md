@@ -37,9 +37,9 @@ The Web UI doctor rows reuse the local doctor checks — settings, printer model
 
 `/healthz` is narrower than the status page. It evaluates the bot heartbeat only: a `503` can mean the bot heartbeat is missing or stale while the Web UI itself is still serving. The Docker healthcheck therefore treats either a `200` or a `503` answer from `/healthz` as proof that the Web UI is serving, while the separate bot row owns the heartbeat verdict. An unreachable Web UI, an unresolved configuration, or any other HTTP status makes the Web UI healthcheck row fail.
 
-## Enable it on a light or manual install
+## Enable it on a native or manual install
 
-Add a `[webui]` section to the installation's settings file. For the usual light install, that is `config/local.yaml`:
+Add a `[webui]` section to the installation's settings file. For a native install, that is `config/local.yaml`:
 
 ```yaml
 webui:

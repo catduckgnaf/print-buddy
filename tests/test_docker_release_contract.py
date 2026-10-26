@@ -216,15 +216,15 @@ class DockerReleaseContract(unittest.TestCase):
         self.assertIn("grep -cE 'sha256_(amd64|arm64)=[0-9a-f]{64}' docker/orca-prebuilt.sh", workflow)
         self.assertIn("grep -cE 'asset_(amd64|arm64)=' docker/orca-prebuilt.sh", workflow)
 
-    def test_validation_workflow_offers_arch_and_variant_on_native_runners(self):
+    def test_validation_workflow_offers_both_arches_on_native_runners(self):
         workflow = yaml.load((ROOT / ".github" / "workflows" / "docker-image-validation.yml").read_text(),
                              Loader=yaml.BaseLoader)
         self.assertEqual(list(workflow["on"]), ["workflow_dispatch"])
         inputs = workflow["on"]["workflow_dispatch"]["inputs"]
         self.assertEqual(inputs["architecture"]["options"], ["amd64", "arm64"])
         self.assertEqual(inputs["architecture"]["default"], "amd64")
-        self.assertEqual(inputs["variant"]["options"], ["full", "light"])
-        self.assertEqual(inputs["variant"]["default"], "full")
+        # One image is published (#353): there is no variant input any more.
+        self.assertNotIn("variant", inputs)
         job = workflow["jobs"]["validate"]
         # arm64 validates on the native ARM runner, amd64 on the x86 runner.
         self.assertIn("ubuntu-24.04-arm", job["runs-on"])
@@ -233,15 +233,17 @@ class DockerReleaseContract(unittest.TestCase):
         env = job["env"]
         self.assertIn("linux/arm64", env["PLATFORM"])
         self.assertIn("linux/amd64", env["PLATFORM"])
-        # The variant, not a free slicer toggle, decides WITH_ORCA; Bambu is out.
-        self.assertIn("inputs.variant == 'full'", env["WITH_ORCA"])
+        # The published image's toggles are fixed: Orca and go2rtc in, Bambu out.
+        self.assertEqual(env["WITH_ORCA"], "true")
+        self.assertEqual(env["WITH_GO2RTC"], "true")
         self.assertEqual(env["WITH_BAMBU"], "false")
         build = next(step for step in job["steps"] if step.get("name") == "Build (no push)")
         self.assertIn('--platform "$PLATFORM"', build["run"])
         self.assertIn("image_acceptance.sh", job["steps"][-2]["run"])
         smoke = next(step for step in job["steps"]
                      if step.get("name") == "Headless slice with each bundled Orca channel")
-        self.assertEqual(smoke["if"], "inputs.variant == 'full'")
+        # The published image always bundles Orca, so the smoke is unconditional.
+        self.assertNotIn("if", smoke)
         for step in job["steps"]:
             if "uses" in step:
                 self.assertRegex(step["uses"], r"^[^@]+@[0-9a-f]{40}$")
@@ -257,8 +259,8 @@ class DockerReleaseContract(unittest.TestCase):
         inputs = workflow["on"]["workflow_dispatch"]["inputs"]
         self.assertEqual(inputs["version"]["required"], "true")
         self.assertNotIn("orca_source", inputs)
-        # The variant matrix replaces free slicer toggles: full/light are fixed
-        # per leg (WITH_BAMBU=false everywhere), not dispatch inputs.
+        # The published image's toggles are fixed in the workflow (Orca and
+        # go2rtc in, WITH_BAMBU=false), not dispatch inputs.
         self.assertNotIn("with_orca", inputs)
         self.assertNotIn("with_bambu", inputs)
         # Candidate validation must not authenticate or push without explicit opt-in.
@@ -279,7 +281,8 @@ class DockerReleaseContract(unittest.TestCase):
         self.assertNotIn("docker tag", steps[publish]["run"])
         self.assertIn("image_acceptance.sh", steps[acceptance]["run"])
         smoke = next(step for step in steps if step.get("name") == "Headless slice with each bundled Orca channel")
-        self.assertEqual(smoke["if"], "matrix.with_orca == 'true'")
+        # The published image always bundles Orca, so the smoke is unconditional.
+        self.assertNotIn("if", smoke)
         self.assertIn('channels="stable alpha"', smoke["run"])
         self.assertNotIn("ORCA_SOURCE", smoke["run"])
         self.assertIn("--network none", smoke["run"])
@@ -288,32 +291,34 @@ class DockerReleaseContract(unittest.TestCase):
                 if "uses" in step:
                     self.assertRegex(step["uses"], r"^[^@]+@[0-9a-f]{40}$")
 
-    def test_publish_matrix_is_native_both_arches_and_both_variants(self):
-        """#192: linux/amd64 + linux/arm64, full + light, native runners, no QEMU, no arm/v7."""
+    def test_publish_matrix_is_native_both_arches_full_image_only(self):
+        """#192/#353: linux/amd64 + linux/arm64, one full image, native runners, no QEMU, no arm/v7."""
         workflow = yaml.load((ROOT / ".github" / "workflows" / "docker-publish.yml").read_text(),
                              Loader=yaml.BaseLoader)
         text = (ROOT / ".github" / "workflows" / "docker-publish.yml").read_text()
         job = workflow["jobs"]["build"]
         self.assertEqual(job["runs-on"], "${{ matrix.runner }}")
         self.assertEqual(job["timeout-minutes"], "350")  # BaseLoader: scalars are strings
-        legs = {(leg["arch"], leg["variant"]): leg
-                for leg in job["strategy"]["matrix"]["include"]}
-        self.assertEqual(set(legs), {("amd64", "full"), ("arm64", "full"),
-                                     ("amd64", "light"), ("arm64", "light")})
+        legs = {leg["arch"]: leg for leg in job["strategy"]["matrix"]["include"]}
+        self.assertEqual(set(legs), {"amd64", "arm64"})
         runners = {"amd64": "ubuntu-24.04", "arm64": "ubuntu-24.04-arm"}
-        for (arch, variant), leg in legs.items():
-            with self.subTest(arch=arch, variant=variant):
+        for arch, leg in legs.items():
+            with self.subTest(arch=arch):
                 self.assertEqual(leg["runner"], runners[arch])
                 self.assertEqual(leg["platform"], f"linux/{arch}")
-                self.assertEqual(leg["with_orca"], "true" if variant == "full" else "false")
-                self.assertEqual(leg["with_bambu"], "false")
+                self.assertNotIn("variant", leg)
+        # The image toggles are fixed at job level: Orca and go2rtc in, Bambu out.
+        self.assertEqual(job["env"]["WITH_ORCA"], "true")
+        self.assertEqual(job["env"]["WITH_GO2RTC"], "true")
+        self.assertEqual(job["env"]["WITH_BAMBU"], "false")
         self.assertNotIn("arm/v7", text)
         self.assertNotIn("setup-qemu", text.lower())
+        self.assertNotIn("-light", text)
         build = next(step for step in job["steps"] if step.get("name") == "Build image once (no push)")
         self.assertIn('--platform "$PLATFORM"', build["run"])
         self.assertIn('--load -t "$LOCAL_IMAGE"', build["run"])
 
-    def test_publish_manifest_job_combines_accepted_digests_into_the_four_tags(self):
+    def test_publish_manifest_job_combines_accepted_digests_into_the_two_tags(self):
         workflow = yaml.load((ROOT / ".github" / "workflows" / "docker-publish.yml").read_text(),
                              Loader=yaml.BaseLoader)
         manifest = workflow["jobs"]["manifest"]
@@ -325,13 +330,13 @@ class DockerReleaseContract(unittest.TestCase):
                       if step.get("name") == "Create and push the multi-arch manifests")
         run = create["run"]
         self.assertIn("docker buildx imagetools create", run)
-        for tag in ('"$IMAGE:$PUBLISH_VERSION"', '"$IMAGE:latest"',
-                    '"$IMAGE:$PUBLISH_VERSION-light"', '"$IMAGE:latest-light"'):
+        for tag in ('"$IMAGE:$PUBLISH_VERSION"', '"$IMAGE:latest"'):
             with self.subTest(tag=tag):
                 self.assertIn(f"-t {tag}", run)
-        for digest_var in ("full_amd64", "full_arm64", "light_amd64", "light_arm64"):
+        for digest_var in ("full_amd64", "full_arm64"):
             with self.subTest(digest=digest_var):
                 self.assertIn(f'"$IMAGE@${digest_var}"', run)
+        self.assertNotIn("-light", run)
         # Manifest digests land in the step summary and the evidence.
         self.assertIn("GITHUB_STEP_SUMMARY", run)
         self.assertIn("evidence/manifests.txt", run)
@@ -339,16 +344,20 @@ class DockerReleaseContract(unittest.TestCase):
         self.assertTrue(download["uses"].startswith("actions/download-artifact@"))
         self.assertEqual(download["with"]["pattern"], "digest-*")
 
-    def test_light_variant_is_the_no_slicer_combined_image(self):
-        """Light = bot + listener + bundled Spoolman + OpenSCAD, no slicers.
+    def test_no_light_variant_and_no_orca_build_still_fails_closed(self):
+        """#353: no workflow publishes or validates a -light image any more.
 
-        The definition lives in the publish matrix (WITH_ORCA=false,
-        WITH_BAMBU=false); the runtime behaviour it relies on is the existing
-        no-Orca behaviour: non-slicing commands run, slicing fails closed
-        (tests/docker/image_probe.py proves no G-code is written).
+        A locally built WITH_ORCA=false image (a build option, not a shipped
+        variant) keeps the existing no-Orca behaviour: non-slicing commands
+        run, slicing fails closed (tests/docker/image_probe.py proves no
+        G-code is written).
         """
+        for name in ("docker-publish.yml", "nightly.yml", "docker-image-validation.yml"):
+            with self.subTest(workflow=name):
+                text = (ROOT / ".github" / "workflows" / name).read_text()
+                self.assertNotIn("-light", text)
+                self.assertNotIn("variant", text)
         docs = (ROOT / "docs" / "DOCKER.md").read_text()
-        self.assertIn("VERSION-light", docs)
         self.assertIn("WITH_ORCA=false", docs)
         self.assertIn("WITH_BAMBU=false", docs)
         probe = (ROOT / "tests" / "docker" / "image_probe.py").read_text()

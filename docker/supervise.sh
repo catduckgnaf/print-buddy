@@ -49,8 +49,8 @@ else
     esac
 fi
 # go2rtc (#246 stage 1) normalises the camera source on loopback for
-# in-container timelapse capture. It exists only in the full image (the
-# #192 light image has no binary, so the whole block is skipped there) and
+# in-container timelapse capture. A WITH_GO2RTC=false build has no binary
+# (so the whole block is skipped there); the published image includes it. It
 # runs only when [timelapse] capture_enabled is set. The gate resolves the
 # effective configuration (print_buddy.go2rtc), never an environment
 # guess: 0 = start it, 3 = not started (capture disabled, or no camera

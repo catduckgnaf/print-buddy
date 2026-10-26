@@ -6,7 +6,7 @@ name: Nightly Docker image to GHCR
 # so a red or unfinished main is never promoted and never published. The
 # build matrix, acceptance and push-by-digest flow are the release
 # publisher's (docker-publish.yml); only the source and the tags differ.
-# Published tags: `nightly` (full) and `nightly-light` (light). Release tags
+# Published tag: `nightly`. Release tags
 # and `latest` are never touched by this workflow.
 on:
   schedule:
@@ -101,16 +101,15 @@ jobs:
           } >> "$GITHUB_STEP_SUMMARY"
 
   build:
-    name: Build ${{ matrix.variant }} (${{ matrix.arch }})
+    name: Build (${{ matrix.arch }})
     needs: promote
     # A scheduled run with an unmoved nightly branch has nothing new
     # to build; a manual dispatch always builds.
     if: github.event_name == 'workflow_dispatch' || needs.promote.outputs.changed == 'true'
     # Native runners only: arm64 builds run on a real arm64 runner, never under
-    # QEMU emulation. The matrix is the supported platform/variant matrix:
-    # full = WITH_ORCA=true + WITH_GO2RTC=true, light = both false (#246: the light
-    # image also excludes go2rtc and the VAAPI stack), Bambu Studio stays out of
-    # the published matrix (WITH_BAMBU=false on every leg).
+    # QEMU emulation. One image is published (#353): the full image
+    # (WITH_ORCA=true + WITH_GO2RTC=true) on linux/amd64 and linux/arm64.
+    # Bambu Studio stays out of the published image (WITH_BAMBU=false).
     strategy:
       fail-fast: false
       matrix:
@@ -118,31 +117,9 @@ jobs:
           - arch: amd64
             platform: linux/amd64
             runner: ubuntu-24.04
-            variant: full
-            with_orca: "true"
-            with_go2rtc: "true"
-            with_bambu: "false"
           - arch: arm64
             platform: linux/arm64
             runner: ubuntu-24.04-arm
-            variant: full
-            with_orca: "true"
-            with_go2rtc: "true"
-            with_bambu: "false"
-          - arch: amd64
-            platform: linux/amd64
-            runner: ubuntu-24.04
-            variant: light
-            with_orca: "false"
-            with_go2rtc: "false"
-            with_bambu: "false"
-          - arch: arm64
-            platform: linux/arm64
-            runner: ubuntu-24.04-arm
-            variant: light
-            with_orca: "false"
-            with_go2rtc: "false"
-            with_bambu: "false"
     runs-on: ${{ matrix.runner }}
     permissions:
       contents: read
@@ -156,12 +133,11 @@ jobs:
       ARCH: ${{ matrix.arch }}
       RUNNER_LABEL: ${{ matrix.runner }}
       PLATFORM: ${{ matrix.platform }}
-      VARIANT: ${{ matrix.variant }}
-      WITH_ORCA: ${{ matrix.with_orca }}
-      WITH_GO2RTC: ${{ matrix.with_go2rtc }}
-      WITH_BAMBU: ${{ matrix.with_bambu }}
+      WITH_ORCA: "true"
+      WITH_GO2RTC: "true"
+      WITH_BAMBU: "false"
       SPOOLMAN_MODE: included
-      LOCAL_IMAGE: print-buddy-nightly-candidate:${{ matrix.variant }}-${{ matrix.arch }}
+      LOCAL_IMAGE: print-buddy-nightly-candidate:${{ matrix.arch }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
         with:
@@ -179,11 +155,10 @@ jobs:
           {
             echo "source_sha=$NIGHTLY_SHA"
             echo "version=$nightly_version"
-            echo "arch=$ARCH platform=$PLATFORM variant=$VARIANT runner=$RUNNER_LABEL"
+            echo "arch=$ARCH platform=$PLATFORM runner=$RUNNER_LABEL"
             echo "app_channel=$APP_CHANNEL with_orca=$WITH_ORCA with_go2rtc=$WITH_GO2RTC with_bambu=$WITH_BAMBU spoolman=$SPOOLMAN_MODE"
           } | tee evidence/pins.txt
       - name: Free runner disk for the slicer build
-        if: matrix.with_orca == 'true'
         run: |
           df -h /
           sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL
@@ -215,7 +190,6 @@ jobs:
             docker image inspect --format 'platform={{.Os}}/{{.Architecture}} size={{.Size}}' "$LOCAL_IMAGE"
           } | tee evidence/identity.txt
       - name: Headless slice with each bundled Orca channel
-        if: matrix.with_orca == 'true'
         run: |
           set -euo pipefail
           channels="stable alpha"
@@ -245,7 +219,7 @@ jobs:
           # build leg. Tags are created later, by the manifest job, from digests.
           docker buildx build --platform "$PLATFORM" --progress=plain \
             --output "type=image,name=$IMAGE,push-by-digest=true,name-canonical=true,push=true" \
-            --metadata-file "evidence/metadata-$VARIANT-$ARCH.json" \
+            --metadata-file "evidence/metadata-$ARCH.json" \
             --build-arg "APP_CHANNEL=$APP_CHANNEL" \
             --build-arg "WITH_ORCA=$WITH_ORCA" \
             --build-arg "WITH_GO2RTC=$WITH_GO2RTC" \
@@ -254,17 +228,16 @@ jobs:
             --label "org.opencontainers.image.version=$NIGHTLY_VERSION" \
             --label "org.opencontainers.image.revision=$NIGHTLY_SHA" \
             . 2>&1 | tee evidence/push.log
-          digest=$(python3 -c "import json; print(json.load(open('evidence/metadata-$VARIANT-$ARCH.json'))['containerimage.digest'])")
+          digest=$(python3 -c "import json; print(json.load(open('evidence/metadata-$ARCH.json'))['containerimage.digest'])")
           [[ "$digest" =~ ^sha256:[0-9a-f]{64}$ ]] || {
             echo "Could not read the pushed image digest" >&2
             exit 1
           }
           mkdir -p digest-out
-          printf '%s\n' "$digest" | tee "digest-out/digest-$VARIANT-$ARCH.txt" evidence/digest.txt
+          printf '%s\n' "$digest" | tee "digest-out/digest-$ARCH.txt" evidence/digest.txt
           {
             echo "### GHCR image pushed by digest"
             echo
-            echo "- Variant: \`$VARIANT\`"
             echo "- Platform: \`$PLATFORM\`"
             echo "- Digest: \`$IMAGE@$digest\`"
             echo "- Source revision: \`$NIGHTLY_SHA\`"
@@ -273,14 +246,14 @@ jobs:
         if: needs.promote.outputs.publish == 'true' && steps.publish.outcome == 'success'
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9  # v7.0.2
         with:
-          name: digest-${{ matrix.variant }}-${{ matrix.arch }}
+          name: digest-${{ matrix.arch }}
           path: digest-out/
           retention-days: 30
       - name: Upload build and acceptance evidence
         if: always()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9  # v7.0.2
         with:
-          name: docker-nightly-${{ github.run_id }}-${{ github.run_attempt }}-${{ matrix.variant }}-${{ matrix.arch }}
+          name: docker-nightly-${{ github.run_id }}-${{ github.run_attempt }}-${{ matrix.arch }}
           path: evidence/
           retention-days: 30
 
@@ -315,33 +288,27 @@ jobs:
           set -euo pipefail
           mkdir -p evidence
           read_digest() {
-            local file="digests/digest-$1-$2.txt"
-            [[ -f "$file" ]] || { echo "missing pushed digest for variant $1 arch $2" >&2; exit 1; }
+            local file="digests/digest-$1.txt"
+            [[ -f "$file" ]] || { echo "missing pushed digest for arch $1" >&2; exit 1; }
             local digest
             digest=$(tr -d '[:space:]' < "$file")
             [[ "$digest" =~ ^sha256:[0-9a-f]{64}$ ]] || { echo "invalid digest in $file" >&2; exit 1; }
             printf '%s' "$digest"
           }
-          full_amd64=$(read_digest full amd64)
-          full_arm64=$(read_digest full arm64)
-          light_amd64=$(read_digest light amd64)
-          light_arm64=$(read_digest light arm64)
+          full_amd64=$(read_digest amd64)
+          full_arm64=$(read_digest arm64)
           {
             echo "full_amd64=$full_amd64"
             echo "full_arm64=$full_arm64"
-            echo "light_amd64=$light_amd64"
-            echo "light_arm64=$light_arm64"
           } | tee evidence/digests.txt
-          # Full variant: the floating nightly tag. Light variant: nightly-light.
+          # One image (#353): the floating nightly tag.
           # Release tags and latest are owned by docker-publish.yml, never this workflow.
           docker buildx imagetools create -t "$IMAGE:nightly" \
             "$IMAGE@$full_amd64" "$IMAGE@$full_arm64" 2>&1 | tee evidence/manifest-nightly.log
-          docker buildx imagetools create -t "$IMAGE:nightly-light" \
-            "$IMAGE@$light_amd64" "$IMAGE@$light_arm64" 2>&1 | tee evidence/manifest-nightly-light.log
           {
             echo "### GHCR multi-arch manifests published"
             echo
-            for tag in nightly nightly-light; do
+            for tag in nightly; do
               manifest_digest="sha256:$(docker buildx imagetools inspect --raw "$IMAGE:$tag" | sha256sum | cut -d ' ' -f 1)"
               echo "- \`$IMAGE:$tag\` manifest digest: \`$manifest_digest\`"
               echo "$tag=$manifest_digest"

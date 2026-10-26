@@ -107,3 +107,101 @@ max_height_mm = 256.0
 filament_slots = 1
 profile = "print_buddy/printers/bambulab/p1s.py"
 notes = "Slicing, fit checks and G-code validation, plus opt-in read-only LAN status when configured."
+
+[[printer]]
+key = "bambulab.a1mini"
+label = "Bambu Lab A1 mini"
+vendor = "bambulab"
+firmware = "Bambu Lab (offline handoff only)"
+firmware_family = "none"
+connection = "bambulab_lan"
+kinematics = "Cartesian (moving bed)"
+bed_mm = [180.0, 180.0]
+max_height_mm = 180.0
+filament_slots = 1
+profile = "print_buddy/printers/bambulab/a1mini.py"
+notes = "180 mm sibling of the A1 with an AMS Lite that is not driven. Same opt-in LAN path as every Bambu Lab model."
+
+[[printer]]
+key = "bambulab.p1p"
+label = "Bambu Lab P1P"
+vendor = "bambulab"
+firmware = "Bambu Lab (offline handoff only)"
+firmware_family = "none"
+connection = "bambulab_lan"
+kinematics = "CoreXY"
+bed_mm = [256.0, 256.0]
+max_height_mm = 256.0
+filament_slots = 1
+profile = "print_buddy/printers/bambulab/p1p.py"
+notes = "Open-frame P1/X1 platform printer; Orca slices to 250 mm with an 18 x 28 mm front-left exclusion. AMS is not driven."
+
+[[printer]]
+key = "bambulab.x1"
+label = "Bambu Lab X1"
+vendor = "bambulab"
+firmware = "Bambu Lab (offline handoff only)"
+firmware_family = "none"
+connection = "bambulab_lan"
+kinematics = "CoreXY"
+bed_mm = [256.0, 256.0]
+max_height_mm = 256.0
+filament_slots = 1
+profile = "print_buddy/printers/bambulab/x1.py"
+notes = "Original X1; Orca slices to 250 mm with an 18 x 28 mm front-left exclusion. AMS is not driven."
+
+[[printer]]
+key = "bambulab.x1c"
+label = "Bambu Lab X1 Carbon"
+vendor = "bambulab"
+firmware = "Bambu Lab (offline handoff only)"
+firmware_family = "none"
+connection = "bambulab_lan"
+kinematics = "CoreXY"
+bed_mm = [256.0, 256.0]
+max_height_mm = 256.0
+filament_slots = 1
+profile = "print_buddy/printers/bambulab/x1c.py"
+notes = "X1 Carbon with hardened steel stock hotend; Orca slices to 250 mm with an 18 x 28 mm front-left exclusion. AMS is not driven."
+
+[[printer]]
+key = "bambulab.x1e"
+label = "Bambu Lab X1E"
+vendor = "bambulab"
+firmware = "Bambu Lab (offline handoff only)"
+firmware_family = "none"
+connection = "bambulab_lan"
+kinematics = "CoreXY"
+bed_mm = [256.0, 256.0]
+max_height_mm = 256.0
+filament_slots = 1
+profile = "print_buddy/printers/bambulab/x1e.py"
+notes = "Enterprise X1E with Ethernet and heated chamber (chamber not driven); Orca slices to 250 mm. AMS is not driven."
+
+[[printer]]
+key = "bambulab.p2s"
+label = "Bambu Lab P2S"
+vendor = "bambulab"
+firmware = "Bambu Lab (offline handoff only)"
+firmware_family = "none"
+connection = "bambulab_lan"
+kinematics = "CoreXY"
+bed_mm = [256.0, 256.0]
+max_height_mm = 256.0
+filament_slots = 1
+profile = "print_buddy/printers/bambulab/p2s.py"
+notes = "P1S successor; Orca uses the full 256 mm height and no bed exclusion. AMS 2 Pro is not driven beyond a single path."
+
+[[printer]]
+key = "bambulab.h2s"
+label = "Bambu Lab H2S"
+vendor = "bambulab"
+firmware = "Bambu Lab (offline handoff only)"
+firmware_family = "none"
+connection = "bambulab_lan"
+kinematics = "CoreXY"
+bed_mm = [340.0, 320.0]
+max_height_mm = 340.0
+filament_slots = 1
+profile = "print_buddy/printers/bambulab/h2s.py"
+notes = "Single-nozzle H2 model with a 350 C hotend. Dual-nozzle H2D/H2C are not yet supported (#127 Stage 2)."

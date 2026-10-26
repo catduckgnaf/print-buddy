@@ -1,10 +1,28 @@
-# Bambu Lab printers (A1 and P1S; slicing offline, optional read-only LAN status)
+# Bambu Lab printers (all single-nozzle models; slicing, optional LAN status, upload and gated print start)
 
 [Documentation home](README.md) · [Printer profiles](PRINTER-PROFILES.md)
 
 Select the A1 with `printer.model: bambulab.a1`. Print Buddy slices for the A1, checks fit and G-code, and can package the result. It connects to the printer only when you configure LAN status (see [LAN status](#lan-status-read-only-opt-in)), and it uploads or starts a print only under the further opt-in described in [Printing over LAN](#printing-over-lan-opt-in). Nothing here has been tested on an A1 — not the slicing path, and not the LAN path.
 
 Select the P1S with `printer.model: bambulab.p1s`. Like every Bambu Lab printer it slices with Bambu Studio by default (`printer.slicer: orca` opts out). It works the same way, and has not been tested on a P1S either. Its differences: OrcaSlicer's P1S profile slices to 250 mm high (Bambu lists 256 mm), an 18 × 28 mm area at the front left of the bed is kept clear, and the vendor start and end moves use the front purge lane up to Y = 265. The AMS is not used; P1S jobs are single color. Generate its profiles with `--printer p1s`.
+
+## All single-nozzle models (#127 Stage 1)
+
+Every current single-nozzle Bambu Lab printer is a model on the same vendor, with the same LAN configuration (`[bambu] lan_*` keys are per-installation, not per-model), the same delivery options, and profiles generated the same way (`--printer <name>`). None has been tested on hardware.
+
+| Model | Key | Bed (mm) | Orca height | Bed exclusion | Notes |
+|---|---|---|---|---|---|
+| A1 mini | `bambulab.a1mini` | 180 × 180 | 180 | none | AMS Lite, not driven |
+| P1P | `bambulab.p1p` | 256 × 256 | 250 | 18 × 28 front-left | Open frame as shipped |
+| X1 | `bambulab.x1` | 256 × 256 | 250 | 18 × 28 front-left | Stainless stock hotend |
+| X1 Carbon | `bambulab.x1c` | 256 × 256 | 250 | 18 × 28 front-left | Hardened steel stock hotend |
+| X1E | `bambulab.x1e` | 256 × 256 | 250 | 18 × 28 front-left | Ethernet; heated chamber not driven |
+| P2S | `bambulab.p2s` | 256 × 256 | 256 | none | AMS 2 Pro, single path only |
+| H2S | `bambulab.h2s` | 340 × 320 | 340 | none | 350 °C hotend; single nozzle |
+
+Each model's facts (profile names, the SHA-256 identity of its OrcaSlicer 2.4.2 profiles, exclusions, motion envelope, materials) live in `facts.py` beside the A1's and P1S's, derived the same way: the identities were computed by running Print Buddy's own profile flattening over OrcaSlicer v2.4.2 at the pinned commit, a pipeline that reproduces the recorded A1 and P1S identities exactly.
+
+**Not supported: the dual-nozzle models** — H2D, H2D Pro, H2C and X2D (#127 Stage 2). Their Orca machine profiles carry two `nozzle_diameter` entries and a narrower dual-tool width; the Bambu adapter is single-path (single tray mapping, tool changes refused), so claiming them today would mis-slice dual-tool jobs. The A2L has no profile in the pinned OrcaSlicer 2.4.2 BBL tree and joins when a newer OrcaSlicer identity is pinned and checked.
 
 Print Buddy ships no A1 slicer profiles. Before the first A1 slice, generate them from your own OrcaSlicer (see [Set up the A1 profiles](#set-up-the-a1-profiles)).
 
@@ -36,7 +54,7 @@ The A1 is one printer module under the existing Bambu Lab vendor profile. See [P
 | `print_buddy/printers/bambulab/profiles.py` | Generates the A1 templates from an installed OrcaSlicer and re-verifies them before every use |
 | `<hermes_home>/state/orca-profiles/bambulab_a1/` | The generated templates, on the operator's machine only (`MODEL.generated_templates`) |
 
-The P1S is `bambulab/p1s.py`: its facts in `facts.P1S` (profile names, checked identity, 250 mm Orca height, bed exclusion, motion envelope), a `BambuAdapter` subclass and a `MODEL` with `generated_templates=True`. Its templates go to `<hermes_home>/state/orca-profiles/bambulab_p1s/`.
+The P1S is `bambulab/p1s.py`: its facts in `facts.P1S` (profile names, checked identity, 250 mm Orca height, bed exclusion, motion envelope), a `BambuAdapter` subclass and a `MODEL` with `generated_templates=True`. Its templates go to `<hermes_home>/state/orca-profiles/bambulab_p1s/`. Every Stage 1 model follows exactly this shape: `bambulab/<model>.py`, a facts block in `facts.py`, and templates under `<hermes_home>/state/orca-profiles/bambulab_<model>/`.
 
 ## What works and what does not
 
@@ -47,12 +65,14 @@ The P1S is `bambulab/p1s.py`: its facts in `facts.P1S` (profile names, checked i
 | G-code validation | Supported: after slicing, before packaging, at `print-now` and `verify-gcode` |
 | Delivery | `discord` and `bambu_handoff` by default; `printer` is offered but opt-in (add it to `[delivery] methods`). A `.gcode.3mf` package is built in Bambu Studio's export layout. Opening it in Bambu Studio or Bambu Handy, printing it from SD, or printing a plain `.gcode` on an A1 has **not** been tested |
 | Print | Opt-in (#187 stage d): with `printer` in `[delivery] methods`, LAN configured and the printer in Developer Mode, `print-now` uploads the package and starts it through every Print Buddy gate — see [Printing over LAN](#printing-over-lan-opt-in). Without the opt-in, `print-now` verifies the file, then refuses; the bed-clear approval is not used up |
-| Bambu Studio as slicer | Default for the A1 and P1S, like every Bambu Lab printer; `[printer] slicer: orca` opts out. Its output passes the same A1 guard. No real Bambu Studio A1 slice has been run yet |
+| Bambu Studio as slicer | Default for every Bambu Lab printer; `[printer] slicer: orca` opts out. Its output passes the same A1 guard. No real Bambu Studio A1 slice has been run yet |
 | Live telemetry | Read-only, opt-in: with `[bambu] lan_host` + `lan_serial` set and the access code supplied as a secret, the health check reads one MQTT status snapshot (state, progress, temperatures) — see [LAN status](#lan-status-read-only-opt-in). **Not tested on a printer.** No listener, no camera |
 | Upload | FTPS to the printer's storage root with the remote size read back for verification (#187 stage c); used by the LAN print path, never on its own |
 | Print control | Start via the gated print path (below). Pause/resume/stop commands exist on the LAN client (`adapter.control`) for the operator tooling that drives them; the Discord print-control module is external to this repository and does not call them yet |
 | AMS Lite multi-color | Not supported: tool changes are refused, as are multi-color, multi-part and multi-plate sources |
 | P1S | Supported offline, like the A1: `bambulab.p1s`, with profiles generated by `--printer p1s` from OrcaSlicer 2.4.2. Not tested on a P1S |
+| A1 mini, P1P, X1, X1 Carbon, X1E, P2S, H2S | Supported the same way (#127 Stage 1): one model module and one facts block each, profiles generated by `--printer a1mini` / `p1p` / `x1` / `x1c` / `x1e` / `p2s` / `h2s`. Not tested on hardware |
+| H2D, H2D Pro, H2C, X2D | **Not supported** (dual nozzle; #127 Stage 2) |
 
 Supported firmware and authentication modes for live use: LAN Mode with the printer's LAN access code for status (the setup wizard collects both); printing additionally requires Developer Mode — see [Printing over LAN](#printing-over-lan-opt-in). `services.moonraker_url` and `services.octoprint_url` must stay empty for a Bambu Lab model; settings refuse to load otherwise. The Moonraker listener, camera watchdog, timelapse download and cold pull do not apply.
 

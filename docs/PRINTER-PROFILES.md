@@ -30,6 +30,9 @@ print_buddy/printers/
     a1.py                MODEL   bambulab.a1: 256 mm bed, 0.4 mm nozzle, single filament, slicing offline
                                  (adapter.py, guard.py, facts.py, profiles.py; see BAMBU-LAB.md)
     p1s.py               MODEL   bambulab.p1s: 256 mm bed, 250 mm Orca height, 0.4 mm nozzle, single filament, slicing offline
+    a1mini.py, p1p.py, x1.py, x1c.py, x1e.py, p2s.py, h2s.py
+                         MODEL   #127 Stage 1: the remaining single-nozzle models, same shape as the P1S
+                                 (dual-nozzle H2D/H2D Pro/H2C/X2D are Stage 2 and absent)
 templates/orca/<folder>/ machine.json, process.json, filament.json per printer; a model with
                          generated_templates (the A1) ships none: <state>/orca-profiles/<folder>
 ```
@@ -142,12 +145,12 @@ Every file is one message with one `MEDIA:` attachment, labelled "Plate n of m".
 
 | Capability | Status |
 |---|---|
-| Vendor profile, settings, delivery options | Implemented. Printer profiles: A1 and P1S; slicing is offline, LAN status is opt-in and read-only |
+| Vendor profile, settings, delivery options | Implemented. Printer profiles: A1, A1 mini, P1P, P1S, P2S, X1, X1 Carbon, X1E, H2S (every single-nozzle model); LAN status/upload/start are opt-in (see BAMBU-LAB.md) |
 | Start-code guard | Implemented. After slicing, and again before packaging, every G-code line for a Bambu printer must be a plain G, M or T code. Klipper or ZMod macros (`PRINT_START`, `START_PRINT ... MESH=`, `CHANGE_ZCOLOR`, `LOAD_ZOFFSET`, `BED_MESH_*`) block the slice or the package |
 | `.gcode.3mf` packaging | Implemented, offline and deterministic. Contents: `Metadata/plate_<n>.gcode`, its upper-case MD5 in `Metadata/plate_<n>.gcode.md5`, `Metadata/slice_info.config` with the plate index and nozzle, and an empty `3D/3dmodel.model`, laid out the way Bambu Studio exports a sliced plate. **Not yet verified on Bambu hardware or in Bambu Studio.** Thumbnails and `printer_model_id` are not written |
 | Discord delivery | Implemented. Bambu Lab's primary format is `.gcode.3mf`, so "Send the files here" sends the packages |
 | Bambu Studio as the primary slicer | Implemented, opt-in with `printer.slicer: bambu_studio`, allowed only by the Bambu Lab profile. Runs the configured `[bambu] command` (Flathub Bambu Studio with `--unshare=network`) with the same CLI flags as the existing fallback: `--datadir`, `--load-settings`, `--load-filaments`, `--arrange`/`--orient`, `--slice 0`, `--outputdir`. Orca is not run and there is no fallback. Every Print Buddy guard still applies to its output. The real-slicer CI job covers OrcaSlicer only, so this path is tested with a mocked CLI |
-| LAN, FTPS or cloud upload | **Unsupported.** No upload client exists. "Package for Bambu" says nothing was uploaded. Read-only LAN MQTT *status* is separate — see the telemetry row in [BAMBU-LAB](BAMBU-LAB.md) |
+| LAN upload | Implemented opt-in (#187 stage c): FTPS upload with size readback, used by the gated LAN print path. Cloud upload is unsupported. Read-only LAN MQTT *status* is separate — see the telemetry row in [BAMBU-LAB](BAMBU-LAB.md) |
 | Starting a print | Opt-in (#187 stage d): the Start button appears only when the operator adds `printer` to `[delivery] methods`, with LAN configured and the printer in Developer Mode; the start then runs every gate (readiness twice, bed-clear approval, verified upload, telemetry confirmation). Otherwise no Start button is offered — open the package in Bambu Studio or Bambu Handy, or copy it to the SD card |
 | Pausing or stopping a print | Commands exist on the LAN client; the external Discord print-control module does not call them yet |
 | Telemetry | Read-only and opt-in: with `[bambu] lan_host`/`lan_serial` configured, the health check reads one LAN MQTT status snapshot. No listener. **Not tested on a printer** |

@@ -1,4 +1,8 @@
-"""Bambu Lab vendor profile: slicing and packaging, plus opt-in read-only LAN telemetry (#187 stage b).
+"""Bambu Lab vendor profile: slicing and packaging, plus opt-in LAN telemetry, upload and gated print start (#187, #127).
+
+Models: a1, a1mini, p1p, p1s, p2s, x1, x1c, x1e, h2s — every current single-nozzle Bambu Lab printer.
+Dual-nozzle models (H2D, H2D Pro, H2C, X2D) are #127 Stage 2: their profiles carry two nozzles and
+the single-path adapter must not claim them.
 
 Print Buddy slices, validates and packages; a person moves the file. When the operator configures
 [bambu] lan_host/lan_serial and supplies the LAN access code as a secret, the adapter can also read

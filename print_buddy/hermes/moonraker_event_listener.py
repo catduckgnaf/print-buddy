@@ -35,6 +35,7 @@ from . import moonraker_discord_announcements as announcer
 from . import discord_print_summary as print_summary
 from . import plan_timelapse
 from . import print_control
+from . import visual_watch as _visual_watch
 INTERRUPTED_HINT = print_control.INTERRUPTED_HINT
 try:
     from . import maintenance as maintenance_state
@@ -1086,8 +1087,17 @@ def _vision_chat_url():
     return _config.require(_config.service_url("vision_chat_url"), "services.vision_chat_url")
 
 
-VISUAL_VERDICTS = {"ok", "air", "spaghetti", "detached", "empty_idle", "uncertain"}
-VISUAL_ALERT_VERDICTS = {"air", "spaghetti", "detached", "uncertain"}
+# The visual-watch implementation is shared with the Bambu camera watch (#294):
+# these names are the shared module's, re-exported so existing references work.
+VISUAL_VERDICTS = _visual_watch.VISUAL_VERDICTS
+VISUAL_ALERT_VERDICTS = _visual_watch.VISUAL_ALERT_VERDICTS
+VISUAL_HEALTHY_VERDICTS = _visual_watch.VISUAL_HEALTHY_VERDICTS
+VISUAL_SENSITIVITY = _visual_watch.VISUAL_SENSITIVITY
+_visual_level = _visual_watch._visual_level
+_visual_profile = _visual_watch._visual_profile
+_frame_changed = _visual_watch._frame_changed
+_strip_json_fence = _visual_watch._strip_json_fence
+VisualPrintWatch = _visual_watch.VisualPrintWatch
 _VISION_BASE = _config.service_url("vision_chat_url")
 _VISION_MODEL = str(_config.cfg()["vision"]["model"])
 _VISION_CONTEXT = (
@@ -1114,76 +1124,16 @@ def _camera_snapshot_bytes():
     return image
 
 
-# Camera stall alert presets for [visual_watch] sensitivity, 1 (quietest) to 5 (loudest).
-# Level 3 is the original hard-coded behavior. diff is the mean 64x48 grayscale difference a
-# frame needs to count as changed; stall_layers is how many layers an unchanged frame may span;
-# vision_veto lets an "ok" or "safe" vision verdict cancel a pixel-diff stall alert.
-VISUAL_SENSITIVITY = {
-    1: {"diff": 1.5, "stall_layers": 8, "periodic_s": 1800, "vision_veto": True},
-    2: {"diff": 2.0, "stall_layers": 5, "periodic_s": 1200, "vision_veto": True},
-    3: {"diff": 3.0, "stall_layers": 3, "periodic_s": 900, "vision_veto": False},
-    4: {"diff": 4.0, "stall_layers": 3, "periodic_s": 600, "vision_veto": False},
-    5: {"diff": 5.0, "stall_layers": 2, "periodic_s": 450, "vision_veto": False},
-}
-VISUAL_HEALTHY_VERDICTS = {"ok", "safe"}
-
-
-def _visual_level(level=None):
-    """The configured sensitivity level, 1 to 5 (3 when unset)."""
-    if level is None:
-        level = _config.cfg().get("visual_watch", {}).get("sensitivity", 3)
-    level = int(level)
-    if level not in VISUAL_SENSITIVITY:
-        raise ValueError(f"visual_watch sensitivity must be 1 to 5, got {level!r}")
-    return level
-
-
-def _visual_profile(level=None):
-    return VISUAL_SENSITIVITY[_visual_level(level)]
-
-
-def _frame_changed(before, after, threshold=None):
-    """Cheap whole-frame perceptual difference; false means visually unchanged."""
-    from PIL import Image, ImageChops, ImageStat
-    import io as _io
-    a = Image.open(_io.BytesIO(before)).convert("L").resize((64, 48))
-    b = Image.open(_io.BytesIO(after)).convert("L").resize((64, 48))
-    if threshold is None:
-        threshold = _visual_profile()["diff"]
-    return ImageStat.Stat(ImageChops.difference(a, b)).mean[0] >= threshold
 
 
 _VISION_CONTEXT = "Printer: Flashforge AD5X, enclosed, smooth PEI plate. Reply JSON verdict ok|air|spaghetti|detached|empty_idle|uncertain. "
 
 
-def _strip_json_fence(text):
-    raw = str(text or "").strip()
-    if raw.startswith("```"):
-        raw = raw.split("\n", 1)[-1].rsplit("```", 1)[0]
-    return raw.strip()
-
-
 def _visual_verdict(image, prompt):
-    endpoint = os.environ.get("PRINT_VISION_URL")
-    try:
-        if endpoint:
-            payload = json.dumps({"image": __import__("base64").b64encode(image).decode(), "prompt": prompt}).encode()
-            req = urllib.request.Request(endpoint, data=payload, headers={"Content-Type": "application/json"})
-            with urllib.request.urlopen(req, timeout=30) as response:
-                result = json.loads(response.read())
-            return str(result.get("verdict", "uncertain")).casefold(), str(result.get("reason", ""))[:300]
-        key = _profile_env_value("CLIPROXY_API_KEY")
-        if not key: return "uncertain", "vision key is not configured"
-        encoded = __import__("base64").b64encode(image).decode()
-        body = {"model": _VISION_MODEL, "temperature": 0, "max_tokens": 200,
-                "messages": [{"role": "user", "content": [{"type": "text", "text": _VISION_CONTEXT + str(prompt)},
-                {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{encoded}"}}]}]}
-        req = urllib.request.Request(_vision_chat_url(),
-            data=json.dumps(body).encode(), headers={"Authorization": f"Bearer {key}", "Content-Type": "application/json"})
-        with urllib.request.urlopen(req, timeout=60) as response: result = json.loads(response.read())
-        parsed = json.loads(_strip_json_fence(result["choices"][0]["message"]["content"]))
-        return str(parsed.get("verdict", "uncertain")).casefold(), str(parsed.get("reason", ""))[:300]
-    except Exception as exc: return "uncertain", f"vision check failed: {exc!r}"
+    """The shared verdict call (visual_watch.visual_verdict) with this listener's values."""
+    return _visual_watch.visual_verdict(
+        image, prompt, chat_url=_vision_chat_url, model=_VISION_MODEL,
+        api_key=lambda: _profile_env_value("CLIPROXY_API_KEY"), context=_VISION_CONTEXT)
 
 
 def _visual_layer(stats):
@@ -1226,58 +1176,6 @@ def _slot_bools(slots):
         if slot in (1, 2, 3, 4) and isinstance(value, bool):
             out[slot] = value
     return out
-
-
-class VisualPrintWatch:
-    """Pure trigger policy for periodic visual checks; never controls the printer."""
-    def __init__(self, sensitivity=None):
-        self.sensitivity = _visual_level(sensitivity)
-        self.profile = VISUAL_SENSITIVITY[self.sensitivity]
-        self.reset()
-
-    def reset(self):
-        self.last_layer = None
-        self.last_check_at = 0.0
-        self.last_snapshot = None
-        self.last_snapshot_layer = 0
-        self.progress_seen_layer = 0
-        self.alerted_stall_layer = None
-        self.layer2_checked = False
-        self.layer5_checked = False
-        self.last_alert_at = 0.0
-
-    def due(self, layer, now, *, snapshot_changed=None):
-        if not isinstance(layer, int) or layer < 1:
-            return None
-        if layer >= 2 and not self.layer2_checked:
-            self.layer2_checked = True
-            self.last_check_at = now
-            return "layer2"
-        if layer >= 5 and not self.layer5_checked:
-            self.layer5_checked = True
-            self.last_check_at = now
-            return "layer5"
-        stall_layers = self.profile["stall_layers"]
-        if now - self.last_check_at >= self.profile["periodic_s"]:
-            self.last_check_at = now
-            reason = "stalled_layers" if snapshot_changed is False and self.last_layer is not None and layer - self.last_layer >= stall_layers else "periodic"
-            return reason
-        if snapshot_changed is False and self.last_snapshot_layer and layer - self.last_snapshot_layer >= stall_layers and self.alerted_stall_layer is None:
-            self.alerted_stall_layer = layer
-            self.last_layer = layer
-            self.last_check_at = now
-            return "stalled_layers"
-        if snapshot_changed is None and layer >= 5 and self.alerted_stall_layer is None and self.last_snapshot_layer and layer - self.last_snapshot_layer >= stall_layers:
-            self.last_layer = layer
-            return "layer_progress"
-        return None
-
-    def record(self, layer, now, snapshot=None):
-        if isinstance(layer, int):
-            self.last_layer = layer
-        self.last_check_at = now
-        self.last_snapshot = snapshot
-        if isinstance(layer, int): self.last_snapshot_layer = layer
 
 
 class MidPrintSlotTracker:

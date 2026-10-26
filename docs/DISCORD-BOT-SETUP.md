@@ -177,7 +177,7 @@ and no camera feed leaves your network.
 | Privileged intents error or typed messages ignored | Enable **Message Content Intent** on the Developer Portal's **Bot** page; restart the bot deliberately |
 | Bot online but no replies / missing permissions | Confirm channel and user IDs, then check channel overrides for View Channel, Send Messages and Read Message History; check Attach Files/Embed Links for attachments |
 | Slash commands absent | Confirm `applications.commands` invite scope and `bot.sync_commands: true`; inspect startup errors. Allow Discord time to propagate; typed `/print-help` can test routing meanwhile |
-| Login/connectivity errors | Inspect local startup logs for DNS, TLS or Discord availability errors. Do not disable TLS checks or expose a new port; retry after resolving the reported cause |
+| Login/connectivity errors | The standalone Discord bot retries transient DNS/connection failures at startup up to 5 attempts over roughly 2–3 minutes (watch for `DISCORD_STARTUP_RETRY` lines). If it still exits, inspect those log lines for the DNS, TLS or Discord availability error and resolve the reported cause; do not disable TLS checks or expose a new port |
 | Health fails | Start with its reason: no heartbeat, stale heartbeat, disconnected, or replaced process. Check that both terminals/services use the same config and data directory |
 | Duplicate replies | Stop the extra standalone process or Hermes gateway using that token. Keep exactly one owner |
 

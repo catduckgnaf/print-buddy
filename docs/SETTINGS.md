@@ -60,7 +60,7 @@ Schema, validation limits and TOML migration: [CONFIGURATION-YAML.md](CONFIGURAT
 | `services.octoprint_url` | `PRINT_BUDDY__SERVICES__OCTOPRINT_URL` | empty | OctoPrint printers (`octoprint.marlin`): OctoPrint URL. API key: `OCTOPRINT_API_KEY` secret |
 | `discord.chat_id` | `PRINT_BUDDY__DISCORD__CHAT_ID` | empty | Discord channel ID |
 | `discord.approval_user_id` | `PRINT_BUDDY__DISCORD__APPROVAL_USER_ID` | empty | Discord user ID allowed to approve |
-| `discord.upload_max_bytes` | `PRINT_BUDDY__DISCORD__UPLOAD_MAX_BYTES` | `9500000` | Largest upload before video is shrunk |
+| `discord.upload_max_bytes` | `PRINT_BUDDY__DISCORD__UPLOAD_MAX_BYTES` | `9500000` | Largest upload per file: video is shrunk to it, and a sliced file or Bambu package over it is reported with its host path instead of offered for sending (see [PRINTER-PROFILES.md](PRINTER-PROFILES.md)). Keep it under your server's Discord cap (10 MB unboosted) |
 | `discord.post_print_quiet_s` | `PRINT_BUDDY__DISCORD__POST_PRINT_QUIET_S` | `7200` | Quiet time before a chat session resets |
 | `discord.daily_reset_hour` | `PRINT_BUDDY__DISCORD__DAILY_RESET_HOUR` | `4` | Hour of the daily session reset |
 | `discord.timezone` | `PRINT_BUDDY__DISCORD__TIMEZONE` | `America/New_York` | Display and reset time zone (IANA name) |

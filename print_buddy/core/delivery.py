@@ -16,6 +16,7 @@ from __future__ import annotations
 import hashlib
 import logging
 import zipfile
+import zlib
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -156,6 +157,110 @@ def discord_message(item, limit, label=None):
             f"was not sent. It stays on the Print Buddy host at {item.source}.")
 
 
+# ----------------------------------------------------------------------------- early size check (#272)
+
+@dataclass
+class Candidate:
+    """One file 'Send the files here' would attach, sized before the button is offered.
+
+    source is what Discord would get: the sliced G-code, or the Bambu package built from it (which may not
+    exist yet: built_from then names the G-code it will hold). size is the bytes of source on disk, None for
+    a package not built yet. packed is the deflated size, what a zip of a G-code or the package's G-code
+    entry weighs: measured only when the plain size is over the limit, else None.
+    """
+    source: Path
+    size: int | None
+    packed: int | None
+    limit: int
+    built_from: Path | None = None
+
+    @property
+    def fits(self):
+        """True when some form of this file can reach Discord under the limit (as is, zipped, or packaged)."""
+        known = [n for n in (self.size, self.packed) if n is not None]
+        return not known or min(known) <= self.limit
+
+
+def deflated_size(path, level=9):
+    """Bytes of the raw deflate stream of a file: what a zip entry of it would weigh, measured without
+    writing anything. Streams in 1 MB blocks, so an 80 MB G-code costs seconds and no disk."""
+    packer = zlib.compressobj(level, zlib.DEFLATED, -zlib.MAX_WBITS)
+    total = 0
+    with open(path, "rb") as f:
+        for block in iter(lambda: f.read(1 << 20), b""):
+            total += len(packer.compress(block))
+    return total + len(packer.flush())
+
+
+def package_target(gcode):
+    """Where bambu_handoff writes the package for one G-code: <its folder>/bambu/<name>.gcode.3mf."""
+    gcode = Path(gcode)
+    stem = gcode.name[:-len(".gcode")] if gcode.name.endswith(".gcode") else gcode.stem
+    return gcode.parent / "bambu" / (stem + ".gcode.3mf")
+
+
+def discord_candidates(files, limit, config=None, cache=None):
+    """Size what 'Send the files here' would attach, before the button is offered (#272).
+
+    For a Bambu Lab printer the attachment is the .gcode.3mf package: its exact size once built, else a
+    lower bound from deflating the G-code it will hold (the package is that G-code deflated plus a few
+    hundred bytes). For other printers it is the G-code, zipped when over the limit. A deflate pass runs
+    only for a file whose plain size is over the limit; cache (a dict the caller keeps) stores it by path
+    and size so a menu shown twice measures once.
+    """
+    config = config or settings.current()
+    packaged = current_model(config).vendor.file_formats[0] == ".gcode.3mf"
+    cache = cache if cache is not None else {}
+    out = []
+    for gcode in map(Path, files):
+        source, built_from = (package_target(gcode), gcode) if packaged else (gcode, None)
+        if not gcode.is_file():  # unknown size: the send itself reports a file that is gone
+            out.append(Candidate(source, None, None, limit, built_from))
+            continue
+        if source.is_file():
+            size = source.stat().st_size
+            if size <= limit or source.suffix.lower() in _COMPRESSED:
+                out.append(Candidate(source, size, None, limit, None))
+                continue
+            measured = source
+        else:
+            size = None
+            measured = gcode
+            if gcode.stat().st_size <= limit:  # deflating never grows a G-code past this limit in practice
+                out.append(Candidate(source, None, None, limit, built_from))
+                continue
+        key = (str(measured), measured.stat().st_size)
+        if key not in cache:
+            cache[key] = deflated_size(measured)
+        out.append(Candidate(source, size, cache[key], limit, built_from))
+    return out
+
+
+def oversize_message(candidates, limit, for_handoff=False):
+    """Why each file that cannot reach Discord will not be offered: its size, the limit, where it lives.
+
+    Empty when everything fits. The paths are on the Print Buddy host, where the operator fetches a
+    file Discord cannot carry. for_handoff phrases a package that was just built.
+    """
+    lines = []
+    for item in candidates:
+        if item.fits:
+            continue
+        over = f"over the {_fmt_mb(limit)} Discord upload limit, so it cannot be sent here"
+        if item.size is None:  # a package not built yet, sized from its G-code
+            gcode = f"its G-code {item.built_from.name} is {_fmt_mb(item.built_from.stat().st_size)}"
+            lines.append(f"{item.source.name} would be about {_fmt_mb(item.packed)} ({gcode}), {over}. "
+                         f"'{LABELS[BAMBU_HANDOFF]}' writes it to {item.source} on the Print Buddy host.")
+            continue
+        zipped = f" and {_fmt_mb(item.packed)} zipped" if item.packed is not None else ""
+        lines.append(f"{item.source.name} is {_fmt_mb(item.size)}{zipped}, {over}. "
+                     f"It stays on the Print Buddy host at {item.source}.")
+    if lines and not for_handoff and not any(item.fits for item in candidates):
+        lines.append(f"'{LABELS[DISCORD]}' is not offered for this slice; "
+                     "[discord] upload_max_bytes is the limit (docs/SETTINGS.md).")
+    return "\n".join(lines)
+
+
 # ----------------------------------------------------------------------------- Bambu handoff
 
 _CONTENT_TYPES = """<?xml version="1.0" encoding="UTF-8"?>
@@ -247,9 +352,7 @@ def bambu_handoff(job, gcodes, config=None):
         problems = start_code_problems(text, model.vendor) + adapter.gcode_problems(text)
         if problems:
             raise DeliveryRefused("; ".join(problems) + "; no Bambu package was made")
-        target = gcode.parent / "bambu" / (gcode.name[:-len(".gcode")] if gcode.name.endswith(".gcode")
-                                           else gcode.stem)
-        packages.append(bambu_package(gcode, target.with_name(target.name + ".gcode.3mf"), index, nozzle,
+        packages.append(bambu_package(gcode, package_target(gcode), index, nozzle,
                                       _thumbnails(gcode, job, config, text)))
     return packages
 

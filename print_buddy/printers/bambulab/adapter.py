@@ -96,6 +96,36 @@ class BambuAdapter(PrinterAdapter):
         """Pause, resume or stop the current print over LAN MQTT."""
         return self.client().control(action)
 
+    # -- Camera (#294) ------------------------------------------------------
+    def camera_kind(self):
+        """The verified camera protocol for this model ("tcp6000" / "rtsps"), or None when unverified."""
+        from . import camera
+        return camera.camera_kind(self.model.key if self.model else None)
+
+    def camera_snapshot(self, **overrides):
+        """One bounded JPEG from the printer's own camera, via the LAN camera path (camera.py).
+
+        This is the same internal snapshot seam the Moonraker path fills from
+        `services.camera_snapshot_url`: callers get JPEG bytes or a plain
+        BambuLanError, never a half answer. X1-family stills ride the RTSPS
+        path that arrives with #246's go2rtc work, and say so; a model with
+        no verified camera protocol says that instead of guessing.
+        """
+        from . import camera
+        kind = self.camera_kind()
+        if kind is None:
+            raise BambuLanError(f"{self.label}: Print Buddy has not verified a camera protocol for this model; "
+                                "no snapshot was taken")
+        if kind == "rtsps":
+            raise BambuLanError(f"{self.label}: camera stills for this model come from its RTSP stream, which "
+                                "Print Buddy reads through the go2rtc path in #246; that path has not landed, "
+                                "so no snapshot was taken")
+        if not self.lan_configured():
+            raise BambuLanError(f"{self.label}: the camera is not configured; set [bambu] lan_host and "
+                                "lan_serial and supply the LAN access code via the environment")
+        client = camera.BambuCameraClient(str(self._lan()["lan_host"]).strip(), self.access_code(), **overrides)
+        return client.snapshot()
+
     # slicer: the vendor start/end G-code is used as is; Print Buddy adds and changes nothing. The only accepted
     # start and end are the ones in the verified generated profiles (profiles.py), so an [orca] templates
     # override with other vendor code is refused before Orca runs.

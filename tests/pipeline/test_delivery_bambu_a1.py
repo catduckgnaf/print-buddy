@@ -3,7 +3,6 @@
 Offline: the fake Discord adapter from test_prepared_intake answers buttons; the slice writes synthetic A1
 G-code (tests/printers/test_bambulab_a1.a1_gcode). Nothing contacts a printer.
 """
-import json
 import zipfile
 from pathlib import Path
 
@@ -37,6 +36,24 @@ def a1_config(tmp_path):
     return cfg
 
 
+def _a1_job(monkeypatch):
+    """The intake job is recorded for the A1 from creation.
+
+    The shared env inventory names no printer, so a job created from it belongs to the
+    configured model (the AD5X default) and the slice recipe is bound to that model.
+    Recording the A1 at inventory time binds the recipe to the A1 at slice launch, at
+    approval and at delivery alike; rewriting JOB.json after slicing instead would race
+    the slice-approval freshness guard, which rightly refuses a job whose model changed
+    mid-flow.
+    """
+    inventory = model_job.printables_inventory
+
+    def a1_inventory(url):
+        return {**inventory(url), "printer_model": A1}
+
+    monkeypatch.setattr(model_job, "printables_inventory", a1_inventory)
+
+
 def _a1_slice(monkeypatch, text):
     real_slice = model_job.slice_job
 
@@ -45,14 +62,13 @@ def _a1_slice(monkeypatch, text):
         for gcode in out:
             Path(gcode).write_text(text)
             box_stl(Path(gcode).parent / "geometry.stl", origin=(118, 123, 0))  # what a real slice leaves beside it
-        data = json.loads(Path(job_path).read_text())
-        model_job.write_job(Path(job_path).parent, {**data, "printer_model": A1})
         return out
     monkeypatch.setattr(model_job, "slice_job", slice_as_a1)
 
 
 def test_a1_offers_no_print_and_packages_through_its_guard(env, monkeypatch, tmp_path):  # noqa: F811
     use_config(monkeypatch, a1_config(tmp_path))
+    _a1_job(monkeypatch)
     _a1_slice(monkeypatch, a1_gcode())
     # one color, slot 1, "Slice only", package, send, (menu ends)
     adapter, result, receipt = run_flow(env, [1, 0, 0, 1, 0])
@@ -73,6 +89,7 @@ def test_a1_offers_no_print_and_packages_through_its_guard(env, monkeypatch, tmp
 
 def test_a1_refuses_to_package_foreign_start_code(env, monkeypatch, tmp_path):  # noqa: F811
     use_config(monkeypatch, a1_config(tmp_path))
+    _a1_job(monkeypatch)
     _a1_slice(monkeypatch, ad5x_gcode())
     adapter, result, receipt = run_flow(env, [1, 0, 0, 1, 1])
     assert not any("MEDIA:" in m and m.strip().endswith(".gcode.3mf") for m in adapter.sent)

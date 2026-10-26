@@ -75,8 +75,15 @@ Schema, validation limits and TOML migration: [CONFIGURATION-YAML.md](CONFIGURAT
 | `telegram.allowed_user_ids` | `PRINT_BUDDY__TELEGRAM__ALLOWED_USER_IDS` | empty | Telegram user IDs allowed to use the standalone bot, comma or space separated |
 | `telegram.approval_user_id` | `PRINT_BUDDY__TELEGRAM__APPROVAL_USER_ID` | empty | Telegram user ID allowed to approve |
 | `telegram.upload_max_bytes` | `PRINT_BUDDY__TELEGRAM__UPLOAD_MAX_BYTES` | `50000000` | Largest file the Telegram bot uploads (the Bot API cloud limit) |
+| `matrix.homeserver_url` | `PRINT_BUDDY__MATRIX__HOMESERVER_URL` | empty | Matrix homeserver base URL, for example `https://matrix.org` or a self-hosted server |
+| `matrix.access_token_env` | `PRINT_BUDDY__MATRIX__ACCESS_TOKEN_ENV` | `MATRIX_ACCESS_TOKEN` | Name of the environment variable holding the Matrix access token |
+| `matrix.room_id` | `PRINT_BUDDY__MATRIX__ROOM_ID` | empty | Matrix room ID of the print room (starts with `!`); the room must be unencrypted |
+| `matrix.allowed_user_ids` | `PRINT_BUDDY__MATRIX__ALLOWED_USER_IDS` | empty | Matrix user IDs allowed to use the standalone bot, full `@user:server` form, comma or space separated |
+| `matrix.approval_user_id` | `PRINT_BUDDY__MATRIX__APPROVAL_USER_ID` | empty | Matrix user ID allowed to approve |
+| `matrix.bot_user_id` | `PRINT_BUDDY__MATRIX__BOT_USER_ID` | empty | The bot's own Matrix user ID; empty asks the homeserver (whoami) at startup |
+| `matrix.upload_max_bytes` | `PRINT_BUDDY__MATRIX__UPLOAD_MAX_BYTES` | `50000000` | Largest file the Matrix bot uploads; lowered to the homeserver's media limit when the server reports a smaller one |
 | `bot.mode` | `PRINT_BUDDY__BOT__MODE` | `hermes`; `standalone` in the image | `hermes` or `standalone`; the image and Compose set `standalone` |
-| `bot.platform` | `PRINT_BUDDY__BOT__PLATFORM` | `discord` | Chat platform for the standalone bot (#164): `discord` or `telegram`; `matrix` lands in a later stage |
+| `bot.platform` | `PRINT_BUDDY__BOT__PLATFORM` | `discord` | Chat platform for the standalone bot (#164): `discord`, `telegram` or `matrix` |
 | `bot.health_port` | `PRINT_BUDDY__BOT__HEALTH_PORT` | `0` | Serve `GET /healthz` on this port; `0` turns the HTTP check off |
 | `bot.health_stale_s` | `PRINT_BUDDY__BOT__HEALTH_STALE_S` | `120` | Bot health fails when its heartbeat is older than this |
 | `bot.sync_commands` | `PRINT_BUDDY__BOT__SYNC_COMMANDS` | `true` | Register the slash commands with Discord at startup |
@@ -156,6 +163,7 @@ Secrets come from the environment only (Docker: `.env`, never committed or share
 |---|---|
 | `DISCORD_BOT_TOKEN` | Standalone bot token. The variable name is `discord.token_env` |
 | `TELEGRAM_BOT_TOKEN` | Telegram standalone bot token. The variable name is `telegram.token_env` |
+| `MATRIX_ACCESS_TOKEN` | Matrix standalone bot access token. The variable name is `matrix.access_token_env` |
 | `LLM_API_KEY` | Optional key for `llm.chat_url`. The variable name is `llm.api_key_env` |
 | `OCTOPRINT_API_KEY` | `octoprint.marlin` printers: OctoPrint application key |
 | `BAMBU_LAN_PASSWORD` | Bambu Lab printers: the LAN access code for read-only status. The variable name is `bambu.lan_access_code_env` |

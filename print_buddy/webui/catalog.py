@@ -122,6 +122,19 @@ CATALOG = (
     _field("services", "spoolman_url", "Spoolman URL", "url",
            "Spoolman URL for filament inventory; empty when Spoolman is not used.",
            validator="guided Spoolman URL / settings services check"),
+    # Images (camera snapshot and the vision endpoint the watchdog uses;
+    # visual_watch itself is the next group. API keys stay in the
+    # environment: vision_chat_url names no secret, and there is no key field.)
+    _field("services", "camera_snapshot_url", "Camera snapshot URL", "url",
+           "Camera snapshot URL for status images and the camera watchdog; empty derives "
+           "it from the Moonraker host.",
+           validator="settings services check"),
+    _field("services", "vision_chat_url", "Vision chat URL", "url",
+           "OpenAI-compatible chat endpoint used for camera checks; empty disables them. "
+           "Its API key stays in the environment, never here.",
+           validator="settings services check"),
+    _field("vision", "model", "Vision model", "text",
+           "Model the vision endpoint uses for camera checks."),
     # Camera watch.
     _field("visual_watch", "enabled", "Camera watch", "toggle",
            "Camera watchdog switch; the watchdog is alert-only and never controls the printer.",
@@ -129,6 +142,36 @@ CATALOG = (
     _field("visual_watch", "sensitivity", "Camera watch sensitivity", "number",
            "Camera watchdog sensitivity, 1 (quietest) to 5 (most alerts).",
            validator="settings visual_watch check", minimum=1, maximum=5),
+    # Timelapse (render waiting, size cap, retention, and the SSH archive
+    # target). ssh_key is a filesystem *path* — the same plain string the
+    # YAML already stores — never key contents, so it is a text field like
+    # any other path and no secret value is involved.
+    _field("timelapse", "render_wait_s", "Timelapse render wait", "number",
+           "How long to wait for a printer-rendered timelapse to appear after a print "
+           "finishes, in seconds.",
+           validator="settings type check", minimum=1),
+    _field("timelapse", "render_poll_s", "Timelapse render poll", "number",
+           "How often to check for the rendered timelapse while waiting, in seconds.",
+           validator="settings type check", minimum=1),
+    _field("timelapse", "max_bytes", "Timelapse max size", "number",
+           "Largest timelapse file kept or sent, in bytes.",
+           validator="settings type check", minimum=1),
+    _field("timelapse", "local_retention_days", "Timelapse local retention", "number",
+           "Days a rendered timelapse is kept locally before cleanup.",
+           validator="settings type check", minimum=0),
+    _field("timelapse", "plan_clip_retention_days", "Plan clip retention", "number",
+           "Days an unfinished plan's timelapse clip store is kept before cleanup.",
+           validator="settings type check", minimum=0),
+    _field("timelapse", "archive_host", "Timelapse archive host", "host",
+           "SSH host finished timelapses are copied to for archiving; empty turns archiving off.",
+           validator="settings type check"),
+    _field("timelapse", "archive_dir", "Timelapse archive directory", "text",
+           "Directory on the archive host that receives timelapse files.",
+           validator="settings type check"),
+    _field("timelapse", "ssh_key", "Timelapse archive SSH key path", "text",
+           "Filesystem path of the SSH private key for the archive host; only the path "
+           "is stored here, never the key contents.",
+           validator="settings type check"),
     # Logging.
     _field("logging", "level", "Log level", "picker",
            "Log verbosity.",

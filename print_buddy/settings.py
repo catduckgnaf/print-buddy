@@ -88,6 +88,7 @@ OPTIONAL_KEYS = {("printer", "nozzle_type"): str, ("visual_watch", "enabled"): b
                  ("services", "octoprint_url"): str,
                  ("bambu", "lan_host"): str, ("bambu", "lan_serial"): str,
                  ("bambu", "lan_access_code_env"): str,
+                 ("bambu", "start_confirm_s"): int,
                  ("slicer", "flash_studio_path"): str,
                  ("flashforge_stock", "host"): str}
 # List settings that may also come from the environment, as a comma- or space-separated value
@@ -215,7 +216,7 @@ def _from_env(home, environ):
         if key not in home.get(section, {}):
             if (section, key) in OPTIONAL_KEYS:
                 expected_type = OPTIONAL_KEYS[(section, key)]
-                expected = expected_type() if expected_type is bool else ""
+                expected = expected_type() if expected_type in (bool, int, float) else ""
                 out.setdefault(section, {})[key] = _coerce(expected, raw, name)
                 continue
             raise _unknown(f"${name}", section, key)
@@ -261,7 +262,7 @@ def _validate_vendor_choices(data, model):
 
 
 def _validate_bambu_lan(data, model):
-    """[bambu] LAN telemetry keys (#187 stage b): host and serial together, Bambu models only.
+    """[bambu] LAN keys (#187 stage b): host and serial together, Bambu models only; start_confirm_s (#271).
 
     The access code itself is never a setting: [bambu] lan_access_code_env names the environment
     variable that holds it, the same indirection as [discord] token_env and [llm] api_key_env.
@@ -282,6 +283,14 @@ def _validate_bambu_lan(data, model):
     if not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", env_name):
         raise SettingsError(f"[bambu] lan_access_code_env must be an environment variable name, got {env_name!r}")
     bambu["lan_host"], bambu["lan_serial"], bambu["lan_access_code_env"] = host, serial, env_name
+    # How long a LAN print start is polled for the printer to report the file (#271). Whole seconds,
+    # 1-300: the bot gives the whole print-now child 420 s including the upload, so the window
+    # must leave room for a large package.
+    bambu.setdefault("start_confirm_s", 90)
+    window = _positive(data, "bambu", "start_confirm_s", int)
+    if window > 300:
+        raise SettingsError(f"[bambu] start_confirm_s must be at most 300 seconds, got {window!r}")
+    bambu["start_confirm_s"] = window
 
 
 def _validate_stock_lan(data, model):

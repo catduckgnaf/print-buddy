@@ -226,8 +226,11 @@ class BambuAdapter(PrinterAdapter):
             return {"state": "unknown", "filename": "", "progress": None, "hotend_c": None, "bed_c": None}
         percent = payload.get("mc_percent")
         remaining = payload.get("mc_remaining_time")
+        gcode_state = str(payload.get("gcode_state") or "").upper()
         return {
-            "state": _GCODE_STATES.get(str(payload.get("gcode_state") or "").upper(), "unknown"),
+            "state": _GCODE_STATES.get(gcode_state, "unknown"),
+            "gcode_state": gcode_state,  # the raw Bambu value, kept for start-confirmation evidence (#271)
+            "stage": payload.get("mc_print_stage"),
             "filename": payload.get("subtask_name") or payload.get("gcode_file") or "",
             "progress": percent / 100 if isinstance(percent, (int, float)) and not isinstance(percent, bool) else None,
             "hotend_c": _number(payload.get("nozzle_temper")),

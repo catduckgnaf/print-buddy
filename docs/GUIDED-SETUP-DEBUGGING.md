@@ -103,6 +103,10 @@ and user IDs) are masked. Exact state/log paths therefore do not appear in Disco
 
 ## How this relates to the CLI checks
 
+- The optional [Web UI](WEBUI.md) is a third setup surface over the same YAML settings:
+  its `/config` page renders the catalogued settings with their source layer, previews a
+  change before writing, and applies the same settings validation. It does not replace
+  this guided flow, and neither surface collects secret values.
 - `python3 -m print_buddy.setup_wizard` is the full terminal installer wizard (printer
   registry menus, service installs with their own confirmations). The Discord setup flow
   covers initial configuration only and reuses the wizard's validation and config merge.

@@ -323,8 +323,8 @@ class TelegramClient:
             logger.info("health check on :%d/healthz", port)
 
     def _register_commands(self):
-        payload = {"commands": [{"command": c.name.replace("-", "_"), "description": c.description[:256]}
-                                for c in commands.COMMANDS]}
+        payload = {"commands": [{"command": name.replace("-", "_"), "description": c.description[:256]}
+                                for name, c in commands.registrations()]}
         tg.call(self.token, "setMyCommands", payload, opener=self.opener)
 
     async def _heartbeat(self):

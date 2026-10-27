@@ -351,11 +351,28 @@ class OverrideTests(unittest.TestCase):
         data = settings.load(local=self.toml('[orca]\ntemplates = "my/profiles"\n'))
         self.assertEqual(data["orca"]["templates"], settings.ROOT / "my/profiles")
 
-    def test_design_defaults_off_and_inherits_nothing_yet(self):
+    def test_design_defaults_to_auto_unset_and_inherits_nothing_yet(self):
+        # Tri-state (#388 close-out): no enabled line anywhere means AUTO
+        # (None here) — design resolves on iff an endpoint is configured.
         data = settings.load(local=False, environ={})
-        self.assertEqual(data["design"], {"enabled": False, "chat_url": "", "model": "",
+        self.assertEqual(data["design"], {"enabled": None, "chat_url": "", "model": "",
                                           "api_key_env": "", "timeout_s": 180,
                                           "repair_attempts": 3})
+        from print_buddy.core import design as _design
+        self.assertEqual(_design.mode_name(data), "auto-off")
+        self.assertFalse(_design.effective_enabled(data))
+        with_llm = settings.load(local=False, environ={
+            "PRINT_BUDDY__LLM__CHAT_URL": "http://llm.invalid/v1",
+            "PRINT_BUDDY__LLM__MODEL": "luna"})
+        self.assertEqual(_design.mode_name(with_llm), "auto-on")
+        self.assertTrue(_design.effective_enabled(with_llm))
+        forced_off = settings.load(local=False, environ={
+            "PRINT_BUDDY__LLM__CHAT_URL": "http://llm.invalid/v1",
+            "PRINT_BUDDY__LLM__MODEL": "luna",
+            "PRINT_BUDDY__DESIGN__ENABLED": "false"})
+        self.assertIs(forced_off["design"]["enabled"], False)
+        self.assertEqual(_design.mode_name(forced_off), "off")
+        self.assertFalse(_design.effective_enabled(forced_off))
 
     def test_design_env_and_file_overrides(self):
         env = {"PRINT_BUDDY__DESIGN__ENABLED": "true", "PRINT_BUDDY__DESIGN__MODEL": "sol-x",
@@ -371,10 +388,13 @@ class OverrideTests(unittest.TestCase):
     def test_design_env_works_with_a_legacy_home_without_the_section(self):
         home = self.toml(Path(settings.LEGACY_HOME).read_text().replace(
             "[design]\n# AI design with OpenSCAD (#388): /print-design creates a new printable part\n"
-            "# from a description. Off by default. Empty chat_url/model/api_key_env\n"
-            "# inherit the [llm] values. In Hermes mode the endpoint fields are unused:\n"
-            "# the profile's auxiliary.print_design block pins the design model instead.\n"
-            "enabled = false\nchat_url = \"\"\nmodel = \"\"\napi_key_env = \"\"\ntimeout_s = 180\n"
+            "# from a description. No enabled line on purpose: unset means AUTO — design\n"
+            "# turns on whenever a design/LLM endpoint is configured, like roasts. Set\n"
+            "# enabled = false to force it off, or enabled = true to force it on. Empty\n"
+            "# chat_url/model/api_key_env inherit the [llm] values. In Hermes mode the\n"
+            "# endpoint fields are unused: the profile's auxiliary.print_design block\n"
+            "# pins the design model instead.\n"
+            "chat_url = \"\"\nmodel = \"\"\napi_key_env = \"\"\ntimeout_s = 180\n"
             "repair_attempts = 3\n\n", ""), "older-home.toml")
         data = settings.load(home=home, local=False,
                              environ={"PRINT_BUDDY__DESIGN__ENABLED": "true"})

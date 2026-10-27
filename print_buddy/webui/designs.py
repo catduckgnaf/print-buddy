@@ -175,14 +175,14 @@ _NAV = ('<p><a href="/">Status</a> · <a href="/config">Configuration</a> · '
 def render_designs_page(rows):
     """The GET /designs list: one row per session, newest first."""
     parts = [_NAV,
-             "<p>Designs made from Discord chat with <code>/print-design</code> "
+             "<p>Designs made from chat with <code>/print-design</code> (or <code>/design</code>) "
              "(<a href=\"https://github.com/catduckgnaf/print-buddy/blob/main/docs/DESIGN.md\">"
              "the design guide</a>). This catalog is read-only: it shows the "
              "sessions kept on this machine (14 days) and serves their files; "
              "slicing and printing still happen from chat, through the normal "
              "confirmation flow.</p>"]
     if not rows:
-        parts.append("<p>No designs yet. Designs are made from Discord chat: "
+        parts.append("<p>No designs yet. Designs are made from chat: "
                      "describe a part with <code>/print-design</code>, or drop a "
                      "model and ask to design or change it — finished sessions "
                      "will be listed here.</p>")

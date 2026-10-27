@@ -121,15 +121,109 @@ def test_bare_command_shows_usage(design_env):
     assert "Usage: /print-design" in adapter.sent[-1]
 
 
-def test_unauthorized_and_other_platforms_fall_through(design_env):
+def test_unauthorized_and_unknown_platforms_fall_through(design_env):
     adapter = FakeAdapter()
     assert _dispatch("/print-design a plate", adapter, scripted([GOOD]),
                      design.CANCEL_LABEL, authorized=False) is None
     assert _dispatch("/print-design a plate", adapter, scripted([GOOD]),
-                     design.CANCEL_LABEL, platform="telegram") is None
+                     design.CANCEL_LABEL, platform="irc") is None
     assert _dispatch("just chatting", adapter, scripted([GOOD]),
                      design.CANCEL_LABEL) is None
     assert adapter.sent == []
+
+
+# ------------------------------------------------- close-out: alias, auto-on, Telegram/Matrix
+
+def test_design_alias_shows_the_same_usage(design_env):
+    adapter = FakeAdapter()
+    out = _dispatch("/design", adapter, scripted([GOOD]), design.CANCEL_LABEL)
+    assert out["reason"] == "design usage shown"
+    assert "Usage: /print-design" in adapter.sent[-1]
+
+
+def test_design_alias_answers_not_set_up_when_explicitly_off(design_env):
+    design_env["design"]["enabled"] = False
+    adapter = FakeAdapter()
+    out = _dispatch("/design a plate", adapter, scripted([GOOD]), design.CANCEL_LABEL)
+    assert out == {"action": "skip", "reason": "design not enabled"}
+    assert "not set up" in adapter.sent[-1]
+
+
+def test_auto_posture_without_an_endpoint_answers_not_set_up(design_env):
+    # enabled unset (auto) + no endpoint anywhere: same answer as #422 pinned.
+    design_env["design"]["enabled"] = None
+    adapter = FakeAdapter()
+    with mock.patch.object(plugin, "_design_transport", return_value=(None, "")):
+        out = asyncio.run(plugin.design_dispatch(_event("/print-design a plate"),
+                                                 _gateway(adapter)))
+    assert out["reason"] == "design not enabled"
+    assert "not set up" in adapter.sent[-1] and "DESIGN__ENABLED" in adapter.sent[-1]
+
+
+def test_auto_posture_with_an_endpoint_runs(design_env):
+    # enabled unset (auto) + a transport (endpoint configured): design is on.
+    design_env["design"]["enabled"] = None
+    adapter = FakeAdapter()
+    out = _dispatch("/design", adapter, scripted([GOOD]), design.CANCEL_LABEL)
+    assert out["reason"] == "design usage shown"
+
+
+@pytest.mark.parametrize("platform", ["telegram", "matrix"])
+def test_design_command_is_served_on_telegram_and_matrix(design_env, platform):
+    adapter = FakeAdapter()
+    out = _dispatch("/print-design", adapter, scripted([GOOD]), design.CANCEL_LABEL,
+                    platform=platform)
+    assert out["reason"] == "design usage shown"
+    assert "Usage: /print-design" in adapter.sent[-1]
+
+
+@pytest.mark.parametrize("platform", ["telegram", "matrix"])
+def test_design_on_telegram_and_matrix_answers_not_set_up_without_an_endpoint(
+        design_env, platform):
+    design_env["design"]["enabled"] = None
+    adapter = FakeAdapter()
+    with mock.patch.object(plugin, "_design_transport", return_value=(None, "")):
+        out = asyncio.run(plugin.design_dispatch(
+            _event("design me a hook", platform=platform), _gateway(adapter)))
+    assert out["reason"] == "design not enabled"
+    assert "not set up" in adapter.sent[-1]
+
+
+def test_telegram_and_matrix_stay_pure_bots_for_ordinary_chat():
+    # Design is a separate configured lane; it must not wire the [llm] chat
+    # fallback on the pure-bot platforms (#164 posture, unchanged).
+    from print_buddy.bot import matrix as matrix_mod
+    from print_buddy.bot import telegram as telegram_mod
+    assert telegram_mod.StandaloneAdapter.uses_llm is False
+    assert matrix_mod.StandaloneAdapter.uses_llm is False
+    assert matrix_mod.StandaloneAdapter.supports_buttons is False
+
+
+def test_design_alias_is_in_the_commands_table():
+    from print_buddy.bot import commands
+    canonical = commands.by_name("print-design")
+    assert commands.by_name("design") is canonical
+    assert commands.as_text("design", {"prompt": "a hook"}) == "/design a hook"
+    assert commands.as_text("print-design", {"prompt": "a hook"}) == "/print-design a hook"
+    registered = dict(commands.registrations())
+    assert registered["design"] is canonical and registered["print-design"] is canonical
+    assert "`/design`" in commands.help_text()
+
+
+@needs_scad
+@pytest.mark.parametrize("platform", ["telegram", "matrix"])
+def test_design_turn_runs_on_telegram_and_matrix(design_env, platform):
+    # A full turn through the platform-neutral prompt path: the fake
+    # adapter stands in for the platform adapter (Telegram buttons, Matrix
+    # numbered lists both resolve through the shared prompt registry).
+    adapter = FakeAdapter()
+    out = _dispatch("/design a 40x20x3 plate with two 4 mm holes", adapter,
+                    scripted([GOOD]), design.CANCEL_LABEL, platform=platform)
+    assert out["reason"] == "design cancelled"
+    post = next(content for content in adapter.sent if "Design turn 1" in content)
+    assert "40 × 20 × 3" in post
+    assert adapter.clarified[-1][1] == [design.SLICE_LABEL, design.CHANGE_LABEL,
+                                        design.CANCEL_LABEL]
 
 
 @needs_scad

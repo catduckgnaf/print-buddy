@@ -48,6 +48,10 @@ def make(cfg, opener):
     ("/print-design", "/print-design"),
     ("/print-design a 40 mm bracket with two holes", "/print-design a 40 mm bracket with two holes"),
     ("/print-design; rm -rf /", None),
+    # /design is the same command's short alias (#388 close-out).
+    ("/design", "/design"),
+    ("/design a 40 mm bracket with two holes", "/design a 40 mm bracket with two holes"),
+    ("/design; rm -rf /", None),
     ("https://makerworld.com/en/models/1", None), ("/print-stop; rm -rf /", None), ("", None), (None, None),
 ])
 def test_only_read_only_or_button_gated_commands_are_allowed(command, allowed):

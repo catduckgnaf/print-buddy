@@ -106,6 +106,20 @@ Printer event posts (started, complete, failed, timelapse) come from the
 listener, unchanged: in standalone mode with `platform: matrix` it posts
 into the same room through the Client-Server API instead of Discord REST.
 
+## AI design on Matrix
+
+`/print-design` (or `/design`) and the design phrases ("design me …",
+"design this" with a model file attached, or a model link) work on Matrix
+too — see [AI design with OpenSCAD](DESIGN.md). Design is the one
+model-backed feature here, and it runs only through an explicitly
+configured `[design]` endpoint (or the `[llm]` values it inherits). With
+an endpoint configured, design is on automatically (set
+`design.enabled: false` to force it off); with none configured, the
+commands answer "design is not set up". Ordinary chat still never
+consults `[llm]` — the pure-bot rule is unchanged. Design's Slice it /
+Change it / Cancel choices arrive as a numbered list, like every other
+Matrix prompt.
+
 ## How Matrix differs from Discord here
 
 - **No buttons**: Matrix has no inline keyboards, so a prompt is the

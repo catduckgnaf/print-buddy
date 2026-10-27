@@ -1,6 +1,6 @@
-# AI design with OpenSCAD (`/print-design`, #388)
+# AI design with OpenSCAD (`/print-design`, alias `/design`, #388)
 
-Describe a part in Discord — or start from a model you already have — and Print Buddy
+Describe a part in chat — Discord, Telegram or Matrix — or start from a model you already have — and Print Buddy
 designs it for you: a model writes
 OpenSCAD, Print Buddy renders it with the OpenSCAD binary already in the
 install, measures the result, and shows you a preview with the real
@@ -17,13 +17,27 @@ dimensions. You then choose:
 
 ## Turning it on
 
-Design is off by default. Set `[design] enabled = true` (or
-`PRINT_BUDDY__DESIGN__ENABLED=true`), then a model:
+Design is **on automatically whenever a model endpoint is configured** —
+the same posture as roasts. The `[design] enabled` switch is tri-state:
+
+- **Unset (the default): auto.** Design works when an endpoint resolves
+  (below); with no endpoint configured anywhere, `/print-design`, `/design`
+  and the design phrases answer "design is not set up".
+- **`enabled = false`:** off in all cases, whatever is configured.
+- **`enabled = true`:** forced on; an unconfigured endpoint is then a
+  visible "no design model is configured" failure, not a silent off.
+
+Where the model comes from:
 
 - **Standalone bot:** the `[design]` settings pick the model. Leave
   `chat_url` / `model` / `api_key_env` empty to reuse the `[llm]` endpoint,
   or point them at a stronger model — design turns are the ones worth
   spending a bigger model on, while everyday chat stays on the small one.
+  This is also how Telegram and Matrix get design: an explicitly
+  configured `[design]` endpoint (or the `[llm]` values it inherits)
+  serves design there, and nothing else changes — ordinary chat on those
+  platforms still has no LLM fallback and unmatched text still gets the
+  command list.
 - **Hermes:** the design model is the profile's auxiliary task, not a
   Print Buddy setting. Uncomment the `auxiliary.print_design` block in the
   profile config (the shipped template carries a commented example) to pin
@@ -31,10 +45,11 @@ Design is off by default. Set `[design] enabled = true` (or
   `[design]` fields are ignored in Hermes mode unless the auxiliary task
   is unavailable, in which case the HTTP settings above are the fallback.
 
-`bot check` prints a `design` row saying which of these is in effect.
+`bot check` prints a `design` row naming the mode (`off`, `auto-off`,
+`auto-on` or `on`), the model in effect, and whether OpenSCAD is present.
 
 Standalone installs outside the container need the `openscad` binary on the
-machine (the container image includes it); with design enabled and no
+machine (the container image includes it); with design on and no
 `openscad` on PATH, `bot check` fails that row and design turns report it.
 
 ## The sandbox, in plain language
@@ -92,7 +107,7 @@ original is never modified: design works on a copy inside its session folder.
 
 ## Saying it instead of the command
 
-With design enabled and a model configured, these phrases start design
+With design on and a model configured, these phrases start design
 without the command (case-insensitive):
 
 - "design me …" / "help me design …" — a new part; the rest of the message is
@@ -107,10 +122,14 @@ without the command (case-insensitive):
 Anything without a design phrase — a plain link, a plain file drop, "print
 it", every existing command — behaves exactly as before, and while a design
 is waiting for a revision, your next plain message is the revision, phrases
-or not. When design is off, a message with a design phrase gets the same
-"design is not set up" reply as the command — and with design on but no
-model configured, the same "no design model is configured" reply — while
-messages without a design phrase are untouched either way.
+or not. When design cannot run — switched off, or auto with no endpoint
+configured — a message with a design phrase gets the same
+"design is not set up" reply as the command — and with design forced on but
+no model configured, the same "no design model is configured" reply — while
+messages without a design phrase are untouched either way. The phrases work
+on Telegram and Matrix exactly as on Discord; on Matrix the Slice it /
+Change it / Cancel choices arrive as a numbered list you answer by number
+or by typing the choice, like every other Matrix prompt.
 
 ## Browsing designs in the Web UI
 

@@ -20,6 +20,10 @@ class Command:
     description: str
     options: tuple[Option, ...] = ()
     usage: str = ""
+    # Short names for the same command (#388 close-out): an alias registers,
+    # parses and answers exactly like the canonical name — slash registration,
+    # the typed form and help all derive from this one table entry.
+    aliases: tuple[str, ...] = ()
 
 
 COMMANDS = (
@@ -54,7 +58,7 @@ COMMANDS = (
             "/print-live [start | stop | status]"),
     Command("print-design", "Design a part, or edit a dropped/linked model, with AI + OpenSCAD (asks before slicing)",
             (Option("prompt", "What to make or change, e.g. a 40x20x3 plate with two 4 mm holes, or 'make it taller' with a file dropped"),),
-            "/print-design <what to make or change>"),
+            "/print-design <what to make or change>", aliases=("design",)),
     Command("print-buddy", "Guided setup and read-only debugging (never prints)",
             (Option("action", "setup, debugging, bundle, status, cancel or help",
                     ("setup", "debugging", "bundle", "status", "cancel", "help")),),
@@ -64,7 +68,13 @@ COMMANDS = (
 
 
 def by_name(name):
-    return next((c for c in COMMANDS if c.name == name), None)
+    return next((c for c in COMMANDS if c.name == name or name in c.aliases), None)
+
+
+def registrations():
+    """(name, command) for every slash registration: canonical names, then aliases."""
+    return [(c.name, c) for c in COMMANDS] + \
+        [(alias, c) for c in COMMANDS for alias in c.aliases]
 
 
 def as_text(name, values):
@@ -78,5 +88,7 @@ def help_text(bot_name="Print Buddy"):
     lines = [f"**{bot_name}** prints from this channel. Nothing starts without a button press.",
              "- Post a MakerWorld or Printables link, or drop one .3mf or .stl file, to slice and print it.",
              '- "print it" after a link, or "print the last one again", reuses the last model.']
-    lines += [f"- `{c.usage}`: {c.description}" for c in COMMANDS if c.name != "print-help"]
+    lines += [f"- `{c.usage}`: {c.description}"
+              + (f" (also `/{c.aliases[0]}`)" if c.aliases else "")
+              for c in COMMANDS if c.name != "print-help"]
     return "\n".join(lines)

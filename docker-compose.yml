@@ -45,7 +45,10 @@ services:
       PRINT_BUDDY__DISCORD__TIMEZONE: ${PRINT_BUDDY__DISCORD__TIMEZONE:-America/New_York}
       PRINT_BUDDY__LLM__CHAT_URL: ${PRINT_BUDDY__LLM__CHAT_URL:-}
       PRINT_BUDDY__LLM__MODEL: ${PRINT_BUDDY__LLM__MODEL:-}
-      PRINT_BUDDY__DESIGN__ENABLED: ${PRINT_BUDDY__DESIGN__ENABLED:-false}
+      # AI design (#388) has no ENABLED line here on purpose: unset is AUTO
+      # (on whenever a design/LLM endpoint above is configured, like roasts).
+      # To force it off or on, set PRINT_BUDDY__DESIGN__ENABLED=false/true in
+      # the .env env_file.
       PRINT_BUDDY__DESIGN__CHAT_URL: ${PRINT_BUDDY__DESIGN__CHAT_URL:-}
       PRINT_BUDDY__DESIGN__MODEL: ${PRINT_BUDDY__DESIGN__MODEL:-}
       PRINT_BUDDY__DESIGN__API_KEY_ENV: ${PRINT_BUDDY__DESIGN__API_KEY_ENV:-}

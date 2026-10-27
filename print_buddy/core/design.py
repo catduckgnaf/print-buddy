@@ -437,6 +437,42 @@ def resolve_http_config(cfg) -> dict | None:
             "timeout_s": int(design.get("timeout_s") or 180)}
 
 
+def endpoint_configured(cfg) -> bool:
+    """True when a standalone design endpoint resolves ([design] inheriting [llm])."""
+    return resolve_http_config(cfg) is not None
+
+
+def effective_enabled(cfg, *, endpoint_available=None) -> bool:
+    """The tri-state [design] enabled switch, resolved (#388 close-out ruling).
+
+    ``enabled`` absent/None is AUTO: design is on exactly when an endpoint
+    is available — ``endpoint_available`` when the caller knows its
+    transport (the Hermes lane counts as available), else whether the
+    standalone HTTP endpoint resolves. Explicit True is on (the caller
+    still reports an unconfigured endpoint separately), explicit False is
+    off in all cases.
+    """
+    raw = (cfg or {}).get("design", {}).get("enabled")
+    if raw is False:
+        return False
+    if raw is True:
+        return True
+    if endpoint_available is None:
+        endpoint_available = endpoint_configured(cfg)
+    return bool(endpoint_available)
+
+
+def mode_name(cfg, *, endpoint_available=None) -> str:
+    """The design posture in bot-check words: off / on / auto-on / auto-off."""
+    raw = (cfg or {}).get("design", {}).get("enabled")
+    if raw is False:
+        return "off"
+    if raw is True:
+        return "on"
+    return "auto-on" if effective_enabled(cfg, endpoint_available=endpoint_available) \
+        else "auto-off"
+
+
 def http_complete(cfg, messages, *, opener=None):
     """One design model call over an OpenAI-compatible endpoint. Returns the reply text."""
     import urllib.request

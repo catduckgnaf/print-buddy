@@ -131,30 +131,36 @@ def checks(cfg):
     else:
         add("roast", True, "on by default, but no LLM/vision endpoint is available "
                            "(services.vision_chat_url is empty); set it to enable roasts")
-    # AI design (#388): off by default. When enabled it needs OpenSCAD (the
+    # AI design (#388): tri-state enable — explicit design.enabled=false is
+    # off; explicit true is on; unset is auto (on whenever a design/LLM
+    # endpoint resolves — the roast posture). When on it needs OpenSCAD (the
     # design engine) and a model: in Hermes mode the profile's
     # auxiliary.print_design task, in standalone mode the [design] endpoint
-    # inheriting [llm]. An enabled-but-unusable design fails the check, like
+    # inheriting [llm]. A forced-on-but-unusable design fails the check, like
     # a missing token, so the misconfiguration is visible before a user
-    # hits it mid-conversation.
+    # hits it mid-conversation; auto with no endpoint is a healthy off.
     import shutil as _shutil
     from ..core import design as _design
     design_cfg = cfg.get("design") or {}
-    if not design_cfg.get("enabled"):
-        add("design", True, "off (design.enabled is false; /print-design is unavailable)")
+    resolved = _design.resolve_http_config(cfg)
+    endpoint_available = resolved is not None or mode == "hermes"
+    design_mode = _design.mode_name(cfg, endpoint_available=endpoint_available)
+    if design_mode == "off":
+        add("design", True, "off (design.enabled is false; /print-design and /design are unavailable)")
+    elif design_mode == "auto-off":
+        add("design", True, "auto-off (no design/LLM endpoint configured; /print-design answers "
+                            "'not set up' until one is — set [design] or [llm] chat_url/model)")
     elif not _shutil.which("openscad"):
         add("design", False, "enabled, but openscad is not on PATH; install OpenSCAD "
                              "(it is in the Docker image) or set design.enabled=false")
     elif mode == "hermes":
-        add("design", True, "on (Hermes print_design auxiliary task; pin its model in the "
+        add("design", True, f"{design_mode} (Hermes print_design auxiliary task; pin its model in the "
                             "profile's auxiliary.print_design block)")
+    elif resolved:
+        add("design", True, f"{design_mode} ({resolved['model']} at {resolved['chat_url']})")
     else:
-        resolved = _design.resolve_http_config(cfg)
-        if resolved:
-            add("design", True, f"on ({resolved['model']} at {resolved['chat_url']})")
-        else:
-            add("design", False, "enabled, but no model endpoint: set [design] chat_url and "
-                                 "model, or the [llm] values they inherit")
+        add("design", False, "enabled, but no model endpoint: set [design] chat_url and "
+                             "model, or the [llm] values they inherit")
     return rows
 
 

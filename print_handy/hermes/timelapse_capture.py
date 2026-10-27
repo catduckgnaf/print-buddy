@@ -47,6 +47,7 @@ from .. import go2rtc
 from ..live_stream import redact_url
 from . import _config
 from .print_records import _safe_slug
+from .visual_watch import frame_dark
 
 # go2rtc serves a JPEG snapshot of the generated config's one stream
 # (live_stream.GO2RTC_STREAM_NAME) on its loopback API; see
@@ -101,6 +102,20 @@ def frame_url(data=None, environ=None) -> str | None:
     if go2rtc.binary_present(environ) or not source.snapshot_url:
         return GO2RTC_FRAME_URL
     return source.snapshot_url
+
+
+def dark_outcome_text(dark_frames) -> str:
+    """The named camera-dark outcome line for a completion post (#476).
+
+    The #383 principle — a missing timelapse always says why — applied
+    to a capture whose every frame was dark: the delivery paths (the
+    listener's timelapse postprocess and the printer monitors' terminal
+    posts) append this line instead of staying silent or attaching an
+    all-black video.
+    """
+    return ("Timelapse not attached: the camera image was completely dark — "
+            f"all {dark_frames} captured frame(s) were skipped as dark, so "
+            "there was nothing to encode. Check the camera or its light.")
 
 
 def fetch_frame(url, timeout=8) -> bytes:
@@ -244,6 +259,7 @@ class CaptureSession:
         self.state = "new"
         self.capped = False
         self.failures = 0
+        self.dark_frames = 0
         self._frames = 0
         self._bytes = 0
         self._last_layer = None
@@ -279,7 +295,8 @@ class CaptureSession:
             except Exception as exc:
                 self._say(f"timelapse capture manifest write failed for {self.filename!r}: {exc!r}")
             self._say(f"timelapse capture stopped for {self.filename!r}: "
-                      f"{self._frames} frame(s), state={self.state}")
+                      f"{self._frames} frame(s) kept, {self.dark_frames} dark "
+                      f"frame(s) skipped, state={self.state}")
         return self.manifest()
 
     @property
@@ -325,6 +342,23 @@ class CaptureSession:
             self.trigger.note_captured(now)
             self._say(f"timelapse frame fetch failed for {self.filename!r} "
                       f"from {redact_url(self.url or '')}: {exc!r}")
+            return False
+        if frame_dark(image):
+            # #476: a completely dark frame is a camera problem, not
+            # footage — never stored, so a dark spell can never become
+            # an all-black timelapse. Skipped frames are counted on the
+            # session/manifest; a session that ends with only dark
+            # frames is the named camera-dark outcome (timelapse_encode
+            # .dark_capture), not a silent empty capture.
+            self.dark_frames += 1
+            self.trigger.note_captured(now)
+            self._say(f"timelapse frame skipped for {self.filename!r}: camera frame "
+                      f"completely dark ({self.dark_frames} dark frame(s) so far, "
+                      f"{self._frames} kept)")
+            try:
+                self._write_manifest()
+            except Exception:
+                pass
             return False
         if self.max_bytes and self._bytes + len(image) > self.max_bytes:
             return self._cap(f"byte cap ({self.max_bytes})")
@@ -373,6 +407,7 @@ class CaptureSession:
             "frames": self._frames,
             "bytes": self._bytes,
             "failures": self.failures,
+            "dark_frames": self.dark_frames,
             "started_at": self._started_at,
             "finished_at": self._finished_at,
         }

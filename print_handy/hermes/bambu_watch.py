@@ -339,8 +339,17 @@ class BambuPrintMonitor:
                 log(f"bambu timelapse encode failed for {self.filename!r}: {exc!r}; "
                     "posting the completion without it")
         elif session is not None:
-            log(f"bambu timelapse for {self.filename!r} has no frames "
-                f"({session.failures} failed fetch(es)); posting the completion without it")
+            dark_frames = getattr(session, "dark_frames", 0)
+            if dark_frames:
+                # #476: name the camera-dark outcome in the completion
+                # post itself (the #383 principle), not just the log.
+                text = (f"{text}\n{timelapse_capture.dark_outcome_text(dark_frames)}")
+                log(f"bambu timelapse for {self.filename!r} has no usable frames: "
+                    f"all {dark_frames} frame(s) were completely dark; "
+                    "posting the completion without it")
+            else:
+                log(f"bambu timelapse for {self.filename!r} has no frames "
+                    f"({session.failures} failed fetch(es)); posting the completion without it")
         try:
             image = self._camera_fn()
             path = write_frame(self.filename, image)

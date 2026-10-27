@@ -991,6 +991,19 @@ def _captured_timelapse(job_key):
         return None
 
 
+def _dark_capture(job_key):
+    """The #476 camera-dark capture outcome for a job (a manifest dict), or None.
+
+    The manifest of a finished in-container capture that kept no frames
+    because every frame was completely dark. Never raises.
+    """
+    try:
+        return timelapse_encode.dark_capture(job_key, data=_config.cfg())
+    except Exception as exc:
+        log(f"dark capture lookup failed for {job_key!r}: {exc!r}")
+        return None
+
+
 def _timelapse_postprocess(job_key, completion_message, plan_id=None, tl_plan=None):
     try:
         if tl_plan:
@@ -1022,7 +1035,12 @@ def _plan_timelapse_post(job_key, completion_message, tl_plan):
                     clip = Path(str(announcer.materialize_archived_timelapse(archived)))
                     plan_timelapse.add_clip(plan, order, clip)
                 else:
-                    log(f"timelapse not rendered for {job_key!r} within the wait")
+                    dark = _dark_capture(job_key)
+                    if dark:
+                        log(f"timelapse capture for {job_key!r} kept no frames: all "
+                            f"{dark.get('dark_frames')} frame(s) were completely dark (#476)")
+                    else:
+                        log(f"timelapse not rendered for {job_key!r} within the wait")
         except Exception as exc:
             log(f"plan timelapse clip for {job_key!r} unavailable: {exc!r}")
             clip = None
@@ -1086,6 +1104,15 @@ def _timelapse_post(job_key, completion_message):
             return
         archived = announcer.archive_completed_timelapse(job_key)
         if not archived:
+            dark = _dark_capture(job_key)
+            if dark:
+                # #476: the in-container capture ran and every frame was
+                # dark — name that outcome in the completion post (the
+                # #383 principle) instead of the generic not-rendered line.
+                _post_completion(
+                    f"{completion_message}\n{timelapse_capture.dark_outcome_text(dark.get('dark_frames') or 0)}",
+                    completion_message)
+                return
             log(f"timelapse not rendered for {job_key!r} within the wait")
             if announcer.TIMELAPSE_ARCHIVE_HOST and announcer.TIMELAPSE_ARCHIVE_DIR:
                 # Archiving is on, so a video was expected: the completion

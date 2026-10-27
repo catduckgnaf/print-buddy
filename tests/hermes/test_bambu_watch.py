@@ -401,9 +401,10 @@ SOURCE_URL = "bambu-tcp6000://192.168.1.50"
 
 
 class FakeSession:
-    def __init__(self, frames=3, failures=0):
+    def __init__(self, frames=3, failures=0, dark_frames=0):
         self.frames = frames
         self.failures = failures
+        self.dark_frames = dark_frames
         self.ticks = 0
         self.stopped = None
         self.filename = REMOTE
@@ -513,6 +514,16 @@ def test_zero_frames_posts_the_snapshot_without_encoding(capture_logs):
     assert rig.encodes == []
     assert rig.posts[0].count("MEDIA:") == 1
     assert any("has no frames" in line for line in capture_logs)
+
+
+def test_all_dark_session_names_the_camera_dark_outcome(capture_logs):
+    rig = CaptureRig([st("printing"), st("complete")],
+                     session=FakeSession(frames=0, failures=0, dark_frames=4))
+    assert rig.monitor.run() == "complete"
+    assert rig.encodes == []
+    assert ("Timelapse not attached: the camera image was completely dark"
+            in rig.posts[0])
+    assert any("completely dark" in line for line in capture_logs)
 
 
 def test_encode_failure_degrades_to_the_snapshot_post(capture_logs):

@@ -306,3 +306,277 @@ def _bambu_pause(monkeypatch, snapshots):
         camera_snapshot=mock.Mock(side_effect=BambuLanError("no camera in this fake")))
     monkeypatch.setattr(printers, "current", lambda: adapter)
     return adapter, client
+
+
+# -- #295: the timelapse capture session in the monitor -------------------------
+
+from pathlib import Path as _Path
+
+from print_buddy.printers.bambulab.client import BambuLanError as _LanError
+
+SOURCE_URL = "bambu-tcp6000://192.168.1.50"
+
+
+class FakeSession:
+    def __init__(self, frames=3, failures=0):
+        self.frames = frames
+        self.failures = failures
+        self.ticks = 0
+        self.stopped = None
+        self.filename = REMOTE
+        self.frames_dir = _Path("/unused/frames")
+        self.directory = _Path("/unused")
+
+    def tick(self):
+        self.ticks += 1
+        return True
+
+    def stop(self, state="complete"):
+        self.stopped = state
+        return {"state": state, "frames": self.frames}
+
+    @property
+    def frame_count(self):
+        return self.frames
+
+
+class CaptureRig:
+    """A monitor wired for capture; every collaborator is a fake."""
+
+    def __init__(self, statuses, *, source=(SOURCE_URL, "fetch"), session="default",
+                 encode=None, camera=JPEG):
+        self.posts = []
+        self.begins = []
+        self.encodes = []
+        self.logs = []
+        self.session = FakeSession() if session == "default" else session
+        self.clock = FakeClock()
+        self.monitor = bambu_watch.BambuPrintMonitor(
+            REMOTE,
+            status_fn=scripted(statuses),
+            camera_fn=lambda: (_ for _ in ()).throw(camera) if isinstance(camera, Exception) else camera,
+            post=self.posts.append,
+            camera_source_fn=scripted([source]),
+            begin_fn=self._begin,
+            encode_fn=encode or self._encode,
+            clock=self.clock, wall=self.clock, sleep=self.clock.sleep,
+            poll_s=10, capture_poll_s=2)
+
+    def _begin(self, url, fetch):
+        self.begins.append((url, fetch))
+        return self.session
+
+    def _encode(self, session):
+        self.encodes.append(session)
+        return _Path("/tmp/timelapse.mp4")
+
+
+@pytest.fixture
+def capture_logs(monkeypatch):
+    lines = []
+    monkeypatch.setattr(bambu_watch, "log", lines.append)
+    return lines
+
+
+def test_timelapse_attaches_alongside_the_final_snapshot(capture_logs):
+    rig = CaptureRig([st("printing"), st("printing"), st("complete")])
+    assert rig.monitor.run() == "complete"
+    assert rig.begins == [(SOURCE_URL, "fetch")]  # opened exactly once
+    assert rig.session.ticks > 0
+    assert rig.session.stopped == "complete"
+    assert rig.encodes == [rig.session]
+    assert len(rig.posts) == 1
+    assert rig.posts[0].startswith("Print complete")
+    assert rig.posts[0].count("MEDIA:") == 2  # the snapshot and the video
+    assert "MEDIA:/tmp/timelapse.mp4" in rig.posts[0]
+
+
+def test_timelapse_on_a_cancelled_print_stops_as_cancelled(capture_logs):
+    rig = CaptureRig([st("printing"), st("cancelled")])
+    assert rig.monitor.run() == "cancelled"
+    assert rig.session.stopped == "cancelled"
+    assert "MEDIA:/tmp/timelapse.mp4" in rig.posts[0]
+
+
+def test_timelapse_on_an_errored_print_stops_as_error(capture_logs):
+    rig = CaptureRig([st("printing"), st("error")])
+    assert rig.monitor.run() == "error"
+    assert rig.session.stopped == "error"
+
+
+def test_capture_refused_keeps_the_pre_timelapse_completion_post(capture_logs):
+    rig = CaptureRig([st("printing"), st("complete")], session=None)
+    rig.session = None
+    rig.monitor._begin_fn = lambda url, fetch: rig.begins.append((url, fetch)) or None
+    assert rig.monitor.run() == "complete"
+    assert len(rig.posts) == 1 and rig.posts[0].count("MEDIA:") == 1  # snapshot only
+    assert any("capture unavailable" in line for line in capture_logs)
+
+
+def test_camera_source_failure_is_named_and_never_blocks_the_post(capture_logs):
+    reason = _LanError("X1 camera stills come from the printer's RTSPS stream through "
+                       "go2rtc, and go2rtc is not running for this printer")
+    rig = CaptureRig([st("printing"), st("complete")], source=reason, camera=reason)
+    rig.monitor._camera_source_fn = lambda: (_ for _ in ()).throw(reason)
+    assert rig.monitor.run() == "complete"
+    assert rig.begins == []
+    assert len(rig.posts) == 1 and "MEDIA:" not in rig.posts[0]  # text-only, still posted
+    assert any("go2rtc is not running" in line for line in capture_logs)
+
+
+def test_zero_frames_posts_the_snapshot_without_encoding(capture_logs):
+    rig = CaptureRig([st("printing"), st("complete")], session=FakeSession(frames=0, failures=2))
+    assert rig.monitor.run() == "complete"
+    assert rig.encodes == []
+    assert rig.posts[0].count("MEDIA:") == 1
+    assert any("has no frames" in line for line in capture_logs)
+
+
+def test_encode_failure_degrades_to_the_snapshot_post(capture_logs):
+    def encode(session):
+        raise RuntimeError("ffmpeg died")
+
+    rig = CaptureRig([st("printing"), st("complete")], encode=encode)
+    assert rig.monitor.run() == "complete"
+    assert rig.posts[0].count("MEDIA:") == 1
+    assert any("encode failed" in line for line in capture_logs)
+
+
+def test_oversize_timelapse_posts_the_recorded_but_too_large_line(monkeypatch, capture_logs):
+    monkeypatch.setattr(bambu_watch, "_too_big_text", lambda: "RECORDED BUT TOO LARGE")
+    rig = CaptureRig([st("printing"), st("complete")], encode=lambda session: None)
+    assert rig.monitor.run() == "complete"
+    assert "RECORDED BUT TOO LARGE" in rig.posts[0]
+    assert "timelapse.mp4" not in rig.posts[0]
+
+
+def test_video_post_refusal_falls_back_to_the_snapshot_post(capture_logs):
+    posts = []
+
+    def post(text):
+        posts.append(text)
+        if "timelapse.mp4" in text:
+            raise RuntimeError("chat refused the video post")
+
+    rig = CaptureRig([st("printing"), st("complete")])
+    rig.monitor._post = post
+    assert rig.monitor.run() == "complete"
+    assert len(posts) == 2 and "timelapse.mp4" not in posts[1] and "MEDIA:" in posts[1]
+
+
+def test_pause_holds_the_session_without_taking_frames(capture_logs):
+    rig = CaptureRig([st("paused"), st("paused"), st("complete")])
+    assert rig.monitor.run() == "complete"
+    assert rig.session is not None and rig.session.ticks == 0
+    assert rig.session.stopped == "complete"
+
+
+def test_superseded_print_stops_the_session_and_posts_nothing(capture_logs):
+    rig = CaptureRig([st("printing"), st("printing", filename="other.gcode.3mf")])
+    assert rig.monitor.run() is None
+    assert rig.session.stopped == "superseded"
+    assert rig.posts == []
+
+
+def test_status_read_failure_costs_a_poll_never_the_session(capture_logs):
+    statuses = scripted([st("printing"), RuntimeError("mqtt dropped"), st("complete")])
+
+    def status_fn():
+        value = statuses()
+        if isinstance(value, Exception):
+            raise value
+        return value
+
+    rig = CaptureRig([st("complete")])
+    rig.monitor._status_fn = status_fn
+    assert rig.monitor.run() == "complete"
+    assert rig.session.stopped == "complete"
+    assert len(rig.posts) == 1
+
+
+def test_monitor_without_a_camera_source_never_captures():
+    # The pre-#295 construction: no camera_source_fn, so no session is
+    # ever attempted and the completion post is exactly the old one.
+    posts = []
+    clock = FakeClock()
+    begins = []
+    monitor = bambu_watch.BambuPrintMonitor(
+        REMOTE, status_fn=scripted([st("printing"), st("complete")]),
+        camera_fn=lambda: JPEG, post=posts.append,
+        begin_fn=lambda url, fetch: begins.append((url, fetch)),
+        clock=clock, wall=clock, sleep=clock.sleep, poll_s=10)
+    assert monitor.run() == "complete"
+    assert begins == []
+    assert len(posts) == 1 and posts[0].count("MEDIA:") == 1
+
+
+def test_start_monitor_wires_the_adapters_frame_source():
+    ran = []
+    adapter = FakeAdapter([st("printing"), st("complete")])
+    adapter.camera_frame_source = lambda: (SOURCE_URL, lambda _url: JPEG)
+    thread = bambu_watch.start_monitor(
+        adapter, REMOTE, post=ran.append,
+        thread_factory=lambda target: types.SimpleNamespace(start=lambda: target()))
+    assert thread is not None
+    assert len(ran) == 1 and "MEDIA:" in ran[0]
+
+
+# -- the full lifecycle: real session, real JPEG stills, real ffmpeg -------------
+
+import io as _io
+import shutil as _shutil
+import subprocess as _subprocess
+
+import pytest as _pytest
+from PIL import Image as _Image
+
+from print_buddy.hermes import moonraker_event_listener as _mel
+from print_buddy.hermes import timelapse_capture as _capture
+
+_FFMPEG = _shutil.which("ffmpeg")
+_FFPROBE = _shutil.which("ffprobe")
+
+
+def _jpeg_bytes(colour):
+    out = _io.BytesIO()
+    _Image.new("RGB", (320, 240), colour).save(out, format="JPEG")
+    return out.getvalue()
+
+
+@_pytest.mark.skipif(not (_FFMPEG and _FFPROBE), reason="needs ffmpeg and ffprobe on PATH")
+def test_full_lifecycle_produces_a_valid_h264_mp4_under_the_limit(tmp_path, monkeypatch):
+    stills = scripted([_jpeg_bytes(colour) for colour in ("red", "green", "blue")])
+    clock = FakeClock()
+    root = tmp_path / "cache" / "timelapse"
+
+    def begin_fn(url, fetch):
+        session = _capture.CaptureSession(
+            root, REMOTE, REMOTE,
+            trigger=_capture.make_trigger("interval", 0.5),
+            max_frames=100, max_bytes=0, url=url,
+            fetch=fetch, log=lambda _line: None, now=clock)
+        assert session.start()
+        return session
+
+    monkeypatch.setattr(_mel, "_media_upload_limit", lambda: 500_000)
+    posts = []
+    monitor = bambu_watch.BambuPrintMonitor(
+        REMOTE,
+        status_fn=scripted([st("printing"), st("printing"), st("printing"), st("complete")]),
+        camera_fn=lambda: JPEG,
+        post=posts.append,
+        camera_source_fn=lambda: (SOURCE_URL, lambda _url: stills()),
+        begin_fn=begin_fn,
+        clock=clock, wall=clock, sleep=clock.sleep, poll_s=10, capture_poll_s=2)
+    assert monitor.run() == "complete"
+    assert len(posts) == 1 and posts[0].count("MEDIA:") == 2
+    video = _Path(posts[0].rsplit("MEDIA:", 1)[1].strip())
+    assert video.is_file() and 0 < video.stat().st_size <= 500_000
+    probe = _subprocess.run([_FFPROBE, "-v", "error", "-select_streams", "v:0",
+                             "-show_entries", "stream=codec_name", "-of", "csv=p=0",
+                             str(video)], capture_output=True, text=True, check=True)
+    assert probe.stdout.strip() == "h264"
+    session_dir = next(root.iterdir())
+    frames = list((session_dir / "frames").glob("frame-*.jpg"))
+    assert len(frames) >= 2
+    assert frames[0].read_bytes().startswith(b"\xff\xd8")

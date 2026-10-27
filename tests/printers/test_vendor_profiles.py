@@ -31,6 +31,7 @@ def without_added(data):
         data.get("timelapse", {}).pop(key, None)
     data.pop("webui", None)  # added by #286 stage 1, after the golden files were captured
     data.pop("live_stream", None)  # added by #311 stage 3, after the golden files were captured
+    data.pop("design", None)  # added by #388 stage 1, after the golden files were captured
     data.pop("printers", None)  # added by #333 (the [[printers]] roster), after the golden files were captured
     data.get("vision", {}).pop("roast_enabled", None)  # added by the roast switch, after capture
     data.pop("telegram", None)  # added by #164 stage 2, after the golden files were captured

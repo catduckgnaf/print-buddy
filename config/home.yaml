@@ -127,6 +127,20 @@ llm:
   model: ''
   api_key_env: LLM_API_KEY
   timeout_s: 20
+design:
+  # AI design with OpenSCAD (#388): /print-design creates a new printable
+  # part from a description. Off by default — a design turn spends real
+  # model time. Empty chat_url/model/api_key_env inherit the [llm] values,
+  # so a single-endpoint setup only sets design.model (a stronger model
+  # for design, e.g. sol at medium while chat stays luna at medium).
+  # In Hermes mode the endpoint fields are unused: the profile's
+  # auxiliary.print_design block pins the design model instead.
+  enabled: false
+  chat_url: ''
+  model: ''
+  api_key_env: ''
+  timeout_s: 180
+  repair_attempts: 3
 listener:
   tick_s: 600
   ifs_presence_poll_s: 15

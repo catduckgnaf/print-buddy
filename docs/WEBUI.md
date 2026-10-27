@@ -111,7 +111,7 @@ In the in-repo Unraid template:
 
 1. Set **Web UI** (`PRINT_BUDDY__WEBUI__ENABLED`) to `true`.
 2. Leave **Web UI bind host** at the template default `0.0.0.0` when the page must be reachable through the port mapping.
-3. Keep **Web UI port setting** (`PRINT_BUDDY__WEBUI__PORT`) and the **Web UI port** mapping matched; the template uses `8080` for both.
+3. Keep **Web UI port setting** (`PRINT_BUDDY__WEBUI__PORT`) and the **Web UI port** mapping matched; the template uses `8088` for both.
 4. Set the masked **Web UI access token** (`WEBUI_ACCESS_TOKEN`) to a long random value.
 5. Apply/restart the container.
 

@@ -7,12 +7,17 @@ Flow runs against the fetched files are run_complex_corpus.py's job and are
 reported there, not faked here.
 """
 import hashlib
+import http.client
+import json
 import os
 import re
 import tomllib
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
+
+from . import fetch_complex_corpus
 
 MANIFEST = Path(__file__).resolve().parent / "complex_cases.toml"
 CASES = tomllib.loads(MANIFEST.read_text())["case"]
@@ -91,6 +96,66 @@ def test_targets_exist_in_the_printer_registry():
     keys = set(re.findall(r'^key = "([^"]+)"', registry, re.M))
     for case in CASES:
         assert case["target_printer"] in keys, (case["slug"], case["target_printer"])
+
+
+class _FakeResponse:
+    """A stand-in for the _open_direct response: read() either returns the
+    canned body or raises the canned error (e.g. a truncated read)."""
+
+    def __init__(self, body=None, error=None):
+        self._body = body
+        self._error = error
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc):
+        return False
+
+    def read(self):
+        if self._error is not None:
+            raise self._error
+        return self._body
+
+
+_GOOD_LINK_BODY = json.dumps({"data": {"getDownloadLink": {
+    "ok": True, "output": {"link": "https://example.test/model.stl"},
+    "errors": None}}}).encode()
+
+
+def _stub_open_direct(monkeypatch, responses):
+    calls = []
+
+    def fake_open(url, data=None, headers=None):
+        calls.append(url)
+        return responses[len(calls) - 1]
+
+    monkeypatch.setattr(fetch_complex_corpus, "_open_direct", fake_open)
+    monkeypatch.setattr(fetch_complex_corpus, "time",
+                        SimpleNamespace(sleep=lambda *_args: None))
+    return calls
+
+
+def test_printables_link_retries_a_truncated_read(monkeypatch):
+    """A response truncated mid-read (http.client.IncompleteRead, seen once
+    in the real fetch smoke run) is retried, not a crash."""
+    calls = _stub_open_direct(monkeypatch, [
+        _FakeResponse(error=http.client.IncompleteRead(b"partial", 123)),
+        _FakeResponse(body=_GOOD_LINK_BODY),
+    ])
+    assert fetch_complex_corpus.printables_link("11", "22") == \
+        "https://example.test/model.stl"
+    assert len(calls) == 2
+
+
+def test_printables_link_gives_up_after_bounded_retries(monkeypatch):
+    calls = _stub_open_direct(monkeypatch, [
+        _FakeResponse(error=http.client.IncompleteRead(b"partial"))
+        for _ in range(3)
+    ])
+    with pytest.raises(http.client.IncompleteRead):
+        fetch_complex_corpus.printables_link("11", "22")
+    assert len(calls) == 3
 
 
 @pytest.mark.skipif(not os.environ.get("COMPLEX_CORPUS_ROOT"),

@@ -123,6 +123,66 @@ def find_session_for_owner(root, owner_key):
     return best
 
 
+# ------------------------------------------------------- read-only catalog
+
+_CATALOG_FILES = ("scad", "stl", "preview")
+
+
+def list_sessions(root, *, days=RETENTION_DAYS, now=None):
+    """Session records inside the retention window, newest first.
+
+    The read side of the store (the Web UI designs catalog renders this):
+    only records whose ``updated_at`` is within ``days`` are listed — the
+    same window :func:`prune_old_sessions` enforces — and a folder whose
+    record is unreadable is skipped, never fatal.
+    """
+    root = Path(root)
+    if not root.is_dir():
+        return []
+    cutoff = (now or time.time()) - days * 86400
+    found = []
+    for folder in root.iterdir():
+        if not folder.is_dir():
+            continue
+        try:
+            data = json.loads((folder / "session.json").read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            continue
+        if not isinstance(data, dict) or not data.get("id"):
+            continue
+        if float(data.get("updated_at") or 0) < cutoff:
+            continue
+        found.append(data)
+    found.sort(key=lambda s: (float(s.get("updated_at") or 0),
+                              float(s.get("created_at") or 0), str(s.get("id"))),
+               reverse=True)
+    return found
+
+
+def session_file(root, session_id, kind):
+    """The path of one catalog file of a session, or None.
+
+    ``kind`` is one of ``scad`` / ``stl`` / ``preview`` and selects the
+    filename the session record itself carries under that key. The name
+    must be a bare filename, so what is served always lives directly
+    inside the session's own folder — a tampered record naming ``../``
+    or an absolute path resolves to None, never to a file outside.
+    """
+    if kind not in _CATALOG_FILES:
+        return None
+    try:
+        session = load_session(root, session_id)
+    except DesignError:  # a malformed id names no session
+        return None
+    if session is None:
+        return None
+    name = session.get(kind)
+    if not isinstance(name, str) or not name or Path(name).name != name:
+        return None
+    path = _session_path(Path(root), session_id) / name
+    return path if path.is_file() else None
+
+
 def prune_old_sessions(root, days=RETENTION_DAYS, now=None):
     """Drop session folders whose last update is older than the retention window."""
     root = Path(root)

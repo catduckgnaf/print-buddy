@@ -109,3 +109,19 @@ it", every existing command — behaves exactly as before, and while a design
 is waiting for a revision, your next plain message is the revision, phrases
 or not. When design is off or no model is configured, the phrases fall
 through to normal chat untouched.
+
+## Browsing designs in the Web UI
+
+The [Web UI](WEBUI.md) has a read-only **Designs** page (`/designs`, behind
+the same access token as every other page) listing the design sessions on
+the machine, newest first: what each one is (created from a description, or
+an edit with its source named), its state, how many turns it took, when it
+was made and last changed, and its preview. Opening a design shows its
+final `.scad` source and offers downloads of the `.scad`, the final `.stl`
+and the preview PNG.
+
+The page is a catalog of what exists on disk — the same sessions chat works
+with, kept for the same 14 days — so it lists sessions even while
+`[design]` is switched off. It has no actions: nothing there deletes,
+slices or prints. Slicing a design still happens from chat, through the
+normal confirmation flow.

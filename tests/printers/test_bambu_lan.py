@@ -12,7 +12,7 @@ import ssl
 import pytest
 
 from print_buddy import printers, settings
-from print_buddy.core import printer_state
+from print_buddy.core import printer_state, spoolman_client
 from print_buddy.printers.bambulab import adapter as bambu_adapter
 from print_buddy.printers.bambulab.client import (BambuLanClient, BambuLanError, lan_ssl_context,
                                                   merge_print, signature_required)
@@ -232,6 +232,12 @@ def test_printer_state_check_uses_telemetry_and_spoolman_but_never_moonraker(mon
         contacted.append(url)
         return {"id": 10, "archived": False, "filament": {"name": "white", "material": "PLA"}, "remaining_weight": 900}
     monkeypatch.setattr(printer_state, "_get", get)
+
+    def spoolman_request(method, path, body=None, *, base_url=None, timeout=None):
+        # #387: the check's Spoolman leg travels through the one client now.
+        contacted.append(f"{base_url}{path}")
+        return {"id": 10, "archived": False, "filament": {"name": "white", "material": "PLA"}, "remaining_weight": 900}
+    monkeypatch.setattr(spoolman_client, "request", spoolman_request)
     record = {"bed_mm": [256, 256], "max_print_height_mm": 256,
               "nozzle": {"diameter_mm": 0.4, "type": "stainless_steel"},
               "spool": {"spoolman_id": 10, "name": "white"}, "spoolman_url": "http://spoolman.test:7912"}

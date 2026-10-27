@@ -27,7 +27,7 @@ from unittest.mock import patch
 import pytest
 
 from print_buddy import printers, settings
-from print_buddy.core import model_job, orca_adapter, printer_state
+from print_buddy.core import model_job, orca_adapter, printer_state, spoolman_client
 
 FIXTURE = Path(__file__).parent / "fixtures" / "printer_hardware.json"
 
@@ -60,12 +60,14 @@ def use_generic(monkeypatch):
 
 
 def moonraker_get(spool_reply):
-    """printer_state._get stand-in: Moonraker answers, Spoolman gets spool_reply (value or exception)."""
+    """printer_state._get stand-in for the Moonraker legs only (#387).
+
+    Spoolman no longer travels over _get: it goes through
+    print_buddy.core.spoolman_client, faked by spoolman_request below.
+    """
     def get(url, data=None, method=None, timeout=6):
         if "/api/v1/spool/" in url:
-            if isinstance(spool_reply, Exception):
-                raise spool_reply
-            return spool_reply
+            raise AssertionError("Spoolman must go through spoolman_client, not _get (#387)")
         if "configfile" in url:
             return {"result": {"status": {"configfile": {"settings": {"extruder": {"nozzle_diameter": "0.4"}}}}}}
         if "spool_id" in url:
@@ -74,9 +76,26 @@ def moonraker_get(spool_reply):
     return get
 
 
+def spoolman_request(spool_reply, contacted=None):
+    """spoolman_client.request stand-in: returns spool_reply, or raises it as an outage.
+
+    A transport/HTTP exception becomes SpoolmanUnavailable carrying the
+    original message, exactly as the real client wraps it.
+    """
+    def request(method, path, body=None, *, base_url=None, timeout=5.0):
+        if contacted is not None:
+            contacted.append((method, path, base_url))
+        if isinstance(spool_reply, Exception):
+            raise spoolman_client.SpoolmanUnavailable(str(spool_reply))
+        return spool_reply
+    return request
+
+
 def test_spoolman_unreachable_is_a_warning_not_a_problem(monkeypatch):
     use_generic(monkeypatch)
-    with mock.patch.object(printer_state, "_get", moonraker_get(urllib.error.URLError("Connection refused"))):
+    down = urllib.error.URLError("Connection refused")
+    with mock.patch.object(printer_state, "_get", moonraker_get(down)), \
+         mock.patch.object(spoolman_client, "request", spoolman_request(down)):
         ok, probs, facts = printer_state.check(dict(GENERIC_STATE))
     assert ok is True
     assert probs == []
@@ -89,7 +108,8 @@ def test_spoolman_archived_and_renamed_are_warnings(monkeypatch):
     use_generic(monkeypatch)
     reply = {"id": 7, "archived": True, "remaining_weight": 120,
              "filament": {"name": "Renamed PLA", "material": "PLA"}}
-    with mock.patch.object(printer_state, "_get", moonraker_get(reply)):
+    with mock.patch.object(printer_state, "_get", moonraker_get(reply)), \
+         mock.patch.object(spoolman_client, "request", spoolman_request(reply)):
         ok, probs, facts = printer_state.check(dict(GENERIC_STATE))
     assert ok is True and probs == []
     assert any("archived" in w for w in facts["warnings"])
@@ -99,7 +119,9 @@ def test_spoolman_archived_and_renamed_are_warnings(monkeypatch):
 
 def test_spoolman_missing_record_is_a_warning(monkeypatch):
     use_generic(monkeypatch)
-    with mock.patch.object(printer_state, "_get", moonraker_get(urllib.error.HTTPError("u", 404, "not found", {}, None))):
+    missing = urllib.error.HTTPError("u", 404, "not found", {}, None)
+    with mock.patch.object(printer_state, "_get", moonraker_get(missing)), \
+         mock.patch.object(spoolman_client, "request", spoolman_request(missing)):
         ok, probs, facts = printer_state.check(dict(GENERIC_STATE))
     assert ok is True and probs == []
     assert any("Spoolman lookup failed" in w for w in facts["warnings"])
@@ -109,7 +131,9 @@ def test_offline_check_spoolman_down_still_ok(monkeypatch):
     stub = mock.Mock(connection="offline", transport=None, has_native_screen=False)
     stub.readiness_problems = lambda st, snapshot: []
     monkeypatch.setattr(printers, "current", lambda config=None: stub)
-    with mock.patch.object(printer_state, "_get", side_effect=urllib.error.URLError("Connection refused")):
+    with mock.patch.object(printer_state, "_get", side_effect=urllib.error.URLError("Connection refused")), \
+         mock.patch.object(spoolman_client, "request",
+                           spoolman_request(urllib.error.URLError("Connection refused"))):
         ok, probs, facts = printer_state.check(dict(GENERIC_STATE))
     assert ok is True and probs == []
     assert facts["connection"] == "offline"
@@ -121,15 +145,15 @@ def test_real_hardware_problem_still_blocks_despite_spoolman_warning(monkeypatch
     use_generic(monkeypatch)
 
     def get(url, data=None, method=None, timeout=6):
-        if "/api/v1/spool/" in url:
-            raise urllib.error.URLError("Connection refused")
         if "configfile" in url:
             return {"result": {"status": {"configfile": {"settings": {"extruder": {"nozzle_diameter": "0.6"}}}}}}
         if "spool_id" in url:
             return {"result": {"spool_id": 7}}
         raise AssertionError(url)
 
-    with mock.patch.object(printer_state, "_get", get):
+    with mock.patch.object(printer_state, "_get", get), \
+         mock.patch.object(spoolman_client, "request",
+                           spoolman_request(urllib.error.URLError("Connection refused"))):
         ok, probs, facts = printer_state.check(dict(GENERIC_STATE))
     assert ok is False
     assert any("nozzle_diameter" in p for p in probs)
@@ -143,17 +167,16 @@ def test_spoolman_url_prefers_settings_over_stale_record(monkeypatch):
                         lambda: {"services": {"spoolman_url": "http://configured.test:8000/"}})
     assert printer_state.spoolman_url(dict(GENERIC_STATE)) == "http://configured.test:8000"
     contacted = []
-
-    def get(url, data=None, method=None, timeout=6):
-        contacted.append(url)
-        return moonraker_get({"id": 7, "filament": {"name": "Black PLA", "material": "PLA"}})(url, data, method, timeout)
+    reply = {"id": 7, "filament": {"name": "Black PLA", "material": "PLA"}}
 
     use_generic(monkeypatch)
-    with mock.patch.object(printer_state, "_get", get):
+    with mock.patch.object(printer_state, "_get", moonraker_get(reply)), \
+         mock.patch.object(spoolman_client, "request", spoolman_request(reply, contacted)):
         ok, probs, facts = printer_state.check(dict(GENERIC_STATE))
     assert ok is True
-    assert "http://configured.test:8000/api/v1/spool/7" in contacted
-    assert not any("stale.test" in u for u in contacted)
+    # The one Spoolman client was aimed at the settings URL, never the stale record.
+    assert ("GET", "/api/v1/spool/7", "http://configured.test:8000") in contacted
+    assert not any("stale.test" in str(base) for _m, _p, base in contacted)
 
 
 def test_spoolman_url_falls_back_to_record_when_settings_empty(monkeypatch):
@@ -176,7 +199,9 @@ def test_spoolman_url_survives_broken_settings(monkeypatch):
 def test_verify_gcode_proceeds_and_warns_when_spoolman_down(monkeypatch, tmp_path, capsys):
     use_generic(monkeypatch)
     monkeypatch.setattr(printer_state, "load", lambda: dict(GENERIC_STATE))
-    with mock.patch.object(printer_state, "_get", moonraker_get(urllib.error.URLError("Connection refused"))):
+    down = urllib.error.URLError("Connection refused")
+    with mock.patch.object(printer_state, "_get", moonraker_get(down)), \
+         mock.patch.object(spoolman_client, "request", spoolman_request(down)):
         gcode = tmp_path / "plate_1.gcode"
         gcode.write_text(GCODE)
         assert model_job.verify_gcode(gcode) is True
@@ -221,7 +246,8 @@ def test_derived_plate_slices_when_spoolman_unreachable(tmp_path, capsys):
     assert output.exists()
     filament = json.loads((tmp_path / "out/filament.json").read_text())
     assert filament["filament_type"] == ["PLA"]  # the slot record's material, not a Spoolman answer
-    assert "WARNING: Spoolman lookup failed for slot 2" in capsys.readouterr().out
+    # #387: the detail is in the WARNING log; the user gets the one line, once.
+    assert capsys.readouterr().out.count(spoolman_client.UNAVAILABLE_NOTICE) == 1
 
 
 def test_derived_plate_slices_when_spoolman_says_archived(tmp_path, capsys):

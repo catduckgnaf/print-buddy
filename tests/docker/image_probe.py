@@ -19,6 +19,22 @@ ORCA = Path("/usr/bin/orca-slicer")
 sys.path.insert(0, "/app")
 
 
+def _orca_env():
+    """Environment for invoking the raw Orca binary (/usr/bin/orca-slicer ->
+    the stable tree). The image sets no global LD_LIBRARY_PATH (Orca's
+    bundled FFmpeg 7.0 libav* sonames would shadow the system ffmpeg's
+    libraries), so the raw binary gets its private library path scoped to
+    this invocation, mirroring upstream's env helper
+    (libexec/orca-slicer-env). Wrapped launches (ORCA_COMMAND -> AppRun)
+    set it themselves and do not need this."""
+    env = dict(os.environ)
+    paths = ["/opt/orca-stable/lib/orca-runtime", "/opt/orca-stable/bin"]
+    if env.get("LD_LIBRARY_PATH"):
+        paths.append(env["LD_LIBRARY_PATH"])
+    env["LD_LIBRARY_PATH"] = ":".join(paths)
+    return env
+
+
 def report(check, ok, **details):
     print("PROBE " + json.dumps({"check": check, "ok": ok, **details}, sort_keys=True, default=str))
     return 0 if ok else 1
@@ -54,9 +70,20 @@ def closure():
     if not ORCA.exists():
         ok = not info.exists() and not Path("/orca-source-revision").exists()
         return report("closure", ok, orca=False)
-    ldd = subprocess.run(["ldd", str(ORCA)], capture_output=True, text=True, timeout=60)
-    missing = [line.strip() for line in ldd.stdout.splitlines() if "not found" in line]
-    help_run = subprocess.run([str(ORCA), "--help"], capture_output=True, text=True, timeout=300)
+    # Orca writes 00000.log into its working directory at startup and aborts
+    # when it cannot (the image's /app is not writable by the runtime user),
+    # so --help runs from a writable work directory under the cache mount,
+    # like every other Orca invocation in the probe and in production.
+    from print_buddy import settings
+    work = Path(tempfile.mkdtemp(prefix="probe-closure-", dir=settings.current()["paths"]["cache"]))
+    try:
+        env = _orca_env()
+        ldd = subprocess.run(["ldd", str(ORCA)], capture_output=True, text=True, timeout=60, env=env)
+        missing = [line.strip() for line in ldd.stdout.splitlines() if "not found" in line]
+        help_run = subprocess.run([str(ORCA), "--help"], capture_output=True, text=True, timeout=300,
+                                  cwd=work, env=env)
+    finally:
+        shutil.rmtree(work, ignore_errors=True)
     first = (help_run.stdout or help_run.stderr).strip().splitlines()[:1]
     build = dict(line.split("=", 1) for line in info.read_text().splitlines() if "=" in line) if info.exists() else {}
     revision = Path("/orca-source-revision").read_text().strip() if Path("/orca-source-revision").exists() else ""
@@ -101,7 +128,7 @@ def slice_check():
         command = [*orca_adapter.ORCA_COMMAND, "--load-settings", f"{machine};{process}",
                    "--load-filaments", str(filament), "--arrange", "1", "--orient", "0", "--ensure-on-bed",
                    "--allow-newer-file", "--slice", "0", "--outputdir", str(out), str(cube)]
-        run = subprocess.run(command, capture_output=True, text=True, timeout=900)
+        run = subprocess.run(command, capture_output=True, text=True, timeout=900, cwd=work)
         gcode = out / "plate_1.gcode"
         result = None
         if run.returncode == 0 and gcode.is_file():

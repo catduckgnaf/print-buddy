@@ -21,7 +21,7 @@ from pathlib import Path
 import pytest
 
 from print_buddy import printers, settings
-from print_buddy.core import delivery, model_job, orca_adapter, printer_state, slice_guard
+from print_buddy.core import delivery, model_job, orca_adapter, printer_state, slice_guard, spoolman_client
 from print_buddy.printers.bambulab import VENDOR, facts, guard, profiles
 from print_buddy.printers.bambulab.a1 import MODEL, A1Adapter
 from print_buddy.printers.bambulab.adapter import BambuOfflineAdapter, LiveUnsupported
@@ -833,9 +833,15 @@ def a1_current(monkeypatch):
             return {"id": 10, "archived": False, "filament": {"name": "white", "material": "PLA"}, "remaining_weight": 900}
         raise AssertionError(f"unexpected network call {url}")
 
+    def spoolman_request(method, path, body=None, *, base_url=None, timeout=None):
+        # #387: Spoolman lookups travel through the one client now, not _get.
+        contacted.append(f"{base_url}{path}")
+        return {"id": 10, "archived": False, "filament": {"name": "white", "material": "PLA"}, "remaining_weight": 900}
+
     monkeypatch.setattr(printers, "current", lambda config=None: a)
     monkeypatch.setattr(printer_state, "load", state)
     monkeypatch.setattr(printer_state, "_get", get)
+    monkeypatch.setattr(spoolman_client, "request", spoolman_request)
     monkeypatch.setattr(model_job, "_mr", lambda *a, **k: (_ for _ in ()).throw(AssertionError("Moonraker contacted")))
     return contacted
 

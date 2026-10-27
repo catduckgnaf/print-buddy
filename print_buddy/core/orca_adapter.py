@@ -935,25 +935,24 @@ def slice_model(source, folder, state, brim=None, first_layer=False, color_decis
             # color/material). Spoolman is advisory only (#235): every lookup
             # outcome — unreachable, missing, archived or a different material
             # on file — warns and slicing proceeds on the slot's recorded
-            # material/name and the recorded density/temperatures.
+            # material/name and the recorded density/temperatures. The lookup
+            # itself goes through the one Spoolman client (#387): when
+            # Spoolman does not answer, the wrapper has logged the WARNING
+            # and the user gets the one-line notice, once.
             state = {**state, 'spool': {**state['spool'], 'spoolman_id': slot['spoolman_id'],
                                         'name': slot.get('name'), 'material': slot['material']}}
             from .printer_state import same_material, spoolman_url
-            try:
-                import urllib.request
-                spool_url = f"{spoolman_url(state)}/api/v1/spool/{slot['spoolman_id']}"
-                with urllib.request.urlopen(spool_url, timeout=6) as response:
-                    spool = json.load(response)
-                if spool.get('archived'):
-                    print(f"WARNING: Spoolman spool #{slot['spoolman_id']} is archived; "
-                          f"slicing slot {filament_slot} on its recorded {slot['material']} anyway", flush=True)
-                elif not same_material(spool.get('filament', {}).get('material'), slot['material']):
-                    print(f"WARNING: Spoolman spool #{slot['spoolman_id']} material "
-                          f"{spool.get('filament', {}).get('material')!r} differs from slot {filament_slot}'s "
-                          f"recorded {slot['material']!r}; slicing on the slot record", flush=True)
-            except Exception as exc:
-                print(f"WARNING: Spoolman lookup failed for slot {filament_slot} spool "
-                      f"#{slot['spoolman_id']}: {exc}; slicing on the slot record", flush=True)
+            from . import spoolman_client
+            spool = spoolman_client.get_spool(slot['spoolman_id'], base_url=spoolman_url(state))
+            if spool is None:
+                spoolman_client.note_unavailable_once()
+            elif spool.get('archived'):
+                print(f"WARNING: Spoolman spool #{slot['spoolman_id']} is archived; "
+                      f"slicing slot {filament_slot} on its recorded {slot['material']} anyway", flush=True)
+            elif not same_material(spool.get('filament', {}).get('material'), slot['material']):
+                print(f"WARNING: Spoolman spool #{slot['spoolman_id']} material "
+                      f"{spool.get('filament', {}).get('material')!r} differs from slot {filament_slot}'s "
+                      f"recorded {slot['material']!r}; slicing on the slot record", flush=True)
         color = slot.get('hex')
     else:
         matching = [s for s in slots.values() if s.get('spoolman_id') == state['spool'].get('spoolman_id')]

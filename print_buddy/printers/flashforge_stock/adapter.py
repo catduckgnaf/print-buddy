@@ -37,6 +37,22 @@ class StockFlashforgeAdapter(PrinterAdapter):
             raise StockLanError("stock LAN credentials missing (AD5X_SERIAL, AD5X_CHECK_CODE)")
         return StockClient(host)
 
+    def control(self, action):
+        """Pause, resume or stop the current job over stock LAN (jobCtl_cmd).
+
+        Protocol facts from the same public docs the client cites
+        (Parallel-7/flashforge-api-docs, HTTP REST API): /control carries
+        cmd "jobCtl_cmd" — "Manages the current print job (pause, resume,
+        cancel)" — with args {"jobID": "", "action": ...}; the resume
+        action is spelled "continue" there. The shared control vocabulary
+        (pause/resume/stop) is translated here so callers never see the
+        firmware's spelling.
+        """
+        actions = {"pause": "pause", "resume": "continue", "stop": "cancel"}
+        if action not in actions:
+            raise StockLanError(f"unsupported stock LAN control action: {action!r}")
+        return self.client().control("jobCtl_cmd", {"jobID": "", "action": actions[action]})
+
     def machine_start_gcode(self, template_start, mesh="auto"):
         return template_start  # the slicer owns the start sequence; Print Buddy adds nothing
 

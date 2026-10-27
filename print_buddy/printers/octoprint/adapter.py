@@ -11,6 +11,19 @@ class OctoPrintAdapter(KlipperAdapter):
     def client(self):
         return OctoPrintClient(self.config['services'].get('octoprint_url', ''), os.environ.get('OCTOPRINT_API_KEY', ''))
 
+    def control(self, action):
+        """Pause, resume or stop the current print through OctoPrint's job API.
+
+        The shared control vocabulary is pause/resume/stop (the shape the
+        other families' adapters expose); OctoPrint's own job command for
+        stopping is "cancel", so the translation lives here, in the family's
+        adapter, and callers never see it.
+        """
+        actions = {'pause': 'pause', 'resume': 'resume', 'stop': 'cancel'}
+        if action not in actions:
+            raise OctoPrintError(f'{action} is unsupported by the OctoPrint integration')
+        return self.client().control(actions[action])
+
     def machine_start_gcode(self, template_start, mesh='auto'):
         return template_start
 

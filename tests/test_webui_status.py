@@ -72,21 +72,25 @@ class SnapshotTests(unittest.TestCase):
         self.assertTrue(snap["ok"])
 
     def test_listener_section_aggregates_a_multi_printer_roster(self):
-        # #336: one status row per printer; a printer without a listener
-        # domain adds no requirement.
+        # #336: one status row per printer. Since #460 every family has a
+        # listener domain, so the stock printer is required too — and it
+        # beats under its own domain runtime, not Moonraker's.
         with tempfile.TemporaryDirectory() as tmp:
             data = load_settings(tmp, extra=(
                 "printers:\n"
                 "  - id: moon-two\n    model: klipper.generic\n"
                 "  - id: stock-two\n    model: flashforge_stock.ad5x\n"))
             healthcheck.beat(data=data, printer_id="moon-two")
+            healthcheck.beat(data=data, printer_id="stock-two",
+                             runtime=healthcheck.expected_runtime(data, "stock-two"))
             section = status.snapshot(data, environ={}, heartbeat=fresh_heartbeat(),
                                       probe=ok_probe, checks=OK_CHECKS)["listener"]
         self.assertTrue(section["required"])
         self.assertTrue(section["ok"])
         self.assertEqual(set(section["printers"]), {"moon-two", "stock-two"})
         self.assertTrue(section["printers"]["moon-two"]["ok"])
-        self.assertFalse(section["printers"]["stock-two"]["required"])
+        self.assertTrue(section["printers"]["stock-two"]["required"])
+        self.assertTrue(section["printers"]["stock-two"]["ok"])
 
     def test_listener_section_names_the_unhealthy_printer(self):
         with tempfile.TemporaryDirectory() as tmp:

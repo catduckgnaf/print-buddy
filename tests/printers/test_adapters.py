@@ -121,7 +121,9 @@ class ContractTests(unittest.TestCase):
                                        "elegoo.neptune4max", "elegoo_sdcp.centauricarbon",
                                        "qidi.q1pro", "qidi.xplus3", "qidi.xmax3", "qidi.xsmart3",
                                        "creality.ender3v3", "creality.ender3v3ke", "creality.ender3v3plus",
-                                       "creality.k1", "creality.k1c", "creality.k1max"})
+                                       "creality.k1", "creality.k1c", "creality.k1max",
+                                       "octoprint.ender3", "octoprint.ender3pro", "octoprint.ender3v2",
+                                       "octoprint.ender3v3se"})
         for key, model in printers.MODELS.items():
             self.assertEqual(model.key, key)
             shipped = settings.ROOT / "print_buddy" / "templates" / "orca" / model.templates
@@ -156,7 +158,7 @@ class ContractTests(unittest.TestCase):
                 folder = a.templates_dir()
                 for name in ("machine", "process", "filament"):
                     json.loads((folder / f"{name}.json").read_text())
-                if family not in (OCTOPRINT, "flashforge_stock.ad5x") and not family.startswith(("bambulab.", "prusa.", "elegoo", "qidi.", "creality.")):
+                if family != "flashforge_stock.ad5x" and not family.startswith(("octoprint.", "bambulab.", "prusa.", "elegoo", "qidi.", "creality.")):
                     self.assertIn("[bed_temperature_initial_layer_single]", a.machine_start_gcode("X MESH=auto", "auto"))
                 plan = a.start_plan(60, 215)
                 if family == "flashforge_stock.ad5x":
@@ -188,7 +190,7 @@ class ContractTests(unittest.TestCase):
                     self.assertRaises(Exception, a.moonraker_objects)
                     self.assertIn("state", a.normalize_status({}))
                     continue
-                if family == OCTOPRINT:
+                if family.startswith("octoprint."):
                     self.assertEqual(plan, ["M190 S60", "M109 S215"])
                     self.assertEqual(a.machine_end_gcode("END_PRINT"), "END_PRINT")
                     self.assertRaises(Exception, a.moonraker_start_commands, "part.gcode")

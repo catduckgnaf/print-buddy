@@ -6,6 +6,7 @@ health  exit 0 only while a running bot reports a fresh heartbeat with no Hermes
 """
 import logging
 import sys
+from pathlib import Path
 
 from .. import logs, settings
 
@@ -27,6 +28,31 @@ def checks(cfg):
     implemented = platform.platform_module(name) is not None
     add("platform", implemented, name if implemented else
         f"{name}; platform {name!r} is not implemented yet (#164) — discord, telegram and matrix are available")
+    if mode == "hermes" and name == "discord":
+        # #384: in Hermes mode the gateway owns the Discord connection, and an
+        # explicit platforms.discord.enabled: false in the profile config
+        # silently removes attachment intake — credentials do not override it
+        # and the gateway only logs a warning. Name it here, with the remedy.
+        state, profile_config = _config.profile_platform_state(
+            "discord", path=Path(cfg["paths"]["hermes_home"]) / "config.yaml")
+        remedy = (f"set platforms.discord.enabled: true in {profile_config} and restart the Hermes gateway; "
+                  "environment credentials do not override an explicit platform disable")
+        if state == "disabled":
+            add("hermes discord platform", False,
+                f"disabled in {profile_config}: platforms.discord.enabled is false, so the gateway never "
+                f"connects Discord and attachment intake is silently absent; {remedy}")
+        elif state == "enabled":
+            add("hermes discord platform", True, f"enabled in {profile_config}")
+        elif state == "unset":
+            add("hermes discord platform", True,
+                f"no explicit platforms.discord.enabled in {profile_config}; the gateway default applies")
+        elif state == "missing":
+            add("hermes discord platform", True,
+                f"no profile config at {profile_config} (not installed; no platform switch to disable)")
+        else:
+            add("hermes discord platform", False,
+                f"cannot read {profile_config} to verify platforms.discord.enabled; "
+                "fix or remove it, then re-run scripts/install-hermes.sh")
     if name == "discord":
         token_env = cfg["discord"]["token_env"]
         add("token", bool(_config.discord_token()), f"${token_env} is set" if _config.discord_token()

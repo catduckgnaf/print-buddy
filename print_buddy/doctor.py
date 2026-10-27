@@ -131,6 +131,37 @@ def check_bot(data):
     return f"standalone, print channel {chat}, {len(users)} allowed user(s)"
 
 
+def check_hermes_platform(data):
+    """Hermes mode: the profile must not explicitly disable the Discord platform (#384).
+
+    The gateway honours platforms.discord.enabled: false over any credentials,
+    so Discord attachment intake is silently absent while everything else
+    looks healthy. Returns None outside Hermes/Discord mode, and when there
+    is no profile config to check (a missing config means the profile was
+    never installed — already loud everywhere else, and this check must
+    never become an update blocker for it); raises with the remedy when the
+    switch is explicitly off or the file cannot be parsed.
+    """
+    if data["bot"]["mode"] != "hermes" or str(data["bot"].get("platform") or "discord") != "discord":
+        return None
+    from .hermes import _config
+    state, path = _config.profile_platform_state(
+        "discord", path=Path(data["paths"]["hermes_home"]) / "config.yaml")
+    if state == "disabled":
+        raise RuntimeError(
+            f"the Hermes profile disables Discord: platforms.discord.enabled is false in {path}. "
+            "The gateway will not connect Discord, so attachment intake is absent even though "
+            "credentials are set; environment credentials do not override an explicit platform "
+            "disable. Set it to true and restart the Hermes gateway")
+    if state == "missing":
+        return None
+    if state == "unreadable":
+        raise RuntimeError(f"cannot read {path} to verify platforms.discord.enabled")
+    if state == "enabled":
+        return f"discord platform enabled in {path}"
+    return f"no explicit discord platform disable in {path}"
+
+
 def _bot_token(data):
     from .hermes import _config
     name = data["discord"]["token_env"]
@@ -197,6 +228,7 @@ def run(out=sys.stdout):
     for key in SERVICE_PATHS:
         report(key.replace("_url", ""), check_service, data, key)
     report("bot mode", check_bot, data)
+    report("hermes discord platform", check_hermes_platform, data)
     if data["bot"]["mode"] == "standalone":
         report("discord login", check_discord_login, data)
         try:

@@ -164,7 +164,19 @@ class StandaloneAdapter(BasePlatformAdapter):
     # ------------------------------------------------------------------ answers
 
     async def answer_typed(self, session_key, text):
-        """A typed reply, with a bare number ('2', '2.') translated to that choice's text first."""
+        """A typed reply, with a bare number ('2', '2.') translated to that choice's text first.
+
+        Ordering (#416): the answer note is posted BEFORE the prompt is
+        resolved. Resolving wakes the waiting flow, which sends its next
+        message immediately; on Matrix the close-out is a new room message
+        (there is no edit), so the shared resolve-then-close sequence let
+        the flow's next message overtake the note whenever the note's send
+        lost the thread-pool race — the intermittent CI failure where a
+        room saw "Started." and only then "> Answered by message: ...".
+        Discord/Telegram close-outs are edits, so only Matrix reorders.
+        Answers here are handled one event at a time by the sync loop, and
+        the resolve stays first-wins: its result is what this call returns.
+        """
         text = str(text or "").strip()
         match = _NUMBER.fullmatch(text)
         if match:
@@ -174,7 +186,11 @@ class StandaloneAdapter(BasePlatformAdapter):
                 index = int(match.group(1)) - 1
                 if 0 <= index < len(labels):
                     text = labels[index]
-        return await super().answer_typed(session_key, text)
+        cid = self.open_prompt(session_key)
+        if cid is None or not self.registry.is_open(cid):
+            return False
+        await self.close_prompt(cid, f"Answered by message: {text[:100]}")
+        return bool(self.registry.resolve_gateway_clarify(cid, str(text)))
 
     async def close_prompt(self, clarify_id, note):
         """No message edit on Matrix: a short follow-up message records the answer."""

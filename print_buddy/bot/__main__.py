@@ -15,7 +15,7 @@ def checks(cfg):
     """[(label, ok, detail)]. Offline: nothing here contacts the chat platform."""
     from ..hermes import _config
     from . import health, llm, platform
-    from .runtime import allowed_users
+    from .runtime import allowed_users, discord_chat_llm_enabled
     rows = []
 
     def add(label, ok, detail):
@@ -113,6 +113,12 @@ def checks(cfg):
         # Telegram and Matrix are pure bots (#164 stages 2-3, #73): the LLM
         # fallback is never wired for them, whatever [llm] says elsewhere.
         add("llm", True, f"off ({name.capitalize()} is a pure bot: no LLM; unmatched messages get the short not-understood reply)")
+    elif name == "discord" and not discord_chat_llm_enabled(cfg):
+        # Discord's own no-LLM mode (#466): the operator turned the chat LLM
+        # off by name, so the row names the switch — [llm] may still be
+        # configured for /print-design, which the design row below reports.
+        add("llm", True, "off (discord.chat_llm_enabled is false: no chat LLM; "
+                         "unmatched messages get the short not-understood reply)")
     else:
         add("llm", True, f"{cfg['llm']['model']} at {cfg['llm']['chat_url']}" if llm.configured(cfg)
             else "off (unmatched messages get the short not-understood reply)")

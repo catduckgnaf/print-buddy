@@ -90,6 +90,20 @@ def denied_users(cfg, section="discord"):
     return settings.user_ids(cfg[section].get("denied_user_ids"), key="denied_user_ids")
 
 
+def discord_chat_llm_enabled(cfg):
+    """Discord's operator-facing chat-LLM switch (#466): [discord] chat_llm_enabled.
+
+    On by default: a configured [llm] words Discord free-text replies, as
+    before. False runs Discord as a pure bot (unmatched text gets the
+    short not-understood reply, #467) while [llm] stays configured for the features that
+    inherit it — /print-design resolves its endpoint from [design]/[llm]
+    independently, and the roast and the camera watchdog keep their own
+    vision gates — so turning chat off changes none of them.
+    """
+    discord = (cfg or {}).get("discord") or {}
+    return bool(discord.get("chat_llm_enabled", True))
+
+
 def platform_name_of(source):
     """The platform name a source came from ('discord' for sources that do not say)."""
     value = getattr(getattr(source, "platform", None), "value", None) or getattr(source, "platform", None)
@@ -212,7 +226,12 @@ class BotCore:
         # Pure-bot platforms (the adapter reports uses_llm=False, Telegram in
         # #164 stage 2) never reach the LLM fallback, even when [llm] is
         # configured: their unmatched text gets the short unmatched reply only (#73, #467).
-        self.use_llm = bool(getattr(self.adapter, "uses_llm", True)) if use_llm is None else bool(use_llm)
+        # Discord has the operator-facing version of the same choice (#466):
+        # [discord] chat_llm_enabled=false makes Discord a pure bot too,
+        # without unconfiguring [llm] for design or the vision features.
+        self.chat_llm_enabled = discord_chat_llm_enabled(self.cfg) if self.platform_name == "discord" else True
+        self.use_llm = (bool(getattr(self.adapter, "uses_llm", True)) and self.chat_llm_enabled) \
+            if use_llm is None else bool(use_llm)
         self.llm_opener = llm_opener
         self._refusal_notices: dict[str, float] = {}  # user_id -> last notice time (#386)
         self.bot_name = str(section.get("bot_name") or discord.get("bot_name") or "").strip() or "Print Buddy"

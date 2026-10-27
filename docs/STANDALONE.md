@@ -60,6 +60,7 @@ message. `python3 -m print_buddy.doctor` warns when a Hermes profile holds the s
 | `discord.denied_user_ids` | empty | Optional deny list of Discord user IDs; a denied user is refused even when whitelisted or the approval user |
 | `discord.approval_user_id` | empty | Always allowed as well; setting one does not restrict anyone else |
 | `discord.token_env` | `DISCORD_BOT_TOKEN` | Name of the environment variable that holds the bot token |
+| `discord.chat_llm_enabled` | `true` | Discord's chat-LLM switch (#466). `false` runs Discord as a pure bot — unmatched text gets the short “didn't understand” reply — while `[llm]` stays configured for `/print-design`. Roasts and camera checks keep their own vision switches |
 | `llm.chat_url` | empty | Optional OpenAI-compatible chat completions URL. Empty: unmatched text gets the short “didn't understand” reply |
 | `llm.model` | empty | Model name, required when `chat_url` is set |
 | `llm.api_key_env` | `LLM_API_KEY` | Name of the environment variable that holds the LLM API key, if it needs one |
@@ -194,6 +195,22 @@ Required environment: `PRINT_BUDDY__BOT__MODE=standalone`, `DISCORD_BOT_TOKEN`, 
   the same message. The model can never run `/spool change`, `/spool new`, `/spool sync`, `/print-colors` or
   `/print-again stop`, and it never sees links, files or the printer. With no `[llm]` configured, unmatched
   text gets that short reply as before, and Telegram and Matrix never use the LLM at all (see above).
+
+## Running Discord with no chat LLM
+
+Discord can run as a pure bot too, the way Telegram and Matrix always do. Set
+`discord.chat_llm_enabled` to `false` (or `PRINT_BUDDY__DISCORD__CHAT_LLM_ENABLED=false`) and restart:
+unmatched text gets the short “didn't understand” reply, and no chat message is ever sent to a model — while everything
+deterministic (commands, links, files, typed answers, buttons, `print 57`) works exactly as before.
+`bot check` says so on its llm row, naming the switch, and the bot's status reports `"llm": false`.
+
+You do not have to remove `[llm]` to do this, and you should not if you use `/print-design`: design
+inherits the `[llm]` endpoint when `[design]` is unset, and that inheritance keeps working with chat
+off — design has its own switch (`design.enabled`). Two other features use a model through the
+separate vision endpoint, not the chat fallback, and keep their own gates: the print-started **roast**
+(`vision.roast_enabled`, on by default) and the **camera watchdog** (`visual_watch.enabled`, on
+`services.vision_chat_url`). Turning the chat LLM off changes none of them; turn each off at its own
+switch if you want no model calls at all.
 
 ## Hermes pieces and their replacement
 

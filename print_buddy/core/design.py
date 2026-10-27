@@ -197,8 +197,10 @@ def render_scad(scad_path: Path, stl_path: Path, *, timeout_s=RENDER_TIMEOUT_S, 
     """Render one SCAD file to STL. Returns (ok, error_text). Never raises for a bad design."""
     exe = shutil.which("openscad")
     if not exe:
-        raise DesignError("OpenSCAD is not installed on this machine (no openscad on PATH), "
-                          "so designs cannot be rendered")
+        if runner is subprocess.run:
+            raise DesignError("OpenSCAD is not installed on this machine (no openscad on PATH), "
+                              "so designs cannot be rendered")
+        exe = "openscad"  # an injected runner (tests) stands in for the binary
     cmd = [exe, "--hardwarnings", "-o", str(stl_path), "--export-format", "binstl", str(scad_path)]
     env = {"PATH": os.environ.get("PATH", ""), "HOME": str(scad_path.parent)}
     run = runner or subprocess.run

@@ -135,6 +135,31 @@ class BambuAdapter(PrinterAdapter):
         client = camera.BambuCameraClient(str(self._lan()["lan_host"]).strip(), self.access_code(), **overrides)
         return client.snapshot()
 
+    def camera_frame_source(self):
+        """(url, fetch) feeding the shared timelapse capture session (#295).
+
+        The url names the frame source for the session manifest: the
+        go2rtc stills URL for X1 models (their frames are go2rtc frames,
+        fetched with camera.fetch_url_jpeg), a credential-free
+        `bambu-tcp6000://` label for A1/P1 (fetch takes one port-6000
+        snapshot per call and ignores the label). Raises BambuLanError
+        naming the reason when this printer cannot feed frames — no
+        verified protocol, LAN not configured, or the X1 fan-out not
+        running for this printer — so the caller logs it once, plainly.
+        """
+        from . import camera
+        kind = self.camera_kind()
+        if kind is None:
+            raise BambuLanError(f"{self.label}: Print Buddy has not verified a camera protocol for this model; "
+                                "no timelapse frames can be captured")
+        if not self.lan_configured():
+            raise BambuLanError(f"{self.label}: the camera is not configured; set [bambu] lan_host and "
+                                "lan_serial and supply the LAN access code via the environment")
+        host = str(self._lan()["lan_host"]).strip()
+        if kind == "rtsps":
+            return camera.fanout_frame_url(host, self.access_code()), camera.fetch_url_jpeg
+        return f"bambu-tcp6000://{host}", lambda _url: self.camera_snapshot()
+
     # slicer: the vendor start/end G-code is used as is; Print Buddy adds and changes nothing. The only accepted
     # start and end are the ones in the verified generated profiles (profiles.py), so an [orca] templates
     # override with other vendor code is refused before Orca runs.

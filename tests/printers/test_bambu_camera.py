@@ -239,3 +239,46 @@ def test_adapter_snapshot_for_an_unverified_model_says_so(monkeypatch):
     with pytest.raises(BambuLanError) as excinfo:
         adapter.camera_snapshot()
     assert "has not verified a camera protocol" in str(excinfo.value)
+
+
+# -- the timelapse frame source (#295) -----------------------------------------
+
+def test_frame_source_for_a1_is_the_tcp6000_snapshot(monkeypatch):
+    adapter = _adapter("bambulab.a1", monkeypatch)
+
+    class FakeClient:
+        def __init__(self, host, code, **kwargs):
+            pass
+
+        def snapshot(self):
+            return JPEG
+
+    monkeypatch.setattr(camera, "BambuCameraClient", FakeClient)
+    url, fetch = adapter.camera_frame_source()
+    assert url == f"bambu-tcp6000://{HOST}"
+    assert fetch("ignored") == JPEG
+
+
+def test_frame_source_for_x1_is_the_go2rtc_still(monkeypatch):
+    adapter = _adapter("bambulab.x1", monkeypatch)
+    monkeypatch.setattr(camera, "_default_fanout_url", lambda: FRAME_URL)
+    monkeypatch.setattr(camera, "_default_resolved_source",
+                        lambda: camera.rtsp_url(HOST, CODE))
+    url, fetch = adapter.camera_frame_source()
+    assert url == FRAME_URL and fetch is camera.fetch_url_jpeg
+
+
+def test_frame_source_for_x1_names_the_go2rtc_limitation(monkeypatch):
+    adapter = _adapter("bambulab.x1", monkeypatch)
+    monkeypatch.setattr(camera, "_default_fanout_url", lambda: None)
+    with pytest.raises(BambuLanError) as excinfo:
+        adapter.camera_frame_source()
+    assert "go2rtc is not running" in str(excinfo.value)
+    assert CODE not in str(excinfo.value)
+
+
+def test_frame_source_for_an_unverified_model_says_so(monkeypatch):
+    adapter = _adapter("bambulab.p2s", monkeypatch)
+    with pytest.raises(BambuLanError) as excinfo:
+        adapter.camera_frame_source()
+    assert "has not verified a camera protocol" in str(excinfo.value)

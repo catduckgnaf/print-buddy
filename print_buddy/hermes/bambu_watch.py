@@ -15,6 +15,17 @@ instead, from the Bambu LAN path itself:
   when the print reaches a terminal state it makes the completion post —
   the same format_event text the Moonraker path uses — carrying the final
   camera snapshot through the MEDIA: marker when one could be taken.
+  It also drives the #295 timelapse capture session for the print: on
+  the first active poll it opens one shared capture session
+  (#246's print_buddy.hermes.timelapse_capture) fed by the adapter's
+  camera frame source (printers/bambulab adapter.camera_frame_source —
+  port-6000 stills for A1/P1, go2rtc stills for the X1 family), and on
+  the terminal transition it stops the session, encodes the frames
+  through the same encode/sizing seam the other launched-print monitors
+  use, and attaches the video alongside the final snapshot. A printer
+  that cannot feed frames (an X1 whose go2rtc fan-out is not running,
+  a model with no verified camera protocol) simply gets no capture —
+  the reason is logged once, and the completion post is unaffected.
 
 The monitor runs on a daemon thread inside whichever process launched the
 print (normally the bot). It is deliberately not a supervised process and
@@ -37,6 +48,7 @@ from pathlib import Path
 from .. import logs
 from . import _config
 from . import discord_print_summary as print_summary
+from . import stock_watch, timelapse_capture
 from . import visual_watch as _vw
 
 WATCH_PROMPT = "Is there plastic on the bed under the nozzle, or is there spaghetti/detachment?"
@@ -51,6 +63,35 @@ _TERMINAL = {"complete": "complete", "cancelled": "cancelled", "error": "error",
 
 def log(line):
     logger.info("%s", logs.redact(str(line)))
+
+
+def _default_encode(session):
+    """Encode a stopped session's frames and size the result for delivery.
+
+    The same shared seam the Prusa and stock monitors use
+    (stock_watch.encode_frames: the [timelapse] encoder choice with the
+    CPU fallback, then the platform upload limit), so no family forks
+    the frame pipeline. Returns the attachable video path, or None when
+    the video exists but cannot be sized under the platform limit.
+    Raises when the encode itself failed.
+    """
+    from . import moonraker_event_listener as mel
+
+    raw = stock_watch.encode_frames(session.frames_dir, session.directory / "timelapse.mp4")
+    try:
+        return mel.platform_sized_video(raw)
+    except Exception as exc:
+        log(f"bambu timelapse sizing failed for {session.filename!r}: {exc!r}")
+        return None
+
+
+def _too_big_text():
+    """The completion line for a recorded-but-undeliverable timelapse, per platform."""
+    try:
+        from . import moonraker_event_listener as mel
+        return mel._timelapse_too_big_text()
+    except Exception:
+        return "Timelapse was recorded but is too large to attach."
 
 
 def write_frame(filename, image) -> Path:
@@ -155,7 +196,8 @@ def deliver_visual_alert(filename, image, reason, *, post=None, token=None, chat
 
 
 class BambuPrintMonitor:
-    """Poll one launched Bambu print to its end; post its completion, with the final image.
+    """Poll one launched Bambu print to its end; post its completion, with the final image
+    and, when a capture session ran, the print's timelapse alongside it (#295).
 
     Alert-only by construction: the monitor reads status and the camera and
     posts to chat. It holds no printer-control callable at all — the
@@ -165,7 +207,9 @@ class BambuPrintMonitor:
 
     def __init__(self, filename, *, status_fn, camera_fn, post,
                  watch=None, verdict=None, alert=None, changed=None,
-                 clock=time.monotonic, wall=time.time, sleep=time.sleep, poll_s=POLL_S):
+                 camera_source_fn=None, begin_fn=None, encode_fn=None,
+                 clock=time.monotonic, wall=time.time, sleep=time.sleep,
+                 poll_s=POLL_S, capture_poll_s=5.0):
         self.filename = filename or ""
         self._status_fn = status_fn
         self._camera_fn = camera_fn
@@ -174,23 +218,111 @@ class BambuPrintMonitor:
         self._verdict = verdict
         self._alert = alert
         self._changed = changed or _frame_changed_safe
+        self._camera_source_fn = camera_source_fn
+        self._begin_fn = begin_fn or self._begin_default
+        self._encode_fn = encode_fn or _default_encode
         self._clock = clock
         self._wall = wall
         self._sleep = sleep
         self._poll_s = poll_s
+        self._capture_poll_s = max(1.0, min(float(capture_poll_s), poll_s))
+        self._session = None
         self._last_frame = None
         self._last_periodic_at = None
         self.outcome = None
 
-    def _terminal_post(self, state):
+    # -- capture lifecycle (#295) --------------------------------------------
+
+    def _begin_default(self, url, fetch):
+        return timelapse_capture.begin(
+            self.filename, self.filename, url=url, fetch=fetch, log=log)
+
+    def _begin_capture(self):
+        """Open the one capture session for this print. Never raises.
+
+        Called at most once per monitor (the caller guards it), so a
+        duplicate poll or a status flap can never open a second session.
+        With no camera source wired (camera_source_fn is None — monitors
+        constructed outside start_monitor) there is no capture at all,
+        exactly the pre-#295 behaviour. Every failure lands as "no
+        capture for this print" plus a log line naming the reason.
+        """
+        if self._camera_source_fn is None:
+            return None
+        try:
+            url, fetch = self._camera_source_fn()
+        except Exception as exc:
+            log(f"bambu camera source could not be read for {self.filename!r}: {exc!r}; "
+                "no timelapse for this print")
+            return None
+        if not url:
+            log(f"bambu printer has no camera source for {self.filename!r}; "
+                "no timelapse for this print")
+            return None
+        try:
+            session = self._begin_fn(url, fetch)
+        except Exception as exc:
+            log(f"timelapse capture could not begin for {self.filename!r}: {exc!r}")
+            return None
+        if session is None:
+            log(f"timelapse capture unavailable for {self.filename!r} "
+                "(capture disabled or refused); the print continues without it")
+        return session
+
+    def _stop_capture(self, state):
+        """Stop the session, whatever state it is in. Never raises."""
+        session, self._session = self._session, None
+        if session is not None:
+            try:
+                session.stop(state)
+            except Exception as exc:
+                log(f"timelapse capture stop failed for {self.filename!r}: {exc!r}")
+        return session
+
+    # -- terminal post ---------------------------------------------------------
+
+    def _terminal_post(self, state, session=None):
         kind = _TERMINAL[state]
         text = print_summary.format_event(kind, self.filename)
+        video = None
+        undeliverable = False
+        if session is not None and session.frame_count > 0:
+            try:
+                video = self._encode_fn(session)
+                undeliverable = video is None
+            except Exception as exc:
+                log(f"bambu timelapse encode failed for {self.filename!r}: {exc!r}; "
+                    "posting the completion without it")
+        elif session is not None:
+            log(f"bambu timelapse for {self.filename!r} has no frames "
+                f"({session.failures} failed fetch(es)); posting the completion without it")
         try:
             image = self._camera_fn()
             path = write_frame(self.filename, image)
-            self._post(text + f"\n{path}\nMEDIA:{path}")
         except Exception as exc:
             log(f"bambu completion image unavailable for {self.filename!r}: {exc!r}")
+            path = None
+        if video is not None:
+            message = text
+            if path is not None:
+                message += f"\n{path}\nMEDIA:{path}"
+            message += f"\nMEDIA:{video}"
+            try:
+                self._post(message)
+                return kind
+            except Exception as exc:
+                log(f"bambu completion post with timelapse failed for {self.filename!r}: {exc!r}; "
+                    "posting without the video")
+        if undeliverable:
+            text = f"{text}\n{_too_big_text()}"
+        if path is not None:
+            try:
+                self._post(text + f"\n{path}\nMEDIA:{path}")
+            except Exception as exc:
+                log(f"bambu completion post with the snapshot failed for {self.filename!r}: {exc!r}; "
+                    "posting the text only")
+                self._post(text)
+        else:
             self._post(text)
         return kind
 
@@ -198,10 +330,14 @@ class BambuPrintMonitor:
         """Poll until the launched print ends. Returns the terminal kind, or None."""
         started = self._clock()
         seen_active = False
+        capture_attempted = False
         while self._clock() - started <= MAX_MONITOR_S:
             try:
                 st = self._status_fn()
             except Exception as exc:
+                # A reconnect or a refused read costs one poll, never the
+                # session: capture state lives in this monitor, and the
+                # session's own tick retries its fetches the same way.
                 log(f"bambu monitor status read failed for {self.filename!r}: {exc!r}")
                 self._sleep(self._poll_s)
                 continue
@@ -210,17 +346,52 @@ class BambuPrintMonitor:
             if state in _ACTIVE:
                 if fname and self.filename and fname != self.filename:
                     log(f"bambu monitor: a different print {fname!r} is running; {self.filename!r} is gone")
+                    self._stop_capture("superseded")
                     return None
                 seen_active = True
                 self.poll_active(st)
+                if not capture_attempted:
+                    capture_attempted = True
+                    self._session = self._begin_capture()
+                if self._session is not None and state == "printing":
+                    # A pause holds the session open but takes no frames,
+                    # exactly as the other launched-print monitors do.
+                    self._session.tick()
+                self._sleep_between_polls(tick=state == "printing")
             elif state in _TERMINAL:
                 if seen_active or not self.filename or fname == self.filename:
-                    self.outcome = self._terminal_post(state)
+                    session = self._stop_capture(_TERMINAL[state])
+                    self.outcome = self._terminal_post(state, session)
                     return self.outcome
+                self._stop_capture("superseded")
                 return None
-            self._sleep(self._poll_s)
+            else:
+                self._sleep(self._poll_s)
         log(f"bambu monitor gave up on {self.filename!r} after {MAX_MONITOR_S / 3600:g}h without a terminal state")
+        self._stop_capture("abandoned")
         return None
+
+    def _sleep_between_polls(self, *, tick):
+        """Wait one status-poll interval, ticking the capture session inside it.
+
+        Status keeps the monitor's poll cadence (each read is a one-shot
+        MQTT snapshot); frames are due at the [timelapse] capture
+        interval, so while a session is live and the print is printing
+        the wait is spent in capture-interval steps that tick the
+        session — the session's own trigger decides whether a frame is
+        actually due. Without a live session this is exactly the old
+        single sleep.
+        """
+        if not tick or self._session is None:
+            self._sleep(self._poll_s)
+            return
+        elapsed = 0.0
+        while elapsed < self._poll_s:
+            step = min(self._capture_poll_s, self._poll_s - elapsed)
+            self._sleep(step)
+            elapsed += step
+            if self._session is not None:
+                self._session.tick()
 
     def poll_active(self, st):
         """One active-print poll: the camera watchdog's trigger (#294 stage 3).
@@ -355,7 +526,8 @@ def _default_verdict(adapter):
     return verdict
 
 
-def start_monitor(adapter, filename, *, post=None, camera_fn=None, status_fn=None, thread_factory=None):
+def start_monitor(adapter, filename, *, post=None, camera_fn=None, status_fn=None,
+                  camera_source_fn=None, thread_factory=None):
     """Start a BambuPrintMonitor for a just-launched print on a daemon thread.
 
     Returns the thread (or None when monitoring could not start — a failed
@@ -370,12 +542,19 @@ def start_monitor(adapter, filename, *, post=None, camera_fn=None, status_fn=Non
             watch = _vw.VisualPrintWatch()
             verdict = _default_verdict(adapter)
             alert = deliver_visual_alert
+        if camera_source_fn is None and hasattr(adapter, "camera_frame_source"):
+            camera_source_fn = adapter.camera_frame_source
+        try:
+            interval = timelapse_capture.capture_settings(_config.cfg())["capture_interval_s"]
+        except Exception:
+            interval = 5.0
         monitor = BambuPrintMonitor(
             filename,
             status_fn=status_fn or (lambda: adapter.normalize_status(adapter.client().snapshot())),
             camera_fn=camera_fn or adapter.camera_snapshot,
             post=post or _default_post,
-            watch=watch, verdict=verdict, alert=alert)
+            watch=watch, verdict=verdict, alert=alert,
+            camera_source_fn=camera_source_fn, capture_poll_s=interval)
         factory = thread_factory or (lambda target: threading.Thread(target=target, daemon=True,
                                                                      name=f"bambu-watch-{filename}"))
         thread = factory(monitor.run)

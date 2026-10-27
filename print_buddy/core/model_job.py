@@ -1377,7 +1377,7 @@ def record_start(gcode_path, moonraker_name=None, started_at=None):
          "source_platform":(job or {}).get("site"),"started_at":started_at or print_records.utc_now(),
          "hardware":st.get("printer", "Klipper") + ", "+printer_state.summary(st),
          "printer_profile":"Klipper base ini, resliced locally (site settings not imported)",
-         "estimated_time":cfg("estimated printing time (normal mode)"),"estimated_filament_g":cfg("total filament used [g]"),
+         "estimated_time":cfg("estimated printing time (normal mode)") or _bambu_total_estimated_time(text),"estimated_filament_g":cfg("total filament used [g]") or _filament_total_g(text),
          "filament_diameter_mm":st["spool"]["diameter_mm"],"filament_density":st["spool"]["density"],
          "slicer_settings":{**{k:cfg(k) for k in RECORD_KEYS if cfg(k) is not None},
                             "source_profile":src.get("title"),"source_file":(job or {}).get("downloaded_file"),"local_gcode":str(g)},
@@ -3423,6 +3423,36 @@ def prepare_first_layer(slot, color, material, spoolman_id, slicer="orca"):
     return output
 
 
+def _filament_total_g(text):
+    """Total filament grams from the slicer summary comments, or None when absent.
+
+    OrcaSlicer/Flash spell it "; total filament used [g] = X"; Bambu Studio's
+    header block spells it "; total filament weight [g] : X" (#444, verified
+    against a real 2.8.2.61 slice). Absent stays None (unknown), never zero.
+    """
+    m = (re.search(r"^; total filament used \[g\] = ([\d.]+)", text or "", re.M)
+         or re.search(r"^;\s*total filament weight \[g\]\s*:\s*([\d.]+)", text or "", re.M))
+    if not m:
+        return None
+    try:
+        return float(m.group(1))
+    except ValueError:
+        return None
+
+
+def _bambu_total_estimated_time(text):
+    """The header-block "total estimated time" string, for Bambu files only (#444).
+
+    Both BBL slicers write that header totals line with the same spelling, so
+    this is gated on the BambuStudio identity line and OrcaSlicer files keep
+    exactly the metadata they had before.
+    """
+    if not re.search(r"^; BambuStudio ", text or "", re.M):
+        return None
+    m = re.search(r"^;.*?total estimated time\s*:\s*([^;\n]+)", text or "", re.M)
+    return m.group(1).strip() if m else None
+
+
 def gcode_estimate_s(text):
     m=re.search(r'^; estimated printing time \(normal mode\) = (.+)$',text,re.M)
     if not m:
@@ -3683,10 +3713,10 @@ def job_card(job, remote, gcode_text=""):
         if isinstance(row, dict) and row.get("slot") not in seen:
             seen.add(row.get("slot"))
             spools.append({k: row.get(k) for k in ("slot", "color", "material", "spoolman_id")})
-    m = re.search(r"^; total filament used \[g\] = ([\d.]+)", gcode_text or "", re.M)
+    grams = _filament_total_g(gcode_text)
     return {"title": job.get("title") or Path(str(remote)).stem, "file": remote,
             "copies": int(job.get("copies") or 1), "spools": spools,
-            "filament_g": round(float(m[1]), 1) if m else None,
+            "filament_g": round(grams, 1) if grams is not None else None,
             "started_at": time.strftime("%Y-%m-%dT%H:%M:%S%z")}
 
 
@@ -5054,14 +5084,14 @@ def print_now(target, wait_s=25, accept_default_z_offset=False, reprint=False, r
     elif record_path is not None: record_path=str(record_path)
     from datetime import datetime, timedelta
     from zoneinfo import ZoneInfo
-    est=gcode_estimate_s(text); m=re.search(r'^; total filament used \[g\] = ([\d.]+)',text,re.M)
+    est=gcode_estimate_s(text); fg=_filament_total_g(text)
     warm=5*60; now=datetime.now(ZoneInfo(TIMEZONE))
     title=(job or {}).get("title") or g.stem
     print_no=_assign_print_number(job_path)
     out={"started":True,"title":title,"print_number":print_no,"file":remote,"method":method,
          "phase":"executing","outcome":"printing","message":(readback.message if readback else "printing"),
          "extrusion_confirmed":bool(readback and (readback.evidence or {}).get("extrusion_confirmed")),
-         "print_time":human_dur(est) if est else None,"filament_g":round(float(m.group(1))) if m else None,
+         "print_time":human_dur(est) if est else None,"filament_g":round(fg) if fg is not None else None,
          "finish_et":(now+timedelta(seconds=(est or 0)+warm)).strftime("%-I:%M %p %a") if est else None}
     settings=start_print_settings(text); z_notice=z_offset_notice(text)
     try: hardware=st.get("printer","Klipper")+", "+printer_state.summary(st)

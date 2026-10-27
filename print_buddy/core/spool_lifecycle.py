@@ -523,6 +523,37 @@ def parse_slicer_metadata(gcode_text: str) -> dict[str, Any]:
     if m_cm3:
         meta["total_filament_used_cm3"] = float(m_cm3.group(1))
 
+    # Bambu Studio writes its usage totals ONLY in the header block, with
+    # different spellings and a colon separator (verified against a real
+    # Bambu Studio 2.8.2.61 A1 slice; #444). OrcaSlicer/Flash files never
+    # contain these lines, so these fallbacks cannot change their metadata.
+    if meta["total_filament_used_g"] is None:
+        m_bambu_g = re.search(r"^;\s*total filament weight \[g\]\s*:\s*([\d.]+)", gcode_text, re.M)
+        if m_bambu_g:
+            meta["total_filament_used_g"] = float(m_bambu_g.group(1))
+    if meta["total_filament_used_mm"] is None:
+        m_bambu_mm = re.search(r"^;\s*total filament length \[mm\]\s*:\s*([\d.]+)", gcode_text, re.M)
+        if m_bambu_mm:
+            meta["total_filament_used_mm"] = float(m_bambu_mm.group(1))
+    if meta["total_filament_used_cm3"] is None:
+        m_bambu_cm3 = re.search(r"^;\s*total filament volume \[cm\^3\]\s*:\s*([\d.]+)", gcode_text, re.M)
+        if m_bambu_cm3:
+            # The header labels this value [cm^3] but the number is mm3: in
+            # the real slice it equals filament length x cross-section
+            # (1263.89 mm -> 3040.0) and weight / density (3.77 g / 1.24 =
+            # 3.04 cm3), so convert to the cm3 this field holds.
+            meta["total_filament_used_cm3"] = float(m_bambu_cm3.group(1)) / 1000.0
+    if meta["estimated_time_str"] is None and re.search(r"^; BambuStudio ", gcode_text, re.M):
+        # Both BBL slicers write the header totals line with the same
+        # spelling, so only Bambu-identified files take this fallback and
+        # OrcaSlicer metadata stays byte-identical.
+        m_bambu_time = re.search(r"^;.*?total estimated time\s*:\s*([^;\n]+)", gcode_text, re.M)
+        if m_bambu_time:
+            meta["estimated_time_str"] = m_bambu_time.group(1).strip()
+    # Bambu Studio writes no per-filament used lines anywhere in the file
+    # (full-file check of real one- and two-filament 2.8.2.61 slices), so
+    # filament_used_g_list keeps whatever the Orca spellings above found.
+
     # Per-filament used [g] list
     m_g_list = re.search(r"^;\s*filament used \[g\]\s*=\s*([0-9.,\s]+)", gcode_text, re.M)
     if m_g_list:

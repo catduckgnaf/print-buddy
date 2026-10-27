@@ -2031,6 +2031,18 @@ class JobCardTests(unittest.TestCase):
         self.assertEqual((card["copies"], card["filament_g"], [s["spoolman_id"] for s in card["spools"]]), (3, 95.6, [8, 5]))
         self.assertEqual(model_job.job_card(None, "plate_1_x.gcode")["spools"], [])
 
+    def test_card_reads_bambu_studio_weight_spelling(self):
+        """#444: Bambu Studio's header block spells the total 'total filament weight [g] : X'.
+
+        Header lines shaped from a real Bambu Studio 2.8.2.61 A1 slice.
+        """
+        card = model_job.job_card({"title": "Cube"}, "plate_1.gcode",
+                                  "; HEADER_BLOCK_START\n; BambuStudio 02.08.02.61\n"
+                                  "; total filament weight [g] : 3.77\n; HEADER_BLOCK_END\n")
+        self.assertEqual(card["filament_g"], 3.8)
+        # A genuinely absent total stays unknown (None), never zero.
+        self.assertIsNone(model_job.job_card({"title": "Cube"}, "plate_1.gcode", "G1 X1\n")["filament_g"])
+
 
 class RemoteNameTests(unittest.TestCase):
     def test_title_leads_the_moonraker_name(self):

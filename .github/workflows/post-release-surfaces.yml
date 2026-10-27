@@ -1,0 +1,174 @@
+name: Post-release surfaces check
+
+# After a release is published, open (or update) ONE checklist issue for
+# that release: "Post-release surfaces check: <tag>". The issue lists the
+# merged PRs in the previous-tag -> this-tag range with per-PR surface
+# hints, and requires an explicit "updated / verified-no-change" decision
+# for every surface before it can close (#394).
+#
+# Why this exists: #355 removed the -light variant (scripts/install-light.sh
+# and docs/INSTALL-LIGHT.md, per #353), but the GitHub Pages site kept
+# serving the Light install guide until it was removed by hand. A release
+# check puts removals like that on a checklist the day the release ships.
+#
+# This complements — never duplicates — the daily Docs sync check in
+# catduckgnaf/print-buddy-docs, which only watches file drift between
+# print-buddy/docs and the site copies. This check is per-release and
+# PR-driven, and also covers the surfaces the sync check cannot see: the
+# wiki, the README and repo About text, the release notes themselves, and
+# page removals as a deliberate act.
+#
+# The workflow only ever opens or comments on an issue in this repo. It
+# never edits code, docs, the wiki or repo settings, and it uses only the
+# workflow GITHUB_TOKEN (no secrets, no external services).
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Release tag to check (blank = the latest release)"
+        type: string
+        required: false
+        default: ""
+
+permissions:
+  contents: read
+  issues: write
+  pull-requests: read
+
+jobs:
+  surfaces:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - name: Open or update the release's surfaces checklist issue
+        env:
+          GH_TOKEN: ${{ github.token }}
+          EVENT_TAG: ${{ github.event.release.tag_name }}
+          INPUT_TAG: ${{ inputs.tag }}
+        run: |
+          set -euo pipefail
+          repo="${{ github.repository }}"
+
+          tag="${EVENT_TAG:-$INPUT_TAG}"
+          if [ -z "$tag" ]; then
+            tag="$(gh release view --repo "$repo" --json tagName --jq .tagName)"
+          fi
+          echo "Release under check: $tag"
+
+          # Previous release tag: the releases list is newest first, so the
+          # previous release is the entry right after this tag.
+          prev="$(gh api "repos/$repo/releases?per_page=100" \
+            | jq -r --arg t "$tag" \
+              '[.[].tag_name] | (index($t) // -1) as $i
+               | if $i >= 0 and $i + 1 < length then .[$i + 1] else "" end')"
+          if [ -n "$prev" ]; then
+            range="$prev...$tag"
+          else
+            range="$tag (no earlier release found)"
+          fi
+          echo "Range: $range"
+
+          # Merged PRs in the range: squash-merged PR numbers ride in the
+          # compare commits' subjects as "(#NNN)". Without a previous tag,
+          # fall back to the tag's recent commits and say so in the issue.
+          if [ -n "$prev" ]; then
+            gh api "repos/$repo/compare/$prev...$tag" --paginate > compare.json
+            jq -s '[.[].commits[]]' compare.json > commits.json
+          else
+            gh api "repos/$repo/commits?sha=$tag&per_page=100" > commits.json
+          fi
+          mapfile -t pr_numbers < <(jq -r \
+            '.[].commit.message | split("\n")[0]
+             | capture("\\(#(?<n>[0-9]+)\\)$"; "") | .n // empty' commits.json \
+            | sort -un)
+
+          # Per-PR surface hints from changed paths. A REMOVED docs page is
+          # the #355 case: the site page, its nav entry and its inbound
+          # links must be removed too, not just noted as drift.
+          pr_rows=""
+          removed_pages=""
+          for n in "${pr_numbers[@]}"; do
+            title="$(gh api "repos/$repo/pulls/$n" --jq .title)"
+            labels="$(gh api "repos/$repo/pulls/$n" \
+              --jq '[.labels[].name] | join(", ")' )"
+            gh api "repos/$repo/pulls/$n/files?per_page=100" --paginate \
+              | jq -s '[.[].[]]' > files.json
+            hints="$(jq -r '
+              def hint:
+                if .filename | startswith("docs/") and endswith(".md") then "docs guide"
+                elif .filename == "README.md" then "README"
+                elif .filename | startswith("docker/unraid/") then "Unraid CA template (release-time sync: verify)"
+                elif .filename == "docker-compose.yml" then "Unraid CA template (release-time sync: verify)"
+                elif .filename | startswith("scripts/install") then "install surfaces"
+                elif .filename | startswith("print_buddy/bot/commands") then "bot commands / Discord-facing docs"
+                elif .filename | startswith(".github/") then "GitHub surfaces"
+                else empty end;
+              [ .[] | hint ] | unique | join("; ")' files.json)"
+            gone="$(jq -r \
+              '[.[] | select(.status == "removed")
+                | select(.filename | startswith("docs/")) | .filename]
+               | join(", ")' files.json)"
+            if [ -n "$gone" ]; then
+              hints="${hints:+$hints; }PAGE REMOVAL: $gone"
+              removed_pages="${removed_pages:+$removed_pages, }$gone"
+            fi
+            title="${title//|/ }"
+            pr_rows="${pr_rows}| #$n | ${title} | ${labels:-—} | ${hints:-—} |"$'\n'
+          done
+          if [ -z "$pr_rows" ]; then
+            pr_rows="| — | No squash-merged PR numbers found in the range's commit subjects; check the release notes' PR list by hand. | — | — |"$'\n'
+          fi
+
+          {
+            echo "## Post-release surfaces check: $tag"
+            echo ""
+            echo "Release: https://github.com/$repo/releases/tag/$tag"
+            echo "Range: \`$range\` — opened automatically when the release was published (or by manual dispatch). See #394 for why this check exists and how it complements the daily Docs sync check in print-buddy-docs (that check watches docs/ ↔ site file drift only; this one is per-release, PR-driven, and covers the wiki, README/About, release notes and deliberate page removals)."
+            echo ""
+            echo "Every surface below needs exactly one decision recorded — **updated** or **verified-no-change** — before this issue closes. A surface with no decision is not done."
+            echo ""
+            echo "## Merged PRs in this release"
+            echo ""
+            echo "| PR | Title | Labels | Surface hints |"
+            echo "|---|---|---|---|"
+            printf '%s' "$pr_rows"
+            if [ -n "$removed_pages" ]; then
+              echo ""
+              echo "**Page removals in this release:** $removed_pages — the corresponding Pages site page, its nav/sidebar entry and every inbound link must be removed (this is the #355 \`-light\` case: the site kept serving \`install-light\` after the guide was deleted upstream)."
+            fi
+            echo ""
+            echo "## Surfaces"
+            echo ""
+            echo "- [ ] **print-buddy/docs** (source of truth): guides for anything this release changed are updated in the release PRs or a follow-up — decision: updated / verified-no-change"
+            echo "- [ ] **Pages site** (print-buddy-docs): drifted pages re-synced; pages **added or removed** as the PR list requires (removals include nav/sidebar and inbound links); live URLs spot-checked — decision: updated / verified-no-change"
+            echo "- [ ] **Wiki** (Home, _Sidebar, setup pages): links and summaries still point at the right guides; removed guides unlinked — decision: updated / verified-no-change"
+            echo "- [ ] **README + repo About** (description, topics): still accurate for what shipped — decision: updated / verified-no-change"
+            echo "- [ ] **Release notes** for $tag: match the PRs above (user capabilities first, no shipped item missing, no unshipped item claimed) — decision: updated / verified-no-change"
+            echo "- [ ] **Unraid CA templates**: the release-time template sync happened (verify only — this check does not redo it) — decision: updated / verified-no-change"
+            echo "- [ ] **Discord-facing surfaces** where relevant (bot help/command docs, setup instructions): match shipped behaviour — decision: updated / verified-no-change / not relevant"
+          } > body.md
+
+          cat body.md >> "$GITHUB_STEP_SUMMARY"
+
+          # One checklist issue per release: update it, never duplicate it.
+          issue_title="Post-release surfaces check: $tag"
+          existing="$(gh issue list --repo "$repo" --state open --limit 100 \
+            --json number,title \
+            | jq -r --arg t "$issue_title" \
+              '[.[] | select(.title == $t) | .number] | first // empty')"
+          if [ -n "$existing" ]; then
+            {
+              echo "Surfaces check re-run for $tag (release event or manual dispatch). Current checklist:"
+              echo ""
+              cat body.md
+            } > update.md
+            gh issue comment "$existing" --repo "$repo" --body-file update.md
+            echo "Updated existing checklist issue #$existing for $tag."
+          else
+            gh issue create --repo "$repo" --title "$issue_title" \
+              --label documentation --label enhancement \
+              --body-file body.md
+          fi

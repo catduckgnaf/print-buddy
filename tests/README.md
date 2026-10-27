@@ -72,3 +72,29 @@ remainder), and the Matrix message-ordering flake root cause (scope 4).
   cross-vendor keys, bad/missing ids, unknown keys and empty rosters
   are all already refused with named errors in
   `tests/test_printers_roster.py` — no gap found, nothing added.
+
+## #391 stage 3 (multi-printer cross-product + flake investigation)
+
+- Cross-family walkthrough added in `tests/test_multi_printer_walkthrough.py`:
+  three listener families in one instance (Bambu LAN + Moonraker +
+  OctoPrint) route their claimed channels plus the shared fallback,
+  each printer's settings view carries only its own family's connection
+  (no moonraker URL in the Bambu view, no LAN serial/host in the
+  OctoPrint view, no OctoPrint URL in either), Spoolman stays shared,
+  state folders stay distinct; and a printer with no channel claim and
+  no platform home is unreachable by chat without breaking the others.
+  The rest of the Stage 2 matrix was re-audited as already pinned:
+  leases/approvals/hardware/maintenance/spool exclusivity per printer
+  (`tests/test_per_printer_state.py`), channel routing and cross-channel
+  prompt/plugin safety (`tests/bot/test_routing.py`), per-printer
+  listener supervision and heartbeats (`tests/test_combined_supervisor.py`,
+  `tests/test_listener_health.py`).
+- Scope 4 (flake elimination) investigation, 2026-10-26: the Matrix
+  message-ordering flake did NOT reproduce. Evidence: six consecutive
+  local runs of `tests/bot/test_matrix.py` + `tests/bot/test_routing.py`
+  were all green (43 passed each, finished logs), and the failed CI runs
+  sampled from the last 60 (40430763841, 40419563602, 40415662779,
+  40403501206) failed on other tracks' in-flight branches (design,
+  state-files, supervisor timing) — none on a Matrix test. No root cause
+  is claimed and no speculative fix is made; scope 4 stays open on #391
+  until a failing run can be captured with its log.

@@ -12,7 +12,7 @@ import importlib.util
 import unittest
 from unittest import mock
 
-from print_buddy import healthcheck, listeners, printers, settings
+from print_buddy import healthcheck, listeners, logs, printers, settings
 from print_buddy.printers import base as printer_base
 
 
@@ -179,6 +179,10 @@ class MultiPrinterLaunchTests(unittest.TestCase):
     def tearDown(self):
         settings.set_override(None)
         listeners._set_instance_printer_id(None)
+        # launch() binds printer_id to the log context for the process
+        # lifetime (#390 stage 4); in-process tests must not leak it into
+        # unrelated log assertions in other suites.
+        logs.clear_context()
 
     def test_launch_runs_the_domain_module_for_that_printer(self):
         with mock.patch.object(listeners.runpy, "run_module") as run_module:
@@ -187,6 +191,7 @@ class MultiPrinterLaunchTests(unittest.TestCase):
         run_module.assert_called_once_with(
             "print_buddy.hermes.moonraker_event_listener", run_name="__main__")
         self.assertEqual(listeners.instance_printer_id(), "moon-two")
+        self.assertEqual(logs.bound_context().get("printer_id"), "moon-two")
 
     def test_launch_installs_the_printer_view_with_its_channel_claim(self):
         seen = {}

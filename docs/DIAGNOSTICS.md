@@ -48,10 +48,13 @@ in `print_buddy.diagnostics.LEGACY_MARKERS` and likewise never changes.
    recent-log tail. The bug-report issue form asks for the bundle. The
    bundle is only ever written to a local file the operator chooses to
    attach — nothing is uploaded.
-4. **Stage 4:** structured logging consistency — per-subsystem verbosity
-   (see [Settings](SETTINGS.md) `[logging]`), `printer_id` on
-   multi-printer records, and supervisor/healthcheck output that names
-   the failing child and the reason instead of a bare exit status.
+4. **Stage 4 (done):** structured logging consistency — per-subsystem
+   verbosity via `[logging] levels` (see [Settings](SETTINGS.md)),
+   `printer_id` bound on every log line of a per-printer listener
+   process, and the container supervisor naming the required child that
+   exited (`Required child exited: bot (status 1); stopping container.`)
+   instead of a bare exit status. The container healthcheck already named
+   each subsystem with its reason and is unchanged.
 5. **Stage 5:** doctor / `bot check` tripwires — every failure mode the
    earlier stages make detectable gets a named doctor row with a remedy,
    and a Web UI status equivalent where one exists.

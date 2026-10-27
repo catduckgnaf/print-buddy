@@ -252,6 +252,11 @@ def launch(data=None, printer_id=None):
         return 3
     settings.set_override(_instance_view(printer_id, data))
     _set_instance_printer_id(printer_id)
+    # #390 stage 4: every log line from this process carries its printer_id.
+    # The token is deliberately never reset — the binding is process-lifetime,
+    # exactly like the instance identity above.
+    from . import logs
+    logs.bind(printer_id=printer_id)
     _run_domain_module(domain.module)
     return 0
 

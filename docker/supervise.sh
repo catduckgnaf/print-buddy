@@ -3,6 +3,7 @@
 set -euo pipefail
 if [ "$#" -gt 0 ]; then exec "$@"; fi
 children=()
+children_names=()
 listener_loops=()
 listener_run_dir=""
 cleanup() {
@@ -51,7 +52,7 @@ if [ "${PRINT_BUDDY_BUNDLED_SPOOLMAN:-true}" = true ]; then
     mkdir -p "$SPOOLMAN_DIR_DATA" "$SPOOLMAN_DIR_CONFIG" "$SPOOLMAN_DIR_LOGS" "$SPOOLMAN_DIR_BACKUPS"
     # Spoolman runs its migrations by spawning `alembic`, so its venv bin must lead PATH.
     (cd /opt/spoolman && PATH=/opt/spoolman/.venv/bin:$PATH exec .venv/bin/python -m uvicorn spoolman.main:app --host "$SPOOLMAN_HOST" --port "$SPOOLMAN_PORT") &
-    children+=("$!")
+    children+=("$!"); children_names+=("spoolman")
     python3 - <<'PY'
 import os, time, urllib.request
 url = 'http://127.0.0.1:' + os.environ['SPOOLMAN_PORT'] + '/api/v1/health'
@@ -89,7 +90,7 @@ if [ -x "$go2rtc_bin" ]; then
     if [ "$go2rtc_gate" -eq 0 ]; then
         go2rtc_config="$(python3 -m print_buddy.go2rtc --write-config)"
         "$go2rtc_bin" -config "$go2rtc_config" &
-        children+=("$!")
+        children+=("$!"); children_names+=("go2rtc")
     elif [ "$go2rtc_gate" -eq 3 ]; then
         echo 'go2rtc not started: no feature needs it, or it has no camera source.'
     else
@@ -168,7 +169,7 @@ if [ -n "$roster_ids" ]; then
 fi
 if [ -n "${DISCORD_BOT_TOKEN:-}" ]; then
     python3 -m print_buddy.bot &
-    children+=("$!")
+    children+=("$!"); children_names+=("bot")
 else
     echo 'DISCORD_BOT_TOKEN is empty; bot disabled.'
 fi
@@ -184,7 +185,7 @@ webui_gate=0
 python3 -m print_buddy.webui_gate || webui_gate=$?
 if [ "$webui_gate" -eq 0 ]; then
     python3 -m print_buddy.webui &
-    children+=("$!")
+    children+=("$!"); children_names+=("webui")
 elif [ "$webui_gate" -eq 3 ]; then
     echo 'Web UI not started: disabled or no port configured.'
 else
@@ -208,7 +209,7 @@ live_gate=0
 python3 -m print_buddy.live_gate || live_gate=$?
 if [ "$live_gate" -eq 0 ]; then
     python3 -m print_buddy.live_activity &
-    children+=("$!")
+    children+=("$!"); children_names+=("live view")
 elif [ "$live_gate" -eq 3 ]; then
     echo 'Live view not started: disabled or not fully configured.'
 else
@@ -222,10 +223,16 @@ if [ "${#children[@]}" -eq 0 ]; then
     # of exiting into a restart loop.
     echo 'No supervised children for this configuration; idling.'
     sleep infinity &
-    children+=("$!")
+    children+=("$!"); children_names+=("idle")
 fi
 status=0
 wait -n "${children[@]}" || status=$?
-echo "Required child exited (status $status); stopping container." >&2
+# Name the child that exited (#390 stage 4): a bare status left the operator
+# guessing which of spoolman/bot/webui/live-view/go2rtc died.
+exited_name="unknown"
+for i in "${!children[@]}"; do
+    if ! kill -0 "${children[$i]}" 2>/dev/null; then exited_name="${children_names[$i]:-unknown}"; break; fi
+done
+echo "Required child exited: $exited_name (status $status); stopping container." >&2
 if [ "$status" -eq 0 ]; then status=1; fi
 exit "$status"

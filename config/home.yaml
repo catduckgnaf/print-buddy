@@ -214,6 +214,9 @@ logging:
   level: INFO
   format: text
   file: ''
+  # Per-subsystem verbosity (#390): logger name -> level, e.g.
+  # levels: { "print_buddy.core.orca_adapter": "DEBUG" }
+  levels: {}
 webui:
   # Optional Web UI (#286): off by default; nothing listens while disabled.
   # Port 0 means no port has been chosen yet. The access token itself never

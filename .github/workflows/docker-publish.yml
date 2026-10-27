@@ -152,7 +152,7 @@ jobs:
       - name: Offline runtime acceptance
         id: acceptance
         run: tests/docker/image_acceptance.sh "$LOCAL_IMAGE" "$SPOOLMAN_MODE" evidence/acceptance
-      - uses: docker/login-action@74a5d142397b4f367a81961eba4e8cd7edddf772  # v3.4.0
+      - uses: docker/login-action@81c6f93d4bc991e510b342a00b419b3bb4efc5c6  # v4.7.0
         if: inputs.publish && steps.acceptance.outcome == 'success'
         with:
           registry: ghcr.io
@@ -219,12 +219,12 @@ jobs:
       PUBLISH_VERSION: ${{ inputs.version }}
     steps:
       - name: Download the pushed per-arch digests
-        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131  # v7.0.0
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333  # v8.0.2
         with:
           pattern: digest-*
           path: digests
           merge-multiple: true
-      - uses: docker/login-action@74a5d142397b4f367a81961eba4e8cd7edddf772  # v3.4.0
+      - uses: docker/login-action@81c6f93d4bc991e510b342a00b419b3bb4efc5c6  # v4.7.0
         with:
           registry: ghcr.io
           username: ${{ github.actor }}

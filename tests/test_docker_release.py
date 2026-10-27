@@ -398,9 +398,9 @@ class UnraidTemplateTests(unittest.TestCase):
         self.assertNotIn("-p", self.params)
         self.assertFalse(any(p.startswith("--publish") for p in self.params))
         ports = self.configs(UNRAID, "Port")
-        self.assertEqual(set(ports), {"8080"})
-        self.assertEqual(ports["8080"].text, "8080")
-        self.assertEqual(UNRAID.findtext("WebUI"), "http://[IP]:[PORT:8080]/")
+        self.assertEqual(set(ports), {"8088"})
+        self.assertEqual(ports["8088"].text, "8088")
+        self.assertEqual(UNRAID.findtext("WebUI"), "http://[IP]:[PORT:8088]/")
 
     def test_hardening_and_limits_match_compose(self):
         value, service = self.flags, self.service
@@ -480,7 +480,7 @@ class WebuiContainerTests(unittest.TestCase):
         # work once enabled; the token below is then mandatory (the server
         # refuses a non-loopback bind without it).
         self.assertEqual(variables["PRINT_BUDDY__WEBUI__HOST"].text, "0.0.0.0")
-        self.assertEqual(variables["PRINT_BUDDY__WEBUI__PORT"].text, "8080")
+        self.assertEqual(variables["PRINT_BUDDY__WEBUI__PORT"].text, "8088")
         token = variables["WEBUI_ACCESS_TOKEN"]
         self.assertEqual(token.get("Mask"), "true")
         self.assertFalse(token.text)

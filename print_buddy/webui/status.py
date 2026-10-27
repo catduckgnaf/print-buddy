@@ -31,7 +31,6 @@ from __future__ import annotations
 import json
 import os
 import socket
-import urllib.request
 from urllib.parse import urlparse
 
 from .. import __version__, doctor, healthcheck, printers, settings
@@ -48,7 +47,6 @@ HEARTBEAT_KEYS = ("connected", "user", "handlers", "mode", "platform", "heartbea
 # gets whatever stale file another process left behind.
 READ_HEARTBEAT = object()
 
-SPOOLMAN_HEALTH_PATH = "/api/v1/health"
 _PROBE_TIMEOUT_S = 2
 
 
@@ -73,13 +71,13 @@ def spoolman_bundled(data, environ):
 
 
 def probe_spoolman(url, timeout=_PROBE_TIMEOUT_S):
-    """(ok, detail) for one Spoolman base URL's /api/v1/health. Never raises."""
-    try:
-        with urllib.request.urlopen(url.rstrip("/") + SPOOLMAN_HEALTH_PATH,
-                                    timeout=timeout) as response:
-            return response.status == 200, f"HTTP {response.status}"
-    except Exception as exc:  # a down service is data, not a server error
-        return False, f"{type(exc).__name__}: {exc}"
+    """(ok, detail) for one Spoolman base URL's /api/v1/health. Never raises.
+
+    Through the one Spoolman client (#387); a down service is data, not a
+    server error, exactly as the wrapper's health probe reports it.
+    """
+    from ..core import spoolman_client
+    return spoolman_client.health(base_url=url, timeout=timeout)
 
 
 def _bot_section(data, heartbeat):

@@ -15,6 +15,7 @@ import urllib.request
 from pathlib import Path
 
 from . import settings, state_files
+from .core import spoolman_client
 
 # Moonraker and Spoolman endpoints that answer without auth when the service is up.
 SERVICE_PATHS = {"moonraker_url": "/printer/info", "spoolman_url": "/api/v1/health"}
@@ -110,6 +111,12 @@ def check_service(data, key):
     url = data.get("services", {}).get(key)
     if not url:
         return None
+    if key == "spoolman_url":
+        # Through the one Spoolman client (#387), like every Spoolman call.
+        ok, detail = spoolman_client.health(base_url=url, timeout=5)
+        if not ok:
+            raise RuntimeError(f"{url} Spoolman health check failed: {detail}")
+        return url
     with urllib.request.urlopen(url.rstrip("/") + SERVICE_PATHS[key], timeout=5) as resp:
         if resp.status != 200:
             raise RuntimeError(f"{url} answered {resp.status}")

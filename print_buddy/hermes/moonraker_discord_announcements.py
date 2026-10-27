@@ -16,6 +16,7 @@ import urllib.parse
 import urllib.request
 from pathlib import Path
 
+from ..core import spoolman_client
 from . import _config
 from . import discord_print_summary as print_summary
 from . import plan_timelapse
@@ -623,17 +624,16 @@ def get_active_spool():
         spool_id = result
     if spool_id in (None, ""):
         return spool
-    try:
-        request = urllib.request.Request(
-            f"{_config.require(SPOOLMAN_BASE, 'services.spoolman_url')}/api/v1/spool/{urllib.parse.quote(str(spool_id), safe='')}",
-            headers={"Accept": "application/json"},
-        )
-        with urllib.request.urlopen(request, timeout=10) as response:
-            details = json.load(response)
+    # The Spoolman detail fetch is bookkeeping enrichment (#387): through
+    # the one client, best-effort. When Spoolman does not answer, the
+    # completion record is still written — with the usage marked pending
+    # for later reconciliation instead of silently unrecorded.
+    if SPOOLMAN_BASE:
+        details = spoolman_client.get_spool(spool_id, base_url=SPOOLMAN_BASE, timeout=10)
         if isinstance(details, dict):
             spool.update(details)
-    except (OSError, ValueError, json.JSONDecodeError):
-        pass
+        else:
+            spool["spoolman_unavailable"] = True
     return spool
 
 

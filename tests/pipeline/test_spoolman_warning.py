@@ -1,7 +1,7 @@
 import pytest
 
 from print_buddy import printers, settings
-from print_buddy.core import model_job, printer_state
+from print_buddy.core import model_job, printer_state, spoolman_client
 
 
 def test_live_check_spoolman_offline_is_warning_not_fatal(monkeypatch):
@@ -19,9 +19,14 @@ def test_live_check_spoolman_offline_is_warning_not_fatal(monkeypatch):
             }}}}}
         if "spool_id" in url:
             return {"result": {"spool_id": 7}}
-        raise OSError("connection refused")
+        raise AssertionError(f"Spoolman must go through spoolman_client, not _get (#387): {url}")
+
+    def spoolman_down(method, path, body=None, *, base_url=None, timeout=5.0):
+        urls.append(f"{base_url}{path}")
+        raise spoolman_client.SpoolmanUnavailable("connection refused")
 
     monkeypatch.setattr(printer_state, "_get", get)
+    monkeypatch.setattr(spoolman_client, "request", spoolman_down)
     monkeypatch.setattr(printer_state, "STATE", "/nonexistent-for-check")
     state = {
         "moonraker_url": "http://printer.test", "spoolman_url": "http://configured-spoolman",

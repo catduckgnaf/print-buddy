@@ -75,7 +75,10 @@ class DoctorTests(unittest.TestCase):
         with mock.patch.object(doctor.urllib.request, "urlopen", side_effect=OSError("connection refused")):
             code, text = self.run_doctor('[services]\nspoolman_url = "http://spoolman.lan:7912"\n')
         self.assertEqual(code, 1)
-        self.assertIn("FAIL  spoolman: connection refused", text)
+        # #387: the Spoolman probe goes through spoolman_client.health; the
+        # failure names the service and keeps the transport detail.
+        self.assertIn("FAIL  spoolman: http://spoolman.lan:7912 Spoolman health check failed: "
+                      "OSError: connection refused", text)
         self.assertIn("ok    core", text)
 
     def test_healthy_service_passes(self):

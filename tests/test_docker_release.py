@@ -385,7 +385,11 @@ class UnraidTemplateTests(unittest.TestCase):
         self.assertNotIn("command", self.service)
         health = self.flags["--health-cmd"]
         self.assertEqual(["CMD", *shlex.split(health)], self.service["healthcheck"]["test"])
-        self.assertEqual(UNRAID.findtext("Repository"), "REPLACE_WITH_TESTED_IMAGE")
+        publish = (ROOT / ".github" / "workflows" / "docker-publish.yml").read_text()
+        image = re.search(r"(?m)^      IMAGE: (ghcr\.io/[^\s]+)$", publish)
+        self.assertIsNotNone(image)
+        self.assertIn("docker buildx imagetools create -t \"$IMAGE:latest\"", publish)
+        self.assertEqual(UNRAID.findtext("Repository"), f"{image.group(1)}:latest")
         self.assertEqual(UNRAID.findtext("Privileged"), "false")
         # The bundled Spoolman API stays on loopback: Compose publishes no port
         # at all (the Web UI mapping below is a commented example only), and the

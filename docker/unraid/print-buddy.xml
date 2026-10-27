@@ -8,7 +8,7 @@
      can use the host render group; the container runs fine without it. See docs/DOCKER.md. -->
 <Container version="2">
   <Name>print-buddy</Name>
-  <Repository>REPLACE_WITH_TESTED_IMAGE</Repository>
+  <Repository>ghcr.io/catduckgnaf/print-buddy:latest</Repository>
   <Registry/>
   <Network>bridge</Network>
   <MyIP/>

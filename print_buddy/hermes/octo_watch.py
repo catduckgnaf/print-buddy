@@ -122,16 +122,22 @@ class OctoPrintMonitor:
 
     Read-only by construction, like the other launched-print monitors:
     it reads status and the timelapse list and posts to chat; it never
-    writes to the printer.
+    writes to the printer. Its one alert is the pause post (#460): a
+    printing -> paused transition posts the shared pause alert through
+    family_control.PauseAlerts, whose Resume/Cancel buttons actuate
+    only when an operator presses one — the monitor itself holds no
+    printer-control callable.
     """
 
     def __init__(self, filename, *, status_fn, movies_fn, video_fn, post,
+                 pause_alerts=None,
                  clock=time.monotonic, sleep=time.sleep, poll_s=POLL_S):
         self.filename = filename or ""
         self._status_fn = status_fn
         self._movies_fn = movies_fn
         self._video_fn = video_fn
         self._post = post
+        self._pause_alerts = pause_alerts
         self._clock = clock
         self._sleep = sleep
         self._poll_s = poll_s
@@ -199,9 +205,13 @@ class OctoPrintMonitor:
                 if fname and self.filename and fname != self.filename:
                     log(f"octoprint monitor: a different print {fname!r} is running; "
                         f"{self.filename!r} is gone")
+                    if self._pause_alerts:
+                        self._pause_alerts.note("standby", st)
                     return None
                 seen_active = True
                 unknown_streak = 0
+                if self._pause_alerts:
+                    self._pause_alerts.note(state, st)
                 self._sleep(self._poll_s)
             elif state == "standby" and seen_active:
                 # OctoPrint's normalised states have no "complete": back to
@@ -209,6 +219,8 @@ class OctoPrintMonitor:
                 # and the final progress separates complete from ended-early.
                 progress = st.get("progress")
                 kind = "complete" if isinstance(progress, (int, float)) and progress >= 1.0 else "cancelled"
+                if self._pause_alerts:
+                    self._pause_alerts.note(kind, st)
                 self.outcome = self._terminal_post(kind)
                 return self.outcome
             elif seen_active and state == "unknown":
@@ -220,6 +232,8 @@ class OctoPrintMonitor:
                 if unknown_streak >= _UNKNOWN_STREAK_TERMINAL:
                     log(f"octoprint monitor: {self.filename!r} unreadable for "
                         f"{unknown_streak} polls after printing; posting the error outcome")
+                    if self._pause_alerts:
+                        self._pause_alerts.note("error", st)
                     self.outcome = self._terminal_post("error")
                     return self.outcome
                 self._sleep(self._poll_s)
@@ -251,12 +265,14 @@ def start_monitor(adapter, filename, *, post=None, thread_factory=None):
             return None
     try:
         client = adapter.client()
+        from . import family_control
         monitor = OctoPrintMonitor(
             filename,
             status_fn=lambda: adapter.normalize_status(client.status()),
             movies_fn=client.timelapse_movies,
             video_fn=lambda movie: _fetch_and_size(client, movie),
-            post=post or _default_post)
+            post=post or _default_post,
+            pause_alerts=family_control.pause_alerts_for(adapter, filename))
         factory = thread_factory or (lambda target: threading.Thread(target=target, daemon=True,
                                                                      name=f"octo-watch-{filename}"))
         thread = factory(monitor.run)

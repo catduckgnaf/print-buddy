@@ -268,3 +268,67 @@ def test_retire_alerts_leaves_other_jobs_and_kinds_alone(tmp_path):
         visual = _record_with_message("visual", "f.gcode")
         assert pab.retire_alerts("token", "f.gcode", "Closed.", ("paused",)) == 0
         assert pab.peek(other) is not None and pab.peek(visual) is not None
+
+
+# -- #460: family pause alerts route to the family's own control --------------
+
+class _FakeFamilyControl:
+    connection = "prusalink"
+
+    def __init__(self):
+        self.calls = []
+
+    def resume(self, filename):
+        self.calls.append(("resume", filename))
+        return True, "Resumed. Printer now reports printing."
+
+    def cancel(self, filename):
+        self.calls.append(("cancel", filename))
+        return True, "Stopped. Printer now reports standby."
+
+
+def test_family_alert_clicks_route_to_family_control_never_moonraker():
+    from unittest.mock import Mock
+    control = _FakeFamilyControl()
+    alert = {"kind": "paused", "filename": "f.gcode", "connection": "prusalink"}
+    with patch("print_buddy.hermes.family_control.control_for", return_value=control) as resolve, \
+         patch("print_buddy.hermes.print_control.status", Mock(side_effect=AssertionError("Moonraker path taken"))):
+        assert pab.handle_click("resume", alert).startswith("Resumed.")
+        assert pab.handle_click("cancel", alert).startswith("Stopped.")
+    assert control.calls == [("resume", "f.gcode"), ("cancel", "f.gcode")]
+    resolve.assert_called_with(None)
+
+
+def test_family_alert_click_refuses_when_the_printer_is_not_controllable():
+    alert = {"kind": "paused", "filename": "f.gcode", "connection": "prusalink"}
+    with patch("print_buddy.hermes.family_control.control_for", return_value=None):
+        out = pab.handle_click("resume", alert)
+    assert "can't control" in out and "Nothing sent" in out
+
+    wrong = _FakeFamilyControl()
+    wrong.connection = "octoprint"
+    with patch("print_buddy.hermes.family_control.control_for", return_value=wrong):
+        out = pab.handle_click("cancel", alert)
+    assert "Nothing sent" in out and wrong.calls == []
+
+
+def test_family_alert_record_carries_its_connection(tmp_path):
+    class Response:
+        status = 200
+        def __enter__(self): return self
+        def __exit__(self, *args): return False
+        def read(self): return b'{"id": "4242"}'
+
+    with patch.object(pab, "STATE", tmp_path / "alerts.json"), \
+         patch.object(pab.urllib.request, "urlopen", lambda req, timeout: Response()):
+        assert pab.post_with_buttons("token", "chan", "Paused: f.gcode", "paused",
+                                     "f.gcode", connection="prusalink",
+                                     printer_id="prusa-two")
+        assert pab.post_with_buttons("token", "chan", "Paused: g.gcode", "paused", "g.gcode")
+    import json as _json
+    data = _json.loads((tmp_path / "alerts.json").read_text())
+    family = next(r for r in data.values() if r["filename"] == "f.gcode")
+    moonraker = next(r for r in data.values() if r["filename"] == "g.gcode")
+    assert family["connection"] == "prusalink" and family["printer_id"] == "prusa-two"
+    # Moonraker alert records are unchanged: no connection marker at all.
+    assert "connection" not in moonraker and "printer_id" not in moonraker

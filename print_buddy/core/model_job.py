@@ -1408,6 +1408,9 @@ def record_start(gcode_path, moonraker_name=None, started_at=None):
 
 # Start announcement ownership. print_now claims the file before starting it so the
 # Moonraker listener skips its generic "Print started" post for that same job.
+# The family print paths claim the same way (#460): a claimed start belongs to
+# the print path and its launched-print monitor; the family listener domains
+# post starts only for prints nobody claimed (started outside Print Buddy).
 START_CLAIMS = Path(os.environ.get("PRINT_BUDDY_START_CLAIMS", settings.state_dir()/"print_buddy_start_claims.json"))
 START_CLAIM_TTL_S = settings.current()["listener"]["start_claim_ttl_s"]
 
@@ -4348,6 +4351,9 @@ def _print_octoprint(adapter, state, gcode, job, job_path, wait_s, reprint):
         remote = client.upload(gcode, remote)
         from .nozzle import effective_nozzle_temperature
         hotend = effective_nozzle_temperature((state.get('nozzle') or {}).get('type', 'hardened_steel'), state['temps_c']['nozzle'])
+        # Claim the start (#460): the family listener must not post a second start for this print.
+        try: claim_start_announcement(remote)
+        except OSError as e: print(f"WARNING: start announcement claim failed, listener may also post: {e}")
         client.start(remote, state['temps_c']['bed'], hotend)
     except BaseException as exc:
         lease.uncertain(f'OctoPrint submission did not complete: {exc!r}')
@@ -4374,10 +4380,12 @@ def _print_octoprint(adapter, state, gcode, job, job_path, wait_s, reprint):
             out['record_path'] = record_start(gcode, remote)
         except Exception as exc:
             print(f'WARNING: start record failed: {exc}')
-        # No listener exists for OctoPrint (#299 keeps the domain planned),
-        # so the print path starts a launched-print monitor (#373): it makes
-        # the completion post and attaches the timelapse OctoPrint itself
-        # rendered. A monitor that cannot start never fails the print.
+        # The print path starts a launched-print monitor (#373): it makes
+        # the completion post, attaches the timelapse OctoPrint itself
+        # rendered, and posts this print's pause alerts (#460). Prints
+        # started outside Print Buddy belong to the octoprint listener
+        # domain (family_event_listener). A monitor that cannot start
+        # never fails the print.
         try:
             from print_buddy.hermes import octo_watch
             octo_watch.start_monitor(adapter, remote)
@@ -4531,6 +4539,9 @@ def _print_bambu(adapter, state, gcode, job, job_path, wait_s, reprint):
     lease.submitting()
     try:
         client.upload(package, remote)
+        # Claim the start (#460): the Bambu listener's sink must not post a second start for this print.
+        try: claim_start_announcement(remote)
+        except OSError as e: print(f"WARNING: start announcement claim failed, listener may also post: {e}")
         client.start_print(remote, ams_mapping=ams_map)
     except BaseException as exc:
         lease.uncertain(f"Bambu Lab submission did not complete: {exc!r}")
@@ -4561,9 +4572,10 @@ def _print_bambu(adapter, state, gcode, job, job_path, wait_s, reprint):
         except Exception as exc:
             print(f"WARNING: start record failed: {exc}")
         # Camera parity (#294): a monitor watches this launched print — it makes
-        # the completion post with the final camera image and runs the camera
-        # watchdog. Bambu has no listener (#256), so the print path starts it;
-        # a monitor that cannot start never fails the print.
+        # the completion post with the final camera image, runs the camera
+        # watchdog, and posts this print's pause alerts (#460). The Bambu
+        # listener domain covers prints started outside Print Buddy; a
+        # monitor that cannot start never fails the print.
         try:
             from print_buddy.hermes import bambu_watch
             bambu_watch.start_monitor(adapter, remote)
@@ -4625,6 +4637,9 @@ def _print_elegoo_sdcp(adapter, state, gcode, job, job_path, wait_s, reprint):
     lease.submitting()
     try:
         client.upload(gcode, remote)
+        # Claim the start (#460): the family listener must not post a second start for this print.
+        try: claim_start_announcement(remote)
+        except OSError as e: print(f"WARNING: start announcement claim failed, listener may also post: {e}")
         client.start_print(remote)
     except BaseException as exc:
         lease.uncertain(f"SDCP submission did not complete: {exc!r}")
@@ -4651,13 +4666,15 @@ def _print_elegoo_sdcp(adapter, state, gcode, job, job_path, wait_s, reprint):
             out["record_path"] = record_start(gcode, remote)
         except Exception as exc:
             print(f"WARNING: start record failed: {exc}")
-        # Timelapse (#295): a monitor watches this launched print — SDCP
-        # has no listener (#299), so the print path starts it; it makes the
-        # completion post and, once an SDCP camera source is verified,
-        # captures frames for a timelapse attached to that post (no source
-        # is verified today — printers/elegoo_sdcp/camera.py — so for now
-        # the monitor is the completion post, with the reason logged).
-        # A monitor that cannot start never fails the print.
+        # Timelapse (#295): a monitor watches this launched print — the
+        # print path starts it; it makes the completion post, posts this
+        # print's pause alerts (#460), and, once an SDCP camera source is
+        # verified, captures frames for a timelapse attached to that post
+        # (no source is verified today — printers/elegoo_sdcp/camera.py —
+        # so for now the monitor is the completion post, with the reason
+        # logged). Prints started outside Print Buddy belong to the
+        # elegoo_sdcp listener domain (family_event_listener). A monitor
+        # that cannot start never fails the print.
         try:
             from print_buddy.hermes import elegoo_watch
             elegoo_watch.start_monitor(adapter, remote)
@@ -4718,6 +4735,9 @@ def _print_prusa(adapter, state, gcode, job, job_path, wait_s, reprint):
     lease.submitting()
     try:
         client.upload(gcode, remote)
+        # Claim the start (#460): the family listener must not post a second start for this print.
+        try: claim_start_announcement(remote)
+        except OSError as e: print(f"WARNING: start announcement claim failed, listener may also post: {e}")
         client.start_print(remote)
     except BaseException as exc:
         lease.uncertain(f"PrusaLink submission did not complete: {exc!r}")
@@ -4744,11 +4764,13 @@ def _print_prusa(adapter, state, gcode, job, job_path, wait_s, reprint):
             out["record_path"] = record_start(gcode, remote)
         except Exception as exc:
             print(f"WARNING: start record failed: {exc}")
-        # Timelapse (#295): a monitor watches this launched print — PrusaLink
-        # has no listener (#299), so the print path starts it; it makes the
-        # completion post and, when the printer registers a camera with
-        # PrusaLink, captures frames for a timelapse attached to that post.
-        # A monitor that cannot start never fails the print.
+        # Timelapse (#295): a monitor watches this launched print — the
+        # print path starts it; it makes the completion post, posts this
+        # print's pause alerts (#460), and, when the printer registers a
+        # camera with PrusaLink, captures frames for a timelapse attached
+        # to that post. Prints started outside Print Buddy belong to the
+        # prusalink listener domain (family_event_listener). A monitor
+        # that cannot start never fails the print.
         try:
             from print_buddy.hermes import prusa_watch
             prusa_watch.start_monitor(adapter, remote)
@@ -4833,6 +4855,9 @@ def _print_flashforge_stock(adapter, state, gcode, job, job_path, wait_s, reprin
     lease.submitting()
     try:
         client.upload(gcode, remote)
+        # Claim the start (#460): the family listener must not post a second start for this print.
+        try: claim_start_announcement(remote)
+        except OSError as e: print(f"WARNING: start announcement claim failed, listener may also post: {e}")
         client.print_gcode(remote)
     except BaseException as exc:
         lease.uncertain(f"stock Flashforge submission did not complete: {exc!r}")
@@ -4859,10 +4884,12 @@ def _print_flashforge_stock(adapter, state, gcode, job, job_path, wait_s, reprin
             out["record_path"] = record_start(gcode, remote)
         except Exception as exc:
             print(f"WARNING: start record failed: {exc}")
-        # Timelapse (#373): a monitor watches this launched print — stock
-        # firmware has no listener (#299), so the print path starts it; it
-        # captures frames from the camera source the printer advertises
-        # and makes the completion post with the timelapse attached. A
+        # Timelapse (#373): a monitor watches this launched print — the
+        # print path starts it; it captures frames from the camera source
+        # the printer advertises, makes the completion post with the
+        # timelapse attached, and posts this print's pause alerts (#460).
+        # Prints started outside Print Buddy belong to the
+        # flashforge_stock listener domain (family_event_listener). A
         # monitor that cannot start never fails the print.
         try:
             from print_buddy.hermes import stock_watch

@@ -367,14 +367,22 @@ def main():
             "not bambulab_lan; nothing to listen to")
         return 3
     printer_id = listeners.instance_printer_id()
+    # The #460 sink: the listener detected the transitions all along;
+    # this wires them to the shared family posts for prints started
+    # outside Print Buddy (claimed prints stay the launched-print
+    # monitor's). Imported here, not at module scope: the sink lives in
+    # the bot core (print_buddy.hermes), which must not become an
+    # import-time dependency of the printer package.
+    from ...hermes import family_control
+    emit = family_control.bambu_event_sink(printer_id)
     try:
-        listener = BambuListener(adapter, printer_id=printer_id)
+        listener = BambuListener(adapter, emit=emit, printer_id=printer_id)
     except BambuLanError as exc:
         # e.g. host/serial set but the access-code secret is missing: the
         # client cannot even be built. Idle like the unconfigured case
         # rather than crash-looping the container; the log names the fix.
         log(f"LAN client cannot be built: {exc}; listener idling with heartbeat")
-        listener = BambuListener(adapter, lan_client=None, printer_id=printer_id)
+        listener = BambuListener(adapter, lan_client=None, emit=emit, printer_id=printer_id)
     return listener.run_forever()
 
 

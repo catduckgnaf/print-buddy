@@ -104,17 +104,22 @@ class ElegooPrintMonitor:
 
     Read-only by construction, like the other launched-print monitors:
     it reads status (and, once a source verifies, the camera) and
-    posts to chat; it never writes to the printer.
+    posts to chat; it never writes to the printer. Its one alert is
+    the pause post (#460): a printing -> paused transition posts the
+    shared pause alert through family_control.PauseAlerts, whose
+    Resume/Cancel buttons actuate only when an operator presses one —
+    the monitor itself holds no printer-control callable.
     """
 
     def __init__(self, filename, *, status_fn, camera_source_fn, post,
-                 begin_fn=None, encode_fn=None,
+                 begin_fn=None, encode_fn=None, pause_alerts=None,
                  clock=time.monotonic, wall=time.time, sleep=time.sleep,
                  poll_s=POLL_S, capture_poll_s=5.0):
         self.filename = filename or ""
         self._status_fn = status_fn
         self._camera_source_fn = camera_source_fn
         self._post = post
+        self._pause_alerts = pause_alerts
         self._begin_fn = begin_fn or self._begin_default
         self._encode_fn = encode_fn or _default_encode
         self._clock = clock
@@ -223,9 +228,13 @@ class ElegooPrintMonitor:
                 if fname and self.filename and fname != self.filename:
                     log(f"elegoo monitor: a different print {fname!r} is running; "
                         f"{self.filename!r} is gone")
+                    if self._pause_alerts:
+                        self._pause_alerts.note("standby", st)
                     self._stop_capture("superseded")
                     return None
                 seen_active = True
+                if self._pause_alerts:
+                    self._pause_alerts.note(state, st)
                 if not capture_attempted:
                     capture_attempted = True
                     self._session = self._begin_capture()
@@ -236,6 +245,8 @@ class ElegooPrintMonitor:
                 self._sleep(self._capture_poll_s if self._session is not None else self._poll_s)
             elif state in _TERMINAL:
                 if seen_active or not self.filename or fname == self.filename:
+                    if self._pause_alerts:
+                        self._pause_alerts.note(state, st)
                     session = self._stop_capture(_TERMINAL[state])
                     self.outcome = self._terminal_post(state, session)
                     return self.outcome
@@ -277,11 +288,13 @@ def start_monitor(adapter, filename, *, post=None, thread_factory=None):
             interval = timelapse_capture.capture_settings(_config.cfg())["capture_interval_s"]
         except Exception:
             interval = 5.0
+        from . import family_control
         monitor = ElegooPrintMonitor(
             filename,
             status_fn=lambda: adapter.normalize_status(client.status()),
             camera_source_fn=camera_source,
             post=post or _default_post,
+            pause_alerts=family_control.pause_alerts_for(adapter, filename),
             capture_poll_s=interval)
         factory = thread_factory or (lambda target: threading.Thread(target=target, daemon=True,
                                                                      name=f"elegoo-watch-{filename}"))

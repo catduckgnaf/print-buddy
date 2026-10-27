@@ -87,7 +87,8 @@ def as_text(name, values):
 def help_text(bot_name="Print Buddy"):
     lines = [f"**{bot_name}** prints from this channel. Nothing starts without a button press.",
              "- Post a MakerWorld or Printables link, or drop one .3mf or .stl file, to slice and print it.",
-             '- "print it" after a link, or "print the last one again", reuses the last model.']
+             '- "print it" after a link, or "print the last one again", reuses the last model.',
+             '- "print 57" (or "print #57") reprints print #57, exactly like "/print-again 57".']
     lines += [f"- `{c.usage}`: {c.description}"
               + (f" (also `/{c.aliases[0]}`)" if c.aliases else "")
               for c in COMMANDS if c.name != "print-help"]

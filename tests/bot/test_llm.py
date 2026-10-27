@@ -10,7 +10,8 @@ from corpus import fake_discord
 from print_buddy.bot import llm, runtime
 from print_buddy.bot.adapter import parse_custom_id
 from print_buddy.core import prompts
-from print_buddy.hermes import print_stop
+from print_buddy.hermes import discord_print_summary as summary
+from print_buddy.hermes import print_control, print_next, print_stop
 
 LLM_URL = "http://llm.test/v1/chat/completions"
 
@@ -143,3 +144,108 @@ def test_typed_answer_to_an_llm_routed_question_is_not_sent_to_the_llm(llm_cfg):
         asyncio.run(flow())
     moonraker.assert_not_called()
     assert len(opener.requests) == 1
+
+
+# ---------------------------------------------------------------------- #437: LLM first, help last
+
+def test_llm_named_print_again_runs_through_the_normal_handler_with_its_confirmation(llm_cfg):
+    """The #437 acceptance example, on a phrase no deterministic handler takes:
+    the stub LLM names /print-again 57, the normal handler runs it (bed-clear
+    confirmation included) and no help text is sent."""
+    opener = FakeLLM("Running print 57 again — it still needs its button press.", "/print-again 57")
+    discord, core = make(llm_cfg, opener)
+    target = {"title": "Widget", "gcode": "/archive/widget.gcode", "job_json": "/archive/JOB.json"}
+    started = []
+
+    async def accepted(target_):
+        started.append(target_)
+        return True, "started"
+
+    confirm = mock.AsyncMock(return_value=print_control.AGAIN_LABEL)
+    with mock.patch.object(core.router.plugin, "_confirm", confirm), \
+            mock.patch.object(print_control, "split_count", return_value=("57", 1)), \
+            mock.patch.object(print_control, "resolve_print", return_value=target.copy()) as resolve, \
+            mock.patch.object(print_control, "queue_copies"), \
+            mock.patch.object(print_next, "start", side_effect=accepted), \
+            mock.patch.object(summary, "gcode_metadata", return_value=(60, 1.0)), \
+            mock.patch.object(summary, "_print_number", return_value=57):
+        out = asyncio.run(core.handle_message(discord.message("could you run number 57 again?")))
+    assert out == {"action": "skip", "reason": "deterministic print again handled"}
+    assert len(opener.requests) == 1
+    resolve.assert_called_once_with("57")
+    confirm.assert_awaited_once()
+    assert len(started) == 1 and started[0]["title"] == "Widget"
+    assert core.help not in discord.sent
+    assert discord.sent[0].startswith("Running print 57 again")
+
+
+def test_llm_answer_alone_is_the_only_reply_no_help_after_it(llm_cfg):
+    opener = FakeLLM("The printer is idle right now.", None)
+    discord, core = make(llm_cfg, opener)
+    out = asyncio.run(core.handle_message(discord.message("what does the printer dream about")))
+    assert out == {"action": "skip", "reason": "llm reply"}
+    assert discord.sent == ["The printer is idle right now."]
+    assert len(opener.requests) == 1
+
+
+def test_llm_declining_falls_back_to_the_command_list_once(llm_cfg):
+    opener = FakeLLM("", None)
+    discord, core = make(llm_cfg, opener)
+    out = asyncio.run(core.handle_message(discord.message("what is the meaning of layer adhesion")))
+    assert out == {"action": "skip", "reason": "command list"}
+    assert discord.sent == [core.help]
+    assert len(opener.requests) == 1
+
+
+def test_llm_timeout_falls_back_to_the_command_list_once(llm_cfg):
+    def timing_out(req, timeout=None):
+        raise TimeoutError("llm timed out")
+    discord, core = make(llm_cfg, timing_out)
+    out = asyncio.run(core.handle_message(discord.message("hello?")))
+    assert out == {"action": "skip", "reason": "command list"} and discord.sent == [core.help]
+
+
+def test_llm_naming_print_help_sends_the_help_once_without_its_own_reply(llm_cfg):
+    """Never both for one message (#437): /print-help's own output is the help,
+    so the LLM's wording is not sent alongside it."""
+    opener = FakeLLM("Here is everything I can do.", "/print-help")
+    discord, core = make(llm_cfg, opener)
+    out = asyncio.run(core.handle_message(discord.message("hello?")))
+    assert out == {"action": "skip", "reason": "help"}
+    assert discord.sent == [core.help]
+    assert len(opener.requests) == 1
+
+
+def test_no_llm_configured_never_calls_the_llm(cfg):
+    """Exploding stub for the disabled path (#437): no [llm], no call, help only."""
+    discord, core = make(cfg, None)
+    calls = []
+
+    def exploding_ask(*args, **kwargs):
+        calls.append((args, kwargs))
+        raise AssertionError("the LLM was called with no LLM configured")
+
+    with mock.patch.object(runtime.llm, "ask", exploding_ask):
+        out = asyncio.run(core.handle_message(discord.message("can you make my printer go brrr")))
+    assert calls == []
+    assert out == {"action": "skip", "reason": "command list"}
+    assert discord.sent == [core.help]
+
+
+def test_use_llm_false_never_calls_the_llm_even_when_configured(llm_cfg):
+    """Exploding stub for the pure-bot path (#437): uses_llm=False wins over a configured [llm]."""
+    discord = fake_discord.FakeDiscord(auto=False, chat_id=int(llm_cfg["discord"]["chat_id"]),
+                                       operator_id=int(llm_cfg["discord"]["allowed_user_ids"]))
+    core = runtime.BotCore(discord.client, llm_cfg, llm_opener=None, use_llm=False)
+    assert core.use_llm is False
+    calls = []
+
+    def exploding_ask(*args, **kwargs):
+        calls.append((args, kwargs))
+        raise AssertionError("the LLM was called on a uses_llm=False platform")
+
+    with mock.patch.object(runtime.llm, "ask", exploding_ask):
+        out = asyncio.run(core.handle_message(discord.message("can you make my printer go brrr")))
+    assert calls == []
+    assert out == {"action": "skip", "reason": "command list"}
+    assert discord.sent == [core.help]

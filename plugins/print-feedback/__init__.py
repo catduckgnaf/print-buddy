@@ -1791,10 +1791,16 @@ async def print_stop_dispatch(event, gateway, **kwargs):
 
 def _control_preamble(event, gateway, command, with_args=False):
     """Shared gate for the /print-resume, /print-again and /print-reboot commands."""
-    source = getattr(event, 'source', None)
     text = str(getattr(event, 'text', '')).strip()
     if not (text == command or with_args and text.startswith(command + ' ')):
         return None, None
+    return _control_gate(event, gateway)
+
+
+def _control_gate(event, gateway):
+    """The source and authorization half of _control_preamble, for handlers
+    whose text form is not the command itself (the plain 'print 57' form)."""
+    source = getattr(event, 'source', None)
     if (source is None or not _is_bot_platform(source)
             or getattr(source, 'profile', None) != '3dprinting'
             or getattr(event, 'internal', False) or getattr(source, 'is_bot', False)
@@ -1869,9 +1875,32 @@ async def print_resume_dispatch(event, gateway, **kwargs):
     return {'action': 'skip', 'reason': 'deterministic print resume handled'}
 
 
+_PLAIN_PRINT_NUMBER_RE = re.compile(r"print\s+#?(\d+)\s*[.!]?", re.I)
+
+
+def _plain_print_number(text):
+    """'print 57' / 'print #57' -> 57 (#436), else None.
+
+    The plain-text twin of '/print-again <N>': deterministic, exact number
+    only. A bare number with no 'print' is not a print request, and no other
+    wording matches here — anything looser is the LLM fallback's business,
+    on the platforms and configs that have one.
+    """
+    match = _PLAIN_PRINT_NUMBER_RE.fullmatch(str(text or '').strip())
+    return int(match.group(1)) if match else None
+
+
 async def print_again_dispatch(event, gateway, **kwargs):
     """/print-again [list | N | name]: an archived printed job from the start, behind one bed-clear button."""
-    source, adapter = _control_preamble(event, gateway, '/print-again', with_args=True)
+    text = str(getattr(event, 'text', '')).strip()
+    plain_number = _plain_print_number(text)
+    if plain_number is not None:
+        # 'print 57' is exactly '/print-again 57' (#436): same registry,
+        # same confirmation, same unknown-number reply — never the LLM and
+        # never the generic help text.
+        source, adapter = _control_gate(event, gateway)
+    else:
+        source, adapter = _control_preamble(event, gateway, '/print-again', with_args=True)
     if source is None:
         return None
     if adapter is None:
@@ -1880,7 +1909,7 @@ async def print_again_dispatch(event, gateway, **kwargs):
     from print_buddy.hermes import print_next
     metadata = {'thread_id': source.thread_id} if source.thread_id else None
     pid = _routed_printer_id(source, gateway)
-    query = str(getattr(event, 'text', '')).strip()[len('/print-again'):].strip()
+    query = str(plain_number) if plain_number is not None else text[len('/print-again'):].strip()
     if query.casefold() in ('list', 'ls', 'history'):
         rows = await asyncio.to_thread(pc.printed_jobs)
         if pid:

@@ -254,7 +254,7 @@ class BotCore:
         metadata = {"thread_id": source.thread_id} if source.thread_id else None
         await self.adapter.send(chat_id=source.chat_id, content=REFUSAL_NOTICE, metadata=metadata)
 
-    async def process(self, event, *, allow_llm=True):
+    async def process(self, event, *, allow_llm=True, _llm_replied=False):
         source = event.source
         metadata = {"thread_id": source.thread_id} if source.thread_id else None
         text = event.text.strip()
@@ -272,10 +272,21 @@ class BotCore:
             return {"action": "skip", "reason": "typed answer to an open question"}
         if not text:
             return None
-        return await self.fallback(event, allow_llm=allow_llm)
+        return await self.fallback(event, allow_llm=allow_llm, _llm_replied=_llm_replied)
 
-    async def fallback(self, event, *, allow_llm=True):
-        """No handler took it. With an LLM: a worded reply and maybe one allowed command. Else the help."""
+    async def fallback(self, event, *, allow_llm=True, _llm_replied=False):
+        """No handler took it: the LLM tries first (#437), the help text is the last resort.
+
+        Order of handling for a non-command message: explicit commands,
+        deterministic handlers, links/files and typed answers to an open
+        prompt have already run in ``process`` and are never rerouted here.
+        What is left goes to the LLM when one is enabled on a ``uses_llm``
+        platform: it may answer directly, or name one allowlisted command,
+        which then runs through the exact same handler (and confirmation)
+        as a typed command. Only when the LLM declines, names no usable
+        command, errors or times out does the help / command list go out —
+        once, and never alongside an LLM reply for the same message.
+        """
         source = event.source
         metadata = {"thread_id": source.thread_id} if source.thread_id else None
         if allow_llm and self.use_llm and llm.configured(self.cfg):
@@ -285,14 +296,25 @@ class BotCore:
             except Exception as exc:
                 logger.warning("LLM reply failed, sending the command list: %r", exc)
             else:
+                if command:
+                    # A named command is dispatched before any reply is
+                    # sent when the command's own output IS the help text:
+                    # the LLM's wording plus the help dump for one message
+                    # is exactly the double reply #437 forbids.
+                    replied = bool(reply) and command.casefold() not in HELP_WORDS
+                    if replied:
+                        await self.adapter.send(chat_id=source.chat_id, content=reply,
+                                                reply_to=event.message_id, metadata=metadata)
+                    routed = make_event(source, command, f"{event.message_id}:llm", metadata={"llm_command": True})
+                    return await self.process(routed, allow_llm=False, _llm_replied=replied)
                 if reply:
                     await self.adapter.send(chat_id=source.chat_id, content=reply, reply_to=event.message_id,
                                             metadata=metadata)
-                if command:
-                    routed = make_event(source, command, f"{event.message_id}:llm", metadata={"llm_command": True})
-                    return await self.process(routed, allow_llm=False)
-                if reply:
                     return {"action": "skip", "reason": "llm reply"}
+        if _llm_replied:
+            # The LLM already answered this message and its named command
+            # fell through: a solved reply stands alone, no help after it.
+            return {"action": "skip", "reason": "llm reply"}
         await self.adapter.send(chat_id=source.chat_id, content=self.help, reply_to=event.message_id,
                                 metadata=metadata)
         return {"action": "skip", "reason": "command list"}

@@ -143,7 +143,9 @@ Required environment: `PRINT_BUDDY__BOT__MODE=standalone`, `DISCORD_BOT_TOKEN`, 
 ## What you get
 
 * Post a MakerWorld or Printables link, or drop one `.3mf` or `.stl`: the same intake as under Hermes, with the same
-  buttons. "print it" after a link, and "print the last one again", work.
+  buttons. "print it" after a link, and "print the last one again", work. "print 57" (or "print #57") reprints
+  print #57 behind the same bed-clear button as `/print-again 57`; an unknown number gets a "no such print"
+  reply pointing at `/print-again list`, not the help text. A bare number on its own is not a print request.
 * Slash commands: `/print-next`, `/print-stop`, `/print-resume`, `/print-again`, `/print-reboot`,
   `/print-coldpull`, `/print-maintenance`, `/print-colors`, `/spool`, `/print-lookup`, `/print-troubleshoot`,
   `/print-macros` (Moonraker printers only; lists the macros the printer defines, and `run <name>` runs one behind a confirmation),
@@ -166,10 +168,16 @@ Required environment: `PRINT_BUDDY__BOT__MODE=standalone`, `DISCORD_BOT_TOKEN`, 
 * A typed reply answers your own open question, as under Hermes ("2" for two copies, "split", "cancel"). It
   never answers another allowed user's question, even in the same channel or thread. Buttons are shared: any
   allowed user may press an open question's button, and the message then shows who chose.
-* Anything else gets the command list, or with `[llm]` set, a short reply from the model. The model may name one
-  command from a fixed list (read-only or button-gated: `/print-stop`, `/print-next`, `/spool list`, ...). That
-  command then asks for its button like a typed one. It can never run `/spool change`, `/spool new`,
-  `/spool sync`, `/print-colors` or `/print-again stop`, and it never sees links, files or the printer.
+* Anything else is tried with the LLM first when `[llm]` is set, and only falls back to the command list when
+  the model cannot solve it. The order is: explicit commands, deterministic phrases (like "print 57" above),
+  links/files and typed answers to an open question run first and are never rerouted through the model; any
+  other text goes to the model, which may answer directly or name one command from a fixed list (read-only or
+  button-gated: `/print-stop`, `/print-next`, `/spool list`, ...). A named command runs through the same
+  handler as a typed one and asks for its button the same way. Only if the model declines, names no usable
+  command, errors or times out does the command list appear — once, and never together with a model reply for
+  the same message. The model can never run `/spool change`, `/spool new`, `/spool sync`, `/print-colors` or
+  `/print-again stop`, and it never sees links, files or the printer. With no `[llm]` configured, unmatched
+  text gets the command list as before, and Telegram and Matrix never use the LLM at all (see above).
 
 ## Hermes pieces and their replacement
 

@@ -11,7 +11,10 @@ clients; endpoint shapes are also cross-checked against vmhomelab/printbuddy's p
   - `PUT /api/v1/files/<storage>/<path>` uploads (and creates folders); a follow-up GET of the
     file must report the same size before the upload counts as verified;
   - `POST /api/v1/files/<storage>/<path>` starts the uploaded file;
-  - `PUT /api/v1/job/<id>/pause`, `PUT /api/v1/job/<id>/resume`, `DELETE /api/v1/job/<id>` control.
+  - `PUT /api/v1/job/<id>/pause`, `PUT /api/v1/job/<id>/resume`, `DELETE /api/v1/job/<id>` control;
+  - `GET /api/v1/cameras` lists the cameras PrusaLink serves for the printer and
+    `GET /api/v1/cameras/<id>/snap` returns the latest still (PNG; 204 when no image
+    is available yet, 304 when it has not changed) — see printers/prusa/camera.py.
 
 Auth: the PrusaLink API key travels in the `X-Api-Key` header. Firmware that answers 401 with a
 Digest challenge gets one RFC 7616 (MD5) digest retry as user `maker` with the same key as the
@@ -140,6 +143,39 @@ class PrusaLinkClient:
 
     def snapshot(self):
         return {"info": self.info(), "status": self.status(), "job": self.job()}
+
+    # -- camera --------------------------------------------------------------
+    def cameras(self):
+        """The cameras PrusaLink serves for this printer: a list of camera dicts.
+
+        Each dict carries `camera_id` and a `connected` flag. Firmware
+        without the camera API answers 404, which request() raises as
+        PrusaLinkError like any other refusal; printers/prusa/camera.py
+        treats that answer as "no camera source", never as a print
+        failure. The list may arrive bare (the published spec's shape)
+        or wrapped; both are normalised to the bare list.
+        """
+        data = self.get(f"{API}/cameras")
+        if isinstance(data, dict):
+            data = data.get("camera_list") or data.get("cameras") or []
+        if not isinstance(data, list):
+            return []
+        return [camera for camera in data if isinstance(camera, dict)]
+
+    def camera_snapshot(self, camera_id=None):
+        """The latest camera still (PNG bytes), or None when there is none.
+
+        None is a normal answer, not a failure: 204 means the camera has
+        produced no image yet and 304 means the image has not changed
+        since the previous poll. Transport and auth failures raise
+        PrusaLinkError like every other read.
+        """
+        if camera_id:
+            path = f"{API}/cameras/{quote(str(camera_id), safe='')}/snap"
+        else:
+            path = f"{API}/cameras/snap"
+        resp = self.request("GET", path)
+        return resp.body if resp.status == 200 else None
 
     # -- files ---------------------------------------------------------------
     def storage(self):

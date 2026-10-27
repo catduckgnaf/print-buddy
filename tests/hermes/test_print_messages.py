@@ -729,3 +729,85 @@ def test_model_link_receipt_is_sent_before_slow_intake(monkeypatch):
     # receive_ack must not double-send for the same handled message.
     asyncio.run(plugin.receive_ack(event, gateway))
     assert adapter.sent == []
+
+
+# --- #391 expansion: generate_roast's fail-soft branches (#374's contract) ---
+#
+# #374 made the roast best-effort by design: one roast per print, and a
+# roast problem must never break the start post it decorates. #380 pinned
+# the success path and the off switch; these pin every refusal/failure
+# branch returning "" without an LLM call where the refusal is local.
+
+
+class _FakeResp:
+    def __init__(self, payload):
+        self._payload = payload
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc):
+        return False
+
+    def read(self):
+        return self._payload
+
+
+def _roast_env(monkeypatch, *, key="test-key", url="http://llm.test/chat"):
+    calls = []
+    monkeypatch.setattr(mel, "_profile_env_value", lambda name: key)
+    monkeypatch.setattr(mel, "log", lambda line: None)
+    monkeypatch.setattr(mel._config, "service_url", lambda name: url)
+    return calls
+
+
+def test_generate_roast_refuses_an_empty_title_without_calling(monkeypatch):
+    calls = _roast_env(monkeypatch)
+    monkeypatch.setattr("urllib.request.urlopen",
+                        lambda req, timeout=0: calls.append(req) or _FakeResp(b"{}"))
+    assert mel.generate_roast("") == ""
+    assert mel.generate_roast("   ") == ""
+    assert mel.generate_roast(None) == ""
+    assert calls == []
+
+
+def test_generate_roast_without_an_api_key_makes_no_call(monkeypatch):
+    calls = _roast_env(monkeypatch, key="")
+    monkeypatch.setattr("urllib.request.urlopen",
+                        lambda req, timeout=0: calls.append(req) or _FakeResp(b"{}"))
+    assert mel.generate_roast(TITLE) == ""
+    assert calls == []
+
+
+def test_generate_roast_without_a_chat_url_makes_no_call(monkeypatch):
+    calls = _roast_env(monkeypatch, url="")
+    monkeypatch.setattr("urllib.request.urlopen",
+                        lambda req, timeout=0: calls.append(req) or _FakeResp(b"{}"))
+    assert mel.generate_roast(TITLE) == ""
+    assert calls == []
+
+
+def test_generate_roast_swallows_an_llm_http_failure(monkeypatch):
+    _roast_env(monkeypatch)
+
+    def boom(req, timeout=0):
+        raise OSError("connection refused")
+    monkeypatch.setattr("urllib.request.urlopen", boom)
+    assert mel.generate_roast(TITLE) == ""
+
+
+def test_generate_roast_swallows_a_malformed_llm_payload(monkeypatch):
+    _roast_env(monkeypatch)
+    monkeypatch.setattr("urllib.request.urlopen",
+                        lambda req, timeout=0: _FakeResp(b'{"unexpected": true}'))
+    assert mel.generate_roast(TITLE) == ""
+    monkeypatch.setattr("urllib.request.urlopen",
+                        lambda req, timeout=0: _FakeResp(b"not json"))
+    assert mel.generate_roast(TITLE) == ""
+
+
+def test_generate_roast_strips_quotes_and_whitespace_from_the_reply(monkeypatch):
+    _roast_env(monkeypatch)
+    payload = json.dumps({"choices": [{"message": {"content": '  "A very roastable stand."  '}}]}).encode()
+    monkeypatch.setattr("urllib.request.urlopen", lambda req, timeout=0: _FakeResp(payload))
+    assert mel.generate_roast(TITLE) == "A very roastable stand."

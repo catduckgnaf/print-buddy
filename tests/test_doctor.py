@@ -147,3 +147,20 @@ class DoctorTests(unittest.TestCase):
     def test_bad_service_url_is_a_settings_error(self):
         with self.assertRaisesRegex(settings.SettingsError, "must be a URL"):
             self.run_doctor('[services]\nspoolman_url = "spoolman.lan"\n')
+
+    def test_hermes_profile_config_unreadable_fails_instead_of_passing(self):
+        """#391 (#384 expansion): an unparseable profile config means the
+        platform switch cannot be verified — the doctor must fail that row
+        rather than report the platform check ok or skip it silently."""
+        code, text = self.run_doctor(profile_config="platforms: [unclosed\n")
+        self.assertEqual(code, 1)
+        self.assertIn("FAIL  hermes discord platform", text)
+        self.assertIn("cannot read", text)
+
+    def test_hermes_profile_without_a_platform_switch_is_ok(self):
+        """#391 (#384 expansion): no explicit switch means the gateway
+        default applies — ok, and the row says why it is ok."""
+        code, text = self.run_doctor(profile_config="model:\n  default: test\n")
+        self.assertEqual(code, 0, text)
+        self.assertIn("ok    hermes discord platform", text)
+        self.assertIn("no explicit discord platform disable", text)

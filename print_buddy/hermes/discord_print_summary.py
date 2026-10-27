@@ -19,6 +19,9 @@ _TIME = re.compile(r"^; estimated printing time \(normal mode\) = (.+)$", re.M)
 # instead of the line above (#271): printing time first, the slicer's total as the fallback.
 _BAMBU_TIME = (re.compile(r"^;.*?\bmodel printing time\s*:\s*([^;\n]+)", re.M),
                re.compile(r"^;.*?\btotal estimated time\s*:\s*([^;\n]+)", re.M))
+# Bambu Studio's header block spells the total "; total filament weight [g] : X" (#444,
+# verified against a real 2.8.2.61 slice); OrcaSlicer/Flash never write it.
+_BAMBU_GRAMS = re.compile(r"^;\s*total filament weight \[g\]\s*:\s*([\d.]+)", re.M)
 ARCHIVE = _config.archive_dir()
 CONTEXT_PATH = _config.state_file("PRINT_BUDDY_CONTEXT_PATH", "print_buddy_context.json")
 WARMUP_S = 5 * 60
@@ -72,7 +75,7 @@ def gcode_metadata(gcode):
     except OSError:
         return None, None
     match = _TIME.search(text) or next((m for m in (p.search(text) for p in _BAMBU_TIME) if m), None)
-    filament = re.search(r"^;\s*total filament used \[g\]\s*=\s*([\d.]+)", text, re.M)
+    filament = re.search(r"^;\s*total filament used \[g\]\s*=\s*([\d.]+)", text, re.M) or _BAMBU_GRAMS.search(text)
     return (parse_duration(match.group(1)) if match else None,
             float(filament.group(1)) if filament else None)
 

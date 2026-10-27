@@ -198,7 +198,8 @@ def _event(text):
 
 
 def _gateway(adapter):
-    return S(_is_user_authorized_for_source=lambda s: True, _delivery_adapter_for=lambda s: adapter)
+    return S(_is_user_authorized_for_source=lambda s: True, _delivery_adapter_for=lambda s: adapter,
+             _session_key_for_source=lambda s: "session-key")
 
 
 def _configured(connection):
@@ -442,7 +443,7 @@ class ConfirmRecorder:
         self.answer = answer
         self.prompts = []
 
-    async def __call__(self, adapter, source, metadata, prefix, question, choices, timeout):
+    async def __call__(self, adapter, source, metadata, prefix, question, choices, timeout, live_key=None):
         self.prompts.append((question, choices))
         return self.answer
 

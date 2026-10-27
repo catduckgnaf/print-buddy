@@ -981,6 +981,7 @@ async def print_next_dispatch(event, gateway, **kwargs):
             if not ok and _start_refused_needs_restart(detail):
                 from print_buddy.hermes import print_control as pc
                 message += '\n' + await _offer_force_restart(adapter, source, metadata, pc, detail,
+                                                             live_key=gateway._session_key_for_source(source),
                                                              **_pkw(pid))
     except print_next.NextPlateError as exc:
         message = f'No next plate: {exc}. Nothing uploaded or started.'
@@ -1027,7 +1028,7 @@ def _cold_pull_temps():
 
 
 async def _coldpull_workflow(adapter, source, metadata, *, source_tag, initial_cold=None, selected_material=None,
-                             printer_id=None):
+                             printer_id=None, live_key=None):
     """Shared user interaction for the standalone and maintenance cold-pull paths."""
     from print_buddy.hermes import maintenance
     from print_buddy.hermes import print_control as pc
@@ -1043,7 +1044,8 @@ async def _coldpull_workflow(adapter, source, metadata, *, source_tag, initial_c
     if answer is None:
         answer = await _confirm(adapter, source, metadata, f'{source_tag}-material',
             'Choose material for this cold pull.',
-            [f'PLA (trial) {pla_hot}/{pla_cold}', f'PETG {petg_hot}/{petg_cold}'], (globals().get('_config').question_timeout_s() if globals().get('_config') else 1800))
+            [f'PLA (trial) {pla_hot}/{pla_cold}', f'PETG {petg_hot}/{petg_cold}'], (globals().get('_config').question_timeout_s() if globals().get('_config') else 1800),
+            live_key=live_key)
     if not answer:
         return None, 'Cancelled or expired. Nothing sent.'
     is_pla = answer.startswith('PLA') or answer.startswith('Run PLA')
@@ -1058,7 +1060,8 @@ async def _coldpull_workflow(adapter, source, metadata, *, source_tag, initial_c
         if initial_cold != retry_cold:
             retry_answer = await _confirm(adapter, source, metadata, f'{source_tag}-temp',
                 f'Previous PLA tip snapped or did not release. Try COLD={retry_cold} once?',
-                [f'Use COLD={retry_cold}', f'Keep COLD={pla_cold}'], (globals().get('_config').question_timeout_s() if globals().get('_config') else 1800))
+                [f'Use COLD={retry_cold}', f'Keep COLD={pla_cold}'], (globals().get('_config').question_timeout_s() if globals().get('_config') else 1800),
+                live_key=live_key)
             if retry_answer != f'Use COLD={retry_cold}':
                 cold = pla_cold
     dirty_count = 0
@@ -1068,13 +1071,15 @@ async def _coldpull_workflow(adapter, source, metadata, *, source_tag, initial_c
         dirty_count += 1
     if dirty_count:
         repeat = await _confirm(adapter, source, metadata, f'{source_tag}-repeat',
-            'A prior pull was dirty. Repeat once?', ['Run one repeat', 'Cancel'], (globals().get('_config').question_timeout_s() if globals().get('_config') else 1800))
+            'A prior pull was dirty. Repeat once?', ['Run one repeat', 'Cancel'], (globals().get('_config').question_timeout_s() if globals().get('_config') else 1800),
+            live_key=live_key)
         if repeat != 'Run one repeat':
             return None, 'Cancelled. Nothing sent.'
     await adapter.send(chat_id=source.chat_id, metadata=metadata,
         content='Bed must be clear; it homes. Screen may look frozen for a few minutes. Confirm only at the printer.')
     confirmed = await _confirm(adapter, source, metadata, f'{source_tag}-actuate',
-        'I am present, the bed is clear, and authorize one cold pull.', ['Confirm cold pull', 'Cancel'], (globals().get('_config').safety_confirm_timeout_s() if globals().get('_config') else 600))
+        'I am present, the bed is clear, and authorize one cold pull.', ['Confirm cold pull', 'Cancel'], (globals().get('_config').safety_confirm_timeout_s() if globals().get('_config') else 600),
+        live_key=live_key)
     if confirmed != 'Confirm cold pull':
         return None, 'Cancelled or expired. Nothing sent.'
     import time as _time
@@ -1088,7 +1093,8 @@ async def _coldpull_workflow(adapter, source, metadata, *, source_tag, initial_c
         maintenance.append_run(record, **_pkw(printer_id))
         return record, detail
     tip = await _confirm(adapter, source, metadata, f'{source_tag}-tip', 'How did the pulled tip look?',
-                         ['Clean', 'Dirty', 'Snapped', "Didn't release"], (globals().get('_config').cold_pull_outcome_s() if globals().get('_config') else 1800))
+                         ['Clean', 'Dirty', 'Snapped', "Didn't release"], (globals().get('_config').cold_pull_outcome_s() if globals().get('_config') else 1800),
+                         live_key=live_key)
     result = {'Clean': 'clean', 'Dirty': 'dirty', 'Snapped': 'snapped', "Didn't release": 'didnt_release'}.get(tip)
     if not result:
         record['hours_total'] = await (asyncio.to_thread(_maintenance_hours_now, printer_id) if printer_id else asyncio.to_thread(_maintenance_hours_now))
@@ -1124,11 +1130,9 @@ async def coldpull_dispatch(event, gateway, **kwargs):
     _seen[key] = time.monotonic()
     try:
         pid = _routed_printer_id(source, gateway)
-        if pid:
-            _record, message = await _coldpull_workflow(adapter, source, metadata, source_tag='coldpull',
-                                                        printer_id=pid)
-        else:
-            _record, message = await _coldpull_workflow(adapter, source, metadata, source_tag='coldpull')
+        _record, message = await _coldpull_workflow(adapter, source, metadata, source_tag='coldpull',
+                                                    live_key=gateway._session_key_for_source(source),
+                                                    **_pkw(pid))
     except Exception as exc:
         logger.exception('/print-coldpull failed')
         message = f'Cold pull stopped: {exc}. Do not retry unless printer state is checked.'
@@ -1186,7 +1190,8 @@ async def maintenance_dispatch(event, gateway, **kwargs):
                 if i < len(session['steps']) and session['steps'][i] is not None:
                     continue
                 answer = await _confirm(adapter, source, metadata, f'maintenance-{i}',
-                                        f'{instruction} Choose an outcome.', buttons, (globals().get('_config').question_timeout_s() if globals().get('_config') else 1800))
+                                        f'{instruction} Choose an outcome.', buttons, (globals().get('_config').question_timeout_s() if globals().get('_config') else 1800),
+                                        live_key=gateway._session_key_for_source(source))
                 action = 'problem' if answer == 'Problem found' else 'done' if answer == 'Done' else 'skip'
                 session['steps'][i] = action
                 if action == 'problem':
@@ -1201,12 +1206,14 @@ async def maintenance_dispatch(event, gateway, **kwargs):
                 if last_pull.get('next_cold') == retry_cold:
                     options[0] = f'Run PLA (trial) cold pull {pla_hot}/{retry_cold}'
                 answer = await _confirm(adapter, source, metadata, 'maintenance-coldpull',
-                    'Cold pull requires you at the printer. Bed must be clear; it homes. Screen may look frozen for a few minutes.', options, (globals().get('_config').question_timeout_s() if globals().get('_config') else 1800))
+                    'Cold pull requires you at the printer. Bed must be clear; it homes. Screen may look frozen for a few minutes.', options, (globals().get('_config').question_timeout_s() if globals().get('_config') else 1800),
+                    live_key=gateway._session_key_for_source(source))
                 if answer and answer != 'Skip cold pull':
                     cold = retry_cold if answer.endswith(f'{pla_hot}/{retry_cold}') else None
                     record, _cold_message = await _coldpull_workflow(
                         adapter, source, metadata, source_tag='maintenance', initial_cold=cold,
-                        selected_material=answer, **_pkw(pid))
+                        selected_material=answer, live_key=gateway._session_key_for_source(source),
+                        **_pkw(pid))
                     session['cold_pull'] = record.get('cold_pull') if record else {'result': 'cancelled'}
                     if session.get('cold_pull'):
                         session['cold_pull']['source'] = 'maintenance'
@@ -1513,7 +1520,8 @@ async def macros_dispatch(event, gateway, **kwargs):
                                     macros.run_prompt_text(prepared),
                                     [macros.RUN_LABEL, macros.CANCEL_LABEL],
                                     (globals().get('_config').safety_confirm_timeout_s()
-                                     if globals().get('_config') else 600))
+                                     if globals().get('_config') else 600),
+                                    live_key=gateway._session_key_for_source(source))
             if answer != macros.RUN_LABEL:
                 message = 'Macro not run. Nothing sent.'
             else:
@@ -1693,7 +1701,8 @@ async def troubleshoot_dispatch(event, gateway, **kwargs):
                     break
                 continue
             answer = await _confirm(adapter, source, metadata, 'print-troubleshoot', step.text,
-                                    [*step.choices, TROUBLESHOOT_STOP_LABEL], timeout)
+                                    [*step.choices, TROUBLESHOOT_STOP_LABEL], timeout,
+                                    live_key=gateway._session_key_for_source(source))
             if answer is None or answer == TROUBLESHOOT_STOP_LABEL:
                 break
             session.answer(answer)
@@ -1845,7 +1854,8 @@ async def print_resume_dispatch(event, gateway, **kwargs):
             where = pc.where_text(st)
             answer = await _confirm(adapter, source, metadata, 'print-resume',
                                     f"Resume {name}{' (' + where + ')' if where else ''}? Make sure nothing is in the way.",
-                                    [pc.RESUME_LABEL, pc.KEEP_LABEL], (globals().get('_config').safety_confirm_timeout_s() if globals().get('_config') else 600))
+                                    [pc.RESUME_LABEL, pc.KEEP_LABEL], (globals().get('_config').safety_confirm_timeout_s() if globals().get('_config') else 600),
+                                    live_key=gateway._session_key_for_source(source))
             if answer != pc.RESUME_LABEL:
                 message = 'Left it paused. Nothing sent.'
             else:
@@ -1914,7 +1924,8 @@ async def print_again_dispatch(event, gateway, **kwargs):
                 f"that print belongs to {_printer_label(_job_owner_pid(target['job_json']))}, "
                 f"not this channel's printer ({_printer_label(pid)})")
         answer = await _confirm(adapter, source, metadata, 'print-again', question,
-                                [pc.AGAIN_LABEL, pc.AGAIN_CANCEL_LABEL], (globals().get('_config').question_timeout_s() if globals().get('_config') else 1800))
+                                [pc.AGAIN_LABEL, pc.AGAIN_CANCEL_LABEL], (globals().get('_config').question_timeout_s() if globals().get('_config') else 1800),
+                                live_key=gateway._session_key_for_source(source))
         if answer != pc.AGAIN_LABEL:
             message = 'Cancelled or expired. Nothing uploaded or started.'
         else:
@@ -1938,6 +1949,7 @@ async def print_again_dispatch(event, gateway, **kwargs):
                        else f"Did not start {target['title']}. Not retrying.\n{detail}")
             if not ok and _start_refused_needs_restart(detail):
                 message += '\n' + await _offer_force_restart(adapter, source, metadata, pc, detail,
+                                                             live_key=gateway._session_key_for_source(source),
                                                              **_pkw(pid))
     except print_next.NextPlateError as exc:
         message = f'Nothing to print again: {exc}. Nothing uploaded or started.'
@@ -1970,11 +1982,12 @@ def _start_refused_needs_restart(detail):
                                          'stale', 'retained job', 'not idle', 'state is error'))
 
 
-async def _offer_force_restart(adapter, source, metadata, pc, reason, printer_id=None):
+async def _offer_force_restart(adapter, source, metadata, pc, reason, printer_id=None, live_key=None):
     """Offer the existing confirmation flow after a safe-to-restart start refusal."""
     answer = await _confirm(adapter, source, metadata, 'print-reboot',
         f"{reason} Force restart clears a stuck screen or heaters and wipes any Resume the printer screen is offering. Retry the print manually afterward.",
-        [pc.REBOOT_LABEL, pc.CANCEL_REBOOT_LABEL], (globals().get('_config').safety_confirm_timeout_s() if globals().get('_config') else 600))
+        [pc.REBOOT_LABEL, pc.CANCEL_REBOOT_LABEL], (globals().get('_config').safety_confirm_timeout_s() if globals().get('_config') else 600),
+        live_key=live_key)
     if answer != pc.REBOOT_LABEL:
         return 'Not restarted. Nothing sent; retry the print only after checking the printer.'
     await adapter.send(chat_id=source.chat_id, metadata=metadata,
@@ -2023,7 +2036,8 @@ async def print_reboot_dispatch(event, gateway, **kwargs):
                                     "The printer is in an emergency stop. " + pab.explain(reason)
                                     + "\nClear it with one firmware restart? No motion or heat. This ends the "
                                     "stopped job for good. Only do this after the bed and nozzle are clear.",
-                                    [pc.REBOOT_LABEL, pc.CANCEL_REBOOT_LABEL], (globals().get('_config').safety_confirm_timeout_s() if globals().get('_config') else 600))
+                                    [pc.REBOOT_LABEL, pc.CANCEL_REBOOT_LABEL], (globals().get('_config').safety_confirm_timeout_s() if globals().get('_config') else 600),
+                                    live_key=gateway._session_key_for_source(source))
             if answer != pc.REBOOT_LABEL:
                 message = 'Not restarted. Nothing sent.'
             else:
@@ -2039,7 +2053,8 @@ async def print_reboot_dispatch(event, gateway, **kwargs):
             answer = await _confirm(adapter, source, metadata, 'print-reboot',
                                     "Force restart the AD5X? This clears a stuck screen or heaters, and it wipes "
                                     "any Resume the printer screen is offering. Takes about two minutes.",
-                                    [pc.REBOOT_LABEL, pc.CANCEL_REBOOT_LABEL], (globals().get('_config').safety_confirm_timeout_s() if globals().get('_config') else 600))
+                                    [pc.REBOOT_LABEL, pc.CANCEL_REBOOT_LABEL], (globals().get('_config').safety_confirm_timeout_s() if globals().get('_config') else 600),
+                                    live_key=gateway._session_key_for_source(source))
             if answer != pc.REBOOT_LABEL:
                 message = 'Not restarted. Nothing sent.'
             else:

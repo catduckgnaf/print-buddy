@@ -61,7 +61,8 @@ def test_maintenance_and_standalone_use_same_workflow_source_tags():
     from pathlib import Path
     plugin = Path(__file__).resolve().parents[2] / "plugins/print-feedback/__init__.py"
     text = plugin.read_text()
-    assert "_coldpull_workflow(adapter, source, metadata, source_tag='coldpull')" in text
+    assert "_coldpull_workflow(adapter, source, metadata, source_tag='coldpull'," in text
+    assert "live_key=gateway._session_key_for_source(source)" in text
     assert "source_tag='maintenance', initial_cold=cold" in text
     assert text.count("pc.coldpull, temp, cold, confirmed_at=confirmed_at") == 1
 
@@ -79,7 +80,7 @@ def test_selected_options_map_to_exact_scripts_before_send(monkeypatch):
     sys.modules[spec.name] = plugin
     spec.loader.exec_module(plugin)
 
-    async def confirm(adapter, source, metadata, key, prompt, choices, timeout):
+    async def confirm(adapter, source, metadata, key, prompt, choices, timeout, live_key=None):
         return "Confirm cold pull" if key.endswith("-actuate") else None
 
     monkeypatch.setattr(plugin, "_confirm", confirm)
@@ -136,7 +137,7 @@ def test_next_pla_run_offers_cold_95_and_sends_it(monkeypatch):
     plugin = _load_coldpull_plugin()
     prompts = []
 
-    async def confirm(adapter, source, metadata, key, prompt, choices, timeout):
+    async def confirm(adapter, source, metadata, key, prompt, choices, timeout, live_key=None):
         prompts.append((key, prompt, tuple(choices)))
         if key.endswith("-temp"):
             assert "COLD=95" in prompt
@@ -184,7 +185,7 @@ def test_standalone_log_uses_coldpull_source(monkeypatch):
 
     plugin = _load_coldpull_plugin()
 
-    async def confirm(adapter, source, metadata, key, prompt, choices, timeout):
+    async def confirm(adapter, source, metadata, key, prompt, choices, timeout, live_key=None):
         if key.endswith("-actuate"):
             return "Confirm cold pull"
         if key.endswith("-tip"):
@@ -225,7 +226,7 @@ def test_two_dirty_results_suggest_nozzle_swap(monkeypatch):
 
     plugin = _load_coldpull_plugin()
 
-    async def confirm(adapter, source, metadata, key, prompt, choices, timeout):
+    async def confirm(adapter, source, metadata, key, prompt, choices, timeout, live_key=None):
         if key.endswith("-repeat"):
             return "Run one repeat"
         if key.endswith("-actuate"):
@@ -272,7 +273,7 @@ def test_cold_pull_prompts_use_their_configured_timeouts(monkeypatch):
     plugin = _load_coldpull_plugin()
     recorded = []
 
-    async def confirm(adapter, source, metadata, key, prompt, choices, timeout):
+    async def confirm(adapter, source, metadata, key, prompt, choices, timeout, live_key=None):
         recorded.append((key, timeout))
         if key.endswith("-actuate"):
             return "Confirm cold pull"

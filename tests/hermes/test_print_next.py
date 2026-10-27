@@ -232,7 +232,8 @@ def run_hook(tmp_path, text, pick=0, authorized=True, start_result=(True, 'START
         setattr(mod, name, value)
     adapter = Transport(pick)
     src = S(platform=S(value='discord'), profile='3dprinting', user_id='42', chat_id='c', thread_id=None)
-    gateway = S(_is_user_authorized_for_source=lambda s: authorized, _delivery_adapter_for=lambda s: adapter)
+    gateway = S(_is_user_authorized_for_source=lambda s: authorized, _delivery_adapter_for=lambda s: adapter,
+                _session_key_for_source=lambda s: 'session-key')
     started = []
 
     async def fake_start(target):
@@ -278,7 +279,7 @@ def test_hook_ignores_other_text(tmp_path):
 
 
 def test_hook_refused_start_offers_force_restart(tmp_path):
-    async def offer(adapter, source, metadata, pc, reason):
+    async def offer(adapter, source, metadata, pc, reason, **kwargs):
         return 'RESTART OFFERED'
     _result, adapter, _started, _ = run_hook(
         tmp_path, '/print-next ghost', pick=0, start_result=(False, 'Refused: printer state is paused'),

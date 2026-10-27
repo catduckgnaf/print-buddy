@@ -75,9 +75,11 @@ def test_docker_scalar_environment_parity_for_every_schema_key():
         for key, value in values.items():
             if isinstance(value, (list, dict)):
                 continue
+            keys.append((section, key))
+            if value is None:
+                continue  # tri-state unset (design.enabled, #388): parity is "stays unset"
             env[f"PRINT_BUDDY__{section.upper()}__{key.upper()}"] = (
                 str(value).lower() if isinstance(value, bool) else str(int(value)) if isinstance(value, float) and value.is_integer() else str(value))
-            keys.append((section, key))
     loaded = settings.load(local=ROOT / "config/docker.yaml", environ=env)
     for section, key in keys:
         assert loaded[section][key] == base[section][key], (section, key)

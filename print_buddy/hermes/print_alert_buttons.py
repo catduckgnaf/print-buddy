@@ -92,12 +92,28 @@ def _save(data: dict[str, Any]) -> None:
     os.replace(tmp, STATE)
 
 
+def _timestamp(value: Any) -> float | None:
+    """A stored row's timestamp as a float, or None when it cannot be read as one (#404)."""
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _fresh(row: Any, now: float) -> bool:
+    """True only for a mapping row whose timestamp reads as a number inside the TTL."""
+    if not isinstance(row, dict):
+        return False
+    at = _timestamp(row.get("at", 0))
+    return at is not None and now - at < TTL
+
+
 def record(kind: str, filename: str, now: float | None = None, **extra: Any) -> str:
     """Remember one alert; returns its short id. Extra fields support inventory-only UI flows."""
     now = time.time() if now is None else now
     aid = secrets.token_hex(4)
     with _LOCK:
-        data = {k: v for k, v in _load().items() if now - float(v.get("at", 0)) < TTL}
+        data = {k: v for k, v in _load().items() if _fresh(v, now)}
         data[aid] = {"kind": kind, "filename": filename, "at": now, **extra}
         _save(data)
     return aid
@@ -106,7 +122,7 @@ def record(kind: str, filename: str, now: float | None = None, **extra: Any) -> 
 def peek(aid: str) -> dict[str, Any] | None:
     """Read an alert without claiming it, so a bad choice can be refused and the prompt stays usable."""
     alert = _load().get(aid)
-    if alert and time.time() - float(alert.get("at", 0)) < TTL:
+    if _fresh(alert, time.time()):
         return alert
     return None
 
@@ -117,7 +133,7 @@ def take(aid: str) -> dict[str, Any] | None:
         data = _load()
         alert = data.pop(aid, None)
         _save(data)
-    if alert and time.time() - float(alert.get("at", 0)) < TTL:
+    if _fresh(alert, time.time()):
         return alert
     return None
 
@@ -356,7 +372,7 @@ def retire_alerts(token: str, filename: str | None, note: str, kinds: tuple[str,
     retired = 0
     with _LOCK:
         data = _load()
-        stale = {aid: a for aid, a in data.items() if a.get("kind") in kinds
+        stale = {aid: a for aid, a in data.items() if isinstance(a, dict) and a.get("kind") in kinds
                  and (filename is None or a.get("filename") == filename)}
         for aid in stale:
             data.pop(aid, None)

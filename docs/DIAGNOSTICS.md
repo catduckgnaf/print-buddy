@@ -55,9 +55,17 @@ in `print_buddy.diagnostics.LEGACY_MARKERS` and likewise never changes.
    exited (`Required child exited: bot (status 1); stopping container.`)
    instead of a bare exit status. The container healthcheck already named
    each subsystem with its reason and is unchanged.
-5. **Stage 5:** doctor / `bot check` tripwires — every failure mode the
-   earlier stages make detectable gets a named doctor row with a remedy,
-   and a Web UI status equivalent where one exists.
+5. **Stage 5 (done):** doctor / `bot check` tripwires — the doctor gained
+   a `logging` row (a configured log file whose folder is missing or
+   unwritable now fails loudly with the remedy and
+   `PB_LOGGING_CONFIGURATION`, instead of silently falling back to
+   stderr) and a `listener heartbeats` warning row naming each required
+   printer whose heartbeat is unhealthy, with `PB_LISTENER_TRANSIENT`.
+   Both rows also appear in the Web UI status page's doctor section,
+   which reuses the same check functions. The heartbeat row is a warning,
+   never a doctor failure: the container healthcheck owns failing on a
+   dead listener, and a doctor run on a host where listeners are
+   legitimately stopped must not fail.
 6. **Stage 6 (done):** per-post audit of the Discord action handlers in
    `plugins/print-feedback` — the generic failure posts (color selection,
    next plate, stop, resume, print again, restart, plate picker, alert

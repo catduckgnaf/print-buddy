@@ -7,12 +7,12 @@ the feature, never the flow — unparseable JSON already degrades to the
 empty state in every one of these modules, and those paths are pinned
 here as passing tests.
 
-The parseable-but-malformed shape is NOT handled today: a row whose
-timestamp is not a number (partial write, hand edit, foreign writer)
-raises out of recent_links, print_alert_buttons and print_next. That is
-bug #404, filed from this pass per #391's rules (tests only here, no
-drive-by fix); the strict xfails below pin the expected behaviour, so
-the fix PR must remove the markers when they start passing.
+The parseable-but-malformed shape was bug #404: a row whose timestamp is
+not a number (partial write, hand edit, foreign writer) raised out of
+recent_links, print_alert_buttons and print_next. These tests were
+pinned as strict xfails when the bug was filed from this pass per #391's
+rules (tests only, no drive-by fix); the #404 fix made the readers treat
+an unreadable timestamp as expired/invalid, and the markers are removed.
 """
 import json
 import time
@@ -98,27 +98,20 @@ def test_bot_health_unparseable_heartbeat_reads_as_none(tmp_path, monkeypatch):
     assert health.read() is None
 
 
-# -- parseable but malformed timestamps: bug #404, pinned as strict xfails --
-
-MALFORMED_AT = pytest.mark.xfail(
-    strict=True, reason="bug #404: fail-soft state readers crash on a "
-                        "non-numeric stored timestamp")
+# -- parseable but malformed timestamps: bug #404, fixed -------------------
 
 
-@MALFORMED_AT
 def test_recent_links_recall_survives_a_non_numeric_timestamp(links):
     links.write_text(json.dumps({"chan:": {"url": "https://example.com/x", "at": "bad"}}))
     assert recent_links.recall("chan", now=NOW) is None
 
 
-@MALFORMED_AT
 def test_recent_links_remember_prunes_a_non_numeric_timestamp_row(links):
     links.write_text(json.dumps({"chan:": {"url": "https://example.com/x", "at": [1]}}))
     recent_links.remember("other", "https://example.com/y", now=NOW)
     assert recent_links.recall("other", now=NOW) == "https://example.com/y"
 
 
-@MALFORMED_AT
 def test_alert_buttons_survive_a_non_numeric_timestamp(alerts):
     alerts.write_text(json.dumps({"old": {"kind": "paused", "filename": "f", "at": "bad"}}))
     assert pab.peek("old") is None
@@ -127,13 +120,18 @@ def test_alert_buttons_survive_a_non_numeric_timestamp(alerts):
     assert aid
 
 
-@MALFORMED_AT
 def test_alert_buttons_survive_a_non_mapping_row(alerts):
     alerts.write_text(json.dumps({"old": "just-a-string"}))
     assert pab.peek("old") is None
 
 
-@MALFORMED_AT
+def test_alert_buttons_record_and_take_survive_a_non_mapping_row(alerts):
+    alerts.write_text(json.dumps({"old": "just-a-string"}))
+    assert pab.take("old") is None
+    aid = pab.record("paused", "f.gcode")
+    assert pab.peek(aid)["filename"] == "f.gcode"
+
+
 def test_start_messages_survive_a_non_numeric_timestamp(starts):
     starts.write_text(json.dumps({"a.gcode": {"message_id": "1", "ts": "bad"}}))
     assert print_next.take_start_message("a.gcode", now=NOW) is None

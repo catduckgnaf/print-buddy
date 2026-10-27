@@ -164,6 +164,14 @@ def doctor_checks(data):
         report(key.replace("_url", ""), doctor.check_service, data, key)
     report("bot mode", doctor.check_bot, data)
     report("hermes discord platform", doctor.check_hermes_platform, data)
+    report("logging", doctor.check_logging, data)
+    try:
+        heartbeat_warning = doctor.check_listener_heartbeats(data)
+    except Exception as exc:  # a scan problem is a warning, never a failed check
+        heartbeat_warning = f"could not check: {exc}"
+    rows.append({"label": "listener heartbeats",
+                 "status": "warn" if heartbeat_warning else "ok",
+                 "detail": heartbeat_warning or "healthy or not required"})
     try:
         warning = doctor.check_strays(data)
     except Exception as exc:  # a scan problem is a warning, never a failed check

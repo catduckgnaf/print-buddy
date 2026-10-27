@@ -171,6 +171,58 @@ def check_hermes_platform(data):
     return f"no explicit discord platform disable in {path}"
 
 
+def check_logging(data):
+    """The [logging] setup (#390 stage 5): a configured log file must be writable.
+
+    A log file whose folder is missing or unwritable fails silently at
+    runtime (logs.configure falls back to stderr and the operator never
+    learns the file they configured is not being written), so the doctor
+    probes it here with the remedy. Levels were already validated when the
+    settings loaded; this row reports how many subsystem overrides apply.
+    """
+    cfg = data.get("logging") or {}
+    levels = cfg.get("levels") or {}
+    suffix = f", {len(levels)} subsystem level override(s)" if levels else ""
+    path = str(cfg.get("file") or "").strip()
+    if not path:
+        return f"stderr only{suffix}"
+    target = Path(path).expanduser()
+    if not target.parent.is_dir():
+        raise RuntimeError(
+            f"log file folder {target.parent} does not exist; create it or fix [logging] file "
+            f"[PB_LOGGING_CONFIGURATION]")
+    probe = target.parent / ".doctor-write-test"
+    try:
+        probe.write_text("")
+        probe.unlink()
+    except OSError as exc:
+        raise RuntimeError(
+            f"log file folder {target.parent} is not writable ({exc}); fix its permissions "
+            f"or change [logging] file [PB_LOGGING_CONFIGURATION]") from exc
+    return f"file {target}{suffix}"
+
+
+def check_listener_heartbeats(data):
+    """Per-printer listener liveness as a warning (#390 stage 5).
+
+    Returns a warning string, or None. Follows check_strays' contract: a
+    dead listener is a named, actionable warning here — the container
+    healthcheck owns failing on it, and a doctor run on a host where the
+    listeners legitimately are not running must not fail the whole check.
+    """
+    from . import healthcheck
+    statuses = healthcheck.listener_statuses(data)
+    required = {pid: s for pid, s in statuses.items() if s["required"]}
+    if not required:
+        return None
+    down = [f"{pid} ({s['reason']})" for pid, s in sorted(required.items()) if not s["ok"]]
+    if not down:
+        return None
+    return (f"listener heartbeat not healthy for {', '.join(down)}; check that printer's "
+            f"listener is running (in the container it restarts on its own; see "
+            f"docs/DIAGNOSTICS.md) [PB_LISTENER_TRANSIENT]")
+
+
 def _bot_token(data):
     from .hermes import _config
     name = data["discord"]["token_env"]
@@ -238,6 +290,7 @@ def run(out=sys.stdout):
         report(key.replace("_url", ""), check_service, data, key)
     report("bot mode", check_bot, data)
     report("hermes discord platform", check_hermes_platform, data)
+    report("logging", check_logging, data)
     if data["bot"]["mode"] == "standalone":
         report("discord login", check_discord_login, data)
         try:
@@ -250,6 +303,12 @@ def run(out=sys.stdout):
     except Exception as exc:  # a scan problem is a warning, never a failed check
         warning = f"could not scan: {exc}"
     print(f"WARN  stray state files: {warning}" if warning else "ok    stray state files: none", file=out)
+    try:
+        heartbeat_warning = check_listener_heartbeats(data)
+    except Exception as exc:  # an unresolvable roster is a warning here, never a failed check
+        heartbeat_warning = f"could not check: {exc}"
+    print(f"WARN  listener heartbeats: {heartbeat_warning}" if heartbeat_warning
+          else "ok    listener heartbeats: healthy or not required", file=out)
     return 1 if failed else 0
 
 

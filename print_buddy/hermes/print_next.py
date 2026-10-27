@@ -218,11 +218,24 @@ def _read_start_messages() -> dict[str, Any]:
     return value if isinstance(value, dict) else {}
 
 
+def _timestamp(value: Any) -> float | None:
+    """A recorded row's timestamp as a float, or None when it cannot be read as one (#404)."""
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
 def record_start_message(filename: str, message_id: str, now: float | None = None) -> None:
     """Remember the one Discord start message so the listener can edit it after warmup."""
     now = time.time() if now is None else now
-    rows = {k: v for k, v in _read_start_messages().items()
-            if isinstance(v, dict) and now - float(v.get("ts") or 0) < START_MESSAGE_TTL_S}
+    rows = {}
+    for k, v in _read_start_messages().items():
+        if not isinstance(v, dict):
+            continue
+        ts = _timestamp(v.get("ts") or 0)
+        if ts is not None and now - ts < START_MESSAGE_TTL_S:
+            rows[k] = v
     rows[Path(str(filename)).name] = {"message_id": str(message_id), "ts": now}
     START_MESSAGES.parent.mkdir(parents=True, exist_ok=True)
     tmp = START_MESSAGES.with_suffix(".tmp")
@@ -235,7 +248,8 @@ def take_start_message(filename: str, now: float | None = None) -> str | None:
     now = time.time() if now is None else now
     rows = _read_start_messages()
     row = rows.pop(Path(str(filename or "")).name, None)
-    if not isinstance(row, dict) or not 0 <= now - float(row.get("ts") or 0) < START_MESSAGE_TTL_S:
+    ts = _timestamp(row.get("ts") or 0) if isinstance(row, dict) else None
+    if ts is None or not 0 <= now - ts < START_MESSAGE_TTL_S:
         return None
     tmp = START_MESSAGES.with_suffix(".tmp")
     tmp.write_text(json.dumps(rows), encoding="utf-8")

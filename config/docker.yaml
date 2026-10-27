@@ -71,6 +71,16 @@ webui:
   host: "127.0.0.1"
   port: 0
   access_token_env: WEBUI_ACCESS_TOKEN
+design:
+  # AI design with OpenSCAD (#388): off by default. Empty chat_url/model/
+  # api_key_env inherit the [llm] values; set PRINT_BUDDY__DESIGN__ENABLED
+  # plus a model endpoint to turn /print-design on.
+  enabled: false
+  chat_url: ""
+  model: ""
+  api_key_env: ""
+  timeout_s: 180
+  repair_attempts: 3
 live_stream:
   # Live camera viewing in Discord (#311): off by default. The bot cannot
   # send video itself; /print-live starts a viewing session and points at

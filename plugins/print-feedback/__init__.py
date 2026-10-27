@@ -213,6 +213,181 @@ async def guided_dispatch(event, gateway, **kwargs):
     return {'action': 'skip', 'reason': 'guided setup/debugging handled'}
 
 
+# The Hermes plugin LLM lane (ctx.llm), stashed by register() when the host
+# offers it (#388 Stage 1). The standalone Router offers neither attribute,
+# so this stays None there and design uses its HTTP transport instead.
+_HERMES_LLM = None
+
+
+def _design_root(cfg):
+    from print_buddy.core import design
+    cache = (cfg.get('paths') or {}).get('cache')
+    return design.sessions_root(cache) if cache else design.sessions_root(_hermes_home() / 'cache')
+
+
+def _design_transport(cfg):
+    """(complete, kind) for a design turn, or (None, '') when no model is reachable.
+
+    Hermes mode prefers the host's plugin LLM lane with the registered
+    print_design auxiliary task — [design].model is NOT consulted there, the
+    profile's auxiliary.print_design block is the setting (Stage 0 on #388).
+    The HTTP transport (standalone, or the Hermes fallback when ctx.llm is
+    unavailable) resolves its endpoint from [design] inheriting [llm].
+    """
+    from print_buddy.core import design
+    design_cfg = cfg.get('design') or {}
+    timeout_s = int(design_cfg.get('timeout_s') or 180)
+    if (cfg.get('bot') or {}).get('mode') == 'hermes' and _HERMES_LLM is not None:
+        llm = _HERMES_LLM
+
+        async def hermes(messages):
+            return await design.hermes_complete(llm, messages, timeout_s=timeout_s)
+
+        return hermes, 'hermes'
+    if design.resolve_http_config(cfg) is not None:
+        def http(messages):
+            return asyncio.to_thread(design.http_complete, cfg, messages)
+
+        return http, 'http'
+    return None, ''
+
+
+async def _design_handoff(event, gateway, adapter, session, stl_path):
+    """Hand a finished design STL to prepared intake, exactly like a dropped file.
+
+    The design flow slices and prints nothing itself: prepare_link runs its
+    own fit, colour and confirmation gates from here, unchanged.
+    """
+    import copy as _copy
+    import uuid as _uuid
+    from print_buddy.core import printer_state
+    from print_buddy.core.link_intake import PromptCancelled
+    from print_buddy.core.prepared_intake import prepare_link
+    source = event.source
+    metadata = {'thread_id': source.thread_id} if source.thread_id else None
+    await adapter.send(chat_id=source.chat_id, metadata=metadata,
+                       content='Handing the design to the normal intake — it asks the usual '
+                               'questions before anything is sliced.')
+    handed = _copy.copy(event)
+    handed.text = ''
+    handed.media_urls = [str(stl_path)]
+    handed.message_id = f"design-{session['id']}-{_uuid.uuid4().hex[:8]}"
+    handed.metadata = dict(getattr(event, 'metadata', None) or {})
+    handed.metadata['live_session_key'] = gateway._session_key_for_source(source)
+    root = _state_dir() / 'model-link-intakes'
+    pid = _routed_printer_id(source, gateway)
+    try:
+        return await prepare_link(handed, adapter, printer_state.load(**_pkw(pid)), root,
+                                  **_pkw(pid))
+    except PromptCancelled:
+        await adapter.send(chat_id=source.chat_id, metadata=metadata,
+                           content='Cancelled. Nothing sliced, nothing uploaded, nothing started.')
+        return {'action': 'skip', 'reason': 'operator cancelled design intake'}
+    except Exception:
+        logger.exception('design intake handoff failed')
+        await adapter.send(chat_id=source.chat_id, metadata=metadata,
+                           content='The intake handoff failed. The design files are saved; '
+                                   'nothing was sliced or started.')
+        return {'action': 'skip', 'reason': 'design intake handoff failed'}
+
+
+async def design_dispatch(event, gateway, **kwargs):
+    """/print-design <what to make> (#388 Stage 1): AI + OpenSCAD create loop.
+
+    Starts a design session, or consumes the owner's next plain message as a
+    revision while a session awaits one. Each successful turn posts the
+    preview and measured geometry, then asks Slice it / Change it / Cancel.
+    Slice it hands the STL to prepared intake; the design flow itself never
+    slices and never prints. Create-from-text only: editing dropped files
+    and natural-language triggers are Stage 2.
+    """
+    if not _is_print_discord_event(event):
+        return None
+    source = event.source
+    if _platform_value(source) != 'discord':
+        return None  # Stage 1 is Discord-only; Telegram/Matrix keep their no-LLM posture (#164)
+    if not getattr(source, 'user_id', None) or not gateway._is_user_authorized_for_source(source):
+        return None
+    text = str(getattr(event, 'text', '') or '').strip()
+    is_command = text == '/print-design' or text.startswith('/print-design ')
+    from print_buddy.core import design
+    cfg = _config.cfg()
+    root = _design_root(cfg)
+    owner = f"{source.chat_id}:{source.thread_id or ''}:{source.user_id}"
+    session = design.find_session_for_owner(root, owner)
+    if not is_command:
+        if text.startswith('/') or not session or session.get('status') != 'awaiting_revision':
+            return None
+    adapter = gateway._delivery_adapter_for(source)
+    if adapter is None:
+        return {'action': 'skip', 'reason': 'design UI delivery unavailable'}
+    metadata = {'thread_id': source.thread_id} if source.thread_id else None
+
+    async def say(content):
+        await adapter.send(chat_id=source.chat_id, metadata=metadata, content=content)
+
+    if not (cfg.get('design') or {}).get('enabled'):
+        await say('Design is not set up: set design.enabled = true (PRINT_BUDDY__DESIGN__ENABLED=true) '
+                  'and configure a design model — see docs/DESIGN.md. Nothing was designed.')
+        return {'action': 'skip', 'reason': 'design not enabled'}
+    complete, _kind = _design_transport(cfg)
+    if complete is None:
+        await say('Design is enabled but no design model is configured: in standalone mode set '
+                  '[design] chat_url/model (or the [llm] values they inherit); in Hermes mode the '
+                  'profile needs the print_design auxiliary task. Nothing was designed.')
+        return {'action': 'skip', 'reason': 'design model not configured'}
+    engine = design.DesignEngine((cfg.get('paths') or {}).get('cache') or (_hermes_home() / 'cache'),
+                                 complete, cfg=cfg)
+    try:
+        if is_command:
+            description = text[len('/print-design'):].strip()
+            if not description:
+                if session and session.get('status') == 'awaiting_revision':
+                    await say('A design is waiting for your call: reply with the change you want, '
+                              'or /print-design <a new part> to start over.')
+                else:
+                    await say('Usage: /print-design <what to make> — e.g. '
+                              '/print-design a 40x20x3 plate with two 4 mm holes 30 mm apart')
+                return {'action': 'skip', 'reason': 'design usage shown'}
+            if session:
+                engine.cancel(session)  # a fresh /print-design supersedes the old session
+            session = engine.start_session(owner, source.chat_id, description)
+            result = await engine.run_turn(session, description)
+        else:
+            result = await engine.run_turn(session, text)
+    except design.DesignError as exc:
+        await say(f'Design turn failed: {exc}')
+        return {'action': 'skip', 'reason': 'design turn failed'}
+    except Exception:
+        logger.exception('design turn failed unexpectedly')
+        await say('Design turn failed unexpectedly. Nothing was sliced or started.')
+        return {'action': 'skip', 'reason': 'design turn failed'}
+    session = result['session']
+    lines = [f"**Design turn {session['turns']}** — {design.summary_text(result)}",
+             f"Source: `{result['scad_path'].name}` (the .scad is the design; "
+             'the STL reaches the printer only through the normal intake after you pick Slice it).']
+    if result.get('preview_path'):
+        lines.append(f"MEDIA:{result['preview_path']}")
+    else:
+        lines.append('(No preview could be rendered for this turn.)')
+    await say('\n'.join(lines))
+    timeout = (globals().get('_config').question_timeout_s() if globals().get('_config') else 1800)
+    answer = await _confirm(adapter, source, metadata, 'print-design',
+                            'What next for this design?', list(design.CHOICES), timeout)
+    if answer == design.SLICE_LABEL:
+        engine.mark_handed_off(session)
+        return await _design_handoff(event, gateway, adapter, session, result['stl_path'])
+    if answer == design.CHANGE_LABEL:
+        engine.awaiting_revision(session)
+        await say('Say the change in your next message — e.g. "make it 5 mm taller". '
+                  f'({design.MAX_TURNS} turns per design; this one has had {session["turns"]}.)')
+        return {'action': 'skip', 'reason': 'design awaiting revision'}
+    engine.cancel(session)
+    await say('Design cancelled. The files stay in the session folder for a while; nothing '
+              'was sliced or started.')
+    return {'action': 'skip', 'reason': 'design cancelled'}
+
+
 def receipt_text(text):
     text = str(text or '').strip()
     lower = text.casefold()
@@ -2229,7 +2404,22 @@ def register(ctx):
     # "Pick one below, or click Other..." line for this gateway (a locale overlay, not a core patch).
     with contextlib.suppress(Exception):
         ctx.register_locale('en', {'platform': {'discord': {'prompt': {'clarify_hint_buttons': ''}}}})
+    # AI design (#388): when the host offers the plugin LLM lane, register the
+    # design auxiliary task (the operator pins its model in the profile's
+    # auxiliary.print_design block) and keep the lane for design_dispatch.
+    # The standalone Router offers neither API, so both stay unset there.
+    global _HERMES_LLM
+    if hasattr(ctx, 'register_auxiliary_task'):
+        with contextlib.suppress(Exception):
+            ctx.register_auxiliary_task(
+                'print_design', display_name='Print design',
+                description='Model for /print-design turns (AI design with OpenSCAD). '
+                            'Pin a stronger model here than the chat model.',
+                defaults={'timeout': int((_config.cfg().get('design') or {}).get('timeout_s') or 180)})
+    if getattr(ctx, 'llm', None) is not None:
+        _HERMES_LLM = ctx.llm
     ctx.register_hook('pre_gateway_dispatch', guided_dispatch)
+    ctx.register_hook('pre_gateway_dispatch', design_dispatch)
     ctx.register_hook('pre_gateway_dispatch', maintenance_dispatch)
     ctx.register_hook('pre_gateway_dispatch', coldpull_dispatch)
     ctx.register_hook('pre_gateway_dispatch', lookup_dispatch)

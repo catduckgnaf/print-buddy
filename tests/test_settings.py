@@ -190,6 +190,7 @@ class OverrideTests(unittest.TestCase):
                        "approval_user_id", "bot_user_id", "upload_max_bytes"},
             "bot": {"mode", "platform", "health_port", "health_stale_s", "sync_commands"},
             "llm": {"chat_url", "model", "api_key_env", "timeout_s"},
+            "design": {"enabled", "chat_url", "model", "api_key_env", "timeout_s", "repair_attempts"},
             "listener": {"tick_s", "ifs_presence_poll_s", "spool_nag_s", "start_claim_ttl_s"},
             "vision": {"model", "roast_model", "roast_enabled"},
             "visual_watch": {"enabled", "sensitivity"},
@@ -349,6 +350,46 @@ class OverrideTests(unittest.TestCase):
     def test_relative_templates_resolve_from_the_repo(self):
         data = settings.load(local=self.toml('[orca]\ntemplates = "my/profiles"\n'))
         self.assertEqual(data["orca"]["templates"], settings.ROOT / "my/profiles")
+
+    def test_design_defaults_off_and_inherits_nothing_yet(self):
+        data = settings.load(local=False, environ={})
+        self.assertEqual(data["design"], {"enabled": False, "chat_url": "", "model": "",
+                                          "api_key_env": "", "timeout_s": 180,
+                                          "repair_attempts": 3})
+
+    def test_design_env_and_file_overrides(self):
+        env = {"PRINT_BUDDY__DESIGN__ENABLED": "true", "PRINT_BUDDY__DESIGN__MODEL": "sol-x",
+               "PRINT_BUDDY__DESIGN__TIMEOUT_S": "240", "PRINT_BUDDY__DESIGN__REPAIR_ATTEMPTS": "1"}
+        data = settings.load(local=False, environ=env)
+        self.assertIs(data["design"]["enabled"], True)
+        self.assertEqual(data["design"]["model"], "sol-x")
+        self.assertEqual(data["design"]["timeout_s"], 240)
+        self.assertEqual(data["design"]["repair_attempts"], 1)
+        local = self.toml("design:\n  enabled: true\n  model: from-file\n", "design.yaml")
+        self.assertEqual(settings.load(local=local, environ={})["design"]["model"], "from-file")
+
+    def test_design_env_works_with_a_legacy_home_without_the_section(self):
+        home = self.toml(Path(settings.LEGACY_HOME).read_text().replace(
+            "[design]\n# AI design with OpenSCAD (#388): /print-design creates a new printable part\n"
+            "# from a description. Off by default. Empty chat_url/model/api_key_env\n"
+            "# inherit the [llm] values. In Hermes mode the endpoint fields are unused:\n"
+            "# the profile's auxiliary.print_design block pins the design model instead.\n"
+            "enabled = false\nchat_url = \"\"\nmodel = \"\"\napi_key_env = \"\"\ntimeout_s = 180\n"
+            "repair_attempts = 3\n\n", ""), "older-home.toml")
+        data = settings.load(home=home, local=False,
+                             environ={"PRINT_BUDDY__DESIGN__ENABLED": "true"})
+        self.assertIs(data["design"]["enabled"], True)
+        self.assertEqual(data["design"]["timeout_s"], 180)
+
+    def test_design_bad_values_are_refused(self):
+        for env, message in (({"PRINT_BUDDY__DESIGN__ENABLED": "sometimes"}, "true or false"),
+                             ({"PRINT_BUDDY__DESIGN__TIMEOUT_S": "0"}, "positive"),
+                             ({"PRINT_BUDDY__DESIGN__REPAIR_ATTEMPTS": "99"}, "0 to 10"),
+                             ({"PRINT_BUDDY__DESIGN__CHAT_URL": "ftp://x"}, "must be a URL"),
+                             ({"PRINT_BUDDY__DESIGN__API_KEY_ENV": "not a name"}, "environment variable name")):
+            with self.subTest(env=env):
+                with self.assertRaisesRegex(settings.SettingsError, message):
+                    settings.load(local=False, environ=env)
 
     def test_override_changes_core_behavior_in_a_fresh_process(self):
         path = self.toml("[printer]\nbed_mm = [300, 300]\n")

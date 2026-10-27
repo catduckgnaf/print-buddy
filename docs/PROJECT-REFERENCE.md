@@ -184,6 +184,7 @@ Without the file, MakerWorld intake stops before the model summary with a messag
 | | `health_port`, `health_stale_s` | `0`, `120` | Standalone bot: `GET /healthz` port (0 off) and heartbeat age limit |
 | | `sync_commands` | `true` | Standalone bot: register slash commands at startup |
 | `llm` | `chat_url`, `model`, `api_key_env`, `timeout_s` | empty, empty, `LLM_API_KEY`, `20` | Optional OpenAI-compatible model for standalone free-text replies; never starts anything itself |
+| `design` | `enabled`, `chat_url`, `model`, `api_key_env`, `timeout_s`, `repair_attempts` | `false`, empty, empty, empty, `180`, `3` | `/print-design` AI design (#388); empty fields inherit `llm`; in Hermes mode the profile's `auxiliary.print_design` block picks the model instead |
 | `listener` | `tick_s` | `600` | Listener housekeeping interval |
 | | `ifs_presence_poll_s` | `15` | IFS spool presence poll |
 | | `spool_nag_s` | `600` | Reminder interval for an unanswered spool question |

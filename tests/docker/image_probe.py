@@ -1,6 +1,6 @@
 """Checks run INSIDE a Print Buddy image by tests/docker/image_acceptance.sh. Standard library only.
 
-    python3 /probe/image_probe.py payload | closure | slice | egress | ffmpeg
+    python3 /probe/image_probe.py payload | closure | slice | egress | ffmpeg | openscad
 
 Each prints one `PROBE {json}` line and exits non-zero on failure. Mounted read-only as data; the
 image's own /app is what is tested. It never contacts a printer, Discord or any other service.
@@ -162,6 +162,19 @@ def ffmpeg():
                   version=(version.stdout or "").strip().splitlines()[:1], encoders=have)
 
 
+def openscad():
+    """OpenSCAD is a shipped runtime dependency (#388): the CAD-split and
+    AI-design paths resolve it from PATH as the runtime user. It must
+    resolve, run, and report its version."""
+    binary = shutil.which("openscad")
+    if not binary:
+        return report("openscad", False, binary=None)
+    version = subprocess.run([binary, "--version"], capture_output=True, text=True, timeout=60)
+    text = ((version.stdout or "") + (version.stderr or "")).strip()
+    ok = version.returncode == 0 and "OpenSCAD" in text
+    return report("openscad", ok, binary=binary, version=text.splitlines()[:1])
+
+
 def egress():
     """The container must have no route out: no DNS answer and no TCP connection."""
     attempts = {}
@@ -176,7 +189,7 @@ def egress():
 
 if __name__ == "__main__":
     checks = {"payload": payload, "closure": closure, "slice": slice_check, "egress": egress,
-              "ffmpeg": ffmpeg}
+              "ffmpeg": ffmpeg, "openscad": openscad}
     if len(sys.argv) != 2 or sys.argv[1] not in checks:
         raise SystemExit(f"usage: image_probe.py {' | '.join(checks)}")
     sys.exit(checks[sys.argv[1]]())

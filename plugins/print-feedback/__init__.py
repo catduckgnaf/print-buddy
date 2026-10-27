@@ -291,33 +291,145 @@ async def _design_handoff(event, gateway, adapter, session, stl_path):
         return {'action': 'skip', 'reason': 'design intake handoff failed'}
 
 
-async def design_dispatch(event, gateway, **kwargs):
-    """/print-design <what to make> (#388 Stage 1): AI + OpenSCAD create loop.
+def _fetch_design_link(url, target_dir):
+    """Seam over design.fetch_link_source so dispatch tests can fake the network."""
+    from print_buddy.core import design
+    return design.fetch_link_source(url, target_dir)
 
-    Starts a design session, or consumes the owner's next plain message as a
-    revision while a session awaits one. Each successful turn posts the
-    preview and measured geometry, then asks Slice it / Change it / Cancel.
-    Slice it hands the STL to prepared intake; the design flow itself never
-    slices and never prints. Create-from-text only: editing dropped files
-    and natural-language triggers are Stage 2.
+
+def _design_file(event):
+    """The single dropped .scad in this message (a design source), else None."""
+    hits = [Path(p) for p in (getattr(event, 'media_urls', None) or [])
+            if Path(str(p)).suffix.lower() == '.scad']
+    return hits[0] if len(hits) == 1 and hits[0].is_file() else None
+
+
+_DESIGN_CONTEXT_PHRASES = ("design this", "design it", "redesign this",
+                           "edit this", "modify this", "change this")
+_DESIGN_ASK_PHRASES = ("edit this", "modify this", "change this")
+
+
+def _design_parse(text):
+    """Classify a plain message as a design request: (kind, rest) or None.
+
+    Kinds: 'create' (rest is the description), 'context' (a design/edit ask
+    that needs a model — attached, linked or recent; rest is the instruction,
+    possibly ''), 'ask' (a bare 'design me'/'help me design' with neither a
+    description nor an obvious model). Word-boundaried, case-insensitive;
+    commands and ordinary chat return None.
+    """
+    low = text.casefold()
+
+    def rest_of(match):
+        return re.sub(r"\s+", " ", text[:match.start()] + " " +
+                      text[match.end():]).strip(" \t—–-:,.").strip()
+
+    for phrase in ("help me design", "design me"):
+        match = re.search(rf"\b{re.escape(phrase)}\b", low)
+        if match:
+            rest = rest_of(match)
+            return ("create", rest) if rest else ("ask", "")
+    for phrase in _DESIGN_CONTEXT_PHRASES:
+        match = re.search(rf"\b{re.escape(phrase)}\b", low)
+        if match:
+            return ("context", rest_of(match))
+    return None
+
+
+def _recent_design_source(source):
+    """(path, link) for the channel's recent model, else (None, None).
+
+    The recent link wins (the same machinery "print it" uses); otherwise the
+    newest archived job whose source file is still on disk.
+    """
+    url = _recent_model_link(source)
+    if url:
+        return None, url
+    try:
+        from print_buddy.core.prepared_intake import last_job
+        job = last_job()
+    except Exception:
+        job = None
+    if job:
+        path = Path(job.get('downloaded_file') or '')
+        if path.is_file() and path.suffix.lower() in ('.stl', '.3mf', '.scad'):
+            return path, None
+    return None, None
+
+
+async def design_dispatch(event, gateway, **kwargs):
+    """/print-design and natural design requests (#388 Stages 1-2).
+
+    Create loop (Stage 1): /print-design <what to make>, Slice it / Change
+    it / Cancel, Slice it handing the STL to prepared intake. Stage 2 adds
+    edit sessions — /print-design (or a design phrase) with a dropped
+    .stl/.3mf/.scad or a model link in the same message, the same phrases
+    against the channel's recent model, and create phrases ("design me …",
+    "help me design …") — seeded through the engine's edit path. Routing is
+    deterministic and narrow: no design phrase means this handler returns
+    None and plain intake/chat behave exactly as before; inside a session
+    awaiting a revision, the owner's next plain message is the revision
+    before any phrase detection runs.
     """
     if not _is_print_discord_event(event):
         return None
     source = event.source
     if _platform_value(source) != 'discord':
-        return None  # Stage 1 is Discord-only; Telegram/Matrix keep their no-LLM posture (#164)
+        return None  # Design is Discord-only; Telegram/Matrix keep their no-LLM posture (#164)
     if not getattr(source, 'user_id', None) or not gateway._is_user_authorized_for_source(source):
         return None
     text = str(getattr(event, 'text', '') or '').strip()
     is_command = text == '/print-design' or text.startswith('/print-design ')
     from print_buddy.core import design
+    from print_buddy.core.link_intake import model_link
+    from print_buddy.core.prepared_intake import model_file
     cfg = _config.cfg()
     root = _design_root(cfg)
     owner = f"{source.chat_id}:{source.thread_id or ''}:{source.user_id}"
     session = design.find_session_for_owner(root, owner)
-    if not is_command:
-        if text.startswith('/') or not session or session.get('status') != 'awaiting_revision':
+
+    # Resolve what this message asks for before any state changes.
+    intent = None  # (kind, instruction, file_path, link_url)
+    if is_command:
+        intent = ("command", text[len('/print-design'):].strip(), None, None)
+    elif text.startswith('/'):
+        return None
+    elif session and session.get('status') == 'awaiting_revision':
+        intent = ("revision", text, None, None)
+    else:
+        parsed = _design_parse(text)
+        if parsed is None:
             return None
+        kind, rest = parsed
+        attached = model_file(event) or _design_file(event)
+        linked = model_link(text)
+        if attached or linked:
+            intent = ("edit", rest, attached, linked)
+        elif kind == "create":
+            intent = ("create", rest, None, None)
+        elif kind == "ask":
+            recent_path, recent_link = _recent_design_source(source)
+            if recent_path or recent_link:
+                intent = ("edit", "", recent_path, recent_link)
+            else:
+                intent = ("ask", "", None, None)
+        else:  # 'context': only the change-this family stays silent without a model
+            recent_path, recent_link = _recent_design_source(source)
+            if recent_path or recent_link:
+                intent = ("edit", rest, recent_path, recent_link)
+            elif any(re.search(rf"\b{re.escape(p)}\b", text.casefold())
+                     for p in _DESIGN_ASK_PHRASES):
+                return None  # "change this" with no model anywhere is not ours
+            else:
+                intent = ("ask", "", None, None)
+    if intent[0] != "command" and intent[0] != "revision":
+        # Natural-language routing never hijacks chat when design cannot run:
+        # with design off or modelless, the message falls through untouched.
+        if not (cfg.get('design') or {}).get('enabled'):
+            return None
+        if _design_transport(cfg)[0] is None:
+            return None
+
     adapter = gateway._delivery_adapter_for(source)
     if adapter is None:
         return {'action': 'skip', 'reason': 'design UI delivery unavailable'}
@@ -338,23 +450,57 @@ async def design_dispatch(event, gateway, **kwargs):
         return {'action': 'skip', 'reason': 'design model not configured'}
     engine = design.DesignEngine((cfg.get('paths') or {}).get('cache') or (_hermes_home() / 'cache'),
                                  complete, cfg=cfg)
+    note = ''
     try:
-        if is_command:
-            description = text[len('/print-design'):].strip()
-            if not description:
-                if session and session.get('status') == 'awaiting_revision':
-                    await say('A design is waiting for your call: reply with the change you want, '
-                              'or /print-design <a new part> to start over.')
-                else:
-                    await say('Usage: /print-design <what to make> — e.g. '
-                              '/print-design a 40x20x3 plate with two 4 mm holes 30 mm apart')
-                return {'action': 'skip', 'reason': 'design usage shown'}
-            if session:
-                engine.cancel(session)  # a fresh /print-design supersedes the old session
-            session = engine.start_session(owner, source.chat_id, description)
-            result = await engine.run_turn(session, description)
-        else:
+        kind, instruction, file_path, link_url = intent
+        if kind == "revision":
             result = await engine.run_turn(session, text)
+        elif kind == "ask":
+            await say('Drop the file you want to work on, paste its model link, or tell me '
+                      'what to make — e.g. "design me a 40 mm bracket with two holes". '
+                      'Nothing was designed.')
+            return {'action': 'skip', 'reason': 'design needs a model or a description'}
+        else:
+            if kind == "command":
+                attached = model_file(event) or _design_file(event)
+                linked = model_link(instruction)
+                if attached or linked:
+                    kind, file_path, link_url = "edit", attached, linked
+                elif not instruction:
+                    if session and session.get('status') == 'awaiting_revision':
+                        await say('A design is waiting for your call: reply with the change you want, '
+                                  'or /print-design <a new part> to start over.')
+                    else:
+                        await say('Usage: /print-design <what to make> — e.g. '
+                                  '/print-design a 40x20x3 plate with two 4 mm holes 30 mm apart; '
+                                  'or drop a model file / paste a link with the change you want.')
+                    return {'action': 'skip', 'reason': 'design usage shown'}
+                else:
+                    kind = "create"
+            if kind == "create":
+                if session:
+                    engine.cancel(session)  # a fresh design supersedes the old session
+                session = engine.start_session(owner, source.chat_id, instruction)
+                result = await engine.run_turn(session, instruction)
+            else:  # edit
+                if link_url:
+                    instruction = instruction.replace(link_url, '').strip(" \t—–-:,.")
+                if session:
+                    engine.cancel(session)  # a fresh design supersedes the old session
+                description = instruction or f"Edit {(file_path.name if file_path else 'the linked model')}"
+                if link_url:
+                    session = await asyncio.to_thread(
+                        engine.start_edit_session, owner, source.chat_id, description,
+                        None, link_url=link_url,
+                        fetcher=lambda url, folder: _fetch_design_link(url, folder))
+                else:
+                    session = await asyncio.to_thread(
+                        engine.start_edit_session, owner, source.chat_id, description,
+                        file_path)
+                note = design.source_note(session)
+                result = await engine.run_turn(
+                    session, instruction or
+                    'Show the model unchanged so I can preview it before asking for changes.')
     except design.DesignError as exc:
         await say(f'Design turn failed: {exc}')
         return {'action': 'skip', 'reason': 'design turn failed'}
@@ -363,9 +509,11 @@ async def design_dispatch(event, gateway, **kwargs):
         await say('Design turn failed unexpectedly. Nothing was sliced or started.')
         return {'action': 'skip', 'reason': 'design turn failed'}
     session = result['session']
-    lines = [f"**Design turn {session['turns']}** — {design.summary_text(result)}",
-             f"Source: `{result['scad_path'].name}` (the .scad is the design; "
-             'the STL reaches the printer only through the normal intake after you pick Slice it).']
+    lines = [f"**Design turn {session['turns']}** — {design.summary_text(result)}"]
+    if note:
+        lines.append(note)
+    lines.append(f"Source: `{result['scad_path'].name}` (the .scad is the design; "
+                 'the STL reaches the printer only through the normal intake after you pick Slice it).')
     if result.get('preview_path'):
         lines.append(f"MEDIA:{result['preview_path']}")
     else:

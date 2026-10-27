@@ -44,6 +44,10 @@ def make(cfg, opener):
     ("/print-maintenance quick", "/print-maintenance quick"),
     ("/spool sync", None), ("/spool change 1 12", None), ("/spool new a, PLA, red, 1000", None),
     ("/print-again stop", None), ("/print-colors /x/JOB.json", None), ("M112", None), ("G28", None),
+    # /print-design asks for its own Slice it / Change it / Cancel buttons (#388 Stage 2).
+    ("/print-design", "/print-design"),
+    ("/print-design a 40 mm bracket with two holes", "/print-design a 40 mm bracket with two holes"),
+    ("/print-design; rm -rf /", None),
     ("https://makerworld.com/en/models/1", None), ("/print-stop; rm -rf /", None), ("", None), (None, None),
 ])
 def test_only_read_only_or_button_gated_commands_are_allowed(command, allowed):

@@ -1,6 +1,7 @@
 # AI design with OpenSCAD (`/print-design`, #388)
 
-Describe a part in Discord and Print Buddy designs it for you: a model writes
+Describe a part in Discord — or start from a model you already have — and Print Buddy
+designs it for you: a model writes
 OpenSCAD, Print Buddy renders it with the OpenSCAD binary already in the
 install, measures the result, and shows you a preview with the real
 dimensions. You then choose:
@@ -42,7 +43,10 @@ The model writes the part, but it never gets to run anything general:
 
 - The generated file may not use `import`, `include`, `use` or `surface` —
   the statements that could read files off the machine. A file containing
-  one is refused before OpenSCAD ever runs.
+  one is refused before OpenSCAD ever runs. (Mesh edits are the one place an
+  `import` appears in a render: the engine's own fixed header imports the
+  session-local copy of the model being edited — the model's text is still
+  scanned and still may not contain one.)
 - Rendering runs with `--hardwarnings` (any warning is a failure, so a
   design that silently lost a piece cannot slip through), in the design's
   own folder, with a near-empty environment, a CPU/memory limit and a
@@ -60,5 +64,48 @@ The model writes the part, but it never gets to run anything general:
 - The preview and measurements are of the rendered STL: dimensions, volume,
   shell count and whether the mesh is watertight and manifold. A design
   that renders to nothing is rejected, not posted.
-- Stage 1 creates designs from text. Editing a file you drop, or "design
-  this" without the command, comes later (#388).
+- Mesh edits (below) can only do what a mesh allows; a change that needs the
+  original design's parameters is refused in plain words, not faked.
+
+## Editing an existing model
+
+Attach the model to the design message — drop the file in the same message as
+`/print-design <the change>`, or paste a MakerWorld/Printables link in it. The
+original is never modified: design works on a copy inside its session folder.
+
+- **`.scad`** — edited in source form. The model returns the complete updated
+  file, so parameters change directly (there is no separate parameter-override
+  mechanism; the session file always shows the real design). If the file
+  references other files (`import`/`include`/`use`/`surface`), the first reply
+  says so: a design session holds one self-contained file, so referenced parts
+  cannot render here.
+- **`.stl`, and `.3mf` after conversion to STL** — edited as a mesh. The engine
+  composes the render: its own header defines `base()` (the model being
+  edited) and the model's edit body calls it. Scaling, mirroring, moving,
+  adding shapes and cutting holes work this way. Changes that need the
+  original design's parameters or generated structure (a thread pitch, a
+  pattern) do not — the design says so in plain words instead of guessing. A
+  `.3mf` is converted through the same geometry loader intake uses.
+- **A model link** — the file is fetched through the ordinary link machinery
+  first (MakerWorld picks its default profile; Printables must offer one
+  STL/3MF file), then edited like a dropped file.
+
+## Saying it instead of the command
+
+With design enabled and a model configured, these phrases start design
+without the command (case-insensitive):
+
+- "design me …" / "help me design …" — a new part; the rest of the message is
+  the description.
+- "design this", "design it", "redesign this" — edit the model attached to
+  the message, linked in it, or the channel's recent model; with none of
+  those, design asks for one.
+- "edit this", "modify this", "change this" — the same edits, but only when a
+  model is actually there (attached, linked or recent); a bare "change this"
+  with no model anywhere is left to normal chat.
+
+Anything without a design phrase — a plain link, a plain file drop, "print
+it", every existing command — behaves exactly as before, and while a design
+is waiting for a revision, your next plain message is the revision, phrases
+or not. When design is off or no model is configured, the phrases fall
+through to normal chat untouched.

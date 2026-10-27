@@ -1,7 +1,7 @@
 # Complex slicer corpus manifest for #458. Measured stats were taken from the downloaded
 # files themselves on 2026-10-27 (see tests/corpus/complex/README.md for how). Licence strings
 # for Printables entries are the exact names returned by the Printables GraphQL API at download
-# time (the same API print_buddy.core.model_job uses). Public entries are redistributable;
+# time (the same API print_handy.core.model_job uses). Public entries are redistributable;
 # private-tier entries are never committed or uploaded - only their stats are recorded here.
 
 [[case]]
@@ -482,4 +482,4 @@ target_printer_label = "Bambu Lab H2D"
 target_bed_mm = [350.0, 320.0]
 target_max_height_mm = 325.0
 status = "blocked-download"
-blocked_reason = "MakerWorld downloads in this codebase require the account token file ~/.config/bambu/token (print_buddy.core.model_job.maker_headers raises without it); that file is absent on this machine, so the file could not be obtained through the eligible route. The model's metadata was read from MakerWorld's public design API, which confirms the title and licence ('Standard Digital File License', one print instance). No scrape or paywall workaround was attempted."
+blocked_reason = "MakerWorld downloads in this codebase require the account token file ~/.config/bambu/token (print_handy.core.model_job.maker_headers raises without it); that file is absent on this machine, so the file could not be obtained through the eligible route. The model's metadata was read from MakerWorld's public design API, which confirms the title and licence ('Standard Digital File License', one print instance). No scrape or paywall workaround was attempted."

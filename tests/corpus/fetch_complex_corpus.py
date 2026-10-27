@@ -4,7 +4,7 @@ Storage decision (see tests/corpus/complex/README.md): the model files are
 tens of MB each and are NOT committed to this repository. This script downloads
 them, pinned by the SHA256 and byte size recorded in
 tests/corpus/complex_cases.toml, into a root outside the repo (default
-~/print-buddy-complex-corpus) laid out as one folder per case:
+~/print-handy-complex-corpus) laid out as one folder per case:
 
     <root>/<slug>/model.stl|model.3mf   the flow-run primary file
     <root>/<slug>/<extra files>         measured companion files, where any
@@ -13,7 +13,7 @@ tests/corpus/complex_cases.toml, into a root outside the repo (default
 
 Downloads use the same eligible-site paths as production intake (#462):
 Printables through its GraphQL API (the getDownloadLink mutation
-print_buddy.core.model_job.printables_download uses; no token), NASA through
+print_handy.core.model_job.printables_download uses; no token), NASA through
 its direct public file link. Private-tier cases are licence-flagged for local
 runs only: they are skipped unless --private-root is given, and they are never
 written into the public root.
@@ -181,7 +181,7 @@ def case_toml(case):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--root", default=str(Path.home() / "print-buddy-complex-corpus"),
+    parser.add_argument("--root", default=str(Path.home() / "print-handy-complex-corpus"),
                         help="public corpus root (outside the repository)")
     parser.add_argument("--private-root", default=None,
                         help="also fetch private-tier cases into this separate root")

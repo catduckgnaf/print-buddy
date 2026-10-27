@@ -10,7 +10,7 @@ layout - the state still carries the fixture's spool/IFS layout - and the
 README (tests/corpus/complex/README.md) says so plainly.
 
 Usage:
-    COMPLEX_CORPUS_ROOT=~/print-buddy-complex-corpus \
+    COMPLEX_CORPUS_ROOT=~/print-handy-complex-corpus \
         python tests/corpus/run_complex_corpus.py [--tier public|private] [--only slug,...]
 
 Writes JSON rows (model, result, seconds, error, receipt facts) to
@@ -54,7 +54,7 @@ def main():
     parser.add_argument("--tier", default="public")
     parser.add_argument("--only", default=None, help="comma-separated slugs")
     parser.add_argument("--root", default=os.environ.get("COMPLEX_CORPUS_ROOT")
-                        or os.environ.get("PRINT_BUDDY_PRIVATE_CORPUS"))
+                        or os.environ.get("PRINT_HANDY_PRIVATE_CORPUS"))
     args = parser.parse_args()
     if not args.root:
         raise SystemExit("set --root or COMPLEX_CORPUS_ROOT to the fetched corpus root")

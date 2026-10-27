@@ -111,9 +111,9 @@ class StandaloneAdapter(BasePlatformAdapter):
     uses_llm = False
     supports_live_stream = False
 
-    def __init__(self, client, allowed, *, registry=prompts, upload_max_bytes=None,
-                 homeserver=None, token=None, opener=None):
-        super().__init__(allowed, registry=registry)
+    def __init__(self, client, allowed, *, denied=(), approver=None, registry=prompts,
+                 upload_max_bytes=None, homeserver=None, token=None, opener=None):
+        super().__init__(allowed, denied=denied, approver=approver, registry=registry)
         self.client = client
         self.upload_max_bytes = int(upload_max_bytes) if upload_max_bytes else 50_000_000
         self.homeserver = homeserver if homeserver is not None else getattr(client, "homeserver", "")

@@ -106,6 +106,7 @@ OPTIONAL_KEYS = {("printer", "nozzle_type"): str, ("printer", "tool_count"): int
                  ("live_stream", "activity_origin"): str,
                  ("flashforge_stock", "host"): str,
                  ("prusa", "link_host"): str, ("prusa", "api_key_env"): str,
+                 ("discord", "denied_user_ids"): str,
                  ("elegoo_sdcp", "host"): str}
 # List settings that may also come from the environment, as a comma- or space-separated value
 # (PRINT_BUDDY__DELIVERY__METHODS=discord,bambu_handoff,printer). Every other list or table is file
@@ -761,12 +762,12 @@ TIMELAPSE_ENCODERS = ("cpu", "vaapi", "qsv", "nvenc")
 CAMERA_SOURCES = ("auto", "moonraker", "bambu", "go2rtc", "none")
 
 
-def user_ids(value, section="discord", platform_label="Discord"):
+def user_ids(value, section="discord", platform_label="Discord", key="allowed_user_ids"):
     """User IDs from a comma or space separated string. A non-numeric entry is an error."""
     ids = [part for part in re.split(r"[\s,]+", str(value or "").strip()) if part]
     for part in ids:
         if not part.isdigit():
-            raise SettingsError(f"[{section}] allowed_user_ids must be numeric {platform_label} user IDs, got {part!r}")
+            raise SettingsError(f"[{section}] {key} must be numeric {platform_label} user IDs, got {part!r}")
     return ids
 
 
@@ -1068,6 +1069,7 @@ def _validate_bot(data):
     if not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", str(discord["token_env"])):
         raise SettingsError(f"[discord] token_env must be an environment variable name, got {discord['token_env']!r}")
     user_ids(discord.setdefault("allowed_user_ids", ""))
+    user_ids(discord.setdefault("denied_user_ids", ""), key="denied_user_ids")
     _validate_telegram(data)
     _validate_matrix(data)
     llm = data.setdefault("llm", {})

@@ -34,16 +34,23 @@ def library_status():
 
 
 class StandaloneAdapter(BasePlatformAdapter):
-    """Sends through a discord.py client. ``allowed`` holds the Discord user IDs that may act."""
+    """Sends through a discord.py client. ``allowed`` holds the Discord user IDs that may act.
+
+    Discord is a channel-boundary platform (#386): with no allow list
+    configured, anyone who can post in the print channel may use the bot;
+    ``allowed``/``denied`` are opt-in lists on top of that default.
+    """
 
     name = "discord"
     message_limit = rest.LIMIT
     supports_buttons = True
     max_buttons = MAX_BUTTONS
     supports_live_stream = True
+    channel_is_boundary = True
 
-    def __init__(self, client, allowed, *, registry=prompts, upload_max_bytes=None):
-        super().__init__(allowed, registry=registry)
+    def __init__(self, client, allowed, *, denied=(), approver=None, registry=prompts,
+                 upload_max_bytes=None):
+        super().__init__(allowed, denied=denied, approver=approver, registry=registry)
         self.client = client
         # [discord] upload_max_bytes when BotCore builds this adapter; None
         # means the caller sizes uploads from settings itself.
@@ -130,6 +137,10 @@ class StandaloneAdapter(BasePlatformAdapter):
         cid, index = parsed
         user = getattr(interaction, "user", None)
         if not self._is_allowed_user(str(getattr(user, "id", "")), user):
+            # Never silent (#386): the presser gets the ephemeral reply and
+            # the log names who was refused and why.
+            logger.info("refused button press from Discord user %s: %s",
+                        getattr(user, "id", ""), self.refusal_reason(getattr(user, "id", "")))
             await interaction.response.send_message("Not allowed. Nothing changed.", ephemeral=True)
             return True
         row = self._prompts.get(cid)

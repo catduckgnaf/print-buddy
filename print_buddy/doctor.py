@@ -121,14 +121,16 @@ def check_bot(data):
     mode = data["bot"]["mode"]
     if mode != "standalone":
         return f"{mode} (the Hermes gateway runs the print-feedback plugin)"
-    from .bot.runtime import allowed_users
+    from .bot.platform import describe_access
+    from .bot.runtime import allowed_users, denied_users, listed_users
     chat = data["discord"]["chat_id"]
-    users = allowed_users(data)
     if not chat:
         raise RuntimeError("standalone, but discord.chat_id is empty")
-    if not users:
-        raise RuntimeError("standalone, but no allowed users: set discord.allowed_user_ids")
-    return f"standalone, print channel {chat}, {len(users)} allowed user(s)"
+    # An empty allow list is a valid Discord mode (#386): the channel is
+    # the boundary. Doctor states the mode instead of refusing to run.
+    access = describe_access(len(allowed_users(data)), len(denied_users(data)),
+                              not listed_users(data))
+    return f"standalone, print channel {chat}, access: {access}"
 
 
 def check_hermes_platform(data):

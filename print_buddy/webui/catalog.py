@@ -78,6 +78,7 @@ GROUP_OF = {
     "bot.platform": "platform",
     "discord.chat_id": "platform",
     "discord.allowed_user_ids": "platform",
+    "discord.denied_user_ids": "platform",
     "discord.approval_user_id": "platform",
     "discord.timezone": "platform",
     "telegram.chat_id": "platform",
@@ -151,8 +152,13 @@ CATALOG = (
            "Numeric ID of the print channel (Developer Mode > Copy Channel ID).",
            validator="guided chat ID"),
     _field("discord", "allowed_user_ids", "Discord allowed users", "id_list",
-           "Numeric Discord user IDs allowed to use Print Buddy, separated by commas or spaces.",
+           "Optional whitelist: numeric Discord user IDs allowed to use Print Buddy, separated "
+           "by commas or spaces. Empty (the default) lets everyone in the print channel use it.",
            validator="guided user IDs / settings.user_ids"),
+    _field("discord", "denied_user_ids", "Discord denied users", "id_list",
+           "Optional deny list: numeric Discord user IDs refused even when listed or the "
+           "approval user, separated by commas or spaces.",
+           validator="settings.user_ids"),
     _field("discord", "approval_user_id", "Discord approval user", "text",
            "Numeric Discord user ID allowed to approve prints; always allowed.",
            validator="settings approval user check"),

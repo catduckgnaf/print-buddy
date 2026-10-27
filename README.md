@@ -38,7 +38,7 @@ One container runs the three parts of Print Buddy, started and watched by a supe
 
 If any part stops, the container stops so Docker can restart it. The health check covers all three.
 
-1. Copy `.env.example` to `.env` and fill in the token, channel/room and allowed users for your chat platform (Discord by default; set `PRINT_BUDDY__BOT__PLATFORM` for Telegram or Matrix).
+1. Copy `.env.example` to `.env` and fill in the token and channel/room for your chat platform (Discord by default; set `PRINT_BUDDY__BOT__PLATFORM` for Telegram or Matrix). Allowed users are optional: with no list, everyone in the print channel can use the bot.
 2. Pin the image by digest, not a tag: set `PRINT_BUDDY_IMAGE=ghcr.io/catduckgnaf/print-buddy@sha256:<digest>`. The digest will be in the publish run summary and that release's notes.
 3. Set `PRINT_BUDDY_DATA` to a persistent directory owned by UID 1000. Spoolman data lives in `PRINT_BUDDY_DATA/spoolman` unless you set `PRINT_BUDDY_SPOOLMAN_DATA`.
 4. Run `docker compose up -d`.

@@ -178,7 +178,8 @@ Without the file, MakerWorld intake stops before the model summary with a messag
 | | `upload_wait_s` | `3600` | How long an upload-wait freeze stays active |
 | | `cold_pull_outcome_s` | `1800` | How long a cold-pull outcome prompt stays open |
 | | `token_env` | `DISCORD_BOT_TOKEN` | Standalone bot: environment variable holding the bot token |
-| | `allowed_user_ids` | empty | Standalone bot: Discord user IDs allowed to use it, comma or space separated |
+| | `allowed_user_ids` | empty | Standalone bot: optional whitelist of Discord user IDs, comma or space separated; empty lets everyone in the print channel use the bot |
+| | `denied_user_ids` | empty | Standalone bot: optional deny list of Discord user IDs; a denied user is refused even when whitelisted or the approver |
 | `bot` | `mode` | `hermes` | `standalone` runs `python3 -m print_buddy.bot` with no Hermes; see [Standalone bot](../docs/STANDALONE.md) |
 | | `health_port`, `health_stale_s` | `0`, `120` | Standalone bot: `GET /healthz` port (0 off) and heartbeat age limit |
 | | `sync_commands` | `true` | Standalone bot: register slash commands at startup |

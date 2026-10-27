@@ -65,7 +65,7 @@ for unit in hermes-gateway.service hermes-3dprinting-moonraker-listener.service;
         say "NOTE: $unit is installed. If it uses the same bot token, stop and disable it first."
     fi
 done
-say "Next: set DISCORD_BOT_TOKEN in $DATA_HOME/.env, set bot.mode: standalone, discord.chat_id and"
-say "discord.allowed_user_ids in config/local.yaml, then:"
+say "Next: set DISCORD_BOT_TOKEN in $DATA_HOME/.env, set bot.mode: standalone and discord.chat_id"
+say "in config/local.yaml (discord.allowed_user_ids is optional; empty lets everyone in the channel in), then:"
 say "  $PYTHON -m print_buddy.bot check"
 say "  systemctl --user enable --now print-buddy-bot.service print-buddy-listener.service"

@@ -34,6 +34,8 @@ Do not run both Discord modes with the same token. Installing, enabling services
 - [Bambu Lab live connectivity research](BAMBU-CONNECTIVITY.md): LAN MQTT/FTPS evidence from maintained integrations, the 2025 authorization change, the staged live-support plan for the A1/P1S, and the unknowns that need a live test.
 - [Prusa printers](PRUSA.md): the MK4S/CORE One/XL/MINI+ profiles, generating slicer profiles from your own OrcaSlicer, the PrusaLink LAN client (status, verified upload, gated start), and what is not supported.
 - [Elegoo printers](ELEGOO.md): the Neptune 4 family on Moonraker and the Centauri Carbon on SDCP, generating slicer profiles from your own OrcaSlicer, the SDCP LAN client (status, verified upload, gated start), and what is not supported.
+- [Qidi printers](QIDI.md): the Klipper line (Q1 Pro, X-Plus 3, X-Max 3, X-Smart 3) on Moonraker, generating slicer profiles from your own OrcaSlicer, and what is not supported.
+- [Creality printers](CREALITY.md): the Klipper/Creality OS line (Ender-3 V3 series, K1 series) on Moonraker, generating slicer profiles from your own OrcaSlicer, why Marlin Enders are not this vendor, and what is not supported.
 - [Read-only mesh topology audit](MESH-AUDIT.md): topology metrics, CLI usage, and manifold/watertight checks.
 - [100%-scale geometry layout and export](GEOMETRY-LAYOUT.md): multi-object single-plate packing, status ladder, and geometry-only export boundaries.
 - [Opt-in reviewed CAD split plans and dowel connectors](CAD-SPLIT-PLANS.md): reviewed split presets, chamfered dowel generation, OpenSCAD CSG script synthesis, and post-boolean volume conservation checks.

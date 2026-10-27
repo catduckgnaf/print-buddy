@@ -57,6 +57,22 @@ print_buddy/printers/
     __init__.py          VENDOR  Elegoo (SDCP): SDCP LAN, slicer-owned start code, OrcaSlicer, .gcode/.bgcode
     centauricarbon.py    MODEL   elegoo_sdcp.centauricarbon: 256 mm cube, enclosed CoreXY
                                  (adapter.py, client.py, guard.py, facts.py, profiles.py; see ELEGOO.md)
+  qidi/
+    __init__.py          VENDOR  Qidi: Moonraker, template start code (PRINT_START-led), OrcaSlicer, .gcode
+    q1pro.py             MODEL   qidi.q1pro: 245 x 245 mm bed, 240 mm height, enclosed CoreXY
+    xplus3.py            MODEL   qidi.xplus3: 280 x 280 mm bed, 270 mm height, enclosed CoreXY
+    xmax3.py             MODEL   qidi.xmax3: 325 x 325 mm bed, 315 mm height, enclosed CoreXY
+    xsmart3.py           MODEL   qidi.xsmart3: 175 x 180 mm bed, 170 mm height, enclosed CoreXY
+                                 (adapter.py, guard.py, facts.py, profiles.py; see QIDI.md)
+  creality/
+    __init__.py          VENDOR  Creality: Moonraker, template start code (START_PRINT-led or inline), OrcaSlicer, .gcode
+    ender3v3.py          MODEL   creality.ender3v3: 220 x 220 mm bed, 250 mm height
+    ender3v3ke.py        MODEL   creality.ender3v3ke: 220 x 220 mm bed, 245 mm height
+    ender3v3plus.py      MODEL   creality.ender3v3plus: 300 x 300 mm bed, 330 mm height
+    k1.py                MODEL   creality.k1: 220 x 220 mm bed, 250 mm height, enclosed CoreXY
+    k1c.py               MODEL   creality.k1c: 220 x 220 mm bed, 250 mm height, enclosed CoreXY
+    k1max.py             MODEL   creality.k1max: 300 x 300 mm bed, 300 mm height, enclosed CoreXY
+                                 (adapter.py, guard.py, facts.py, profiles.py; see CREALITY.md)
 templates/orca/<folder>/ machine.json, process.json, filament.json per printer; a model with
                          generated_templates (the A1) ships none: <state>/orca-profiles/<folder>
 ```

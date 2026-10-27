@@ -119,7 +119,8 @@ class BuildVolume:
 # moves the file.
 CONNECTIONS = ("moonraker", "octoprint", "offline", "bambulab_lan", "flashforge_stock", "prusalink", "elegoo_sdcp")
 # Start G-code families. Each printer runs only its own; see start_code_problems.
-START_CODES = ("zmod", "klipper_macro", "marlin", "bambu", "flashforge_stock", "prusa", "elegoo_sdcp", "elegoo_inline")
+START_CODES = ("zmod", "klipper_macro", "marlin", "bambu", "flashforge_stock", "prusa", "elegoo_sdcp", "elegoo_inline",
+               "qidi", "creality")
 # Slicers a vendor may pick as its primary. OrcaSlicer is the default everywhere.
 SLICERS = ("orca", "bambu_studio")
 # What can happen to a validated slice, besides nothing:

@@ -455,3 +455,143 @@ max_height_mm = 256.0
 filament_slots = 1
 profile = "print_buddy/printers/elegoo_sdcp/centauricarbon.py"
 notes = "Closed firmware; SDCP v3.0 LAN protocol (unauthenticated). Marketed bed is 260 x 260 mm; the pinned Orca profile's printable area is 256 x 256 mm and is what is recorded."
+
+[[printer]]
+key = "qidi.q1pro"
+label = "Qidi Q1 Pro"
+vendor = "qidi"
+firmware = "Klipper"
+firmware_family = "klipper"
+connection = "moonraker"
+kinematics = "CoreXY"
+bed_mm = [245.0, 245.0]
+max_height_mm = 240.0
+filament_slots = 1
+profile = "print_buddy/printers/qidi/q1pro.py"
+notes = "Stock Klipper + Moonraker. Enclosed CoreXY with an actively heated chamber (set by the template start code, not driven separately). The pinned Orca profile records a bed exclusion polygon along the back edge; not tested on hardware."
+
+[[printer]]
+key = "qidi.xplus3"
+label = "Qidi X-Plus 3"
+vendor = "qidi"
+firmware = "Klipper"
+firmware_family = "klipper"
+connection = "moonraker"
+kinematics = "CoreXY"
+bed_mm = [280.0, 280.0]
+max_height_mm = 270.0
+filament_slots = 1
+profile = "print_buddy/printers/qidi/xplus3.py"
+notes = "Stock Klipper + Moonraker. Enclosed CoreXY; not tested on hardware."
+
+[[printer]]
+key = "qidi.xmax3"
+label = "Qidi X-Max 3"
+vendor = "qidi"
+firmware = "Klipper"
+firmware_family = "klipper"
+connection = "moonraker"
+kinematics = "CoreXY"
+bed_mm = [325.0, 325.0]
+max_height_mm = 315.0
+filament_slots = 1
+profile = "print_buddy/printers/qidi/xmax3.py"
+notes = "Stock Klipper + Moonraker. Enclosed CoreXY; not tested on hardware."
+
+[[printer]]
+key = "qidi.xsmart3"
+label = "Qidi X-Smart 3"
+vendor = "qidi"
+firmware = "Klipper"
+firmware_family = "klipper"
+connection = "moonraker"
+kinematics = "CoreXY"
+bed_mm = [175.0, 180.0]
+max_height_mm = 170.0
+filament_slots = 1
+profile = "print_buddy/printers/qidi/xsmart3.py"
+notes = "Stock Klipper + Moonraker. Marketed bed is 180 x 180 mm; the pinned Orca profile's printable area is 175 x 180 mm and is what is recorded. Not tested on hardware."
+
+[[printer]]
+key = "creality.ender3v3"
+label = "Creality Ender-3 V3"
+vendor = "creality"
+firmware = "Klipper"
+firmware_family = "klipper"
+connection = "moonraker"
+kinematics = "Cartesian (moving bed)"
+bed_mm = [220.0, 220.0]
+max_height_mm = 250.0
+filament_slots = 1
+profile = "print_buddy/printers/creality/ender3v3.py"
+notes = "Creality OS (Klipper-based) + Moonraker. Open-frame bed-slinger; not tested on hardware. Marlin Enders are not this vendor — they use octoprint.marlin."
+
+[[printer]]
+key = "creality.ender3v3ke"
+label = "Creality Ender-3 V3 KE"
+vendor = "creality"
+firmware = "Klipper"
+firmware_family = "klipper"
+connection = "moonraker"
+kinematics = "Cartesian (moving bed)"
+bed_mm = [220.0, 220.0]
+max_height_mm = 245.0
+filament_slots = 1
+profile = "print_buddy/printers/creality/ender3v3ke.py"
+notes = "Creality OS (Klipper-based) + Moonraker. Its Orca start code is fully inline (no START_PRINT macro call); the adapter ships the template sequence verbatim. Not tested on hardware."
+
+[[printer]]
+key = "creality.ender3v3plus"
+label = "Creality Ender-3 V3 Plus"
+vendor = "creality"
+firmware = "Klipper"
+firmware_family = "klipper"
+connection = "moonraker"
+kinematics = "Cartesian (moving bed)"
+bed_mm = [300.0, 300.0]
+max_height_mm = 330.0
+filament_slots = 1
+profile = "print_buddy/printers/creality/ender3v3plus.py"
+notes = "Creality OS (Klipper-based) + Moonraker. Open-frame bed-slinger; not tested on hardware. Marlin Enders are not this vendor — they use octoprint.marlin."
+
+[[printer]]
+key = "creality.k1"
+label = "Creality K1"
+vendor = "creality"
+firmware = "Klipper"
+firmware_family = "klipper"
+connection = "moonraker"
+kinematics = "CoreXY"
+bed_mm = [220.0, 220.0]
+max_height_mm = 250.0
+filament_slots = 1
+profile = "print_buddy/printers/creality/k1.py"
+notes = "Creality OS (Klipper-based) + Moonraker. Enclosed CoreXY; not tested on hardware."
+
+[[printer]]
+key = "creality.k1c"
+label = "Creality K1C"
+vendor = "creality"
+firmware = "Klipper"
+firmware_family = "klipper"
+connection = "moonraker"
+kinematics = "CoreXY"
+bed_mm = [220.0, 220.0]
+max_height_mm = 250.0
+filament_slots = 1
+profile = "print_buddy/printers/creality/k1c.py"
+notes = "Creality OS (Klipper-based) + Moonraker. Enclosed CoreXY; not tested on hardware."
+
+[[printer]]
+key = "creality.k1max"
+label = "Creality K1 Max"
+vendor = "creality"
+firmware = "Klipper"
+firmware_family = "klipper"
+connection = "moonraker"
+kinematics = "CoreXY"
+bed_mm = [300.0, 300.0]
+max_height_mm = 300.0
+filament_slots = 1
+profile = "print_buddy/printers/creality/k1max.py"
+notes = "Creality OS (Klipper-based) + Moonraker. Enclosed CoreXY; not tested on hardware."

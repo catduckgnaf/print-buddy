@@ -60,7 +60,7 @@ def load(environ=None, local=False):
 # ----------------------------------------------------------------------------- layout
 
 def test_every_printer_sits_under_its_vendor_package():
-    assert set(printers.VENDORS) == {"bambulab", "elegoo", "elegoo_sdcp", "flashforge", "flashforge_stock", "klipper", "octoprint", "prusa", "sovol"}
+    assert set(printers.VENDORS) == {"bambulab", "creality", "elegoo", "elegoo_sdcp", "flashforge", "flashforge_stock", "klipper", "octoprint", "prusa", "qidi", "sovol"}
     for key, model in printers.MODELS.items():
         assert model.vendor is printers.VENDORS[model.vendor_key]
         assert key == f"{model.vendor.key}.{model.printer_key}"
@@ -208,8 +208,15 @@ def test_vendor_alias_and_mismatch():
     assert printers.vendor_key("bambu_lab") == "bambulab" and printers.vendor_key("klipper") == "klipper"
     with pytest.raises(settings.SettingsError, match="does not match"):
         load({"PRINT_BUDDY__PRINTER__MODEL": "sovol.sv06", "PRINT_BUDDY__PRINTER__VENDOR": "flashforge"})
+    # "creality" used to be this test's example of an unknown vendor; it is a real vendor
+    # now (the Klipper/Creality-OS pack), so the unknown-vendor case uses a made-up name
+    # and creality/qidi resolution is asserted positively instead.
     with pytest.raises(settings.SettingsError, match="vendor must be one of"):
-        load({"PRINT_BUDDY__PRINTER__VENDOR": "creality", "PRINT_BUDDY__PRINTER__MODEL": "mk4"})
+        load({"PRINT_BUDDY__PRINTER__VENDOR": "acme", "PRINT_BUDDY__PRINTER__MODEL": "mk4"})
+    assert load({"PRINT_BUDDY__PRINTER__VENDOR": "creality",
+                 "PRINT_BUDDY__PRINTER__MODEL": "k1"})["printer"]["model"] == "creality.k1"
+    assert load({"PRINT_BUDDY__PRINTER__VENDOR": "qidi",
+                 "PRINT_BUDDY__PRINTER__MODEL": "q1pro"})["printer"]["model"] == "qidi.q1pro"
     with pytest.raises(settings.SettingsError, match="model must be one of"):
         load({"PRINT_BUDDY__PRINTER__MODEL": "mk4"})
 

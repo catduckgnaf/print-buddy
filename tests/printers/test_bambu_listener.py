@@ -300,3 +300,63 @@ def test_heartbeat_uses_the_bambu_runtime_and_satisfies_the_healthcheck(monkeypa
     assert record["runtime"] == "bambu_event_listener"
     ok, _reason = healthcheck.check({"printer": {"model": "bambulab.a1"}})
     assert ok
+
+
+# --------------------------------------------------------------------- main() entry point (#409)
+
+class _FakeMainListener:
+    """Stand-in for BambuListener in main() tests: records, never connects."""
+    built = []
+
+    def __init__(self, adapter, printer_id=None, **kwargs):
+        type(self).built.append((adapter, printer_id))
+        self.adapter = adapter
+
+    def run_forever(self):
+        return 0
+
+
+def _call_main(monkeypatch, adapter):
+    import types
+
+    from print_buddy import logs
+    from print_buddy.printers.bambulab import listener as listener_module
+
+    _FakeMainListener.built = []
+    monkeypatch.setattr(logs, "configure", lambda *args, **kwargs: None)
+    monkeypatch.setattr(printers, "current", lambda *args, **kwargs: adapter)
+    monkeypatch.setattr(listener_module, "BambuListener", _FakeMainListener)
+    return listener_module.main()
+
+
+def test_main_returns_3_for_a_non_bambu_printer(monkeypatch):
+    # The shape main() used to crash on in #409: no usable vendor at all.
+    # It must report the connection and return 3, not raise ImportError
+    # (the old ``from .. import``) or AttributeError (``adapter.vendor``).
+    import types
+    adapter = types.SimpleNamespace(vendor=None, connection="moonraker", transport=None)
+    assert _call_main(monkeypatch, adapter) == 3
+    assert _FakeMainListener.built == []
+
+
+def test_main_returns_3_for_a_real_non_bambu_adapter(monkeypatch):
+    cfg = settings.load(local=False, environ={"PRINT_BUDDY__PRINTER__MODEL": "flashforge.ad5x"})
+    adapter = printers.get("flashforge.ad5x", cfg)
+    assert _call_main(monkeypatch, adapter) == 3
+    assert _FakeMainListener.built == []
+
+
+def test_main_starts_when_vendor_is_none_but_transport_is_bambulab_lan(monkeypatch):
+    # The exact 2.1.5 container state in #409: vendor is None, the
+    # adapter still reports transport="bambulab_lan", and the verified
+    # fix starts the listener instead of dying on ``.vendor.connection``.
+    import types
+    adapter = types.SimpleNamespace(vendor=None, connection=None, transport="bambulab_lan")
+    assert _call_main(monkeypatch, adapter) == 0
+    assert _FakeMainListener.built and _FakeMainListener.built[0][0] is adapter
+
+
+def test_main_starts_for_a_real_bambu_adapter(monkeypatch):
+    adapter = lan_adapter(monkeypatch)
+    assert _call_main(monkeypatch, adapter) == 0
+    assert _FakeMainListener.built and _FakeMainListener.built[0][0] is adapter

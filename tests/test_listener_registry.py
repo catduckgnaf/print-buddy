@@ -109,6 +109,36 @@ class LauncherTests(unittest.TestCase):
         run_module.assert_called_once_with(
             "print_buddy.printers.bambulab.listener", run_name="__main__")
 
+    def test_launch_drops_a_preimported_domain_module_before_runpy(self):
+        # #409: printer discovery pre-imports the Bambu listener module
+        # (it scans every vendor-package module for MODEL), so launch
+        # must drop that stale sys.modules entry before runpy runs the
+        # module as __main__, or runpy warns and reuses the import.
+        import sys
+        module_name = listeners.DOMAINS["bambulab_lan"].module
+        missing = object()
+        previous = sys.modules.get(module_name, missing)
+        sys.modules[module_name] = object()  # a stale pre-import
+        seen = {}
+
+        def fake_run_module(name, run_name=None):
+            seen["name"] = name
+            seen["present_during_run"] = name in sys.modules
+
+        try:
+            with mock.patch.object(healthcheck, "listener_domain",
+                                   return_value=listeners.DOMAINS["bambulab_lan"]), \
+                    mock.patch.object(listeners.runpy, "run_module",
+                                      side_effect=fake_run_module):
+                self.assertEqual(listeners.launch({}), 0)
+        finally:
+            if previous is missing:
+                sys.modules.pop(module_name, None)
+            else:
+                sys.modules[module_name] = previous
+        self.assertEqual(seen["name"], module_name)
+        self.assertFalse(seen["present_during_run"])
+
     def test_none_domain_is_nothing_to_run(self):
         with mock.patch.object(healthcheck, "listener_domain",
                                return_value=listeners.DOMAINS["offline"]):

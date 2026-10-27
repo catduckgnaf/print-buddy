@@ -26,7 +26,7 @@ Share a MakerWorld or Printables link, or upload an STL or 3MF. Print Buddy guid
 
 ### Docker
 
-The single-container image ships with 2.1.5 (see [#117](https://github.com/catduckgnaf/print-buddy/issues/117) and [#214](https://github.com/catduckgnaf/print-buddy/issues/214)); the published 2.1.1 image keeps the older three-container stack. The image is at `ghcr.io/catduckgnaf/print-buddy` as a multi-arch manifest for `linux/amd64` and `linux/arm64`, built and checked offline by the publish workflow before it is pushed; see [Docker](docs/DOCKER.md#supported-platforms-192-353) for the platform matrix. 2.1.4 also published a slicer-free `-light` variant; from 2.1.5 only the one full image is published ([#353](https://github.com/catduckgnaf/print-buddy/issues/353)).
+The single-container image ships with 2.1.6 (see [#117](https://github.com/catduckgnaf/print-buddy/issues/117) and [#214](https://github.com/catduckgnaf/print-buddy/issues/214)); the published 2.1.1 image keeps the older three-container stack. The image is at `ghcr.io/catduckgnaf/print-buddy` as a multi-arch manifest for `linux/amd64` and `linux/arm64`, built and checked offline by the publish workflow before it is pushed; see [Docker](docs/DOCKER.md#supported-platforms-192-353) for the platform matrix. 2.1.4 also published a slicer-free `-light` variant; from 2.1.5 only the one full image is published ([#353](https://github.com/catduckgnaf/print-buddy/issues/353)).
 
 One container runs the three parts of Print Buddy, started and watched by a supervisor:
 

@@ -360,3 +360,38 @@ def test_main_starts_for_a_real_bambu_adapter(monkeypatch):
     adapter = lan_adapter(monkeypatch)
     assert _call_main(monkeypatch, adapter) == 0
     assert _FakeMainListener.built and _FakeMainListener.built[0][0] is adapter
+
+
+# --- main(): the entry point `python -m print_buddy.listeners --printer <id>` runs through runpy (#409, from #420) ---
+
+class _Adapter:
+    def __init__(self, transport, vendor=None):
+        self.transport = transport
+        self.vendor = vendor
+
+
+def test_main_refuses_a_non_bambu_printer_through_the_adapter_transport(monkeypatch):
+    # #409: `from .. import logs, printers` raised ImportError (one package too low) and the
+    # vendor check read adapter.vendor.connection on an adapter whose vendor is None.
+    from print_buddy.printers.bambulab import listener as listener_mod
+    monkeypatch.setattr(printers, "current", lambda: _Adapter("moonraker", vendor=None))
+    assert listener_mod.main() == 3
+
+
+def test_main_builds_the_listener_for_a_bambu_lan_adapter(monkeypatch):
+    from print_buddy.printers.bambulab import listener as listener_mod
+    seen = {}
+
+    class FakeListener:
+        def __init__(self, adapter, *, printer_id=None, **kw):
+            seen["adapter"] = adapter
+            seen["printer_id"] = printer_id
+
+        def run_forever(self):
+            return 7
+
+    adapter = _Adapter("bambulab_lan", vendor=None)
+    monkeypatch.setattr(printers, "current", lambda: adapter)
+    monkeypatch.setattr(listener_mod, "BambuListener", FakeListener)
+    assert listener_mod.main() == 7
+    assert seen["adapter"] is adapter and seen["printer_id"] is None

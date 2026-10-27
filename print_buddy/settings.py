@@ -1042,6 +1042,17 @@ def _validate_logging(data):
     path = logging_cfg.setdefault("file", "")
     if not isinstance(path, str):
         raise SettingsError(f"[logging] file must be a path or empty, got {path!r}")
+    # Per-subsystem verbosity (#390 stage 4): {logger name: level}, so one
+    # noisy subsystem can be raised without a wall of debug output.
+    levels = logging_cfg.setdefault("levels", {})
+    if not isinstance(levels, dict):
+        raise SettingsError(f"[logging] levels must be a table of logger name to level, got {levels!r}")
+    for name, value in levels.items():
+        normalised = str(value).upper()
+        if normalised not in LOG_LEVELS:
+            raise SettingsError(f"[logging] levels.{name} must be one of "
+                                f"{', '.join(LOG_LEVELS)}, got {value!r}")
+        levels[name] = normalised
 
 
 def _validate_bot(data):

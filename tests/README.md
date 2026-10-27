@@ -50,3 +50,25 @@ Known remaining gaps for later #391 stages: the multi-printer
 cross-product beyond the sampled Stage 2 matrix (scope 3), upload
 timeout mid-flight and roster misconfiguration failure paths (scope 2
 remainder), and the Matrix message-ordering flake root cause (scope 4).
+
+## #391 stage 2 (failure paths: uploads)
+
+- Bambu FTPS upload: a timeout mid-transfer and a timeout during the
+  size verification both surface as the plain "may be incomplete"
+  `BambuLanError` (failure type named, no access code, session closed);
+  a failing `quit()` after a verified store does not fail the upload.
+  Mutation-verified: removing the upload wrap in a scratch copy fails
+  both new timeout tests (8 failed across the two mutated modules).
+- OctoPrint upload: the client's `upload()` had no tests at all — now
+  pinned for the one multipart POST shape, server-reported target
+  verification (origin/path mismatch refuses, nothing started), a
+  timeout as a plain not-retried error with no key leak and exactly one
+  request, and bad filenames refused before any request.
+- PrusaLink upload: a PUT timeout is not retried, leaks no key, and is
+  followed by no verification read and no start (the storage lookup GET
+  before it fails soft to the default storage, as designed).
+- Roster misconfigurations were re-audited for this stage: duplicate
+  ids, duplicate chat claims (including the global-channel fallback),
+  cross-vendor keys, bad/missing ids, unknown keys and empty rosters
+  are all already refused with named errors in
+  `tests/test_printers_roster.py` — no gap found, nothing added.

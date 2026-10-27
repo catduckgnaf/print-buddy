@@ -66,3 +66,78 @@ def test_download_failure_never_leaks_the_key():
     with pytest.raises(OctoPrintError) as excinfo:
         client.download("/downloads/timelapse/a.mp4")
     assert "SECRETKEY" not in str(excinfo.value)
+
+
+# --- #391 stage 2: the upload path itself -----------------------------------
+#
+# This module pinned the timelapse listing/download surface (#373); the
+# upload() method — the print path's one mutation — had no client-level
+# tests. Pin its shape: one multipart POST, the server's word on where
+# the file landed is verified before anything may start from it, a
+# timeout is a plain not-retried error, and bad names never reach the
+# transport.
+
+
+def _upload_client(payloads, seen):
+    return _client(payloads, seen)
+
+
+def test_upload_posts_the_file_once_and_returns_the_remote_name(tmp_path):
+    package = tmp_path / "benchy.gcode"
+    package.write_bytes(b"G28\nG1 X1\n")
+    seen = []
+    client = _upload_client(
+        [json.dumps({"files": {"local": {"origin": "local", "path": "benchy.gcode"}}}).encode()],
+        seen)
+    assert client.upload(package, "benchy.gcode") == "benchy.gcode"
+    assert len(seen) == 1
+    req = seen[0]
+    assert req.full_url == "http://octo.test:5000/api/files/local"
+    assert req.get_method() == "POST"
+    assert req.get_header("X-api-key") == "SECRETKEY"
+    assert req.get_header("Content-type").startswith("multipart/form-data; boundary=PrintBuddy")
+    assert b'filename="benchy.gcode"' in req.data
+    assert b"G28\nG1 X1\n" in req.data
+
+
+def test_upload_timeout_is_plain_not_retried_and_leaks_no_key(tmp_path):
+    package = tmp_path / "benchy.gcode"
+    package.write_bytes(b"G28\n")
+    calls = []
+
+    def opener(req, timeout=None):
+        calls.append(req)
+        raise TimeoutError("timed out for SECRETKEY")
+
+    client = OctoPrintClient("http://octo.test:5000", "SECRETKEY", opener=opener)
+    with pytest.raises(OctoPrintError) as excinfo:
+        client.upload(package, "benchy.gcode")
+    assert "not retried" in str(excinfo.value)
+    assert "SECRETKEY" not in str(excinfo.value)
+    assert len(calls) == 1  # an ambiguous mutation is never resent
+
+
+@pytest.mark.parametrize("reported", [
+    {"origin": "sdcard", "path": "benchy.gcode"},
+    {"origin": "local", "path": "someone-else.gcode"},
+    {"origin": "local"},
+    {},
+])
+def test_upload_refuses_when_the_server_reports_a_different_target(tmp_path, reported):
+    package = tmp_path / "benchy.gcode"
+    package.write_bytes(b"G28\n")
+    client = _upload_client([json.dumps({"files": {"local": reported}}).encode()], [])
+    with pytest.raises(OctoPrintError, match="target mismatch; nothing started"):
+        client.upload(package, "benchy.gcode")
+
+
+@pytest.mark.parametrize("bad", ["", "../benchy.gcode", "sub/benchy.gcode",
+                                 'quo"te.gcode', "back\\slash.gcode", "new\nline.gcode"])
+def test_upload_refuses_bad_filenames_before_any_request(tmp_path, bad):
+    package = tmp_path / "benchy.gcode"
+    package.write_bytes(b"G28\n")
+    seen = []
+    client = _upload_client([], seen)
+    with pytest.raises(OctoPrintError, match="invalid OctoPrint upload filename"):
+        client.upload(package, bad)
+    assert seen == []

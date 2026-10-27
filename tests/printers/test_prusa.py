@@ -279,3 +279,28 @@ def test_guard_refusals_and_acceptance():
     assert any("single-tool" in p for p in a.gcode_problems(good + "T1\n"))
     assert any("exceeds" in p for p in a.gcode_problems(good + "M104 S300\n"))
     assert any("nozzle" in p for p in a.gcode_problems(good.replace("= 0.4", "= 0.6")))
+
+
+# --- #391 stage 2: timeout mid-upload ---------------------------------------
+
+
+def test_client_upload_timeout_is_not_retried_and_starts_nothing(tmp_path):
+    fake = FakePrusaLink()
+    gcode = tmp_path / "benchy.gcode"
+    gcode.write_bytes(b"G28\n")
+    calls = []
+
+    def timing_out(req, timeout=None):
+        calls.append(req.get_method())
+        raise TimeoutError("timed out for test-key")
+
+    client = client_for(fake)
+    client.opener = timing_out
+    with pytest.raises(PrusaLinkError) as err:
+        client.upload(gcode)
+    assert "not retried" in str(err.value)
+    assert "test-key" not in str(err.value)
+    # The storage lookup GET fails soft to the default storage first; the
+    # PUT itself is attempted exactly once — no retry, no verify, no start.
+    assert calls == ["GET", "PUT"]
+    assert fake.state == "IDLE" and fake.files == {}

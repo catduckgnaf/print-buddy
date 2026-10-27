@@ -63,8 +63,8 @@ each row as it changes it.
 
 | Surface | What it does today | Bar verdict | Stage |
 | --- | --- | --- | --- |
-| Discord startup (`bot/client.py` `run_bot`) | `DISCORD_STARTUP_RETRY` log marker with attempt/backoff; token/intent failures print an actionable stderr line and exit 3 | Mostly meets bar; no taxonomy marker on the final failure | 2 |
-| Spoolman unavailable (pipeline notice) | One-line notice that tracking was skipped; failure detail only in the WARNING log | Names what failed; no cause/remedy for the operator. Log warning now carries `PB_SPOOLMAN_*` (Stage 1) | 2 |
+| Discord startup (`bot/client.py` `run_bot`) | `DISCORD_STARTUP_RETRY` log marker with attempt/backoff; token/intent failures print an actionable stderr line and exit 3 | Meets bar after Stage 2: the exhausted-retry line carries `PB_DISCORD_*`, and the token/intent exits name the remedy and `PB_DISCORD_CONFIGURATION` | 2 (done) |
+| Spoolman unavailable (pipeline notice) | One-line notice that tracking was skipped; failure detail only in the WARNING log | Meets bar after Stage 2: the notice states the print continues and what to check; the log warning carries the exact `PB_SPOOLMAN_*` marker (Stage 1) | 2 (done) |
 | Timelapse completion posts (#383) | Every degraded outcome posts a reason line instead of dropping the video silently | Meets bar — the reference pattern for Stage 2 | — |
 | Intake / slicing / delivery posts (`core/model_job.py`) | Many outcomes carry a `reason`; some failure posts are still built from raw exception text | Mixed; per-post audit needed | 2 |
 | Listener heartbeat (`healthcheck.py`, `bot/health.py`) | `(ok, reason)` strings name staleness/identity/connection states | Names what failed; no remedy, no marker | 5 |

@@ -99,20 +99,25 @@ def run_bot(cfg):
         try:
             PrintBuddyBot(cfg).run(token, log_handler=None)
         except discord.LoginFailure as exc:
-            print(f"Discord refused the bot token: {exc}", file=sys.stderr)
+            print(f"Discord refused the bot token: {exc}. Check that the token in the environment "
+                  "variable named by discord.token_env is the current bot token. "
+                  "Reference: PB_DISCORD_CONFIGURATION", file=sys.stderr)
             return 3
         except discord.PrivilegedIntentsRequired:
             print("Turn on the Message Content intent for this bot in the Discord developer portal "
-                  "(Bot > Privileged Gateway Intents).", file=sys.stderr)
+                  "(Bot > Privileged Gateway Intents). Reference: PB_DISCORD_CONFIGURATION",
+                  file=sys.stderr)
             return 3
         except Exception as exc:
             if not _is_transient_startup_error(exc):
                 raise
             error_errno = getattr(exc, "errno", None)
             if attempt >= STARTUP_ATTEMPTS:
+                from .. import diagnostics
                 logger.warning(
-                    "DISCORD_STARTUP_RETRY attempt %d/%d failed: %s (errno=%s); no retries left",
-                    attempt, STARTUP_ATTEMPTS, type(exc).__name__, error_errno)
+                    "DISCORD_STARTUP_RETRY attempt %d/%d failed: %s (errno=%s); no retries left [%s]",
+                    attempt, STARTUP_ATTEMPTS, type(exc).__name__, error_errno,
+                    diagnostics.marker("discord", diagnostics.classify(exc)))
                 raise
             delay = _startup_retry_delay(attempt)
             logger.warning(

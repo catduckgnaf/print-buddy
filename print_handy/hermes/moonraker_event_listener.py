@@ -1564,7 +1564,15 @@ def _camera_snapshot_bytes():
         fanout = None
     if fanout:
         try:
-            return _fetch_snapshot(fanout)
+            frame = _fetch_snapshot(fanout)
+            if not _visual_watch.frame_dark(frame):
+                return frame
+            # #476: a black JPEG is a *successful* fetch, so the #424
+            # failure fallback never fired on it — go2rtc serves black
+            # frames before the stream produces real ones. A completely
+            # dark fan-out frame falls back exactly like a failed fetch.
+            log("visual watch: go2rtc fan-out snapshot is completely dark; "
+                "falling back to the direct camera snapshot")
         except Exception:
             log("visual watch: go2rtc fan-out snapshot failed; "
                 "falling back to the direct camera snapshot")
@@ -1591,7 +1599,7 @@ def _visual_layer(stats):
     return value if isinstance(value, int) else None
 
 
-def _visual_alert(filename, image, reason):
+def _visual_alert(filename, image, reason, identity=None):
     # #317: a watchdog alert is blooper material; record() never raises.
     print_markers.record(filename, print_markers.WATCHDOG_ALERT, detail=reason)
     target = Path(os.environ.get("PRINT_WATCH_FRAME_DIR") or _config.cache_dir() / "print-watch")
@@ -1605,7 +1613,7 @@ def _visual_alert(filename, image, reason):
     try:
         from . import print_alert_buttons as pab
         if pab.post_visual_alert(_bot_token(), announcer.DISCORD_CHAT_ID,
-                                 text, filename, path):
+                                 text, filename, path, identity=identity):
             log(f"post visual alert {clean(filename)!r}")
             return path
         log("visual button post failed; falling back to text")
@@ -1613,6 +1621,31 @@ def _visual_alert(filename, image, reason):
         log(f"visual button post error: {exc!r}")
     post(text + f"\n{path}\nMEDIA:{path}")
     return path
+
+
+def _visual_dark_notice(filename, identity=None):
+    """The once-per-print dark-camera notice (#476): a camera problem, not a print alert.
+
+    Plain text on buttonless standalone platforms; on Discord the same text
+    with only the "Stop asking for this print" button, via the alert-button
+    transport. No image is attached — the frame is black.
+    """
+    text = (f"Camera check: {clean(filename)} — the camera image is completely dark, "
+            "so I can't check the print. Check the camera or its light. "
+            "Monitoring continues; nothing was sent to the printer.")
+    if _buttonless_standalone():
+        post(text)
+        return
+    try:
+        from . import print_alert_buttons as pab
+        if pab.post_visual_dark_notice(_bot_token(), announcer.DISCORD_CHAT_ID,
+                                       text, filename, identity=identity):
+            log(f"post visual dark notice {clean(filename)!r}")
+            return
+        log("visual dark button post failed; falling back to text")
+    except Exception as exc:
+        log(f"visual dark notice post error: {exc!r}")
+    post(text)
 
 
 def _slot_bools(slots):
@@ -1888,6 +1921,36 @@ class Listener:
                                 "paused", self.filename)
         self.pause_context = await self.open_question(slot, "runout")
 
+    def _visual_identity(self):
+        """This print's identity for watchdog mutes (#476): the notification identity.
+
+        The same identity the lifecycle notifications claim on (Moonraker
+        job id when known, else filename + start-claim time). It can be
+        None early in a print; the mute store's fallback key covers that.
+        """
+        return _notification_identity({"start_time": start_claim_time(self.filename),
+                                       **self.last_stats, "filename": self.filename})
+
+    async def _dark_frame_check(self, reason, layer):
+        """Handle one completely dark frame (#476). True when the frame was dark.
+
+        A dark frame is a camera fact: it is logged, the vision endpoint is
+        never consulted, the frame never becomes a stall baseline, and it
+        never posts as a print alert. The operator gets at most one
+        dark-camera notice per print — and none at all when this print's
+        watchdog posts are muted.
+        """
+        log(f"visual check file={self.filename!r} reason={reason} layer={layer} verdict=dark detail='camera image completely dark'")
+        if self.visual_watch.dark_noticed:
+            return True
+        self.visual_watch.dark_noticed = True
+        from . import print_alert_buttons as pab
+        if await asyncio.to_thread(pab.visual_muted, self.filename, self._visual_identity()):
+            log(f"visual dark notice suppressed for muted print {self.filename!r}")
+            return True
+        await asyncio.to_thread(_visual_dark_notice, self.filename, self._visual_identity())
+        return True
+
     async def visual_check(self, reason, layer):
         """Capture and classify a print frame; notify humans only, never actuate.
 
@@ -1901,6 +1964,9 @@ class Listener:
         image = None
         try:
             image = await asyncio.to_thread(_camera_snapshot_bytes)
+            if await asyncio.to_thread(_visual_watch.frame_dark, image):
+                await self._dark_frame_check(reason, layer)
+                return
             prior = self.visual_frames.get(self.filename)
             changed = None if prior is None else await asyncio.to_thread(_frame_changed, prior, image)
             snapshot_before = self.visual_watch.last_snapshot_layer
@@ -1938,15 +2004,25 @@ class Listener:
                 suspicious = True
             log(f"visual check file={self.filename!r} reason={reason} layer={layer} changed={changed} verdict={verdict} detail={detail!r}")
             if suspicious and image is not None:
-                await asyncio.to_thread(_visual_alert, self.filename, image,
-                                        f"{reason} at layer {layer or 'unknown'}: {verdict}; {detail or 'visual check needs operator review'}")
+                from . import print_alert_buttons as pab
+                if await asyncio.to_thread(pab.visual_muted, self.filename, self._visual_identity()):
+                    log(f"visual alert suppressed for muted print {self.filename!r}")
+                else:
+                    await asyncio.to_thread(_visual_alert, self.filename, image,
+                                            f"{reason} at layer {layer or 'unknown'}: {verdict}; {detail or 'visual check needs operator review'}",
+                                            identity=self._visual_identity())
         except Exception as exc:
             log(f"visual check failed file={self.filename!r} reason={reason}: {exc!r}")
             if image is not None:
                 try:
-                    await asyncio.to_thread(
-                        _visual_alert, self.filename, image,
-                        f"{reason} at layer {layer or 'unknown'}: vision check failed: {exc!r}")
+                    from . import print_alert_buttons as pab
+                    if await asyncio.to_thread(pab.visual_muted, self.filename, self._visual_identity()):
+                        log(f"visual alert suppressed for muted print {self.filename!r}")
+                    else:
+                        await asyncio.to_thread(
+                            _visual_alert, self.filename, image,
+                            f"{reason} at layer {layer or 'unknown'}: vision check failed: {exc!r}",
+                            identity=self._visual_identity())
                 except Exception as alert_exc:
                     log(f"visual alert failed file={self.filename!r}: {alert_exc!r}")
 

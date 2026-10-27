@@ -28,6 +28,10 @@ print_handy/printers/
   octoprint/
     __init__.py          VENDOR  OctoPrint: REST to Marlin, slicer-owned start code, OrcaSlicer, .gcode
     marlin.py            MODEL   octoprint.marlin
+    ender3.py            MODEL   octoprint.ender3: the Ender-3 preset (220 mm bed, 250 mm height)
+    ender3pro.py         MODEL   octoprint.ender3pro: the Ender-3 Pro preset
+    ender3v2.py          MODEL   octoprint.ender3v2: the Ender-3 V2 preset (0.4 mm nozzle only)
+    ender3v3se.py        MODEL   octoprint.ender3v3se: the Ender-3 V3 SE preset (Marlin firmware)
   bambulab/
     __init__.py          VENDOR  Bambu Lab: opt-in read-only LAN MQTT status, Bambu start code, Orca or Bambu Studio,
                                  .gcode.3mf handoff

@@ -17,7 +17,7 @@ Select one with `printer.model: creality.k1` (etc.).
 
 Bed sizes are the pinned Orca profiles' printable areas — the values slicing enforces; here they agree with Creality's marketed sizes. The vendor writes `bed_exclude_area` two ways — a `["0x0"]` list on the Ender-3 V3 line and a bare `"0x0"` string on the K1 line — and both mean no exclusion; the profile checker treats them the same.
 
-**Marlin Enders are not this vendor.** The older Ender-3 / Ender-3 V2 / Ender-3 S1 / Ender-5 and CR-10 lines run Marlin firmware with no Moonraker endpoint; they are not covered by anything on this page and keep the existing route: OctoPrint in front of the printer, model `octoprint.marlin` — see [OctoPrint + Marlin](OCTOPRINT-MARLIN.md). The Ender-3 V3 SE is likewise not covered: it does not expose the Klipper/Moonraker endpoint this vendor uses.
+**Marlin Enders are not this vendor.** The older Ender-3 / Ender-3 V2 / Ender-3 S1 / Ender-5 and CR-10 lines run Marlin firmware with no Moonraker endpoint; they are not covered by anything on this page and keep the existing route: OctoPrint in front of the printer — the per-model presets (`octoprint.ender3`, `octoprint.ender3pro`, `octoprint.ender3v2`) or the generic `octoprint.marlin` — see [OctoPrint + Marlin](OCTOPRINT-MARLIN.md). The Ender-3 V3 SE is likewise not covered by this vendor: it does not expose the Klipper/Moonraker endpoint this vendor uses, and is preset as `octoprint.ender3v3se` on the OctoPrint route.
 
 ## Set up the profiles
 
@@ -39,8 +39,8 @@ The start G-code is the template's own sequence, verbatim: most of these profile
 
 ## What is not supported
 
-- Every Marlin Creality printer (older Ender-3/CR lines) — see the note above; they use `octoprint.marlin`, unchanged.
-- The Ender-3 V3 SE (no Moonraker endpoint on its stock firmware).
+- Every Marlin Creality printer (older Ender-3/CR lines) — see the note above; they use the OctoPrint route: a per-model preset where one exists, else `octoprint.marlin`.
+- The Ender-3 V3 SE (no Moonraker endpoint on its stock firmware; preset as `octoprint.ender3v3se`).
 - The K2 series and other CFS multi-material models: the CFS filament system is not modelled here; single-slot templates would misrepresent them.
 - Other Klipper-based Creality models whose Orca identities are not pinned yet (for example the Ender-5 Max and CR-10 SE): follow-ups on this vendor pack, added the same way once checked.
 - Multi-nozzle variants: templates are pinned to the stock 0.4 mm nozzle profiles, as with the other generated-template vendors.

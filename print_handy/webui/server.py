@@ -153,7 +153,7 @@ def healthz(data=None, heartbeat=status_module.READ_HEARTBEAT):
     return (200 if ok else 503), body
 
 
-def render_status_html(snap):
+def render_status_html(snap, form_token=""):
     """The / page: the snapshot as plain escaped HTML tables. No scripts."""
     esc = html.escape
     bot, listener, spoolman = snap["bot"], snap["listener"], snap["spoolman"]
@@ -192,6 +192,25 @@ def render_status_html(snap):
     doctor = "".join(
         f"<tr><td>{esc(row['label'])}</td><td>{esc(row['status'])}</td>"
         f"<td>{esc(row['detail'])}</td></tr>" for row in snap["doctor"])
+    # Debug log mode control (#478): the same form-token guard as the
+    # config POSTs. Without a form token (programmatic renders) the
+    # doctor table's debug mode row above is the whole surface.
+    debug_section = ""
+    if form_token:
+        debug_row = next((row for row in snap["doctor"] if row["label"] == "debug mode"), None)
+        state = esc(debug_row["detail"]) if debug_row else "off"
+        debug_section = (
+            "<h2>Debug log mode</h2>"
+            f"<p>State: {state}. Logging only — printing is unaffected. "
+            "Turning it off ends the session; the sanitized export is "
+            "delivered by the bot (`/print-handy debug off`) or the CLI "
+            "(`python3 -m print_handy.debug_mode off`).</p>"
+            '<form method="post" action="/debug">'
+            f'<input type="hidden" name="{pages.CSRF_FIELD}" value="{esc(form_token)}">'
+            '<label>Minutes <input name="minutes" size="4" placeholder="30"></label> '
+            '<button name="action" value="on" type="submit">Turn on</button> '
+            '<button name="action" value="off" type="submit">Turn off</button>'
+            "</form>")
     main_rows = "".join(
         f"<tr><th>{esc(label)}</th><td>{esc(str(value))}</td></tr>" for label, value in rows)
     return ("<!DOCTYPE html>\n<html><head><meta charset=\"utf-8\">"
@@ -205,7 +224,8 @@ def render_status_html(snap):
             + roster_table
             + (f"<h2>Services</h2><table>{services}</table>" if services else "")
             + f"<h2>Doctor checks</h2><table>{doctor}</table>"
-            "</body></html>\n")
+            + debug_section
+            + "</body></html>\n")
 
 
 class _Handler(BaseHTTPRequestHandler):
@@ -322,7 +342,8 @@ class _Handler(BaseHTTPRequestHandler):
                 return
             if path == "/":
                 snap = self.server.snapshot_func()
-                self._send(200, render_status_html(snap), "text/html; charset=utf-8")
+                self._send(200, render_status_html(snap, form_token=self.server.form_token),
+                           "text/html; charset=utf-8")
             elif path == "/api/status":
                 self._json(200, self.server.snapshot_func())
             elif path == "/config":
@@ -474,6 +495,8 @@ class _Handler(BaseHTTPRequestHandler):
                 self._config_preview()
             elif path == "/config":
                 self._config_save()
+            elif path == "/debug":
+                self._debug_post()
             else:
                 self._read_only()
         except Exception as exc:  # a broken write is a 500, never a dropped connection
@@ -543,6 +566,42 @@ class _Handler(BaseHTTPRequestHandler):
                        "text/html; charset=utf-8")
             return
         self._send(200, pages.render_result_page(changed), "text/html; charset=utf-8")
+
+    def _debug_post(self):
+        """POST /debug (#478): turn debug log mode on or off.
+
+        Same authorization as a config POST (access-token header or the
+        page's form token). The mode is shared state in the state folder,
+        so this one write reaches the bot and every listener process;
+        nothing about printing changes.
+        """
+        form, error = self._read_form()
+        if error:
+            self._json(error[0], {"ok": False, "reason": error[1]})
+            return
+        if not self._post_authorized(form):
+            self._json(403, {"ok": False,
+                             "reason": f"missing or wrong form token: POST /debug "
+                                       f"requires the {TOKEN_HEADER} header or the "
+                                       f"form's own {pages.CSRF_FIELD} token"})
+            return
+        from .. import debug_mode
+        action = (form.get("action") or [""])[0]
+        data = self.server.settings_data
+        if action == "on":
+            raw = (form.get("minutes") or [""])[0].strip()
+            try:
+                minutes = int(raw) if raw else None
+            except ValueError:
+                self._json(400, {"ok": False, "reason": "minutes must be a whole number"})
+                return
+            debug_mode.start(data, minutes=minutes)
+        elif action == "off":
+            debug_mode.end(data)
+        else:
+            self._json(400, {"ok": False, "reason": "action must be on or off"})
+            return
+        self._redirect("/")
 
     def _read_only(self):
         self._json(405, {"ok": False,

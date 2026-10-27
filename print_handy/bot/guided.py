@@ -43,6 +43,7 @@ HELP = """**Print Handy setup and debugging** — neither flow prints, moves, or
 - `/print-handy setup`: guided setup in small steps. Your checklist is saved, so you can stop and resume later. At the review step, reply `add` to set up more printers — each gets its own channel and state folder.
 - `/print-handy debugging`: read-only checks (configuration, bot login, permissions, connectivity, executables, state and logs). Secrets and private paths are redacted.
 - `/print-handy bundle`: write a redacted diagnostics bundle (versions, configuration summary, doctor output, recent log tail) into the state folder, ready to attach to a bug report. Nothing is uploaded.
+- `/print-handy debug on [minutes]` / `off` / `status`: debug log mode (#478) — temporary DEBUG capture (30 minutes by default, then it turns itself off). Turning it off delivers the sanitized log export for the session here in chat, with its sanitization report. Logging only; printing is unaffected.
 - `/print-handy status`: show the saved setup checklist.
 - `/print-handy cancel`: pause setup; the saved checklist is kept for resuming.
 While setup is waiting for an answer, reply with the answer as a plain message."""
@@ -524,13 +525,15 @@ def _apply_answers(answers, config_path):
 # ---------------------------------------------------------------------- the flow
 
 def handle_text(key, text, *, store, now=None, token_env="DISCORD_BOT_TOKEN",
-                apply_config=None, report=None, bundle=None):
+                apply_config=None, report=None, bundle=None, debug=None):
     """One message in the guided flows. Returns the reply text, or None when not ours.
 
     ``key`` identifies one person's session in one channel/thread. ``report`` is a zero-arg
     callable returning the debugging report; ``bundle`` is a zero-arg callable that writes
     the #390 diagnostics bundle and returns the reply saying where it went;
-    ``apply_config`` writes the consented settings.
+    ``debug`` is a one-arg callable taking the text after ``debug`` (``on``/``off``/``status``
+    plus any duration) and returning the #478 debug-mode reply; ``apply_config`` writes the
+    consented settings.
     """
     now = time.time() if now is None else now
     raw = str(text or "").strip()
@@ -541,10 +544,15 @@ def handle_text(key, text, *, store, now=None, token_env="DISCORD_BOT_TOKEN",
         rest = low[len("/print-handy"):].strip()
         if rest in ("", "help"):
             return HELP
-        if rest == "debugging" or rest == "debug":
+        if rest == "debugging":
             if report is None:
                 return "Debugging is not available in this runtime."
             return report()
+        if rest == "debug" or rest.startswith("debug "):
+            if debug is None:
+                return ("Debug mode is not available in this runtime. On the host, run "
+                        "`python3 -m print_handy.debug_mode on|off|status` instead.")
+            return debug(rest[len("debug"):].strip())
         if rest == "bundle":
             if bundle is None:
                 return ("Diagnostics bundles are not available in this runtime. On the host, run "
@@ -590,7 +598,7 @@ def handle_text(key, text, *, store, now=None, token_env="DISCORD_BOT_TOKEN",
                 return (note + "\n" if note else "") + _review_text(session)
             return _prompt_text(session, note)
         return ("Use `/print-handy setup`, `/print-handy debugging`, `/print-handy bundle`, "
-                "`/print-handy status`, or `/print-handy cancel`.")
+                "`/print-handy debug on|off|status`, `/print-handy status`, or `/print-handy cancel`.")
 
     if session is None or session["status"] not in ("in_progress", "awaiting_consent", "adding_printer"):
         return None

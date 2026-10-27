@@ -41,7 +41,7 @@ import logging
 import time
 from pathlib import Path
 
-from .. import healthcheck, listeners, logs
+from .. import debug_mode, healthcheck, listeners, logs
 from . import _config, family_control
 
 logger = logging.getLogger(__name__)
@@ -256,6 +256,10 @@ class FamilyListener:
             f"(runtime {self._runtime})")
         while not self._stopped:
             self.poll_once()
+            try:
+                debug_mode.poll()  # #478: observe the shared debug-mode state
+            except Exception:
+                pass
             if self._stopped:
                 break
             self._sleep(self._poll_s)

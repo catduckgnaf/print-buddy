@@ -198,6 +198,16 @@ def configure(cfg: dict | None = None, *, stream=None) -> logging.Logger:
         sub_level = str(sub_level).upper()
         if sub_level in LEVELS:
             logging.getLogger(str(name)).setLevel(getattr(logging, sub_level))
+    # Debug log mode (#478): a session started by any surface is shared
+    # state in the state folder; applying it here means every process that
+    # configures logging (bot, listeners, CLI) joins the capture without a
+    # config edit or a restart of the others. Best-effort by design: a
+    # broken state file must never stop logging.
+    try:
+        from . import debug_mode
+        debug_mode.apply()
+    except Exception:
+        pass
     return root
 
 

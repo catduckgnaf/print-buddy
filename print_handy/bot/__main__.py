@@ -90,6 +90,13 @@ def checks(cfg):
         users = allowed_users(cfg, "matrix")
         add("allowed users", bool(users), f"{len(users)} user(s)" if users
             else "none: set matrix.allowed_user_ids (or approval_user_id); everyone is refused")
+    # Debug log mode (#478): a visible row while a session is on, so a
+    # check run never hides that DEBUG capture is running.
+    try:
+        from .. import debug_mode
+        add("debug mode", True, debug_mode.check_row(cfg) or "off")
+    except Exception as exc:
+        add("debug mode", True, f"could not check: {exc}")
     label, available, detail = platform.library_status(name)
     add(label, available, detail)
     try:

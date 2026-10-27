@@ -30,7 +30,7 @@ from pathlib import Path
 
 import websockets
 
-from .. import go2rtc, healthcheck, logs, printers
+from .. import debug_mode, go2rtc, healthcheck, logs, printers
 from ..core import delivery, spoolman_client
 from . import _config
 from . import moonraker_discord_announcements as announcer
@@ -2228,6 +2228,12 @@ class Listener:
                                         state=self.state)
             except Exception as exc:
                 log(f"heartbeat write failed: {exc!r}")
+            try:
+                # Debug log mode (#478) is shared state this listener
+                # observes on its heartbeat tick, like every process.
+                await asyncio.to_thread(debug_mode.poll)
+            except Exception:
+                pass
             await asyncio.sleep(healthcheck.HEARTBEAT_S)
 
     async def forever(self):

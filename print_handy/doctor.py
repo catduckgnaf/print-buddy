@@ -223,6 +223,16 @@ def check_listener_heartbeats(data):
             f"docs/DIAGNOSTICS.md) [PB_LISTENER_TRANSIENT]")
 
 
+def check_debug_mode(data):
+    """Debug log mode (#478) as a row: the live session line, or None.
+
+    Reading the state can end an expired session (the auto-off); that is
+    the mode working as designed, never a doctor failure.
+    """
+    from . import debug_mode
+    return debug_mode.check_row(data)
+
+
 def _bot_token(data):
     from .hermes import _config
     name = data["discord"]["token_env"]
@@ -309,6 +319,11 @@ def run(out=sys.stdout):
         heartbeat_warning = f"could not check: {exc}"
     print(f"WARN  listener heartbeats: {heartbeat_warning}" if heartbeat_warning
           else "ok    listener heartbeats: healthy or not required", file=out)
+    try:
+        debug_row = check_debug_mode(data)
+    except Exception as exc:  # a state problem is reported, never a failed check
+        debug_row = f"could not check: {exc}"
+    print(f"WARN  debug mode: {debug_row}" if debug_row else "ok    debug mode: off", file=out)
     return 1 if failed else 0
 
 

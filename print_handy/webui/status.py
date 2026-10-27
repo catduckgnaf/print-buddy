@@ -179,6 +179,13 @@ def doctor_checks(data):
     rows.append({"label": "stray state files",
                  "status": "warn" if warning else "ok",
                  "detail": warning or "none"})
+    try:
+        debug_row = doctor.check_debug_mode(data)
+    except Exception as exc:  # a state problem is a row, never a failed snapshot
+        debug_row = f"could not check: {exc}"
+    rows.append({"label": "debug mode",
+                 "status": "warn" if debug_row else "ok",
+                 "detail": debug_row or "off"})
     return rows
 
 

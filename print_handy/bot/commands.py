@@ -60,9 +60,9 @@ COMMANDS = (
             (Option("prompt", "What to make or change, e.g. a 40x20x3 plate with two 4 mm holes, or 'make it taller' with a file dropped"),),
             "/print-design <what to make or change>", aliases=("design",)),
     Command("print-handy", "Guided setup and read-only debugging (never prints)",
-            (Option("action", "setup, debugging, bundle, status, cancel or help",
-                    ("setup", "debugging", "bundle", "status", "cancel", "help")),),
-            "/print-handy [setup | debugging | bundle | status | cancel | help]"),
+            (Option("action", "setup, debugging, bundle, debug, status, cancel or help",
+                    ("setup", "debugging", "bundle", "debug", "status", "cancel", "help")),),
+            "/print-handy [setup | debugging | bundle | debug on/off/status | status | cancel | help]"),
     Command("print-help", "What Print Handy can do", usage="/print-help"),
 )
 

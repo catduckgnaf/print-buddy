@@ -12,7 +12,14 @@ Assembles, in one Markdown document:
   every assembled line passes through ``print_handy.logs.redact``;
 * the printer roster (id, model, connection — no hosts, no credentials);
 * the doctor's output;
-* a bounded tail of the configured log file, redacted line by line.
+* the debug session's captured log window when one exists (#478),
+  otherwise a bounded tail of the configured log file.
+
+The assembled bundle passes through ``print_handy.sanitize_logs`` — the
+export sanitizer layered on ``logs.redact`` — so internal IPs/hostnames,
+platform user/channel IDs (as consistent pseudonyms), local paths,
+emails, MACs, serials and URL query strings are removed as well as
+secrets, and the bundle carries the counts-only sanitization report.
 
 There is no telemetry: the bundle is written only where the operator asks
 (this module's CLI, or ``/print-handy bundle`` in the bot, which writes it
@@ -27,7 +34,7 @@ import platform
 import sys
 from pathlib import Path
 
-from . import __version__, logs, settings
+from . import __version__, logs, sanitize_logs, settings
 
 DEFAULT_LOG_LINES = 200
 MAX_LOG_LINES = 2000
@@ -110,12 +117,36 @@ def doctor_output() -> str:
     return out.getvalue().strip() or "(doctor produced no output)"
 
 
+def _known_ids(data):
+    """Platform IDs the config itself names, for consistent pseudonyms."""
+    users, channels = [], []
+    for section in ("discord", "telegram", "matrix"):
+        cfg = data.get(section) or {}
+        raw_users = cfg.get("allowed_user_ids")
+        if isinstance(raw_users, (list, tuple)):
+            users.extend(str(v) for v in raw_users)
+        elif raw_users:
+            users.extend(str(raw_users).replace(",", " ").split())
+        for key in ("chat_id", "room_id"):
+            if cfg.get(key):
+                channels.append(str(cfg[key]))
+    return users, channels
+
+
 def build_bundle(data=None, *, log_lines: int = DEFAULT_LOG_LINES,
                  include_doctor: bool = True) -> str:
     """The whole bundle as one Markdown string. Never raises on a section."""
     data = settings.current() if data is None else data
     digest = next((os.environ[name] for name in _DIGEST_ENVS if os.environ.get(name)),
                   "not recorded in this environment (standalone install or unset)")
+    from . import debug_mode
+    window = debug_mode.session_window(data)
+    if window is not None:
+        log_title = "Debug session log (sanitized; see docs/DIAGNOSTICS.md)"
+        log_text = window
+    else:
+        log_title = f"Recent log tail (last {min(log_lines, MAX_LOG_LINES)} lines, sanitized)"
+        log_text = log_tail(data, log_lines)
     parts = [
         "# Print Handy diagnostics bundle",
         "",
@@ -123,6 +154,10 @@ def build_bundle(data=None, *, log_lines: int = DEFAULT_LOG_LINES,
         f"- Python: {platform.python_version()}",
         f"- Platform: {platform.platform()}",
         f"- Image digest: {digest}",
+        "",
+        "## Sanitization",
+        "",
+        "{REPORT}",
         "",
         "## Configuration summary (redacted)",
         "",
@@ -138,14 +173,17 @@ def build_bundle(data=None, *, log_lines: int = DEFAULT_LOG_LINES,
         doctor_output() if include_doctor else "(skipped)",
         "```",
         "",
-        f"## Recent log tail (last {min(log_lines, MAX_LOG_LINES)} lines, redacted)",
+        f"## {log_title}",
         "",
         "```text",
-        log_tail(data, log_lines),
+        log_text,
         "```",
         "",
     ]
-    return logs.redact("\n".join(parts))
+    users, channels = _known_ids(data)
+    sanitizer = sanitize_logs.Sanitizer(known_user_ids=users, known_channel_ids=channels)
+    clean = sanitizer.sanitize("\n".join(parts))
+    return clean.replace("{REPORT}", sanitizer.report())
 
 
 def write_bundle(path=None, data=None, *, log_lines: int = DEFAULT_LOG_LINES) -> Path:

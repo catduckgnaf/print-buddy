@@ -324,12 +324,22 @@ class BambuListener:
         """True when a LAN session can run: configured, with a usable client factory."""
         return self._lan is not None and self.adapter.lan_configured()
 
+    def _poll_debug_mode(self):
+        """#478: observe the shared debug-mode state (lazy import: this
+        module sits under the printers package settings loads first)."""
+        try:
+            from ... import debug_mode
+            debug_mode.poll()
+        except Exception:
+            pass
+
     def run_forever(self):
         """Serve until stop() — reconnecting forever, never exiting on printer errors."""
         if not self.active:
             log("LAN telemetry is not configured ([bambu] lan_host/lan_serial); "
                 "listener idling with heartbeat, no network contact")
             while not self._stopped:
+                self._poll_debug_mode()
                 self._wait(LOOP_TICK_S)
             return 0
         log(f"listener starting for the Bambu Lab printer at {self._lan.host} "
@@ -345,6 +355,7 @@ class BambuListener:
                 log(f"session failed unexpectedly: {exc!r}; reconnect after cooldown")
             if self._stopped:
                 break
+            self._poll_debug_mode()
             self._wait(RECONNECT_COOLDOWN_S)
         return 0
 

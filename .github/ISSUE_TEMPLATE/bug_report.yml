@@ -78,6 +78,20 @@ body:
       description: Run `/print-handy bundle` in Discord (or `python3 -m print_handy.diagnostics_bundle` on the host) and attach the generated diagnostics-bundle.md file to this issue, or paste its Doctor section here. The bundle is redacted — it contains versions, a configuration summary with secret values removed, the printer roster, doctor output and a bounded log tail. Review it before attaching.
     validations:
       required: false
+  - type: input
+    id: debug_session
+    attributes:
+      label: Debug session ID
+      description: If you captured the problem in debug log mode (`/print-handy debug on`, reproduce, `/print-handy debug off`), the session ID from the bot's reply or the export file name (`print-handy-debug-<date>-<session>.md`). Write "Not applicable" otherwise.
+    validations:
+      required: false
+  - type: textarea
+    id: sanitization_report
+    attributes:
+      label: Sanitization report
+      description: Paste the counts-only sanitization report from the debug export or diagnostics bundle (its first line starts with "Sanitization report" and lists removals by category, ending with the verification-pass result). It lists what was removed by category — never the removed values — so reviewers can see the export was checked before it was attached.
+    validations:
+      required: false
   - type: checkboxes
     id: attestations
     attributes:

@@ -1,13 +1,16 @@
 #!/usr/bin/env python3
 """Nightly print log catch up. Moonraker job history is the source of truth.
 
-Any finished Moonraker job in the lookback window with no matching Obsidian print
-note gets one written from history (start, end, duration, filament, outcome). A
-note matches when gcode_file is the same and started_at is within 10 minutes.
+Any finished Moonraker job in the lookback window with no matching print
+record gets one written from history (start, end, duration, filament,
+outcome). A record matches when gcode_file is the same and started_at is
+within 10 minutes. Records written before the JSON format (legacy Markdown
+notes) still count as matches, so an upgrade never backfills a duplicate.
 No AI agent, no Discord posts. Prints one line per action; exit 1 on failure.
 """
 
 import argparse
+import json
 import re
 from datetime import datetime, timezone
 from pathlib import Path
@@ -20,23 +23,36 @@ STATUS = {"completed": "complete", "cancelled": "cancelled"}  # everything else 
 FIELD = re.compile(r'^(gcode_file|started_at):\s*"?([^"\n]*)"?\s*$', re.M)
 
 
-def existing_notes():
-    notes = []
+def _started_epoch(value):
+    if not value:
+        return None
+    try:
+        return datetime.fromisoformat(str(value).replace("Z", "+00:00")).timestamp()
+    except ValueError:
+        return None
+
+
+def existing_records():
+    records = []
+    for path in PRINTS_DIR.glob("*.json"):
+        try:
+            record = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            continue
+        if isinstance(record, dict):
+            records.append((Path(str(record.get("gcode_file") or "")).name,
+                            _started_epoch(record.get("started_at"))))
     for path in PRINTS_DIR.glob("*.md"):
         head = path.read_text(encoding="utf-8", errors="replace").split("\n---", 1)[0]
         fields = dict(FIELD.findall(head))
-        try:
-            started = datetime.strptime(fields.get("started_at", ""), "%Y-%m-%dT%H:%M:%SZ")
-            started = started.replace(tzinfo=timezone.utc).timestamp()
-        except ValueError:
-            started = None
-        notes.append((Path(fields.get("gcode_file", "")).name, started))
-    return notes
+        records.append((Path(fields.get("gcode_file", "")).name,
+                        _started_epoch(fields.get("started_at"))))
+    return records
 
 
-def has_note(notes, filename, start):
+def has_record(records, filename, start):
     name = Path(filename).name
-    return any(n == name and (s is None or abs(s - start) <= 600) for n, s in notes)
+    return any(n == name and (s is None or abs(s - start) <= 600) for n, s in records)
 
 
 def iso(ts):
@@ -56,11 +72,11 @@ def main():
         print(f"print log: Moonraker history unavailable: {exc}")
         return 1
     jobs = (result.get("result") or {}).get("jobs") or []
-    notes = existing_notes()
+    records = existing_records()
     failed = 0
     for job in jobs:
         status, filename, start, end = job.get("status"), job.get("filename"), job.get("start_time"), job.get("end_time")
-        if not filename or not start or status in (None, "in_progress") or has_note(notes, filename, start):
+        if not filename or not start or status in (None, "in_progress") or has_record(records, filename, start):
             continue
         if args.dry_run:
             print(f"print log: would add {filename} ({status}) started {iso(start)}")
@@ -74,11 +90,11 @@ def main():
                                          completed_at=iso(end) if end else None)
             data["moonraker_state"] = status
             path = ann.write_completed_record(data).get("record_path")
-            notes.append((Path(filename).name, start))
-            print(f"print log: added missing note for {filename} ({status}) -> {path}")
+            records.append((Path(filename).name, start))
+            print(f"print log: added missing record for {filename} ({status}) -> {path}")
         except Exception as exc:
             failed += 1
-            print(f"print log: could not write note for {filename} ({status}): {exc}")
+            print(f"print log: could not write record for {filename} ({status}): {exc}")
     return 1 if failed else 0
 
 

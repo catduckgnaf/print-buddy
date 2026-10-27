@@ -584,8 +584,8 @@ def test_announcer_completion_uses_model_title_not_hash(job, tmp_path, monkeypat
     assert state["reset_armed_at"] == 12345.0
     assert state["memory_verified"] is True
     assert not HEX.search(posted)
-    record = next((tmp_path / "Prints").glob("*.md")).read_text()
-    assert TITLE in record
+    record = json.loads(next((tmp_path / "Prints").glob("*.json")).read_text())
+    assert record["title"] == TITLE and record["status"] == "completed"
 
 
 def test_announcer_completion_has_no_roast_and_never_calls_the_generator(job, tmp_path, monkeypatch, capsys):

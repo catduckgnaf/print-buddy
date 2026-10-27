@@ -647,35 +647,23 @@ def write_start_record(context: Mapping[str, Any]) -> str:
 
 
 def update_cleanup_record(record_path: str, status: str, session_id: str | None = None, detail: str = "") -> None:
+    """Record the session-cleanup outcome on the print's JSON record.
+
+    A path that is not a JSON record (a legacy Markdown note from before
+    this format) is left entirely untouched: historical notes are history.
+    """
     path = Path(record_path)
     record = _read_json_record(path)
-    if record is not None:
-        record["cleanup_status"] = status
-        if status == "archived":
-            record["cleanup_at"] = utc_now()
-        if session_id:
-            record["cleanup_session"] = session_id
-        if detail:
-            record["cleanup_detail"] = detail
-        _atomic_write(path, json.dumps(record, ensure_ascii=False, indent=2) + "\n")
+    if record is None:
         return
-    # Legacy Markdown notes from before JSON records keep their section rewrite.
-    try:
-        content = path.read_text(encoding="utf-8")
-    except (FileNotFoundError, OSError):
-        return
-    marker = "## Session cleanup"
-    prefix = content.split(marker, 1)[0].rstrip()
-    section = [
-        marker,
-        "",
-        f"- **Status:** {status}",
-        f"- **Occurred at:** {utc_now() if status == 'archived' else 'not recorded'}",
-        f"- **Session:** {session_id or 'not recorded'}",
-        f"- **Detail:** {detail or 'not recorded'}",
-        "",
-    ]
-    _atomic_write(path, prefix + "\n\n" + "\n".join(section))
+    record["cleanup_status"] = status
+    if status == "archived":
+        record["cleanup_at"] = utc_now()
+    if session_id:
+        record["cleanup_session"] = session_id
+    if detail:
+        record["cleanup_detail"] = detail
+    _atomic_write(path, json.dumps(record, ensure_ascii=False, indent=2) + "\n")
 
 
 def _profile_home() -> Path:

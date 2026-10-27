@@ -84,7 +84,6 @@ def printables_link(file_id, model_id):
     # http.client.IncompleteRead on resp.read() - retry the whole
     # open-and-read, bounded like _open_direct, instead of crashing.
     data = None
-    last = None
     for attempt in range(3):
         try:
             with _open_direct(PRINTABLES_GQL, data=payload,
@@ -93,11 +92,10 @@ def printables_link(file_id, model_id):
                                        "Referer": "https://www.printables.com/"}) as resp:
                 data = json.loads(resp.read().decode())
             break
-        except Exception as exc:  # noqa: BLE001 - retried, then re-raised
-            last = exc
+        except Exception:  # noqa: BLE001 - retried, then re-raised
+            if attempt == 2:
+                raise
             time.sleep(2 * (attempt + 1))
-    if data is None:
-        raise last
     link = data["data"]["getDownloadLink"]
     if not link.get("ok"):
         raise RuntimeError(f"Printables refused a download link: {link.get('errors')}")

@@ -76,3 +76,46 @@ def test_shipped_template_enables_the_platform():
     text = (Path(__file__).parents[1] / "hermes" / "profile" / "config.yaml.template").read_text()
     data = yaml.safe_load(text)
     assert data["platforms"]["discord"]["enabled"] is True
+
+
+# --- #391 expansion: reader branches #389's first tests did not pin ---
+
+
+def test_quoted_no_and_off_are_disabled(profile):
+    _write(profile, 'platforms:\n  discord:\n    enabled: "no"\n')
+    assert _config.profile_platform_state("discord")[0] == "disabled"
+    _write(profile, 'platforms:\n  discord:\n    enabled: "off"\n')
+    assert _config.profile_platform_state("discord")[0] == "disabled"
+
+
+def test_false_string_matching_ignores_case_and_whitespace(profile):
+    _write(profile, 'platforms:\n  discord:\n    enabled: " False "\n')
+    assert _config.profile_platform_state("discord")[0] == "disabled"
+
+
+def test_other_platforms_switch_does_not_leak_into_the_discord_read(profile):
+    _write(profile, "platforms:\n  telegram:\n    enabled: false\n  discord:\n    enabled: true\n")
+    assert _config.profile_platform_state("discord")[0] == "enabled"
+    assert _config.profile_platform_state("telegram")[0] == "disabled"
+
+
+def test_non_mapping_platforms_section_is_unset(profile):
+    _write(profile, "platforms: [discord]\n")
+    assert _config.profile_platform_state("discord")[0] == "unset"
+
+
+def test_non_mapping_platform_entry_is_unset(profile):
+    _write(profile, "platforms:\n  discord: yes\n")
+    assert _config.profile_platform_state("discord")[0] == "unset"
+
+
+def test_empty_profile_config_is_unreadable(profile):
+    """An empty file parses to None, not a mapping: the switch cannot be
+    verified, so the reader must not report it as enabled or unset."""
+    _write(profile, "")
+    assert _config.profile_platform_state("discord")[0] == "unreadable"
+
+
+def test_comment_only_profile_config_is_unreadable(profile):
+    _write(profile, "# rendered by the installer\n")
+    assert _config.profile_platform_state("discord")[0] == "unreadable"

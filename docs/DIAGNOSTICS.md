@@ -66,6 +66,10 @@ in `print_buddy.diagnostics.LEGACY_MARKERS` and likewise never changes.
    never a doctor failure: the container healthcheck owns failing on a
    dead listener, and a doctor run on a host where listeners are
    legitimately stopped must not fail.
+6. **Stage 6:** per-post audit of the remaining Discord failure posts
+   (intake / slicing / delivery action handlers) — the inventory's
+   "Mixed" row — bringing the bare-exception posts up to the bar with
+   the shared operator-message helper.
 
 The fail-soft posture is preserved throughout (#235): warnings never block
 a print, and no print path changes behaviour beyond reporting.

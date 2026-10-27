@@ -78,6 +78,18 @@ def unbind(token: contextvars.Token) -> None:
     _context.reset(token)
 
 
+def bound_context() -> dict:
+    """A copy of the fields currently bound to every log line."""
+    return dict(_context.get())
+
+
+def clear_context() -> None:
+    """Drop every bound field. For hosts that run Print Buddy in-process
+    (and for tests): a listener launched in its own process never needs it,
+    because its ``printer_id`` binding is process-lifetime by design."""
+    _context.set({})
+
+
 def _pairs(fields: dict) -> str:
     return " ".join(f"{key}={_value(value)}" for key, value in fields.items())
 

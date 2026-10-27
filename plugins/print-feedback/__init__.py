@@ -222,6 +222,329 @@ async def guided_dispatch(event, gateway, **kwargs):
     return {'action': 'skip', 'reason': 'guided setup/debugging handled'}
 
 
+# The Hermes plugin LLM lane (ctx.llm), stashed by register() when the host
+# offers it (#388 Stage 1). The standalone Router offers neither attribute,
+# so this stays None there and design uses its HTTP transport instead.
+_HERMES_LLM = None
+
+
+def _design_root(cfg):
+    from print_buddy.core import design
+    cache = (cfg.get('paths') or {}).get('cache')
+    return design.sessions_root(cache) if cache else design.sessions_root(_hermes_home() / 'cache')
+
+
+def _design_transport(cfg):
+    """(complete, kind) for a design turn, or (None, '') when no model is reachable.
+
+    Hermes mode prefers the host's plugin LLM lane with the registered
+    print_design auxiliary task — [design].model is NOT consulted there, the
+    profile's auxiliary.print_design block is the setting (Stage 0 on #388).
+    The HTTP transport (standalone, or the Hermes fallback when ctx.llm is
+    unavailable) resolves its endpoint from [design] inheriting [llm].
+    """
+    from print_buddy.core import design
+    design_cfg = cfg.get('design') or {}
+    timeout_s = int(design_cfg.get('timeout_s') or 180)
+    if (cfg.get('bot') or {}).get('mode') == 'hermes' and _HERMES_LLM is not None:
+        llm = _HERMES_LLM
+
+        async def hermes(messages):
+            return await design.hermes_complete(llm, messages, timeout_s=timeout_s)
+
+        return hermes, 'hermes'
+    if design.resolve_http_config(cfg) is not None:
+        def http(messages):
+            return asyncio.to_thread(design.http_complete, cfg, messages)
+
+        return http, 'http'
+    return None, ''
+
+
+async def _design_handoff(event, gateway, adapter, session, stl_path):
+    """Hand a finished design STL to prepared intake, exactly like a dropped file.
+
+    The design flow slices and prints nothing itself: prepare_link runs its
+    own fit, colour and confirmation gates from here, unchanged.
+    """
+    import copy as _copy
+    import uuid as _uuid
+    from print_buddy.core import printer_state
+    from print_buddy.core.link_intake import PromptCancelled
+    from print_buddy.core.prepared_intake import prepare_link
+    source = event.source
+    metadata = {'thread_id': source.thread_id} if source.thread_id else None
+    await adapter.send(chat_id=source.chat_id, metadata=metadata,
+                       content='Handing the design to the normal intake — it asks the usual '
+                               'questions before anything is sliced.')
+    handed = _copy.copy(event)
+    handed.text = ''
+    handed.media_urls = [str(stl_path)]
+    handed.message_id = f"design-{session['id']}-{_uuid.uuid4().hex[:8]}"
+    handed.metadata = dict(getattr(event, 'metadata', None) or {})
+    handed.metadata['live_session_key'] = gateway._session_key_for_source(source)
+    root = _state_dir() / 'model-link-intakes'
+    pid = _routed_printer_id(source, gateway)
+    try:
+        return await prepare_link(handed, adapter, printer_state.load(**_pkw(pid)), root,
+                                  **_pkw(pid))
+    except PromptCancelled:
+        await adapter.send(chat_id=source.chat_id, metadata=metadata,
+                           content='Cancelled. Nothing sliced, nothing uploaded, nothing started.')
+        return {'action': 'skip', 'reason': 'operator cancelled design intake'}
+    except Exception:
+        logger.exception('design intake handoff failed')
+        await adapter.send(chat_id=source.chat_id, metadata=metadata,
+                           content='The intake handoff failed. The design files are saved; '
+                                   'nothing was sliced or started.')
+        return {'action': 'skip', 'reason': 'design intake handoff failed'}
+
+
+def _fetch_design_link(url, target_dir):
+    """Seam over design.fetch_link_source so dispatch tests can fake the network."""
+    from print_buddy.core import design
+    return design.fetch_link_source(url, target_dir)
+
+
+def _design_file(event):
+    """The single dropped .scad in this message (a design source), else None."""
+    hits = [Path(p) for p in (getattr(event, 'media_urls', None) or [])
+            if Path(str(p)).suffix.lower() == '.scad']
+    return hits[0] if len(hits) == 1 and hits[0].is_file() else None
+
+
+_DESIGN_CONTEXT_PHRASES = ("design this", "design it", "redesign this",
+                           "edit this", "modify this", "change this")
+_DESIGN_ASK_PHRASES = ("edit this", "modify this", "change this")
+
+
+def _design_parse(text):
+    """Classify a plain message as a design request: (kind, rest) or None.
+
+    Kinds: 'create' (rest is the description), 'context' (a design/edit ask
+    that needs a model — attached, linked or recent; rest is the instruction,
+    possibly ''), 'ask' (a bare 'design me'/'help me design' with neither a
+    description nor an obvious model). Word-boundaried, case-insensitive;
+    commands and ordinary chat return None.
+    """
+    low = text.casefold()
+
+    def rest_of(match):
+        return re.sub(r"\s+", " ", text[:match.start()] + " " +
+                      text[match.end():]).strip(" \t—–-:,.").strip()
+
+    for phrase in ("help me design", "design me"):
+        match = re.search(rf"\b{re.escape(phrase)}\b", low)
+        if match:
+            rest = rest_of(match)
+            return ("create", rest) if rest else ("ask", "")
+    for phrase in _DESIGN_CONTEXT_PHRASES:
+        match = re.search(rf"\b{re.escape(phrase)}\b", low)
+        if match:
+            return ("context", rest_of(match))
+    return None
+
+
+def _recent_design_source(source):
+    """(path, link) for the channel's recent model, else (None, None).
+
+    The recent link wins (the same machinery "print it" uses); otherwise the
+    newest archived job whose source file is still on disk.
+    """
+    url = _recent_model_link(source)
+    if url:
+        return None, url
+    try:
+        from print_buddy.core.prepared_intake import last_job
+        job = last_job()
+    except Exception:
+        job = None
+    if job:
+        path = Path(job.get('downloaded_file') or '')
+        if path.is_file() and path.suffix.lower() in ('.stl', '.3mf', '.scad'):
+            return path, None
+    return None, None
+
+
+async def design_dispatch(event, gateway, **kwargs):
+    """/print-design and natural design requests (#388 Stages 1-2).
+
+    Create loop (Stage 1): /print-design <what to make>, Slice it / Change
+    it / Cancel, Slice it handing the STL to prepared intake. Stage 2 adds
+    edit sessions — /print-design (or a design phrase) with a dropped
+    .stl/.3mf/.scad or a model link in the same message, the same phrases
+    against the channel's recent model, and create phrases ("design me …",
+    "help me design …") — seeded through the engine's edit path. Routing is
+    deterministic and narrow: no design phrase means this handler returns
+    None and plain intake/chat behave exactly as before; inside a session
+    awaiting a revision, the owner's next plain message is the revision
+    before any phrase detection runs.
+    """
+    if not _is_print_discord_event(event):
+        return None
+    source = event.source
+    if _platform_value(source) != 'discord':
+        return None  # Design is Discord-only; Telegram/Matrix keep their no-LLM posture (#164)
+    if not getattr(source, 'user_id', None) or not gateway._is_user_authorized_for_source(source):
+        return None
+    text = str(getattr(event, 'text', '') or '').strip()
+    is_command = text == '/print-design' or text.startswith('/print-design ')
+    from print_buddy.core import design
+    from print_buddy.core.link_intake import model_link
+    from print_buddy.core.prepared_intake import model_file
+    cfg = _config.cfg()
+    root = _design_root(cfg)
+    owner = f"{source.chat_id}:{source.thread_id or ''}:{source.user_id}"
+    session = design.find_session_for_owner(root, owner)
+
+    # Resolve what this message asks for before any state changes.
+    intent = None  # (kind, instruction, file_path, link_url)
+    if is_command:
+        intent = ("command", text[len('/print-design'):].strip(), None, None)
+    elif text.startswith('/'):
+        return None
+    elif session and session.get('status') == 'awaiting_revision':
+        intent = ("revision", text, None, None)
+    else:
+        parsed = _design_parse(text)
+        if parsed is None:
+            return None
+        kind, rest = parsed
+        attached = model_file(event) or _design_file(event)
+        linked = model_link(text)
+        if attached or linked:
+            intent = ("edit", rest, attached, linked)
+        elif kind == "create":
+            intent = ("create", rest, None, None)
+        elif kind == "ask":
+            recent_path, recent_link = _recent_design_source(source)
+            if recent_path or recent_link:
+                intent = ("edit", "", recent_path, recent_link)
+            else:
+                intent = ("ask", "", None, None)
+        else:  # 'context': only the change-this family stays silent without a model
+            recent_path, recent_link = _recent_design_source(source)
+            if recent_path or recent_link:
+                intent = ("edit", rest, recent_path, recent_link)
+            elif any(re.search(rf"\b{re.escape(p)}\b", text.casefold())
+                     for p in _DESIGN_ASK_PHRASES):
+                return None  # "change this" with no model anywhere is not ours
+            else:
+                intent = ("ask", "", None, None)
+    if intent[0] != "command" and intent[0] != "revision":
+        # Natural-language routing never hijacks chat when design cannot run:
+        # with design off or modelless, the message falls through untouched.
+        if not (cfg.get('design') or {}).get('enabled'):
+            return None
+        if _design_transport(cfg)[0] is None:
+            return None
+
+    adapter = gateway._delivery_adapter_for(source)
+    if adapter is None:
+        return {'action': 'skip', 'reason': 'design UI delivery unavailable'}
+    metadata = {'thread_id': source.thread_id} if source.thread_id else None
+
+    async def say(content):
+        await adapter.send(chat_id=source.chat_id, metadata=metadata, content=content)
+
+    if not (cfg.get('design') or {}).get('enabled'):
+        await say('Design is not set up: set design.enabled = true (PRINT_BUDDY__DESIGN__ENABLED=true) '
+                  'and configure a design model — see docs/DESIGN.md. Nothing was designed.')
+        return {'action': 'skip', 'reason': 'design not enabled'}
+    complete, _kind = _design_transport(cfg)
+    if complete is None:
+        await say('Design is enabled but no design model is configured: in standalone mode set '
+                  '[design] chat_url/model (or the [llm] values they inherit); in Hermes mode the '
+                  'profile needs the print_design auxiliary task. Nothing was designed.')
+        return {'action': 'skip', 'reason': 'design model not configured'}
+    engine = design.DesignEngine((cfg.get('paths') or {}).get('cache') or (_hermes_home() / 'cache'),
+                                 complete, cfg=cfg)
+    note = ''
+    try:
+        kind, instruction, file_path, link_url = intent
+        if kind == "revision":
+            result = await engine.run_turn(session, text)
+        elif kind == "ask":
+            await say('Drop the file you want to work on, paste its model link, or tell me '
+                      'what to make — e.g. "design me a 40 mm bracket with two holes". '
+                      'Nothing was designed.')
+            return {'action': 'skip', 'reason': 'design needs a model or a description'}
+        else:
+            if kind == "command":
+                attached = model_file(event) or _design_file(event)
+                linked = model_link(instruction)
+                if attached or linked:
+                    kind, file_path, link_url = "edit", attached, linked
+                elif not instruction:
+                    if session and session.get('status') == 'awaiting_revision':
+                        await say('A design is waiting for your call: reply with the change you want, '
+                                  'or /print-design <a new part> to start over.')
+                    else:
+                        await say('Usage: /print-design <what to make> — e.g. '
+                                  '/print-design a 40x20x3 plate with two 4 mm holes 30 mm apart; '
+                                  'or drop a model file / paste a link with the change you want.')
+                    return {'action': 'skip', 'reason': 'design usage shown'}
+                else:
+                    kind = "create"
+            if kind == "create":
+                if session:
+                    engine.cancel(session)  # a fresh design supersedes the old session
+                session = engine.start_session(owner, source.chat_id, instruction)
+                result = await engine.run_turn(session, instruction)
+            else:  # edit
+                if link_url:
+                    instruction = instruction.replace(link_url, '').strip(" \t—–-:,.")
+                if session:
+                    engine.cancel(session)  # a fresh design supersedes the old session
+                description = instruction or f"Edit {(file_path.name if file_path else 'the linked model')}"
+                if link_url:
+                    session = await asyncio.to_thread(
+                        engine.start_edit_session, owner, source.chat_id, description,
+                        None, link_url=link_url,
+                        fetcher=lambda url, folder: _fetch_design_link(url, folder))
+                else:
+                    session = await asyncio.to_thread(
+                        engine.start_edit_session, owner, source.chat_id, description,
+                        file_path)
+                note = design.source_note(session)
+                result = await engine.run_turn(
+                    session, instruction or
+                    'Show the model unchanged so I can preview it before asking for changes.')
+    except design.DesignError as exc:
+        await say(f'Design turn failed: {exc}')
+        return {'action': 'skip', 'reason': 'design turn failed'}
+    except Exception:
+        logger.exception('design turn failed unexpectedly')
+        await say('Design turn failed unexpectedly. Nothing was sliced or started.')
+        return {'action': 'skip', 'reason': 'design turn failed'}
+    session = result['session']
+    lines = [f"**Design turn {session['turns']}** — {design.summary_text(result)}"]
+    if note:
+        lines.append(note)
+    lines.append(f"Source: `{result['scad_path'].name}` (the .scad is the design; "
+                 'the STL reaches the printer only through the normal intake after you pick Slice it).')
+    if result.get('preview_path'):
+        lines.append(f"MEDIA:{result['preview_path']}")
+    else:
+        lines.append('(No preview could be rendered for this turn.)')
+    await say('\n'.join(lines))
+    timeout = (globals().get('_config').question_timeout_s() if globals().get('_config') else 1800)
+    answer = await _confirm(adapter, source, metadata, 'print-design',
+                            'What next for this design?', list(design.CHOICES), timeout)
+    if answer == design.SLICE_LABEL:
+        engine.mark_handed_off(session)
+        return await _design_handoff(event, gateway, adapter, session, result['stl_path'])
+    if answer == design.CHANGE_LABEL:
+        engine.awaiting_revision(session)
+        await say('Say the change in your next message — e.g. "make it 5 mm taller". '
+                  f'({design.MAX_TURNS} turns per design; this one has had {session["turns"]}.)')
+        return {'action': 'skip', 'reason': 'design awaiting revision'}
+    engine.cancel(session)
+    await say('Design cancelled. The files stay in the session folder for a while; nothing '
+              'was sliced or started.')
+    return {'action': 'skip', 'reason': 'design cancelled'}
+
+
 def receipt_text(text):
     text = str(text or '').strip()
     lower = text.casefold()
@@ -869,11 +1192,53 @@ async def maintenance_dispatch(event, gateway, **kwargs):
     return {'action': 'skip', 'reason': 'maintenance handled'}
 
 
+def _cancel_spool_question_print(listener, spool_sync, context):
+    """Cancel the paused print behind a pending spool question, then close the question.
+
+    The cancel itself is print_stop.cancel — the same path as /print-stop and
+    the paused alert's Cancel button: state re-read first, the file must still
+    match, one cancel, no retries, Bambu LAN printers get their LAN stop.
+    The question is closed only once the print is actually over (cancel
+    confirmed, or the printer had already left printing/paused on its own):
+    the pending record is cleared, which stops the reminders, and filament
+    usage is finalised exactly as a cancelled print leaves it — Moonraker
+    charged spools in real time up to the suspension, so nothing is resumed,
+    re-charged, archived or rebound here. When the cancel does not end the
+    print (refused, or sent but the printer still reports printing/paused),
+    this raises and the question stays open and answerable, so the operator
+    is never deadlocked by a failed cancel.
+    """
+    from print_buddy.hermes import print_stop
+    current = listener.load_runout_pause()
+    if current is None:
+        raise spool_sync.SpoolError('that spool question was already answered; nothing changed')
+    context = current
+    filename = context.get('filename') or ''
+    label = filename or 'the paused print'
+    before = print_stop.status()
+    if before.get('state') in print_stop.ACTIVE:
+        _sent, detail = print_stop.cancel(filename)
+        after = print_stop.status()
+        if after.get('state') in print_stop.ACTIVE:
+            raise spool_sync.SpoolError(
+                f'the print is still {after.get("state")} — {detail}')
+        outcome = f'Print cancelled: {detail}'
+    else:
+        outcome = (f'The print was already over (printer reports {before.get("state")}), '
+                   'so there was nothing to cancel.')
+    listener.clear_runout_pause()
+    return (f'{outcome} The spool question for {label} is closed and its reminders are off. '
+            'Filament usage stays paused for every spool: nothing was charged after the '
+            'question opened, and no spool binding changed.')
+
+
 async def runout_intake_dispatch(event, gateway, **kwargs):
-    """Answer a pending filament-runout pause. Inventory writes only.
+    """Answer a pending filament-runout pause. Inventory writes only — except cancel.
 
     A generic pause leaves no pending record, so an ordinary message is ignored.
-    Nothing here resumes, heats, or moves the printer.
+    Nothing here resumes, heats, or moves the printer. The one exception is an
+    unambiguous typed cancel ("cancel the print"), which routes to the same
+    print_stop.cancel path as the Cancel print button and /print-stop.
     """
     source = _discord_operator(event, gateway)
     text = str(getattr(event, 'text', '')).strip()
@@ -888,15 +1253,27 @@ async def runout_intake_dispatch(event, gateway, **kwargs):
         # printer until the listener itself is per-printer (Stage 2d). A
         # routed channel must not answer it or bind its printer's slots.
         return None
+    adapter = gateway._delivery_adapter_for(source)
+    metadata = {'thread_id': source.thread_id} if source.thread_id else None
+    if listener.parse_cancel_print_reply(text):
+        from print_buddy.hermes import spool_sync
+        try:
+            message = await asyncio.to_thread(_cancel_spool_question_print, listener, spool_sync, context)
+        except Exception as exc:
+            logger.exception('spool question cancel failed')
+            await adapter.send(chat_id=source.chat_id, metadata=metadata, content=(
+                f'The print was not cancelled: {exc} The spool question is still open and usage '
+                'is still paused — answer it, or try cancelling again.'))
+            return {'action': 'skip', 'reason': 'spool question cancel failed, question left open'}
+        await adapter.send(chat_id=source.chat_id, metadata=metadata, content=message)
+        return {'action': 'skip', 'reason': 'spool question print cancelled'}
     choice = listener.parse_runout_reply(text)
     if text.strip().casefold() in ('same', 'same spool', 'no change'):
         choice = {'status': 'same'}
-    adapter = gateway._delivery_adapter_for(source)
-    metadata = {'thread_id': source.thread_id} if source.thread_id else None
     if choice['status'] in ('need_choice', 'need_spool_number', 'need_new_fields', 'unparsed'):
         await adapter.send(chat_id=source.chat_id, metadata=metadata, content=(
             'Spool question is still open and usage is still paused. Reply with a spool number, '
-            '`same`, or: brand, material, color, grams. Nothing was changed.'))
+            '`same`, brand, material, color, grams — or `cancel the print`. Nothing was changed.'))
         return {'action': 'skip', 'reason': 'spool reply needs a choice'}
     from print_buddy.hermes import spool_sync
     try:
@@ -1968,6 +2345,21 @@ def alert_button_handlers(bot, adapter):
             await interaction.message.edit(view=None)
         except Exception:
             logger.debug('could not strip spool-question buttons', exc_info=True)
+        if action == 'cancel':
+            try:
+                from print_buddy.hermes import moonraker_event_listener as listener
+                from print_buddy.hermes import spool_sync
+                result = await asyncio.to_thread(_cancel_spool_question_print, listener, spool_sync,
+                                                 alert.get('context') or {})
+            except Exception as exc:
+                logger.exception('spool-question cancel failed')
+                await interaction.response.send_message(
+                    f'The print was not cancelled: {exc} The spool question is still open — answer it '
+                    'in text (a spool number, `same`, or `cancel the print`); the next reminder '
+                    're-posts its buttons.', ephemeral=True)
+                return
+            await interaction.response.send_message(result)
+            return
         if action == 'existing':
             await spool_question_select(interaction, alert)
             return
@@ -2238,7 +2630,22 @@ def register(ctx):
     # "Pick one below, or click Other..." line for this gateway (a locale overlay, not a core patch).
     with contextlib.suppress(Exception):
         ctx.register_locale('en', {'platform': {'discord': {'prompt': {'clarify_hint_buttons': ''}}}})
+    # AI design (#388): when the host offers the plugin LLM lane, register the
+    # design auxiliary task (the operator pins its model in the profile's
+    # auxiliary.print_design block) and keep the lane for design_dispatch.
+    # The standalone Router offers neither API, so both stay unset there.
+    global _HERMES_LLM
+    if hasattr(ctx, 'register_auxiliary_task'):
+        with contextlib.suppress(Exception):
+            ctx.register_auxiliary_task(
+                'print_design', display_name='Print design',
+                description='Model for /print-design turns (AI design with OpenSCAD). '
+                            'Pin a stronger model here than the chat model.',
+                defaults={'timeout': int((_config.cfg().get('design') or {}).get('timeout_s') or 180)})
+    if getattr(ctx, 'llm', None) is not None:
+        _HERMES_LLM = ctx.llm
     ctx.register_hook('pre_gateway_dispatch', guided_dispatch)
+    ctx.register_hook('pre_gateway_dispatch', design_dispatch)
     ctx.register_hook('pre_gateway_dispatch', maintenance_dispatch)
     ctx.register_hook('pre_gateway_dispatch', coldpull_dispatch)
     ctx.register_hook('pre_gateway_dispatch', lookup_dispatch)

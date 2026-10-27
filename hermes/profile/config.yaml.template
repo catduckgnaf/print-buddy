@@ -15,6 +15,15 @@ providers:
     key_env: LLM_API_KEY
     request_timeout_seconds: 90
     stale_timeout_seconds: 60
+# Auxiliary tasks: models Hermes calls for side jobs, separate from the chat
+# model above. Uncomment print_design to give /print-design (#388) a stronger
+# model than chat; chat itself stays on the profile model. The design timeout
+# comes from Print Buddy's [design] timeout_s, not from here.
+# auxiliary:
+#   print_design:
+#     provider: ${LLM_PROVIDER}
+#     model: sol
+#     reasoning_effort: medium
 agent:
   api_max_retries: 3
   reasoning_effort: medium

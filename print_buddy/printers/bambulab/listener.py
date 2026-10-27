@@ -350,12 +350,20 @@ class BambuListener:
 
 
 def main():
-    from .. import logs, printers
+    from ... import logs, printers
 
     logs.configure()
     adapter = printers.current()
-    if adapter.vendor.connection != "bambulab_lan":
-        log(f"configured printer uses connection {adapter.vendor.connection!r}, "
+    # Adapters have no ``vendor`` attribute: the connection is the
+    # adapter's ``connection`` property (the vendor profile's connection,
+    # or None when the model carries no vendor), with the adapter's
+    # ``transport`` as the fallback — a Bambu adapter reports
+    # ``transport = "bambulab_lan"`` even when its vendor is None (#409).
+    # The rest of the codebase asks through these two, never
+    # ``adapter.vendor.connection``.
+    connection = getattr(adapter, "connection", None) or getattr(adapter, "transport", None)
+    if connection != "bambulab_lan":
+        log(f"configured printer uses connection {connection!r}, "
             "not bambulab_lan; nothing to listen to")
         return 3
     printer_id = listeners.instance_printer_id()

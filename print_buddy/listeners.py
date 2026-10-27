@@ -191,6 +191,20 @@ def _instance_view(printer_id, data):
     return view
 
 
+def _run_domain_module(module):
+    """Run a listener domain module as ``__main__``.
+
+    A module under ``print_buddy.printers`` (the Bambu listener) is
+    already in ``sys.modules`` by the time this runs: printer discovery
+    imports every vendor-package module while looking for ``MODEL``.
+    ``runpy`` warns about that ("found in sys.modules ... prior to
+    execution", #409) and would leave the earlier import in place, so
+    drop the stale entry first and let ``runpy`` execute it fresh.
+    """
+    sys.modules.pop(module, None)
+    runpy.run_module(module, run_name="__main__")
+
+
 def launch(data=None, printer_id=None):
     """Run a printer instance's listener in this process.
 
@@ -219,7 +233,7 @@ def launch(data=None, printer_id=None):
         if not domain.implemented:
             print(f"listener: domain {domain.name!r} has no listener yet; not starting one")
             return 3
-        runpy.run_module(domain.module, run_name="__main__")
+        _run_domain_module(domain.module)
         return 0
 
     from . import settings
@@ -243,7 +257,7 @@ def launch(data=None, printer_id=None):
     # exactly like the instance identity above.
     from . import logs
     logs.bind(printer_id=printer_id)
-    runpy.run_module(domain.module, run_name="__main__")
+    _run_domain_module(domain.module)
     return 0
 
 

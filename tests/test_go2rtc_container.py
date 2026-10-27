@@ -355,5 +355,50 @@ class DeploymentContractTests(unittest.TestCase):
         self.assertIn("python3 -m print_buddy.go2rtc", text)
 
 
+class FanoutFrameUrlTests(unittest.TestCase):
+    """#311 one-upstream rule: stills consumers use the fan-out only
+    when go2rtc should actually be running."""
+
+    def fanout(self, data, binary=True):
+        from unittest import mock
+        if binary:
+            fake = tempfile.NamedTemporaryFile(delete=False)
+            fake.close()
+            os.chmod(fake.name, 0o755)
+            path = fake.name
+        else:
+            path = "/nonexistent/go2rtc"
+        with mock.patch.dict(os.environ, {"GO2RTC_BIN": path}):
+            return go2rtc.fanout_frame_url(data)
+
+    def test_capture_on_with_binary_and_source(self):
+        self.assertEqual(self.fanout(make_data()), go2rtc.FRAME_URL)
+        self.assertEqual(go2rtc.FRAME_URL,
+                         "http://127.0.0.1:1984/api/frame.jpeg?src=camera")
+
+    def test_live_viewing_on_with_binary_and_source(self):
+        self.assertEqual(self.fanout(make_live_data()), go2rtc.FRAME_URL)
+
+    def test_neither_feature_on_means_no_fanout(self):
+        self.assertIsNone(self.fanout(make_data(capture_enabled=False)))
+
+    def test_no_binary_means_no_fanout(self):
+        self.assertIsNone(self.fanout(make_data(), binary=False))
+
+    def test_no_source_means_no_fanout(self):
+        data = make_data()
+        data["services"]["camera_snapshot_url"] = ""
+        self.assertIsNone(self.fanout(data))
+
+    def test_unresolvable_source_reads_as_no_fanout(self):
+        data = make_data()
+        data["services"]["camera_snapshot_url"] = "::::"
+        self.assertIsNone(self.fanout(data))
+
+    def test_frame_url_is_the_one_timelapse_capture_uses(self):
+        from print_buddy.hermes import timelapse_capture
+        self.assertEqual(timelapse_capture.GO2RTC_FRAME_URL, go2rtc.FRAME_URL)
+
+
 if __name__ == "__main__":
     unittest.main()

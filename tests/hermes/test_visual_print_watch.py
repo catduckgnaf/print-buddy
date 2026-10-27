@@ -295,3 +295,53 @@ def test_default_and_higher_sensitivity_alert_on_every_stall(monkeypatch):
     for level in (3, 4, 5):
         alerts = _stall_alerts(monkeypatch, level, ("ok", ""))
         assert alerts and "stalled_layers" in alerts[0], level
+
+
+DIRECT_URL = "http://printer.example/webcam/?action=snapshot"
+FANOUT_URL = "http://127.0.0.1:1984/api/frame.jpeg?src=camera"
+
+
+def _record_snapshot_requests(monkeypatch, fanout, fail_urls=()):
+    """Route _camera_snapshot_bytes at a fake transport; return the URLs hit."""
+    seen = []
+
+    class Response:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return False
+
+        def read(self, _n=-1):
+            return _jpeg()
+
+    def fake_open(req, timeout=0):
+        seen.append(req.full_url)
+        if req.full_url in fail_urls:
+            raise ConnectionError("refused")
+        return Response()
+
+    monkeypatch.setattr(mel, "_camera_url", lambda: DIRECT_URL)
+    monkeypatch.setattr(mel, "_config", type("Cfg", (), {"cfg": staticmethod(lambda: {})})())
+    monkeypatch.setattr(mel.go2rtc, "fanout_frame_url", lambda data: fanout)
+    monkeypatch.setattr(mel, "log", lambda line: None)
+    monkeypatch.setattr(mel.urllib.request, "urlopen", fake_open)
+    return seen
+
+
+def test_watchdog_snapshot_uses_go2rtc_fanout_when_it_is_running(monkeypatch):
+    seen = _record_snapshot_requests(monkeypatch, FANOUT_URL)
+    assert mel._camera_snapshot_bytes() == _jpeg()
+    assert seen == [FANOUT_URL]  # the direct camera URL is never opened
+
+
+def test_watchdog_snapshot_is_direct_when_no_fanout_feature_is_on(monkeypatch):
+    seen = _record_snapshot_requests(monkeypatch, None)
+    assert mel._camera_snapshot_bytes() == _jpeg()
+    assert seen == [DIRECT_URL]
+
+
+def test_watchdog_snapshot_falls_back_direct_when_the_fanout_fails(monkeypatch):
+    seen = _record_snapshot_requests(monkeypatch, FANOUT_URL, fail_urls={FANOUT_URL})
+    assert mel._camera_snapshot_bytes() == _jpeg()
+    assert seen == [FANOUT_URL, DIRECT_URL]  # sequential fallback, never parallel

@@ -93,17 +93,25 @@ DOMAINS = {
         module="print_handy.printers.bambulab.listener",
         runtime="bambu_event_listener", transport="Bambu LAN MQTT (long-lived)"),
     "prusalink": ListenerDomain(
-        name="prusalink", connection="prusalink", availability=PLANNED,
-        transport="PrusaLink HTTP polling (#299 Stage C)"),
+        name="prusalink", connection="prusalink", availability=IMPLEMENTED,
+        module="print_handy.hermes.family_event_listener",
+        runtime="prusalink_event_listener",
+        transport="PrusaLink HTTP status polling (#460)"),
     "elegoo_sdcp": ListenerDomain(
-        name="elegoo_sdcp", connection="elegoo_sdcp", availability=PLANNED,
-        transport="Elegoo SDCP websocket (#299 Stage C)"),
+        name="elegoo_sdcp", connection="elegoo_sdcp", availability=IMPLEMENTED,
+        module="print_handy.hermes.family_event_listener",
+        runtime="elegoo_sdcp_event_listener",
+        transport="Elegoo SDCP status polling (#460)"),
     "octoprint": ListenerDomain(
-        name="octoprint", connection="octoprint", availability=PLANNED,
-        transport="OctoPrint HTTP (evaluated in #299 Stage C)"),
+        name="octoprint", connection="octoprint", availability=IMPLEMENTED,
+        module="print_handy.hermes.family_event_listener",
+        runtime="octoprint_event_listener",
+        transport="OctoPrint HTTP status polling (#460)"),
     "flashforge_stock": ListenerDomain(
-        name="flashforge_stock", connection="flashforge_stock", availability=PLANNED,
-        transport="Stock Flashforge LAN (evaluated in #299 Stage C)"),
+        name="flashforge_stock", connection="flashforge_stock", availability=IMPLEMENTED,
+        module="print_handy.hermes.family_event_listener",
+        runtime="flashforge_stock_event_listener",
+        transport="Stock Flashforge LAN HTTP status polling (#460)"),
     "offline": ListenerDomain(
         name="offline", connection="offline", availability=NONE,
         transport="none: Print Handy never contacts the printer"),

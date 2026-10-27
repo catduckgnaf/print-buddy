@@ -1,11 +1,11 @@
 """#299: the listener registry behind the gate, supervisor and healthcheck.
 
 One registry (print_handy.listeners) maps every vendor connection to its
-listener domain: implemented (moonraker, and bambulab_lan since Stage B),
-planned (domain known, no listener yet) or none (offline). The planned/none
-distinction is what lets the supervisor idle a zero-listener configuration
-instead of failing it, while an unresolved configuration still fails
-distinctly (#256 semantics).
+listener domain: implemented (moonraker, bambulab_lan since Stage B, and
+the four polling families since #460), planned (domain known, no listener
+yet) or none (offline). The planned/none distinction is what lets the
+supervisor idle a zero-listener configuration instead of failing it, while
+an unresolved configuration still fails distinctly (#256 semantics).
 Offline: registry, fake settings and mocks only.
 """
 import importlib.util
@@ -28,14 +28,15 @@ class RegistryShapeTests(unittest.TestCase):
                 self.assertEqual(domain.connection, connection)
                 self.assertEqual(domain.name, connection)
 
-    def test_implemented_domains_are_moonraker_and_bambulab(self):
+    def test_implemented_domains_cover_every_connection_but_offline(self):
         implemented = [c for c, d in listeners.DOMAINS.items() if d.implemented]
-        self.assertEqual(implemented, ["moonraker", "bambulab_lan"])
+        self.assertEqual(implemented, ["moonraker", "bambulab_lan", "prusalink",
+                                       "elegoo_sdcp", "octoprint", "flashforge_stock"])
         self.assertEqual(listeners.implemented_connections(),
-                         ("moonraker", "bambulab_lan"))
+                         tuple(implemented))
         # Backwards-compatible name the #256 code and tests already use.
         self.assertEqual(healthcheck.LISTENER_CONNECTIONS,
-                         ("moonraker", "bambulab_lan"))
+                         tuple(implemented))
 
     def test_implemented_domain_points_at_a_real_module_and_runtime(self):
         for connection in ("moonraker", "bambulab_lan"):
@@ -51,14 +52,31 @@ class RegistryShapeTests(unittest.TestCase):
         self.assertEqual(listeners.DOMAINS["bambulab_lan"].module,
                          "print_handy.printers.bambulab.listener")
 
-    def test_planned_and_none_are_distinct_states(self):
+    def test_family_domains_point_at_the_shared_polling_listener(self):
+        # #460: one module serves the four polling families; the registry
+        # runtime for each must equal the listener's own runtime table,
+        # or the healthcheck would expect a heartbeat that never comes.
+        from print_handy.hermes import family_event_listener
         for connection in ("prusalink", "elegoo_sdcp",
                            "octoprint", "flashforge_stock"):
             with self.subTest(connection=connection):
                 domain = listeners.DOMAINS[connection]
-                self.assertEqual(domain.availability, listeners.PLANNED)
-                self.assertIsNone(domain.module)
-                self.assertFalse(domain.implemented)
+                self.assertEqual(domain.availability, listeners.IMPLEMENTED)
+                self.assertEqual(domain.module,
+                                 "print_handy.hermes.family_event_listener")
+                self.assertIsNotNone(importlib.util.find_spec(domain.module))
+                self.assertEqual(domain.runtime,
+                                 family_event_listener.RUNTIMES[connection])
+
+    def test_planned_and_none_are_distinct_states(self):
+        # No connection is PLANNED any more (#460 delivered the last four);
+        # the state itself stays distinct, pinned on a fabricated domain.
+        planned = listeners.ListenerDomain(
+            name="someday", connection="prusalink",
+            availability=listeners.PLANNED)
+        self.assertEqual(planned.availability, listeners.PLANNED)
+        self.assertIsNone(planned.module)
+        self.assertFalse(planned.implemented)
         offline = listeners.DOMAINS["offline"]
         self.assertEqual(offline.availability, listeners.NONE)
         self.assertFalse(offline.implemented)
@@ -87,19 +105,31 @@ class RegistryClassificationTests(unittest.TestCase):
             with self.subTest(model=model):
                 self.assertTrue(healthcheck.listener_required(data(model)))
 
-    def test_no_other_model_requires_a_listener_yet(self):
+    def test_family_models_require_the_listener(self):
+        # #460: the polling families flipped from planned to implemented.
         for model in ("flashforge_stock.ad5x",
                       "octoprint.marlin", "prusa.mk4s", "prusa.coreone",
                       "elegoo_sdcp.centauricarbon"):
             with self.subTest(model=model):
-                self.assertFalse(healthcheck.listener_required(data(model)))
+                self.assertTrue(healthcheck.listener_required(data(model)))
 
 
 class LauncherTests(unittest.TestCase):
     def test_planned_domain_is_nothing_to_run_not_a_failure(self):
+        planned = listeners.ListenerDomain(
+            name="someday", connection="prusalink",
+            availability=listeners.PLANNED)
         with mock.patch.object(healthcheck, "listener_domain",
-                               return_value=listeners.DOMAINS["prusalink"]):
+                               return_value=planned):
             self.assertEqual(listeners.launch({}), 3)
+
+    def test_family_domain_runs_the_shared_polling_module(self):
+        with mock.patch.object(healthcheck, "listener_domain",
+                               return_value=listeners.DOMAINS["prusalink"]), \
+                mock.patch.object(listeners.runpy, "run_module") as run_module:
+            self.assertEqual(listeners.launch({}), 0)
+        run_module.assert_called_once_with(
+            "print_handy.hermes.family_event_listener", run_name="__main__")
 
     def test_bambu_domain_runs_its_registered_module(self):
         with mock.patch.object(healthcheck, "listener_domain",
@@ -222,8 +252,15 @@ class MultiPrinterLaunchTests(unittest.TestCase):
             self.assertEqual(listeners.main(["--printer", "ghost"]), 2)
 
     def test_printer_without_a_listener_domain_is_nothing_to_run(self):
+        # Every real model has a listener since #460, so the nothing-to-run
+        # path is pinned with a fabricated planned domain.
+        planned = listeners.ListenerDomain(
+            name="someday", connection="prusalink",
+            availability=listeners.PLANNED)
         roster = {"printers": [{"id": "prusa-two", "model": "prusa.mk4s"}]}
-        with mock.patch.object(listeners.runpy, "run_module") as run_module:
+        with mock.patch.object(healthcheck, "listener_domain",
+                               return_value=planned), \
+                mock.patch.object(listeners.runpy, "run_module") as run_module:
             self.assertEqual(listeners.launch(roster, printer_id="prusa-two"), 3)
         run_module.assert_not_called()
 

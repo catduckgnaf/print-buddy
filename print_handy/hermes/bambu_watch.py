@@ -203,17 +203,22 @@ class BambuPrintMonitor:
     posts to chat. It holds no printer-control callable at all — the
     watchdog's Pause is the operator pressing the alert's button, which the
     gateway routes to the adapter's control("pause") (print_stop.pause).
+    The pause post (#460, via family_control.PauseAlerts) works the same
+    way: a printing -> paused transition posts the shared pause alert,
+    whose Resume/Cancel buttons the gateway routes to family_control.
     """
 
     def __init__(self, filename, *, status_fn, camera_fn, post,
                  watch=None, verdict=None, alert=None, changed=None,
                  camera_source_fn=None, begin_fn=None, encode_fn=None,
+                 pause_alerts=None,
                  clock=time.monotonic, wall=time.time, sleep=time.sleep,
                  poll_s=POLL_S, capture_poll_s=5.0):
         self.filename = filename or ""
         self._status_fn = status_fn
         self._camera_fn = camera_fn
         self._post = post
+        self._pause_alerts = pause_alerts
         self._watch = watch
         self._verdict = verdict
         self._alert = alert
@@ -346,9 +351,13 @@ class BambuPrintMonitor:
             if state in _ACTIVE:
                 if fname and self.filename and fname != self.filename:
                     log(f"bambu monitor: a different print {fname!r} is running; {self.filename!r} is gone")
+                    if self._pause_alerts:
+                        self._pause_alerts.note("standby", st)
                     self._stop_capture("superseded")
                     return None
                 seen_active = True
+                if self._pause_alerts:
+                    self._pause_alerts.note(state, st)
                 self.poll_active(st)
                 if not capture_attempted:
                     capture_attempted = True
@@ -360,6 +369,8 @@ class BambuPrintMonitor:
                 self._sleep_between_polls(tick=state == "printing")
             elif state in _TERMINAL:
                 if seen_active or not self.filename or fname == self.filename:
+                    if self._pause_alerts:
+                        self._pause_alerts.note(state, st)
                     session = self._stop_capture(_TERMINAL[state])
                     self.outcome = self._terminal_post(state, session)
                     return self.outcome
@@ -548,13 +559,15 @@ def start_monitor(adapter, filename, *, post=None, camera_fn=None, status_fn=Non
             interval = timelapse_capture.capture_settings(_config.cfg())["capture_interval_s"]
         except Exception:
             interval = 5.0
+        from . import family_control
         monitor = BambuPrintMonitor(
             filename,
             status_fn=status_fn or (lambda: adapter.normalize_status(adapter.client().snapshot())),
             camera_fn=camera_fn or adapter.camera_snapshot,
             post=post or _default_post,
             watch=watch, verdict=verdict, alert=alert,
-            camera_source_fn=camera_source_fn, capture_poll_s=interval)
+            camera_source_fn=camera_source_fn, capture_poll_s=interval,
+            pause_alerts=family_control.pause_alerts_for(adapter, filename))
         factory = thread_factory or (lambda target: threading.Thread(target=target, daemon=True,
                                                                      name=f"bambu-watch-{filename}"))
         thread = factory(monitor.run)

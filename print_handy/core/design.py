@@ -263,6 +263,17 @@ def fetch_link_source(url, target_dir) -> Path:
                     f"that MakerWorld link has {len(job['sources'])} profiles and no clear "
                     "default, so design cannot pick one; drop the file you want edited")
             return Path(mj.maker_download(job, chosen, target_dir))
+        if "thingiverse.com" in host:
+            job = mj.thingiverse_inventory(str(url))
+            rows = [row for row in job["sources"]
+                    if Path(str(row.get("name") or "")).suffix.lower() in (".3mf", ".stl")]
+            if not rows:
+                raise DesignError("that Thingiverse link has no STL or 3MF file to edit")
+            if len(rows) > 1:
+                raise DesignError(
+                    f"that Thingiverse link has {len(rows)} model files, so design cannot pick "
+                    "one; drop the file you want edited")
+            return Path(mj.thingiverse_download(job, rows[0], target_dir))
         job = mj.printables_inventory(str(url))
         rows = [row for row in job["sources"]
                 if Path(str(row.get("name") or "")).suffix.lower() in (".3mf", ".stl")]

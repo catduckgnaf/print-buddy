@@ -933,13 +933,12 @@ async def prepare_link(event, adapter, state, root, timeout=None, reuse=None, pr
         elif upload:
             job = upload_job(upload)
         else:
-            job = await asyncio.to_thread(mj.maker_inventory if 'makerworld.com' in urlsplit(url).hostname
-                                          else mj.printables_inventory, url)
+            job = await asyncio.to_thread(mj.inventory_for_url, url)
         rows = job.get('sources', [])
-        if job['site'] == 'printables':
+        if job['site'] in ('printables', 'thingiverse'):
             rows = [r for r in rows if Path(r.get('name', '')).suffix.lower() in {'.3mf', '.stl'}]
         if not rows:
-            raise ValueError('source inventory contains no selectable geometry')
+            raise ValueError(job.get('no_geometry_reason') or 'source inventory contains no selectable geometry')
         hint = re.fullmatch(r'profileId-(\d+)', urlsplit(url or '').fragment or '')
         suggested = [r for r in rows if hint and str(r.get('instance_id')) == hint[1]]
         if job['site'] == 'makerworld':
@@ -993,8 +992,8 @@ async def prepare_link(event, adapter, state, root, timeout=None, reuse=None, pr
         folder = mj.intake_folder(mj.ARCHIVE, job['slug'], iid)
         folder.mkdir(parents=True, exist_ok=False)
         job.update(url=url, intake_id=iid, hardware=state, selected_source=chosen)
-        fetch = copy_upload if (reuse or job['site'] == 'upload') else {'makerworld': mj.maker_download}.get(
-            job['site'], mj.printables_download)
+        fetch = copy_upload if (reuse or job['site'] == 'upload') else (
+            lambda j, chosen, dest: mj.download_for_site(j, chosen, dest))
         path = await _with_stop(
             adapter, source, key, metadata, None,
             asyncio.to_thread(fetch, job, chosen, folder / 'source'))

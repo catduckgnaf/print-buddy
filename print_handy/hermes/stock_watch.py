@@ -136,11 +136,15 @@ class StockPrintMonitor:
 
     Alert-only by construction, like the Bambu monitor: it reads status
     and the camera and posts to chat; the only printer write it can make
-    is opening/closing the camera stream it is capturing from.
+    is opening/closing the camera stream it is capturing from. Its pause
+    post (#460) goes through family_control.PauseAlerts: a printing ->
+    paused transition posts the shared pause alert, whose Resume/Cancel
+    buttons actuate only when an operator presses one — the monitor
+    itself holds no job-control callable.
     """
 
     def __init__(self, filename, *, status_fn, camera_url_fn, stream_fn, post,
-                 begin_fn=None, encode_fn=None,
+                 begin_fn=None, encode_fn=None, pause_alerts=None,
                  clock=time.monotonic, wall=time.time, sleep=time.sleep,
                  poll_s=POLL_S, capture_poll_s=5.0):
         self.filename = filename or ""
@@ -148,6 +152,7 @@ class StockPrintMonitor:
         self._camera_url_fn = camera_url_fn
         self._stream_fn = stream_fn
         self._post = post
+        self._pause_alerts = pause_alerts
         self._begin_fn = begin_fn or self._begin_default
         self._encode_fn = encode_fn or _default_encode
         self._clock = clock
@@ -271,9 +276,13 @@ class StockPrintMonitor:
                 if fname and self.filename and fname != self.filename:
                     log(f"stock monitor: a different print {fname!r} is running; "
                         f"{self.filename!r} is gone")
+                    if self._pause_alerts:
+                        self._pause_alerts.note("standby", st)
                     self._stop_capture("superseded")
                     return None
                 seen_active = True
+                if self._pause_alerts:
+                    self._pause_alerts.note(state, st)
                 if not capture_attempted:
                     capture_attempted = True
                     self._session = self._begin_capture()
@@ -284,6 +293,8 @@ class StockPrintMonitor:
                 self._sleep(self._capture_poll_s if self._session is not None else self._poll_s)
             elif state in _TERMINAL:
                 if seen_active or not self.filename or fname == self.filename:
+                    if self._pause_alerts:
+                        self._pause_alerts.note(state, st)
                     session = self._stop_capture(_TERMINAL[state])
                     self.outcome = self._terminal_post(state, session)
                     return self.outcome
@@ -321,12 +332,14 @@ def start_monitor(adapter, filename, *, post=None, thread_factory=None):
             interval = timelapse_capture.capture_settings(_config.cfg())["capture_interval_s"]
         except Exception:
             interval = 5.0
+        from . import family_control
         monitor = StockPrintMonitor(
             filename,
             status_fn=lambda: adapter.normalize_status(adapter.client().detail()),
             camera_url_fn=lambda: stock_camera.stream_url_for(adapter.client(), host),
             stream_fn=lambda action: stock_camera.set_stream(adapter.client(), action),
             post=post or _default_post,
+            pause_alerts=family_control.pause_alerts_for(adapter, filename),
             capture_poll_s=interval)
         factory = thread_factory or (lambda target: threading.Thread(target=target, daemon=True,
                                                                      name=f"stock-watch-{filename}"))

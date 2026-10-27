@@ -33,13 +33,14 @@ class ListenerGateDecisionTests(unittest.TestCase):
             with self.subTest(model=model):
                 self.assertTrue(healthcheck.listener_required(data(model)))
 
-    def test_non_listener_models_do_not(self):
-        # flashforge_stock forbids a Moonraker URL in settings; octoprint
-        # never populates the listener's websocket URL. Both SystemExited
-        # the listener before #256, and neither has a domain listener yet.
-        for model in ("flashforge_stock.ad5x", "octoprint.marlin"):
+    def test_family_models_require_the_listener(self):
+        # #460: the polling families have domain listeners now, so their
+        # models require one like Moonraker's and Bambu's do. (Before
+        # #460 flashforge_stock and octoprint models required none.)
+        for model in ("flashforge_stock.ad5x", "octoprint.marlin",
+                      "prusa.mk4s", "elegoo_sdcp.centauricarbon"):
             with self.subTest(model=model):
-                self.assertFalse(healthcheck.listener_required(data(model)))
+                self.assertTrue(healthcheck.listener_required(data(model)))
 
     def test_every_registered_model_is_classified_by_its_connection(self):
         from print_handy import listeners
@@ -62,11 +63,15 @@ class ListenerGateCliTests(unittest.TestCase):
     def test_bambulab_connection_starts_the_listener(self):
         self.assertEqual(self.run_gate("bambulab_lan"), 0)
 
-    def test_other_connections_skip_the_listener(self):
-        for connection in ("flashforge_stock", "octoprint", "offline",
+    def test_family_connections_start_the_listener(self):
+        # #460: the polling families are implemented domains now.
+        for connection in ("flashforge_stock", "octoprint",
                            "prusalink", "elegoo_sdcp"):
             with self.subTest(connection=connection):
-                self.assertEqual(self.run_gate(connection), 3)
+                self.assertEqual(self.run_gate(connection), 0)
+
+    def test_offline_connection_skips_the_listener(self):
+        self.assertEqual(self.run_gate("offline"), 3)
 
     def test_unresolved_configuration_is_a_distinct_failure(self):
         with mock.patch.object(healthcheck, "listener_connection",
@@ -90,8 +95,10 @@ class ListenerGatePerPrinterCliTests(unittest.TestCase):
     def test_moonraker_printer_starts_its_listener(self):
         self.assertEqual(self.run_gate(["--printer", "moon-two"]), 0)
 
-    def test_printer_without_a_listener_domain_skips(self):
-        self.assertEqual(self.run_gate(["--printer", "prusa-two"]), 3)
+    def test_family_printer_starts_its_listener(self):
+        # #460: prusalink is an implemented domain, so its printer gates 0
+        # (before #460 this same roster entry skipped with 3).
+        self.assertEqual(self.run_gate(["--printer", "prusa-two"]), 0)
 
     def test_unknown_printer_is_a_configuration_failure(self):
         self.assertEqual(self.run_gate(["--printer", "ghost"]), 2)

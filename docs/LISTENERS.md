@@ -24,17 +24,18 @@ supervisor or healthcheck edits.
 |---|---|---|
 | `moonraker` | implemented: `print_handy.hermes.moonraker_event_listener` | Moonraker websocket |
 | `bambulab_lan` | implemented: `print_handy.printers.bambulab.listener` | Bambu LAN MQTT, long-lived |
-| `prusalink` | planned (#299 Stage C) | PrusaLink HTTP polling |
-| `elegoo_sdcp` | planned (#299 Stage C) | Elegoo SDCP websocket |
-| `octoprint` | planned (evaluated in Stage C) | OctoPrint HTTP |
-| `flashforge_stock` | planned (evaluated in Stage C) | Stock Flashforge LAN |
+| `prusalink` | implemented: `print_handy.hermes.family_event_listener` | PrusaLink HTTP status polling |
+| `elegoo_sdcp` | implemented: `print_handy.hermes.family_event_listener` | Elegoo SDCP status polling |
+| `octoprint` | implemented: `print_handy.hermes.family_event_listener` | OctoPrint HTTP status polling |
+| `flashforge_stock` | implemented: `print_handy.hermes.family_event_listener` | Stock Flashforge LAN HTTP status polling |
 | `offline` | none, by definition | Print Handy never contacts the printer |
 
-A domain with no listener yet is a normal state, not an error: the
-supervisor starts nothing for it and a configuration with no children at all
-idles instead of exiting. A configuration that cannot be resolved at all is
-different — the supervisor stops with the settings error rather than
-guessing which children to run.
+Every connection except `offline` now has a delivered listener (#460
+completed the polling families). A domain with no listener yet is a normal
+state, not an error: the supervisor starts nothing for it and a
+configuration with no children at all idles instead of exiting. A
+configuration that cannot be resolved at all is different — the supervisor
+stops with the settings error rather than guessing which children to run.
 
 ## The normalised contract
 
@@ -104,6 +105,70 @@ With `[bambu] lan_host`/`lan_serial` unset, the Bambu listener starts but
 idles — heartbeat alive, `printer_connected=False`, no network contact —
 so an offline Bambu configuration behaves exactly as it did before the
 domain had a listener. See [Bambu Lab printers](BAMBU-LAB.md#lan-status-read-only-opt-in).
+
+Since #460 the listener's `main()` wires its events to a posting sink
+(`family_control.BambuEventSink`): the transitions it always detected —
+started / paused / cancelled / completion / error — now post for prints
+started outside Print Handy. Claimed prints (below) stay silent here;
+they belong to their launched-print monitor.
+
+## Start/pause parity: the polling families (#460)
+
+Moonraker's listener has always posted the full lifecycle — starts
+(launched and external), pauses with Resume/Cancel buttons, completions.
+#460 gives every other family the same contract through one shared
+mechanism (`print_handy/hermes/family_control.py`), not five copies:
+
+- **Launched prints** are claimed by the print path
+  (`model_job.claim_start_announcement`, the same claim the Moonraker
+  listener honours) before the family's start command is sent. Their
+  pause alerts come from their launched-print monitor: each `*_watch`
+  monitor feeds its polls to `family_control.PauseAlerts`, which posts
+  exactly one pause alert per printing → paused episode and retires the
+  print's alerts when it ends.
+- **External prints** (started at the printer or from another app) are
+  the listener domain's. The four polling families share one listener
+  (`print_handy/hermes/family_event_listener.py`): it polls the family's
+  normalised status every 15 s — the same read its monitor uses — and
+  runs the Moonraker state machine over it. The Bambu domain does the
+  same through its event sink.
+- **Resume/Cancel** on a family pause alert reach the family's *own*
+  adapter `control()` operation (`family_control.FamilyControl`), routed
+  by the alert record's connection marker in
+  `print_alert_buttons.handle_click` — never the Moonraker transport.
+  The press re-reads the family's state first, refuses when the state no
+  longer matches or a different file is loaded, sends at most one
+  command, and reports the read-back — the Moonraker discipline. Every
+  family verifies state before resuming this way, so no family is
+  offered a blind Resume. Nothing actuates without an operator press:
+  posters and listeners hold no control callable.
+- **No stale buttons.** When a print ends, its pause alerts are retired
+  (buttons stripped, headline updated) by whichever owner sees the end
+  first — the monitor or the listener; retiring is idempotent. A pause
+  resolved at the printer leaves the alert live, exactly as Moonraker's
+  does: its buttons re-read state on a press and refuse truthfully.
+- **Baseline rule.** A print already active at a listener's first
+  successful read is never classified: no start, pause or terminal post
+  for it. Only a witnessed inactive → active transition classifies a
+  print, via the start-claim file. The polling listener persists its
+  classification, so a restart mid-print restores it without re-posting
+  the start. A launched-print monitor that dies mid-print is not
+  restarted (the pre-existing monitor limitation); the listener still
+  retires that print's pause alerts when it ends.
+
+Per-family event coverage (all rows: pause post with Resume + Cancel,
+external start post, completion attaches as before #460):
+
+| Family | Pause post source (launched) | External prints | Resume / Cancel transport |
+|---|---|---|---|
+| `bambulab_lan` | `bambu_watch` monitor | Bambu listener sink | adapter `control()` over Bambu LAN MQTT |
+| `prusalink` | `prusa_watch` monitor | polling listener | adapter `control()` over PrusaLink HTTP (`/api/v1/job`) |
+| `elegoo_sdcp` | `elegoo_watch` monitor | polling listener | adapter `control()` over SDCP (pause/resume/stop commands) |
+| `flashforge_stock` | `stock_watch` monitor | polling listener | adapter `control()` over stock LAN HTTP (`jobCtl_cmd`; resume is spelled `continue`) |
+| `octoprint` | `octo_watch` monitor | polling listener | adapter `control()` over OctoPrint HTTP (`/api/job`; stop is spelled `cancel`) |
+
+On buttonless standalone platforms (Telegram/Matrix) the pause alert is
+plain text, exactly as the Moonraker listener's is there.
 
 ## Instances
 

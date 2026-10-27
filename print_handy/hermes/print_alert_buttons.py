@@ -337,11 +337,22 @@ def create_and_bind_insertion(slot: int, values: dict[str, Any], spool_sync) -> 
     return f"Created spool #{made['spool_id']}; slot {slot} → #{made['spool_id']} ({record['name']}). Inventory updated; printer untouched."
 
 
-def post_with_buttons(token: str, channel_id: str, content: str, kind: str, filename: str) -> bool:
-    """Post the alert with buttons. False means the caller should fall back to plain text."""
+def post_with_buttons(token: str, channel_id: str, content: str, kind: str, filename: str,
+                      connection: str | None = None, printer_id: str | None = None) -> bool:
+    """Post the alert with buttons. False means the caller should fall back to plain text.
+
+    A family pause alert (#460) names its connection (and roster printer
+    id) so handle_click routes the press to that family's own control;
+    Moonraker alerts pass neither and their records are unchanged.
+    """
     if not token or not channel_id:
         return False
-    aid = record(kind, filename)
+    extra: dict[str, Any] = {}
+    if connection:
+        extra["connection"] = connection
+    if printer_id:
+        extra["printer_id"] = printer_id
+    aid = record(kind, filename, **extra)
     body = json.dumps({"content": content[:1990], "components": components(aid, kind),
                        "allowed_mentions": {"parse": []}}).encode()
     req = urllib.request.Request(f"https://discord.com/api/v10/channels/{channel_id}/messages", data=body,
@@ -518,6 +529,21 @@ def handle_click(action: str, alert: dict[str, Any] | None) -> str:
             pc._call("/printer/print/pause", method="POST", timeout=15)
             return "Pause sent. Check the printer screen for the current state."
         return "That visual alert action is not recognized. Nothing sent."
+    connection = alert.get("connection")
+    if connection:
+        # A non-Moonraker family's pause alert (#460): the press goes to
+        # that family's own adapter control (family_control), with its
+        # state re-read and filename check — never the Moonraker path
+        # below, whose transport only speaks to Moonraker endpoints.
+        from . import family_control
+        control = family_control.control_for(alert.get("printer_id"))
+        if control is None or control.connection != connection:
+            return "That alert belongs to a printer I can't control from here. Nothing sent."
+        if action == "resume":
+            return control.resume(filename)[1]
+        if action == "cancel":
+            return control.cancel(filename)[1]
+        return "That alert action is not recognized. Nothing sent."
     st = pc.status()
     if action == "resume":
         return pc.resume(filename)[1]

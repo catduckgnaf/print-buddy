@@ -149,7 +149,17 @@ else
 fi
 connected=false
 for _ in $(seq 30); do
-    if compose exec -T combined python3 -c "import json, sys; d = json.load(open('/data/hermes/state/listener_health.json')); sys.exit(0 if d.get('moonraker_connected') else 1)" > /dev/null 2>&1; then
+    # Since the Stage 2b listener rework (#334) the heartbeat is per-printer:
+    # <state>/printers/<id>/listener_health.json (print_buddy/healthcheck.py).
+    if compose exec -T combined python3 -c "
+import glob, json, sys
+connected = False
+for path in glob.glob('/data/hermes/state/printers/*/listener_health.json'):
+    try:
+        connected = connected or bool(json.load(open(path)).get('moonraker_connected'))
+    except Exception:
+        pass
+sys.exit(0 if connected else 1)" > /dev/null 2>&1; then
         connected=true
         break
     fi

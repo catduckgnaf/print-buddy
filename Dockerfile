@@ -105,6 +105,7 @@ RUN git init . && git remote add origin https://github.com/Donkie/Spoolman.git &
     printf '%s\n' "$SPOOLMAN_REF" > source-revision
 FROM debian:13-slim AS runtime
 ARG WITH_GO2RTC=true
+ARG TARGETARCH
 ENV DEBIAN_FRONTEND=noninteractive PYTHONUNBUFFERED=1 PATH=/opt/venv/bin:$PATH
 RUN apt-get update && apt-get install -y --no-install-recommends \
     python3 python3-venv ca-certificates curl jq ffmpeg xvfb xauth tini openscad \
@@ -121,13 +122,25 @@ COPY --from=go2rtc-prebuilt /out/ /
 # ships under the same WITH_GO2RTC toggle as the go2rtc binary; a
 # WITH_GO2RTC=false build carries neither. No CUDA toolkit is baked
 # in: NVENC/QSV activate only when the host runtime provides the device.
+# intel-media-va-driver is amd64-only (no arm64 candidate in Debian trixie),
+# so it installs behind a TARGETARCH check; the rest of the stack ships on
+# both architectures.
 RUN case "$WITH_GO2RTC" in true|false) ;; *) echo 'WITH_GO2RTC must be true or false' >&2; exit 2;; esac && \
     if [ "$WITH_GO2RTC" = true ]; then \
       apt-get update && apt-get install -y --no-install-recommends \
-        intel-media-va-driver mesa-va-drivers libva-drm2 vainfo && \
+        mesa-va-drivers libva-drm2 vainfo && \
+      if [ "$TARGETARCH" = amd64 ]; then \
+        apt-get install -y --no-install-recommends intel-media-va-driver; \
+      fi && \
       rm -rf /var/lib/apt/lists/*; \
     fi
-ENV LD_LIBRARY_PATH=/opt/orca-stable/lib/orca-runtime:/opt/orca-stable/bin
+# No global LD_LIBRARY_PATH into Orca's bundled runtime: lib/orca-runtime
+# carries FFmpeg 7.0 libav* builds whose sonames shadow the system ffmpeg
+# 7.1.5 libraries and kill it before it prints anything. The path is scoped
+# to Orca invocations instead: upstream's AppRun env helper
+# (libexec/orca-slicer-env) sets it for every wrapped launch, and the
+# raw-binary checks (tests/docker/image_probe.py, docker/slicer-smoke.py)
+# set it per invocation.
 COPY --from=bambu-build /out/ /
 RUN if [ -x /usr/local/bin/orca-slicer-stable ]; then \
       ln -s /opt/orca-stable/bin/orca-slicer /usr/bin/orca-slicer && \

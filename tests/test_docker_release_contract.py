@@ -394,6 +394,63 @@ class DockerReleaseContract(unittest.TestCase):
         dockerfile = (ROOT / "Dockerfile").read_text()
         self.assertIn("openscad", dockerfile.split("AS runtime", 1)[1])
 
+    def test_no_global_ld_library_path_into_orca_runtime(self):
+        """2.1.5 release blocker: a global LD_LIBRARY_PATH into Orca's bundled
+        runtime makes the loader resolve the system ffmpeg's libav* from
+        Orca 2.5's bundled FFmpeg 7.0 copies (identical sonames), killing
+        ffmpeg before it prints anything — the candidate image's ffmpeg
+        probe found the binary but no version output and no encoders. The
+        path stays scoped to Orca invocations: upstream's AppRun env helper
+        sets it for wrapped launches, and the raw-binary checks
+        (image_probe.py, slicer-smoke.py) set it per invocation."""
+        dockerfile = (ROOT / "Dockerfile").read_text()
+        self.assertIsNone(re.search(r"^\s*ENV\s+[^#]*LD_LIBRARY_PATH", dockerfile, re.M),
+                          "Dockerfile must not set LD_LIBRARY_PATH as a global ENV")
+        probe = (ROOT / "tests" / "docker" / "image_probe.py").read_text()
+        self.assertIn("def _orca_env(", probe)
+        self.assertIn("/opt/orca-stable/lib/orca-runtime", probe)
+        self.assertGreaterEqual(probe.count("env=env"), 2)  # ldd and --help both scoped
+        smoke = (ROOT / "docker" / "slicer-smoke.py").read_text()
+        self.assertIn('f"/opt/orca-{channel}/lib/orca-runtime"', smoke)
+
+    def test_intel_vaapi_driver_is_amd64_only(self):
+        """2.1.5 release blocker: intel-media-va-driver has no arm64
+        candidate in Debian trixie, so the unconditional install killed the
+        arm64 image build outright. It installs only behind a TARGETARCH
+        amd64 check; the rest of the VAAPI stack ships on both arches."""
+        dockerfile = (ROOT / "Dockerfile").read_text()
+        runtime = dockerfile.split("AS runtime", 1)[1]
+        self.assertIn("ARG TARGETARCH", runtime)
+        code = "\n".join(line for line in runtime.splitlines() if not line.lstrip().startswith("#"))
+        self.assertEqual(code.count("intel-media-va-driver"), 1)
+        self.assertRegex(runtime, r'if \[ "\$TARGETARCH" = amd64 \]; then \\\n'
+                                  r'\s+apt-get install -y --no-install-recommends intel-media-va-driver;')
+        unconditional = re.search(r"apt-get install -y --no-install-recommends \\\n"
+                                  r"\s+mesa-va-drivers libva-drm2 vainfo", runtime)
+        self.assertIsNotNone(unconditional)
+
+    def test_probe_runs_orca_from_a_writable_cwd(self):
+        """2.1.5 release blocker: Orca writes 00000.log into its working
+        directory at startup and aborts when it cannot; the probe ran its
+        Orca subprocesses with no cwd, inheriting the root-owned /app.
+        Every Orca invocation in the probe now passes the writable work
+        directory it creates under the cache mount."""
+        probe = (ROOT / "tests" / "docker" / "image_probe.py").read_text()
+        self.assertGreaterEqual(probe.count("cwd=work"), 2)  # closure --help and the slice run
+        self.assertNotIn('subprocess.run([str(ORCA), "--help"], capture_output=True, text=True, timeout=300)',
+                         probe)
+        self.assertNotIn('run = subprocess.run(command, capture_output=True, text=True, timeout=900)',
+                         probe)
+
+    def test_acceptance_polls_the_per_printer_heartbeat(self):
+        """2.1.5 release blocker: since the Stage 2b listener rework (#334)
+        the heartbeat lives at <state>/printers/<id>/listener_health.json;
+        the acceptance script kept polling the legacy flat file and reported
+        'never connected' while the listener was connected."""
+        acceptance = (ROOT / "tests" / "docker" / "image_acceptance.sh").read_text()
+        self.assertIn("/data/hermes/state/printers/*/listener_health.json", acceptance)
+        self.assertNotIn("/data/hermes/state/listener_health.json", acceptance)
+
 
 if __name__ == "__main__":
     unittest.main()

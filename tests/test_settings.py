@@ -202,7 +202,7 @@ class OverrideTests(unittest.TestCase):
             "logging": {"level", "format", "file"},
             "webui": {"enabled", "host", "port", "access_token_env"},
             "live_stream": {"enabled", "voice_channel_id", "auto_start_on_print", "max_height", "fps",
-                            "max_bitrate_kbps", "encoder", "empty_timeout_s", "activity_origin"},
+                            "max_bitrate_kbps", "encoder", "empty_timeout_s", "activity_origin", "port"},
             "maintenance": {"quick_hours", "full_hours", "full_days"},
             "delivery": {"methods"},
             "nozzle_temp_offsets": {"brass", "hardened_steel", "stainless_steel", "ruby", "tungsten_carbide", "diamond"},
@@ -508,7 +508,7 @@ class LiveStreamSettingsTests(unittest.TestCase):
 
     DEFAULTS = {"enabled": False, "voice_channel_id": "", "auto_start_on_print": False,
                 "max_height": 720, "fps": 15, "max_bitrate_kbps": 2500, "encoder": "auto",
-                "empty_timeout_s": 300, "activity_origin": ""}
+                "empty_timeout_s": 300, "activity_origin": "", "port": 0}
 
     def test_absent_section_yields_the_defaults(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -545,6 +545,8 @@ class LiveStreamSettingsTests(unittest.TestCase):
                      "live_stream:\n  max_bitrate_kbps: 99999\n",
                      "live_stream:\n  encoder: av1\n",
                      "live_stream:\n  empty_timeout_s: 0\n",
+                     "live_stream:\n  port: 65536\n", "live_stream:\n  port: -1\n",
+                     "live_stream:\n  port: 1.5\n",
                      "live_stream:\n  activity_origin: http://insecure.example\n"):
             with self.subTest(text=text), tempfile.TemporaryDirectory() as tmp:
                 local = Path(tmp) / "local.yaml"

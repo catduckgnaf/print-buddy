@@ -2,29 +2,40 @@
 
 Stage 1 is container plumbing only: the full image bundles a pinned go2rtc
 binary (docker/go2rtc-prebuilt.sh), and docker/supervise.sh runs it as a
-supervised child exactly when in-container timelapse capture is enabled
-(``[timelapse] capture_enabled``). go2rtc's only job is stream
-normalisation — it ingests the configured camera source and restreams it on
-loopback for the capture stage that follows (#246 Stage 2); nothing in this
-module captures frames or encodes video.
+supervised child exactly when a feature needs the camera fan-out.
+go2rtc's only job is stream normalisation — it ingests the configured
+camera source and restreams it on loopback; nothing in this module
+captures frames or encodes video.
+
+Two features share the one upstream camera pull (the #311 contention
+rule: go2rtc holds the single connection to the camera and fans out):
+
+- in-container timelapse capture (#246), when ``[timelapse]
+  capture_enabled`` is set;
+- live camera viewing in Discord (#311), when ``[live_stream] enabled``
+  is set — the Activity page plays the restreamed feed, so live viewing
+  must not require timelapse capture to be on.
 
 This module is the shell-facing gate, mirroring print_buddy.listener_gate:
 
     python3 -m print_buddy.go2rtc              # gate: exit 0 / 3 / 2
     python3 -m print_buddy.go2rtc --write-config
 
-Exit codes: 0 = capture is enabled and a camera source resolved, start
-go2rtc; 3 = not started (capture disabled, or enabled with no camera
-source configured — the feature degrades off, the container is unaffected);
-2 = the configuration could not be resolved (settings error; the
-supervisor stops rather than guessing, like the listener gate).
+Exit codes: 0 = a feature needs go2rtc and a camera source resolved,
+start go2rtc; 3 = not started (no feature needs it, or one does but no
+camera source is configured — the feature degrades off, the container
+is unaffected); 2 = the configuration could not be resolved (settings
+error; the supervisor stops rather than guessing, like the listener
+gate).
 
 The generated configuration binds go2rtc's API (1984) and RTSP (8554) to
-loopback only. It contains the camera source URL, which may carry
-credentials, so it is written with 0600 permissions, lives under the cache
-path with the other runtime files, and is never logged unredacted: every
-message this module prints passes URLs through
-print_buddy.live_stream.redact_url.
+loopback only, and renders the one stream under
+:data:`print_buddy.live_stream.GO2RTC_STREAM_NAME` — the name the
+timelapse capture polls and the #311 Activity page requests. It contains
+the camera source URL, which may carry credentials, so it is written
+with 0600 permissions, lives under the cache path with the other runtime
+files, and is never logged unredacted: every message this module prints
+passes URLs through print_buddy.live_stream.redact_url.
 """
 from __future__ import annotations
 
@@ -35,7 +46,8 @@ import urllib.request
 from pathlib import Path
 
 from . import settings
-from .live_stream import CameraSource, LiveStreamError, derive_from_snapshot_url, redact_url
+from .live_stream import (GO2RTC_STREAM_NAME, CameraSource, LiveStreamError,
+                          derive_from_snapshot_url, redact_url)
 
 API_URL = "http://127.0.0.1:1984/api"
 DEFAULT_BINARY = "/usr/local/bin/go2rtc"
@@ -57,6 +69,28 @@ def capture_enabled(data=None) -> bool:
     return bool(data.get("timelapse", {}).get("capture_enabled", False))
 
 
+def live_enabled(data=None) -> bool:
+    """True when [live_stream] enabled is set in the resolved settings (#311)."""
+    data = settings.current() if data is None else data
+    return bool(data.get("live_stream", {}).get("enabled", False))
+
+
+def needed_by(data=None) -> tuple:
+    """The features that need the go2rtc fan-out, in report order.
+
+    Timelapse capture (#246) and live viewing (#311) share the one
+    upstream camera pull, so either one needing go2rtc starts the same
+    single child with the same generated config.
+    """
+    data = settings.current() if data is None else data
+    needed = []
+    if capture_enabled(data):
+        needed.append("timelapse capture")
+    if live_enabled(data):
+        needed.append("live viewing")
+    return tuple(needed)
+
+
 def resolve_source(data=None) -> CameraSource | None:
     """The camera source go2rtc should ingest, or None when none is configured.
 
@@ -71,14 +105,14 @@ def resolve_source(data=None) -> CameraSource | None:
     override = (data.get("timelapse", {}).get("capture_source_url") or "").strip()
     if override.startswith("ffmpeg:"):
         return CameraSource(stream_url=override, snapshot_url=None,
-                            kind="mjpeg", name="capture")
+                            kind="mjpeg", name=GO2RTC_STREAM_NAME)
     if override.startswith(("rtsp://", "rtsps://")):
         return CameraSource(stream_url=override, snapshot_url=None,
-                            kind="rtsp", name="capture")
+                            kind="rtsp", name=GO2RTC_STREAM_NAME)
     url = override or (data.get("services", {}).get("camera_snapshot_url") or "").strip()
     if not url:
         return None
-    return derive_from_snapshot_url(url, name="capture")
+    return derive_from_snapshot_url(url, name=GO2RTC_STREAM_NAME)
 
 
 def source_url(source: CameraSource) -> str:
@@ -104,7 +138,7 @@ def render_config(source: CameraSource) -> str:
         "log:",
         "  level: info",
         "streams:",
-        f"  camera: {json.dumps(source_url(source))}",
+        f"  {GO2RTC_STREAM_NAME}: {json.dumps(source_url(source))}",
         "",
     ]
     return "\n".join(lines)
@@ -124,7 +158,7 @@ def write_config(path=None, data=None) -> Path:
     data = settings.current() if data is None else data
     source = resolve_source(data)
     if source is None:
-        raise LiveStreamError("timelapse capture has no camera source to configure")
+        raise LiveStreamError("no camera source is configured for go2rtc")
     path = Path(path) if path is not None else config_path(data)
     path.parent.mkdir(parents=True, exist_ok=True)
     fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
@@ -138,8 +172,10 @@ def gate(data=None) -> int:
     """The supervisor/healthcheck decision: 0 start, 3 not started, 2 unresolved."""
     try:
         data = settings.current() if data is None else data
-        if not capture_enabled(data):
-            print("go2rtc gate: timelapse capture is disabled; not starting go2rtc")
+        needed = needed_by(data)
+        if not needed:
+            print("go2rtc gate: timelapse capture and live viewing are both "
+                  "disabled; not starting go2rtc")
             return 3
         source = resolve_source(data)
     except settings.SettingsError as exc:
@@ -149,10 +185,11 @@ def gate(data=None) -> int:
         print(f"go2rtc gate: camera source unresolved: {exc}; not starting go2rtc")
         return 3
     if source is None:
-        print("go2rtc gate: capture is enabled but no camera source is configured; "
-              "not starting go2rtc")
+        print(f"go2rtc gate: {' and '.join(needed)} enabled but no camera source "
+              "is configured; not starting go2rtc")
         return 3
-    print(f"go2rtc gate: capture enabled, source {redact_url(source_url(source))}")
+    print(f"go2rtc gate: {' and '.join(needed)} enabled, "
+          f"source {redact_url(source_url(source))}")
     return 0
 
 

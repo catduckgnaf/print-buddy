@@ -72,13 +72,16 @@ else
     esac
 fi
 # go2rtc (#246 stage 1) normalises the camera source on loopback for
-# in-container timelapse capture. A WITH_GO2RTC=false build has no binary
-# (so the whole block is skipped there); the published image includes it. It
-# runs only when [timelapse] capture_enabled is set. The gate resolves the
-# effective configuration (print_buddy.go2rtc), never an environment
-# guess: 0 = start it, 3 = not started (capture disabled, or no camera
-# source configured — the feature degrades off), anything else = the
-# configuration could not be resolved; stop instead of guessing.
+# in-container timelapse capture and for live viewing in Discord (#311):
+# it holds the one upstream camera pull and fans out to both. A
+# WITH_GO2RTC=false build has no binary (so the whole block is skipped
+# there); the published image includes it. It runs only when a feature
+# needs it ([timelapse] capture_enabled or [live_stream] enabled). The
+# gate resolves the effective configuration (print_buddy.go2rtc), never
+# an environment guess: 0 = start it, 3 = not started (no feature needs
+# it, or no camera source is configured — the feature degrades off),
+# anything else = the configuration could not be resolved; stop instead
+# of guessing.
 go2rtc_bin="${GO2RTC_BIN:-/usr/local/bin/go2rtc}"
 if [ -x "$go2rtc_bin" ]; then
     go2rtc_gate=0
@@ -88,7 +91,7 @@ if [ -x "$go2rtc_bin" ]; then
         "$go2rtc_bin" -config "$go2rtc_config" &
         children+=("$!")
     elif [ "$go2rtc_gate" -eq 3 ]; then
-        echo 'go2rtc not started: timelapse capture is disabled or has no camera source.'
+        echo 'go2rtc not started: no feature needs it, or it has no camera source.'
     else
         echo "go2rtc gate failed (status $go2rtc_gate); configuration unresolved, stopping container." >&2
         exit "$go2rtc_gate"
@@ -188,11 +191,35 @@ else
     echo "Web UI gate failed (status $webui_gate); configuration unresolved, stopping container." >&2
     exit "$webui_gate"
 fi
+# The live-view Activity server (#311 stage 4) runs only when
+# [live_stream] is enabled AND configured (voice channel, activity
+# origin, a chosen loopback port, the Discord application ID and both
+# secrets in the environment): the gate resolves the effective
+# configuration (print_buddy.live_gate), never an environment guess.
+# Gate status: 0 = start the server (python3 -m print_buddy.live_activity),
+# 3 = disabled or incompletely configured (start nothing — a healthy,
+# reported state, like the go2rtc no-source case), anything else = the
+# configuration could not be resolved; stop instead of guessing. The
+# server binds loopback only; Discord clients reach it through the
+# named Cloudflare Tunnel and the Developer Portal URL mapping, and
+# the tunnel is a separate, optional sidecar — its absence never stops
+# this container.
+live_gate=0
+python3 -m print_buddy.live_gate || live_gate=$?
+if [ "$live_gate" -eq 0 ]; then
+    python3 -m print_buddy.live_activity &
+    children+=("$!")
+elif [ "$live_gate" -eq 3 ]; then
+    echo 'Live view not started: disabled or not fully configured.'
+else
+    echo "Live gate failed (status $live_gate); configuration unresolved, stopping container." >&2
+    exit "$live_gate"
+fi
 if [ "${#children[@]}" -eq 0 ]; then
     # No required children for this configuration (no bot, no bundled
-    # Spoolman, no Web UI; listener instances run under their own loops
-    # and are never required): stay up idling instead of exiting into a
-    # restart loop.
+    # Spoolman, no Web UI, no live view; listener instances run under
+    # their own loops and are never required): stay up idling instead
+    # of exiting into a restart loop.
     echo 'No supervised children for this configuration; idling.'
     sleep infinity &
     children+=("$!")

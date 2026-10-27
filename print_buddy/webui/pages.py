@@ -62,6 +62,7 @@ GROUPS = (
     ("services", "Services"),
     ("timelapse", "Timelapse"),
     ("images", "Images and camera watch"),
+    ("live", "Live camera (Discord)"),
     ("slicing", "Slicing and delivery"),
     ("logging", "Logging"),
     ("webui", "Web UI"),

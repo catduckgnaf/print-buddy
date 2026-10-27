@@ -518,3 +518,39 @@ def test_session_text_reports_off_ready_and_live_states():
     assert "nobody in the channel yet" in live
     session.note_viewers(3, now=1130.0)
     assert "3 watching" in ls.session_text(session, ENABLED_SECTION, now=1130.0)
+
+
+# --------------------------------------------------------------------- stage 4: lifecycle helpers
+
+AUTO_SECTION = dict(ENABLED_SECTION, auto_start_on_print=True,
+                    activity_origin="https://pb.example")
+
+
+def test_auto_start_fires_only_when_the_switch_and_config_allow_it():
+    session = ls.LiveStreamSession()
+    text = ls.auto_start(session, AUTO_SECTION, now=1000.0)
+    assert text is not None and "activity" in text and session.is_live
+    assert session.started_by == ls.AUTO_STARTED_BY
+    # Already live: no second start, no second pointer.
+    assert ls.auto_start(session, AUTO_SECTION, now=1001.0) is None
+    # Switch off: nothing happens.
+    idle = ls.LiveStreamSession()
+    assert ls.auto_start(idle, ENABLED_SECTION, now=1000.0) is None
+    assert not idle.is_live
+    # Enabled but unconfigured (no channel): nothing happens, no error.
+    assert ls.auto_start(idle, dict(AUTO_SECTION, voice_channel_id=""), now=1000.0) is None
+    assert not idle.is_live
+
+
+def test_expire_empty_ends_only_a_timed_out_empty_session():
+    session = ls.LiveStreamSession().start("42", now=1000.0)
+    assert ls.expire_empty(session, AUTO_SECTION, now=1000.0 + 299) is False
+    assert session.is_live
+    assert ls.expire_empty(session, AUTO_SECTION, now=1000.0 + 300) is True
+    assert not session.is_live
+    # An idle session is untouched, and a watched one survives.
+    assert ls.expire_empty(session, AUTO_SECTION, now=9999.0) is False
+    watched = ls.LiveStreamSession().start("42", now=1000.0)
+    watched.note_viewers(1, now=1100.0)
+    assert ls.expire_empty(watched, AUTO_SECTION, now=1000.0 + 10000) is False
+    assert watched.is_live

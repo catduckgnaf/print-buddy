@@ -15,6 +15,7 @@ from print_buddy import go2rtc, settings
 from print_buddy.bot.health import check as bot_check
 from print_buddy.healthcheck import check as listener_check
 from print_buddy.healthcheck import listener_domain, listener_required
+from print_buddy.live_gate import live_config
 from print_buddy.webui_gate import webui_config
 
 
@@ -84,17 +85,20 @@ def main():
                 print(f"ok  listener ({printer_id}): not required for this printer connection{detail}")
     # go2rtc (#246 stage 1) is covered exactly when the supervisor started
     # it: the same gate decision (print_buddy.go2rtc), mirroring the
-    # disabled-bot branch above. Capture disabled (or enabled with no
-    # camera source) is a healthy, reported state; enabled in an image
-    # without the binary (a WITH_GO2RTC=false build) fails with the reason.
+    # disabled-bot branch above. The gate is feature-aware since #311:
+    # timelapse capture OR live viewing needing it starts the one child.
+    # Neither feature needing it (or one needing it with no camera
+    # source) is a healthy, reported state; a feature needing it in an
+    # image without the binary (a WITH_GO2RTC=false build) fails with
+    # the reason.
     gate = go2rtc.gate()
     if gate == 2:
         print("FAIL  go2rtc: configuration unresolved")
         healthy = False
     elif gate == 0:
         if not go2rtc.binary_present():
-            print("FAIL  go2rtc: timelapse capture is enabled but go2rtc is "
-                  "not in this image (built with WITH_GO2RTC=false)")
+            print("FAIL  go2rtc: timelapse capture or live viewing is enabled but "
+                  "go2rtc is not in this image (built with WITH_GO2RTC=false)")
             healthy = False
         else:
             ok, reason = go2rtc.check()
@@ -150,6 +154,38 @@ def main():
         print("ok  webui: enabled but no port chosen; not started")
     elif webui_resolved:
         print("ok  webui: disabled")
+    # The live-view row mirrors the supervisor's live gate (#311 stage 4)
+    # through the same shared helper (print_buddy.live_gate.live_config):
+    # skipped as healthy when the feature is disabled, reported with its
+    # missing pieces when enabled but incompletely configured (the
+    # supervisor started nothing then), and probed on its open /health
+    # route when the supervisor started the Activity server. The probe
+    # reveals no configuration: /health answers only {"ok": true, ...}.
+    try:
+        live = live_config()
+        live_resolved = True
+    except settings.SettingsError as exc:
+        print(f"FAIL  live view: configuration unresolved: {exc}")
+        live, live_resolved, healthy = None, False, False
+    if live_resolved and live.ready:
+        try:
+            with urllib.request.urlopen(
+                    f"http://127.0.0.1:{live.port}/health", timeout=3) as response:
+                status = response.status
+        except Exception as exc:
+            print(f"FAIL  live view: {exc}")
+            healthy = False
+        else:
+            if status == 200:
+                print(f"ok  live view: Activity server serving on 127.0.0.1:{live.port}")
+            else:
+                print(f"FAIL  live view: HTTP {status} from /health")
+                healthy = False
+    elif live_resolved and live.enabled:
+        print("ok  live view: enabled but not configured; not started ("
+              + "; ".join(live.missing) + ")")
+    elif live_resolved:
+        print("ok  live view: disabled")
     return 0 if healthy else 1
 
 

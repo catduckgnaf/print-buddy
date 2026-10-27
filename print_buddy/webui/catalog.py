@@ -69,7 +69,7 @@ class Field:
 
 # Page groups for the stage 3 /config page, keyed by field id. The page
 # renders them in this order: printer, platform, services, timelapse,
-# images, slicing, logging, webui (pages.GROUPS carries the titles).
+# images, live, slicing, logging, webui (pages.GROUPS carries the titles).
 GROUP_OF = {
     "printer.model": "printer",
     "printer.slicer": "slicing",
@@ -111,6 +111,16 @@ GROUP_OF = {
     "webui.enabled": "webui",
     "webui.host": "webui",
     "webui.port": "webui",
+    "live_stream.enabled": "live",
+    "live_stream.voice_channel_id": "live",
+    "live_stream.auto_start_on_print": "live",
+    "live_stream.max_height": "live",
+    "live_stream.fps": "live",
+    "live_stream.max_bitrate_kbps": "live",
+    "live_stream.encoder": "live",
+    "live_stream.empty_timeout_s": "live",
+    "live_stream.activity_origin": "live",
+    "live_stream.port": "live",
 }
 
 
@@ -269,6 +279,53 @@ CATALOG = (
     _field("webui", "port", "Web UI port", "number",
            "Port the Web UI binds to when enabled; 0 means no port has been chosen yet.",
            validator="settings webui check", minimum=0, maximum=65535),
+    # Live camera in Discord (#311): the [live_stream] section. No secret
+    # is a field here — the Discord client secret and the Activity
+    # session secret live only in the environment, and the tunnel token
+    # belongs to the cloudflared sidecar; this group carries exactly the
+    # settings the loader validates.
+    _field("live_stream", "enabled", "Live camera in Discord", "toggle",
+           "Live camera viewing in Discord (#311) switch; off by default, and "
+           "/print-live only reports that while disabled.",
+           validator="settings live_stream check"),
+    _field("live_stream", "voice_channel_id", "Live voice channel", "text",
+           "Numeric ID of the one private Discord voice channel the live "
+           "Activity is launched in; the bot never names another channel.",
+           validator="settings live_stream check"),
+    _field("live_stream", "auto_start_on_print", "Auto-start on print", "toggle",
+           "Start the live view automatically when a print starts and post "
+           "the Activity pointer; off by default — /print-live start is the "
+           "manual trigger. The session still ends itself after the empty "
+           "timeout below.",
+           validator="settings live_stream check"),
+    _field("live_stream", "max_height", "Live feed height", "number",
+           "Live feed height cap in pixels; width follows the camera's aspect.",
+           validator="settings live_stream check", minimum=144, maximum=2160),
+    _field("live_stream", "fps", "Live feed frame rate", "number",
+           "Live feed frame-rate cap, in frames per second.",
+           validator="settings live_stream check", minimum=1, maximum=60),
+    _field("live_stream", "max_bitrate_kbps", "Live feed bitrate cap", "number",
+           "Live feed bitrate cap in kbit/s.",
+           validator="settings live_stream check", minimum=100, maximum=20000),
+    _field("live_stream", "encoder", "Live feed encoder", "picker",
+           "Encoder preference for the live feed (the plan in "
+           "print_buddy/live_stream.py).",
+           choices=tuple(settings.LIVE_STREAM_ENCODERS),
+           validator="settings live_stream check"),
+    _field("live_stream", "empty_timeout_s", "Live empty timeout", "number",
+           "Seconds the live view may stay empty of viewers before the "
+           "session ends itself.",
+           validator="settings live_stream check", minimum=1),
+    _field("live_stream", "activity_origin", "Live Activity origin", "url",
+           "Public https origin the Discord Activity page is served from: "
+           "the named Cloudflare Tunnel hostname mapped in the Developer "
+           "Portal (see docs/DISCORD-BOT-SETUP.md).",
+           validator="settings live_stream check"),
+    _field("live_stream", "port", "Live Activity port", "number",
+           "Loopback port the supervised Activity server binds inside the "
+           "deployment; 0 means no port has been chosen yet, so the server "
+           "does not start.",
+           validator="settings live_stream check", minimum=0, maximum=65535),
 )
 
 _FIELDS = {field.id: field for field in CATALOG}

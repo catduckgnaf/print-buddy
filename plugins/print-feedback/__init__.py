@@ -1119,8 +1119,11 @@ async def live_dispatch(event, gateway, **kwargs):
     the one configured voice channel; other platforms get no command
     surface at all — the dispatch returns None for their sources, like
     an unknown command. The [live_stream] activity page and its OAuth
-    allowlist live in print_buddy.live_activity; serving that page
-    publicly (URL mapping / tunnel) is stage 4 deployment wiring.
+    allowlist live in print_buddy.live_activity; stage 4 serves that
+    page from the supervised Activity server (print_buddy.live_gate)
+    behind the named tunnel, shares this session through the on-disk
+    record (auto-start on print, viewer presence, the empty timeout),
+    and is documented in docs/DISCORD-BOT-SETUP.md section 7.
     """
     source, adapter = _control_preamble(event, gateway, '/print-live', with_args=True)
     if source is None:
@@ -1134,8 +1137,28 @@ async def live_dispatch(event, gateway, **kwargs):
     section = _config.cfg().get('live_stream') or {}
     args = str(getattr(event, 'text', '')).strip()[len('/print-live'):].split()
     verb = args[0].casefold() if args else 'status'
-    session = _live_session()
+    # Stage 4: the session record is shared on disk with the listener
+    # (auto-start on print) and the Activity server (viewer presence),
+    # so adopt it when a state dir is resolvable; the module-global is
+    # the fallback for contexts without one (tests install a config
+    # override with no paths, which lands here). The leave-when-empty
+    # timeout is enforced on entry: a session nobody has watched for
+    # the configured timeout is already over before the verb runs.
+    shared_path = None
+    try:
+        shared_path = live_stream.session_file_path(_config.cfg())
+    except Exception:
+        shared_path = None
+    shared_existed = shared_path is not None and shared_path.exists()
+    if shared_existed:
+        session = live_stream.read_session_file(shared_path)
+        globals()['_LIVE_SESSION'] = session
+    else:
+        session = _live_session()
     now = time.time()
+    before = (session.state, session.started_by, session.started_at,
+              session.viewers, session.empty_since)
+    live_stream.expire_empty(session, section, now=now)
     if verb == 'start':
         problem = live_stream.start_problem(section)
         if problem is not None:
@@ -1163,6 +1186,14 @@ async def live_dispatch(event, gateway, **kwargs):
         message = ('Use `/print-live start`, `/print-live stop` or `/print-live status`. '
                    'Nothing changed.')
         reason = 'print live usage shown'
+    if shared_path is not None:
+        after = (session.state, session.started_by, session.started_at,
+                 session.viewers, session.empty_since)
+        if shared_existed or after != before:
+            try:
+                live_stream.write_session_file(session, shared_path)
+            except Exception:
+                pass  # the record is bookkeeping; the reply still stands
     await adapter.send(chat_id=source.chat_id, metadata=metadata, content=message)
     return {'action': 'skip', 'reason': reason}
 

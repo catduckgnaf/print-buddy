@@ -2,10 +2,11 @@
 the vendor's opt-in read-only LAN status; no upload or print control.
 
 Quirks: the vendor start/end G-code parks the head off the bed on the wiper (X-48.2) and purge lane, so only
-the Orca toolpath is held to the 256 mm bed; the vendor blocks are matched line by line against the pinned
-templates instead. The AMS Lite is not driven: single filament only. Bambu Studio output is not verified for
-the A1 and is refused. Sourced values: facts.py; docs/BAMBU-LAB.md. Templates: generated on the operator's
-machine from their own OrcaSlicer into <state>/orca-profiles/bambulab_a1 (profiles.py); none are shipped.
+the toolpath is held to the 256 mm bed; the vendor blocks are matched line by line against the pinned
+templates instead. The AMS Lite is not driven: single filament only. Output from either verified slicer —
+OrcaSlicer, or Bambu Studio identified by its header block (#434) — passes the same guard checks. Sourced
+values: facts.py; docs/BAMBU-LAB.md. Templates: generated on the operator's machine from their own
+OrcaSlicer into <state>/orca-profiles/bambulab_a1 (profiles.py); none are shipped.
 """
 from ..base import PrinterModel
 from . import VENDOR, facts

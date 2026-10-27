@@ -219,6 +219,88 @@ jobs:
           tests/corpus/test_corpus.py::test_discord_flow[single-part]
           tests/corpus/test_corpus.py::test_discord_flow[plates-multicolor]
 
+  real-slicer-bambu:
+    # Bambu Studio is the Bambu Lab vendor default slicer and the one-shot fallback when
+    # Orca execution fails, but it stays out of the published image (the image
+    # workflows keep the source-build stage off) and was covered only with the slicer
+    # process mocked. This leg
+    # runs the A1 production path (primary + fallback) against the real Flathub Bambu
+    # Studio the home configuration uses. Templates still come from the pinned OrcaSlicer
+    # bundle, exactly like production: profiles.install is identity-checked against the
+    # OrcaSlicer tree, and Bambu Studio slices from the resolved profiles.
+    # Flatpak plus xvfb requires a full system session and display; kept on the host
+    # runner, same as the Orca legs.
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    env:
+      ORCA_FLATPAK_APP_ID: com.orcaslicer.OrcaSlicer
+      BAMBU_FLATPAK_APP_ID: com.bambulab.BambuStudio
+      # Flathub ostree commit of com.bambulab.BambuStudio v2.8.2.61 (recorded from
+      # `flatpak info --show-commit`); the install step deploys exactly this commit.
+      BAMBU_FLATPAK_COMMIT: "68a634d4d733ce7acf79009095db6f7ca76625f0eb810eef1e92dc7adeba7852"
+      PRINT_BUDDY_REAL_SLICER: "1"
+      PRINT_BUDDY_REAL_BAMBU: "1"
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: requirements-test.txt
+      - run: python -m pip install -r requirements-test.txt
+      - name: Install flatpak and xvfb
+        run: |
+          sudo apt-get update -q
+          sudo apt-get install -y -q flatpak xvfb
+      - name: Cache slicer bundles and flatpak installs
+        uses: actions/cache@v6
+        with:
+          path: |
+            ~/.cache/orcaslicer-v2.5.0-alpha.flatpak
+            ~/.local/share/flatpak
+          key: real-slicer-bambu-flatpak-${{ env.BAMBU_FLATPAK_COMMIT }}-${{ runner.os }}-x86_64
+      - name: Download and verify upstream OrcaSlicer v2.5.0-alpha bundle
+        run: |
+          set -euo pipefail
+          bundle="$HOME/.cache/orcaslicer-v2.5.0-alpha.flatpak"
+          mkdir -p "$(dirname "$bundle")"
+          if [ -f "$bundle" ] && ! echo '2caa907e75ca1cd499568d7940d1fe787b795b3deff1d5dcf4cda31f1a4b6d32  '"$bundle" | sha256sum --check --status; then
+            rm "$bundle"
+          fi
+          if [ ! -f "$bundle" ]; then
+            curl --fail --location --retry 3 --output "$bundle" \
+              https://github.com/OrcaSlicer/OrcaSlicer/releases/download/v2.5.0-alpha/OrcaSlicer-Linux-flatpak_V2.5.0-alpha_x86_64.flatpak
+          fi
+          echo '2caa907e75ca1cd499568d7940d1fe787b795b3deff1d5dcf4cda31f1a4b6d32  '"$bundle" | sha256sum --check
+          echo "ORCA_ALPHA_BUNDLE=$bundle" >> "$GITHUB_ENV"
+      - name: Install OrcaSlicer app bundle and runtime
+        run: |
+          set -euo pipefail
+          flatpak remote-add --user --if-not-exists flathub https://dl.flathub.org/repo/flathub.flatpakrepo
+          flatpak install --user -y --noninteractive flathub org.gnome.Platform//50
+          # The restored cache may already contain the app; do not reinstall its bundle.
+          if ! flatpak info --user --show-ref "$ORCA_FLATPAK_APP_ID" >/dev/null 2>&1; then
+            flatpak install --user --bundle -y --noninteractive "$ORCA_ALPHA_BUNDLE"
+          fi
+          flatpak info --user --show-ref "$ORCA_FLATPAK_APP_ID"
+          flatpak info --user --show-commit "$ORCA_FLATPAK_APP_ID"
+      - name: Install Bambu Studio from Flathub at the pinned commit
+        run: |
+          set -euo pipefail
+          flatpak remote-add --user --if-not-exists flathub https://dl.flathub.org/repo/flathub.flatpakrepo
+          if ! flatpak info --user --show-ref "$BAMBU_FLATPAK_APP_ID" >/dev/null 2>&1; then
+            flatpak install --user -y --noninteractive flathub "$BAMBU_FLATPAK_APP_ID"
+          fi
+          # Deploy exactly the pinned commit (a no-op when the install already is the
+          # pin, a downgrade when Flathub has moved on), then prove what is deployed.
+          flatpak update --user -y --noninteractive --commit="$BAMBU_FLATPAK_COMMIT" "$BAMBU_FLATPAK_APP_ID"
+          deployed="$(flatpak info --user --show-commit "$BAMBU_FLATPAK_APP_ID")"
+          echo "Bambu Studio deployed commit: $deployed (pinned: $BAMBU_FLATPAK_COMMIT)"
+          test "$deployed" = "$BAMBU_FLATPAK_COMMIT"
+          flatpak info --user "$BAMBU_FLATPAK_APP_ID" | grep -E 'Version|Ref'
+      - name: Run real-slicer tests against Bambu Studio
+        run: xvfb-run -a python -m pytest -v -s tests/slicer/test_bambu_real_a1.py
+
   spoolman:
     # spool_sync against a real, throwaway Spoolman.
     runs-on: ubuntu-24.04  # Debian 13 container; hosted runner supplies the VM only.

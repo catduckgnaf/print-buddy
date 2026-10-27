@@ -24,6 +24,15 @@ class _Lazy:
     def __init__(self, name):
         object.__setattr__(self, "_name", name)
 
+    @property
+    def __dict__(self):
+        # The stand in's namespace IS the real module's namespace. Tools that save and
+        # restore patched attributes (pytest's monkeypatch, unittest.mock) look the old
+        # value up in the target's __dict__; reporting only this instance's own dict
+        # (just _name) makes them record "no old value" for a forwarded attribute and
+        # delete it from the real module on teardown.
+        return load(object.__getattribute__(self, "_name")).__dict__
+
     def __getattr__(self, attr):
         return getattr(load(self._name), attr)
 

@@ -8,7 +8,7 @@ This page preserves the detailed project reference. Start with the setup guides 
 
 [Contributing](../CONTRIBUTING.md) · [User documentation](../docs/README.md)
 
-Print Buddy is an automated 3D printing pipeline driven from a Discord channel, for Sovol and other Klipper printers, and Flashforge printers running ZMod. Post a MakerWorld or Printables link, or a 3MF or STL file, and the bot downloads the model, merges multi plate parts, matches colors to loaded spools in Spoolman, and slices headless with OrcaSlicer. Once someone confirms the bed is clear, it sends the job to the printer through Moonraker, watches it through the camera, and posts the result.
+Print Buddy is an automated 3D printing pipeline driven from a Discord channel, for Sovol and other Klipper printers, and Flashforge printers running ZMod. Post a MakerWorld, Printables or Thingiverse link, or a 3MF or STL file, and the bot downloads the model, merges multi plate parts, matches colors to loaded spools in Spoolman, and slices headless with OrcaSlicer. Once someone confirms the bed is clear, it sends the job to the printer through Moonraker, watches it through the camera, and posts the result.
 
 ## About
 
@@ -41,7 +41,7 @@ A bed-clear approval starts one print. Starting the same G-code again needs a ne
 ## Features
 
 **Intake and slicing**
-* MakerWorld and Printables links, or uploaded 3MF and STL files. MakerWorld links need an [account token](#makerworld-account-token); Printables links and uploads do not.
+* MakerWorld, Printables and Thingiverse links, or uploaded 3MF and STL files. MakerWorld links need an [account token](#makerworld-account-token); Thingiverse links need an [App Token](#thingiverse-app-token); Printables links and uploads do not.
 * Print time and grams from the model page in the first reply.
 * Multi plate models merged onto one bed when they fit; plates that would run longer than `layout.max_merged_hours` stay separate. Merging first tries the established rectangle packing; when that fails and at least one part is genuinely non-rectangular, the merge planner retries with the parts' actual convex hulls (translation only, at their authored orientation, with the same spacing measured hull-to-hull instead of rectangle-to-rectangle), so multi-plate sources that split only because of rectangular over-estimation — two diagonal or triangular parts, for example — can still merge onto one plate. Under that hull fallback rectangle-only sources keep exactly their previous merge verdicts and placements, and a hull placement that cannot be found within a bounded search falls back to the previous split outcome. When rectangle and hull packing both fail, the merge planner makes one more attempt with per-object yaw: a part that fits the usable bed only when turned in the bed plane is packed by its hull rotated to the same recorded yaw the full-size split evaluation chooses for such a part (recorded as `yaw_by_object` in the merge plan), while parts that fit as authored keep their authored orientation, so a source that split only because one part needed a turn can now merge. Slicing realizes each recorded turn through the exporters' per-object fit channels, composed with the plan's recorded shifts (a turned part's shift is measured from its rotated bounds), and proves the merged output landed at each turned part's rotated bounds plus its shift before accepting it; a merge plan that records a turn for an unknown object, a non-finite or out-of-range angle, or a turn without the shifts that realize it is refused rather than sliced as authored. A part that fits the bed at no checked yaw still blocks the merge, eligibility matches the hull fallback (single-build-item parts only), and every merge verdict that succeeds without a turn is unchanged.
 * Oversized models split across plates, tracked as one plan.
@@ -140,6 +140,20 @@ chmod 600 ~/.config/bambu/token
 ```
 
 Without the file, MakerWorld intake stops before the model summary with a message naming the file; an empty file stops it too. Print Buddy does not check the token when it reads it. Tokens expire: when MakerWorld downloads start failing, sign in again and replace the file. Observed by the reporter on 25 Oct 2026 ([#262](https://github.com/catduckgnaf/print-buddy/issues/262)): with an invalid token, the MakerWorld model lookup still answered and the summary was posted, and the download was then refused with HTTP 403 ("Please log in to download models."). A wrong or expired token can therefore show up only at download time, after the model summary.
+
+### Thingiverse App Token
+
+Thingiverse links use Thingiverse's official REST API (`api.thingiverse.com`) and need a free Thingiverse App Token. It is a file, not a setting or environment variable: Print Buddy reads `~/.config/thingiverse/token` in the home directory of the account that runs it (in Docker, `/data/.config/thingiverse/token`; see [Docker](DOCKER.md#makerworld-account-token) — the same bind-mounted `dot-config` directory holds both token files) and sends it as an `Authorization: Bearer` header when it looks up a thing, lists its files and downloads the chosen file. The token is read on each request and is never logged.
+
+To get the token, sign in at thingiverse.com and create an app/token at <https://www.thingiverse.com/developers> under your Thingiverse account. Store the App Token as the only content of the file, readable only by that account, and never commit or share it:
+
+```bash
+mkdir -p ~/.config/thingiverse && chmod 700 ~/.config/thingiverse
+(umask 077 && cat > ~/.config/thingiverse/token)   # paste the App Token, press Enter, then Ctrl-D
+chmod 600 ~/.config/thingiverse/token
+```
+
+Without the file, Thingiverse intake stops before the model summary with a message naming the file and where to create the token; an empty file stops it too. Only `.stl` and `.3mf` files from a thing are selectable sources — a "download all" zip and other file types are not — and, as with the other sites, the chosen geometry is resliced locally; baked site G-code is never used. If Thingiverse answers with a 401/403 or a Cloudflare robot check (challenge), intake reports that plainly and stops; Print Buddy never tries to solve or bypass a robot check. Open thingiverse.com in a browser and pass any check there, or check/replace the token, then send the link again.
 
 ### All settings
 

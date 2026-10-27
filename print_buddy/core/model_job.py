@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Fetch, inspect, and (only with --approved) slice Printables or MakerWorld jobs.
+"""Fetch, inspect, and (only with --approved) slice Printables, MakerWorld or Thingiverse jobs.
 
 Normal path, one command:
   python3 -m print_buddy.core.model_job fetch URL
@@ -54,9 +54,10 @@ def request_json(url, *, data=None, headers=None, timeout=25):
     with urllib.request.urlopen(req, timeout=timeout) as r: return json.load(r)
 
 
-def download(url, target):
+def download(url, target, headers=None):
     target.parent.mkdir(parents=True, exist_ok=True)
-    req=urllib.request.Request(url, headers={"User-Agent":UA})
+    h={"User-Agent":UA}; h.update(headers or {})
+    req=urllib.request.Request(url, headers=h)
     from .intake_resources import save_download
     with urllib.request.urlopen(req, timeout=90) as r:
         save_download(r, target)
@@ -183,7 +184,23 @@ def printables_inventory(url):
     files=[]
     for kind in ("stls","gcodes","otherFiles"):
         for f in d.get(kind,[]): files.append({"id":f["id"],"name":f["name"],"bytes":f["fileSize"],"kind":kind})
-    return {"site":"printables","model_id":mid,"title":d["name"],"slug":d.get("slug") or mid,"license":(d.get("license")or{}).get("name"),"sources":files}
+    job={"site":"printables","model_id":mid,"title":d["name"],"slug":d.get("slug") or mid,"license":(d.get("license")or{}).get("name"),"sources":files}
+    # Stage 0 of #462 (live-audited 2026-10-27, model 3111): some listings expose no
+    # geometry at all through this API -- stls and otherFiles come back empty and only
+    # pre-sliced G-code is listed, and PrintType has no other file field to reach it
+    # through (files/modelFiles/packages/downloads and similar are all rejected by
+    # the schema). Print Buddy never uses baked site G-code, so name that exact reason
+    # instead of letting intake report a generic empty inventory.
+    if not any(Path(f["name"]).suffix.lower() in {".stl", ".3mf"} for f in files):
+        detail=[]
+        if d.get("gcodes"): detail.append(f"only pre-sliced G-code is listed ({len(d['gcodes'])} file(s))")
+        if d.get("otherFiles"): detail.append("otherFiles lists only non-geometry files: "
+                                              + ", ".join(str(f.get("name")) for f in d["otherFiles"]))
+        if not detail: detail.append("no files are listed at all")
+        job["no_geometry_reason"]=(
+            f"Printables listing for model {mid} exposes no STL/3MF via the Printables API "
+            f"(stls is empty; {'; '.join(detail)}), so there is no selectable geometry to reslice")
+    return job
 def printables_download(job, source, target):
     cached=_cached_source("printables", "id", source.get("id"), job.get("model_id"))
     if cached is not None and cached.name==Path(source.get("name") or "").name:
@@ -193,6 +210,97 @@ def printables_download(job, source, target):
     d=gql(q,{"id":str(source["id"]),"printId":str(job["model_id"]),"source":"model_detail","fileType":typ})["data"]["getDownloadLink"]
     if not d.get("ok"): raise RuntimeError(str(d.get("errors")))
     target=target/Path(source["name"]).name; download(d["output"]["link"],target); return target
+
+THINGIVERSE="https://api.thingiverse.com"
+def thingiverse_headers():
+    path=Path.home()/".config/thingiverse/token"
+    try:
+        token=path.read_text().strip()
+    except FileNotFoundError:
+        raise RuntimeError(f"Thingiverse links need a free Thingiverse App Token in {path}; "
+                           "create an app/token at https://www.thingiverse.com/developers "
+                           "(under your Thingiverse account) and store the App Token as the only "
+                           "content of that file; see docs/PROJECT-REFERENCE.md (Thingiverse App Token)") from None
+    if not token: raise RuntimeError("Thingiverse token empty")
+    return {"Authorization":f"Bearer {token}"}
+def _thingiverse_blocked(exc):
+    """Plain RuntimeError for a Thingiverse 401/403/challenge, else None. Never bypass a challenge."""
+    if getattr(exc, "code", None) not in (401, 403): return None
+    headers=getattr(exc, "headers", None) or {}
+    try: challenged="challenge" in str(headers.get("Cf-Mitigated", "")).lower()
+    except Exception: challenged=False
+    cause=("Thingiverse answered with a Cloudflare robot check (challenge)" if challenged
+           else "Thingiverse refused the request (401/403), which usually means the App Token is missing, invalid or expired, or the site is challenging this connection")
+    return RuntimeError(f"{cause}. Open thingiverse.com in a browser and pass any check there, "
+                        "check the token file (see docs/PROJECT-REFERENCE.md, Thingiverse App Token), "
+                        "then send the link again. Print Buddy does not try to bypass robot checks.")
+def _thingiverse_json(url):
+    try:
+        return request_json(url, headers=thingiverse_headers())
+    except urllib.error.HTTPError as exc:
+        blocked=_thingiverse_blocked(exc)
+        if blocked is not None: raise blocked from None
+        raise
+def thingiverse_id(url):
+    m=re.search(r'thing:(\d+)', url)
+    if not m: raise ValueError("Thingiverse URL needs /thing:<number>")
+    return m.group(1)
+def thingiverse_inventory(url):
+    # Verified against the official API shape documented by open-source SDKs
+    # (e.g. the Go thingiverse client): GET /things/{id} -> {id, name, license (string),
+    # public_url, ...}; GET /things/{id}/files -> [{id, name, size, download_url, ...}].
+    # The per-file download_url is the download route; no live token was available to
+    # re-verify it end to end, which the #462 PR body names explicitly.
+    mid=thingiverse_id(url)
+    d=_thingiverse_json(f"{THINGIVERSE}/things/{mid}")
+    if not isinstance(d, dict) or not d: raise RuntimeError("Thingiverse thing not found")
+    listed=_thingiverse_json(f"{THINGIVERSE}/things/{mid}/files")
+    rows=[]
+    for f in listed or []:
+        name=str(f.get("name") or "")
+        if Path(name).suffix.lower() not in {".stl", ".3mf"}: continue
+        rows.append({"id":f.get("id"),"name":name,"bytes":f.get("size"),"kind":"files",
+                     "download_url":f.get("download_url")})
+    title=str(d.get("name") or "").strip() or f"thingiverse-{mid}"
+    slug=re.sub(r'[^a-z0-9]+','-',title.lower()).strip('-') or mid
+    return {"site":"thingiverse","model_id":mid,"title":title,"slug":slug,
+            "license":d.get("license"),"sources":rows}
+def thingiverse_download(job, source, target):
+    cached=_cached_source("thingiverse", "id", source.get("id"), job.get("model_id"))
+    if cached is not None and cached.name==Path(source.get("name") or "").name:
+        return _reuse_cached(cached, target, "Thingiverse")
+    url=source.get("download_url")
+    if not url:
+        for f in _thingiverse_json(f"{THINGIVERSE}/things/{job['model_id']}/files") or []:
+            if str(f.get("id"))==str(source.get("id")): url=f.get("download_url"); break
+    if not url: raise RuntimeError("Thingiverse gave no download_url for this file, so it cannot be downloaded through the API")
+    dest=target/Path(source["name"]).name
+    try:
+        download(url, dest, headers=thingiverse_headers())
+    except urllib.error.HTTPError as exc:
+        blocked=_thingiverse_blocked(exc)
+        if blocked is not None: raise blocked from None
+        raise
+    return dest
+
+# Per-site registry (#462): site -> function NAME, resolved through this module's globals
+# at call time so existing tests that monkeypatch maker_*/printables_*/thingiverse_* by
+# name keep working exactly as before.
+SITE_INVENTORY_FUNCS={"makerworld":"maker_inventory","printables":"printables_inventory",
+                      "thingiverse":"thingiverse_inventory"}
+SITE_DOWNLOAD_FUNCS={"makerworld":"maker_download","printables":"printables_download",
+                     "thingiverse":"thingiverse_download"}
+SITE_HOSTS={"makerworld.com":"makerworld","www.makerworld.com":"makerworld",
+            "printables.com":"printables","www.printables.com":"printables",
+            "thingiverse.com":"thingiverse","www.thingiverse.com":"thingiverse"}
+def inventory_for_url(url):
+    site=SITE_HOSTS.get((urllib.parse.urlparse(url).hostname or "").lower())
+    if site is None: raise ValueError("supported sites: MakerWorld, Printables, Thingiverse")
+    return globals()[SITE_INVENTORY_FUNCS[site]](url)
+def download_for_site(job, source, target):
+    name=SITE_DOWNLOAD_FUNCS.get((job or {}).get("site"))
+    if name is None: raise ValueError("supported sites: MakerWorld, Printables, Thingiverse")
+    return globals()[name](job, source, target)
 
 
 def _timing(job_path, stage, **extra):
@@ -5365,9 +5473,11 @@ def _main():
             })
         except ValueError as exc:
             raise SystemExit(f"REFUSED: invalid filament selection: {exc}")
-    p=urllib.parse.urlparse(a.url); job=maker_inventory(a.url) if "makerworld.com" in p.netloc else printables_inventory(a.url) if "printables.com" in p.netloc else (_ for _ in ()).throw(ValueError("supported sites: MakerWorld, Printables"))
+    job=inventory_for_url(a.url)
     if not job.get("sources"):
         raise SystemExit("REFUSED: source inventory contains no selectable files or profiles")
+    if job.get("no_geometry_reason"):
+        raise SystemExit(f"REFUSED: {job['no_geometry_reason']}")
     job["url"],job["hardware"],job["fetched_at"]=a.url,st,time.strftime("%Y-%m-%dT%H:%M:%S%z")
     stamp_job_printer(job)
     if a.printer: job["printer_model"]=a.printer
@@ -5403,7 +5513,7 @@ def _main():
         site_mats=set(chosen.get("materials") or [])
         if site_mats and st["spool"]["material"] not in site_mats: notes.append(f"site profile material is {', '.join(sorted(site_mats))}; loaded material is {st['spool']['material']}")
         if notes: print("SITE PROFILE NOT REUSED: " + "; ".join(notes) + ". Reslicing geometry to live local state.")
-    srcdir=folder/"source"; path=maker_download(job,chosen,srcdir) if job["site"]=="makerworld" else printables_download(job,chosen,srcdir)
+    srcdir=folder/"source"; path=download_for_site(job,chosen,srcdir)
     job["selected_source"],job["downloaded_file"],job["audit"]=chosen,str(path),audit(path, printer_model=job.get("printer_model") or printers.current().key); write_job(folder,job)
     print("\nAUDIT: "+json.dumps(job["audit"],indent=2))
     if a.inspect_only:

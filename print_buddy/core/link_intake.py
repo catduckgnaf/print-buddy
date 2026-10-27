@@ -25,6 +25,8 @@ def model_link(text):
         return text
     if host in {'printables.com', 'www.printables.com'} and re.match(r'/(?:[a-z]{2}/)?model/', path):
         return text
+    if host in {'thingiverse.com', 'www.thingiverse.com'} and re.match(r'/thing:\d+', path):
+        return text
     return None
 
 

@@ -11,7 +11,8 @@ from pathlib import Path
 
 ALLOWED = {
     ('model_job', 'audit'), ('model_job', 'slice_job'), ('model_job', 'maker_download'),
-    ('model_job', 'printables_download'), ('source_colors', 'inventory'),
+    ('model_job', 'printables_download'), ('model_job', 'thingiverse_download'),
+    ('source_colors', 'inventory'),
     ('orca_adapter', 'orca_plate_capacity'), ('orca_adapter', 'fit_options'),
     ('model_job', 'per_part_fit_options'), ('plate_merge', 'full_size_split_possible'),
     ('geometry_layout', 'inspect_geometry'), ('geometry_layout', 'arrange_and_export'),

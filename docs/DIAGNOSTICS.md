@@ -66,10 +66,16 @@ in `print_buddy.diagnostics.LEGACY_MARKERS` and likewise never changes.
    never a doctor failure: the container healthcheck owns failing on a
    dead listener, and a doctor run on a host where listeners are
    legitimately stopped must not fail.
-6. **Stage 6:** per-post audit of the remaining Discord failure posts
-   (intake / slicing / delivery action handlers) — the inventory's
-   "Mixed" row — bringing the bare-exception posts up to the bar with
-   the shared operator-message helper.
+6. **Stage 6 (done):** per-post audit of the Discord action handlers in
+   `plugins/print-feedback` — the generic failure posts (color selection,
+   next plate, stop, resume, print again, restart, plate picker, alert
+   buttons) now go through one helper that keeps the operator detail and
+   the state/remedy note and appends the greppable `PB_*` reference
+   marker, redacted. The deliberate refusal posts (`NextPlateError`,
+   `REFUSED: ... Nothing uploaded or started.`) already met the bar and
+   are unchanged; `model_job`'s CLI exits are those same curated refusal
+   texts. The design turn's `DesignError` post is the same class —
+   a curated, operator-phrased error type — and is likewise unchanged.
 
 The fail-soft posture is preserved throughout (#235): warnings never block
 a print, and no print path changes behaviour beyond reporting.
@@ -85,7 +91,7 @@ each row as it changes it.
 | Discord startup (`bot/client.py` `run_bot`) | `DISCORD_STARTUP_RETRY` log marker with attempt/backoff; token/intent failures print an actionable stderr line and exit 3 | Meets bar after Stage 2: the exhausted-retry line carries `PB_DISCORD_*`, and the token/intent exits name the remedy and `PB_DISCORD_CONFIGURATION` | 2 (done) |
 | Spoolman unavailable (pipeline notice) | One-line notice that tracking was skipped; failure detail only in the WARNING log | Meets bar after Stage 2: the notice states the print continues and what to check; the log warning carries the exact `PB_SPOOLMAN_*` marker (Stage 1) | 2 (done) |
 | Timelapse completion posts (#383) | Every degraded outcome posts a reason line instead of dropping the video silently | Meets bar — the reference pattern for Stage 2 | — |
-| Intake / slicing / delivery posts (`core/model_job.py`) | Many outcomes carry a `reason`; some failure posts are still built from raw exception text | Mixed; per-post audit needed | 2 |
+| Intake / slicing / delivery posts (`core/model_job.py` + plugin handlers) | Curated refusal texts carry the reason and the state; generic handler failures were built from raw exception text with no marker | Meets bar after Stage 6: generic Discord handler posts carry the detail, the state/remedy note and the `PB_*` marker via `_failure_post`; deliberate refusals unchanged | 6 (done) |
 | Listener heartbeat (`healthcheck.py`, `bot/health.py`) | `(ok, reason)` strings name staleness/identity/connection states | Names what failed; no remedy, no marker | 5 |
 | Container supervisor (`docker/supervise.sh`) | A required child's exit is reported as a bare status; listener exits name the printer and the restart budget | Required-child exit does not name the child | 4 |
 | Container healthcheck (`docker/healthcheck.py`) | One row per subsystem with a reason string | Mostly meets bar; rows get markers in Stage 5 | 5 |

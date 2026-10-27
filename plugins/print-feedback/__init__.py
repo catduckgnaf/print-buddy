@@ -55,6 +55,23 @@ def _wait_key(source):
             str(getattr(source, 'thread_id', '') or ''))
 
 
+def _failure_post(label, exc, note, *, subsystem):
+    """One Discord failure post meeting the #390 operator bar (stage 6).
+
+    ``label`` says what failed, the exception text is the detail the print
+    paths already phrase for operators, ``note`` says what state the print
+    is in and what to do, and the line ends with the stable greppable
+    ``PB_<SUBSYSTEM>_<CATEGORY>`` marker so a support thread can start from
+    one searchable string. The result is redacted like every diagnostics
+    string, so no secret material can ride along.
+    """
+    from print_buddy import diagnostics, logs
+    category = diagnostics.classify(exc)
+    return logs.redact(
+        f'{label} failed: {exc}. {note}\n'
+        f'Reference: {diagnostics.marker(subsystem, category)}')
+
+
 # Platforms whose standalone sources these handlers serve (#164): Discord,
 # Telegram (stage 2) and Matrix (stage 3). The gate was never really "is
 # this Discord" but "is this our bot's print source"; Hermes gateway
@@ -808,7 +825,7 @@ async def color_selection_dispatch(event, gateway, **kwargs):
     except PromptCancelled:
         message = 'Cancelled. No colors changed, nothing sliced, nothing started.'
     except Exception as exc:
-        message = f'Color selection failed: {exc}. No slicing, upload or print started.'
+        message = _failure_post('Color selection', exc, 'No slicing, upload or print started.', subsystem='intake')
     finally:
         _seen.pop(key, None)
     await adapter.send(chat_id=source.chat_id, content=message, metadata=metadata)
@@ -938,7 +955,7 @@ async def print_next_dispatch(event, gateway, **kwargs):
         message = f'No next plate: {exc}. Nothing uploaded or started.'
     except Exception as exc:
         logger.exception('print-next failed')
-        message = f'Next plate failed: {exc}. Check the printer screen before retrying.'
+        message = _failure_post('Next plate', exc, 'Check the printer screen before retrying.', subsystem='printer')
     finally:
         _seen.pop(key, None)
     if message:  # None: start accepted, printer preparing; the listener posts "Print started".
@@ -1725,7 +1742,7 @@ async def print_stop_dispatch(event, gateway, **kwargs):
                 _sent, message = await asyncio.to_thread(print_stop.cancel, st['filename'], **_pkw(pid))
     except Exception as exc:
         logger.exception('print-stop failed')
-        message = f'Stop failed: {exc}. Check the printer screen.'
+        message = _failure_post('Stop', exc, 'Check the printer screen.', subsystem='printer')
     finally:
         _seen.pop(key, None)
     await adapter.send(chat_id=source.chat_id, content=message, metadata=metadata)
@@ -1797,7 +1814,7 @@ async def print_resume_dispatch(event, gateway, **kwargs):
                 _sent, message = await asyncio.to_thread(pc.resume, st['filename'], **_pkw(pid))
     except Exception as exc:
         logger.exception('print-resume failed')
-        message = f'Resume failed: {exc}. Check the printer screen.'
+        message = _failure_post('Resume', exc, 'Check the printer screen.', subsystem='printer')
     finally:
         _seen.pop(key, None)
     await adapter.send(chat_id=source.chat_id, content=message, metadata=metadata)
@@ -1888,7 +1905,7 @@ async def print_again_dispatch(event, gateway, **kwargs):
         message = f'Nothing to print again: {exc}. Nothing uploaded or started.'
     except Exception as exc:
         logger.exception('print-again failed')
-        message = f'Print again failed: {exc}. Check the printer screen before retrying.'
+        message = _failure_post('Print again', exc, 'Check the printer screen before retrying.', subsystem='printer')
     finally:
         _seen.pop(key, None)
     if message:
@@ -1993,7 +2010,7 @@ async def print_reboot_dispatch(event, gateway, **kwargs):
                 _ok, message = await asyncio.to_thread(pc.force_reboot, **pkw)
     except Exception as exc:
         logger.exception('print-reboot failed')
-        message = f'Restart failed: {exc}. Check the printer screen.'
+        message = _failure_post('Restart', exc, 'Check the printer screen.', subsystem='printer')
     finally:
         _seen.pop(key, None)
     await adapter.send(chat_id=source.chat_id, content=message, metadata=metadata)
@@ -2482,7 +2499,7 @@ def alert_button_handlers(bot, adapter):
                 message = f"Did not start {target['label']}.\n{_spool_change_text(target, detail)}"
         except Exception as exc:
             logger.exception('plate picker start failed')
-            message = f'Next plate failed: {exc}. Check the printer screen before retrying.'
+            message = _failure_post('Next plate', exc, 'Check the printer screen before retrying.', subsystem='printer')
         if message:  # None: start accepted, printer preparing; the listener posts "Print started".
             await (interaction.followup.send(message, view=view) if view else interaction.followup.send(message))
 
@@ -2619,7 +2636,7 @@ def alert_button_handlers(bot, adapter):
             result = await asyncio.to_thread(pab.handle_click, action, alert)
         except Exception as exc:
             logger.exception('alert button %s failed', action)
-            result = f'{label} failed: {exc}. Check the printer screen. Not retrying.'
+            result = _failure_post(label, exc, 'Check the printer screen. Not retrying.', subsystem='printer')
         await interaction.followup.send(result)
 
     bot.add_listener(on_interaction, 'on_interaction')

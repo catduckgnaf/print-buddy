@@ -299,6 +299,55 @@ def test_numeric_and_text_answers_resolve_the_prompt(cfg, tmp_path):
     assert run(scenario("White")) == "White"   # the choice text itself still works
 
 
+def test_a_typed_answer_posts_its_note_before_it_unblocks_the_flow(cfg, tmp_path):
+    """#416 regression pin: resolving a prompt wakes the waiting flow, whose
+    next message must not overtake the answer note in the room. The stub
+    holds the note's send on a gate; while it is held, the waiter must still
+    be blocked. On the pre-fix resolve-then-close sequence the waiter
+    returns immediately and this fails deterministically."""
+    import threading
+    gate = threading.Event()
+    entered = threading.Event()
+
+    class GatedStub(HomeserverStub):
+        def __call__(self, req, timeout=None):
+            body = None
+            if req.data and req.headers.get("Content-type") == "application/json":
+                body = json.loads(req.data)
+            if body and str(body.get("body", "")).startswith("> Answered"):
+                entered.set()
+                gate.wait(10)
+            return super().__call__(req, timeout=timeout)
+
+    async def scenario():
+        stub = GatedStub()
+        adapter = matrix.StandaloneAdapter(None, [USER], homeserver=HOMESERVER, token=TOKEN, opener=stub)
+        cid = "ab" * 16
+        key = f"matrix:{ROOM}::{USER}"
+        prompts.register(cid, key, "Start the print?", ["Print it"])
+        result = await adapter.send_clarify(chat_id=ROOM, question="Start the print?",
+                                            choices=["Print it"], clarify_id=cid, session_key="flow")
+        assert result.success
+        waiter = asyncio.create_task(asyncio.to_thread(prompts.wait_for_response, cid, 10))
+        answer = asyncio.create_task(adapter.answer_typed(key, "1"))
+        for _ in range(200):
+            if entered.is_set():
+                break
+            await asyncio.sleep(0.01)
+        assert entered.is_set(), "the answer note was never sent"
+        await asyncio.sleep(0.2)
+        assert not waiter.done(), "the flow unblocked before the answer note posted (#416)"
+        gate.set()
+        assert await answer is True
+        assert await waiter == "Print it"
+        assert stub.sent_bodies()[-1] == "> Answered by message: Print it"
+
+    try:
+        run(scenario())
+    finally:
+        gate.set()
+
+
 def test_a_number_with_no_open_prompt_is_not_an_answer(cfg, tmp_path):
     adapter = matrix.StandaloneAdapter(None, [USER], homeserver=HOMESERVER, token=TOKEN,
                                        opener=HomeserverStub())

@@ -98,3 +98,28 @@ remainder), and the Matrix message-ordering flake root cause (scope 4).
   state-files, supervisor timing) — none on a Matrix test. No root cause
   is claimed and no speculative fix is made; scope 4 stays open on #391
   until a failing run can be captured with its log.
+
+## #416 (Matrix message-ordering flake: captured, root-caused, fixed)
+
+- Capture: two CI runs on main failed the same test with the same
+  assertion — 40339371151 (main @ 3d37f51, 2026-10-26) and 40442136404
+  (main @ 8899a40, 2026-10-27), both `offline-tests (3.14)` only (3.12
+  green on the same heads):
+  `test_matrix_adapter_drives_a_full_intake_through_the_real_handlers`
+  expected the last room message to be `Started.` and got
+  `> Answered by message: Print it`. Linked on #416 before any re-run.
+- Root cause (code, not the test): `BasePlatformAdapter.answer_typed`
+  resolves the prompt registry before posting the close-out. Resolving
+  wakes the waiting intake flow, which sends its next message at once.
+  Discord/Telegram close-outs are edits, but the Matrix close-out is a
+  new room message sent via `asyncio.to_thread`, so the answer note and
+  the flow's next message raced, and either could land first.
+- Fix: the Matrix adapter posts its answer note before resolving the
+  prompt (`StandaloneAdapter.answer_typed` in `print_buddy/bot/matrix.py`);
+  other platforms are unchanged. Deterministic local reproduction with
+  the note's send artificially delayed inverted the order on the old
+  code every run and never on the fixed code.
+- Pin: `test_a_typed_answer_posts_its_note_before_it_unblocks_the_flow`
+  in `tests/bot/test_matrix.py` gates the note's send and asserts the
+  waiting flow stays blocked until the note has posted; it fails
+  deterministically against the pre-fix adapter.

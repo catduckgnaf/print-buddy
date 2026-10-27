@@ -144,6 +144,10 @@ Required environment: `PRINT_BUDDY__BOT__MODE=standalone`, `DISCORD_BOT_TOKEN`, 
   `/print-coldpull`, `/print-maintenance`, `/print-colors`, `/spool`, `/print-lookup`, `/print-troubleshoot`,
   `/print-macros` (Moonraker printers only; lists the macros the printer defines, and `run <name>` runs one behind a confirmation),
   `/print-buddy` (guided setup and read-only debugging), `/print-help`. Typing the same text works too.
+* `/print-design <what to make>` designs a new part with AI + OpenSCAD when `[design]` is enabled (see
+  [AI design](DESIGN.md)). It needs an OpenAI-compatible endpoint — the `[design]` settings, or `[llm]`'s —
+  and the `openscad` binary on the machine (the container image includes it; a native install must add it,
+  e.g. `apt install openscad`). Design is Discord-only; Telegram and Matrix keep their no-LLM posture.
 * Listener posts (started, complete, failed, timelapse) and alert buttons (Resume, Cancel, spool questions, IFS
   insertion, plate picker) work with the Hermes gateway stopped.
 * A typed reply answers your own open question, as under Hermes ("2" for two copies, "split", "cancel"). It

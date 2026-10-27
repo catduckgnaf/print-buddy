@@ -165,6 +165,14 @@ Required environment: `PRINT_BUDDY__BOT__MODE=standalone`, `DISCORD_BOT_TOKEN`, 
   button or reply `cancel the print`. That cancels through the same path as `/print-stop`, closes the question
   and stops its reminders; filament usage stays paused for every spool, exactly as a cancelled print leaves it.
   If the cancel does not end the print, the question stays open and answerable.
+* A pause caused by a filament runout is announced as a runout, not a generic pause: the listener combines the
+  pause message, the printer's own filament sensor (switch or motion sensor, discovered from Moonraker's object
+  list — a disabled, absent or unreadable sensor counts as no evidence, never as a runout) and, on printers with
+  IFS slot presence, the slot readings. The alert names the slot and spool that ran out, is followed by the spool
+  question for registering the replacement spool, and carries the usual **Resume print** / **Cancel print**
+  buttons — Resume acts only when you press it and re-checks the paused job first. If a slot empties while the
+  print is already paused and the pause had not been classified as a runout, the alert is re-posted as a runout
+  alert (with the spool question) instead of only being logged.
 * A typed reply answers your own open question, as under Hermes ("2" for two copies, "split", "cancel"). It
   never answers another allowed user's question, even in the same channel or thread. Buttons are shared: any
   allowed user may press an open question's button, and the message then shows who chose.

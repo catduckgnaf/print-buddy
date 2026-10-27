@@ -81,6 +81,7 @@ GROUP_OF = {
     "discord.denied_user_ids": "platform",
     "discord.approval_user_id": "platform",
     "discord.timezone": "platform",
+    "discord.chat_llm_enabled": "platform",
     "telegram.chat_id": "platform",
     "telegram.allowed_user_ids": "platform",
     "telegram.approval_user_id": "platform",
@@ -165,6 +166,12 @@ CATALOG = (
     _field("discord", "timezone", "Timezone", "picker",
            "IANA timezone name used for display and the daily reset.",
            choices_source=SOURCE_TIMEZONES),
+    _field("discord", "chat_llm_enabled", "Discord chat LLM", "toggle",
+           "Free-text chat replies from the [llm] model on Discord. On by default; "
+           "off runs Discord as a pure bot (unmatched text gets the command list) "
+           "while [llm] stays configured for /print-design. The roast and camera "
+           "watchdog keep their own vision switches either way.",
+           validator="settings discord check"),
     _field("telegram", "chat_id", "Telegram chat", "text",
            "Telegram chat (group) ID; group and channel IDs are negative.",
            validator="settings telegram check"),

@@ -577,7 +577,8 @@ async def design_dispatch(event, gateway, **kwargs):
     await say('\n'.join(lines))
     timeout = (globals().get('_config').question_timeout_s() if globals().get('_config') else 1800)
     answer = await _confirm(adapter, source, metadata, 'print-design',
-                            'What next for this design?', list(design.CHOICES), timeout)
+                            'What next for this design?', list(design.CHOICES), timeout,
+                            live_key=gateway._session_key_for_source(source))
     if answer == design.SLICE_LABEL:
         engine.mark_handed_off(session)
         return await _design_handoff(event, gateway, adapter, session, result['stl_path'])
@@ -1795,13 +1796,20 @@ def _control_preamble(event, gateway, command, with_args=False):
     return source, gateway._delivery_adapter_for(source)
 
 
-async def _confirm(adapter, source, metadata, prefix, question, choices, timeout):
+async def _confirm(adapter, source, metadata, prefix, question, choices, timeout, live_key=None):
     import uuid
     from print_buddy.core.prompts import gateway as _prompts
     cm = _prompts()
     cid = uuid.uuid4().hex
     session_key = f'{prefix}:{source.chat_id}:{source.thread_id}'
-    cm.register(cid, session_key, question, choices)
+    # Registration key vs delivery key (the link_intake.ask pattern): a typed
+    # reply reaches a prompt only when the prompt is registered under the
+    # live chat session key, because the bot core routes typed answers by
+    # that key exactly. Button platforms resolve by clarify_id either way,
+    # but Matrix has no buttons — its numbered replies are typed answers, so
+    # a flow-key registration there can never be answered and the prompt
+    # times out. send_clarify keeps the flow key for delivery.
+    cm.register(cid, live_key or session_key, question, choices)
     try:
         sent = await adapter.send_clarify(chat_id=str(source.chat_id), question=question, choices=choices,
                                           clarify_id=cid, session_key=session_key, metadata=metadata)

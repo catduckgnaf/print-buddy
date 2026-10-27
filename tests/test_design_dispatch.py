@@ -227,6 +227,80 @@ def test_design_turn_runs_on_telegram_and_matrix(design_env, platform):
 
 
 @needs_scad
+@pytest.mark.parametrize("reply,reason", [("2", "design awaiting revision"),
+                                          ("3", "design cancelled")])
+def test_design_prompt_answers_a_numbered_reply_through_the_real_matrix_adapter(
+        design_env, reply, reason):
+    """Regression (#426 review): Matrix has no buttons, so the design
+    Slice/Change/Cancel prompt is answered by a typed numbered reply, which
+    the bot core routes by the LIVE session key. The whole path runs for
+    real here — the actual Matrix adapter, the actual prompt registry, no
+    mocked wait — because the mocked-wait dispatch tests cannot see a
+    registration-key mismatch: pre-fix the prompt was registered under the
+    flow key only, replying with the number returned False and the
+    confirmation timed out (surfacing as a cancel)."""
+    import io
+    import json
+    import urllib.parse
+
+    from print_buddy.bot import matrix as matrix_mod
+
+    class _Response(io.BytesIO):
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *exc):
+            self.close()
+            return False
+
+    class Stub:
+        def __init__(self):
+            self.bodies = []
+
+        def __call__(self, req, timeout=None):
+            path = urllib.parse.urlsplit(req.full_url).path
+            body = (json.loads(req.data) if req.data and
+                    req.headers.get("Content-type") == "application/json" else None)
+            if "/send/m.room.message/" in path:
+                self.bodies.append((body or {}).get("body", ""))
+                return _Response(json.dumps({"event_id": "$evt"}).encode())
+            if path.endswith("/media/v3/upload"):
+                return _Response(json.dumps({"content_uri": "mxc://example.org/m"}).encode())
+            raise AssertionError(f"unexpected homeserver call: {req.method} {req.full_url}")
+
+    stub = Stub()
+    mx_access = "mx-test-access"
+    adapter = matrix_mod.StandaloneAdapter(None, ["42"], homeserver="https://matrix.example.org",
+                                           token=mx_access, opener=stub)
+    live_key = "matrix:c::42"
+    gateway = S(_is_user_authorized_for_source=lambda s: True,
+                _delivery_adapter_for=lambda s: adapter,
+                _session_key_for_source=lambda s: live_key)
+    fake = scripted([GOOD])
+
+    async def scenario():
+        with mock.patch.object(plugin, "_design_transport", return_value=(fake, "http")), \
+                mock.patch.object(core_prompts, "gateway", return_value=core_prompts):
+            task = asyncio.create_task(plugin.design_dispatch(
+                _event("/design a 40x20x3 plate with two 4 mm holes", platform="matrix"),
+                gateway))
+            for _ in range(600):
+                if any("Reply with the number" in body for body in stub.bodies):
+                    break
+                await asyncio.sleep(0.05)
+            else:
+                raise AssertionError("the design prompt never reached the room")
+            answered = await adapter.answer_typed(live_key, reply)
+            out = await asyncio.wait_for(task, 15)
+            return answered, out
+
+    answered, out = asyncio.run(scenario())
+    assert answered is True
+    assert out["reason"] == reason
+    assert any(body.startswith("> Answered by message:") for body in stub.bodies)
+
+
+@needs_scad
 def test_turn_posts_preview_choices_and_change_it_revises(design_env):
     adapter = FakeAdapter()
     fake = scripted([GOOD, THICKER])

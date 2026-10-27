@@ -84,7 +84,11 @@ def request(method: str, path: str, body: Any = None, *,
             raw = resp.read().decode("utf-8") or "{}"
         return json.loads(raw)
     except Exception as exc:
-        logger.warning("Spoolman %s %s failed: %s", method, path, exc)
+        # #390: the warning carries the taxonomy marker so a support
+        # conversation can start from one greppable string.
+        from .. import diagnostics
+        logger.warning("Spoolman %s %s failed: %s [%s]", method, path, exc,
+                       diagnostics.marker("spoolman", diagnostics.classify(exc)))
         raise SpoolmanUnavailable(str(exc) or type(exc).__name__) from exc
 
 

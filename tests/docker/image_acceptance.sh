@@ -12,7 +12,7 @@
 #
 # Checks: image identity; packaged payload and handlers without a source mount; Orca executable
 # and shared-library closure, or its absence; the ffmpeg runtime dependency and its timelapse
-# encoders; real slicing plus G-code guards, or fail-closed
+# encoders; the OpenSCAD runtime dependency (#388); real slicing plus G-code guards, or fail-closed
 # refusal; egress isolation; the same on a read-only root; the Unraid template's run flags;
 # combined readiness (listener plus Spoolman, bot idle); Spoolman API on loopback only with no
 # web UI; stale and cross-container heartbeat refusal; graceful SIGTERM; data and Spoolman
@@ -101,7 +101,7 @@ probe() {  # probe LABEL [docker run options...] -- CHECK
     fi
 }
 
-for check in payload closure slice egress ffmpeg; do
+for check in payload closure slice egress ffmpeg openscad; do
     probe default -- "$check"
     probe readonly --read-only --tmpfs /tmp:size=64m -- "$check"
 done

@@ -93,7 +93,24 @@ class DockerReleaseContract(unittest.TestCase):
         self.assertIn("def ffmpeg(", probe)
         self.assertIn('"ffmpeg": ffmpeg', probe)
         acceptance = (ROOT / "tests" / "docker" / "image_acceptance.sh").read_text()
-        self.assertIn("payload closure slice egress ffmpeg", acceptance)
+        self.assertIn("payload closure slice egress ffmpeg openscad", acceptance)
+
+    def test_runtime_installs_openscad_for_cad_split_and_design(self):
+        """#388: OpenSCAD is a runtime dependency (CAD split, previews, and
+        now the /print-design engine), resolved from PATH by the runtime
+        user. The live half of this pin — the binary resolves, runs and
+        reports its version — is the image probe's openscad check, wired
+        into the acceptance loop."""
+        dockerfile = (ROOT / "Dockerfile").read_text()
+        runtime = dockerfile.split("AS runtime", 1)[1]
+        install = re.search(r"apt-get install -y --no-install-recommends\s+(.*?)\s*&& rm -rf",
+                            runtime, re.S)
+        self.assertIsNotNone(install)
+        packages = set(install.group(1).replace("\\", " ").split())
+        self.assertIn("openscad", packages)
+        probe = (ROOT / "tests" / "docker" / "image_probe.py").read_text()
+        self.assertIn("def openscad(", probe)
+        self.assertIn('"openscad": openscad', probe)
 
     def test_docker_examples_use_source_installed_slicer(self):
         for suffix in ("yaml", "toml"):

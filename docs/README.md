@@ -56,6 +56,7 @@ Do not run both Discord modes with the same token. Installing, enabling services
 ## 4. Develop and review
 
 - [Listener domains](LISTENERS.md): the per-domain listener registry, the normalised status/event contract, and liveness (#299).
+- [Diagnostics](DIAGNOSTICS.md): the #390 error taxonomy, greppable markers, the operator-message bar, and the staged audit inventory.
 - [Multi-printer design](MULTI-PRINTER-DESIGN.md): the #257 Stage 2 design for one instance serving many printers — audit of the one-printer assumptions, config/state/routing decisions, and the staged implementation plan. Design only; not implemented.
 - [Contribution workflow](../CONTRIBUTING.md) and [pull request template](../.github/PULL_REQUEST_TEMPLATE.md).
 - [Release-note guidance](RELEASE-NOTES.md) and [internal release history](INTERNAL_RELEASE_NOTES.md).

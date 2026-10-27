@@ -1,6 +1,6 @@
 # Diagnostics: error taxonomy, markers and the audit inventory (#390)
 
-Print Buddy's diagnostics overhaul (issue #390, milestone 2.1.6) gives every
+Print Handy's diagnostics overhaul (issue #390, milestone 2.1.6) gives every
 failure one vocabulary, one searchable marker, and one operator-facing bar:
 a message says **what failed**, the **most likely cause**, and **what the
 operator can do about it**. No bare exception text, no silent drops, and no
@@ -10,14 +10,14 @@ exports a bundle (Stage 3).
 ## Error taxonomy
 
 Every failure at a main boundary is classified by
-`print_buddy.diagnostics.classify` into exactly one category:
+`print_handy.diagnostics.classify` into exactly one category:
 
 | Category | Meaning | Typical remedy shape |
 | --- | --- | --- |
 | `transient` | Network weather: DNS, refused/reset connections, timeouts, 429/5xx | Wait and retry; then check the network path |
 | `configuration` | A setting, profile or credential is wrong or missing | Fix the named setting; re-run the doctor |
 | `hardware` | The printer or a physical subsystem did not do what was asked | Check the printer; nothing was started by the message |
-| `programming` | A Print Buddy bug | File a report with the marker and a diagnostics bundle |
+| `programming` | A Print Handy bug | File a report with the marker and a diagnostics bundle |
 | `unknown` | Nothing honest can be said yet | Run the doctor; include the marker in any report |
 
 An explicit category from a boundary that knows better always wins over the
@@ -31,17 +31,17 @@ Each (subsystem, category) pair has one stable marker,
 Markers are append-only: once one has shipped in a log line or a message
 it is never renamed, so old support threads stay searchable. The pre-#390
 marker `DISCORD_STARTUP_RETRY` (#364/#369) is registered as a legacy marker
-in `print_buddy.diagnostics.LEGACY_MARKERS` and likewise never changes.
+in `print_handy.diagnostics.LEGACY_MARKERS` and likewise never changes.
 
 ## Staged plan
 
 1. **Stage 1 (this page's PR):** taxonomy + markers + the operator-message
-   builder (`print_buddy/diagnostics.py`), first wiring in the Spoolman
+   builder (`print_handy/diagnostics.py`), first wiring in the Spoolman
    client's failure warning, and this audit inventory.
 2. **Stage 2:** Discord message audit fixes — apply the operator-message
    bar to the surfaces the inventory below marks as failing it.
-3. **Stage 3 (done):** diagnostics bundle — `/print-buddy bundle` in the bot
-   and `python3 -m print_buddy.diagnostics_bundle` on the host assemble
+3. **Stage 3 (done):** diagnostics bundle — `/print-handy bundle` in the bot
+   and `python3 -m print_handy.diagnostics_bundle` on the host assemble
    versions, image digest (when the environment records one), a redacted
    config summary (env-name indirection only; secret values never
    included), printer/roster summary, doctor output and a bounded

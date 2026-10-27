@@ -1,4 +1,4 @@
-"""Stray Print Buddy state files: detection, safe removal, and the doctor line. Uses a temp HOME only."""
+"""Stray Print Handy state files: detection, safe removal, and the doctor line. Uses a temp HOME only."""
 import io
 import os
 import re
@@ -7,7 +7,7 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
-from print_buddy import doctor, settings, state_files
+from print_handy import doctor, settings, state_files
 
 ROOT = Path(__file__).resolve().parents[1]
 SOURCE_NAME = re.compile(
@@ -17,14 +17,14 @@ SOURCE_NAME = re.compile(
 class KnownNamesTests(unittest.TestCase):
     def source_names(self):
         names = set()
-        for folder in ("print_buddy", "plugins"):
+        for folder in ("print_handy", "plugins"):
             for path in (ROOT / folder).rglob("*.py"):
                 names.update(SOURCE_NAME.findall(path.read_text()))
         return names
 
     def test_every_state_name_in_the_code_is_known(self):
         missing = self.source_names() - set(state_files.KNOWN)
-        self.assertFalse(missing, f"add to print_buddy/state_files.py KNOWN: {sorted(missing)}")
+        self.assertFalse(missing, f"add to print_handy/state_files.py KNOWN: {sorted(missing)}")
 
     def test_known_has_no_stale_names(self):
         stale = set(state_files.KNOWN) - self.source_names()
@@ -46,7 +46,7 @@ class StrayTests(unittest.TestCase):
         patch = mock.patch.dict(os.environ, {"HOME": str(self.home)})
         patch.start()
         self.addCleanup(patch.stop)
-        self.config = settings.load(local=Path(os.devnull), environ={"PRINT_BUDDY__PATHS__HERMES_HOME": str(self.profile)})
+        self.config = settings.load(local=Path(os.devnull), environ={"PRINT_HANDY__PATHS__HERMES_HOME": str(self.profile)})
 
     def paths(self, strays):
         return {s.path for s in strays}
@@ -60,7 +60,7 @@ class StrayTests(unittest.TestCase):
         (self.sibling / "state" / "printer_hardware.json").write_text('{"x": 1}')
         (self.sibling / "state" / "gcode-bounds-cache").mkdir()
         (self.home / ".print_bitch_context.json").write_text('{"x": 1}')
-        (self.state / "print_buddy_context.json").write_text('{"x": 2}')
+        (self.state / "print_handy_context.json").write_text('{"x": 2}')
         (self.state / "print_bitch_context.json").write_text('{"x": 3}')
         found = {s.path: s for s in state_files.find_strays(self.config)}
         self.assertEqual({self.root / "state" / "print_alert_buttons.json",
@@ -69,7 +69,7 @@ class StrayTests(unittest.TestCase):
                           self.home / ".print_bitch_context.json",
                           self.state / "print_bitch_context.json"}, set(found))
         self.assertEqual(self.state / "print_alert_buttons.json", found[self.root / "state" / "print_alert_buttons.json"].canonical)
-        self.assertEqual(self.state / "print_buddy_context.json", found[self.home / ".print_bitch_context.json"].canonical)
+        self.assertEqual(self.state / "print_handy_context.json", found[self.home / ".print_bitch_context.json"].canonical)
 
     def test_unknown_names_and_no_recursive_scan(self):
         (self.root / "state" / "notes.txt").write_text("mine")
@@ -80,7 +80,7 @@ class StrayTests(unittest.TestCase):
     def test_profile_outside_a_profiles_folder_scans_only_home_and_old_names(self):
         solo = self.base / "solo"
         (solo / "state").mkdir(parents=True)
-        config = settings.load(local=Path(os.devnull), environ={"PRINT_BUDDY__PATHS__HERMES_HOME": str(solo)})
+        config = settings.load(local=Path(os.devnull), environ={"PRINT_HANDY__PATHS__HERMES_HOME": str(solo)})
         (self.base / "state").mkdir()
         (self.base / "state" / "print_alert_buttons.json").write_text("{}")
         self.assertEqual([], state_files.find_strays(config))
@@ -104,7 +104,7 @@ class StrayTests(unittest.TestCase):
         self.assertEqual('{"real": 2}', (self.state / "print_alert_buttons.json").read_text())
 
     def test_other_profiles_state_is_never_deleted(self):
-        # A sibling may be another Print Buddy install: even an empty or identical copy stays.
+        # A sibling may be another Print Handy install: even an empty or identical copy stays.
         identical = self.sibling / "state" / "printer_hardware.json"
         identical.write_text('{"same": 1}')
         (self.state / "printer_hardware.json").write_text('{"same": 1}')

@@ -1,7 +1,7 @@
 import unittest
 from copy import deepcopy
-from print_buddy.printers.flashforge.zmod.native_idle import require_idle
-from print_buddy.core.model_job import _require_idle_before_mapped_launch
+from print_handy.printers.flashforge.zmod.native_idle import require_idle
+from print_handy.core.model_job import _require_idle_before_mapped_launch
 
 class NativeIdleTests(unittest.TestCase):
     def test_mapped_launch_guard_refusal_is_clean_pre_upload_exit(self):

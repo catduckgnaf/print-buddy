@@ -10,10 +10,10 @@ own get_version + pushall, and the print-start payload is pinned byte-identical.
 """
 import copy
 
-from print_buddy import printers
-from print_buddy.core import printer_state
-from print_buddy.printers.bambulab import ams
-from print_buddy.printers.bambulab.client import BambuLanClient, project_file_payload
+from print_handy import printers
+from print_handy.core import printer_state
+from print_handy.printers.bambulab import ams
+from print_handy.printers.bambulab.client import BambuLanClient, project_file_payload
 
 from .test_bambu_lan import CODE, SERIAL, FakeMqtt, config_for, factory_for, lan_adapter
 

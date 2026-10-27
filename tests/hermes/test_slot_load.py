@@ -7,8 +7,8 @@ from unittest import mock
 
 import pytest
 
-from print_buddy.hermes import print_control as pc
-from print_buddy.hermes import slot_load
+from print_handy.hermes import print_control as pc
+from print_handy.hermes import slot_load
 
 
 def test_slot_load_refuses_invalid_slot():
@@ -116,7 +116,7 @@ def test_slot_load_screenless_display_off_mode():
 
 
 def test_pb_load_slot_cli_script_invocations():
-    bin_path = Path(__file__).resolve().parents[2] / "bin" / "pb-load-slot"
+    bin_path = Path(__file__).resolve().parents[2] / "bin" / "ph-load-slot"
     assert bin_path.is_file()
 
     # Test invalid slot CLI. Parsing leaves validation to load_slot so failures

@@ -1,7 +1,7 @@
 import pytest
-from print_buddy.hermes import spool_sync
-from print_buddy.core import model_job
-from print_buddy.printers.flashforge.zmod import stock
+from print_handy.hermes import spool_sync
+from print_handy.core import model_job
+from print_handy.printers.flashforge.zmod import stock
 
 
 def test_rebinding_slot_does_not_keep_previous_spool_color():

@@ -1,7 +1,7 @@
 """Slice with the real Orca CLI and the home templates, then run the guards on what it produced.
 
-Skipped unless PRINT_BUDDY_REAL_SLICER=1. CI runs these in the real-slicer job with the same Flathub
-Orca the home box uses. Locally: PRINT_BUDDY_REAL_SLICER=1 python3 -m unittest tests.slicer -v
+Skipped unless PRINT_HANDY_REAL_SLICER=1. CI runs these in the real-slicer job with the same Flathub
+Orca the home box uses. Locally: PRINT_HANDY_REAL_SLICER=1 python3 -m unittest tests.slicer -v
 """
 import os
 import subprocess
@@ -9,11 +9,11 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from print_buddy import settings
-from print_buddy.core import slice_guard as sg
+from print_handy import settings
+from print_handy.core import slice_guard as sg
 import pytest
 
-REAL = os.environ.get("PRINT_BUDDY_REAL_SLICER") == "1"
+REAL = os.environ.get("PRINT_HANDY_REAL_SLICER") == "1"
 # Flatpak Orca has a private /tmp and cannot read host temp files. Work inside the checkout,
 # which sits under $HOME on the home box and the CI runner, where the sandbox can see it.
 WORK = settings.ROOT / ".slicer-work"
@@ -21,7 +21,7 @@ WORK = settings.ROOT / ".slicer-work"
 
 def _orca_command():
     """Return the configured Orca command with the adapter's runtime overrides applied."""
-    from print_buddy.core import orca_adapter
+    from print_handy.core import orca_adapter
     return orca_adapter._orca_command()
 
 
@@ -40,7 +40,7 @@ def write_cube(path, size):
     return path
 
 
-@unittest.skipUnless(REAL, "set PRINT_BUDDY_REAL_SLICER=1 to slice with the real Orca CLI")
+@unittest.skipUnless(REAL, "set PRINT_HANDY_REAL_SLICER=1 to slice with the real Orca CLI")
 class OrcaRealSliceTests(unittest.TestCase):
     def setUp(self):
         WORK.mkdir(exist_ok=True)
@@ -111,12 +111,12 @@ class OrcaRealSliceTests(unittest.TestCase):
         self.assertTrue(sg.enforce_approved_baseline(gcode, path=baseline).ok)
 
 
-@pytest.mark.skipif(not REAL, reason="set PRINT_BUDDY_REAL_SLICER=1 to slice with the real Orca CLI")
+@pytest.mark.skipif(not REAL, reason="set PRINT_HANDY_REAL_SLICER=1 to slice with the real Orca CLI")
 # The A1 (0.4 mm only) slices from profiles generated from the installed OrcaSlicer: test_orca_real_bambu_a1.py.
 @pytest.mark.parametrize("printer_key,size", [("flashforge.ad5x", 0.25), ("flashforge.ad5x", 0.4), ("flashforge.ad5x", 0.6), ("flashforge.ad5x", 0.8), ("sovol.sv06", 0.2)])
 def test_real_slicer_supported_nozzle_sizes(printer_key, size):
-    from print_buddy import printers
-    from print_buddy.core import orca_adapter, nozzle
+    from print_handy import printers
+    from print_handy.core import orca_adapter, nozzle
 
     WORK.mkdir(exist_ok=True)
     with tempfile.TemporaryDirectory(dir=WORK) as tmp_dir:

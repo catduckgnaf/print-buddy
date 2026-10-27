@@ -2,7 +2,7 @@ import subprocess
 import unittest
 from unittest.mock import Mock
 
-from print_buddy.core import clear_job
+from print_handy.core import clear_job
 
 
 def snapshots(native_status="ready", moon="standby", target=0):

@@ -8,8 +8,8 @@ import types
 
 import pytest
 
-from print_buddy.hermes import bambu_watch, print_stop
-from print_buddy.printers.bambulab.client import BambuLanError
+from print_handy.hermes import bambu_watch, print_stop
+from print_handy.printers.bambulab.client import BambuLanError
 
 JPEG = b"\xff\xd8\xff\xe0" + b"fake-jpeg-body" + b"\xff\xd9"
 REMOTE = "benchy_abc.gcode.3mf"
@@ -156,7 +156,7 @@ def test_start_monitor_with_injected_parts_uses_the_given_thread_factory():
 
 # -- Stage 3: the camera watchdog ----------------------------------------------
 
-from print_buddy.hermes import visual_watch as vw
+from print_handy.hermes import visual_watch as vw
 
 
 def _watch_monitor(*, sensitivity=3, verdict=("ok", "looks fine"), changed=True):
@@ -242,7 +242,7 @@ def test_periodic_checks_still_run_when_the_firmware_reports_no_layer():
 
 
 def test_visual_alert_delivery_posts_buttons_like_the_moonraker_alert(monkeypatch):
-    from print_buddy.hermes import print_alert_buttons as pab
+    from print_handy.hermes import print_alert_buttons as pab
     seen = {}
     monkeypatch.setattr(pab, "post_visual_alert",
                         lambda token, chat, text, filename, path: seen.update(
@@ -282,7 +282,7 @@ def test_pause_refuses_a_different_file_without_sending(monkeypatch):
 
 def test_handle_click_visual_pause_routes_to_the_bambu_pause(monkeypatch):
     from unittest import mock
-    from print_buddy.hermes import print_alert_buttons as pab
+    from print_handy.hermes import print_alert_buttons as pab
     adapter, _client = _bambu_pause(monkeypatch, [bst2("printing"), bst2("paused")])
     with mock.patch.object(print_stop.time, "sleep"):
         text = pab.handle_click("pause", {"kind": "visual", "filename": "plate_1.gcode.3mf"})
@@ -297,7 +297,7 @@ def bst2(state, filename="plate_1.gcode.3mf", layer=1, total=513, progress=0.01)
 def _bambu_pause(monkeypatch, snapshots):
     """Route print_stop through a fake Bambu LAN adapter, as in test_print_stop.py."""
     from unittest import mock
-    from print_buddy import printers
+    from print_handy import printers
     client = mock.Mock()
     client.snapshot.side_effect = list(snapshots)
     adapter = types.SimpleNamespace(
@@ -312,7 +312,7 @@ def _bambu_pause(monkeypatch, snapshots):
 
 from pathlib import Path as _Path
 
-from print_buddy.printers.bambulab.client import BambuLanError as _LanError
+from print_handy.printers.bambulab.client import BambuLanError as _LanError
 
 SOURCE_URL = "bambu-tcp6000://192.168.1.50"
 
@@ -530,8 +530,8 @@ import subprocess as _subprocess
 import pytest as _pytest
 from PIL import Image as _Image
 
-from print_buddy.hermes import moonraker_event_listener as _mel
-from print_buddy.hermes import timelapse_capture as _capture
+from print_handy.hermes import moonraker_event_listener as _mel
+from print_handy.hermes import timelapse_capture as _capture
 
 _FFMPEG = _shutil.which("ffmpeg")
 _FFPROBE = _shutil.which("ffprobe")

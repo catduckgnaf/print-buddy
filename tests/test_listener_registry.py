@@ -1,6 +1,6 @@
 """#299: the listener registry behind the gate, supervisor and healthcheck.
 
-One registry (print_buddy.listeners) maps every vendor connection to its
+One registry (print_handy.listeners) maps every vendor connection to its
 listener domain: implemented (moonraker, and bambulab_lan since Stage B),
 planned (domain known, no listener yet) or none (offline). The planned/none
 distinction is what lets the supervisor idle a zero-listener configuration
@@ -12,8 +12,8 @@ import importlib.util
 import unittest
 from unittest import mock
 
-from print_buddy import healthcheck, listeners, logs, printers, settings
-from print_buddy.printers import base as printer_base
+from print_handy import healthcheck, listeners, logs, printers, settings
+from print_handy.printers import base as printer_base
 
 
 def data(model):
@@ -45,11 +45,11 @@ class RegistryShapeTests(unittest.TestCase):
                 self.assertIsNotNone(domain.runtime)
         self.assertEqual(listeners.DOMAINS["moonraker"].runtime,
                          healthcheck.RUNTIME)
-        from print_buddy.printers.bambulab import listener as bambu_listener
+        from print_handy.printers.bambulab import listener as bambu_listener
         self.assertEqual(listeners.DOMAINS["bambulab_lan"].runtime,
                          bambu_listener.RUNTIME)
         self.assertEqual(listeners.DOMAINS["bambulab_lan"].module,
-                         "print_buddy.printers.bambulab.listener")
+                         "print_handy.printers.bambulab.listener")
 
     def test_planned_and_none_are_distinct_states(self):
         for connection in ("prusalink", "elegoo_sdcp",
@@ -107,7 +107,7 @@ class LauncherTests(unittest.TestCase):
                 mock.patch.object(listeners.runpy, "run_module") as run_module:
             self.assertEqual(listeners.launch({}), 0)
         run_module.assert_called_once_with(
-            "print_buddy.printers.bambulab.listener", run_name="__main__")
+            "print_handy.printers.bambulab.listener", run_name="__main__")
 
     def test_launch_drops_a_preimported_domain_module_before_runpy(self):
         # #409: printer discovery pre-imports the Bambu listener module
@@ -150,7 +150,7 @@ class LauncherTests(unittest.TestCase):
                 mock.patch.object(listeners.runpy, "run_module") as run_module:
             self.assertEqual(listeners.launch({}), 0)
         run_module.assert_called_once_with(
-            "print_buddy.hermes.moonraker_event_listener", run_name="__main__")
+            "print_handy.hermes.moonraker_event_listener", run_name="__main__")
 
     def test_unresolved_configuration_keeps_the_gate_failure_code(self):
         with mock.patch.object(healthcheck, "listener_domain",
@@ -189,7 +189,7 @@ class MultiPrinterLaunchTests(unittest.TestCase):
             self.assertEqual(
                 listeners.launch(self.roster(), printer_id="moon-two"), 0)
         run_module.assert_called_once_with(
-            "print_buddy.hermes.moonraker_event_listener", run_name="__main__")
+            "print_handy.hermes.moonraker_event_listener", run_name="__main__")
         self.assertEqual(listeners.instance_printer_id(), "moon-two")
         self.assertEqual(logs.bound_context().get("printer_id"), "moon-two")
 
@@ -211,7 +211,7 @@ class MultiPrinterLaunchTests(unittest.TestCase):
             self.assertEqual(
                 listeners.launch(self.roster(), printer_id="bambu-two"), 0)
         run_module.assert_called_once_with(
-            "print_buddy.printers.bambulab.listener", run_name="__main__")
+            "print_handy.printers.bambulab.listener", run_name="__main__")
         self.assertEqual(listeners.instance_printer_id(), "bambu-two")
 
     def test_unknown_printer_id_is_a_configuration_failure(self):
@@ -238,9 +238,9 @@ class MultiPrinterLaunchTests(unittest.TestCase):
 
 class StatusContractTests(unittest.TestCase):
     def test_adapter_normalised_statuses_fit_the_contract(self):
-        from print_buddy.printers.bambulab.adapter import BambuAdapter
-        from print_buddy.printers.elegoo_sdcp.adapter import ElegooSdcpAdapter
-        from print_buddy.printers.prusa.adapter import PrusaAdapter
+        from print_handy.printers.bambulab.adapter import BambuAdapter
+        from print_handy.printers.elegoo_sdcp.adapter import ElegooSdcpAdapter
+        from print_handy.printers.prusa.adapter import PrusaAdapter
 
         for cls in (BambuAdapter, PrusaAdapter, ElegooSdcpAdapter):
             with self.subTest(adapter=cls.__name__):

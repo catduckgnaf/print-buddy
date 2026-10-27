@@ -15,11 +15,11 @@ from pathlib import Path
 
 import pytest
 
-from print_buddy import printers, settings
-from print_buddy.printers.bambulab import VENDOR, facts, profiles
-from print_buddy.printers.bambulab.adapter import BambuAdapter
-from print_buddy.printers.bambulab.client import BambuLanError
-from print_buddy.printers.bambulab.guard import ForeignStartCode
+from print_handy import printers, settings
+from print_handy.printers.bambulab import VENDOR, facts, profiles
+from print_handy.printers.bambulab.adapter import BambuAdapter
+from print_handy.printers.bambulab.client import BambuLanError
+from print_handy.printers.bambulab.guard import ForeignStartCode
 
 from . import bambu_family_fixture as fixture
 
@@ -42,8 +42,8 @@ def model_facts(key):
 
 
 def config_for(key, hermes=fixture.HERMES, **printer):
-    env = {"PRINT_BUDDY__PRINTER__MODEL": key, "PRINT_BUDDY__PATHS__HERMES_HOME": str(hermes),
-           **{f"PRINT_BUDDY__PRINTER__{k.upper()}": str(v) for k, v in printer.items()}}
+    env = {"PRINT_HANDY__PRINTER__MODEL": key, "PRINT_HANDY__PATHS__HERMES_HOME": str(hermes),
+           **{f"PRINT_HANDY__PRINTER__{k.upper()}": str(v) for k, v in printer.items()}}
     return settings.load(local=False, environ=env)
 
 

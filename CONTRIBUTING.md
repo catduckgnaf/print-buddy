@@ -1,6 +1,6 @@
-# Contributing to Print Buddy
+# Contributing to Print Handy
 
-Thanks for helping improve Print Buddy. This guide describes the repository workflow and project specific checks. The [`.github/PULL_REQUEST_TEMPLATE.md`](.github/PULL_REQUEST_TEMPLATE.md) provides the expected pull request description structure.
+Thanks for helping improve Print Handy. This guide describes the repository workflow and project specific checks. The [`.github/PULL_REQUEST_TEMPLATE.md`](.github/PULL_REQUEST_TEMPLATE.md) provides the expected pull request description structure.
 
 ## Before starting
 
@@ -11,7 +11,7 @@ Thanks for helping improve Print Buddy. This guide describes the repository work
 
 ## Filing an issue
 
-- Use the [issue forms](.github/ISSUE_TEMPLATE). Bug reports require the observed behaviour, the steps that reproduce it, the Print Buddy version and install method, and evidence. Feature requests require the problem, the proposed behaviour, scope, and acceptance criteria. Research issues require the question and the decision the answer informs. The forms mark which fields are required.
+- Use the [issue forms](.github/ISSUE_TEMPLATE). Bug reports require the observed behaviour, the steps that reproduce it, the Print Handy version and install method, and evidence. Feature requests require the problem, the proposed behaviour, scope, and acceptance criteria. Research issues require the question and the decision the answer informs. The forms mark which fields are required.
 - State measured facts, and label estimates and suspicions as such. Do not present a cause as verified when it is a hypothesis; say what evidence would settle it.
 - Never include credentials, tokens, private model files, or personal runtime records in an issue. Redact logs before posting.
 - An issue never authorizes operating a live printer. If a report involves unexpected motion, heating, or an ignored confirmation, say so in the first line so it can be prioritised.
@@ -44,7 +44,7 @@ python3 -m pytest -q tests/corpus
 python3 -m pytest -q tests/slicer
 ```
 
-Real slicer checks require a compatible OrcaSlicer installation and are enabled with `PRINT_BUDDY_REAL_SLICER=1`. They invoke the slicer locally; they are not printer tests. The Discord flow corpus uses fake interactions and does not contact a printer. Check the CI workflow for the current Python versions and additional integration jobs.
+Real slicer checks require a compatible OrcaSlicer installation and are enabled with `PRINT_HANDY_REAL_SLICER=1`. They invoke the slicer locally; they are not printer tests. The Discord flow corpus uses fake interactions and does not contact a printer. Check the CI workflow for the current Python versions and additional integration jobs.
 
 Report which checks you actually ran and their result in the pull request. Clearly identify checks not run and why. Do not describe a pending CI job as passing.
 
@@ -60,9 +60,9 @@ Report which checks you actually ran and their result in the pull request. Clear
 
 Use [the documentation home](docs/README.md) for user guidance. Keep the root README focused on purpose, compatibility and the first setup step; put detailed reference material in `docs/`. Check relative links from the file that contains them. Follow [the release-note guide](docs/RELEASE-NOTES.md): user capabilities first, fixes next, implementation details and PR references last. Keep pending changes separate from shipped releases, and preserve the detailed internal history.
 
-When a release is published, the post-release surfaces workflow (`.github/workflows/post-release-surfaces.yml`, #394) opens one `Post-release surfaces check: <tag>` issue listing the release's merged PRs. Every surface in it — these docs, the Pages site (including pages to add or remove), the wiki, the README and repo About text, the release notes and the Unraid CA template sync — needs an explicit updated / verified-no-change decision before the issue closes. It complements the daily Docs sync check in `print-buddy-docs`, which only watches file drift between `docs/` and the site copies.
+When a release is published, the post-release surfaces workflow (`.github/workflows/post-release-surfaces.yml`, #394) opens one `Post-release surfaces check: <tag>` issue listing the release's merged PRs. Every surface in it — these docs, the Pages site (including pages to add or remove), the wiki, the README and repo About text, the release notes and the Unraid CA template sync — needs an explicit updated / verified-no-change decision before the issue closes. It complements the daily Docs sync check in `print-handy-docs`, which only watches file drift between `docs/` and the site copies.
 
-Publication is gated on the two machine-checkable surfaces: the `docker-publish` workflow's surfaces gate (see `docs/DOCKER.md`, "Validation and publication") refuses a `publish=true` run while the README/package version disagree with the release or the Pages site has drifted from `docs/`; candidate runs only warn, and nightly is never gated. The gate's remedy is the Docs auto-sync workflow in `print-buddy-docs`, which publishing a release also triggers automatically when the `DOCS_SYNC_TOKEN` secret is configured.
+Publication is gated on the two machine-checkable surfaces: the `docker-publish` workflow's surfaces gate (see `docs/DOCKER.md`, "Validation and publication") refuses a `publish=true` run while the README/package version disagree with the release or the Pages site has drifted from `docs/`; candidate runs only warn, and nightly is never gated. The gate's remedy is the Docs auto-sync workflow in `print-handy-docs`, which publishing a release also triggers automatically when the `DOCS_SYNC_TOKEN` secret is configured.
 
 ## Automated PR review support
 

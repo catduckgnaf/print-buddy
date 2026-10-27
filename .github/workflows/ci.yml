@@ -86,26 +86,26 @@ jobs:
           "/tmp/clean/bin/python" -m pip install -r requirements.txt
       - name: Standalone bot setup check
         env:
-          PRINT_BUDDY__BOT__MODE: standalone
-          PRINT_BUDDY__DISCORD__CHAT_ID: "100000000000000001"
-          PRINT_BUDDY__DISCORD__ALLOWED_USER_IDS: "200000000000000002"
+          PRINT_HANDY__BOT__MODE: standalone
+          PRINT_HANDY__DISCORD__CHAT_ID: "100000000000000001"
+          PRINT_HANDY__DISCORD__ALLOWED_USER_IDS: "200000000000000002"
           DISCORD_BOT_TOKEN: not-a-real-token
         run: |
-          export PRINT_BUDDY__PATHS__HERMES_HOME="/tmp/print-buddy"
-          "/tmp/clean/bin/python" -m print_buddy.bot check
+          export PRINT_HANDY__PATHS__HERMES_HOME="/tmp/print-handy"
+          "/tmp/clean/bin/python" -m print_handy.bot check
 
   real-slicer:
     # The production track: OrcaSlicer v2.5.0-alpha is the shipped slicer (#356), so the full
     # corpus and the slicer fixtures run against its upstream flatpak bundle. That bundle ships
     # packed vendor profiles only (BBL.opc), so this job is also the packed-tree proof:
-    # template generation here goes through print_buddy's preset-cache reader.
+    # template generation here goes through print_handy's preset-cache reader.
     # Flatpak plus xvfb requires a full system session and display; kept on the host runner after
     # Debian 13 container attempts failed during actual slicer startup.
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     env:
       ORCA_FLATPAK_APP_ID: com.orcaslicer.OrcaSlicer
-      PRINT_BUDDY_REAL_SLICER: "1"
+      PRINT_HANDY_REAL_SLICER: "1"
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-python@v7
@@ -166,7 +166,7 @@ jobs:
     timeout-minutes: 30
     env:
       ORCA_FLATPAK_APP_ID: com.orcaslicer.OrcaSlicer
-      PRINT_BUDDY_REAL_SLICER: "1"
+      PRINT_HANDY_REAL_SLICER: "1"
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-python@v7
@@ -238,8 +238,8 @@ jobs:
       # Flathub ostree commit of com.bambulab.BambuStudio v2.8.2.61 (recorded from
       # `flatpak info --show-commit`); the install step deploys exactly this commit.
       BAMBU_FLATPAK_COMMIT: "68a634d4d733ce7acf79009095db6f7ca76625f0eb810eef1e92dc7adeba7852"
-      PRINT_BUDDY_REAL_SLICER: "1"
-      PRINT_BUDDY_REAL_BAMBU: "1"
+      PRINT_HANDY_REAL_SLICER: "1"
+      PRINT_HANDY_REAL_BAMBU: "1"
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-python@v7
@@ -344,5 +344,5 @@ jobs:
           echo "Spoolman did not come up"; exit 1
       - name: Spoolman tests
         env:
-          PRINT_BUDDY_SPOOLMAN_TEST_URL: http://localhost:7912
+          PRINT_HANDY_SPOOLMAN_TEST_URL: http://localhost:7912
         run: python -m pytest -v -rs tests/services

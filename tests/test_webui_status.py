@@ -15,8 +15,8 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
-from print_buddy import __version__, healthcheck, settings
-from print_buddy.webui import server, status
+from print_handy import __version__, healthcheck, settings
+from print_handy.webui import server, status
 
 TOKEN = "test-webui-token-12345"
 OTHER_SECRET = "test-discord-token-67890"
@@ -30,7 +30,7 @@ def load_settings(tmp, extra="", environ=None):
 
 def fresh_heartbeat(**overrides):
     record = {"heartbeat_at": time.time(), "pid": os.getpid(), "mode": "standalone",
-              "connected": True, "user": "printbuddy#0001", "handlers": 12,
+              "connected": True, "user": "printhandy#0001", "handlers": 12,
               "hermes_modules": []}
     record.update(overrides)
     return record
@@ -61,7 +61,7 @@ class SnapshotTests(unittest.TestCase):
         self.assertEqual(snap["bot"]["platform"], "discord")
         self.assertEqual(snap["bot"]["mode"], "hermes")
         self.assertTrue(snap["bot"]["ok"])
-        self.assertEqual(snap["bot"]["heartbeat"]["user"], "printbuddy#0001")
+        self.assertEqual(snap["bot"]["heartbeat"]["user"], "printhandy#0001")
         self.assertTrue(snap["listener"]["required"])
         self.assertTrue(snap["listener"]["ok"])
         # A non-loopback configured URL with no bundled flag is external.
@@ -135,7 +135,7 @@ class SnapshotTests(unittest.TestCase):
             data = load_settings(tmp, "services:\n  spoolman_url: http://127.0.0.1:8000\n")
             down = status.snapshot(data, environ={}, heartbeat=fresh_heartbeat(),
                                    probe=down_probe, checks=OK_CHECKS)
-            bundled = status.snapshot(data, environ={"PRINT_BUDDY_BUNDLED_SPOOLMAN": "true"},
+            bundled = status.snapshot(data, environ={"PRINT_HANDY_BUNDLED_SPOOLMAN": "true"},
                                       heartbeat=fresh_heartbeat(), probe=ok_probe,
                                       checks=OK_CHECKS)
         self.assertFalse(down["spoolman"]["ok"])
@@ -244,7 +244,7 @@ class ServerRouteTests(unittest.TestCase):
             port = self.start(tmp)
             code, body = self.request(port, "GET", "/")
             self.assertEqual(code, 200)
-            self.assertIn("Print Buddy status", body)
+            self.assertIn("Print Handy status", body)
             self.assertIn("Flashforge AD5X", body)
             code, body = self.request(port, "GET", "/api/status")
             self.assertEqual(code, 200)

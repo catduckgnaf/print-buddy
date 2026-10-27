@@ -4,7 +4,7 @@ import zipfile
 
 import pytest
 
-from print_buddy.core import mesh_fast, orca_adapter
+from print_handy.core import mesh_fast, orca_adapter
 
 NS = 'http://schemas.microsoft.com/3dmanufacturing/core/2015/02'
 BODY = ('<vertices><vertex x="0" y="0" z="0"/>'
@@ -160,7 +160,7 @@ def test_bounds_and_volume_known_tetrahedron():
 
 
 def _annotated_bounds(tmp_path, monkeypatch, use_fast):
-    from print_buddy.core import source_colors
+    from print_handy.core import source_colors
     obj = (f'<model xmlns="{NS}"><resources><object id="1"><mesh>{BODY}</mesh></object></resources></model>').encode()
     top = (f'<model xmlns="{NS}" xmlns:p="http://schemas.microsoft.com/3dmanufacturing/production/2015/06">'
            '<resources><object id="2"><components>'

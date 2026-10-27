@@ -1,16 +1,16 @@
 """spool_sync against a real Spoolman server. CI runs Spoolman as a service container.
 
-Skipped unless PRINT_BUDDY_SPOOLMAN_TEST_URL points at a throwaway Spoolman; never aim it at the home server.
+Skipped unless PRINT_HANDY_SPOOLMAN_TEST_URL points at a throwaway Spoolman; never aim it at the home server.
 """
 import json
 import os
 
 import pytest
 
-from print_buddy.hermes import spool_sync
+from print_handy.hermes import spool_sync
 
-URL = os.environ.get("PRINT_BUDDY_SPOOLMAN_TEST_URL", "")
-pytestmark = pytest.mark.skipif(not URL, reason="set PRINT_BUDDY_SPOOLMAN_TEST_URL to a throwaway Spoolman")
+URL = os.environ.get("PRINT_HANDY_SPOOLMAN_TEST_URL", "")
+pytestmark = pytest.mark.skipif(not URL, reason="set PRINT_HANDY_SPOOLMAN_TEST_URL to a throwaway Spoolman")
 
 
 def client(method, path, body=None):

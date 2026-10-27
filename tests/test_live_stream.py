@@ -7,7 +7,7 @@ carried in a camera URL appears in no error message and no repr.
 """
 import pytest
 
-from print_buddy import live_stream as ls
+from print_handy import live_stream as ls
 
 SECRET = "s3cr3t-PASS-xyz789"
 MOONRAKER_BASE = "http://printer.local:7125"

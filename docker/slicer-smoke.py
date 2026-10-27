@@ -11,12 +11,12 @@ import sys
 import tempfile
 
 sys.path.insert(0, "/app")
-from print_buddy import settings
-from print_buddy.core import slice_guard
+from print_handy import settings
+from print_handy.core import slice_guard
 
 
 def main():
-    channel = os.environ["PRINT_BUDDY_ORCA_CHANNEL"]
+    channel = os.environ["PRINT_HANDY_ORCA_CHANNEL"]
     assert channel in {"stable", "alpha"}
     binary = Path(f"/opt/orca-{channel}/bin/orca-slicer")
     assert binary.is_file() and os.access(binary, os.X_OK), binary

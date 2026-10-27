@@ -49,9 +49,9 @@ For native mapping, review the official ZMod project at https://github.com/ghzse
 
 From the repo checkout, tested normal commands:
 
-    python3 -m print_buddy.core.model_job finalize-gcode ~/3d-prints/ad5x-four-color-reviewed/four_color.gcode --tool-map state/research/ad5x-public-source-multicolor/coupon/sol_recovery/four/tool_mapping.json
-    python3 -m print_buddy.core.model_job verify-gcode FILE
-    python3 -m print_buddy.core.model_job print-now FILE
+    python3 -m print_handy.core.model_job finalize-gcode ~/3d-prints/ad5x-four-color-reviewed/four_color.gcode --tool-map state/research/ad5x-public-source-multicolor/coupon/sol_recovery/four/tool_mapping.json
+    python3 -m print_handy.core.model_job verify-gcode FILE
+    python3 -m print_handy.core.model_job print-now FILE
 
 The last command requires current physical authorization and verified notification delivery. Loading this reference grants neither. Original source and `.before-finalize` backup remain untouched. Shared `multicolor_contract.py` serves existing Orca single-color finalization, mapped finalization, verify-gcode and normal print-now. No executable startup, heater, tool or extrusion lines were edited. The reviewed original already contained literal M104 S210. Missing MD5 is generated after metadata edits; corrupt existing MD5 is refused.
 

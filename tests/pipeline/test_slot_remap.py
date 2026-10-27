@@ -8,8 +8,8 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from print_buddy.core import model_job as job
-from print_buddy.printers.flashforge.zmod import multicolor_contract as contract
+from print_handy.core import model_job as job
+from print_handy.printers.flashforge.zmod import multicolor_contract as contract
 
 
 def _state():
@@ -156,7 +156,7 @@ def test_cli_remap_slot_subcommand(tmp_path):
         [
             sys.executable,
             "-m",
-            "print_buddy.core.model_job",
+            "print_handy.core.model_job",
             "remap-slot",
             str(gcode),
             "--slot",
@@ -167,7 +167,7 @@ def test_cli_remap_slot_subcommand(tmp_path):
         text=True,
         env={
             "PYTHONPATH": str(Path(__file__).resolve().parents[2]),
-            "PRINT_BUDDY_CONFIG": str(test_config),
+            "PRINT_HANDY_CONFIG": str(test_config),
         },
     )
     assert run.returncode == 0

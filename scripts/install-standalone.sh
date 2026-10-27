@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
-# Install Print Buddy as a standalone Discord bot: no Hermes, no LLM. Safe to run again.
+# Install Print Handy as a standalone Discord bot: no Hermes, no LLM. Safe to run again.
 #
 #   scripts/install-standalone.sh [--dry-run] [--python PATH]
 #
-# Writes two systemd user units, print-buddy-bot.service and print-buddy-listener.service, and the
+# Writes two systemd user units, print-handy-bot.service and print-handy-listener.service, and the
 # data folder [paths] hermes_home (state, logs, the .env holding DISCORD_BOT_TOKEN). It enables nothing:
 # the last lines say what to run. Env: PYTHON, SYSTEMD_USER_DIR (default ~/.config/systemd/user),
 # NO_SYSTEMCTL=1 to skip daemon-reload. Use one bot token for one mode: stop the Hermes gateway
@@ -24,7 +24,7 @@ done
 
 PYTHON=${PYTHON:-$(command -v python3)}
 SYSTEMD_USER_DIR=${SYSTEMD_USER_DIR:-$HOME/.config/systemd/user}
-DATA_HOME=$(cd "$REPO" && "$PYTHON" -m print_buddy.settings get paths.hermes_home)
+DATA_HOME=$(cd "$REPO" && "$PYTHON" -m print_handy.settings get paths.hermes_home)
 STAMP=$(date +%Y%m%d-%H%M%S)
 
 say() { printf '%s\n' "$*"; }
@@ -37,10 +37,10 @@ for dir in "$DATA_HOME" "$DATA_HOME/state" "$DATA_HOME/logs" "$SYSTEMD_USER_DIR"
 done
 if [ ! -e "$DATA_HOME/.env" ]; then
     act "create $DATA_HOME/.env (mode 600): add DISCORD_BOT_TOKEN=..."
-    [ "$DRY" = 1 ] || (umask 077; printf '# Print Buddy standalone secrets\nDISCORD_BOT_TOKEN=\n' > "$DATA_HOME/.env")
+    [ "$DRY" = 1 ] || (umask 077; printf '# Print Handy standalone secrets\nDISCORD_BOT_TOKEN=\n' > "$DATA_HOME/.env")
 fi
 
-for name in print-buddy-bot print-buddy-listener; do
+for name in print-handy-bot print-handy-listener; do
     target="$SYSTEMD_USER_DIR/$name.service"
     rendered=$(sed -e "s|{{REPO}}|$REPO|g" -e "s|{{PYTHON}}|$PYTHON|g" -e "s|{{DATA_HOME}}|$DATA_HOME|g" \
         "$REPO/systemd/$name.service.template")
@@ -67,5 +67,5 @@ for unit in hermes-gateway.service hermes-3dprinting-moonraker-listener.service;
 done
 say "Next: set DISCORD_BOT_TOKEN in $DATA_HOME/.env, set bot.mode: standalone and discord.chat_id"
 say "in config/local.yaml (discord.allowed_user_ids is optional; empty lets everyone in the channel in), then:"
-say "  $PYTHON -m print_buddy.bot check"
-say "  systemctl --user enable --now print-buddy-bot.service print-buddy-listener.service"
+say "  $PYTHON -m print_handy.bot check"
+say "  systemctl --user enable --now print-handy-bot.service print-handy-listener.service"

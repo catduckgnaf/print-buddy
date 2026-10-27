@@ -34,14 +34,14 @@ body:
   - type: input
     id: version
     attributes:
-      label: Print Buddy version
+      label: Print Handy version
       description: Release version, image tag, or commit SHA.
     validations:
       required: true
   - type: dropdown
     id: install
     attributes:
-      label: How is Print Buddy installed?
+      label: How is Print Handy installed?
       options:
         - Docker image
         - Standalone (install.sh)
@@ -61,7 +61,7 @@ body:
     id: profile
     attributes:
       label: Printer / slicer profile
-      description: The Print Buddy printer profile and any slicer profile involved, if relevant.
+      description: The Print Handy printer profile and any slicer profile involved, if relevant.
     validations:
       required: false
   - type: textarea
@@ -75,7 +75,7 @@ body:
     id: diagnostics_bundle
     attributes:
       label: Diagnostics bundle
-      description: Run `/print-buddy bundle` in Discord (or `python3 -m print_buddy.diagnostics_bundle` on the host) and attach the generated diagnostics-bundle.md file to this issue, or paste its Doctor section here. The bundle is redacted — it contains versions, a configuration summary with secret values removed, the printer roster, doctor output and a bounded log tail. Review it before attaching.
+      description: Run `/print-handy bundle` in Discord (or `python3 -m print_handy.diagnostics_bundle` on the host) and attach the generated diagnostics-bundle.md file to this issue, or paste its Doctor section here. The bundle is redacted — it contains versions, a configuration summary with secret values removed, the printer roster, doctor output and a bounded log tail. Review it before attaching.
     validations:
       required: false
   - type: checkboxes

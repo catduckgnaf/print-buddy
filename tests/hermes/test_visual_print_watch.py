@@ -1,8 +1,8 @@
 """Offline tests for the visual watchdog trigger policy."""
 import sys
 from pathlib import Path
-from print_buddy.hermes import moonraker_event_listener as mel
-from print_buddy.hermes import print_alert_buttons as pab
+from print_handy.hermes import moonraker_event_listener as mel
+from print_handy.hermes import print_alert_buttons as pab
 
 
 def test_strip_json_fence_and_profile_adapter(monkeypatch):

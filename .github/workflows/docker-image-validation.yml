@@ -35,7 +35,7 @@ jobs:
     runs-on: ${{ inputs.architecture == 'arm64' && 'ubuntu-24.04-arm' || 'ubuntu-24.04' }}
     timeout-minutes: 330   # below the 6 h hosted-job limit; the build is bounded inside it
     env:
-      IMAGE: print-buddy-validation:${{ github.run_id }}-${{ github.run_attempt }}
+      IMAGE: print-handy-validation:${{ github.run_id }}-${{ github.run_attempt }}
       # Inputs reach the shell only as environment variables, never interpolated into scripts.
       APP_CHANNEL: ${{ inputs.app_channel }}
       ARCHITECTURE: ${{ inputs.architecture }}
@@ -93,7 +93,7 @@ jobs:
             docker run --rm --network none --cpus 2 --memory 4g --pids-limit 256 \
               --cap-drop ALL --security-opt no-new-privileges:true \
               --tmpfs /data:uid=1000,gid=1000,size=512m \
-              -e "PRINT_BUDDY_ORCA_CHANNEL=$channel" \
+              -e "PRINT_HANDY_ORCA_CHANNEL=$channel" \
               "$IMAGE" python3 /app/docker/slicer-smoke.py \
               2>&1 | tee "evidence/slicer-$channel.log"
           done

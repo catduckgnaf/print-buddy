@@ -2,8 +2,8 @@
 import time
 from unittest.mock import MagicMock
 
-from print_buddy.hermes import print_control
-from print_buddy.hermes import maintenance
+from print_handy.hermes import print_control
+from print_handy.hermes import maintenance
 
 
 def state(status="standby", filament=True, target=0):
@@ -85,8 +85,8 @@ def test_selected_options_map_to_exact_scripts_before_send(monkeypatch):
 
     monkeypatch.setattr(plugin, "_confirm", confirm)
     monkeypatch.setattr(plugin, "_maintenance_hours_now", lambda: 0.0)
-    monkeypatch.setattr("print_buddy.hermes.maintenance.load", lambda *args, **kwargs: {"runs": []})
-    monkeypatch.setattr("print_buddy.hermes.maintenance.append_run", lambda record, **kwargs: record)
+    monkeypatch.setattr("print_handy.hermes.maintenance.load", lambda *args, **kwargs: {"runs": []})
+    monkeypatch.setattr("print_handy.hermes.maintenance.append_run", lambda record, **kwargs: record)
 
     cases = [
         ("PLA (trial) 220/90", None, 220, 90),
@@ -105,7 +105,7 @@ def test_selected_options_map_to_exact_scripts_before_send(monkeypatch):
             return True, "Cold pull finished; heater target is 0."
 
         monkeypatch.setattr(plugin, "asyncio", asyncio)
-        from print_buddy.hermes import print_control as pc
+        from print_handy.hermes import print_control as pc
         monkeypatch.setattr(pc, "coldpull", fake_coldpull)
         source = MagicMock()
         source.chat_id = "c"
@@ -150,10 +150,10 @@ def test_next_pla_run_offers_cold_95_and_sends_it(monkeypatch):
 
     monkeypatch.setattr(plugin, "_confirm", confirm)
     monkeypatch.setattr(plugin, "_maintenance_hours_now", lambda: 1.0)
-    monkeypatch.setattr("print_buddy.hermes.maintenance.load", lambda *args, **kwargs: {
+    monkeypatch.setattr("print_handy.hermes.maintenance.load", lambda *args, **kwargs: {
         "runs": [{"cold_pull": {"result": "snapped", "next_cold": 95}}]})
     saved = []
-    monkeypatch.setattr("print_buddy.hermes.maintenance.append_run", lambda record, **kwargs: saved.append(record) or record)
+    monkeypatch.setattr("print_handy.hermes.maintenance.append_run", lambda record, **kwargs: saved.append(record) or record)
 
     sent = []
 
@@ -165,7 +165,7 @@ def test_next_pla_run_offers_cold_95_and_sends_it(monkeypatch):
         sent.append(f"_COLDPULL_LOAD_MATERIAL T=0 TEMP={got_temp} COLD={got_cold}")
         return True, "Cold pull finished; heater target is 0."
 
-    from print_buddy.hermes import print_control as pc
+    from print_handy.hermes import print_control as pc
     monkeypatch.setattr(pc, "coldpull", fake_coldpull)
     source = MagicMock()
     source.chat_id = "c"
@@ -194,9 +194,9 @@ def test_standalone_log_uses_coldpull_source(monkeypatch):
 
     monkeypatch.setattr(plugin, "_confirm", confirm)
     monkeypatch.setattr(plugin, "_maintenance_hours_now", lambda: 2.0)
-    monkeypatch.setattr("print_buddy.hermes.maintenance.load", lambda *args, **kwargs: {"runs": []})
+    monkeypatch.setattr("print_handy.hermes.maintenance.load", lambda *args, **kwargs: {"runs": []})
     saved = []
-    monkeypatch.setattr("print_buddy.hermes.maintenance.append_run", lambda record, **kwargs: saved.append(dict(record)) or record)
+    monkeypatch.setattr("print_handy.hermes.maintenance.append_run", lambda record, **kwargs: saved.append(dict(record)) or record)
 
     class Adapter:
         async def send(self, **kwargs):
@@ -205,7 +205,7 @@ def test_standalone_log_uses_coldpull_source(monkeypatch):
     def fake_coldpull(got_temp, got_cold, *, confirmed_at, gcode_sender=None, reader=None):
         return True, "Cold pull finished; heater target is 0."
 
-    from print_buddy.hermes import print_control as pc
+    from print_handy.hermes import print_control as pc
     monkeypatch.setattr(pc, "coldpull", fake_coldpull)
     source = MagicMock()
     source.chat_id = "c"
@@ -237,10 +237,10 @@ def test_two_dirty_results_suggest_nozzle_swap(monkeypatch):
 
     monkeypatch.setattr(plugin, "_confirm", confirm)
     monkeypatch.setattr(plugin, "_maintenance_hours_now", lambda: 3.0)
-    monkeypatch.setattr("print_buddy.hermes.maintenance.load", lambda *args, **kwargs: {
+    monkeypatch.setattr("print_handy.hermes.maintenance.load", lambda *args, **kwargs: {
         "runs": [{"cold_pull": {"result": "dirty"}}]})
     saved = []
-    monkeypatch.setattr("print_buddy.hermes.maintenance.append_run", lambda record, **kwargs: saved.append(record) or record)
+    monkeypatch.setattr("print_handy.hermes.maintenance.append_run", lambda record, **kwargs: saved.append(record) or record)
 
     class Adapter:
         async def send(self, **kwargs):
@@ -249,7 +249,7 @@ def test_two_dirty_results_suggest_nozzle_swap(monkeypatch):
     def fake_coldpull(got_temp, got_cold, *, confirmed_at, gcode_sender=None, reader=None):
         return True, "Cold pull finished; heater target is 0."
 
-    from print_buddy.hermes import print_control as pc
+    from print_handy.hermes import print_control as pc
     monkeypatch.setattr(pc, "coldpull", fake_coldpull)
     source = MagicMock()
     source.chat_id = "c"
@@ -283,8 +283,8 @@ def test_cold_pull_prompts_use_their_configured_timeouts(monkeypatch):
 
     monkeypatch.setattr(plugin, "_confirm", confirm)
     monkeypatch.setattr(plugin, "_maintenance_hours_now", lambda: 0.0)
-    monkeypatch.setattr("print_buddy.hermes.maintenance.load", lambda *args, **kwargs: {"runs": []})
-    monkeypatch.setattr("print_buddy.hermes.maintenance.append_run", lambda record, **kwargs: record)
+    monkeypatch.setattr("print_handy.hermes.maintenance.load", lambda *args, **kwargs: {"runs": []})
+    monkeypatch.setattr("print_handy.hermes.maintenance.append_run", lambda record, **kwargs: record)
 
     class Adapter:
         async def send(self, **kwargs):
@@ -293,8 +293,8 @@ def test_cold_pull_prompts_use_their_configured_timeouts(monkeypatch):
     def fake_coldpull(got_temp, got_cold, *, confirmed_at, gcode_sender=None, reader=None):
         return True, "Cold pull finished; heater target is 0."
 
-    from print_buddy.hermes import _config
-    from print_buddy.hermes import print_control as pc
+    from print_handy.hermes import _config
+    from print_handy.hermes import print_control as pc
     monkeypatch.setattr(pc, "coldpull", fake_coldpull)
     source = MagicMock()
     source.chat_id = "c"

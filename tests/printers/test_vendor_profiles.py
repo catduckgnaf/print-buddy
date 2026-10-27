@@ -5,10 +5,10 @@ from pathlib import Path
 
 import pytest
 
-from print_buddy import printers, settings
-from print_buddy.printers.base import (PrinterModel, SHARED_SETTINGS, VendorProfile, merge_settings,
+from print_handy import printers, settings
+from print_handy.printers.base import (PrinterModel, SHARED_SETTINGS, VendorProfile, merge_settings,
                                        start_code_problems)
-from print_buddy.printers.klipper.adapter import KlipperAdapter
+from print_handy.printers.klipper.adapter import KlipperAdapter
 
 GOLDEN = Path(__file__).parent / "golden"
 # Keys the vendor layer added. Everything else must be exactly what each printer had before it.
@@ -135,7 +135,7 @@ def test_existing_printer_defaults_are_unchanged(key):
 def test_existing_printer_loaded_settings_are_unchanged(key):
     """model_settings.json: settings.load() for each model on main, before the vendor layer."""
     want = json.loads((GOLDEN / "model_settings.json").read_text())[key]
-    got = load({"PRINT_BUDDY__PRINTER__MODEL": key})
+    got = load({"PRINT_HANDY__PRINTER__MODEL": key})
 
     def norm(value):
         if isinstance(value, dict):
@@ -160,19 +160,19 @@ def test_existing_printer_loaded_settings_are_unchanged(key):
 
 def test_legacy_full_model_key_still_selects_the_printer():
     for key in EXISTING:
-        assert load({"PRINT_BUDDY__PRINTER__MODEL": key})["printer"]["model"] == key
+        assert load({"PRINT_HANDY__PRINTER__MODEL": key})["printer"]["model"] == key
 
 
 def test_vendor_plus_printer_name_is_stored_as_the_full_key():
-    data = load({"PRINT_BUDDY__PRINTER__VENDOR": "sovol", "PRINT_BUDDY__PRINTER__MODEL": "sv06"})
+    data = load({"PRINT_HANDY__PRINTER__VENDOR": "sovol", "PRINT_HANDY__PRINTER__MODEL": "sv06"})
     assert data["printer"]["model"] == "sovol.sv06" and data["printer"]["vendor"] == "sovol"
     assert printers.current(data).key == "sovol.sv06"
 
 
 def test_printer_adapters_expose_display_and_firmware_names():
-    bambu = printers.current(load({"PRINT_BUDDY__PRINTER__MODEL": "bambulab.a1"}))
-    octoprint = printers.current(load({"PRINT_BUDDY__PRINTER__MODEL": "octoprint.marlin"}))
-    klipper = printers.current(load({"PRINT_BUDDY__PRINTER__MODEL": "klipper.generic"}))
+    bambu = printers.current(load({"PRINT_HANDY__PRINTER__MODEL": "bambulab.a1"}))
+    octoprint = printers.current(load({"PRINT_HANDY__PRINTER__MODEL": "octoprint.marlin"}))
+    klipper = printers.current(load({"PRINT_HANDY__PRINTER__MODEL": "klipper.generic"}))
 
     assert (bambu.display_name, bambu.firmware_name) == (
         "Bambu Lab A1", "Bambu Lab (offline handoff only)")
@@ -182,10 +182,10 @@ def test_printer_adapters_expose_display_and_firmware_names():
 
 
 def test_unique_printer_name_alone_resolves():
-    assert load({"PRINT_BUDDY__PRINTER__MODEL": "sv06"})["printer"]["model"] == "sovol.sv06"
+    assert load({"PRINT_HANDY__PRINTER__MODEL": "sv06"})["printer"]["model"] == "sovol.sv06"
     # ad5x exists for both the ZMod vendor and the stock vendor, so the bare name is refused.
     with pytest.raises(settings.SettingsError, match="several vendors"):
-        load({"PRINT_BUDDY__PRINTER__MODEL": "ad5x"})
+        load({"PRINT_HANDY__PRINTER__MODEL": "ad5x"})
 
 
 def test_local_yaml_with_vendor_and_printer_sections(tmp_path):
@@ -207,18 +207,18 @@ def test_vendor_alias_and_mismatch():
     assert printers.vendor_key("Bambu") == "bambulab"
     assert printers.vendor_key("bambu_lab") == "bambulab" and printers.vendor_key("klipper") == "klipper"
     with pytest.raises(settings.SettingsError, match="does not match"):
-        load({"PRINT_BUDDY__PRINTER__MODEL": "sovol.sv06", "PRINT_BUDDY__PRINTER__VENDOR": "flashforge"})
+        load({"PRINT_HANDY__PRINTER__MODEL": "sovol.sv06", "PRINT_HANDY__PRINTER__VENDOR": "flashforge"})
     # "creality" used to be this test's example of an unknown vendor; it is a real vendor
     # now (the Klipper/Creality-OS pack), so the unknown-vendor case uses a made-up name
     # and creality/qidi resolution is asserted positively instead.
     with pytest.raises(settings.SettingsError, match="vendor must be one of"):
-        load({"PRINT_BUDDY__PRINTER__VENDOR": "acme", "PRINT_BUDDY__PRINTER__MODEL": "mk4"})
-    assert load({"PRINT_BUDDY__PRINTER__VENDOR": "creality",
-                 "PRINT_BUDDY__PRINTER__MODEL": "k1"})["printer"]["model"] == "creality.k1"
-    assert load({"PRINT_BUDDY__PRINTER__VENDOR": "qidi",
-                 "PRINT_BUDDY__PRINTER__MODEL": "q1pro"})["printer"]["model"] == "qidi.q1pro"
+        load({"PRINT_HANDY__PRINTER__VENDOR": "acme", "PRINT_HANDY__PRINTER__MODEL": "mk4"})
+    assert load({"PRINT_HANDY__PRINTER__VENDOR": "creality",
+                 "PRINT_HANDY__PRINTER__MODEL": "k1"})["printer"]["model"] == "creality.k1"
+    assert load({"PRINT_HANDY__PRINTER__VENDOR": "qidi",
+                 "PRINT_HANDY__PRINTER__MODEL": "q1pro"})["printer"]["model"] == "qidi.q1pro"
     with pytest.raises(settings.SettingsError, match="model must be one of"):
-        load({"PRINT_BUDDY__PRINTER__MODEL": "mk4"})
+        load({"PRINT_HANDY__PRINTER__MODEL": "mk4"})
 
 
 def test_slicer_and_delivery_must_be_offered_by_the_vendor(tmp_path):
@@ -249,11 +249,11 @@ def dropped_in_bambu_printer(tmp_path, monkeypatch):
         "    templates='klipper_generic', supported_nozzle_sizes=(0.4,),\n"
         "    settings={'printer': {'name': 'Test Bambu', 'bed_mm': [256.0, 256.0], 'max_print_height_mm': 256.0,\n"
         "                          'nozzle_diameter_mm': 0.4, 'ifs_slots': 1}})\n")
-    package = sys.modules["print_buddy.printers.bambulab"]
+    package = sys.modules["print_handy.printers.bambulab"]
     monkeypatch.setattr(package, "__path__", [*package.__path__, str(tmp_path)])
     vendors, models = printers._discover()
     yield models["bambulab.zz_test_printer"]
-    sys.modules.pop("print_buddy.printers.bambulab.zz_test_printer", None)
+    sys.modules.pop("print_handy.printers.bambulab.zz_test_printer", None)
 
 
 def test_a_printer_dropped_into_a_vendor_package_inherits_it(dropped_in_bambu_printer, monkeypatch):
@@ -264,8 +264,8 @@ def test_a_printer_dropped_into_a_vendor_package_inherits_it(dropped_in_bambu_pr
     assert out["printer"]["bed_mm"] == [256.0, 256.0]
     assert out["delivery"]["methods"] == ["discord", "bambu_handoff"]
     monkeypatch.setitem(printers.MODELS, model.key, model)
-    data = load({"PRINT_BUDDY__PRINTER__VENDOR": "bambu", "PRINT_BUDDY__PRINTER__MODEL": "zz_test_printer",
-                 "PRINT_BUDDY__PRINTER__SLICER": "bambu_studio"})
+    data = load({"PRINT_HANDY__PRINTER__VENDOR": "bambu", "PRINT_HANDY__PRINTER__MODEL": "zz_test_printer",
+                 "PRINT_HANDY__PRINTER__SLICER": "bambu_studio"})
     assert data["printer"]["model"] == "bambulab.zz_test_printer" and data["printer"]["slicer"] == "bambu_studio"
 
 
@@ -276,13 +276,13 @@ def test_a_model_naming_another_vendor_is_refused(tmp_path, monkeypatch):
         "from ..klipper.adapter import KlipperAdapter\n"
         "MODEL = PrinterModel(key='bambulab.zz_wrong_vendor', label='x', adapter=KlipperAdapter,\n"
         "    templates='klipper_generic', vendor=VENDOR, settings={})\n")
-    package = sys.modules["print_buddy.printers.bambulab"]
+    package = sys.modules["print_handy.printers.bambulab"]
     monkeypatch.setattr(package, "__path__", [*package.__path__, str(tmp_path)])
     try:
         with pytest.raises(RuntimeError, match="must be the bambulab package VENDOR"):
             printers._discover()
     finally:
-        sys.modules.pop("print_buddy.printers.bambulab.zz_wrong_vendor", None)
+        sys.modules.pop("print_handy.printers.bambulab.zz_wrong_vendor", None)
 
 
 # ----------------------------------------------------------------------------- start code

@@ -1,7 +1,7 @@
 """Timelapse delivery contract (#373): a printer-rendered Moonraker timelapse
 must never vanish silently from a completion post.
 
-Print #57 ("Print in Place Bag Clip", AD5X on ZMod/Klipper, Print Buddy
+Print #57 ("Print in Place Bag Clip", AD5X on ZMod/Klipper, Print Handy
 2.1.4) completed with a summary post and no video, although timelapses had
 attached before. The marker/archive code is byte-identical across 2.1.2 ->
 2.1.4 and the working path below passes on both, so the loss sits in the
@@ -36,8 +36,8 @@ import time
 
 import pytest
 
-from print_buddy.hermes import moonraker_discord_announcements as watcher
-from print_buddy.hermes import moonraker_event_listener as mel
+from print_handy.hermes import moonraker_discord_announcements as watcher
+from print_handy.hermes import moonraker_event_listener as mel
 
 FFMPEG = shutil.which("ffmpeg")
 FFPROBE = shutil.which("ffprobe")
@@ -155,7 +155,7 @@ def _complete(monkeypatch, thread_cls):
 
 @pytest.mark.skipif(not (FFMPEG and FFPROBE), reason="needs ffmpeg and ffprobe on PATH")
 def test_completion_post_carries_printer_rendered_timelapse(world, tmp_path):
-    """The working path (#57's shape): Print Buddy job, printer-rendered
+    """The working path (#57's shape): Print Handy job, printer-rendered
     timelapse present -> ONE completion post carrying the MEDIA attachment.
 
     The one genuinely encode-verifying test: a real tiny MP4 through the

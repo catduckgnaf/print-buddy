@@ -35,8 +35,8 @@ class RealSlicerBambuWorkflowContract(unittest.TestCase):
     def test_job_exists_on_the_host_runner_with_both_real_flags(self):
         job = bambu_job()
         self.assertEqual(job["runs-on"], "ubuntu-24.04")
-        self.assertEqual(job["env"]["PRINT_BUDDY_REAL_SLICER"], "1")
-        self.assertEqual(job["env"]["PRINT_BUDDY_REAL_BAMBU"], "1")
+        self.assertEqual(job["env"]["PRINT_HANDY_REAL_SLICER"], "1")
+        self.assertEqual(job["env"]["PRINT_HANDY_REAL_BAMBU"], "1")
         self.assertEqual(job["env"]["BAMBU_FLATPAK_APP_ID"], "com.bambulab.BambuStudio")
 
     def test_bambu_commit_is_pinned_and_verified_after_install(self):
@@ -74,8 +74,8 @@ class RealSlicerBambuWorkflowContract(unittest.TestCase):
         jobs = load_workflow()["jobs"]
         for name in ("real-slicer", "real-slicer-alpha"):
             self.assertIn(name, jobs)
-            self.assertEqual(jobs[name]["env"]["PRINT_BUDDY_REAL_SLICER"], "1")
-            self.assertNotIn("PRINT_BUDDY_REAL_BAMBU", jobs[name]["env"])
+            self.assertEqual(jobs[name]["env"]["PRINT_HANDY_REAL_SLICER"], "1")
+            self.assertNotIn("PRINT_HANDY_REAL_BAMBU", jobs[name]["env"])
 
 
 if __name__ == "__main__":

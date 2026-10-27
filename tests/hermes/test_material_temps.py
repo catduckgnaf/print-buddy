@@ -1,6 +1,6 @@
 import pytest
 
-from print_buddy.core import printer_state
+from print_handy.core import printer_state
 
 
 @pytest.mark.parametrize("material,expected", [

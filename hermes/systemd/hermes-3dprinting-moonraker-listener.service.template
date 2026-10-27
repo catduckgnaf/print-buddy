@@ -1,5 +1,5 @@
 [Unit]
-Description=Hermes 3dprinting Moonraker event listener (no AI, replaces polling; Print Buddy)
+Description=Hermes 3dprinting Moonraker event listener (no AI, replaces polling; Print Handy)
 After=network-online.target
 Wants=network-online.target
 
@@ -10,7 +10,7 @@ Environment=HERMES_HOME={{HERMES_HOME}}
 # Secrets and personal settings (chat targets, tokens) live in the profile .env or in an overlay drop-in.
 EnvironmentFile=-{{HERMES_HOME}}/.env
 WorkingDirectory={{REPO}}
-ExecStart={{PYTHON}} -m print_buddy.hermes.moonraker_event_listener
+ExecStart={{PYTHON}} -m print_handy.hermes.moonraker_event_listener
 Restart=always
 RestartSec=10
 MemoryMax=256M

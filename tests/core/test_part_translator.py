@@ -1,8 +1,8 @@
 """Offline part-name translation. No printer, no network."""
 import unittest
 
-from print_buddy.core import part_translator as tr
-from print_buddy.core import source_colors
+from print_handy.core import part_translator as tr
+from print_handy.core import source_colors
 
 
 class PartTranslatorTests(unittest.TestCase):

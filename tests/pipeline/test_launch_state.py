@@ -13,7 +13,7 @@ from unittest import mock
 
 import pytest
 
-from print_buddy.core import model_job
+from print_handy.core import model_job
 
 PRINTER = "http://m"  # the moonraker_url the mocked hardware record reports
 
@@ -44,7 +44,7 @@ def dead_pid():
 
 
 def leases():
-    db = os.environ["PRINT_BUDDY_LAUNCH_DB"]
+    db = os.environ["PRINT_HANDY_LAUNCH_DB"]
     if not Path(db).exists():
         return []
     con = sqlite3.connect(db)
@@ -59,7 +59,7 @@ def leases():
 
 def simulate_restart():
     """The owner of every lease is gone, as after a crash or host restart."""
-    con = sqlite3.connect(os.environ["PRINT_BUDDY_LAUNCH_DB"])
+    con = sqlite3.connect(os.environ["PRINT_HANDY_LAUNCH_DB"])
     with con:
         con.execute("UPDATE leases SET pid=?", (dead_pid(),))
     con.close()
@@ -249,7 +249,7 @@ def test_uncertain_submission_reconciles_from_printer_evidence_not_replay(printe
 
 
 def test_operator_reconciles_an_uncertain_submission_without_replaying_it(printer):
-    from print_buddy.core import launch_state
+    from print_handy.core import launch_state
     a, _ = make_job(printer.root, "a")
     crash_on_start(printer.mr)
     with pytest.raises(Crash):
@@ -290,7 +290,7 @@ def test_upload_failure_releases_the_lease(printer):
 
 
 def test_hard_crash_before_submission_is_released_after_restart():
-    from print_buddy.core import launch_state
+    from print_handy.core import launch_state
     launch_state.acquire(PRINTER, job_json="/jobs/a/JOB.json", gcode_sha256="a" * 64, remote="a.gcode")
     with pytest.raises(SystemExit, match="in progress"):
         launch_state.acquire(PRINTER, remote="b.gcode")
@@ -421,11 +421,11 @@ def test_mapped_unresolved_start_is_uncertain_and_blocks_the_next_job(mapped):
 
 
 def test_operator_can_clear_a_lease_left_by_another_host_but_not_a_live_local_one():
-    from print_buddy.core import launch_state
+    from print_handy.core import launch_state
     lease = launch_state.acquire(PRINTER, remote="a.gcode")
     with pytest.raises(SystemExit, match="still running"):
         launch_state.resolve(PRINTER, "not_started")
-    con = sqlite3.connect(os.environ["PRINT_BUDDY_LAUNCH_DB"])
+    con = sqlite3.connect(os.environ["PRINT_HANDY_LAUNCH_DB"])
     with con:
         con.execute("UPDATE leases SET host='another-container'")
     con.close()

@@ -3,10 +3,10 @@ from pathlib import Path
 from unittest import mock
 import pytest
 
-from print_buddy.hermes import spool_sync
-from print_buddy.printers.flashforge.zmod import screen
-from print_buddy.hermes.moonraker_event_listener import MidPrintSlotTracker, load_runout_pause
-from print_buddy.hermes.print_next import NextPlateError
+from print_handy.hermes import spool_sync
+from print_handy.printers.flashforge.zmod import screen
+from print_handy.hermes.moonraker_event_listener import MidPrintSlotTracker, load_runout_pause
+from print_handy.hermes.print_next import NextPlateError
 
 
 def test_slot_record_strips_repeated_trailing_material_case_insensitively():
@@ -81,7 +81,7 @@ def test_mid_print_slot_tracker():
 
 
 def test_split_count_copies():
-    from print_buddy.hermes import print_control as pc
+    from print_handy.hermes import print_control as pc
     assert pc.split_count("benchy x3") == ("benchy", 3)
     assert pc.split_count("shelf 5 copies") == ("shelf", 5)
     assert pc.split_count("part 20 times") == ("part", 20)

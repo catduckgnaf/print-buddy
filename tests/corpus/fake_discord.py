@@ -160,7 +160,7 @@ class FakeDiscord:
 
     def __init__(self, clicks=(), *, chat_id=100000000000000001, operator_id=200000000000000002,
                  events=None, auto=True):
-        self.bot_user = FakeUser(300000000000000003, "Print Buddy", bot=True)
+        self.bot_user = FakeUser(300000000000000003, "Print Handy", bot=True)
         self.operator = FakeUser(operator_id, "Mrs catduck")
         self.client = FakeClient(self, self.bot_user)
         self.channel = self.add_channel(chat_id)

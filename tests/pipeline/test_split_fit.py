@@ -3,8 +3,8 @@ import sys
 import zipfile
 from pathlib import Path
 
-from print_buddy.core import split_fit  # noqa: E402
-from print_buddy.core import plate_merge  # noqa: E402
+from print_handy.core import split_fit  # noqa: E402
+from print_handy.core import plate_merge  # noqa: E402
 from .test_plate_merge import _source  # noqa: E402
 
 
@@ -129,7 +129,7 @@ def test_per_part_fit_uses_the_real_height_limit_not_the_bed_size(tmp_path):
 
 
 def test_fit_options_reports_blocking_parts_before_any_scale(tmp_path, monkeypatch):
-    from print_buddy.core import orca_adapter as oa
+    from print_handy.core import orca_adapter as oa
     # A 250 mm part blocks at every orientation: no in-plane yaw fits, and
     # reoriented it would stand 250 tall, over the 220 mm limit. (The #76
     # Stand was this test's fixture until #221's diagonal stage: it now
@@ -187,7 +187,7 @@ def test_split_plan_yaw_does_not_cure_the_issue_76_stand(tmp_path):
 
 
 def test_fit_choice_rows_carry_the_split_yaw():
-    from print_buddy.core.prepared_intake import fit_choice_rows
+    from print_handy.core.prepared_intake import fit_choice_rows
     rows = fit_choice_rows({'scales': [], 'rotations': [],
                             'split_plan': {'plates': [['1:1'], ['2:1']],
                                            'yaw_by_object': {'1': 43.0}}})
@@ -210,7 +210,7 @@ def _split_job(tmp_path, source, plan):
 def test_slicing_a_yaw_split_applies_the_recorded_turn_to_its_plate(tmp_path, monkeypatch):
     import json
 
-    from print_buddy.core import model_job, orca_adapter
+    from print_handy.core import model_job, orca_adapter
     from .test_plate_merge import _fake_slice
     source = tmp_path / 'yaw.3mf'
     _source(source, {'1': (230, 50, 20), '2': (150, 150, 10)}, [['1', '2']])
@@ -239,7 +239,7 @@ def test_slicing_a_yaw_split_applies_the_recorded_turn_to_its_plate(tmp_path, mo
 def test_slicing_refuses_a_turn_recorded_for_a_shared_plate(tmp_path, monkeypatch):
     import pytest
 
-    from print_buddy.core import model_job, orca_adapter
+    from print_handy.core import model_job, orca_adapter
     from .test_plate_merge import _fake_slice
     source = tmp_path / 'shared.3mf'
     _source(source, {'1': (150, 150, 10), '2': (150, 150, 10)}, [['1', '2']])
@@ -348,7 +348,7 @@ def test_split_plan_on_an_exclusion_bed_still_blocks_without_a_placement(tmp_pat
 
 
 def test_fit_choice_rows_carry_the_split_placement():
-    from print_buddy.core.prepared_intake import fit_choice_rows
+    from print_handy.core.prepared_intake import fit_choice_rows
     rows = fit_choice_rows({'scales': [], 'rotations': [],
                             'split_plan': {'plates': [['1:1'], ['2:1']],
                                            'placement_by_object': {'1': [18.0, 8.0]}}})
@@ -359,7 +359,7 @@ def test_fit_choice_rows_carry_the_split_placement():
 def test_slicing_an_exclusion_split_lands_the_plate_at_the_recorded_placement(tmp_path, monkeypatch):
     import json
 
-    from print_buddy.core import model_job, orca_adapter
+    from print_handy.core import model_job, orca_adapter
     from .test_plate_merge import _fake_slice
     source = tmp_path / 'placed.3mf'
     _source(source, {'1': (150, 150, 10), '2': (150, 150, 10)}, [['1', '2']])
@@ -384,7 +384,7 @@ def test_slicing_an_exclusion_split_lands_the_plate_at_the_recorded_placement(tm
 def test_slicing_refuses_a_placement_recorded_for_a_shared_plate(tmp_path, monkeypatch):
     import pytest
 
-    from print_buddy.core import model_job, orca_adapter
+    from print_handy.core import model_job, orca_adapter
     from .test_plate_merge import _fake_slice
     source = tmp_path / 'shared.3mf'
     _source(source, {'1': (150, 150, 10), '2': (150, 150, 10)}, [['1', '2']])
@@ -398,7 +398,7 @@ def test_slicing_refuses_a_placement_recorded_for_a_shared_plate(tmp_path, monke
 def test_slicing_refuses_an_out_of_range_or_unknown_placement(tmp_path, monkeypatch):
     import pytest
 
-    from print_buddy.core import model_job, orca_adapter
+    from print_handy.core import model_job, orca_adapter
     from .test_plate_merge import _fake_slice
     source = tmp_path / 'bad-placement.3mf'
     _source(source, {'1': (150, 150, 10), '2': (150, 150, 10)}, [['1', '2']])
@@ -541,7 +541,7 @@ def _tri_source(path):
 
 
 def _placed_hulls(source, shifts):
-    from print_buddy.core import color_geometry
+    from print_handy.core import color_geometry
     placed = {}
     with zipfile.ZipFile(source) as archive:
         for oid, shift in shifts.items():
@@ -621,7 +621,7 @@ def test_split_plan_rectangle_only_sources_record_no_shifts(tmp_path):
 
 
 def test_fit_choice_rows_carry_the_split_shifts():
-    from print_buddy.core.prepared_intake import fit_choice_rows
+    from print_handy.core.prepared_intake import fit_choice_rows
     shifts = [{'1': [1.0, 2.0, 0.0], '2': [3.0, 4.0, 0.0]}, None]
     rows = fit_choice_rows({'scales': [], 'rotations': [],
                             'split_plan': {'plates': [['1:1', '2:1'], ['3:1']],
@@ -635,7 +635,7 @@ def test_slicing_a_polygon_split_lands_at_the_recorded_shifts(tmp_path, monkeypa
 
     import pytest
 
-    from print_buddy.core import color_geometry, model_job, orca_adapter
+    from print_handy.core import color_geometry, model_job, orca_adapter
     from .test_plate_merge import _fake_slice
     source = tmp_path / 'tri-split.3mf'
     _tri_source(source)
@@ -671,7 +671,7 @@ def test_slicing_a_polygon_split_lands_at_the_recorded_shifts(tmp_path, monkeypa
 def test_slicing_refuses_unproved_or_malformed_shifts(tmp_path, monkeypatch):
     import pytest
 
-    from print_buddy.core import model_job, orca_adapter
+    from print_handy.core import model_job, orca_adapter
     from .test_plate_merge import _fake_slice
     source = tmp_path / 'tri-split.3mf'
     _tri_source(source)
@@ -860,7 +860,7 @@ def test_reorientation_with_a_diagonal_turn_cures_the_issue_76_stand(tmp_path):
     # About X still yields no candidate at any turn: the binding
     # constraint there is the height proof (it would stand 230 tall),
     # not the turn — exactly one candidate is proved for the Stand.
-    from print_buddy.core import color_geometry
+    from print_handy.core import color_geometry
     with zipfile.ZipFile(source) as archive:
         items = color_geometry._world_item_points(archive, {'1'})
     proved = split_fit._reorientation_candidates(source, '1', items, (204.0, 204.0), 220.0)
@@ -902,7 +902,7 @@ def test_reorientation_candidates_prove_each_item_of_a_multi_item_object(tmp_pat
     # of the same item, both landing flat, get the same candidates as one;
     # a second item offset so it would hover under the turn (shifted in X
     # and Y, so every face change leaves one item in the air) gets none.
-    from print_buddy.core import color_geometry
+    from print_handy.core import color_geometry
     source = tmp_path / 'box.3mf'
     _solid_source(source, {'1': _box_tris(0, 230, 0, 190, 0, 30)}, [['1']])
     with zipfile.ZipFile(source) as archive:
@@ -922,7 +922,7 @@ def test_reorientation_candidates_prove_each_item_of_a_multi_item_object(tmp_pat
 def test_reorientation_records_supports_and_slicing_passes_them_for_that_plate_only(tmp_path, monkeypatch):
     import json
 
-    from print_buddy.core import model_job, orca_adapter
+    from print_handy.core import model_job, orca_adapter
     source = tmp_path / 'frame.3mf'
     _frame_source(source)
     (row,) = [r for r in split_fit.per_part_fit(source, 220) if r['object_id'] == '1']
@@ -949,7 +949,7 @@ def test_slicing_a_reoriented_split_applies_the_recorded_rotation(tmp_path, monk
 
     import pytest
 
-    from print_buddy.core import color_geometry, model_job, orca_adapter
+    from print_handy.core import color_geometry, model_job, orca_adapter
     source = tmp_path / 'frame.3mf'
     _frame_source(source)
     plan = split_fit.split_plan_100(source, 220)
@@ -976,7 +976,7 @@ def test_slicing_a_reoriented_split_applies_the_recorded_rotation(tmp_path, monk
 def test_slicing_refuses_unproved_or_mixed_reorientations(tmp_path, monkeypatch):
     import pytest
 
-    from print_buddy.core import model_job, orca_adapter
+    from print_handy.core import model_job, orca_adapter
     source = tmp_path / 'frame.3mf'
     _frame_source(source)
     plan = split_fit.split_plan_100(source, 220)
@@ -1010,7 +1010,7 @@ def test_slicing_refuses_unproved_or_mixed_reorientations(tmp_path, monkeypatch)
 
 
 def test_fit_choice_rows_carry_the_split_reorientation():
-    from print_buddy.core.prepared_intake import fit_choice_rows
+    from print_handy.core.prepared_intake import fit_choice_rows
     record = {'axis': '-X', 'rotation': [0, 0, 1, 0, 1, 0, -1, 0, 0], 'yaw_deg': 0.0,
               'dims_mm': [40.0, 190.0, 210.0], 'supports': True, 'brim_recommended': False,
               'bed_contact_mm2': 7600, 'overhang_mm2': 3200}
@@ -1090,7 +1090,7 @@ def test_brim_budget_can_remove_the_reorientation_offer(tmp_path):
 
 
 def test_changing_the_reorientation_record_changes_the_slice_recipe_sha():
-    from print_buddy.core.background_slice import slice_binding
+    from print_handy.core.background_slice import slice_binding
     record = {'axis': '-X', 'rotation': [0, 0, 1, 0, 1, 0, -1, 0, 0], 'yaw_deg': 0.0,
               'dims_mm': [40.0, 190.0, 210.0], 'supports': True, 'brim_recommended': False,
               'bed_contact_mm2': 7600, 'overhang_mm2': 3200}
@@ -1120,7 +1120,7 @@ def test_diagonal_reorientation_never_displaces_a_cardinal_candidate(tmp_path):
     # margin is LARGER (20.2 mm). The recorded winner is still the
     # cardinal one: diagonal turns add fits, they never replace a verdict
     # a cardinal plan already achieved.
-    from print_buddy.core import color_geometry
+    from print_handy.core import color_geometry
     source = tmp_path / 'side-box.3mf'
     _solid_source(source, {'1': _box_tris(0, 230, 0, 190, 0, 30),
                            '2': _box_tris(0, 150, 0, 150, 0, 10)}, [['1'], ['2']])
@@ -1143,7 +1143,7 @@ def test_slicing_a_diagonal_reorientation_lands_at_the_recorded_rotation(tmp_pat
 
     import pytest
 
-    from print_buddy.core import color_geometry, model_job, orca_adapter
+    from print_handy.core import color_geometry, model_job, orca_adapter
     source = tmp_path / 'stand.3mf'
     _solid_source(source, {'1': _box_tris(0, 130, 0, 230, 0, 30),
                            '2': _box_tris(0, 195, 0, 200, 0, 119.8)}, [['1'], ['2']])
@@ -1176,8 +1176,8 @@ def test_slicing_a_diagonal_reorientation_lands_at_the_recorded_rotation(tmp_pat
 def test_slicing_refuses_diagonal_reorientation_records_that_do_not_prove(tmp_path, monkeypatch):
     import pytest
 
-    from print_buddy.core import model_job, orca_adapter
-    from print_buddy.core.orca_adapter import UP_AXES, _matmul, _yaw
+    from print_handy.core import model_job, orca_adapter
+    from print_handy.core.orca_adapter import UP_AXES, _matmul, _yaw
     source = tmp_path / 'stand.3mf'
     _solid_source(source, {'1': _box_tris(0, 130, 0, 230, 0, 30),
                            '2': _box_tris(0, 195, 0, 200, 0, 119.8)}, [['1'], ['2']])
@@ -1212,7 +1212,7 @@ def test_split_plan_diagonal_reorientation_can_share_a_plate(tmp_path, monkeypat
     # the diagonal bar is genuinely free — hull-true packing, not AABB).
     import json
 
-    from print_buddy.core import model_job, orca_adapter
+    from print_handy.core import model_job, orca_adapter
     source = tmp_path / 'diagonal-share.3mf'
     _solid_source(source, {'1': _box_tris(0, 130, 0, 230, 0, 30),
                            '2': _box_tris(0, 60, 0, 60, 0, 10),
@@ -1252,7 +1252,7 @@ def _yaw_share_source(path):
 def _rotated_hull(source, oid, degrees):
     import math
 
-    from print_buddy.core import color_geometry
+    from print_handy.core import color_geometry
     with zipfile.ZipFile(source) as archive:
         hull = color_geometry._world_hull_xy(archive, {oid})[0][0]
     return split_fit._rotate_hull_xy(hull, degrees)
@@ -1344,7 +1344,7 @@ def test_slicing_a_shared_yaw_split_lands_at_the_recorded_turn(tmp_path, monkeyp
 
     import pytest
 
-    from print_buddy.core import color_geometry, model_job, orca_adapter
+    from print_handy.core import color_geometry, model_job, orca_adapter
     from .test_plate_merge import _fake_slice
     source = tmp_path / 'yaw-share.3mf'
     _yaw_share_source(source)
@@ -1389,7 +1389,7 @@ def test_slicing_a_shared_yaw_split_lands_at_the_recorded_turn(tmp_path, monkeyp
 def test_slicing_refuses_unproved_shared_yaws(tmp_path, monkeypatch):
     import pytest
 
-    from print_buddy.core import model_job, orca_adapter
+    from print_handy.core import model_job, orca_adapter
     from .test_plate_merge import _fake_slice
     source = tmp_path / 'yaw-share.3mf'
     _yaw_share_source(source)
@@ -1432,7 +1432,7 @@ def test_slicing_refuses_unproved_shared_yaws(tmp_path, monkeypatch):
 def test_exporter_refuses_a_per_object_fit_combined_with_a_whole_plate_fit(tmp_path):
     import pytest
 
-    from print_buddy.core import color_geometry
+    from print_handy.core import color_geometry
     source = tmp_path / 'yaw-share.3mf'
     _yaw_share_source(source)
     rotation = [0.70710678, -0.70710678, 0.0, 0.70710678, 0.70710678, 0.0, 0.0, 0.0, 1.0]
@@ -1519,8 +1519,8 @@ def test_slicing_a_shared_reorientation_lands_at_the_recorded_rotation(tmp_path,
 
     import pytest
 
-    from print_buddy.core import color_geometry, model_job, orca_adapter
-    from print_buddy.core.orca_adapter import _rotate
+    from print_handy.core import color_geometry, model_job, orca_adapter
+    from print_handy.core.orca_adapter import _rotate
     source = tmp_path / 'reorientation-share.3mf'
     _reorientation_share_source(source)
     plan = split_fit.split_plan_100(source, 220)
@@ -1566,7 +1566,7 @@ def test_slicing_a_shared_reorientation_lands_at_the_recorded_rotation(tmp_path,
 def test_slicing_refuses_unproved_shared_reorientations(tmp_path, monkeypatch):
     import pytest
 
-    from print_buddy.core import model_job, orca_adapter
+    from print_handy.core import model_job, orca_adapter
     from .test_plate_merge import _fake_slice
     source = tmp_path / 'reorientation-share.3mf'
     _reorientation_share_source(source)
@@ -1605,7 +1605,7 @@ def test_slicing_a_placed_reorientation_lands_at_the_recorded_placement(tmp_path
 
     import pytest
 
-    from print_buddy.core import model_job, orca_adapter
+    from print_handy.core import model_job, orca_adapter
     source = tmp_path / 'placed-frame.3mf'
     _solid_source(source, {'1': _frame_tris(210, 190, 40, 80, 130, 60, 140),
                            '2': _box_tris(0, 150, 0, 150, 0, 10)}, [['1'], ['2']])
@@ -1656,7 +1656,7 @@ def test_split_plan_reoriented_part_can_share_with_a_turned_part(tmp_path):
 def test_slicing_a_mixed_turned_and_reoriented_plate(tmp_path, monkeypatch):
     import json
 
-    from print_buddy.core import model_job, orca_adapter
+    from print_handy.core import model_job, orca_adapter
     source = tmp_path / 'mixed-share.3mf'
     _solid_source(source, {'1': _box_tris(0, 205, 0, 20, 0, 10),
                            '2': _frame_tris(210, 190, 25, 80, 130, 60, 140),
@@ -1689,7 +1689,7 @@ def test_slicing_a_shared_reorientation_without_supports_keeps_the_plate_default
     # record of its own.
     import json
 
-    from print_buddy.core import model_job, orca_adapter
+    from print_handy.core import model_job, orca_adapter
     source = tmp_path / 'shared-no-supports.3mf'
     _solid_source(source, {'1': _box_tris(0, 210, 0, 100, 0, 20),
                            '2': _box_tris(0, 210, 0, 100, 0, 20),

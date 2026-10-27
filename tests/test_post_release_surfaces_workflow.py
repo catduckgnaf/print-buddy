@@ -66,8 +66,8 @@ class PostReleaseSurfacesWorkflowContract(unittest.TestCase):
         run = dispatch["run"]
         self.assertEqual(dispatch["env"]["DOCS_SYNC_TOKEN"],
                          "${{ secrets.DOCS_SYNC_TOKEN }}")
-        self.assertIn("repos/catduckgnaf/print-buddy-docs/dispatches", run)
-        self.assertIn("print-buddy-release", run)
+        self.assertIn("repos/catduckgnaf/print-handy-docs/dispatches", run)
+        self.assertIn("print-handy-release", run)
         # Missing secret: the skip and the manual remedy are recorded.
         self.assertIn("DOCS_SYNC_TOKEN", run)
         self.assertIn("docs-auto-sync.yml", run)
@@ -94,7 +94,7 @@ class PostReleaseSurfacesWorkflowContract(unittest.TestCase):
     def test_every_surface_needs_a_decision(self):
         run = run_block()
         for surface in (
-            "print-buddy/docs",
+            "print-handy/docs",
             "Pages site",
             "Wiki",
             "README + repo About",

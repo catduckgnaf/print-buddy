@@ -9,14 +9,14 @@ import re
 
 import pytest
 
-from print_buddy import printers, settings
-from print_buddy.printers.elegoo import VENDOR as ELEGOO_VENDOR
-from print_buddy.printers.elegoo import facts as elegoo_facts
-from print_buddy.printers.elegoo import profiles
-from print_buddy.printers.elegoo_sdcp import VENDOR as SDCP_VENDOR
-from print_buddy.printers.elegoo_sdcp import facts as sdcp_facts
-from print_buddy.printers.elegoo_sdcp.adapter import ElegooSdcpAdapter
-from print_buddy.printers.elegoo_sdcp.client import SdcpClient, SdcpError
+from print_handy import printers, settings
+from print_handy.printers.elegoo import VENDOR as ELEGOO_VENDOR
+from print_handy.printers.elegoo import facts as elegoo_facts
+from print_handy.printers.elegoo import profiles
+from print_handy.printers.elegoo_sdcp import VENDOR as SDCP_VENDOR
+from print_handy.printers.elegoo_sdcp import facts as sdcp_facts
+from print_handy.printers.elegoo_sdcp.adapter import ElegooSdcpAdapter
+from print_handy.printers.elegoo_sdcp.client import SdcpClient, SdcpError
 
 from . import elegoo_fixture as fixture
 
@@ -30,7 +30,7 @@ CENTAURI = "elegoo_sdcp.centauricarbon"
 
 
 def config_for(key, hermes=fixture.HERMES, environ=None):
-    env = {"PRINT_BUDDY__PRINTER__MODEL": key, "PRINT_BUDDY__PATHS__HERMES_HOME": str(hermes),
+    env = {"PRINT_HANDY__PRINTER__MODEL": key, "PRINT_HANDY__PATHS__HERMES_HOME": str(hermes),
            **(environ or {})}
     return settings.load(local=False, environ=env)
 
@@ -55,7 +55,7 @@ def test_neptune_registration_and_defaults(key):
     assert cfg["printer"]["slicer"] == "orca" and cfg["printer"]["firmware"] == "Klipper"
     assert cfg["delivery"]["methods"] == ["printer"]  # Moonraker path: printer is the default
     with pytest.raises(settings.SettingsError, match="not supported by model"):
-        config_for(key, environ={"PRINT_BUDDY__PRINTER__NOZZLE_DIAMETER_MM": "0.6"})
+        config_for(key, environ={"PRINT_HANDY__PRINTER__NOZZLE_DIAMETER_MM": "0.6"})
 
 
 def test_centauri_registration_and_defaults():
@@ -70,14 +70,14 @@ def test_centauri_registration_and_defaults():
 
 
 def test_sdcp_settings_validation():
-    cfg = config_for(CENTAURI, environ={"PRINT_BUDDY__ELEGOO_SDCP__HOST": "192.168.1.80"})
+    cfg = config_for(CENTAURI, environ={"PRINT_HANDY__ELEGOO_SDCP__HOST": "192.168.1.80"})
     assert cfg["elegoo_sdcp"] == {"host": "192.168.1.80"}
     with pytest.raises(settings.SettingsError, match="only applies to Elegoo SDCP"):
-        config_for("elegoo.neptune4", environ={"PRINT_BUDDY__ELEGOO_SDCP__HOST": "192.168.1.80"})
+        config_for("elegoo.neptune4", environ={"PRINT_HANDY__ELEGOO_SDCP__HOST": "192.168.1.80"})
     with pytest.raises(settings.SettingsError, match="plain IP address or hostname"):
-        config_for(CENTAURI, environ={"PRINT_BUDDY__ELEGOO_SDCP__HOST": "http://192.168.1.80"})
+        config_for(CENTAURI, environ={"PRINT_HANDY__ELEGOO_SDCP__HOST": "http://192.168.1.80"})
     with pytest.raises(settings.SettingsError, match="moonraker_url and octoprint_url must be empty"):
-        config_for(CENTAURI, environ={"PRINT_BUDDY__SERVICES__MOONRAKER_URL": "http://x:7125"})
+        config_for(CENTAURI, environ={"PRINT_HANDY__SERVICES__MOONRAKER_URL": "http://x:7125"})
 
 
 # --------------------------------------------------------------------------- profiles

@@ -16,21 +16,21 @@ class DockerReleaseContract(unittest.TestCase):
     def test_standalone_is_default_runtime(self):
         """One supervised container: tini, then the supervisor that starts every required process."""
         dockerfile = (ROOT / "Dockerfile").read_text()
-        self.assertIn("PRINT_BUDDY__BOT__MODE=standalone", dockerfile)
+        self.assertIn("PRINT_HANDY__BOT__MODE=standalone", dockerfile)
         self.assertIn('ENTRYPOINT ["/usr/bin/tini", "-g", "--", "/app/docker/entrypoint.sh", '
-                      '"/usr/local/bin/print-buddy-supervise"]', dockerfile)
-        self.assertIn('CMD ["python3", "/usr/local/bin/print-buddy-healthcheck"]', dockerfile)
+                      '"/usr/local/bin/print-handy-supervise"]', dockerfile)
+        self.assertIn('CMD ["python3", "/usr/local/bin/print-handy-healthcheck"]', dockerfile)
         # The probe is installed outside /app; a script invocation puts the script's
         # own directory on sys.path, so it must add /app itself before importing
-        # print_buddy (regression: the combined container could never report healthy).
+        # print_handy (regression: the combined container could never report healthy).
         probe = (ROOT / "docker" / "healthcheck.py").read_text()
         self.assertLess(probe.index('sys.path.insert(0, "/app")'),
-                        probe.index("from print_buddy.bot.health import"))
+                        probe.index("from print_handy.bot.health import"))
         supervisor = (ROOT / "docker" / "supervise.sh").read_text()
         # #299: the supervisor starts the printer listener through the
         # listener registry launcher, not a hard-coded domain module.
-        for process in ("python3 -m print_buddy.bot", "python3 -m print_buddy.listeners",
-                        "python3 -m print_buddy.webui_gate", "python3 -m print_buddy.webui",
+        for process in ("python3 -m print_handy.bot", "python3 -m print_handy.listeners",
+                        "python3 -m print_handy.webui_gate", "python3 -m print_handy.webui",
                         "uvicorn spoolman.main:app"):
             with self.subTest(process=process):
                 self.assertIn(process, supervisor)
@@ -85,7 +85,7 @@ class DockerReleaseContract(unittest.TestCase):
         self.assertIsNotNone(install)
         packages = set(install.group(1).replace("\\", " ").split())
         self.assertIn("ffmpeg", packages)
-        self.assertIn("USER buddy", runtime)
+        self.assertIn("USER handy", runtime)
         for vaapi_package in ("intel-media-va-driver", "mesa-va-drivers", "libva-drm2"):
             with self.subTest(package=vaapi_package):
                 self.assertIn(vaapi_package, runtime)
@@ -120,12 +120,12 @@ class DockerReleaseContract(unittest.TestCase):
                 self.assertNotIn("/opt/orcaslicer/AppRun", config)
 
     def test_single_container_with_included_spoolman_api(self):
-        """#214: one Compose service runs Print Buddy plus the bundled Spoolman API on loopback."""
+        """#214: one Compose service runs Print Handy plus the bundled Spoolman API on loopback."""
         compose = yaml.safe_load((ROOT / "docker-compose.yml").read_text())
         services = compose["services"]
-        # One container runs Print Buddy; the only other service is the
+        # One container runs Print Handy; the only other service is the
         # optional profile-gated cloudflared sidecar (#311), which runs no
-        # Print Buddy code and shares the combined network namespace.
+        # Print Handy code and shares the combined network namespace.
         self.assertEqual(list(services), ["combined", "cloudflared"])
         self.assertEqual(services["cloudflared"]["profiles"], ["live-stream"])
         service = services["combined"]
@@ -133,13 +133,13 @@ class DockerReleaseContract(unittest.TestCase):
         self.assertNotIn("ports", service)
         self.assertNotIn("depends_on", service)
         self.assertTrue(service["init"])
-        self.assertEqual(service["healthcheck"]["test"], ["CMD", "python3", "/usr/local/bin/print-buddy-healthcheck"])
+        self.assertEqual(service["healthcheck"]["test"], ["CMD", "python3", "/usr/local/bin/print-handy-healthcheck"])
         self.assertFalse(any(v.split(":")[-1].startswith("/app") for v in service["volumes"]))
         self.assertTrue(any(v.endswith(":/data/spoolman") for v in service["volumes"]))
         env = service["environment"]
         # Bundled API by default; a non-empty external URL in .env wins and nothing is migrated.
-        self.assertEqual(env["PRINT_BUDDY__SERVICES__SPOOLMAN_URL"],
-                         "${PRINT_BUDDY__SERVICES__SPOOLMAN_URL:-http://127.0.0.1:8000}")
+        self.assertEqual(env["PRINT_HANDY__SERVICES__SPOOLMAN_URL"],
+                         "${PRINT_HANDY__SERVICES__SPOOLMAN_URL:-http://127.0.0.1:8000}")
         self.assertEqual(env["SPOOLMAN_HOST"], "${SPOOLMAN_HOST:-127.0.0.1}")
         self.assertEqual(env["SPOOLMAN_DIR_DATA"], "/data/spoolman")
         # Spoolman's backend only: pinned revision, locked deps, no Node build or web UI assets.
@@ -153,7 +153,7 @@ class DockerReleaseContract(unittest.TestCase):
 
     def test_configuration_parity_channels_and_packaged_plugins(self):
         import tomllib
-        from print_buddy import settings
+        from print_handy import settings
 
         configs = [settings.load(local=ROOT / "config" / f"docker.{suffix}", environ={})
                    for suffix in ("yaml", "toml")]
@@ -177,15 +177,15 @@ class DockerReleaseContract(unittest.TestCase):
             Path(data, "records").mkdir()
             Path(data, "cache").mkdir()
             command = ["sh", "-c", "printf \"%s\\n\" \"$PB_ORCA_CMD\""]
-            env = {"PATH": os.environ["PATH"], "HOME": data, "PRINT_BUDDY_ORCA_CHANNEL": "alpha"}
+            env = {"PATH": os.environ["PATH"], "HOME": data, "PRINT_HANDY_ORCA_CHANNEL": "alpha"}
             alpha = subprocess.run(["bash", str(script), *command], cwd=data, env=env,
                                    text=True, capture_output=True, check=True)
             self.assertEqual(alpha.stdout.strip(), "/usr/local/bin/orca-slicer-alpha")
-            env.pop("PRINT_BUDDY_ORCA_CHANNEL")
+            env.pop("PRINT_HANDY_ORCA_CHANNEL")
             stable = subprocess.run(["bash", str(script), *command], cwd=data, env=env,
                                     text=True, capture_output=True, check=True)
             self.assertEqual(stable.stdout.strip(), "/usr/local/bin/orca-slicer-stable")
-            env["PRINT_BUDDY_ORCA_CHANNEL"] = "other"
+            env["PRINT_HANDY_ORCA_CHANNEL"] = "other"
             invalid = subprocess.run(["bash", str(script), *command], cwd=data, env=env,
                                      text=True, capture_output=True)
             self.assertNotEqual(invalid.returncode, 0)
@@ -201,7 +201,7 @@ class DockerReleaseContract(unittest.TestCase):
         self.assertFalse((ROOT / "docker" / "orca-build.sh").exists())
         self.assertIn('COPY --from=orca-prebuilt /out/ /', dockerfile)
         entrypoint = (ROOT / "docker" / "entrypoint.sh").read_text()
-        self.assertIn("PRINT_BUDDY_ORCA_CHANNEL:-stable", entrypoint)
+        self.assertIn("PRINT_HANDY_ORCA_CHANNEL:-stable", entrypoint)
         self.assertIn("export PB_ORCA_CMD=\"$selected\"", entrypoint)
         self.assertIn("must be 'stable' or 'alpha'", entrypoint)
         runtime = dockerfile.split("AS runtime", 1)[1]
@@ -239,7 +239,7 @@ class DockerReleaseContract(unittest.TestCase):
 
     def test_documentation_and_app_version_match_the_docker_contract(self):
         docs = (ROOT / "docs" / "DOCKER.md").read_text()
-        self.assertIn("PRINT_BUDDY_ORCA_CHANNEL", docs)
+        self.assertIn("PRINT_HANDY_ORCA_CHANNEL", docs)
         self.assertIn("OpenSCAD (`openscad`) is included", docs)
         self.assertNotIn("KiCad", docs)
         self.assertIn("No Node, npm or web UI assets are built or copied", docs)

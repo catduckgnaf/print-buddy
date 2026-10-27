@@ -126,7 +126,7 @@ jobs:
       packages: write
     timeout-minutes: 350
     env:
-      IMAGE: ghcr.io/catduckgnaf/print-buddy
+      IMAGE: ghcr.io/catduckgnaf/print-handy
       NIGHTLY_SHA: ${{ needs.promote.outputs.sha }}
       APP_CHANNEL: stable
       # Matrix values reach the shell only as environment variables too.
@@ -137,7 +137,7 @@ jobs:
       WITH_GO2RTC: "true"
       WITH_BAMBU: "false"
       SPOOLMAN_MODE: included
-      LOCAL_IMAGE: print-buddy-nightly-candidate:${{ matrix.arch }}
+      LOCAL_IMAGE: print-handy-nightly-candidate:${{ matrix.arch }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
         with:
@@ -179,7 +179,7 @@ jobs:
             --build-arg "WITH_ORCA=$WITH_ORCA" \
             --build-arg "WITH_GO2RTC=$WITH_GO2RTC" \
             --build-arg "WITH_BAMBU=$WITH_BAMBU" \
-            --label "org.opencontainers.image.source=https://github.com/catduckgnaf/print-buddy" \
+            --label "org.opencontainers.image.source=https://github.com/catduckgnaf/print-handy" \
             --label "org.opencontainers.image.version=$NIGHTLY_VERSION" \
             --label "org.opencontainers.image.revision=$NIGHTLY_SHA" \
             . 2>&1 | tee evidence/build.log
@@ -197,7 +197,7 @@ jobs:
             docker run --rm --network none --cpus 2 --memory 4g --pids-limit 256 \
               --cap-drop ALL --security-opt no-new-privileges:true \
               --tmpfs /data:uid=1000,gid=1000,size=512m \
-              -e "PRINT_BUDDY_ORCA_CHANNEL=$channel" \
+              -e "PRINT_HANDY_ORCA_CHANNEL=$channel" \
               "$LOCAL_IMAGE" python3 /app/docker/slicer-smoke.py \
               2>&1 | tee "evidence/slicer-$channel.log"
           done
@@ -224,7 +224,7 @@ jobs:
             --build-arg "WITH_ORCA=$WITH_ORCA" \
             --build-arg "WITH_GO2RTC=$WITH_GO2RTC" \
             --build-arg "WITH_BAMBU=$WITH_BAMBU" \
-            --label "org.opencontainers.image.source=https://github.com/catduckgnaf/print-buddy" \
+            --label "org.opencontainers.image.source=https://github.com/catduckgnaf/print-handy" \
             --label "org.opencontainers.image.version=$NIGHTLY_VERSION" \
             --label "org.opencontainers.image.revision=$NIGHTLY_SHA" \
             . 2>&1 | tee evidence/push.log
@@ -269,7 +269,7 @@ jobs:
       packages: write
     timeout-minutes: 60
     env:
-      IMAGE: ghcr.io/catduckgnaf/print-buddy
+      IMAGE: ghcr.io/catduckgnaf/print-handy
       NIGHTLY_SHA: ${{ needs.promote.outputs.sha }}
     steps:
       - name: Download the pushed per-arch digests

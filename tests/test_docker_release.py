@@ -1,7 +1,7 @@
 """Issue #117 release residue on top of main's Docker contract (test_docker_release_contract.py).
 
 Settings parity: every user-adjustable setting in the schema has a docs/SETTINGS.md row and, when it
-is a scalar, an .env.example line; every PRINT_BUDDY__ name in a deployment file is a real setting.
+is a scalar, an .env.example line; every PRINT_HANDY__ name in a deployment file is a real setting.
 Sanitization: public deployment files carry no LAN addresses, machine paths, IDs or credentials.
 Build: OrcaSlicer is prebuilt-only (both channels pinned by version, revision and SHA256);
 bounded, validated parallelism remains only for the Bambu Studio source build. Unraid: the
@@ -21,7 +21,7 @@ from pathlib import Path
 
 import yaml
 
-from print_buddy import printers, settings
+from print_handy import printers, settings
 
 ROOT = settings.ROOT
 DOCS = (ROOT / "docs" / "SETTINGS.md").read_text()
@@ -29,18 +29,18 @@ ENV_EXAMPLE = (ROOT / ".env.example").read_text()
 DOCKERFILE = (ROOT / "Dockerfile").read_text()
 COMPOSE = yaml.safe_load((ROOT / "docker-compose.yml").read_text())
 JOBS = ROOT / "docker" / "orca-build-jobs.sh"
-UNRAID = ET.parse(ROOT / "docker" / "unraid" / "print-buddy.xml").getroot()
+UNRAID = ET.parse(ROOT / "docker" / "unraid" / "print-handy.xml").getroot()
 # Public files a user copies or reads to deploy. All must be sanitized.
 DEPLOYMENT_FILES = [".env.example", "docker-compose.yml", "Dockerfile",
-                    "docker/entrypoint.sh", "docker/orca-build-jobs.sh", "docker/orca-prebuilt.sh", "docker/unraid/print-buddy.xml",
+                    "docker/entrypoint.sh", "docker/orca-build-jobs.sh", "docker/orca-prebuilt.sh", "docker/unraid/print-handy.xml",
                     "docker/supervise.sh", "docker/healthcheck.py", "config/docker.yaml", "config/docker.toml",
                     "docs/DOCKER.md", "docs/SETTINGS.md", "tests/docker/compose.acceptance.yml"]
 SECRETS = {"DISCORD_BOT_TOKEN", "TELEGRAM_BOT_TOKEN", "MATRIX_ACCESS_TOKEN", "LLM_API_KEY", "OCTOPRINT_API_KEY", "MOONRAKER_API_KEY", "CLIPROXY_API_KEY",
            "OPENVIKING_API_KEY", "BAMBU_LAN_PASSWORD", "AD5X_SERIAL", "AD5X_CHECK_CODE", "WEBUI_ACCESS_TOKEN",
            "DISCORD_CLIENT_SECRET", "LIVE_STREAM_SESSION_SECRET", "TUNNEL_TOKEN"}
-COMPOSE_VARS = {"PRINT_BUDDY_IMAGE", "PRINT_BUDDY_DATA", "PRINT_BUDDY_SPOOLMAN_DATA", "PRINT_BUDDY_CONFIG", "TZ",
+COMPOSE_VARS = {"PRINT_HANDY_IMAGE", "PRINT_HANDY_DATA", "PRINT_HANDY_SPOOLMAN_DATA", "PRINT_HANDY_CONFIG", "TZ",
                 "DISCORD_CLIENT_ID", "CLOUDFLARED_IMAGE"}
-RUNTIME_ENV_VARS = {"PRINT_BUDDY_ORCA_CHANNEL", "PRINT_BUDDY_BUNDLED_SPOOLMAN", "SPOOLMAN_HOST"}
+RUNTIME_ENV_VARS = {"PRINT_HANDY_ORCA_CHANNEL", "PRINT_HANDY_BUNDLED_SPOOLMAN", "SPOOLMAN_HOST"}
 DATA_TARGETS = {"/data/hermes", "/data/archive", "/data/records", "/data/cache"}
 
 
@@ -58,7 +58,7 @@ def inventory():
 
 
 def env_name(section, key):
-    return f"PRINT_BUDDY__{section.upper()}__{key.upper()}"
+    return f"PRINT_HANDY__{section.upper()}__{key.upper()}"
 
 
 def is_scalar(value):
@@ -110,10 +110,10 @@ class SettingsParityTests(unittest.TestCase):
         for key in sorted(settings.PRINTER_ENTRY_KEYS):
             with self.subTest(entry_key=key):
                 self.assertIn(f"printers.{key}", self.rows)
-        self.assertNotIn("PRINT_BUDDY__PRINTERS__", ENV_EXAMPLE)
+        self.assertNotIn("PRINT_HANDY__PRINTERS__", ENV_EXAMPLE)
         for name, env in self.rows.items():
             if name.startswith("printers."):
-                self.assertNotRegex(env, r"PRINT_BUDDY__PRINTERS__[A-Z0-9_]+__")
+                self.assertNotRegex(env, r"PRINT_HANDY__PRINTERS__[A-Z0-9_]+__")
 
     def test_env_example_lists_every_scalar_setting(self):
         for (section, key), value in self.inventory.items():
@@ -124,11 +124,11 @@ class SettingsParityTests(unittest.TestCase):
     def test_every_documented_env_name_is_accepted_by_the_loader(self):
         names = set()
         for path in DEPLOYMENT_FILES:
-            names |= set(re.findall(r"PRINT_BUDDY__[A-Z0-9_]+__[A-Z0-9_]+", (ROOT / path).read_text()))
-        names -= {"PRINT_BUDDY__SECTION__KEY", "PRINT_BUDDY__NOZZLE_TEMP_OFFSETS__TYPE"}
-        self.assertIn("PRINT_BUDDY__SERVICES__MOONRAKER_URL", names)
+            names |= set(re.findall(r"PRINT_HANDY__[A-Z0-9_]+__[A-Z0-9_]+", (ROOT / path).read_text()))
+        names -= {"PRINT_HANDY__SECTION__KEY", "PRINT_HANDY__NOZZLE_TEMP_OFFSETS__TYPE"}
+        self.assertIn("PRINT_HANDY__SERVICES__MOONRAKER_URL", names)
         for name in sorted(names):
-            section, key = name[len("PRINT_BUDDY__"):].lower().split("__")
+            section, key = name[len("PRINT_HANDY__"):].lower().split("__")
             with self.subTest(env=name):
                 self.assertTrue((section, key) in self.inventory or section in settings.OPEN_SECTIONS, name)
 
@@ -136,11 +136,11 @@ class SettingsParityTests(unittest.TestCase):
         """Integer spelling, booleans and URLs in .env.example are values the loader accepts."""
         environ = {}
         for line in ENV_EXAMPLE.splitlines():
-            match = re.match(r"^#? ?(PRINT_BUDDY__[A-Z0-9_]+)=(.+)$", line)
+            match = re.match(r"^#? ?(PRINT_HANDY__[A-Z0-9_]+)=(.+)$", line)
             # The model line and the delivery list are per-printer: the delivery example is written for
             # bambulab.a1 (tests/test_settings.py loads it there), docker.yaml selects flashforge.ad5x.
-            if match and "example" not in match.group(2) and match.group(1) not in ("PRINT_BUDDY__PRINTER__MODEL",
-                                                                                 "PRINT_BUDDY__DELIVERY__METHODS"):
+            if match and "example" not in match.group(2) and match.group(1) not in ("PRINT_HANDY__PRINTER__MODEL",
+                                                                                 "PRINT_HANDY__DELIVERY__METHODS"):
                 environ[match.group(1)] = match.group(2)
         self.assertGreater(len(environ), 40)
         data = settings.load(local=ROOT / "config" / "docker.yaml", environ=environ)
@@ -251,13 +251,13 @@ class OrcaPrebuiltTests(unittest.TestCase):
     def test_no_orca_source_build_remains(self):
         self.assertFalse((ROOT / "docker" / "orca-build.sh").exists())
         for marker in ("ORCA_SOURCE", "ORCA_STABLE_REF", "ORCA_ALPHA_REF", "ORCA_BUILD_PROFILE",
-                       "AS orca-base", "AS orca-stable", "AS orca-alpha", "print-buddy-orca-"):
+                       "AS orca-base", "AS orca-stable", "AS orca-alpha", "print-handy-orca-"):
             with self.subTest(marker=marker):
                 self.assertNotIn(marker, DOCKERFILE)
         # The only remaining build cache is the Bambu Studio one.
         mounts = re.findall(r"--mount=type=cache,id=(\S+?),target=/cache,sharing=locked", DOCKERFILE)
         self.assertEqual(len(mounts), 1)
-        self.assertIn("print-buddy-bambu-", mounts[0])
+        self.assertIn("print-handy-bambu-", mounts[0])
         self.assertIn('COPY --from=orca-prebuilt /out/ /', DOCKERFILE)
         self.assertIn('sh /usr/local/bin/orca-prebuilt stable "$TARGETARCH"', DOCKERFILE)
         self.assertIn('sh /usr/local/bin/orca-prebuilt alpha "$TARGETARCH"', DOCKERFILE)
@@ -353,11 +353,11 @@ class OrcaPrebuiltTests(unittest.TestCase):
 
 class RuntimeImageTests(unittest.TestCase):
     def test_every_stage_uses_debian_stable(self):
-        """Debian 13 slim for every stage (Orca, go2rtc, Bambu, Spoolman, runtime); no stock UID 1000 user, so buddy takes 1000."""
+        """Debian 13 slim for every stage (Orca, go2rtc, Bambu, Spoolman, runtime); no stock UID 1000 user, so handy takes 1000."""
         self.assertEqual(re.findall(r"^FROM (debian:13-slim)(?: AS [\w-]+)?$", DOCKERFILE, re.M),
                          ["debian:13-slim"] * 5)
         runtime = DOCKERFILE.split("FROM debian:13-slim AS runtime", 1)[1]
-        self.assertIn("useradd --uid 1000 --create-home buddy", runtime)
+        self.assertIn("useradd --uid 1000 --create-home handy", runtime)
         self.assertNotIn("ubuntu", DOCKERFILE)
 
 
@@ -380,7 +380,7 @@ class UnraidTemplateTests(unittest.TestCase):
         sidecar = COMPOSE["services"]["cloudflared"]
         self.assertEqual(sidecar["profiles"], ["live-stream"])
         self.assertEqual(sidecar["network_mode"], "service:combined")
-        self.assertEqual(UNRAID.findtext("Name"), "print-buddy")
+        self.assertEqual(UNRAID.findtext("Name"), "print-handy")
         self.assertFalse(UNRAID.findtext("PostArgs"))
         self.assertNotIn("command", self.service)
         health = self.flags["--health-cmd"]
@@ -428,10 +428,10 @@ class UnraidTemplateTests(unittest.TestCase):
         paths = self.configs(UNRAID, "Path")
         self.assertEqual(set(paths), DATA_TARGETS | {"/data/spoolman"})
         self.assertEqual(set(paths), {v.split(":")[-1] for v in self.service["volumes"]})
-        self.assertTrue(all(p.text.startswith("/mnt/user/appdata/print-buddy/") for p in paths.values()))
+        self.assertTrue(all(p.text.startswith("/mnt/user/appdata/print-handy/") for p in paths.values()))
         variables = self.configs(UNRAID, "Variable")
-        for key in ("PRINT_BUDDY_CONFIG", "PRINT_BUDDY__BOT__MODE", "PRINT_BUDDY__SERVICES__SPOOLMAN_URL",
-                    "PRINT_BUDDY_BUNDLED_SPOOLMAN"):
+        for key in ("PRINT_HANDY_CONFIG", "PRINT_HANDY__BOT__MODE", "PRINT_HANDY__SERVICES__SPOOLMAN_URL",
+                    "PRINT_HANDY_BUNDLED_SPOOLMAN"):
             with self.subTest(variable=key):
                 self.assertEqual(variables[key].text, str(compose_env[key]).split(":-")[-1].rstrip("}"))
         for target, config in variables.items():
@@ -441,8 +441,8 @@ class UnraidTemplateTests(unittest.TestCase):
                     self.assertFalse(config.text)
                 elif target in RUNTIME_ENV_VARS:
                     self.assertEqual(config.text, str(compose_env[target]).split(":-")[-1].rstrip("}"))
-                elif target.startswith("PRINT_BUDDY__"):
-                    section, key = target[len("PRINT_BUDDY__"):].lower().split("__")
+                elif target.startswith("PRINT_HANDY__"):
+                    section, key = target[len("PRINT_HANDY__"):].lower().split("__")
                     self.assertIn((section, key), inventory())
                 else:
                     self.assertIn(target, COMPOSE_VARS)
@@ -450,9 +450,9 @@ class UnraidTemplateTests(unittest.TestCase):
         self.assertEqual(variables["DISCORD_BOT_TOKEN"].get("Required"), "false")
         # The runtime Orca channel selector (#180): in the template, the Compose runtime
         # environment and as a settable .env.example line, so both reach alpha without a rebuild.
-        self.assertEqual(variables["PRINT_BUDDY_ORCA_CHANNEL"].text, "stable")
-        self.assertEqual(compose_env["PRINT_BUDDY_ORCA_CHANNEL"], "${PRINT_BUDDY_ORCA_CHANNEL:-stable}")
-        self.assertRegex(ENV_EXAMPLE, r"(?m)^PRINT_BUDDY_ORCA_CHANNEL=stable$")
+        self.assertEqual(variables["PRINT_HANDY_ORCA_CHANNEL"].text, "stable")
+        self.assertEqual(compose_env["PRINT_HANDY_ORCA_CHANNEL"], "${PRINT_HANDY_ORCA_CHANNEL:-stable}")
+        self.assertRegex(ENV_EXAMPLE, r"(?m)^PRINT_HANDY_ORCA_CHANNEL=stable$")
 
 
 class WebuiContainerTests(unittest.TestCase):
@@ -465,39 +465,39 @@ class WebuiContainerTests(unittest.TestCase):
 
     def test_compose_webui_variables_default_to_off(self):
         compose_env = COMPOSE["services"]["combined"]["environment"]
-        self.assertEqual(compose_env["PRINT_BUDDY__WEBUI__ENABLED"],
-                         "${PRINT_BUDDY__WEBUI__ENABLED:-false}")
-        self.assertEqual(compose_env["PRINT_BUDDY__WEBUI__HOST"],
-                         "${PRINT_BUDDY__WEBUI__HOST:-127.0.0.1}")
-        self.assertEqual(compose_env["PRINT_BUDDY__WEBUI__PORT"],
-                         "${PRINT_BUDDY__WEBUI__PORT:-0}")
+        self.assertEqual(compose_env["PRINT_HANDY__WEBUI__ENABLED"],
+                         "${PRINT_HANDY__WEBUI__ENABLED:-false}")
+        self.assertEqual(compose_env["PRINT_HANDY__WEBUI__HOST"],
+                         "${PRINT_HANDY__WEBUI__HOST:-127.0.0.1}")
+        self.assertEqual(compose_env["PRINT_HANDY__WEBUI__PORT"],
+                         "${PRINT_HANDY__WEBUI__PORT:-0}")
         # The token is a secret: .env env_file only, never a Compose default.
         self.assertNotIn("WEBUI_ACCESS_TOKEN", compose_env)
         # The port publication stays a commented example in the file text.
         text = (ROOT / "docker-compose.yml").read_text()
-        self.assertIn('#   - "8088:${PRINT_BUDDY__WEBUI__PORT:-8088}"', text)
+        self.assertIn('#   - "8088:${PRINT_HANDY__WEBUI__PORT:-8088}"', text)
 
     def test_unraid_webui_variables_and_masked_token(self):
         variables = self.variables()
         # #440: the template enables the Web UI so its WebUI link works;
         # the gate still starts it only once the token below is set (the
         # bind host is not loopback). Compose/code defaults stay off.
-        self.assertEqual(variables["PRINT_BUDDY__WEBUI__ENABLED"].text, "true")
+        self.assertEqual(variables["PRINT_HANDY__WEBUI__ENABLED"].text, "true")
         # The template binds all interfaces so the port mapping and WebUI link
         # work once enabled; the token below is then mandatory (the gate
         # blocks the start without it and the server refuses that bind).
-        self.assertEqual(variables["PRINT_BUDDY__WEBUI__HOST"].text, "0.0.0.0")
-        self.assertEqual(variables["PRINT_BUDDY__WEBUI__PORT"].text, "8088")
+        self.assertEqual(variables["PRINT_HANDY__WEBUI__HOST"].text, "0.0.0.0")
+        self.assertEqual(variables["PRINT_HANDY__WEBUI__PORT"].text, "8088")
         token = variables["WEBUI_ACCESS_TOKEN"]
         self.assertEqual(token.get("Mask"), "true")
         self.assertFalse(token.text)
 
     def test_supervisor_and_healthcheck_carry_the_gate_and_row(self):
         supervisor = (ROOT / "docker" / "supervise.sh").read_text()
-        self.assertIn("python3 -m print_buddy.webui_gate", supervisor)
-        self.assertIn("python3 -m print_buddy.webui &", supervisor)
+        self.assertIn("python3 -m print_handy.webui_gate", supervisor)
+        self.assertIn("python3 -m print_handy.webui &", supervisor)
         probe = (ROOT / "docker" / "healthcheck.py").read_text()
-        self.assertIn("from print_buddy.webui_gate import", probe)
+        self.assertIn("from print_handy.webui_gate import", probe)
         self.assertIn("webui_config", probe)
         self.assertIn("start_blocked", probe)
         self.assertIn("webui: ", probe)
@@ -505,7 +505,7 @@ class WebuiContainerTests(unittest.TestCase):
     def test_webui_is_documented_in_the_docker_guide(self):
         docker_doc = (ROOT / "docs" / "DOCKER.md").read_text()
         self.assertIn("## Web UI (optional, #286)", docker_doc)
-        self.assertIn("PRINT_BUDDY__WEBUI__ENABLED", docker_doc)
+        self.assertIn("PRINT_HANDY__WEBUI__ENABLED", docker_doc)
         self.assertIn("WEBUI_ACCESS_TOKEN", docker_doc)
 
 
@@ -566,10 +566,10 @@ class LiveContainerTests(unittest.TestCase):
 
     def test_compose_live_variables_default_to_off(self):
         compose_env = COMPOSE["services"]["combined"]["environment"]
-        self.assertEqual(compose_env["PRINT_BUDDY__LIVE_STREAM__ENABLED"],
-                         "${PRINT_BUDDY__LIVE_STREAM__ENABLED:-false}")
-        self.assertEqual(compose_env["PRINT_BUDDY__LIVE_STREAM__PORT"],
-                         "${PRINT_BUDDY__LIVE_STREAM__PORT:-0}")
+        self.assertEqual(compose_env["PRINT_HANDY__LIVE_STREAM__ENABLED"],
+                         "${PRINT_HANDY__LIVE_STREAM__ENABLED:-false}")
+        self.assertEqual(compose_env["PRINT_HANDY__LIVE_STREAM__PORT"],
+                         "${PRINT_HANDY__LIVE_STREAM__PORT:-0}")
         self.assertEqual(compose_env["DISCORD_CLIENT_ID"], "${DISCORD_CLIENT_ID:-}")
         # The secrets reach the container through the .env env_file only,
         # never a Compose environment entry.
@@ -591,10 +591,10 @@ class LiveContainerTests(unittest.TestCase):
 
     def test_unraid_live_variables_and_masked_secrets(self):
         variables = self.variables()
-        self.assertEqual(variables["PRINT_BUDDY__LIVE_STREAM__ENABLED"].text, "false")
+        self.assertEqual(variables["PRINT_HANDY__LIVE_STREAM__ENABLED"].text, "false")
         # The template pre-fills the fixed tunnel target port (the Web UI
         # port precedent); the settings default itself stays 0.
-        self.assertEqual(variables["PRINT_BUDDY__LIVE_STREAM__PORT"].text, "8091")
+        self.assertEqual(variables["PRINT_HANDY__LIVE_STREAM__PORT"].text, "8091")
         for secret in ("DISCORD_CLIENT_SECRET", "LIVE_STREAM_SESSION_SECRET", "TUNNEL_TOKEN"):
             with self.subTest(secret=secret):
                 self.assertEqual(variables[secret].get("Mask"), "true")
@@ -602,16 +602,16 @@ class LiveContainerTests(unittest.TestCase):
 
     def test_supervisor_and_healthcheck_carry_the_gate_and_row(self):
         supervisor = (ROOT / "docker" / "supervise.sh").read_text()
-        self.assertIn("python3 -m print_buddy.live_gate", supervisor)
-        self.assertIn("python3 -m print_buddy.live_activity &", supervisor)
+        self.assertIn("python3 -m print_handy.live_gate", supervisor)
+        self.assertIn("python3 -m print_handy.live_activity &", supervisor)
         probe = (ROOT / "docker" / "healthcheck.py").read_text()
-        self.assertIn("from print_buddy.live_gate import live_config", probe)
+        self.assertIn("from print_handy.live_gate import live_config", probe)
         self.assertIn("live view: ", probe)
 
     def test_live_view_is_documented_in_the_docker_guide(self):
         docker_doc = (ROOT / "docs" / "DOCKER.md").read_text()
         self.assertIn("## Live camera in Discord (optional, #311)", docker_doc)
-        self.assertIn("PRINT_BUDDY__LIVE_STREAM__ENABLED", docker_doc)
+        self.assertIn("PRINT_HANDY__LIVE_STREAM__ENABLED", docker_doc)
         self.assertIn("TUNNEL_TOKEN", docker_doc)
 
 
@@ -628,20 +628,20 @@ class CameraWatchVisibilityTests(unittest.TestCase):
         self.assertEqual(loaded["visual_watch"]["sensitivity"], 3)
         self.assertIs(loaded["visual_watch"]["enabled"], True)
         overridden = settings.load(local=ROOT / "config" / "docker.yaml", environ={
-            "PRINT_BUDDY__VISUAL_WATCH__SENSITIVITY": "5",
-            "PRINT_BUDDY__VISUAL_WATCH__ENABLED": "false"})
+            "PRINT_HANDY__VISUAL_WATCH__SENSITIVITY": "5",
+            "PRINT_HANDY__VISUAL_WATCH__ENABLED": "false"})
         self.assertEqual(overridden["visual_watch"]["sensitivity"], 5)
         self.assertIs(overridden["visual_watch"]["enabled"], False)
 
     def test_compose_and_unraid_defaults_agree(self):
         compose_env = COMPOSE["services"]["combined"]["environment"]
-        self.assertEqual(compose_env["PRINT_BUDDY__VISUAL_WATCH__SENSITIVITY"],
-                         "${PRINT_BUDDY__VISUAL_WATCH__SENSITIVITY:-3}")
-        self.assertEqual(compose_env["PRINT_BUDDY__VISUAL_WATCH__ENABLED"],
-                         "${PRINT_BUDDY__VISUAL_WATCH__ENABLED:-true}")
+        self.assertEqual(compose_env["PRINT_HANDY__VISUAL_WATCH__SENSITIVITY"],
+                         "${PRINT_HANDY__VISUAL_WATCH__SENSITIVITY:-3}")
+        self.assertEqual(compose_env["PRINT_HANDY__VISUAL_WATCH__ENABLED"],
+                         "${PRINT_HANDY__VISUAL_WATCH__ENABLED:-true}")
         variables = {c.get("Target"): c for c in UNRAID.findall("Config") if c.get("Type") == "Variable"}
-        for target, default in (("PRINT_BUDDY__VISUAL_WATCH__SENSITIVITY", "3"),
-                                ("PRINT_BUDDY__VISUAL_WATCH__ENABLED", "true")):
+        for target, default in (("PRINT_HANDY__VISUAL_WATCH__SENSITIVITY", "3"),
+                                ("PRINT_HANDY__VISUAL_WATCH__ENABLED", "true")):
             with self.subTest(variable=target):
                 self.assertEqual(variables[target].text, default)
                 self.assertEqual(variables[target].text,
@@ -651,38 +651,38 @@ class CameraWatchVisibilityTests(unittest.TestCase):
         readme = (ROOT / "README.md").read_text()
         self.assertIn("Camera watchdog", readme)
         self.assertIn("spaghetti", readme.lower())
-        self.assertIn("PRINT_BUDDY__VISUAL_WATCH__SENSITIVITY", readme)
+        self.assertIn("PRINT_HANDY__VISUAL_WATCH__SENSITIVITY", readme)
         docker_doc = (ROOT / "docs" / "DOCKER.md").read_text()
         self.assertIn("## Camera watch (visual_watch)", docker_doc)
-        self.assertIn("PRINT_BUDDY__VISUAL_WATCH__ENABLED", docker_doc)
-        self.assertIn("PRINT_BUDDY__VISUAL_WATCH__SENSITIVITY", docker_doc)
+        self.assertIn("PRINT_HANDY__VISUAL_WATCH__ENABLED", docker_doc)
+        self.assertIn("PRINT_HANDY__VISUAL_WATCH__SENSITIVITY", docker_doc)
 
 
 FEATURE_SETTINGS = {
-    "PRINT_BUDDY__SERVICES__VISION_CHAT_URL": "",
-    "PRINT_BUDDY__SERVICES__CAMERA_SNAPSHOT_URL": "",
-    "PRINT_BUDDY__VISION__MODEL": "gemini-latest",
-    "PRINT_BUDDY__VISION__ROAST_ENABLED": "true",
-    "PRINT_BUDDY__FLASHFORGE_STOCK__HOST": "",
-    "PRINT_BUDDY__BAMBU__LAN_HOST": "",
-    "PRINT_BUDDY__BAMBU__LAN_SERIAL": "",
-    "PRINT_BUDDY__DISCORD__APPROVAL_USER_ID": "",
-    "PRINT_BUDDY__DISCORD__TIMEZONE": "America/New_York",
-    "PRINT_BUDDY__LLM__CHAT_URL": "",
-    "PRINT_BUDDY__LLM__MODEL": "",
+    "PRINT_HANDY__SERVICES__VISION_CHAT_URL": "",
+    "PRINT_HANDY__SERVICES__CAMERA_SNAPSHOT_URL": "",
+    "PRINT_HANDY__VISION__MODEL": "gemini-latest",
+    "PRINT_HANDY__VISION__ROAST_ENABLED": "true",
+    "PRINT_HANDY__FLASHFORGE_STOCK__HOST": "",
+    "PRINT_HANDY__BAMBU__LAN_HOST": "",
+    "PRINT_HANDY__BAMBU__LAN_SERIAL": "",
+    "PRINT_HANDY__DISCORD__APPROVAL_USER_ID": "",
+    "PRINT_HANDY__DISCORD__TIMEZONE": "America/New_York",
+    "PRINT_HANDY__LLM__CHAT_URL": "",
+    "PRINT_HANDY__LLM__MODEL": "",
     # Live camera in Discord (#311): every [live_stream] setting except the
     # port — the template pre-fills 8091 as the fixed tunnel target while
     # the settings/Compose default stays 0 (the Web UI port precedent),
     # pinned separately in LiveContainerTests below.
-    "PRINT_BUDDY__LIVE_STREAM__ENABLED": "false",
-    "PRINT_BUDDY__LIVE_STREAM__VOICE_CHANNEL_ID": "",
-    "PRINT_BUDDY__LIVE_STREAM__AUTO_START_ON_PRINT": "false",
-    "PRINT_BUDDY__LIVE_STREAM__MAX_HEIGHT": "720",
-    "PRINT_BUDDY__LIVE_STREAM__FPS": "15",
-    "PRINT_BUDDY__LIVE_STREAM__MAX_BITRATE_KBPS": "2500",
-    "PRINT_BUDDY__LIVE_STREAM__ENCODER": "auto",
-    "PRINT_BUDDY__LIVE_STREAM__EMPTY_TIMEOUT_S": "300",
-    "PRINT_BUDDY__LIVE_STREAM__ACTIVITY_ORIGIN": "",
+    "PRINT_HANDY__LIVE_STREAM__ENABLED": "false",
+    "PRINT_HANDY__LIVE_STREAM__VOICE_CHANNEL_ID": "",
+    "PRINT_HANDY__LIVE_STREAM__AUTO_START_ON_PRINT": "false",
+    "PRINT_HANDY__LIVE_STREAM__MAX_HEIGHT": "720",
+    "PRINT_HANDY__LIVE_STREAM__FPS": "15",
+    "PRINT_HANDY__LIVE_STREAM__MAX_BITRATE_KBPS": "2500",
+    "PRINT_HANDY__LIVE_STREAM__ENCODER": "auto",
+    "PRINT_HANDY__LIVE_STREAM__EMPTY_TIMEOUT_S": "300",
+    "PRINT_HANDY__LIVE_STREAM__ACTIVITY_ORIGIN": "",
 }
 FEATURE_SECRETS = {"CLIPROXY_API_KEY", "AD5X_SERIAL", "AD5X_CHECK_CODE",
                    "BAMBU_LAN_PASSWORD", "MOONRAKER_API_KEY", "LLM_API_KEY",
@@ -703,7 +703,7 @@ class DockerFeatureVariablesTests(unittest.TestCase):
             with self.subTest(variable=name):
                 self.assertEqual(compose_env[name], "${%s:-%s}" % (name, default))
                 self.assertEqual(variables[name].text or "", default)
-                section, key = name[len("PRINT_BUDDY__"):].lower().split("__")
+                section, key = name[len("PRINT_HANDY__"):].lower().split("__")
                 self.assertIn((section, key), inventory())
 
     def test_secrets_are_masked_template_fields_and_stay_out_of_compose_environment(self):
@@ -717,7 +717,7 @@ class DockerFeatureVariablesTests(unittest.TestCase):
                 self.assertNotIn(name, compose_env)
 
     def test_template_model_list_names_every_supported_model(self):
-        model = self.variables()["PRINT_BUDDY__PRINTER__MODEL"]
+        model = self.variables()["PRINT_HANDY__PRINTER__MODEL"]
         for name in ("flashforge.ad5x", "sovol.sv06", "klipper.generic",
                      "octoprint.marlin", "bambulab.a1", "bambulab.p1s"):
             with self.subTest(model=name):
@@ -743,12 +743,12 @@ class AcceptanceFixtureTests(unittest.TestCase):
 
     def test_harness_owns_its_names_and_publishes_no_port(self):
         script = (ROOT / "tests" / "docker" / "image_acceptance.sh").read_text()
-        self.assertIn('project="pb-accept-${mode}-${run_id}"', script)
+        self.assertIn('project="ph-accept-${mode}-${run_id}"', script)
         self.assertNotIn("container_name", script)
         self.assertNotRegex(script, r"\s-p\s+\d|--publish")
         self.assertNotIn("prune", script)
         self.assertIn("not a version upgrade", script)
-        self.assertNotIn("print-buddy-bot.xml", script)
+        self.assertNotIn("print-handy-bot.xml", script)
         for check in ("spoolman:loopback-only", "spoolman:no-web-ui", "spoolman:persisted", "bot:fails-closed"):
             with self.subTest(check=check):
                 self.assertIn(check, script)

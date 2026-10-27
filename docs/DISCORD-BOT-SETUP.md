@@ -1,20 +1,20 @@
 # Discord bot setup
 
-Print Buddy talks to you through a Discord bot you own. Use this page for the standalone bot;
+Print Handy talks to you through a Discord bot you own. Use this page for the standalone bot;
 Hermes users can follow the Discord application steps, then use [Hermes installation](INSTALL.md).
-Allow about 15 minutes after installing Print Buddy and its Python requirements. Start in the
+Allow about 15 minutes after installing Print Handy and its Python requirements. Start in the
 repository root with the installation's Python environment activated. For installation itself,
 use the [standalone bot](STANDALONE.md) or [Docker](DOCKER.md).
 
-The [wiki setup entry](https://github.com/catduckgnaf/print-buddy/wiki/Discord-Bot-Setup)
+The [wiki setup entry](https://github.com/catduckgnaf/print-handy/wiki/Discord-Bot-Setup)
 links here: this versioned page is the authoritative guide.
 
 ## 1. Create the bot
 
-1. Open https://discord.com/developers/applications and click **New Application**. Name it (for example "Print Buddy").
+1. Open https://discord.com/developers/applications and click **New Application**. Name it (for example "Print Handy").
 2. On **General Information**, copy the **Application ID**. You need it for the invite link.
 3. Open **Bot**, click **Reset Token**, and copy the token. Treat it like a password: anyone with it controls the bot.
-4. Still on **Bot**, under **Privileged Gateway Intents**, turn on **MESSAGE CONTENT**. Print Buddy reads
+4. Still on **Bot**, under **Privileged Gateway Intents**, turn on **MESSAGE CONTENT**. Print Handy reads
    the messages in its channel. It does not need the Server Members or Presence intents.
 
 ## 2. Invite it to your server
@@ -43,14 +43,14 @@ nothing more:
 2. Right-click the print channel and choose **Copy Channel ID**.
 3. Right-click your own name and choose **Copy User ID**. Repeat for anyone else allowed to print.
 
-## 4. Give them to Print Buddy
+## 4. Give them to Print Handy
 
 The setup wizard asks for the channel ID, the user IDs and the token. The token is typed hidden and saved
 only to the data folder's `.env` file (mode 600); it is never printed or written to `config/local.yaml`.
 
 Doing it by hand instead:
 
-- Standalone: put `DISCORD_BOT_TOKEN=...` in `~/.local/share/print-buddy/.env` (or your `paths.hermes_home`),
+- Standalone: put `DISCORD_BOT_TOKEN=...` in `~/.local/share/print-handy/.env` (or your `paths.hermes_home`),
   and set `discord.chat_id` in `config/local.yaml` (`discord.allowed_user_ids` is optional; see
   [Who can use the bot](#who-can-use-the-bot)). See [standalone bot](STANDALONE.md).
 - Hermes: put `DISCORD_BOT_TOKEN`, `DISCORD_ALLOWED_USERS` and `DISCORD_HOME_CHANNEL` in
@@ -74,7 +74,7 @@ bot:
   sync_commands: true
   health_port: 0
 paths:
-  hermes_home: ~/.local/share/print-buddy
+  hermes_home: ~/.local/share/print-handy
 discord:
   chat_id: "123456789012345678"             # replace with your channel ID
   allowed_user_ids: ""                      # optional whitelist; empty lets everyone in the channel use the bot
@@ -86,7 +86,7 @@ its name is historical and does not require Hermes. Keep the printer-specific co
 created by the installer. This example only shows the Discord fields.
 
 Store the real token in that data directory's `.env` using a local editor, not a shell command
-that leaves the token in history. Restrict access with `chmod 600 ~/.local/share/print-buddy/.env`.
+that leaves the token in history. Restrict access with `chmod 600 ~/.local/share/print-handy/.env`.
 Do not paste tokens into Discord, issue reports or screenshots. Reset an exposed token in the
 Developer Portal and replace it locally. Never commit `.env` or `config/local.yaml`.
 
@@ -103,17 +103,17 @@ Developer Portal and replace it locally. Never commit `.env` or `config/local.ya
 | `bot.health_port` | Default `0`: no HTTP listener; leave disabled for this setup |
 | `bot.health_stale_s` | Heartbeat freshness limit; default 120 seconds |
 
-All settings support `PRINT_BUDDY__SECTION__KEY` process-environment overrides, for example
-`PRINT_BUDDY__BOT__MODE=standalone` and
-`PRINT_BUDDY__DISCORD__ALLOWED_USER_IDS="234567890123456789 345678901234567890"`.
+All settings support `PRINT_HANDY__SECTION__KEY` process-environment overrides, for example
+`PRINT_HANDY__BOT__MODE=standalone` and
+`PRINT_HANDY__DISCORD__ALLOWED_USER_IDS="234567890123456789 345678901234567890"`.
 The actual token still comes from the variable named by `token_env` (default `DISCORD_BOT_TOKEN`),
-not a `discord.token` field. `PRINT_BUDDY_CONFIG` selects an explicit configuration file.
+not a `discord.token` field. `PRINT_HANDY_CONFIG` selects an explicit configuration file.
 See [settings and optional LLM/logging fields](STANDALONE.md#settings) and
 [configuration load order](CONFIGURATION-YAML.md). Leave `llm.chat_url` empty for command-list replies
 with no LLM. Separate from that chat LLM, the print-started post carries the
 one-line **roast** whenever an LLM/vision endpoint is configured (`services.vision_chat_url` plus
 `CLIPROXY_API_KEY`): `vision.roast_enabled` is on by default, and setting it `false` (or
-`PRINT_BUDDY__VISION__ROAST_ENABLED=false`) turns roasts off. See
+`PRINT_HANDY__VISION__ROAST_ENABLED=false`) turns roasts off. See
 [The roast](TELEGRAM-BOT-SETUP.md#the-roast).
 
 ## Who can use the bot
@@ -144,21 +144,21 @@ there.
 Run in the repository root using the Python environment from installation:
 
 ```bash
-python3 -m print_buddy.bot check
+python3 -m print_handy.bot check
 ```
 
 This does not log into Discord or contact a printer. It checks mode, token presence (not validity),
 channel, allowed users, discord.py, loaded handlers, absence of Hermes modules and writable state.
 It creates the state directory and briefly writes a probe file there. Expect exit 0 and `ok` lines;
 resolve each `FAIL` before proceeding. A valid configuration is not proof the token can log in.
-Do not use `python3 -m print_buddy.doctor` as this offline check: doctor can contact configured services.
+Do not use `python3 -m print_handy.doctor` as this offline check: doctor can contact configured services.
 
 ## 6. First launch and health
 
 Once the offline check passes, deliberately connect the bot to Discord:
 
 ```bash
-python3 -m print_buddy.bot run
+python3 -m print_handy.bot run
 ```
 
 Keep the printer listener stopped during this first check. As an allowed user in the configured
@@ -169,7 +169,7 @@ A stranger or a message in another channel is ignored.
 In a second terminal using the same environment and configuration:
 
 ```bash
-python3 -m print_buddy.bot health
+python3 -m print_handy.bot health
 ```
 
 Expect exit 0 with `ok standalone bot: connected as ...`. This reads the local heartbeat and
@@ -180,7 +180,7 @@ printed instructions in [standalone systemd setup](STANDALONE.md#systemd) before
 
 ## 7. Live camera Activity (optional, #311)
 
-Print Buddy can show the printer camera live inside a Discord voice channel. The bot itself
+Print Handy can show the printer camera live inside a Discord voice channel. The bot itself
 cannot send video — Discord's bot API is audio-only — so the live view is an **Activity**: a
 small web page that runs inside the voice channel, served by the *same* Discord application as
 the bot (no second bot, no second token). The page plays the container's go2rtc restream of
@@ -199,7 +199,7 @@ loopback and is never exposed raw).
 
 Four pieces, in four places. Nothing here is automatic: creating the Discord application
 changes, the tunnel and its credentials are operator steps (they are listed as manual
-follow-ups on the #311 stage 4 PR), and Print Buddy only consumes the results.
+follow-ups on the #311 stage 4 PR), and Print Handy only consumes the results.
 
 **1. A private voice channel.** Create (or pick) a voice channel limited to your household —
 the camera can see your home, so this channel is the privacy boundary. Note its ID
@@ -214,7 +214,7 @@ the Activity. `/print-live` only ever names this one channel.
   **Client Secret**. The secret goes only into the deployment environment
   (`DISCORD_CLIENT_SECRET`, next step) — never into a settings file, a screenshot or a chat.
 - **Activities → URL Mappings**: map the root prefix `/` to your tunnel hostname (step 3),
-  for example `pb-live.example.com`. One mapping is enough: the page, its sign-in endpoint
+  for example `ph-live.example.com`. One mapping is enough: the page, its sign-in endpoint
   and the feed all live behind the same origin, and the Activity server proxies the feed
   to go2rtc itself.
 - The bot needs no new token and no new invite for this; the Activity runs under the same
@@ -230,12 +230,12 @@ Cloudflare, so the hostname survives restarts:
 - Add a public hostname for the tunnel (the same hostname you mapped in step 2) with its
   service pointed at the Activity server on loopback: `http://127.0.0.1:<live port>`
   (`8091` in the examples — `[live_stream] port`, which the Unraid template pre-fills).
-- Run the connector beside Print Buddy: with Compose, the profiled sidecar does it
+- Run the connector beside Print Handy: with Compose, the profiled sidecar does it
   (`docker compose --profile live-stream up -d`, with `CLOUDFLARED_IMAGE` set to a tested
   connector image); on Unraid, run a separate `cloudflared` container with the same token.
   If the tunnel is down, only the live view is unreachable — the bot and prints are
   unaffected. Set `[live_stream] activity_origin` to the hostname's https origin, for
-  example `https://pb-live.example.com`.
+  example `https://ph-live.example.com`.
 
 **4. The deployment settings and secrets.** In the Web UI's **Live camera (Discord)** group,
 a config file, or environment variables (all of them are in [SETTINGS.md](SETTINGS.md)):
@@ -249,7 +249,7 @@ a config file, or environment variables (all of them are in [SETTINGS.md](SETTIN
 | `DISCORD_CLIENT_ID` | environment — the application ID from step 2 (a plain identifier, not a secret) |
 | `DISCORD_CLIENT_SECRET` | environment, secret — from step 2 |
 | `LIVE_STREAM_SESSION_SECRET` | environment, secret — a long random value you generate; it signs the Activity sessions |
-| `TUNNEL_TOKEN` | `.env` only — read by the cloudflared sidecar, never by Print Buddy |
+| `TUNNEL_TOKEN` | `.env` only — read by the cloudflared sidecar, never by Print Handy |
 
 Restart the container after changing them: settings are read once at start. The supervisor
 starts the Activity server only when **all** of them are present (the live gate's report,
@@ -269,7 +269,7 @@ household, exactly as you would for print approvals.
 ### Using it
 
 - `/print-live start` opens the viewing session and posts the pointer: join the configured
-  voice channel and launch the **Print Buddy** activity from its activity shelf.
+  voice channel and launch the **Print Handy** activity from its activity shelf.
   `/print-live stop` ends it; `/print-live status` reports it.
 - With `live_stream.auto_start_on_print = true` (off by default), a print start opens the
   session and posts the pointer automatically, and the session ends when that print ends.
@@ -289,10 +289,10 @@ household, exactly as you would for print approvals.
   the print ending, or the empty timeout) ends it.
 - go2rtc and the Activity server bind loopback inside the deployment; the only public
   surface is the tunnel hostname, behind the allowlist sign-in. Camera credentials stay
-  between Print Buddy, go2rtc (loopback) and the camera on your LAN, redacted in logs as
-  everywhere else in Print Buddy.
+  between Print Handy, go2rtc (loopback) and the camera on your LAN, redacted in logs as
+  everywhere else in Print Handy.
 - One bot serves one printer's camera per instance (the multi-instance rule): a second
-  printer is a second Print Buddy instance with its own channel, tunnel hostname and
+  printer is a second Print Handy instance with its own channel, tunnel hostname and
   settings.
 
 ### Support and verification matrix
@@ -321,6 +321,6 @@ household, exactly as you would for print approvals.
 
 Startup logs go to stderr by default; optional logging settings are in [standalone settings](STANDALONE.md#settings).
 Review and redact logs locally before sharing: diagnostic output can contain paths, channel IDs and service URLs.
-In Discord, `/print-buddy setup` runs a guided, resumable setup checklist and `/print-buddy debugging` runs read-only, redacted diagnostics; see [guided setup and debugging](GUIDED-SETUP-DEBUGGING.md). The CLI checks above remain the offline and machine-level routes.
+In Discord, `/print-handy setup` runs a guided, resumable setup checklist and `/print-handy debugging` runs read-only, redacted diagnostics; see [guided setup and debugging](GUIDED-SETUP-DEBUGGING.md). The CLI checks above remain the offline and machine-level routes.
 After a restart, intake questions held in memory must be restarted by resending the model; do not treat old
 buttons as authorization. Listener alerts have separate persistent-button support.

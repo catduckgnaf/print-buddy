@@ -1,5 +1,5 @@
 {
-  "name": "Print Buddy test fixture",
+  "name": "Print Handy test fixture",
   "version": "00.00.00.00",
   "machine_list": [
     {"name": "fixture_machine_common", "sub_path": "machine/fixture_machine_common.json"},

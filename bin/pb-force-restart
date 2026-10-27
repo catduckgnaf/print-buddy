@@ -1,5 +1,0 @@
-#!/usr/bin/env bash
-set -euo pipefail
-REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-cd "$REPO"
-exec python3 -m print_buddy.hermes.panic force-restart "$@"

@@ -47,8 +47,8 @@ export SPOOLMAN_DIR_DATA="${SPOOLMAN_DIR_DATA:-/data/spoolman}"
 export SPOOLMAN_DIR_CONFIG="${SPOOLMAN_DIR_CONFIG:-/data/spoolman/config}"
 export SPOOLMAN_DIR_LOGS="${SPOOLMAN_DIR_LOGS:-/data/spoolman/logs}"
 export SPOOLMAN_DIR_BACKUPS="${SPOOLMAN_DIR_BACKUPS:-/data/spoolman/backups}"
-export PRINT_BUDDY__SERVICES__SPOOLMAN_URL="${PRINT_BUDDY__SERVICES__SPOOLMAN_URL:-http://127.0.0.1:$SPOOLMAN_PORT}"
-if [ "${PRINT_BUDDY_BUNDLED_SPOOLMAN:-true}" = true ]; then
+export PRINT_HANDY__SERVICES__SPOOLMAN_URL="${PRINT_HANDY__SERVICES__SPOOLMAN_URL:-http://127.0.0.1:$SPOOLMAN_PORT}"
+if [ "${PRINT_HANDY_BUNDLED_SPOOLMAN:-true}" = true ]; then
     mkdir -p "$SPOOLMAN_DIR_DATA" "$SPOOLMAN_DIR_CONFIG" "$SPOOLMAN_DIR_LOGS" "$SPOOLMAN_DIR_BACKUPS"
     # Spoolman runs its migrations by spawning `alembic`, so its venv bin must lead PATH.
     (cd /opt/spoolman && PATH=/opt/spoolman/.venv/bin:$PATH exec .venv/bin/python -m uvicorn spoolman.main:app --host "$SPOOLMAN_HOST" --port "$SPOOLMAN_PORT") &
@@ -68,7 +68,7 @@ else:
     raise SystemExit('Bundled Spoolman failed readiness')
 PY
 else
-    case "$PRINT_BUDDY__SERVICES__SPOOLMAN_URL" in
+    case "$PRINT_HANDY__SERVICES__SPOOLMAN_URL" in
         http://127.0.0.1:*|http://localhost:*) echo 'External Spoolman URL required when bundled API is disabled' >&2; exit 2;;
     esac
 fi
@@ -78,7 +78,7 @@ fi
 # WITH_GO2RTC=false build has no binary (so the whole block is skipped
 # there); the published image includes it. It runs only when a feature
 # needs it ([timelapse] capture_enabled or [live_stream] enabled). The
-# gate resolves the effective configuration (print_buddy.go2rtc), never
+# gate resolves the effective configuration (print_handy.go2rtc), never
 # an environment guess: 0 = start it, 3 = not started (no feature needs
 # it, or no camera source is configured — the feature degrades off),
 # anything else = the configuration could not be resolved; stop instead
@@ -86,9 +86,9 @@ fi
 go2rtc_bin="${GO2RTC_BIN:-/usr/local/bin/go2rtc}"
 if [ -x "$go2rtc_bin" ]; then
     go2rtc_gate=0
-    python3 -m print_buddy.go2rtc || go2rtc_gate=$?
+    python3 -m print_handy.go2rtc || go2rtc_gate=$?
     if [ "$go2rtc_gate" -eq 0 ]; then
-        go2rtc_config="$(python3 -m print_buddy.go2rtc --write-config)"
+        go2rtc_config="$(python3 -m print_handy.go2rtc --write-config)"
         "$go2rtc_bin" -config "$go2rtc_config" &
         children+=("$!"); children_names+=("go2rtc")
     elif [ "$go2rtc_gate" -eq 3 ]; then
@@ -99,7 +99,7 @@ if [ -x "$go2rtc_bin" ]; then
     fi
 fi
 # Listener instances (#336, design §2.5): one per roster printer whose
-# listener domain (print_buddy.listeners, #299) has an implementation. The
+# listener domain (print_handy.listeners, #299) has an implementation. The
 # gate resolves the effective configuration per printer (model -> vendor
 # connection -> domain), never the presence of a service URL, which
 # settings forbid for most connections. Gate status per printer: 0 =
@@ -108,7 +108,7 @@ fi
 # configuration could not be resolved; stop instead of guessing. The
 # roster itself failing to resolve stops the container the same way.
 roster_status=0
-roster_ids="$(python3 -m print_buddy.listener_gate --roster)" || roster_status=$?
+roster_ids="$(python3 -m print_handy.listener_gate --roster)" || roster_status=$?
 if [ "$roster_status" -ne 0 ]; then
     echo "Listener gate failed (status $roster_status); configuration unresolved, stopping container." >&2
     exit "$roster_status"
@@ -123,13 +123,13 @@ run_listener() {
     # or another printer's listener. The backoff/budget/window are
     # env-tunable for the container-shaped tests; defaults are production.
     local printer_id="$1"
-    local backoff="${PRINT_BUDDY_LISTENER_RESTART_BACKOFF_S:-5}"
-    local budget="${PRINT_BUDDY_LISTENER_RESTART_BUDGET:-5}"
-    local window="${PRINT_BUDDY_LISTENER_RESTART_WINDOW_S:-600}"
+    local backoff="${PRINT_HANDY_LISTENER_RESTART_BACKOFF_S:-5}"
+    local budget="${PRINT_HANDY_LISTENER_RESTART_BUDGET:-5}"
+    local window="${PRINT_HANDY_LISTENER_RESTART_WINDOW_S:-600}"
     local restarts=0 window_start=$SECONDS child="" status=0
     trap 'if [ -n "$child" ]; then kill -TERM "$child" 2>/dev/null || true; fi; exit 0' TERM INT
     while true; do
-        python3 -m print_buddy.listeners --printer "$printer_id" &
+        python3 -m print_handy.listeners --printer "$printer_id" &
         child=$!
         echo "$child" > "$listener_run_dir/$printer_id.pid"
         status=0
@@ -155,7 +155,7 @@ if [ -n "$roster_ids" ]; then
     while IFS= read -r printer_id; do
         [ -n "$printer_id" ] || continue
         listener_gate=0
-        python3 -m print_buddy.listener_gate --printer "$printer_id" || listener_gate=$?
+        python3 -m print_handy.listener_gate --printer "$printer_id" || listener_gate=$?
         if [ "$listener_gate" -eq 0 ]; then
             run_listener "$printer_id" &
             listener_loops+=("$!")
@@ -168,7 +168,7 @@ if [ -n "$roster_ids" ]; then
     done <<< "$roster_ids"
 fi
 if [ -n "${DISCORD_BOT_TOKEN:-}" ]; then
-    python3 -m print_buddy.bot &
+    python3 -m print_handy.bot &
     children+=("$!"); children_names+=("bot")
 else
     echo 'DISCORD_BOT_TOKEN is empty; bot disabled.'
@@ -185,9 +185,9 @@ fi
 # refusal halting a healthy install. The server still refuses that
 # bind outright when run standalone.
 webui_gate=0
-python3 -m print_buddy.webui_gate || webui_gate=$?
+python3 -m print_handy.webui_gate || webui_gate=$?
 if [ "$webui_gate" -eq 0 ]; then
-    python3 -m print_buddy.webui &
+    python3 -m print_handy.webui &
     children+=("$!"); children_names+=("webui")
 elif [ "$webui_gate" -eq 3 ]; then
     echo 'Web UI not started: disabled, no port configured, or blocked (see the webui gate message above).'
@@ -199,8 +199,8 @@ fi
 # [live_stream] is enabled AND configured (voice channel, activity
 # origin, a chosen loopback port, the Discord application ID and both
 # secrets in the environment): the gate resolves the effective
-# configuration (print_buddy.live_gate), never an environment guess.
-# Gate status: 0 = start the server (python3 -m print_buddy.live_activity),
+# configuration (print_handy.live_gate), never an environment guess.
+# Gate status: 0 = start the server (python3 -m print_handy.live_activity),
 # 3 = disabled or incompletely configured (start nothing — a healthy,
 # reported state, like the go2rtc no-source case), anything else = the
 # configuration could not be resolved; stop instead of guessing. The
@@ -209,9 +209,9 @@ fi
 # the tunnel is a separate, optional sidecar — its absence never stops
 # this container.
 live_gate=0
-python3 -m print_buddy.live_gate || live_gate=$?
+python3 -m print_handy.live_gate || live_gate=$?
 if [ "$live_gate" -eq 0 ]; then
-    python3 -m print_buddy.live_activity &
+    python3 -m print_handy.live_activity &
     children+=("$!"); children_names+=("live view")
 elif [ "$live_gate" -eq 3 ]; then
     echo 'Live view not started: disabled or not fully configured.'

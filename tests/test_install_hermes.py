@@ -28,8 +28,8 @@ class InstallerTests(unittest.TestCase):
 
     def run_installer(self, *args, overlay=True, python="/opt/venv/bin/python", **extra_env):
         env = dict(os.environ, **extra_env,
-                   PRINT_BUDDY__PATHS__HERMES_HOME=str(self.home), HERMES_HOME=str(self.tmp / "gateway-root"), SYSTEMD_USER_DIR=str(self.units),
-                   PRINT_BUDDY_OVERLAY=str(self.overlay if overlay else self.tmp / "no-overlay"),
+                   PRINT_HANDY__PATHS__HERMES_HOME=str(self.home), HERMES_HOME=str(self.tmp / "gateway-root"), SYSTEMD_USER_DIR=str(self.units),
+                   PRINT_HANDY_OVERLAY=str(self.overlay if overlay else self.tmp / "no-overlay"),
                    PYTHON=python, HOME=str(self.tmp / "fakehome"),
                    PATH=f"{self.fakebin}:{os.environ['PATH']}",
                    DISCORD_CHANNEL_ID="12345", TIMEZONE="Europe/Paris")
@@ -65,7 +65,7 @@ class InstallerTests(unittest.TestCase):
             self.assertTrue((self.home / name).is_file(), name)
         unit = (self.units / "hermes-3dprinting-moonraker-listener.service").read_text()
         self.assertIn(f"WorkingDirectory={ROOT}", unit)
-        self.assertIn("ExecStart=/opt/venv/bin/python -m print_buddy.hermes.moonraker_event_listener", unit)
+        self.assertIn("ExecStart=/opt/venv/bin/python -m print_handy.hermes.moonraker_event_listener", unit)
         self.assertIn(f"HERMES_HOME={self.home}", unit)
         self.assertNotIn("{{", unit)
         self.assertTrue((self.units / "hermes-3dprinting-moonraker-listener.service.d/10-restart-with-gateway.conf").is_file())
@@ -143,13 +143,13 @@ class InstallerTests(unittest.TestCase):
         py, purelib = self.make_venv()
         dry = self.run_installer("--dry-run", python=str(py))
         self.assertIn("would: write", dry)
-        self.assertFalse((purelib / "print_buddy.pth").exists())
+        self.assertFalse((purelib / "print_handy.pth").exists())
         self.run_installer(python=str(py))
-        self.assertEqual(f"{ROOT}\n", (purelib / "print_buddy.pth").read_text())
-        self.assertIn("ok      " + str(purelib / "print_buddy.pth"), self.run_installer(python=str(py)))
+        self.assertEqual(f"{ROOT}\n", (purelib / "print_handy.pth").read_text())
+        self.assertIn("ok      " + str(purelib / "print_handy.pth"), self.run_installer(python=str(py)))
 
     def test_unusable_python_skips_pth_with_warning(self):
-        self.assertIn("skipped print_buddy.pth", self.run_installer())
+        self.assertIn("skipped print_handy.pth", self.run_installer())
 
     def test_legacy_state_files_are_copied_not_moved(self):
         fake_home = self.tmp / "fakehome"
@@ -159,14 +159,14 @@ class InstallerTests(unittest.TestCase):
         (fake_home / ".moonraker_discord_announcements.json").write_text("ann\n")
         state = self.home / "state"
         state.mkdir(parents=True)
-        (state / "print_buddy_start_claims.json").write_text("claims-new\n")
+        (state / "print_handy_start_claims.json").write_text("claims-new\n")
         dry = self.run_installer("--dry-run")
         self.assertIn("would: copy", dry)
-        self.assertFalse((state / "print_buddy_context.json").exists())
+        self.assertFalse((state / "print_handy_context.json").exists())
         self.run_installer()
-        self.assertEqual("ctx\n", (state / "print_buddy_context.json").read_text())
+        self.assertEqual("ctx\n", (state / "print_handy_context.json").read_text())
         self.assertEqual("ann\n", (state / "moonraker_discord_announcements.json").read_text())
-        self.assertEqual("claims-new\n", (state / "print_buddy_start_claims.json").read_text())
+        self.assertEqual("claims-new\n", (state / "print_handy_start_claims.json").read_text())
         self.assertTrue((fake_home / ".print_bitch_context.json").exists())
 
     def test_stray_state_files_are_removed_after_install(self):
@@ -175,14 +175,14 @@ class InstallerTests(unittest.TestCase):
         (fake_home / ".print_bitch_context.json").write_text("ctx\n")
         (fake_home / ".print_bitch_start_claims.json").write_text("claims-old\n")
         (self.home / "state").mkdir(parents=True)
-        (self.home / "state" / "print_buddy_start_claims.json").write_text("claims-new\n")
+        (self.home / "state" / "print_handy_start_claims.json").write_text("claims-new\n")
         dry = self.run_installer("--dry-run", python=sys.executable)
         self.assertIn("would remove " + str(fake_home / ".print_bitch_start_claims.json"), dry)
         self.assertTrue((fake_home / ".print_bitch_start_claims.json").exists())
         out = self.run_installer(python=sys.executable)
         self.assertIn("removed " + str(fake_home / ".print_bitch_start_claims.json"), out)
         # The context file was copied into the profile first, so it is removed too.
-        self.assertEqual("ctx\n", (self.home / "state" / "print_buddy_context.json").read_text())
+        self.assertEqual("ctx\n", (self.home / "state" / "print_handy_context.json").read_text())
         self.assertFalse((fake_home / ".print_bitch_context.json").exists())
         self.assertFalse((fake_home / ".print_bitch_start_claims.json").exists())
 

@@ -4,7 +4,7 @@
 
 A **listener** watches one printer continuously and reports what happens —
 status changes, progress, completion, errors — so the bot can post about a
-print without anyone asking. Print Buddy splits listeners by **domain**: the
+print without anyone asking. Print Handy splits listeners by **domain**: the
 configured printer's connection / firmware type. The domain selects the
 listener *type*; each configured printer gets its own listener *instance*,
 supervised and healthchecked independently, so one printer's listener
@@ -13,22 +13,22 @@ listener (#256, #299).
 
 ## The registry
 
-`print_buddy/listeners.py` is the single registry: connection → listener
-domain. The supervisor's gate (`python3 -m print_buddy.listener_gate`), the
+`print_handy/listeners.py` is the single registry: connection → listener
+domain. The supervisor's gate (`python3 -m print_handy.listener_gate`), the
 container healthcheck and the registry launcher (`python3 -m
-print_buddy.listeners`) all consult it — adding a domain listener means
+print_handy.listeners`) all consult it — adding a domain listener means
 registering the module and implementing the contract below, with no
 supervisor or healthcheck edits.
 
 | Domain (connection) | Listener | Transport |
 |---|---|---|
-| `moonraker` | implemented: `print_buddy.hermes.moonraker_event_listener` | Moonraker websocket |
-| `bambulab_lan` | implemented: `print_buddy.printers.bambulab.listener` | Bambu LAN MQTT, long-lived |
+| `moonraker` | implemented: `print_handy.hermes.moonraker_event_listener` | Moonraker websocket |
+| `bambulab_lan` | implemented: `print_handy.printers.bambulab.listener` | Bambu LAN MQTT, long-lived |
 | `prusalink` | planned (#299 Stage C) | PrusaLink HTTP polling |
 | `elegoo_sdcp` | planned (#299 Stage C) | Elegoo SDCP websocket |
 | `octoprint` | planned (evaluated in Stage C) | OctoPrint HTTP |
 | `flashforge_stock` | planned (evaluated in Stage C) | Stock Flashforge LAN |
-| `offline` | none, by definition | Print Buddy never contacts the printer |
+| `offline` | none, by definition | Print Handy never contacts the printer |
 
 A domain with no listener yet is a normal state, not an error: the
 supervisor starts nothing for it and a configuration with no children at all
@@ -55,7 +55,7 @@ shape and never need to know which domain produced it.
 | `remaining_min`, `layer`, `total_layer` | Optional, when the protocol reports them |
 
 A domain may add its own extra fields (for example SDCP's `status_code`);
-core consumers read only the fields above. `print_buddy.listeners.validate_status`
+core consumers read only the fields above. `print_handy.listeners.validate_status`
 pins the core shape in tests.
 
 **Event kinds**
@@ -68,7 +68,7 @@ pins the core shape in tests.
 | `snapshot_available` | A camera snapshot can be fetched for this printer now |
 
 **Liveness.** A running listener writes the listener heartbeat
-(`listener_health.json`, see `print_buddy.healthcheck`) under its domain's
+(`listener_health.json`, see `print_handy.healthcheck`) under its domain's
 registered runtime identity. Since #336 the heartbeat lives in the
 printer's own state directory (`state/printers/<id>/listener_health.json`)
 and the record names its printer; a legacy single-printer configuration
@@ -79,7 +79,7 @@ otherwise.
 
 ## The Bambu domain listener (#299 Stage B)
 
-`print_buddy/printers/bambulab/listener.py` holds one Bambu LAN MQTT
+`print_handy/printers/bambulab/listener.py` holds one Bambu LAN MQTT
 session open and merges the printer's delta pushes into a persistent
 state, normalising through the Bambu adapter. Its discipline comes from
 the #298 audit of Bambuddy (protocol facts only, no code copied):
@@ -111,11 +111,11 @@ Since #336 (multi-printer Stage 2d) the supervisor runs **one listener
 instance per roster printer** whose domain has an implementation:
 
 - The supervisor enumerates the roster
-  (`python3 -m print_buddy.listener_gate --roster`), gates each printer
+  (`python3 -m print_handy.listener_gate --roster`), gates each printer
   (`--printer <id>`: 0 = start, 3 = the domain has no listener, anything
   else = unresolved configuration, which stops the container with the
   settings error), and starts
-  `python3 -m print_buddy.listeners --printer <id>` for each printer
+  `python3 -m print_handy.listeners --printer <id>` for each printer
   that passes.
 - An instance runs against its printer's settings view (the Stage 2b
   `view_for` projection) with the roster entry's channel claim applied,

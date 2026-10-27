@@ -8,7 +8,7 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
-from print_buddy.core import spool_lifecycle as sl
+from print_handy.core import spool_lifecycle as sl
 
 
 class SpoolLifecycleReplacementTests(unittest.TestCase):
@@ -429,8 +429,8 @@ class SpoolLifecycleCLITests(unittest.TestCase):
             spool_data = {"id": 8, "name": "Black PLA", "archived": False, "filament": {"material": "PLA", "name": "Black PLA", "color_hex": "000000"}}
 
             with mock.patch("sys.argv", ["spool_lifecycle.py", "replace", "--slot", "3", "--material", "PLA", "--color", "black", "--spoolman-id", "8", "--quantity", "unknown"]), \
-                 mock.patch("print_buddy.core.printer_state.load", return_value=copy.deepcopy(self.state)), \
-                 mock.patch("print_buddy.core.spool_lifecycle.fetch_spoolman_spool", return_value=spool_data):
+                 mock.patch("print_handy.core.printer_state.load", return_value=copy.deepcopy(self.state)), \
+                 mock.patch("print_handy.core.spool_lifecycle.fetch_spoolman_spool", return_value=spool_data):
                 with mock.patch("sys.stdout") as mock_stdout:
                     sl.main()
                     self.assertTrue(mock_stdout.write.called)
@@ -471,7 +471,7 @@ class SpoolLifecycleCLITests(unittest.TestCase):
             gcode_file = Path(td) / "test.gcode"
             gcode_file.write_text("; total filament used [g] = 5.2\n")
             with mock.patch("sys.argv", ["spool_lifecycle.py", "receipt", "--gcode", str(gcode_file)]), \
-                 mock.patch("print_buddy.core.printer_state.load", return_value=copy.deepcopy(self.state)):
+                 mock.patch("print_handy.core.printer_state.load", return_value=copy.deepcopy(self.state)):
                 with mock.patch("sys.stdout") as mock_stdout:
                     sl.main()
                     self.assertTrue(mock_stdout.write.called)

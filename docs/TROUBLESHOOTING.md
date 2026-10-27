@@ -1,6 +1,6 @@
 # Troubleshooting: lookups and guided physical diagnosis
 
-Print Buddy keeps its troubleshooting knowledge in root-level registries so a
+Print Handy keeps its troubleshooting knowledge in root-level registries so a
 person browsing the repository and the bot read the same source (issue #169):
 
 | Registry | What is in it |
@@ -10,7 +10,7 @@ person browsing the repository and the bot read the same source (issue #169):
 | [`printers/`](../printers/README.md) | One data entry per registered printer model: hardware facts, firmware family, and the profile module that is the source of truth. |
 
 The executable printer profiles did not move: they stay in
-`print_buddy/printers/`, and tests check the root printer registry against them.
+`print_handy/printers/`, and tests check the root printer registry against them.
 
 ## Look something up
 

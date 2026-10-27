@@ -7,9 +7,9 @@ from unittest import mock
 
 import pytest
 
-from print_buddy import settings
-from print_buddy.bot import commands, guided, runtime
-from print_buddy.hermes import _config
+from print_handy import settings
+from print_handy.bot import commands, guided, runtime
+from print_handy.hermes import _config
 
 from corpus import fake_discord
 
@@ -30,20 +30,20 @@ def say(store_obj, text, key="k", **kwargs):
 
 def finish_steps(store_obj, key="k", **kwargs):
     """Drive a setup session to the review step with valid answers."""
-    say(store_obj, "/print-buddy setup", key=key, **kwargs)
+    say(store_obj, "/print-handy setup", key=key, **kwargs)
     for answer in ("flashforge.ad5x", "standalone", CHAT, USER, "skip", "http://spoolman.test:7912", "stored"):
         say(store_obj, answer, key=key, **kwargs)
 
 
 # ---------------------------------------------------------------------- commands and help
 
-def test_print_buddy_command_is_registered_and_in_help():
-    command = commands.by_name("print-buddy")
+def test_print_handy_command_is_registered_and_in_help():
+    command = commands.by_name("print-handy")
     assert command is not None
-    assert commands.as_text("print-buddy", {"action": "setup"}) == "/print-buddy setup"
-    assert commands.as_text("print-buddy", {"action": "debugging"}) == "/print-buddy debugging"
-    assert "/print-buddy" in commands.help_text()
-    help_reply = say(store(Path("/nonexistent-dir")), "/print-buddy help", key="h")
+    assert commands.as_text("print-handy", {"action": "setup"}) == "/print-handy setup"
+    assert commands.as_text("print-handy", {"action": "debugging"}) == "/print-handy debugging"
+    assert "/print-handy" in commands.help_text()
+    help_reply = say(store(Path("/nonexistent-dir")), "/print-handy help", key="h")
     assert "setup" in help_reply and "debugging" in help_reply and "cancel" in help_reply
 
 
@@ -56,7 +56,7 @@ def test_unrelated_text_is_not_consumed_without_a_session(tmp_path):
 
 def test_setup_walks_small_steps_and_persists_a_checklist(tmp_path):
     st = store(tmp_path)
-    first = say(st, "/print-buddy setup", now=1000)
+    first = say(st, "/print-handy setup", now=1000)
     assert "Setup step 1 of 7: Printer model" in first and "☐ Bot mode" in first
     bad = say(st, "not-a-model", now=1001)
     assert "does not work" in bad and "Setup step 1 of 7" in bad
@@ -69,7 +69,7 @@ def test_setup_walks_small_steps_and_persists_a_checklist(tmp_path):
 
 def test_setup_rejects_invalid_ids_and_urls_without_advancing(tmp_path):
     st = store(tmp_path)
-    say(st, "/print-buddy setup")
+    say(st, "/print-handy setup")
     say(st, "flashforge.ad5x")
     say(st, "standalone")
     out = say(st, "the-print-channel")
@@ -90,7 +90,7 @@ def test_setup_rejects_invalid_ids_and_urls_without_advancing(tmp_path):
 
 def test_spoolman_step_is_offered_for_models_without_moonraker(tmp_path):
     st = store(tmp_path)
-    say(st, "/print-buddy setup")
+    say(st, "/print-handy setup")
     for answer in ("bambulab.a1", "standalone", CHAT, USER):
         say(st, answer)
     out = say(st, "skip")  # Moonraker: a Bambu Lab model has no Moonraker connection
@@ -102,10 +102,10 @@ def test_spoolman_step_is_offered_for_models_without_moonraker(tmp_path):
 
 def test_token_step_never_collects_a_token(tmp_path):
     st = store(tmp_path)
-    say(st, "/print-buddy setup")
+    say(st, "/print-handy setup")
     for answer in ("flashforge.ad5x", "standalone", CHAT, USER, "skip", "skip"):
         say(st, answer)
-    prompt = say(st, "/print-buddy status")
+    prompt = say(st, "/print-handy status")
     assert "Bot token" in prompt
     out = say(st, FAKE_TOKEN)
     assert "Never paste the token" in out or "not collected in chat" in out
@@ -119,26 +119,26 @@ def test_token_step_never_collects_a_token(tmp_path):
 
 def test_cancel_persists_and_a_new_store_resumes_after_restart(tmp_path):
     st = store(tmp_path)
-    say(st, "/print-buddy setup", now=1000)
+    say(st, "/print-handy setup", now=1000)
     say(st, "flashforge.ad5x", now=1001)
-    out = say(st, "/print-buddy cancel", now=1002)
+    out = say(st, "/print-handy cancel", now=1002)
     assert "paused" in out and "☑ Printer model" in out
     assert say(st, "standalone", now=1003) is None, "a cancelled session must not consume answers"
 
     restarted = store(tmp_path)  # a fresh store object over the same file: a bot restart
-    out = say(restarted, "/print-buddy setup", now=1004)
+    out = say(restarted, "/print-handy setup", now=1004)
     assert "resuming your saved checklist" in out and "Setup step 2 of 7" in out
-    status = say(restarted, "/print-buddy status", now=1005)
+    status = say(restarted, "/print-handy status", now=1005)
     assert "in progress" in status and "☑ Printer model" in status
 
 
 def test_timeout_does_not_consume_an_answer_but_keeps_the_checklist(tmp_path):
     st = store(tmp_path)
-    say(st, "/print-buddy setup", now=1000)
+    say(st, "/print-handy setup", now=1000)
     late = 1000 + guided.SESSION_TIMEOUT_S + 1
     out = say(st, "flashforge.ad5x", now=late)
     assert "timed out" in out and st.get("k")["answers"] == {}
-    out = say(st, "/print-buddy setup", now=late + 1)
+    out = say(st, "/print-handy setup", now=late + 1)
     assert "timed out" in out and "Setup step 1 of 7" in out
     out = say(st, "flashforge.ad5x", now=late + 2)
     assert "Setup step 2 of 7" in out
@@ -170,9 +170,9 @@ def test_apply_writes_only_after_explicit_consent(tmp_path):
 
 def test_setup_restart_discards_saved_answers(tmp_path):
     st = store(tmp_path)
-    say(st, "/print-buddy setup")
+    say(st, "/print-handy setup")
     say(st, "flashforge.ad5x")
-    out = say(st, "/print-buddy setup restart")
+    out = say(st, "/print-handy setup restart")
     assert "Setup step 1 of 7" in out and st.get("k")["answers"] == {}
 
 
@@ -240,11 +240,11 @@ def test_debugging_probe_failure_is_actionable_and_redacted(tmp_path):
 def test_debugging_never_invokes_printer_write_operations(tmp_path):
     cfg = diag_cfg(tmp_path)
     (tmp_path / "profile" / "state").mkdir(parents=True, exist_ok=True)
-    writes = [mock.patch("print_buddy.hermes.print_stop.cancel"),
-              mock.patch("print_buddy.hermes.print_control.resume"),
-              mock.patch("print_buddy.hermes.print_control.coldpull"),
-              mock.patch("print_buddy.core.printer_state.save", create=True),
-              mock.patch("print_buddy.core.model_job.request_json")]
+    writes = [mock.patch("print_handy.hermes.print_stop.cancel"),
+              mock.patch("print_handy.hermes.print_control.resume"),
+              mock.patch("print_handy.hermes.print_control.coldpull"),
+              mock.patch("print_handy.core.printer_state.save", create=True),
+              mock.patch("print_handy.core.model_job.request_json")]
     with writes[0] as a, writes[1] as b, writes[2] as c, writes[3] as d, writes[4] as e:
         report = run_report(tmp_path, cfg)
     assert "debugging" in report.lower() or "configuration" in report
@@ -279,25 +279,25 @@ def test_bot_setup_flow_and_debugging_over_messages(cfg, monkeypatch, tmp_path):
         out = asyncio.run(core.handle_message(discord.message(text)))
         return out, discord.sent[before:]
 
-    out, sent = send("/print-buddy setup")
+    out, sent = send("/print-handy setup")
     assert out == {"action": "skip", "reason": "guided setup/debugging handled"}
     assert "Setup step 1 of 7" in sent[-1]
     _, sent = send("flashforge.ad5x")
     assert "Setup step 2 of 7" in sent[-1]
-    _, sent = send("/print-buddy cancel")
+    _, sent = send("/print-handy cancel")
     assert "paused" in sent[-1]
-    _, sent = send("/print-buddy setup")
+    _, sent = send("/print-handy setup")
     assert "resuming" in sent[-1] and "Setup step 2 of 7" in sent[-1]
-    _, sent = send("/print-buddy debugging")
-    assert "Print Buddy debugging" in sent[-1] and "read-only" in sent[-1]
+    _, sent = send("/print-handy debugging")
+    assert "Print Handy debugging" in sent[-1] and "read-only" in sent[-1]
     assert not (tmp_path / "local.yaml").exists(), "debugging must not write configuration"
 
 
-def test_bot_slash_print_buddy_runs_as_typed_text(cfg, monkeypatch):
+def test_bot_slash_print_handy_runs_as_typed_text(cfg, monkeypatch):
     monkeypatch.setattr(guided, "_default_probe", lambda url: 200)
     monkeypatch.setattr(guided, "_default_version_runner", lambda command: "fake 1.0")
     discord, core = make_core(cfg)
     interaction = fake_discord.FakeInteraction(discord, discord.operator, channel=discord.channel)
-    asyncio.run(core.run_slash(interaction, "print-buddy", {"action": "debugging"}))
-    assert interaction.replies[0] == {"content": "`/print-buddy debugging`", "ephemeral": False}
-    assert discord.sent and "Print Buddy debugging" in discord.sent[-1]
+    asyncio.run(core.run_slash(interaction, "print-handy", {"action": "debugging"}))
+    assert interaction.replies[0] == {"content": "`/print-handy debugging`", "ephemeral": False}
+    assert discord.sent and "Print Handy debugging" in discord.sent[-1]

@@ -8,8 +8,8 @@ from types import SimpleNamespace as S
 from unittest import mock
 
 HERE = Path(__file__).resolve().parent
-from print_buddy.hermes import print_stop
-from print_buddy.hermes import moonraker_event_listener as mel
+from print_handy.hermes import print_stop
+from print_handy.hermes import moonraker_event_listener as mel
 
 SPEC = importlib.util.spec_from_file_location("pf_stop", HERE.parents[1] / "plugins/print-feedback/__init__.py")
 plugin = importlib.util.module_from_spec(SPEC)
@@ -192,7 +192,7 @@ def test_other_text_ignored():
 
 def _bambu(monkeypatch, snapshots, configured=True):
     """Route print_stop through a fake Bambu LAN adapter (#276): snapshots are the normalized status dicts."""
-    from print_buddy import printers
+    from print_handy import printers
     client = mock.Mock()
     client.snapshot.side_effect = list(snapshots)
     adapter = S(transport="bambulab_lan", lan_configured=lambda: configured, client=lambda: client,

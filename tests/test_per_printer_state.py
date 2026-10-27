@@ -18,10 +18,10 @@ from unittest import mock
 
 import pytest
 
-from print_buddy import printers as printer_registry
-from print_buddy import settings
-from print_buddy.core import launch_state, model_job, printer_state
-from print_buddy.hermes import maintenance, spool_sync
+from print_handy import printers as printer_registry
+from print_handy import settings
+from print_handy.core import launch_state, model_job, printer_state
+from print_handy.hermes import maintenance, spool_sync
 
 
 def load_local(text, suffix=".yaml"):
@@ -90,7 +90,7 @@ def test_stamp_job_printer_records_the_default_id():
 @pytest.fixture
 def state_root(tmp_path, monkeypatch):
     """Launch databases under a temp state root, with no env override."""
-    monkeypatch.delenv("PRINT_BUDDY_LAUNCH_DB", raising=False)
+    monkeypatch.delenv("PRINT_HANDY_LAUNCH_DB", raising=False)
     monkeypatch.setattr(settings, "state_dir", lambda data=None: tmp_path)
     return tmp_path
 
@@ -120,10 +120,10 @@ def test_approval_consumption_is_invisible_across_printers(state_root):
 
 
 def test_legacy_launch_database_is_adopted_with_a_held_lease(state_root, monkeypatch):
-    legacy = state_root / "print_buddy_launches.sqlite3"
-    monkeypatch.setenv("PRINT_BUDDY_LAUNCH_DB", str(legacy))
+    legacy = state_root / "print_handy_launches.sqlite3"
+    monkeypatch.setenv("PRINT_HANDY_LAUNCH_DB", str(legacy))
     launch_state.acquire(DEFAULT_ID, remote="held.gcode")  # held across the "upgrade"
-    monkeypatch.delenv("PRINT_BUDDY_LAUNCH_DB")
+    monkeypatch.delenv("PRINT_HANDY_LAUNCH_DB")
     path = launch_state.db_path(DEFAULT_ID)
     assert path == state_root / "printers" / DEFAULT_ID / "jobs.db"
     assert path.is_file() and legacy.is_file()  # adopted by copy; the legacy file stays
@@ -134,10 +134,10 @@ def test_legacy_launch_database_is_adopted_with_a_held_lease(state_root, monkeyp
 
 
 def test_legacy_launch_database_is_not_adopted_by_a_second_printer(state_root, monkeypatch):
-    legacy = state_root / "print_buddy_launches.sqlite3"
-    monkeypatch.setenv("PRINT_BUDDY_LAUNCH_DB", str(legacy))
+    legacy = state_root / "print_handy_launches.sqlite3"
+    monkeypatch.setenv("PRINT_HANDY_LAUNCH_DB", str(legacy))
     launch_state.acquire(DEFAULT_ID, remote="held.gcode").release()
-    monkeypatch.delenv("PRINT_BUDDY_LAUNCH_DB")
+    monkeypatch.delenv("PRINT_HANDY_LAUNCH_DB")
     assert launch_state.db_path("printer-b") == state_root / "printers" / "printer-b" / "jobs.db"
     assert not (state_root / "printers" / "printer-b" / "jobs.db").exists()
 

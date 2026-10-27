@@ -7,7 +7,7 @@ source is ever verified and wired, they fail on purpose and must be
 replaced by fixture tests for the real endpoint — they must never be
 quietly relaxed to bless an invented URL.
 """
-from print_buddy.printers.elegoo_sdcp import camera
+from print_handy.printers.elegoo_sdcp import camera
 
 
 class FakeClient:

@@ -1,8 +1,8 @@
 """Derived binary STL must not reconstruct a Python object graph."""
 import struct
 import tracemalloc
-from print_buddy.core.compact_geometry import CompactTriangles
-from print_buddy.core.orca_adapter import read_stl_triangles
+from print_handy.core.compact_geometry import CompactTriangles
+from print_handy.core.orca_adapter import read_stl_triangles
 
 
 def test_binary_stl_streams_into_compact_storage(tmp_path):

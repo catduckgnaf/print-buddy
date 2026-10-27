@@ -113,13 +113,13 @@ next = "cold-pull"
 [[flow.node]]
 id = "partial-clog"
 kind = "advice"
-prompt = "A partial clog passes some filament but starves the print. The bounded fix is a cold pull, which pulls the plug out of the melt zone. Print Buddy has a guided one that asks before heating: /print-coldpull. If two cold pulls do not restore a clean, full stream, change the nozzle rather than escalating force."
+prompt = "A partial clog passes some filament but starves the print. The bounded fix is a cold pull, which pulls the plug out of the melt zone. Print Handy has a guided one that asks before heating: /print-coldpull. If two cold pulls do not restore a clean, full stream, change the nozzle rather than escalating force."
 next = "verify-stream"
 
 [[flow.node]]
 id = "cold-pull"
 kind = "advice"
-prompt = "With a clear path and zero extrusion, treat it as a full clog. A cold pull is the bounded fix: Print Buddy's guided one asks before heating and steps through it: /print-coldpull. If the filament will not move at all even for a cold pull, suspect heat creep or a jam above the nozzle: /print-troubleshoot heat-creep"
+prompt = "With a clear path and zero extrusion, treat it as a full clog. A cold pull is the bounded fix: Print Handy's guided one asks before heating and steps through it: /print-coldpull. If the filament will not move at all even for a cold pull, suspect heat creep or a jam above the nozzle: /print-troubleshoot heat-creep"
 next = "verify-stream"
 
 [[flow.node]]

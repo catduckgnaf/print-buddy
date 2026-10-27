@@ -28,7 +28,7 @@
     "discord": {
       "allowed_user_ids": "",
       "approval_user_id": "",
-      "bot_name": "Print Buddy",
+      "bot_name": "Print Handy",
       "chat_id": "",
       "cold_pull_outcome_s": 1800,
       "daily_reset_hour": 4,
@@ -108,7 +108,7 @@
         "run",
         "com.orcaslicer.OrcaSlicer"
       ],
-      "templates": "<repo>/print_buddy/templates/orca/flashforge_ad5x"
+      "templates": "<repo>/print_handy/templates/orca/flashforge_ad5x"
     },
     "paths": {
       "archive": "~/3d-prints",
@@ -197,7 +197,7 @@
     "discord": {
       "allowed_user_ids": "",
       "approval_user_id": "",
-      "bot_name": "Print Buddy",
+      "bot_name": "Print Handy",
       "chat_id": "",
       "cold_pull_outcome_s": 1800,
       "daily_reset_hour": 4,
@@ -277,7 +277,7 @@
         "run",
         "com.orcaslicer.OrcaSlicer"
       ],
-      "templates": "<repo>/print_buddy/templates/orca/klipper_generic"
+      "templates": "<repo>/print_handy/templates/orca/klipper_generic"
     },
     "paths": {
       "archive": "~/3d-prints",
@@ -366,7 +366,7 @@
     "discord": {
       "allowed_user_ids": "",
       "approval_user_id": "",
-      "bot_name": "Print Buddy",
+      "bot_name": "Print Handy",
       "chat_id": "",
       "cold_pull_outcome_s": 1800,
       "daily_reset_hour": 4,
@@ -446,7 +446,7 @@
         "run",
         "com.orcaslicer.OrcaSlicer"
       ],
-      "templates": "<repo>/print_buddy/templates/orca/octoprint_marlin"
+      "templates": "<repo>/print_handy/templates/orca/octoprint_marlin"
     },
     "paths": {
       "archive": "~/3d-prints",
@@ -535,7 +535,7 @@
     "discord": {
       "allowed_user_ids": "",
       "approval_user_id": "",
-      "bot_name": "Print Buddy",
+      "bot_name": "Print Handy",
       "chat_id": "",
       "cold_pull_outcome_s": 1800,
       "daily_reset_hour": 4,
@@ -615,7 +615,7 @@
         "run",
         "com.orcaslicer.OrcaSlicer"
       ],
-      "templates": "<repo>/print_buddy/templates/orca/sovol_sv06"
+      "templates": "<repo>/print_handy/templates/orca/sovol_sv06"
     },
     "paths": {
       "archive": "~/3d-prints",

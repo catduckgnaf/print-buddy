@@ -1,8 +1,8 @@
 """print_alert_buttons: cause text, buttons, click safety. Offline; no printer traffic."""
 from unittest.mock import patch
 
-from print_buddy.hermes import print_alert_buttons as pab
-from print_buddy.hermes import moonraker_event_listener as mel
+from print_handy.hermes import print_alert_buttons as pab
+from print_handy.hermes import moonraker_event_listener as mel
 
 LIVE = ("Nozzle hit bed or part detachment. Weight 1512>1500.0. Z=10. FIRMWARE_RESTART. "
         "https://wiki.zmod.link/Global/#nozzle_control\nOnce the underlying issue is corrected, use the\n")
@@ -132,14 +132,14 @@ def test_visual_acknowledgement_never_contacts_printer():
 
 
 def test_visual_pause_requires_current_matching_print():
-    with patch("print_buddy.hermes.print_control.status", return_value={"klippy": "ready", "state": "printing", "filename": "other.gcode"}), \
-         patch("print_buddy.hermes.print_control._call") as call:
+    with patch("print_handy.hermes.print_control.status", return_value={"klippy": "ready", "state": "printing", "filename": "other.gcode"}), \
+         patch("print_handy.hermes.print_control._call") as call:
         out = pab.handle_click("pause", {"kind": "visual", "filename": "f.gcode"})
     call.assert_not_called()
     assert "different print" in out
 
-    with patch("print_buddy.hermes.print_control.status", return_value={"klippy": "ready", "state": "printing", "filename": "f.gcode"}), \
-         patch("print_buddy.hermes.print_control._call") as call:
+    with patch("print_handy.hermes.print_control.status", return_value={"klippy": "ready", "state": "printing", "filename": "f.gcode"}), \
+         patch("print_handy.hermes.print_control._call") as call:
         assert pab.handle_click("pause", {"kind": "visual", "filename": "f.gcode"}).startswith("Pause sent.")
     call.assert_called_once_with("/printer/print/pause", method="POST", timeout=15)
 
@@ -147,9 +147,9 @@ def test_visual_pause_requires_current_matching_print():
 def test_cancel_after_shutdown_clears_then_finds_job_gone():
     seq = iter([{"klippy": "shutdown", "state": "paused", "filename": "f.gcode"},
                 {"klippy": "ready", "state": "standby", "filename": ""}])
-    with patch("print_buddy.hermes.print_control.status", side_effect=lambda: next(seq)), \
+    with patch("print_handy.hermes.print_control.status", side_effect=lambda: next(seq)), \
          patch.object(pab, "clear_shutdown", return_value=(True, "Cleared.")) as clr, \
-         patch("print_buddy.hermes.print_stop.cancel") as cancel:
+         patch("print_handy.hermes.print_stop.cancel") as cancel:
         out = pab.handle_click("cancel", {"filename": "f.gcode"})
     clr.assert_called_once(); cancel.assert_not_called()
     assert "Cleared." in out and "already gone" in out
@@ -157,18 +157,18 @@ def test_cancel_after_shutdown_clears_then_finds_job_gone():
 
 def test_cancel_paused_ready_cancels_same_file_only():
     st = {"klippy": "ready", "state": "paused", "filename": "other.gcode"}
-    with patch("print_buddy.hermes.print_control.status", return_value=st), patch("print_buddy.hermes.print_stop.cancel") as cancel:
+    with patch("print_handy.hermes.print_control.status", return_value=st), patch("print_handy.hermes.print_stop.cancel") as cancel:
         out = pab.handle_click("cancel", {"filename": "f.gcode"})
     cancel.assert_not_called(); assert "different print" in out
     st["filename"] = "f.gcode"
-    with patch("print_buddy.hermes.print_control.status", return_value=st), patch("print_buddy.hermes.print_stop.cancel", return_value=(True, "Stopped.")) as cancel:
+    with patch("print_handy.hermes.print_control.status", return_value=st), patch("print_handy.hermes.print_stop.cancel", return_value=(True, "Stopped.")) as cancel:
         assert pab.handle_click("cancel", {"filename": "f.gcode"}) == "Stopped."
     cancel.assert_called_once_with("f.gcode")
 
 
 def test_resume_after_shutdown_refuses_without_restart():
-    with patch("print_buddy.hermes.print_control.status", return_value={"klippy": "shutdown", "state": "paused", "filename": "f"}), \
-         patch("print_buddy.hermes.print_control._call") as call, patch.object(pab, "clear_shutdown") as clr:
+    with patch("print_handy.hermes.print_control.status", return_value={"klippy": "shutdown", "state": "paused", "filename": "f"}), \
+         patch("print_handy.hermes.print_control._call") as call, patch.object(pab, "clear_shutdown") as clr:
         out = pab.handle_click("resume", {"filename": "f"})
     call.assert_not_called(); clr.assert_not_called()
     assert "Nothing sent" in out
@@ -182,10 +182,10 @@ def test_clear_shutdown_reports_timeout_without_retry():
 
 
 def test_clear_shutdown_uses_non_klipper_profile_firmware_name(monkeypatch):
-    from print_buddy import printers, settings
+    from print_handy import printers, settings
 
     config = settings.load(home=settings.HOME, local=False,
-                           environ={"PRINT_BUDDY__PRINTER__MODEL": "bambulab.a1"})
+                           environ={"PRINT_HANDY__PRINTER__MODEL": "bambulab.a1"})
     profile = printers.current(config)
     monkeypatch.setattr(printers, "current", lambda: profile)
     ok, message = pab.clear_shutdown(wait_s=0.05, poll_s=0.001, caller=lambda *a, **k: None,

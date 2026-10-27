@@ -1,9 +1,9 @@
 # More than one printer: one instance per printer (the isolation alternative)
 
-[Documentation home](README.md) · [Docker](DOCKER.md) · Issue [#257](https://github.com/catduckgnaf/print-buddy/issues/257)
+[Documentation home](README.md) · [Docker](DOCKER.md) · Issue [#257](https://github.com/catduckgnaf/print-handy/issues/257)
 
-Since Stage 2 of [#257](https://github.com/catduckgnaf/print-buddy/issues/257) shipped, **one
-Print Buddy instance serves a whole roster of printers**: a `[[printers]]` list in the config
+Since Stage 2 of [#257](https://github.com/catduckgnaf/print-handy/issues/257) shipped, **one
+Print Handy instance serves a whole roster of printers**: a `[[printers]]` list in the config
 file, channel-per-printer routing, per-printer state and leases, and one listener per
 Moonraker printer — see [SETTINGS.md — Printers list](SETTINGS.md#printers-list) and the
 [Multi-printer design](MULTI-PRINTER-DESIGN.md). For most households that is the answer, and
@@ -30,9 +30,9 @@ Everything below follows from those two rules.
 
 | Per instance | Docker (Compose) | Native install |
 | --- | --- | --- |
-| Project / container name | A distinct Compose project (`-p print-buddy-a1`, `-p print-buddy-ad5x`, or `COMPOSE_PROJECT_NAME` in each stack's `.env`) | A distinct systemd service name per instance |
-| Configuration | Its own `.env` and its own config file (`PRINT_BUDDY_CONFIG`, or a mounted override) | Its own `PRINT_BUDDY_CONFIG` file |
-| Data / state | Its own `PRINT_BUDDY_DATA` directory (the `hermes`, `archive`, `records` and `cache` volumes live under it) | Its own `[paths]` state, archive and cache directories |
+| Project / container name | A distinct Compose project (`-p print-handy-a1`, `-p print-handy-ad5x`, or `COMPOSE_PROJECT_NAME` in each stack's `.env`) | A distinct systemd service name per instance |
+| Configuration | Its own `.env` and its own config file (`PRINT_HANDY_CONFIG`, or a mounted override) | Its own `PRINT_HANDY_CONFIG` file |
+| Data / state | Its own `PRINT_HANDY_DATA` directory (the `hermes`, `archive`, `records` and `cache` volumes live under it) | Its own `[paths]` state, archive and cache directories |
 | Printer identity | Its own `[printer] model` **and** `[printer] name` (for example `Garage A1`) — the name is what messages use, so approvals say which printer they mean | Same |
 | Printer connection | Its own LAN host settings (`[bambu] lan_host`, `[prusa] link_host`, `services.moonraker_url`, …) and camera URL | Same |
 | Chat | Its own Discord channel **and** approval user (below) — or its own Telegram chat / Matrix room | Same |
@@ -75,11 +75,11 @@ Spoolman is the natural single inventory for the whole household: one list of sp
 by every instance. Run **one** Spoolman for all instances and point every instance at it:
 
 **Option A — a standalone Spoolman (recommended).** Run Spoolman as its own container or
-service (its usual port is 7912). In every Print Buddy instance set:
+service (its usual port is 7912). In every Print Handy instance set:
 
 ```bash
-PRINT_BUDDY_BUNDLED_SPOOLMAN=false
-PRINT_BUDDY__SERVICES__SPOOLMAN_URL=http://<spoolman-host>:7912
+PRINT_HANDY_BUNDLED_SPOOLMAN=false
+PRINT_HANDY__SERVICES__SPOOLMAN_URL=http://<spoolman-host>:7912
 ```
 
 With the bundled Spoolman disabled, the container supervisor refuses to start unless the
@@ -111,11 +111,11 @@ one Discord server:
 
 | | Instance A | Instance B |
 | --- | --- | --- |
-| Compose project | `print-buddy-a1` | `print-buddy-ad5x` |
+| Compose project | `print-handy-a1` | `print-handy-ad5x` |
 | Printer | `bambulab.a1`, name `Garage A1` | `flashforge.ad5x`, name `Workshop AD5X` |
 | Connection | `[bambu] lan_host` set; `services.moonraker_url` stays empty | `services.moonraker_url` set to the AD5X |
 | Channel | `#a1-prints` | `#ad5x-prints` |
-| Data | Its own `PRINT_BUDDY_DATA` (for example `./data-a1`) | Its own `PRINT_BUDDY_DATA` (for example `./data-ad5x`) |
+| Data | Its own `PRINT_HANDY_DATA` (for example `./data-a1`) | Its own `PRINT_HANDY_DATA` (for example `./data-ad5x`) |
 | Spoolman | Bundled disabled; URL = the shared standalone Spoolman | Bundled disabled; URL = the shared standalone Spoolman |
 | Container children | The bot only — **no Moonraker listener runs** for a Bambu connection, and the bundled Spoolman is disabled | The Moonraker listener and the bot (bundled Spoolman disabled) |
 
@@ -132,7 +132,7 @@ the A1 to the AD5X keeps its identity and remaining weight.
 
 Install the template once per printer and rename each container (Unraid container names
 must be unique). Give each instance its own appdata path — for example
-`/mnt/user/appdata/print-buddy-a1` and `/mnt/user/appdata/print-buddy-ad5x` — for every
+`/mnt/user/appdata/print-handy-a1` and `/mnt/user/appdata/print-handy-ad5x` — for every
 path the template maps, and its own channel, printer name and LAN settings in that
 instance's variables. The shared-Spoolman settings above go in each template the same way
 as in Compose.
@@ -142,7 +142,7 @@ as in Compose.
 Before starting either bot:
 
 1. Load each instance's configuration the way the instance will (its own
-   `PRINT_BUDDY_CONFIG`) and confirm the printer model, printer name, chat id and state
+   `PRINT_HANDY_CONFIG`) and confirm the printer model, printer name, chat id and state
    paths differ between the two and match the printer each is for.
 2. Start **one** instance and post a model link in its channel: the preview names that
    instance's printer, and nothing arrives in the other instance's channel.

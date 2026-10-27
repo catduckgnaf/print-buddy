@@ -1,14 +1,14 @@
 """Test-only A1 profiles: generated from the invented OrcaSlicer resource tree in fixtures/orca_resources.
 
-Print Buddy ships no A1 profiles; production generates them from the operator's own OrcaSlicer and trusts only
+Print Handy ships no A1 profiles; production generates them from the operator's own OrcaSlicer and trusts only
 the identities in facts.py. Tests generate them from the fixture tree instead and trust its hashes, for the test
 process only. Nothing here is OrcaSlicer or Bambu Lab material (see fixtures/orca_resources/README.md).
 """
 import tempfile
 from pathlib import Path
 
-from print_buddy.printers.bambulab import facts, profiles
-from print_buddy.printers.bambulab.a1 import A1Adapter
+from print_handy.printers.bambulab import facts, profiles
+from print_handy.printers.bambulab.a1 import A1Adapter
 
 RESOURCES = Path(__file__).resolve().parent / "fixtures" / "orca_resources"
 # A profile folder for tests that load settings themselves: <HERMES>/state/orca-profiles/bambulab_a1.
@@ -18,7 +18,7 @@ HERMES = Path(tempfile.mkdtemp(prefix="a1-test-profile-"))
 def identity(resources=RESOURCES):
     upstream, version = profiles.flatten(resources, facts.A1["orca_profiles"].value)
     names = set(facts.A1["orca_filaments"].value.values()) - {facts.A1["orca_profiles"].value["filament"]}
-    return {"label": "Print Buddy test fixture (not OrcaSlicer)", "vendor_version": version,
+    return {"label": "Print Handy test fixture (not OrcaSlicer)", "vendor_version": version,
             "sha256": {kind: profiles.sha256(upstream[kind]) for kind in profiles.KINDS},
             "filaments": {name: profiles.sha256(data)
                           for name, data in profiles.flatten_filaments(resources, sorted(names)).items()}}

@@ -12,7 +12,7 @@ import time
 
 import pytest
 
-from print_buddy import live_activity as la
+from print_handy import live_activity as la
 
 CODE = "oauth-code-SECRET-1"
 TOKEN = "access-token-SECRET-2"
@@ -177,7 +177,7 @@ def _request(server, method, path, body=None, headers=None):
 def test_health_is_open_and_reveals_nothing(server):
     instance, _ = server
     status, _, payload = _request(instance, "GET", "/health")
-    assert status == 200 and json.loads(payload) == {"ok": True, "service": "print-buddy-live"}
+    assert status == 200 and json.loads(payload) == {"ok": True, "service": "print-handy-live"}
 
 
 def test_page_requires_a_session_and_the_exchange_sets_one(server):

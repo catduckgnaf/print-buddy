@@ -1,7 +1,7 @@
 from datetime import datetime, timezone
 import json
 
-from print_buddy.hermes import maintenance
+from print_handy.hermes import maintenance
 def test_checklist_step_persists_in_session_shape():
     session = {"steps": [None] * 4}
     maintenance.checklist_step(session, 2, "problem")

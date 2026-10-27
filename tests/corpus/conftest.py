@@ -5,7 +5,7 @@ sets up its own archive, claims and state under a temp dir (or .slicer-work for 
 """
 import pytest
 
-from print_buddy.core import printer_state
+from print_handy.core import printer_state
 
 from . import harness
 
@@ -18,8 +18,8 @@ def _never_write_live_printer_state(monkeypatch):
 @pytest.fixture(autouse=True)
 def _home_slicer_commands(monkeypatch):
     """A machine's YAML or TOML local config may point at another slicer; the corpus runs the home commands."""
-    from print_buddy import settings
-    from print_buddy.core import orca_adapter
+    from print_handy import settings
+    from print_handy.core import orca_adapter
     home = settings.load(local=False, environ={})
     monkeypatch.setattr(orca_adapter, "ORCA_COMMAND", list(home["orca"]["command"]))
     monkeypatch.setattr(orca_adapter, "BAMBU_COMMAND", list(home["bambu"]["command"]))

@@ -1,9 +1,9 @@
 # ZMod printers
 
-Print Buddy's home platform is Flashforge printers running [ZMod](https://zmod.link)
+Print Handy's home platform is Flashforge printers running [ZMod](https://zmod.link)
 (Klipper + Moonraker on top of the stock firmware). ZMod supports five Flashforge
-models; Print Buddy has first-class profiles for all five
-([#301](https://github.com/catduckgnaf/print-buddy/issues/301)).
+models; Print Handy has first-class profiles for all five
+([#301](https://github.com/catduckgnaf/print-handy/issues/301)).
 
 | Model | `[printer] model` | Build volume | Filament system | Status |
 | --- | --- | --- | --- | --- |
@@ -21,7 +21,7 @@ the same treatment the AD5X support has.
 All five models speak the same ZMod language — Moonraker transport and ZMod's
 `START_PRINT ... MESH=` / `END_PRINT` start code from their Orca templates — and
 each ships its own Orca machine/process/filament templates under
-`print_buddy/templates/orca/`, derived from OrcaSlicer's upstream Flashforge
+`print_handy/templates/orca/`, derived from OrcaSlicer's upstream Flashforge
 profiles with the same adjustments the AD5X templates carry (ZMod start/end
 G-code, retraction tuning, corner-origin printable area).
 
@@ -32,11 +32,11 @@ The filament system is where they part:
 
 - **AD5X** is the full ZMod path: 4 IFS slots, slot questions during intake, Spoolman
   slot matching, the native-screen and stock `/detail` machinery, and the
-  `PRINT_BUDDY` ZMod plugin macro that reports spools ZMod can switch to mid-print
+  `PRINT_HANDY` ZMod plugin macro that reports spools ZMod can switch to mid-print
   (see the project reference's "ZMod plugin and spool matching" section).
 - **AD5M and AD5M Pro** are single-extruder printers. Their adapter shares the ZMod
   start code and Moonraker transport with the AD5X and nothing else: no IFS slot
-  questions, no spool-switch claims, no `PRINT_BUDDY` macro (it is AD5X-only), no
+  questions, no spool-switch claims, no `PRINT_HANDY` macro (it is AD5X-only), no
   native-screen sync and no stock `/detail` polling. A multi-colour job is refused,
   not approximated — slice it single-colour or use a multi-slot printer. The Pro's
   enclosure, camera and air filtration do not change slicing; its geometry is the
@@ -44,7 +44,7 @@ The filament system is where they part:
 - **Creator 5 and Creator 5 Pro** are toolhead machines: four independent
   toolheads (T0–T3, Klipper `extruder`…`extruder3`), each with its own filament,
   changed by the sliced file's bare `T` lines — a tool changer, not a feeder.
-  Print Buddy models them as **tools**, not IFS slots (`[printer] tool_count`,
+  Print Handy models them as **tools**, not IFS slots (`[printer] tool_count`,
   `ifs_slots` stays 1): slicer tool *i* always prints with toolhead *i*, readiness
   and status are per toolhead, and Spoolman spools bind per toolhead — the
   toolhead is the identity unit, never an IFS slot. A job that asks for a tool remapped to another head, or a fifth
@@ -58,7 +58,7 @@ The filament system is where they part:
   than toolheads is refused with that explanation; printing everything in
   one colour on one toolhead stays available. Multi-colour jobs print as one
   merged plate; a source that cannot merge onto one bed is refused rather
-  than split into per-toolhead plates. The `PRINT_BUDDY`
+  than split into per-toolhead plates. The `PRINT_HANDY`
   plugin macro stays AD5X-only — ZMod's endless-spool feature exists on the
   Creator too, but the macro's slot model is the IFS one. The Pro adds the
   enclosed frame, active chamber heating (65 °C) and air filtration over the base
@@ -67,8 +67,8 @@ The filament system is where they part:
 
 ## Bundled Spoolman from printer Moonraker (#443)
 
-Print Buddy's bundled Spoolman normally lives on loopback inside the
-Print Buddy container, which is enough for Print Buddy itself. When
+Print Handy's bundled Spoolman normally lives on loopback inside the
+Print Handy container, which is enough for Print Handy itself. When
 Moonraker runs on the printer hardware — the usual ZMod layout, for
 example an AD5X at `http://192.168.x.x:7125` — Moonraker's own
 `[spoolman]` component needs to reach that API over the LAN to sync
@@ -82,7 +82,7 @@ active spool IDs with the IFS slots. That access is opt-in:
    `SPOOLMAN_HOST=0.0.0.0` in `.env` (see
    [Docker](DOCKER.md#included-spoolman)).
 2. In the printer's Moonraker config, point `[spoolman]` at the
-   Print Buddy host:
+   Print Handy host:
 
    ```ini
    [spoolman]
@@ -98,7 +98,7 @@ from a router. Home Assistant REST sensors use the same base URL
 
 ## Choosing a model
 
-Set `[printer] model` to the key from the table (or `PRINT_BUDDY__PRINTER__MODEL` in
+Set `[printer] model` to the key from the table (or `PRINT_HANDY__PRINTER__MODEL` in
 Docker). The setup wizard and the Web UI picker list these models from the printer
 registry, so no other configuration names them. Stock (non-ZMod) firmware is a
 separate path — only the AD5X has one today (`flashforge_stock.ad5x`,

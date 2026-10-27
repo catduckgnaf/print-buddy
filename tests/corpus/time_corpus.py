@@ -79,8 +79,8 @@ def main(argv=None):
 
     harness.install_clarify_stand_in()
     # Same isolation as tests/corpus/conftest.py: never write live printer state, use home slicer commands.
-    from print_buddy import settings
-    from print_buddy.core import orca_adapter, printer_state
+    from print_handy import settings
+    from print_handy.core import orca_adapter, printer_state
     printer_state.save = lambda state: None
     home = settings.load(local=False, environ={})
     orca_adapter.ORCA_COMMAND = list(home["orca"]["command"])
@@ -91,7 +91,7 @@ def main(argv=None):
     if args.case:
         cases = [c for c in cases if c.name in set(args.case)]
     transports = ("hermes", "standalone") if args.transport == "both" else (args.transport,)
-    root = Path(tempfile.mkdtemp(prefix="pb-corpus-timing-"))
+    root = Path(tempfile.mkdtemp(prefix="ph-corpus-timing-"))
     rows = []
     for case in cases:
         for transport in transports:

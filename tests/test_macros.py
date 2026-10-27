@@ -16,8 +16,8 @@ from unittest import mock
 
 import pytest
 
-from print_buddy import knowledge, macros, printers
-from print_buddy.hermes import spool_sync
+from print_handy import knowledge, macros, printers
+from print_handy.hermes import spool_sync
 
 ROOT = Path(__file__).parents[1]
 PLUGIN_PATH = ROOT / "plugins/print-feedback/__init__.py"
@@ -33,7 +33,7 @@ OBJECTS = {
             "toolhead", "extruder", "heater_bed", "fan", "virtual_sdcard",
             "gcode_macro PRINT_START", "gcode_macro PRINT_END",
             "gcode_macro START_PRINT", "gcode_macro WIPE_NOZZLE_CUSTOM",
-            "gcode_macro _PARK_HELPERS", "gcode_macro _PRINT_BUDDY_VARS",
+            "gcode_macro _PARK_HELPERS", "gcode_macro _PRINT_HANDY_VARS",
             "bed_mesh", "gcode_move",
         ]
     }
@@ -60,7 +60,7 @@ class FakeTransport:
 def test_parse_reads_the_result_objects_shape():
     assert macros.parse_macro_names(OBJECTS) == [
         "PRINT_START", "PRINT_END", "START_PRINT", "WIPE_NOZZLE_CUSTOM",
-        "_PARK_HELPERS", "_PRINT_BUDDY_VARS"]
+        "_PARK_HELPERS", "_PRINT_HANDY_VARS"]
 
 
 def test_parse_accepts_result_list_and_bare_list_shapes():
@@ -106,13 +106,13 @@ def test_classify_splits_known_printer_defined_and_internal(registry):
 
 def test_classify_stage3_entries_are_known(registry):
     listing = macros.classify(
-        ["COLDPULL", "PAUSE", "PRINT_BUDDY", "SET_PAUSE_AT_LAYER", "SET_ACTIVE_SPOOL"],
+        ["COLDPULL", "PAUSE", "PRINT_HANDY", "SET_PAUSE_AT_LAYER", "SET_ACTIVE_SPOOL"],
         registry=registry)
     known = {name: entry.id for name, entry in listing.known}
     assert known == {
         "COLDPULL": "zmod.coldpull",
         "PAUSE": "klipper.pause",
-        "PRINT_BUDDY": "zmod.print-buddy",
+        "PRINT_HANDY": "zmod.print-handy",
         "SET_PAUSE_AT_LAYER": "klipper.set-pause-at-layer",
         "SET_ACTIVE_SPOOL": "zmod.set-active-spool",
     }
@@ -141,7 +141,7 @@ def test_discover_makes_exactly_one_read_only_get():
     assert transport.calls == [("GET", "/printer/objects/list", None)]
     assert {name for name, _ in listing.known} == {"PRINT_START", "PRINT_END", "START_PRINT"}
     assert listing.printer_defined == ("WIPE_NOZZLE_CUSTOM",)
-    assert listing.internal == ("_PARK_HELPERS", "_PRINT_BUDDY_VARS")
+    assert listing.internal == ("_PARK_HELPERS", "_PRINT_HANDY_VARS")
 
 
 def test_discover_wraps_transport_failures():
@@ -542,12 +542,12 @@ def test_llm_may_name_the_listing_but_never_a_run():
     # Stage 2 decision, matching the allow-list's treatment of the mutating
     # /print-again verbs: a state-changing, argument-bearing form is not
     # LLM-nameable. The operator types and confirms a run personally.
-    from print_buddy.bot import llm
+    from print_handy.bot import llm
     assert llm.allowed_command("/print-macros") == "/print-macros"
     assert llm.allowed_command("/print-macros run PRINT_START") is None
 
 
 def test_bot_command_text_for_a_run():
-    from print_buddy.bot import commands as bot_commands
+    from print_handy.bot import commands as bot_commands
     assert bot_commands.as_text("print-macros", {"args": "run PRINT_START"}) == "/print-macros run PRINT_START"
     assert bot_commands.as_text("print-macros", {}) == "/print-macros"

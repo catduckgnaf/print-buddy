@@ -1,7 +1,7 @@
 # Firmware registry
 
-Root-level index of firmware commands, macros and error codes for Print Buddy
-(issue #169), read by `print_buddy/knowledge/` and surfaced through
+Root-level index of firmware commands, macros and error codes for Print Handy
+(issue #169), read by `print_handy/knowledge/` and surfaced through
 `/print-lookup`. Entries are reference data: a lookup returns the text, it never
 sends the command. Sending anything to a printer stays behind the existing
 guarded print-control flows and their confirmation buttons.
@@ -25,6 +25,6 @@ guarded print-control flows and their confirmation buttons.
 
 Only add an entry you can stand behind: prefer commands the repository already
 uses or documents, and say where an entry is generic firmware knowledge rather
-than verified on a Print Buddy printer. The loader validates the schema
-(`print_buddy/knowledge/registry.py`) and the tests pin the ZMod, Klipper and
+than verified on a Print Handy printer. The loader validates the schema
+(`print_handy/knowledge/registry.py`) and the tests pin the ZMod, Klipper and
 Marlin coverage the issue asks for.

@@ -1,6 +1,6 @@
 """#286 stage 4: the Web UI child runs only when [webui] is enabled with a port.
 
-The decision comes from the resolved configuration (print_buddy.webui_gate,
+The decision comes from the resolved configuration (print_handy.webui_gate,
 mirroring the listener gate #256), never from an environment guess. Offline:
 fake settings only, plus the docker/healthcheck.py Web UI row loaded from
 source the way tests/test_listener_gate.py loads it.
@@ -14,7 +14,7 @@ import urllib.error
 from pathlib import Path
 from unittest import mock
 
-from print_buddy import settings, webui_gate
+from print_handy import settings, webui_gate
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -99,7 +99,7 @@ class DockerHealthcheckWebuiRowTests(unittest.TestCase):
     """docker/healthcheck.py mirrors the gate: skipped when disabled."""
 
     def run_main(self, module, urlopen):
-        env = {"DISCORD_BOT_TOKEN": "", "PRINT_BUDDY_BUNDLED_SPOOLMAN": "true"}
+        env = {"DISCORD_BOT_TOKEN": "", "PRINT_HANDY_BUNDLED_SPOOLMAN": "true"}
         out = io.StringIO()
         with mock.patch.dict(os.environ, env), \
                 mock.patch.object(module, "listener_required", return_value=False), \

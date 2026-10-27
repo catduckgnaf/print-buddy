@@ -9,10 +9,10 @@ from pathlib import Path
 
 import pytest
 
-from print_buddy import settings
-from print_buddy.core import printer_state
+from print_handy import settings
+from print_handy.core import printer_state
 
-REAL_SLICER = "PRINT_BUDDY_REAL_SLICER"
+REAL_SLICER = "PRINT_HANDY_REAL_SLICER"
 FIXTURES = Path(__file__).parent / "fixtures"
 
 
@@ -40,7 +40,7 @@ def _neutral_printer_hardware(monkeypatch):
 @pytest.fixture(autouse=True)
 def _home_slicer_commands(monkeypatch):
     """A machine's YAML or TOML local config may point at another slicer; these tests assert the home commands."""
-    from print_buddy.core import orca_adapter
+    from print_handy.core import orca_adapter
     home = settings.load(local=False, environ={})
     monkeypatch.setattr(orca_adapter, "ORCA_COMMAND", list(home["orca"]["command"]))
     monkeypatch.setattr(orca_adapter, "BAMBU_COMMAND", list(home["bambu"]["command"]))
@@ -77,7 +77,7 @@ def _scratch_root_is_not_an_ancestor(tmp_path_factory, monkeypatch):
 @pytest.fixture(autouse=True)
 def _no_leftover_background_slice():
     """A background slice is per intake. No test inherits one from the test before it."""
-    from print_buddy.core.background_slice import _RUNNERS
+    from print_handy.core.background_slice import _RUNNERS
     _RUNNERS.clear()
     yield
     _RUNNERS.clear()
@@ -86,7 +86,7 @@ def _no_leftover_background_slice():
 @pytest.fixture(autouse=True)
 def _scratch_state(tmp_path, monkeypatch):
     """Job archives, claims and context sidecars default to a temp dir, never the home profile."""
-    from print_buddy.core import model_job
+    from print_handy.core import model_job
     root = tmp_path / "pipeline-state"
     root.mkdir()
     monkeypatch.setattr(model_job, "ARCHIVE", root / "archive")
@@ -148,7 +148,7 @@ def _clarify_gateway_stand_in():
 
 
 def pytest_configure(config):
-    config.addinivalue_line("markers", "real_slicer: needs the real Orca slicer; runs only with PRINT_BUDDY_REAL_SLICER=1")
+    config.addinivalue_line("markers", "real_slicer: needs the real Orca slicer; runs only with PRINT_HANDY_REAL_SLICER=1")
 
 
 def pytest_collection_modifyitems(config, items):

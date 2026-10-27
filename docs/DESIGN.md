@@ -1,8 +1,8 @@
 # AI design with OpenSCAD (`/print-design`, alias `/design`, #388)
 
-Describe a part in chat — Discord, Telegram or Matrix — or start from a model you already have — and Print Buddy
+Describe a part in chat — Discord, Telegram or Matrix — or start from a model you already have — and Print Handy
 designs it for you: a model writes
-OpenSCAD, Print Buddy renders it with the OpenSCAD binary already in the
+OpenSCAD, Print Handy renders it with the OpenSCAD binary already in the
 install, measures the result, and shows you a preview with the real
 dimensions. You then choose:
 
@@ -39,7 +39,7 @@ Where the model comes from:
   platforms still has no LLM fallback and unmatched text still gets the
   command list.
 - **Hermes:** the design model is the profile's auxiliary task, not a
-  Print Buddy setting. Uncomment the `auxiliary.print_design` block in the
+  Print Handy setting. Uncomment the `auxiliary.print_design` block in the
   profile config (the shipped template carries a commented example) to pin
   a provider/model for design; chat stays on the profile model. The
   `[design]` fields are ignored in Hermes mode unless the auxiliary task

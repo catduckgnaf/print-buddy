@@ -2,7 +2,7 @@
 
 Slices two corpus models for the AD5X and the SV06 with subprocess.run mocked, and records what Orca would
 receive: the machine, process and filament JSON, the argv, and the settings the printer contributes.
-Paths are normalized. Regenerate on purpose with PRINT_BUDDY_WRITE_GOLDEN=1 and review the diff.
+Paths are normalized. Regenerate on purpose with PRINT_HANDY_WRITE_GOLDEN=1 and review the diff.
 """
 import copy
 import json
@@ -11,8 +11,8 @@ from pathlib import Path
 
 import pytest
 
-from print_buddy import printers, settings
-from print_buddy.core import orca_adapter, slice_guard
+from print_handy import printers, settings
+from print_handy.core import orca_adapter, slice_guard
 
 ROOT = Path(__file__).resolve().parents[2]
 GOLDEN = Path(__file__).parent / "golden"
@@ -31,7 +31,7 @@ SECTIONS = ("printer", "layout", "prime_tower", "cold_pull")
 
 
 def adapter_for(name):
-    return printers.get(MODELS[name], settings.load(local=False, environ={"PRINT_BUDDY__PRINTER__MODEL": MODELS[name]}))
+    return printers.get(MODELS[name], settings.load(local=False, environ={"PRINT_HANDY__PRINTER__MODEL": MODELS[name]}))
 
 
 def capture(name, case, tmp_path, monkeypatch, **kw):
@@ -81,7 +81,7 @@ def capture(name, case, tmp_path, monkeypatch, **kw):
 def test_orca_inputs_match_golden(name, case, tmp_path, monkeypatch):
     got = capture(name, case, tmp_path, monkeypatch, **SOURCES[case])
     path = GOLDEN / f"{name}__{case}.json"
-    if os.environ.get("PRINT_BUDDY_WRITE_GOLDEN"):
+    if os.environ.get("PRINT_HANDY_WRITE_GOLDEN"):
         path.write_text(json.dumps(got, indent=2, sort_keys=True) + "\n")
     want = json.loads(path.read_text())
     for data in (got, want):

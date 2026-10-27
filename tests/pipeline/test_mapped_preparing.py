@@ -1,6 +1,6 @@
 """Mapped native start: slow AD5X preparation is reported as accepted/preparing, not a failure."""
 import json
-from print_buddy.core import model_job as mj
+from print_handy.core import model_job as mj
 
 
 def _status(ext, bed):

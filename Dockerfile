@@ -45,7 +45,7 @@ ENV DEBIAN_FRONTEND=noninteractive
 COPY docker/orca-build-jobs.sh /usr/local/bin/orca-build-jobs
 RUN mkdir -p /out && chmod +x /usr/local/bin/orca-build-jobs && \
     case "$WITH_BAMBU" in true|false) ;; *) echo 'WITH_BAMBU must be true or false' >&2; exit 2;; esac
-RUN --mount=type=cache,id=print-buddy-bambu-${TARGETARCH}-${BAMBU_REF}-${BAMBU_BUILD_PROFILE},target=/cache,sharing=locked \
+RUN --mount=type=cache,id=print-handy-bambu-${TARGETARCH}-${BAMBU_REF}-${BAMBU_BUILD_PROFILE},target=/cache,sharing=locked \
     if [ "$WITH_BAMBU" = true ]; then \
       apt-get update && apt-get install -y --no-install-recommends \
         ca-certificates git cmake ninja-build build-essential autoconf automake \
@@ -87,7 +87,7 @@ RUN --mount=type=cache,id=print-buddy-bambu-${TARGETARCH}-${BAMBU_REF}-${BAMBU_B
       ccache --show-stats; \
     fi
 
-# API-only Spoolman, isolated from Print Buddy's Python dependencies.
+# API-only Spoolman, isolated from Print Handy's Python dependencies.
 FROM debian:13-slim AS spoolman-build
 ARG SPOOLMAN_REF=bed3f14ee77a3a571d31b14215d54b0b88a7519c
 ENV UV_PYTHON_DOWNLOADS=0 UV_NO_DEV=1 UV_LINK_MODE=copy
@@ -101,7 +101,7 @@ RUN git init . && git remote add origin https://github.com/Donkie/Spoolman.git &
     test "$(git rev-parse HEAD)" = "$SPOOLMAN_REF" && \
     /opt/uv/bin/uv sync --locked --no-dev --python /usr/bin/python3 && \
     rm -rf .git client client_v2 && mkdir -p client_v2/build && \
-    printf '%s\n' 'Spoolman is managed by Print Buddy; use /api/v1.' > client_v2/build/200.html && \
+    printf '%s\n' 'Spoolman is managed by Print Handy; use /api/v1.' > client_v2/build/200.html && \
     printf '%s\n' "$SPOOLMAN_REF" > source-revision
 FROM debian:13-slim AS runtime
 ARG WITH_GO2RTC=true
@@ -113,7 +113,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libgtk-3-0t64 libglew2.2 libsecret-1-0 libspnav0 libgstreamerd-3-0 \
     libosmesa6 libunwind8 libx264-164 libopengl0 libglu1-mesa libgl1 libegl1 \
     fonts-liberation && rm -rf /var/lib/apt/lists/*
-RUN python3 -m venv /opt/venv && useradd --uid 1000 --create-home buddy
+RUN python3 -m venv /opt/venv && useradd --uid 1000 --create-home handy
 COPY --from=spoolman-build /opt/spoolman /opt/spoolman
 COPY --from=orca-prebuilt /out/ /
 COPY --from=go2rtc-prebuilt /out/ /
@@ -149,23 +149,23 @@ RUN if [ -x /usr/local/bin/orca-slicer-stable ]; then \
     fi
 ARG APP_CHANNEL=development
 RUN case "$APP_CHANNEL" in stable|development) ;; *) echo 'APP_CHANNEL must be stable or development' >&2; exit 2;; esac
-LABEL org.print-buddy.app-channel=$APP_CHANNEL
+LABEL org.print-handy.app-channel=$APP_CHANNEL
 WORKDIR /app
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 COPY . .
-ENV PRINT_BUDDY_CONFIG=/app/config/docker.yaml HOME=/data PRINT_BUDDY__BOT__MODE=standalone \
-    PRINT_BUDDY_ORCA_CHANNEL=stable PRINT_BUDDY__SERVICES__SPOOLMAN_URL=http://127.0.0.1:8000 \
+ENV PRINT_HANDY_CONFIG=/app/config/docker.yaml HOME=/data PRINT_HANDY__BOT__MODE=standalone \
+    PRINT_HANDY_ORCA_CHANNEL=stable PRINT_HANDY__SERVICES__SPOOLMAN_URL=http://127.0.0.1:8000 \
     SPOOLMAN_DIR_DATA=/data/spoolman SPOOLMAN_DIR_CONFIG=/data/spoolman/config \
     SPOOLMAN_DIR_LOGS=/data/spoolman/logs SPOOLMAN_DIR_BACKUPS=/data/spoolman/backups \
     SPOOLMAN_HOST=127.0.0.1 SPOOLMAN_PORT=8000
 VOLUME ["/data/hermes", "/data/archive", "/data/records", "/data/cache", "/data/spoolman"]
 EXPOSE 8000
-COPY docker/supervise.sh /usr/local/bin/print-buddy-supervise
-COPY docker/healthcheck.py /usr/local/bin/print-buddy-healthcheck
+COPY docker/supervise.sh /usr/local/bin/print-handy-supervise
+COPY docker/healthcheck.py /usr/local/bin/print-handy-healthcheck
 RUN mkdir -p /data/hermes/state /data/archive /data/records /data/cache /data/spoolman/config /data/spoolman/logs /data/spoolman/backups && \
-    chown -R buddy:buddy /data && chmod +x /app/docker/entrypoint.sh /usr/local/bin/print-buddy-supervise
-USER buddy
-ENTRYPOINT ["/usr/bin/tini", "-g", "--", "/app/docker/entrypoint.sh", "/usr/local/bin/print-buddy-supervise"]
-HEALTHCHECK --interval=30s --timeout=10s --start-period=90s --retries=3 CMD ["python3", "/usr/local/bin/print-buddy-healthcheck"]
+    chown -R handy:handy /data && chmod +x /app/docker/entrypoint.sh /usr/local/bin/print-handy-supervise
+USER handy
+ENTRYPOINT ["/usr/bin/tini", "-g", "--", "/app/docker/entrypoint.sh", "/usr/local/bin/print-handy-supervise"]
+HEALTHCHECK --interval=30s --timeout=10s --start-period=90s --retries=3 CMD ["python3", "/usr/local/bin/print-handy-healthcheck"]
 CMD []

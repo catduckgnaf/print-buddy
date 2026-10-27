@@ -1,6 +1,6 @@
 # Telegram bot setup
 
-Print Buddy can run its standalone bot on Telegram instead of Discord
+Print Handy can run its standalone bot on Telegram instead of Discord
 (#164). The same handlers, prompts and safety gates serve both platforms;
 only the transport changes. The Telegram bot is a **pure bot: it has no
 LLM**. Unmatched text gets the command list, and no `[llm]` setting is
@@ -25,7 +25,7 @@ standard library; there is no Telegram package to install.
    `123456789:AA...`). Keep it secret: anyone with the token controls the
    bot. If it ever leaks, revoke it with `/revoke` in BotFather.
 4. Optionally send `/setcommands` to BotFather and paste the commands from
-   `print_buddy/bot/commands.py` (names use underscores, e.g.
+   `print_handy/bot/commands.py` (names use underscores, e.g.
    `print_next`). The bot also registers its command menu itself at
    startup, best-effort, and typed commands work either way.
 
@@ -55,7 +55,7 @@ the fallback channel for the one entry that sets no `chat_id` (the first,
 default printer). A chat no printer claims gets silence, and two entries
 claiming one chat refuse startup.
 
-## 3. Configure Print Buddy
+## 3. Configure Print Handy
 
 ```yaml
 # config/local.yaml
@@ -74,7 +74,7 @@ Put the token in the environment variable `[telegram] token_env` names
 (`TELEGRAM_BOT_TOKEN` by default) — in the process environment or in the
 `.env` file in `paths.hermes_home`, mode 600. Never put the token in a
 config file. Every setting can also come from the environment, for
-example `PRINT_BUDDY__TELEGRAM__CHAT_ID=-1001234567890`.
+example `PRINT_HANDY__TELEGRAM__CHAT_ID=-1001234567890`.
 
 Nobody allowed means nobody can use the bot: with no allowed users every
 message is ignored and `check` fails.
@@ -83,8 +83,8 @@ message is ignored and `check` fails.
 
 ```bash
 export TELEGRAM_BOT_TOKEN=...   # or put it in the data folder's .env
-python3 -m print_buddy.bot check   # offline: mode, token present, chat, allowed users, handlers, no Hermes
-python3 -m print_buddy.bot         # start polling
+python3 -m print_handy.bot check   # offline: mode, token present, chat, allowed users, handlers, no Hermes
+python3 -m print_handy.bot         # start polling
 ```
 
 Printer event posts (started, complete, failed, timelapse) come from the
@@ -113,16 +113,16 @@ vision:
 
 with `CLIPROXY_API_KEY` in the environment (the key for
 `services.vision_chat_url`). In Docker the same switch is the
-`PRINT_BUDDY__VISION__ROAST_ENABLED` variable, also defaulting to
+`PRINT_HANDY__VISION__ROAST_ENABLED` variable, also defaulting to
 `true`.
 
 - **No endpoint, no roast.** With `services.vision_chat_url` empty (or
   no key), posts are exactly as before — the roast is best-effort and
   never delays or blocks a print post.
 - **Turn it off** with `vision.roast_enabled: false` (or
-  `PRINT_BUDDY__VISION__ROAST_ENABLED=false`). Camera checks keep using
+  `PRINT_HANDY__VISION__ROAST_ENABLED=false`). Camera checks keep using
   the vision endpoint; only the roast stops.
-- `python3 -m print_buddy.bot check` reports the roast state on its
+- `python3 -m print_handy.bot check` reports the roast state on its
   `roast` line: on with its model and endpoint, off by the switch, or
   on-by-default with no endpoint available yet.
 - The roast is a post decoration, not the chat LLM: Telegram still
@@ -162,7 +162,7 @@ side by side against the same Moonraker, each with its own token.
 
 | Job | Which bot |
 | --- | --- |
-| Prepare a print: link or file in, colour/fit questions, slicing, and a confirmation before anything prints | Print Buddy |
+| Prepare a print: link or file in, colour/fit questions, slicing, and a confirmation before anything prints | Print Handy |
 | Operate the running printer: status, pause, resume, cancel, emergency stop, macro buttons, power devices | moonraker-telegram-bot |
 | Push notifications with camera photos while a print runs | Either — pick one notifier (below) |
 | A rendered timelapse video in the chat | moonraker-telegram-bot (frames by time interval or Z-height, rendered at 15 fps by default) |
@@ -170,7 +170,7 @@ side by side against the same Moonraker, each with its own token.
 Boundaries, stated plainly:
 
 - moonraker-telegram-bot is a **separate upstream project**. Print
-  Buddy does not bundle it, does not require it, and does not support
+  Handy does not bundle it, does not require it, and does not support
   it — report its problems to its own tracker. It works with
   **Moonraker printers only**.
 - Its control commands **act on the printer as soon as they are
@@ -178,9 +178,9 @@ Boundaries, stated plainly:
   require_confirmation` list ask first (by default that list covers
   cancel, emergency stop, shutdown, restarts and power; pause, resume
   and status are not in it). That is a different safety model from
-  Print Buddy's, where a prepared job prints only after an explicit
+  Print Handy's, where a prepared job prints only after an explicit
   confirmation. Decide on purpose which bot may control your printer.
-- Print Buddy's Telegram bot stays a prep bot: it has no live printer
+- Print Handy's Telegram bot stays a prep bot: it has no live printer
   control commands, and pairing changes nothing about that.
 
 ### Two bots, two tokens — never share one
@@ -188,7 +188,7 @@ Boundaries, stated plainly:
 Create **two** bots with BotFather and give each program its own
 token. A Telegram bot token supports exactly one `getUpdates` poller;
 if both programs poll the same token they steal each other's updates
-and both misbehave. Print Buddy's token goes in `TELEGRAM_BOT_TOKEN`
+and both misbehave. Print Handy's token goes in `TELEGRAM_BOT_TOKEN`
 (or the `[telegram] token_env` you configured), the companion's in the
 `bot_token` of its own `telegram.conf`. Both bots can sit in the same
 Telegram chat.
@@ -199,16 +199,16 @@ Both bots can post print-started, progress and print-finished messages,
 so an unconfigured pair posts everything twice. Choose one notifier and
 silence the other:
 
-- **The companion notifies; Print Buddy stays quiet.** Do not run Print
-  Buddy's listener: in a standalone install, start
-  `print-buddy-bot.service` but not `print-buddy-listener.service`.
-  Print Buddy has no per-message notification switch — the `[listener]`
+- **The companion notifies; Print Handy stays quiet.** Do not run Print
+  Handy's listener: in a standalone install, start
+  `print-handy-bot.service` but not `print-handy-listener.service`.
+  Print Handy has no per-message notification switch — the `[listener]`
   settings only set timing intervals, and every event post (started,
   complete, failed, timelapse) plus the camera-watch alerts and spool
   questions comes from that one process, so those go quiet too. In
   Docker the listener is part of the supervised container, so silence
   the companion instead (next bullet).
-- **Print Buddy notifies; the companion stays quiet.** Remove the whole
+- **Print Handy notifies; the companion stays quiet.** Remove the whole
   `[progress_notification]` section from the companion's
   `telegram.conf` (or never add it). Its notifier is enabled by that
   section existing at all; without it, the bot sends no print-started,

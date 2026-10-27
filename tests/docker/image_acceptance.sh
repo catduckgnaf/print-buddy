@@ -1,9 +1,9 @@
 #!/bin/bash
-# Offline runtime acceptance for ONE already-built Print Buddy image. Never builds or pulls it.
+# Offline runtime acceptance for ONE already-built Print Handy image. Never builds or pulls it.
 #
 #   tests/docker/image_acceptance.sh IMAGE [included] [OUT_DIR]
 #
-# IMAGE is a local tag or immutable ID. Print Buddy runs as ONE supervised container: Discord
+# IMAGE is a local tag or immutable ID. Print Handy runs as ONE supervised container: Discord
 # bot, Moonraker listener and the bundled Spoolman API (#214). The mode argument is kept for the
 # workflow: `included`, or the legacy alias `bundled`; there is no Spoolman-free mode.
 # Everything runs under a unique Compose project on an internal network with no route out, with
@@ -29,7 +29,7 @@ repo=$(cd "$(dirname "$0")/../.." && pwd)
 out=${3:-$(mktemp -d)}
 mkdir -p "$out"
 run_id="$(date +%s)-$$"
-project="pb-accept-${mode}-${run_id}"
+project="ph-accept-${mode}-${run_id}"
 work=$(mktemp -d)
 data="$work/data"
 failures=0
@@ -48,7 +48,7 @@ cleanup() {
     if ! compose down --remove-orphans > "$out/down.txt" 2>&1; then
         echo "warning: compose down failed for $project; see $out/down.txt" >&2
     fi
-    docker image rm "pb-accept-tagswitch:$run_id" > /dev/null 2>&1 || true  # only this run's tag
+    docker image rm "ph-accept-tagswitch:$run_id" > /dev/null 2>&1 || true  # only this run's tag
     if ! rm -rf "$work" 2> /dev/null; then
         sudo rm -rf "$work" || echo "warning: could not remove $work" >&2
     fi
@@ -64,13 +64,13 @@ compose() { (cd "$work" && docker compose -p "$project" "${files[@]}" "$@"); }
 # .env from the shipped example: dummy values only, never real credentials. The token starts
 # empty so the bot idles; the last check sets the dummy token to prove the bot fails closed.
 dummy_token="offline-dummy-not-a-discord-token"
-sed -e "s#^PRINT_BUDDY_IMAGE=.*#PRINT_BUDDY_IMAGE=$image#" \
-    -e "s#^PRINT_BUDDY_DATA=.*#PRINT_BUDDY_DATA=$data#" \
+sed -e "s#^PRINT_HANDY_IMAGE=.*#PRINT_HANDY_IMAGE=$image#" \
+    -e "s#^PRINT_HANDY_DATA=.*#PRINT_HANDY_DATA=$data#" \
     -e "s#^DISCORD_BOT_TOKEN=.*#DISCORD_BOT_TOKEN=#" \
-    -e "s#^PRINT_BUDDY__DISCORD__CHAT_ID=.*#PRINT_BUDDY__DISCORD__CHAT_ID=100000000000000001#" \
-    -e "s#^PRINT_BUDDY__DISCORD__ALLOWED_USER_IDS=.*#PRINT_BUDDY__DISCORD__ALLOWED_USER_IDS=200000000000000002#" \
+    -e "s#^PRINT_HANDY__DISCORD__CHAT_ID=.*#PRINT_HANDY__DISCORD__CHAT_ID=100000000000000001#" \
+    -e "s#^PRINT_HANDY__DISCORD__ALLOWED_USER_IDS=.*#PRINT_HANDY__DISCORD__ALLOWED_USER_IDS=200000000000000002#" \
     "$repo/.env.example" > "$work/.env"
-export ACCEPTANCE_FIXTURES="$work/fixture" PRINT_BUDDY_IMAGE="$image"
+export ACCEPTANCE_FIXTURES="$work/fixture" PRINT_HANDY_IMAGE="$image"
 mkdir -p "$data"/{hermes,archive,records,cache,spoolman}
 if ! chown -R 1000:1000 "$data" 2> /dev/null; then
     sudo chown -R 1000:1000 "$data"
@@ -79,11 +79,11 @@ fi
 log "image identity"
 docker image inspect "$image" > "$out/image-inspect.json"
 image_id=$(docker image inspect --format '{{.Id}}' "$image")
-record identity ok "$image_id $(docker image inspect --format '{{.Os}}/{{.Architecture}} app-channel={{index .Config.Labels "org.print-buddy.app-channel"}}' "$image")"
+record identity ok "$image_id $(docker image inspect --format '{{.Os}}/{{.Architecture}} app-channel={{index .Config.Labels "org.print-handy.app-channel"}}' "$image")"
 
 probe_args=(--rm --network none --cap-drop ALL --security-opt no-new-privileges:true
-    -e "DISCORD_BOT_TOKEN=$dummy_token" -e PRINT_BUDDY__BOT__MODE=standalone
-    -e PRINT_BUDDY__DISCORD__CHAT_ID=100000000000000001 -e PRINT_BUDDY__DISCORD__ALLOWED_USER_IDS=200000000000000002
+    -e "DISCORD_BOT_TOKEN=$dummy_token" -e PRINT_HANDY__BOT__MODE=standalone
+    -e PRINT_HANDY__DISCORD__CHAT_ID=100000000000000001 -e PRINT_HANDY__DISCORD__ALLOWED_USER_IDS=200000000000000002
     -v "$data/hermes:/data/hermes" -v "$data/archive:/data/archive" -v "$data/records:/data/records"
     -v "$data/cache:/data/cache" -v "$work/fixture:/probe:ro")
 probe() {  # probe LABEL [docker run options...] -- CHECK
@@ -106,7 +106,7 @@ for check in payload closure slice egress ffmpeg openscad; do
     probe readonly --read-only --tmpfs /tmp:size=64m -- "$check"
 done
 if output=$(timeout 300 docker run --name "$project-probe-botcheck" "${probe_args[@]}" "$image" \
-        python3 -m print_buddy.bot check 2>&1); then
+        python3 -m print_handy.bot check 2>&1); then
     record bot:offline-check ok "$(grep -c '^ok' <<< "$output") ok lines; $(grep 'handlers' <<< "$output" | cut -c1-80)"
 else
     echo "$output" > "$out/bot-check.txt"
@@ -114,7 +114,7 @@ else
 fi
 
 log "Unraid template: its ExtraParams as docker run sees them"
-template="$repo/docker/unraid/print-buddy.xml"
+template="$repo/docker/unraid/print-handy.xml"
 mapfile -t extra < <(python3 -c "
 import shlex, sys, xml.etree.ElementTree as ET
 params = shlex.split(ET.parse(sys.argv[1]).getroot().findtext('ExtraParams'))
@@ -122,7 +122,7 @@ i = params.index('--restart'); del params[i:i + 2]   # --rm below replaces Docke
 print('\n'.join(params))" "$template")
 # Every supervised module must import under exactly these runtime flags.
 if output=$(timeout 300 docker run --name "$project-unraid" "${probe_args[@]}" "${extra[@]}" "$image" \
-        python3 -c 'import importlib; [importlib.import_module(m) for m in ("print_buddy.bot", "print_buddy.hermes.moonraker_event_listener")]; print("imported bot and listener")' 2>&1); then
+        python3 -c 'import importlib; [importlib.import_module(m) for m in ("print_handy.bot", "print_handy.hermes.moonraker_event_listener")]; print("imported bot and listener")' 2>&1); then
     record unraid:params ok "docker run accepted ${#extra[@]} template arguments; $(tail -n 1 <<< "$output")"
 else
     echo "$output" > "$out/unraid.txt"
@@ -137,7 +137,7 @@ dump_health() {  # dump_health TAG: capture the combined container's own health-
     if [ -n "$cid" ]; then
         docker inspect --format '{{json .State.Health}}' "$cid" > "$out/health-$1.json" 2>&1 || true
     fi
-    compose exec -T combined python3 /usr/local/bin/print-buddy-healthcheck > "$out/healthcheck-$1.txt" 2>&1 || true
+    compose exec -T combined python3 /usr/local/bin/print-handy-healthcheck > "$out/healthcheck-$1.txt" 2>&1 || true
 }
 
 log "combined container: listener and bundled Spoolman healthy, bot idle (empty token)"
@@ -150,7 +150,7 @@ fi
 connected=false
 for _ in $(seq 30); do
     # Since the Stage 2b listener rework (#334) the heartbeat is per-printer:
-    # <state>/printers/<id>/listener_health.json (print_buddy/healthcheck.py).
+    # <state>/printers/<id>/listener_health.json (print_handy/healthcheck.py).
     if compose exec -T combined python3 -c "
 import glob, json, sys
 connected = False
@@ -193,7 +193,7 @@ else
 fi
 
 log "heartbeat isolation"
-if compose run --rm --no-deps -T combined python3 -m print_buddy.healthcheck > "$out/foreign-health.txt" 2>&1; then
+if compose run --rm --no-deps -T combined python3 -m print_handy.healthcheck > "$out/foreign-health.txt" 2>&1; then
     record heartbeat:other-container FAIL "a second container accepted the listener's heartbeat"
 else
     record heartbeat:other-container ok "$(grep -m 1 FAIL "$out/foreign-health.txt")"
@@ -213,7 +213,7 @@ else
 fi
 # Age-based staleness is covered natively (tests/test_listener_health.py); this proves a stopped
 # container's last heartbeat cannot make any other container healthy.
-if compose run --rm --no-deps -T combined python3 -m print_buddy.healthcheck > "$out/stopped-health.txt" 2>&1; then
+if compose run --rm --no-deps -T combined python3 -m print_handy.healthcheck > "$out/stopped-health.txt" 2>&1; then
     record heartbeat:after-stop FAIL "heartbeat of a stopped container accepted"
 else
     record heartbeat:after-stop ok "$(grep -m 1 FAIL "$out/stopped-health.txt")"
@@ -241,12 +241,12 @@ sys.exit(0 if s['filament']['name'] == 'Acceptance PLA' and s['location'] == 'IF
 fi
 
 log "same-image tag switch (recreation coverage only, not a version upgrade)"
-docker tag "$image_id" "pb-accept-tagswitch:$run_id"
-sed -i "s#^PRINT_BUDDY_IMAGE=.*#PRINT_BUDDY_IMAGE=pb-accept-tagswitch:$run_id#" "$work/.env"
-export PRINT_BUDDY_IMAGE="pb-accept-tagswitch:$run_id"
+docker tag "$image_id" "ph-accept-tagswitch:$run_id"
+sed -i "s#^PRINT_HANDY_IMAGE=.*#PRINT_HANDY_IMAGE=ph-accept-tagswitch:$run_id#" "$work/.env"
+export PRINT_HANDY_IMAGE="ph-accept-tagswitch:$run_id"
 if compose up -d --wait --wait-timeout 240 fake-moonraker combined > "$out/up-3.txt" 2>&1 &&
     compose exec -T combined grep -qx accepted /data/archive/acceptance-marker; then
-    record tagswitch:same-image ok "pb-accept-tagswitch:$run_id -> $image_id; data reused"
+    record tagswitch:same-image ok "ph-accept-tagswitch:$run_id -> $image_id; data reused"
 else
     record tagswitch:same-image FAIL "see up-3.txt"
     dump_health 3

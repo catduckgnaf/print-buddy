@@ -11,10 +11,10 @@ import zipfile
 
 import pytest
 
-from print_buddy import printers, settings
-from print_buddy.core import delivery, launch_state, model_job
-from print_buddy.printers.bambulab import ams_mapping, facts
-from print_buddy.printers.bambulab.client import project_file_payload
+from print_handy import printers, settings
+from print_handy.core import delivery, launch_state, model_job
+from print_handy.printers.bambulab import ams_mapping, facts
+from print_handy.printers.bambulab.client import project_file_payload
 
 from . import bambu_family_fixture as fixture
 from .test_bambu_print import CODE, DEV_ON, SERIAL, FakeClock, FakeFTP, FakeMqtt, RECORD
@@ -179,8 +179,8 @@ def ams_snapshot(state="IDLE", filename="", ams_units=(), vt=None, fun=DEV_ON):
 def lan_adapter_for(monkeypatch, key):
     monkeypatch.setenv("BAMBU_LAN_PASSWORD", CODE)
     cfg = settings.load(local=False, environ={
-        "PRINT_BUDDY__PRINTER__MODEL": key,
-        "PRINT_BUDDY__BAMBU__LAN_HOST": "192.168.1.50", "PRINT_BUDDY__BAMBU__LAN_SERIAL": SERIAL})
+        "PRINT_HANDY__PRINTER__MODEL": key,
+        "PRINT_HANDY__BAMBU__LAN_HOST": "192.168.1.50", "PRINT_HANDY__BAMBU__LAN_SERIAL": SERIAL})
     return printers.get(key, cfg)
 
 
@@ -219,7 +219,7 @@ def rig(monkeypatch, tmp_path):
 
 
 def wire(monkeypatch, adapter, scripts, ftp):
-    from print_buddy.printers.bambulab.client import BambuLanClient
+    from print_handy.printers.bambulab.client import BambuLanClient
     queue = iter(script if isinstance(script, FakeMqtt) else FakeMqtt(script) for script in scripts)
     fakes = []
 
@@ -330,14 +330,14 @@ DUAL_MODELS = {"bambulab.h2d": "H2D", "bambulab.h2dpro": "H2DPRO", "bambulab.x2d
 @pytest.mark.parametrize("key", sorted(DUAL_MODELS))
 def test_dual_model_registration(key, monkeypatch):
     f = getattr(facts, DUAL_MODELS[key])
-    cfg = settings.load(local=False, environ={"PRINT_BUDDY__PRINTER__MODEL": key,
-                                              "PRINT_BUDDY__PATHS__HERMES_HOME": str(fixture.HERMES)})
+    cfg = settings.load(local=False, environ={"PRINT_HANDY__PRINTER__MODEL": key,
+                                              "PRINT_HANDY__PATHS__HERMES_HOME": str(fixture.HERMES)})
     a = printers.get(key, cfg)
     assert a.extruder_count() == 2 and (a.slot_count, a.multi_slot) == (1, False)
     assert a.build_volume().bed_mm == tuple(float(v) for v in f["bed_mm"].value)
     fixture.trust(type(a), f, monkeypatch.setattr)
     folder = fixture.install(a, f)
-    from print_buddy.printers.bambulab import profiles
+    from print_handy.printers.bambulab import profiles
     assert profiles.problems(a) == []
     machine = json.loads((folder / "machine.json").read_text())
     assert machine["nozzle_diameter"] == ["0.4", "0.4"]
@@ -356,8 +356,8 @@ def _install_dual(adapter, f, monkeypatch):
     """
     import tempfile
     from pathlib import Path
-    from print_buddy.printers.bambulab import profiles
-    from print_buddy.printers.bambulab.facts import Fact
+    from print_handy.printers.bambulab import profiles
+    from print_handy.printers.bambulab.facts import Fact
     root = fixture.resources(Path(tempfile.mkdtemp(prefix="bambu-dual-resources-")), f)
     bbl = root / "profiles" / "BBL"
     petg = {"type": "filament", "name": PETG_H2D, "from": "system", "instantiation": "true",
@@ -405,8 +405,8 @@ def _dual_gcode(adapter, f, second_type="PETG", tools=("T1",)):
 
 def test_dual_guard_accepts_a_fully_declared_two_filament_file(monkeypatch):
     f = facts.H2D
-    cfg = settings.load(local=False, environ={"PRINT_BUDDY__PRINTER__MODEL": "bambulab.h2d",
-                                              "PRINT_BUDDY__PATHS__HERMES_HOME": str(fixture.HERMES)})
+    cfg = settings.load(local=False, environ={"PRINT_HANDY__PRINTER__MODEL": "bambulab.h2d",
+                                              "PRINT_HANDY__PATHS__HERMES_HOME": str(fixture.HERMES)})
     a = printers.get("bambulab.h2d", cfg)
     _install_dual(a, f, monkeypatch)
     assert a.gcode_problems(_dual_gcode(a, f)) == []

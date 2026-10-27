@@ -2,15 +2,15 @@
 
 [Project overview](../README.md) · [Documentation home](README.md) · [Contributing](../CONTRIBUTING.md)
 
-Print Buddy includes a conservative, read-only triangle-topology audit in `print_buddy.core.model_job`. It evaluates indexed triangles for STL and 3MF source geometry without repairing, modifying, or slicing the model.
+Print Handy includes a conservative, read-only triangle-topology audit in `print_handy.core.model_job`. It evaluates indexed triangles for STL and 3MF source geometry without repairing, modifying, or slicing the model.
 
 ## Command-line usage
 
 Run the audit directly without a printer, slicer, or network connection:
 
 ```bash
-python3 -m print_buddy.core.model_job audit path/to/model.stl
-python3 -m print_buddy.core.model_job audit path/to/project.3mf
+python3 -m print_handy.core.model_job audit path/to/model.stl
+python3 -m print_handy.core.model_job audit path/to/project.3mf
 ```
 
 The command prints a formatted JSON topology report to standard output and leaves the input file unchanged.

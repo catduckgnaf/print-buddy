@@ -7,7 +7,7 @@ import pytest
 
 HERE = Path(__file__).resolve().parent
 
-from print_buddy.core import render_preview  # noqa: E402
+from print_handy.core import render_preview  # noqa: E402
 
 pytestmark = pytest.mark.skipif(not (shutil.which('openscad') and shutil.which('xvfb-run')),
                                 reason='openscad/xvfb-run not installed')

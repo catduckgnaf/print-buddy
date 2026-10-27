@@ -9,7 +9,7 @@ import zlib
 
 import pytest
 
-from print_buddy.printers.bambulab import preset_cache, profiles
+from print_handy.printers.bambulab import preset_cache, profiles
 
 # ConfigOptionType values used below (see preset_cache).
 FLOAT, INT, STRING, PERCENT, FLOAT_OR_PERCENT, BOOL, ENUM = 1, 2, 3, 4, 5, 8, 9

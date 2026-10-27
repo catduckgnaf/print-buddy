@@ -4,8 +4,8 @@ import os
 import unittest
 from unittest import mock
 
-from print_buddy import diagnostics, settings
-from print_buddy.diagnostics import Category
+from print_handy import diagnostics, settings
+from print_handy.diagnostics import Category
 
 
 class MarkerTests(unittest.TestCase):

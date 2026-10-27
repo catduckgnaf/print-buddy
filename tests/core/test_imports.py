@@ -2,7 +2,7 @@
 import importlib
 from pathlib import Path
 
-CORE = Path(__file__).resolve().parents[2] / "print_buddy" / "core"
+CORE = Path(__file__).resolve().parents[2] / "print_handy" / "core"
 THIRD_PARTY = {"numpy", "PIL", "trimesh"}
 
 
@@ -11,7 +11,7 @@ def test_every_core_module_imports():
     missing = []
     for path in sorted(CORE.glob("*.py")):
         try:
-            importlib.import_module(f"print_buddy.core.{path.stem}")
+            importlib.import_module(f"print_handy.core.{path.stem}")
         except ModuleNotFoundError as exc:
             if exc.name not in THIRD_PARTY:
                 raise

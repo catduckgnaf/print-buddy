@@ -4,8 +4,8 @@ import unittest
 import zipfile
 from pathlib import Path
 
-from print_buddy.core import makerworld_profiles as mp
-from print_buddy.core import source_colors as sc
+from print_handy.core import makerworld_profiles as mp
+from print_handy.core import source_colors as sc
 
 SLICE_INFO = """<?xml version="1.0"?>
 <config>

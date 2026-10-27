@@ -6,7 +6,7 @@ from unittest import mock
 
 import pytest
 
-from print_buddy.hermes import _config
+from print_handy.hermes import _config
 
 SPEC = importlib.util.spec_from_file_location(
     "print_feedback_guard", Path(__file__).parents[2] / "plugins/print-feedback/__init__.py")
@@ -73,7 +73,7 @@ def test_reboot_dispatch_requires_safe_job_and_controller_states(monkeypatch):
     import asyncio
     import sys
     from types import SimpleNamespace as S
-    from print_buddy.hermes import print_control as pc
+    from print_handy.hermes import print_control as pc
     class Adapter:
         def __init__(self): self.sent = []
         async def send(self, **kw): self.sent.append(kw.get('content')); return S(success=True)
@@ -98,8 +98,8 @@ def test_reboot_during_emergency_stop_offers_confirmed_firmware_restart():
     import asyncio
     import sys
     from types import SimpleNamespace as S
-    from print_buddy.hermes import print_control as pc
-    from print_buddy.hermes import print_alert_buttons as pab
+    from print_handy.hermes import print_control as pc
+    from print_handy.hermes import print_alert_buttons as pab
     class Adapter:
         def __init__(self): self.sent = []
         async def send(self, **kw): self.sent.append(kw.get('content')); return S(success=True)
@@ -130,7 +130,7 @@ def test_runout_new_spool_carries_slot_hex_into_created_filament():
     from types import SimpleNamespace
 
     scripts = Path(__file__).parents[1] / 'scripts'
-    from print_buddy.hermes import spool_sync
+    from print_handy.hermes import spool_sync
 
     created_filaments = []
 
@@ -182,9 +182,9 @@ def test_print_again_success_leaves_canonical_start_post_to_listener(monkeypatch
     from types import SimpleNamespace as S
 
     scripts = Path(__file__).parents[1] / 'scripts'
-    from print_buddy.hermes import print_control as pc
-    from print_buddy.hermes import print_next
-    from print_buddy.hermes import discord_print_summary as summary
+    from print_handy.hermes import print_control as pc
+    from print_handy.hermes import print_next
+    from print_handy.hermes import discord_print_summary as summary
 
     class Adapter:
         def __init__(self):
@@ -337,7 +337,7 @@ def test_actual_dispatcher_enforces_duplicate_guard():
 
 
 @pytest.mark.parametrize('command, expected', [
-    ('python3 -m print_buddy.core.model_job slice JOB.json --approved', True),
+    ('python3 -m print_handy.core.model_job slice JOB.json --approved', True),
     ('python3 /x/model_job.py slice JOB.json', True),
     ('ls -la', False),
 ])

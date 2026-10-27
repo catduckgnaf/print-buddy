@@ -1,5 +1,5 @@
 import unittest
-from print_buddy.core import printer_state
+from print_handy.core import printer_state
 
 
 class PressureAdvanceRecordTests(unittest.TestCase):

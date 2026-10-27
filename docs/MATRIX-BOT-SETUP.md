@@ -1,6 +1,6 @@
 # Matrix bot setup
 
-Print Buddy can run its standalone bot in a Matrix room instead of Discord
+Print Handy can run its standalone bot in a Matrix room instead of Discord
 or Telegram (#164). The same handlers, prompts and safety gates serve every
 platform; only the transport changes. The Matrix bot is a **pure bot: it
 has no LLM**. Unmatched text gets the command list, and no `[llm]` setting
@@ -26,12 +26,12 @@ messages. Create the print room **without** encryption (in Element:
 room settings → Security & Privacy → Encrypted: off, chosen at creation
 time; encryption cannot be turned off afterwards). Keep the room private
 and invite-only instead: access is controlled by the room membership plus
-Print Buddy's allowed-user list.
+Print Handy's allowed-user list.
 
 ## 1. Create a bot account and get an access token
 
 1. Register a dedicated account for the bot on your homeserver (for
-   example `@printbuddy:matrix.org`). A dedicated account matters: the
+   example `@printhandy:matrix.org`). A dedicated account matters: the
    access token below acts as that account.
 2. Sign in as the bot account in Element (a private window works), open
    **Settings → Help & About → Advanced** and click the access token to
@@ -39,7 +39,7 @@ Print Buddy's allowed-user list.
    token is the bot. Signing out that session revokes it.
    (Programmatic login also works: `POST /_matrix/client/v3/login` with
    `m.login.password` returns an `access_token`.)
-3. Note the bot's full user ID (`@printbuddy:matrix.org`) — you can set it
+3. Note the bot's full user ID (`@printhandy:matrix.org`) — you can set it
    as `matrix.bot_user_id`, or leave that empty and the bot asks the
    homeserver who it is (`whoami`) at startup.
 
@@ -64,7 +64,7 @@ below remains the fallback room for the one entry that sets no `chat_id`
 (the first, default printer). A room no printer claims gets silence, and
 two entries claiming one room refuse startup.
 
-## 3. Configure Print Buddy
+## 3. Configure Print Handy
 
 ```yaml
 # config/local.yaml
@@ -85,7 +85,7 @@ access_token_env` names (`MATRIX_ACCESS_TOKEN` by default) — in the
 process environment or in the `.env` file in `paths.hermes_home`, mode
 600. Never put the token in a config file. Every setting can also come
 from the environment, for example
-`PRINT_BUDDY__MATRIX__ROOM_ID='!abcd1234:matrix.org'`.
+`PRINT_HANDY__MATRIX__ROOM_ID='!abcd1234:matrix.org'`.
 
 Nobody allowed means nobody can use the bot: with no allowed users every
 message is ignored and `check` fails.
@@ -94,8 +94,8 @@ message is ignored and `check` fails.
 
 ```bash
 export MATRIX_ACCESS_TOKEN='syt_...'
-python3 -m print_buddy.bot check   # offline: mode, token present, homeserver, room, allowed users, handlers, no Hermes
-python3 -m print_buddy.bot         # start syncing
+python3 -m print_handy.bot check   # offline: mode, token present, homeserver, room, allowed users, handlers, no Hermes
+python3 -m print_handy.bot         # start syncing
 ```
 
 The bot remembers its `/sync` position in the state directory

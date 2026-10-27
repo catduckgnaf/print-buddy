@@ -7,12 +7,12 @@ from pathlib import Path
 
 import pytest
 
-from print_buddy import printers, settings
-from print_buddy.core import orca_adapter
-from print_buddy.printers.bambulab import VENDOR, facts, profiles
-from print_buddy.printers.bambulab.adapter import BambuOfflineAdapter, LiveUnsupported
-from print_buddy.printers.bambulab.p1s import MODEL, P1SAdapter
-from print_buddy.printers.base import MultiColorUnsupported
+from print_handy import printers, settings
+from print_handy.core import orca_adapter
+from print_handy.printers.bambulab import VENDOR, facts, profiles
+from print_handy.printers.bambulab.adapter import BambuOfflineAdapter, LiveUnsupported
+from print_handy.printers.bambulab.p1s import MODEL, P1SAdapter
+from print_handy.printers.base import MultiColorUnsupported
 
 from . import p1s_fixture
 from .test_bambulab_a1 import PLACEHOLDER_VALUES, identity_lines, render as a1_render
@@ -24,8 +24,8 @@ CUBE = ROOT / "tests" / "slicer" / "fixtures" / "cube.stl"
 
 
 def config_for(key=P1S, hermes=p1s_fixture.HERMES, **printer):
-    env = {"PRINT_BUDDY__PRINTER__MODEL": key, "PRINT_BUDDY__PATHS__HERMES_HOME": str(hermes),
-           **{f"PRINT_BUDDY__PRINTER__{k.upper()}": str(v) for k, v in printer.items()}}
+    env = {"PRINT_HANDY__PRINTER__MODEL": key, "PRINT_HANDY__PATHS__HERMES_HOME": str(hermes),
+           **{f"PRINT_HANDY__PRINTER__{k.upper()}": str(v) for k, v in printer.items()}}
     return settings.load(local=False, environ=env)
 
 
@@ -169,7 +169,7 @@ def test_hardware_record_cannot_exceed_the_p1s_printable_volume(p1s_profiles):
 def test_no_bambu_or_orca_profile_content_is_shipped_for_p1s(p1s_profiles):
     tracked = subprocess.run(["git", "ls-files"], cwd=ROOT, capture_output=True, text=True, check=True).stdout.split()
     assert not any("bambulab_p1s" in path.lower() and path.endswith(".json") for path in tracked)
-    assert not (ROOT / "print_buddy/templates/orca/bambulab_p1s").exists()
+    assert not (ROOT / "print_handy/templates/orca/bambulab_p1s").exists()
 
 
 def test_p1s_bed_exclusion_is_not_mistaken_for_printable_area_or_ad5x_limits(p1s_profiles):
@@ -210,9 +210,9 @@ def test_p1s_offers_no_print_delivery_and_does_not_use_the_moonraker_live_paths(
 
 
 def test_p1s_defaults_to_bambu_studio_like_every_bambu_printer():
-    from print_buddy import settings
+    from print_handy import settings
     for key in ("bambulab.a1", "bambulab.p1s"):
-        config = settings.load(local=False, environ={"PRINT_BUDDY__PRINTER__MODEL": key})
+        config = settings.load(local=False, environ={"PRINT_HANDY__PRINTER__MODEL": key})
         assert config["printer"]["slicer"] == "bambu_studio", key
 
 

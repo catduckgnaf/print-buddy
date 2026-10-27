@@ -1,9 +1,9 @@
 """Issue #17: per-plate and per-part estimates, aggregate totals, and the split-plan estimate fields."""
 import json
 
-from print_buddy.core import prepared_intake
-from print_buddy.hermes import discord_print_summary as summary
-from print_buddy.hermes import print_records as records
+from print_handy.core import prepared_intake
+from print_handy.hermes import discord_print_summary as summary
+from print_handy.hermes import print_records as records
 
 
 def _gcode(path, duration, grams):

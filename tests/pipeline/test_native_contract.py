@@ -9,8 +9,8 @@ from unittest import mock
 from unittest.mock import patch
 
 import pytest
-from print_buddy.core import orca_adapter as adapter
-from print_buddy.core import model_job as job
+from print_handy.core import orca_adapter as adapter
+from print_handy.core import model_job as job
 
 
 def state():
@@ -28,7 +28,7 @@ def fake_slice(cmd, **kwargs):
 
 
 def test_offline_verification_requires_effective_nozzle_temperature(tmp_path, monkeypatch):
-    from print_buddy import settings
+    from print_handy import settings
     state_data = state()
     state_data["nozzle"]["type"] = "hardened_steel"
     state_data["temps_c"]["nozzle"] = 220

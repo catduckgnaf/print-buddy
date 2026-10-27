@@ -1,4 +1,4 @@
-# Print Buddy documentation
+# Print Handy documentation
 
 [Project overview](../README.md) · [Contributing](../CONTRIBUTING.md)
 
@@ -17,7 +17,7 @@ Do not run both Discord modes with the same token. Installing, enabling services
 ## 2. Configure and use
 
 - [YAML configuration and TOML migration](CONFIGURATION-YAML.md): schema, precedence and safety limits.
-- [Guided setup and debugging in Discord](GUIDED-SETUP-DEBUGGING.md): the `/print-buddy setup` checklist (resumable, consent-gated, never collects the token) and the read-only, redacted `/print-buddy debugging` checks.
+- [Guided setup and debugging in Discord](GUIDED-SETUP-DEBUGGING.md): the `/print-handy setup` checklist (resumable, consent-gated, never collects the token) and the read-only, redacted `/print-handy debugging` checks.
 - [Web UI](WEBUI.md): the optional, off-by-default status page and picker configuration page that writes the same YAML settings file.
 - [Live camera in Discord](DISCORD-BOT-SETUP.md#7-live-camera-activity-optional-311): the optional Discord Activity live view (#311) — Developer Portal and named-tunnel setup, allowlist, privacy notes, and the honest verification status (the live spike has not run).
 - [Settings reference](SETTINGS.md): every setting with its YAML key, environment variable and Docker value, plus Docker build arguments and secrets.
@@ -53,7 +53,7 @@ Do not run both Discord modes with the same token. Installing, enabling services
 | Installation or update fails | Use the guide for your selected mode; collect the actual error without tokens, private model files or personal service addresses. |
 | Physical print problem (first layer, clog, heat creep, mesh, ringing) | `/print-troubleshoot` in Discord, or the [troubleshooting guide](TROUBLESHOOTING.md); `/print-lookup <query>` searches the knowledge, firmware and printer registries. Both are read-only and send nothing to the printer. |
 
-`python3 -m print_buddy.doctor` checks setup and can contact configured Moonraker and Spoolman services. Run it only where those contacts are authorized. A clean check does not prove physical readiness.
+`python3 -m print_handy.doctor` checks setup and can contact configured Moonraker and Spoolman services. Run it only where those contacts are authorized. A clean check does not prove physical readiness.
 
 ## 4. Develop and review
 

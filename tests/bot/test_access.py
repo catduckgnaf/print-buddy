@@ -14,10 +14,10 @@ from unittest import mock
 import pytest
 
 from corpus import fake_discord
-from print_buddy import settings
-from print_buddy.bot import runtime
-from print_buddy.bot.adapter import StandaloneAdapter
-from print_buddy.live_activity import allowlist_from_settings
+from print_handy import settings
+from print_handy.bot import runtime
+from print_handy.bot.adapter import StandaloneAdapter
+from print_handy.live_activity import allowlist_from_settings
 
 OPERATOR = "200000000000000002"
 MEMBER = "200000000000000777"    # a second household member, on no list
@@ -50,8 +50,8 @@ def test_empty_allow_list_lets_any_channel_member_start_intake(cfg):
         return {"action": "skip", "reason": "test intake"}
 
     url = "https://makerworld.com/en/models/931302-holder"
-    with mock.patch("print_buddy.core.prepared_intake.prepare_link", fake_prepare), \
-            mock.patch("print_buddy.core.printer_state.load", return_value={}):
+    with mock.patch("print_handy.core.prepared_intake.prepare_link", fake_prepare), \
+            mock.patch("print_handy.core.printer_state.load", return_value={}):
         run(core.handle_message(member_message(discord, url)))
     assert seen == [url]
     assert core.adapter.access_description() == "channel (everyone)"
@@ -63,7 +63,7 @@ def test_empty_allow_list_lets_any_channel_member_use_commands(cfg):
     discord, core = make(cfg)
     out = run(core.handle_message(member_message(discord, "/print-help")))
     assert out == {"action": "skip", "reason": "help"}
-    assert discord.sent and discord.sent[-1].startswith("**Print Buddy**")
+    assert discord.sent and discord.sent[-1].startswith("**Print Handy**")
 
 
 def test_setting_only_an_approval_user_does_not_create_a_whitelist(cfg):
@@ -89,9 +89,9 @@ def test_whitelist_refuses_a_non_listed_user_with_notice_log_and_no_intake(cfg, 
         seen.append(event.text)
         return {"action": "skip", "reason": "test intake"}
 
-    with caplog.at_level(logging.INFO, logger="print_buddy.bot.runtime"), \
-            mock.patch("print_buddy.core.prepared_intake.prepare_link", fake_prepare), \
-            mock.patch("print_buddy.core.printer_state.load", return_value={}):
+    with caplog.at_level(logging.INFO, logger="print_handy.bot.runtime"), \
+            mock.patch("print_handy.core.prepared_intake.prepare_link", fake_prepare), \
+            mock.patch("print_handy.core.printer_state.load", return_value={}):
         out = run(core.handle_message(member_message(
             discord, "https://makerworld.com/en/models/931302-holder")))
     assert out is None and seen == []  # no intake
@@ -104,7 +104,7 @@ def test_whitelist_refuses_a_non_listed_user_with_notice_log_and_no_intake(cfg, 
 def test_denied_user_is_refused_in_channel_mode_while_everyone_else_works(cfg, caplog):
     cfg["discord"].update(allowed_user_ids="", denied_user_ids=MEMBER)
     discord, core = make(cfg)
-    with caplog.at_level(logging.INFO, logger="print_buddy.bot.runtime"):
+    with caplog.at_level(logging.INFO, logger="print_handy.bot.runtime"):
         assert run(core.handle_message(member_message(discord, "/print-help"))) is None
     assert discord.sent == [runtime.REFUSAL_NOTICE]
     assert "user is on the denied list" in caplog.text
@@ -155,7 +155,7 @@ def test_channel_mode_does_not_widen_the_live_activity_allowlist(cfg):
 # ---------------------------------------------------------------------- startup log + duplicate token
 
 def test_startup_log_states_the_access_mode(cfg, caplog):
-    from print_buddy.bot import client
+    from print_handy.bot import client
 
     async def ready(bot):
         with mock.patch.object(bot.tree, "sync", mock.AsyncMock(return_value=[])):
@@ -167,19 +167,19 @@ def test_startup_log_states_the_access_mode(cfg, caplog):
                 task.cancel()
 
     cfg["discord"]["allowed_user_ids"] = ""
-    with caplog.at_level(logging.INFO, logger="print_buddy.bot.client"):
-        run(ready(client.PrintBuddyBot(cfg)))
+    with caplog.at_level(logging.INFO, logger="print_handy.bot.client"):
+        run(ready(client.PrintHandyBot(cfg)))
     assert "access: channel (everyone)" in caplog.text
 
     caplog.clear()
     cfg["discord"]["allowed_user_ids"] = OPERATOR
-    with caplog.at_level(logging.INFO, logger="print_buddy.bot.client"):
-        run(ready(client.PrintBuddyBot(cfg)))
+    with caplog.at_level(logging.INFO, logger="print_handy.bot.client"):
+        run(ready(client.PrintHandyBot(cfg)))
     assert "access: whitelist (1 user)" in caplog.text
 
 
 def test_a_second_ready_on_a_live_session_warns_about_a_duplicate_token(cfg, caplog):
-    from print_buddy.bot import client
+    from print_handy.bot import client
 
     async def flow(bot):
         with mock.patch.object(bot.tree, "sync", mock.AsyncMock(return_value=[])):
@@ -197,27 +197,27 @@ def test_a_second_ready_on_a_live_session_warns_about_a_duplicate_token(cfg, cap
             for task in bot._background:
                 task.cancel()
 
-    with caplog.at_level(logging.WARNING, logger="print_buddy.bot.client"):
-        warned = run(flow(client.PrintBuddyBot(cfg)))
+    with caplog.at_level(logging.WARNING, logger="print_handy.bot.client"):
+        warned = run(flow(client.PrintHandyBot(cfg)))
     assert warned and "no two instances serve the same print channel" in warned[0].getMessage()
 
 
 # ---------------------------------------------------------------------- settings surface
 
 def test_denied_user_ids_come_from_the_environment_and_the_file():
-    data = settings.load(environ={"PRINT_BUDDY__DISCORD__DENIED_USER_IDS": "123, 456"})
+    data = settings.load(environ={"PRINT_HANDY__DISCORD__DENIED_USER_IDS": "123, 456"})
     assert runtime.denied_users(data) == ["123", "456"]
     with pytest.raises(settings.SettingsError, match="denied_user_ids must be numeric"):
-        settings.load(environ={"PRINT_BUDDY__DISCORD__DENIED_USER_IDS": "me"})
+        settings.load(environ={"PRINT_HANDY__DISCORD__DENIED_USER_IDS": "me"})
 
 
 def test_unraid_template_ships_allowed_empty_and_surfaces_denied():
-    root = ET.parse(Path(__file__).parents[2] / "docker" / "unraid" / "print-buddy.xml").getroot()
+    root = ET.parse(Path(__file__).parents[2] / "docker" / "unraid" / "print-handy.xml").getroot()
     by_target = {c.get("Target"): c for c in root.iter("Config")}
-    allowed = by_target["PRINT_BUDDY__DISCORD__ALLOWED_USER_IDS"]
+    allowed = by_target["PRINT_HANDY__DISCORD__ALLOWED_USER_IDS"]
     assert allowed.get("Default") == ""
     assert "everyone" in allowed.get("Description")
-    denied = by_target["PRINT_BUDDY__DISCORD__DENIED_USER_IDS"]
+    denied = by_target["PRINT_HANDY__DISCORD__DENIED_USER_IDS"]
     assert denied.get("Default") == ""
 
 

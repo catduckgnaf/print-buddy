@@ -17,7 +17,7 @@ body:
     id: proposal
     attributes:
       label: Proposed behaviour
-      description: What should Print Buddy do? Cover the user-visible flow, any new settings or defaults, and what happens when it cannot comply.
+      description: What should Print Handy do? Cover the user-visible flow, any new settings or defaults, and what happens when it cannot comply.
     validations:
       required: true
   - type: textarea

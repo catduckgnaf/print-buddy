@@ -40,21 +40,21 @@ class DockerPublishGateContract(unittest.TestCase):
     def test_gate_uses_the_docs_repos_own_drift_definition(self):
         gate = load_workflow(PUBLISH_PATH)["jobs"]["surfaces-gate"]
         runs = [step.get("run", "") for step in gate["steps"]]
-        self.assertTrue(any("print-buddy-docs" in run for run in runs))
+        self.assertTrue(any("print-handy-docs" in run for run in runs))
         self.assertTrue(
             any("scripts/check_release_surfaces.py" in run for run in runs))
         script = SCRIPT_PATH.read_text()
         # Drift is delegated to the docs repo's Docs sync check, so the
         # gate can never disagree with it about what drift means.
         self.assertIn("check-sync.sh", script)
-        self.assertIn("PRINT_BUDDY_DIR", script)
+        self.assertIn("PRINT_HANDY_DIR", script)
         for prefix in ("CHANGED:", "ADDED:", "REMOVED:"):
             self.assertIn(prefix, script)
 
     def test_gate_failure_names_the_remedy(self):
         script = SCRIPT_PATH.read_text()
         self.assertIn("docs-auto-sync.yml", script)
-        self.assertIn("print-buddy-docs", script)
+        self.assertIn("print-handy-docs", script)
 
     def test_triggers_and_inputs_unchanged(self):
         workflow = load_workflow(PUBLISH_PATH)
@@ -66,7 +66,7 @@ class DockerPublishGateContract(unittest.TestCase):
         nightly_text = NIGHTLY_PATH.read_text()
         self.assertNotIn("surfaces-gate", nightly_text)
         self.assertNotIn("check_release_surfaces", nightly_text)
-        self.assertNotIn("print-buddy-docs", nightly_text)
+        self.assertNotIn("print-handy-docs", nightly_text)
         nightly = load_workflow(NIGHTLY_PATH)
         for job in nightly["jobs"].values():
             self.assertNotEqual(job.get("needs"), "surfaces-gate")
@@ -90,22 +90,22 @@ class GateScriptBehaviour(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
         base = pathlib.Path(self.tmp.name)
-        self.root = base / "print-buddy"
-        (self.root / "print_buddy").mkdir(parents=True)
-        self.docs = base / "print-buddy-docs"
+        self.root = base / "print-handy"
+        (self.root / "print_handy").mkdir(parents=True)
+        self.docs = base / "print-handy-docs"
         (self.docs / "scripts").mkdir(parents=True)
         stub = self.docs / "scripts" / "check-sync.sh"
         stub.write_text(STUB_CHECK_SYNC)
         stub.chmod(0o755)
         self.write_root(version="1.2.3", readme="Ships with 1.2.3. "
                                                "[Guide](docs/README.md) "
-                                               "[Site](https://catduckgnaf.github.io/print-buddy-docs/)")
+                                               "[Site](https://catduckgnaf.github.io/print-handy-docs/)")
 
     def tearDown(self):
         self.tmp.cleanup()
 
     def write_root(self, version, readme):
-        (self.root / "print_buddy" / "__init__.py").write_text(
+        (self.root / "print_handy" / "__init__.py").write_text(
             f'__version__ = "{version}"\n')
         (self.root / "README.md").write_text(readme + "\n")
         docs = self.root / "docs"

@@ -5,8 +5,8 @@
 #   scripts/home-update.sh v2.0.2     fast-forward to a tag or branch
 #
 # Never touches config/local.yaml or config/local.toml. If config/after-update.sh exists (gitignored), it runs after a
-# good update, for example to restart the Discord listener. A good update also removes Print Buddy
-# state files stranded outside the profile state folder (python3 -m print_buddy.state_files).
+# good update, for example to restart the Discord listener. A good update also removes Print Handy
+# state files stranded outside the profile state folder (python3 -m print_handy.state_files).
 set -eu
 cd "$(dirname "$0")/.."
 target="${1:-origin/main}"
@@ -38,11 +38,11 @@ if [ "$(git rev-parse HEAD)" = "$previous" ]; then
 fi
 
 echo "Updated $(git rev-parse --short "$previous") -> $(git rev-parse --short HEAD). Checking..."
-if PRINT_BUDDY_UPDATE_CHECK=1 "$python" -m pytest -q -p no:cacheprovider tests && "$python" -m print_buddy.doctor; then
+if PRINT_HANDY_UPDATE_CHECK=1 "$python" -m pytest -q -p no:cacheprovider tests && "$python" -m print_handy.doctor; then
     if [ -x config/after-update.sh ]; then
         config/after-update.sh
     fi
-    "$python" -m print_buddy.state_files --remove || echo "Could not check for stray state files."
+    "$python" -m print_handy.state_files --remove || echo "Could not check for stray state files."
     echo "Update good."
 else
     git reset --quiet --hard "$previous"

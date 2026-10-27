@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Offline by default. The read-only commands need a real printer: PRINT_BUDDY_LIVE_PRINTER=1 with
+# Offline by default. The read-only commands need a real printer: PRINT_HANDY_LIVE_PRINTER=1 with
 # MOONRAKER_URL (or services.moonraker_url in config/local.yaml or config/local.toml) pointing at it.
 set -euo pipefail
 
@@ -15,7 +15,7 @@ assert_json() {
 }
 
 reads=0
-if [[ "${PRINT_BUDDY_LIVE_PRINTER:-}" == 1 ]]; then
+if [[ "${PRINT_HANDY_LIVE_PRINTER:-}" == 1 ]]; then
   assert_json status status
   assert_json temps temps
   assert_json objects objects
@@ -48,7 +48,7 @@ if "$CTL" update klipper WRONG >/dev/null 2>&1; then
 fi
 
 # Without a configured Moonraker URL nothing is sent anywhere.
-if env -u MOONRAKER_URL PRINT_BUDDY__SERVICES__MOONRAKER_URL= "$CTL" status >/dev/null 2>&1; then
+if env -u MOONRAKER_URL PRINT_HANDY__SERVICES__MOONRAKER_URL= "$CTL" status >/dev/null 2>&1; then
   echo "unconfigured Moonraker URL was accepted" >&2
   exit 1
 fi

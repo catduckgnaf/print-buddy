@@ -34,14 +34,14 @@ Wiki reason: Versioned docs are authoritative; no separate wiki page exists.
             self.assertEqual(2, len(self.policy.check_links(root, ["README.md"])))
 
     def test_valid_feature(self):
-        self.assertEqual([], self.policy.check_pr(self.body(), ["print_buddy/settings.py", "docs/CONFIGURATION-YAML.md"]))
+        self.assertEqual([], self.policy.check_pr(self.body(), ["print_handy/settings.py", "docs/CONFIGURATION-YAML.md"]))
 
     def test_feature_without_docs_requires_reasoned_exemption(self):
         body = self.body().replace("Documentation: updated", "Documentation: not needed").replace("New configuration option documented in docs/CONFIGURATION-YAML.md.", "Internal rename only; operator behavior and settings are unchanged.")
-        self.assertEqual([], self.policy.check_pr(body, ["print_buddy/core/internal.py"]))
+        self.assertEqual([], self.policy.check_pr(body, ["print_handy/core/internal.py"]))
 
     def test_updated_requires_changed_docs(self):
-        self.assertTrue(self.policy.check_pr(self.body(), ["print_buddy/settings.py"]))
+        self.assertTrue(self.policy.check_pr(self.body(), ["print_handy/settings.py"]))
 
     def test_template_comments_do_not_count(self):
         self.assertTrue(self.policy.check_pr("<!-- " + self.body() + " -->", ["README.md"]))
@@ -58,7 +58,7 @@ Wiki reason: Versioned docs are authoritative; no separate wiki page exists.
     def test_deferred_wiki_needs_issue_link(self):
         body = self.body().replace("Wiki: not applicable", "Wiki: deferred")
         self.assertTrue(self.policy.check_pr(body, ["docs/README.md"]))
-        body += "\nhttps://github.com/catduckgnaf/print-buddy/issues/120\n"
+        body += "\nhttps://github.com/catduckgnaf/print-handy/issues/120\n"
         self.assertEqual([], self.policy.check_pr(body, ["docs/README.md"]))
 
 if __name__ == "__main__":

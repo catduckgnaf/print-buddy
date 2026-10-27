@@ -9,7 +9,7 @@ import json
 import tempfile
 from pathlib import Path
 
-from print_buddy.printers.bambulab import profiles
+from print_handy.printers.bambulab import profiles
 
 HERMES = Path(tempfile.mkdtemp(prefix="bambu-family-test-profile-"))
 
@@ -30,7 +30,7 @@ def resources(root, facts):
     bbl = root / "profiles" / "BBL"
     for folder in (bbl / "machine", bbl / "process", bbl / "filament"):
         folder.mkdir(parents=True, exist_ok=True)
-    index = {"name": "Print Buddy invented family test data", "version": "00.00.00.00"}
+    index = {"name": "Print Handy invented family test data", "version": "00.00.00.00"}
     for kind in ("machine", "process", "filament"):
         index[f"{kind}_list"] = [{"name": names[kind], "sub_path": f"{kind}/{kind}.json"}]
     (root / "profiles").mkdir(parents=True, exist_ok=True)
@@ -77,7 +77,7 @@ def resources(root, facts):
 def identity(facts, root=None):
     root = resources(root or Path(tempfile.mkdtemp(prefix="bambu-family-resources-")), facts)
     upstream, version = profiles.flatten(root, facts["orca_profiles"].value)
-    out = {"label": "Print Buddy invented family fixture (not OrcaSlicer)", "vendor_version": version,
+    out = {"label": "Print Handy invented family fixture (not OrcaSlicer)", "vendor_version": version,
            "sha256": {kind: profiles.sha256(upstream[kind]) for kind in profiles.KINDS}}
     extra = {name for name in (facts["orca_filaments"].value.values() if "orca_filaments" in facts else ())
              if name != facts["orca_profiles"].value["filament"]}
@@ -88,7 +88,7 @@ def identity(facts, root=None):
 
 
 def fixture_facts(facts):
-    from print_buddy.printers.bambulab.facts import Fact
+    from print_handy.printers.bambulab.facts import Fact
     return {**facts, "orca_identity": Fact((identity(facts),), "TEST", False)}
 
 

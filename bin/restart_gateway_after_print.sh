@@ -7,13 +7,13 @@
 set -u
 REPO=$(cd "$(dirname "$0")/.." && pwd)
 cd "$REPO" || exit 1
-MR=$(python3 -m print_buddy.settings get services.moonraker_url)
+MR=$(python3 -m print_handy.settings get services.moonraker_url)
 MR=${MR%/}
 if [ -z "$MR" ]; then
   echo "services.moonraker_url is not configured; set it in config/local.yaml or config/local.toml" >&2
   exit 2
 fi
-HELPER=${HERMES_RESTART_HELPER:-$(python3 -m print_buddy.settings get paths.hermes_restart_helper)}
+HELPER=${HERMES_RESTART_HELPER:-$(python3 -m print_handy.settings get paths.hermes_restart_helper)}
 GRACE=${GRACE:-900}
 state() { curl -fsS -m 10 "$MR/printer/objects/query?print_stats=state" | python3 -c 'import json,sys;print(json.load(sys.stdin)["result"]["status"]["print_stats"]["state"])' 2>/dev/null || echo unknown; }
 while :; do
@@ -21,7 +21,7 @@ while :; do
   case "$s" in printing|paused|unknown) sleep 60 ;; *) break ;; esac
 done
 # A restart kills an intake mid-slice and leaves "Slicing." hanging in Discord. Wait for it.
-INTAKES=${PRINT_BUDDY_INTAKE_DIR:-${HERMES_HOME:-$HOME/.hermes/profiles/3dprinting}/state/model-link-intakes}
+INTAKES=${PRINT_HANDY_INTAKE_DIR:-${HERMES_HOME:-$HOME/.hermes/profiles/3dprinting}/state/model-link-intakes}
 intake_busy() {
   python3 - "$INTAKES" <<'PY'
 import json, sys, time

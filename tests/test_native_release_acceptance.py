@@ -9,8 +9,8 @@ from unittest import mock
 
 import pytest
 
-from print_buddy import settings
-from print_buddy.core import orca_adapter
+from print_handy import settings
+from print_handy.core import orca_adapter
 
 ROOT = settings.ROOT
 
@@ -18,17 +18,17 @@ ROOT = settings.ROOT
 def test_payload_setup_outside_checkout_without_source_masking(tmp_path):
     payload = tmp_path / "payload"
     payload.mkdir()
-    for name in ("print_buddy", "plugins", "config"):
+    for name in ("print_handy", "plugins", "config"):
         shutil.copytree(ROOT / name, payload / name,
                         ignore=shutil.ignore_patterns("__pycache__", "local.*", "after-update.sh"))
     env = {k: v for k, v in os.environ.items()
-           if not k.startswith(("PRINT_BUDDY", "HERMES", "PYTHONPATH", "ORCA_"))}
+           if not k.startswith(("PRINT_HANDY", "HERMES", "PYTHONPATH", "ORCA_"))}
     env.update(PYTHONPATH=str(payload), PYTHONDONTWRITEBYTECODE="1",
-               PRINT_BUDDY_CONFIG=str(payload / "config/docker.yaml"),
-               PRINT_BUDDY__BOT__MODE="standalone", DISCORD_BOT_TOKEN="offline-dummy",
-               PRINT_BUDDY__DISCORD__CHAT_ID="100000000000000001",
-               PRINT_BUDDY__DISCORD__ALLOWED_USER_IDS="200000000000000002",
-               PRINT_BUDDY__PATHS__HERMES_HOME=str(tmp_path / "state"))
+               PRINT_HANDY_CONFIG=str(payload / "config/docker.yaml"),
+               PRINT_HANDY__BOT__MODE="standalone", DISCORD_BOT_TOKEN="offline-dummy",
+               PRINT_HANDY__DISCORD__CHAT_ID="100000000000000001",
+               PRINT_HANDY__DISCORD__ALLOWED_USER_IDS="200000000000000002",
+               PRINT_HANDY__PATHS__HERMES_HOME=str(tmp_path / "state"))
     code = """
 import importlib.abc, json, sys
 class Offline(importlib.abc.MetaPathFinder):
@@ -40,9 +40,9 @@ def audit(event, args):
     if event in ('socket.connect', 'socket.bind'):
         raise AssertionError('network forbidden')
 sys.addaudithook(audit)
-from print_buddy.bot.__main__ import check
-from print_buddy.bot.router import PLUGIN
-from print_buddy import settings
+from print_handy.bot.__main__ import check
+from print_handy.bot.router import PLUGIN
+from print_handy import settings
 assert check() == 0
 print('PAYLOAD ' + json.dumps({'root': str(settings.ROOT), 'plugin': str(PLUGIN)}))
 """
@@ -78,7 +78,7 @@ def test_docker_scalar_environment_parity_for_every_schema_key():
             keys.append((section, key))
             if value is None:
                 continue  # tri-state unset (design.enabled, #388): parity is "stays unset"
-            env[f"PRINT_BUDDY__{section.upper()}__{key.upper()}"] = (
+            env[f"PRINT_HANDY__{section.upper()}__{key.upper()}"] = (
                 str(value).lower() if isinstance(value, bool) else str(int(value)) if isinstance(value, float) and value.is_integer() else str(value))
     loaded = settings.load(local=ROOT / "config/docker.yaml", environ=env)
     for section, key in keys:
@@ -90,11 +90,11 @@ def test_example_requires_explicit_standalone_inputs_and_included_spoolman_defau
     assignments = dict(line.split("=", 1) for line in text.splitlines()
                        if line and not line.startswith("#") and "=" in line)
     # Empty in .env.example: docker-compose.yml defaults it to the included Spoolman (#214).
-    assert assignments["PRINT_BUDDY__SERVICES__SPOOLMAN_URL"] == ""
-    for key in ("DISCORD_BOT_TOKEN", "PRINT_BUDDY_IMAGE", "PRINT_BUDDY__DISCORD__CHAT_ID",
-                "PRINT_BUDDY__DISCORD__ALLOWED_USER_IDS"):
+    assert assignments["PRINT_HANDY__SERVICES__SPOOLMAN_URL"] == ""
+    for key in ("DISCORD_BOT_TOKEN", "PRINT_HANDY_IMAGE", "PRINT_HANDY__DISCORD__CHAT_ID",
+                "PRINT_HANDY__DISCORD__ALLOWED_USER_IDS"):
         assert assignments[key] == ""
-    assert assignments["PRINT_BUDDY__BOT__MODE"] == "standalone"
+    assert assignments["PRINT_HANDY__BOT__MODE"] == "standalone"
     assert "192.168." not in text
 
 
@@ -107,9 +107,9 @@ def test_application_and_slicer_channels_are_independent_build_arguments():
     assert "AS orca-stable" not in text and "AS orca-alpha" not in text
     assert 'COPY --from=orca-prebuilt /out/ /' in text
     assert 'openscad' in text.split('AS runtime', 1)[1]
-    assert 'PRINT_BUDDY_ORCA_CHANNEL:-stable' in entrypoint
+    assert 'PRINT_HANDY_ORCA_CHANNEL:-stable' in entrypoint
     assert 'export PB_ORCA_CMD="$selected"' in entrypoint
-    assert 'org.print-buddy.app-channel=$APP_CHANNEL' in text
+    assert 'org.print-handy.app-channel=$APP_CHANNEL' in text
     assert '$APP_CHANNEL' not in text.split('FROM debian:13-slim AS runtime')[0]
 
 
@@ -119,8 +119,8 @@ def test_optional_octoprint_and_nozzle_settings_file_environment_parity(tmp_path
         "toml": '[services]\noctoprint_url = "http://octoprint.example:5000"\n[printer]\nnozzle_type = "hardened_steel"\n',
     }
     expected = settings.load(local=ROOT / "config/docker.yaml", environ={
-        "PRINT_BUDDY__SERVICES__OCTOPRINT_URL": "http://octoprint.example:5000",
-        "PRINT_BUDDY__PRINTER__NOZZLE_TYPE": "hardened_steel"})
+        "PRINT_HANDY__SERVICES__OCTOPRINT_URL": "http://octoprint.example:5000",
+        "PRINT_HANDY__PRINTER__NOZZLE_TYPE": "hardened_steel"})
     for suffix, text in configs.items():
         path = tmp_path / f"optional.{suffix}"
         path.write_text(text)

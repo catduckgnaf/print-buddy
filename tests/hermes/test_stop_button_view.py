@@ -4,7 +4,7 @@ import sys
 from pathlib import Path
 from types import SimpleNamespace as S
 
-from print_buddy.core import prepared_intake
+from print_handy.core import prepared_intake
 from tests.hermes.test_print_next import Interaction, load_plugin
 
 
@@ -110,7 +110,7 @@ def test_refused_start_retires_stop_and_installs_retry_on_same_prompt(monkeypatc
 
 def test_retry_click_reuses_saved_target_and_calls_guarded_start(monkeypatch, tmp_path):
     sent, on_interaction, plugin = _install(monkeypatch)
-    from print_buddy.hermes import print_next
+    from print_handy.hermes import print_next
     receipt_id = 'b' * 32
     receipt_root = tmp_path / 'model-link-intakes'
     receipt_root.mkdir()

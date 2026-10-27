@@ -17,8 +17,8 @@ from types import SimpleNamespace as S
 import pytest
 
 HERE = Path(__file__).resolve().parent
-from print_buddy.hermes import discord_print_summary as summary
-from print_buddy.hermes import moonraker_event_listener as mel
+from print_handy.hermes import discord_print_summary as summary
+from print_handy.hermes import moonraker_event_listener as mel
 
 HEX = re.compile(r"[0-9a-f]{32,}", re.I)
 TITLE = "Stand for iPad with thick case"
@@ -31,8 +31,8 @@ def _load(name, path):
     return module
 
 
-from print_buddy.hermes import print_records as records  # noqa: E402
-from print_buddy.hermes import moonraker_discord_announcements as watcher  # noqa: E402
+from print_handy.hermes import print_records as records  # noqa: E402
+from print_handy.hermes import moonraker_discord_announcements as watcher  # noqa: E402
 PLUGIN = HERE.parents[1] / "plugins/print-feedback/__init__.py"
 
 
@@ -66,7 +66,7 @@ def _drive_listener(monkeypatch, filename, transitions, *, claimed=False):
     monkeypatch.setattr(mel, "run_announcer", lambda reason: None)
     monkeypatch.setattr(mel, "start_claimed", lambda name: claimed)
     monkeypatch.setattr(mel, "log", lambda line: None)
-    from print_buddy.hermes import klipper_report
+    from print_handy.hermes import klipper_report
     monkeypatch.setattr(klipper_report, "report", lambda filename: "Klipper report stub")
     listener = mel.Listener()
 
@@ -87,7 +87,7 @@ def test_start_claim_matches_exact_moonraker_filename(tmp_path, monkeypatch, job
 
 
 def test_print_now_start_claim_normalizes_moonraker_filename(tmp_path, monkeypatch):
-    from print_buddy.core import model_job
+    from print_handy.core import model_job
     claims = tmp_path / "claims.json"
     monkeypatch.setattr(model_job, "START_CLAIMS", claims)
     remote = "plate_1_" + "a" * 64 + ".gcode"
@@ -169,7 +169,7 @@ def test_generate_roast_runs_by_default_and_stops_when_the_switch_is_off(monkeyp
 
 
 def _claimed_listener(monkeypatch, tmp_path, job, *, message_id="777", edit_ok=True, claim_ts=1000):
-    from print_buddy.hermes import print_alert_buttons as pab, print_next
+    from print_handy.hermes import print_alert_buttons as pab, print_next
     monkeypatch.setattr(print_next, "START_MESSAGES", tmp_path / "start_messages.json")
     if message_id:
         print_next.record_start_message(job.hashed, message_id)
@@ -376,7 +376,7 @@ def test_timelapse_wait_is_bounded_and_failure_safe(monkeypatch):
 
 
 def test_format_event_includes_persistent_print_number(tmp_path, monkeypatch):
-    from print_buddy.hermes import print_control
+    from print_handy.hermes import print_control
     archive = tmp_path / 'archive'
     job_dir = archive / 'ghost'
     job_dir.mkdir(parents=True)
@@ -557,7 +557,7 @@ def test_announcer_completion_uses_model_title_not_hash(job, tmp_path, monkeypat
     context_path = tmp_path / "context.json"
     context_path.write_text(json.dumps({"jobs": {job.hashed: {"selected_option": records.NATIVE_PRINT_OPTIONS[0],
                                                               "discord_session_id": "s1", "discord_chat_id": "1"}}}))
-    monkeypatch.setenv("PRINT_BUDDY_CONTEXT_PATH", str(context_path))
+    monkeypatch.setenv("PRINT_HANDY_CONTEXT_PATH", str(context_path))
     file_row = {"path": job.hashed, "display": job.hashed}
     responses = iter((
         {"job": {"file": file_row}, "progress": {"completion": 25}, "state": "Printing", "stats": {"state": "printing"}},
@@ -604,7 +604,7 @@ def test_announcer_completion_has_no_roast_and_never_calls_the_generator(job, tm
     context_path = tmp_path / "context.json"
     context_path.write_text(json.dumps({"jobs": {job.hashed: {"selected_option": records.NATIVE_PRINT_OPTIONS[0],
                                                               "discord_session_id": "s1", "discord_chat_id": "1"}}}))
-    monkeypatch.setenv("PRINT_BUDDY_CONTEXT_PATH", str(context_path))
+    monkeypatch.setenv("PRINT_HANDY_CONTEXT_PATH", str(context_path))
     file_row = {"path": job.hashed, "display": job.hashed}
     responses = iter((
         {"job": {"file": file_row}, "progress": {"completion": 25}, "state": "Printing", "stats": {"state": "printing"}},
@@ -692,7 +692,7 @@ def test_receipt_hook_sends_with_content_keyword(monkeypatch):
 
 def test_every_plugin_and_intake_send_uses_content_keyword():
     """Static guard on the real sources: no adapter.send(text=...) anywhere in the call paths."""
-    core = HERE.parents[1] / "print_buddy/core"
+    core = HERE.parents[1] / "print_handy/core"
     for path in (PLUGIN, core / "link_intake.py", core / "prepared_intake.py"):
         source = path.read_text()
         for call in re.findall(r"adapter\.send\((?:[^()]|\([^()]*\))*\)", source):
@@ -715,8 +715,8 @@ def test_model_link_receipt_is_sent_before_slow_intake(monkeypatch):
     fake.model_file = lambda e: None
     fake.reprint_request = lambda t: False
     fake.last_job = lambda: None
-    import print_buddy.core as core_pkg
-    monkeypatch.setitem(sys.modules, "print_buddy.core.prepared_intake", fake)
+    import print_handy.core as core_pkg
+    monkeypatch.setitem(sys.modules, "print_handy.core.prepared_intake", fake)
     monkeypatch.setattr(core_pkg, "prepared_intake", fake, raising=False)
     monkeypatch.setattr(core_pkg, "printer_state", types.SimpleNamespace(load=lambda: {}), raising=False)
     src = S(platform=S(value="discord"), profile="3dprinting", user_id="42", chat_id="c", thread_id=None)

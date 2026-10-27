@@ -7,8 +7,8 @@ import zipfile
 from unittest.mock import patch
 
 import pytest
-from print_buddy.core import model_job as job
-from print_buddy.core import source_colors as colors
+from print_handy.core import model_job as job
+from print_handy.core import source_colors as colors
 from .test_source_colors import source
 
 
@@ -85,7 +85,7 @@ def test_unresolved_or_contradictory_metadata_cannot_reach_adapter(tmp_path, roo
         colors.inventory(path)
     jp = tmp_path / 'JOB.json'
     jp.write_text(json.dumps({'downloaded_file': str(path), 'audit': {'plates': 1}}))
-    from print_buddy.core import orca_adapter
+    from print_handy.core import orca_adapter
     with patch.object(job.printer_state, 'load', return_value={}), patch.object(job.printer_state, 'check', return_value=(True, [], {})), patch.object(orca_adapter, 'slice_model') as slicer:
         with pytest.raises(RuntimeError, match=error):
             job.slice_job(jp)

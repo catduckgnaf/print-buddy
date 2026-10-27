@@ -1,6 +1,6 @@
-# Docker defaults for Print Buddy.
-# Loaded when PRINT_BUDDY_CONFIG=/app/config/docker.toml (set in the image).
-# Environment variables PRINT_BUDDY__SECTION__KEY override any key here (scalars only).
+# Docker defaults for Print Handy.
+# Loaded when PRINT_HANDY_CONFIG=/app/config/docker.toml (set in the image).
+# Environment variables PRINT_HANDY__SECTION__KEY override any key here (scalars only).
 # Mount a replacement file at the same path to change lists such as orca.command or bed_mm.
 
 [orca]
@@ -40,7 +40,7 @@ vision_chat_url = ""
 stock_api_port = 8898
 
 [printer]
-# Override with PRINT_BUDDY__PRINTER__MODEL=sovol.sv06 etc.
+# Override with PRINT_HANDY__PRINTER__MODEL=sovol.sv06 etc.
 model = "flashforge.ad5x"
 
 [timelapse]
@@ -62,7 +62,7 @@ access_token_env = "WEBUI_ACCESS_TOKEN"
 # AI design with OpenSCAD (#388): no enabled key on purpose — unset is
 # AUTO (on whenever a design/LLM endpoint is configured, like roasts).
 # Empty chat_url/model/api_key_env inherit the [llm] values. Force off
-# with PRINT_BUDDY__DESIGN__ENABLED=false, or force on with =true.
+# with PRINT_HANDY__DESIGN__ENABLED=false, or force on with =true.
 chat_url = ""
 model = ""
 api_key_env = ""
@@ -88,8 +88,8 @@ port = 0
 
 [visual_watch]
 # Camera watchdog: alert-only spaghetti, detached-part, empty-bed and stall checks
-# (docs/DOCKER.md "Camera watch"). Override with PRINT_BUDDY__VISUAL_WATCH__SENSITIVITY /
-# PRINT_BUDDY__VISUAL_WATCH__ENABLED. Sensitivity 1 (quietest) to 5 (most alerts);
+# (docs/DOCKER.md "Camera watch"). Override with PRINT_HANDY__VISUAL_WATCH__SENSITIVITY /
+# PRINT_HANDY__VISUAL_WATCH__ENABLED. Sensitivity 1 (quietest) to 5 (most alerts);
 # 3 is the original behavior. Periodic checks run every 1800, 1200, 900, 600 or
 # 450 seconds for levels 1 to 5.
 sensitivity = 3

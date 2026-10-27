@@ -4702,6 +4702,16 @@ def _print_prusa(adapter, state, gcode, job, job_path, wait_s, reprint):
             out["record_path"] = record_start(gcode, remote)
         except Exception as exc:
             print(f"WARNING: start record failed: {exc}")
+        # Timelapse (#295): a monitor watches this launched print — PrusaLink
+        # has no listener (#299), so the print path starts it; it makes the
+        # completion post and, when the printer registers a camera with
+        # PrusaLink, captures frames for a timelapse attached to that post.
+        # A monitor that cannot start never fails the print.
+        try:
+            from print_buddy.hermes import prusa_watch
+            prusa_watch.start_monitor(adapter, remote)
+        except Exception as exc:
+            print(f"WARNING: timelapse monitor did not start: {exc}")
     print(("PRINT STARTED " if confirmed else "START SUBMITTED; AWAITING CONFIRMATION ") + json.dumps(out))
     return out
 

@@ -46,11 +46,13 @@ The print path then runs the usual sequence: readiness from a live snapshot → 
 
 Both `.gcode` and the binary `.bgcode` form are accepted file types; what OrcaSlicer produces here is `.gcode`. `services.moonraker_url` and `services.octoprint_url` must stay empty for a Prusa model; settings refuse to load otherwise.
 
+There is no PrusaLink listener, so a print Print Buddy launches is followed by a launched-print monitor (the same pattern as the Bambu, stock Flashforge and OctoPrint families). When the print ends, the monitor makes the completion post. If `[timelapse] capture_enabled` is on and the printer registers a camera with PrusaLink (`GET /api/v1/cameras` — a camera attached to the printer, such as a USB camera or the CORE One's built-in camera), the monitor captures stills from that camera during the print (`GET /api/v1/cameras/<id>/snap`, PNG stills transcoded to JPEG frames) and attaches the assembled timelapse — encoded and sized to the chat platform's upload limit exactly like every other family's — to the completion post. A printer or firmware with no camera registered gets the completion post without a video, and the log says why; capture trouble never delays or loses the completion post. The monitor runs inside the process that launched the print and is not restarted if that process restarts mid-print; prints started outside Print Buddy are not monitored. The camera endpoints are from Prusa's published PrusaLink specification and, like everything else in this document, are **not verified on a live Prusa printer**.
+
 In the combined Docker container the supervisor honours that (#256): for a Prusa model it does not start the Moonraker listener at all, and the healthcheck does not require one, so the container starts, stays up and reports healthy with just the bot (with a token) and the bundled Spoolman — see [Which processes run](DOCKER.md#which-processes-run).
 
 ## What is not supported
 
 - PrusaConnect cloud (any model) — LAN only, the same decision as Bambu Lab in #187.
 - Multi-tool / MMU slicing, including on the XL: jobs are single-tool; a `T1`+ tool change in a file is refused by the guard.
-- Input Shaper tuning, chamber control, camera streaming, firmware updates.
+- Input Shaper tuning, chamber control, live camera streaming, firmware updates. (Timelapse stills from a PrusaLink-registered camera are supported — see above.)
 - Any claim of a successful print on real hardware.

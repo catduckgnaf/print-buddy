@@ -172,7 +172,7 @@ def test_stage_interruption_is_a_warning_without_a_traceback():
 
 def test_logging_defaults_come_from_the_checked_in_config():
     for home in (settings.load(local=False, environ={}), settings.load(home=settings.LEGACY_HOME, local=False, environ={})):
-        assert home["logging"] == {"level": "INFO", "format": "text", "file": ""}
+        assert home["logging"] == {"level": "INFO", "format": "text", "file": "", "levels": {}}
 
 
 def test_env_override_sets_debug_json_logging():

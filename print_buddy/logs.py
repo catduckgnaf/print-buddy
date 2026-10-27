@@ -78,6 +78,18 @@ def unbind(token: contextvars.Token) -> None:
     _context.reset(token)
 
 
+def bound_context() -> dict:
+    """A copy of the fields currently bound to every log line."""
+    return dict(_context.get())
+
+
+def clear_context() -> None:
+    """Drop every bound field. For hosts that run Print Buddy in-process
+    (and for tests): a listener launched in its own process never needs it,
+    because its ``printer_id`` binding is process-lifetime by design."""
+    _context.set({})
+
+
 def _pairs(fields: dict) -> str:
     return " ".join(f"{key}={_value(value)}" for key, value in fields.items())
 
@@ -179,6 +191,13 @@ def configure(cfg: dict | None = None, *, stream=None) -> logging.Logger:
     # Library debug output (gateway heartbeats, socket frames) buries ours. Keep it at INFO in debug mode.
     for noisy in ("discord", "websockets", "asyncio"):
         logging.getLogger(noisy).setLevel(logging.INFO if level == "DEBUG" else logging.NOTSET)
+    # Per-subsystem verbosity (#390 stage 4): [logging] levels maps a logger
+    # name (for example "print_buddy.core.orca_adapter") to its own level,
+    # applied after the defaults above so it always wins for that subtree.
+    for name, sub_level in sorted((cfg.get("levels") or {}).items()):
+        sub_level = str(sub_level).upper()
+        if sub_level in LEVELS:
+            logging.getLogger(str(name)).setLevel(getattr(logging, sub_level))
     return root
 
 

@@ -29,6 +29,45 @@ def hermes_home() -> Path:
     return Path(cfg()["paths"]["hermes_home"])
 
 
+def profile_config_path() -> Path:
+    """The Hermes profile's own config file: <hermes_home>/config.yaml."""
+    return hermes_home() / "config.yaml"
+
+
+def profile_platform_state(platform: str = "discord", path: Path | None = None) -> tuple[str, Path]:
+    """(state, path): the gateway platform switch in the Hermes profile config.
+
+    state is "enabled", "disabled" (platforms.<platform>.enabled is explicitly
+    false: the gateway will not connect that platform even when credentials are
+    set — environment credentials do not override an explicit platform disable),
+    "unset" (no explicit switch; the gateway default applies), "missing" (no
+    profile config at all) or "unreadable" (the file cannot be parsed, so the
+    switch cannot be verified). Print Buddy never writes this file — the
+    installer renders it once from hermes/profile/config.yaml.template and the
+    Hermes gateway owns it after that — so this only ever reads (#384).
+    ``path`` overrides the profile config location for callers holding their
+    own settings dict (the doctor); the default is the live profile's.
+    """
+    path = Path(path) if path is not None else profile_config_path()
+    if not path.is_file():
+        return "missing", path
+    import yaml
+    try:
+        data = yaml.safe_load(path.read_text(encoding="utf-8"))
+    except Exception:
+        return "unreadable", path
+    if not isinstance(data, dict):
+        return "unreadable", path
+    platforms = data.get("platforms")
+    section = platforms.get(platform) if isinstance(platforms, dict) else None
+    if not isinstance(section, dict) or "enabled" not in section:
+        return "unset", path
+    value = section["enabled"]
+    if value is False or (isinstance(value, str) and value.strip().casefold() in ("false", "no", "off")):
+        return "disabled", path
+    return "enabled", path
+
+
 _pinned: dict[str, Any] | None = None
 
 

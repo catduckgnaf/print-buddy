@@ -54,6 +54,15 @@ setup used, so installing it replaces the old unit instead of running a second l
 python3 -m print_buddy.doctor
 ```
 
+The doctor also checks the Hermes profile itself. If `platforms.discord.enabled` is `false` in
+`<hermes home>/config.yaml`, the gateway never connects Discord — environment credentials do not
+override an explicit platform disable — so attachment intake is silently absent while everything
+else looks healthy. The doctor (and `python3 -m print_buddy.bot check`) report that as a named
+failure with the fix: set it to `true` and restart the gateway. Print Buddy's template renders it
+`true` and the installer never rewrites an existing profile config, so a `false` there always
+comes from outside the installer: a private overlay `config.yaml`, a hand edit, or Hermes-side
+tooling.
+
 ## 6. Update
 
 ```sh

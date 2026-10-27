@@ -25,7 +25,10 @@ def test_completion_without_video_is_one_text_post(monkeypatch):
     monkeypatch.setattr(mel.announcer,"_timelapse_job_key",lambda token:"job.gcode")
     monkeypatch.setattr(mel.announcer,"archive_completed_timelapse",lambda key:None)
     mel.run_announcer("mock")
-    assert sent == ["Print complete: Job"]
+    # Archiving is configured in the test settings, so a missing video is
+    # announced in the post instead of vanishing silently (#373).
+    assert sent == ["Print complete: Job\nTimelapse not attached: the printer's rendered video "
+                    "didn't arrive within the wait (see the listener log)."]
 
 def test_repeated_completion_event_does_not_duplicate_post(monkeypatch):
     sent=[]; monkeypatch.setattr(mel,"log",lambda _:None); monkeypatch.setattr(mel,"post",lambda text: sent.append(text) or True)

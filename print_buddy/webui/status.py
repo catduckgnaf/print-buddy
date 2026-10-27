@@ -165,6 +165,7 @@ def doctor_checks(data):
     for key in doctor.SERVICE_PATHS:
         report(key.replace("_url", ""), doctor.check_service, data, key)
     report("bot mode", doctor.check_bot, data)
+    report("hermes discord platform", doctor.check_hermes_platform, data)
     try:
         warning = doctor.check_strays(data)
     except Exception as exc:  # a scan problem is a warning, never a failed check

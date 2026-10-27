@@ -461,7 +461,10 @@ def test_listener_attaches_local_timelapse_only_when_available(monkeypatch):
     posted.clear()
     monkeypatch.setattr(mel.announcer, "archive_completed_timelapse", lambda key: None)
     mel.run_announcer("test")
-    assert posted == ["Print complete: Stand"]
+    # Archiving is configured in the test settings, so a missing video is
+    # announced in the post instead of vanishing silently (#373).
+    assert posted == ["Print complete: Stand\nTimelapse not attached: the printer's rendered video "
+                      "didn't arrive within the wait (see the listener log)."]
 
 
 def test_listener_combines_completion_and_timelapse(monkeypatch):

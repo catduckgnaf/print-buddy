@@ -734,6 +734,7 @@ def _post_completion(message, completion_message):
         state = announcer.load_state()
         if state.get("pending_completion_message") == completion_message:
             state.pop("pending_completion_message", None)
+            state.pop("pending_timelapse_job_key", None)
             state["announced_completion"] = True
             announcer.save_state(state)
     return delivered
@@ -744,6 +745,26 @@ def run_announcer(reason):
     out = io.StringIO()
     pending = announcer.load_state().get("pending_completion_message")
     if pending:
+        tl_key = announcer.load_state().get("pending_timelapse_job_key")
+        if tl_key:
+            # The completion's video leg was armed but never delivered — the
+            # listener restarted (or the postprocess died) during the render
+            # wait. Re-drive the retrieval for the persisted job instead of
+            # posting the pending text bare and silently losing the video
+            # (#373). Claim the key first so a later pass cannot re-drive it
+            # twice; the postprocess's own fallbacks post text (with the
+            # reason) if the video still cannot be attached.
+            state = announcer.load_state()
+            state.pop("pending_timelapse_job_key", None)
+            announcer.save_state(state)
+            threading.Thread(target=_timelapse_postprocess, args=(tl_key, pending, None, None),
+                             daemon=True, name="timelapse-postprocess-retry").start()
+            try:
+                with contextlib.redirect_stdout(io.StringIO()):
+                    announcer.main()
+            except Exception as exc:  # never let one bad pass kill the listener
+                log(f"announcer error ({reason}): {exc!r}")
+            return
         delivered = _post_completion(pending, pending)
         if not delivered or announcer.load_state().get("pending_completion_message"):
             # Avoid a second identical delivery attempt from main() in this pass.
@@ -795,7 +816,10 @@ def run_announcer(reason):
         if tl_plan and tl_plan[1] == "final":
             _plan_timelapse_post(None, message, tl_plan)
         else:
-            _post_completion(message, message)
+            # The marker fired, so a video was expected: say in the post why
+            # there isn't one instead of letting it vanish silently (#373).
+            _post_completion(f"{message}\nTimelapse not attached: the video marker "
+                             "didn't match the active job (see the listener log).", message)
         if plan_id:
             post_plate_picker(plan_id)
         return
@@ -969,7 +993,16 @@ def _timelapse_post(job_key, completion_message):
         archived = announcer.archive_completed_timelapse(job_key)
         if not archived:
             log(f"timelapse not rendered for {job_key!r} within the wait")
-            _post_completion(completion_message, completion_message)
+            if announcer.TIMELAPSE_ARCHIVE_HOST and announcer.TIMELAPSE_ARCHIVE_DIR:
+                # Archiving is on, so a video was expected: the completion
+                # post itself says it is missing and why, instead of the
+                # video vanishing silently (#373). With archiving off the
+                # bare text is the configured behaviour and stays quiet.
+                _post_completion(f"{completion_message}\nTimelapse not attached: the printer's "
+                                 "rendered video didn't arrive within the wait "
+                                 "(see the listener log).", completion_message)
+            else:
+                _post_completion(completion_message, completion_message)
             return
         local_video = announcer.materialize_archived_timelapse(archived)
         try:

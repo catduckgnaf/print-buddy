@@ -20,7 +20,7 @@ Share a MakerWorld or Printables link, or upload an STL or 3MF. Print Buddy guid
 - **The roast:** print-started posts can end with a one-line roast (exactly one per print, when printing begins; completion posts never carry one) of the model, written by `vision.roast_model`. It is enabled by default whenever an LLM/vision endpoint is available (`services.vision_chat_url` plus `CLIPROXY_API_KEY`) — on every platform, Telegram and Matrix included — and `vision.roast_enabled` (env `PRINT_BUDDY__VISION__ROAST_ENABLED`) turns it off without affecting camera checks.
 - **Slicing:** requires a compatible OrcaSlicer CLI and the correct printer, process and filament profiles. A Python install alone does not provide a slicer.
 - **Offline delivery:** vendor profiles can offer Discord file delivery or an offline Bambu package after slicing. Delivery does not authorize printing. Bambu packaging is not verified in Bambu Studio or on hardware. See [printer profiles](docs/PRINTER-PROFILES.md).
-- **Optional integrations:** Spoolman for filament records, camera checks, timelapses and Obsidian records. Requirements depend on the features you enable.
+- **Optional integrations:** Spoolman for filament records, camera checks, timelapses and print records. Requirements depend on the features you enable.
 
 ## Get started
 

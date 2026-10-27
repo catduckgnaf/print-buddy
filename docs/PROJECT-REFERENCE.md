@@ -34,7 +34,7 @@ In the `#3d-printer` channel, someone posts a link. The bot replies with a job s
 >
 > **Print Buddy:** Bed heating started. Job sent to Moonraker. Finish time estimated for 4:22 PM ET. Don't touch the build plate.
 
-The print starts only when someone clicks the button. On completion, the bot posts stats and writes the job to an Obsidian archive note.
+The print starts only when someone clicks the button. On completion, the bot posts stats and writes a JSON print record for the job.
 
 A bed-clear approval starts one print. Starting the same G-code again needs a new confirmation (`print-now --reprint`). Only one start runs per printer at a time. If Print Buddy cannot tell whether a start reached the printer (it stopped during the request, or the printer never confirmed it), it refuses later starts on that printer until the printer reports that exact file. An operator can also check the printer and run `python3 -m print_buddy.core.model_job reconcile-launch --started` or `--not-started`; without a flag, the command only shows the pending start. Print Buddy never resends that start on its own. This launch state is kept in `<hermes_home>/state/print_buddy_launches.sqlite3`.
 
@@ -79,7 +79,7 @@ A bed-clear approval starts one print. Starting the same G-code again needs a ne
 Live camera streaming (#311) starts with a delivery-agnostic core in `print_buddy/live_stream.py`: it resolves one normalised camera source from Moonraker's webcams API — the same Moonraker path whether the household runs Fluidd, Mainsail or neither, since both are frontends over Moonraker's webcam registry — with a stream URL derived from the existing snapshot URL as fallback, from OctoPrint's webcam settings, or as a snapshot-only source, and it plans a codec-aware ffmpeg encode (H.264: VAAPI, NVENC, QSV, then CPU `libx264`; VP8: VAAPI, then CPU `libvpx`; NVENC never serves VP8) from an injected hardware probe. Stage 3 adds the Discord surface: the `[live_stream]` settings, the `/print-live` command and its viewing-session state machine (same module), and the Activity core in `print_buddy/live_activity.py` — because Discord's bot API cannot send video, the live view is an Embedded App (Activity) in the voice channel whose page plays the go2rtc MSE-over-WebSocket feed behind a server-side OAuth allowlist check. Stage 4 adds the deployment wiring: the supervised Activity server (`python3 -m print_buddy.live_activity`, gated by `print_buddy.live_gate` and mirrored in the container healthcheck), the Activity server's own authenticated proxy of the feed to go2rtc on loopback (one public origin, one Portal URL mapping), go2rtc starting for live viewing as well as timelapse capture under the same one-upstream rule, the auto-start-on-print trigger and empty-timeout enforcement over the shared session record, the Web UI catalog's Live camera group, and the Compose/Unraid surfaces (live settings, the two live secrets, the Discord application ID, and the profile-gated `cloudflared` sidecar for the named tunnel). The operator guide is [Discord bot setup §7](DISCORD-BOT-SETUP.md#7-live-camera-activity-optional-311). The Stage 0 live Discord spike has not run, so the feature is offline-verified only — nothing about it is claimed live-verified.
 
 **Records and upkeep**
-* Every finished job written to an Obsidian vault and the job archive.
+* Every finished job written as a JSON print record and to the job archive.
 * Nightly catch up against Moonraker job history so nothing is missed.
 * `/print-maintenance` guided checklist and reminders by print hours and days.
 * `/print-coldpull` runs an operator confirmed cold pull at configured temperatures.
@@ -162,7 +162,7 @@ Without the file, MakerWorld intake stops before the model summary with a messag
 | | `command` | Flathub OrcaSlicer | How to start the Orca CLI |
 | `bambu` | `command` | Flathub Bambu Studio, no network | Fallback slicer |
 | `paths` | `hermes_home` | `~/.hermes/profiles/3dprinting` | Hermes profile the bot runs in |
-| | `archive`, `records_vault`, `cache` | `~/3d-prints`, `~/Documents/3D Printing Records`, `~/.hermes/cache` | Job archive, Obsidian records, cache |
+| | `archive`, `records_vault`, `cache` | `~/3d-prints`, `~/Documents/3D Printing Records`, `~/.hermes/cache` | Job archive, print records, cache |
 | | `hermes_bin`, `hermes_agent`, `hermes_restart_helper`, `ffmpeg` | | Tool locations |
 | `services` | `moonraker_url`, `moonraker_ws_url`, `camera_snapshot_url` | empty | Printer and camera; websocket is derived when empty |
 | | `spoolman_url`, `openviking_url` | empty | Spoolman and optional memory store |

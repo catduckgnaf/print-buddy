@@ -882,7 +882,7 @@ class EnglishAndPrintNowTests(unittest.TestCase):
              mock.patch.object(model_job, "_mr") as mr, \
              mock.patch.object(model_job, "_wait_printing", return_value="standby"), \
              mock.patch.object(model_job, "record_start"):
-            with self.assertRaisesRegex(SystemExit, "START FAILED.*Not retrying; check the printer screen"):
+            with self.assertRaisesRegex(SystemExit, "The printer did not start the print, and it was not retried"):
                 model_job.print_now(self._gcode(d))
         # One start POST, then the #84 status readback. Not a second start.
         self.assertEqual(mr.call_count, 2)
@@ -1016,7 +1016,7 @@ class EnglishAndPrintNowTests(unittest.TestCase):
             g = self._gcode(d)
             sha = model_job.file_sha256(g)
             expected_remote = f"{g.stem}_{sha}{g.suffix}"
-            with self.assertRaisesRegex(SystemExit, "START FAILED"):
+            with self.assertRaisesRegex(SystemExit, "The printer did not start the print"):
                 model_job.print_now(g)
             self.assertNotIn(expected_remote, json.loads((Path(d) / "claims.json").read_text()))
 
@@ -1063,7 +1063,7 @@ class EnglishAndPrintNowTests(unittest.TestCase):
             g = self._gcode(d)
             upload_stdout = json.dumps({"result": {"item": {"root": "gcodes", "path": "different_file.gcode"}}})
             with mock.patch.object(model_job.subprocess, "run", return_value=mock.Mock(returncode=0, stdout=upload_stdout, stderr="")):
-                with self.assertRaisesRegex(SystemExit, "UPLOAD FAILED.*mismatch"):
+                with self.assertRaisesRegex(SystemExit, "The printer did not confirm the uploaded file"):
                     model_job.print_now(g)
             mock_mr.assert_not_called()
 
@@ -1079,7 +1079,7 @@ class EnglishAndPrintNowTests(unittest.TestCase):
             sha = model_job.file_sha256(g)
             expected_remote = f"{g.stem}_{sha}{g.suffix}"
             with mock.patch.object(model_job.subprocess, "run", return_value=mock.Mock(returncode=1, stdout="", stderr="HTTP 400: Checksum mismatch")) as mock_run:
-                with self.assertRaisesRegex(SystemExit, "UPLOAD FAILED: HTTP 400: Checksum mismatch"):
+                with self.assertRaisesRegex(SystemExit, "The file could not be uploaded to the printer, so nothing started"):
                     model_job.print_now(g)
             mock_mr.assert_not_called()
             # Verify moonrakerctl upload was called with the sha checksum parameter
@@ -1380,7 +1380,7 @@ class EnglishAndPrintNowTests(unittest.TestCase):
              mock.patch.object(model_job.subprocess, "run", side_effect=mock_upload_run), \
              mock.patch.object(model_job, "_mr") as mr, \
              mock.patch.object(model_job, "_wait_printing", return_value="standby"):
-            with self.assertRaisesRegex(SystemExit, "START FAILED"):
+            with self.assertRaisesRegex(SystemExit, "The printer did not start the print"):
                 model_job.print_now(self._gcode(d))
         # One start POST, then the #84 status readback. Not a second start.
         self.assertEqual(mr.call_count, 2)

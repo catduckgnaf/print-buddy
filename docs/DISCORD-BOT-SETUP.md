@@ -162,7 +162,8 @@ python3 -m print_buddy.bot run
 ```
 
 Keep the printer listener stopped during this first check. As an allowed user in the configured
-channel, send `/print-help` or plain `hello` with the optional LLM disabled. Expect the command list;
+channel, send `/print-help` or plain `hello` with the optional LLM disabled. Expect the command list for
+`/print-help`, and the short “didn't understand” reply for `hello`;
 neither starts a print. Do not send model links, files or printer-control commands for verification.
 A stranger or a message in another channel is ignored.
 

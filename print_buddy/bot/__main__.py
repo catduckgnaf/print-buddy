@@ -112,10 +112,10 @@ def checks(cfg):
     if name in ("telegram", "matrix"):
         # Telegram and Matrix are pure bots (#164 stages 2-3, #73): the LLM
         # fallback is never wired for them, whatever [llm] says elsewhere.
-        add("llm", True, f"off ({name.capitalize()} is a pure bot: no LLM; unmatched messages get the command list)")
+        add("llm", True, f"off ({name.capitalize()} is a pure bot: no LLM; unmatched messages get the short not-understood reply)")
     else:
         add("llm", True, f"{cfg['llm']['model']} at {cfg['llm']['chat_url']}" if llm.configured(cfg)
-            else "off (unmatched messages get the command list)")
+            else "off (unmatched messages get the short not-understood reply)")
     # The roast is separate from the chat fallback above: the print-started
     # post gains a one-line roast (exactly one per print, when printing
     # begins; the completion post never does) on every platform (Telegram

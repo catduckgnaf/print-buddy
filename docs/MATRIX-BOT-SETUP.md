@@ -3,7 +3,7 @@
 Print Buddy can run its standalone bot in a Matrix room instead of Discord
 or Telegram (#164). The same handlers, prompts and safety gates serve every
 platform; only the transport changes. The Matrix bot is a **pure bot: it
-has no LLM**. Unmatched text gets the command list, and no `[llm]` setting
+has no LLM**. Unmatched text gets the short “didn't understand” reply, and no `[llm]` setting
 is ever consulted for Matrix — deliberate, the same no-LLM posture Telegram
 proved first. One-way posts are the exception, as on Telegram: the
 print-started posts carry the one-line **roast** (completion posts never do) when

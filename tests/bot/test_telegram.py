@@ -244,7 +244,8 @@ def test_telegram_botcore_never_calls_the_llm(cfg):
     assert calls == []
     assert out == {"action": "skip", "reason": "command list"}
     texts = [p["text"] for p in stub.payloads("sendMessage")]
-    assert any("/print-next" in t for t in texts)  # the command list, not an LLM reply
+    assert any("didn't understand" in t and "/print-help" in t for t in texts)  # the short unmatched reply (#467), not an LLM reply
+    assert not any("/print-next" in t for t in texts)  # never the full command list as an error response
 
 
 def test_session_keys_are_telegram_scoped(cfg):

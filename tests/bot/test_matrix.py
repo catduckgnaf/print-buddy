@@ -378,7 +378,8 @@ def test_matrix_botcore_never_calls_the_llm(cfg, tmp_path):
         out = run(core.process(runtime.make_event(source, "what is the printer doing?", "$e7")))
     assert calls == []
     assert out == {"action": "skip", "reason": "command list"}
-    assert any("/print-next" in body for body in stub.sent_bodies())
+    assert any("didn't understand" in body and "/print-help" in body for body in stub.sent_bodies())
+    assert not any("/print-next" in body for body in stub.sent_bodies())
 
 
 def test_session_keys_are_matrix_scoped(cfg):

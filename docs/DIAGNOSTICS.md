@@ -77,6 +77,69 @@ in `print_buddy.diagnostics.LEGACY_MARKERS` and likewise never changes.
    texts. The design turn's `DesignError` post is the same class —
    a curated, operator-phrased error type — and is likewise unchanged.
 
+## Plain-language pass (#467)
+
+#390's bar was written for the operator debugging the system. #467 holds
+the messages a person in chat actually reads to a plainer bar:
+
+1. **First line in plain words** — what you asked for, what happened. No
+   exception class names, no raw exception or stderr text, no ALL-CAPS
+   failure prefix, no internal jargon.
+2. **What did *not* happen**, where it matters — nothing started /
+   nothing uploaded / nothing changed / your print is still running.
+3. **One clear next step** — the button, command or check that fixes or
+   retries it. If there is no user fix (it looks like a bug), the post
+   says so and points at the diagnostics bundle (`/print-buddy bundle`).
+4. **Technical detail demoted, not deleted** — the `PB_*` marker rides as
+   a secondary `Reference:` line, and the full detail stays in the log,
+   the intake receipt and the bundle.
+5. **Never silent, never a dead end.**
+
+The shared builder is `print_buddy.diagnostics.plain_post`; the Discord
+handlers' `_failure_post` (#390) is built on it, so there is one wording
+system. `tests/test_friendly_errors.py` pins the rewritten corpus,
+including the negative pin: no inventoried chat post may contain a raw
+exception string, a traceback fragment, or an ALL-CAPS failure prefix.
+
+What changed, surface by surface:
+
+| Surface | Before → after |
+| --- | --- |
+| Slicing failure (prepared intake) | `Slicing failed: {raw error}` → "Slicing this model did not work. No G-code was kept, and nothing was uploaded or started. Retry once from the saved model?" + `Reference: PB_SLICING_*`; the raw error stays in the receipt and log |
+| Backup-slicer notice | `Bambu Studio sliced it because OrcaSlicer failed: {reason}` → "Sliced with the backup slicer (Bambu Studio) because the main slicer could not slice this model."; the reason is logged |
+| Fit / resize checks unverified | trailing raw exception → plain unverified wording + resume step + marker |
+| Preview failure | `Preview unavailable: {exc}` → "I could not make a preview image, so no image was sent…" |
+| Slot/toolhead map problem | `Slot map problem: {exc}` → "Heads-up on the filament positions: …" (the adapter's own phrased reason) |
+| Intake preparation failure | `New model preparation stopped: {exc}` → plain post + "Send the link or file again; … `/print-buddy bundle`" + marker |
+| Colour-selection failure (link intake) | `New model color selection stopped: {exc}` → plain post + retry step + marker |
+| Delivery refusal | `Not delivered: …` → "The files were not sent here: …" (the `DeliveryRefused` reason is curated and kept) |
+| Start failures (plugin next-plate / print-again / plate picker) | the raw print-now tail (`REFUSED:` / upload / start lines) was posted verbatim → `prepared_intake.plain_start_failure` translates it: a confirmed pre-upload refusal gets the specific plain guidance; anything else gets the honest "did not confirm whether the print started" wording |
+| `model_job` pipeline exits (CLI) | `UPLOAD FAILED: {stderr tail}`, `START FAILED: …`, `REFUSED: live hardware check failed: …`, `G-CODE REFUSED: …` → plain first lines ("The file could not be uploaded to the printer, so nothing started…") with the raw detail demoted to a secondary `Detail:` line |
+| Guided setup apply | `Applying the settings failed: {raw}` → "The settings could not be saved, so nothing was changed…" + bundle pointer; checklist and retry/manual/cancel replies unchanged |
+| Guided debugging findings | `login check failed: {exc}` / `health probe failed: {exc}` → "the login check did not pass" / "the health check did not answer", with the existing Next step kept |
+| `printer_state` warnings/problems | `Spoolman lookup failed: {e}`, `Moonraker active spool lookup failed: {e}`, `Moonraker unreachable: {e}`, `Calibration authority read failed: {e}` → plain wording naming the fallback ("the recorded spool was used; printing can continue") or the check to make; #235 fail-soft unchanged |
+| Design turns | `DesignError` texts that embedded the raw service error → plain reasons ("the design service did not answer — wait a moment and try again"); the post leads "That design change did not work: … Nothing was sliced or started." |
+| Print-control / spool / cold-pull / maintenance generic failures | `…: {exc}` posts → plain posts naming the state ("nothing was changed", "usage is still paused; answer again", "do not retry until the printer state is checked") |
+| Vision-watch alerts | `vision check failed: {exc!r}` in the alert post → "the vision check could not be completed, so treat this as unreviewed…"; the raw error stays in the log |
+| Spool sync results | `NOT updated ({exc})` / per-slot raw errors → plain "not updated — run `/spool sync`…" wording |
+| Access refusal notice | "You are not on this bot's allowed list." → adds why and the next step ("…ask the person who runs Print Buddy to add you"); the house "Not allowed. Nothing changed." posts are unchanged |
+| Unmatched message | the full command list posted as an error response → a short reply: "I didn't understand that, so nothing happened." + the one common next step (post a link / drop a file) + the list on request via `/print-help`. Explicit `/print-help` / `help` still returns the full list, and the #437 LLM-first order is unchanged |
+
+Deliberately unchanged, and why:
+
+- The `REFUSED: …` lines inside `model_job` / `print_next` /
+  `launch_state` remain the **transport contract** between the pipeline
+  and its callers (`print_next` treats a trailing `REFUSED:` line as a
+  confirmed pre-upload refusal; prepared intake extracts it). They are
+  never posted raw any more — every chat path translates them — and the
+  receipts keep them verbatim for support.
+- Curated error types whose text is already operator-phrased —
+  `NextPlateError` ("No next plate: …"), `DesignError`, guided-setup
+  validation answers ("That answer does not work: reply with …") — keep
+  their text; #467 removed the *raw machinery* interpolation under them.
+- Logs, the diagnostics bundle, doctor/`bot check` rows and Web UI
+  status keep full technical detail; only chat posts were rewritten.
+
 The fail-soft posture is preserved throughout (#235): warnings never block
 a print, and no print path changes behaviour beyond reporting.
 

@@ -3,6 +3,7 @@ import asyncio
 import io
 import json
 import os
+import shutil
 import subprocess
 import sys
 import time
@@ -138,8 +139,32 @@ def test_check_command_names_every_problem(monkeypatch, capsys, tmp_path):
     out = capsys.readouterr().out
     for line in ("FAIL  mode: hermes", "FAIL  token", "FAIL  print channel",
                  "ok    access: channel (everyone)",
-                 "ok    handlers: 18", "ok    no hermes", f"ok    state dir: {tmp_path}"):
+                 "ok    handlers: 19", "ok    no hermes", f"ok    state dir: {tmp_path}"):
         assert line in out, out
+
+
+def test_check_design_row_states_off_on_and_missing_openscad(monkeypatch, capsys, tmp_path):
+    """#388: the design row — off by default; on names the model source;
+    enabled without openscad on PATH is a FAIL."""
+    cfg = settings.load(local=Path(os.devnull), environ={})
+    cfg["paths"]["hermes_home"] = tmp_path / "profile"
+    monkeypatch.setattr(settings, "current", lambda: cfg)
+    monkeypatch.setattr(_config, "cfg", lambda: cfg)
+    bot_main.check()
+    assert "ok    design: off" in capsys.readouterr().out
+    cfg["design"]["enabled"] = True
+    cfg["bot"]["mode"] = "standalone"
+    cfg["llm"].update(chat_url="http://llm.invalid/v1", model="sol")
+    real_which = shutil.which
+    monkeypatch.setattr(shutil, "which",
+                        lambda name: "/usr/bin/openscad" if name == "openscad" else real_which(name))
+    bot_main.check()
+    assert "ok    design: on (sol at http://llm.invalid/v1)" in capsys.readouterr().out
+    monkeypatch.setattr(shutil, "which",
+                        lambda name: None if name == "openscad" else real_which(name))
+    bot_main.check()
+    out = capsys.readouterr().out
+    assert "FAIL  design: enabled, but openscad is not on PATH" in out
 
 
 def test_check_names_a_disabled_hermes_discord_platform(monkeypatch, capsys, tmp_path):
@@ -310,3 +335,46 @@ def test_bot_shutdown_awaits_owned_resources(cfg):
         assert bot._background == [] and not bot.connected
 
     asyncio.run(flow())
+
+
+def _check_with_profile(monkeypatch, capsys, tmp_path, profile_text):
+    """Drive bot check with the Hermes profile config set to profile_text
+    (None = no config file at all), mirroring the #384 disabled test."""
+    cfg = settings.load(local=Path(os.devnull), environ={})
+    profile = tmp_path / "profile"
+    profile.mkdir()
+    cfg["paths"]["hermes_home"] = profile
+    monkeypatch.setattr(settings, "current", lambda: cfg)
+    monkeypatch.setattr(_config, "cfg", lambda: cfg)
+    monkeypatch.setattr(_config, "profile_env_value",
+                        lambda name, **kw: "token-present" if name == "DISCORD_BOT_TOKEN" else "")
+    if profile_text is not None:
+        (profile / "config.yaml").write_text(profile_text)
+    bot_main.check()
+    return capsys.readouterr().out
+
+
+def test_check_names_an_unreadable_hermes_profile_config(monkeypatch, capsys, tmp_path):
+    """#391 (#384 expansion): the switch cannot be verified when the file
+    cannot be parsed, so bot check fails that row instead of passing it."""
+    out = _check_with_profile(monkeypatch, capsys, tmp_path, "platforms: [unclosed\n")
+    assert "FAIL  hermes discord platform" in out
+    assert "cannot read" in out
+
+
+def test_check_passes_when_the_profile_has_no_platform_switch(monkeypatch, capsys, tmp_path):
+    """#391 (#384 expansion): no explicit switch — the gateway default
+    applies, the row is ok and says so."""
+    out = _check_with_profile(monkeypatch, capsys, tmp_path, "model:\n  default: test\n")
+    assert "ok    hermes discord platform" in out
+    assert "no explicit platforms.discord.enabled" in out
+    assert "FAIL  hermes discord platform" not in out
+
+
+def test_check_passes_when_the_profile_config_is_missing(monkeypatch, capsys, tmp_path):
+    """#391 (#384 expansion): a missing profile config is a not-installed
+    profile (already loud elsewhere), never a platform FAIL."""
+    out = _check_with_profile(monkeypatch, capsys, tmp_path, None)
+    assert "ok    hermes discord platform" in out
+    assert "no profile config at" in out
+    assert "FAIL  hermes discord platform" not in out

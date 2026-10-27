@@ -148,8 +148,18 @@ Required environment: `PRINT_BUDDY__BOT__MODE=standalone`, `DISCORD_BOT_TOKEN`, 
   `/print-coldpull`, `/print-maintenance`, `/print-colors`, `/spool`, `/print-lookup`, `/print-troubleshoot`,
   `/print-macros` (Moonraker printers only; lists the macros the printer defines, and `run <name>` runs one behind a confirmation),
   `/print-buddy` (guided setup and read-only debugging), `/print-help`. Typing the same text works too.
+* `/print-design <what to make>` designs a new part with AI + OpenSCAD when `[design]` is enabled (see
+  [AI design](DESIGN.md)); with a model file dropped in the same message, or a model link in it, it edits
+  that model instead, and phrases like "design me …" or "design this" start design without the command.
+  It needs an OpenAI-compatible endpoint — the `[design]` settings, or `[llm]`'s —
+  and the `openscad` binary on the machine (the container image includes it; a native install must add it,
+  e.g. `apt install openscad`). Design is Discord-only; Telegram and Matrix keep their no-LLM posture.
 * Listener posts (started, complete, failed, timelapse) and alert buttons (Resume, Cancel, spool questions, IFS
   insertion, plate picker) work with the Hermes gateway stopped.
+* A pending spool question (filament runout or a mid-print swap) can also end the print: tap its **Cancel print**
+  button or reply `cancel the print`. That cancels through the same path as `/print-stop`, closes the question
+  and stops its reminders; filament usage stays paused for every spool, exactly as a cancelled print leaves it.
+  If the cancel does not end the print, the question stays open and answerable.
 * A typed reply answers your own open question, as under Hermes ("2" for two copies, "split", "cancel"). It
   never answers another allowed user's question, even in the same channel or thread. Buttons are shared: any
   allowed user may press an open question's button, and the message then shows who chose.

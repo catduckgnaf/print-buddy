@@ -84,9 +84,10 @@ def test_insertion_components_and_parse_are_button_only():
 
 
 def test_spool_question_buttons_hide_same_without_prior_and_parse():
-    assert [button["label"] for button in pab.spool_question_components("deadbeef")[0]["components"]] == ["Existing spool", "New spool"]
-    assert [button["label"] for button in pab.spool_question_components("deadbeef", 8)[0]["components"]] == ["Same spool", "Existing spool", "New spool"]
+    assert [button["label"] for button in pab.spool_question_components("deadbeef")[0]["components"]] == ["Existing spool", "New spool", "Cancel print"]
+    assert [button["label"] for button in pab.spool_question_components("deadbeef", 8)[0]["components"]] == ["Same spool", "Existing spool", "New spool", "Cancel print"]
     assert pab.parse_spool_question_custom_id("pbspool:new:deadbeef") == ("new", "deadbeef")
+    assert pab.parse_spool_question_custom_id("pbspool:cancel:deadbeef") == ("cancel", "deadbeef")
     assert pab.parse_spool_question_custom_id("pbspool:bad:deadbeef") is None
 
 

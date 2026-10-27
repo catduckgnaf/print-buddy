@@ -37,7 +37,10 @@ PROFILE = "3dprinting"  # the plugin's handlers only answer events of the print 
 # often enough to spam the channel while they keep posting.
 REFUSAL_NOTICE_PERIOD_S = 3600
 REFUSAL_NOTICE = "You are not on this bot's allowed list."
-MODEL_FILE_EXTS = {".3mf", ".stl"}
+# .scad rides along for design edit sessions (#388 Stage 2): prepared intake
+# still only accepts .3mf/.stl (its own MODEL_FILE_EXTS), so a dropped .scad
+# is saved here and ignored by every non-design flow.
+MODEL_FILE_EXTS = {".3mf", ".stl", ".scad"}
 MAX_UPLOAD_BYTES = 200 * 1024 * 1024
 # The intake copies a dropped file into the job archive, so the cached upload is only needed briefly.
 UPLOAD_KEEP_S = 7 * 24 * 3600
@@ -304,7 +307,7 @@ class BotCore:
                 pass
 
     async def save_attachments(self, message):
-        """Save dropped .3mf/.stl files where the intake reads them. Other files are ignored."""
+        """Save dropped .3mf/.stl (and .scad, for design) files where readers look. Others are ignored."""
         self.prune_uploads()
         paths = []
         for attachment in getattr(message, "attachments", None) or []:

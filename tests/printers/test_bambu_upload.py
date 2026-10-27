@@ -133,3 +133,65 @@ def test_adapter_upload_requires_the_package_format_and_a_configured_lan(monkeyp
     plain = printers.get("bambulab.a1", settings.load(local=False, environ={"PRINT_BUDDY__PRINTER__MODEL": "bambulab.a1"}))
     with pytest.raises(BambuLanError, match="not configured"):
         plain.upload(package)
+
+
+# --- #391 stage 2: timeout mid-upload ---------------------------------------
+#
+# #187's tests pinned a refused store and an unanswerable SIZE; a transfer
+# that dies halfway (the printer stalls mid-STOR) is the remaining shape:
+# the partial file sits on the printer, so the error must say it may be
+# incomplete, name the failure type, leak no credential, and still close
+# the session.
+
+
+class StallFTP(FakeFTP):
+    """Reads part of the payload, then the connection times out."""
+
+    def __init__(self, fail_at="store"):
+        super().__init__()
+        self.fail_at = fail_at
+        self.bytes_read = 0
+
+    def storbinary(self, cmd, fp):
+        self.commands.append(cmd)
+        if self.fail_at == "store":
+            self.bytes_read = len(fp.read(8))
+            raise TimeoutError("timed out waiting for the printer")
+        self.stored[cmd.split(" ", 1)[1]] = fp.read()
+        return "226 Transfer complete"
+
+    def size(self, name):
+        if self.fail_at == "size":
+            raise TimeoutError("timed out waiting for the printer")
+        return super().size(name)
+
+
+def test_upload_timeout_mid_transfer_is_a_plain_incomplete_warning(package):
+    fake = StallFTP(fail_at="store")
+    with pytest.raises(BambuLanError) as err:
+        make_client(fake).upload(package)
+    assert "may be incomplete" in str(err.value)
+    assert "TimeoutError" in str(err.value)
+    assert CODE not in str(err.value)
+    assert 0 < fake.bytes_read < len(PAYLOAD)  # the transfer really was partial
+    assert fake.quit_called
+
+
+def test_upload_timeout_during_size_verification_is_also_incomplete(package):
+    fake = StallFTP(fail_at="size")
+    with pytest.raises(BambuLanError) as err:
+        make_client(fake).upload(package)
+    assert "may be incomplete" in str(err.value) and "TimeoutError" in str(err.value)
+    assert CODE not in str(err.value)
+    assert fake.quit_called
+
+
+def test_upload_survives_a_quit_failure_after_a_verified_store(package):
+    class QuitFailFTP(FakeFTP):
+        def quit(self):
+            self.quit_called = True
+            raise OSError("connection already gone")
+
+    fake = QuitFailFTP()
+    assert make_client(fake).upload(package) == "benchy.gcode.3mf"
+    assert fake.quit_called

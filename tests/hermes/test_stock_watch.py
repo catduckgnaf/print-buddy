@@ -350,3 +350,23 @@ def test_full_lifecycle_produces_a_valid_h264_mp4_under_the_limit(tmp_path, monk
     assert probe.stdout.strip() == "h264"
     session_dir = next(root.iterdir())
     assert len(list((session_dir / "frames").glob("frame-*.jpg"))) >= 2
+
+
+def test_media_post_failure_falls_back_to_the_text_completion(capture_logs):
+    """#391 (#373 expansion): the platform refusing the MEDIA post must not
+    lose the completion — the monitor posts the text alone and logs why,
+    the same attach-or-explain contract as the Moonraker route."""
+    rig = Rig([st("printing"), st("complete")])
+    posts = []
+
+    def flaky_post(message):
+        posts.append(message)
+        if "MEDIA:" in message:
+            raise RuntimeError("platform refused the attachment")
+
+    rig.monitor._post = flaky_post
+    assert rig.monitor.run() == "complete"
+    assert len(posts) == 2
+    assert "MEDIA:" in posts[0]
+    assert "MEDIA:" not in posts[1]
+    assert any("post with timelapse failed" in line for line in capture_logs)

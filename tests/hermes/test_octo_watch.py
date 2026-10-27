@@ -188,3 +188,40 @@ def test_start_monitor_wires_the_adapter(monkeypatch):
                                       thread_factory=factory)
     assert thread is not None
     assert "target" in started
+
+
+def test_media_post_failure_falls_back_to_the_text_completion():
+    """#391 (#373 expansion): the platform refusing the MEDIA post must not
+    lose the completion — the monitor retries with the text alone and
+    logs why, the same attach-or-explain contract as the Moonraker route."""
+    h = Harness(COMPLETE_SEQ, movies=[{"name": MOVIE, "url": "/x"}])
+    posts = []
+
+    def flaky_post(message):
+        posts.append(message)
+        if "MEDIA:" in message:
+            raise RuntimeError("platform refused the attachment")
+
+    m = h.monitor()
+    m._post = flaky_post
+    assert m.run() == "complete"
+    assert len(posts) == 2
+    assert "MEDIA:" in posts[0]
+    assert "Print complete" in posts[1] and "MEDIA:" not in posts[1]
+    assert any("post with timelapse failed" in line for line in Harness.logs)
+
+
+def test_movie_for_job_edge_shapes():
+    """#391 (#373 expansion): the matcher pins — a non-.gcode job name is
+    used whole, a movie with no timestamp digits is refused, a missing
+    name is skipped, and the newest valid render wins."""
+    plain = {"name": "widget_20261026120000.mp4"}
+    assert octo_watch.movie_for_job([plain], "widget")["name"] == plain["name"]
+    assert octo_watch.movie_for_job([{"name": "widget_.mp4"}], "widget") is None
+    assert octo_watch.movie_for_job([{"url": "/x"}, {"name": ""}, None], "widget") is None
+    separated = {"name": "widget_2026-10-26_171200.mp4"}
+    assert octo_watch.movie_for_job([separated], "widget")["name"] == separated["name"]
+    older = {"name": "widget_20261025090000.mp4"}
+    newer = {"name": "widget_20261026171200.mp4"}
+    assert octo_watch.movie_for_job([older, newer], "widget")["name"] == newer["name"]
+    assert octo_watch.movie_for_job(None, "widget") is None

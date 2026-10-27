@@ -98,6 +98,12 @@ Schema, validation limits and TOML migration: [CONFIGURATION-YAML.md](CONFIGURAT
 | `llm.model` | `PRINT_BUDDY__LLM__MODEL` | empty | LLM model name, required when `chat_url` is set |
 | `llm.api_key_env` | `PRINT_BUDDY__LLM__API_KEY_ENV` | `LLM_API_KEY` | Name of the environment variable holding the LLM API key |
 | `llm.timeout_s` | `PRINT_BUDDY__LLM__TIMEOUT_S` | `20` | LLM request timeout |
+| `design.enabled` | `PRINT_BUDDY__DESIGN__ENABLED` | `false` | `/print-design` AI design (#388); false keeps the command answering "not set up" |
+| `design.chat_url` | `PRINT_BUDDY__DESIGN__CHAT_URL` | empty (inherit) | Design model endpoint; empty uses `llm.chat_url`. Hermes mode ignores this — the profile's `auxiliary.print_design` block is the design model there |
+| `design.model` | `PRINT_BUDDY__DESIGN__MODEL` | empty (inherit) | Design model name; empty uses `llm.model`. Point this at a stronger model than chat if the endpoint offers one |
+| `design.api_key_env` | `PRINT_BUDDY__DESIGN__API_KEY_ENV` | empty (inherit) | Environment variable holding the design endpoint's key; empty uses `llm.api_key_env` |
+| `design.timeout_s` | `PRINT_BUDDY__DESIGN__TIMEOUT_S` | `180` | Design model-call timeout in seconds; also the OpenSCAD render wall-clock limit |
+| `design.repair_attempts` | `PRINT_BUDDY__DESIGN__REPAIR_ATTEMPTS` | `3` | How many times a failed render is sent back to the model with the error before the turn gives up |
 | `listener.tick_s` | `PRINT_BUDDY__LISTENER__TICK_S` | `600` | Listener housekeeping interval |
 | `listener.ifs_presence_poll_s` | `PRINT_BUDDY__LISTENER__IFS_PRESENCE_POLL_S` | `15` | IFS spool presence poll |
 | `listener.spool_nag_s` | `PRINT_BUDDY__LISTENER__SPOOL_NAG_S` | `600` | Reminder interval for an unanswered spool question |
@@ -144,7 +150,7 @@ Schema, validation limits and TOML migration: [CONFIGURATION-YAML.md](CONFIGURAT
 | `logging.level` | `PRINT_BUDDY__LOGGING__LEVEL` | `INFO` | `DEBUG`, `INFO`, `WARNING` or `ERROR` |
 | `logging.format` | `PRINT_BUDDY__LOGGING__FORMAT` | `text` | `text` (one readable line per event) or `json` (one JSON object per line) |
 | `logging.file` | `PRINT_BUDDY__LOGGING__FILE` | empty | Also write a rotating log file (5 MiB, 3 backups) at this path, for example under `/data/hermes/logs`; empty logs to stderr only |
-| `logging.levels` | — (config file only) | empty | Per-subsystem verbosity (#390): a table of logger name to level, for example `levels = { "print_buddy.core.orca_adapter" = "DEBUG" }` in TOML, so one subsystem can be raised without a wall of debug output; applied at process start |
+| `logging.levels` | file only | empty | Per-subsystem verbosity (#390): a table of logger name to level, for example `levels = { "print_buddy.core.orca_adapter" = "DEBUG" }` in TOML, so one subsystem can be raised without a wall of debug output; applied at process start |
 | `maintenance.quick_hours` | `PRINT_BUDDY__MAINTENANCE__QUICK_HOURS` | `25` | Quick maintenance due after these print hours |
 | `maintenance.full_hours` | `PRINT_BUDDY__MAINTENANCE__FULL_HOURS` | `75` | Full maintenance due after these print hours |
 | `maintenance.full_days` | `PRINT_BUDDY__MAINTENANCE__FULL_DAYS` | `30` | Full maintenance due after these days |

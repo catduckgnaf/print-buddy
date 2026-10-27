@@ -4304,6 +4304,15 @@ def _print_octoprint(adapter, state, gcode, job, job_path, wait_s, reprint):
             out['record_path'] = record_start(gcode, remote)
         except Exception as exc:
             print(f'WARNING: start record failed: {exc}')
+        # No listener exists for OctoPrint (#299 keeps the domain planned),
+        # so the print path starts a launched-print monitor (#373): it makes
+        # the completion post and attaches the timelapse OctoPrint itself
+        # rendered. A monitor that cannot start never fails the print.
+        try:
+            from print_buddy.hermes import octo_watch
+            octo_watch.start_monitor(adapter, remote)
+        except Exception as exc:
+            print(f"WARNING: timelapse monitor did not start: {exc}")
     print(('PRINT STARTED ' if confirmed else 'START SUBMITTED; AWAITING CONFIRMATION ') + json.dumps(out))
     return out
 

@@ -42,6 +42,7 @@ SESSION_TIMEOUT_S = 24 * 3600
 HELP = """**Print Buddy setup and debugging** — neither flow prints, moves, or authorizes a printer.
 - `/print-buddy setup`: guided setup in small steps. Your checklist is saved, so you can stop and resume later. At the review step, reply `add` to set up more printers — each gets its own channel and state folder.
 - `/print-buddy debugging`: read-only checks (configuration, bot login, permissions, connectivity, executables, state and logs). Secrets and private paths are redacted.
+- `/print-buddy bundle`: write a redacted diagnostics bundle (versions, configuration summary, doctor output, recent log tail) into the state folder, ready to attach to a bug report. Nothing is uploaded.
 - `/print-buddy status`: show the saved setup checklist.
 - `/print-buddy cancel`: pause setup; the saved checklist is kept for resuming.
 While setup is waiting for an answer, reply with the answer as a plain message."""
@@ -523,11 +524,13 @@ def _apply_answers(answers, config_path):
 # ---------------------------------------------------------------------- the flow
 
 def handle_text(key, text, *, store, now=None, token_env="DISCORD_BOT_TOKEN",
-                apply_config=None, report=None):
+                apply_config=None, report=None, bundle=None):
     """One message in the guided flows. Returns the reply text, or None when not ours.
 
     ``key`` identifies one person's session in one channel/thread. ``report`` is a zero-arg
-    callable returning the debugging report; ``apply_config`` writes the consented settings.
+    callable returning the debugging report; ``bundle`` is a zero-arg callable that writes
+    the #390 diagnostics bundle and returns the reply saying where it went;
+    ``apply_config`` writes the consented settings.
     """
     now = time.time() if now is None else now
     raw = str(text or "").strip()
@@ -542,6 +545,11 @@ def handle_text(key, text, *, store, now=None, token_env="DISCORD_BOT_TOKEN",
             if report is None:
                 return "Debugging is not available in this runtime."
             return report()
+        if rest == "bundle":
+            if bundle is None:
+                return ("Diagnostics bundles are not available in this runtime. On the host, run "
+                        "`python3 -m print_buddy.diagnostics_bundle` instead.")
+            return bundle()
         if rest == "status":
             if session is None:
                 return "No guided setup has been started here. `/print-buddy setup` begins one."
@@ -581,7 +589,8 @@ def handle_text(key, text, *, store, now=None, token_env="DISCORD_BOT_TOKEN",
             if session["status"] == "awaiting_consent":
                 return (note + "\n" if note else "") + _review_text(session)
             return _prompt_text(session, note)
-        return "Use `/print-buddy setup`, `/print-buddy debugging`, `/print-buddy status`, or `/print-buddy cancel`."
+        return ("Use `/print-buddy setup`, `/print-buddy debugging`, `/print-buddy bundle`, "
+                "`/print-buddy status`, or `/print-buddy cancel`.")
 
     if session is None or session["status"] not in ("in_progress", "awaiting_consent", "adding_printer"):
         return None

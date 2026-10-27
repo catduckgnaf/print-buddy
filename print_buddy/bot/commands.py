@@ -53,9 +53,9 @@ COMMANDS = (
             (Option("action", "start, stop or status", ("start", "stop", "status")),),
             "/print-live [start | stop | status]"),
     Command("print-buddy", "Guided setup and read-only debugging (never prints)",
-            (Option("action", "setup, debugging, status, cancel or help",
-                    ("setup", "debugging", "status", "cancel", "help")),),
-            "/print-buddy [setup | debugging | status | cancel | help]"),
+            (Option("action", "setup, debugging, bundle, status, cancel or help",
+                    ("setup", "debugging", "bundle", "status", "cancel", "help")),),
+            "/print-buddy [setup | debugging | bundle | status | cancel | help]"),
     Command("print-help", "What Print Buddy can do", usage="/print-help"),
 )
 

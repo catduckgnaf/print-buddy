@@ -136,7 +136,8 @@ def test_check_command_names_every_problem(monkeypatch, capsys, tmp_path):
     monkeypatch.setattr(_config, "profile_env_value", lambda name, **kw: "")
     assert bot_main.check() == 1
     out = capsys.readouterr().out
-    for line in ("FAIL  mode: hermes", "FAIL  token", "FAIL  print channel", "FAIL  allowed users",
+    for line in ("FAIL  mode: hermes", "FAIL  token", "FAIL  print channel",
+                 "ok    access: channel (everyone)",
                  "ok    handlers: 18", "ok    no hermes", f"ok    state dir: {tmp_path}"):
         assert line in out, out
 
@@ -157,7 +158,7 @@ def test_doctor_reports_mode_users_and_a_shared_token(monkeypatch, tmp_path):
     (hermes / "profiles" / "3dprinting").mkdir(parents=True)
     (hermes / "profiles" / "3dprinting" / ".env").write_text("DISCORD_BOT_TOKEN='same-token'\n")
     monkeypatch.setenv("DISCORD_BOT_TOKEN", "same-token")
-    assert doctor.check_bot(cfg) == "standalone, print channel 1, 2 allowed user(s)"
+    assert doctor.check_bot(cfg) == "standalone, print channel 1, access: whitelist (2 users)"
     assert "holds this bot token" in doctor.check_shared_token(cfg, hermes_root=hermes)
     monkeypatch.setenv("DISCORD_BOT_TOKEN", "other-token")
     assert doctor.check_shared_token(cfg, hermes_root=hermes) is None

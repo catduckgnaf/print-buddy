@@ -51,12 +51,18 @@ only to the data folder's `.env` file (mode 600); it is never printed or written
 Doing it by hand instead:
 
 - Standalone: put `DISCORD_BOT_TOKEN=...` in `~/.local/share/print-buddy/.env` (or your `paths.hermes_home`),
-  and set `discord.chat_id` and `discord.allowed_user_ids` in `config/local.yaml`. See [standalone bot](STANDALONE.md).
+  and set `discord.chat_id` in `config/local.yaml` (`discord.allowed_user_ids` is optional; see
+  [Who can use the bot](#who-can-use-the-bot)). See [standalone bot](STANDALONE.md).
 - Hermes: put `DISCORD_BOT_TOKEN`, `DISCORD_ALLOWED_USERS` and `DISCORD_HOME_CHANNEL` in
   `~/.hermes/profiles/<profile>/.env`. See [Hermes installation](INSTALL.md).
 
 Use one bot token for one mode. Running the standalone bot and a Hermes profile on the same token makes both
 answer, or neither. Stop the old owner before starting the new one; see [moving from Hermes](STANDALONE.md#moving-from-hermes).
+More generally: **one token, one instance per channel.** Two running instances that serve the same print
+channel (a leftover Hermes profile next to the container is the classic case) each receive every message in
+it and both act, which looks exactly like random bot misbehaviour. Sharing one token across instances is
+supported only with a separate channel per instance — see [multi-instance](MULTI-INSTANCE.md). The standalone
+bot logs a warning when Discord hands it a second READY on a live session, one sign of a competing login.
 
 ### Standalone configuration
 
@@ -71,7 +77,7 @@ paths:
   hermes_home: ~/.local/share/print-buddy
 discord:
   chat_id: "123456789012345678"             # replace with your channel ID
-  allowed_user_ids: "234567890123456789"    # replace with your user IDs
+  allowed_user_ids: ""                      # optional whitelist; empty lets everyone in the channel use the bot
   token_env: DISCORD_BOT_TOKEN
 ```
 
@@ -87,8 +93,9 @@ Developer Portal and replace it locally. Never commit `.env` or `config/local.ya
 | Setting | Meaning |
 |---|---|
 | `discord.chat_id` | Only this channel and its threads are served |
-| `discord.allowed_user_ids` | Numeric user IDs separated by commas or spaces; empty refuses everyone |
-| `discord.approval_user_id` | Optional additional allowed user |
+| `discord.allowed_user_ids` | Optional whitelist: numeric user IDs separated by commas or spaces. Empty (the default) lets everyone in the print channel use the bot |
+| `discord.denied_user_ids` | Optional deny list: numeric user IDs separated by commas or spaces. A denied user is refused even when whitelisted or the approval user |
+| `discord.approval_user_id` | Optional approval user: always allowed to act; setting one does not restrict anyone else |
 | `discord.token_env` | Environment variable name holding the secret, not the token itself |
 | `discord.bot_name` | Name in replies; does not change the Discord account name |
 | `bot.mode` | Set `standalone`; default is `hermes` |
@@ -108,6 +115,29 @@ one-line **roast** whenever an LLM/vision endpoint is configured (`services.visi
 `CLIPROXY_API_KEY`): `vision.roast_enabled` is on by default, and setting it `false` (or
 `PRINT_BUDDY__VISION__ROAST_ENABLED=false`) turns roasts off. See
 [The roast](TELEGRAM-BOT-SETUP.md#the-roast).
+
+## Who can use the bot
+
+By default, **the print channel is the access boundary**: anyone who can post in `discord.chat_id` can use
+the bot, and channel participants share the channel's session. No user list is required, and the startup log
+says so (`access: channel (everyone)`). Two opt-in lists refine that default:
+
+- `discord.allowed_user_ids` — a whitelist. When set, only the listed users (plus the approval user) can use
+  the bot; the startup log reads `access: whitelist (N users)`.
+- `discord.denied_user_ids` — a deny list. A denied user is refused in every mode, even when whitelisted or
+  the approval user.
+
+A refusal is never silent: the bot logs the user ID and the reason at INFO and posts one short notice in the
+channel per user per hour ("You are not on this bot's allowed list."). Approvals stay separate:
+`discord.approval_user_id` names who may approve prints and is always allowed to act, but setting one never
+restricts anyone else, and widening intake does not widen the live camera's own allowlist
+(`approval_user_id` plus `allowed_user_ids`, as before).
+
+In Hermes mode the same model applies through the Hermes profile: the profile serves its configured
+channels, participants share the channel session, and per-user restriction is the gateway's own
+`DISCORD_ALLOWED_USERS` (see the Hermes install docs) — the standalone `[discord]` lists are not consulted
+there.
+
 
 ## 5. Verify offline before connecting
 

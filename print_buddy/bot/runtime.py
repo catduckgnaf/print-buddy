@@ -1,10 +1,12 @@
 """The standalone bot's message flow, independent of any chat client so tests can drive it.
 
-A message from an allowed user in the print channel, on whichever platform
+A message from a user the platform's access policy allows in the print channel, on whichever platform
 ``[bot] platform`` names, becomes the same event the Hermes
 gateway hands the plugin: ``source`` (who and where), ``text``, ``media_urls`` (dropped model files,
 saved locally) and ``message_id``. The router runs the plugin's handlers on it. What no handler takes
 answers an open button question of the same person, or else gets the optional LLM or the command list.
+A user a list refuses is never dropped silently (#386): the refusal is logged at INFO with the reason
+and answered in channel once per user per hour.
 
 The core talks to the chat service only through the platform interface in
 ``print_buddy.bot.platform``; the Discord entry point passes exactly the
@@ -30,6 +32,11 @@ from .router import Router
 logger = logging.getLogger(__name__)
 
 PROFILE = "3dprinting"  # the plugin's handlers only answer events of the print profile
+# A refused user hears why at most once per period (#386): often enough that
+# a household member who was never told about a list learns it exists, never
+# often enough to spam the channel while they keep posting.
+REFUSAL_NOTICE_PERIOD_S = 3600
+REFUSAL_NOTICE = "You are not on this bot's allowed list."
 MODEL_FILE_EXTS = {".3mf", ".stl"}
 MAX_UPLOAD_BYTES = 200 * 1024 * 1024
 # The intake copies a dropped file into the job archive, so the cached upload is only needed briefly.
@@ -37,16 +44,27 @@ UPLOAD_KEEP_S = 7 * 24 * 3600
 HELP_WORDS = {"/print-help", "/help", "help"}
 
 
+def listed_users(cfg, section="discord"):
+    """The raw allow list of a platform's settings section, without the approver."""
+    if section == "matrix":  # Matrix IDs are @user:server strings, not numbers (#164 stage 3)
+        return settings.matrix_user_ids(cfg[section].get("allowed_user_ids"))
+    return settings.user_ids(cfg[section].get("allowed_user_ids"))
+
+
 def allowed_users(cfg, section="discord"):
     """Allowed user IDs from a platform's settings section, plus its approver."""
-    if section == "matrix":  # Matrix IDs are @user:server strings, not numbers (#164 stage 3)
-        ids = settings.matrix_user_ids(cfg[section].get("allowed_user_ids"))
-    else:
-        ids = settings.user_ids(cfg[section].get("allowed_user_ids"))
+    ids = listed_users(cfg, section)
     approver = str(cfg[section].get("approval_user_id") or "").strip()
     if approver and approver not in ids:
         ids.append(approver)
     return ids
+
+
+def denied_users(cfg, section="discord"):
+    """The opt-in deny list of a platform's settings section (#386)."""
+    if section == "matrix":
+        return settings.matrix_user_ids(cfg[section].get("denied_user_ids"))
+    return settings.user_ids(cfg[section].get("denied_user_ids"), key="denied_user_ids")
 
 
 def platform_name_of(source):
@@ -147,8 +165,14 @@ class BotCore:
             module = platform.platform_module(self.platform_name)
             if module is None:
                 raise ValueError(f"platform {self.platform_name!r} is not implemented yet (#164)")
+            access_section = self.platform_name if section else "discord"
+            # The adapter gets the raw list and the approver separately:
+            # the access mode latches on the list alone, so setting only
+            # an approval user does not opt into a whitelist (#386).
             self.adapter = module.StandaloneAdapter(
-                client, allowed_users(self.cfg, self.platform_name if section else "discord"),
+                client, listed_users(self.cfg, access_section),
+                denied=denied_users(self.cfg, access_section),
+                approver=str(section.get("approval_user_id") or "").strip() or None,
                 upload_max_bytes=section.get("upload_max_bytes") or discord.get("upload_max_bytes"))
         self.chat_id = str(chat_id if chat_id is not None
                            else section.get("chat_id") or (discord.get("chat_id") if not section else "")
@@ -167,6 +191,7 @@ class BotCore:
         # configured: their unmatched text gets the command list only (#73).
         self.use_llm = bool(getattr(self.adapter, "uses_llm", True)) if use_llm is None else bool(use_llm)
         self.llm_opener = llm_opener
+        self._refusal_notices: dict[str, float] = {}  # user_id -> last notice time (#386)
         self.bot_name = str(section.get("bot_name") or discord.get("bot_name") or "").strip() or "Print Buddy"
         self.help = commands.help_text(self.bot_name)
         self.started_at = time.time()
@@ -202,10 +227,29 @@ class BotCore:
         source = make_source(author.id, chat_id, thread_id, platform_name=self.platform_name,
                              printer_id=printer_id)
         if not self.gateway._is_user_authorized_for_source(source):
-            return None  # the gateway ignores people who are not allowed; so do we
+            # In the print channel but refused by an access list: never
+            # silent (#386) — an INFO log naming the user and the reason,
+            # plus one throttled in-channel notice.
+            await self._note_refusal(source)
+            return None
         media = await self.save_attachments(message)
         event = make_event(source, getattr(message, "content", ""), message.id, media)
         return await self.process(event)
+
+    async def _note_refusal(self, source):
+        """Log a list refusal at INFO and tell the channel, once per user per period (#386)."""
+        reason = self.adapter.refusal_reason(source.user_id)
+        if reason is None:
+            return  # authorized after all (a race with a config reload); nothing to note
+        logger.info("ignoring message from %s user %s in channel %s: %s",
+                    self.platform_name, source.user_id, source.chat_id, reason)
+        now = time.time()
+        last = self._refusal_notices.get(str(source.user_id), 0.0)
+        if now - last < REFUSAL_NOTICE_PERIOD_S:
+            return
+        self._refusal_notices[str(source.user_id)] = now
+        metadata = {"thread_id": source.thread_id} if source.thread_id else None
+        await self.adapter.send(chat_id=source.chat_id, content=REFUSAL_NOTICE, metadata=metadata)
 
     async def process(self, event, *, allow_llm=True):
         source = event.source
@@ -293,6 +337,9 @@ class BotCore:
             await interaction.response.send_message(f"{self.bot_name} only works in its print channel.", ephemeral=True)
             return None
         if not self.gateway._is_user_authorized_for_source(source):
+            logger.info("refused slash command from %s user %s in channel %s: %s",
+                        self.platform_name, source.user_id, source.chat_id,
+                        self.adapter.refusal_reason(source.user_id))
             await interaction.response.send_message("Not allowed. Nothing changed.", ephemeral=True)
             return None
         text = commands.as_text(name, values)
@@ -323,6 +370,8 @@ class BotCore:
                 "user": str(user) if user else None, "chat_id": self.chat_id,
                 "channel_printers": dict(self.channel_printers),
                 "listeners": self._listener_statuses(),
-                "allowed_users": len(self.adapter.allowed), "handlers": len(self.router.dispatch_hooks),
+                "allowed_users": len(self.adapter.allowed),
+                "access": self.adapter.access_description(),
+                "handlers": len(self.router.dispatch_hooks),
                 "llm": bool(self.use_llm and llm.configured(self.cfg)), "open_prompts": prompts.open_count(),
                 "hermes_modules": health.hermes_modules_loaded()}

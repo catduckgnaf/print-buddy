@@ -194,9 +194,19 @@ class PrintBuddyBot(ext_commands.Bot):
         self.connected = True
 
     async def on_ready(self):
+        if self.connected:
+            # A second READY on a live session means Discord invalidated
+            # the session under us. One cause is another process logging
+            # in with the same bot token (#386): two instances serving
+            # the SAME channel each receive every message and both act.
+            # (Sharing one token across instances is supported only with
+            # one instance per channel — docs/MULTI-INSTANCE.md.)
+            logger.warning("gateway READY arrived on an already-connected session; "
+                           "if another process logged in with this bot token, check "
+                           "that no two instances serve the same print channel")
         self.connected = True
-        logger.info("logged in as %s; print channel %s; %d allowed user(s); handlers: %s",
-                    self.user, self.core.chat_id, len(self.core.adapter.allowed),
+        logger.info("logged in as %s; print channel %s; access: %s; handlers: %s",
+                    self.user, self.core.chat_id, self.core.adapter.access_description(),
                     ", ".join(self.core.router.handler_names()))
         health.write(self.core.status(True))
 

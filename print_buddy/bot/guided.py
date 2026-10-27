@@ -112,11 +112,13 @@ def _validate_chat_id(value, _answers):
 
 def _validate_user_ids(value, _answers):
     from ..setup_wizard import _ids
+    if value.strip().casefold() in ("everyone", "anyone", "all"):
+        return ""  # channel mode (#386): the print channel is the access boundary
     error = _ids(value)
     if error:
         raise ValueError(error)
     if not value.strip():
-        raise ValueError("at least one allowed user ID is required; nobody can use the bot without one")
+        raise ValueError("reply with user IDs, or `everyone` to let anyone in the print channel use the bot")
     return value.strip()
 
 
@@ -179,7 +181,8 @@ def steps(token_env="DISCORD_BOT_TOKEN"):
              "Developer Mode on, then right-click the channel > Copy Channel ID.", _validate_chat_id),
         Step("user_ids", "Allowed users",
              "Reply with the numeric Discord user IDs allowed to use Print Buddy, separated by "
-             "commas (right-click a user > Copy User ID, with Developer Mode on).", _validate_user_ids),
+             "commas (right-click a user > Copy User ID, with Developer Mode on) — or reply "
+             "`everyone` to let anyone who can post in the print channel use it.", _validate_user_ids),
         Step("moonraker_url", "Moonraker URL (optional)",
              "If this printer runs Klipper/Moonraker, reply with its URL (for example "
              "http://printer.local:7125). Otherwise reply `skip`.", _validate_service_url),
@@ -357,7 +360,8 @@ def _review_text(session):
     lines = ["**Setup is ready to review.** Nothing has been written yet.",
              f"- Printer model: `{answers.get('model')}`",
              f"- Bot mode: `{answers.get('mode')}`",
-             "- Print channel and allowed users: the IDs you entered (not repeated here)",
+             "- Print channel and access: the user IDs you entered (not repeated here), "
+             "or everyone in the channel if you chose `everyone`",
              f"- Moonraker URL: {answers.get('moonraker_url') or 'not set'}",
              f"- Spoolman URL: {answers.get('spoolman_url') or 'not set'}",
              f"- Bot token: {'stored in its environment variable' if answers.get('token_stored') else 'not stored yet — the bot cannot log in until it is'}"]
@@ -399,7 +403,8 @@ def _manual_text(session):
     else:
         lines.append(f"   - `[printer] model` = `{answers.get('model')}`")
     lines += [f"   - `[bot] mode` = `{answers.get('mode')}`",
-              "   - `[discord] chat_id` and `allowed_user_ids` = the numeric IDs you entered above"]
+              "   - `[discord] chat_id` and `allowed_user_ids` = what you entered above "
+              "(blank `allowed_user_ids` = everyone in the channel)"]
     if answers.get("moonraker_url") and not roster:
         lines.append("   - `[services] moonraker_url` = the URL you entered above")
     if answers.get("spoolman_url"):
@@ -775,16 +780,16 @@ def run_diagnostics(*, loader=None, token_getter=None, probe=None, login_probe=N
         missing = []
         if not chat.isdigit():
             missing.append("discord.chat_id is not a numeric channel ID")
-        if not users:
-            missing.append("no allowed user IDs are configured")
         needed = ", ".join(setup_wizard.discord_permissions())
         if missing:
             findings.append(Finding("permissions", "fail", clean("; ".join(missing)),
                                     f"The bot needs these channel permissions: {needed}. "
                                     "Set the IDs in config/local.yaml and check channel overrides."))
         else:
+            # No allow list is a valid mode (#386): everyone in the channel.
+            access = f"{len(users)} allowed user(s)" if users else "channel access (everyone in the print channel)"
             findings.append(Finding("permissions", "ok",
-                                    clean(f"print channel set; {len(users)} allowed user(s); "
+                                    clean(f"print channel set; access: {access}; "
                                           f"required channel permissions: {needed}"),
                                     ""))
 

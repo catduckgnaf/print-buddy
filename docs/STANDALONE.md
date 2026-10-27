@@ -56,8 +56,9 @@ message. `python3 -m print_buddy.doctor` warns when a Hermes profile holds the s
 | `logging.file` | empty | Also write a rotating log file (5 MiB, 3 backups) at this path. Empty logs to stderr only |
 | `discord.bot_name` | `Print Buddy` | Name used in bot replies and help; environment: `PRINT_BUDDY__DISCORD__BOT_NAME` |
 | `discord.chat_id` | empty | The print channel. The bot ignores every other channel (threads inside it work) |
-| `discord.allowed_user_ids` | empty | Discord user IDs allowed to use the bot, separated by commas or spaces |
-| `discord.approval_user_id` | empty | Always allowed as well |
+| `discord.allowed_user_ids` | empty | Optional whitelist of Discord user IDs, separated by commas or spaces. Empty lets everyone in the print channel use the bot |
+| `discord.denied_user_ids` | empty | Optional deny list of Discord user IDs; a denied user is refused even when whitelisted or the approval user |
+| `discord.approval_user_id` | empty | Always allowed as well; setting one does not restrict anyone else |
 | `discord.token_env` | `DISCORD_BOT_TOKEN` | Name of the environment variable that holds the bot token |
 | `llm.chat_url` | empty | Optional OpenAI-compatible chat completions URL. Empty: unmatched text gets the command list |
 | `llm.model` | empty | Model name, required when `chat_url` is set |
@@ -75,8 +76,11 @@ the same variable from `.env`. Restart the bot after changing it. This changes i
 not the Discord account username or server nickname; set those in Discord. The default stays `Print Buddy`.
 
 The token is only ever read from the environment variable `discord.token_env` names, or from the `.env` file in
-`paths.hermes_home` (the data folder; the name is historical, it does not need Hermes). Nobody allowed means
-nobody can use the bot: with no allowed users, every message is ignored and `check` fails.
+`paths.hermes_home` (the data folder; the name is historical, it does not need Hermes). With no allow list,
+everyone in the print channel can use the bot — the channel is the access boundary — and `check` reports
+`access: channel (everyone)`; set `discord.allowed_user_ids` to restrict the bot to listed users, and
+`discord.denied_user_ids` to exclude specific users in any mode. A refused message is logged at INFO with
+the user ID and reason, and answered in channel once per user per hour — never silently dropped.
 
 ```yaml
 # config/local.yaml
@@ -175,7 +179,7 @@ Required environment: `PRINT_BUDDY__BOT__MODE=standalone`, `DISCORD_BOT_TOKEN`, 
    that profile).
 2. Keep `paths.hermes_home` pointing at the old profile to keep its state (print numbers, plans, alerts), or copy
    its `state/` folder to the new data folder.
-3. Set `bot.mode: standalone`, `discord.allowed_user_ids`, and put `DISCORD_BOT_TOKEN` in the environment or the
+3. Set `bot.mode: standalone` and `discord.chat_id` (`discord.allowed_user_ids` is optional), and put `DISCORD_BOT_TOKEN` in the environment or the
    data folder's `.env`.
 4. Run `python3 -m print_buddy.bot check`, then `scripts/install-standalone.sh` and enable both units.
 

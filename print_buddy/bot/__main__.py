@@ -33,9 +33,13 @@ def checks(cfg):
             else f"${token_env} is empty; put the Discord bot token in that environment variable")
         chat = str(cfg["discord"]["chat_id"] or "")
         add("print channel", chat.isdigit(), chat or "discord.chat_id is empty")
-        users = allowed_users(cfg)
-        add("allowed users", bool(users), f"{len(users)} user(s)" if users
-            else "none: set discord.allowed_user_ids (or approval_user_id); everyone is refused")
+        # Discord access (#386): an empty allow list is a valid mode (the
+        # channel is the boundary), never a failure. The row names the mode
+        # so a check run states who can use the bot.
+        from .platform import describe_access
+        from .runtime import denied_users, listed_users
+        add("access", True, describe_access(len(allowed_users(cfg)), len(denied_users(cfg)),
+                                            not listed_users(cfg)))
     elif name == "telegram":
         from .telegram import telegram_token
         token_env = cfg["telegram"]["token_env"]

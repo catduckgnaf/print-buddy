@@ -42,7 +42,10 @@ Browser login: a browser cannot send the ``X-WebUI-Token`` header, so
 ``GET /login`` (reachable without auth — it is the entry point) renders
 a token form when a token is configured, and ``POST /login`` trades a
 correct token for a session cookie (``SESSION_COOKIE``, HttpOnly,
-SameSite=Strict). A valid, unexpired session cookie authorises GETs
+SameSite=Strict). An unauthenticated browser navigation (a GET for a
+non-API page with ``Accept: text/html``) redirects to ``/login``
+instead of returning the JSON 401 (#440); API requests keep the JSON
+401. A valid, unexpired session cookie authorises GETs
 exactly like the header; it never authorises a config POST on its own
 (those still need the header or the form token, so login cannot be
 turned into a CSRF path). Sessions live only in server memory with a
@@ -269,6 +272,15 @@ class _Handler(BaseHTTPRequestHandler):
             return False
         return True
 
+    def _browser_navigation(self, path):
+        """True for a browser page navigation: a GET for a non-API page
+        whose Accept header asks for HTML (#440). API paths always keep
+        the JSON contract, whatever the Accept header says."""
+        if path == "/api" or path.startswith("/api/"):
+            return False
+        accept = self.headers.get("Accept") or ""
+        return "text/html" in accept.lower()
+
     def _authorized(self):
         """GET auth: no token configured, the header, or a login session."""
         if not self.server.webui_token:
@@ -298,6 +310,14 @@ class _Handler(BaseHTTPRequestHandler):
                 self._login_page()
                 return
             if not self._authorized():
+                if self._browser_navigation(path):
+                    # A browser following the Unraid WebUI link (or any
+                    # bookmark) sends Accept: text/html and cannot send
+                    # the token header: send it to the login form
+                    # instead of raw JSON (#440). API clients keep the
+                    # JSON 401 below.
+                    self._redirect("/login")
+                    return
                 self._json(401, {"ok": False, "reason": f"missing or wrong {TOKEN_HEADER}"})
                 return
             if path == "/":

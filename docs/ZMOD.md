@@ -65,6 +65,37 @@ The filament system is where they part:
   Creator 5; the print geometry and tool model are identical, and its template
   records the chamber and filtration support.
 
+## Bundled Spoolman from printer Moonraker (#443)
+
+Print Buddy's bundled Spoolman normally lives on loopback inside the
+Print Buddy container, which is enough for Print Buddy itself. When
+Moonraker runs on the printer hardware — the usual ZMod layout, for
+example an AD5X at `http://192.168.x.x:7125` — Moonraker's own
+`[spoolman]` component needs to reach that API over the LAN to sync
+active spool IDs with the IFS slots. That access is opt-in:
+
+1. In the Unraid template, keep the advanced **Spoolman port** mapping
+   (host 7912 to container 8000) and set the advanced **Spoolman bind
+   host** variable `SPOOLMAN_HOST=0.0.0.0`. With the default
+   `127.0.0.1`, Spoolman stays loopback-only and unexposed. Under
+   Compose instead, uncomment the `"7912:8000"` mapping and set
+   `SPOOLMAN_HOST=0.0.0.0` in `.env` (see
+   [Docker](DOCKER.md#included-spoolman)).
+2. In the printer's Moonraker config, point `[spoolman]` at the
+   Print Buddy host:
+
+   ```ini
+   [spoolman]
+   server: http://<unraid-ip>:7912
+   ```
+
+3. Check from any LAN machine: `GET http://<unraid-ip>:7912/api/v1/info`
+   answers HTTP 200 when the bundled Spoolman is up.
+
+The Spoolman API is unauthenticated — LAN only, never forward port 7912
+from a router. Home Assistant REST sensors use the same base URL
+(`http://<unraid-ip>:7912/api/v1/...`).
+
 ## Choosing a model
 
 Set `[printer] model` to the key from the table (or `PRINT_BUDDY__PRINTER__MODEL` in

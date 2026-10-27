@@ -16,12 +16,26 @@ Exit codes: 0 = the Web UI is enabled and a port is chosen, start it
 enabled without a port, so the supervisor starts nothing; 2 = the
 configuration could not be resolved (the supervisor stops with the
 printed error rather than guessing).
+
+One more 3 case (#440): enabled with a port on a non-loopback host but
+no access token in the environment. The server itself still refuses
+that bind outright (print_buddy.webui.server.check_start — a
+LAN-reachable Web UI must never run unauthenticated), but in the
+supervised container that refusal used to kill the whole container on
+an otherwise healthy install. The gate now reports the blocked start
+with the fix (set the token, or bind loopback) and the supervisor
+carries on without the Web UI: the bot, listener and Spoolman are
+unaffected, and the Web UI still never runs unauthenticated.
 """
 from __future__ import annotations
 
+import ipaddress
+import os
 import sys
 
 from . import settings
+
+LOOPBACK_NAMES = frozenset({"localhost"})
 
 
 def webui_config(data=None):
@@ -37,19 +51,56 @@ def webui_config(data=None):
             int(webui["port"] or 0), str(webui["access_token_env"]))
 
 
-def decide(data=None):
+def is_loopback(host):
+    """True for loopback bind hosts only; mirrors webui.server.is_loopback."""
+    if host in LOOPBACK_NAMES:
+        return True
+    try:
+        return ipaddress.ip_address(host).is_loopback
+    except ValueError:
+        return False
+
+
+def start_blocked(host, port, env_name, environ=None):
+    """Why an enabled Web UI must not start, or None when it may (#440).
+
+    The one blocked case: a non-loopback bind with no access token in
+    the environment variable ``env_name`` names. The server refuses
+    that bind itself; the gate reports it first so the supervised
+    container degrades to "no Web UI" with guidance instead of halting.
+    docker/healthcheck.py mirrors this through the same helper so the
+    probe and the supervisor can never disagree.
+    """
+    environ = os.environ if environ is None else environ
+    if is_loopback(host) or (environ.get(env_name) or ""):
+        return None
+    return (f"webui gate: enabled on {host}:{port} but ${env_name} is empty: "
+            f"a non-loopback Web UI requires an access token, so it was not "
+            f"started. Set {env_name} to a long random value (Unraid: the "
+            f"'Web UI access token' field) and restart the container, or bind "
+            f"127.0.0.1 to keep the Web UI inside the container. The bot, "
+            f"listener and Spoolman are unaffected.")
+
+
+def decide(data=None, environ=None):
     """0 when the supervisor should start the Web UI, 3 when it should not."""
-    enabled, _host, port, _env_name = webui_config(data)
-    return 0 if enabled and port > 0 else 3
+    enabled, host, port, env_name = webui_config(data)
+    if not (enabled and port > 0):
+        return 3
+    return 3 if start_blocked(host, port, env_name, environ) else 0
 
 
 def main():
     try:
-        enabled, host, port, _env_name = webui_config()
+        enabled, host, port, env_name = webui_config()
     except settings.SettingsError as exc:
         print(f"webui gate: configuration unresolved: {exc}", file=sys.stderr)
         return 2
     if enabled and port > 0:
+        blocked = start_blocked(host, port, env_name)
+        if blocked:
+            print(blocked)
+            return 3
         print(f"webui gate: enabled on {host}:{port}")
         return 0
     if enabled:

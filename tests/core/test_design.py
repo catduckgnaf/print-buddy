@@ -291,3 +291,193 @@ def test_turn_cap_stops_an_endless_session(tmp_path):
     session["scad"] = "turn-1.scad"
     with pytest.raises(design.DesignError, match="turns"):
         run(eng.run_turn(session, "one more"))
+
+
+# --------------------------------------------------------------------- Stage 2: editing
+
+EDIT_BODY = ("difference() {\n"
+             "  scale([1, 1, 2]) base();\n"
+             "  translate([0, 0, -1]) cylinder(h = 99, d = 4, $fn = 48);\n"
+             "}\n")
+
+
+def _box_triangles(dx, dy, dz, ox=0.0, oy=0.0, oz=0.0):
+    """The 12 triangles of an axis-aligned box (the geometry corpus helper's winding)."""
+    v = [(ox, oy, oz), (ox + dx, oy, oz), (ox + dx, oy + dy, oz), (ox, oy + dy, oz),
+         (ox, oy, oz + dz), (ox + dx, oy, oz + dz), (ox + dx, oy + dy, oz + dz),
+         (ox, oy + dy, oz + dz)]
+    faces = [(0, 2, 1), (0, 3, 2), (4, 5, 6), (4, 6, 7), (0, 1, 5), (0, 5, 4),
+             (2, 3, 7), (2, 7, 6), (1, 2, 6), (1, 6, 5), (3, 0, 4), (3, 4, 7)]
+    return [[v[a], v[b], v[c]] for a, b, c in faces]
+
+
+def _plate_stl(tmp_path, name="plate.stl"):
+    from print_buddy.core.geometry_layout import write_binary_stl
+    path = tmp_path / name
+    write_binary_stl(_box_triangles(40, 20, 3, -20, -10, 0), path)
+    return path
+
+
+def _tiny_3mf(tmp_path, name="plate.3mf"):
+    """A one-object 40x20x3 3MF, built the way the geometry corpus builds them."""
+    import zipfile
+    tris = _box_triangles(40, 20, 3, -20, -10, 0)
+    verts, index = [], {}
+    faces = []
+    for tri in tris:
+        face = []
+        for point in tri:
+            if point not in index:
+                index[point] = len(verts)
+                verts.append(point)
+            face.append(index[point])
+        faces.append(face)
+    model = ['<?xml version="1.0" encoding="UTF-8"?>',
+             '<model unit="millimeter" xml:lang="en-US" '
+             'xmlns="http://schemas.microsoft.com/3dmanufacturing/core/2015/02">',
+             '  <resources>', '    <object id="1" name="plate" type="model">',
+             '      <mesh>', '        <vertices>']
+    model += [f'          <vertex x="{x}" y="{y}" z="{z}"/>' for x, y, z in verts]
+    model += ['        </vertices>', '        <triangles>']
+    model += [f'          <triangle v1="{a}" v2="{b}" v3="{c}"/>' for a, b, c in faces]
+    model += ['        </triangles>', '      </mesh>', '    </object>', '  </resources>',
+              '  <build>', '    <item objectid="1" transform="1 0 0 0 1 0 0 0 1 0 0 0"/>',
+              '  </build>', '</model>']
+    target = tmp_path / name
+    with zipfile.ZipFile(target, "w", zipfile.ZIP_DEFLATED) as zf:
+        zf.writestr("[Content_Types].xml",
+                    '<?xml version="1.0" encoding="UTF-8"?>\n'
+                    '<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">'
+                    '<Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>'
+                    '<Default Extension="model" ContentType="application/vnd.ms-package.3dmanufacturing-3dmodel+xml"/>'
+                    '</Types>\n')
+        zf.writestr("_rels/.rels",
+                    '<?xml version="1.0" encoding="UTF-8"?>\n'
+                    '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">'
+                    '<Relationship Target="/3D/3dmodel.model" Id="rel0" '
+                    'Type="http://schemas.microsoft.com/3dmanufacturing/2013/01/3dmodel"/>'
+                    '</Relationships>\n')
+        zf.writestr("3D/3dmodel.model", "\n".join(model).encode())
+    return target
+
+
+@needs_scad
+def test_stl_edit_session_scales_base_and_cuts_a_hole(tmp_path):
+    eng = engine(tmp_path, scripted([EDIT_BODY]))
+    session = eng.start_edit_session("o", "c", "double the height, centre hole",
+                                     _plate_stl(tmp_path))
+    assert session["kind"] == "edit" and session["edit_mode"] == "mesh"
+    assert session["source"]["type"] == "stl" and session["source"]["origin"] == "file"
+    result = run(eng.run_turn(session, "double the height and drill a 4 mm centre hole"))
+    dims = result["geometry"]["dimensions_mm"]
+    assert dims[0] == pytest.approx(40, abs=0.6)
+    assert dims[1] == pytest.approx(20, abs=0.6)
+    assert dims[2] == pytest.approx(6, abs=0.6)  # 3 mm plate doubled in Z
+    assert "as a mesh" in design.source_note(session)
+    # The render file is header + body: exactly one import, and it is the header's.
+    composed = Path(result["scad_path"]).read_text()
+    assert composed.count("import(") == 1
+    assert composed.index("import(") < composed.index("difference()")
+    body = Path(result["scad_path"]).with_name("turn-1.body.scad").read_text()
+    assert "import(" not in body and "base()" in body
+
+
+def test_edit_mode_sandbox_refuses_a_model_import_before_render(tmp_path):
+    calls = []
+
+    def counting_runner(cmd, **kwargs):
+        calls.append(cmd)
+        raise AssertionError("openscad must not run")
+
+    eng = engine(tmp_path, scripted(["cube([1, 1, 1]);\nimport('secret.stl');"]),
+                 runner=counting_runner)
+    session = eng.start_edit_session("o", "c", "edit", _plate_stl(tmp_path))
+    with pytest.raises(design.DesignError, match="may not use"):
+        run(eng.run_turn(session, "sneak a file in"))
+    assert calls == []
+
+
+def test_mesh_edit_needs_source_is_plain_words(tmp_path):
+    eng = engine(tmp_path, scripted(
+        ["NEEDS_SOURCE: the knurling is generated by the source code"]))
+    session = eng.start_edit_session("o", "c", "edit", _plate_stl(tmp_path))
+    with pytest.raises(design.DesignError, match="needs the original design source"):
+        run(eng.run_turn(session, "make the knurling coarser"))
+
+
+@needs_scad
+def test_scad_edit_changes_the_copy_and_never_the_original(tmp_path):
+    import hashlib
+    source = tmp_path / "widget.scad"
+    source.write_text(GOOD)
+    before = hashlib.sha256(source.read_bytes()).hexdigest()
+    cmds = []
+
+    def spy_runner(cmd, **kwargs):
+        cmds.append(cmd)
+        return subprocess.run(cmd, **kwargs)
+
+    eng = engine(tmp_path, scripted([THICKER]), runner=spy_runner)
+    session = eng.start_edit_session("o", "c", "make it thicker", source)
+    assert session["edit_mode"] == "scad" and session["scad_deps"] == []
+    result = run(eng.run_turn(session, "make it 5 mm thick"))
+    assert result["geometry"]["dimensions_mm"][2] == pytest.approx(5, abs=0.6)
+    assert hashlib.sha256(source.read_bytes()).hexdigest() == before
+    assert "plate_z = 5" in Path(result["scad_path"]).read_text()
+    # The one parametric mechanism is editing values in the source: no -D overrides.
+    assert cmds and all(not any(arg.startswith("-D") for arg in cmd) for cmd in cmds)
+    assert "in source form" in design.source_note(session)
+
+
+def test_scad_edit_with_external_references_is_flagged_plainly(tmp_path):
+    source = tmp_path / "assembly.scad"
+    source.write_text("use <lib.scad>\nimport('mesh.stl');\nwidget();\n")
+    eng = engine(tmp_path, scripted([GOOD]))
+    session = eng.start_edit_session("o", "c", "edit", source)
+    assert session["scad_deps"] == ["import", "use"]
+    note = design.source_note(session)
+    assert "references other files" in note and "import" in note and "use" in note
+
+
+def test_3mf_converts_through_the_geometry_loader(tmp_path):
+    from print_buddy.core.geometry_layout import describe_triangles
+    from print_buddy.core.orca_adapter import read_stl_triangles
+    out = tmp_path / "converted.stl"
+    design.convert_to_stl(_tiny_3mf(tmp_path), out)
+    info = describe_triangles(read_stl_triangles(out))
+    assert info["dimensions_mm"] == [40.0, 20.0, 3.0]
+
+
+@needs_scad
+def test_3mf_edit_session_renders_from_the_converted_stl(tmp_path):
+    eng = engine(tmp_path, scripted([EDIT_BODY]))
+    session = eng.start_edit_session("o", "c", "edit", _tiny_3mf(tmp_path))
+    assert session["edit_mode"] == "mesh"
+    assert session["source"]["converted_from"] == "3mf"
+    folder = tmp_path / "cache" / "design-sessions" / session["id"]
+    assert (folder / "source.stl").is_file()
+    result = run(eng.run_turn(session, "double the height"))
+    assert result["geometry"]["dimensions_mm"][2] == pytest.approx(6, abs=0.6)
+    assert "converted from the 3MF" in design.source_note(session)
+
+
+def test_link_edit_session_uses_the_injected_fetcher(tmp_path):
+    seen = []
+
+    def fake_fetcher(url, target_dir):
+        seen.append(url)
+        target = Path(target_dir) / "linked.stl"
+        from print_buddy.core.geometry_layout import write_binary_stl
+        write_binary_stl(_box_triangles(10, 10, 2), target)
+        return target
+
+    eng = engine(tmp_path, scripted(["base();"]))
+    session = eng.start_edit_session(
+        "o", "c", "edit", link_url="https://www.printables.com/model/1-x",
+        fetcher=fake_fetcher)
+    assert seen == ["https://www.printables.com/model/1-x"]
+    assert session["source"]["origin"] == "link" and session["edit_mode"] == "mesh"
+    with pytest.raises(design.DesignError, match="exactly one source"):
+        eng.start_edit_session("o", "c", "edit")
+    with pytest.raises(design.DesignError, match="can edit"):
+        eng.start_edit_session("o", "c", "edit", tmp_path / "notes.txt")

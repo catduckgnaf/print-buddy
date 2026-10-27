@@ -233,6 +233,21 @@ def test_dropped_model_file_is_saved_where_the_intake_reads_it(cfg, tmp_path):
     assert not stale.exists() and all(os.path.exists(p) for p in paths)
 
 
+def test_dropped_scad_is_saved_for_design_but_intake_ignores_it(cfg, tmp_path):
+    # #388 Stage 2: a dropped .scad is cached like a model file so a design
+    # message can edit it, but prepared intake's own filter still accepts
+    # only .3mf/.stl — a plain .scad drop starts no intake.
+    discord, core = make(cfg)
+    scad = tmp_path / "widget.scad"
+    scad.write_text("cube([1, 1, 1]);\n")
+    message = discord.message(attachments=[fake_discord.FakeAttachment(scad)])
+    paths = run(core.save_attachments(message))
+    assert len(paths) == 1 and paths[0].endswith("_widget.scad")
+    from types import SimpleNamespace
+    from print_buddy.core.prepared_intake import model_file
+    assert model_file(SimpleNamespace(media_urls=paths)) is None
+
+
 def test_status_reports_no_hermes_modules(cfg):
     discord, core = make(cfg)
     status = core.status(True)

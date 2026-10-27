@@ -1,9 +1,19 @@
-"""AI design with OpenSCAD (#388 Stage 1): create a new printable part from a description.
+"""AI design with OpenSCAD (#388): create a new part, or edit an existing model.
 
 The engine owns the loop — prompt the model, extract the OpenSCAD source, sandbox-scan it,
 render it, validate the mesh, render a preview — and nothing else. It never slices, uploads
 or prints: a finished session's STL is handed to the ordinary prepared-intake flow by the
 caller, and every gate after that is intake's own.
+
+Stage 2 edit sessions are seeded from an existing model and record their kind and source:
+a ``.scad`` is edited in source form (a copy lives in the session; the original is never
+touched — parametric changes are made by editing values in the source, never ``-D``
+overrides, so the session file always shows the real design), while an ``.stl`` (or a
+``.3mf`` converted to STL through the intake's own geometry loader) is edited as a mesh:
+the engine composes the render file as a trusted header defining ``base()`` (the only
+``import`` in the render, naming the session-local source copy) plus the model's body,
+which calls ``base()`` and applies transforms, added shapes and boolean cuts. The sandbox
+scan applies to the model's text only, exactly as for creates.
 
 Safety shape (Stage 0 audit on #388, spike-proven):
 - Model-authored SCAD may not contain import/include/use/surface statements at all. Those
@@ -31,6 +41,7 @@ import subprocess
 import time
 import uuid
 from pathlib import Path
+from urllib.parse import urlsplit
 
 MAX_SCAD_BYTES = 64 * 1024  # a single-file part design never needs more source than this
 RENDER_TIMEOUT_S = 180
@@ -145,6 +156,89 @@ def extract_scad(reply) -> str:
     raise DesignError("the design model did not return any OpenSCAD code")
 
 
+def external_refs(source: str) -> list[str]:
+    """The file-access statement kinds a SCAD text uses (empty when self-contained)."""
+    return [name for name, pattern in _FORBIDDEN if pattern.search(source or "")]
+
+
+def convert_to_stl(source_path, dest_path) -> Path:
+    """Convert a 3MF to a binary STL through the intake geometry loader.
+
+    Uses geometry_layout.load_parts (the same loader prepared intake inspects
+    sources with, unit handling included) and write_binary_stl — there is no
+    second 3MF reader in the design path.
+    """
+    from .geometry_layout import load_parts, write_binary_stl
+    parts, *_ = load_parts(Path(source_path))
+    triangles = []
+    for part in parts:
+        triangles.extend(part["triangles"])
+    if not triangles:
+        raise DesignError("that 3MF contains no printable mesh to edit")
+    return write_binary_stl(triangles, Path(dest_path),
+                            header_text="Print Buddy design 3MF conversion")
+
+
+def fetch_link_source(url, target_dir) -> Path:
+    """Fetch a model link's source file into target_dir; returns the file path.
+
+    The minimal existing fetch-to-file path (the same inventory + download
+    pair prepared intake drives): MakerWorld picks its profile with
+    makerworld_profiles.choose (the URL's profileId when present), Printables
+    must offer exactly one STL/3MF file. Ambiguity is a plain refusal, never
+    a silent pick.
+    """
+    from . import model_job as mj
+    target_dir = Path(target_dir)
+    target_dir.mkdir(parents=True, exist_ok=True)
+    host = urlsplit(str(url)).hostname or ""
+    try:
+        if "makerworld.com" in host:
+            job = mj.maker_inventory(str(url))
+            from .makerworld_profiles import choose as choose_profile
+            hint = re.fullmatch(r"profileId-(\d+)", urlsplit(str(url)).fragment or "")
+            chosen = choose_profile(job["sources"], hint[1] if hint else None)
+            if chosen is None:
+                raise DesignError(
+                    f"that MakerWorld link has {len(job['sources'])} profiles and no clear "
+                    "default, so design cannot pick one; drop the file you want edited")
+            return Path(mj.maker_download(job, chosen, target_dir))
+        job = mj.printables_inventory(str(url))
+        rows = [row for row in job["sources"]
+                if Path(str(row.get("name") or "")).suffix.lower() in (".3mf", ".stl")]
+        if not rows:
+            raise DesignError("that Printables link has no STL or 3MF file to edit")
+        if len(rows) > 1:
+            raise DesignError(
+                f"that Printables link has {len(rows)} model files, so design cannot pick "
+                "one; drop the file you want edited")
+        return Path(mj.printables_download(job, rows[0], target_dir))
+    except DesignError:
+        raise
+    except Exception as exc:
+        raise DesignError(f"the linked model could not be fetched: {exc}") from None
+
+
+def source_note(session) -> str:
+    """One plain line naming what an edit session is working on and its limits."""
+    source = session.get("source") or {}
+    name = source.get("name") or "the model"
+    if session.get("edit_mode") == "scad":
+        note = f"Editing `{name}` in source form — its parameters can be changed directly."
+        deps = session.get("scad_deps") or []
+        if deps:
+            note += (f" Note: the file also references other files ({', '.join(deps)}) that "
+                     "were not dropped with it; a design here must be one self-contained "
+                     "file, so those parts cannot be rendered as-is.")
+        return note
+    if session.get("edit_mode") == "mesh":
+        via = " (converted from the 3MF)" if source.get("converted_from") else ""
+        return (f"Editing `{name}`{via} as a mesh: scaling, mirroring, moving, adding "
+                "shapes and cutting holes work; changes that need the original design's "
+                "parameters do not — the design will say so if you ask for one.")
+    return ""
+
+
 def scan_scad(source: str) -> None:
     """Refuse file-access statements before execution (Stage 0 sandbox spec)."""
     if len(source.encode("utf-8")) > MAX_SCAD_BYTES:
@@ -170,16 +264,48 @@ _SYSTEM_PROMPT = (
     "the complete corrected file."
 )
 
+_MESH_SYSTEM_PROMPT = (
+    "You are the design engine for a 3D printer helper, editing an existing 3D model that "
+    "exists only as a mesh. Answer with ONLY OpenSCAD code (no explanation, no markdown "
+    "fences) that builds the edited model by calling base(): base() is the original model "
+    "as one solid, already defined for you — do not redefine it and do not try to load any "
+    "file yourself. You may transform base() (scale, mirror, rotate, translate), add "
+    "primitive shapes, and combine with union/difference/intersection — e.g. "
+    "'difference() { scale([1, 1, 2]) base(); translate([0, 0, -1]) cylinder(h = 99, d = 6); }'. "
+    "Millimetres; use a sane $fn (24-64). Return the complete body every time, not a diff. "
+    "You may NOT use import, include, use or surface statements. If the requested change "
+    "needs the original design's internal parameters or generated structure (a thread "
+    "pitch, a pattern, a wall built by the source code), you cannot do it from a mesh: "
+    "answer with exactly 'NEEDS_SOURCE: <one short line saying what is needed>' and "
+    "nothing else."
+)
+
+_MESH_HEADER = (
+    "// Print Buddy design render: composed by the engine, not written by the model.\n"
+    "// base() is the model being edited; this header carries the only import in the\n"
+    "// render and it names the session-local source copy.\n"
+    "module base() {{ import(\"{name}\"); }}\n"
+)
+
 
 def _messages(session, instruction, previous_scad=None, error=None):
+    mesh = session.get("edit_mode") == "mesh"
     parts = [f"Design request: {session['description']}"]
     if previous_scad:
-        parts.append(f"Current OpenSCAD (turn {session['turns']}):\n{previous_scad}")
+        label = ("Current edit body (it calls base(); return the complete new body)"
+                 if mesh else f"Current OpenSCAD (turn {session['turns']})")
+        parts.append(f"{label}:\n{previous_scad}")
         parts.append(f"Change requested: {instruction}")
+    elif mesh or session.get("edit_mode") == "scad":
+        parts.append(f"Edit requested: {instruction}")
+    if session.get("scad_deps"):
+        parts.append("Note: the original file references external files that are not "
+                     "available here; return a complete self-contained file.")
     if error:
         parts.append(f"The previous file failed to render. OpenSCAD said:\n{error}\n"
                      "Return the complete corrected file.")
-    return [{"role": "system", "content": _SYSTEM_PROMPT},
+    return [{"role": "system",
+             "content": _MESH_SYSTEM_PROMPT if mesh else _SYSTEM_PROMPT},
             {"role": "user", "content": "\n\n".join(parts)}]
 
 
@@ -327,13 +453,70 @@ class DesignEngine:
 
     # -- session lifecycle -------------------------------------------------
 
-    def start_session(self, owner_key, chat_id, description):
+    def start_session(self, owner_key, chat_id, description, *, kind="create",
+                      source=None):
         prune_old_sessions(self.root)
         session = {"id": uuid.uuid4().hex[:12], "owner_key": owner_key,
                    "chat_id": str(chat_id), "description": str(description)[:500],
+                   "kind": kind, "source": source, "edit_mode": None,
+                   "base_stl": None, "body_file": None, "scad_deps": [],
                    "status": "active", "turns": 0, "created_at": time.time(),
                    "updated_at": time.time(), "scad": None, "stl": None,
                    "preview": None, "geometry": None}
+        return _save(self.root, session)
+
+    def start_edit_session(self, owner_key, chat_id, description, source_path=None, *,
+                           link_url=None, fetcher=None):
+        """Seed an edit session from a dropped file or a model link.
+
+        The source is copied into the session folder (a link is fetched there
+        first, through the existing link machinery); the user's original is
+        never modified. A ``.scad`` seeds source-form editing, an ``.stl``
+        seeds mesh editing directly, and a ``.3mf`` is converted to a
+        session-local STL first.
+        """
+        if (source_path is None) == (link_url is None):
+            raise DesignError("an edit session needs exactly one source: a file or a link")
+        session = self.start_session(owner_key, chat_id, description, kind="edit")
+        folder = _session_path(self.root, session["id"])
+        try:
+            origin = "file"
+            if link_url is not None:
+                origin = "link"
+                fetched = (fetcher or fetch_link_source)(
+                    link_url, folder / "incoming")
+                source_path = Path(fetched)
+            source_path = Path(source_path)
+            suffix = source_path.suffix.lower()
+            if suffix not in (".stl", ".3mf", ".scad"):
+                raise DesignError(
+                    f"design can edit .stl, .3mf and .scad files, not "
+                    f"{suffix or 'a file with no extension'}")
+            if not source_path.is_file():
+                raise DesignError("the model file to edit could not be read")
+            record = {"origin": origin, "name": source_path.name,
+                      "type": suffix.lstrip(".")}
+            session["source"] = record
+            if suffix == ".scad":
+                text = source_path.read_text(encoding="utf-8", errors="replace")
+                (folder / "source.scad").write_text(text, encoding="utf-8")
+                session["edit_mode"] = "scad"
+                session["scad"] = "source.scad"  # the baseline the first turn edits
+                session["scad_deps"] = external_refs(text)
+            else:
+                if suffix == ".stl":
+                    shutil.copyfile(source_path, folder / "source.stl")
+                else:
+                    convert_to_stl(source_path, folder / "source.stl")
+                    record["converted_from"] = "3mf"
+                session["edit_mode"] = "mesh"
+                session["base_stl"] = "source.stl"
+        except DesignError:
+            self.cancel(session)
+            raise
+        except Exception as exc:
+            self.cancel(session)
+            raise DesignError(f"that model could not be prepared for editing: {exc}") from None
         return _save(self.root, session)
 
     def cancel(self, session):
@@ -355,6 +538,14 @@ class DesignEngine:
         path = _session_path(self.root, session["id"]) / name
         return path.read_text(encoding="utf-8") if path.is_file() else None
 
+    def current_body(self, session):
+        """The model's last mesh-edit body (the text it actually authored), if any."""
+        name = session.get("body_file")
+        if not name:
+            return None
+        path = _session_path(self.root, session["id"]) / name
+        return path.read_text(encoding="utf-8") if path.is_file() else None
+
     # -- one turn ----------------------------------------------------------
 
     async def _call(self, messages):
@@ -369,6 +560,14 @@ class DesignEngine:
         turn = session["turns"] + 1
         scad_path = folder / f"turn-{turn}.scad"
         stl_path = folder / f"turn-{turn}.stl"
+        if session.get("edit_mode") == "mesh":
+            # The model authored a body, never a file: the render file is the
+            # driver header (the only import) plus that body, and the body is
+            # kept separately so the next turn shows the model its own text.
+            body_path = folder / f"turn-{turn}.body.scad"
+            body_path.write_text(source, encoding="utf-8")
+            session["body_file"] = body_path.name
+            source = _MESH_HEADER.format(name=session["base_stl"]) + source
         scad_path.write_text(source, encoding="utf-8")
         ok, error = render_scad(scad_path, stl_path, timeout_s=self.render_timeout_s,
                                 runner=self.runner)
@@ -414,12 +613,22 @@ class DesignEngine:
         if session["turns"] >= MAX_TURNS and session.get("scad"):
             raise DesignError(f"this design session has had its {MAX_TURNS} turns; "
                               "slice it or cancel and start a new design")
-        previous = self.current_scad(session)
+        mesh = session.get("edit_mode") == "mesh"
+        previous = self.current_body(session) if mesh else self.current_scad(session)
         error = None
         attempts = 1 + self.repair_attempts
         last_error = ""
         for attempt in range(attempts):
             reply = await self._call(_messages(session, instruction, previous, error))
+            needs = re.match(r"\s*NEEDS_SOURCE:\s*(.+)", str(reply or ""))
+            if needs:
+                # Not a render failure and not repairable by asking again:
+                # the change needs the source design, said in plain words.
+                raise DesignError(
+                    f"that change needs the original design source: {needs[1].strip()} "
+                    "Mesh editing can scale, mirror, move, add shapes and cut holes; "
+                    "drop the original .scad file if you have it and design can edit "
+                    "that directly.")
             source = extract_scad(reply)
             scan_scad(source)  # a sandbox refusal is not repaired by asking again
             result, last_error = await asyncio.to_thread(

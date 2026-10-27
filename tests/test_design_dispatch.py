@@ -190,3 +190,205 @@ def test_failed_turn_reports_the_error_and_offers_no_choices(design_env):
     assert out["reason"] == "design turn failed"
     assert "may not use" in adapter.sent[-1]
     assert adapter.clarified == []
+
+
+# --------------------------------------------------------------------- Stage 2: editing + NL routing
+
+EDIT_BODY = ("difference() {\n"
+             "  scale([1, 1, 2]) base();\n"
+             "  translate([0, 0, -1]) cylinder(h = 99, d = 4, $fn = 48);\n"
+             "}\n")
+
+
+def _box_triangles(dx, dy, dz, ox=0.0, oy=0.0, oz=0.0):
+    v = [(ox, oy, oz), (ox + dx, oy, oz), (ox + dx, oy + dy, oz), (ox, oy + dy, oz),
+         (ox, oy, oz + dz), (ox + dx, oy, oz + dz), (ox + dx, oy + dy, oz + dz),
+         (ox, oy + dy, oz + dz)]
+    faces = [(0, 2, 1), (0, 3, 2), (4, 5, 6), (4, 6, 7), (0, 1, 5), (0, 5, 4),
+             (2, 3, 7), (2, 7, 6), (1, 2, 6), (1, 6, 5), (3, 0, 4), (3, 4, 7)]
+    return [[v[a], v[b], v[c]] for a, b, c in faces]
+
+
+def _plate_stl(tmp_path, name="plate.stl"):
+    from print_buddy.core.geometry_layout import write_binary_stl
+    path = tmp_path / name
+    write_binary_stl(_box_triangles(40, 20, 3, -20, -10, 0), path)
+    return path
+
+
+def _media_event(text, *paths):
+    event = _event(text)
+    event.media_urls = [str(p) for p in paths]
+    return event
+
+
+def _dispatch_event(event, adapter, fake, choice):
+    with mock.patch.object(plugin, "_design_transport", return_value=(fake, "http")), \
+            mock.patch.object(core_prompts, "gateway", return_value=core_prompts), \
+            mock.patch.object(core_prompts, "wait_for_response", return_value=choice):
+        return asyncio.run(plugin.design_dispatch(event, _gateway(adapter)))
+
+
+def _sessions(tmp_path):
+    import json as _json
+    folder = tmp_path / "cache" / "design-sessions"
+    return [_json.loads(p.read_text()) for p in folder.glob("*/session.json")] \
+        if folder.is_dir() else []
+
+
+def test_design_parse_matrix():
+    parse = plugin._design_parse
+    assert parse("design me a hook") == ("create", "a hook")
+    assert parse("Help me design a shelf, please") == ("create", "a shelf, please")
+    assert parse("help me design") == ("ask", "")
+    assert parse("design this") == ("context", "")
+    assert parse("please redesign this model") == ("context", "please model")
+    assert parse("CHANGE THIS to be taller") == ("context", "to be taller")
+    assert parse("edit this") == ("context", "")
+    for plain in ("print it", "designated driver on Friday", "redesign the kitchen",
+                  "changes this week", "https://makerworld.com/en/models/1-x",
+                  "just chatting"):
+        assert parse(plain) is None, plain
+
+
+@needs_scad
+def test_command_with_dropped_stl_starts_a_mesh_edit(design_env, tmp_path):
+    adapter = FakeAdapter()
+    out = _dispatch_event(
+        _media_event("/print-design double the height", _plate_stl(tmp_path)),
+        adapter, scripted([EDIT_BODY]), design.CANCEL_LABEL)
+    assert out["reason"] == "design cancelled"
+    (session,) = _sessions(tmp_path)
+    assert session["kind"] == "edit" and session["edit_mode"] == "mesh"
+    assert "as a mesh" in adapter.sent[0]
+    assert "40 × 20 × 6" in adapter.sent[0]  # the doubled plate, from the render
+
+
+@needs_scad
+def test_command_with_dropped_scad_starts_a_source_edit(design_env, tmp_path):
+    source = tmp_path / "widget.scad"
+    source.write_text(GOOD)
+    adapter = FakeAdapter()
+    out = _dispatch_event(_media_event("/print-design make it thicker", source),
+                          adapter, scripted([THICKER]), design.CANCEL_LABEL)
+    assert out["reason"] == "design cancelled"
+    (session,) = _sessions(tmp_path)
+    assert session["kind"] == "edit" and session["edit_mode"] == "scad"
+    assert "in source form" in adapter.sent[0]
+    assert "40 × 20 × 5" in adapter.sent[0]
+
+
+@needs_scad
+def test_nl_design_this_with_a_file_edits_it(design_env, tmp_path):
+    adapter = FakeAdapter()
+    out = _dispatch_event(
+        _media_event("design this — double the height", _plate_stl(tmp_path)),
+        adapter, scripted([EDIT_BODY]), design.CANCEL_LABEL)
+    assert out["reason"] == "design cancelled"
+    (session,) = _sessions(tmp_path)
+    assert session["kind"] == "edit" and session["edit_mode"] == "mesh"
+
+
+@needs_scad
+def test_nl_design_me_creates(design_env, tmp_path):
+    adapter = FakeAdapter()
+    out = _dispatch_event(_event("design me a plate with two 4 mm holes"),
+                          adapter, scripted([GOOD]), design.CANCEL_LABEL)
+    assert out["reason"] == "design cancelled"
+    (session,) = _sessions(tmp_path)
+    assert session["kind"] == "create"
+    assert "a plate with two 4 mm holes" in session["description"]
+
+
+@needs_scad
+def test_nl_link_in_the_message_is_fetched_and_edited(design_env, tmp_path):
+    fetched = []
+
+    def fake_fetch(url, folder):
+        fetched.append(url)
+        return _plate_stl(Path(folder), "linked.stl")
+
+    adapter = FakeAdapter()
+    with mock.patch.object(plugin, "_fetch_design_link", side_effect=fake_fetch):
+        out = _dispatch_event(
+            _event("redesign this https://www.printables.com/model/9-x — double the height"),
+            adapter, scripted([EDIT_BODY]), design.CANCEL_LABEL)
+    assert out["reason"] == "design cancelled"
+    assert fetched == ["https://www.printables.com/model/9-x"]
+    (session,) = _sessions(tmp_path)
+    assert session["kind"] == "edit" and session["source"]["origin"] == "link"
+
+
+@needs_scad
+def test_nl_change_this_uses_the_recent_model_link(design_env, tmp_path):
+    def fake_fetch(url, folder):
+        return _plate_stl(Path(folder), "recent.stl")
+
+    adapter = FakeAdapter()
+    with mock.patch.object(plugin, "_recent_model_link",
+                           return_value="https://www.printables.com/model/9-x"), \
+            mock.patch.object(plugin, "_fetch_design_link", side_effect=fake_fetch):
+        out = _dispatch_event(_event("change this to be twice as tall"),
+                              adapter, scripted([EDIT_BODY]), design.CANCEL_LABEL)
+    assert out["reason"] == "design cancelled"
+    (session,) = _sessions(tmp_path)
+    assert session["kind"] == "edit" and session["source"]["origin"] == "link"
+
+
+def test_change_this_with_no_model_anywhere_is_not_consumed(design_env):
+    adapter = FakeAdapter()
+    out = _dispatch_event(_event("change this"), adapter, scripted([GOOD]),
+                          design.CANCEL_LABEL)
+    assert out is None
+    assert adapter.sent == []
+
+
+def test_design_this_with_no_model_asks_for_one(design_env):
+    adapter = FakeAdapter()
+    out = _dispatch_event(_event("design this"), adapter, scripted([GOOD]),
+                          design.CANCEL_LABEL)
+    assert out["reason"] == "design needs a model or a description"
+    assert "Drop the file" in adapter.sent[-1]
+
+
+@pytest.mark.parametrize("text", [
+    "https://makerworld.com/en/models/123-thing",
+    "print it",
+    "/print-next",
+    "just chatting about printers",
+])
+def test_non_trigger_messages_fall_through(design_env, text):
+    adapter = FakeAdapter()
+    assert _dispatch_event(_event(text), adapter, scripted([GOOD]),
+                           design.CANCEL_LABEL) is None
+    assert adapter.sent == []
+
+
+def test_plain_file_drop_without_a_trigger_falls_through(design_env, tmp_path):
+    adapter = FakeAdapter()
+    assert _dispatch_event(_media_event("", _plate_stl(tmp_path)), adapter,
+                           scripted([GOOD]), design.CANCEL_LABEL) is None
+    assert adapter.sent == []
+
+
+def test_nl_phrases_fall_through_when_design_is_off(design_env):
+    design_env["design"]["enabled"] = False
+    adapter = FakeAdapter()
+    assert _dispatch_event(_event("design me a hook"), adapter, scripted([GOOD]),
+                           design.CANCEL_LABEL) is None
+    assert adapter.sent == []
+
+
+@needs_scad
+def test_awaiting_revision_still_wins_over_trigger_words(design_env, tmp_path):
+    adapter = FakeAdapter()
+    fake = scripted([GOOD, THICKER])
+    out = _dispatch_event(_event("/print-design a plate"), adapter, fake,
+                          design.CHANGE_LABEL)
+    assert out["reason"] == "design awaiting revision"
+    out = _dispatch_event(_event("design this but 5 mm thick"), adapter, fake,
+                          design.CANCEL_LABEL)
+    assert out["reason"] == "design cancelled"
+    assert "Design turn 2" in adapter.sent[-2]
+    (session,) = _sessions(tmp_path)
+    assert session["kind"] == "create" and session["turns"] == 2

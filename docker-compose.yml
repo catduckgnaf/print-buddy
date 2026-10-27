@@ -43,6 +43,9 @@ services:
       PRINT_BUDDY__BAMBU__LAN_SERIAL: ${PRINT_BUDDY__BAMBU__LAN_SERIAL:-}
       PRINT_BUDDY__DISCORD__APPROVAL_USER_ID: ${PRINT_BUDDY__DISCORD__APPROVAL_USER_ID:-}
       PRINT_BUDDY__DISCORD__TIMEZONE: ${PRINT_BUDDY__DISCORD__TIMEZONE:-America/New_York}
+      # Discord chat LLM (#466): true by default; false runs Discord as a
+      # pure bot while the LLM below stays configured for /print-design.
+      PRINT_BUDDY__DISCORD__CHAT_LLM_ENABLED: ${PRINT_BUDDY__DISCORD__CHAT_LLM_ENABLED:-true}
       PRINT_BUDDY__LLM__CHAT_URL: ${PRINT_BUDDY__LLM__CHAT_URL:-}
       PRINT_BUDDY__LLM__MODEL: ${PRINT_BUDDY__LLM__MODEL:-}
       # AI design (#388) has no ENABLED line here on purpose: unset is AUTO

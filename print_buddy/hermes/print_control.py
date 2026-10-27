@@ -392,12 +392,105 @@ def _target_from_record(record: Path, archive: Path) -> dict[str, Any]:
             "job_json": str(job_path), "gcode": str(gcode), "gcode_sha256": _sha256(gcode)}
 
 
+def _summary():
+    from . import discord_print_summary
+    return discord_print_summary
+
+
+def _copy_figures(gcode) -> tuple[float | None, float | None]:
+    """(printing seconds, filament grams) for ONE copy of a reprint G-code; (None, None) when unknown."""
+    try:
+        return _summary().gcode_metadata(gcode)
+    except Exception:
+        return None, None
+
+
+def _known(value) -> bool:
+    return isinstance(value, (int, float)) and not isinstance(value, bool) and value >= 0
+
+
+def _totals_clause(seconds, grams, count: int, label: str) -> str:
+    """'all 3 copies: ~3h 0m printing (plus ~5m warmup per copy), ~36 g filament'; '' when nothing is known."""
+    summary = _summary()
+    bits = []
+    if _known(seconds):
+        bits.append(f"~{summary.human(seconds * count)} printing "
+                    f"(plus ~{summary.human(summary.WARMUP_S)} warmup per copy)")
+    if _known(grams):
+        bits.append(f"~{grams * count:g} g filament")
+    return f"{label}: " + ", ".join(bits) if bits else ""
+
+
+def _per_copy_clause(seconds, grams) -> str:
+    """'~1h 0m printing, ~12 g filament' for one copy; '' when nothing is known."""
+    summary = _summary()
+    bits = []
+    if _known(seconds):
+        bits.append(f"~{summary.human(seconds)} printing")
+    if _known(grams):
+        bits.append(f"~{grams:g} g filament")
+    return ", ".join(bits)
+
+
 def again_question(target: dict[str, Any]) -> str:
     note = " It was re-sliced since the last run, so this uses the current slice." if target.get("resliced") else ""
     copies = int(target.get("copies") or 1)
     many = (f" Copy 1 of {copies}; after each one finishes I'll ask you to clear the bed for the next."
             if copies > 1 else "")
-    return f"Print {target['title']} again from the start?{note}{many}\nConfirm the bed is clear."
+    figures = ""
+    if copies > 1:
+        # Sequential copies (#438): quote this copy's figures and the all-copies
+        # totals, never one copy's numbers as the job's. Unknown stays absent.
+        seconds, grams = _copy_figures(target.get("gcode"))
+        per, totals = _per_copy_clause(seconds, grams), _totals_clause(seconds, grams, copies, f"All {copies} copies")
+        if per and totals:
+            figures = f" Each copy: {per}. {totals}."
+    return f"Print {target['title']} again from the start?{note}{many}{figures}\nConfirm the bed is clear."
+
+
+def next_copy_question(target: dict[str, Any]) -> str:
+    """Confirmation for `/print-again next`: this copy's figures plus the remaining totals (#438)."""
+    n, total = int(target["copy_number"]), int(target["copies"])
+    question = f"Print copy {n} of {total} of {target['title']}?"
+    seconds, grams = _copy_figures(target.get("gcode"))
+    left = total - n + 1
+    sentences = []
+    per = _per_copy_clause(seconds, grams)
+    if per:
+        sentences.append(f"This copy: {per}.")
+    if left > 1:
+        totals = _totals_clause(seconds, grams, left, f"All {left} remaining copies")
+        if totals:
+            sentences.append(totals + ".")
+    if sentences:
+        question += "\n" + " ".join(sentences)
+    return question + "\nConfirm the bed is clear."
+
+
+def start_estimate_text(target: dict[str, Any], seconds, grams) -> str:
+    """The estimate clause of the 'Preparing to start' post for a (re)print.
+
+    One copy keeps the historical wording exactly. Sequential copies (#438)
+    label the figures as this copy's and add the remaining-copies totals, so
+    one copy's time is never presented as the whole job's.
+    """
+    summary = _summary()
+    if _known(seconds):
+        base = (f"estimated print time ~{summary.human(seconds)}, plus warmup "
+                f"~{summary.human(seconds + summary.WARMUP_S)} total")
+    else:
+        base = "estimated print time unknown"
+    copies = int(target.get("copies") or 1)
+    if copies <= 1:
+        return base
+    left = max(1, copies - int(target.get("copy_number") or 1) + 1)
+    if left <= 1:
+        return base
+    label = f"all {copies} copies" if int(target.get("copy_number") or 1) == 1 else f"all {left} remaining copies"
+    totals = _totals_clause(seconds, grams, left, label)
+    if not totals:
+        return base
+    return f"{base}{' for this copy' if _known(seconds) else ''}; {totals}"
 
 
 def split_count(query: str) -> tuple[str, int]:
@@ -489,8 +582,23 @@ def next_copy_prompt(finished_filename: str, path: Path | None = None) -> str | 
     q = pending_copy(path)
     if q is None or not q.get("gcode_sha256") or q["gcode_sha256"] not in str(finished_filename or ""):
         return None
-    return (f"Copy {q['started']} of {q['total']} of {q['title']} is done. "
-            f"Clear the bed, then type `/print-again next` for copy {int(q['started']) + 1}. "
+    started, total = int(q["started"]), int(q["total"])
+    left = total - started
+    rest = ""
+    if left > 0:
+        # Updated remaining figures for the copies still to go (#438); unknown stays absent.
+        seconds, grams = _copy_figures(q.get("gcode"))
+        summary = _summary()
+        bits = []
+        if _known(seconds):
+            bits.append(f"~{summary.human(seconds * left)} printing "
+                        f"(plus ~{summary.human(summary.WARMUP_S)} warmup per copy)")
+        if _known(grams):
+            bits.append(f"~{grams * left:g} g filament")
+        if bits:
+            rest = f" Still to print: {left} {'copy' if left == 1 else 'copies'} ({', '.join(bits)})."
+    return (f"Copy {started} of {total} of {q['title']} is done.{rest} "
+            f"Clear the bed, then type `/print-again next` for copy {started + 1}. "
             "`/print-again stop` drops the remaining copies.")
 
 

@@ -146,6 +146,13 @@ Required environment: `PRINT_BUDDY__BOT__MODE=standalone`, `DISCORD_BOT_TOKEN`, 
   buttons. "print it" after a link, and "print the last one again", work. "print 57" (or "print #57") reprints
   print #57 behind the same bed-clear button as `/print-again 57`; an unknown number gets a "no such print"
   reply pointing at `/print-again list`, not the help text. A bare number on its own is not a print request.
+* Estimates account for copies. Copies cloned onto one plate carry their totals in the sliced G-code
+  itself, and the slice summary, estimate breakdown and start post show those totals as-is. Sequential
+  copies (`/print-again … x3`, and multi-copy parts in a multipart plan) are labelled per copy: the
+  confirmation and start posts add the all-copies printing time and filament, the completion prompt and
+  the continuation summary show the updated remaining time and filament as copies finish, and no post
+  quotes one copy's finish as the whole job's — sequential finishes depend on the bed-clear pauses
+  between copies.
 * Slash commands: `/print-next`, `/print-stop`, `/print-resume`, `/print-again`, `/print-reboot`,
   `/print-coldpull`, `/print-maintenance`, `/print-colors`, `/spool`, `/print-lookup`, `/print-troubleshoot`,
   `/print-macros` (Moonraker printers only; lists the macros the printer defines, and `run <name>` runs one behind a confirmation),

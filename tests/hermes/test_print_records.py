@@ -425,3 +425,27 @@ def test_cancel_to_standby_finalizes_record_from_history(tmp_path, monkeypatch):
     assert record["status"] == "cancelled" and record["success"] is False
     assert record["print_duration_seconds"] == 790
     assert len(list((tmp_path / "Prints").glob("*.json"))) == 1
+
+
+def test_multipart_summary_shows_remaining_filament_for_multi_copy_parts():
+    """#438: remaining filament scales by the copies still to go, like the remaining duration."""
+    summary = records.format_multipart_summary({"parts": [
+        {"id": "clip", "label": "Clip", "quantity": 3, "completed_quantity": 1,
+         "estimated_part_seconds": 3600, "estimated_filament_g": 10.0},
+        {"id": "lid", "label": "Lid", "quantity": 2, "completed_quantity": 0,
+         "estimated_part_seconds": 1800, "estimated_filament_g": 5.0}]})
+    assert "Combined remaining duration: ~3h 0m" in summary
+    assert "Combined remaining filament: ~30 g" in summary  # 2x10 g + 2x5 g still to go
+
+
+def test_multipart_summary_filament_line_only_when_copies_in_play():
+    one_each = records.format_multipart_summary({"parts": [
+        {"id": "clip", "label": "Clip", "quantity": 1, "completed_quantity": 0,
+         "estimated_part_seconds": 3600, "estimated_filament_g": 10.0}]})
+    assert "Combined remaining filament" not in one_each  # single-copy wording unchanged
+    partial = records.format_multipart_summary({"parts": [
+        {"id": "clip", "label": "Clip", "quantity": 2, "completed_quantity": 0,
+         "estimated_part_seconds": 3600, "estimated_filament_g": 10.0},
+        {"id": "lid", "label": "Lid", "quantity": 1, "completed_quantity": 0,
+         "estimated_part_seconds": 1800}]})
+    assert "Combined remaining filament: at least ~20 g (unknown for some remaining parts)" in partial

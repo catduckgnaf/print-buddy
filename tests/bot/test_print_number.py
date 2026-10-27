@@ -133,3 +133,19 @@ def test_a_bare_number_alone_is_not_a_print_request(cfg, archive):
 ])
 def test_plain_print_number_matching_is_exact(text, expected):
     assert Router().plugin._plain_print_number(text) == expected
+
+
+def test_print_again_x3_question_and_start_post_quote_all_copies(cfg, archive):
+    """#438: '/print-again 2 x3' confirms and starts with all-copies figures, not one copy's."""
+    discord, core, out, confirm, start, started, ask = drive(cfg, "/print-again 2 x3", pc.AGAIN_LABEL)
+    assert out == {"action": "skip", "reason": "deterministic print again handled"}
+    ask.assert_not_called()
+    assert confirm.await_args.args[4] == (
+        "Print Newer Widget again from the start? Copy 1 of 3; after each one finishes I'll ask you to "
+        "clear the bed for the next. Each copy: ~1m printing, ~1 g filament. "
+        "All 3 copies: ~3m printing (plus ~5m warmup per copy), ~3 g filament.\n"
+        "Confirm the bed is clear.")
+    assert started[0]["copies"] == 3
+    assert discord.sent == ["Preparing to start Newer Widget. Print #2; "
+                            "estimated print time ~1m, plus warmup ~6m total for this copy; "
+                            "all 3 copies: ~3m printing (plus ~5m warmup per copy), ~3 g filament."]

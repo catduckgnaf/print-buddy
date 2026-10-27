@@ -23,6 +23,7 @@ import subprocess
 import sys
 import threading
 import time
+import urllib.parse
 import urllib.request
 from datetime import datetime
 from pathlib import Path
@@ -448,7 +449,7 @@ def _live_auto_on_print_end():
         pass
 
 
-def paused_message(filename, runout=False):
+def paused_message(filename, runout=False, slot=None, spool_id=None):
     """One alert when a print pauses. Never pauses, resumes, or cancels anything itself."""
     where = ""
     try:
@@ -457,7 +458,17 @@ def paused_message(filename, runout=False):
     except Exception as exc:
         log(f"paused status read failed: {exc!r}")
     if runout:
-        extra = "Filament runout. Load the replacement at the printer and resume there. I will not resume it."
+        which = f"IFS slot {slot}" if slot in (1, 2, 3, 4) else "The active slot"
+        into = f"IFS slot {slot}" if slot in (1, 2, 3, 4) else "the active slot"
+        spool = f" (spool #{spool_id})" if spool_id else ""
+        extra = (f"Filament runout: {which}{spool} ran out of filament.\n"
+                 "To finish this print:\n"
+                 f"1. Load the replacement filament into {into} at the printer.\n"
+                 "2. Answer the spool question below (Existing spool or New spool) so the replacement "
+                 "spool is the one registered for that slot — filament usage stays paused for every "
+                 "spool until you answer.\n"
+                 "3. Tap Resume print below (or type /print-resume) once the filament is loaded. "
+                 "The print resumes only when you press it; nothing resumes on its own.")
     else:
         extra = (f"Paused at {where}. " if where else "") + "Fix it at the printer, then tap Resume or Cancel below (or type /print-resume or /print-stop)."
     return print_summary.format_event("paused", filename, extra=extra)
@@ -541,6 +552,70 @@ def pause_is_runout(message, slot, slot_presence, head_has_filament):
     if slot in (1, 2, 3, 4) and isinstance(slot_presence, dict) and slot_presence.get(slot) is False:
         return True
     return head_has_filament is False
+
+
+FILAMENT_SENSOR_PREFIXES = ("filament_switch_sensor ", "filament_motion_sensor ")
+
+
+def filament_sensor_names(objects):
+    """Filament sensor object names from a Moonraker objects/list payload.
+
+    Names come from the printer's own object list, never a hardcoded sensor
+    name: any Klipper filament switch or motion sensor qualifies.
+    """
+    if not isinstance(objects, (list, tuple)):
+        return []
+    return [name for name in objects
+            if isinstance(name, str) and name.startswith(FILAMENT_SENSOR_PREFIXES)]
+
+
+def head_sensor_from_status(status):
+    """True/False when an enabled filament sensor at the head answers, else None.
+
+    Fail-safe (#442): a sensor that is absent, disabled, or reporting a
+    non-boolean value yields None (unknown), never False — an unreadable
+    sensor must not turn every pause into a runout. Any enabled sensor
+    reporting no filament is decisive (False wins); otherwise one enabled
+    sensor reporting filament means the head is loaded.
+    """
+    if not isinstance(status, dict):
+        return None
+    saw_loaded = False
+    for name, sensor in status.items():
+        if not (isinstance(name, str) and name.startswith(FILAMENT_SENSOR_PREFIXES)):
+            continue
+        if not isinstance(sensor, dict) or sensor.get("enabled") is not True:
+            continue
+        detected = sensor.get("filament_detected")
+        if detected is False:
+            return False
+        if detected is True:
+            saw_loaded = True
+    return True if saw_loaded else None
+
+
+def read_head_sensor():
+    """Discover the printer's filament sensors and read them via Moonraker. None when unreadable.
+
+    Read-only: two GETs (objects/list, then an objects/query for exactly the
+    sensor objects the printer lists). Any failure returns None so the pause
+    classification falls back to the message and slot evidence alone.
+    """
+    try:
+        listing = print_control._call("/printer/objects/list")
+        objects = ((listing.get("result") or {}).get("objects")
+                   if isinstance(listing, dict) else None)
+        names = filament_sensor_names(objects)
+        if not names:
+            return None
+        query = "&".join(urllib.parse.quote(name, safe="") for name in names)
+        data = print_control._call(f"/printer/objects/query?{query}")
+        status = ((data.get("result") or {}).get("status")
+                  if isinstance(data, dict) else None)
+        return head_sensor_from_status(status)
+    except Exception as exc:
+        log(f"head filament sensor read failed: {exc!r}")
+        return None
 
 
 def open_spool_question(filename, slot, prior_spool_id, cause, suspended_spool, path=None):
@@ -1749,6 +1824,12 @@ class Listener:
                     if event == "refilled":
                         # Unloaded and reloaded mid print: unknown spool. Runout already asked.
                         await self.open_question(slot, "swap")
+                    elif (event == "emptied" and self.state == "paused"
+                            and not self.last_pause_was_runout):
+                        # The slot emptied while paused and the pause was not
+                        # classified as a runout: upgrade it instead of
+                        # dropping the event at a log line (#442).
+                        await self.upgrade_paused_runout(slot)
             # Only exact idle state qualifies. Unknown/preparing/printing all suppress prompts.
             idle = detail.get("status") == "ready" and self.state == "standby"
             found = self.ifs_monitor.observe(slots, idle=idle, connected=True)
@@ -1762,21 +1843,50 @@ class Listener:
             self.native_poll_inflight = False
 
     async def classify_runout(self):
-        """Pause cause from the alert text plus a fresh slot read. Returns (is_runout, slot)."""
-        if not printers.current().has_native_screen:
-            return False, None  # no slot telemetry: a pause is a plain pause
-        slots = self.last_slots
-        try:
-            _detail, slots = await self.read_slots()
-            self.last_slots = slots
-            self.slot_tracker.observe(slots)
-        except Exception as exc:
-            log(f"pause slot read failed: {exc!r}")
-        empty = self.slot_tracker.empty_slots(slots)
-        slot = empty[0] if len(empty) == 1 else recovery_slot(self.filename)[0]
-        present = _slot_bools(slots)
-        is_runout = pause_is_runout(self.pause_message, slot, present, None) or bool(empty)
+        """Pause cause from the alert text, the head sensor, and a fresh slot read.
+
+        Returns (is_runout, slot). Klipper's macro-driven runout pause leaves
+        print_stats.message empty (#442), so the message alone is not enough:
+        the printer's own filament sensor (discovered from its Moonraker
+        object list, any printer) and the IFS slot presence (native-screen
+        printers) are read as well. A sensor or slot read that fails or is
+        absent contributes no evidence — the pause stays generic.
+        """
+        empty = []
+        present = {}
+        slot = None
+        if printers.current().has_native_screen:
+            slots = self.last_slots
+            try:
+                _detail, slots = await self.read_slots()
+                self.last_slots = slots
+                self.slot_tracker.observe(slots)
+            except Exception as exc:
+                log(f"pause slot read failed: {exc!r}")
+            empty = self.slot_tracker.empty_slots(slots)
+            present = _slot_bools(slots)
+            slot = empty[0] if len(empty) == 1 else recovery_slot(self.filename)[0]
+        head_has_filament = await asyncio.to_thread(read_head_sensor)
+        if slot is None and head_has_filament is False:
+            # The head sensor names no slot; the job's own slot is the one that fed it.
+            slot = recovery_slot(self.filename)[0]
+        is_runout = pause_is_runout(self.pause_message, slot, present, head_has_filament) or bool(empty)
         return is_runout, slot
+
+    async def upgrade_paused_runout(self, slot):
+        """A paused print's slot emptied after the pause was posted as generic (#442).
+
+        The pause alert already went out without a cause; do not leave the
+        runout at a log line. Re-post as a runout alert (with the same
+        Resume/Cancel buttons a paused alert carries) and open the spool
+        question, exactly as if the pause had been classified runout at once.
+        """
+        self.last_pause_was_runout = True
+        spool_id = _mapped_spool(slot) if slot else None
+        await asyncio.to_thread(post_alert, paused_message(self.filename, runout=True,
+                                                           slot=slot, spool_id=spool_id),
+                                "paused", self.filename)
+        self.pause_context = await self.open_question(slot, "runout")
 
     async def visual_check(self, reason, layer):
         """Capture and classify a print frame; notify humans only, never actuate.
@@ -1899,7 +2009,10 @@ class Listener:
         elif old == "printing" and new_state == "paused":
             self.last_pause_was_runout, slot = await self.classify_runout()
             if self.last_pause_was_runout:
-                await asyncio.to_thread(post, paused_message(self.filename, runout=True))
+                spool_id = _mapped_spool(slot) if slot else None
+                await asyncio.to_thread(post_alert, paused_message(self.filename, runout=True,
+                                                                   slot=slot, spool_id=spool_id),
+                                        "paused", self.filename)
                 self.pause_context = await self.open_question(slot, "runout")
             else:
                 self.pause_context = None

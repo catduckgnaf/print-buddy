@@ -483,7 +483,8 @@ def build_plan(w, *, hermes_found=False, existing_profiles=()):
     client_id = w.ask("discord_app_id", "Discord Application ID (for the invite link, optional)", "", _ids)
     w.say(f"Invite link: {discord_invite_url(client_id)}")
     chat_id = w.ask("discord_chat_id", "Print channel ID", "", _ids)
-    users = w.ask("discord_user_ids", "Discord user IDs allowed to print (comma separated)", "", _ids)
+    users = w.ask("discord_user_ids", "Discord user IDs allowed to print (comma separated; "
+                                      "blank = everyone in the print channel)", "", _ids)
     bot_name = w.ask("bot_name", "Bot name", "Print Buddy")
     token = w.secret("discord_bot_token", "Discord bot token")
 
@@ -681,7 +682,7 @@ def summary(plan):
     lines += [
         f"  Services:    " + (", ".join(f"{k}={v}" for k, v in c["services"].items()) or "none"),
         f"  Discord:     channel {c['discord'].get('chat_id') or '(not set)'}, "
-        f"users {c['discord'].get('allowed_user_ids') or '(not set)'}, "
+        f"users {c['discord'].get('allowed_user_ids') or '(everyone in the channel)'}, "
         f"token {'set' if plan['secrets']['DISCORD_BOT_TOKEN'] else 'not set'}",
         f"  Runs as:     " + (f"Hermes profile '{plan['profile']}'" + (" (exists, reused)" if plan["profile_exists"] else "")
                              if plan["hermes"] else "standalone bot (systemd user services)"),

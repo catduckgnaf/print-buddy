@@ -47,12 +47,20 @@ exactly one instance.
 **One Discord bot token may serve every instance.** That is safe because of how the bot
 scopes itself, not because of the token: the bot core drops every message and every button
 press whose channel is not its configured `discord.chat_id`, and within that channel it
-only acts for users in its own `discord.allowed_user_ids`. Two instances logged in as the
+acts for everyone in the channel by default, or only for users in its own
+`discord.allowed_user_ids` when a whitelist is set. Two instances logged in as the
 same bot therefore cannot see, answer or approve anything in each other's channels — each
 one only ever reads its own. (Both instances register the same slash commands at start-up,
 which is harmless: the command set is identical.) The hard minimum per instance is a
 separate channel **and** a separate approval user, because prompts, approvals and "send
 the files here" delivery are all scoped to the configured channel and approval user.
+
+The scoping is per channel, so the inverse is the hazard: **never let two instances serve
+the same channel on one token.** Both receive every message in that channel and both act —
+a leftover instance (an old Hermes profile on another host, a forgotten container) doing
+this looks exactly like random bot misbehaviour, including slicing failures from an
+outdated code path. The standalone bot logs a warning when Discord hands it a second
+READY on a live session, one sign that another process logged in with the same token.
 
 A **separate bot (token) per printer** is still the cleaner form where you can: each
 printer gets its own bot name in the member list, and a token can be revoked or rotated

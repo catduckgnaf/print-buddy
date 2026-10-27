@@ -79,6 +79,27 @@ def parse_custom_id(value):
     return cid, int(index)
 
 
+def describe_access(allowed_count, denied_count, channel_open):
+    """The one-line access mode every surface reports (#386).
+
+    ``channel_open`` means an empty allow list lets everyone in the print
+    channel act (the channel is the boundary); otherwise an empty list
+    refuses everyone. A deny list subtracts in every mode and is named so
+    a startup log never hides that someone is excluded.
+    """
+    if channel_open:
+        # Latched open wins over the count: the allowed set may still hold
+        # the approval user, who is unioned in for action in every mode.
+        text = "channel (everyone)"
+    elif allowed_count:
+        text = f"whitelist ({allowed_count} user{'s' if allowed_count != 1 else ''})"
+    else:
+        text = "none (no users allowed)"
+    if denied_count:
+        text += f", {denied_count} denied"
+    return text
+
+
 def platform_module(name):
     """The module implementing platform ``name``, or None when its stage has not landed."""
     if name == "discord":
@@ -149,16 +170,52 @@ class BasePlatformAdapter:
     # adapter reports True. Other platforms expose no /print-live command,
     # no stub and no config surface for it.
     supports_live_stream = False
+    # Access model (#386): on a platform whose adapter sets this, the print
+    # channel is the access boundary — with no allow list configured, anyone
+    # who can post in the channel may use the bot, and the allow/deny lists
+    # are opt-in refinements. Platforms that leave it False keep the strict
+    # list-only rule (an empty list refuses everyone).
+    channel_is_boundary = False
 
-    def __init__(self, allowed, *, registry=prompts):
+    def __init__(self, allowed, *, denied=(), approver=None, registry=prompts):
+        # The mode latches on the raw allow list BEFORE the approver is
+        # unioned in: an operator who sets only an approval user has not
+        # opted into a whitelist, so channel mode must still apply (#386).
+        # Latched at construction, too: a runtime mutation of ``allowed``
+        # (tests do this) must not silently flip the mode either way.
+        self.channel_open = bool(self.channel_is_boundary and not {str(u) for u in allowed})
         self.allowed = {str(u) for u in allowed}
+        if approver:
+            self.allowed.add(str(approver))
+        self.denied = {str(u) for u in denied}
         self.registry = registry
         self._prompts: dict[str, dict[str, Any]] = {}
 
     # ------------------------------------------------------------------ who may act
 
     def is_allowed_id(self, user_id):
-        return str(user_id or "") in self.allowed
+        """May this user act? Deny beats everything; an open channel admits
+        everyone else; a closed one admits only the allowed set (which
+        includes the approver) — an empty set there refuses everyone."""
+        uid = str(user_id or "")
+        if not uid or uid in self.denied:
+            return False
+        if self.channel_open:
+            return True
+        return uid in self.allowed
+
+    def refusal_reason(self, user_id):
+        """Why ``user_id`` may not act, in log words, or None when they may."""
+        uid = str(user_id or "")
+        if uid and uid in self.denied:
+            return "user is on the denied list"
+        if not self.is_allowed_id(uid):
+            return "user is not on the allowed list"
+        return None
+
+    def access_description(self):
+        """The startup-log line for this adapter's access mode (#386)."""
+        return describe_access(len(self.allowed), len(self.denied), self.channel_open)
 
     def _is_allowed_user(self, uid, user=None, guild=None, channel_ids=None):
         """The check the listener alert buttons call (same name as the Hermes adapter's)."""

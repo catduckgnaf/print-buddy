@@ -24,6 +24,7 @@ import argparse, datetime, json, os, re, sys, urllib.request
 from pathlib import Path
 
 from .. import printers, settings
+from . import spoolman_client
 
 STATE = str(settings.state_dir() / "printer_hardware.json")
 
@@ -350,7 +351,7 @@ def _check_spoolman(st, warnings, facts):
                         "continuing on the recorded spool state")
         return
     try:
-        sp = _get(f"{base}/api/v1/spool/{spool_id}")
+        sp = spoolman_client.request("GET", f"/api/v1/spool/{spool_id}", base_url=base)
         filament = sp["filament"]
         facts["spool_name"] = filament["name"]
         facts["spool_material"] = filament.get("material")
@@ -529,6 +530,17 @@ def summary(st, calibration_owner="unknown", calibration_valid=None):
             f"{st['temps_c']['nozzle']}/{st['temps_c']['bed']} C")
 
 
+def fetch_spoolman_spool(spool_id, st=None):
+    """The Spoolman record for the operator `set --spool` command.
+
+    An explicit operator operation against Spoolman itself, so an
+    unavailable Spoolman raises (SpoolmanUnavailable) instead of being
+    swallowed; the transport is still the one wrapper (#387).
+    """
+    return spoolman_client.request("GET", f"/api/v1/spool/{spool_id}",
+                                   base_url=spoolman_url(st))
+
+
 def main():
     ap = argparse.ArgumentParser()
     sub = ap.add_subparsers(dest="cmd", required=True)
@@ -555,7 +567,7 @@ def main():
         sys.exit(0 if ok else 2)
     # set
     if a.spool is not None:
-        sp = _get(f"{spoolman_url(st)}/api/v1/spool/{a.spool}")
+        sp = fetch_spoolman_spool(a.spool, st)
         f = sp["filament"]
         st["spool"] = {"spoolman_id": a.spool, "name": f["name"], "material": f.get("material"),
                        "diameter_mm": f.get("diameter", 1.75), "density": f.get("density", 1.24)}

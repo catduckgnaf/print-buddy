@@ -212,6 +212,10 @@ def build_record_data(
         "filament_material": spool_fields.get("filament_material"),
         "filament_color": spool_fields.get("filament_color"),
         "spoolman_spool_id": spool_fields.get("spoolman_spool_id"),
+        # #387: Spoolman did not answer at completion, so this job's usage
+        # could not be confirmed against Spoolman. Recorded as pending for
+        # later reconciliation; the completion itself never waits on it.
+        "spoolman_usage_pending": True if spool.get("spoolman_unavailable") else None,
         "filament_used_mm": used_mm,
         "print_duration_seconds": _first(stats, "print_duration", "total_duration") or _first(metadata, "print_duration"),
         "slicer_settings": slicer_settings,
@@ -238,6 +242,7 @@ _RECORD_FIELDS = (
     "source_url", "selected_option", "selection_confirmation", "hardware",
     "estimated_time", "estimated_filament_g", "filament_vendor",
     "filament_material", "filament_color", "spoolman_spool_id",
+    "spoolman_usage_pending",
     "filament_used_mm", "filament_used_g", "print_duration_seconds",
     "slicer_settings", "author_directed_tree_supports", "physical_outcome",
     "follow_up", "multipart_plan_id", "part_id", "moonraker_state",

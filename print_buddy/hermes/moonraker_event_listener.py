@@ -30,7 +30,7 @@ from pathlib import Path
 import websockets
 
 from .. import healthcheck, logs, printers
-from ..core import delivery
+from ..core import delivery, spoolman_client
 from . import _config
 from . import moonraker_discord_announcements as announcer
 from . import discord_print_summary as print_summary
@@ -478,19 +478,15 @@ def recovery_slot(filename):
 
 def list_spools():
     """Read Spoolman inventory. A failure returns nothing rather than inventing a spool."""
-    import urllib.request
     base = _config.service_url("spoolman_url")
     if not base:
         log("spool inventory read skipped: services.spoolman_url is not configured")
         return []
-    url = base + "/api/v1/spool"
-    try:
-        with urllib.request.urlopen(url, timeout=8) as response:
-            payload = json.loads(response.read().decode())
-    except Exception as exc:
-        log(f"spool inventory read failed: {exc!r}")
+    payload = spoolman_client.list_spools(base_url=base, timeout=8)
+    if payload is None:
+        log("spool inventory read failed: Spoolman did not answer")
         return []
-    return payload if isinstance(payload, list) else []
+    return payload
 
 
 def spool_matches_recovery(existing_material, candidate_material, existing_color, candidate_color):

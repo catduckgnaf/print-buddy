@@ -20,6 +20,7 @@ from pathlib import Path
 from typing import Any, Callable
 
 from .. import printers
+from ..core import spoolman_client
 from . import _config
 
 HARDWARE_STATE = _config.state_file("PRINTER_HARDWARE_STATE", "printer_hardware.json")
@@ -53,7 +54,16 @@ def _http(base: str, method: str, path: str, body: Any = None, timeout: float = 
 
 
 def spoolman(method: str, path: str, body: Any = None) -> Any:
-    return _http(SPOOLMAN, method, path, body)
+    """The /spool command layer's Spoolman transport: the one wrapper (#387).
+
+    An unavailable Spoolman surfaces as SpoolError, this module's contract
+    for a refused /spool action — the operator asked for a Spoolman
+    operation, so the failure is reported, never swallowed.
+    """
+    try:
+        return spoolman_client.request(method, path, body, base_url=SPOOLMAN, timeout=8)
+    except spoolman_client.SpoolmanUnavailable as exc:
+        raise SpoolError(str(exc)) from exc
 
 
 def moonraker(method: str, path: str, body: Any = None) -> Any:

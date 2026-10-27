@@ -28,6 +28,7 @@ from typing import Any, Callable
 from zoneinfo import ZoneInfo
 
 from .. import settings
+from . import spoolman_client
 
 LOCAL_TZ = ZoneInfo(settings.current()["discord"]["timezone"])
 
@@ -115,11 +116,10 @@ def fetch_spoolman_spool(
                 return client[spoolman_id]
             raise RuntimeError(f"Spoolman spool #{spoolman_id} not found in client data")
     if base_url:
-        import urllib.request
-        url = f"{base_url.rstrip('/')}/api/v1/spool/{spoolman_id}"
-        req = urllib.request.Request(url, headers={"User-Agent": "Hermes-SpoolLifecycle/1.0"})
-        with urllib.request.urlopen(req, timeout=6) as resp:
-            return json.loads(resp.read().decode("utf-8"))
+        spool = spoolman_client.get_spool(spoolman_id, base_url=base_url)
+        if spool is None:
+            raise RuntimeError(f"Spoolman spool #{spoolman_id} unavailable: Spoolman did not answer")
+        return spool
     raise RuntimeError(f"Cannot resolve Spoolman spool #{spoolman_id}: no client or URL provided")
 
 
@@ -784,11 +784,7 @@ def fetch_all_spoolman_spools(
         if client:
             data = client(f"{sm_url.rstrip('/')}/api/v1/spool")
         else:
-            import urllib.request
-            url = f"{sm_url.rstrip('/')}/api/v1/spool"
-            req = urllib.request.Request(url, headers={"User-Agent": "Hermes-SpoolLifecycle/1.0"})
-            with urllib.request.urlopen(req, timeout=timeout) as resp:
-                data = json.loads(resp.read().decode("utf-8"))
+            data = spoolman_client.list_spools(base_url=sm_url, timeout=timeout)
         if isinstance(data, list):
             spools = {}
             for item in data:

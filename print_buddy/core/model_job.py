@@ -22,7 +22,7 @@ from typing import Any, NamedTuple
 
 from .. import printers, settings
 from ..printers.base import MultiColorUnsupported
-from . import _external, launch_state, printer_state
+from . import _external, launch_state, printer_state, spoolman_client
 
 logger = logging.getLogger(__name__)
 
@@ -982,9 +982,22 @@ def _validate_slot_selection(state, selection):
 def _sync_active_spool(st, slot):
     """Point Moonraker and the hardware record at the launching slot's spool.
 
-    Runs only after every launch preflight has passed and before upload. A
-    failed write or readback refuses the launch with nothing uploaded. Nozzle
-    and bed temperatures are left alone; per-slot temperatures are Phase 2.
+    Runs only after every launch preflight has passed and before upload.
+    Nozzle and bed temperatures are left alone; per-slot temperatures are
+    Phase 2.
+
+    Moonraker is a launch dependency: its active-spool read failing refuses
+    the launch, and a readback that ANSWERS with a different spool refuses
+    too (a live contradiction, nothing uploaded). Spoolman is not a launch
+    dependency (#387): when Spoolman does not answer, or the Moonraker
+    spool-pointer write itself fails, the launch proceeds on the slot's
+    recorded data, the user gets the one-line notice, and the result
+    carries `spoolman_pending` so the caller records the usage as pending
+    in the job record for later reconciliation — it is never retried in a
+    way that blocks the job. A live Spoolman answer that the spool is
+    archived or a different material than the slot record still refuses:
+    that is Spoolman data contradicting the operator's record, not an
+    outage, and the refusal protects the physical gate (#235).
     """
     configured = st.get('ifs_slots', {}).get(str(slot), {})
     sid = configured.get('spoolman_id')
@@ -996,27 +1009,42 @@ def _sync_active_spool(st, slot):
         raise RuntimeError(f'Moonraker active spool read failed: {exc}; nothing uploaded or started') from exc
     if current == sid and st.get('spool', {}).get('spoolman_id') == sid:
         return {'spool_id': sid, 'changed': False}
-    try:
-        spool = request_json(f"{printer_state.spoolman_url(st)}/api/v1/spool/{sid}")
-    except Exception as exc:
-        raise RuntimeError(f'Spoolman spool #{sid} lookup failed: {exc}; nothing uploaded or started') from exc
-    filament = spool.get('filament') or {}
-    if spool.get('archived') or not printer_state.same_material(filament.get('material'), configured.get('material')):
-        raise RuntimeError(f'Spoolman spool #{sid} is archived or its material differs from slot {slot}; nothing uploaded or started')
+    spool = spoolman_client.get_spool(sid, base_url=printer_state.spoolman_url(st))
+    pending = spool is None
+    if pending:
+        spoolman_client.note_unavailable_once()
+        filament = {}
+    else:
+        filament = spool.get('filament') or {}
+        if spool.get('archived') or not printer_state.same_material(filament.get('material'), configured.get('material')):
+            raise RuntimeError(f'Spoolman spool #{sid} is archived or its material differs from slot {slot}; nothing uploaded or started')
     try:
         _mr(st, '/server/spoolman/spool_id', data={'spool_id': sid})
         back = _mr(st, '/server/spoolman/spool_id')['result'].get('spool_id')
     except Exception as exc:
-        raise RuntimeError(f'Moonraker active spool update failed: {exc}; nothing uploaded or started') from exc
-    if back != sid:
-        raise RuntimeError(f'Moonraker active spool readback {back!r} != #{sid}; nothing uploaded or started')
+        # The pointer write is Spoolman accounting routed through Moonraker;
+        # its failure must not refuse the launch (#387). Usage may charge
+        # the previous spool or none until reconciliation.
+        logger.warning('active spool sync failed for spool #%s: %s', sid, exc)
+        spoolman_client.note_unavailable_once()
+        pending = True
+    else:
+        if back != sid:
+            raise RuntimeError(f'Moonraker active spool readback {back!r} != #{sid}; nothing uploaded or started')
+    recorded = st.get('spool') or {}
     fresh = printer_state.load()
-    fresh['spool'] = {'spoolman_id': sid, 'name': filament.get('name'), 'material': filament.get('material'),
-                      'diameter_mm': filament.get('diameter', 1.75), 'density': filament.get('density', 1.24)}
+    fresh['spool'] = {'spoolman_id': sid,
+                      'name': filament.get('name') or configured.get('name'),
+                      'material': filament.get('material') or configured.get('material'),
+                      'diameter_mm': filament.get('diameter', recorded.get('diameter_mm', 1.75)),
+                      'density': filament.get('density', recorded.get('density', 1.24))}
     printer_state.save(fresh)
     st['spool'] = dict(fresh['spool'])
     print(f'ACTIVE SPOOL SYNCED: #{current} -> #{sid} (slot {slot})', flush=True)
-    return {'spool_id': sid, 'previous': current, 'changed': True}
+    result = {'spool_id': sid, 'previous': current, 'changed': True}
+    if pending:
+        result['spoolman_pending'] = True
+    return result
 
 
 def _verify_readiness_adapter(adapter, state, selection=None):
@@ -4057,7 +4085,19 @@ def print_mapped_native(g, st, mesh, mapping, job, job_path, wait_s, reprint):
         if len(slots_used) > 1:
             print('WARNING: MULTI-SLOT JOB: automatic Spoolman usage deduction disabled; aggregate usage cannot be safely apportioned to selected spools.', flush=True)
         else:
-            _sync_active_spool(st, slots_used[0])
+            sync = _sync_active_spool(st, slots_used[0])
+            if sync.get('spoolman_pending') and job_path is not None:
+                # Usage could not be pointed at this job's spool (#387):
+                # record it as pending in the job record for later
+                # reconciliation. Recording must never block the launch.
+                job['spoolman_usage_pending'] = {
+                    'spool_id': sync.get('spool_id'), 'slot': slots_used[0],
+                    'reason': 'Spoolman unavailable at print start; usage not yet reported',
+                    'recorded_at': time.time()}
+                try:
+                    write_job(Path(job_path).parent, job)
+                except Exception as exc:
+                    logger.warning('could not record pending Spoolman usage: %s', exc)
         _timing(job_path, 'upload_begin')
         uploaded = subprocess.run([str(MOONRAKERCTL), 'upload', str(g), remote, sha],
                                   text=True, capture_output=True, timeout=300)

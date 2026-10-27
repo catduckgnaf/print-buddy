@@ -1939,7 +1939,7 @@ class SelectionConsistencyTests(unittest.TestCase):
         reply, calls = self.sync_transport(active)
         spool = {"archived": False, "filament": {"material": "PLA", "name": "Pink PLA"}}
         with mock.patch.object(model_job, "_mr", side_effect=reply), \
-             mock.patch.object(model_job, "request_json", return_value=spool), \
+             mock.patch.object(model_job.spoolman_client, "get_spool", return_value=spool), \
              mock.patch.object(model_job.printer_state, "load", return_value=self.verified_state()), \
              mock.patch.object(model_job.printer_state, "save") as save:
             result = model_job._sync_active_spool(st, 2)
@@ -1953,7 +1953,7 @@ class SelectionConsistencyTests(unittest.TestCase):
         st = self.verified_state()
         reply, calls = self.sync_transport([10])
         with mock.patch.object(model_job, "_mr", side_effect=reply), \
-             mock.patch.object(model_job, "request_json") as http, \
+             mock.patch.object(model_job.spoolman_client, "get_spool") as http, \
              mock.patch.object(model_job.printer_state, "save") as save:
             self.assertFalse(model_job._sync_active_spool(st, 1)["changed"])
         self.assertEqual(calls, [("/server/spoolman/spool_id", None)])
@@ -1966,7 +1966,7 @@ class SelectionConsistencyTests(unittest.TestCase):
         reply, _ = self.sync_transport([10], fail_write=True)
         spool = {"archived": False, "filament": {"material": "PLA"}}
         with mock.patch.object(model_job, "_mr", side_effect=reply), \
-             mock.patch.object(model_job, "request_json", return_value=spool), \
+             mock.patch.object(model_job.spoolman_client, "get_spool", return_value=spool), \
              mock.patch.object(model_job.printer_state, "save") as save:
             with self.assertRaisesRegex(RuntimeError, "readback.*nothing uploaded"):
                 model_job._sync_active_spool(st, 2)
@@ -1977,7 +1977,7 @@ class SelectionConsistencyTests(unittest.TestCase):
         st["spoolman_url"] = "http://spoolman.invalid"
         reply, calls = self.sync_transport([10])
         with mock.patch.object(model_job, "_mr", side_effect=reply), \
-             mock.patch.object(model_job, "request_json", return_value={"archived": True, "filament": {"material": "PLA"}}):
+             mock.patch.object(model_job.spoolman_client, "get_spool", return_value={"archived": True, "filament": {"material": "PLA"}}):
             with self.assertRaisesRegex(RuntimeError, "archived"):
                 model_job._sync_active_spool(st, 2)
         self.assertNotIn(("/server/spoolman/spool_id", {"spool_id": 11}), calls)
@@ -1997,7 +1997,7 @@ class SelectionConsistencyTests(unittest.TestCase):
         reply, _ = self.sync_transport([10], fail_write=True)
         spool = {"archived": False, "filament": {"material": "PLA+"}}
         with mock.patch.object(model_job, "_mr", side_effect=reply), \
-             mock.patch.object(model_job, "request_json", return_value=spool), \
+             mock.patch.object(model_job.spoolman_client, "get_spool", return_value=spool), \
              mock.patch.object(model_job.printer_state, "save"):
             # Material check passes; the forced write failure is the next gate.
             with self.assertRaisesRegex(RuntimeError, "readback.*nothing uploaded"):

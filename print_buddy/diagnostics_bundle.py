@@ -1,0 +1,173 @@
+"""The diagnostics bundle (#390, Stage 3): one file an operator can attach to a bug report.
+
+    python3 -m print_buddy.diagnostics_bundle [--output PATH] [--log-lines N]
+
+Assembles, in one Markdown document:
+
+* Print Buddy / Python / platform versions and the container image digest
+  when the environment records one (``PRINT_BUDDY_IMAGE_DIGEST``);
+* a **redacted config summary** — settings are summarised, never dumped:
+  any key whose name suggests a secret is replaced by the name of the
+  environment variable that holds it (env-name indirection only), and
+  every assembled line passes through ``print_buddy.logs.redact``;
+* the printer roster (id, model, connection — no hosts, no credentials);
+* the doctor's output;
+* a bounded tail of the configured log file, redacted line by line.
+
+There is no telemetry: the bundle is written only where the operator asks
+(this module's CLI, or ``/print-buddy bundle`` in the bot, which writes it
+into the state folder and says where). Nothing is uploaded anywhere.
+"""
+from __future__ import annotations
+
+import argparse
+import io
+import os
+import platform
+import sys
+from pathlib import Path
+
+from . import __version__, logs, settings
+
+DEFAULT_LOG_LINES = 200
+MAX_LOG_LINES = 2000
+BUNDLE_NAME = "diagnostics-bundle.md"
+_SECRET_KEY_PARTS = ("token", "secret", "password", "api_key", "apikey", "access_code", "credential")
+_DIGEST_ENVS = ("PRINT_BUDDY_IMAGE_DIGEST", "IMAGE_DIGEST")
+
+
+def _is_secret_key(key: str) -> bool:
+    return any(part in key.lower() for part in _SECRET_KEY_PARTS)
+
+
+def _summarise(value, key: str = ""):
+    """A redacted, summary-shaped rendering of one settings value.
+
+    Secret-shaped keys never render their value: ``*_env`` keys render the
+    environment variable's NAME (that is the indirection, and the name is
+    not a secret) plus whether it is set; any other secret-shaped value is
+    replaced outright. Long strings are truncated; nested tables summarise
+    key-by-key; lists render as counts plus scalar items.
+    """
+    if _is_secret_key(key):
+        if key.endswith("_env") and isinstance(value, str) and value:
+            return f"${value} ({'set' if os.environ.get(value) else 'not set'})"
+        return "*** (redacted)"
+    if isinstance(value, dict):
+        return {k: _summarise(v, k) for k, v in sorted(value.items())}
+    if isinstance(value, (list, tuple)):
+        return [_summarise(v) for v in value]
+    if isinstance(value, str) and len(value) > 80:
+        return value[:77] + "..."
+    return value
+
+
+def config_summary(data) -> str:
+    """The redacted config summary section: section names + summarised values."""
+    lines = []
+    for section in sorted(data):
+        if section == "printers":
+            continue  # the roster gets its own section, without hosts
+        value = data[section]
+        if isinstance(value, dict):
+            lines.append(f"- [{section}]")
+            for key in sorted(value):
+                lines.append(f"  - {key}: {_summarise(value[key], key)}")
+        else:
+            lines.append(f"- {section}: {_summarise(value, section)}")
+    return logs.redact("\n".join(lines))
+
+
+def roster_summary(data) -> str:
+    lines = []
+    for entry in settings.printers(data):
+        lines.append(f"- {entry.get('id')}: model={entry.get('model')}")
+    return "\n".join(lines) or "- (no printers configured)"
+
+
+def log_tail(data, lines: int = DEFAULT_LOG_LINES) -> str:
+    """The bounded, redacted tail of the configured log file, or why there is none."""
+    path = str((data.get("logging") or {}).get("file") or "").strip()
+    if not path:
+        return ("(no [logging] file is configured; attach the container or systemd log "
+                "for the same time window instead)")
+    target = Path(path).expanduser()
+    try:
+        text = target.read_text(errors="replace")
+    except OSError as exc:
+        return f"(log file {target} could not be read: {exc})"
+    tail = text.splitlines()[-max(0, min(lines, MAX_LOG_LINES)):]
+    return "\n".join(logs.redact(line) for line in tail) or "(log file is empty)"
+
+
+def doctor_output() -> str:
+    from . import doctor
+    out = io.StringIO()
+    try:
+        doctor.run(out)
+    except Exception as exc:  # the bundle must survive a broken doctor
+        return f"(doctor did not complete: {type(exc).__name__}: {exc})"
+    return out.getvalue().strip() or "(doctor produced no output)"
+
+
+def build_bundle(data=None, *, log_lines: int = DEFAULT_LOG_LINES,
+                 include_doctor: bool = True) -> str:
+    """The whole bundle as one Markdown string. Never raises on a section."""
+    data = settings.current() if data is None else data
+    digest = next((os.environ[name] for name in _DIGEST_ENVS if os.environ.get(name)),
+                  "not recorded in this environment (standalone install or unset)")
+    parts = [
+        "# Print Buddy diagnostics bundle",
+        "",
+        f"- Print Buddy: {__version__}",
+        f"- Python: {platform.python_version()}",
+        f"- Platform: {platform.platform()}",
+        f"- Image digest: {digest}",
+        "",
+        "## Configuration summary (redacted)",
+        "",
+        config_summary(data),
+        "",
+        "## Printers",
+        "",
+        roster_summary(data),
+        "",
+        "## Doctor",
+        "",
+        "```text",
+        doctor_output() if include_doctor else "(skipped)",
+        "```",
+        "",
+        f"## Recent log tail (last {min(log_lines, MAX_LOG_LINES)} lines, redacted)",
+        "",
+        "```text",
+        log_tail(data, log_lines),
+        "```",
+        "",
+    ]
+    return logs.redact("\n".join(parts))
+
+
+def write_bundle(path=None, data=None, *, log_lines: int = DEFAULT_LOG_LINES) -> Path:
+    """Write the bundle (default: ``<state>/diagnostics-bundle.md``); returns the path."""
+    data = settings.current() if data is None else data
+    target = Path(path) if path else settings.state_dir(data) / BUNDLE_NAME
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text(build_bundle(data, log_lines=log_lines))
+    return target
+
+
+def main(argv=None) -> int:
+    parser = argparse.ArgumentParser(description="Assemble a redacted Print Buddy diagnostics bundle.")
+    parser.add_argument("--output", help=f"where to write it (default: <state>/{BUNDLE_NAME})")
+    parser.add_argument("--log-lines", type=int, default=DEFAULT_LOG_LINES,
+                        help=f"log tail length (default {DEFAULT_LOG_LINES}, max {MAX_LOG_LINES})")
+    args = parser.parse_args(argv)
+    target = write_bundle(args.output, log_lines=args.log_lines)
+    print(f"Diagnostics bundle written to {target}. Review it before attaching; "
+          "it is redacted, but it describes your setup.")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

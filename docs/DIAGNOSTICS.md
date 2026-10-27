@@ -40,10 +40,14 @@ in `print_buddy.diagnostics.LEGACY_MARKERS` and likewise never changes.
    client's failure warning, and this audit inventory.
 2. **Stage 2:** Discord message audit fixes — apply the operator-message
    bar to the surfaces the inventory below marks as failing it.
-3. **Stage 3:** diagnostics bundle — a bot command and a CLI that assemble
-   versions, image digest, a redacted config summary (env-name indirection
-   only; secret values never included), printer/roster summary, doctor
-   output and a bounded recent-log tail, wired to the bug-report issue form.
+3. **Stage 3 (done):** diagnostics bundle — `/print-buddy bundle` in the bot
+   and `python3 -m print_buddy.diagnostics_bundle` on the host assemble
+   versions, image digest (when the environment records one), a redacted
+   config summary (env-name indirection only; secret values never
+   included), printer/roster summary, doctor output and a bounded
+   recent-log tail. The bug-report issue form asks for the bundle. The
+   bundle is only ever written to a local file the operator chooses to
+   attach — nothing is uploaded.
 4. **Stage 4:** structured logging consistency — per-subsystem verbosity
    (see [Settings](SETTINGS.md) `[logging]`), `printer_id` on
    multi-printer records, and supervisor/healthcheck output that names

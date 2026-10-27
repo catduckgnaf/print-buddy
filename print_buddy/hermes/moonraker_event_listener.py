@@ -573,7 +573,9 @@ def spool_question_text(record, nag=False):
             f"so neither the old nor the new spool is charged.\nReply with:\n"
             f"• a spool number from Spoolman, e.g. `12`{same}\n"
             f"• or a new spool: `brand, material, color, grams` e.g. `Sunlu, PLA+, White, 1000`\n"
-            "`/spool list` shows what is on the shelf. I will not touch the printer.")
+            f"• or `cancel the print` (or the **Cancel print** button) to end the print and close this question\n"
+            "`/spool list` shows what is on the shelf. Answering never touches the printer; "
+            "cancelling is the one reply that does.")
 
 
 def clear_runout_pause(path=None):
@@ -612,6 +614,27 @@ def _grams(value):
     if grams <= 0:
         return None
     return round(grams, 2)
+
+
+CANCEL_PRINT_REPLIES = frozenset({
+    "cancel", "cancel print", "cancel the print", "cancel it",
+    "stop", "stop print", "stop the print",
+})
+
+
+def parse_cancel_print_reply(text):
+    """True only for an unambiguous typed instruction to cancel the paused print.
+
+    Consulted while a spool question is pending, before the spool-answer
+    parser rejects the reply. Anything softer — a question about cancelling,
+    a sentence that merely mentions cancel, extra words — is not an
+    instruction and keeps falling through to that rejection, exactly as
+    before. The reply gate is the same one every answer passes through
+    (an authorized operator in the print channel), so a typed cancel carries
+    the same authority as the Cancel print button.
+    """
+    folded = " ".join(str(text or "").split()).casefold().strip(" .!")
+    return folded in CANCEL_PRINT_REPLIES
 
 
 def parse_runout_reply(text):

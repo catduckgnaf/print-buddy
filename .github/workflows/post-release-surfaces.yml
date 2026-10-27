@@ -19,8 +19,13 @@ name: Post-release surfaces check
 # page removals as a deliberate act.
 #
 # The workflow only ever opens or comments on an issue in this repo. It
-# never edits code, docs, the wiki or repo settings, and it uses only the
-# workflow GITHUB_TOKEN (no secrets, no external services).
+# never edits code, docs, the wiki or repo settings. The checklist itself
+# uses only the workflow GITHUB_TOKEN. One optional addition: when the
+# DOCS_SYNC_TOKEN secret is configured, a second step sends a
+# repository_dispatch to catduckgnaf/print-buddy-docs so its Docs
+# auto-sync workflow opens a sync PR for the release. Without the secret
+# the step records the skip (and the manual dispatch link) on the
+# checklist issue instead — a missing optional secret never fails a run.
 
 on:
   release:
@@ -172,3 +177,43 @@ jobs:
               --label documentation --label enhancement \
               --body-file body.md
           fi
+      - name: Trigger the docs auto-sync (or record why it was skipped)
+        env:
+          GH_TOKEN: ${{ github.token }}
+          DOCS_SYNC_TOKEN: ${{ secrets.DOCS_SYNC_TOKEN }}
+          EVENT_TAG: ${{ github.event.release.tag_name }}
+          INPUT_TAG: ${{ inputs.tag }}
+        run: |
+          set -uo pipefail
+          repo="${{ github.repository }}"
+
+          tag="${EVENT_TAG:-$INPUT_TAG}"
+          if [ -z "$tag" ]; then
+            tag="$(gh release view --repo "$repo" --json tagName --jq .tagName)"
+          fi
+
+          manual_link="https://github.com/catduckgnaf/print-buddy-docs/actions/workflows/docs-auto-sync.yml"
+          if [ -z "${DOCS_SYNC_TOKEN:-}" ]; then
+            note="Docs auto-sync for $tag was **skipped**: the \`DOCS_SYNC_TOKEN\` secret is not configured on this repo, so the release could not trigger the sync in print-buddy-docs. Sync by hand instead: open the [Docs auto-sync workflow]($manual_link), run it with ref \`$tag\`, and merge the sync PR it opens. (To make this automatic, save a token with contents + pull-requests write access on catduckgnaf/print-buddy-docs as the \`DOCS_SYNC_TOKEN\` secret on this repo.)"
+          elif printf '{"event_type":"print-buddy-release","client_payload":{"ref":"%s"}}' "$tag" \
+              | GH_TOKEN="$DOCS_SYNC_TOKEN" gh api repos/catduckgnaf/print-buddy-docs/dispatches --input - ; then
+            note="Docs auto-sync for $tag was **dispatched** to catduckgnaf/print-buddy-docs (repository_dispatch \`print-buddy-release\`, ref \`$tag\`). It opens (or updates) a sync PR there; the Pages site surface above is decided once that PR is merged and the site matches docs/ at $tag."
+          else
+            note="Docs auto-sync for $tag was **attempted but the dispatch failed** (the \`DOCS_SYNC_TOKEN\` secret may lack access to catduckgnaf/print-buddy-docs). Sync by hand instead: open the [Docs auto-sync workflow]($manual_link), run it with ref \`$tag\`, and merge the sync PR it opens."
+          fi
+
+          # Record the outcome on this release's checklist issue; if the
+          # issue cannot be found, fall back to the step summary. Either
+          # way this step never fails the run.
+          issue_title="Post-release surfaces check: $tag"
+          existing="$(gh issue list --repo "$repo" --state open --limit 100 \
+            --json number,title \
+            | jq -r --arg t "$issue_title" \
+              '[.[] | select(.title == $t) | .number] | first // empty')"
+          if [ -n "$existing" ]; then
+            gh issue comment "$existing" --repo "$repo" --body "$note" \
+              || echo "$note" >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "$note" >> "$GITHUB_STEP_SUMMARY"
+          fi
+          exit 0

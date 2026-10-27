@@ -7,9 +7,12 @@ release notes get an explicit updated / verified-no-change decision per
 release. These tests pin that contract: the workflow fires only on a
 published release (or a manual dispatch), holds least-privilege
 GITHUB_TOKEN permissions, and can never edit code, docs or settings.
+The one deliberate secret is DOCS_SYNC_TOKEN, used only by the optional
+docs auto-sync dispatch step, which degrades gracefully without it.
 """
 
 import pathlib
+import re
 import unittest
 
 import yaml
@@ -47,8 +50,29 @@ class PostReleaseSurfacesWorkflowContract(unittest.TestCase):
             self.assertNotIn("permissions", job)
         text = WORKFLOW_PATH.read_text()
         self.assertIn("${{ github.token }}", text)
-        # No stored secrets or external services: the token above is all.
-        self.assertNotIn("secrets.", text)
+        # The checklist itself uses only the GITHUB_TOKEN above. The single
+        # deliberate exception is DOCS_SYNC_TOKEN, read only by the
+        # auto-sync dispatch step; no other secret may appear.
+        secrets_used = set(re.findall(r"secrets\.([A-Z_]+)", text))
+        self.assertEqual(secrets_used, {"DOCS_SYNC_TOKEN"})
+
+    def test_docs_auto_sync_dispatch_is_optional_and_never_fails(self):
+        workflow = load_workflow()
+        steps = workflow["jobs"]["surfaces"]["steps"]
+        self.assertEqual(len(steps), 2)
+        dispatch = steps[1]
+        # The dispatch runs after the checklist issue step, so its outcome
+        # can be recorded on that issue.
+        run = dispatch["run"]
+        self.assertEqual(dispatch["env"]["DOCS_SYNC_TOKEN"],
+                         "${{ secrets.DOCS_SYNC_TOKEN }}")
+        self.assertIn("repos/catduckgnaf/print-buddy-docs/dispatches", run)
+        self.assertIn("print-buddy-release", run)
+        # Missing secret: the skip and the manual remedy are recorded.
+        self.assertIn("DOCS_SYNC_TOKEN", run)
+        self.assertIn("docs-auto-sync.yml", run)
+        # Graceful degradation: the step always exits 0.
+        self.assertTrue(run.rstrip().endswith("exit 0"))
 
     def test_single_checklist_issue_per_release(self):
         text = WORKFLOW_PATH.read_text()

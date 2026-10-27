@@ -62,6 +62,8 @@ Use [the documentation home](docs/README.md) for user guidance. Keep the root RE
 
 When a release is published, the post-release surfaces workflow (`.github/workflows/post-release-surfaces.yml`, #394) opens one `Post-release surfaces check: <tag>` issue listing the release's merged PRs. Every surface in it — these docs, the Pages site (including pages to add or remove), the wiki, the README and repo About text, the release notes and the Unraid CA template sync — needs an explicit updated / verified-no-change decision before the issue closes. It complements the daily Docs sync check in `print-buddy-docs`, which only watches file drift between `docs/` and the site copies.
 
+Publication is gated on the two machine-checkable surfaces: the `docker-publish` workflow's surfaces gate (see `docs/DOCKER.md`, "Validation and publication") refuses a `publish=true` run while the README/package version disagree with the release or the Pages site has drifted from `docs/`; candidate runs only warn, and nightly is never gated. The gate's remedy is the Docs auto-sync workflow in `print-buddy-docs`, which publishing a release also triggers automatically when the `DOCS_SYNC_TOKEN` secret is configured.
+
 ## Automated PR review support
 
 The **Contribution checks / contribution-policy** check runs when a PR opens,

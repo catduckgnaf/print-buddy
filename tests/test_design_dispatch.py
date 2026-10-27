@@ -88,7 +88,10 @@ def design_env(tmp_path):
 
 
 def _dispatch(text, adapter, fake, choice, platform="discord", authorized=True):
+    # Pin the prompts gateway to the standalone module: under the full suite
+    # another test's Hermes/corpus stand-in can otherwise win gateway().
     with mock.patch.object(plugin, "_design_transport", return_value=(fake, "http")), \
+            mock.patch.object(core_prompts, "gateway", return_value=core_prompts), \
             mock.patch.object(core_prompts, "wait_for_response", return_value=choice):
         return asyncio.run(plugin.design_dispatch(
             _event(text, platform=platform), _gateway(adapter, authorized)))

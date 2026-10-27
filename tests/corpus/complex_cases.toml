@@ -1,0 +1,485 @@
+# Complex slicer corpus manifest for #458. Measured stats were taken from the downloaded
+# files themselves on 2026-10-27 (see tests/corpus/complex/README.md for how). Licence strings
+# for Printables entries are the exact names returned by the Printables GraphQL API at download
+# time (the same API print_buddy.core.model_job uses). Public entries are redistributable;
+# private-tier entries are never committed or uploaded - only their stats are recorded here.
+
+[[case]]
+tier = "public"
+slug = "stanford-dragon"
+title = "Stanford dragon"
+author = "xchgre (Stanford University scan, 1996)"
+source_page = "https://www.printables.com/model/696344-stanford-dragon"
+site = "printables"
+site_model_id = "696344"
+site_file_id = "2943137"
+license = "Creative Commons — Public Domain"
+target_domain = "octoprint"
+target_printer = "octoprint.marlin"
+target_printer_label = "Marlin via OctoPrint"
+target_bed_mm = [220.0, 220.0]
+target_max_height_mm = 220.0
+status = "ready"
+file = "model.stl"
+bytes = 15923084
+sha256 = "ae884cd464e115cab7b769cd11b3658f7da475e587bd9731f98acaae8b63a3ee"
+triangles = 318460
+dims_mm = [143.45, 62.84, 97.03]
+colors = "1 (single colour STL)"
+supports = "Author page offers a flat-base version; the distributed STL is the full scan - supports expected from the slicer profile defaults, not asserted"
+notes = "Listing states the source scan has 871,414 triangles; the distributed STL measures 318,460 - the listing's number describes the scan data, not this file. The 118 MB Dragon.obj from the same listing is not used (corpus formats are STL/3MF)."
+
+[[case]]
+tier = "public"
+slug = "cute-dino-mmu"
+title = "Cute Dino - MMU"
+author = "Cherry Hill Tech (remix of BMoArtist)"
+source_page = "https://www.printables.com/model/513325-cute-dino-mmu"
+site = "printables"
+site_model_id = "513325"
+site_file_id = "2195419"
+license = "Creative Commons — Attribution"
+target_domain = "moonraker"
+target_printer = "flashforge.ad5x"
+target_printer_label = "Flashforge AD5X"
+target_bed_mm = [220.0, 220.0]
+target_max_height_mm = 250.0
+status = "ready"
+file = "model.3mf"
+bytes = 13114908
+sha256 = "6dae20a2ab7e4f93396eb8a9143ae5d24781ce591e61c5103223562511b7a47d"
+triangles = 960168
+dims_mm = [78.0, 251.41, 186.39]
+colors = "4 painted colours stated on the page (body / feet / spine plates / eyes + polka dots); every one of the 960,168 triangles carries a slic3rpe:mmu_segmentation attribute (measured)"
+supports = "Organic supports stated on the page"
+notes = "477 tool changes stated on the page for the printed settings. A 3-dino variant file (39,256,018 bytes) exists on the listing and is not used. Page-stated tool changes are for the author's settings, not a corpus expectation."
+
+[[case]]
+tier = "public"
+slug = "curiosity-nasa"
+title = "Curiosity Rover (Simplified)"
+author = "NASA (science.nasa.gov 3D Resources)"
+source_page = "https://science.nasa.gov/3d-resources/curiosity-rover-simplified/"
+site = "nasa"
+license = "Public domain (NASA media guidelines; NASA 3D Resources hub: free to download and use)"
+target_domain = "prusalink"
+target_printer = "prusa.xl"
+target_printer_label = "Prusa XL (5-tool)"
+target_bed_mm = [360.0, 360.0]
+target_max_height_mm = 360.0
+status = "ready"
+file = "model.stl"
+bytes = 19247184
+sha256 = "baf0e822a46bea22b23a7c0bee968f82d4f309b49c53f7e33fa642a0e176fe8a"
+triangles = 384942
+dims_mm = [196.28, 96.69, 32.5]
+colors = "1 (single colour STL)"
+supports = "Elevated body on rocker-bogie arms, mast and arm - heavy overhang volume; support outcome is whatever the flow decides, not pre-asserted"
+notes = "Page states the STL is 18.36 MB; measured 19,247,184 bytes = 18.36 MiB, matching. Parts.zip on the same page is not used. This is the single merged mesh; case 11 is the many-part assembly of the same rover from a different source file set."
+
+[[case]]
+tier = "public"
+slug = "spiral-vase"
+title = "Vase - Spiral shape"
+author = "traenman"
+source_page = "https://www.printables.com/model/1607673-vase-spiral-shape"
+site = "printables"
+site_model_id = "1607673"
+site_file_id = "6764469"
+license = "Creative Commons — Public Domain"
+target_domain = "bambulab_lan"
+target_printer = "bambulab.h2d"
+target_printer_label = "Bambu Lab H2D"
+target_bed_mm = [350.0, 320.0]
+target_max_height_mm = 325.0
+status = "ready"
+file = "model.stl"
+bytes = 7747284
+sha256 = "5dd523f6a95ae3a8c3c53313286e0ac307a878abed8ad5158c61deb24fa19478"
+triangles = 154944
+dims_mm = [179.83, 300.0, 179.83]
+colors = "1 (single colour STL)"
+supports = "Continuous spiral thin wall; no supports stated"
+notes = "Page states 300 mm tall. Measured bbox as stored is [179.83, 300.0, 179.83] mm: the file is authored Y-up, so as stored its 300 mm axis lies along Y and its Z height is 179.83 mm. On the H2D bed (350x320) the as-stored footprint fits at 100%; on a 256 mm Bambu bed it would not."
+
+[[case]]
+tier = "public"
+slug = "mammoth-skeleton"
+title = "Mammuthus primigenius (Blumbach)"
+author = "Smithsonian Institution, NMNH Paleobiology (USNM V23792)"
+source_page = "https://3d.si.edu/object/3d/mammuthus-primigenius-blumbach:341c96cd-f967-4540-8ed1-d3fc56d31f12"
+site = "smithsonian"
+license = "Public domain (page, verbatim: 'This media is in the public domain (free of copyright restrictions). You can copy, modify, and distribute this work without contacting the Smithsonian.')"
+target_domain = "moonraker"
+target_printer = "klipper.generic"
+target_printer_label = "Generic Klipper"
+target_bed_mm = [220.0, 220.0]
+target_max_height_mm = 220.0
+status = "blocked-download"
+blocked_reason = "No direct file link on the object page (format not stated there). The Smithsonian EDAN API answers API_KEY_MISSING (a key from api.si.edu is required; none is available on this machine) and the 3d-api.si.edu document route is WAF-rejected from this machine. Not substituted, per the licence/download rules."
+colors = "1"
+supports = "Complete mounted skeleton - near-worst-case supports (catalogue)"
+
+[[case]]
+tier = "public"
+slug = "jukebox-face"
+title = "Vintage Jukebox Cover for Google Home Mini (Face Only Remix)"
+author = "N8&Joey"
+source_page = "https://www.printables.com/model/947485-vintage-jukebox-cover-for-google-home-mini-face-on"
+site = "printables"
+site_model_id = "947485"
+site_file_id = "3978865"
+license = "Creative Commons — Attribution — Share Alike"
+target_domain = "moonraker"
+target_printer = "flashforge.ad5x"
+target_printer_label = "Flashforge AD5X"
+target_bed_mm = [220.0, 220.0]
+target_max_height_mm = 250.0
+status = "ready"
+file = "model.3mf"
+bytes = 327923
+sha256 = "4c734ba75e17278b613e269ad38e6e1faaa2eb6ef6747a9f8a4665da36caa21f"
+triangles = 25656
+dims_mm = [114.72, 180.0, 14.15]
+colors = "5 colours stated on the page (MMU, 5 PLA colours); 22,072 of 25,656 triangles carry slic3rpe:mmu_segmentation (measured)"
+supports = "Not stated"
+notes = "Face-only remix: the case/backplate live in the original model, so this case is one painted part of a larger project. Small file (327,923 bytes) - its stress is the 5-colour over-slots path on a 4-slot printer, not size."
+
+[[case]]
+tier = "public"
+slug = "eiffel-tower"
+title = "Eiffel Tower"
+author = "Michal Fanta"
+source_page = "https://www.printables.com/model/572-eiffel-tower"
+site = "printables"
+site_model_id = "572"
+site_file_id = "2591"
+license = "Creative Commons — Public Domain"
+target_domain = "octoprint"
+target_printer = "octoprint.marlin"
+target_printer_label = "Marlin via OctoPrint"
+target_bed_mm = [220.0, 220.0]
+target_max_height_mm = 220.0
+status = "ready"
+file = "model.stl"
+bytes = 8125184
+sha256 = "4cb15b66c826404a632cddba7c50a47800f1cc30ef732d174b30b1a743ff1a70"
+triangles = 162502
+dims_mm = [54.66, 54.66, 120.94]
+colors = "1 (single colour STL)"
+supports = "Lattice/truss - support decision is the slicer's; not pre-asserted"
+notes = "Native size is small (54.66 x 54.66 x 120.94 mm measured): the stress is 162,502 triangles of dense thin-rod lattice, not footprint. File size on the listing (8 MB) matches the measured 8,125,184 bytes."
+
+[[case]]
+tier = "public"
+slug = "gyroid-surface"
+title = "Gyroid Surface"
+author = "deadsy"
+source_page = "https://www.printables.com/model/157474-gyroid-surface"
+site = "printables"
+site_model_id = "157474"
+site_file_id = "645383"
+license = "Creative Commons — Attribution"
+target_domain = "offline"
+target_printer = "klipper.generic"
+target_printer_label = "Generic Klipper"
+target_bed_mm = [220.0, 220.0]
+target_max_height_mm = 220.0
+status = "ready"
+file = "model.stl"
+bytes = 45001084
+sha256 = "d828943ef792cfd577e6fe2b67cdd77ddb88ee11d609521a7ad07616a0c44ea4"
+triangles = 900020
+dims_mm = [60.0, 60.0, 60.0]
+colors = "1 (single colour STL)"
+supports = "Page print settings state Supports: No"
+notes = "900,020 triangles in a 60 mm cube: a thin shell over a triply-periodic gyroid surface, no flat landing. Target domain is offline (slicing-only); the state used for the flow run is the Generic Klipper geometry, which the README names as a placeholder, not an offline profile. Verified 2026-10-27: the flow refuses this file at intake - STL 45,001,084 bytes exceeds the product's 32 MiB STL cap - so the case pins the refusal receipt (status FAILED). The gyroid geometry itself is never reached at current limits."
+
+[[case]]
+tier = "public"
+slug = "church-bell"
+title = "Church Bell with frame"
+author = "leadinglights"
+source_page = "https://www.printables.com/model/160174-church-bell-with-frame"
+site = "printables"
+site_model_id = "160174"
+site_file_id = "654700"
+license = "Creative Commons — Attribution"
+target_domain = "elegoo_sdcp"
+target_printer = "elegoo_sdcp.centauricarbon"
+target_printer_label = "Elegoo Centauri Carbon"
+target_bed_mm = [256.0, 256.0]
+target_max_height_mm = 256.0
+status = "ready"
+file = "model.stl"
+bytes = 6999584
+sha256 = "cb20e57222e2a59f94d6899250648cbd22da74ec2fd048d64ef716d336a70573"
+triangles = 139990
+dims_mm = [109.16, 109.16, 110.8]
+colors = "1 (single colour STL set)"
+supports = "Not stated"
+notes = "12 STL files on the listing; the flow-run primary is NewBell.stl (the bell). The fetch downloads all 12 and the manifest's extra_files record each one's measured stats. Assembled height 'just under 300 mm' is the page's claim for the stacked assembly, not a single file's dimension."
+
+[[case.extra_file]]
+case_slug = "church-bell"
+name = "Plate1.stl"
+site_file_id = "654699"
+bytes = 6887484
+sha256 = "88ca5e17278b25b8fda7075717d18bdc364abb1399b8ec5dcde9269b4c7f2f26"
+triangles = 137748
+dims_mm = [109.16, 109.16, 103.71]
+
+[[case.extra_file]]
+case_slug = "church-bell"
+name = "Plate2.stl"
+site_file_id = "654694"
+bytes = 344984
+sha256 = "da57e1f7582dff95dfc46aa5d418e0e4e849529cb900736bfeb3d57ed19ae383"
+triangles = 6898
+dims_mm = [17.58, 15.47, 108.25]
+
+[[case.extra_file]]
+case_slug = "church-bell"
+name = "Plate3.stl"
+site_file_id = "654695"
+bytes = 692684
+sha256 = "1dc7c4aa67f58de74834a647499f00f06f8ec43388741f047cadb9f03ae7e616"
+triangles = 13852
+dims_mm = [180.0, 180.0, 10.0]
+
+[[case.extra_file]]
+case_slug = "church-bell"
+name = "Plate5.stl"
+site_file_id = "654691"
+bytes = 507084
+sha256 = "376051e122301dfafaafe878e843e03c19bfbfebe6754b08408a43f9d5cf8c74"
+triangles = 10140
+dims_mm = [179.67, 168.0, 10.0]
+
+[[case.extra_file]]
+case_slug = "church-bell"
+name = "Plate6.stl"
+site_file_id = "654696"
+bytes = 620284
+sha256 = "b51c8a48c82ad63858b0616e42ac889ad4039f394f30ac7848c78dac3ef4b249"
+triangles = 12404
+dims_mm = [140.14, 160.27, 22.25]
+
+[[case.extra_file]]
+case_slug = "church-bell"
+name = "Plate6A.stl"
+site_file_id = "654690"
+bytes = 40084
+sha256 = "21ab40612dec617648b45a773f5d3255d418a9a88b191ab0d655d9cab4d1e65c"
+triangles = 800
+dims_mm = [170.72, 169.74, 1.8]
+
+[[case.extra_file]]
+case_slug = "church-bell"
+name = "Plate7.stl"
+site_file_id = "654698"
+bytes = 1307384
+sha256 = "5106da66d37e2cf34d768c5202f407a67b8e91d76a448d215426dcfc1d774ed2"
+triangles = 26146
+dims_mm = [172.1, 175.06, 10.0]
+
+[[case.extra_file]]
+case_slug = "church-bell"
+name = "Plate8.stl"
+site_file_id = "654692"
+bytes = 227184
+sha256 = "9d3a0359ef7afabd00d2cf42fa914e5d2242ce4e53451700ca36c29e301cf10f"
+triangles = 4542
+dims_mm = [97.49, 136.09, 20.0]
+
+[[case.extra_file]]
+case_slug = "church-bell"
+name = "NewCrosshead.stl"
+site_file_id = "654688"
+bytes = 100184
+sha256 = "d736f2da386a9e85253cc225c1cccc93b3120d2e19ead630393b8b35cdc020db"
+triangles = 2002
+dims_mm = [128.0, 16.0, 61.76]
+
+[[case.extra_file]]
+case_slug = "church-bell"
+name = "BellwheelSolid.stl"
+site_file_id = "654689"
+bytes = 49584
+sha256 = "027aa137e24c3f2c2e638db8cdb187ff65b83c2cec7de9d7736ae55cd6b57a84"
+triangles = 990
+dims_mm = [228.0, 227.97, 8.0]
+
+[[case.extra_file]]
+case_slug = "church-bell"
+name = "BellWheelCheek.stl"
+site_file_id = "654693"
+bytes = 36184
+sha256 = "a70690f4d06c5b898fec7ba5ba16ccbcbf8017229a9956a8ad153322a891942f"
+triangles = 722
+dims_mm = [239.86, 240.0, 1.2]
+
+[[case]]
+tier = "public"
+slug = "fnaf-mask"
+title = "FNAF Marionette Mask"
+author = "ninjakitty7"
+source_page = "https://www.printables.com/model/582937-fnaf-marionette-mask"
+site = "printables"
+site_model_id = "582937"
+site_file_id = "2468904"
+license = "Creative Commons — Attribution"
+target_domain = "flashforge_stock"
+target_printer = "flashforge_stock.ad5x"
+target_printer_label = "Flashforge Adventurer 5X (stock)"
+target_bed_mm = [220.0, 220.0]
+target_max_height_mm = 220.0
+status = "ready"
+file = "model.stl"
+bytes = 36467384
+sha256 = "7cc721434c651a84194102d2da2ea6d603f7df36cff591ad039e71da1d5fded9"
+triangles = 729346
+dims_mm = [191.88, 240.0, 70.28]
+colors = "1 (single colour STL)"
+supports = "Page states: supports yes, brim and tree supports at ~30 degree overhang, support blockers used; just over 48 hours print time"
+notes = "Primary file is 'Puppet Mask Whole.stl'. The listing also carries the mask split into 4 quadrant STLs (Puppet Segment 1-4), which are not downloaded: the whole-mask file is the harder single case. Measured footprint 191.88 x 240.0 mm exceeds the 220 mm stock bed in Y, so the flow's fit path (rotate/shrink) is part of the case. Verified 2026-10-27: the flow refuses this file at intake - STL 36,467,384 bytes exceeds the product's 32 MiB STL cap - so the case pins the refusal receipt (status FAILED), which is the finding this case exists to record."
+
+[[case]]
+tier = "public"
+slug = "curiosity-large"
+title = "Curiosity Rover (large) with instructions"
+author = "xchgre (origin: NASA Jet Propulsion Laboratory)"
+source_page = "https://www.printables.com/model/693101-curiosity-rover-large-with-instructions"
+site = "printables"
+site_model_id = "693101"
+site_file_id = "2920823"
+license = "Creative Commons — Public Domain"
+target_domain = "prusalink"
+target_printer = "prusa.xl"
+target_printer_label = "Prusa XL (5-tool)"
+target_bed_mm = [360.0, 360.0]
+target_max_height_mm = 360.0
+status = "ready"
+file = "model.stl"
+bytes = 916984
+sha256 = "37658779043aab83c74664c25347d6aaf4f17fe83ecf4382e24347f0f2156708"
+triangles = 18338
+dims_mm = [160.43, 107.93, 59.0]
+colors = "1 (single colour STL set)"
+supports = "Many-part mechanical assembly; per-part support decisions are the slicer's"
+notes = "The fetch downloads the listing's 4 numbered plate files (1-body, 2-components, 3-pins-and-hubs, 4-wheels); the flow-run primary is 1-body.stl, saved as model.stl. The listing's separate 'STL Files' folder holds the same content as individual parts (its body.STL is the same 916,984 bytes as 1-body.stl) - a different file set from case 3's single merged NASA mesh (384,942 triangles in one file vs 749,346 across these four plates, measured)."
+
+[[case.extra_file]]
+case_slug = "curiosity-large"
+name = "2-components.stl"
+site_file_id = "2920824"
+bytes = 12157084
+sha256 = "572bb13c4a2db8c7f9921ab0ad8353620c6c23566203373a5e74107daa4c1a8f"
+triangles = 243140
+dims_mm = [205.65, 147.76, 55.0]
+
+[[case.extra_file]]
+case_slug = "curiosity-large"
+name = "3-pins-and-hubs.stl"
+site_file_id = "2920825"
+bytes = 6986284
+sha256 = "3a0f5a043270c2bb0b85650143b0580f13d1cda4b19a68824affd537f5791174"
+triangles = 139724
+dims_mm = [167.54, 125.3, 15.2]
+
+[[case.extra_file]]
+case_slug = "curiosity-large"
+name = "4-wheels.stl"
+site_file_id = "2920822"
+bytes = 17407284
+sha256 = "b4fcb1cbf5e00d6498080cf92e50086829eab69d8af923c683a94fbcf9a5c560"
+triangles = 348144
+dims_mm = [120.32, 78.77, 32.0]
+
+[[case]]
+tier = "public"
+slug = "chinese-dragon"
+title = "Chinese Dragon Sculpture"
+author = "Theo Gottwald"
+source_page = "https://www.printables.com/model/290290-chinese-dragon-sculpture"
+site = "printables"
+site_model_id = "290290"
+site_file_id = "1307000"
+license = "Creative Commons — Public Domain"
+target_domain = "bambulab_lan"
+target_printer = "bambulab.h2d"
+target_printer_label = "Bambu Lab H2D"
+target_bed_mm = [350.0, 320.0]
+target_max_height_mm = 325.0
+status = "ready"
+file = "model.3mf"
+bytes = 68721403
+sha256 = "50fae8b219795b677553af0119bbd16e1ab4ff43fff9d182ca7d0a2b66c1503c"
+triangles = 5930118
+dims_mm = [201.74, 90.56, 134.19]
+colors = "Bambu project (project_settings.config filament_colour list present in the file, measured); author page describes model filament plus dedicated support filament in AMS"
+supports = "Page states: do not use tree supports, use normal supports; dedicated support filament (support-material swap)"
+notes = "VARIANT of case 1's Stanford dragon geometry in a Bambu project configuration - not a 12th distinct mesh. The downloaded file is 'Big Dragon 02.3mf' (the listing's other 68 MB project, 'Other_Dragon_Large.3mf', is not used). Measured 5,930,118 triangles across the project's object files - the project carries more geometry than the standalone STL (copies/plates in the project), which is itself part of the stress. Verified 2026-10-27: the flow refuses this file at intake - the 3MF's uncompressed model XML exceeds the product's 400 MiB cap - so the case pins the refusal receipt (status FAILED)."
+
+[[case]]
+tier = "private"
+slug = "colormix-chameleon"
+title = "ColorMix Chameleon"
+author = "Prusa Research"
+source_page = "https://www.printables.com/model/1734124-colormix-chameleon"
+site = "printables"
+site_model_id = "1734124"
+site_file_id = "7231710"
+license = "Creative Commons — Attribution — Noncommercial — Share Alike"
+target_domain = "prusalink"
+target_printer = "prusa.xl"
+target_printer_label = "Prusa XL (5-tool)"
+target_bed_mm = [360.0, 360.0]
+target_max_height_mm = 360.0
+status = "ready"
+file = "model.3mf"
+bytes = 14642355
+sha256 = "4fc6564e0c124b98d6136ff8aa380743cc672d767d2ef043b9310388a662b260"
+triangles = 972972
+dims_mm = [86.46, 74.82, 180.0]
+notes = "PRIVATE TIER ONLY - CC BY-NC-SA permits non-commercial use only, so the file is never committed or uploaded. Downloaded file is 'ColorMix_chameleon_5T_red_shades.3mf' (the Prusa XL 5-tool version). Every one of its 972,972 triangles carries slic3rpe:mmu_segmentation (measured). Stats and outcomes may be reported; the file may not."
+
+[[case]]
+tier = "private"
+slug = "dragon-statue"
+title = "Dragon Statue"
+author = "29flo"
+source_page = "https://www.printables.com/model/1377818-dragon-statue"
+site = "printables"
+site_model_id = "1377818"
+site_file_id = "5805016"
+license = "Standard Digital File License"
+target_domain = "flashforge_stock"
+target_printer = "flashforge_stock.ad5x"
+target_printer_label = "Flashforge Adventurer 5X (stock)"
+target_bed_mm = [220.0, 220.0]
+target_max_height_mm = 220.0
+status = "ready"
+file = "model.stl"
+bytes = 32902384
+sha256 = "48d03183eab5a00ab6dbc6985ce5f35ef6aafe431425f0b3c4f7bd4bc85bbc7c"
+triangles = 658046
+dims_mm = [200.0, 152.43, 154.68]
+notes = "PRIVATE TIER ONLY - Standard Digital File License forbids sharing/hosting/distributing the file, so it is never committed or uploaded. Downloaded file is dragon5.stl. Page states it will 'need a ton of support removal' with tree (auto) supports at angle 35. Stats and outcomes may be reported; the file may not."
+
+[[case]]
+tier = "private"
+slug = "polymaker-scientist"
+title = "16 Color Polymaker Scientist"
+author = "The3DPrintGeneral (design: Kong Chho for Polymaker)"
+source_page = "https://makerworld.com/en/models/13993-16-color-polymaker-scientist"
+site = "makerworld"
+site_model_id = "13993"
+license = "Standard Digital File License"
+target_domain = "bambulab_lan"
+target_printer = "bambulab.h2d"
+target_printer_label = "Bambu Lab H2D"
+target_bed_mm = [350.0, 320.0]
+target_max_height_mm = 325.0
+status = "blocked-download"
+blocked_reason = "MakerWorld downloads in this codebase require the account token file ~/.config/bambu/token (print_buddy.core.model_job.maker_headers raises without it); that file is absent on this machine, so the file could not be obtained through the eligible route. The model's metadata was read from MakerWorld's public design API, which confirms the title and licence ('Standard Digital File License', one print instance). No scrape or paywall workaround was attempted."

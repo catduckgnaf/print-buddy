@@ -19,6 +19,13 @@ The YAML file remains the only source of truth. The Web UI does not keep a secon
 | `GET /config` | The picker configuration page |
 | `GET /api/status` | The same status snapshot as JSON |
 | `GET /healthz` | The standalone bot heartbeat verdict: `200` when it passes, `503` when it does not |
+| `GET /designs` | The read-only designs catalog (#388): AI design sessions on disk, newest first |
+| `GET /designs/<id>` | One design session: its final `.scad` source and file downloads |
+| `GET /designs/<id>/<scad\|stl\|preview>` | That session's `.scad`, final `.stl`, or preview PNG download |
+
+### Designs page
+
+The designs page is a read-only catalog of the AI design sessions kept on the machine (the same 14-day window the design engine keeps under the cache directory). Each row names the session — derived from the instruction it was started with — says whether it was created from a description or is an edit (and of what), its state (in progress, ready, handed off, cancelled), its turn count, its created/updated times, and its preview when one exists. A session's own page shows the final `.scad` source and downloads for the source, the final STL and the preview PNG; files are served only from inside that session's own directory. The catalog lists what is on disk whether or not `[design]` is currently enabled, and it has no write actions: nothing there deletes, slices or prints. See [AI design with OpenSCAD](DESIGN.md#browsing-designs-in-the-web-ui).
 
 ### Status page
 

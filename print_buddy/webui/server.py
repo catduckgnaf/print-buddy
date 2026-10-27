@@ -11,6 +11,10 @@ step) serving:
   200/503 + JSON shape as the standalone bot's own health server;
 - ``GET /config`` — the picker configuration page
   (:mod:`print_buddy.webui.pages`), the one write surface in the Web UI.
+- ``GET /designs`` and ``GET /designs/<id>`` — the read-only catalog of
+  AI design sessions (#388, stage 3;
+  :mod:`print_buddy.webui.designs`), with per-session file downloads
+  under ``GET /designs/<id>/<scad|stl|preview>``.
 
 Unknown GET paths are 404. Writes happen only through the config page's
 two POSTs (``POST /config/preview`` renders the diff and writes nothing;
@@ -65,6 +69,7 @@ from urllib.parse import parse_qs, urlparse
 from .. import settings
 from ..bot import health as bot_health
 from . import config as config_api
+from . import designs as designs_module
 from . import pages
 from . import status as status_module
 
@@ -191,7 +196,8 @@ def render_status_html(snap):
             "<h1>Print Buddy status</h1>"
             f"<p>Overall: {'ok' if snap['ok'] else 'attention needed'} (read-only page; "
             "settings are changed on the <a href=\"/config\">configuration page</a>, "
-            "which writes the YAML settings file)</p>"
+            "which writes the YAML settings file; AI designs are listed on the "
+            "<a href=\"/designs\">designs page</a>)</p>"
             f"<table>{main_rows}</table>"
             + roster_table
             + (f"<h2>Services</h2><table>{services}</table>" if services else "")
@@ -302,11 +308,54 @@ class _Handler(BaseHTTPRequestHandler):
             elif path == "/config":
                 self._send(200, self._config_html(self._field_values()),
                            "text/html; charset=utf-8")
+            elif path == "/designs":
+                rows = designs_module.catalog_rows(self.server.settings_data)
+                self._send(200, designs_module.render_designs_page(rows),
+                           "text/html; charset=utf-8")
+            elif path.startswith("/designs/"):
+                self._design_route(path[len("/designs/"):])
             else:
                 self._json(404, {"ok": False,
-                                 "reason": "try /, /api/status, /healthz, /config or /login"})
+                                 "reason": "try /, /api/status, /healthz, /config, "
+                                           "/designs or /login"})
         except Exception as exc:  # a broken snapshot is a 500, never a dropped connection
             self._json(500, {"ok": False, "reason": f"{type(exc).__name__}: {exc}"})
+
+    # -- designs catalog (read-only, #388 stage 3) --------------------------
+    def _design_route(self, rest):
+        """GET /designs/<id> (detail) and /designs/<id>/<kind> (a file).
+
+        ``rest`` is the path after ``/designs/``: exactly one segment is
+        a session id, exactly two is that session's ``scad`` / ``stl`` /
+        ``preview`` file. Anything else — extra segments, ``..``, unknown
+        ids or kinds — is a 404; the file itself is resolved by
+        :func:`print_buddy.core.design.session_file` from the session
+        record, so nothing outside the session's own folder can be named.
+        """
+        segments = rest.split("/")
+        data = self.server.settings_data
+        if len(segments) == 1 and segments[0]:
+            detail = designs_module.load_detail(data, segments[0])
+            if detail is None:
+                self._json(404, {"ok": False, "reason": "no such design session"})
+                return
+            session, scad_text, has_stl, has_preview = detail
+            self._send(200, designs_module.render_design_detail(
+                session, scad_text, has_stl=has_stl, has_preview=has_preview),
+                "text/html; charset=utf-8")
+            return
+        if len(segments) == 2 and segments[0] and segments[1] in designs_module.FILE_KINDS:
+            found = designs_module.file_for(data, segments[0], segments[1])
+            if found is None:
+                self._json(404, {"ok": False, "reason": "no such design file"})
+                return
+            path, content_type, inline = found
+            disposition = "inline" if inline else "attachment"
+            self._send(200, path.read_bytes(), content_type,
+                       headers=[("Content-Disposition",
+                                 f'{disposition}; filename="{path.name}"')])
+            return
+        self._json(404, {"ok": False, "reason": "no such design session"})
 
     # -- browser login ------------------------------------------------------
     def _login_page(self):

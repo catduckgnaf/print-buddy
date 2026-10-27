@@ -40,10 +40,14 @@ in `print_buddy.diagnostics.LEGACY_MARKERS` and likewise never changes.
    client's failure warning, and this audit inventory.
 2. **Stage 2:** Discord message audit fixes — apply the operator-message
    bar to the surfaces the inventory below marks as failing it.
-3. **Stage 3:** diagnostics bundle — a bot command and a CLI that assemble
-   versions, image digest, a redacted config summary (env-name indirection
-   only; secret values never included), printer/roster summary, doctor
-   output and a bounded recent-log tail, wired to the bug-report issue form.
+3. **Stage 3 (done):** diagnostics bundle — `/print-buddy bundle` in the bot
+   and `python3 -m print_buddy.diagnostics_bundle` on the host assemble
+   versions, image digest (when the environment records one), a redacted
+   config summary (env-name indirection only; secret values never
+   included), printer/roster summary, doctor output and a bounded
+   recent-log tail. The bug-report issue form asks for the bundle. The
+   bundle is only ever written to a local file the operator chooses to
+   attach — nothing is uploaded.
 4. **Stage 4:** structured logging consistency — per-subsystem verbosity
    (see [Settings](SETTINGS.md) `[logging]`), `printer_id` on
    multi-printer records, and supervisor/healthcheck output that names
@@ -63,8 +67,8 @@ each row as it changes it.
 
 | Surface | What it does today | Bar verdict | Stage |
 | --- | --- | --- | --- |
-| Discord startup (`bot/client.py` `run_bot`) | `DISCORD_STARTUP_RETRY` log marker with attempt/backoff; token/intent failures print an actionable stderr line and exit 3 | Mostly meets bar; no taxonomy marker on the final failure | 2 |
-| Spoolman unavailable (pipeline notice) | One-line notice that tracking was skipped; failure detail only in the WARNING log | Names what failed; no cause/remedy for the operator. Log warning now carries `PB_SPOOLMAN_*` (Stage 1) | 2 |
+| Discord startup (`bot/client.py` `run_bot`) | `DISCORD_STARTUP_RETRY` log marker with attempt/backoff; token/intent failures print an actionable stderr line and exit 3 | Meets bar after Stage 2: the exhausted-retry line carries `PB_DISCORD_*`, and the token/intent exits name the remedy and `PB_DISCORD_CONFIGURATION` | 2 (done) |
+| Spoolman unavailable (pipeline notice) | One-line notice that tracking was skipped; failure detail only in the WARNING log | Meets bar after Stage 2: the notice states the print continues and what to check; the log warning carries the exact `PB_SPOOLMAN_*` marker (Stage 1) | 2 (done) |
 | Timelapse completion posts (#383) | Every degraded outcome posts a reason line instead of dropping the video silently | Meets bar — the reference pattern for Stage 2 | — |
 | Intake / slicing / delivery posts (`core/model_job.py`) | Many outcomes carry a `reason`; some failure posts are still built from raw exception text | Mixed; per-post audit needed | 2 |
 | Listener heartbeat (`healthcheck.py`, `bot/health.py`) | `(ok, reason)` strings name staleness/identity/connection states | Names what failed; no remedy, no marker | 5 |

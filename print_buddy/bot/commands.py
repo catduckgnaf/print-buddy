@@ -56,9 +56,9 @@ COMMANDS = (
             (Option("prompt", "What to make or change, e.g. a 40x20x3 plate with two 4 mm holes, or 'make it taller' with a file dropped"),),
             "/print-design <what to make or change>"),
     Command("print-buddy", "Guided setup and read-only debugging (never prints)",
-            (Option("action", "setup, debugging, status, cancel or help",
-                    ("setup", "debugging", "status", "cancel", "help")),),
-            "/print-buddy [setup | debugging | status | cancel | help]"),
+            (Option("action", "setup, debugging, bundle, status, cancel or help",
+                    ("setup", "debugging", "bundle", "status", "cancel", "help")),),
+            "/print-buddy [setup | debugging | bundle | status | cancel | help]"),
     Command("print-help", "What Print Buddy can do", usage="/print-help"),
 )
 

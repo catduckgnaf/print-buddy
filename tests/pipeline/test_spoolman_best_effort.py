@@ -12,7 +12,8 @@ the wrapper's real error handling, logging and notice run):
 - slicing succeeds and produces G-code with Spoolman refused, timing out
   or answering 500, on the slot/filament data already on hand, with a
   WARNING in the log and exactly one user line:
-  "Spoolman unavailable; spool tracking skipped for this job.";
+  the #390 notice (UNAVAILABLE_NOTICE: what failed, that the print
+  continues, and what to check);
 - print start and completion with Spoolman down raise nothing, and the
   usage that could not be reported is recorded as pending in the job /
   completion record for later reconciliation.

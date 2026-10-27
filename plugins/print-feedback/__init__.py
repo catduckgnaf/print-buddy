@@ -196,13 +196,22 @@ async def guided_dispatch(event, gateway, **kwargs):
                                        token_getter=lambda _cfg: token,
                                        secrets=[token] if token else [])
 
+    def bundle():
+        from print_buddy import diagnostics_bundle
+        target = diagnostics_bundle.write_bundle(_state_dir() / diagnostics_bundle.BUNDLE_NAME,
+                                                 data=_config.cfg())
+        return (f"**Diagnostics bundle written**: `{target}`\n"
+                "It contains versions, a redacted configuration summary (no secret values), "
+                "the printer roster, the doctor output and a bounded recent-log tail. "
+                "Review it, then attach it to your bug report — nothing was uploaded anywhere.")
+
     try:
         token_env = str(_config.cfg()['discord'].get('token_env') or 'DISCORD_BOT_TOKEN')
     except Exception:
         token_env = 'DISCORD_BOT_TOKEN'
     try:
         reply = await asyncio.to_thread(guided.handle_text, key, text, store=store,
-                                        token_env=token_env, report=report)
+                                        token_env=token_env, report=report, bundle=bundle)
     except Exception:
         logger.exception('guided setup/debugging failed')
         reply = 'That guided step failed and nothing was changed. Try `/print-buddy status`, or `/print-buddy cancel` to pause setup.'

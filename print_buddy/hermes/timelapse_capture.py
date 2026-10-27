@@ -44,14 +44,15 @@ import urllib.request
 from pathlib import Path
 
 from .. import go2rtc
-from ..live_stream import GO2RTC_STREAM_NAME, redact_url
+from ..live_stream import redact_url
 from . import _config
 from .print_records import _safe_slug
 
 # go2rtc serves a JPEG snapshot of the generated config's one stream
 # (live_stream.GO2RTC_STREAM_NAME) on its loopback API; see
-# print_buddy.go2rtc.render_config.
-GO2RTC_FRAME_URL = f"http://127.0.0.1:1984/api/frame.jpeg?src={GO2RTC_STREAM_NAME}"
+# print_buddy.go2rtc.render_config. The URL itself is defined once, in
+# print_buddy.go2rtc, so every stills consumer reads the same endpoint.
+GO2RTC_FRAME_URL = go2rtc.FRAME_URL
 # One frame is a camera JPEG; the bound mirrors the listener's snapshot
 # check (_camera_snapshot_bytes) so a hostile or broken source cannot
 # stream unbounded data into the cache.

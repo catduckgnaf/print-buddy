@@ -29,7 +29,7 @@ from pathlib import Path
 
 import websockets
 
-from .. import healthcheck, logs, printers
+from .. import go2rtc, healthcheck, logs, printers
 from ..core import delivery, spoolman_client
 from . import _config
 from . import moonraker_discord_announcements as announcer
@@ -1461,13 +1461,39 @@ _VISION_CONTEXT = (
 _VISION_CONTEXT = "Printer: Flashforge AD5X, enclosed, smooth PEI plate. Reply JSON verdict ok|air|spaghetti|detached|empty_idle|uncertain. "
 
 
-def _camera_snapshot_bytes():
-    request = urllib.request.Request(_camera_url())
+def _fetch_snapshot(url):
+    request = urllib.request.Request(url)
     with urllib.request.urlopen(request, timeout=8) as response:
         image = response.read(8 * 1024 * 1024 + 1)
     if len(image) > 8 * 1024 * 1024 or not image.startswith(bytes((0xff, 0xd8))):
         raise ValueError("camera response is not a bounded JPEG snapshot")
     return image
+
+
+def _camera_snapshot_bytes():
+    """One watchdog still, from the go2rtc fan-out whenever it is running.
+
+    The #311 one-upstream rule: while timelapse capture or live viewing
+    has go2rtc running, it holds the single camera pull, so the watchdog
+    reads its still from go2rtc's loopback frame endpoint and never
+    opens a second direct connection. When no fan-out feature is on,
+    go2rtc is not running and the direct snapshot URL is the sole pull,
+    exactly as before. A failed fan-out fetch falls back to the direct
+    URL once — sequentially, never in parallel — so a broken stream can
+    never degrade the watchdog (#311's fail-soft rule).
+    """
+    direct = _camera_url()
+    try:
+        fanout = go2rtc.fanout_frame_url(_config.cfg())
+    except Exception:
+        fanout = None
+    if fanout:
+        try:
+            return _fetch_snapshot(fanout)
+        except Exception:
+            log("visual watch: go2rtc fan-out snapshot failed; "
+                "falling back to the direct camera snapshot")
+    return _fetch_snapshot(direct)
 
 
 

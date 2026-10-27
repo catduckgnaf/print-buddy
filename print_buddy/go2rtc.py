@@ -50,6 +50,11 @@ from .live_stream import (GO2RTC_STREAM_NAME, CameraSource, LiveStreamError,
                           derive_from_snapshot_url, redact_url)
 
 API_URL = "http://127.0.0.1:1984/api"
+#: Where go2rtc serves a JPEG still of the one published stream, on its
+#: loopback API. Every stills consumer (timelapse capture, the camera
+#: watchdog) reads from this one URL while go2rtc is running, so no
+#: consumer ever opens a second direct connection to the camera.
+FRAME_URL = f"http://127.0.0.1:1984/api/frame.jpeg?src={GO2RTC_STREAM_NAME}"
 DEFAULT_BINARY = "/usr/local/bin/go2rtc"
 
 
@@ -89,6 +94,30 @@ def needed_by(data=None) -> tuple:
     if live_enabled(data):
         needed.append("live viewing")
     return tuple(needed)
+
+
+def fanout_frame_url(data=None, environ=None) -> str | None:
+    """The go2rtc stills URL when go2rtc should be running, else None.
+
+    go2rtc should be running exactly when a feature needs the fan-out
+    (:func:`needed_by`), the bundled binary is present, and a camera
+    source resolves — the same conditions the supervisor's gate starts
+    it under. Consumers that need a still (the camera watchdog) use this
+    URL in that case, so the camera keeps exactly one upstream pull;
+    when it returns None go2rtc is not expected to be running and the
+    consumer's own direct snapshot URL is the sole pull, as before.
+    Any resolution failure reads as None: a stills consumer must never
+    be broken by the fan-out's configuration.
+    """
+    try:
+        data = settings.current() if data is None else data
+        if not needed_by(data) or not binary_present(environ):
+            return None
+        if resolve_source(data) is None:
+            return None
+    except Exception:
+        return None
+    return FRAME_URL
 
 
 def resolve_source(data=None) -> CameraSource | None:

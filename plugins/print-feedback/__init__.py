@@ -1939,8 +1939,7 @@ async def print_again_dispatch(event, gateway, **kwargs):
         is_next = query.casefold() in ('next', 'continue')
         if is_next:
             target = await asyncio.to_thread(pc.next_copy_target)
-            question = (f"Print copy {target['copy_number']} of {target['copies']} of {target['title']}?\n"
-                        "Confirm the bed is clear.")
+            question = pc.next_copy_question(target)
         else:
             query, copies = pc.split_count(query)
             target = await asyncio.to_thread(pc.resolve_print, query)
@@ -1959,11 +1958,9 @@ async def print_again_dispatch(event, gateway, **kwargs):
             message = 'Cancelled or expired. Nothing uploaded or started.'
         else:
             from print_buddy.hermes import discord_print_summary as print_summary
-            gcode_seconds, _filament_g = print_summary.gcode_metadata(target['gcode'])
+            gcode_seconds, filament_g = print_summary.gcode_metadata(target['gcode'])
             number = print_summary._print_number({'_job_path': str(Path(target['job_json']).parent)})
-            estimate = (f"estimated print time ~{print_summary.human(gcode_seconds)}, plus warmup "
-                        f"~{print_summary.human(gcode_seconds + print_summary.WARMUP_S)} total"
-                        if gcode_seconds is not None else 'estimated print time unknown')
+            estimate = pc.start_estimate_text(target, gcode_seconds, filament_g)
             number_line = f"Print #{number}; " if number else 'Print number unknown; '
             await adapter.send(chat_id=source.chat_id, metadata=metadata,
                                content=f"Preparing to start {target['title']}. {number_line}{estimate}.")

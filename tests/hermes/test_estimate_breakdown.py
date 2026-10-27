@@ -155,3 +155,19 @@ def test_estimate_breakdown_shows_bambu_studio_grams(tmp_path):
     text = summary.format_estimate_breakdown(job)
     assert "3.77 g" in text and "filament unknown" not in text and "grams unknown" not in text
 
+
+
+def test_cloned_copies_show_the_gcodes_own_totals_everywhere(tmp_path):
+    """#438: cloned copies live in the G-code, so its totals ARE the job totals — never multiplied again."""
+    job = _single(tmp_path, 3)
+    _gcode(tmp_path / "one.gcode", "3h", 36.0)  # the real cloned slice: all 3 copies in the file
+    sliced = summary.format_slice_summary(job)
+    assert "Total filament: 36 g" in sliced and "108 g" not in sliced
+    assert "Estimated total: ~3h 5m (printing: 3h 0m)" in sliced
+    assert "Approx. finish if started now:" in sliced
+    started = summary.format_started(job, summary.plates_of(job)[0])
+    assert "Filament: 36 g" in started and "108 g" not in started
+    assert "Estimated total: ~3h 5m (printing: 3h 0m)" in started
+    assert "Approx. finish:" in started
+    breakdown = summary.format_estimate_breakdown(job)
+    assert "Total: ~3h 0m printing (+~5 min warmup), ~36 g filament for 3 copies" in breakdown

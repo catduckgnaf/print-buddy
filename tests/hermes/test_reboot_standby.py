@@ -28,7 +28,8 @@ class RebootStandbyTests(unittest.TestCase):
                       '_control_preamble': lambda *a: (source, adapter), '_confirm': confirm}
                 exec(compile(ast.Module(body=[node], type_ignores=[]), '<dispatch>', 'exec'), ns)
                 with patch.object(hermes_pkg, 'print_control', pc):
-                    asyncio.run(ns['print_reboot_dispatch'](S(), S()))
+                    asyncio.run(ns['print_reboot_dispatch'](
+                        S(), S(_session_key_for_source=lambda s: 'session-key')))
                 self.assertEqual(confirm.await_count, int(allowed))
                 pc.force_reboot.assert_not_called()
 

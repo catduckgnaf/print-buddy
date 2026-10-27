@@ -106,7 +106,8 @@ def test_reboot_during_emergency_stop_offers_confirmed_firmware_restart():
     adapter = Adapter()
     source = S(platform=S(value='discord'), profile='3dprinting', user_id='u', chat_id='c',
                thread_id=None, is_bot=False, profile_route_rejected=False)
-    gateway = S(_is_user_authorized_for_source=lambda _s: True, _delivery_adapter_for=lambda _s: adapter)
+    gateway = S(_is_user_authorized_for_source=lambda _s: True, _delivery_adapter_for=lambda _s: adapter,
+                _session_key_for_source=lambda _s: 'session-key')
     event = S(source=source, text='/print-reboot', internal=False)
     msg = 'Nozzle hit bed or part detachment. Weight 1512>1500.0. Z=10.'
     for answer, expect_clear in ((pc.CANCEL_REBOOT_LABEL, False), (pc.REBOOT_LABEL, True)):
@@ -195,7 +196,8 @@ def test_print_again_success_leaves_canonical_start_post_to_listener(monkeypatch
     adapter = Adapter()
     source = S(platform=S(value='discord'), profile='3dprinting', user_id='u', chat_id='c',
                thread_id=None, is_bot=False, profile_route_rejected=False)
-    gateway = S(_is_user_authorized_for_source=lambda _s: True, _delivery_adapter_for=lambda _s: adapter)
+    gateway = S(_is_user_authorized_for_source=lambda _s: True, _delivery_adapter_for=lambda _s: adapter,
+                _session_key_for_source=lambda _s: 'session-key')
     event = S(source=source, text='/print-again widget', internal=False)
     target = {'title': 'Widget', 'gcode': '/archive/widget.gcode', 'job_json': '/archive/JOB.json'}
 

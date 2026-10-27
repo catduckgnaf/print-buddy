@@ -267,7 +267,8 @@ def _event(text):
 
 
 def _gateway(adapter):
-    return S(_is_user_authorized_for_source=lambda s: True, _delivery_adapter_for=lambda s: adapter)
+    return S(_is_user_authorized_for_source=lambda s: True, _delivery_adapter_for=lambda s: adapter,
+             _session_key_for_source=lambda s: "session-key")
 
 
 def test_lookup_dispatch_answers_without_a_printer():

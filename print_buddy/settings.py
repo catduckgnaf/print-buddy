@@ -97,6 +97,9 @@ OPTIONAL_KEYS = {("printer", "nozzle_type"): str, ("printer", "tool_count"): int
                  ("slicer", "flash_studio_path"): str,
                  ("webui", "enabled"): bool, ("webui", "host"): str,
                  ("webui", "port"): int, ("webui", "access_token_env"): str,
+                 ("design", "enabled"): bool, ("design", "chat_url"): str,
+                 ("design", "model"): str, ("design", "api_key_env"): str,
+                 ("design", "timeout_s"): int, ("design", "repair_attempts"): int,
                  ("timelapse", "mode"): str, ("timelapse", "encoder"): str,
                  ("services", "camera_source"): str,
                  ("live_stream", "enabled"): bool, ("live_stream", "voice_channel_id"): str,
@@ -1027,6 +1030,43 @@ def _validate_vision(data):
         raise SettingsError(f"[vision] roast_enabled must be true or false, got {enabled!r}")
 
 
+def _validate_design(data):
+    """The [design] section (#388 Stage 1): AI design with OpenSCAD.
+
+    Off by default: a design turn spends real model time and money, so the
+    operator opts in. ``chat_url``, ``model`` and ``api_key_env`` are empty
+    to inherit the [llm] values, so the common single-endpoint setup only
+    sets ``design.model`` (a stronger model for design turns). In Hermes
+    mode these endpoint fields are not used at all: the plugin calls the
+    Hermes host's own LLM lane with its registered ``print_design``
+    auxiliary task, and the profile's ``auxiliary.print_design`` block is
+    where the design model is pinned (see docs/DESIGN.md). Absent in an
+    older config means the defaults (off).
+    """
+    design = data.setdefault("design", {})
+    enabled = design.setdefault("enabled", False)
+    if not isinstance(enabled, bool):
+        raise SettingsError(f"[design] enabled must be true or false, got {enabled!r}")
+    chat_url = str(design.setdefault("chat_url", "") or "").strip()
+    if chat_url and not chat_url.startswith(("http://", "https://")):
+        raise SettingsError(f"[design] chat_url must be a URL, got {chat_url!r}")
+    design["chat_url"] = chat_url
+    model = design.setdefault("model", "")
+    if not isinstance(model, str):
+        raise SettingsError(f"[design] model must be a model name or empty, got {model!r}")
+    design["model"] = model.strip()
+    env_name = str(design.setdefault("api_key_env", "") or "").strip()
+    if env_name and not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", env_name):
+        raise SettingsError(f"[design] api_key_env must be an environment variable name, got {env_name!r}")
+    design["api_key_env"] = env_name
+    design.setdefault("timeout_s", 180)
+    design["timeout_s"] = _positive(data, "design", "timeout_s", int)
+    attempts = design.setdefault("repair_attempts", 3)
+    if isinstance(attempts, bool) or not isinstance(attempts, int) or not 0 <= attempts <= 10:
+        raise SettingsError(f"[design] repair_attempts must be a whole number from 0 to 10, got {attempts!r}")
+    design["repair_attempts"] = attempts
+
+
 def _validate_logging(data):
     """The [logging] section (#150). Absent in a hand-made home file means the defaults."""
     logging_cfg = data.setdefault("logging", {})
@@ -1189,6 +1229,7 @@ def validate(data):
     for key in ("question_timeout_s", "safety_confirm_timeout_s", "upload_wait_s", "cold_pull_outcome_s"):
         data["discord"][key] = _positive(data, "discord", key, int)
     _validate_bot(data)
+    _validate_design(data)
     _validate_vision(data)
     _validate_logging(data)
     _validate_webui(data)

@@ -66,7 +66,7 @@ jobs:
       - name: Proposed baseline from this runner (for review, never applied automatically)
         if: always()
         run: python -m tests.corpus.timing_gate timing/run-*.json --record > timing/proposed-baseline.json || true
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         if: always()
         with:
           name: discord-timing

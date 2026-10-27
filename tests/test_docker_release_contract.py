@@ -65,6 +65,36 @@ class DockerReleaseContract(unittest.TestCase):
                     self.assertRegex(text, rf"\b{tool}\b")
                     self.assertIn(tool, packages)
 
+    def test_runtime_installs_ffmpeg_for_timelapse_delivery(self):
+        """#373: ffmpeg is a runtime dependency of the shipped processes, not a build tool.
+
+        The bot/listener processes size printer-rendered timelapses, assemble
+        captured ones and build the vertical short with the ffmpeg the settings
+        resolve from PATH (paths.ffmpeg). It must sit in the runtime stage's
+        unconditional package list (every published variant carries it, like
+        curl/jq in #236), the stage must run as the unprivileged runtime user,
+        and the VAAPI driver stack the h264_vaapi encoder needs must ship in
+        the same stage. The live half of this pin — the binary resolves and
+        runs for the runtime user and lists libx264 + h264_vaapi — is the
+        image probe's ffmpeg check, wired into the acceptance loop.
+        """
+        dockerfile = (ROOT / "Dockerfile").read_text()
+        runtime = dockerfile.split("AS runtime", 1)[1]
+        install = re.search(r"apt-get install -y --no-install-recommends\s+(.*?)\s*&& rm -rf",
+                            runtime, re.S)
+        self.assertIsNotNone(install)
+        packages = set(install.group(1).replace("\\", " ").split())
+        self.assertIn("ffmpeg", packages)
+        self.assertIn("USER buddy", runtime)
+        for vaapi_package in ("intel-media-va-driver", "mesa-va-drivers", "libva-drm2"):
+            with self.subTest(package=vaapi_package):
+                self.assertIn(vaapi_package, runtime)
+        probe = (ROOT / "tests" / "docker" / "image_probe.py").read_text()
+        self.assertIn("def ffmpeg(", probe)
+        self.assertIn('"ffmpeg": ffmpeg', probe)
+        acceptance = (ROOT / "tests" / "docker" / "image_acceptance.sh").read_text()
+        self.assertIn("payload closure slice egress ffmpeg", acceptance)
+
     def test_docker_examples_use_source_installed_slicer(self):
         for suffix in ("yaml", "toml"):
             with self.subTest(format=suffix):

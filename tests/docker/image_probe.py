@@ -1,6 +1,6 @@
 """Checks run INSIDE a Print Buddy image by tests/docker/image_acceptance.sh. Standard library only.
 
-    python3 /probe/image_probe.py payload | closure | slice | egress
+    python3 /probe/image_probe.py payload | closure | slice | egress | ffmpeg
 
 Each prints one `PROBE {json}` line and exits non-zero on failure. Mounted read-only as data; the
 image's own /app is what is tested. It never contacts a printer, Discord or any other service.
@@ -115,6 +115,26 @@ def slice_check():
         shutil.rmtree(work, ignore_errors=True)
 
 
+def ffmpeg():
+    """ffmpeg is a shipped runtime dependency (#373): the timelapse sizing,
+    assembly and vertical-short paths resolve it from PATH as the runtime
+    user. It must resolve, run, and list the encoders the [timelapse]
+    encoder options rely on: libx264 (the cpu path) and h264_vaapi (the
+    VAAPI stack's encoder; the device itself needs the host passthrough).
+    """
+    binary = shutil.which("ffmpeg")
+    if not binary:
+        return report("ffmpeg", False, binary=None)
+    version = subprocess.run([binary, "-version"], capture_output=True, text=True, timeout=60)
+    encoders = subprocess.run([binary, "-hide_banner", "-encoders"],
+                              capture_output=True, text=True, timeout=60)
+    listed = encoders.stdout if encoders.returncode == 0 else ""
+    have = {name: (name in listed) for name in ("libx264", "h264_vaapi")}
+    ok = version.returncode == 0 and all(have.values())
+    return report("ffmpeg", ok, binary=binary,
+                  version=(version.stdout or "").strip().splitlines()[:1], encoders=have)
+
+
 def egress():
     """The container must have no route out: no DNS answer and no TCP connection."""
     attempts = {}
@@ -128,7 +148,8 @@ def egress():
 
 
 if __name__ == "__main__":
-    checks = {"payload": payload, "closure": closure, "slice": slice_check, "egress": egress}
+    checks = {"payload": payload, "closure": closure, "slice": slice_check, "egress": egress,
+              "ffmpeg": ffmpeg}
     if len(sys.argv) != 2 or sys.argv[1] not in checks:
         raise SystemExit(f"usage: image_probe.py {' | '.join(checks)}")
     sys.exit(checks[sys.argv[1]]())

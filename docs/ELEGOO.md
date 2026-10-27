@@ -53,6 +53,8 @@ delivery:
 
 The print path then runs the usual sequence: readiness from a live status answer → offline G-code verification (right model, single tool, temperatures within limits — 320 °C nozzle, 110 °C bed — no foreign start code) → launch lease → bed-clear approval inside the lease → a second status read → upload (1 MiB chunks with the file's MD5, the size read back and required to match before anything starts) → start command for that exact file → confirmation from a fresh status answer. An unconfirmed start is recorded as uncertain and is never resubmitted. Pause/resume/stop map to SDCP commands 129/131/130. Start requests carry `Calibration_switch: 0`: Print Buddy never starts a calibration the operator did not ask for.
 
+There is no SDCP listener, so a print Print Buddy launches is followed by a launched-print monitor (the same pattern as the Bambu, stock Flashforge, OctoPrint and Prusa families). When the print ends, the monitor makes the completion post. Timelapse capture is wired into that monitor through the shared #246 machinery, but **no SDCP camera source is verified**: the SDCP client speaks status, upload, start/control and file commands only, no camera still or stream endpoint is recorded in the vendor facts or Elegoo's published SDCP documentation as this codebase uses it, and Print Buddy does not guess endpoints — so a launched Centauri print currently gets the completion post without a video, and the log says why (see `printers/elegoo_sdcp/camera.py` for the audit). If a camera source is verified later, capture slots into the same monitor unchanged. The monitor runs inside the process that launched the print and is not restarted if that process restarts mid-print; prints started outside Print Buddy are not monitored.
+
 `services.moonraker_url` and `services.octoprint_url` must stay empty for a Centauri model; settings refuse to load otherwise.
 
 In the combined Docker container the supervisor honours that (#256): for a Centauri Carbon model it does not start the Moonraker listener at all, and the healthcheck does not require one, so the container starts, stays up and reports healthy with just the bot (with a token) and the bundled Spoolman — see [Which processes run](DOCKER.md#which-processes-run).
@@ -62,4 +64,5 @@ In the combined Docker container the supervisor honours that (#256): for a Centa
 - The open-frame Centauri and the Centauri Carbon 2 / Centauri 2 (profiles exist in Orca; follow-ups on #243 once their SDCP behaviour is confirmed to match).
 - Elegoo resin printers (Mars/Saturn/Jupiter) and their `.goo` files.
 - Chamber light/fan control over SDCP (commands 386/403 exist; not wired up).
+- Timelapse video for launched Centauri prints: the monitor and the shared capture/encode pipeline are in place, but no SDCP camera endpoint is verified, so completion posts carry no video until one is (see above).
 - Any claim of a successful print on real hardware.

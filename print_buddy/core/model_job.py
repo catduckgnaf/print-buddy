@@ -4651,6 +4651,18 @@ def _print_elegoo_sdcp(adapter, state, gcode, job, job_path, wait_s, reprint):
             out["record_path"] = record_start(gcode, remote)
         except Exception as exc:
             print(f"WARNING: start record failed: {exc}")
+        # Timelapse (#295): a monitor watches this launched print — SDCP
+        # has no listener (#299), so the print path starts it; it makes the
+        # completion post and, once an SDCP camera source is verified,
+        # captures frames for a timelapse attached to that post (no source
+        # is verified today — printers/elegoo_sdcp/camera.py — so for now
+        # the monitor is the completion post, with the reason logged).
+        # A monitor that cannot start never fails the print.
+        try:
+            from print_buddy.hermes import elegoo_watch
+            elegoo_watch.start_monitor(adapter, remote)
+        except Exception as exc:
+            print(f"WARNING: timelapse monitor did not start: {exc}")
     print(("PRINT STARTED " if confirmed else "START SUBMITTED; AWAITING CONFIRMATION ") + json.dumps(out))
     return out
 

@@ -46,7 +46,7 @@ jobs:
         run: python tests/corpus/run_external_corpus.py
       - name: Upload shard results
         if: always()
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v7
         with:
           name: corpus-shard-${{ matrix.shard }}
           path: ${{ runner.temp }}/results-${{ matrix.shard }}.json

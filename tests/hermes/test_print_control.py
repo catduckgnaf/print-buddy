@@ -222,3 +222,66 @@ def test_resolve_unknown_name(tmp_path):
 def test_resolve_empty_query_is_last_print(tmp_path):
     a, _b, _c = _three(tmp_path)
     assert print_control.resolve_print("", tmp_path)["gcode"] == str(a.resolve())
+
+
+def _copy_gcode(tmp_path, duration="1h", grams=12.0):
+    g = tmp_path / "copy.gcode"
+    g.write_text(f"; estimated printing time (normal mode) = {duration}\n"
+                 f"; total filament used [g] = {grams}\nG1 X1\n")
+    return str(g)
+
+
+def test_again_question_quotes_all_copies_for_a_sequential_reprint(tmp_path):
+    """#438: the xN confirmation quotes each copy and the all-copies totals, not one copy."""
+    t = {"title": "Hook", "gcode": _copy_gcode(tmp_path), "copies": 3, "resliced": False}
+    q = print_control.again_question(t)
+    assert "Copy 1 of 3" in q
+    assert "Each copy: ~1h 0m printing, ~12 g filament." in q
+    assert "All 3 copies: ~3h 0m printing (plus ~5m warmup per copy), ~36 g filament." in q
+
+
+def test_again_question_single_copy_and_unknown_figures_unchanged(tmp_path):
+    g = _copy_gcode(tmp_path)
+    one = {"title": "Hook", "gcode": g, "copies": 1, "resliced": False}
+    assert print_control.again_question(one) == "Print Hook again from the start?\nConfirm the bed is clear."
+    missing = {"title": "Hook", "gcode": str(tmp_path / "gone.gcode"), "copies": 3, "resliced": False}
+    q = print_control.again_question(missing)
+    assert "Copy 1 of 3" in q and "Each copy" not in q and "All 3 copies" not in q
+
+
+def test_start_estimate_text_labels_sequential_copies_and_keeps_single_copy_wording():
+    single = "estimated print time ~1h 0m, plus warmup ~1h 5m total"
+    assert print_control.start_estimate_text({"copies": 1}, 3600, 12.0) == single
+    assert print_control.start_estimate_text({"copies": 1}, None, None) == "estimated print time unknown"
+    assert print_control.start_estimate_text({"copies": 3}, 3600, 12.0) == (
+        single + " for this copy; all 3 copies: ~3h 0m printing (plus ~5m warmup per copy), ~36 g filament")
+    second = print_control.start_estimate_text({"copies": 3, "copy_number": 2}, 3600, 12.0)
+    assert "all 2 remaining copies: ~2h 0m printing" in second and "~24 g filament" in second
+    # The last copy's figures are the remaining job's figures; nothing extra is added.
+    assert print_control.start_estimate_text({"copies": 3, "copy_number": 3}, 3600, 12.0) == single
+
+
+def test_next_copy_question_and_prompt_show_remaining_figures(tmp_path):
+    import hashlib
+    from pathlib import Path
+
+    g = _copy_gcode(tmp_path)
+    sha = hashlib.sha256(Path(g).read_bytes()).hexdigest()
+    target = {"title": "Hook", "gcode": g, "job_json": str(tmp_path / "JOB.json"),
+              "gcode_sha256": sha, "copies": 3}
+    queue = tmp_path / "reprint_queue.json"
+    print_control.queue_copies(target, queue)
+    prompt = print_control.next_copy_prompt(f"Hook_{sha}.gcode", queue)
+    assert prompt is not None and prompt.startswith(
+        "Copy 1 of 3 of Hook is done. Still to print: 2 copies "
+        "(~2h 0m printing (plus ~5m warmup per copy), ~24 g filament).")
+    assert "for copy 2" in prompt
+    question = print_control.next_copy_question(
+        {"copy_number": 2, "copies": 3, "title": "Hook", "gcode": g})
+    assert question == ("Print copy 2 of 3 of Hook?\n"
+                        "This copy: ~1h 0m printing, ~12 g filament. "
+                        "All 2 remaining copies: ~2h 0m printing (plus ~5m warmup per copy), ~24 g filament.\n"
+                        "Confirm the bed is clear.")
+    unknown = print_control.next_copy_question(
+        {"copy_number": 2, "copies": 3, "title": "Hook", "gcode": str(tmp_path / "gone.gcode")})
+    assert unknown == "Print copy 2 of 3 of Hook?\nConfirm the bed is clear."

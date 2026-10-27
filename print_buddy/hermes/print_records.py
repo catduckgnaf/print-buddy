@@ -460,6 +460,26 @@ def format_multipart_summary(plan: Mapping[str, Any], completed_part_id: str | N
             lines.append("- Combined remaining duration incomplete; unknown estimate for " + "; ".join(unknown_groups))
         else:
             lines.append(f"- Combined remaining duration: ~{_hm(known_total)}")
+        # Remaining filament next to the remaining duration (#438), but only
+        # when copies are in play: a one-of-each plan keeps today's wording.
+        # Per-part grams are per copy, so they scale by the copies still to go,
+        # exactly like the per-part duration above.
+        remaining_rows = [part for _group, rows in remaining for part in rows]
+        if any(part["quantity"] > 1 for part in remaining_rows):
+            known_g, any_known, all_known = 0.0, False, True
+            for part in remaining_rows:
+                est = part.get("estimated_filament_g")
+                if isinstance(est, (int, float)) and not isinstance(est, bool) and est >= 0:
+                    known_g += float(est) * (part["quantity"] - part["completed_quantity"])
+                    any_known = True
+                else:
+                    all_known = False
+            if all_known:
+                lines.append(f"- Combined remaining filament: ~{known_g:g} g")
+            elif any_known:
+                lines.append(f"- Combined remaining filament: at least ~{known_g:g} g (unknown for some remaining parts)")
+            else:
+                lines.append("- Combined remaining filament: unknown")
         next_artifact = str(next_part.get("gcode_file") or "") if next_part else ""
         exact_target = bool(next_part and next_part.get("job_json") and next_part.get("gcode_path"))
         plan_id = plan.get("plan_id") if isinstance(plan, Mapping) else None

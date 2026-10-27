@@ -60,19 +60,29 @@ def test_unmatched_text_without_an_llm_gets_the_command_list_and_starts_nothing(
     start.assert_not_called()
 
 
-@pytest.mark.parametrize("who", ["stranger", "bot", "elsewhere"])
-def test_messages_from_strangers_bots_and_other_channels_are_ignored(cfg, who):
+@pytest.mark.parametrize("who", ["bot", "elsewhere"])
+def test_messages_from_bots_and_other_channels_are_ignored(cfg, who):
     discord, core = make(cfg)
     author = discord.operator
     channel = discord.channel
-    if who == "stranger":
-        author = fake_discord.FakeUser(999, "stranger")
-    elif who == "bot":
+    if who == "bot":
         author = fake_discord.FakeUser(998, "other bot", bot=True)
     else:
         channel = discord.add_channel(555)
     assert run(core.handle_message(discord.message("/print-help", author=author, channel=channel))) is None
     assert discord.messages == []
+
+
+def test_a_strangers_message_is_refused_with_one_notice_not_silence(cfg, caplog):
+    """#386: a list refusal is never silent — one notice in channel, an INFO log, no intake."""
+    discord, core = make(cfg)
+    stranger = fake_discord.FakeUser(999, "stranger")
+    with caplog.at_level("INFO", logger="print_buddy.bot.runtime"):
+        assert run(core.handle_message(discord.message("/print-help", author=stranger))) is None
+        assert run(core.handle_message(discord.message("/print-help", author=stranger))) is None
+    assert discord.sent == [runtime.REFUSAL_NOTICE]  # throttled: the second message adds none
+    assert "ignoring message from discord user 999" in caplog.text
+    assert "user is not on the allowed list" in caplog.text
 
 
 def test_empty_allow_list_refuses_everyone(cfg):

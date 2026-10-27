@@ -48,7 +48,7 @@ Schema, validation limits and TOML migration: [CONFIGURATION-YAML.md](CONFIGURAT
 | `prusa.api_key_env` | `PRINT_BUDDY__PRUSA__API_KEY_ENV` | `"PRUSA_LINK_API_KEY"` | Name of the environment variable holding the PrusaLink API key. The key itself is never a setting |
 | `paths.hermes_home` | `PRINT_BUDDY__PATHS__HERMES_HOME` | `/data/hermes` | State folder (`state/`, `logs/`); the name is historical, Hermes is not required |
 | `paths.archive` | `PRINT_BUDDY__PATHS__ARCHIVE` | `/data/archive` | Job archive |
-| `paths.records_vault` | `PRINT_BUDDY__PATHS__RECORDS_VAULT` | `/data/records` | Obsidian print records |
+| `paths.records_vault` | `PRINT_BUDDY__PATHS__RECORDS_VAULT` | `/data/records` | Print records: one JSON file per print in `Prints/` |
 | `paths.cache` | `PRINT_BUDDY__PATHS__CACHE` | `/data/cache` | Regenerable cache |
 | `paths.hermes_bin` | `PRINT_BUDDY__PATHS__HERMES_BIN` | `/usr/local/bin/hermes` | Hermes CLI; Hermes installs only, not in the image |
 | `paths.ffmpeg` | `PRINT_BUDDY__PATHS__FFMPEG` | `ffmpeg` | ffmpeg binary or name on `PATH` |
@@ -75,7 +75,8 @@ Schema, validation limits and TOML migration: [CONFIGURATION-YAML.md](CONFIGURAT
 | `discord.upload_wait_s` | `PRINT_BUDDY__DISCORD__UPLOAD_WAIT_S` | `3600` | How long an upload-wait freeze stays active |
 | `discord.cold_pull_outcome_s` | `PRINT_BUDDY__DISCORD__COLD_PULL_OUTCOME_S` | `1800` | How long a cold-pull outcome prompt stays open |
 | `discord.token_env` | `PRINT_BUDDY__DISCORD__TOKEN_ENV` | `DISCORD_BOT_TOKEN` | Name of the environment variable holding the bot token |
-| `discord.allowed_user_ids` | `PRINT_BUDDY__DISCORD__ALLOWED_USER_IDS` | empty | Discord user IDs allowed to use the standalone bot, comma or space separated |
+| `discord.allowed_user_ids` | `PRINT_BUDDY__DISCORD__ALLOWED_USER_IDS` | empty | Optional whitelist of Discord user IDs for the standalone bot, comma or space separated. Empty (the default) lets everyone in the print channel use the bot — the channel is the access boundary (#386) |
+| `discord.denied_user_ids` | `PRINT_BUDDY__DISCORD__DENIED_USER_IDS` | empty | Optional deny list of Discord user IDs, comma or space separated. A denied user is refused even when whitelisted or the approval user; a refusal is logged at INFO and answered in channel once per user per hour. Applies to bot messages, commands and button presses; the live camera Activity keeps its own allowlist (`approval_user_id` plus `allowed_user_ids`) |
 | `telegram.token_env` | `PRINT_BUDDY__TELEGRAM__TOKEN_ENV` | `TELEGRAM_BOT_TOKEN` | Name of the environment variable holding the Telegram bot token |
 | `telegram.chat_id` | `PRINT_BUDDY__TELEGRAM__CHAT_ID` | empty | Telegram chat (group) ID; group and channel IDs are negative |
 | `telegram.allowed_user_ids` | `PRINT_BUDDY__TELEGRAM__ALLOWED_USER_IDS` | empty | Telegram user IDs allowed to use the standalone bot, comma or space separated |

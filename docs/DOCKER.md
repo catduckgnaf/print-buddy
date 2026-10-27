@@ -30,6 +30,43 @@ Persist `/data/spoolman` separately, including database, config, logs and backup
 
 For an existing external instance set `PRINT_BUDDY__SERVICES__SPOOLMAN_URL=http://spoolman.example:8000`. Its data is not migrated or reset; the local database remains separate. Optionally set `PRINT_BUDDY_BUNDLED_SPOOLMAN=false` to skip the local API, requiring a nonlocal URL. Healthcheck then checks the external API. Changing a URL never moves or deletes a database.
 
+## Print records
+
+Every print — completed, failed or cancelled — gets one self-contained JSON
+record in `/data/records/Prints/` (`paths.records_vault` + `Prints`), named by
+its permanent print number: `print-0057.json`. The folder lives on the `/data`
+volume, so records survive container recreation and upgrades, and any past
+print can be looked up with `jq` or `grep` alone — no index, database or
+external app required:
+
+```json
+{
+  "print_number": 57,
+  "title": "Print in Place Bag Clip",
+  "status": "completed",
+  "success": true,
+  "started_at": "2026-10-26T20:00:00Z",
+  "completed_at": "2026-10-26T21:30:32Z",
+  "printer": "Flashforge AD5X",
+  "gcode_file": "bag-clip.gcode",
+  "source_platform": "Printables",
+  "filament_material": "PLA",
+  "filament_color": "Black",
+  "spoolman_spool_id": 12,
+  "filament_used_g": 12.5,
+  "print_duration_seconds": 5432,
+  "record_id": "1a2b3c4d",
+  "cleanup_status": "pending"
+}
+```
+
+Fields the system does not know are omitted, never invented (`print_number`
+is present as `null` for prints that never went through a Print Buddy
+launch, which instead get a dated filename). A record starts as
+`"status": "printing"` when the print starts and is finalized in place when
+the print ends. Example lookup: `jq -r 'select(.status != "completed") |
+"\(.print_number) \(.title) \(.status)"' /data/records/Prints/*.json`.
+
 ## More than one printer
 
 One container serves the whole roster (#257 Stage 2). Declare every printer in the mounted config file with a `[[printers]]` list — the list itself is file-only, because list values cannot come from environment variables:
@@ -168,7 +205,7 @@ Hardware encoding is opportunistic and never required; without a GPU everything 
 
 1. Copy `.env.example` to a private `.env`. Set `PRINT_BUDDY_IMAGE` to a tested digest. Configure Moonraker with `PRINT_BUDDY__SERVICES__MOONRAKER_URL`; do not use a real printer for offline validation.
 2. Set `PRINT_BUDDY_DATA` to a persistent directory with `hermes`, `archive`, `records`, `cache` and `spoolman` subdirectories writable by UID/GID 1000:1000; `PRINT_BUDDY_SPOOLMAN_DATA` can point the Spoolman data elsewhere, such as an existing Spoolman data folder. They map separately to `/data/hermes`, `/data/archive`, `/data/records`, `/data/cache`, `/data/spoolman`.
-3. Leave the token empty for staging. At separately authorized live cutover configure token, chat ID and allowed user IDs. Stop previous consumers before enabling the replacement. Live startup never authorizes heating, movement or printing.
+3. Leave the token empty for staging. At separately authorized live cutover configure token and chat ID (allowed user IDs are optional; empty lets everyone in the channel use the bot). Stop previous consumers before enabling the replacement. Live startup never authorizes heating, movement or printing.
 4. Use `PRINT_BUDDY__SECTION__KEY` scalar overrides from [SETTINGS.md](SETTINGS.md), or mount YAML/TOML and set `PRINT_BUDDY_CONFIG`. The image sets `PRINT_BUDDY_CONFIG=/app/config/docker.yaml`; a mounted file you point it at **replaces** `docker.yaml` rather than layering on it, so copy `config/docker.yaml`, edit the copy and mount that. Lists stay file-only except `delivery.methods`: `PRINT_BUDDY__DELIVERY__METHODS=discord,bambu_handoff,printer` (comma- or space-separated, values from the vendor profile) enables the Bambu LAN print opt-in without a mounted file (#270). Never bake secrets into images or mount host source over `/app`.
 5. One Compose service, `combined`, uses 2 CPUs, 2 GiB RAM, 256 PIDs and 256 MiB shared memory by default. Real slicing may require more RAM. Capabilities are dropped and logs rotate.
 6. MakerWorld links only: provide the account token file and keep it on the host; see [MakerWorld account token](#makerworld-account-token). Printables links and uploads need no token.

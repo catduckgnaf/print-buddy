@@ -910,7 +910,7 @@ def main():
         # Keep the completion retryable until the listener confirms Discord delivery.
         previous["pending_completion_message"] = message
 
-    # A cancel or error also finalizes the Obsidian note, without an announcement
+    # A cancel or error also finalizes the print record, without an announcement
     # or session cleanup, so every started print ends with a dated outcome.
     native = str((payload.get("stats") or {}).get("state") or "").lower()
     if was_printing and not printing and native in ("cancelled", "error") and not previous.get("record_written", False):

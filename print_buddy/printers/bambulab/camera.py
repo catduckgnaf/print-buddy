@@ -11,13 +11,17 @@ commits recorded there); this implementation is written from those protocol
 facts, not copied, and — like every Bambu LAN path in Print Buddy — it has
 **not been run against a real printer yet**.
 
-X1-family printers serve RTSPS on port 322 instead. Print Buddy deliberately
-grows no RTSP stack for a still image: X1 stills are deferred by decision to
-the go2rtc path in #246 (recorded on #294), and until that lands
-``camera_kind`` reports them as ``"rtsps"`` so callers can say exactly that
-instead of failing obscurely. Models whose camera
-protocol is not documented in the research (P2S, H2 family) report ``None`` —
-unverified is stated, never guessed.
+X1-family printers serve RTSPS on port 322 instead (``bblp`` / access code,
+stream path ``/streaming/live/1`` — the same maintained-client protocol
+facts). Print Buddy deliberately grows no RTSP stack for a still image: X1
+stills come through the go2rtc fan-out from #246 (the decision recorded on
+#294). go2rtc ingests the printer's RTSPS stream as its one configured
+camera source and serves a JPEG still of it on its loopback API;
+:func:`fanout_snapshot` reads that still, and only when the fan-out is
+actually running with this printer's stream as its source — otherwise it
+raises a plain error naming exactly what to enable, never a fake success.
+Models whose camera protocol is not documented in the research (P2S, H2
+family) report ``None`` — unverified is stated, never guessed.
 
 The snapshot contract mirrors the Moonraker path's
 ``_camera_snapshot_bytes()``: at most 8 MiB, and the bytes must be a JPEG
@@ -30,10 +34,15 @@ from __future__ import annotations
 
 import socket
 import struct
+import urllib.request
+from urllib.parse import quote, urlsplit
 
 from .client import BambuLanError
 
 CAMERA_PORT = 6000
+RTSPS_PORT = 322
+RTSPS_PATH = "/streaming/live/1"
+RTSPS_USER = "bblp"
 MAX_SNAPSHOT_BYTES = 8 * 1024 * 1024
 _FRAME_HEADER = struct.Struct("<IIII")
 _AUTH_PACKET = struct.Struct("<IIQ32s32s")
@@ -174,3 +183,119 @@ class BambuCameraClient:
                 transport.close()
             except Exception:
                 pass
+
+
+# -- X1 family: stills through the go2rtc fan-out (#246, #294) ------------
+
+def rtsp_url(host, access_code) -> str:
+    """This printer's RTSPS stream URL: bblp / access code, port 322.
+
+    The URL carries the access code, so callers must never log it
+    unredacted; the errors below name the stream without it.
+    """
+    return (f"rtsps://{RTSPS_USER}:{quote(str(access_code), safe='')}@{host}:"
+            f"{RTSPS_PORT}{RTSPS_PATH}")
+
+
+def _default_fanout_url():
+    """go2rtc's loopback stills URL when the fan-out should be running, else None."""
+    from ... import go2rtc
+    return go2rtc.fanout_frame_url()
+
+
+def _default_resolved_source():
+    """The URL go2rtc is configured to ingest, or None when none resolves."""
+    from ... import go2rtc
+    source = go2rtc.resolve_source()
+    return go2rtc.source_url(source) if source is not None else None
+
+
+def _source_is_this_printer(source_url, host) -> bool:
+    """True when a go2rtc source URL is this printer's X1 RTSPS stream.
+
+    The password is deliberately not compared: the operator's configured
+    source may encode it differently, and a wrong password fails loudly at
+    fetch time. Host, port, path and user are the identity, and they are
+    compared exactly so a fan-out serving a different camera can never be
+    mistaken for this printer's.
+    """
+    try:
+        parts = urlsplit(source_url or "")
+    except ValueError:
+        return False
+    if parts.scheme not in ("rtsp", "rtsps"):
+        return False
+    if (parts.hostname or "").lower() != str(host).lower():
+        return False
+    port = parts.port or (RTSPS_PORT if parts.scheme == "rtsps" else 554)
+    if port != RTSPS_PORT:
+        return False
+    if (parts.path or "").rstrip("/") != RTSPS_PATH:
+        return False
+    return parts.username in (None, RTSPS_USER)
+
+
+def fanout_frame_url(host, access_code, *, fanout=None, resolved=None) -> str:
+    """The go2rtc stills URL for this printer's X1 stream.
+
+    Raises BambuCameraError naming the limitation — never a fake success —
+    when the fan-out is not running for this printer (neither timelapse
+    capture nor live viewing enabled, or the bundled binary absent), or
+    when it runs with a different camera source. The ``fanout`` and
+    ``resolved`` seams exist for offline tests; production reads go2rtc.
+    """
+    fanout = _default_fanout_url if fanout is None else fanout
+    resolved = _default_resolved_source if resolved is None else resolved
+    url = fanout()
+    if not url:
+        raise BambuCameraError(
+            "X1 camera stills come from the printer's RTSPS stream through go2rtc, "
+            "and go2rtc is not running for this printer: enable [timelapse] "
+            "capture_enabled or [live_stream] enabled and set [timelapse] "
+            "capture_source_url to this printer's RTSPS stream "
+            "(bblp / the LAN access code, port 322, path /streaming/live/1); "
+            "no snapshot was taken")
+    if not _source_is_this_printer(resolved(), host):
+        raise BambuCameraError(
+            "X1 camera stills come from the printer's RTSPS stream through go2rtc, "
+            "but go2rtc's configured camera source is not this printer's stream; "
+            "set [timelapse] capture_source_url to this printer's RTSPS stream "
+            "(bblp / the LAN access code, port 322, path /streaming/live/1); "
+            "no snapshot was taken")
+    return url
+
+
+def fetch_url_jpeg(url, timeout_s=10.0) -> bytes:
+    """One bounded JPEG from an HTTP snapshot URL (the go2rtc frame endpoint).
+
+    Same contract as a port-6000 snapshot: at most 8 MiB, JPEG-validated,
+    and the error never carries the URL's credentials.
+    """
+    try:
+        request = urllib.request.Request(url)
+        with urllib.request.urlopen(request, timeout=timeout_s) as response:
+            image = response.read(MAX_SNAPSHOT_BYTES + 1)
+    except Exception as exc:
+        raise BambuCameraError(
+            f"the go2rtc camera still could not be fetched ({type(exc).__name__}); "
+            "if this persists, check go2rtc is running and its source is this "
+            "printer's RTSPS stream") from exc
+    try:
+        return validate_snapshot_bytes(image)
+    except BambuCameraError as exc:
+        raise BambuCameraError(
+            "the go2rtc camera still did not answer with an image; if this "
+            "persists, check go2rtc is running and its source is this "
+            "printer's RTSPS stream") from exc
+
+
+def fanout_snapshot(host, access_code, *, fanout=None, resolved=None, fetch=None) -> bytes:
+    """One X1 still through the go2rtc fan-out, or a named limitation.
+
+    The adapter's rtsps branch calls this; the monitor's timelapse source
+    for X1 models calls :func:`fanout_frame_url` directly and reuses
+    :func:`fetch_url_jpeg` as its frame fetch.
+    """
+    fetch = fetch_url_jpeg if fetch is None else fetch
+    url = fanout_frame_url(host, access_code, fanout=fanout, resolved=resolved)
+    return fetch(url)

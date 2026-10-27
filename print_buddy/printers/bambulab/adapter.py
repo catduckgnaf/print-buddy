@@ -1,11 +1,12 @@
-"""Bambu Lab printers: Orca slicing and G-code validation, plus opt-in read-only LAN telemetry.
+"""Bambu Lab printers: Orca slicing and G-code validation, plus the opt-in LAN path.
 
 VENDOR (bambulab/__init__.py) is the authority for connection ("bambulab_lan"), start code, slicers and
 delivery. The LAN path (client.py) exists only when the operator configures [bambu] lan_host and
 lan_serial and supplies the LAN access code through an environment variable; without that configuration
-the adapter behaves exactly as the original offline adapter did. Stage (b) added read-only telemetry;
-stage (c) adds the FTPS upload transport (client.py) behind `upload()` — print start and control still
-raise LiveUnsupported, and `printer` delivery is not offered until the print-start stage.
+the adapter behaves exactly as the original offline adapter did. On top of the read-only telemetry it
+carries the whole LAN delivery path: the FTPS upload transport (client.py) behind `upload()`, print
+start (the `project_file` command) and pause/resume/stop control over MQTT, and the chamber camera
+(camera.py: port-6000 stills for A1/P1, the go2rtc fan-out for X1 RTSPS stills — #294/#295).
 Each printer subclasses this adapter with its facts (see a1.py). Deliberately imports nothing from the
 ZMod/AD5X code and has no Moonraker or cloud client.
 """
@@ -115,22 +116,22 @@ class BambuAdapter(PrinterAdapter):
 
         This is the same internal snapshot seam the Moonraker path fills from
         `services.camera_snapshot_url`: callers get JPEG bytes or a plain
-        BambuLanError, never a half answer. X1-family stills are deferred by
-        decision to #246's go2rtc path (recorded on #294), and say so; a
-        model with no verified camera protocol says that instead of guessing.
+        BambuLanError, never a half answer. X1-family stills come through
+        #246's go2rtc fan-out by decision (recorded on #294) — Print Buddy
+        grows no RTSP stack — and say exactly what to enable when the
+        fan-out is not running for this printer; a model with no verified
+        camera protocol says that instead of guessing.
         """
         from . import camera
         kind = self.camera_kind()
         if kind is None:
             raise BambuLanError(f"{self.label}: Print Buddy has not verified a camera protocol for this model; "
                                 "no snapshot was taken")
-        if kind == "rtsps":
-            raise BambuLanError(f"{self.label}: camera stills for this model come from its RTSP stream; "
-                                "X1 stills are deferred by decision to #246's go2rtc path, "
-                                "so no snapshot was taken")
         if not self.lan_configured():
             raise BambuLanError(f"{self.label}: the camera is not configured; set [bambu] lan_host and "
                                 "lan_serial and supply the LAN access code via the environment")
+        if kind == "rtsps":
+            return camera.fanout_snapshot(str(self._lan()["lan_host"]).strip(), self.access_code(), **overrides)
         client = camera.BambuCameraClient(str(self._lan()["lan_host"]).strip(), self.access_code(), **overrides)
         return client.snapshot()
 

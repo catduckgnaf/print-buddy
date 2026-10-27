@@ -160,7 +160,7 @@ The same snapshot's AMS block is decoded read-only (#307): each unit (AMS, AMS L
 
 What it is not: the listener adds no AMS detail beyond what the status snapshot carries (the Moonraker listener does not run for Bambu). The camera is separate from status — see [Camera](#camera-a1p1) below. Newer firmware's packed temperature words (`device.*.info.temp`) are not decoded; the classic temperature fields are used. All of this is implemented from the #187 research document and the maintained integrations it cites, and **none of it has been run against a real Bambu printer yet**; treat the first live use as a test, and expect the unknowns listed in the research document (certificate chain on real firmware, single-MQTT-session contention with Bambu Studio/Handy, snapshot behaviour) to apply.
 
-## Camera (A1/P1)
+## Camera
 
 With LAN status configured, the camera shows where a Moonraker printer's camera shows (#294):
 
@@ -170,9 +170,9 @@ With LAN status configured, the camera shows where a Moonraker printer's camera 
 
 The A1/P1 camera is a proprietary stills protocol: one JPEG frame over TCP port 6000, authenticated by a packet that embeds the LAN access code — the same secret as status, via the same `lan_access_code_env` indirection; there is no separate camera setting. Snapshots are bounded (8 MiB) and JPEG-validated before use, exactly like the Moonraker camera path, and camera errors never include the access code.
 
-Not covered: the X1 family's RTSPS camera (port 322) — Print Buddy does not embed an RTSP client; X1 stills are deferred by decision to #246's go2rtc path (recorded on #294), and until that lands an X1 status says so plainly. P2S/H2 camera protocols are not in the verified connectivity survey, so those models report no verified camera protocol rather than guessing. Timelapse is #295, not this section.
+The X1 family's camera is an RTSPS stream (port 322, `bblp` / the LAN access code, path `/streaming/live/1`), and Print Buddy does not embed an RTSP client: X1 stills come through #246's go2rtc fan-out instead (the decision recorded on #294). When go2rtc is running with this printer's stream as its configured source, the same status, completion and watchdog places show X1 stills, read from go2rtc's loopback still of that stream. To enable it: turn on `[timelapse] capture_enabled` or `[live_stream] enabled` (either one starts go2rtc) and set `[timelapse] capture_source_url` to the printer's RTSPS URL — `rtsps://bblp:<access code>@<printer address>:322/streaming/live/1`. When go2rtc is not running, or is serving a different camera, an X1 camera request says exactly that and what to enable — there is no silent missing image and no fallback RTSP client. P2S/H2 camera protocols are not in the verified connectivity survey, so those models report no verified camera protocol rather than guessing. Timelapse is #295, not this section.
 
-**None of this has been run against a real Bambu printer yet.** The 6000 protocol is implemented from the maintained clients cited in [BAMBU-CONNECTIVITY.md](BAMBU-CONNECTIVITY.md) and covered by fake-transport tests; treat the first live use as a test.
+**None of this has been run against a real Bambu printer yet.** The 6000 protocol and the go2rtc stills path are implemented from the maintained clients cited in [BAMBU-CONNECTIVITY.md](BAMBU-CONNECTIVITY.md) and covered by fake-transport tests; treat the first live use as a test.
 
 ## Printing over LAN (opt-in)
 

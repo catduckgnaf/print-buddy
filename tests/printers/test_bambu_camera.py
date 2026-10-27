@@ -145,10 +145,93 @@ def test_adapter_snapshot_without_lan_configuration_is_a_plain_note(monkeypatch)
 
 
 def test_adapter_snapshot_for_x1_names_the_deferred_rtsp_path(monkeypatch):
+    # Superseded by the go2rtc stills test below: X1 stills are no longer
+    # deferred, they route through the fan-out; with go2rtc not running the
+    # error names exactly what to enable instead.
     adapter = _adapter("bambulab.x1", monkeypatch)
     with pytest.raises(BambuLanError) as excinfo:
-        adapter.camera_snapshot()
-    assert "#246" in str(excinfo.value) and CODE not in str(excinfo.value)
+        adapter.camera_snapshot(fanout=lambda: None, resolved=lambda: None)
+    message = str(excinfo.value)
+    assert "go2rtc is not running" in message and "capture_source_url" in message
+    assert CODE not in message
+
+
+# -- X1 family: stills through the go2rtc fan-out -----------------------------
+
+FRAME_URL = "http://127.0.0.1:1984/api/frame.jpeg?src=printer"
+
+
+def test_rtsp_url_is_the_documented_stream():
+    url = camera.rtsp_url(HOST, CODE)
+    assert url == f"rtsps://bblp:{CODE}@192.168.1.50:322/streaming/live/1"
+
+
+def test_fanout_frame_url_matches_this_printers_stream():
+    seams = dict(fanout=lambda: FRAME_URL, resolved=lambda: camera.rtsp_url(HOST, CODE))
+    assert camera.fanout_frame_url(HOST, CODE, **seams) == FRAME_URL
+    # An rtsp:// spelling of the same stream (operator's hand) still matches.
+    seams["resolved"] = lambda: f"rtsp://bblp:{CODE}@192.168.1.50:322/streaming/live/1"
+    assert camera.fanout_frame_url(HOST, CODE, **seams) == FRAME_URL
+
+
+def test_fanout_frame_url_names_the_limitation_when_go2rtc_is_down():
+    with pytest.raises(BambuLanError) as excinfo:
+        camera.fanout_frame_url(HOST, CODE, fanout=lambda: None, resolved=lambda: None)
+    message = str(excinfo.value)
+    assert "go2rtc is not running" in message and "no snapshot was taken" in message
+    assert CODE not in message
+
+
+def test_fanout_frame_url_refuses_a_different_camera_source():
+    for other in (f"rtsps://bblp:{CODE}@192.168.1.99:322/streaming/live/1",
+                  "http://192.168.1.50:8080/?action=snapshot",
+                  f"rtsps://bblp:{CODE}@192.168.1.50:322/other/path",
+                  None):
+        with pytest.raises(BambuLanError) as excinfo:
+            camera.fanout_frame_url(HOST, CODE, fanout=lambda: FRAME_URL,
+                                    resolved=lambda other=other: other)
+        assert "not this printer's stream" in str(excinfo.value)
+        assert CODE not in str(excinfo.value)
+
+
+def test_fanout_snapshot_fetches_the_still_from_the_fanout():
+    seen = []
+    image = camera.fanout_snapshot(
+        HOST, CODE, fanout=lambda: FRAME_URL,
+        resolved=lambda: camera.rtsp_url(HOST, CODE),
+        fetch=lambda url: seen.append(url) or JPEG)
+    assert image == JPEG and seen == [FRAME_URL]
+
+
+def test_fetch_url_jpeg_validates_like_a_port6000_snapshot(monkeypatch):
+    class Response:
+        def __init__(self, body):
+            self._body = body
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return False
+
+        def read(self, _count):
+            return self._body
+
+    monkeypatch.setattr(camera.urllib.request, "urlopen",
+                        lambda request, timeout=None: Response(JPEG + b"pad"))
+    assert camera.fetch_url_jpeg(FRAME_URL) == JPEG
+    monkeypatch.setattr(camera.urllib.request, "urlopen",
+                        lambda request, timeout=None: Response(b"not-a-jpeg"))
+    with pytest.raises(BambuLanError):
+        camera.fetch_url_jpeg(FRAME_URL)
+
+
+def test_adapter_snapshot_for_x1_comes_through_go2rtc(monkeypatch):
+    adapter = _adapter("bambulab.x1c", monkeypatch)
+    image = adapter.camera_snapshot(
+        fanout=lambda: FRAME_URL, resolved=lambda: camera.rtsp_url(HOST, CODE),
+        fetch=lambda url: JPEG)
+    assert image == JPEG
 
 
 def test_adapter_snapshot_for_an_unverified_model_says_so(monkeypatch):

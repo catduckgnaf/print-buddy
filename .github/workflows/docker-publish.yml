@@ -4,6 +4,17 @@ name: Publish Docker image to GHCR (manual)
 # native runner, validates each one offline, and only then pushes by digest.
 # A final manifest job combines the accepted per-architecture digests into the
 # published multi-arch tags. See docs/DOCKER.md for the supported platforms.
+#
+# Release surfaces gate: the surfaces-gate job runs first on every dispatch
+# of this workflow (version releases only — nightly has its own workflow,
+# .github/workflows/nightly.yml, and is never gated). It checks that the
+# README and package version match the version being published and that
+# the GitHub Pages site (catduckgnaf/print-buddy-docs) has no drift
+# against docs/ at this ref, using the docs repo's own drift definition.
+# Candidate dispatches (publish=false) only warn; a publication dispatch
+# (publish=true) fails here, before any image is built or pushed, until
+# the stale surfaces listed in the gate report are fixed (the remedy —
+# the Docs auto-sync in print-buddy-docs — is printed in the report).
 on:
   workflow_dispatch:
     inputs:
@@ -25,8 +36,30 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  surfaces-gate:
+    name: Release surfaces gate
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    env:
+      # Inputs reach the shell only as environment variables, never interpolated into scripts.
+      PUBLISH_VERSION: ${{ inputs.version }}
+      PUBLISH: ${{ inputs.publish }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+      - name: Clone the docs site for the drift comparison
+        run: |
+          set -euo pipefail
+          git clone --depth 1 https://github.com/catduckgnaf/print-buddy-docs.git "$RUNNER_TEMP/print-buddy-docs"
+      - name: Check release surfaces (README, version and Pages drift)
+        env:
+          DOCS_DIR: ${{ runner.temp }}/print-buddy-docs
+        run: python3 scripts/check_release_surfaces.py
+
   build:
     name: Build (${{ matrix.arch }})
+    # The surfaces gate runs first: on a publication dispatch it fails the
+    # run before any image is built or pushed when a surface is stale.
+    needs: surfaces-gate
     # Native runners only: arm64 builds run on a real arm64 runner, never under
     # QEMU emulation. One image is published (#353): the full image
     # (WITH_ORCA=true + WITH_GO2RTC=true) on linux/amd64 and linux/arm64.

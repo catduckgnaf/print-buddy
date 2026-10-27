@@ -60,6 +60,8 @@ Report which checks you actually ran and their result in the pull request. Clear
 
 Use [the documentation home](docs/README.md) for user guidance. Keep the root README focused on purpose, compatibility and the first setup step; put detailed reference material in `docs/`. Check relative links from the file that contains them. Follow [the release-note guide](docs/RELEASE-NOTES.md): user capabilities first, fixes next, implementation details and PR references last. Keep pending changes separate from shipped releases, and preserve the detailed internal history.
 
+When a release is published, the post-release surfaces workflow (`.github/workflows/post-release-surfaces.yml`, #394) opens one `Post-release surfaces check: <tag>` issue listing the release's merged PRs. Every surface in it — these docs, the Pages site (including pages to add or remove), the wiki, the README and repo About text, the release notes and the Unraid CA template sync — needs an explicit updated / verified-no-change decision before the issue closes. It complements the daily Docs sync check in `print-buddy-docs`, which only watches file drift between `docs/` and the site copies.
+
 ## Automated PR review support
 
 The **Contribution checks / contribution-policy** check runs when a PR opens,

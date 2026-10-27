@@ -3,6 +3,7 @@ import asyncio
 import io
 import json
 import os
+import shutil
 import subprocess
 import sys
 import time
@@ -137,8 +138,32 @@ def test_check_command_names_every_problem(monkeypatch, capsys, tmp_path):
     assert bot_main.check() == 1
     out = capsys.readouterr().out
     for line in ("FAIL  mode: hermes", "FAIL  token", "FAIL  print channel", "FAIL  allowed users",
-                 "ok    handlers: 18", "ok    no hermes", f"ok    state dir: {tmp_path}"):
+                 "ok    handlers: 19", "ok    no hermes", f"ok    state dir: {tmp_path}"):
         assert line in out, out
+
+
+def test_check_design_row_states_off_on_and_missing_openscad(monkeypatch, capsys, tmp_path):
+    """#388: the design row — off by default; on names the model source;
+    enabled without openscad on PATH is a FAIL."""
+    cfg = settings.load(local=Path(os.devnull), environ={})
+    cfg["paths"]["hermes_home"] = tmp_path / "profile"
+    monkeypatch.setattr(settings, "current", lambda: cfg)
+    monkeypatch.setattr(_config, "cfg", lambda: cfg)
+    bot_main.check()
+    assert "ok    design: off" in capsys.readouterr().out
+    cfg["design"]["enabled"] = True
+    cfg["bot"]["mode"] = "standalone"
+    cfg["llm"].update(chat_url="http://llm.invalid/v1", model="sol")
+    real_which = shutil.which
+    monkeypatch.setattr(shutil, "which",
+                        lambda name: "/usr/bin/openscad" if name == "openscad" else real_which(name))
+    bot_main.check()
+    assert "ok    design: on (sol at http://llm.invalid/v1)" in capsys.readouterr().out
+    monkeypatch.setattr(shutil, "which",
+                        lambda name: None if name == "openscad" else real_which(name))
+    bot_main.check()
+    out = capsys.readouterr().out
+    assert "FAIL  design: enabled, but openscad is not on PATH" in out
 
 
 def test_check_names_a_disabled_hermes_discord_platform(monkeypatch, capsys, tmp_path):

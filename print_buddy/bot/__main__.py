@@ -127,6 +127,30 @@ def checks(cfg):
     else:
         add("roast", True, "on by default, but no LLM/vision endpoint is available "
                            "(services.vision_chat_url is empty); set it to enable roasts")
+    # AI design (#388): off by default. When enabled it needs OpenSCAD (the
+    # design engine) and a model: in Hermes mode the profile's
+    # auxiliary.print_design task, in standalone mode the [design] endpoint
+    # inheriting [llm]. An enabled-but-unusable design fails the check, like
+    # a missing token, so the misconfiguration is visible before a user
+    # hits it mid-conversation.
+    import shutil as _shutil
+    from ..core import design as _design
+    design_cfg = cfg.get("design") or {}
+    if not design_cfg.get("enabled"):
+        add("design", True, "off (design.enabled is false; /print-design is unavailable)")
+    elif not _shutil.which("openscad"):
+        add("design", False, "enabled, but openscad is not on PATH; install OpenSCAD "
+                             "(it is in the Docker image) or set design.enabled=false")
+    elif mode == "hermes":
+        add("design", True, "on (Hermes print_design auxiliary task; pin its model in the "
+                            "profile's auxiliary.print_design block)")
+    else:
+        resolved = _design.resolve_http_config(cfg)
+        if resolved:
+            add("design", True, f"on ({resolved['model']} at {resolved['chat_url']})")
+        else:
+            add("design", False, "enabled, but no model endpoint: set [design] chat_url and "
+                                 "model, or the [llm] values they inherit")
     return rows
 
 

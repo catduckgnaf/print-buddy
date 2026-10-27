@@ -107,8 +107,10 @@ without the command (case-insensitive):
 Anything without a design phrase — a plain link, a plain file drop, "print
 it", every existing command — behaves exactly as before, and while a design
 is waiting for a revision, your next plain message is the revision, phrases
-or not. When design is off or no model is configured, the phrases fall
-through to normal chat untouched.
+or not. When design is off, a message with a design phrase gets the same
+"design is not set up" reply as the command — and with design on but no
+model configured, the same "no design model is configured" reply — while
+messages without a design phrase are untouched either way.
 
 ## Browsing designs in the Web UI
 

@@ -371,12 +371,82 @@ def test_plain_file_drop_without_a_trigger_falls_through(design_env, tmp_path):
     assert adapter.sent == []
 
 
-def test_nl_phrases_fall_through_when_design_is_off(design_env):
+def test_nl_create_phrase_answers_not_set_up_when_design_is_off(design_env):
+    # Criterion 7 (catduck's ruling): a design phrase gets the command's
+    # "not set up" reply and is consumed, exactly like /print-design.
     design_env["design"]["enabled"] = False
     adapter = FakeAdapter()
-    assert _dispatch_event(_event("design me a hook"), adapter, scripted([GOOD]),
+    out = _dispatch_event(_event("design me a hook"), adapter, scripted([GOOD]),
+                          design.CANCEL_LABEL)
+    assert out == {"action": "skip", "reason": "design not enabled"}
+    assert "not set up" in adapter.sent[-1] and "DESIGN__ENABLED" in adapter.sent[-1]
+    assert _sessions(design_env["paths"]["cache"].parent) == []
+
+
+def test_nl_edit_phrase_with_a_model_answers_not_set_up_when_design_is_off(
+        design_env, tmp_path):
+    design_env["design"]["enabled"] = False
+    adapter = FakeAdapter()
+    out = _dispatch_event(
+        _media_event("change this to be twice as tall", _plate_stl(tmp_path)),
+        adapter, scripted([GOOD]), design.CANCEL_LABEL)
+    assert out == {"action": "skip", "reason": "design not enabled"}
+    assert "not set up" in adapter.sent[-1]
+    assert _sessions(tmp_path) == []
+
+
+def test_nl_design_this_without_a_model_answers_not_set_up_when_design_is_off(
+        design_env):
+    design_env["design"]["enabled"] = False
+    adapter = FakeAdapter()
+    out = _dispatch_event(_event("design this"), adapter, scripted([GOOD]),
+                          design.CANCEL_LABEL)
+    assert out == {"action": "skip", "reason": "design not enabled"}
+    assert "not set up" in adapter.sent[-1]
+
+
+def test_nl_edit_phrase_without_a_model_is_not_consumed_when_design_is_off(
+        design_env):
+    # "change this" with no model anywhere was never a trigger, so the
+    # not-set-up reply does not apply: the message is not ours.
+    design_env["design"]["enabled"] = False
+    adapter = FakeAdapter()
+    out = _dispatch_event(_event("change this"), adapter, scripted([GOOD]),
+                          design.CANCEL_LABEL)
+    assert out is None
+    assert adapter.sent == []
+
+
+@pytest.mark.parametrize("text", [
+    "https://makerworld.com/en/models/123-thing",
+    "print it",
+    "just chatting about printers",
+])
+def test_non_trigger_messages_fall_through_when_design_is_off(design_env, text):
+    design_env["design"]["enabled"] = False
+    adapter = FakeAdapter()
+    assert _dispatch_event(_event(text), adapter, scripted([GOOD]),
                            design.CANCEL_LABEL) is None
     assert adapter.sent == []
+
+
+def test_plain_file_drop_without_a_trigger_falls_through_when_design_is_off(
+        design_env, tmp_path):
+    design_env["design"]["enabled"] = False
+    adapter = FakeAdapter()
+    assert _dispatch_event(_media_event("", _plate_stl(tmp_path)), adapter,
+                           scripted([GOOD]), design.CANCEL_LABEL) is None
+    assert adapter.sent == []
+
+
+def test_nl_trigger_answers_not_configured_when_enabled_without_a_model(
+        design_env):
+    adapter = FakeAdapter()
+    with mock.patch.object(plugin, "_design_transport", return_value=(None, "")):
+        out = asyncio.run(plugin.design_dispatch(_event("design me a hook"),
+                                                 _gateway(adapter)))
+    assert out["reason"] == "design model not configured"
+    assert "no design model is configured" in adapter.sent[-1]
 
 
 @needs_scad

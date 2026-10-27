@@ -448,14 +448,12 @@ async def design_dispatch(event, gateway, **kwargs):
                 return None  # "change this" with no model anywhere is not ours
             else:
                 intent = ("ask", "", None, None)
-    if intent[0] != "command" and intent[0] != "revision":
-        # Natural-language routing never hijacks chat when design cannot run:
-        # with design off or modelless, the message falls through untouched.
-        if not (cfg.get('design') or {}).get('enabled'):
-            return None
-        if _design_transport(cfg)[0] is None:
-            return None
-
+    # Natural-language intents get the same answers as the command when
+    # design cannot run (#388 criterion 7, catduck's ruling): the enabled
+    # and transport checks below reply "not set up" / "not configured" and
+    # consume the message. Messages that matched no trigger returned None
+    # during intent resolution above, so non-design chat is untouched
+    # whatever the design state.
     adapter = gateway._delivery_adapter_for(source)
     if adapter is None:
         return {'action': 'skip', 'reason': 'design UI delivery unavailable'}

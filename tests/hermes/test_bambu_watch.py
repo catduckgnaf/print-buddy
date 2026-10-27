@@ -284,7 +284,7 @@ def test_dark_frame_posts_one_notice_and_never_alerts():
 
 def test_muted_bambu_print_posts_no_alert(monkeypatch, tmp_path):
     from unittest.mock import patch as _patch
-    from print_buddy.hermes import print_alert_buttons as pab
+    from print_handy.hermes import print_alert_buttons as pab
     alerts = []
     clock = FakeClock()
     monitor = bambu_watch.BambuPrintMonitor(
@@ -313,7 +313,7 @@ def test_muted_bambu_print_posts_no_alert(monkeypatch, tmp_path):
 
 
 def test_dark_notice_delivery_posts_only_the_mute_button(monkeypatch):
-    from print_buddy.hermes import print_alert_buttons as pab
+    from print_handy.hermes import print_alert_buttons as pab
     seen = {}
     monkeypatch.setattr(pab, "post_visual_dark_notice",
                         lambda token, chat, text, filename, identity=None: seen.update(

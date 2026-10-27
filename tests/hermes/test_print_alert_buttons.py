@@ -56,9 +56,9 @@ def test_mute_store_survives_alert_recording(tmp_path):
 
 def test_mute_click_records_without_touching_the_printer(tmp_path):
     with patch.object(pab, "STATE", tmp_path / "alerts.json"), \
-         patch("print_buddy.hermes.print_control.status",
+         patch("print_handy.hermes.print_control.status",
                side_effect=AssertionError("printer read for a mute")), \
-         patch("print_buddy.hermes.print_stop._lan_adapter",
+         patch("print_handy.hermes.print_stop._lan_adapter",
                side_effect=AssertionError("printer read for a mute")):
         out = pab.handle_click("mute", {"kind": "visual", "filename": "f.gcode", "identity": "job:9"})
         assert pab.visual_muted("f.gcode", "job:9")

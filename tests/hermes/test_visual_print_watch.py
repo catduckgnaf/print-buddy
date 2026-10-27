@@ -369,7 +369,7 @@ def _bright_jpeg():
 
 
 def test_frame_dark_pins_completely_dark_frames():
-    from print_buddy.hermes import visual_watch as vw
+    from print_handy.hermes import visual_watch as vw
     # Pure black and near-black noise are dark.
     assert vw.frame_dark(_dark_jpeg()) is True
     assert vw.frame_dark(_pil_jpeg(lambda x, y: (x + y) % 3)) is True
@@ -429,7 +429,7 @@ def test_watchdog_snapshot_dark_direct_frame_is_returned_without_a_second_fanout
 def test_dark_frame_check_posts_one_notice_and_never_alerts_or_calls_vision(monkeypatch, tmp_path):
     import asyncio
     from unittest.mock import patch
-    from print_buddy.hermes import print_alert_buttons as pab
+    from print_handy.hermes import print_alert_buttons as pab
 
     alerts, notices = [], []
     monkeypatch.setattr(mel, "_camera_snapshot_bytes", lambda: _dark_jpeg())
@@ -455,7 +455,7 @@ def test_dark_frame_check_posts_one_notice_and_never_alerts_or_calls_vision(monk
 def test_dark_frame_does_not_become_a_stall_baseline(monkeypatch, tmp_path):
     import asyncio
     from unittest.mock import patch
-    from print_buddy.hermes import print_alert_buttons as pab
+    from print_handy.hermes import print_alert_buttons as pab
 
     monkeypatch.setattr(mel, "_camera_snapshot_bytes", lambda: _dark_jpeg())
     monkeypatch.setattr(mel, "_visual_dark_notice", lambda filename, identity=None: None)
@@ -476,7 +476,7 @@ def test_dark_frame_does_not_become_a_stall_baseline(monkeypatch, tmp_path):
 def test_muted_print_posts_no_visual_alert(monkeypatch, tmp_path):
     import asyncio
     from unittest.mock import patch
-    from print_buddy.hermes import print_alert_buttons as pab
+    from print_handy.hermes import print_alert_buttons as pab
 
     alerts = []
     monkeypatch.setattr(mel, "_camera_snapshot_bytes", lambda: _jpeg())

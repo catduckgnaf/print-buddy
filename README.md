@@ -65,8 +65,11 @@ One thing to know either way: slicing needs a compatible OrcaSlicer and the righ
 | **Prusa MK4S, CORE One, XL and MINI+** | Slicing plus opt-in PrusaLink LAN status, upload and gated print start. See [Prusa printers](docs/PRUSA.md). |
 | **Elegoo Neptune 4, 4 Pro, 4 Plus and 4 Max** | Built-in profiles over Moonraker. See [Elegoo printers](docs/ELEGOO.md). |
 | **Elegoo Centauri Carbon** | SDCP LAN, opt-in. See [Elegoo printers](docs/ELEGOO.md). |
+| **Qidi Q1 Pro, X-Plus 3, X-Max 3 and X-Smart 3** | Built-in profiles over Moonraker. See [Qidi printers](docs/QIDI.md). |
+| **Creality Ender-3 V3, V3 KE, V3 Plus, K1, K1C and K1 Max** | Built-in profiles over Moonraker (Creality OS). Creality's Marlin printers are not in this row — they use the OctoPrint route below. See [Creality printers](docs/CREALITY.md). |
 | **Bambu Lab A1, A1 mini, P1P, P1S, P2S, X1, X1 Carbon, X1E, H2S and A2L; dual-nozzle H2D, H2D Pro, H2C and X2D** | Slicing, G-code checks and Bambu packaging, with opt-in LAN status, upload and gated print start (the dual-nozzle models with per-slot AMS mapping at print start). Bambu printers slice with Bambu Studio by default; set `printer.slicer: orca` to use OrcaSlicer instead. None of these has been tested on Bambu hardware. See [Bambu Lab printers](docs/BAMBU-LAB.md). |
 | **Any other Klipper printer** | A generic Klipper/Moonraker adapter is included — but a generic adapter is not a tuned or physically verified profile for your printer. |
+| **Marlin printers behind OctoPrint** (including the older Ender and CR lines) | A generic OctoPrint/Marlin adapter is included. See [OctoPrint + Marlin](docs/OCTOPRINT-MARLIN.md). |
 
 Some profiles can also offer chat file delivery or an offline Bambu package after slicing; delivery never authorizes printing, and Bambu packaging is not verified in Bambu Studio or on hardware. Details are in [printer profiles](docs/PRINTER-PROFILES.md).
 

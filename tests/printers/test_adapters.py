@@ -14,11 +14,14 @@ from print_buddy.printers.bambulab.p1s import P1SAdapter
 from print_buddy.printers.base import BuildVolume, MultiColorUnsupported, PrinterAdapter
 
 from print_buddy.printers.bambulab import facts as bambu_facts
+from print_buddy.printers.creality import facts as creality_facts
 from print_buddy.printers.elegoo import facts as elegoo_facts
 from print_buddy.printers.elegoo_sdcp import facts as sdcp_facts
 from print_buddy.printers.prusa import facts as prusa_facts
+from print_buddy.printers.qidi import facts as qidi_facts
 
-from . import a1_fixture, bambu_family_fixture, elegoo_fixture, p1s_fixture, prusa_fixture
+from . import (a1_fixture, bambu_family_fixture, creality_fixture, elegoo_fixture, p1s_fixture,
+               prusa_fixture, qidi_fixture)
 
 AD5X_ARTIFACTS = re.compile(
     r"SET_EXTRUDER_SLOT|\bIFS\b|zmod|ZMOD|CHANGE_ZCOLOR|display_off|LOAD_ZOFFSET|START_PRINT|MESH=|8898|AD5X|/detail",
@@ -83,6 +86,28 @@ class ContractTests(unittest.TestCase):
             patcher.start()
             self.addCleanup(patcher.stop)
             elegoo_fixture.install(adapter_for(key), model_facts)
+        # The Qidi models share the Qidi fixture: trust + install each one.
+        for key, model_facts in (("qidi.q1pro", qidi_facts.Q1PRO),
+                                 ("qidi.xplus3", qidi_facts.XPLUS3),
+                                 ("qidi.xmax3", qidi_facts.XMAX3),
+                                 ("qidi.xsmart3", qidi_facts.XSMART3)):
+            patcher = mock.patch.object(printers.MODELS[key].adapter, "facts",
+                                        qidi_fixture.fixture_facts(model_facts))
+            patcher.start()
+            self.addCleanup(patcher.stop)
+            qidi_fixture.install(adapter_for(key), model_facts)
+        # The Creality models share the Creality fixture: trust + install each one.
+        for key, model_facts in (("creality.ender3v3", creality_facts.ENDER3V3),
+                                 ("creality.ender3v3ke", creality_facts.ENDER3V3KE),
+                                 ("creality.ender3v3plus", creality_facts.ENDER3V3PLUS),
+                                 ("creality.k1", creality_facts.K1),
+                                 ("creality.k1c", creality_facts.K1C),
+                                 ("creality.k1max", creality_facts.K1MAX)):
+            patcher = mock.patch.object(printers.MODELS[key].adapter, "facts",
+                                        creality_fixture.fixture_facts(model_facts))
+            patcher.start()
+            self.addCleanup(patcher.stop)
+            creality_fixture.install(adapter_for(key), model_facts)
 
     def test_registry_finds_every_model_file(self):
         self.assertEqual(set(MODELS), {AD5X, GENERIC, SV06, OCTOPRINT, BAMBU_A1, BAMBU_P1S, "flashforge_stock.ad5x",
@@ -93,7 +118,10 @@ class ContractTests(unittest.TestCase):
                                        "bambulab.h2dpro", "bambulab.x2d", "bambulab.h2c", "bambulab.a2l",
                                        "prusa.mk4s", "prusa.coreone", "prusa.xl", "prusa.miniplus",
                                        "elegoo.neptune4", "elegoo.neptune4pro", "elegoo.neptune4plus",
-                                       "elegoo.neptune4max", "elegoo_sdcp.centauricarbon"})
+                                       "elegoo.neptune4max", "elegoo_sdcp.centauricarbon",
+                                       "qidi.q1pro", "qidi.xplus3", "qidi.xmax3", "qidi.xsmart3",
+                                       "creality.ender3v3", "creality.ender3v3ke", "creality.ender3v3plus",
+                                       "creality.k1", "creality.k1c", "creality.k1max"})
         for key, model in printers.MODELS.items():
             self.assertEqual(model.key, key)
             shipped = settings.ROOT / "print_buddy" / "templates" / "orca" / model.templates
@@ -128,7 +156,7 @@ class ContractTests(unittest.TestCase):
                 folder = a.templates_dir()
                 for name in ("machine", "process", "filament"):
                     json.loads((folder / f"{name}.json").read_text())
-                if family not in (OCTOPRINT, "flashforge_stock.ad5x") and not family.startswith(("bambulab.", "prusa.", "elegoo")):
+                if family not in (OCTOPRINT, "flashforge_stock.ad5x") and not family.startswith(("bambulab.", "prusa.", "elegoo", "qidi.", "creality.")):
                     self.assertIn("[bed_temperature_initial_layer_single]", a.machine_start_gcode("X MESH=auto", "auto"))
                 plan = a.start_plan(60, 215)
                 if family == "flashforge_stock.ad5x":

@@ -383,8 +383,21 @@ def _recent_design_source(source):
     return None, None
 
 
+_DESIGN_COMMANDS = ('/print-design', '/design')  # canonical + short alias (#388 close-out)
+
+
+def _design_command_args(text):
+    """The argument text when `text` is a design command, else None."""
+    for command in _DESIGN_COMMANDS:
+        if text == command:
+            return ''
+        if text.startswith(command + ' '):
+            return text[len(command):].strip()
+    return None
+
+
 async def design_dispatch(event, gateway, **kwargs):
-    """/print-design and natural design requests (#388 Stages 1-2).
+    """/print-design (alias /design) and natural design requests (#388).
 
     Create loop (Stage 1): /print-design <what to make>, Slice it / Change
     it / Cancel, Slice it handing the STL to prepared intake. Stage 2 adds
@@ -396,16 +409,26 @@ async def design_dispatch(event, gateway, **kwargs):
     None and plain intake/chat behave exactly as before; inside a session
     awaiting a revision, the owner's next plain message is the revision
     before any phrase detection runs.
+
+    Close-out rulings: the handler serves every bot platform — Discord,
+    Telegram and Matrix — through the platform-neutral adapter/prompt path
+    (Matrix answers the Slice it / Change it / Cancel choices as a numbered
+    list, via the shared prompt machinery). Design is its own configured
+    lane: on Telegram/Matrix it runs only through an explicitly configured
+    [design] endpoint, and their pure-bot chat posture is untouched —
+    ordinary chat there still has no [llm] fallback (BotCore keys that off
+    the adapter's uses_llm, which design never changes). The enable switch
+    is tri-state (design.effective_enabled): unset is auto-on when an
+    endpoint resolves, explicit false is off in all cases.
     """
     if not _is_print_discord_event(event):
         return None
     source = event.source
-    if _platform_value(source) != 'discord':
-        return None  # Design is Discord-only; Telegram/Matrix keep their no-LLM posture (#164)
     if not getattr(source, 'user_id', None) or not gateway._is_user_authorized_for_source(source):
         return None
     text = str(getattr(event, 'text', '') or '').strip()
-    is_command = text == '/print-design' or text.startswith('/print-design ')
+    command_args = _design_command_args(text)
+    is_command = command_args is not None
     from print_buddy.core import design
     from print_buddy.core.link_intake import model_link
     from print_buddy.core.prepared_intake import model_file
@@ -417,7 +440,7 @@ async def design_dispatch(event, gateway, **kwargs):
     # Resolve what this message asks for before any state changes.
     intent = None  # (kind, instruction, file_path, link_url)
     if is_command:
-        intent = ("command", text[len('/print-design'):].strip(), None, None)
+        intent = ("command", command_args, None, None)
     elif text.startswith('/'):
         return None
     elif session and session.get('status') == 'awaiting_revision':
@@ -462,16 +485,25 @@ async def design_dispatch(event, gateway, **kwargs):
     async def say(content):
         await adapter.send(chat_id=source.chat_id, metadata=metadata, content=content)
 
-    if not (cfg.get('design') or {}).get('enabled'):
-        await say('Design is not set up: set design.enabled = true (PRINT_BUDDY__DESIGN__ENABLED=true) '
-                  'and configure a design model — see docs/DESIGN.md. Nothing was designed.')
-        return {'action': 'skip', 'reason': 'design not enabled'}
     complete, _kind = _design_transport(cfg)
+    design_raw = (cfg.get('design') or {}).get('enabled')
+    if design_raw is False:
+        await say('Design is not set up: design.enabled is false — set design.enabled = true '
+                  '(PRINT_BUDDY__DESIGN__ENABLED=true) or remove it to turn design on when a '
+                  'model is configured — see docs/DESIGN.md. Nothing was designed.')
+        return {'action': 'skip', 'reason': 'design not enabled'}
     if complete is None:
-        await say('Design is enabled but no design model is configured: in standalone mode set '
-                  '[design] chat_url/model (or the [llm] values they inherit); in Hermes mode the '
-                  'profile needs the print_design auxiliary task. Nothing was designed.')
-        return {'action': 'skip', 'reason': 'design model not configured'}
+        if design_raw is True:
+            await say('Design is enabled but no design model is configured: in standalone mode set '
+                      '[design] chat_url/model (or the [llm] values they inherit); in Hermes mode the '
+                      'profile needs the print_design auxiliary task. Nothing was designed.')
+            return {'action': 'skip', 'reason': 'design model not configured'}
+        # Auto posture with nothing configured anywhere: the same "not set
+        # up" answer the command has always given (#422).
+        await say('Design is not set up: configure a design model — set [design] chat_url/model '
+                  '(or the [llm] values they inherit), or PRINT_BUDDY__DESIGN__ENABLED=true with '
+                  'a design endpoint — see docs/DESIGN.md. Nothing was designed.')
+        return {'action': 'skip', 'reason': 'design not enabled'}
     engine = design.DesignEngine((cfg.get('paths') or {}).get('cache') or (_hermes_home() / 'cache'),
                                  complete, cfg=cfg)
     note = ''
@@ -545,7 +577,8 @@ async def design_dispatch(event, gateway, **kwargs):
     await say('\n'.join(lines))
     timeout = (globals().get('_config').question_timeout_s() if globals().get('_config') else 1800)
     answer = await _confirm(adapter, source, metadata, 'print-design',
-                            'What next for this design?', list(design.CHOICES), timeout)
+                            'What next for this design?', list(design.CHOICES), timeout,
+                            live_key=gateway._session_key_for_source(source))
     if answer == design.SLICE_LABEL:
         engine.mark_handed_off(session)
         return await _design_handoff(event, gateway, adapter, session, result['stl_path'])
@@ -1763,13 +1796,20 @@ def _control_preamble(event, gateway, command, with_args=False):
     return source, gateway._delivery_adapter_for(source)
 
 
-async def _confirm(adapter, source, metadata, prefix, question, choices, timeout):
+async def _confirm(adapter, source, metadata, prefix, question, choices, timeout, live_key=None):
     import uuid
     from print_buddy.core.prompts import gateway as _prompts
     cm = _prompts()
     cid = uuid.uuid4().hex
     session_key = f'{prefix}:{source.chat_id}:{source.thread_id}'
-    cm.register(cid, session_key, question, choices)
+    # Registration key vs delivery key (the link_intake.ask pattern): a typed
+    # reply reaches a prompt only when the prompt is registered under the
+    # live chat session key, because the bot core routes typed answers by
+    # that key exactly. Button platforms resolve by clarify_id either way,
+    # but Matrix has no buttons — its numbered replies are typed answers, so
+    # a flow-key registration there can never be answered and the prompt
+    # times out. send_clarify keeps the flow key for delivery.
+    cm.register(cid, live_key or session_key, question, choices)
     try:
         sent = await adapter.send_clarify(chat_id=str(source.chat_id), question=question, choices=choices,
                                           clarify_id=cid, session_key=session_key, metadata=metadata)

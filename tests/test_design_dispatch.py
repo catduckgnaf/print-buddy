@@ -121,15 +121,183 @@ def test_bare_command_shows_usage(design_env):
     assert "Usage: /print-design" in adapter.sent[-1]
 
 
-def test_unauthorized_and_other_platforms_fall_through(design_env):
+def test_unauthorized_and_unknown_platforms_fall_through(design_env):
     adapter = FakeAdapter()
     assert _dispatch("/print-design a plate", adapter, scripted([GOOD]),
                      design.CANCEL_LABEL, authorized=False) is None
     assert _dispatch("/print-design a plate", adapter, scripted([GOOD]),
-                     design.CANCEL_LABEL, platform="telegram") is None
+                     design.CANCEL_LABEL, platform="irc") is None
     assert _dispatch("just chatting", adapter, scripted([GOOD]),
                      design.CANCEL_LABEL) is None
     assert adapter.sent == []
+
+
+# ------------------------------------------------- close-out: alias, auto-on, Telegram/Matrix
+
+def test_design_alias_shows_the_same_usage(design_env):
+    adapter = FakeAdapter()
+    out = _dispatch("/design", adapter, scripted([GOOD]), design.CANCEL_LABEL)
+    assert out["reason"] == "design usage shown"
+    assert "Usage: /print-design" in adapter.sent[-1]
+
+
+def test_design_alias_answers_not_set_up_when_explicitly_off(design_env):
+    design_env["design"]["enabled"] = False
+    adapter = FakeAdapter()
+    out = _dispatch("/design a plate", adapter, scripted([GOOD]), design.CANCEL_LABEL)
+    assert out == {"action": "skip", "reason": "design not enabled"}
+    assert "not set up" in adapter.sent[-1]
+
+
+def test_auto_posture_without_an_endpoint_answers_not_set_up(design_env):
+    # enabled unset (auto) + no endpoint anywhere: same answer as #422 pinned.
+    design_env["design"]["enabled"] = None
+    adapter = FakeAdapter()
+    with mock.patch.object(plugin, "_design_transport", return_value=(None, "")):
+        out = asyncio.run(plugin.design_dispatch(_event("/print-design a plate"),
+                                                 _gateway(adapter)))
+    assert out["reason"] == "design not enabled"
+    assert "not set up" in adapter.sent[-1] and "DESIGN__ENABLED" in adapter.sent[-1]
+
+
+def test_auto_posture_with_an_endpoint_runs(design_env):
+    # enabled unset (auto) + a transport (endpoint configured): design is on.
+    design_env["design"]["enabled"] = None
+    adapter = FakeAdapter()
+    out = _dispatch("/design", adapter, scripted([GOOD]), design.CANCEL_LABEL)
+    assert out["reason"] == "design usage shown"
+
+
+@pytest.mark.parametrize("platform", ["telegram", "matrix"])
+def test_design_command_is_served_on_telegram_and_matrix(design_env, platform):
+    adapter = FakeAdapter()
+    out = _dispatch("/print-design", adapter, scripted([GOOD]), design.CANCEL_LABEL,
+                    platform=platform)
+    assert out["reason"] == "design usage shown"
+    assert "Usage: /print-design" in adapter.sent[-1]
+
+
+@pytest.mark.parametrize("platform", ["telegram", "matrix"])
+def test_design_on_telegram_and_matrix_answers_not_set_up_without_an_endpoint(
+        design_env, platform):
+    design_env["design"]["enabled"] = None
+    adapter = FakeAdapter()
+    with mock.patch.object(plugin, "_design_transport", return_value=(None, "")):
+        out = asyncio.run(plugin.design_dispatch(
+            _event("design me a hook", platform=platform), _gateway(adapter)))
+    assert out["reason"] == "design not enabled"
+    assert "not set up" in adapter.sent[-1]
+
+
+def test_telegram_and_matrix_stay_pure_bots_for_ordinary_chat():
+    # Design is a separate configured lane; it must not wire the [llm] chat
+    # fallback on the pure-bot platforms (#164 posture, unchanged).
+    from print_buddy.bot import matrix as matrix_mod
+    from print_buddy.bot import telegram as telegram_mod
+    assert telegram_mod.StandaloneAdapter.uses_llm is False
+    assert matrix_mod.StandaloneAdapter.uses_llm is False
+    assert matrix_mod.StandaloneAdapter.supports_buttons is False
+
+
+def test_design_alias_is_in_the_commands_table():
+    from print_buddy.bot import commands
+    canonical = commands.by_name("print-design")
+    assert commands.by_name("design") is canonical
+    assert commands.as_text("design", {"prompt": "a hook"}) == "/design a hook"
+    assert commands.as_text("print-design", {"prompt": "a hook"}) == "/print-design a hook"
+    registered = dict(commands.registrations())
+    assert registered["design"] is canonical and registered["print-design"] is canonical
+    assert "`/design`" in commands.help_text()
+
+
+@needs_scad
+@pytest.mark.parametrize("platform", ["telegram", "matrix"])
+def test_design_turn_runs_on_telegram_and_matrix(design_env, platform):
+    # A full turn through the platform-neutral prompt path: the fake
+    # adapter stands in for the platform adapter (Telegram buttons, Matrix
+    # numbered lists both resolve through the shared prompt registry).
+    adapter = FakeAdapter()
+    out = _dispatch("/design a 40x20x3 plate with two 4 mm holes", adapter,
+                    scripted([GOOD]), design.CANCEL_LABEL, platform=platform)
+    assert out["reason"] == "design cancelled"
+    post = next(content for content in adapter.sent if "Design turn 1" in content)
+    assert "40 × 20 × 3" in post
+    assert adapter.clarified[-1][1] == [design.SLICE_LABEL, design.CHANGE_LABEL,
+                                        design.CANCEL_LABEL]
+
+
+@needs_scad
+@pytest.mark.parametrize("reply,reason", [("2", "design awaiting revision"),
+                                          ("3", "design cancelled")])
+def test_design_prompt_answers_a_numbered_reply_through_the_real_matrix_adapter(
+        design_env, reply, reason):
+    """Regression (#426 review): Matrix has no buttons, so the design
+    Slice/Change/Cancel prompt is answered by a typed numbered reply, which
+    the bot core routes by the LIVE session key. The whole path runs for
+    real here — the actual Matrix adapter, the actual prompt registry, no
+    mocked wait — because the mocked-wait dispatch tests cannot see a
+    registration-key mismatch: pre-fix the prompt was registered under the
+    flow key only, replying with the number returned False and the
+    confirmation timed out (surfacing as a cancel)."""
+    import io
+    import json
+    import urllib.parse
+
+    from print_buddy.bot import matrix as matrix_mod
+
+    class _Response(io.BytesIO):
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *exc):
+            self.close()
+            return False
+
+    class Stub:
+        def __init__(self):
+            self.bodies = []
+
+        def __call__(self, req, timeout=None):
+            path = urllib.parse.urlsplit(req.full_url).path
+            body = (json.loads(req.data) if req.data and
+                    req.headers.get("Content-type") == "application/json" else None)
+            if "/send/m.room.message/" in path:
+                self.bodies.append((body or {}).get("body", ""))
+                return _Response(json.dumps({"event_id": "$evt"}).encode())
+            if path.endswith("/media/v3/upload"):
+                return _Response(json.dumps({"content_uri": "mxc://example.org/m"}).encode())
+            raise AssertionError(f"unexpected homeserver call: {req.method} {req.full_url}")
+
+    stub = Stub()
+    mx_access = "mx-test-access"
+    adapter = matrix_mod.StandaloneAdapter(None, ["42"], homeserver="https://matrix.example.org",
+                                           token=mx_access, opener=stub)
+    live_key = "matrix:c::42"
+    gateway = S(_is_user_authorized_for_source=lambda s: True,
+                _delivery_adapter_for=lambda s: adapter,
+                _session_key_for_source=lambda s: live_key)
+    fake = scripted([GOOD])
+
+    async def scenario():
+        with mock.patch.object(plugin, "_design_transport", return_value=(fake, "http")), \
+                mock.patch.object(core_prompts, "gateway", return_value=core_prompts):
+            task = asyncio.create_task(plugin.design_dispatch(
+                _event("/design a 40x20x3 plate with two 4 mm holes", platform="matrix"),
+                gateway))
+            for _ in range(600):
+                if any("Reply with the number" in body for body in stub.bodies):
+                    break
+                await asyncio.sleep(0.05)
+            else:
+                raise AssertionError("the design prompt never reached the room")
+            answered = await adapter.answer_typed(live_key, reply)
+            out = await asyncio.wait_for(task, 15)
+            return answered, out
+
+    answered, out = asyncio.run(scenario())
+    assert answered is True
+    assert out["reason"] == reason
+    assert any(body.startswith("> Answered by message:") for body in stub.bodies)
 
 
 @needs_scad

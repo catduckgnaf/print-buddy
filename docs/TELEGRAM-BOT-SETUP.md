@@ -129,6 +129,29 @@ with `CLIPROXY_API_KEY` in the environment (the key for
   never consults `[llm]`, and unmatched text still gets the command
   list.
 
+## AI design on Telegram
+
+`/print-design` (or `/design`) and the design phrases ("design me …",
+"design this" with a model file attached as a document, or a model link)
+work on Telegram too — see [AI design with OpenSCAD](DESIGN.md). Design is
+the one model-backed feature here, and it runs only through an explicitly
+configured `[design]` endpoint (or the `[llm]` values it inherits):
+
+```yaml
+# config/local.yaml
+design:
+  chat_url: http://192.168.1.10:8317/v1/chat/completions
+  model: sol-latest        # a stronger model for design turns
+```
+
+With an endpoint configured, design is on automatically (set
+`design.enabled: false` to force it off). With none configured, the
+commands answer "design is not set up". This changes nothing about the
+pure-bot rule: design turns call only that design endpoint, ordinary chat
+still never consults `[llm]`, and unmatched text still gets the command
+list. The Slice it / Change it / Cancel choices are inline buttons, like
+every other Telegram prompt.
+
 ## Pairing with moonraker-telegram-bot (ZMod companion)
 
 If your printer runs ZMod (an AD5X, say), you may already run

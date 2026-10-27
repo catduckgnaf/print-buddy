@@ -1032,22 +1032,31 @@ def _validate_vision(data):
 
 
 def _validate_design(data):
-    """The [design] section (#388 Stage 1): AI design with OpenSCAD.
+    """The [design] section (#388 Stage 1; auto-on posture from the close-out ruling).
 
-    Off by default: a design turn spends real model time and money, so the
-    operator opts in. ``chat_url``, ``model`` and ``api_key_env`` are empty
+    ``enabled`` is tri-state. Absent (None here) means AUTO: design turns
+    on whenever a design/LLM endpoint is resolvable — standalone resolves
+    [design] inheriting [llm]; Hermes uses the plugin's ``print_design``
+    auxiliary-task lane — the same posture roasts have via
+    ``vision.roast_enabled`` (on whenever an endpoint is available).
+    ``enabled = true`` forces it on (an unconfigured endpoint is then a
+    visible failure, not a silent off), and ``enabled = false`` turns it
+    off in all cases. ``chat_url``, ``model`` and ``api_key_env`` are empty
     to inherit the [llm] values, so the common single-endpoint setup only
     sets ``design.model`` (a stronger model for design turns). In Hermes
     mode these endpoint fields are not used at all: the plugin calls the
     Hermes host's own LLM lane with its registered ``print_design``
     auxiliary task, and the profile's ``auxiliary.print_design`` block is
-    where the design model is pinned (see docs/DESIGN.md). Absent in an
-    older config means the defaults (off).
+    where the design model is pinned (see docs/DESIGN.md). The shipped
+    config files deliberately carry no ``enabled`` line, so a config that
+    never mentions it gets the auto posture; the effective state is
+    resolved by ``print_buddy.core.design.effective_enabled``.
     """
     design = data.setdefault("design", {})
-    enabled = design.setdefault("enabled", False)
-    if not isinstance(enabled, bool):
+    enabled = design.get("enabled")
+    if enabled is not None and not isinstance(enabled, bool):
         raise SettingsError(f"[design] enabled must be true or false, got {enabled!r}")
+    design["enabled"] = enabled
     chat_url = str(design.setdefault("chat_url", "") or "").strip()
     if chat_url and not chat_url.startswith(("http://", "https://")):
         raise SettingsError(f"[design] chat_url must be a URL, got {chat_url!r}")

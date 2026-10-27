@@ -281,7 +281,8 @@ def test_discord_client_registers_commands_and_reports_connection(cfg):
             await bot.setup_hook()
         try:
             sync.assert_awaited_once()
-            assert sorted(c.name for c in bot.tree.get_commands()) == sorted(c.name for c in commands.COMMANDS)
+            assert sorted(c.name for c in bot.tree.get_commands()) == \
+                sorted(name for name, _c in commands.registrations())  # canonical + aliases (/design)
             assert len(bot.extra_events["on_interaction"]) == 2  # prompt buttons + listener alert buttons
             await bot.on_ready()
             assert health.evaluate(health.read())[0] is True

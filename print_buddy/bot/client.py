@@ -128,12 +128,18 @@ def run_bot(cfg):
             return 0
 
 
-def _slash(core_ref, command):
-    """One app command whose callback hands its options to BotCore.run_slash."""
+def _slash(core_ref, command, name=None):
+    """One app command whose callback hands its options to BotCore.run_slash.
+
+    ``name`` is the registered name (the canonical name, or an alias from
+    the commands table): run_slash is called with it, so an alias produces
+    its own typed form (``/design …`` for ``/print-design``'s alias).
+    """
     names = [o.name for o in command.options]
+    registered = name or command.name
 
     async def run(interaction, values):
-        await core_ref().run_slash(interaction, command.name, values)
+        await core_ref().run_slash(interaction, registered, values)
 
     if not names:
         async def callback(interaction: discord.Interaction):
@@ -154,7 +160,7 @@ def _slash(core_ref, command):
             if option.choices:
                 callback = app_commands.choices(**{param: [app_commands.Choice(name=c, value=c)
                                                            for c in option.choices]})(callback)
-    return app_commands.Command(name=command.name, description=command.description[:100], callback=callback)
+    return app_commands.Command(name=registered, description=command.description[:100], callback=callback)
 
 
 class PrintBuddyBot(ext_commands.Bot):
@@ -169,8 +175,8 @@ class PrintBuddyBot(ext_commands.Bot):
 
     async def setup_hook(self):
         self.core = BotCore(self, self.cfg)
-        for command in commands.COMMANDS:
-            self.tree.add_command(_slash(lambda: self.core, command))
+        for name, command in commands.registrations():
+            self.tree.add_command(_slash(lambda: self.core, command, name))
         if self.cfg["bot"].get("sync_commands", True):
             try:
                 synced = await self.tree.sync()

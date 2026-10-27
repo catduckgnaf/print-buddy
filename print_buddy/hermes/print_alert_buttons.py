@@ -145,7 +145,12 @@ def insertion_components(aid: str) -> list[dict[str, Any]]:
 
 
 def spool_question_components(aid: str, prior_spool_id: int | None = None) -> list[dict[str, Any]]:
-    """Inventory-only answers for a paused runout or swap question."""
+    """Answers for a paused runout or swap question.
+
+    Same/Existing/New are inventory-only. Cancel print is the one actuating
+    choice: it ends the paused print through print_stop.cancel (the same
+    path as the paused alert's Cancel button) and closes the question.
+    """
     buttons = []
     if prior_spool_id is not None:
         buttons.append({"type": 2, "style": 2, "label": "Same spool",
@@ -155,6 +160,8 @@ def spool_question_components(aid: str, prior_spool_id: int | None = None) -> li
          "custom_id": f"{SPOOL_QUESTION_PREFIX}:existing:{aid}"},
         {"type": 2, "style": 1, "label": "New spool",
          "custom_id": f"{SPOOL_QUESTION_PREFIX}:new:{aid}"},
+        {"type": 2, "style": 4, "label": "Cancel print",
+         "custom_id": f"{SPOOL_QUESTION_PREFIX}:cancel:{aid}"},
     ])
     return [{"type": 1, "components": buttons}]
 
@@ -437,7 +444,7 @@ def parse_insertion_custom_id(custom_id: str) -> tuple[str, str] | None:
 def parse_spool_question_custom_id(custom_id: str) -> tuple[str, str] | None:
     """Return a paused-spool choice and alert id, or None for unrelated controls."""
     parts = str(custom_id or "").split(":")
-    if len(parts) == 3 and parts[0] == SPOOL_QUESTION_PREFIX and parts[1] in ("same", "existing", "new") and parts[2]:
+    if len(parts) == 3 and parts[0] == SPOOL_QUESTION_PREFIX and parts[1] in ("same", "existing", "new", "cancel") and parts[2]:
         return parts[1], parts[2]
     return None
 

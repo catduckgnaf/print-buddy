@@ -1035,11 +1035,53 @@ async def maintenance_dispatch(event, gateway, **kwargs):
     return {'action': 'skip', 'reason': 'maintenance handled'}
 
 
+def _cancel_spool_question_print(listener, spool_sync, context):
+    """Cancel the paused print behind a pending spool question, then close the question.
+
+    The cancel itself is print_stop.cancel — the same path as /print-stop and
+    the paused alert's Cancel button: state re-read first, the file must still
+    match, one cancel, no retries, Bambu LAN printers get their LAN stop.
+    The question is closed only once the print is actually over (cancel
+    confirmed, or the printer had already left printing/paused on its own):
+    the pending record is cleared, which stops the reminders, and filament
+    usage is finalised exactly as a cancelled print leaves it — Moonraker
+    charged spools in real time up to the suspension, so nothing is resumed,
+    re-charged, archived or rebound here. When the cancel does not end the
+    print (refused, or sent but the printer still reports printing/paused),
+    this raises and the question stays open and answerable, so the operator
+    is never deadlocked by a failed cancel.
+    """
+    from print_buddy.hermes import print_stop
+    current = listener.load_runout_pause()
+    if current is None:
+        raise spool_sync.SpoolError('that spool question was already answered; nothing changed')
+    context = current
+    filename = context.get('filename') or ''
+    label = filename or 'the paused print'
+    before = print_stop.status()
+    if before.get('state') in print_stop.ACTIVE:
+        _sent, detail = print_stop.cancel(filename)
+        after = print_stop.status()
+        if after.get('state') in print_stop.ACTIVE:
+            raise spool_sync.SpoolError(
+                f'the print is still {after.get("state")} — {detail}')
+        outcome = f'Print cancelled: {detail}'
+    else:
+        outcome = (f'The print was already over (printer reports {before.get("state")}), '
+                   'so there was nothing to cancel.')
+    listener.clear_runout_pause()
+    return (f'{outcome} The spool question for {label} is closed and its reminders are off. '
+            'Filament usage stays paused for every spool: nothing was charged after the '
+            'question opened, and no spool binding changed.')
+
+
 async def runout_intake_dispatch(event, gateway, **kwargs):
-    """Answer a pending filament-runout pause. Inventory writes only.
+    """Answer a pending filament-runout pause. Inventory writes only — except cancel.
 
     A generic pause leaves no pending record, so an ordinary message is ignored.
-    Nothing here resumes, heats, or moves the printer.
+    Nothing here resumes, heats, or moves the printer. The one exception is an
+    unambiguous typed cancel ("cancel the print"), which routes to the same
+    print_stop.cancel path as the Cancel print button and /print-stop.
     """
     source = _discord_operator(event, gateway)
     text = str(getattr(event, 'text', '')).strip()
@@ -1054,15 +1096,27 @@ async def runout_intake_dispatch(event, gateway, **kwargs):
         # printer until the listener itself is per-printer (Stage 2d). A
         # routed channel must not answer it or bind its printer's slots.
         return None
+    adapter = gateway._delivery_adapter_for(source)
+    metadata = {'thread_id': source.thread_id} if source.thread_id else None
+    if listener.parse_cancel_print_reply(text):
+        from print_buddy.hermes import spool_sync
+        try:
+            message = await asyncio.to_thread(_cancel_spool_question_print, listener, spool_sync, context)
+        except Exception as exc:
+            logger.exception('spool question cancel failed')
+            await adapter.send(chat_id=source.chat_id, metadata=metadata, content=(
+                f'The print was not cancelled: {exc} The spool question is still open and usage '
+                'is still paused — answer it, or try cancelling again.'))
+            return {'action': 'skip', 'reason': 'spool question cancel failed, question left open'}
+        await adapter.send(chat_id=source.chat_id, metadata=metadata, content=message)
+        return {'action': 'skip', 'reason': 'spool question print cancelled'}
     choice = listener.parse_runout_reply(text)
     if text.strip().casefold() in ('same', 'same spool', 'no change'):
         choice = {'status': 'same'}
-    adapter = gateway._delivery_adapter_for(source)
-    metadata = {'thread_id': source.thread_id} if source.thread_id else None
     if choice['status'] in ('need_choice', 'need_spool_number', 'need_new_fields', 'unparsed'):
         await adapter.send(chat_id=source.chat_id, metadata=metadata, content=(
             'Spool question is still open and usage is still paused. Reply with a spool number, '
-            '`same`, or: brand, material, color, grams. Nothing was changed.'))
+            '`same`, brand, material, color, grams — or `cancel the print`. Nothing was changed.'))
         return {'action': 'skip', 'reason': 'spool reply needs a choice'}
     from print_buddy.hermes import spool_sync
     try:
@@ -2134,6 +2188,21 @@ def alert_button_handlers(bot, adapter):
             await interaction.message.edit(view=None)
         except Exception:
             logger.debug('could not strip spool-question buttons', exc_info=True)
+        if action == 'cancel':
+            try:
+                from print_buddy.hermes import moonraker_event_listener as listener
+                from print_buddy.hermes import spool_sync
+                result = await asyncio.to_thread(_cancel_spool_question_print, listener, spool_sync,
+                                                 alert.get('context') or {})
+            except Exception as exc:
+                logger.exception('spool-question cancel failed')
+                await interaction.response.send_message(
+                    f'The print was not cancelled: {exc} The spool question is still open — answer it '
+                    'in text (a spool number, `same`, or `cancel the print`); the next reminder '
+                    're-posts its buttons.', ephemeral=True)
+                return
+            await interaction.response.send_message(result)
+            return
         if action == 'existing':
             await spool_question_select(interaction, alert)
             return

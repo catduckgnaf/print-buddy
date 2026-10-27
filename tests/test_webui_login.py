@@ -88,6 +88,32 @@ class LoginTests(unittest.TestCase):
 
     # -- the login flow ------------------------------------------------------
 
+    def test_browser_navigation_redirects_to_login(self):
+        """#440: an unauthenticated browser (Accept: text/html) following
+        the Unraid WebUI link gets the login page, not raw JSON 401."""
+        with tempfile.TemporaryDirectory() as tmp:
+            _httpd, port, _local, _environ = self.start(
+                tmp, environ={"WEBUI_ACCESS_TOKEN": TOKEN})
+            browser = {"Accept": "text/html,application/xhtml+xml"}
+            for path in ("/", "/config", "/designs"):
+                with self.subTest(path=path):
+                    code, headers, _body = self.request(port, "GET", path, headers=browser)
+                    self.assertEqual(code, 303)
+                    self.assertEqual(headers["location"], "/login")
+            # API paths keep the JSON 401 contract, whatever Accept says.
+            code, _headers, body = self.request(port, "GET", "/api/status", headers=browser)
+            self.assertEqual(code, 401)
+            self.assertIn("missing or wrong X-WebUI-Token", body)
+            # A non-HTML client on a page path also keeps the JSON 401.
+            code, _headers, body = self.request(
+                port, "GET", "/", headers={"Accept": "application/json"})
+            self.assertEqual(code, 401)
+            self.assertIn("missing or wrong X-WebUI-Token", body)
+            # With the header token, a browser navigation serves the page.
+            code, _headers, _body = self.request(
+                port, "GET", "/", headers={**browser, server.TOKEN_HEADER: TOKEN})
+            self.assertEqual(code, 200)
+
     def test_login_page_flow_and_cookie_auth(self):
         with tempfile.TemporaryDirectory() as tmp:
             _httpd, port, _local, _environ = self.start(

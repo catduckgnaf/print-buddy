@@ -55,7 +55,7 @@ services:
       PRINT_BUDDY__DESIGN__TIMEOUT_S: ${PRINT_BUDDY__DESIGN__TIMEOUT_S:-180}
       PRINT_BUDDY__DESIGN__REPAIR_ATTEMPTS: ${PRINT_BUDDY__DESIGN__REPAIR_ATTEMPTS:-3}
       # Optional Web UI (#286, docs/DOCKER.md "Web UI"): off by default. To serve
-      # it beyond the container, set ENABLED=true and PORT (for example 8080),
+      # it beyond the container, set ENABLED=true and PORT (for example 8088),
       # set HOST=0.0.0.0, publish the port below, and set WEBUI_ACCESS_TOKEN in
       # .env — a non-loopback bind without the token is refused. The token is a
       # secret: it reaches the container through the .env env_file only, never
@@ -97,10 +97,17 @@ services:
       - ${PRINT_BUDDY_DATA:-./data}/cache:/data/cache
       - ${PRINT_BUDDY_SPOOLMAN_DATA:-./data/spoolman}:/data/spoolman
     # No port is published by default. To reach the optional Web UI from the
-    # host when it is enabled above, uncomment (host port 8080 to the Web UI
+    # host when it is enabled above, uncomment (host port 8088 to the Web UI
     # port) — keep it on the LAN only, never forward it from a router:
     # ports:
-    #   - "8080:${PRINT_BUDDY__WEBUI__PORT:-8080}"
+    #   - "8088:${PRINT_BUDDY__WEBUI__PORT:-8088}"
+    # Optional bundled Spoolman API on the LAN (#443): for Moonraker on
+    # printer hardware (for example a ZMod AD5X) or Home Assistant, ALSO
+    # uncomment the Spoolman line and set SPOOLMAN_HOST=0.0.0.0 in .env —
+    # with the default SPOOLMAN_HOST=127.0.0.1 Spoolman stays loopback-only
+    # inside the container and the mapping answers nothing. The API is
+    # unauthenticated: LAN only, never forward it from a router.
+    #   - "7912:8000"
     user: "1000:1000"
     # Optional GPU passthrough for hardware timelapse encoding (#246): opt-in
     # only — the container runs fine with no GPU and falls back to CPU

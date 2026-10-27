@@ -84,7 +84,7 @@ The container path is covered in [Docker](DOCKER.md#web-ui-optional-286). In `.e
 ```dotenv
 PRINT_BUDDY__WEBUI__ENABLED=true
 PRINT_BUDDY__WEBUI__HOST=0.0.0.0
-PRINT_BUDDY__WEBUI__PORT=8080
+PRINT_BUDDY__WEBUI__PORT=8088
 WEBUI_ACCESS_TOKEN=<choose-a-long-random-token>
 ```
 
@@ -92,7 +92,7 @@ Then uncomment the Web UI port example in `docker-compose.yml`:
 
 ```yaml
 ports:
-  - "8080:${PRINT_BUDDY__WEBUI__PORT:-8080}"
+  - "8088:${PRINT_BUDDY__WEBUI__PORT:-8088}"
 ```
 
 Recreate the container:
@@ -101,7 +101,7 @@ Recreate the container:
 docker compose up -d
 ```
 
-On startup, the supervisor's Web UI gate reads the resolved configuration. It starts `python3 -m print_buddy.webui` only when the Web UI is enabled and a port is set. If the configuration cannot be resolved, the gate stops the container rather than guessing. If the Web UI is enabled on a non-loopback host without its access-token secret, the server child refuses to start and the container stops — that visible failure is deliberate.
+On startup, the supervisor's Web UI gate reads the resolved configuration. It starts `python3 -m print_buddy.webui` only when the Web UI is enabled and a port is set. If the configuration cannot be resolved, the gate stops the container rather than guessing. If the Web UI is enabled on a non-loopback host without its access-token secret, the gate reports the blocked start with the fix in the log and the container carries on without the Web UI (#440) — the standalone server still refuses that bind outright, because a LAN-reachable Web UI must never run unauthenticated.
 
 The Web UI can also be enabled in the selected Docker YAML or TOML file (`webui` in `config/docker.yaml`, or `[webui]` in `config/docker.toml`). Environment values override the file, so an environment setting left at the Compose default can be the reason a file change appears to have no effect; the configuration page marks those fields as environment-overridden.
 
@@ -109,13 +109,13 @@ The Web UI can also be enabled in the selected Docker YAML or TOML file (`webui`
 
 In the in-repo Unraid template:
 
-1. Set **Web UI** (`PRINT_BUDDY__WEBUI__ENABLED`) to `true`.
+1. The template sets **Web UI** (`PRINT_BUDDY__WEBUI__ENABLED`) to `true` for you; set it to `false` only to turn the Web UI off entirely.
 2. Leave **Web UI bind host** at the template default `0.0.0.0` when the page must be reachable through the port mapping.
 3. Keep **Web UI port setting** (`PRINT_BUDDY__WEBUI__PORT`) and the **Web UI port** mapping matched; the template uses `8088` for both.
-4. Set the masked **Web UI access token** (`WEBUI_ACCESS_TOKEN`) to a long random value.
+4. Set the masked **Web UI access token** (`WEBUI_ACCESS_TOKEN`) to a long random value. This step is required: with no token, the Web UI does not start (the container keeps running and its log explains the fix).
 5. Apply/restart the container.
 
-The template's **WebUI** link points at the mapped port and the status page. The port mapping exists even while the Web UI is disabled; with the Web UI off, nothing answers on it.
+The template's **WebUI** link points at the mapped port; the browser is redirected to the login page, where the token from step 4 signs it in. The port mapping exists even while the Web UI is disabled or blocked; then, nothing answers on it.
 
 The published Community Applications template is separate from the in-repo template and follows the normal release-time sync; do not treat this guide as proof that a published template has already picked up a source change.
 
@@ -131,9 +131,9 @@ The token's value is a secret held only in the environment variable named by `we
   curl -H "X-WebUI-Token: $WEBUI_ACCESS_TOKEN" http://127.0.0.1:8080/api/status
   ```
 
-- A missing or wrong header returns `401` JSON with `missing or wrong X-WebUI-Token`.
+- A missing or wrong header on an API request returns `401` JSON with `missing or wrong X-WebUI-Token`. A browser navigation (a GET for a page with `Accept: text/html`) redirects to `/login` instead (#440).
 
-**Browser sign-in:** a normal browser cannot add a custom header to an address-bar request, so browsers sign in at `/login` instead. Open the Web UI address (the Unraid **WebUI** link lands on the status page; add `/login` to the address), enter the access token, and the server sets a `webui_session` cookie (`HttpOnly`, `SameSite=Strict`) that authorizes page views (`GET` requests) for 12 hours. Sessions live only in the server's memory, so restarting the server signs everyone out; `POST /logout` ends your own session immediately. With no token configured there is nothing to sign in to and `/login` simply redirects to the status page. Scripts and API clients keep using the `X-WebUI-Token` header exactly as above — the cookie is a browser convenience, not a second token. There are no user accounts and no HTTPS listener, so do not remove the token from a LAN-reachable bind just to make a page load.
+**Browser sign-in:** a normal browser cannot add a custom header to an address-bar request, so browsers sign in at `/login` instead. Open the Web UI address (the Unraid **WebUI** link lands on `/`, which redirects to the login page while signed out), enter the access token, and the server sets a `webui_session` cookie (`HttpOnly`, `SameSite=Strict`) that authorizes page views (`GET` requests) for 12 hours. Sessions live only in the server's memory, so restarting the server signs everyone out; `POST /logout` ends your own session immediately. With no token configured there is nothing to sign in to and `/login` simply redirects to the status page. Scripts and API clients keep using the `X-WebUI-Token` header exactly as above — the cookie is a browser convenience, not a second token. There are no user accounts and no HTTPS listener, so do not remove the token from a LAN-reachable bind just to make a page load.
 
 Configuration form posts have a second, narrower credential: the server generates a form token when it starts, keeps it only in memory, and embeds it as the `_csrf` hidden field. A `POST` is accepted with either the `X-WebUI-Token` header or that form token. The form token is not the access token and does not authorize `GET` requests, and a session cookie alone never authorizes a post either — a signed-in browser still submits the form's own `_csrf` value. On loopback with no access token configured, the form token is still required for posts, so another page in the operator's browser cannot silently submit configuration changes.
 
@@ -207,10 +207,11 @@ If the selected settings file is a legacy TOML file, the Web UI refuses to rewri
 |---|---|
 | `webui: not started: [webui] enabled is false` | Set `webui.enabled` to `true` in the effective settings file, or `PRINT_BUDDY__WEBUI__ENABLED=true`; then restart the process/container. |
 | `webui: not started: [webui] port is 0 (unset)` | Port `0` means no port has been chosen. Set `webui.port` (the deployment examples use `8080`), then restart. |
-| `webui: refusing to bind ... a non-loopback bind requires an access token` | Set the secret named by `webui.access_token_env` (default `WEBUI_ACCESS_TOKEN`) in the server/container environment, or bind `127.0.0.1`. In Docker, an enabled non-loopback Web UI without the token stops the container by design. |
+| `webui: refusing to bind ... a non-loopback bind requires an access token` | Set the secret named by `webui.access_token_env` (default `WEBUI_ACCESS_TOKEN`) in the server/container environment, or bind `127.0.0.1`. In Docker, the gate instead logs the blocked start (next row) and the container carries on without the Web UI. |
+| `webui gate: enabled on ... but $WEBUI_ACCESS_TOKEN is empty ... it was not started` | The container is healthy; only the Web UI is off. Set `WEBUI_ACCESS_TOKEN` (Unraid: the **Web UI access token** field) to a long random value and restart, or bind `127.0.0.1` to keep the Web UI inside the container. |
 | `401` with `missing or wrong X-WebUI-Token` | In a browser, open `/login` and enter the access token (sessions last 12 hours and end when the server restarts). For scripts, send the exact token value in the `X-WebUI-Token` header. See [Access token and browser access](#access-token-and-browser-access). |
 | `403` with `missing or wrong form token` on a configuration post | Load `/config` from the running server and submit its own form, so the current in-memory `_csrf` value is included. Restarting the server creates a new form token, so an old page must be reloaded. |
-| The Docker container stops after enabling the Web UI | Read the container log for the gate or server refusal. The usual causes are an unresolved settings file, a non-loopback bind with no `WEBUI_ACCESS_TOKEN`, or a port conflict. Fix the named setting and restart. |
+| The Docker container stops after enabling the Web UI | Read the container log for the gate or server refusal. An unresolved settings file still stops the container; a non-loopback bind with no `WEBUI_ACCESS_TOKEN` no longer does (the gate logs the blocked start and the container carries on without the Web UI — #440). Fix the named setting and restart. |
 | The Web UI healthcheck row says `enabled but no port chosen; not started` | This is an `ok` row, not a serving Web UI. Choose a port and restart if you intended to run it. |
 | The Web UI healthcheck row says `disabled` | This is an `ok` skip. Nothing is listening, as configured. |
 | The status page says **attention needed**, but `/healthz` is `200` | They answer different questions: `/healthz` is only the bot heartbeat, while the status page also includes the listener, Spoolman and doctor rows. Read the failing row on `/` or `/api/status`. |

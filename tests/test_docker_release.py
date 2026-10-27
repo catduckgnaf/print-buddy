@@ -391,15 +391,19 @@ class UnraidTemplateTests(unittest.TestCase):
         self.assertIn("docker buildx imagetools create -t \"$IMAGE:latest\"", publish)
         self.assertEqual(UNRAID.findtext("Repository"), f"{image.group(1)}:latest")
         self.assertEqual(UNRAID.findtext("Privileged"), "false")
-        # The bundled Spoolman API stays on loopback: Compose publishes no port
-        # at all (the Web UI mapping below is a commented example only), and the
-        # template's single Port config is the optional Web UI's (#286 stage 5).
+        # The bundled Spoolman API stays on loopback by default: Compose
+        # publishes no port at all (both mappings below are commented
+        # examples only), and the template's Port configs are the Web UI's
+        # (#286 stage 5) plus the advanced, opt-in Spoolman LAN mapping
+        # (#443) — which answers nothing while SPOOLMAN_HOST keeps its
+        # 127.0.0.1 default (see SpoolmanLanTests).
         self.assertNotIn("ports", self.service)
         self.assertNotIn("-p", self.params)
         self.assertFalse(any(p.startswith("--publish") for p in self.params))
         ports = self.configs(UNRAID, "Port")
-        self.assertEqual(set(ports), {"8088"})
+        self.assertEqual(set(ports), {"8088", "8000"})
         self.assertEqual(ports["8088"].text, "8088")
+        self.assertEqual(ports["8000"].text, "7912")
         self.assertEqual(UNRAID.findtext("WebUI"), "http://[IP]:[PORT:8088]/")
 
     def test_hardening_and_limits_match_compose(self):
@@ -471,14 +475,17 @@ class WebuiContainerTests(unittest.TestCase):
         self.assertNotIn("WEBUI_ACCESS_TOKEN", compose_env)
         # The port publication stays a commented example in the file text.
         text = (ROOT / "docker-compose.yml").read_text()
-        self.assertIn('#   - "8080:${PRINT_BUDDY__WEBUI__PORT:-8080}"', text)
+        self.assertIn('#   - "8088:${PRINT_BUDDY__WEBUI__PORT:-8088}"', text)
 
     def test_unraid_webui_variables_and_masked_token(self):
         variables = self.variables()
-        self.assertEqual(variables["PRINT_BUDDY__WEBUI__ENABLED"].text, "false")
+        # #440: the template enables the Web UI so its WebUI link works;
+        # the gate still starts it only once the token below is set (the
+        # bind host is not loopback). Compose/code defaults stay off.
+        self.assertEqual(variables["PRINT_BUDDY__WEBUI__ENABLED"].text, "true")
         # The template binds all interfaces so the port mapping and WebUI link
-        # work once enabled; the token below is then mandatory (the server
-        # refuses a non-loopback bind without it).
+        # work once enabled; the token below is then mandatory (the gate
+        # blocks the start without it and the server refuses that bind).
         self.assertEqual(variables["PRINT_BUDDY__WEBUI__HOST"].text, "0.0.0.0")
         self.assertEqual(variables["PRINT_BUDDY__WEBUI__PORT"].text, "8088")
         token = variables["WEBUI_ACCESS_TOKEN"]
@@ -490,7 +497,9 @@ class WebuiContainerTests(unittest.TestCase):
         self.assertIn("python3 -m print_buddy.webui_gate", supervisor)
         self.assertIn("python3 -m print_buddy.webui &", supervisor)
         probe = (ROOT / "docker" / "healthcheck.py").read_text()
-        self.assertIn("from print_buddy.webui_gate import webui_config", probe)
+        self.assertIn("from print_buddy.webui_gate import", probe)
+        self.assertIn("webui_config", probe)
+        self.assertIn("start_blocked", probe)
         self.assertIn("webui: ", probe)
 
     def test_webui_is_documented_in_the_docker_guide(self):
@@ -498,6 +507,52 @@ class WebuiContainerTests(unittest.TestCase):
         self.assertIn("## Web UI (optional, #286)", docker_doc)
         self.assertIn("PRINT_BUDDY__WEBUI__ENABLED", docker_doc)
         self.assertIn("WEBUI_ACCESS_TOKEN", docker_doc)
+
+
+class SpoolmanLanTests(unittest.TestCase):
+    """#443: bundled Spoolman LAN access is opt-in on both deployment
+    surfaces. The safe default is pinned everywhere: SPOOLMAN_HOST
+    127.0.0.1, no active Compose port mapping — so with no operator
+    action Spoolman stays loopback-only and unexposed."""
+
+    def configs(self, kind):
+        return {c.get("Target"): c for c in UNRAID.findall("Config") if c.get("Type") == kind}
+
+    def test_unraid_template_carries_the_opt_in(self):
+        ports = self.configs("Port")
+        spoolman = ports["8000"]
+        self.assertEqual(spoolman.text, "7912")
+        self.assertEqual(spoolman.get("Default"), "7912")
+        self.assertEqual(spoolman.get("Display"), "advanced")
+        variables = self.configs("Variable")
+        host = variables["SPOOLMAN_HOST"]
+        self.assertEqual(host.text, "127.0.0.1")
+        self.assertEqual(host.get("Display"), "advanced")
+        self.assertIn("0.0.0.0", host.get("Description"))
+
+    def test_compose_keeps_the_safe_default(self):
+        service = COMPOSE["services"]["combined"]
+        # No active port mapping ships; the LAN mapping is a comment.
+        self.assertNotIn("ports", service)
+        self.assertEqual(service["environment"]["SPOOLMAN_HOST"],
+                         "${SPOOLMAN_HOST:-127.0.0.1}")
+        text = (ROOT / "docker-compose.yml").read_text()
+        self.assertIn('#   - "7912:8000"', text)
+        self.assertIn("SPOOLMAN_HOST=0.0.0.0", text)
+        self.assertRegex(ENV_EXAMPLE, r"(?m)^# SPOOLMAN_HOST=127\.0\.0\.1$")
+
+    def test_supervisor_binds_spoolman_from_spoolman_host(self):
+        supervisor = (ROOT / "docker" / "supervise.sh").read_text()
+        self.assertIn("SPOOLMAN_HOST", supervisor)
+
+    def test_lan_access_is_documented(self):
+        docker_doc = (ROOT / "docs" / "DOCKER.md").read_text()
+        self.assertIn("Optional LAN access (#443", docker_doc)
+        self.assertIn("http://<unraid-ip>:7912", docker_doc)
+        self.assertIn("/api/v1/info", docker_doc)
+        zmod_doc = (ROOT / "docs" / "ZMOD.md").read_text()
+        self.assertIn("Bundled Spoolman from printer Moonraker (#443)", zmod_doc)
+        self.assertIn("server: http://<unraid-ip>:7912", zmod_doc)
 
 
 class LiveContainerTests(unittest.TestCase):

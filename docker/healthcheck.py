@@ -16,7 +16,7 @@ from print_buddy.bot.health import check as bot_check
 from print_buddy.healthcheck import check as listener_check
 from print_buddy.healthcheck import listener_domain, listener_required
 from print_buddy.live_gate import live_config
-from print_buddy.webui_gate import webui_config
+from print_buddy.webui_gate import start_blocked, webui_config
 
 
 def main():
@@ -128,7 +128,14 @@ def main():
     except settings.SettingsError as exc:
         print(f"FAIL  webui: configuration unresolved: {exc}")
         webui_enabled, webui_resolved, healthy = False, False, False
-    if webui_resolved and webui_enabled and webui_port > 0:
+    # #440: an enabled Web UI the gate blocked (non-loopback bind without
+    # a token) was never started; that is a healthy, reported state with
+    # the fix in the gate's message, not a probe failure.
+    webui_blocked = (start_blocked(webui_host, webui_port, webui_env_name)
+                     if webui_resolved and webui_enabled and webui_port > 0 else None)
+    if webui_blocked:
+        print(f"ok  webui: not started: {webui_blocked}")
+    elif webui_resolved and webui_enabled and webui_port > 0:
         probe_host = "127.0.0.1" if webui_host in ("0.0.0.0", "::") else webui_host
         request = urllib.request.Request(
             f"http://{probe_host}:{webui_port}/healthz")

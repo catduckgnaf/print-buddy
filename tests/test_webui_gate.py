@@ -37,6 +37,21 @@ class WebuiGateDecisionTests(unittest.TestCase):
     def test_enabled_without_a_port_does_not_start(self):
         self.assertEqual(webui_gate.decide(data(True, 0)), 3)
 
+    def test_non_loopback_without_a_token_is_blocked_not_started(self):
+        # #440: the gate's start_blocked is the container-side graceful
+        # path; the server itself still refuses this bind outright.
+        blocked = data(True, 8088, host="0.0.0.0")
+        self.assertEqual(webui_gate.decide(blocked, environ={}), 3)
+        self.assertIsNotNone(webui_gate.start_blocked(
+            "0.0.0.0", 8088, "WEBUI_ACCESS_TOKEN", environ={}))
+        # With the token set the same configuration starts.
+        env = {"WEBUI_ACCESS_TOKEN": "a-long-random-token"}
+        self.assertEqual(webui_gate.decide(blocked, environ=env), 0)
+        self.assertIsNone(webui_gate.start_blocked(
+            "0.0.0.0", 8088, "WEBUI_ACCESS_TOKEN", environ=env))
+        # Loopback never needs a token.
+        self.assertEqual(webui_gate.decide(data(True, 8088), environ={}), 0)
+
 
 class WebuiGateCliTests(unittest.TestCase):
     def run_gate(self, config):
@@ -56,6 +71,20 @@ class WebuiGateCliTests(unittest.TestCase):
         with mock.patch.object(webui_gate, "webui_config",
                                side_effect=settings.SettingsError("bad webui")):
             self.assertEqual(webui_gate.main(), 2)
+
+    def test_blocked_start_is_three_with_actionable_guidance(self):
+        # #440: the printed reason names the missing secret and both fixes,
+        # so an Unraid user can act on the container log alone.
+        out = io.StringIO()
+        with mock.patch.dict(os.environ, {}, clear=False), \
+                contextlib.redirect_stdout(out):
+            os.environ.pop("WEBUI_ACCESS_TOKEN", None)
+            code = self.run_gate((True, "0.0.0.0", 8088, "WEBUI_ACCESS_TOKEN"))
+        self.assertEqual(code, 3)
+        text = out.getvalue()
+        self.assertIn("WEBUI_ACCESS_TOKEN is empty", text)
+        self.assertIn("was not started", text)
+        self.assertIn("127.0.0.1", text)
 
 
 def load_docker_healthcheck():
@@ -121,6 +150,21 @@ class DockerHealthcheckWebuiRowTests(unittest.TestCase):
 
         return mock.Mock(side_effect=_open), probed
 
+    def test_blocked_webui_is_an_ok_skip(self):
+        # #440: enabled on a non-loopback host with no token in the
+        # environment: the gate never started it, so the row reports the
+        # blocked start (with the gate's guidance) instead of probing.
+        module = load_docker_healthcheck()
+        urlopen, probed = self.urlopen_for(200)
+        with mock.patch.dict(os.environ, {}, clear=False):
+            os.environ.pop("WEBUI_ACCESS_TOKEN", None)
+            with mock.patch.object(module, "webui_config",
+                                   return_value=(True, "0.0.0.0", 8088, "WEBUI_ACCESS_TOKEN")):
+                code, out = self.run_main(module, urlopen)
+        self.assertEqual(code, 0)
+        self.assertIn("ok  webui: not started: webui gate: enabled on 0.0.0.0:8088", out)
+        self.assertEqual(probed, [])
+
     def test_serving_webui_is_ok_on_200_and_503(self):
         # 503 from /healthz is the bot heartbeat's verdict, which the bot
         # row owns; for the Web UI row both prove the server is serving.
@@ -128,8 +172,9 @@ class DockerHealthcheckWebuiRowTests(unittest.TestCase):
             with self.subTest(status=status):
                 module = load_docker_healthcheck()
                 urlopen, probed = self.urlopen_for(status)
-                with mock.patch.object(module, "webui_config",
-                                       return_value=(True, "0.0.0.0", 8080, "WEBUI_ACCESS_TOKEN")):
+                with mock.patch.dict(os.environ, {"WEBUI_ACCESS_TOKEN": "tok"}), \
+                        mock.patch.object(module, "webui_config",
+                                          return_value=(True, "0.0.0.0", 8080, "WEBUI_ACCESS_TOKEN")):
                     code, out = self.run_main(module, urlopen)
                 self.assertEqual(code, 0)
                 self.assertIn(f"ok  webui: serving on 0.0.0.0:8080 (HTTP {status})", out)

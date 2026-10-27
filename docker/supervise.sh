@@ -179,15 +179,18 @@ fi
 # port (start nothing), anything else = the configuration could not be
 # resolved; stop instead of guessing. The gate never bypasses the
 # server's own start rules: enabling the Web UI on a non-loopback host
-# without the WEBUI_ACCESS_TOKEN secret makes the child refuse to start,
-# which stops the container like any other required child's exit.
+# without the WEBUI_ACCESS_TOKEN secret is reported by the gate as a
+# blocked start (#440) — the Web UI is skipped with the fix in the log
+# and the rest of the container carries on, instead of the child's
+# refusal halting a healthy install. The server still refuses that
+# bind outright when run standalone.
 webui_gate=0
 python3 -m print_buddy.webui_gate || webui_gate=$?
 if [ "$webui_gate" -eq 0 ]; then
     python3 -m print_buddy.webui &
     children+=("$!"); children_names+=("webui")
 elif [ "$webui_gate" -eq 3 ]; then
-    echo 'Web UI not started: disabled or no port configured.'
+    echo 'Web UI not started: disabled, no port configured, or blocked (see the webui gate message above).'
 else
     echo "Web UI gate failed (status $webui_gate); configuration unresolved, stopping container." >&2
     exit "$webui_gate"

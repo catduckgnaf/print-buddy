@@ -30,6 +30,43 @@ Persist `/data/spoolman` separately, including database, config, logs and backup
 
 For an existing external instance set `PRINT_BUDDY__SERVICES__SPOOLMAN_URL=http://spoolman.example:8000`. Its data is not migrated or reset; the local database remains separate. Optionally set `PRINT_BUDDY_BUNDLED_SPOOLMAN=false` to skip the local API, requiring a nonlocal URL. Healthcheck then checks the external API. Changing a URL never moves or deletes a database.
 
+## Print records
+
+Every print — completed, failed or cancelled — gets one self-contained JSON
+record in `/data/records/Prints/` (`paths.records_vault` + `Prints`), named by
+its permanent print number: `print-0057.json`. The folder lives on the `/data`
+volume, so records survive container recreation and upgrades, and any past
+print can be looked up with `jq` or `grep` alone — no index, database or
+external app required:
+
+```json
+{
+  "print_number": 57,
+  "title": "Print in Place Bag Clip",
+  "status": "completed",
+  "success": true,
+  "started_at": "2026-10-26T20:00:00Z",
+  "completed_at": "2026-10-26T21:30:32Z",
+  "printer": "Flashforge AD5X",
+  "gcode_file": "bag-clip.gcode",
+  "source_platform": "Printables",
+  "filament_material": "PLA",
+  "filament_color": "Black",
+  "spoolman_spool_id": 12,
+  "filament_used_g": 12.5,
+  "print_duration_seconds": 5432,
+  "record_id": "1a2b3c4d",
+  "cleanup_status": "pending"
+}
+```
+
+Fields the system does not know are omitted, never invented (`print_number`
+is present as `null` for prints that never went through a Print Buddy
+launch, which instead get a dated filename). A record starts as
+`"status": "printing"` when the print starts and is finalized in place when
+the print ends. Example lookup: `jq -r 'select(.status != "completed") |
+"\(.print_number) \(.title) \(.status)"' /data/records/Prints/*.json`.
+
 ## More than one printer
 
 One container serves the whole roster (#257 Stage 2). Declare every printer in the mounted config file with a `[[printers]]` list — the list itself is file-only, because list values cannot come from environment variables:
@@ -120,6 +157,7 @@ GPU passthrough for the live feed follows the same opt-in rules as timelapse enc
 All three stages of #246 have landed: Stage 1 is the container plumbing below, Stage 2 captures frames during a print, and Stage 3 encodes and delivers the video with the completion post. Everything here is off by default; what Stage 1 adds is the machinery both later stages use:
 
 - The image bundles **go2rtc** (upstream AlexxIT/go2rtc v1.9.15, one static binary per architecture, downloaded at build time and verified by SHA256 in `docker/go2rtc-prebuilt.sh`, like the OrcaSlicer prebuilts) and the **VAAPI driver stack** (`intel-media-va-driver`, `mesa-va-drivers`, `libva-drm2`, `vainfo`). Both are under the `WITH_GO2RTC` build toggle, which the published image sets; a local `WITH_GO2RTC=false` build omits both.
+- The image bundles **ffmpeg** (the Debian package, in the runtime stage's unconditional package list, so every image variant carries it): it is the timelapse workhorse — sizing printer-rendered videos to the chat platform's limit, assembling captured frames, and building the vertical short. Debian's ffmpeg provides `libx264` (the `[timelapse] encoder` CPU path) and the `h264_vaapi` encoder for the VAAPI stack above; the NVENC/QSV encoders are in the package too and activate only when the host runtime provides the device (see the encoder table below). The image acceptance probe verifies that `ffmpeg` resolves and runs for the runtime user and that both encoders are listed (#373).
 - With `timelapse.capture_enabled` set (`PRINT_BUDDY__TIMELAPSE__CAPTURE_ENABLED=true`, or `timelapse.capture_enabled` in the config file), the supervisor starts go2rtc as a supervised child and the healthcheck covers it. The gate is resolved from settings (`python3 -m print_buddy.go2rtc`), never guessed: capture disabled — or enabled with no camera source configured — starts nothing and is a healthy state, reported in the healthcheck like the disabled-bot case. Enabling capture in an image built without go2rtc fails the healthcheck with that reason, because the binary is not there. Since #311 the same gate also starts go2rtc for live viewing (`live_stream.enabled`) with the same generated config and the same one-upstream rule — the two features share the single camera pull.
 - The supervisor generates go2rtc's config from settings — no hand-edited YAML for the standard case. The source is `[timelapse] capture_source_url` when set (an MJPEG/RTSP URL or a go2rtc `ffmpeg:` source), otherwise it derives from `services.camera_snapshot_url` / the Moonraker webcam exactly like the camera watchdog's source. The generated file lives at `<cache>/go2rtc/go2rtc.yaml`, is written `0600`, and holds the raw camera URL, which may carry credentials; Print Buddy's own logs only ever show it redacted.
 - go2rtc does stream normalisation only: it restreams the camera on **loopback**. Its API (1984) and RTSP (8554) bind `127.0.0.1` inside the container, are never published by Compose or the Unraid template, and its WebUI is not exposed.
@@ -209,7 +247,7 @@ One image is published, on two platforms. It is a multi-arch manifest, so `docke
 
 | Build toggles | Tags | Contents |
 |---|---|---|
-| `WITH_ORCA=true`, `WITH_GO2RTC=true`, `WITH_BAMBU=false` | `ghcr.io/catduckgnaf/print-buddy:VERSION` and `:latest` | Discord bot, Moonraker listener, bundled Spoolman API, OpenSCAD, both pinned OrcaSlicer channels (stable and alpha), go2rtc and the VAAPI stack (#246) |
+| `WITH_ORCA=true`, `WITH_GO2RTC=true`, `WITH_BAMBU=false` | `ghcr.io/catduckgnaf/print-buddy:VERSION` and `:latest` | Discord bot, Moonraker listener, bundled Spoolman API, OpenSCAD, ffmpeg, both pinned OrcaSlicer channels (stable and alpha), go2rtc and the VAAPI stack (#246) |
 
 Platforms are `linux/amd64` and `linux/arm64`. There is no `linux/arm/v7` image: upstream OrcaSlicer ships no 32-bit ARM Linux build, and 32-bit hosts are out of scope.
 

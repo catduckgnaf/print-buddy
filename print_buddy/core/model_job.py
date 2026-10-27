@@ -1365,7 +1365,7 @@ def copies_supported(job, multi_plate=None):
 
 
 def record_start(gcode_path, moonraker_name=None, started_at=None):
-    """Write the Obsidian start note plus the completion sidecar for a started print."""
+    """Write the JSON start record plus the completion sidecar for a started print."""
     print_records = _external.load("print_records")
     st=printer_state.load(); g=Path(gcode_path).expanduser().resolve(); text=g.read_text(errors="ignore")
     def cfg(key):
@@ -1402,7 +1402,7 @@ def record_start(gcode_path, moonraker_name=None, started_at=None):
     if not isinstance(side.get("jobs"),dict): side={"jobs":{}}
     side["jobs"][key]={**side["jobs"].get(key,{}),**ctx}
     tmp=CONTEXT.with_suffix(".tmp"); tmp.write_text(json.dumps(side,indent=2)+"\n"); os.replace(tmp,CONTEXT)
-    print(f"OBSIDIAN START NOTE: {ctx['record_path']}")
+    print(f"PRINT RECORD: {ctx['record_path']}")
     return record_path
 
 
@@ -4144,7 +4144,7 @@ def print_mapped_native(g, st, mesh, mapping, job, job_path, wait_s, reprint):
     checkpoint = g.with_suffix('.launch.json')
     checkpoint.write_text(json.dumps(out, indent=2) + '\n')
     print('MAPPED START SUBMITTED ' + json.dumps(out), flush=True)
-    # Record immediately so a long native preparation cannot lose its dated note.
+    # Record immediately so a long native preparation cannot lose its start record.
     out['record_path'] = str(record_start(g, remote))
     state = _wait_printing(st, remote, wait_s, prep_check=_preparation_evidence)
     readback = None
@@ -5049,7 +5049,7 @@ def print_now(target, wait_s=25, accept_default_z_offset=False, reprint=False, r
     lease.release()  # printing; the busy printer now refuses another start
     record_path=None
     try: record_path=record_start(g, remote)
-    except Exception as e: print(f"WARNING: Obsidian start note failed: {e}")
+    except Exception as e: print(f"WARNING: print start record failed: {e}")
     if not isinstance(record_path,(str,os.PathLike)): record_path=None
     elif record_path is not None: record_path=str(record_path)
     from datetime import datetime, timedelta
@@ -5165,7 +5165,7 @@ def _main():
     cad.add_argument("--execute", action="store_true", help="invoke OpenSCAD CLI to render boolean split halves and verify volume conservation")
     m=sub.add_parser("plate-manifest",help="read-only source plate inventory; does not authorize slicing")
     m.add_argument("source_3mf")
-    r=sub.add_parser("record-start",help="after a confirmed print start: write the dated Obsidian note"); r.add_argument("gcode"); r.add_argument("--moonraker-name"); r.add_argument("--started-at",help="ISO UTC, default now")
+    r=sub.add_parser("record-start",help="after a confirmed print start: write the JSON print record"); r.add_argument("gcode"); r.add_argument("--moonraker-name"); r.add_argument("--started-at",help="ISO UTC, default now")
     prep = sub.add_parser("prepare-first-layer", help="offline: generate and slice a one-layer test; never upload or start")
     prep.add_argument("--slot", type=int, required=True)
     prep.add_argument("--color", required=True)

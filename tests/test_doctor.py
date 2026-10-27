@@ -1,6 +1,7 @@
 """The doctor reports every check and fails on any problem. Network and slicer are mocked."""
 import io
 import json
+import os
 import tempfile
 import unittest
 from pathlib import Path
@@ -14,11 +15,15 @@ HARDWARE = {"spool": {"material": "PLA", "density": 1.24}, "temps_c": {"nozzle":
 
 
 class DoctorTests(unittest.TestCase):
-    def run_doctor(self, local_toml="", hardware=None):
+    def run_doctor(self, local_toml="", hardware=None, profile_config="enabled"):
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "local.toml"
             path.write_text(local_toml)
             data = settings.load(local=path, environ={"PRINT_BUDDY__PATHS__HERMES_HOME": str(self.profile)})
+        if profile_config is not None:
+            self.profile.mkdir(parents=True, exist_ok=True)
+            (self.profile / "config.yaml").write_text(
+                "platforms:\n  discord:\n    enabled: true\n" if profile_config == "enabled" else profile_config)
         state = settings.state_dir(data)
         state.mkdir(parents=True, exist_ok=True)
         if hardware is not False:
@@ -43,6 +48,25 @@ class DoctorTests(unittest.TestCase):
         self.assertIn("ok    settings: Flashforge AD5X, bed 220x220 mm, 4 slot(s), 0.4 mm nozzle", text)
         self.assertIn("skip  moonraker", text)
         self.assertIn("ok    orca cli: flatpak run com.orcaslicer.OrcaSlicer", text)
+        self.assertIn("ok    hermes discord platform", text)
+
+    def test_hermes_profile_disabling_discord_fails_with_the_remedy(self):
+        """#384: the gateway honours an explicit platform disable over any
+        credentials, so the doctor must fail loudly instead of all-ok."""
+        with mock.patch.dict("os.environ", {"DISCORD_BOT_TOKEN": "token-present"}):
+            code, text = self.run_doctor(profile_config="platforms:\n  discord:\n    enabled: false\n")
+        self.assertEqual(code, 1)
+        self.assertIn("FAIL  hermes discord platform", text)
+        self.assertIn("platforms.discord.enabled is false", text)
+        self.assertIn("Set it to true and restart the Hermes gateway", text)
+
+    def test_hermes_profile_config_missing_skips(self):
+        """No profile config means the profile was never installed — already
+        loud everywhere else; this check must not become an update blocker
+        for it (home-update.sh gates on the doctor)."""
+        code, text = self.run_doctor(profile_config=None)
+        self.assertEqual(code, 0, text)
+        self.assertIn("skip  hermes discord platform", text)
 
     def test_stray_state_files_warn_without_failing(self):
         root = Path(self.tmp.name) / "hermes"

@@ -219,4 +219,4 @@ def test_record_completion_with_spoolman_down_writes_pending_record(monkeypatch,
     result = watcher.record_completion("job.gcode", "job.gcode",
                                        {"state": "complete", "print_duration": 30})  # must not raise
     text = Path(result["record_path"]).read_text()
-    assert "spoolman_usage_pending: true" in text
+    assert '"spoolman_usage_pending": true' in text

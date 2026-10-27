@@ -184,10 +184,47 @@ def test_watcher_records_mocked_moonraker_completion(tmp_path, monkeypatch):
     monkeypatch.setattr(watcher, "get_active_spool", lambda: {})
     assert watcher.main() == 0
     assert watcher.main() == 0
-    assert len(list((tmp_path / "Prints").glob("*.md"))) == 1
+    files = list((tmp_path / "Prints").glob("*.json"))
+    assert len(files) == 1
+    record = json.loads(files[0].read_text())
+    assert record["status"] == "completed" and record["gcode_file"] == "part.gcode"
+    assert record["print_duration_seconds"] == 30 and record["print_number"] is None
     state = json.loads((tmp_path / "state.json").read_text())
     assert state["record_written"] is True
     assert state["pending_cleanups"][0]["cleanup_due_at"] > 0
+
+
+def test_failing_record_write_does_not_break_the_watcher(tmp_path, monkeypatch):
+    """A records-folder failure is logged into watcher state, never raised:
+    the print flow (and its Discord posts) must survive a broken record sink."""
+    monkeypatch.setattr(records, "PRINTS_DIR", tmp_path / "Prints")
+    monkeypatch.setattr(records, "PLANS_DIR", tmp_path / "Plans")
+    monkeypatch.setattr(watcher, "STATE_PATH", tmp_path / "state.json")
+    monkeypatch.setattr(watcher, "PROFILE_HOME", tmp_path / "profile")
+    context_path = tmp_path / "context.json"
+    context_path.write_text(json.dumps({"jobs": {"part.gcode": {
+        "selected_option": records.NATIVE_PRINT_OPTIONS[0],
+        "discord_session_id": "session-1",
+        "discord_chat_id": "100000000000000001",
+    }}}))
+    monkeypatch.setenv("PRINT_BUDDY_CONTEXT_PATH", str(context_path))
+    responses = iter((
+        {"job": {"file": {"path": "part.gcode", "display": "part.gcode"}}, "progress": {"completion": 25}, "state": "Printing", "stats": {"state": "printing"}},
+        {"job": {"file": {"path": "part.gcode", "display": "part.gcode"}}, "progress": {"completion": 100}, "state": "Completed", "stats": {"state": "complete", "print_duration": 30}},
+    ))
+    monkeypatch.setattr(watcher, "get_job", lambda: next(responses))
+    monkeypatch.setattr(watcher, "get_file_metadata", lambda filename: {})
+    monkeypatch.setattr(watcher, "get_active_spool", lambda: {})
+
+    def broken_write(data):
+        raise OSError("records folder unavailable")
+
+    monkeypatch.setattr(watcher, "write_completed_record", broken_write)
+    assert watcher.main() == 0
+    assert watcher.main() == 0
+    state = json.loads((tmp_path / "state.json").read_text())
+    assert "records folder unavailable" in state["record_error"]
+    assert not state.get("record_written")
 
 def _session_db(tmp_path, rows):
     db_path = tmp_path / "state.db"
@@ -252,27 +289,115 @@ def test_open_multipart_plan_blocks_every_reset(tmp_path, monkeypatch):
     assert _reasons(db) == {"s": None}
 
 
-def test_start_note_then_cancel_finalizes_same_dated_note(tmp_path, monkeypatch):
+def test_start_record_then_cancel_finalizes_same_record(tmp_path, monkeypatch):
     monkeypatch.setattr(records, "PRINTS_DIR", tmp_path / "Prints")
     monkeypatch.setattr(records, "PLANS_DIR", tmp_path / "Plans")
     ctx = {"job_key": "stand.gcode", "title": "Stand", "started_at": "2026-09-24T03:30:00Z",
            "hardware": "0.6 mm ruby", "estimated_time": "17h 56m", "filament_diameter_mm": 1.75, "filament_density": 1.24}
     path = records.write_start_record(ctx)
-    text = open(path).read()
-    assert 'status: "printing"' in text and "2026-09-23 11:30 PM EDT" in text and "in progress" in text
+    start = json.loads(Path(path).read_text())
+    assert start["status"] == "printing" and start["started_at"] == "2026-09-24T03:30:00Z"
+    assert start["title"] == "Stand" and "completed_at" not in start
     assert not (tmp_path / "Plans").exists()
     data = records.build_record_data("stand.gcode", stats={"state": "cancelled", "print_duration": 3600, "filament_used": 1000},
                                      context={**ctx, "record_path": path}, completed_at="2026-09-24T04:30:00Z")
     result = records.write_completed_record(data)
-    assert result["record_path"] == path and len(list((tmp_path / "Prints").glob("*.md"))) == 1
-    final = open(path).read()
-    assert 'status: "cancelled"' in final and "success: false" in final and "1h 0m" in final and "Used filament (g):** 3.0" in final
+    assert result["record_path"] == path and len(list((tmp_path / "Prints").glob("*.json"))) == 1
+    final = Path(path).read_text()
+    record = json.loads(final)
+    assert record["status"] == "cancelled" and record["success"] is False
+    assert record["print_duration_seconds"] == 3600 and record["filament_used_g"] == 3.0
+    assert record["completed_at"] == "2026-09-24T04:30:00Z"
     records.write_completed_record(records.build_record_data("stand.gcode", stats={"state": "complete"}, context={**ctx, "record_path": path}))
-    assert open(path).read() == final  # finalized notes are immutable
+    assert Path(path).read_text() == final  # finalized records are immutable
 
 
-def test_cancel_to_standby_finalizes_note_from_history(tmp_path, monkeypatch):
-    """Klipper drops to standby with an empty filename on cancel; the note must still close."""
+def test_completed_record_named_by_print_number_with_lookup_fields(tmp_path, monkeypatch):
+    monkeypatch.setattr(records, "PRINTS_DIR", tmp_path / "Prints")
+    monkeypatch.setattr(records, "PLANS_DIR", tmp_path / "Plans")
+    ctx = {"job_key": "bag-clip.gcode", "title": "Print in Place Bag Clip", "print_number": 57,
+           "started_at": "2026-10-26T20:00:00Z", "printer": "Flashforge AD5X",
+           "source_url": "https://example.test/bag-clip", "source_platform": "Printables",
+           "active_spool": {"id": 12, "material": "PLA", "color": "Black", "vendor": "Elegoo"},
+           "filament_diameter_mm": 1.75, "filament_density": 1.24}
+    start_path = records.write_start_record(ctx)
+    assert Path(start_path).name == "print-0057.json"
+    assert json.loads(Path(start_path).read_text())["status"] == "printing"
+    data = records.build_record_data(
+        "bag-clip.gcode",
+        stats={"state": "complete", "print_duration": 5432, "filament_used": 4200},
+        context={**ctx, "record_path": start_path},
+        completed_at="2026-10-26T21:30:32Z",
+    )
+    result = records.write_completed_record(data)
+    assert result["record_path"] == start_path
+    files = list((tmp_path / "Prints").glob("*.json"))
+    assert len(files) == 1
+    record = json.loads(files[0].read_text())
+    assert record["print_number"] == 57 and record["title"] == "Print in Place Bag Clip"
+    assert record["gcode_file"] == "bag-clip.gcode" and record["status"] == "completed"
+    assert record["success"] is True and record["printer"] == "Flashforge AD5X"
+    assert record["started_at"] == "2026-10-26T20:00:00Z" and record["completed_at"] == "2026-10-26T21:30:32Z"
+    assert record["print_duration_seconds"] == 5432
+    assert record["filament_material"] == "PLA" and record["filament_color"] == "Black"
+    assert record["spoolman_spool_id"] == 12 and record["source_url"] == "https://example.test/bag-clip"
+
+
+def test_second_print_gets_its_own_numbered_file(tmp_path, monkeypatch):
+    monkeypatch.setattr(records, "PRINTS_DIR", tmp_path / "Prints")
+    monkeypatch.setattr(records, "PLANS_DIR", tmp_path / "Plans")
+
+    def complete(number, name):
+        ctx = {"job_key": name, "title": name, "print_number": number,
+               "started_at": "2026-10-26T20:00:00Z"}
+        data = records.build_record_data(name, stats={"state": "complete", "print_duration": 60},
+                                         context=ctx, completed_at="2026-10-26T20:01:00Z")
+        return records.write_completed_record(data)["record_path"]
+
+    first = complete(57, "first.gcode")
+    first_text = Path(first).read_text()
+    second = complete(58, "second.gcode")
+    assert Path(first).name == "print-0057.json" and Path(second).name == "print-0058.json"
+    assert Path(first).read_text() == first_text  # the second print never touches the first record
+    assert json.loads(Path(second).read_text())["print_number"] == 58
+
+
+def test_print_number_resolved_from_launch_registry(tmp_path, monkeypatch):
+    monkeypatch.setattr(records, "PRINTS_DIR", tmp_path / "Prints")
+    monkeypatch.setattr(records, "PLANS_DIR", tmp_path / "Plans")
+    from print_buddy.hermes import print_control
+    job_dir = tmp_path / "archive" / "bag-clip"
+    job_dir.mkdir(parents=True)
+    job_json = job_dir / "JOB.json"
+    job_json.write_text(json.dumps({"title": "Bag Clip"}))
+    registry = tmp_path / "print_numbers.json"
+    registry.write_text(json.dumps({"numbers": {str(job_json.resolve()): 57}}))
+    monkeypatch.setattr(print_control, "PRINT_NUMBERS", registry)
+    ctx = {"job_key": "bag-clip.gcode", "started_at": "2026-10-26T20:00:00Z",
+           "slicer_settings": {"local_gcode": str(job_dir / "bag-clip.gcode")}}
+    data = records.build_record_data("bag-clip.gcode", stats={"state": "complete"}, context=ctx,
+                                     completed_at="2026-10-26T21:00:00Z")
+    assert data["print_number"] == 57
+    result = records.write_completed_record(data)
+    assert Path(result["record_path"]).name == "print-0057.json"
+
+
+def test_cleanup_status_lands_on_the_json_record(tmp_path, monkeypatch):
+    monkeypatch.setattr(records, "PRINTS_DIR", tmp_path / "Prints")
+    monkeypatch.setattr(records, "PLANS_DIR", tmp_path / "Plans")
+    ctx = {"job_key": "stand.gcode", "title": "Stand", "started_at": "2026-09-24T03:30:00Z"}
+    data = records.build_record_data("stand.gcode", stats={"state": "complete"}, context=ctx,
+                                     completed_at="2026-09-24T04:30:00Z")
+    path = records.write_completed_record(data)["record_path"]
+    assert json.loads(Path(path).read_text())["cleanup_status"] == "pending"
+    records.update_cleanup_record(path, "archived", "session-9", "unique channel session matched")
+    record = json.loads(Path(path).read_text())
+    assert record["cleanup_status"] == "archived" and record["cleanup_session"] == "session-9"
+    assert record["status"] == "completed"  # the record itself is untouched otherwise
+
+
+def test_cancel_to_standby_finalizes_record_from_history(tmp_path, monkeypatch):
+    """Klipper drops to standby with an empty filename on cancel; the record must still close."""
     monkeypatch.setattr(records, "PRINTS_DIR", tmp_path / "Prints")
     monkeypatch.setattr(watcher, "STATE_PATH", tmp_path / "state.json")
     ctx = {"job_key": "stand.gcode", "title": "Stand", "started_at": "2026-09-24T03:31:54Z",
@@ -296,6 +421,7 @@ def test_cancel_to_standby_finalizes_note_from_history(tmp_path, monkeypatch):
     monkeypatch.setattr(watcher, "check_and_reset_idle_discord_session", lambda *a, **k: (False, ""))
     for _ in range(3):
         assert watcher.main() == 0
-    final = open(ctx["record_path"]).read()
-    assert 'status: "cancelled"' in final and "success: false" in final and "0h 13m" in final
-    assert "2026-09-23 11:53 PM EDT" in final and len(list((tmp_path / "Prints").glob("*.md"))) == 1
+    record = json.loads(Path(ctx["record_path"]).read_text())
+    assert record["status"] == "cancelled" and record["success"] is False
+    assert record["print_duration_seconds"] == 790
+    assert len(list((tmp_path / "Prints").glob("*.json"))) == 1

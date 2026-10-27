@@ -141,6 +141,31 @@ def test_check_command_names_every_problem(monkeypatch, capsys, tmp_path):
         assert line in out, out
 
 
+def test_check_names_a_disabled_hermes_discord_platform(monkeypatch, capsys, tmp_path):
+    """#384: credentials present but the profile disables the platform: the
+    check must name the problem and the remedy, never report healthy."""
+    cfg = settings.load(local=Path(os.devnull), environ={})
+    profile = tmp_path / "profile"
+    profile.mkdir()
+    cfg["paths"]["hermes_home"] = profile
+    monkeypatch.setattr(settings, "current", lambda: cfg)
+    monkeypatch.setattr(_config, "cfg", lambda: cfg)
+    monkeypatch.setattr(_config, "profile_env_value",
+                        lambda name, **kw: "token-present" if name == "DISCORD_BOT_TOKEN" else "")
+    (profile / "config.yaml").write_text("platforms:\n  discord:\n    enabled: false\n")
+    assert bot_main.check() == 1
+    out = capsys.readouterr().out
+    assert "ok    token: $DISCORD_BOT_TOKEN is set" in out  # credentials really are present
+    assert "FAIL  hermes discord platform" in out
+    assert "platforms.discord.enabled is false" in out
+    assert "set platforms.discord.enabled: true" in out  # the remedy is named
+    (profile / "config.yaml").write_text("platforms:\n  discord:\n    enabled: true\n")
+    assert bot_main.check() == 1  # hermes mode itself still gates the standalone runner
+    out = capsys.readouterr().out
+    assert "ok    hermes discord platform" in out
+    assert "FAIL  hermes discord platform" not in out
+
+
 def test_run_refuses_to_start_when_checks_fail(monkeypatch):
     monkeypatch.setattr(bot_main, "check", lambda out=None: 1)
     with mock.patch("print_buddy.bot.client.PrintBuddyBot") as bot:

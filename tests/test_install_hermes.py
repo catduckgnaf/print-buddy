@@ -196,6 +196,14 @@ class InstallerTests(unittest.TestCase):
         [moved] = (self.home / ".install-backups").glob("*/scripts")
         self.assertTrue((moved / "moonraker_event_listener.py").is_file())
 
+    def test_fresh_install_enables_the_discord_platform(self):
+        """#384 root-cause guard: the shipped template renders the gateway's
+        Discord platform on, so a fresh install can never start disabled."""
+        import yaml
+        self.run_installer()
+        data = yaml.safe_load((self.home / "config.yaml").read_text())
+        self.assertIs(data["platforms"]["discord"]["enabled"], True)
+
     def test_config_template_runs_terminal_from_the_repo(self):
         self.run_installer()
         self.assertIn(f"cwd: {ROOT}", (self.home / "config.yaml").read_text())

@@ -48,7 +48,7 @@ Schema, validation limits and TOML migration: [CONFIGURATION-YAML.md](CONFIGURAT
 | `prusa.api_key_env` | `PRINT_BUDDY__PRUSA__API_KEY_ENV` | `"PRUSA_LINK_API_KEY"` | Name of the environment variable holding the PrusaLink API key. The key itself is never a setting |
 | `paths.hermes_home` | `PRINT_BUDDY__PATHS__HERMES_HOME` | `/data/hermes` | State folder (`state/`, `logs/`); the name is historical, Hermes is not required |
 | `paths.archive` | `PRINT_BUDDY__PATHS__ARCHIVE` | `/data/archive` | Job archive |
-| `paths.records_vault` | `PRINT_BUDDY__PATHS__RECORDS_VAULT` | `/data/records` | Obsidian print records |
+| `paths.records_vault` | `PRINT_BUDDY__PATHS__RECORDS_VAULT` | `/data/records` | Print records: one JSON file per print in `Prints/` |
 | `paths.cache` | `PRINT_BUDDY__PATHS__CACHE` | `/data/cache` | Regenerable cache |
 | `paths.hermes_bin` | `PRINT_BUDDY__PATHS__HERMES_BIN` | `/usr/local/bin/hermes` | Hermes CLI; Hermes installs only, not in the image |
 | `paths.ffmpeg` | `PRINT_BUDDY__PATHS__FFMPEG` | `ffmpeg` | ffmpeg binary or name on `PATH` |
@@ -111,7 +111,7 @@ Schema, validation limits and TOML migration: [CONFIGURATION-YAML.md](CONFIGURAT
 | `timelapse.archive_host` | `PRINT_BUDDY__TIMELAPSE__ARCHIVE_HOST` | empty | SSH host for the timelapse archive; empty disables it |
 | `timelapse.archive_dir` | `PRINT_BUDDY__TIMELAPSE__ARCHIVE_DIR` | empty | Archive folder on that host |
 | `timelapse.ssh_key` | `PRINT_BUDDY__TIMELAPSE__SSH_KEY` | empty | Path of the SSH key in the container (mount it read-only) |
-| `timelapse.render_wait_s` | `PRINT_BUDDY__TIMELAPSE__RENDER_WAIT_S` | `900` | Wait for the printer to render the timelapse |
+| `timelapse.render_wait_s` | `PRINT_BUDDY__TIMELAPSE__RENDER_WAIT_S` | `900` | Wait for the printer to render the timelapse. Delivery contract (#373): when archiving is on and the rendered video doesn't arrive within the wait (or the marker can't be matched to the job), the completion post itself carries a "Timelapse not attached" line with the reason instead of the video vanishing silently; and if the listener restarts during the wait, the pending completion re-drives the retrieval for the persisted job rather than posting the text without the video |
 | `timelapse.render_poll_s` | `PRINT_BUDDY__TIMELAPSE__RENDER_POLL_S` | `10` | Poll interval while waiting |
 | `timelapse.max_bytes` | `PRINT_BUDDY__TIMELAPSE__MAX_BYTES` | `209715200` | Largest timelapse kept |
 | `timelapse.local_retention_days` | `PRINT_BUDDY__TIMELAPSE__LOCAL_RETENTION_DAYS` | `1` | Local copy retention |

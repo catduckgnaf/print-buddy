@@ -461,7 +461,10 @@ def test_listener_attaches_local_timelapse_only_when_available(monkeypatch):
     posted.clear()
     monkeypatch.setattr(mel.announcer, "archive_completed_timelapse", lambda key: None)
     mel.run_announcer("test")
-    assert posted == ["Print complete: Stand"]
+    # Archiving is configured in the test settings, so a missing video is
+    # announced in the post instead of vanishing silently (#373).
+    assert posted == ["Print complete: Stand\nTimelapse not attached: the printer's rendered video "
+                      "didn't arrive within the wait (see the listener log)."]
 
 
 def test_listener_combines_completion_and_timelapse(monkeypatch):
@@ -581,8 +584,8 @@ def test_announcer_completion_uses_model_title_not_hash(job, tmp_path, monkeypat
     assert state["reset_armed_at"] == 12345.0
     assert state["memory_verified"] is True
     assert not HEX.search(posted)
-    record = next((tmp_path / "Prints").glob("*.md")).read_text()
-    assert TITLE in record
+    record = json.loads(next((tmp_path / "Prints").glob("*.json")).read_text())
+    assert record["title"] == TITLE and record["status"] == "completed"
 
 
 def test_announcer_completion_has_no_roast_and_never_calls_the_generator(job, tmp_path, monkeypatch, capsys):

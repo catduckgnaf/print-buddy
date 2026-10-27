@@ -1,10 +1,13 @@
 #!/usr/bin/env python3
-"""Durable Print Buddy completion records and safe session cleanup.
+"""Durable Print Buddy print records and safe session cleanup.
 
-The watcher supplies confirmed Moonraker data and, when available, a JSON
-context sidecar through PRINT_BUDDY_CONTEXT_PATH. The sidecar is the only
-source for user confirmation, source selection, author-directed supports, and
-Discord session identity. Missing values stay blank or are marked unavailable.
+Every print gets one self-contained JSON record in the records folder
+(``<records vault>/Prints/print-NNNN.json``, named by its permanent print
+number when one was assigned at launch). The watcher supplies confirmed
+Moonraker data and, when available, a JSON context sidecar through
+PRINT_BUDDY_CONTEXT_PATH. The sidecar is the only source for user
+confirmation, source selection, author-directed supports, and Discord session
+identity. Missing values stay absent from the record; nothing is invented.
 No slicing, support generation, printer control, or gateway operation happens
 here.
 """
@@ -40,21 +43,7 @@ def utc_now() -> str:
     return datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
 
 
-ET = _config.tz()  # the configured display timezone (discord.timezone); the name is historical
 TERMINAL_STATUS = {"complete": ("completed", True), "cancelled": ("cancelled", False), "error": ("failed", False), "printing": ("printing", None)}
-
-
-def et_text(value: Any) -> str | None:
-    """Render an ISO UTC stamp in the configured display timezone for the human facing note."""
-    if not value:
-        return None
-    try:
-        dt = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
-    except ValueError:
-        return str(value)
-    if dt.tzinfo is None:
-        dt = dt.replace(tzinfo=timezone.utc)
-    return dt.astimezone(ET).strftime("%Y-%m-%d %I:%M %p %Z")
 
 
 def _hm(seconds: Any) -> str | None:
@@ -92,22 +81,6 @@ def _atomic_write(path: Path, content: str) -> None:
             os.unlink(temporary)
 
 
-def _json_value(value: Any) -> str:
-    if value is None or value == "":
-        return ""
-    return json.dumps(value, ensure_ascii=False, sort_keys=True)
-
-
-def _frontmatter_value(value: Any) -> str:
-    if value is None or value == "":
-        return ""
-    if isinstance(value, bool):
-        return "true" if value else "false"
-    if isinstance(value, (int, float)):
-        return str(value)
-    return json.dumps(str(value), ensure_ascii=False)
-
-
 def _first(mapping: Mapping[str, Any], *keys: str) -> Any:
     for key in keys:
         value = mapping.get(key)
@@ -138,6 +111,35 @@ def load_context(job_key: str, path: Path | None = None) -> dict[str, Any]:
     return {}
 
 
+def _valid_print_number(value: Any) -> int | None:
+    return value if isinstance(value, int) and not isinstance(value, bool) and value > 0 else None
+
+
+def _registry_print_number(context: Mapping[str, Any]) -> int | None:
+    """The permanent number the launch registry already assigned this job, or None.
+
+    Read-only: numbers are minted at launch (print_control.assign_print_numbers);
+    a record never assigns one. The job is located through the slicer settings'
+    local G-code path, whose parent chain holds the job's JOB.json.
+    """
+    settings = context.get("slicer_settings")
+    local = settings.get("local_gcode") if isinstance(settings, Mapping) else None
+    if not local:
+        return None
+    job_path = next((parent / "JOB.json" for parent in Path(str(local)).parents
+                     if (parent / "JOB.json").is_file()), None)
+    if job_path is None:
+        return None
+    try:
+        from . import print_control
+        numbers = json.loads(print_control.PRINT_NUMBERS.read_text(encoding="utf-8")).get("numbers") or {}
+    except (OSError, ValueError, AttributeError, ImportError):
+        return None
+    if not isinstance(numbers, dict):
+        return None
+    return _valid_print_number(numbers.get(str(job_path.resolve())))
+
+
 def _spool_fields(spool: Any) -> dict[str, Any]:
     if not isinstance(spool, dict):
         return {}
@@ -149,11 +151,6 @@ def _spool_fields(spool: Any) -> dict[str, Any]:
         "filament_material": _first(spool, "material", "material_name") or _first(filament, "material", "name"),
         "filament_color": _first(spool, "color", "color_name") or _first(filament, "color"),
     }
-
-
-def _safe_label(value, fallback):
-    from . import discord_print_summary
-    return discord_print_summary.safe_label(value, fallback)
 
 
 def _resolved_title(filename):
@@ -193,6 +190,7 @@ def build_record_data(
     status, success = TERMINAL_STATUS.get(native, (native, None))
     used_mm = _first(stats, "filament_used") or _first(metadata, "filament_used")
     return {
+        "print_number": _valid_print_number(context.get("print_number")) or _registry_print_number(context),
         "status": status,
         "success": success,
         "title": context.get("title") or _resolved_title(filename),
@@ -234,104 +232,69 @@ def build_record_data(
     }
 
 
-def _record_markdown(data: Mapping[str, Any], cleanup_status: str = "pending") -> str:
-    frontmatter = {
-        "status": data.get("status"),
-        "success": data.get("success"),
-        "title": data.get("title"),
-        "started_et": et_text(data.get("started_at")),
-        "finished_et": et_text(data.get("completed_at")),
-        "started_at": data.get("started_at"),
-        "completed_at": data.get("completed_at"),
-        "source_url": data.get("source_url"),
-        "source_platform": data.get("source_platform"),
-        "selected_option": data.get("selected_option"),
-        "printer": data.get("printer"),
-        "printer_profile": data.get("printer_profile"),
-        "gcode_file": data.get("gcode_file"),
-        "filament_vendor": data.get("filament_vendor"),
-        "filament_material": data.get("filament_material"),
-        "filament_color": data.get("filament_color"),
-        "spoolman_spool_id": data.get("spoolman_spool_id"),
-        "spoolman_usage_pending": data.get("spoolman_usage_pending"),
-        "filament_used_mm": data.get("filament_used_mm"),
-        "print_duration_seconds": data.get("print_duration_seconds"),
-        "cleanup_status": cleanup_status,
-    }
-    settings = data.get("slicer_settings")
-    settings_text = "not recorded" if settings is None else json.dumps(settings, ensure_ascii=False, indent=2, sort_keys=True)
-    lines = ["---"]
-    lines.extend(f"{key}: {_frontmatter_value(value)}" for key, value in frontmatter.items())
-    lines.extend([
-        "---",
-        "",
-        f"# {data.get('title') or _safe_label(data.get('gcode_file'), 'Completed print')}",
-        "",
-        "## Date",
-        "",
-        f"- **Started:** {et_text(data.get('started_at')) or 'not recorded'}",
-        f"- **Finished:** {et_text(data.get('completed_at')) or ('in progress' if data.get('status') == 'printing' else 'not recorded')}",
-        f"- **Status:** {data.get('status') or 'not recorded'}",
-        f"- **Actual duration:** {_hm(data.get('print_duration_seconds')) or 'not recorded'}",
-        f"- **Slicer estimate:** {data.get('estimated_time') or 'not recorded'}",
-        "",
-        "## Hardware",
-        "",
-        f"- **Printer / nozzle / spool / temps:** {data.get('hardware') or 'not recorded'}",
-        f"- **G-code:** `{data.get('gcode_file') or 'not recorded'}`",
-        "",
-        "## Selected source option",
-        "",
-        f"- **Selected:** {data.get('selected_option') or 'not recorded'}",
-        f"- **Reason / user confirmation:** {data.get('selection_confirmation') or 'not recorded'}",
-        f"- **Source:** {data.get('source_platform') or 'not recorded'} {data.get('source_url') or ''}".rstrip(),
-        "",
-        "## Print settings used",
-        "",
-        f"- **Printer profile:** {data.get('printer_profile') or 'not recorded'}",
-        f"- **Duration (seconds):** {data.get('print_duration_seconds') if data.get('print_duration_seconds') is not None else 'not recorded'}",
-        "- **Confirmed slicer settings:**",
-        "",
-        "```json",
-        settings_text,
-        "```",
-        f"- **Supports:** {_supports_text(data.get('author_directed_tree_supports'))}",
-        "",
-        "## Material",
-        "",
-        f"- **Vendor:** {data.get('filament_vendor') or 'not recorded'}",
-        f"- **Material:** {data.get('filament_material') or 'not recorded'}",
-        f"- **Color:** {data.get('filament_color') or 'not recorded'}",
-        f"- **Spoolman spool:** {data.get('spoolman_spool_id') or 'not recorded'}",
-        f"- **Used filament (mm):** {data.get('filament_used_mm') if data.get('filament_used_mm') is not None else 'not recorded'}",
-        f"- **Used filament (g):** {data.get('filament_used_g') if data.get('filament_used_g') is not None else 'not recorded'}",
-        f"- **Slicer filament estimate (g):** {data.get('estimated_filament_g') or 'not recorded'}",
-        "",
-        "## Result",
-        "",
-        f"- **Moonraker completion:** {data.get('moonraker_state') or 'not recorded'}",
-        f"- **Physical outcome reported by user:** {data.get('physical_outcome') or 'not recorded'}",
-        f"- **Follow-up / multipart plan:** {data.get('follow_up') or data.get('multipart_plan_id') or 'not recorded'}",
-        "",
-        "## Session cleanup",
-        "",
-        f"- **Status:** {cleanup_status}",
-        "- **Occurred at:** not recorded",
-        "- **Session:** not recorded",
-        "- **Detail:** pending five-minute eligible cleanup",
-        "",
-    ])
-    return "\n".join(lines)
+# The fields a print record carries, in file order: the lookup schema. One
+# self-contained JSON object per print answers what print N was, when it ran,
+# on which printer, how it ended, what filament it used and how long it took,
+# with jq or grep alone — no index or external app required.
+_RECORD_FIELDS = (
+    "print_number", "title", "status", "success", "started_at", "completed_at",
+    "printer", "printer_profile", "gcode_file", "job_key", "source_platform",
+    "source_url", "selected_option", "selection_confirmation", "hardware",
+    "estimated_time", "estimated_filament_g", "filament_vendor",
+    "filament_material", "filament_color", "spoolman_spool_id",
+    "spoolman_usage_pending",
+    "filament_used_mm", "filament_used_g", "print_duration_seconds",
+    "slicer_settings", "author_directed_tree_supports", "physical_outcome",
+    "follow_up", "multipart_plan_id", "part_id", "moonraker_state",
+    "discord_chat_id",
+)
 
 
-def _supports_text(value: Any) -> str:
-    if value is True:
-        return "author explicitly required tree supports"
-    if value is False:
-        return "author explicitly did not require tree supports"
-    if value not in (None, ""):
-        return str(value)
-    return "not recorded; no support decision was inferred"
+def _record_id(data: Mapping[str, Any]) -> str:
+    """Stable identity for one physical print: job + file + start instant."""
+    key = f"{data.get('job_key') or ''}:{data.get('gcode_file') or ''}:{data.get('started_at') or data.get('completed_at') or ''}"
+    return hashlib.sha256(key.encode("utf-8")).hexdigest()[:8]
+
+
+def _record_json(data: Mapping[str, Any], cleanup_status: str = "pending") -> dict[str, Any]:
+    record = {key: data.get(key) for key in _RECORD_FIELDS}
+    record["record_id"] = _record_id(data)
+    record["cleanup_status"] = cleanup_status
+    # Absent data stays absent (never invented). print_number is the one
+    # anchored key: always present, null when no number was ever assigned.
+    return {key: value for key, value in record.items() if value is not None or key == "print_number"}
+
+
+def _record_path_for(data: Mapping[str, Any], digest: str) -> Path:
+    number = _valid_print_number(data.get("print_number"))
+    if number is not None:
+        return PRINTS_DIR / f"print-{number:04d}.json"
+    stamp = str(data.get("started_at") or data.get("completed_at") or utc_now())
+    slug = _safe_slug(Path(str(data.get("gcode_file") or "print")).stem)
+    return PRINTS_DIR / f"{stamp.replace(':', '').replace('-', '')[:15]}-{slug}-{digest}.json"
+
+
+def _read_json_record(path: Path) -> dict[str, Any] | None:
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    return payload if isinstance(payload, dict) else None
+
+
+def _avoid_collision(path: Path, digest: str) -> Path:
+    """A name already held by a different print (batch copies of one job share
+    its number) gains that print's digest suffix; the same print keeps its name."""
+    if not path.exists():
+        return path
+    existing = _read_json_record(path)
+    if existing is not None and existing.get("record_id") == digest:
+        return path
+    return path.with_name(f"{path.stem}-{digest}.json")
+
+
+def _write_json_record(path: Path, data: Mapping[str, Any], cleanup_status: str = "pending") -> None:
+    _atomic_write(path, json.dumps(_record_json(data, cleanup_status), ensure_ascii=False, indent=2) + "\n")
 
 
 def _plan_parts(required_parts: Any) -> list[dict[str, Any]]:
@@ -634,9 +597,6 @@ def update_multipart_plan(data: Mapping[str, Any]) -> tuple[str | None, bool]:
         "parts": parts,
     }
     _atomic_write(json_path, json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True) + "\n")
-    md_lines = ["# Print plan", "", f"Plan ID: `{plan_id}`", "", "| Part | Status | G-code |", "| --- | --- | --- |"]
-    md_lines.extend(f"| {part.get('label', part.get('id'))} | {part.get('status', 'planned')} | {part.get('gcode_file', '')} |" for part in parts)
-    _atomic_write(PLANS_DIR / f"{plan_id}.md", "\n".join(md_lines) + "\n")
     return plan_id, bool(parts) and all(part.get("status") == "completed" for part in parts)
 
 
@@ -651,21 +611,29 @@ def plan_is_complete(plan_id: str) -> bool:
 
 
 def write_completed_record(data: Mapping[str, Any]) -> dict[str, Any]:
-    """Write one idempotent record and its multipart plan, then return cleanup facts."""
+    """Write one idempotent JSON record and its multipart plan, then return cleanup facts."""
     plan_id, eligible = update_multipart_plan(data)
-    record_key = f"{data.get('job_key') or data.get('completed_at')}:{data.get('gcode_file')}"
-    digest = hashlib.sha256(record_key.encode("utf-8")).hexdigest()[:8]
-    stamp = str(data.get("started_at") or data.get("completed_at") or utc_now())
-    filename = f"{stamp.replace(':', '').replace('-', '')[:15]}-{_safe_slug(Path(str(data.get('gcode_file') or 'print')).stem)}-{digest}.md"
-    path = PRINTS_DIR / filename
-    started = Path(str(data.get("record_path") or ""))
-    if data.get("record_path") and started.parent == PRINTS_DIR:
-        path = started
-    # A start note (status printing) is finalized in place; a final note is immutable.
-    if not path.exists() or 'status: "printing"' in path.read_text(encoding="utf-8"):
-        _atomic_write(path, _record_markdown(data))
+    digest = _record_id(data)
+    target = _record_path_for(data, digest)
+    existing = _read_json_record(target) if target.exists() else None
+    if existing is not None and existing.get("record_id") != digest:
+        target = _avoid_collision(target, digest)
+        existing = _read_json_record(target) if target.exists() else None
+    # A start record (status printing) is finalized in place or renamed to the
+    # numbered name; a final record for this same print is immutable.
+    final_exists = existing is not None and existing.get("record_id") == digest and existing.get("status") != "printing"
+    if not final_exists:
+        _write_json_record(target, data)
+        started = Path(str(data.get("record_path") or ""))
+        if data.get("record_path") and started.parent == PRINTS_DIR and started != target:
+            start_record = _read_json_record(started)
+            if start_record is not None and start_record.get("record_id") == digest:
+                try:
+                    started.unlink()
+                except OSError:
+                    pass
     return {
-        "record_path": str(path),
+        "record_path": str(target),
         "plan_id": plan_id,
         "cleanup_eligible": eligible,
         "discord_session_id": data.get("discord_session_id"),
@@ -674,35 +642,33 @@ def write_completed_record(data: Mapping[str, Any]) -> dict[str, Any]:
 
 
 def write_start_record(context: Mapping[str, Any]) -> str:
-    """Create the in-progress note for a just-started print and return its path."""
+    """Create the in-progress JSON record for a just-started print and return its path."""
     data = build_record_data(str(context["job_key"]), stats={"state": "printing"}, context=context)
-    record_key = f"{data.get('job_key')}:{data.get('gcode_file')}"
-    digest = hashlib.sha256(record_key.encode("utf-8")).hexdigest()[:8]
-    stamp = str(data.get("started_at") or utc_now())
-    path = PRINTS_DIR / f"{stamp.replace(':', '').replace('-', '')[:15]}-{_safe_slug(Path(str(data.get('gcode_file') or 'print')).stem)}-{digest}.md"
+    digest = _record_id(data)
+    path = _avoid_collision(_record_path_for(data, digest), digest)
     # No multipart plan update here: a start must never mark a part complete.
-    _atomic_write(path, _record_markdown(data))
+    _write_json_record(path, data)
     return str(path)
 
 
 def update_cleanup_record(record_path: str, status: str, session_id: str | None = None, detail: str = "") -> None:
+    """Record the session-cleanup outcome on the print's JSON record.
+
+    A path that is not a JSON record (a legacy Markdown note from before
+    this format) is left entirely untouched: historical notes are history.
+    """
     path = Path(record_path)
-    try:
-        content = path.read_text(encoding="utf-8")
-    except (FileNotFoundError, OSError):
+    record = _read_json_record(path)
+    if record is None:
         return
-    marker = "## Session cleanup"
-    prefix = content.split(marker, 1)[0].rstrip()
-    section = [
-        marker,
-        "",
-        f"- **Status:** {status}",
-        f"- **Occurred at:** {utc_now() if status == 'archived' else 'not recorded'}",
-        f"- **Session:** {session_id or 'not recorded'}",
-        f"- **Detail:** {detail or 'not recorded'}",
-        "",
-    ]
-    _atomic_write(path, prefix + "\n\n" + "\n".join(section))
+    record["cleanup_status"] = status
+    if status == "archived":
+        record["cleanup_at"] = utc_now()
+    if session_id:
+        record["cleanup_session"] = session_id
+    if detail:
+        record["cleanup_detail"] = detail
+    _atomic_write(path, json.dumps(record, ensure_ascii=False, indent=2) + "\n")
 
 
 def _profile_home() -> Path:

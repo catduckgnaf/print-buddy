@@ -863,6 +863,11 @@ def main():
         marker = _timelapse_marker(job_key)
         if marker:
             print(f"TIMELAPSE_POSTPROCESS:{marker}")
+            # Remember which job the pending completion's video leg belongs
+            # to, so a listener restart during the render wait can re-drive
+            # the retrieval instead of posting the pending text bare and
+            # losing the video (#373).
+            previous["pending_timelapse_job_key"] = job_key
         # No roast here (#374): the one roast per print belongs to the start
         # announcement, added when printing begins. Completion never invokes
         # the roast generator.
@@ -905,7 +910,7 @@ def main():
         # Keep the completion retryable until the listener confirms Discord delivery.
         previous["pending_completion_message"] = message
 
-    # A cancel or error also finalizes the Obsidian note, without an announcement
+    # A cancel or error also finalizes the print record, without an announcement
     # or session cleanup, so every started print ends with a dated outcome.
     native = str((payload.get("stats") or {}).get("state") or "").lower()
     if was_printing and not printing and native in ("cancelled", "error") and not previous.get("record_written", False):

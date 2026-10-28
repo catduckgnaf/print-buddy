@@ -25,7 +25,7 @@ from pathlib import Path
 from types import SimpleNamespace
 
 from .. import settings
-from ..core import prompts
+from ..core import fuzzy, prompts
 from ..hermes import _config
 from . import agent, commands, llm, platform, routing
 from .router import Router
@@ -57,14 +57,58 @@ def unmatched_text(bot_name="Print Handy"):
     what the person typed. This says it did not understand, names the
     most common things people mean here, and offers the full list on
     request (``/print-help``, or typing ``help``) instead of leading with
-    it. Did-you-mean suggestions for near-miss commands are #468's
-    research scope; this wording and the no-dump rule are #467's either
-    way.
+    it. Did-you-mean suggestions for near-miss commands are #468 stage 3
+    (``command_suggestion`` below): when one fires it replaces this reply;
+    this wording and the no-dump rule are #467's either way.
     """
     return (f"I didn't understand that, so nothing happened.\n"
             f"{bot_name} prints from this channel: post a MakerWorld, Printables or Thingiverse link, "
             "or drop one .3mf or .stl file, and I will prepare it — nothing starts without a button press.\n"
             "For everything I can do, type `/print-help`.")
+
+
+# #468 stage 3: the did-you-mean prompt's shape. The 60-second expiry is the
+# Stage 0 report's; the labels are the whole contract — a press (or a typed
+# "yes") is the only thing that can turn a suggestion into a dispatch.
+SUGGESTION_TIMEOUT_S = 60
+SUGGEST_YES_LABEL = "Yes — run it"
+SUGGEST_NO_LABEL = "No"
+
+
+def command_suggestion(text):
+    """The canonical command a near-miss message most likely meant, else None (#468 stage 3).
+
+    Only the first word is matched — "/spol list" suggests "/spool list",
+    arguments carried over untouched — against command names and aliases
+    with the shared fuzzy scorer (``core.fuzzy``, windowed so "/stop" can
+    mean "/print-stop"). The message must be command-shaped (first word
+    starts with "/"): plain chat is never a near miss, however similar a
+    word in it looks — "hello there" would otherwise score 67 against the
+    "help" window of print-help. An exact first word is not a near miss
+    and returns None, a tie between two commands returns None rather than
+    a coin flip, and the 65 floor plus the coverage guard keep the rest of
+    chat ("can you make my printer go brrr") suggestion-free.
+    Deterministic, offline, no LLM involved — it runs in the fallback
+    after every model lane has declined, so #466's no-LLM posture keeps
+    it too.
+    """
+    parts = str(text or "").strip().split(None, 1)
+    if not parts or not parts[0].startswith("/"):
+        return None
+    word = parts[0].lstrip("/").casefold()
+    if not word or commands.by_name(word):
+        return None
+    best_score, best = 0, []
+    for cmd in commands.COMMANDS:
+        score = max(fuzzy.windowed_fuzzy_score(word, name) for name in (cmd.name, *cmd.aliases))
+        if score > best_score:
+            best_score, best = score, [cmd]
+        elif score and score == best_score:
+            best.append(cmd)
+    if not best_score or len(best) != 1:
+        return None
+    rest = parts[1] if len(parts) > 1 else ""
+    return f"/{best[0].name}" + (f" {rest}" if rest else "")
 
 
 def agent_unavailable_text():
@@ -381,8 +425,10 @@ class BotCore:
         and can never name a command), else the bounded [llm] call: it may
         answer directly, or name one allowlisted command, which then runs
         through the exact same handler (and confirmation) as a typed
-        command. Only when no lane answers does the short unmatched reply
-        go out (#467 — the full command list is an answer to
+        command. Only when no lane answers does the #468 stage-3
+        did-you-mean prompt get its chance at a near-miss command, and
+        only when it does not fire (or is declined) does the short
+        unmatched reply go out (#467 — the full command list is an answer to
         ``/print-help``, never an error response) — once, and never
         alongside a lane reply for the same message. A configured agent
         endpoint that fails gets the honest agent-unavailable line
@@ -431,6 +477,63 @@ class BotCore:
             # The LLM already answered this message and its named command
             # fell through: a solved reply stands alone, no help after it.
             return {"action": "skip", "reason": "llm reply"}
+        suggestion = command_suggestion(event.text)
+        if suggestion is not None:
+            # #468 stage 3: a near-miss command gets a did-you-mean prompt
+            # instead of the plain unmatched reply. It sits here — after
+            # both model lanes have declined — so it fires with no LLM
+            # configured too, and never competes with a lane's answer.
+            return await self._offer_suggestion(event, suggestion, metadata)
+        await self.adapter.send(chat_id=source.chat_id, content=self.unmatched, reply_to=event.message_id,
+                                metadata=metadata)
+        return {"action": "skip", "reason": "command list"}
+
+    async def _offer_suggestion(self, event, suggestion, metadata):
+        """Ask "Did you mean …?" and dispatch only on an explicit yes (#468 stage 3).
+
+        The prompt lives in the shared clarify registry, so it works on
+        every platform the bot serves and can be answered by button or by
+        typing "yes". A yes re-dispatches the corrected text through
+        ``process`` exactly as if it had been typed — the suggested command
+        still runs its own confirmation and names its target before
+        anything prints, so the suggestion itself starts nothing. A no, a
+        typed non-answer, or the 60-second expiry closes the prompt; a no
+        (or a delivery failure) still gets the plain unmatched reply, so
+        the decline path is byte-identical to today's fallback.
+        """
+        source = event.source
+        registry = prompts.gateway()
+        clarify_id = f"fuzzy-{uuid.uuid4().hex[:12]}"
+        question = (f"Did you mean `{suggestion}`? Nothing runs unless you say yes — "
+                    "and the command still asks before anything prints.")
+        labels = [SUGGEST_YES_LABEL, SUGGEST_NO_LABEL]
+        answer, delivered = None, True
+        try:
+            registry.register(clarify_id, session_key(source), question, labels)
+            result = await self.adapter.send_clarify(chat_id=source.chat_id, question=question,
+                                                      choices=labels, clarify_id=clarify_id,
+                                                      session_key=session_key(source), metadata=metadata)
+            if not getattr(result, "success", False):
+                raise RuntimeError("did-you-mean delivery failed")
+            answer = await asyncio.to_thread(registry.wait_for_response, clarify_id, SUGGESTION_TIMEOUT_S)
+        except Exception:
+            logger.warning("did-you-mean suggestion failed; sending the unmatched reply", exc_info=True)
+            delivered = False
+        finally:
+            registry.resolve_gateway_clarify(clarify_id, registry.CANCELLED)
+            registry.wait_for_response(clarify_id, 0.001)
+        if not delivered:
+            await self.adapter.send(chat_id=source.chat_id, content=self.unmatched, reply_to=event.message_id,
+                                    metadata=metadata)
+            return {"action": "skip", "reason": "command list"}
+        if answer == SUGGEST_YES_LABEL or (isinstance(answer, str) and answer.strip().casefold() in {"yes", "y"}):
+            await self.adapter.close_prompt(clarify_id, f"Running {suggestion} — watch for its own confirmation.")
+            routed = make_event(source, suggestion, f"{event.message_id}:fuzzy", metadata={"fuzzy_command": True})
+            return await self.process(routed, allow_llm=False)
+        if answer is None:
+            await self.adapter.close_prompt(clarify_id, "That suggestion expired — nothing ran.")
+            return {"action": "skip", "reason": "did-you-mean suggestion expired"}
+        await self.adapter.close_prompt(clarify_id, "OK — nothing ran.")
         await self.adapter.send(chat_id=source.chat_id, content=self.unmatched, reply_to=event.message_id,
                                 metadata=metadata)
         return {"action": "skip", "reason": "command list"}

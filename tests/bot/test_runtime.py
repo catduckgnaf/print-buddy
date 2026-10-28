@@ -308,3 +308,94 @@ def test_custom_name_is_used_in_help_and_wrong_channel_refusal(cfg, name):
     interaction = fake_discord.FakeInteraction(discord, discord.operator, channel=elsewhere)
     assert run(core.run_slash(interaction, "print-help", {})) is None
     assert interaction.replies == [{"content": f"{name} only works in its print channel.", "ephemeral": True}]
+
+
+# ------------------------------------------------------- #468 stage 3
+
+def _recording_router(seen):
+    """A stub plugin whose only handler takes the corrected command and records it."""
+    class _Plugin:
+        def register(self, router):
+            async def record(event, gateway):
+                if event.text.startswith("/spool"):
+                    seen.append(event.text)
+                    return {"action": "skip", "reason": "recorded"}
+                return None
+            router.register_hook("pre_gateway_dispatch", record)
+    return Router(plugin=_Plugin())
+
+
+@pytest.mark.parametrize("text,expected", [
+    ("/spol list", "/spool list"),          # the audit's example shape
+    ("/prnt-stop", "/print-stop"),
+    ("/stop", "/print-stop"),               # window match on the name's tail
+    ("/desing a benchy", "/print-design a benchy"),   # alias target, args carried over
+    ("/print-agani benchy", "/print-again benchy"),
+    ("/print-stop", None),                  # exact is not a near miss
+    ("/prnt", None),                        # ties every print-* command: no coin flip
+    ("spol list", None),                    # not command-shaped: chat never suggests
+    ("hello there", None),                  # would score 67 on the "help" window ungated
+    ("can you make my printer go brrr", None),
+    ("", None),
+])
+def test_command_suggestion_pins(text, expected):
+    assert runtime.command_suggestion(text) == expected
+
+
+def test_did_you_mean_fires_with_no_llm_and_yes_dispatches_the_correction(cfg):
+    """The #466 no-LLM posture keeps the suggestion (it sits after both lanes
+    decline), and a yes re-dispatches the corrected text as if typed."""
+    seen = []
+    discord, core = make(cfg, router=_recording_router(seen))
+
+    async def flow():
+        task = asyncio.create_task(core.handle_message(discord.message("/spol list")))
+        await press(discord, runtime.SUGGEST_YES_LABEL)
+        return await task
+
+    out = run(flow())
+    assert seen == ["/spool list"]
+    assert out == {"action": "skip", "reason": "recorded"}
+
+
+def test_did_you_mean_no_sends_the_unmatched_reply_and_dispatches_nothing(cfg):
+    seen = []
+    discord, core = make(cfg, router=_recording_router(seen))
+
+    async def flow():
+        task = asyncio.create_task(core.handle_message(discord.message("/spol list")))
+        await press(discord, runtime.SUGGEST_NO_LABEL)
+        return await task
+
+    out = run(flow())
+    assert seen == []
+    assert out == {"action": "skip", "reason": "command list"}
+    assert discord.sent[-1] == runtime.unmatched_text(cfg["discord"]["bot_name"])
+
+
+def test_did_you_mean_accepts_a_typed_yes(cfg):
+    seen = []
+    discord, core = make(cfg, router=_recording_router(seen))
+
+    async def flow():
+        task = asyncio.create_task(core.handle_message(discord.message("/spol list")))
+        for _ in range(200):
+            if discord.last_question() is not None:
+                break
+            await asyncio.sleep(0.01)
+        await core.handle_message(discord.message("yes"))
+        return await task
+
+    run(flow())
+    assert seen == ["/spool list"]
+
+
+def test_did_you_mean_expires_quietly_and_dispatches_nothing(cfg, monkeypatch):
+    monkeypatch.setattr(runtime, "SUGGESTION_TIMEOUT_S", 0.2)
+    seen = []
+    discord, core = make(cfg, router=_recording_router(seen))
+    out = run(core.handle_message(discord.message("/spol list")))
+    assert out == {"action": "skip", "reason": "did-you-mean suggestion expired"}
+    assert seen == []
+    assert any("Did you mean `/spool list`?" in q["question"] for q in discord.questions)
+    assert runtime.unmatched_text(cfg["discord"]["bot_name"]) not in discord.sent

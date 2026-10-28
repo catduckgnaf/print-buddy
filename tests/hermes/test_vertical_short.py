@@ -185,7 +185,8 @@ def _wire_post(monkeypatch, tmp_path):
     announcer = mel.announcer
     monkeypatch.setattr(announcer, "STATE_PATH", tmp_path / "announcement.json")
     announcer.save_state({"pending_completion_message": "Print complete: Stand"})
-    monkeypatch.setattr(announcer, "archive_completed_timelapse", lambda key: "/archive/stand.mp4")
+    monkeypatch.setattr(announcer, "archive_completed_timelapse",
+                        lambda key: announcer.ArchiveOutcome(announcer.ARCHIVED, "/archive/stand.mp4"))
     video = tmp_path / "stand.mp4"
     video.write_bytes(b"v" * 100)
     monkeypatch.setattr(announcer, "materialize_archived_timelapse", lambda path: str(video))

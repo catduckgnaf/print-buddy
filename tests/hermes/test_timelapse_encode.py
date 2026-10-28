@@ -302,7 +302,8 @@ def test_captured_video_wins_over_printer_rendered(monkeypatch, tmp_path, delive
 
 def test_dark_capture_names_the_outcome_in_the_completion_post(monkeypatch, tmp_path, delivery):
     monkeypatch.setattr(mel, "_captured_timelapse", lambda key: None)
-    monkeypatch.setattr(mel.announcer, "archive_completed_timelapse", lambda key: None)
+    monkeypatch.setattr(mel.announcer, "archive_completed_timelapse",
+                        lambda key: mel.announcer.ArchiveOutcome(mel.announcer.ARCHIVE_NOT_RENDERED))
     monkeypatch.setattr(mel, "_dark_capture", lambda key: {"dark_frames": 3})
     mel._timelapse_post("benchy.gcode", "Print complete")
     assert delivery == [
@@ -315,7 +316,8 @@ def test_delivery_falls_back_to_printer_rendered(monkeypatch, tmp_path, delivery
     monkeypatch.setattr(mel, "_captured_timelapse", lambda key: None)
     rendered = tmp_path / "rendered.mp4"
     rendered.write_bytes(b"video")
-    monkeypatch.setattr(mel.announcer, "archive_completed_timelapse", lambda key: "/archive/rendered.mp4")
+    monkeypatch.setattr(mel.announcer, "archive_completed_timelapse",
+                        lambda key: mel.announcer.ArchiveOutcome(mel.announcer.ARCHIVED, "/archive/rendered.mp4"))
     monkeypatch.setattr(mel.announcer, "materialize_archived_timelapse", lambda path: rendered)
     monkeypatch.setattr(mel, "platform_sized_video", lambda path, max_bytes=None: path)
     mel._timelapse_post("benchy.gcode", "Print complete")

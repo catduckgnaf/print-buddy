@@ -351,7 +351,9 @@ def test_timelapse_wait_retries_then_archives(monkeypatch):
     monkeypatch.setattr(watcher, "archive_timelapse", lambda key, path, completed: "/archive/stand.mp4")
     monkeypatch.setattr(watcher, "TIMELAPSE_RENDER_WAIT_SECONDS", 2)
     monkeypatch.setattr(watcher, "TIMELAPSE_RENDER_POLL_SECONDS", 0.1)
-    assert watcher.archive_completed_timelapse("stand.gcode") == "/archive/stand.mp4"
+    outcome = watcher.archive_completed_timelapse("stand.gcode")
+    assert outcome.state == watcher.ARCHIVED
+    assert outcome.path == "/archive/stand.mp4"
 
 
 def test_timelapse_wait_is_bounded_and_failure_safe(monkeypatch):
@@ -361,7 +363,9 @@ def test_timelapse_wait_is_bounded_and_failure_safe(monkeypatch):
     monkeypatch.setattr(watcher, "TIMELAPSE_RENDER_WAIT_SECONDS", 0.3)
     monkeypatch.setattr(watcher, "TIMELAPSE_RENDER_POLL_SECONDS", 0.1)
     started = time.monotonic()
-    assert watcher.archive_completed_timelapse("stand.gcode") is None
+    outcome = watcher.archive_completed_timelapse("stand.gcode")
+    assert outcome.state == watcher.ARCHIVE_NOT_RENDERED
+    assert outcome.path is None
     assert time.monotonic() - started < 2
     assert archived == []
 
@@ -371,7 +375,9 @@ def test_timelapse_wait_is_bounded_and_failure_safe(monkeypatch):
     monkeypatch.setattr(watcher, "_timelapse_candidates", broken)
     monkeypatch.setattr(watcher, "TIMELAPSE_RENDER_WAIT_SECONDS", 0.3)
     started = time.monotonic()
-    assert watcher.archive_completed_timelapse("stand.gcode") is None
+    outcome = watcher.archive_completed_timelapse("stand.gcode")
+    assert outcome.state == watcher.ARCHIVE_NOT_RENDERED
+    assert "moonraker down" in outcome.detail
     assert time.monotonic() - started < 2
 
 
@@ -404,7 +410,45 @@ def test_timelapse_lookup_error_retries_instead_of_giving_up(monkeypatch):
     monkeypatch.setattr(watcher, "archive_timelapse", lambda key, path, completed: "/archive/stand.mp4")
     monkeypatch.setattr(watcher, "TIMELAPSE_RENDER_WAIT_SECONDS", 2)
     monkeypatch.setattr(watcher, "TIMELAPSE_RENDER_POLL_SECONDS", 0.1)
-    assert watcher.archive_completed_timelapse("stand.gcode") == "/archive/stand.mp4"
+    outcome = watcher.archive_completed_timelapse("stand.gcode")
+    assert outcome.state == watcher.ARCHIVED
+    assert outcome.path == "/archive/stand.mp4"
+
+
+def test_timelapse_archive_off_skips_the_lookup_without_waiting(monkeypatch, capsys):
+    # #540: with the archive destination unset the lookup is skipped
+    # outright — no candidate search, no bounded wait — and the outcome
+    # says so, so the completion flow can never describe it as a timeout.
+    for host, directory in (("", "/archive/timelapses"), ("archive.test", ""), ("", "")):
+        monkeypatch.setattr(watcher, "TIMELAPSE_ARCHIVE_HOST", host)
+        monkeypatch.setattr(watcher, "TIMELAPSE_ARCHIVE_DIR", directory)
+
+        def forbidden(key):
+            raise AssertionError("the lookup must not run while the archive is off")
+
+        monkeypatch.setattr(watcher, "_timelapse_candidates", forbidden)
+        started = time.monotonic()
+        outcome = watcher.archive_completed_timelapse("stand.gcode")
+        assert outcome.state == watcher.ARCHIVE_OFF
+        assert outcome.path is None
+        assert time.monotonic() - started < 1
+    assert "Timelapse archive is off" in capsys.readouterr().err
+
+
+def test_timelapse_archive_failure_is_its_own_state(monkeypatch):
+    # #540: a rendered video that fails to archive is neither "off" nor
+    # "not rendered" — the outcome names the delivery failure.
+    monkeypatch.setattr(watcher, "_timelapse_candidates",
+                        lambda key: ["timelapse_stand.gcode_20261011_1230.mp4"])
+
+    def broken(key, path, completed):
+        raise OSError("ssh down")
+
+    monkeypatch.setattr(watcher, "archive_timelapse", broken)
+    outcome = watcher.archive_completed_timelapse("stand.gcode")
+    assert outcome.state == watcher.ARCHIVE_FAILED
+    assert outcome.path is None
+    assert "ssh down" in outcome.detail
 
 
 def test_local_timelapse_cache_retention_keeps_recent_and_non_video(tmp_path, monkeypatch):
@@ -452,17 +496,20 @@ def test_listener_attaches_local_timelapse_only_when_available(monkeypatch):
     monkeypatch.setattr(mel, "post", lambda message: posted.append(message) or True)
     monkeypatch.setattr(mel.announcer, "main", lambda: print("TIMELAPSE_POSTPROCESS:stand.gcode\nPrint complete: Stand"))
     monkeypatch.setattr(mel.announcer, "_timelapse_job_key", lambda token: "stand.gcode" if token == "stand.gcode" else "")
-    monkeypatch.setattr(mel.announcer, "archive_completed_timelapse", lambda key: "/archive/timelapses/stand.mp4")
+    monkeypatch.setattr(mel.announcer, "archive_completed_timelapse",
+                        lambda key: mel.announcer.ArchiveOutcome(mel.announcer.ARCHIVED, "/archive/timelapses/stand.mp4"))
     monkeypatch.setattr(mel.threading, "Thread", _InlineThread)
     monkeypatch.setattr(mel.announcer, "materialize_archived_timelapse", lambda path: "/cache/stand.mp4")
     mel.run_announcer("test")
     assert posted == ["Print complete: Stand\nMEDIA:/cache/stand.mp4"]
     assert "MEDIA:/volume1" not in posted[0]
     posted.clear()
-    monkeypatch.setattr(mel.announcer, "archive_completed_timelapse", lambda key: None)
+    monkeypatch.setattr(mel.announcer, "archive_completed_timelapse",
+                        lambda key: mel.announcer.ArchiveOutcome(mel.announcer.ARCHIVE_NOT_RENDERED))
     mel.run_announcer("test")
-    # Archiving is configured in the test settings, so a missing video is
-    # announced in the post instead of vanishing silently (#373).
+    # Archiving is configured in the test settings and the bounded wait
+    # really elapsed, so a missing video is announced in the post instead
+    # of vanishing silently (#373).
     assert posted == ["Print complete: Stand\nTimelapse not attached: the printer's rendered video "
                       "didn't arrive within the wait (see the listener log)."]
 
@@ -473,7 +520,8 @@ def test_listener_combines_completion_and_timelapse(monkeypatch):
     monkeypatch.setattr(mel, "post", lambda message: posted.append(message) or True)
     monkeypatch.setattr(mel.announcer, "main", lambda: print("TIMELAPSE_POSTPROCESS:stand.gcode\nPrint complete: Stand"))
     monkeypatch.setattr(mel.announcer, "_timelapse_job_key", lambda token: "stand.gcode" if token == "stand.gcode" else "")
-    monkeypatch.setattr(mel.announcer, "archive_completed_timelapse", lambda key: "/archive/timelapses/stand.mp4")
+    monkeypatch.setattr(mel.announcer, "archive_completed_timelapse",
+                        lambda key: mel.announcer.ArchiveOutcome(mel.announcer.ARCHIVED, "/archive/timelapses/stand.mp4"))
     monkeypatch.setattr(mel.threading, "Thread", _InlineThread)
     monkeypatch.setattr(mel.announcer, "materialize_archived_timelapse", lambda path: "/cache/stand.mp4")
     mel.run_announcer("test")
@@ -486,7 +534,8 @@ def test_listener_shrinks_video_and_never_drops_completion_on_rejected_upload(mo
     monkeypatch.setattr(mel, "post", lambda message: posted.append(message) or results.pop(0))
     monkeypatch.setattr(mel.announcer, "main", lambda: print("TIMELAPSE_POSTPROCESS:stand.gcode\nPrint complete: Stand"))
     monkeypatch.setattr(mel.announcer, "_timelapse_job_key", lambda token: "stand.gcode")
-    monkeypatch.setattr(mel.announcer, "archive_completed_timelapse", lambda key: "/volume1/x/stand.mp4")
+    monkeypatch.setattr(mel.announcer, "archive_completed_timelapse",
+                        lambda key: mel.announcer.ArchiveOutcome(mel.announcer.ARCHIVED, "/volume1/x/stand.mp4"))
     monkeypatch.setattr(mel.threading, "Thread", _InlineThread)
     monkeypatch.setattr(mel.announcer, "materialize_archived_timelapse", lambda path: "/cache/stand.mp4")
     monkeypatch.setattr(mel, "platform_sized_video", lambda path, max_bytes=None: "/cache/stand.sized.mp4")

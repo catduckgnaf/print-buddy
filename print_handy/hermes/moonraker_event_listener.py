@@ -1011,6 +1011,25 @@ def _dark_capture(job_key):
         return None
 
 
+def _capture_outcome_text():
+    """Why the in-container capture path has no video, in one clause (#540).
+
+    Consulted only when the captured-video lookup found nothing and the
+    dark outcome did not apply: either capture is disabled, or it is
+    enabled but produced no video for the job — no finished capture, or an
+    assembly no encoder could complete (the capture and encode layers log
+    their own specifics, like a dead source, when they happen). The
+    printer-rendered archive states are reported separately and never in
+    these terms.
+    """
+    try:
+        if not go2rtc.capture_enabled(_config.cfg()):
+            return "in-container capture is disabled (timelapse.capture_enabled is off)"
+    except Exception:
+        pass
+    return "in-container capture produced no video for this job"
+
+
 def _timelapse_postprocess(job_key, completion_message, plan_id=None, tl_plan=None):
     try:
         if tl_plan:
@@ -1037,15 +1056,22 @@ def _plan_timelapse_post(job_key, completion_message, tl_plan):
             if captured is not None:
                 clip = plan_timelapse.add_clip(plan, order, captured)
             else:
-                archived = announcer.archive_completed_timelapse(job_key)
-                if archived:
-                    clip = Path(str(announcer.materialize_archived_timelapse(archived)))
+                outcome = announcer.archive_completed_timelapse(job_key)
+                if outcome.state == announcer.ARCHIVED and outcome.path:
+                    clip = Path(str(announcer.materialize_archived_timelapse(outcome.path)))
                     plan_timelapse.add_clip(plan, order, clip)
                 else:
                     dark = _dark_capture(job_key)
                     if dark:
                         log(f"timelapse capture for {job_key!r} kept no frames: all "
                             f"{dark.get('dark_frames')} frame(s) were completely dark (#476)")
+                    elif outcome.state == announcer.ARCHIVE_OFF:
+                        log(f"plan timelapse clip for {job_key!r} unavailable: printer-rendered "
+                            "archive is off (timelapse.archive_host / archive_dir not configured), "
+                            "lookup skipped")
+                    elif outcome.state == announcer.ARCHIVE_FAILED:
+                        log(f"plan timelapse clip for {job_key!r} unavailable: printer-rendered "
+                            f"archive failed: {outcome.detail}")
                     else:
                         log(f"timelapse not rendered for {job_key!r} within the wait")
         except Exception as exc:
@@ -1109,7 +1135,8 @@ def _timelapse_post(job_key, completion_message):
                 _post_completion(f"{completion_message}\n{_timelapse_fallback_text(message, captured.name)}",
                                  completion_message)
             return
-        archived = announcer.archive_completed_timelapse(job_key)
+        outcome = announcer.archive_completed_timelapse(job_key)
+        archived = outcome.path if outcome.state == announcer.ARCHIVED else None
         if not archived:
             dark = _dark_capture(job_key)
             if dark:
@@ -1120,17 +1147,28 @@ def _timelapse_post(job_key, completion_message):
                     f"{completion_message}\n{timelapse_capture.dark_outcome_text(dark.get('dark_frames') or 0)}",
                     completion_message)
                 return
-            log(f"timelapse not rendered for {job_key!r} within the wait")
-            if announcer.TIMELAPSE_ARCHIVE_HOST and announcer.TIMELAPSE_ARCHIVE_DIR:
-                # Archiving is on, so a video was expected: the completion
-                # post itself says it is missing and why, instead of the
-                # video vanishing silently (#373). With archiving off the
-                # bare text is the configured behaviour and stays quiet.
+            # Name each path's actual state (#540): only ARCHIVE_NOT_RENDERED
+            # means a bounded wait elapsed, so only it may be described as a
+            # render timeout. With the archive off the bare text post is the
+            # configured behaviour and stays quiet in the channel; the log
+            # still records both states.
+            capture_text = _capture_outcome_text()
+            if outcome.state == announcer.ARCHIVE_OFF:
+                log(f"no timelapse for {job_key!r}: {capture_text}; printer-rendered archive "
+                    "is off (timelapse.archive_host / archive_dir not configured), lookup skipped")
+                _post_completion(completion_message, completion_message)
+            elif outcome.state == announcer.ARCHIVE_FAILED:
+                log(f"no timelapse for {job_key!r}: {capture_text}; printer-rendered archive "
+                    f"failed: {outcome.detail}")
+                _post_completion(f"{completion_message}\nTimelapse not attached: the printer's "
+                                 "rendered video was found, but archiving it failed "
+                                 "(see the listener log).", completion_message)
+            else:
+                log(f"timelapse not rendered for {job_key!r} within the wait"
+                    + (f" ({outcome.detail})" if outcome.detail else ""))
                 _post_completion(f"{completion_message}\nTimelapse not attached: the printer's "
                                  "rendered video didn't arrive within the wait "
                                  "(see the listener log).", completion_message)
-            else:
-                _post_completion(completion_message, completion_message)
             return
         local_video = announcer.materialize_archived_timelapse(archived)
         try:

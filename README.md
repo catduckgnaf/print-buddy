@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="assets/branding/logo-lockup.png" alt="Print Handy logo" width="480">
+  <img src="assets/branding/logo-lockup-dark.png" alt="Print Handy logo" width="480">
 </p>
 
 # Print Handy

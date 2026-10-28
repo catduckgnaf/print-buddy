@@ -51,7 +51,7 @@ LABELS = (
 _PUBLIC_HOST_SUFFIXES = (
     "discord.com", "discordapp.com", "telegram.org", "github.com",
     "githubusercontent.com", "googleapis.com", "printables.com",
-    "makerworld.com", "thingiverse.com", "bambulab.com",
+    "makerworld.com", "thingiverse.com", "myminifactory.com", "bambulab.com",
 )
 
 _URL = re.compile(r"(?i)\b([a-z][a-z0-9+.-]*://)([^\s'\"<>\]]+)")

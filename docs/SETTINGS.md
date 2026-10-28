@@ -66,8 +66,8 @@ Schema, validation limits and TOML migration: [CONFIGURATION-YAML.md](CONFIGURAT
 | `discord.chat_id` | `PRINT_HANDY__DISCORD__CHAT_ID` | empty | Discord channel ID |
 | `discord.approval_user_id` | `PRINT_HANDY__DISCORD__APPROVAL_USER_ID` | empty | Discord user ID allowed to approve |
 | `discord.upload_max_bytes` | `PRINT_HANDY__DISCORD__UPLOAD_MAX_BYTES` | `9500000` | Largest upload per file on Discord: video is shrunk to it, and a sliced file or Bambu package over it is reported with its host path instead of offered for sending (see [PRINTER-PROFILES.md](PRINTER-PROFILES.md)). Keep it under your server's Discord cap (10 MB unboosted). This row governs Discord only — Telegram and Matrix posts are sized to their own `upload_max_bytes` rows below |
-| `discord.post_print_quiet_s` | `PRINT_HANDY__DISCORD__POST_PRINT_QUIET_S` | `7200` | Quiet time before a chat session resets |
-| `discord.daily_reset_hour` | `PRINT_HANDY__DISCORD__DAILY_RESET_HOUR` | `4` | Hour of the daily session reset |
+| `discord.post_print_quiet_s` | `PRINT_HANDY__DISCORD__POST_PRINT_QUIET_S` | `7200` | Retired (#524): the bot no longer resets chat sessions after prints. Kept in the schema so existing configs still load; session resets are the agent host's own setting |
+| `discord.daily_reset_hour` | `PRINT_HANDY__DISCORD__DAILY_RESET_HOUR` | `4` | Retired (#524): see `post_print_quiet_s`. The shipped Hermes profile template still resets its sessions daily at 4 AM on its own config |
 | `discord.timezone` | `PRINT_HANDY__DISCORD__TIMEZONE` | `America/New_York` | Display and reset time zone (IANA name) |
 | `discord.bot_name` | `PRINT_HANDY__DISCORD__BOT_NAME` | `Print Handy` | Name the bot uses for itself |
 | `discord.question_timeout_s` | `PRINT_HANDY__DISCORD__QUESTION_TIMEOUT_S` | `1800` | How long a Discord question waits for a button |

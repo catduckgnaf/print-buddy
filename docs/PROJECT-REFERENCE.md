@@ -219,8 +219,8 @@ chmod 600 ~/.config/myminifactory/token
 | | `stock_api_port` | `8898` | Flashforge stock API for IFS presence |
 | `discord` | `chat_id`, `approval_user_id` | empty | Channel and approver IDs |
 | | `upload_max_bytes` | `9500000` | Largest upload before video is shrunk |
-| | `post_print_quiet_s` | `7200` | Quiet time before a chat session resets |
-| | `daily_reset_hour`, `timezone` | `4`, `America/New_York` | Daily session reset |
+| | `post_print_quiet_s` | `7200` | Retired (#524): the bot no longer resets chat sessions; kept so existing configs load |
+| | `daily_reset_hour`, `timezone` | `4`, `America/New_York` | `daily_reset_hour` retired with it (#524); `timezone` is the display zone |
 | | `bot_name` | `Print Handy` | Name the bot uses in the roast persona and the rendered profile templates (`SOUL.md`, locale strings). Set it to anything, for example your old name |
 | | `question_timeout_s` | `1800` | How long a Discord question waits for a button press |
 | | `safety_confirm_timeout_s` | `600` | How long a safety confirmation (stop, resume, reboot, cold-pull go-ahead) waits |

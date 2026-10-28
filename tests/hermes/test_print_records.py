@@ -1,6 +1,5 @@
 import importlib.util
 import json
-import sqlite3
 
 import pytest
 import sys
@@ -19,20 +18,6 @@ def test_batch_copy_and_multipart_guards(monkeypatch, tmp_path):
     monkeypatch.setattr(watcher, "_queued_jobs", lambda: [{"job_id": "next"}])
     assert watcher._batch_fully_complete({"total_copies": 1, "copy_index": 1}) is False
 
-
-@pytest.mark.usefixtures("hermes_agent")
-def test_silent_reset_promotes_session_without_gateway_reply(tmp_path, monkeypatch):
-    db_path = tmp_path / "state.db"
-    with sqlite3.connect(db_path) as conn:
-        conn.execute("CREATE TABLE sessions (id TEXT PRIMARY KEY, source TEXT, chat_id TEXT, archived INTEGER, started_at REAL, last_activity_at REAL, ended_at REAL, end_reason TEXT, parent_session_id TEXT, reset_generation INTEGER DEFAULT 0)")
-        conn.execute("INSERT INTO sessions (id, source, chat_id, archived, started_at, last_activity_at, ended_at, end_reason) VALUES ('s1', 'discord', '100000000000000001', 0, 1, 2, NULL, NULL)")
-        conn.commit()
-    monkeypatch.setattr(watcher, "PROFILE_HOME", tmp_path)
-    ok, detail = watcher.silently_reset_discord_session("100000000000000001", "s1")
-    assert ok is True
-    assert "silently" in detail
-    with sqlite3.connect(db_path) as conn:
-        assert conn.execute("SELECT end_reason FROM sessions WHERE id='s1'").fetchone()[0] == "print_complete_auto_reset"
 
 def test_record_keeps_unavailable_values_blank():
     data = records.build_record_data(
@@ -132,42 +117,10 @@ def test_multipart_plan_defers_until_every_part(tmp_path, monkeypatch):
     assert [(part["id"], part["completed_quantity"]) for part in plan["parts"]] == [("a", 1), ("b", 0)]
 
 
-def test_archive_dry_run_targets_one_verified_session(tmp_path):
-    db_path = tmp_path / "state.db"
-    with sqlite3.connect(db_path) as conn:
-        conn.execute("CREATE TABLE sessions (id TEXT PRIMARY KEY, source TEXT, chat_id TEXT, archived INTEGER, started_at REAL, last_activity_at REAL)")
-        conn.execute("INSERT INTO sessions VALUES ('s1', 'discord', '100000000000000001', 0, 1, 2)")
-        conn.execute("INSERT INTO sessions VALUES ('other', 'discord', 'different', 0, 1, 2)")
-        conn.commit()
-    matched, reason = records.discover_discord_session("100000000000000001", db_path=db_path)
-    assert matched == "s1"
-    assert "matched" in reason
-    ok, reason = records.archive_discord_session("s1", "100000000000000001", dry_run=True, db_path=db_path)
-    assert ok is True
-    assert "dry run" in reason
-    with sqlite3.connect(db_path) as conn:
-        assert conn.execute("SELECT archived FROM sessions WHERE id = 's1'").fetchone()[0] == 0
-
-
-def test_archive_refuses_ambiguous_channel(tmp_path):
-    db_path = tmp_path / "state.db"
-    with sqlite3.connect(db_path) as conn:
-        conn.execute("CREATE TABLE sessions (id TEXT PRIMARY KEY, source TEXT, chat_id TEXT, archived INTEGER, started_at REAL, last_activity_at REAL)")
-        conn.executemany(
-            "INSERT INTO sessions VALUES (?, 'discord', '100000000000000001', 0, 1, ?)",
-            [("s1", 2), ("s2", 3)],
-        )
-        conn.commit()
-    matched, reason = records.discover_discord_session("100000000000000001", db_path=db_path)
-    assert matched is None
-    assert "refusing cleanup" in reason
-
-
 def test_watcher_records_mocked_moonraker_completion(tmp_path, monkeypatch):
     monkeypatch.setattr(records, "PRINTS_DIR", tmp_path / "Prints")
     monkeypatch.setattr(records, "PLANS_DIR", tmp_path / "Plans")
     monkeypatch.setattr(watcher, "STATE_PATH", tmp_path / "state.json")
-    monkeypatch.setattr(watcher, "PROFILE_HOME", tmp_path / "profile")
     context_path = tmp_path / "context.json"
     context_path.write_text(json.dumps({"jobs": {"part.gcode": {
         "selected_option": records.NATIVE_PRINT_OPTIONS[0],
@@ -191,7 +144,8 @@ def test_watcher_records_mocked_moonraker_completion(tmp_path, monkeypatch):
     assert record["print_duration_seconds"] == 30 and record["print_number"] is None
     state = json.loads((tmp_path / "state.json").read_text())
     assert state["record_written"] is True
-    assert state["pending_cleanups"][0]["cleanup_due_at"] > 0
+    # #524: a completion no longer queues any agent-session cleanup.
+    assert "pending_cleanups" not in state
 
 
 def test_failing_record_write_does_not_break_the_watcher(tmp_path, monkeypatch):
@@ -200,7 +154,6 @@ def test_failing_record_write_does_not_break_the_watcher(tmp_path, monkeypatch):
     monkeypatch.setattr(records, "PRINTS_DIR", tmp_path / "Prints")
     monkeypatch.setattr(records, "PLANS_DIR", tmp_path / "Plans")
     monkeypatch.setattr(watcher, "STATE_PATH", tmp_path / "state.json")
-    monkeypatch.setattr(watcher, "PROFILE_HOME", tmp_path / "profile")
     context_path = tmp_path / "context.json"
     context_path.write_text(json.dumps({"jobs": {"part.gcode": {
         "selected_option": records.NATIVE_PRINT_OPTIONS[0],
@@ -225,69 +178,6 @@ def test_failing_record_write_does_not_break_the_watcher(tmp_path, monkeypatch):
     state = json.loads((tmp_path / "state.json").read_text())
     assert "records folder unavailable" in state["record_error"]
     assert not state.get("record_written")
-
-def _session_db(tmp_path, rows):
-    db_path = tmp_path / "state.db"
-    with sqlite3.connect(db_path) as conn:
-        conn.execute("CREATE TABLE sessions (id TEXT PRIMARY KEY, source TEXT, chat_id TEXT, archived INTEGER, started_at REAL, last_activity_at REAL, ended_at REAL, end_reason TEXT, parent_session_id TEXT, reset_generation INTEGER DEFAULT 0)")
-        for sid, archived, act in rows:
-            conn.execute("INSERT INTO sessions (id, source, chat_id, archived, started_at, last_activity_at) VALUES (?, 'discord', '100000000000000001', ?, 1000, ?)", (sid, archived, act))
-        conn.commit()
-    return db_path
-
-
-def _reasons(db_path):
-    with sqlite3.connect(db_path) as conn:
-        return dict(conn.execute("SELECT id, end_reason FROM sessions").fetchall())
-
-
-def _patch_idle(monkeypatch, tmp_path, now, plans=()):
-    monkeypatch.setattr(watcher, "PROFILE_HOME", tmp_path)
-    monkeypatch.setattr(watcher, "_queued_jobs", lambda: [])
-    monkeypatch.setattr(watcher, "_open_multipart_plans", lambda: set(plans))
-    monkeypatch.setattr(watcher, "_daily_boundary_epoch", lambda now=None: 50_000.0)
-    monkeypatch.setattr("time.time", lambda: now)
-
-
-@pytest.mark.usefixtures("hermes_agent")
-def test_post_print_quiet_reset_after_two_hours(tmp_path, monkeypatch):
-    now = 100_000.0
-    db = _session_db(tmp_path, [("quiet", 0, now - 7300), ("chatty", 0, now - 60)])
-    _patch_idle(monkeypatch, tmp_path, now)
-    ok, detail, disarm = watcher.check_and_reset_idle_discord_session(armed_at=now - 7300)
-    assert ok is True and disarm is True and "post_print=1" in detail
-    assert _reasons(db) == {"quiet": "post_print_2h_quiet_reset", "chatty": None}
-
-
-def test_quiet_timer_does_not_fire_early_or_when_unarmed(tmp_path, monkeypatch):
-    now = 100_000.0
-    db = _session_db(tmp_path, [("s", 0, now - 3600)])
-    _patch_idle(monkeypatch, tmp_path, now)
-    assert watcher.check_and_reset_idle_discord_session(armed_at=now - 3600)[0] is False
-    assert watcher.check_and_reset_idle_discord_session(armed_at=None)[0] is False
-    assert _reasons(db) == {"s": None}
-
-
-@pytest.mark.usefixtures("hermes_agent")
-def test_daily_4am_backup_resets_archived_and_every_stale_session(tmp_path, monkeypatch):
-    """Regression: an auto-archived live session escaped reset for 16 days. The 4 AM
-    backup must end every unended row whose last activity predates the boundary."""
-    now = 100_000.0
-    db = _session_db(tmp_path, [("old_archived", 1, 1000.0), ("fresh_user2", 0, now - 60)])
-    _patch_idle(monkeypatch, tmp_path, now)
-    ok, detail, _ = watcher.check_and_reset_idle_discord_session(armed_at=None)
-    assert ok is True and "daily=1" in detail
-    assert _reasons(db) == {"old_archived": "daily_4am_backup_reset", "fresh_user2": None}
-
-
-def test_open_multipart_plan_blocks_every_reset(tmp_path, monkeypatch):
-    now = 100_000.0
-    db = _session_db(tmp_path, [("s", 0, 1000.0)])
-    _patch_idle(monkeypatch, tmp_path, now, plans=["desk-organizer"])
-    ok, detail, disarm = watcher.check_and_reset_idle_discord_session(armed_at=1000.0)
-    assert ok is False and disarm is False and "desk-organizer" in detail
-    assert _reasons(db) == {"s": None}
-
 
 def test_start_record_then_cancel_finalizes_same_record(tmp_path, monkeypatch):
     monkeypatch.setattr(records, "PRINTS_DIR", tmp_path / "Prints")
@@ -417,8 +307,6 @@ def test_cancel_to_standby_finalizes_record_from_history(tmp_path, monkeypatch):
     monkeypatch.setattr(watcher, "get_json", lambda path: history if path.startswith("/server/history") else {})
     monkeypatch.setattr(watcher, "get_active_spool", lambda: {})
     monkeypatch.setattr(watcher, "get_file_metadata", lambda filename: {})
-    monkeypatch.setattr(watcher, "process_pending_cleanups", lambda state, now=None: state)
-    monkeypatch.setattr(watcher, "check_and_reset_idle_discord_session", lambda *a, **k: (False, ""))
     for _ in range(3):
         assert watcher.main() == 0
     record = json.loads(Path(ctx["record_path"]).read_text())

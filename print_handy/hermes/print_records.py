@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Durable Print Handy print records and safe session cleanup.
+"""Durable Print Handy print records.
 
 Every print gets one self-contained JSON record in the records folder
 (``<records vault>/Prints/print-NNNN.json``, named by its permanent print
@@ -18,7 +18,6 @@ import hashlib
 import json
 import os
 import re
-import sqlite3
 import sys
 import tempfile
 from datetime import datetime, timezone
@@ -689,75 +688,6 @@ def update_cleanup_record(record_path: str, status: str, session_id: str | None 
     if detail:
         record["cleanup_detail"] = detail
     _atomic_write(path, json.dumps(record, ensure_ascii=False, indent=2) + "\n")
-
-
-def _profile_home() -> Path:
-    # Pinned: HERMES_HOME in cron is the multiplex launch profile, not 3dprinting.
-    return _config.pinned_hermes_home()
-
-
-def discover_discord_session(chat_id: str, not_before: float | None = None, db_path: Path | None = None) -> tuple[str | None, str]:
-    """Return one unarchived recent session, or an explicit ambiguity reason."""
-    path = db_path or (_profile_home() / "state.db")
-    try:
-        with sqlite3.connect(path) as conn:
-            conn.row_factory = sqlite3.Row
-            rows = conn.execute(
-                "SELECT id, started_at, last_activity_at FROM sessions "
-                "WHERE source = 'discord' AND chat_id = ? AND archived = 0 "
-                "AND (? IS NULL OR COALESCE(last_activity_at, started_at) >= ?) "
-                "ORDER BY COALESCE(last_activity_at, started_at) DESC",
-                (str(chat_id), not_before, not_before),
-            ).fetchall()
-    except (OSError, sqlite3.Error) as exc:
-        return None, f"session lookup failed: {exc}"
-    if not rows:
-        return None, "no unarchived Discord session matched the confirmed channel"
-    if len(rows) > 1:
-        return None, f"refusing cleanup because {len(rows)} unarchived sessions matched the channel"
-    return str(rows[0]["id"]), "unique channel session matched"
-
-
-def archive_discord_session(
-    session_id: str,
-    chat_id: str,
-    *,
-    dry_run: bool = False,
-    db_path: Path | None = None,
-) -> tuple[bool, str]:
-    """Archive exactly one verified session through Hermes' SessionDB API.
-
-    This is a reversible soft archive. It never deletes messages and refuses a
-    session whose source or channel does not match the intended Discord route.
-    """
-    path = db_path or (_profile_home() / "state.db")
-    try:
-        with sqlite3.connect(path) as conn:
-            conn.row_factory = sqlite3.Row
-            row = conn.execute(
-                "SELECT id, source, chat_id, archived FROM sessions WHERE id = ?",
-                (str(session_id),),
-            ).fetchone()
-            if row is None:
-                return False, "session no longer exists"
-            if row["source"] != "discord" or str(row["chat_id"]) != str(chat_id):
-                return False, "session route did not match the confirmed Discord channel"
-            if row["archived"]:
-                return True, "session was already archived"
-        if dry_run:
-            return True, f"dry run would archive session {session_id}"
-        _config.add_hermes_agent_to_path()
-        from hermes_state import SessionDB  # type: ignore
-        db = SessionDB(path)
-        try:
-            changed = bool(db.set_session_archived(str(session_id), True))
-        finally:
-            close = getattr(db, "close", None)
-            if callable(close):
-                close()
-        return (changed, "session archived through SessionDB" if changed else "session archive made no change")
-    except (OSError, sqlite3.Error, ImportError, RuntimeError) as exc:
-        return False, f"session archive failed: {exc}"
 
 
 def native_option_labels() -> tuple[str, str, str]:

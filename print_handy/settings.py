@@ -1072,19 +1072,20 @@ def _validate_design(data):
     """The [design] section (#388 Stage 1; auto-on posture from the close-out ruling).
 
     ``enabled`` is tri-state. Absent (None here) means AUTO: design turns
-    on whenever a design/LLM endpoint is resolvable — standalone resolves
-    [design] inheriting [llm]; Hermes uses the plugin's ``print_design``
-    auxiliary-task lane — the same posture roasts have via
-    ``vision.roast_enabled`` (on whenever an endpoint is available).
+    on whenever a design/LLM endpoint is resolvable — every mode resolves
+    [design] inheriting [llm] first; Hermes mode additionally counts the
+    plugin's ``print_design`` auxiliary-task lane as available — the same
+    posture roasts have via ``vision.roast_enabled`` (on whenever an
+    endpoint is available).
     ``enabled = true`` forces it on (an unconfigured endpoint is then a
     visible failure, not a silent off), and ``enabled = false`` turns it
     off in all cases. ``chat_url``, ``model`` and ``api_key_env`` are empty
     to inherit the [llm] values, so the common single-endpoint setup only
-    sets ``design.model`` (a stronger model for design turns). In Hermes
-    mode these endpoint fields are not used at all: the plugin calls the
-    Hermes host's own LLM lane with its registered ``print_design``
-    auxiliary task, and the profile's ``auxiliary.print_design`` block is
-    where the design model is pinned (see docs/DESIGN.md). The shipped
+    sets ``design.model`` (a stronger model for design turns). The Hermes
+    host's own LLM lane (with its registered ``print_design`` auxiliary
+    task, pinned in the profile's ``auxiliary.print_design`` block) is
+    only the fallback for a Hermes install with no endpoint configured
+    (#524 Stage 3; see docs/DESIGN.md). The shipped
     config files deliberately carry no ``enabled`` line, so a config that
     never mentions it gets the auto posture; the effective state is
     resolved by ``print_handy.core.design.effective_enabled``.

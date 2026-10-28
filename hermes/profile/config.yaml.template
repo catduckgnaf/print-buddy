@@ -17,8 +17,11 @@ providers:
     stale_timeout_seconds: 60
 # Auxiliary tasks: models Hermes calls for side jobs, separate from the chat
 # model above. Uncomment print_design to give /print-design (#388) a stronger
-# model than chat; chat itself stays on the profile model. The design timeout
-# comes from Print Handy's [design] timeout_s, not from here.
+# model than chat; chat itself stays on the profile model. Note: a configured
+# Print Handy [design] (or inherited [llm]) endpoint takes precedence over
+# this pin (#524) — print_design here is the fallback for a Hermes install
+# with no endpoint configured. The design timeout comes from Print Handy's
+# [design] timeout_s, not from here.
 # auxiliary:
 #   print_design:
 #     provider: ${LLM_PROVIDER}

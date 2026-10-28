@@ -294,7 +294,8 @@ async def guided_dispatch(event, gateway, **kwargs):
 
 # The Hermes plugin LLM lane (ctx.llm), stashed by register() when the host
 # offers it (#388 Stage 1). The standalone Router offers neither attribute,
-# so this stays None there and design uses its HTTP transport instead.
+# so this stays None there. Design uses it only as the fallback when no
+# [design]/[llm] HTTP endpoint resolves (#524 Stage 3).
 _HERMES_LLM = None
 
 
@@ -315,15 +316,22 @@ def _design_root(cfg):
 def _design_transport(cfg):
     """(complete, kind) for a design turn, or (None, '') when no model is reachable.
 
-    Hermes mode prefers the host's plugin LLM lane with the registered
-    print_design auxiliary task — [design].model is NOT consulted there, the
-    profile's auxiliary.print_design block is the setting (Stage 0 on #388).
-    The HTTP transport (standalone, or the Hermes fallback when ctx.llm is
-    unavailable) resolves its endpoint from [design] inheriting [llm].
+    The HTTP transport is the normal path in EVERY mode (#524 Stage 3):
+    its endpoint resolves from [design] inheriting [llm], Hermes mode
+    included. The host's plugin LLM lane (ctx.llm, with the registered
+    print_design auxiliary task — Stage 0 on #388) is the legacy fallback,
+    used only when no HTTP endpoint resolves: an install with no
+    [design]/[llm] endpoint configured sees no change at all, and the
+    profile's auxiliary.print_design block stays its design model.
     """
     from print_handy.core import design
     design_cfg = cfg.get('design') or {}
     timeout_s = int(design_cfg.get('timeout_s') or 180)
+    if design.resolve_http_config(cfg) is not None:
+        def http(messages):
+            return asyncio.to_thread(design.http_complete, cfg, messages)
+
+        return http, 'http'
     if (cfg.get('bot') or {}).get('mode') == 'hermes' and _HERMES_LLM is not None:
         llm = _HERMES_LLM
 
@@ -331,11 +339,6 @@ def _design_transport(cfg):
             return await design.hermes_complete(llm, messages, timeout_s=timeout_s)
 
         return hermes, 'hermes'
-    if design.resolve_http_config(cfg) is not None:
-        def http(messages):
-            return asyncio.to_thread(design.http_complete, cfg, messages)
-
-        return http, 'http'
     return None, ''
 
 
@@ -555,9 +558,10 @@ async def design_dispatch(event, gateway, **kwargs):
         return {'action': 'skip', 'reason': 'design not enabled'}
     if complete is None:
         if design_raw is True:
-            await say('Design is enabled but no design model is configured: in standalone mode set '
-                      '[design] chat_url/model (or the [llm] values they inherit); in Hermes mode the '
-                      'profile needs the print_design auxiliary task. Nothing was designed.')
+            await say('Design is enabled but no design model is configured: set '
+                      '[design] chat_url/model (or the [llm] values they inherit); in Hermes mode '
+                      'without an endpoint, the profile needs the print_design auxiliary task. '
+                      'Nothing was designed.')
             return {'action': 'skip', 'reason': 'design model not configured'}
         # Auto posture with nothing configured anywhere: the same "not set
         # up" answer the command has always given (#422).
@@ -3837,6 +3841,9 @@ def register(ctx):
     # AI design (#388): when the host offers the plugin LLM lane, register the
     # design auxiliary task (the operator pins its model in the profile's
     # auxiliary.print_design block) and keep the lane for design_dispatch.
+    # Since #524 Stage 3 the lane is design's fallback — a configured
+    # [design]/[llm] HTTP endpoint wins in every mode — but the registration
+    # stays so endpoint-less Hermes installs keep working unchanged.
     # The standalone Router offers neither API, so both stay unset there.
     global _HERMES_LLM
     if hasattr(ctx, 'register_auxiliary_task'):

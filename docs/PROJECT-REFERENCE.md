@@ -233,7 +233,7 @@ chmod 600 ~/.config/myminifactory/token
 | | `health_port`, `health_stale_s` | `0`, `120` | Standalone bot: `GET /healthz` port (0 off) and heartbeat age limit |
 | | `sync_commands` | `true` | Standalone bot: register slash commands at startup |
 | `llm` | `chat_url`, `model`, `api_key_env`, `timeout_s` | empty, empty, `LLM_API_KEY`, `20` | Optional OpenAI-compatible model for standalone free-text replies; never starts anything itself |
-| `design` | `enabled`, `chat_url`, `model`, `api_key_env`, `timeout_s`, `repair_attempts` | unset (auto), empty, empty, empty, `180`, `3` | `/print-design` (alias `/design`) AI design (#388); `enabled` unset = auto-on when an endpoint is configured, `false` forces off; empty fields inherit `llm`; in Hermes mode the profile's `auxiliary.print_design` block picks the model instead |
+| `design` | `enabled`, `chat_url`, `model`, `api_key_env`, `timeout_s`, `repair_attempts` | unset (auto), empty, empty, empty, `180`, `3` | `/print-design` (alias `/design`) AI design (#388); `enabled` unset = auto-on when an endpoint is configured, `false` forces off; empty fields inherit `llm`; the endpoint wins in Hermes mode too, and the profile's `auxiliary.print_design` block is the fallback when no endpoint is configured |
 | `listener` | `tick_s` | `600` | Listener housekeeping interval |
 | | `ifs_presence_poll_s` | `15` | IFS spool presence poll |
 | | `spool_nag_s` | `600` | Reminder interval for an unanswered spool question |

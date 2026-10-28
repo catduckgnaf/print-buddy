@@ -22,6 +22,8 @@ ALLOWED = (
     re.compile(r"/print-again(?! (?:stop|cancel|clear)\b)(?: [\w .#-]{1,60})?", re.I),
     re.compile(r"/print-next(?: [\w.-]{1,80}){0,2}"),
     re.compile(r"/print-(?:stop|resume|reboot|coldpull)"),
+    # The guided nozzle change asks for its own confirmations before heating (#513).
+    re.compile(r"/nozzle(?: change)?"),
     re.compile(r"/print-maintenance(?: (?:full|quick))?"),
     re.compile(r"/print-lookup(?: [\w .#/-]{1,80})?"),
     re.compile(r"/print-troubleshoot(?: (?:first-layer|clog|heat-creep|bed-level|ringing))?"),

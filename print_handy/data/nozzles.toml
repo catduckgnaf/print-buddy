@@ -9,12 +9,20 @@ flow_multiplier = 1.0
 
 [types.stainless_steel]
 max_temperature_c = 300.0
-temp_offset_c = 0.0
+# Lower thermal conductivity than brass (#513): +5 C by default so the melt
+# zone matches the brass baseline for EVERY filament material — the offset
+# composes on top of whatever filament baseline (PLA, PETG, ABS, composites,
+# ...) is resolved, it is not tied to any one material. Override per type in
+# [nozzle_temp_offsets] (-10..+15 C).
+temp_offset_c = 5.0
 flow_multiplier = 0.95
 
 [types.hardened_steel]
 max_temperature_c = 450.0
-temp_offset_c = 0.0
+# Same low-conductivity compensation as stainless steel (#513): +5 C default
+# (the documented +5..+10 C band; 5 is the conservative end and operators can
+# raise it to 10 in [nozzle_temp_offsets]).
+temp_offset_c = 5.0
 flow_multiplier = 0.95
 
 [types.ruby]

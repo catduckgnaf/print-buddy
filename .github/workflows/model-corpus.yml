@@ -36,6 +36,13 @@ jobs:
           sha256sum -c SHA256SUMS
           tar -xzf print-handy-corpus-v1.tar.gz
           test "$(find models -type f \( -name '*.3mf' -o -name '*.stl' \) | wc -l)" -eq 171
+          # corpus-v2: the #458 complex cases (manifest: tests/corpus/complex_cases.toml).
+          mkdir v2 && cd v2
+          gh release download corpus-v2 --repo catduckgnaf/print-handy-corpus --dir .
+          sha256sum -c SHA256SUMS
+          tar -xzf print-handy-corpus-v2.tar.gz -C ..
+          cd ..
+          test "$(find models -type f \( -name '*.3mf' -o -name '*.stl' \) | wc -l)" -gt 171
       - name: Run fake-Discord corpus shard
         env:
           PRINT_HANDY_PRIVATE_CORPUS: ${{ runner.temp }}/corpus/models

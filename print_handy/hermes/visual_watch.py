@@ -104,7 +104,7 @@ def visual_verdict(image, prompt, *, chat_url, model, api_key, context):
         parsed = json.loads(_strip_json_fence(result["choices"][0]["message"]["content"]))
         return str(parsed.get("verdict", "uncertain")).casefold(), str(parsed.get("reason", ""))[:300]
     except Exception as exc:
-        return "uncertain", f"vision check failed: {exc!r}"
+        return "uncertain", "the vision check could not be completed"
 
 
 class VisualPrintWatch:

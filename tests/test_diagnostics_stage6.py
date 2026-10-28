@@ -1,6 +1,7 @@
 """#390 Stage 6: the Discord action handlers' generic failure posts meet
-the operator bar — what failed, the operator detail, the state/remedy
-note, and the stable greppable PB_* marker, redacted."""
+the operator bar — what failed, the state/remedy note, and the stable
+greppable PB_* marker, redacted. #467: the raw exception text is no
+longer posted; it is classified for the marker and kept in the log."""
 import importlib.util
 import re
 from pathlib import Path
@@ -12,11 +13,13 @@ plugin = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(plugin)
 
 
-def test_failure_post_carries_label_detail_note_and_marker():
+def test_failure_post_carries_label_note_and_marker_without_raw_detail():
     post = plugin._failure_post(
         "Stop", RuntimeError("printer did not answer"), "Check the printer screen.",
         subsystem="printer")
-    assert post.startswith("Stop failed: printer did not answer. Check the printer screen.")
+    assert post.startswith("Stop didn't work.")
+    assert "Check the printer screen." in post
+    assert "printer did not answer" not in post  # raw detail demoted to the log (#467)
     assert "Reference: PB_PRINTER_UNKNOWN" in post
 
 
@@ -33,10 +36,10 @@ def test_failure_post_marker_reflects_the_classified_category():
 
 def test_failure_post_is_redacted():
     post = plugin._failure_post(
-        "Stop", RuntimeError("auth failed token=supersecretvalue"), "Check the printer screen.",
+        "Stop", RuntimeError("auth failed token=sekrit123"), "Check the printer screen.",
         subsystem="printer")
-    assert "supersecretvalue" not in post
-    assert "***" in post
+    assert "sekrit123" not in post
+    assert "auth failed" not in post  # the whole raw exception text stays out of chat (#467)
 
 
 def test_every_generic_handler_post_uses_the_helper():
@@ -45,7 +48,8 @@ def test_every_generic_handler_post_uses_the_helper():
     # stop, resume, print again, restart, alert buttons) all route
     # through _failure_post; no bare f-string failure post remains.
     assert len(re.findall(r"_failure_post\(", source)) >= 9  # helper + 8 call sites
-    # The only "failed: {exc}" f-strings left are the helper's own and the
-    # curated DesignError post (a deliberate, operator-phrased error type,
-    # in the same class as the NextPlateError refusals — audited, unchanged).
-    assert len(re.findall(r"failed: \{exc\}", source)) == 2
+    # No "failed: {exc}" f-string remains in the helper (the raw text is
+    # classified, not posted, #467); the only "did not work: {exc}" left is
+    # the curated DesignError post (a deliberate, operator-phrased error
+    # type, in the same class as the NextPlateError refusals — audited).
+    assert len(re.findall(r"failed: \{exc\}", source)) == 0

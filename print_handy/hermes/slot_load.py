@@ -108,7 +108,7 @@ def load_slot(
         logger.exception("Error executing slot load")
         return {
             "ok": False,
-            "error": f"Slot load failed: {exc}",
+            "error": "The slot load did not run. Check the printer state on its screen before trying again.",
         }
     finally:
         pc._CONTROL_LOCK.release()

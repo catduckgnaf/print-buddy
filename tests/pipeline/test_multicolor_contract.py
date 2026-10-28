@@ -164,7 +164,7 @@ def test_launch_invalid_zero_submission(tmp_path,fault):
          patch.object(job,'_printer_phase',return_value=('standby','','Ready')), \
          patch.object(job,'mesh_readiness',return_value={'display_off':0,'profile':'MESH_DATA','problem':None}), \
          patch.object(job.subprocess,'run',side_effect=AssertionError('invalid upload reached')):
-        with pytest.raises(SystemExit,match='G-CODE REFUSED'):
+        with pytest.raises(SystemExit,match='did not pass its safety checks'):
             cli(['print-now',str(path)])
     assert submissions==[]
 

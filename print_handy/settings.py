@@ -110,6 +110,7 @@ OPTIONAL_KEYS = {("printer", "nozzle_type"): str, ("printer", "tool_count"): int
                  ("flashforge_stock", "host"): str,
                  ("prusa", "link_host"): str, ("prusa", "api_key_env"): str,
                  ("discord", "denied_user_ids"): str,
+                 ("discord", "chat_llm_enabled"): bool,
                  ("elegoo_sdcp", "host"): str}
 # List settings that may also come from the environment, as a comma- or space-separated value
 # (PRINT_HANDY__DELIVERY__METHODS=discord,bambu_handoff,printer). Every other list or table is file
@@ -1130,6 +1131,14 @@ def _validate_bot(data):
         raise SettingsError(f"[discord] token_env must be an environment variable name, got {discord['token_env']!r}")
     user_ids(discord.setdefault("allowed_user_ids", ""))
     user_ids(discord.setdefault("denied_user_ids", ""), key="denied_user_ids")
+    # Discord's chat-LLM switch (#466): on by default, so a configured [llm]
+    # words free-text replies on Discord exactly as before. False runs
+    # Discord as a pure bot — unmatched text gets the short reply — while
+    # [llm] stays configured for the features that inherit it (/print-design)
+    # and the separately gated roast/vision features keep their own switches.
+    chat_llm_enabled = discord.setdefault("chat_llm_enabled", True)
+    if not isinstance(chat_llm_enabled, bool):
+        raise SettingsError(f"[discord] chat_llm_enabled must be true or false, got {chat_llm_enabled!r}")
     _validate_telegram(data)
     _validate_matrix(data)
     llm = data.setdefault("llm", {})

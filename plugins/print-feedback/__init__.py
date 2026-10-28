@@ -56,20 +56,20 @@ def _wait_key(source):
 
 
 def _failure_post(label, exc, note, *, subsystem):
-    """One Discord failure post meeting the #390 operator bar (stage 6).
+    """One Discord failure post meeting the #390 bar, in #467 plain language.
 
-    ``label`` says what failed, the exception text is the detail the print
-    paths already phrase for operators, ``note`` says what state the print
-    is in and what to do, and the line ends with the stable greppable
-    ``PB_<SUBSYSTEM>_<CATEGORY>`` marker so a support thread can start from
-    one searchable string. The result is redacted like every diagnostics
-    string, so no secret material can ride along.
+    ``label`` says what was being done, in the person's words; ``note``
+    says what state things are in and what to do next. The raw exception
+    text is *not* posted (#467): it is classified for the stable greppable
+    ``PB_<SUBSYSTEM>_<CATEGORY>`` marker that ends the post, and the full
+    detail stays in the log and the diagnostics bundle. Built through the
+    shared ``diagnostics.plain_post`` so every platform surface uses the
+    one wording system.
     """
-    from print_handy import diagnostics, logs
-    category = diagnostics.classify(exc)
-    return logs.redact(
-        f'{label} failed: {exc}. {note}\n'
-        f'Reference: {diagnostics.marker(subsystem, category)}')
+    from print_handy import diagnostics
+    return diagnostics.plain_post(
+        f"{label} didn't work.", next_step=note,
+        subsystem=subsystem, exc=exc)
 
 
 # Platforms whose standalone sources these handlers serve (#164): Discord,
@@ -558,11 +558,12 @@ async def design_dispatch(event, gateway, **kwargs):
                     session, instruction or
                     'Show the model unchanged so I can preview it before asking for changes.')
     except design.DesignError as exc:
-        await say(f'Design turn failed: {exc}')
+        await say(f'That design change did not work: {exc} Nothing was sliced or started.')
         return {'action': 'skip', 'reason': 'design turn failed'}
     except Exception:
         logger.exception('design turn failed unexpectedly')
-        await say('Design turn failed unexpectedly. Nothing was sliced or started.')
+        await say('That design change did not work, and I could not tell why from here. Nothing was sliced or started. '
+                  'If it keeps happening, run `/print-handy bundle` and share the bundle so it can be looked into.')
         return {'action': 'skip', 'reason': 'design turn failed'}
     session = result['session']
     lines = [f"**Design turn {session['turns']}** — {design.summary_text(result)}"]
@@ -863,6 +864,17 @@ async def color_selection_dispatch(event, gateway, **kwargs):
     return {'action': 'skip', 'reason': 'deterministic color selection handled'}
 
 
+def intake_plain_start_failure(detail):
+    """Plain chat wording for a print-now detail tail (#467).
+
+    The tail itself (REFUSED lines, upload/start stderr) stays in the
+    receipt and log; chat gets prepared_intake's translation, which the
+    intake flow already uses for the same tails.
+    """
+    from print_handy.core import prepared_intake
+    return prepared_intake.plain_start_failure(detail)
+
+
 USE_LOADED_SPOOL = 'Use the loaded spool · bed is clear'
 SPOOL_CHANGED = 'spool changed since slicing'
 
@@ -977,7 +989,8 @@ async def print_next_dispatch(event, gateway, **kwargs):
             if not ok and SPOOL_CHANGED in str(detail):
                 ok, detail = await _offer_spool_change(adapter, source, metadata, print_next, target, detail)
             message = (None if ok
-                       else f"Did not start {target['label']}. Not retrying.\n{detail}")
+                       else f"Did not start {target['label']}. Not retrying.\n"
+                            + intake_plain_start_failure(detail))
             if not ok and _start_refused_needs_restart(detail):
                 from print_handy.hermes import print_control as pc
                 message += '\n' + await _offer_force_restart(adapter, source, metadata, pc, detail,
@@ -1135,7 +1148,7 @@ async def coldpull_dispatch(event, gateway, **kwargs):
                                                     **_pkw(pid))
     except Exception as exc:
         logger.exception('/print-coldpull failed')
-        message = f'Cold pull stopped: {exc}. Do not retry unless printer state is checked.'
+        message = 'The cold pull stopped early. Do not retry until the printer state is checked on its screen.'
     finally:
         _seen.pop(key, None)
     await adapter.send(chat_id=source.chat_id, metadata=metadata, content=message)
@@ -1241,7 +1254,7 @@ async def maintenance_dispatch(event, gateway, **kwargs):
         await adapter.send(chat_id=source.chat_id, metadata=metadata, content=message)
     except Exception as exc:
         logger.exception('maintenance workflow failed')
-        await adapter.send(chat_id=source.chat_id, metadata=metadata, content=f'Maintenance stopped: {exc}. No further printer action was sent.')
+        await adapter.send(chat_id=source.chat_id, metadata=metadata, content='The maintenance checklist stopped early. No further printer action was sent — check the printer screen before retrying.')
     finally:
         _seen.pop(key, None)
     return {'action': 'skip', 'reason': 'maintenance handled'}
@@ -1317,7 +1330,7 @@ async def runout_intake_dispatch(event, gateway, **kwargs):
         except Exception as exc:
             logger.exception('spool question cancel failed')
             await adapter.send(chat_id=source.chat_id, metadata=metadata, content=(
-                f'The print was not cancelled: {exc} The spool question is still open and usage '
+                'The print was not cancelled. The spool question is still open and usage '
                 'is still paused — answer it, or try cancelling again.'))
             return {'action': 'skip', 'reason': 'spool question cancel failed, question left open'}
         await adapter.send(chat_id=source.chat_id, metadata=metadata, content=message)
@@ -1336,7 +1349,7 @@ async def runout_intake_dispatch(event, gateway, **kwargs):
     except Exception as exc:
         logger.exception('spool question answer failed')
         await adapter.send(chat_id=source.chat_id, metadata=metadata,
-                           content=f'Nothing changed: {exc}. Usage is still paused; answer again.')
+                           content='That answer did not work, so nothing was changed. Usage is still paused; please answer again.')
         return {'action': 'skip', 'reason': 'spool answer failed closed'}
     await adapter.send(chat_id=source.chat_id, metadata=metadata, content=message)
     return {'action': 'skip', 'reason': 'spool question answered'}
@@ -1771,7 +1784,7 @@ async def spool_dispatch(event, gateway, **kwargs):
                        '`/spool new brand, material, color, grams[, hex]` · `/spool sync`')
     except Exception as exc:
         logger.exception('/spool failed')
-        message = f'Nothing changed: {exc}'
+        message = 'That spool change did not work, so nothing was changed. Check the slot and spool number and try again.'
     finally:
         if guided:
             _seen.pop(key, None)
@@ -2325,7 +2338,8 @@ async def print_again_dispatch(event, gateway, **kwargs):
             # including the model roast. A successful print-now request may still
             # be preparing, so do not race it with a second, incomplete receipt.
             message = (None if ok
-                       else f"Did not start {target['title']}. Not retrying.\n{detail}")
+                       else f"Did not start {target['title']}. Not retrying.\n"
+                            + intake_plain_start_failure(detail))
             if not ok and _start_refused_needs_restart(detail):
                 message += '\n' + await _offer_force_restart(adapter, source, metadata, pc, detail,
                                                              live_key=gateway._session_key_for_source(source),
@@ -2668,7 +2682,7 @@ def alert_button_handlers(bot, adapter):
         try:
             spools = await asyncio.to_thread(spool_sync.spoolman, 'GET', '/api/v1/spool?allow_archived=false', None)
         except Exception as exc:
-            await interaction.response.send_message(f'Could not load shelf spools: {exc}. Nothing changed.', ephemeral=True)
+            await interaction.response.send_message('The shelf spools could not be loaded, so nothing was changed. Check that Spoolman is running, then try again.', ephemeral=True)
             return
         options = pab.insertion_select_options(spools, mapped, loaded_ids)
         if not options:
@@ -2711,7 +2725,7 @@ def alert_button_handlers(bot, adapter):
                     result = await asyncio.to_thread(pab.create_and_bind_insertion, pending['slot'], values, spool_sync)
                 except Exception as exc:
                     logger.exception('new insertion spool failed')
-                    await modal_interaction.response.send_message(f'Nothing changed: {exc}', ephemeral=True)
+                    await modal_interaction.response.send_message('Nothing was changed. Check what you entered and try again.', ephemeral=True)
                     return
                 await modal_interaction.response.send_message(result)
 
@@ -2732,7 +2746,7 @@ def alert_button_handlers(bot, adapter):
         try:
             spools = await asyncio.to_thread(spool_sync.spoolman, 'GET', '/api/v1/spool?allow_archived=false', None)
         except Exception as exc:
-            await interaction.response.send_message(f'Could not load shelf spools: {exc}. Nothing changed.', ephemeral=True)
+            await interaction.response.send_message('The shelf spools could not be loaded, so nothing was changed. Check that Spoolman is running, then try again.', ephemeral=True)
             return
         options = pab.insertion_select_options(spools, mapped, loaded_ids)
         if not options:
@@ -2779,7 +2793,7 @@ def alert_button_handlers(bot, adapter):
                                                      pending['context'], choice)
                 except Exception as exc:
                     logger.exception('new spool-question spool failed')
-                    await modal_interaction.response.send_message(f'Nothing changed: {exc}', ephemeral=True)
+                    await modal_interaction.response.send_message('Nothing was changed. Check what you entered and try again.', ephemeral=True)
                     return
                 await modal_interaction.response.send_message(result)
 
@@ -2803,7 +2817,7 @@ def alert_button_handlers(bot, adapter):
             except Exception as exc:
                 logger.exception('spool-question cancel failed')
                 await interaction.response.send_message(
-                    f'The print was not cancelled: {exc} The spool question is still open — answer it '
+                    'The print was not cancelled. The spool question is still open — answer it '
                     'in text (a spool number, `same`, or `cancel the print`); the next reminder '
                     're-posts its buttons.', ephemeral=True)
                 return
@@ -2822,7 +2836,7 @@ def alert_button_handlers(bot, adapter):
                                              alert.get('context') or {}, {'status': 'same'})
         except Exception as exc:
             logger.exception('same spool-question answer failed')
-            await interaction.response.send_message(f'Nothing changed: {exc}', ephemeral=True)
+            await interaction.response.send_message('Nothing was changed. Check what you entered and try again.', ephemeral=True)
             return
         await interaction.response.send_message(result)
 
@@ -2839,7 +2853,7 @@ def alert_button_handlers(bot, adapter):
                                              pending['context'], {'status': 'existing', 'spool_id': spool_id})
         except Exception as exc:
             logger.exception('existing spool-question spool failed')
-            await interaction.response.send_message(f'Nothing changed: {exc}', ephemeral=True)
+            await interaction.response.send_message('Nothing was changed. Check what you entered and try again.', ephemeral=True)
             return
         await interaction.response.edit_message(content=result, view=None)
 
@@ -2871,7 +2885,7 @@ def alert_button_handlers(bot, adapter):
             result = await asyncio.to_thread(pab.bind_insertion_existing, pending['slot'], spool_id, spool_sync)
         except Exception as exc:
             logger.exception('existing insertion spool failed')
-            await interaction.response.send_message(f'Nothing changed: {exc}', ephemeral=True)
+            await interaction.response.send_message('Nothing was changed. Check what you entered and try again.', ephemeral=True)
             return
         await interaction.response.edit_message(content=result, view=None)
 
@@ -2921,7 +2935,8 @@ def alert_button_handlers(bot, adapter):
         try:
             ok, detail = await print_next.start({**target, 'accept_spool_change': True} if accept_spool_change else target)
             message = None if ok else (f"Did not start {target['label']}. Not retrying. "
-                                       f"`/print-next {alert['plan_id']} {alert['part_id']}` offers a fresh button.\n{detail}")
+                                       f"`/print-next {alert['plan_id']} {alert['part_id']}` offers a fresh button.\n"
+                                       + intake_plain_start_failure(detail))
             if not ok and not accept_spool_change and SPOOL_CHANGED in str(detail):
                 spool_aid = await asyncio.to_thread(pab.record, 'plate-spool', '',
                                                     plan_id=alert['plan_id'], part_id=alert['part_id'])

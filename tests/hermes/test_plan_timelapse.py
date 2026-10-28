@@ -41,7 +41,8 @@ def world(tmp_path, monkeypatch):
         """Make the announcer 'render' a plate's clip: archive + materialize hand back this file."""
         clip = tmp_path / name
         clip.write_bytes(name.encode())
-        monkeypatch.setattr(announcer, "archive_completed_timelapse", lambda key: "/archive/" + name)
+        monkeypatch.setattr(announcer, "archive_completed_timelapse",
+                            lambda key: announcer.ArchiveOutcome(announcer.ARCHIVED, "/archive/" + name))
         monkeypatch.setattr(announcer, "materialize_archived_timelapse", lambda path: clip)
 
     def announce(*lines):
@@ -119,7 +120,8 @@ def test_final_plate_whose_clip_is_missing_posts_earlier_plates_as_partial(world
     world.announce("TIMELAPSE_POSTPROCESS:plate.gcode", "TIMELAPSE_PLAN:trio:more:0", "Plate 1 done")
     world.sent.clear()
     world.render("two.mp4")
-    monkeypatch.setattr(announcer, "archive_completed_timelapse", lambda key: None)
+    monkeypatch.setattr(announcer, "archive_completed_timelapse",
+                        lambda key: announcer.ArchiveOutcome(announcer.ARCHIVE_NOT_RENDERED))
     world.announce("TIMELAPSE_POSTPROCESS:plate.gcode", "TIMELAPSE_PLAN:trio:final:1000", "Job complete")
     assert len(world.sent) == 1 and "Partial timelapse: 1 plate(s)" in world.sent[0]
 
@@ -169,7 +171,8 @@ def test_final_video_is_partial_when_an_earlier_plate_clip_is_missing(world, mon
     monkeypatch.setattr(plan_timelapse, "_load_plan", lambda plan_id: plan(1, 1, 1))
     world.render("one.mp4")
     world.announce("TIMELAPSE_POSTPROCESS:plate.gcode", "TIMELAPSE_PLAN:trio:more:0", "Plate 1 done")
-    monkeypatch.setattr(announcer, "archive_completed_timelapse", lambda key: None)  # plate 2 never rendered
+    monkeypatch.setattr(announcer, "archive_completed_timelapse",
+                        lambda key: announcer.ArchiveOutcome(announcer.ARCHIVE_NOT_RENDERED))  # plate 2 never rendered
     world.announce("TIMELAPSE_POSTPROCESS:plate.gcode", "TIMELAPSE_PLAN:trio:more:1000", "Plate 2 done")
     world.render("three.mp4")
     world.sent.clear()

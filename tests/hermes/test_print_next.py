@@ -389,7 +389,8 @@ def test_picker_follows_timelapse_post(monkeypatch):
     monkeypatch.setattr(mel, 'post_plate_picker', lambda plan_id: order.append('picker') or True)
     monkeypatch.setattr(mel.announcer, 'main', lambda: print('TIMELAPSE_POSTPROCESS:j.gcode\nDone\nPLATE_PICKER:trio'))
     monkeypatch.setattr(mel.announcer, '_timelapse_job_key', lambda token: 'j.gcode')
-    monkeypatch.setattr(mel.announcer, 'archive_completed_timelapse', lambda key: None)
+    monkeypatch.setattr(mel.announcer, 'archive_completed_timelapse',
+                        lambda key: mel.announcer.ArchiveOutcome(mel.announcer.ARCHIVE_NOT_RENDERED))
 
     class Inline:
         def __init__(self, target=None, args=(), **kw):

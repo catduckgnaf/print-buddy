@@ -10,7 +10,7 @@ def test_completion_with_video_is_one_combined_discord_post(monkeypatch):
     monkeypatch.setattr(mel,"log",lambda _:None); monkeypatch.setattr(mel,"post",lambda text: sent.append(text) or True)
     monkeypatch.setattr(mel.announcer,"main",lambda: print("TIMELAPSE_POSTPROCESS:job.gcode\nPrint complete: Job"))
     monkeypatch.setattr(mel.announcer,"_timelapse_job_key",lambda token:"job.gcode")
-    monkeypatch.setattr(mel.announcer,"archive_completed_timelapse",lambda key:"/archive/job.mp4")
+    monkeypatch.setattr(mel.announcer,"archive_completed_timelapse",lambda key:mel.announcer.ArchiveOutcome(mel.announcer.ARCHIVED,"/archive/job.mp4"))
     monkeypatch.setattr(mel.announcer,"materialize_archived_timelapse",lambda path:"/cache/job.mp4")
     class Inline:
         def __init__(self,target=None,args=(),**kw): self.target,self.args=target,args
@@ -23,10 +23,11 @@ def test_completion_without_video_is_one_text_post(monkeypatch):
     sent=[]; monkeypatch.setattr(mel,"log",lambda _:None); monkeypatch.setattr(mel,"post",lambda text: sent.append(text) or True)
     monkeypatch.setattr(mel.announcer,"main",lambda: print("TIMELAPSE_POSTPROCESS:job.gcode\nPrint complete: Job"))
     monkeypatch.setattr(mel.announcer,"_timelapse_job_key",lambda token:"job.gcode")
-    monkeypatch.setattr(mel.announcer,"archive_completed_timelapse",lambda key:None)
+    monkeypatch.setattr(mel.announcer,"archive_completed_timelapse",lambda key:mel.announcer.ArchiveOutcome(mel.announcer.ARCHIVE_NOT_RENDERED))
     mel.run_announcer("mock")
-    # Archiving is configured in the test settings, so a missing video is
-    # announced in the post instead of vanishing silently (#373).
+    # Archiving is configured in the test settings and the bounded wait
+    # really elapsed, so a missing video is announced in the post instead
+    # of vanishing silently (#373).
     assert sent == ["Print complete: Job\nTimelapse not attached: the printer's rendered video "
                     "didn't arrive within the wait (see the listener log)."]
 
@@ -56,7 +57,7 @@ def test_completion_video_post_is_coalesced(monkeypatch):
     monkeypatch.setattr(mel,"log",lambda _:None); monkeypatch.setattr(mel,"post",lambda text: sent.append(text) or True)
     monkeypatch.setattr(mel.announcer,"main",lambda: print("TIMELAPSE_POSTPROCESS:job.gcode\nPrint complete: Job"))
     monkeypatch.setattr(mel.announcer,"_timelapse_job_key",lambda token:"job.gcode")
-    monkeypatch.setattr(mel.announcer,"archive_completed_timelapse",lambda key:"/archive/job.mp4")
+    monkeypatch.setattr(mel.announcer,"archive_completed_timelapse",lambda key:mel.announcer.ArchiveOutcome(mel.announcer.ARCHIVED,"/archive/job.mp4"))
     monkeypatch.setattr(mel.announcer,"materialize_archived_timelapse",lambda path:"/cache/job.mp4")
     class Inline:
         def __init__(self,target=None,args=(),**kw): self.target,self.args=target,args

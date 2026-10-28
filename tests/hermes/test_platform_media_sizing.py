@@ -266,7 +266,8 @@ def test_discord_fallback_post_is_byte_for_byte_unchanged(monkeypatch, tmp_path)
     posted, results = [], [False, True]
     monkeypatch.setattr(mel, "log", lambda line: None)
     monkeypatch.setattr(mel, "post", lambda message: posted.append(message) or results.pop(0))
-    monkeypatch.setattr(mel.announcer, "archive_completed_timelapse", lambda key: "/volume1/x/stand.mp4")
+    monkeypatch.setattr(mel.announcer, "archive_completed_timelapse",
+                        lambda key: mel.announcer.ArchiveOutcome(mel.announcer.ARCHIVED, "/volume1/x/stand.mp4"))
     monkeypatch.setattr(mel.announcer, "materialize_archived_timelapse", lambda path: str(video))
     monkeypatch.setattr(mel, "platform_sized_video", lambda path, max_bytes=None: path)
     mel._timelapse_post("stand.gcode", COMPLETE)
@@ -298,7 +299,8 @@ def test_discord_fallback_post_names_no_cause_when_the_video_fits(monkeypatch, t
     posted, results = [], [False, True]
     monkeypatch.setattr(mel, "log", lambda line: None)
     monkeypatch.setattr(mel, "post", lambda message: posted.append(message) or results.pop(0))
-    monkeypatch.setattr(mel.announcer, "archive_completed_timelapse", lambda key: "/volume1/x/stand.mp4")
+    monkeypatch.setattr(mel.announcer, "archive_completed_timelapse",
+                        lambda key: mel.announcer.ArchiveOutcome(mel.announcer.ARCHIVED, "/volume1/x/stand.mp4"))
     monkeypatch.setattr(mel.announcer, "materialize_archived_timelapse", lambda path: str(video))
     monkeypatch.setattr(mel, "platform_sized_video", lambda path, max_bytes=None: path)
     mel._timelapse_post("stand.gcode", COMPLETE)
@@ -359,7 +361,8 @@ def _wire_completion(monkeypatch, tmp_path, video):
     monkeypatch.setattr(mel, "log", lambda line: None)
     monkeypatch.setattr(mel.announcer, "STATE_PATH", tmp_path / "announcement.json")
     mel.announcer.save_state({"pending_completion_message": COMPLETE})
-    monkeypatch.setattr(mel.announcer, "archive_completed_timelapse", lambda key: "/archive/stand.mp4")
+    monkeypatch.setattr(mel.announcer, "archive_completed_timelapse",
+                        lambda key: mel.announcer.ArchiveOutcome(mel.announcer.ARCHIVED, "/archive/stand.mp4"))
     monkeypatch.setattr(mel.announcer, "materialize_archived_timelapse", lambda path: str(video))
 
 

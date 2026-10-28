@@ -108,6 +108,25 @@ class TimelapseCaptureSettingsTests(unittest.TestCase):
         data = settings.load(environ={"PRINT_HANDY__TIMELAPSE__CAPTURE_ENABLED": "true"})
         self.assertIs(data["timelapse"]["capture_enabled"], True)
 
+    def test_env_wins_over_the_file_value_in_both_directions(self):
+        # Precedence contract (#540): the load order ends with the
+        # environment, so PRINT_HANDY__TIMELAPSE__CAPTURE_ENABLED beats
+        # timelapse.capture_enabled in the config file whichever way the
+        # two disagree — the Unraid template variable can switch capture
+        # off (or on) without editing a mounted file.
+        with tempfile.TemporaryDirectory() as td:
+            local = Path(td) / "local.yaml"
+            local.write_text("timelapse:\n  capture_enabled: true\n")
+            data = settings.load(local=local, environ={})
+            self.assertIs(data["timelapse"]["capture_enabled"], True)
+            data = settings.load(local=local,
+                                 environ={"PRINT_HANDY__TIMELAPSE__CAPTURE_ENABLED": "false"})
+            self.assertIs(data["timelapse"]["capture_enabled"], False)
+            local.write_text("timelapse:\n  capture_enabled: false\n")
+            data = settings.load(local=local,
+                                 environ={"PRINT_HANDY__TIMELAPSE__CAPTURE_ENABLED": "true"})
+            self.assertIs(data["timelapse"]["capture_enabled"], True)
+
 
 def make_data(**timelapse):
     base = {"capture_enabled": True, "capture_source_url": ""}

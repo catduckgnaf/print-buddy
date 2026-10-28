@@ -15,6 +15,7 @@ import time
 import urllib.parse
 import urllib.request
 from pathlib import Path
+from typing import NamedTuple
 
 from ..core import spoolman_client
 from . import _config
@@ -75,6 +76,22 @@ TIMELAPSE_RENDER_WAIT_SECONDS = float(_TIMELAPSE["render_wait_s"])
 TIMELAPSE_RENDER_POLL_SECONDS = float(_TIMELAPSE["render_poll_s"])
 TIMELAPSE_MAX_BYTES = int(_TIMELAPSE["max_bytes"])
 TIMELAPSE_LOCAL_RETENTION_DAYS = float(_TIMELAPSE["local_retention_days"])
+# The distinct outcomes of the printer-rendered archive lookup (#540). The
+# completion flow names exactly one per job; only ARCHIVE_NOT_RENDERED means
+# a bounded wait actually elapsed, so no other state may be reported as a
+# render timeout.
+ARCHIVE_OFF = "archive_off"  # archive_host/archive_dir unset: lookup skipped, no wait at all
+ARCHIVE_NOT_RENDERED = "not_rendered"  # the bounded wait elapsed and no rendered video appeared
+ARCHIVE_FAILED = "archive_failed"  # a rendered video was found, but downloading/archiving it failed
+ARCHIVED = "archived"  # the rendered video was archived; path holds its archive location
+
+
+class ArchiveOutcome(NamedTuple):
+    """The result of archive_completed_timelapse: the state, the archive path when archived, and failure detail."""
+
+    state: str
+    path: str | None = None
+    detail: str = ""
 ACTIVE_STATES = {"Printing", "Paused", "Pausing", "Resuming"}
 # Pinned to the print profile from config. The multiplex gateway exports the launching profile's
 # HERMES_HOME to cron scripts, which would point profile-relative files at the wrong profile.
@@ -422,26 +439,33 @@ def materialize_archived_timelapse(remote_path):
 def archive_completed_timelapse(job_key, completed_at=None, wait=None):
     """Wait a bounded interval for the completed job's MP4, then archive if available.
 
-    With no timelapse.archive_host configured the archive, and the posted video, are off.
+    Returns an ArchiveOutcome naming what actually happened (#540): with no
+    timelapse.archive_host configured the archive is off and the lookup is
+    skipped outright (ARCHIVE_OFF — no search, no wait); a rendered video
+    that fails to download or archive is ARCHIVE_FAILED; only a full bounded
+    wait with no render appearing is ARCHIVE_NOT_RENDERED.
     """
     if not TIMELAPSE_ARCHIVE_HOST or not TIMELAPSE_ARCHIVE_DIR:
         print("Timelapse archive is off (timelapse.archive_host / archive_dir not configured)", file=sys.stderr)
-        return None
+        return ArchiveOutcome(ARCHIVE_OFF)
     deadline = time.monotonic() + max(0, TIMELAPSE_RENDER_WAIT_SECONDS if wait is None else wait)
+    last_lookup_error = None
     while True:
         try:
             candidates = _timelapse_candidates(job_key)
         except Exception as exc:  # transient Moonraker hiccup: keep waiting until the deadline
             print(f"Timelapse lookup unavailable (will retry): {exc}", file=sys.stderr)
             candidates = []
+            last_lookup_error = exc
         if candidates:
             try:
-                return archive_timelapse(job_key, candidates[0], completed_at)
+                return ArchiveOutcome(ARCHIVED, archive_timelapse(job_key, candidates[0], completed_at))
             except Exception as exc:
                 print(f"Timelapse archive failed: {exc}", file=sys.stderr)
-                return None
+                return ArchiveOutcome(ARCHIVE_FAILED, detail=str(exc))
         if time.monotonic() >= deadline:
-            return None
+            detail = f"lookup unavailable throughout the wait: {last_lookup_error}" if last_lookup_error else ""
+            return ArchiveOutcome(ARCHIVE_NOT_RENDERED, detail=detail)
         time.sleep(max(0.1, TIMELAPSE_RENDER_POLL_SECONDS))
 
 

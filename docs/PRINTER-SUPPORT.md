@@ -2,7 +2,7 @@
 
 [Documentation home](README.md) · [Printer profiles](PRINTER-PROFILES.md) · [Contributing](../CONTRIBUTING.md)
 
-This page answers three questions: what "supported" means for a printer, what to do if yours is not listed, and how to confirm that a listed printer really works. The printer table is in the [README](../README.md#is-my-printer-supported).
+This page answers three questions: what "supported" means for a printer, what to do if yours is not listed, and how to confirm that a listed printer really works. The [README](../README.md#is-my-printer-supported) groups printers by how they connect; the model-by-model detail is in the vendor guides linked from there.
 
 ## What "supported" means
 
@@ -65,7 +65,7 @@ The rest of the checklist for a new model:
 2. **Slicer templates.** Either ship your own generic templates in `print_handy/templates/orca/<folder>/` (`machine.json`, `process.json`, `filament.json`), or, for vendors whose slicer profiles cannot be redistributed, follow the Qidi pattern: a `scripts/<vendor>-templates.py` generator that reads the user's OrcaSlicer install and checks it against a recorded identity (see `scripts/qidi-templates.py`; Bambu Lab, Creality, Elegoo and Prusa have siblings). Do not copy slicer vendor profile text into the repository.
 3. **Source every number.** Take bed size and height from the slicer profile's printable area and height, not from marketing pages, and record the source in `facts.py`. Mark a value unverified if it came from a spec sheet.
 4. **Tests.** Use the vendor's existing test file as the template (`tests/printers/test_qidi.py` with `tests/printers/qidi_fixture.py`). They run offline against invented slicer resources. Golden Orca input files in `tests/printers/golden/` pin the slicer inputs, and `tests/printers/test_vendor_profiles.py` pins model defaults.
-5. **Docs.** Add the model to the vendor's guide (for example [QIDI.md](QIDI.md)), to the README printer table, and to `docs/README.md` if you add a page. Say what has and has not been tested. Do not claim hardware success without a report.
+5. **Docs.** Add the model to the vendor's guide (for example [QIDI.md](QIDI.md)), to the README's printer groups when it changes one, and to `docs/README.md` if you add a page. Say what has and has not been tested. Do not claim hardware success without a report.
 
 Run the offline suite as described in [CONTRIBUTING.md](../CONTRIBUTING.md) (`python -m pytest -q tests`), and at minimum `tests/printers`, `tests/test_knowledge.py` and `tests/test_docs_index_contract.py`. Say in the pull request which checks you ran and which you did not.
 

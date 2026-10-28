@@ -97,6 +97,28 @@ def _strip_json_fence(text):
     return raw.strip()
 
 
+_vision_missing_logged = False
+
+
+def vision_ready(api_key, log=None):
+    """True when a frame can actually be judged: PRINT_VISION_URL, or vision_chat_url with its key.
+
+    Without one, every verdict degrades to "uncertain", and "uncertain"
+    alerts, so the watch would post a false alert at every check. The
+    watch stays off instead, as docs/DOCKER.md describes, and says so once.
+    """
+    global _vision_missing_logged
+    if os.environ.get("PRINT_VISION_URL"):
+        return True
+    if _config.service_url("vision_chat_url") and api_key():
+        return True
+    if log is not None and not _vision_missing_logged:
+        _vision_missing_logged = True
+        log("camera watch skipped: no vision endpoint (set services.vision_chat_url with "
+            "CLIPROXY_API_KEY, or PRINT_VISION_URL)")
+    return False
+
+
 def visual_verdict(image, prompt, *, chat_url, model, api_key, context):
     """Judge one frame through the configured vision endpoint. Returns (verdict, detail).
 

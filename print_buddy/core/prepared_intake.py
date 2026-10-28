@@ -1842,6 +1842,12 @@ async def prepare_link(event, adapter, state, root, timeout=None, reuse=None, pr
             # the remedy): keep its reason, lead plainly, drop its prefix.
             reason = str(exc).removeprefix('Model intake refused: ')
             content = (f'That model could not be prepared. {reason}')
+        elif isinstance(exc, ValueError) and str(exc).startswith('requires one to four distinct configured'):
+            # Also curated and user-phrased: a multi-slot/toolhead printer
+            # with nothing configured. The text names the exact setup gap,
+            # so keep it — the generic wording would hide the remedy.
+            content = (f'That model could not be prepared: this printer {exc}. '
+                       'Nothing was sliced, uploaded or started.')
         else:
             content = diagnostics.plain_post('Preparing that model stopped before it was ready.',
                                                not_happened='Nothing was sliced, uploaded or started.',

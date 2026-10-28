@@ -284,6 +284,7 @@ def test_discord_clarify_cap_is_scoped_to_3dprinting_discord():
         ('pre_gateway_dispatch', plugin.live_dispatch),
         ('pre_gateway_dispatch', plugin.nozzle_dispatch),
         ('pre_gateway_dispatch', plugin.receive_ack),
+        ('pre_gateway_dispatch', plugin.stray_chat_dispatch),
         ('post_tool_call', plugin.clarify_ack),
         ('pre_tool_call', plugin.cap_discord_clarifications),
         ('pre_tool_call', plugin.guard_terminal_loop),

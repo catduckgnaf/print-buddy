@@ -7,7 +7,7 @@ from unittest import mock
 
 import pytest
 
-from print_handy import settings
+from print_handy import __version__, settings
 from print_handy.bot import commands, guided, runtime
 from print_handy.hermes import _config
 
@@ -115,6 +115,17 @@ def test_token_step_never_collects_a_token(tmp_path):
     out = say(st, "stored")
     assert "ready to review" in out and st.get("k")["status"] == "awaiting_consent"
     assert "ready" not in json.loads(saved) or True  # answers file was rewritten since; checked above
+
+
+def test_status_reports_the_running_version(tmp_path):
+    st = store(tmp_path)
+    out = say(st, "/print-handy status")
+    assert out.splitlines()[0] == f"Print Handy {__version__}"
+    assert "No guided setup has been started here" in out
+    say(st, "/print-handy setup", now=1000)
+    out = say(st, "/print-handy status", now=1001)
+    assert out.splitlines()[0] == f"Print Handy {__version__}"
+    assert "in progress" in out
 
 
 def test_cancel_persists_and_a_new_store_resumes_after_restart(tmp_path):

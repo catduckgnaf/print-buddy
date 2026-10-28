@@ -8,6 +8,9 @@ one terminal post; a claimed print gets none of them (its monitor owns
 it) but its pause alerts are still retired when it ends; a print first
 seen mid-flight is a baseline and gets nothing.
 """
+import logging
+
+from print_handy import __version__
 from print_handy.hermes import family_control as fc
 from print_handy.hermes import family_event_listener as fel
 
@@ -77,6 +80,14 @@ def drive(rig, polls):
 
 
 # -- the polling listener ---------------------------------------------------------
+
+def test_run_forever_startup_line_names_the_version(tmp_path, caplog):
+    rig, _posts = listener(tmp_path, [st("printing")])
+    rig._sleep = lambda _s: rig.stop()
+    with caplog.at_level(logging.INFO, logger="print_handy.hermes.family_event_listener"):
+        assert rig.run_forever() == 0
+    assert f"family listener starting (Print Handy {__version__})" in caplog.text
+
 
 def test_external_print_gets_one_start_one_pause_alert_one_terminal(tmp_path):
     rig, posts = listener(tmp_path, [

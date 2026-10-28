@@ -32,7 +32,7 @@ import urllib.request
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from .. import printers, settings
+from .. import __version__, printers, settings
 
 STORE_NAME = "guided-setup.json"
 # A saved checklist survives this long. After it, a plain reply is not consumed as an answer;
@@ -560,11 +560,12 @@ def handle_text(key, text, *, store, now=None, token_env="DISCORD_BOT_TOKEN",
             return bundle()
         if rest == "status":
             if session is None:
-                return "No guided setup has been started here. `/print-handy setup` begins one."
+                return (f"Print Handy {__version__}\n"
+                        "No guided setup has been started here. `/print-handy setup` begins one.")
             state = {"in_progress": "in progress", "adding_printer": "adding another printer",
                      "awaiting_consent": "waiting for your review choice",
                      "cancelled": "paused (cancelled)", "complete": "complete"}[session["status"]]
-            return f"**Guided setup: {state}**\n" + checklist_text(session)
+            return f"Print Handy {__version__}\n**Guided setup: {state}**\n" + checklist_text(session)
         if rest == "cancel":
             if session is None or session["status"] == "complete":
                 return "No guided setup is in progress. Nothing was changed."

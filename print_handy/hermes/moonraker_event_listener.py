@@ -30,7 +30,7 @@ from pathlib import Path
 
 import websockets
 
-from .. import debug_mode, go2rtc, healthcheck, logs, printers
+from .. import __version__, debug_mode, go2rtc, healthcheck, logs, printers
 from ..core import delivery, spoolman_client
 from . import _config
 from . import moonraker_discord_announcements as announcer
@@ -2535,7 +2535,7 @@ def main():
                          "Set it in config/local.yaml or config/local.toml; the listener has nothing to connect to.")
     route = "PRINT_VISION_URL" if os.environ.get("PRINT_VISION_URL") else (_VISION_BASE or "not configured")
     logs.configure()
-    log(f"listener starting; camera watchdog initialized route={route} model={_VISION_MODEL}")
+    log(f"listener starting (Print Handy {__version__}); camera watchdog initialized route={route} model={_VISION_MODEL}")
     asyncio.run(Listener().forever())
 
 

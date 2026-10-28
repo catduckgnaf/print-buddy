@@ -8,7 +8,9 @@ import logging
 import sys
 from pathlib import Path
 
-from .. import logs, settings
+from .. import __version__, logs, settings
+
+logger = logging.getLogger(__name__)
 
 
 def checks(cfg):
@@ -193,6 +195,7 @@ def check(out=None):
 
 def run():
     logs.configure()
+    logger.info("standalone bot starting (Print Handy %s)", __version__)
     if check(sys.stderr):
         print("Not starting: fix the FAIL lines above.", file=sys.stderr)
         return 2

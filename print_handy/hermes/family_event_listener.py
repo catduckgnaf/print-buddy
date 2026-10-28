@@ -41,7 +41,7 @@ import logging
 import time
 from pathlib import Path
 
-from .. import debug_mode, healthcheck, listeners, logs
+from .. import __version__, debug_mode, healthcheck, listeners, logs
 from . import _config, family_control
 
 logger = logging.getLogger(__name__)
@@ -260,7 +260,7 @@ class FamilyListener:
         self._stopped = True
 
     def run_forever(self):
-        log(f"family listener starting for connection {self.connection} "
+        log(f"family listener starting (Print Handy {__version__}) for connection {self.connection} "
             f"(runtime {self._runtime})")
         while not self._stopped:
             self.poll_once()

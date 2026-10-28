@@ -494,3 +494,57 @@ def test_muted_print_posts_no_visual_alert(monkeypatch, tmp_path):
 
     asyncio.run(run())
     assert alerts == []
+
+
+# -- no vision endpoint: the watch stays off ------------------------------------
+
+
+def test_vision_ready_needs_an_endpoint_the_watch_can_actually_use(monkeypatch):
+    from print_handy.hermes import visual_watch as vw
+    monkeypatch.delenv("PRINT_VISION_URL", raising=False)
+    monkeypatch.setattr(vw, "_vision_missing_logged", False)
+    urls = {"vision_chat_url": ""}
+    monkeypatch.setattr(vw._config, "service_url", lambda key: urls.get(key, ""))
+    lines = []
+    assert vw.vision_ready(lambda: "key", lines.append) is False
+    assert vw.vision_ready(lambda: "key", lines.append) is False
+    assert len(lines) == 1 and "camera watch skipped" in lines[0]  # said once, not per check
+    urls["vision_chat_url"] = "http://vision.local/v1/chat/completions"
+    assert vw.vision_ready(lambda: "", None) is False  # a URL without its key judges nothing
+    assert vw.vision_ready(lambda: "key", None) is True
+    urls["vision_chat_url"] = ""
+    monkeypatch.setenv("PRINT_VISION_URL", "http://detector.local/judge")
+    assert vw.vision_ready(lambda: "", None) is True
+
+
+def _printing_with_a_due_check(monkeypatch, ready):
+    import asyncio
+    checks = []
+    monkeypatch.setattr(mel, "post", lambda message: True)
+    monkeypatch.setattr(mel, "run_announcer", lambda reason: None)
+    monkeypatch.setattr(mel, "start_claimed", lambda name: False)
+    monkeypatch.setattr(mel, "log", lambda line: None)
+    monkeypatch.setattr(mel, "_buttonless_standalone", lambda: None)
+    monkeypatch.setattr(mel, "_vision_ready", lambda: ready, raising=False)
+
+    async def record(self, reason, layer):
+        checks.append(reason)
+    monkeypatch.setattr(mel.Listener, "visual_check", record)
+    listener = mel.Listener()
+    listener.visual_watch.due = lambda *args, **kwargs: "layer2"
+
+    async def run():
+        for state in ("standby", "printing"):
+            await listener.on_status({"state": state, "filename": "clip.gcode"}, "test")
+        if listener.last_visual_task is not None:
+            await listener.last_visual_task
+    asyncio.run(run())
+    return checks
+
+
+def test_no_vision_endpoint_means_no_camera_checks_and_no_false_alerts(monkeypatch):
+    assert _printing_with_a_due_check(monkeypatch, ready=False) == []
+
+
+def test_a_configured_vision_endpoint_still_runs_the_due_check(monkeypatch):
+    assert _printing_with_a_due_check(monkeypatch, ready=True) == ["layer2"]

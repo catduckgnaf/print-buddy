@@ -310,6 +310,38 @@ household, exactly as you would for print approvals.
 | Encoder plan (VAAPI / QSV / NVENC / CPU) | Command construction pinned by offline tests per vendor; **no GPU path verified on real hardware** |
 | The Activity in Discord (desktop / mobile) | **Unverified** — the Stage 0 live spike has not run; the first live result belongs on issue #311, not in this table's wording |
 
+## What a print looks like in Discord
+
+Once the bot is running, this is the whole conversation for one print. Every step has buttons; typing the answer works too. These are mockups built from the bot's real message text and buttons, with placeholder names.
+
+**Share a link and pick colors.**
+
+![Paste a model link and choose a color](https://raw.githubusercontent.com/catduckgnaf/print-handy/main/assets/screenshots/discord-01-link-and-colors.png)
+
+**Choose copies and confirm.** Nothing is sent to the printer until you tap a start button.
+
+![Copies and the confirm buttons](https://raw.githubusercontent.com/catduckgnaf/print-handy/main/assets/screenshots/discord-02-copies-and-confirm.png)
+
+**The print starts.**
+
+![Print started post](https://raw.githubusercontent.com/catduckgnaf/print-handy/main/assets/screenshots/discord-03-print-start.png)
+
+**It finishes,** with a timelapse when capture is on.
+
+![Print complete post with timelapse](https://raw.githubusercontent.com/catduckgnaf/print-handy/main/assets/screenshots/discord-04-print-complete.png)
+
+**The camera watchdog** only alerts; every printer action is your tap.
+
+![Camera alert with Pause, It's fine and Stop asking for this print](https://raw.githubusercontent.com/catduckgnaf/print-handy/main/assets/screenshots/discord-05-camera-watchdog.png)
+
+**Pause and filament runout.** The spool question always has a Cancel print button.
+
+![Paused post and runout spool question](https://raw.githubusercontent.com/catduckgnaf/print-handy/main/assets/screenshots/discord-06-pause-and-runout.png)
+
+**A spool added directly in Spoolman** gets a one-time prompt to load it.
+
+![New spool prompt and load flow](https://raw.githubusercontent.com/catduckgnaf/print-handy/main/assets/screenshots/discord-07-new-spool.png)
+
 ## Recovery
 
 | Symptom | Safe next step |

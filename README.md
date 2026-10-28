@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="assets/branding/logo-lockup.png" alt="Print Handy logo" width="480">
+  <img src="assets/branding/logo-lockup-dark.png" alt="Print Handy logo" width="480">
 </p>
 
 # Print Handy
@@ -20,6 +20,23 @@ Current release: **2.1.7**
 4. **Follow along.** Progress, alerts and timelapses come back to the same chat.
 
 That's the whole idea: the convenience of printing from chat, with a human — you — making the final call every time.
+
+<img src="assets/screenshots/discord-02-copies-and-confirm.png" alt="Print Handy in Discord: choose the number of copies, then confirm the estimate with Slice and print now, Slice only, Stop with colors saved or Cancel print request" width="720">
+
+<details>
+<summary><b>See a whole print in Discord, step by step</b></summary>
+
+1. **Share a link, pick colors.** ![Paste a model link and choose a color](assets/screenshots/discord-01-link-and-colors.png)
+2. **Choose copies and confirm.** ![Copies and the confirm buttons](assets/screenshots/discord-02-copies-and-confirm.png)
+3. **The print starts.** ![Print started post](assets/screenshots/discord-03-print-start.png)
+4. **It finishes, with a timelapse.** ![Print complete post with timelapse](assets/screenshots/discord-04-print-complete.png)
+5. **The camera watchdog spots trouble.** ![Camera alert with Pause, It's fine and Stop asking for this print](assets/screenshots/discord-05-camera-watchdog.png)
+6. **Pause, runout and the spool question.** ![Paused post and runout spool question](assets/screenshots/discord-06-pause-and-runout.png)
+7. **A spool added in Spoolman gets offered for a slot.** ![New spool prompt and load flow](assets/screenshots/discord-07-new-spool.png)
+
+These are mockups built from the bot's real message text and buttons, with placeholder names. Sources for every line are in [assets/screenshots](assets/screenshots/README.md).
+
+</details>
 
 ## Quick start (Docker)
 
@@ -73,6 +90,14 @@ One thing to know either way: slicing needs a compatible OrcaSlicer and the righ
 | **Marlin printers behind OctoPrint** (including the older Ender and CR lines) | A generic OctoPrint/Marlin adapter is included, plus built-in presets for the Creality Ender-3, Ender-3 Pro, Ender-3 V2 and Ender-3 V3 SE with their real dimensions. See [OctoPrint + Marlin](docs/OCTOPRINT-MARLIN.md). |
 
 Some profiles can also offer chat file delivery or an offline Bambu package after slicing; delivery never authorizes printing, and Bambu packaging is not verified in Bambu Studio or on hardware. Details are in [printer profiles](docs/PRINTER-PROFILES.md).
+
+### Printer not listed, or want to confirm yours?
+
+The full guide is [Printer support: levels, new printers and hardware checks](docs/PRINTER-SUPPORT.md).
+
+- **Not listed.** A Klipper printer with Moonraker can use `klipper.generic`; a Marlin printer behind OctoPrint can use `octoprint.marlin`. Set your real bed size, height, nozzle and start/end macros first, because the placeholder numbers will not match your machine. Then open a [printer request](https://github.com/catduckgnaf/print-handy/issues/new?template=printer_report.yml).
+- **Add support or docs.** A built-in printer is one model file, its sourced facts, a registry entry and tests. The guide lists each piece and the tests that must pass.
+- **Listed, and it works for you.** Apart from one Bambu Lab A1 run, every entry above is covered by offline tests only. If you ran the hardware checklist in the guide on your printer, file a verification report through the same form and attach a redacted `/print-handy bundle`. Do the physical checks with the bed clear and a hand near the stop button.
 
 ## Which chat platform?
 

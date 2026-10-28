@@ -628,7 +628,8 @@ def start_monitor(adapter, filename, *, post=None, camera_fn=None, status_fn=Non
         return None
     try:
         watch = verdict = alert = dark_notice = None
-        if _config.cfg()["visual_watch"]["enabled"]:
+        from . import moonraker_event_listener as mel
+        if _config.cfg()["visual_watch"]["enabled"] and mel._vision_ready():
             watch = _vw.VisualPrintWatch()
             verdict = _default_verdict(adapter)
             alert = deliver_visual_alert

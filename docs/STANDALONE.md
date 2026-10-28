@@ -71,8 +71,8 @@ message. `python3 -m print_handy.doctor` warns when a Hermes profile holds the s
 Every key can come from the environment as `PRINT_HANDY__SECTION__KEY`, for example
 `PRINT_HANDY__BOT__MODE=standalone` or `PRINT_HANDY__DISCORD__ALLOWED_USER_IDS="111 222"`.
 
-For example, set `PRINT_HANDY__DISCORD__BOT_NAME="Print Bitch"` in the process environment, or
-`bot_name: "Print Bitch"` inside the YAML `discord:` mapping. Docker Compose reads
+For example, set `PRINT_HANDY__DISCORD__BOT_NAME="Workshop Printer"` in the process environment, or
+`bot_name: "Workshop Printer"` inside the YAML `discord:` mapping. Docker Compose reads
 the same variable from `.env`. Restart the bot after changing it. This changes its self-description,
 not the Discord account username or server nickname; set those in Discord. The default stays `Print Handy`.
 
@@ -195,6 +195,14 @@ Required environment: `PRINT_HANDY__BOT__MODE=standalone`, `DISCORD_BOT_TOKEN`, 
   buttons — Resume acts only when you press it and re-checks the paused job first. If a slot empties while the
   print is already paused and the pause had not been classified as a runout, the alert is re-posted as a runout
   alert (with the spool question) instead of only being logged.
+* A spool created directly in Spoolman (its web UI, or another tool) gets a prompt too: on the same poll
+  cadence as the IFS presence check, the listener diffs Spoolman's spool IDs against the ones it already
+  knows (kept in the state folder; the first poll learns the current inventory silently, so existing spools
+  never prompt). Each genuinely new, non-archived spool is named in Discord — number, brand, material and
+  colour — exactly once, with **Load into a slot** (the guided change flow's slot → old spool's fate →
+  confirm steps, with the new spool already chosen), **Leave on the shelf** and **Dismiss**. A spool that
+  arrives already archived is learned silently, a deleted spool is forgotten silently, and when Spoolman is
+  unreachable or not configured the poll simply skips — it never blocks the listener and never prompts.
 * A typed reply answers your own open question, as under Hermes ("2" for two copies, "split", "cancel"). It
   never answers another allowed user's question, even in the same channel or thread. Buttons are shared: any
   allowed user may press an open question's button, and the message then shows who chose.

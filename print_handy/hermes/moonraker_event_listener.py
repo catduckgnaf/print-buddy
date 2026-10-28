@@ -790,7 +790,7 @@ def apply_runout_choice(state, context, choice, *, client, filaments=None):
     created = client("POST", "/api/v1/spool", {
         "filament_id": match["id"], "initial_weight": grams, "remaining_weight": grams,
         "used_weight": 0, "location": f"IFS Slot {slot}", "lot_nr": choice.get("lot"),
-        "comment": "runout replacement; starting weight supplied by operator",
+        "comment": RUNOUT_SPOOL_COMMENT,
     })
     if prior_id:
         client("PATCH", f"/api/v1/spool/{int(prior_id)}",
@@ -1353,6 +1353,11 @@ NATIVE_POLL_SECONDS = float(_LISTENER["ifs_presence_poll_s"])
 IFS_EDGE_STATE = _config.state_file("IFS_EDGE_STATE", "ifs_presence_edges.json")
 IFS_PENDING_STATE = _config.state_file("IFS_PENDING_STATE", "ifs_pending_prompts.json")
 RUNOUT_PAUSE_STATE = _config.state_file("RUNOUT_PAUSE_STATE", "runout_pause.json")
+SPOOLMAN_KNOWN_STATE = _config.state_file("SPOOLMAN_KNOWN_STATE", "spoolman_known_spools.json")
+RUNOUT_SPOOL_COMMENT = "runout replacement; starting weight supplied by operator"
+# An undelivered new-spool prompt is retried this often, and given up after a day.
+NEW_SPOOL_RETRY_S = 300.0
+NEW_SPOOL_GIVE_UP_S = 24 * 3600.0
 HARDWARE_STATE = _config.state_file("PRINTER_HARDWARE_STATE", "printer_hardware.json")
 
 
@@ -1382,6 +1387,145 @@ def insertion_confirmation_text(slot):
     """Short human confirmation prompt for a newly detected idle IFS insertion."""
     return (f"**IFS slot {slot} has filament.** Is this the same spool already mapped to that slot? "
             "Tap Same spool, Existing spool, or New spool. No inventory or printer change happens until you answer.")
+
+
+def spool_display_label(spool):
+    """'#21 Sunlu PLA+ Matte White' — number, brand, material, colour from the filament record."""
+    filament = (spool or {}).get("filament") or {}
+    brand = str((filament.get("vendor") or {}).get("name") or "").strip()
+    parts = [brand, str(filament.get("material") or "").strip(),
+             str(filament.get("name") or "").strip()]
+    return f"#{(spool or {}).get('id')} " + (" ".join(part for part in parts if part) or "unknown filament")
+
+
+def new_spool_prompt_text(spool):
+    """The one-time Discord prompt for a spool created outside Print Handy (#483)."""
+    return (f"**New spool in Spoolman: {spool_display_label(spool)}.**\n"
+            "It was added outside Print Handy, so no slot uses it yet. **Load into a slot** walks "
+            "you through loading it; **Leave on the shelf** keeps it unassigned; **Dismiss** just "
+            "closes this. You are only ever asked once about a spool.")
+
+
+def new_spool_plain_text(spool):
+    """The buttonless wording (Telegram/Matrix): the same facts, answered with /spool."""
+    return (f"New spool in Spoolman: {spool_display_label(spool)}. It was added outside Print Handy, "
+            f"so no slot uses it yet. Load it with `/spool change <slot> {(spool or {}).get('id')}`, "
+            "or leave it on the shelf — you are only ever asked once about a spool.")
+
+
+def post_new_spool_prompt(spool):
+    """Post the one-time new-spool prompt; fall back to plain text if Discord refuses buttons."""
+    if _buttonless_standalone():
+        return post(new_spool_plain_text(spool))
+    try:
+        from . import print_alert_buttons as pab
+        if pab.post_new_spool(_bot_token(), announcer.DISCORD_CHAT_ID,
+                              new_spool_prompt_text(spool), int(spool["id"]), spool_display_label(spool)):
+            log(f"post new spool prompt spool={spool.get('id')}")
+            return True
+        log(f"new spool button post failed spool={spool.get('id')}; falling back to text")
+    except Exception as exc:
+        log(f"new spool button post error: {exc!r}")
+    return post(new_spool_plain_text(spool))
+
+
+def created_by_print_handy(spool):
+    """True for a spool Print Handy made itself: /spool new, the insertion modal or a runout replacement."""
+    from . import spool_sync
+    comment = str((spool or {}).get("comment") or "").strip()
+    return comment in (spool_sync.CREATED_SPOOL_COMMENT, RUNOUT_SPOOL_COMMENT)
+
+
+def _pending_entries(raw):
+    """{spool id: {"since", "tried"}} from the persisted pending map, skipping anything malformed."""
+    entries = {}
+    if not isinstance(raw, dict):
+        return entries
+    for key, value in raw.items():
+        try:
+            entries[int(key)] = {"since": float(value["since"]), "tried": float(value["tried"])}
+        except (TypeError, ValueError, KeyError):
+            continue
+    return entries
+
+
+class SpoolmanNewSpoolWatcher:
+    """Diff Spoolman inventory against a persisted known-set; prompt once per new spool (#483).
+
+    The Spoolman-side twin of FilamentInsertionMonitor: that one watches IFS
+    slot presence at the printer, this one watches Spoolman itself, so a
+    spool created in Spoolman's UI (or by another tool) gets its Discord
+    prompt too. The first successful poll seeds the known-set silently —
+    existing inventory is history, not news. Spools Print Handy created
+    itself (recognised by the comment it stamps on them) are recorded
+    silently, as are new spools that arrive already archived (a history
+    import, not a new physical spool); deleted IDs drop out of the set.
+
+    A new spool waits in "pending" until the caller reports the prompt
+    delivered, so a chat outage does not lose it: a pending prompt is
+    retried every NEW_SPOOL_RETRY_S, across restarts, and given up after
+    NEW_SPOOL_GIVE_UP_S. Pending spools that are archived or deleted in the
+    meantime are dropped. Fail-soft, per the #387 posture: when Spoolman
+    does not answer, list_spools returns None and the poll reports nothing
+    and changes nothing.
+    """
+
+    def __init__(self, state_path=SPOOLMAN_KNOWN_STATE, lister=None, clock=time.time):
+        self.state_path = Path(state_path)
+        self.lister = lister
+        self.clock = clock
+
+    def poll(self):
+        """Spool records to prompt for now: new ones, plus undelivered ones due for a retry."""
+        lister = self.lister
+        if lister is None:
+            # Archived spools included: Spoolman hides them by default, and a spool
+            # that left the list on archiving would be "new" again when unarchived.
+            from print_handy.core import spoolman_client
+            lister = lambda: spoolman_client.list_spools(allow_archived=True)  # noqa: E731
+        rows = lister()
+        if not isinstance(rows, list):
+            return []
+        current = {}
+        for row in rows:
+            sid = row.get("id") if isinstance(row, dict) else None
+            if isinstance(sid, int) and not isinstance(sid, bool):
+                current[sid] = row
+        state = read_json_object(self.state_path)
+        known = state.get("known")
+        if not state.get("seeded") or not isinstance(known, list):
+            atomic_write_json(self.state_path, {"seeded": True, "known": sorted(current), "pending": {}})
+            return []
+        known_ids = {item for item in known if isinstance(item, int) and not isinstance(item, bool)}
+        pending = _pending_entries(state.get("pending"))
+        now = self.clock()
+        for sid in sorted(current):
+            row = current[sid]
+            if sid not in known_ids and not row.get("archived") and not created_by_print_handy(row):
+                pending[sid] = {"since": now, "tried": 0.0}
+        due = []
+        for sid in sorted(pending):
+            row, entry = current.get(sid), pending[sid]
+            if row is None or row.get("archived"):
+                del pending[sid]  # deleted or archived since: nothing left to ask about
+            elif now - entry["since"] >= NEW_SPOOL_GIVE_UP_S:
+                log(f"spoolman watcher gave up on the undelivered prompt for spool #{sid}")
+                del pending[sid]
+            elif now - entry["tried"] >= NEW_SPOOL_RETRY_S:
+                entry["tried"] = now
+                due.append(row)
+        updated = {"seeded": True, "known": sorted(current),
+                   "pending": {str(sid): entry for sid, entry in sorted(pending.items())}}
+        if updated != state:
+            atomic_write_json(self.state_path, updated)
+        return due
+
+    def delivered(self, spool_id):
+        """Clear a spool's pending prompt once it has reached the chat."""
+        state = read_json_object(self.state_path)
+        pending = state.get("pending")
+        if isinstance(pending, dict) and pending.pop(str(int(spool_id)), None) is not None:
+            atomic_write_json(self.state_path, state)
 
 
 class FilamentInsertionMonitor:
@@ -1624,6 +1768,11 @@ def _visual_verdict(image, prompt):
         api_key=lambda: _profile_env_value("CLIPROXY_API_KEY"), context=_VISION_CONTEXT)
 
 
+def _vision_ready():
+    """Whether the camera watch has a vision endpoint to judge frames with (visual_watch.vision_ready)."""
+    return _visual_watch.vision_ready(lambda: _profile_env_value("CLIPROXY_API_KEY"), log)
+
+
 def _visual_layer(stats):
     info = stats.get("info") if isinstance(stats, dict) else None
     if not isinstance(info, dict):
@@ -1809,6 +1958,7 @@ class Listener:
         self.filename = ""
         self.pause_message = ""
         self.ifs_monitor = FilamentInsertionMonitor()
+        self.spoolman_watcher = SpoolmanNewSpoolWatcher()
         self.slot_tracker = MidPrintSlotTracker()
         self.visual_watch = VisualPrintWatch()
         self.last_stats = {}
@@ -1848,6 +1998,21 @@ class Listener:
         log(f"spool question opened: cause={cause} slot={slot} suspended_spool={suspended}")
         await asyncio.to_thread(post_spool_question, record)
         return record
+
+    async def poll_spoolman_new_spools(self):
+        """Prompt once per spool created in Spoolman outside Print Handy (#483).
+
+        Runs on the native-presence poll's cadence. Fail-soft: the watcher
+        reports nothing when Spoolman does not answer, and the caller logs
+        and continues on any error — this poll never stalls the loop.
+        """
+        due = await asyncio.to_thread(self.spoolman_watcher.poll)
+        for spool in due:
+            if await asyncio.to_thread(post_new_spool_prompt, spool):
+                await asyncio.to_thread(self.spoolman_watcher.delivered, spool["id"])
+                log(f"spoolman watcher prompted for new spool #{spool.get('id')}")
+            else:
+                log(f"spoolman watcher could not deliver the prompt for spool #{spool.get('id')}; will retry")
 
     async def nag_if_due(self):
         record = load_runout_pause()
@@ -2097,7 +2262,7 @@ class Listener:
         if new_state == "printing" and _config.cfg()["visual_watch"]["enabled"]:
             layer = _visual_layer(self.last_stats)
             reason_due = self.visual_watch.due(layer, time.time(), snapshot_changed=None)
-            if reason_due:
+            if reason_due and _vision_ready():
                 self.last_visual_task = asyncio.create_task(self.visual_check(reason_due, layer))
         if old is not None and old != "printing" and new_state == "printing":
             # Claimed starts already have the intake's one post; unclaimed starts (printer screen,
@@ -2296,7 +2461,7 @@ class Listener:
                             if self.state == "printing" and _config.cfg()["visual_watch"]["enabled"]:
                                 layer = _visual_layer(self.last_stats)
                                 reason_due = self.visual_watch.due(layer, time.time())
-                                if reason_due:
+                                if reason_due and _vision_ready():
                                     self.last_visual_task = asyncio.create_task(self.visual_check(reason_due, layer))
                     elif method == "notify_gcode_response":
                         for line in msg.get("params") or []:
@@ -2318,6 +2483,10 @@ class Listener:
                 if time.monotonic() - self.last_native_poll >= NATIVE_POLL_SECONDS:
                     self.last_native_poll = time.monotonic()
                     await self.poll_native_presence()
+                    try:
+                        await self.poll_spoolman_new_spools()
+                    except Exception as exc:
+                        log(f"spoolman new-spool poll failed: {exc!r}")
                     try:
                         await self.nag_if_due()
                     except Exception as exc:

@@ -8,7 +8,7 @@
 
 **Prepare and manage 3D prints right from your chat — Discord, Telegram or Matrix — and nothing ever prints without your explicit confirmation.**
 
-Current release: **2.1.6**
+Current release: **2.1.7**
 
 [Get started](#quick-start-docker) · [Documentation](https://catduckgnaf.github.io/print-handy-docs/) · [Contribute](CONTRIBUTING.md) · [Releases](https://github.com/catduckgnaf/print-handy/releases)
 

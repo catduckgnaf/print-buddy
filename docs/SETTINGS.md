@@ -159,6 +159,17 @@ Schema, validation limits and TOML migration: [CONFIGURATION-YAML.md](CONFIGURAT
 | `material_temps.<MATERIAL>` | file only | see `config/home.yaml` | `{nozzle, bed}` fallback temperatures for PLA, PETG, ABS, ASA, TPU, PA, PC; Spoolman filament values win |
 | `cold_pull.<profile>` | file only | from the vendor profile *model* | Hot and cold cold-pull temperatures; profile names are yours |
 
+## Custom vision endpoint (PRINT_VISION_URL)
+
+The camera watchdog normally judges frames through the OpenAI-compatible `services.vision_chat_url` endpoint (with `CLIPROXY_API_KEY`). Setting the plain environment variable `PRINT_VISION_URL` — it is not a `PRINT_HANDY__` setting and has no config-file form — points the watchdog at your own detector instead: a Frigate-adjacent sidecar, an Obico-style adapter, a small ONNX service, anything that can answer one HTTP call. When it is set, it is the route used for every camera check: the OpenAI-compatible route is not consulted, no API key is needed, and the camera watch counts as having a vision endpoint. It serves camera checks only — the print-start roast still needs `services.vision_chat_url`.
+
+The contract is deliberately small:
+
+- **Request:** `POST` to the `PRINT_VISION_URL` URL with header `Content-Type: application/json` and no `Authorization` header. The body is a JSON object: `{"image": "<base64>", "prompt": "<text>"}`. `image` is the camera frame's JPEG bytes, standard base64, no `data:` prefix. `prompt` is the watchdog's question text (today: "Is there plastic on the bed under the nozzle, or is there spaghetti/detachment?"). Unlike the OpenAI-compatible route, no format instructions are prepended — the endpoint itself maps its analysis onto the verdict vocabulary below.
+- **Response:** HTTP 200 with a JSON object body: `{"verdict": "...", "reason": "..."}`. `verdict` is matched case-insensitively (Print Handy lowercases it). The vocabulary is `ok`, `air`, `spaghetti`, `detached`, `empty_idle`, `uncertain`; the watch also recognises `safe` (healthy, like `ok`) and `no` / `unsafe` (suspicious). A missing `verdict` counts as `uncertain`; any other value is passed through and matches neither the alert nor the healthy set. `reason` is free text shown with the alert; a missing one counts as empty, and it is truncated to 300 characters.
+- **How verdicts map:** `ok` / `safe` are healthy (at `visual_watch.sensitivity` 1–2 a healthy verdict can veto a pixel-diff stall alert). `air`, `spaghetti` and `detached` alert. `uncertain` also alerts — a frame that cannot be judged is treated as needing review, never as a pass. `empty_idle` is neither: an idle printer with an empty bed is expected.
+- **Timeout and failures:** Print Handy waits at most **30 seconds** for the answer. Anything that goes wrong — endpoint unreachable, timeout, an HTTP error status, or a body that is not a JSON object — degrades to verdict `uncertain` with the detail "the vision check could not be completed", so a broken endpoint produces visible alerts instead of silently passing frames. The underlying error is written to the log (`vision check failed via PRINT_VISION_URL: ...`), which is where a mis-configured URL is diagnosed.
+
 ## Printers list
 
 By default Print Handy runs one printer, described by the `[printer]`, `[services]`, `[bambu]`, `[prusa]`, `[elegoo_sdcp]` and `[flashforge_stock]` settings above. A config file may instead declare a **list of printers** — `printers:` in YAML, `[[printers]]` in TOML — one entry per printer, each carrying its own connection keys (#333; design: [MULTI-PRINTER-DESIGN.md](MULTI-PRINTER-DESIGN.md)). The list itself is file only: it cannot come from the environment.
@@ -218,6 +229,7 @@ These configure the Compose deployment, not Print Handy itself. Set them in `.en
 | `PRINT_HANDY_ORCA_CHANNEL` | `stable` | Selects the bundled stable or alpha OrcaSlicer at startup; invalid values stop the container |
 | `PRINT_HANDY_BUNDLED_SPOOLMAN` | `true` | `true` runs the bundled Spoolman API; `false` uses `services.spoolman_url` only |
 | `SPOOLMAN_HOST` | `127.0.0.1` | Bundled Spoolman bind address; widen it only together with an approved port mapping, see docs/DOCKER.md |
+| `PRINT_VISION_URL` | empty | Custom vision endpoint for camera checks; takes precedence over `services.vision_chat_url` and needs no key. See [Custom vision endpoint](#custom-vision-endpoint-print_vision_url) |
 
 `WITH_ORCA=false` (default) omits both Orca channels; slicing fails closed without either binary.
 

@@ -258,18 +258,28 @@ switch if you want no model calls at all.
 | `hermes send` subprocess in the listener | `print_handy.bot.rest.send`: Discord REST with the bot token, `MEDIA:` files as attachments. Since #524 this is the listener's Discord post path in Hermes mode too — no `hermes send` subprocess remains anywhere |
 | Hermes `state.db` messages for "print it" | `print_handy.bot.recent_links`: the last model link per channel in `<state>/recent_model_links.json`. This file is the single source in both modes (#524); `state.db` is no longer read for link recall |
 | Agent session resets and cleanups after a print (`state.db`, `SessionDB`) | Retired in every mode (#524): the bot no longer resets or archives agent sessions and never opens `state.db`. Session lifetime belongs to the agent host — the shipped Hermes profile template resets its sessions daily at 4 AM |
+| Profile `auxiliary.print_design` pin answering /print-design | The `[design]`/`[llm]` HTTP transport in both modes (#524): the configured endpoint answers; the profile pin is only the fallback when no endpoint is configured |
 | Tool-call hooks (`pre_tool_call`, `post_tool_call`) | Not needed: they only guard an agent's tool calls. Kept registered for Hermes |
 | Hermes home, install script, systemd units, restart drop-in | `paths.hermes_home` is just the data folder; `scripts/install-standalone.sh` and `systemd/*.service.template` with no gateway coupling |
 
 ## Moving from Hermes
 
 1. Stop the gateway for this bot: `systemctl --user disable --now hermes-gateway` (or remove the Discord token from
-   that profile).
+   that profile). One token, one connection: if both end up live, the doctor's shared-token check
+   (`python3 -m print_handy.bot check`) names the collision.
 2. Keep `paths.hermes_home` pointing at the old profile to keep its state (print numbers, plans, alerts), or copy
    its `state/` folder to the new data folder.
 3. Set `bot.mode: standalone` and `discord.chat_id` (`discord.allowed_user_ids` is optional), and put `DISCORD_BOT_TOKEN` in the environment or the
    data folder's `.env`.
 4. Run `python3 -m print_handy.bot check`, then `scripts/install-standalone.sh` and enable both units.
+5. Optional — keep agent answers for stray chat: point `[agent] chat_url` (and `api_key_env`) at the
+   Hermes API. Without it, stray chat uses the `[llm]` endpoint if one is configured, else the short
+   bounded reply.
+6. If the profile pinned a design model (`auxiliary.print_design`), set the same model under
+   `[design]` (or `[llm]`): the HTTP values are the normal path now.
+
+Session resets need no step: the bot no longer resets agent sessions in any mode, and the profile's
+own daily 4 AM reset (`session_reset` in the shipped template) is the remaining behaviour.
 
 Going back is the reverse: `bot.mode: hermes`, stop the standalone units, start the gateway.
 

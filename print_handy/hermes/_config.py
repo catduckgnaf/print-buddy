@@ -159,8 +159,8 @@ def discord_chat_id() -> str:
 
 
 def bot_mode() -> str:
-    """hermes (the gateway runs the plugin) or standalone (python3 -m print_handy.bot)."""
-    return str((cfg().get("bot") or {}).get("mode") or "hermes")
+    """standalone (python3 -m print_handy.bot, the default) or hermes (the gateway runs the plugin)."""
+    return str((cfg().get("bot") or {}).get("mode") or "standalone")
 
 
 def standalone() -> bool:

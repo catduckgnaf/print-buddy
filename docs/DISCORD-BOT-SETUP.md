@@ -98,7 +98,7 @@ Developer Portal and replace it locally. Never commit `.env` or `config/local.ya
 | `discord.approval_user_id` | Optional approval user: always allowed to act; setting one does not restrict anyone else |
 | `discord.token_env` | Environment variable name holding the secret, not the token itself |
 | `discord.bot_name` | Name in replies; does not change the Discord account name |
-| `bot.mode` | Set `standalone`; default is `hermes` |
+| `bot.mode` | `standalone` (the default); set `hermes` only for a Hermes-hosted install |
 | `bot.sync_commands` | Register slash commands at startup; default `true` |
 | `bot.health_port` | Default `0`: no HTTP listener; leave disabled for this setup |
 | `bot.health_stale_s` | Heartbeat freshness limit; default 120 seconds |

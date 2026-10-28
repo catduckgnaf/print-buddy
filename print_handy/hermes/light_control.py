@@ -5,6 +5,16 @@ snapshot, the verdict call and the G-code send, and feeds this module
 printer-state transitions and verdicts with an injected clock. Everything
 here is unit-testable offline.
 
+The Bambu Lab and Elegoo SDCP follow-up (also #516) reuses the policy
+unchanged: the family drivers in ``family_control`` own those families'
+I/O and feed the same transitions and verdicts. This module additionally
+carries the two pure protocol readers those drivers need — the Bambu
+``lights_report`` chamber-light probe and the SDCP ``LightStatus``
+reader — while the command payloads themselves live with their
+transports (``printers/bambulab/client.py``,
+``printers/elegoo_sdcp/client.py``), where those modules keep their
+other payload builders.
+
 The feature, in one paragraph: when ``vision.auto_light_off_minutes`` is
 set above zero, a print start turns the printer's light on (state event
 only — once the light is off the camera frame is dark, so vision can
@@ -41,6 +51,83 @@ LIGHT_OBJECT_TYPES = ("led", "neopixel", "output_pin")
 _NAME_RE = re.compile(r"[A-Za-z0-9_][A-Za-z0-9_.\-]*")
 
 DEFAULT_CHECK_INTERVAL_S = 300
+
+# The idle plate-check prompt every family's driver judges a frame with
+# (the Moonraker listener's wording, shared verbatim so a plate is asked
+# about the same way on every family).
+IDLE_CHECK_PROMPT = ("Is there plastic on the bed under the nozzle, or is "
+                     "there spaghetti/detachment?")
+
+
+# ------------------------------------------------------- Bambu Lab (#516)
+#
+# The chamber light is a fixed protocol target on Bambu printers: the
+# `system/ledctrl` MQTT command with led_node "chamber_light" (the
+# payload builder lives in printers/bambulab/client.py, beside its other
+# payload builders). Whether a given printer has one is something the
+# printer itself reports: its telemetry carries a `lights_report` list
+# of {"node": ..., "mode": ...} entries in the print block.
+
+def bambu_light_report(snapshot):
+    """True/False/None: does this Bambu snapshot report a chamber light?
+
+    Accepts a client snapshot ({"print": {...}, ...}) or the bare print
+    payload. True when a `lights_report` entry names the chamber_light
+    node, False when a lights_report is present without one (that model
+    reports its lights and has no chamber light — the capability is
+    unavailable, honestly), None when the snapshot carries no
+    lights_report at all (unknown — not evidence either way).
+    """
+    payload = snapshot.get("print") if isinstance(snapshot, dict) else None
+    if not isinstance(payload, dict):
+        payload = snapshot if isinstance(snapshot, dict) else None
+    if not isinstance(payload, dict):
+        return None
+    report = payload.get("lights_report")
+    if not isinstance(report, list):
+        return None
+    for entry in report:
+        if isinstance(entry, dict) and entry.get("node") == "chamber_light":
+            return True
+    return False
+
+
+# ------------------------------------------------------- Elegoo SDCP (#516)
+#
+# The SDCP chamber light is switched by Cmd 403 (control device) with
+# Data {"LightStatus": {"SecondLight": 0|1}} — the payload lives in
+# printers/elegoo_sdcp/client.py. The printer reports the same field in
+# its Cmd 0 status answer, which is the availability signal: a status
+# answer carrying LightStatus/SecondLight describes a printer with the
+# light; one without it says nothing (older firmware shapes differ), so
+# absence is unknown, never "no light".
+
+def sdcp_light_state(raw):
+    """True/False/None: the chamber light state in an SDCP status answer.
+
+    Looks for LightStatus under the answer's Status block (the recorded
+    shape) or at the top level (firmware builds differ on nesting, the
+    same posture as the client's Ack handling). SecondLight 1 reads as
+    on, 0 as off; anything else — no LightStatus, a non-integer value —
+    is None (unknown).
+    """
+    if not isinstance(raw, dict):
+        return None
+    blocks = [raw]
+    status = raw.get("Status")
+    if isinstance(status, dict):
+        blocks.append(status)
+    for block in blocks:
+        light = block.get("LightStatus")
+        if isinstance(light, dict):
+            value = light.get("SecondLight")
+            if isinstance(value, int) and not isinstance(value, bool):
+                if value == 1:
+                    return True
+                if value == 0:
+                    return False
+            return None
+    return None
 
 
 def parse_light_object(value):

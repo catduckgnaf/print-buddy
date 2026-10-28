@@ -58,6 +58,9 @@ services:
 printer:
   # Override with PRINT_HANDY__PRINTER__MODEL=sovol.sv06 etc.
   model: flashforge.ad5x
+spool:
+  # Ask for brand/vendor in the new-spool walkthrough (#512); off by default.
+  prompt_brand: false
 timelapse:
   # Mode (#246/#295): rendered, container or off. Empty derives: rendered
   # when a Moonraker URL is configured, else off.

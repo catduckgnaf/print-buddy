@@ -157,6 +157,9 @@ Schema, validation limits and TOML migration: [CONFIGURATION-YAML.md](CONFIGURAT
 | `maintenance.full_days` | `PRINT_HANDY__MAINTENANCE__FULL_DAYS` | `30` | Full maintenance due after these days |
 | `nozzle_temp_offsets.<type>` | `PRINT_HANDY__NOZZLE_TEMP_OFFSETS__<TYPE>` | `0.0` | Temperature offset, −10 to +15 °C, for `brass`, `hardened_steel`, `stainless_steel`, `ruby`, `tungsten_carbide`, `diamond` |
 | `material_temps.<MATERIAL>` | file only | see `config/home.yaml` | `{nozzle, bed}` fallback temperatures for PLA, PETG, ABS, ASA, TPU, PA, PC; Spoolman filament values win |
+| `spool.prompt_brand` | `PRINT_HANDY__SPOOL__PROMPT_BRAND` | `false` | Ask for the brand/vendor during the conversational new-spool walkthrough (#512). Off by default: the walkthrough skips brand entirely and the spool is created without one. Set `true` only if you track brands |
+
+**Material variant adjustments (#512).** A named variant within a family — Silk PLA, PLA+, Matte PLA, and the fibre-reinforced *-CF / *-GF variants of any family — adjusts the family fallback above: Silk PLA +10 °C nozzle and 0.7× outer-wall speed when slicing (its gloss needs the slower wall), PLA+ / Matte PLA / reinforced variants +5 °C nozzle (PA-CF +10 °C), Matte PLA 0.9× outer-wall speed. The adjustment applies only to the material-default fallback: a temperature recorded on the Spoolman filament itself is explicit data and is never adjusted, and plain family labels (PLA, PETG, ABS, ASA, TPU, PA, PC) are never adjusted.
 | `cold_pull.<profile>` | file only | from the vendor profile *model* | Hot and cold cold-pull temperatures; profile names are yours |
 
 ## Custom vision endpoint (PRINT_VISION_URL)

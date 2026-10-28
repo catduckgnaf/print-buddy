@@ -193,6 +193,7 @@ class OverrideTests(unittest.TestCase):
             "design": {"enabled", "chat_url", "model", "api_key_env", "timeout_s", "repair_attempts"},
             "listener": {"tick_s", "ifs_presence_poll_s", "spool_nag_s", "start_claim_ttl_s"},
             "vision": {"model", "roast_model", "roast_enabled"},
+            "spool": {"prompt_brand"},
             "visual_watch": {"enabled", "sensitivity"},
             "timelapse": {"mode", "encoder", "archive_host", "archive_dir", "ssh_key", "render_wait_s", "render_poll_s",
                           "max_bytes", "local_retention_days", "plan_clip_retention_days",

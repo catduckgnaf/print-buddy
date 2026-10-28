@@ -56,10 +56,18 @@ A bed-clear approval starts one print. Starting the same G-code again needs a ne
 * Filament estimates split across parts that share a spool, never multiplied.
 * `/spool` lists, changes, creates, and syncs spools without moving the printer. Bare or incomplete
   forms open a guided button flow (#475): known Spoolman filament types are offered first (their
-  colour/hex come from the database; hex is never asked), the create confirmation names the spool
-  number the new spool will be, and changing a slot asks the old spool's fate (shelf / archive /
-  depleted). Anchored plain phrases ("add new filament", "swap the filament", …) start the same flow
-  with no LLM involved; the complete typed forms stay one-shot.
+  colour/hex come from the database; hex is never asked), the very first question already previews
+  the spool number the new spool will be (#512 — write it on the spool before loading), and changing
+  a slot asks the old spool's fate (shelf / archive / depleted / delete, with Archive as depleted
+  recommended when the old spool has 0 g left). The brand question is skipped unless
+  `spool.prompt_brand` is on. Anchored plain phrases ("add new filament", "swap the filament", …)
+  start the same flow with no LLM involved; the complete typed forms stay one-shot.
+* The Discord insertion prompt (a spool changed on the printer's own screen) and the paused
+  spool question answer "New spool" with the same conversational walkthrough (#512) instead of
+  the old five-field text modal: material quick-select (PLA, Silk PLA, PLA+, PETG, TPU, ABS,
+  Other), colour/finish picker (known colours for the material first), starting-weight buttons
+  (1000 / 500 / 250 g or custom), the replaced spool's fate when the slot is occupied, and one
+  confirmation — nothing is created before it. Photo/OCR label intake is tracked separately in #514.
 * `/print-colors <JOB.json>` opens the color selection flow for an archived job. Preparation only: it slices nothing, uploads nothing and starts nothing, and the path must be an archived `JOB.json`.
 * A swapped spool can finish a job sliced for the old one, by explicit choice.
 * `PRINT_HANDY` Klipper macro confirms ZMod can fall back to a matching backup slot.
@@ -230,7 +238,8 @@ chmod 600 ~/.config/myminifactory/token
 | `logging` | `level`, `format`, `file` | `INFO`, `text`, empty | Log verbosity (`DEBUG`, `INFO`, `WARNING`, `ERROR`), `text` or `json` lines, and an optional rotating log file |
 | `maintenance` | `quick_hours`, `full_hours`, `full_days` | `25`, `75`, `30` | When maintenance reminders come due |
 | `nozzle_temp_offsets` | supported nozzle type | `0.0` | Optional temperature compensation from −10 to +15 °C for a known nozzle type |
-| `material_temps` | PLA, PETG, ABS, ASA, TPU, PA, PC (`nozzle`, `bed`) | see `config/home.yaml` | Configurable fallback temperatures in °C; explicit Spoolman filament settings take precedence |
+| `material_temps` | PLA, PETG, ABS, ASA, TPU, PA, PC (`nozzle`, `bed`) | see `config/home.yaml` | Configurable fallback temperatures in °C; explicit Spoolman filament settings take precedence. Named variants adjust the fallback (#512): Silk PLA +10 °C and 0.7× outer-wall speed, PLA+ / Matte PLA / *-CF / *-GF +5 °C (PA-CF +10 °C), Matte PLA 0.9× outer-wall speed |
+| `spool` | `prompt_brand` | `false` | Ask for brand/vendor in the new-spool walkthrough (#512); off by default, brand is skipped |
 | `cold_pull` | profile name | `pla_trial = [220, 90]`, `petg = [245, 100]` | Hot and cold temperatures in °C; profile names are configurable |
 
 ## Install and update

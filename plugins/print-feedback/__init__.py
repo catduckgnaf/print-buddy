@@ -1456,7 +1456,8 @@ _SPOOL_MENU_NEW = 'Add a new spool'
 _SPOOL_MENU_CHANGE = 'Change a spool'
 _SPOOL_MENU_LIST = 'List spools'
 _SPOOL_DISPOSITIONS = {'Back on the shelf': 'shelf', 'Archive it': 'archive',
-                       'Mark it as depleted': 'depleted'}
+                       'Mark it as depleted': 'depleted', 'Archive as depleted': 'depleted',
+                       'Delete it': 'delete'}
 
 _SPOOL_NL_NEW_RES = (
     re.compile(r"(?:please\s+)?add(?:ing)?\s+(?:a\s+|an\s+|some\s+)?(?:new\s+)?(?:filament|spool)\s*[.!]?", re.I),
@@ -1491,6 +1492,15 @@ def _spool_nl_intent(text):
 
 def _spool_timeout():
     return (globals().get('_config').question_timeout_s() if globals().get('_config') else 1800)
+
+
+def _prompt_brand():
+    """Whether new-spool intake asks for a brand (#512): spool.prompt_brand,
+    off by default — an unreadable config also means off, never a surprise step."""
+    try:
+        return bool((_config.cfg().get('spool') or {}).get('prompt_brand'))
+    except Exception:
+        return False
 
 
 async def _spool_ask(adapter, source, metadata, gateway, question, choices):
@@ -1533,34 +1543,51 @@ async def _spool_slot_ask(adapter, source, metadata, gateway, spool_sync, state,
     return int(match.group(1)), None
 
 
-async def _spool_disposition_ask(adapter, source, metadata, gateway, slot, old_id):
-    """The old spool's fate, as buttons. (disposition, None) or (None, final message)."""
-    answer = await _spool_ask(adapter, source, metadata, gateway,
-                              f"Slot {slot} still holds spool #{old_id}. What happens to spool #{old_id}?",
-                              list(_SPOOL_DISPOSITIONS) + ['Cancel'])
+async def _spool_disposition_ask(adapter, source, metadata, gateway, slot, old_id, old_remaining=None):
+    """The old spool's fate, as buttons. (disposition, None) or (None, final message).
+
+    Delete is offered alongside shelf/archive/depleted (#512 §3); when the
+    old spool has nothing left, Archive as depleted leads and says why.
+    """
+    empty = isinstance(old_remaining, (int, float)) and old_remaining <= 0
+    if empty:
+        choices = ['Archive as depleted', 'Back on the shelf', 'Archive it', 'Delete it', 'Cancel']
+        question = (f"Slot {slot} still holds spool #{old_id} (0 g left). What happens to spool #{old_id}? "
+                    f"Archive as depleted is the recommended choice for an empty spool.")
+    else:
+        choices = ['Back on the shelf', 'Archive it', 'Mark it as depleted', 'Delete it', 'Cancel']
+        question = f"Slot {slot} still holds spool #{old_id}. What happens to spool #{old_id}?"
+    answer = await _spool_ask(adapter, source, metadata, gateway, question, choices)
     if _spool_is_cancel(answer):
         return None, _SPOOL_CANCELLED
     disposition = _SPOOL_DISPOSITIONS.get(str(answer).strip())
     return (disposition, None) if disposition else (None, _SPOOL_UNCLEAR)
 
 
-async def _spool_new_type_details(adapter, source, metadata, gateway):
+async def _spool_new_type_details(adapter, source, metadata, gateway, lead=''):
     """Brand / material / colour for a filament type the database does not know.
 
     Returns a spec dict, or a final message string when the flow ends.
-    Hex is never asked and never required (#475).
+    Hex is never asked and never required (#475). Brand is asked only when
+    spool.prompt_brand is on (#512): off by default, the flow goes straight
+    to material and the spool is created with no brand. ``lead`` prefixes the
+    first question (the early spool-number preview, #512 §2).
     """
+    brand = None
+    if _prompt_brand():
+        answer = await _spool_ask(adapter, source, metadata, gateway,
+                                  (lead + '\n' if lead else '')
+                                  + 'What brand is the new filament? Type the brand name, or choose Skip brand.',
+                                  ['Skip brand', 'Cancel'])
+        if _spool_is_cancel(answer):
+            return _SPOOL_CANCELLED
+        brand = None if str(answer).strip().casefold() in ('skip brand', 'skip') else str(answer).strip()
+        if brand is not None and not brand:
+            return _SPOOL_UNCLEAR
     answer = await _spool_ask(adapter, source, metadata, gateway,
-                              'What brand is the new filament? Type the brand name, or choose Skip brand.',
-                              ['Skip brand', 'Cancel'])
-    if _spool_is_cancel(answer):
-        return _SPOOL_CANCELLED
-    brand = None if str(answer).strip().casefold() in ('skip brand', 'skip') else str(answer).strip()
-    if brand is not None and not brand:
-        return _SPOOL_UNCLEAR
-    answer = await _spool_ask(adapter, source, metadata, gateway,
-                              'What material is it? Pick one, or type another material.',
-                              ['PLA', 'PLA+', 'PETG', 'Cancel'])
+                              (lead + '\n' if lead and not _prompt_brand() else '')
+                              + 'What material is it? Pick one, or type another material.',
+                              ['PLA', 'Silk PLA', 'PLA+', 'PETG', 'TPU', 'ABS', 'Cancel'])
     if _spool_is_cancel(answer):
         return _SPOOL_CANCELLED
     material = str(answer).strip()
@@ -1602,10 +1629,16 @@ async def _spool_guided_new(adapter, source, metadata, gateway, spool_sync, pid,
     """
     types = await asyncio.to_thread(spool_sync.filament_types)
     predicted = await asyncio.to_thread(spool_sync.next_spool_id)
+    # The number is previewed in the very first question (#512 §2), not only
+    # at confirmation, so the operator can write it on the physical spool
+    # before loading or shelving it.
+    preview = (f"Preparing new spool #{predicted} — you can write #{predicted} on the spool now. "
+               f"Nothing is created until you confirm.")
     spec = None
     if types:
         listed = types[:8]
-        lines = ['Which filament is the new spool? Pick a type already in the database, '
+        lines = [preview,
+                 'Which filament is the new spool? Pick a type already in the database, '
                  'or choose New filament type.']
         lines += [f"{i}. {_spool_type_label(t)}" for i, t in enumerate(listed, 1)]
         choices = [_spool_type_label(t) for t in listed[:3]] + ['New filament type']
@@ -1626,7 +1659,8 @@ async def _spool_guided_new(adapter, source, metadata, gateway, spool_sync, pid,
             spec = {'brand': pick.get('brand'), 'material': pick['material'],
                     'color': pick['color'], 'hex': pick.get('hex')}
     if spec is None:
-        details = await _spool_new_type_details(adapter, source, metadata, gateway)
+        details = await _spool_new_type_details(adapter, source, metadata, gateway,
+                                                lead='' if types else preview)
         if isinstance(details, str):
             return None, details
         spec = details
@@ -1660,7 +1694,9 @@ async def _spool_guided_new(adapter, source, metadata, gateway, spool_sync, pid,
     old_id = ((state.get('ifs_slots') or {}).get(str(slot)) or {}).get('spoolman_id')
     disposition = 'shelf'
     if old_id and int(old_id) != made_id:
-        disposition, problem = await _spool_disposition_ask(adapter, source, metadata, gateway, slot, old_id)
+        disposition, problem = await _spool_disposition_ask(
+            adapter, source, metadata, gateway, slot, old_id,
+            ((state.get('ifs_slots') or {}).get(str(slot)) or {}).get('remaining_grams'))
         if disposition is None:
             return made_id, f"{message} Nothing was loaded; slot {slot} is unchanged."
     result = await asyncio.to_thread(spool_sync.bind_slot, slot, made_id,
@@ -1722,13 +1758,16 @@ async def _spool_guided_change(adapter, source, metadata, gateway, spool_sync, p
         return f"{created_note}Slot {slot} already holds spool #{new_id}. Nothing changed."
     disposition = 'shelf'
     if old_id:
-        disposition, problem = await _spool_disposition_ask(adapter, source, metadata, gateway, slot, old_id)
+        disposition, problem = await _spool_disposition_ask(
+            adapter, source, metadata, gateway, slot, old_id,
+            ((state.get('ifs_slots') or {}).get(str(slot)) or {}).get('remaining_grams'))
         if disposition is None:
             return (f"{created_note}The change was cancelled; slot {slot} is unchanged."
                     if created_note else problem)
     fate = {'shelf': f" Spool #{old_id} goes back on the shelf.",
             'archive': f" Spool #{old_id} will be archived.",
-            'depleted': f" Spool #{old_id} will be marked as depleted (0 g left)."}.get(disposition, '') if old_id else ''
+            'depleted': f" Spool #{old_id} will be marked as depleted (0 g left).",
+            'delete': f" Spool #{old_id} will be DELETED from Spoolman."}.get(disposition, '') if old_id else ''
     confirm_label = f'Change slot {slot}'
     answer = await _spool_ask(adapter, source, metadata, gateway,
                               f"Change slot {slot} to spool #{new_id}?{fate}", [confirm_label, 'Cancel'])
@@ -2749,40 +2788,191 @@ def alert_button_handlers(bot, adapter):
         view.add_item(select)
         await interaction.response.edit_message(content='Choose the shelf spool to map to this IFS slot. Nothing changes until you select one.', view=view)
 
-    async def insertion_modal(interaction, aid, alert):
+    def intake_view(components):
         import discord
-        slot = alert.get('slot')
-        if slot not in (1, 2, 3, 4):
-            await interaction.response.send_message('That insertion prompt is invalid. Nothing changed.', ephemeral=True)
-            return
-        modal_aid = await asyncio.to_thread(pab.record, 'insertion-modal', '', slot=slot)
+        view = discord.ui.View(timeout=(globals().get('_config').question_timeout_s() if globals().get('_config') else 1800))
+        for row in components:
+            for item in row.get('components', []):
+                if item.get('type') == 3:
+                    view.add_item(discord.ui.Select(
+                        placeholder=item.get('placeholder') or 'Choose one', min_values=1, max_values=1,
+                        options=[discord.SelectOption(**option) for option in item.get('options', [])],
+                        custom_id=item['custom_id']))
+                else:
+                    view.add_item(discord.ui.Button(label=item['label'], style=discord.ButtonStyle(item['style']),
+                                                    custom_id=item['custom_id']))
+        return view
 
-        class NewSpoolModal(discord.ui.Modal, title='New IFS spool'):
+    async def intake_show_step(interaction, state, *, new_message=False):
+        """Record the walkthrough's next step and show it (#512)."""
+        aid = await asyncio.to_thread(pab.record, 'intake', '', **state)
+        state = {**state}
+        text = pab.intake_step_text(state)
+        view = intake_view(pab.intake_step_components(aid, state))
+        if new_message:
+            await interaction.response.send_message(text, view=view)
+        else:
+            await interaction.response.edit_message(content=text, view=view)
+
+    async def intake_advance(interaction, state):
+        state = {**state, 'step': pab.intake_next_step(state)}
+        await intake_show_step(interaction, state)
+
+    async def intake_start(interaction, origin, slot, context=None):
+        """Open the conversational new-spool walkthrough (#512), replacing the modal.
+
+        The first step already names the spool number that will be assigned,
+        so the operator can write it on the physical spool before loading.
+        """
+        from print_handy.hermes import spool_sync
+        if slot not in (1, 2, 3, 4):
+            await interaction.response.send_message('That prompt has no usable slot. Nothing changed.', ephemeral=True)
+            return
+        try:
+            predicted = await asyncio.to_thread(spool_sync.next_spool_id)
+            types = await asyncio.to_thread(spool_sync.filament_types)
+        except Exception:
+            logger.exception('new spool walkthrough could not read Spoolman')
+            await interaction.response.send_message('Spoolman could not be reached, so nothing was changed. Check that Spoolman is running, then try again.', ephemeral=True)
+            return
+        old_spool_id = old_remaining = None
+        if origin == 'insertion':
+            try:
+                state_now = await asyncio.to_thread(spool_sync.load_state)
+                record = (state_now.get('ifs_slots') or {}).get(str(slot)) or {}
+                old_spool_id = record.get('spoolman_id')
+                old_remaining = record.get('remaining_grams')
+            except Exception:
+                logger.debug('intake could not read slot state', exc_info=True)
+        state = {'origin': origin, 'slot': slot, 'context': context or {}, 'step': 'start',
+                 'predicted_id': predicted, 'prompt_brand': _prompt_brand(),
+                 'types': types[:100], 'brand': None, 'material': None, 'color': None,
+                 'grams': None, 'old_spool_id': old_spool_id, 'old_remaining': old_remaining,
+                 'disposition': None}
+        await intake_advance(interaction, state)
+
+    async def intake_field_modal(interaction, state, field, label, max_length=100):
+        """The walkthrough's only typed inputs: one field, for Other/Custom choices."""
+        import discord
+        modal_aid = await asyncio.to_thread(pab.record, 'intake-modal', '', state=state, field=field)
+
+        class IntakeFieldModal(discord.ui.Modal, title=label):
             def __init__(self):
-                super().__init__(custom_id=f'pbinsertmodal:{modal_aid}')
-                self.fields = {}
-                for field in pab.new_insertion_fields():
-                    item = discord.ui.TextInput(label=field['label'], custom_id=field['key'],
-                                                required=field['required'], max_length=field['max_length'])
-                    self.fields[field['key']] = item
-                    self.add_item(item)
+                super().__init__(custom_id=f'pbintakemodal:{modal_aid}')
+                self.item = discord.ui.TextInput(label=label, custom_id=field,
+                                                 required=True, max_length=max_length)
+                self.add_item(self.item)
 
             async def on_submit(self, modal_interaction):
                 pending = await asyncio.to_thread(pab.take, modal_aid)
                 if not pending:
                     await modal_interaction.response.send_message('That form is old or was already submitted. Nothing changed.', ephemeral=True)
                     return
-                try:
-                    from print_handy.hermes import spool_sync
-                    values = {key: str(item.value or '') for key, item in self.fields.items()}
-                    result = await asyncio.to_thread(pab.create_and_bind_insertion, pending['slot'], values, spool_sync)
-                except Exception as exc:
-                    logger.exception('new insertion spool failed')
-                    await modal_interaction.response.send_message('Nothing was changed. Check what you entered and try again.', ephemeral=True)
-                    return
-                await modal_interaction.response.send_message(result)
+                new_state = dict(pending['state'])
+                value = str(self.item.value or '').strip()
+                if pending['field'] == 'grams':
+                    try:
+                        grams = float(re.sub(r'[^0-9.]', '', value))
+                    except ValueError:
+                        grams = 0
+                    if grams <= 0:
+                        await modal_interaction.response.send_message('That weight is not usable. Nothing changed — start again from the prompt.', ephemeral=True)
+                        return
+                    new_state['grams'] = round(grams, 1)
+                else:
+                    if not value:
+                        await modal_interaction.response.send_message('That answer was empty. Nothing changed — start again from the prompt.', ephemeral=True)
+                        return
+                    new_state[pending['field']] = value
+                # A modal submission answers with a fresh message carrying the next step.
+                new_state = {**new_state, 'step': pab.intake_next_step(new_state)}
+                aid = await asyncio.to_thread(pab.record, 'intake', '', **new_state)
+                await modal_interaction.response.send_message(
+                    pab.intake_step_text(new_state),
+                    view=intake_view(pab.intake_step_components(aid, new_state)))
 
-        await interaction.response.send_modal(NewSpoolModal())
+        await interaction.response.send_modal(IntakeFieldModal())
+
+    async def intake_finish(interaction, state):
+        """The walkthrough's confirmation: create + bind, once, inventory-only."""
+        try:
+            from print_handy.hermes import spool_sync
+            values = {'brand': state.get('brand') or '', 'material': state.get('material') or '',
+                      'color': state.get('color') or '', 'grams': str(state.get('grams') or ''), 'lot': ''}
+            if state.get('origin') == 'spool-question':
+                from print_handy.hermes import moonraker_event_listener as listener
+                choice = {'status': 'new', 'brand': values['brand'] or None, 'material': values['material'],
+                          'color': values['color'], 'grams': values['grams'], 'lot': None}
+                result = await asyncio.to_thread(_answer_spool_question, listener, spool_sync,
+                                                 state.get('context') or {}, choice)
+            else:
+                result = await asyncio.to_thread(pab.create_and_bind_insertion, state['slot'], values,
+                                                 spool_sync, state.get('disposition') or 'shelf')
+        except Exception:
+            logger.exception('new spool walkthrough create failed')
+            await interaction.response.edit_message(content='Nothing was changed. Check what you entered and try again.', view=None)
+            return
+        await interaction.response.edit_message(content=result, view=None)
+
+    async def handle_intake(interaction, action, aid):
+        alert = await asyncio.to_thread(pab.peek, aid)
+        if not alert or alert.get('kind') != 'intake':
+            await interaction.response.send_message('That new-spool walkthrough is old or was already answered. Nothing changed.', ephemeral=True)
+            return
+        state = {key: alert.get(key) for key in
+                 ('origin', 'slot', 'context', 'step', 'predicted_id', 'prompt_brand', 'types',
+                  'brand', 'material', 'color', 'grams', 'old_spool_id', 'old_remaining', 'disposition')}
+        if action == 'cancel':
+            await asyncio.to_thread(pab.take, aid)
+            await interaction.response.edit_message(content='New spool cancelled. Nothing changed.', view=None)
+            return
+        if action == 'mat_other':
+            await asyncio.to_thread(pab.take, aid)
+            await intake_field_modal(interaction, state, 'material', 'Material')
+            return
+        if action == 'w_custom':
+            await asyncio.to_thread(pab.take, aid)
+            await intake_field_modal(interaction, state, 'grams', 'Full starting grams', max_length=12)
+            return
+        if action == 'brand_type':
+            await asyncio.to_thread(pab.take, aid)
+            await intake_field_modal(interaction, state, 'brand', 'Brand')
+            return
+        await asyncio.to_thread(pab.take, aid)
+        material = pab.intake_material_for_action(action)
+        if material is not None:
+            state['material'] = material
+        weight = pab.intake_weight_for_action(action)
+        if weight is not None:
+            state['grams'] = weight
+        disposition = pab.intake_disposition_for_action(action)
+        if disposition is not None:
+            state['disposition'] = disposition
+        if action == 'brand_skip':
+            state['brand'] = None
+        if action == 'confirm':
+            await intake_finish(interaction, state)
+            return
+        await intake_advance(interaction, state)
+
+    async def handle_intake_select(interaction, aid):
+        alert = await asyncio.to_thread(pab.take, aid)
+        if not alert or alert.get('kind') != 'intake':
+            await interaction.response.send_message('That choice is old or was already used. Nothing changed.', ephemeral=True)
+            return
+        state = {key: alert.get(key) for key in
+                 ('origin', 'slot', 'context', 'step', 'predicted_id', 'prompt_brand', 'types',
+                  'brand', 'material', 'color', 'grams', 'old_spool_id', 'old_remaining', 'disposition')}
+        value = str((getattr(interaction, 'data', {}) or {}).get('values', [''])[0] or '')
+        if value == pab.INTAKE_OTHER:
+            field = 'brand' if state.get('step') == 'brand' else 'color'
+            await intake_field_modal(interaction, state, field, 'Brand' if field == 'brand' else 'Color / finish')
+            return
+        if state.get('step') == 'brand':
+            state['brand'] = None if value == pab.INTAKE_SKIP else value
+        else:
+            state['color'] = value
+        await intake_advance(interaction, state)
 
     async def spool_question_select(interaction, alert):
         import discord
@@ -2814,43 +3004,12 @@ def alert_button_handlers(bot, adapter):
         await interaction.response.edit_message(content='Choose the shelf spool to charge for the rest of this print. Nothing changes until you select one.', view=view)
 
     async def spool_question_modal(interaction, alert):
-        import discord
+        """'New spool' on a paused spool question opens the same walkthrough (#512)."""
         context = alert.get('context') or {}
         if context.get('slot') not in (1, 2, 3, 4):
             await interaction.response.send_message('That spool question has no usable slot. Nothing changed.', ephemeral=True)
             return
-        modal_aid = await asyncio.to_thread(pab.record, 'spool-question-modal', '', context=context)
-
-        class NewSpoolModal(discord.ui.Modal, title='New replacement spool'):
-            def __init__(self):
-                super().__init__(custom_id=f'pbspoolmodal:{modal_aid}')
-                self.fields = {}
-                for field in pab.new_insertion_fields():
-                    item = discord.ui.TextInput(label=field['label'], custom_id=field['key'],
-                                                required=field['required'], max_length=field['max_length'])
-                    self.fields[field['key']] = item
-                    self.add_item(item)
-
-            async def on_submit(self, modal_interaction):
-                pending = await asyncio.to_thread(pab.take, modal_aid)
-                if not pending:
-                    await modal_interaction.response.send_message('That form is old or was already submitted. Nothing changed.', ephemeral=True)
-                    return
-                try:
-                    from print_handy.hermes import moonraker_event_listener as listener
-                    from print_handy.hermes import spool_sync
-                    values = {key: str(item.value or '') for key, item in self.fields.items()}
-                    choice = {'status': 'new', 'brand': values['brand'] or None, 'material': values['material'],
-                              'color': values['color'], 'grams': values['grams'], 'lot': values['lot'] or None}
-                    result = await asyncio.to_thread(_answer_spool_question, listener, spool_sync,
-                                                     pending['context'], choice)
-                except Exception as exc:
-                    logger.exception('new spool-question spool failed')
-                    await modal_interaction.response.send_message('Nothing was changed. Check what you entered and try again.', ephemeral=True)
-                    return
-                await modal_interaction.response.send_message(result)
-
-        await interaction.response.send_modal(NewSpoolModal())
+        await intake_start(interaction, 'spool-question', context['slot'], context)
 
     async def handle_spool_question(interaction, action, aid):
         alert = await asyncio.to_thread(pab.take, aid)
@@ -2925,7 +3084,7 @@ def alert_button_handlers(bot, adapter):
         elif action == 'existing':
             await insertion_select(interaction, aid, alert)
         else:
-            await insertion_modal(interaction, aid, alert)
+            await intake_start(interaction, 'insertion', slot)
 
     async def handle_insertion_select(interaction, aid):
         pending = await asyncio.to_thread(pab.take, aid)
@@ -3008,7 +3167,8 @@ def alert_button_handlers(bot, adapter):
             old_id = alert.get('old_spool_id')
             fate = {'shelf': f' Spool #{old_id} goes back on the shelf.',
                     'archive': f' Spool #{old_id} will be archived.',
-                    'depleted': f' Spool #{old_id} will be marked as depleted (0 g left).'}[action]
+                    'depleted': f' Spool #{old_id} will be marked as depleted (0 g left).',
+                    'delete': f' Spool #{old_id} will be DELETED from Spoolman.'}[action]
             await new_spool_confirm(interaction, spool_id, label, alert.get('slot'), action, fate)
             return
         # spoolman-new-confirm + confirm: the one bind, through the same
@@ -3053,7 +3213,8 @@ def alert_button_handlers(bot, adapter):
                                                old_spool_id=int(old_id))
             view = discord.ui.View(timeout=(globals().get('_config').question_timeout_s() if globals().get('_config') else 1800))
             for text, key in (('Back on the shelf', 'shelf'), ('Archive it', 'archive'),
-                              ('Mark it as depleted', 'depleted'), ('Cancel', 'cancel')):
+                              ('Mark it as depleted', 'depleted'), ('Delete it', 'delete'),
+                              ('Cancel', 'cancel')):
                 view.add_item(discord.ui.Button(label=text, style=discord.ButtonStyle.secondary,
                                                 custom_id=f'{pab.NEW_SPOOL_PREFIX}:{key}:{disp_aid}'))
             await interaction.response.edit_message(
@@ -3222,14 +3383,24 @@ def alert_button_handlers(bot, adapter):
         insertion = pab.parse_insertion_custom_id(custom_id)
         spool_question = pab.parse_spool_question_custom_id(custom_id)
         new_spool = pab.parse_new_spool_custom_id(custom_id)
+        intake = pab.parse_intake_custom_id(custom_id)
         is_select = str(custom_id).startswith('pbinsertselect:')
         is_spool_select = str(custom_id).startswith('pbspoolselect:')
         is_new_spool_select = str(custom_id).startswith(f'{pab.NEW_SPOOL_SELECT_PREFIX}:')
-        if not parsed and not insertion and not spool_question and not new_spool \
-                and not is_select and not is_spool_select and not is_new_spool_select:
+        is_intake_select = str(custom_id).startswith(f'{pab.INTAKE_SELECT_PREFIX}:')
+        if not parsed and not insertion and not spool_question and not new_spool and not intake \
+                and not is_select and not is_spool_select and not is_new_spool_select \
+                and not is_intake_select:
             return
         if not allowed(interaction):
             await reject(interaction)
+            return
+        if intake:
+            await handle_intake(interaction, *intake)
+            return
+        if is_intake_select:
+            _, aid = str(custom_id).split(':', 1)
+            await handle_intake_select(interaction, aid)
             return
         if insertion:
             await handle_insertion(interaction, *insertion)

@@ -90,6 +90,7 @@ OPEN_SECTIONS = {"cold_pull", "nozzle_temp_offsets", "material_temps"}
 OPTIONAL_KEYS = {("printer", "nozzle_type"): str, ("printer", "tool_count"): int,
                  ("visual_watch", "enabled"): bool,
                  ("vision", "roast_enabled"): bool,
+                 ("spool", "prompt_brand"): bool,
                  ("services", "octoprint_url"): str,
                  ("bambu", "lan_host"): str, ("bambu", "lan_serial"): str,
                  ("bambu", "lan_access_code_env"): str,
@@ -1032,6 +1033,20 @@ def _validate_vision(data):
         raise SettingsError(f"[vision] roast_enabled must be true or false, got {enabled!r}")
 
 
+def _validate_spool(data):
+    """The [spool] section (#512): new-spool intake preferences.
+
+    ``prompt_brand`` is off by default: the conversational new-spool
+    walkthrough skips the brand/vendor question entirely (the spool is
+    created with no brand) unless the operator sets it true because they
+    track brands. Absent in an older config means the default (off).
+    """
+    spool = data.setdefault("spool", {})
+    prompt_brand = spool.setdefault("prompt_brand", False)
+    if not isinstance(prompt_brand, bool):
+        raise SettingsError(f"[spool] prompt_brand must be true or false, got {prompt_brand!r}")
+
+
 def _validate_design(data):
     """The [design] section (#388 Stage 1; auto-on posture from the close-out ruling).
 
@@ -1262,6 +1277,7 @@ def validate(data):
     _validate_bot(data)
     _validate_design(data)
     _validate_vision(data)
+    _validate_spool(data)
     _validate_logging(data)
     _validate_webui(data)
     _validate_timelapse(data)

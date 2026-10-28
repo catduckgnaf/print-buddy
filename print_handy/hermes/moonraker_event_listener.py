@@ -1712,6 +1712,11 @@ def _visual_verdict(image, prompt):
         api_key=lambda: _profile_env_value("CLIPROXY_API_KEY"), context=_VISION_CONTEXT)
 
 
+def _vision_ready():
+    """Whether the camera watch has a vision endpoint to judge frames with (visual_watch.vision_ready)."""
+    return _visual_watch.vision_ready(lambda: _profile_env_value("CLIPROXY_API_KEY"), log)
+
+
 def _visual_layer(stats):
     info = stats.get("info") if isinstance(stats, dict) else None
     if not isinstance(info, dict):
@@ -2198,7 +2203,7 @@ class Listener:
         if new_state == "printing" and _config.cfg()["visual_watch"]["enabled"]:
             layer = _visual_layer(self.last_stats)
             reason_due = self.visual_watch.due(layer, time.time(), snapshot_changed=None)
-            if reason_due:
+            if reason_due and _vision_ready():
                 self.last_visual_task = asyncio.create_task(self.visual_check(reason_due, layer))
         if old is not None and old != "printing" and new_state == "printing":
             # Claimed starts already have the intake's one post; unclaimed starts (printer screen,
@@ -2397,7 +2402,7 @@ class Listener:
                             if self.state == "printing" and _config.cfg()["visual_watch"]["enabled"]:
                                 layer = _visual_layer(self.last_stats)
                                 reason_due = self.visual_watch.due(layer, time.time())
-                                if reason_due:
+                                if reason_due and _vision_ready():
                                     self.last_visual_task = asyncio.create_task(self.visual_check(reason_due, layer))
                     elif method == "notify_gcode_response":
                         for line in msg.get("params") or []:

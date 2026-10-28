@@ -115,6 +115,38 @@ def test_standby_after_active_posts_cancelled(tmp_path):
     assert posts.retires == [(REMOTE, "Print ended at the printer.")]
 
 
+def test_standby_at_full_progress_is_a_completed_print(tmp_path):
+    # OctoPrint has no "complete" state: a finished job reads as standby at 100%.
+    done = {"state": "standby", "filename": REMOTE, "progress": 1.0}
+    rig, posts = listener(tmp_path, [st("standby", ""), st("printing"), done])
+    drive(rig, 3)
+    assert posts.terminals == [("complete", REMOTE)]
+    assert posts.retires == [(REMOTE, "Print complete.")]
+
+
+def test_octoprint_finished_job_through_the_real_adapter_posts_complete(tmp_path):
+    from print_handy.printers.octoprint.adapter import OctoPrintAdapter
+
+    adapter = OctoPrintAdapter.__new__(OctoPrintAdapter)
+
+    def raw(flags, completion):
+        return {"printer": {"state": {"flags": flags}, "temperature": {}},
+                "job": {"job": {"file": {"path": REMOTE}}, "progress": {"completion": completion}}}
+
+    idle = {"ready": True, "operational": True}
+    statuses = [adapter.normalize_status(raw(idle, None)),
+                adapter.normalize_status(raw({"printing": True, "operational": True}, 42.0)),
+                adapter.normalize_status(raw(idle, 100.0))]
+    rig, posts = listener(tmp_path, statuses)
+    drive(rig, 3)
+    assert posts.terminals == [("complete", REMOTE)]
+
+    cancelled = [statuses[0], statuses[1], adapter.normalize_status(raw(idle, 42.0))]
+    rig, posts = listener(tmp_path, cancelled, name="fam2.json")
+    drive(rig, 3)
+    assert posts.terminals == [("cancelled", REMOTE)]
+
+
 def test_restart_restores_the_classification_without_a_second_start(tmp_path):
     rig_a, posts_a = listener(tmp_path, [st("standby", ""), st("printing")])
     drive(rig_a, 2)

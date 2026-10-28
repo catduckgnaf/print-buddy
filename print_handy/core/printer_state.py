@@ -247,6 +247,40 @@ def save(st, printer_id=None):
     os.replace(tmp, target)
 
 
+def seed_hardware_record(printer_id, view=None):
+    """Create a newly onboarded printer's first hardware record (#537).
+
+    Nothing else creates one: records otherwise appear only as a side
+    effect of state-writing flows, and ``load``/``check`` raise on a
+    missing file — so a printer added to the roster without a record could
+    never pass readiness or bind a first spool. The seed carries only what
+    the printer's own settings view already states (identity, bed, height,
+    the configured nozzle size, the PLA temperature defaults, the Moonraker
+    URL for the Moonraker check path) plus an empty spool and empty IFS
+    slots: no spool is claimed loaded, no offset is marked verified. An
+    existing record is never overwritten. Returns True when a record was
+    created.
+    """
+    if state_path(printer_id).exists():
+        return False
+    view = view if view is not None else settings.view_for(printer_id)
+    printer = view["printer"]
+    pla = (view.get("material_temps") or {}).get("PLA") or DEFAULT_MATERIAL_TEMPS["PLA"]
+    record = {
+        "printer": printer.get("name") or printer_id,
+        "moonraker_url": (view.get("services") or {}).get("moonraker_url") or "",
+        "bed_mm": [float(v) for v in printer["bed_mm"]],
+        "max_print_height_mm": float(printer["max_print_height_mm"]),
+        "nozzle": {"diameter_mm": float(printer["nozzle_diameter_mm"]), "type": "stock",
+                   "installed": datetime.date.today().isoformat()},
+        "temps_c": {"nozzle": pla["nozzle"], "bed": pla["bed"]},
+        "spool": {},
+        "ifs_slots": {},
+    }
+    save(record, printer_id)
+    return True
+
+
 def _get(url, data=None, method=None, timeout=6):
     req = urllib.request.Request(url, data=json.dumps(data).encode() if data is not None else None,
                                  method=method, headers={"Content-Type": "application/json"})

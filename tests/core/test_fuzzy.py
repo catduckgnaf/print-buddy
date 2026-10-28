@@ -1,0 +1,66 @@
+"""Unit pins for the shared #468 fuzzy scorer (print_handy/core/fuzzy.py).
+
+The scorer is deliberately narrow: whole-string difflib similarity with a
+floor at 65 and a cap at 99. These pins hold the bands the #468 Stage 0
+report set (65–84 suggestion material, 85–99 high-confidence, 100 reserved
+for exact matches owned by callers) and the false-friend behaviour measured
+against the real registries while the scorer was designed.
+"""
+import pytest
+
+from print_handy.core import fuzzy
+
+
+@pytest.mark.parametrize("query,target,band", [
+    ("adheison", "adhesion", (85, 99)),      # transposed letters, the issue's example
+    ("nozzel", "nozzle", (65, 99)),          # letter swap
+    ("ofset", "offset", (85, 99)),           # dropped letter
+    ("prnt stop", "print stop", (85, 99)),   # command near-miss (stage 3 reuses this)
+    ("spol", "spool", (85, 99)),
+    ("stringng", "ringing", (65, 84)),       # the known false friend: suggestion band only
+])
+def test_typo_pairs_land_in_their_measured_bands(query, target, band):
+    score = fuzzy.fuzzy_score(query, target)
+    assert band[0] <= score <= band[1], (query, target, score)
+
+
+@pytest.mark.parametrize("query,target", [
+    ("pizza", "prusa mk4s"),
+    ("weather", "heat bed"),
+    ("banana", "bambu lab a1"),
+    ("fan", "first layer"),     # token-pair averaging scored this 0.67; whole-string must not
+    ("", "nozzle"),
+    ("nozzle", ""),
+    ("   ", "nozzle"),
+])
+def test_unrelated_pairs_score_zero(query, target):
+    assert fuzzy.fuzzy_score(query, target) == 0
+
+
+def test_fuzzy_never_reaches_exact_100():
+    # Identical strings are the caller's exact tier; through the fuzzy lens
+    # they cap at 99 so a fuzzy contribution can never impersonate exact.
+    assert fuzzy.fuzzy_score("adhesion", "adhesion") == 99
+    assert fuzzy.fuzzy_score("nozzle", "nozzles") == 92
+
+
+def test_normalization_is_applied_to_both_sides():
+    assert fuzzy.fuzzy_score("Nozzel!", "NOZZLE") == fuzzy.fuzzy_score("nozzel", "nozzle")
+    assert fuzzy.fuzzy_score("  bed   adheison ", "bed adhesion") >= fuzzy.FUZZY_FLOOR
+
+
+def test_coverage_guard_rejects_one_shared_word_false_friends():
+    # One long shared word must not carry a multi-word query whose other
+    # words match nothing in the target (measured: this pair's raw ratio
+    # clears 65 on "calibration" alone).
+    assert fuzzy.fuzzy_score("warp drive calibration", "probe calibrate") == 0
+    # ...while a query whose words each have a partner — typo'd or not —
+    # keeps its whole-string score.
+    assert fuzzy.fuzzy_score("bed adheison", "adhesion") >= fuzzy.FUZZY_FLOOR
+    assert fuzzy.fuzzy_score("nozzel clog fix", "nozzle clog") >= fuzzy.FUZZY_FLOOR
+
+
+def test_best_fuzzy_score_takes_the_best_target():
+    assert fuzzy.best_fuzzy_score("adheison", ["zzz", "adhesion failure", "adhesion"]) >= 85
+    assert fuzzy.best_fuzzy_score("pizza", ["zzz", "adhesion"]) == 0
+    assert fuzzy.best_fuzzy_score("adheison", []) == 0

@@ -315,13 +315,22 @@ def post_spool_question(token: str, channel_id: str, content: str, context: dict
         return None
 
 
-def edit_message(token: str, channel_id: str, message_id: str, content: str) -> bool:
-    """Replace the text of one bot message in place. False on any failure."""
+def edit_message(token: str, channel_id: str, message_id: str, content: str,
+                 components: list | None = None) -> bool:
+    """Replace the text of one bot message in place. False on any failure.
+
+    ``components`` is omitted from the payload unless given: an explicit
+    list replaces the message's buttons ([] strips them), while the
+    default leaves them untouched, as every pre-existing caller relies on.
+    """
     if not (token and channel_id and message_id):
         return False
+    payload = {"content": content[:1990], "allowed_mentions": {"parse": []}}
+    if components is not None:
+        payload["components"] = components
     req = urllib.request.Request(
         f"{rest.API}/channels/{channel_id}/messages/{message_id}",
-        data=json.dumps({"content": content[:1990], "allowed_mentions": {"parse": []}}).encode(),
+        data=json.dumps(payload).encode(),
         method="PATCH", headers={"Authorization": f"Bot {token}", "Content-Type": "application/json",
                                  "User-Agent": "DiscordBot (hermes-3dprinting, 1.0)"})
     try:

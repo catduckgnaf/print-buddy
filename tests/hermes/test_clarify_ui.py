@@ -2,9 +2,8 @@
 
 Fake-opener tests: no network, no Discord. The handler pattern is mirrored
 exactly — register in Print Handy's own registry first, then send — so the
-registry state these tests resolve is the state production would see once
-the S5 switch wires the adapter in. Nothing here is live: the adapter is
-not installed anywhere by production code yet.
+registry state these tests resolve is the state production sees with the
+S5 switch on ([discord] clarify_ui, wired in test_clarify_wiring.py).
 """
 import asyncio
 import json
@@ -272,5 +271,23 @@ def test_close_prompt_edits_once_and_forgets_the_row():
         assert CID not in ui._prompts
         asyncio.run(ui.close_prompt(CID, "again"))
         assert len(opener.patches()) == 1  # nothing left to edit
+    finally:
+        close()
+
+
+def test_retire_prompt_strips_buttons_without_an_answer_line():
+    # S6: a superseded question (the Stop step moved on) stops being
+    # answerable in place — same edit as a click, minus the answer line.
+    opener = FakeOpener()
+    ui, _ = ask(opener)
+    try:
+        assert asyncio.run(ui.retire_prompt(CID)) is True
+        patches = opener.patches()
+        assert len(patches) == 1
+        assert patches[0][2]["content"] == QUESTION  # text unchanged
+        assert patches[0][2]["components"] == []
+        assert CID not in ui._prompts
+        assert asyncio.run(ui.retire_prompt(CID)) is False  # already gone: nothing to edit
+        assert len(opener.patches()) == 1
     finally:
         close()

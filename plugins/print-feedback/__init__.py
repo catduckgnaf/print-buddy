@@ -334,6 +334,9 @@ class _ClarifyAdapter:
     async def send_clarify(self, *args, **kwargs):
         return await self._ui.send_clarify(*args, **kwargs)
 
+    async def retire_prompt(self, clarify_id):
+        return await self._ui.retire_prompt(clarify_id)
+
     async def send(self, *args, **kwargs):
         return await self._host.send(*args, **kwargs)
 
@@ -3018,6 +3021,26 @@ def alert_button_handlers(bot, adapter):
     from print_handy.core import prepared_intake as _pi
     STOP_PREFIX = _pi.STOP_CUSTOM_ID
 
+    # The S5 install (#524 stage 2, design §3.2): under Hermes with
+    # [discord] clarify_ui on and a resolvable bot token, the plugin-owned
+    # clarify adapter goes live — pbq: presses stop being inert and
+    # _adapter_for starts substituting send_clarify. Any gap (standalone
+    # host, setting off, no token) leaves _CLARIFY_UI unset and handlers on
+    # the host adapter: today's behaviour, no new failure mode. An adapter
+    # already installed (or installed by hand in tests) is kept.
+    global _CLARIFY_UI
+    if _CLARIFY_UI is None and _clarify_ui_on() and _config.discord_token():
+        from print_handy.hermes.clarify_ui import HermesClarifyAdapter
+        _CLARIFY_UI = HermesClarifyAdapter()
+    # S6: on the clarify-UI path the Stop-view substitution below stands
+    # down for this install (see the _pi assignments under send_stop):
+    # prepared_intake completes the clarify path by retiring the question
+    # message in place instead, and never needs a second prompt posted
+    # through the host gateway. (A UI installed by hand with the switch
+    # off — the #529 test posture — keeps the substitution: the switch,
+    # not the global's mere presence, is the operator's choice.)
+    _clarify_ui_live = _CLARIFY_UI is not None and _clarify_ui_on()
+
     async def send_stop(source, text, clarify_id):
         """Status step: one Stop button, no 'Other (type answer)'. Returns the sent message."""
         import discord
@@ -3049,6 +3072,30 @@ def alert_button_handlers(bot, adapter):
 
     _pi.REFUSAL_EDITOR = edit_refusal
 
+    async def edit_refusal_by_id(source, channel_id, message_id, text, context, raw):
+        """edit_refusal's by-id twin for the clarify path (#524 stage 2, S6).
+
+        The standing prompt there is a plain REST message with no live
+        view, so the refusal lands by PATCH instead of a view edit: the
+        guidance text plus a single Retry button when the receipt id is
+        usable, bare text otherwise — the same outcome edit_refusal
+        produces. Returns True when the message now carries the Retry
+        button.
+        """
+        from print_handy.hermes import print_alert_buttons as pab
+        receipt = (context or {}).get('receipt') or {}
+        receipt_id = str(receipt.get('intake_id') or '')
+        if re.fullmatch(r'[a-f0-9]{32}', receipt_id):
+            components = [{"type": 1, "components": [
+                {"type": 2, "style": 1, "label": "Retry",
+                 "custom_id": pab.retry_custom_id(receipt_id)}]}]
+        else:
+            receipt_id = ''
+            components = []
+        ok = await asyncio.to_thread(pab.edit_message, _config.discord_token(),
+                                     channel_id, message_id, text, components)
+        return bool(ok and receipt_id)
+
     async def handle_stop(interaction, clarify_id):
         from print_handy.core.prompts import gateway as _prompts
         cm = _prompts()
@@ -3060,7 +3107,14 @@ def alert_button_handlers(bot, adapter):
         except Exception:
             logger.debug('could not acknowledge Stop', exc_info=True)
 
-    _pi.STOP_SENDER = send_stop
+    if _clarify_ui_live:
+        # S6 retirement, on-path only: no Stop substitution. prepared_intake
+        # completes the clarify path in place (the question message is
+        # retired or becomes the refusal), and its refusals edit by id.
+        _pi.STOP_SENDER = None
+        _pi.REFUSAL_EDITOR_BY_ID = edit_refusal_by_id
+    else:
+        _pi.STOP_SENDER = send_stop
     async def insertion_select(interaction, aid, alert):
         import discord
         from print_handy.hermes import spool_sync
@@ -3867,18 +3921,6 @@ def alert_button_handlers(bot, adapter):
             result = _failure_post(label, exc, 'Check the printer screen. Not retrying.', subsystem='printer')
         await interaction.followup.send(result)
 
-    # The S5 install (#524 stage 2, design §3.2): under Hermes with
-    # [discord] clarify_ui on and a resolvable bot token, the plugin-owned
-    # clarify adapter goes live — pbq: presses stop being inert and
-    # _adapter_for starts substituting send_clarify. Any gap (standalone
-    # host, setting off, no token) leaves _CLARIFY_UI unset and handlers on
-    # the host adapter: today's behaviour, no new failure mode. An adapter
-    # already installed (or installed by hand in tests) is kept.
-    global _CLARIFY_UI
-    if _CLARIFY_UI is None and _clarify_ui_on() and _config.discord_token():
-        from print_handy.hermes.clarify_ui import HermesClarifyAdapter
-        _CLARIFY_UI = HermesClarifyAdapter()
-
     bot.add_listener(on_interaction, 'on_interaction')
 
 
@@ -3899,8 +3941,13 @@ def register(ctx):
         _prompts.activate()
     # Print Handy's button prompts already say what to do; drop Hermes's generic
     # "Pick one below, or click Other..." line for this gateway (a locale overlay, not a core patch).
-    with contextlib.suppress(Exception):
-        ctx.register_locale('en', {'platform': {'discord': {'prompt': {'clarify_hint_buttons': ''}}}})
+    # Retired on the clarify-UI path (S6): with the switch on, Print Handy's
+    # questions render through its own adapter and never carry Hermes's hint
+    # line — the patch only ever existed for handler questions. Hermes' own
+    # agent questions keep Hermes' hint either way; they are not ours to style.
+    if not clarify_on:
+        with contextlib.suppress(Exception):
+            ctx.register_locale('en', {'platform': {'discord': {'prompt': {'clarify_hint_buttons': ''}}}})
     # AI design (#388): when the host offers the plugin LLM lane, register the
     # design auxiliary task (the operator pins its model in the profile's
     # auxiliary.print_design block) and keep the lane for design_dispatch.

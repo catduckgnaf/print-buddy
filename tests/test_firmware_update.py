@@ -593,3 +593,65 @@ def test_dispatch_update_refuses_the_neptune_4_without_any_call():
     assert out["reason"] == "print firmware update refused for this printer"
     assert transport.calls == []
     assert "vendor fork" in adapter.sent[-1]
+
+
+# ------------------------------------------------------------------ stage 3: guides
+
+def test_zmod_guide_covers_zflash_md5_pairing_and_verification():
+    text = fw.guide_text("zmod", AD5X)
+    assert "ZFLASH" in text and "MD5" in text and "USB" in text
+    assert "first two numbers" in text
+    assert "mod_data" in text
+    assert text.rstrip().endswith(fw.GUIDE_VERIFY_LINE)
+    assert "`/print-firmware`" in fw.GUIDE_VERIFY_LINE
+
+
+def test_stock_guide_covers_every_documented_pre_and_post_step():
+    text = fw.guide_text("stock", AD5X)
+    for needle in ("DISABLE_PLUGIN", "recommend", "timelapse", "notify",
+                   "UPDATE_MCU", "RESET_PASSWD", "AD5X-enable-zmod.tgz",
+                   "IFS Update", "Firmware Update"):
+        assert needle in text, needle
+    assert text.rstrip().endswith(fw.GUIDE_VERIFY_LINE)
+
+
+def test_guides_never_claim_print_handy_performed_the_manual_steps():
+    for which, who in (("zmod", AD5X), ("stock", AD5X),
+                       ("stock", entry("flashforge_stock.ad5x"))):
+        text = fw.guide_text(which, who)
+        assert "Print Handy cannot do these steps for you" in text
+        for claim in ("Print Handy has updated", "Print Handy updated",
+                      "we have updated", "I updated your"):
+            assert claim not in text, (which, claim)
+
+
+def test_guides_say_so_plainly_for_printers_they_do_not_cover():
+    text = fw.guide_text("zmod", BAMBU_A1)
+    assert "not one of those" in text and "Nothing was sent" in text
+    assert "stock" in fw.guide_text("stock", entry("flashforge_stock.ad5x"))
+    assert "not one of those" in fw.guide_text("stock", GENERIC)
+    assert "Guides exist" in fw.guide_text("everything", AD5X)
+
+
+def test_dispatch_guide_stock_works_on_a_stock_printer_without_any_call():
+    adapter = FakeAdapter()
+    transport = FakeTransport()
+    with _configured("flashforge_stock.ad5x", "flashforge_stock"), \
+            mock.patch.object(spool_sync, "moonraker", transport):
+        out = asyncio.run(plugin.firmware_dispatch(
+            _event("/print-firmware guide stock"), _gateway(adapter)))
+    assert out == {"action": "skip", "reason": "print firmware guide shown"}
+    assert transport.calls == []
+    assert "RESET_PASSWD" in adapter.sent[-1]
+
+
+def test_dispatch_guide_zmod_on_the_ad5x():
+    adapter = FakeAdapter()
+    transport = FakeTransport()
+    with _configured("flashforge.ad5x", "moonraker"), \
+            mock.patch.object(spool_sync, "moonraker", transport):
+        out = asyncio.run(plugin.firmware_dispatch(
+            _event("/print-firmware guide zmod"), _gateway(adapter)))
+    assert out["reason"] == "print firmware guide shown"
+    assert "ZFLASH" in adapter.sent[-1]
+    assert transport.calls == []

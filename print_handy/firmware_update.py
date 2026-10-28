@@ -562,3 +562,103 @@ def send_update(transport, prepared: PreparedUpdate, *, verify_attempts=3,
     return ("The printer did not answer after the update request, so Print Handy cannot "
             f"verify what happened to **{name}**. It may still be restarting — give it a "
             "few minutes, then run `/print-firmware` to see the state it reports.")
+
+
+# --------------------------------------------------------------------- stage 3: guides
+
+GUIDE_VERIFY_LINE = ("When the printer is back, run `/print-firmware` and Print Handy will "
+                     "read and verify the versions it now reports.")
+
+ZMOD_GUIDE = """**Updating the ZMod base firmware (guided — you do these steps at the printer)**
+
+This is the ZMod base layer: the firmware image ZMod itself runs from. It is
+separate from the components `/print-firmware update` can apply — there is no
+API for the base layer, so Print Handy cannot do these steps for you. This
+guide is the checklist, in ZMod's documented order.
+
+1. Make sure the printer is idle and stays powered. Have a USB drive the
+   printer can read (FAT/FAT32) ready.
+2. Easiest path — the `ZFLASH` macro: insert the USB drive, then run
+   `ZFLASH` from the printer's console (Fluidd/Mainsail). It checks for the
+   latest ZMod release, downloads it to the USB drive, verifies the MD5
+   hash, and installs it after a reboot.
+3. Or by hand: download the latest ZMod release for your model from ZMod's
+   releases, put it on the USB drive exactly as ZMod's setup guide
+   describes, insert the drive and reboot the printer.
+4. Wait for the install to finish — ZMod's docs say it can take up to about
+   40 minutes on the AD5X, with two reboots (one to extract, one to
+   initialise). Do not remove the USB drive or switch the printer off
+   during the install. Your `mod_data` settings are preserved across the
+   update.
+5. Afterwards, the printer's OS version and its `zmod` component version
+   must pair in their first two numbers (OS 1.9.x with ZMod 1.9.x). If the
+   report still shows component updates, apply them one at a time with
+   `/print-firmware update <component>`.
+
+""" + GUIDE_VERIFY_LINE
+
+STOCK_GUIDE = """**Updating the stock Flashforge firmware under ZMod (guided — you do these steps at the printer)**
+
+The stock firmware is the layer underneath ZMod. It updates from the
+printer's own screen or a USB drive — there is no API Print Handy can use,
+so Print Handy cannot do these steps for you. On a ZMod printer, do the
+pre-steps first or the update can strand the install:
+
+1. Disable every active plugin except `recommend`, `timelapse` and
+   `notify`: `DISABLE_PLUGIN name=<plugin>` for each of the others.
+2. On Klipper 13, run `UPDATE_MCU` *before* updating the stock firmware,
+   so the MCU and Klipper are not left on mismatched versions.
+3. Update the stock firmware itself, one of two ways:
+   - From the native screen: with the printer online, open the device
+     info screen and choose Firmware Update (or accept the update prompt
+     when one appears). Note a screen update may need Chinese cloud
+     services enabled in ZMod's settings; if the screen finds no update,
+     your serial number may not be in the rollout yet — use the USB path.
+   - From USB: put Flashforge's firmware file for your model on a
+     FAT/FAT32 USB drive, insert it while the printer is powered off,
+     then power on and follow the screen.
+   The IFS firmware is *not* part of this: it updates separately, with
+   the IFS Update button on the same device info screen.
+4. If you updated from the native screen, run `RESET_PASSWD` before
+   turning the printer off.
+5. If you updated from USB on an AD5X, re-enable ZMod from the USB drive
+   with `AD5X-enable-zmod.tgz` (Creator 5 / Creator 5 Pro use their own
+   `Creator5-enable-zmod.tgz` / `Creator5Pro-enable-zmod.tgz`).
+6. Re-enable the plugins you disabled in step 1.
+
+On a stock (non-ZMod) AD5X, steps 1, 2, 4 and 5 do not apply — just use
+step 3 at the screen or from USB.
+
+""" + GUIDE_VERIFY_LINE
+
+_GUIDES = {"zmod": ZMOD_GUIDE, "stock": STOCK_GUIDE}
+
+
+def guide_applies(which, entry) -> bool:
+    """Whether a stage 3 guide covers this registry entry's printer."""
+    if entry is None:
+        return False
+    if which == "zmod":
+        return entry.firmware_family == "zmod"
+    if which == "stock":
+        return entry.firmware_family == "zmod" or entry.vendor == "flashforge_stock"
+    return False
+
+
+def guide_text(which, entry) -> str:
+    """One stage 3 guide for this printer, or a plain not-applicable answer."""
+    guide = _GUIDES.get(which)
+    if guide is None:
+        return ("Guides exist for the ZMod base (`/print-firmware guide zmod`) and for the "
+                "stock Flashforge firmware under it (`/print-firmware guide stock`). "
+                "Nothing was sent to the printer.")
+    if guide_applies(which, entry):
+        return guide
+    label = entry.label if entry is not None else "this printer"
+    covers = ("the ZMod base firmware on ZMod printers (AD5X, AD5M, AD5M Pro, Creator 5, "
+              "Creator 5 Pro)" if which == "zmod" else
+              "the stock Flashforge firmware on the AD5X — under ZMod, or stock")
+    return (f"The {which} guide covers {covers}. {label} is not one of those, so the "
+            "steps would not match its firmware. Run `/print-firmware` to see what Print "
+            "Handy can report for it, and docs/FIRMWARE-UPDATE.md for its own update "
+            "path. Nothing was sent to the printer.")

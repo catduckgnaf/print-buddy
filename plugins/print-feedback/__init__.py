@@ -2761,6 +2761,17 @@ async def firmware_dispatch(event, gateway, **kwargs):
         entry = firmware_update.printer_entry(model_key)
     except Exception:
         logger.exception('/print-firmware could not resolve the configured printer')
+    if args and args[0].casefold() == 'guide':
+        if len(args) != 2 or args[1].casefold() not in ('zmod', 'stock'):
+            await adapter.send(chat_id=source.chat_id, metadata=metadata,
+                               content=('Guides exist for the ZMod base '
+                                        '(`/print-firmware guide zmod`) and for the stock '
+                                        'Flashforge firmware under it (`/print-firmware '
+                                        'guide stock`). Nothing was sent to the printer.'))
+            return {'action': 'skip', 'reason': 'print firmware usage shown'}
+        await adapter.send(chat_id=source.chat_id, metadata=metadata,
+                           content=firmware_update.guide_text(args[1].casefold(), entry))
+        return {'action': 'skip', 'reason': 'print firmware guide shown'}
     if args and args[0].casefold() == 'update':
         if len(args) != 2:
             await adapter.send(chat_id=source.chat_id, metadata=metadata,

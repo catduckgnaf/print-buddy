@@ -52,8 +52,10 @@ With several printers (a `printers:` list, see
 group's chat ID in the printer's `chat_id` entry: each chat then drives
 only its own printer, end to end. The `[telegram] chat_id` above remains
 the fallback channel for the one entry that sets no `chat_id` (the first,
-default printer). A chat no printer claims gets silence, and two entries
-claiming one chat refuse startup.
+default printer). A chat no printer claims gets silence. Two entries may
+also claim the *same* group on purpose: that group becomes a shared
+channel (#536) where the bot asks which printer before anything
+printer-bound happens — see "Shared channels" in SETTINGS.md.
 
 ## 3. Configure Print Handy
 

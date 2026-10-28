@@ -1,25 +1,26 @@
-"""Channel → printer routing for the standalone bot (#335, design §2.3).
+"""Channel → printer routing for the standalone bot (#335; shared channels #536).
 
 One bot serves every configured printer. Each roster entry claims one chat
 on the platform the bot runs: the entry's own ``chat_id`` when it sets one,
 else the platform's home chat (``[discord] chat_id``, ``[telegram] chat_id``
-or ``[matrix] room_id``) — the fallback the config model already validates
-for Discord in ``settings._check_chat_claims``. A message or interaction in
-a claimed chat is handled for that chat's printer; a chat nobody claimed is
-dropped silently, exactly as a foreign channel is dropped today.
+or ``[matrix] room_id``). The claim model:
 
-Two entries claiming one chat is a startup error, never a silent choice:
-an approval button carries no typed target, so the channel *is* the target
-and a shared channel would make approvals ambiguous. Settings refuse the
-Discord case at load; this module re-checks per platform at bot startup so
-a Telegram or Matrix home chat colliding with an entry's claim also fails
-loudly instead of misrouting a print approval.
+- A chat claimed by exactly one entry routes to that printer: a message or
+  interaction in it is handled for that printer, decided before any
+  handler runs.
+- A chat claimed by two or more entries is a *shared* channel (#536). It
+  is served, but the channel decides nothing: printer-bound handlers ask
+  which printer (or resolve the printer from the job they act on), and a
+  shared channel never falls through to the default printer.
+- A chat nobody claimed is dropped silently, exactly as a foreign channel
+  is dropped today; with no roster at all, the legacy single configured
+  chat routes to the default printer.
 """
 from __future__ import annotations
 
 
 class RoutingError(ValueError):
-    """The roster's channel claims cannot route safely; the bot must not start."""
+    """A routing configuration problem (kept for callers that catch it)."""
 
 
 def home_chat_id(cfg, platform_name):
@@ -44,40 +45,60 @@ def roster(cfg):
     return [entry for entry in raw if isinstance(entry, dict) and entry.get("id")]
 
 
-def channel_map(cfg, platform_name):
-    """{chat_id: printer_id} for one platform. {} when the config names no roster.
+def channel_claims(cfg, platform_name):
+    """{chat_id: [printer ids in roster order]} for one platform (#536).
 
     An entry with no claimable chat (no chat_id of its own and no platform
     home chat configured) is simply unreachable by chat and claims nothing.
+    Claims by several entries on the same chat are legal: they make the
+    chat shared.
     """
     entries = roster(cfg)
     if not entries:
         return {}
     home = home_chat_id(cfg, platform_name)
-    claims: dict[str, str] = {}
+    claims: dict[str, list[str]] = {}
     for entry in entries:
         claim = str(entry.get("chat_id") or "") or home
         if not claim:
             continue
-        other = claims.get(claim)
-        if other is not None:
-            raise RoutingError(
-                f"printers {other!r} and {entry['id']!r} both claim {platform_name} chat {claim}: "
-                "give each printer its own chat_id — a channel is one printer's approval channel "
-                "(design §2.3)")
-        claims[claim] = str(entry["id"])
+        claims.setdefault(claim, []).append(str(entry["id"]))
     return claims
 
 
+def channel_map(cfg, platform_name):
+    """{chat_id: printer_id} for chats claimed by exactly one entry.
+
+    {} when the config names no roster. Shared chats (2+ claims) are
+    absent — see :func:`shared_channel_map`; a chat claimed once routes
+    to its printer exactly as it always has.
+    """
+    return {chat: ids[0] for chat, ids in channel_claims(cfg, platform_name).items() if len(ids) == 1}
+
+
+def shared_channel_map(cfg, platform_name):
+    """{chat_id: [printer ids in roster order]} for shared chats (#536).
+
+    A shared chat is claimed by two or more roster entries. Nothing in it
+    is decided by the channel; handlers resolve the printer by asking or
+    from the job they act on.
+    """
+    return {chat: ids for chat, ids in channel_claims(cfg, platform_name).items() if len(ids) > 1}
+
+
 def printer_for_chat(cfg, platform_name, chat_id):
-    """The roster printer id a chat routes to, or None when the chat is unmapped."""
+    """The roster printer id a chat routes to, or None.
+
+    None means either "unmapped" or "shared chat — undecided"; callers
+    that must tell those apart use :func:`shared_channel_map`.
+    """
     return channel_map(cfg, platform_name).get(str(chat_id))
 
 
 def chat_for_printer(cfg, platform_name, printer_id):
-    """The chat a printer is reached in on this platform, or None when it claims none."""
-    for chat, pid in channel_map(cfg, platform_name).items():
-        if pid == str(printer_id):
+    """The chat a printer is reached in on this platform (its claim, shared or not), or None."""
+    for chat, ids in channel_claims(cfg, platform_name).items():
+        if str(printer_id) in ids:
             return chat
     return None
 

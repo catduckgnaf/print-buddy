@@ -226,9 +226,39 @@ def _position_noun(job):
         return "Slot"
 
 
+def announcement_printer_name(job=None):
+    """The roster display name a lifecycle announcement is about (#536), or None.
+
+    Only a multi-printer roster names the printer — a one-printer install's
+    announcements stay byte-identical. The name comes from the job's stamped
+    printer when a job is known, else from the printer this process serves
+    (its per-printer listener identity), else the default entry.
+    """
+    try:
+        entries = list((_config.cfg() or {}).get("printers") or [])
+    except Exception:
+        return None
+    if len(entries) <= 1:
+        return None
+    pid = str((job or {}).get("printer_id") or "")
+    if not pid:
+        try:
+            from .. import listeners
+            pid = str(listeners.instance_printer_id() or "")
+        except Exception:
+            pid = ""
+    if pid:
+        for entry in entries:
+            if str(entry.get("id")) == pid:
+                return str(entry.get("name") or entry.get("id"))
+        return pid
+    first = entries[0]
+    return str(first.get("name") or first.get("id"))
+
+
 def format_confirmed_print(*, model, parts=(), plate=None, slot=None, color=None, material=None,
                            filament_g=None, seconds=None, finish=None, kind="started", plates_total=None,
-                           print_number=None, position_noun="Slot"):
+                           print_number=None, position_noun="Slot", printer_name=None):
     """Human readable, hash free message for one print event."""
     details = [f"{VERBS.get(kind, VERBS['started'])}: {safe_label(model)}"]
     if print_number:
@@ -248,6 +278,10 @@ def format_confirmed_print(*, model, parts=(), plate=None, slot=None, color=None
                        if isinstance(seconds, (int, float)) and seconds >= 0 else "Estimated total: unknown")
         if finish:
             details.append(f"Approx. finish: {finish}")
+    if printer_name:
+        # A trailing line, not headline text: first-line consumers (the
+        # stop/resume name extraction) keep reading the model line (#536).
+        details.append(f"Printer: {printer_name}")
     return scrub("\n".join(details))
 
 
@@ -277,7 +311,8 @@ def format_preparation(job, plate=None):
         slot=row.get("slot"), color=row.get("color"), material=row.get("material"),
         filament_g=row.get("filament_g"), seconds=row.get("seconds"), kind="slice",
         plates_total=len((job or {}).get("derived_plates") or []) or None,
-        print_number=_print_number(job or {}), position_noun=_position_noun(job))
+        print_number=_print_number(job or {}), position_noun=_position_noun(job),
+        printer_name=announcement_printer_name(job))
 
 
 def format_started(job, plate=None, now=None):
@@ -290,14 +325,18 @@ def format_started(job, plate=None, now=None):
         filament_g=row.get("filament_g"), seconds=seconds,
         finish=finish_text(seconds, now), kind="started",
         plates_total=len((job or {}).get("derived_plates") or []) or None,
-        print_number=_print_number(job or {}), position_noun=_position_noun(job))
+        print_number=_print_number(job or {}), position_noun=_position_noun(job),
+        printer_name=announcement_printer_name(job))
 
 
 def format_event(kind, filename, now=None, archive=None, context_path=None, extra=None):
     """Message for a Moonraker event on `filename`. Falls back to a scrubbed file label."""
     job, plate = find_job(filename, archive, context_path)
+    printer_name = announcement_printer_name(job)
     if not job:
         message = f"{VERBS.get(kind, VERBS['started'])}: {safe_label(filename)}"
+        if printer_name:
+            message += f"\nPrinter: {printer_name}"
     else:
         seconds = (plate or {}).get("seconds")
         total = len(job.get("derived_plates") or []) or None
@@ -307,7 +346,7 @@ def format_event(kind, filename, now=None, archive=None, context_path=None, extr
             material=(plate or {}).get("material"), filament_g=(plate or {}).get("filament_g"),
             seconds=seconds, finish=finish_text(seconds, now) if kind == "started" else None,
             kind=kind, plates_total=total, print_number=_print_number(job),
-            position_noun=_position_noun(job))
+            position_noun=_position_noun(job), printer_name=printer_name)
     if extra:
         message += "\n" + scrub(extra)
     return scrub(message)

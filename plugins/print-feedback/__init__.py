@@ -156,6 +156,171 @@ def _job_owner_pid(job_json):
         return None
 
 
+# ---------------------------------------------------------------------------
+# Shared channels (#536): a chat claimed by 2+ roster entries is served, but
+# the channel decides no printer. Printer-bound handlers resolve the printer
+# by asking, or from the job they act on — never by falling through to the
+# default, which is what pid=None has always meant everywhere else.
+
+
+def _routed_form(printer_id):
+    """A real roster id in ``_routed_printer_id`` form: None for the default printer."""
+    if not printer_id:
+        return None
+    try:
+        from print_handy import settings
+        if str(printer_id) == str(settings.default_printer_id(_config.cfg())):
+            return None
+    except Exception:
+        pass
+    return str(printer_id)
+
+
+def _shared_printer_ids(source, gateway=None):
+    """The roster ids sharing this event's channel (#536), or None when decided.
+
+    Standalone, the gateway's shared map (or the stamp BotCore put on the
+    source) answers. A host with no channel map at all (Hermes) serves one
+    channel per profile, so a roster with more than one printer makes every
+    unrouted event undecided among the whole roster. A gateway that HAS a
+    channel map decides authoritatively: no shared entry there means the
+    channel is not shared, whatever the roster holds.
+    """
+    if gateway is not None:
+        shared_for = getattr(gateway, 'shared_printer_ids_for', None)
+        if shared_for is not None:
+            try:
+                ids = shared_for(source)
+            except Exception:
+                ids = None
+            if ids:
+                return [str(pid) for pid in ids]
+        if getattr(gateway, 'printer_id_for', None) is not None:
+            return None
+    stamped = getattr(source, 'shared_printer_ids', None)
+    if stamped:
+        return [str(pid) for pid in stamped]
+    try:
+        from print_handy import settings
+        entries = settings.printers(_config.cfg())
+    except Exception:
+        return None
+    if len(entries) > 1:
+        return [str(entry['id']) for entry in entries]
+    return None
+
+
+def _undecided_printer_ids(source, gateway=None):
+    """Candidate roster ids when this event's channel is shared and no printer
+    is decided yet — None when routing (or the legacy default) already decided."""
+    if _routed_printer_id(source, gateway):
+        return None
+    return _shared_printer_ids(source, gateway)
+
+
+def _live_key_for(source, gateway, printer_id=None):
+    """The live session key prompts register under, printer-scoped once decided (#536).
+
+    In a shared channel a decided flow's questions register under
+    ``<session key>:printer:<id>`` so two same-user flows in one channel
+    never share a typed-answer route; undecided or routed flows keep the
+    plain key, byte-identical to before.
+    """
+    key = None
+    session_for = getattr(gateway, '_session_key_for_source', None) if gateway is not None else None
+    if session_for is not None:
+        try:
+            key = session_for(source)
+        except Exception:
+            key = None
+    if key and printer_id:
+        from print_handy.core import prompts as _prompts_mod
+        return _prompts_mod.printer_scoped_key(key, printer_id)
+    return key
+
+
+def _question_timeout():
+    cfg = globals().get('_config')
+    return cfg.question_timeout_s() if cfg is not None else 1800
+
+
+async def _ask_which_printer(source, gateway, adapter, candidates, *, question=None, label_for=None):
+    """Ask which printer, in a shared channel (#536). Returns the chosen roster id, or None.
+
+    Choices are the roster display names; ``label_for`` may add a per-printer
+    suffix (a busy printer is labelled with its state, so picking it is
+    deliberate). Duplicate display names are disambiguated with the roster
+    id — two printers may share a name, never an id.
+    """
+    names = {}
+    for pid in candidates:
+        names.setdefault(_printer_label(pid), []).append(pid)
+    labels = {}
+    for pid in candidates:
+        label = _printer_label(pid)
+        if len(names[label]) > 1:
+            label = f'{label} ({pid})'
+        if label_for is not None:
+            try:
+                suffix = label_for(pid)
+            except Exception:
+                suffix = None
+            if suffix:
+                label = f'{label} — {suffix}'
+        labels[label] = pid
+    answer = await _confirm(adapter, source, {}, 'which-printer',
+                            question or 'Which printer should I use?',
+                            list(labels), timeout=_question_timeout(),
+                            live_key=_live_key_for(source, gateway))
+    if answer not in labels:
+        return None
+    return labels[answer]
+
+
+async def _decide_printer(source, gateway, adapter, metadata, *, question=None):
+    """Decide the printer for a printer-bound handler.
+
+    Returns ``(pid, chosen_id)``: pid in routed form (None = the default
+    printer), chosen_id the real roster id when a shared channel's picker
+    decided (None when routing decided). Returns None when the picker was
+    shown and not answered — the caller stops; nothing was sent anywhere.
+    """
+    pid = _routed_printer_id(source, gateway)
+    candidates = _undecided_printer_ids(source, gateway)
+    if not candidates:
+        return pid, None
+    chosen = await _ask_which_printer(source, gateway, adapter, candidates, question=question)
+    if chosen is None:
+        await adapter.send(chat_id=source.chat_id, metadata=metadata,
+                           content='No printer chosen, so nothing was sent to any printer.')
+        return None
+    return _routed_form(chosen), chosen
+
+
+def _busy_label(status):
+    """A short busy/idle suffix for a picker choice from a status dict, or None."""
+    if not isinstance(status, dict):
+        return None
+    state = str(status.get('state') or '')
+    if state == 'printing':
+        name = str(status.get('filename') or '').strip()
+        return f'printing {name}' if name else 'printing'
+    if state == 'paused':
+        return 'paused'
+    return None
+
+
+async def _candidate_statuses(candidates, status_fn):
+    """{roster id: status dict or None} for picker candidates, best effort."""
+    out = {}
+    for pid in candidates:
+        try:
+            out[pid] = await asyncio.to_thread(status_fn, **_pkw(_routed_form(pid)))
+        except Exception:
+            out[pid] = None
+    return out
+
+
 async def upload_wait_dispatch(event, gateway, **kwargs):
     """Freeze a Discord intake while uploads arrive; only an explicit resume releases it."""
     if not _is_print_discord_event(event):
@@ -420,6 +585,24 @@ async def _design_handoff(event, gateway, adapter, session, stl_path):
     handed.metadata['live_session_key'] = gateway._session_key_for_source(source)
     root = _state_dir() / 'model-link-intakes'
     pid = _routed_printer_id(source, gateway)
+    candidates = _undecided_printer_ids(source, gateway) if not pid else None
+    if candidates:
+        # A designed part is a new print (#536): in a shared channel it asks
+        # which printer, like a dropped link — design sessions are keyed by
+        # channel, so the conversation stays one design; only its print
+        # target was undecided.
+        from print_handy.hermes import print_control as _print_control
+        statuses = await _candidate_statuses(candidates, _print_control.status)
+        chosen = await _ask_which_printer(source, gateway, adapter, candidates,
+                                          question='Which printer should I print this design on?',
+                                          label_for=lambda cid: _busy_label(statuses.get(cid)))
+        if chosen is None:
+            await adapter.send(chat_id=source.chat_id, metadata=metadata,
+                               content='No printer chosen, so nothing was sliced or sent anywhere. '
+                                       'The design files are saved.')
+            return {'action': 'skip', 'reason': 'shared channel: no printer chosen for design intake'}
+        pid = _routed_form(chosen)
+        handed.metadata['live_session_key'] = _live_key_for(source, gateway, chosen)
     try:
         return await prepare_link(handed, adapter, printer_state.load(**_pkw(pid)), root,
                                   **_pkw(pid))
@@ -1237,6 +1420,18 @@ async def print_next_dispatch(event, gateway, **kwargs):
                 raise print_next.NextPlateError(
                     f"that plan belongs to {_printer_label(_job_pid)}, not this channel's printer "
                     f"({_printer_label(pid)})")
+        live_key = gateway._session_key_for_source(source)
+        if not pid:
+            candidates = _undecided_printer_ids(source, gateway)
+            if candidates:
+                # A shared channel decides nothing (#536), but the plan's
+                # job already knows its printer: resolve from the job
+                # record instead of asking — or worse, defaulting.
+                from print_handy.core import model_job as _mj
+                _job = json.loads(Path(target['job_json']).read_text())
+                _owner = _mj._job_printer_id(_job)
+                pid = _routed_form(_owner)
+                live_key = _live_key_for(source, gateway, _owner)
         from print_handy.hermes import discord_print_summary as print_summary
         job, plate = print_summary.find_job(target['gcode'])
         seconds = (plate or {}).get('seconds')
@@ -1255,7 +1450,7 @@ async def print_next_dispatch(event, gateway, **kwargs):
         # typed replies route by that key, so a flow-key registration can
         # never be answered on buttonless platforms. send_clarify keeps
         # the flow key for delivery.
-        cm.register(cid, gateway._session_key_for_source(source) or session_key, question, choices)
+        cm.register(cid, live_key or session_key, question, choices)
         try:
             sent = await adapter.send_clarify(chat_id=str(source.chat_id), question=question,
                                               choices=choices, clarify_id=cid,
@@ -1273,14 +1468,14 @@ async def print_next_dispatch(event, gateway, **kwargs):
             ok, detail = await print_next.start(target)
             if not ok and SPOOL_CHANGED in str(detail):
                 ok, detail = await _offer_spool_change(adapter, source, metadata, print_next, target, detail,
-                                                        live_key=gateway._session_key_for_source(source))
+                                                        live_key=live_key)
             message = (None if ok
                        else f"Did not start {target['label']}. Not retrying.\n"
                             + intake_plain_start_failure(detail))
             if not ok and _start_refused_needs_restart(detail):
                 from print_handy.hermes import print_control as pc
                 message += '\n' + await _offer_force_restart(adapter, source, metadata, pc, detail,
-                                                             live_key=gateway._session_key_for_source(source),
+                                                             live_key=live_key,
                                                              **_pkw(pid))
     except print_next.NextPlateError as exc:
         message = f'No next plate: {exc}. Nothing uploaded or started.'
@@ -1428,9 +1623,13 @@ async def coldpull_dispatch(event, gateway, **kwargs):
         return {'action': 'skip', 'reason': 'cold-pull prompt already active'}
     _seen[key] = time.monotonic()
     try:
-        pid = _routed_printer_id(source, gateway)
+        decided = await _decide_printer(source, gateway, adapter, metadata,
+                                        question='Cold pull on which printer?')
+        if decided is None:
+            return {'action': 'skip', 'reason': 'shared channel: no printer chosen for cold pull'}
+        pid, chosen = decided
         _record, message = await _coldpull_workflow(adapter, source, metadata, source_tag='coldpull',
-                                                    live_key=gateway._session_key_for_source(source),
+                                                    live_key=_live_key_for(source, gateway, chosen),
                                                     **_pkw(pid))
     except Exception as exc:
         logger.exception('/print-coldpull failed')
@@ -1569,9 +1768,13 @@ async def nozzle_dispatch(event, gateway, **kwargs):
         return {'action': 'skip', 'reason': 'nozzle change already active'}
     _seen[key] = time.monotonic()
     try:
-        pid = _routed_printer_id(source, gateway)
+        decided = await _decide_printer(source, gateway, adapter, metadata,
+                                        question='Nozzle change on which printer?')
+        if decided is None:
+            return {'action': 'skip', 'reason': 'shared channel: no printer chosen for nozzle change'}
+        pid, chosen = decided
         message = await _nozzle_change_workflow(adapter, source, metadata,
-                                                live_key=gateway._session_key_for_source(source),
+                                                live_key=_live_key_for(source, gateway, chosen),
                                                 **_pkw(pid))
     except Exception:
         logger.exception('/nozzle change failed')
@@ -1609,6 +1812,12 @@ async def maintenance_dispatch(event, gateway, **kwargs):
     _seen[key] = time.monotonic()
     try:
         from print_handy.hermes import print_control as pc
+        decided = await _decide_printer(source, gateway, adapter, metadata,
+                                        question='Maintenance on which printer?')
+        if decided is None:
+            return {'action': 'skip', 'reason': 'shared channel: no printer chosen for maintenance'}
+        pid, chosen = decided
+        live_key = _live_key_for(source, gateway, chosen)
         st = await asyncio.to_thread(pc.status, **_pkw(pid))
         if st.get('state') in {'printing', 'paused'}:
             message = f"Maintenance is unavailable while the printer is {st['state']}. Nothing changed."
@@ -1632,7 +1841,7 @@ async def maintenance_dispatch(event, gateway, **kwargs):
                     continue
                 answer = await _confirm(adapter, source, metadata, f'maintenance-{i}',
                                         f'{instruction} Choose an outcome.', buttons, (globals().get('_config').question_timeout_s() if globals().get('_config') else 1800),
-                                        live_key=gateway._session_key_for_source(source))
+                                        live_key=live_key)
                 action = 'problem' if answer == 'Problem found' else 'done' if answer == 'Done' else 'skip'
                 session['steps'][i] = action
                 if action == 'problem':
@@ -1648,12 +1857,12 @@ async def maintenance_dispatch(event, gateway, **kwargs):
                     options[0] = f'Run PLA (trial) cold pull {pla_hot}/{retry_cold}'
                 answer = await _confirm(adapter, source, metadata, 'maintenance-coldpull',
                     'Cold pull requires you at the printer. Bed must be clear; it homes. Screen may look frozen for a few minutes.', options, (globals().get('_config').question_timeout_s() if globals().get('_config') else 1800),
-                    live_key=gateway._session_key_for_source(source))
+                    live_key=live_key)
                 if answer and answer != 'Skip cold pull':
                     cold = retry_cold if answer.endswith(f'{pla_hot}/{retry_cold}') else None
                     record, _cold_message = await _coldpull_workflow(
                         adapter, source, metadata, source_tag='maintenance', initial_cold=cold,
-                        selected_material=answer, live_key=gateway._session_key_for_source(source),
+                        selected_material=answer, live_key=live_key,
                         **_pkw(pid))
                     session['cold_pull'] = record.get('cold_pull') if record else {'result': 'cancelled'}
                     if session.get('cold_pull'):
@@ -2264,6 +2473,38 @@ async def spool_dispatch(event, gateway, **kwargs):
         guided = new_spec is None
     if verb in ('change', 'set', 'load'):
         guided = not change_complete
+    # Shared channel (#536): slot binds and screen syncs are printer-bound
+    # and ask first; making a shelf spool and listing inventory are global.
+    candidates = _undecided_printer_ids(source, gateway) if not pid else None
+    decided = {'done': False}
+
+    async def _spool_printer():
+        """Decide the printer for a printer-bound spool form, once."""
+        nonlocal pid, mr_kw
+        if decided['done']:
+            return True
+        decided['done'] = True
+        if not candidates:
+            return True
+        chosen = await _ask_which_printer(source, gateway, adapter, candidates,
+                                          question='Which printer are the spools for?')
+        if chosen is None:
+            return False
+        pid = _routed_form(chosen)
+        mr_kw = {'mr': spool_sync.moonraker_for(pid), 'printer_id': pid} if pid else {}
+        return True
+
+    async def _spool_list_message():
+        if candidates:
+            # No silent default: a shared channel's list names each
+            # printer's loaded slots separately.
+            sections = []
+            for candidate in candidates:
+                body = await asyncio.to_thread(spool_sync.list_text, printer_id=candidate)
+                sections.append(f'**{_printer_label(candidate)}**\n{body}')
+            return '\n\n'.join(sections)
+        return await asyncio.to_thread(spool_sync.list_text, **_pkw(pid))
+
     key = ('spool', source.chat_id, source.thread_id)
     if guided:
         if key in _seen:
@@ -2273,15 +2514,23 @@ async def spool_dispatch(event, gateway, **kwargs):
         _seen[key] = time.monotonic()
     try:
         if nl_intent == 'new':
-            _made, message = await _spool_guided_new(adapter, source, metadata, gateway,
-                                                     spool_sync, pid, mr_kw)
+            if await _spool_printer():
+                _made, message = await _spool_guided_new(adapter, source, metadata, gateway,
+                                                         spool_sync, pid, mr_kw)
+            else:
+                message = 'No printer chosen, so nothing was changed.'
         elif nl_intent == 'change':
-            message = await _spool_guided_change(adapter, source, metadata, gateway,
-                                                 spool_sync, pid, mr_kw)
+            if await _spool_printer():
+                message = await _spool_guided_change(adapter, source, metadata, gateway,
+                                                     spool_sync, pid, mr_kw)
+            else:
+                message = 'No printer chosen, so nothing was changed.'
         elif verb in ('list', 'ls'):
-            message = await asyncio.to_thread(spool_sync.list_text, **_pkw(pid))
+            message = await _spool_list_message()
         elif verb in ('change', 'set', 'load'):
-            if change_complete:
+            if not await _spool_printer():
+                message = 'No printer chosen, so nothing was changed.'
+            elif change_complete:
                 result = await asyncio.to_thread(spool_sync.bind_slot, int(change_parts[0]),
                                                  int(change_parts[1]), **mr_kw)
                 message = spool_sync.bind_text(result)
@@ -2294,24 +2543,35 @@ async def spool_dispatch(event, gateway, **kwargs):
                 message = (f"Created spool #{made['spool_id']} on the shelf"
                            f"{' (existing filament type reused)' if made['reused_filament'] else ''}. "
                            f"Load it with `/spool change <slot> {made['spool_id']}`.")
-            else:
+            elif await _spool_printer():
                 _made, message = await _spool_guided_new(adapter, source, metadata, gateway,
                                                          spool_sync, pid, mr_kw)
+            else:
+                message = 'No printer chosen, so nothing was changed.'
         elif verb == 'sync':
-            message = 'Printer screen from Spoolman:\n' + '\n'.join(await asyncio.to_thread(spool_sync.sync_all_screens, **mr_kw))
+            if await _spool_printer():
+                message = 'Printer screen from Spoolman:\n' + '\n'.join(await asyncio.to_thread(spool_sync.sync_all_screens, **mr_kw))
+            else:
+                message = 'No printer chosen, so nothing was changed.'
         elif verb == '':
             answer = await _spool_ask(adapter, source, metadata, gateway,
                                       'What would you like to do with the spools?',
                                       [_SPOOL_MENU_NEW, _SPOOL_MENU_CHANGE, _SPOOL_MENU_LIST, 'Cancel'])
             picked = str(answer).strip().casefold() if isinstance(answer, str) else ''
             if answer == _SPOOL_MENU_NEW or picked in ('new', 'add', 'add a new spool'):
-                _made, message = await _spool_guided_new(adapter, source, metadata, gateway,
-                                                         spool_sync, pid, mr_kw)
+                if await _spool_printer():
+                    _made, message = await _spool_guided_new(adapter, source, metadata, gateway,
+                                                             spool_sync, pid, mr_kw)
+                else:
+                    message = 'No printer chosen, so nothing was changed.'
             elif answer == _SPOOL_MENU_CHANGE or picked in ('change', 'change a spool', 'swap', 'replace'):
-                message = await _spool_guided_change(adapter, source, metadata, gateway,
-                                                     spool_sync, pid, mr_kw)
+                if await _spool_printer():
+                    message = await _spool_guided_change(adapter, source, metadata, gateway,
+                                                         spool_sync, pid, mr_kw)
+                else:
+                    message = 'No printer chosen, so nothing was changed.'
             elif answer == _SPOOL_MENU_LIST or picked == 'list':
-                message = await asyncio.to_thread(spool_sync.list_text, **_pkw(pid))
+                message = await _spool_list_message()
             elif _spool_is_cancel(answer):
                 message = _SPOOL_CANCELLED
             else:
@@ -2373,7 +2633,12 @@ async def macros_dispatch(event, gateway, **kwargs):
     from print_handy import macros, printers
     from print_handy.hermes import spool_sync
     metadata = {'thread_id': source.thread_id} if source.thread_id else None
-    pid = _routed_printer_id(source, gateway)
+    decided = await _decide_printer(source, gateway, adapter, metadata,
+                                    question='Macros on which printer?')
+    if decided is None:
+        return {'action': 'skip', 'reason': 'shared channel: no printer chosen for macros'}
+    pid, chosen = decided
+    live_key = _live_key_for(source, gateway, chosen)
     mr = spool_sync.moonraker_for(pid)
     args = str(getattr(event, 'text', '')).strip()[len('/print-macros'):].split()
     try:
@@ -2424,7 +2689,7 @@ async def macros_dispatch(event, gateway, **kwargs):
                                     [macros.RUN_LABEL, macros.CANCEL_LABEL],
                                     (globals().get('_config').safety_confirm_timeout_s()
                                      if globals().get('_config') else 600),
-                                    live_key=gateway._session_key_for_source(source))
+                                    live_key=live_key)
             if answer != macros.RUN_LABEL:
                 message = 'Macro not run. Nothing sent.'
             else:
@@ -2649,8 +2914,37 @@ async def print_stop_dispatch(event, gateway, **kwargs):
                            content='A stop prompt is already open. Nothing sent.')
         return {'action': 'skip', 'reason': 'stop prompt already active'}
     _seen[key] = time.monotonic()
+    live_key = gateway._session_key_for_source(source)
+    decided_status = None
+    if not pid:
+        candidates = _undecided_printer_ids(source, gateway)
+        if candidates:
+            # "Stop the current print" in a shared channel (#536): the
+            # printer with a print running is the target. Two running
+            # prints is a question, never a guess; none running refuses,
+            # naming the printers it checked.
+            statuses = await _candidate_statuses(candidates, print_stop.status)
+            active = {cid: st for cid, st in statuses.items()
+                      if isinstance(st, dict) and st.get('state') in print_stop.ACTIVE}
+            chosen = None
+            if len(active) == 1:
+                chosen = next(iter(active))
+            elif len(active) > 1:
+                chosen = await _ask_which_printer(
+                    source, gateway, adapter, list(active),
+                    question='More than one printer has a print running. Stop which one?',
+                    label_for=lambda cid: _busy_label(active.get(cid)))
+            if chosen is None:
+                _seen.pop(key, None)
+                names = ' or '.join(_printer_label(c) for c in candidates)
+                await adapter.send(chat_id=source.chat_id, metadata=metadata,
+                                   content=('No printer chosen. Nothing sent.' if active else
+                                            f'Nothing to stop: no print is running on {names}. Nothing sent.'))
+                return {'action': 'skip', 'reason': 'shared channel: no stop target decided'}
+            pid, decided_status = _routed_form(chosen), active[chosen]
+            live_key = _live_key_for(source, gateway, chosen)
     try:
-        st = await asyncio.to_thread(print_stop.status, **_pkw(pid))
+        st = decided_status if decided_status is not None else await asyncio.to_thread(print_stop.status, **_pkw(pid))
         if st.get('camera_image_path'):
             # Bambu camera parity (#294): show the camera image alongside the status.
             try:
@@ -2673,7 +2967,7 @@ async def print_stop_dispatch(event, gateway, **kwargs):
             # typed replies route by that key, so a flow-key registration can
             # never be answered on buttonless platforms. send_clarify keeps
             # the flow key for delivery.
-            cm.register(cid, gateway._session_key_for_source(source) or session_key, question, choices)
+            cm.register(cid, live_key or session_key, question, choices)
             try:
                 sent = await adapter.send_clarify(chat_id=str(source.chat_id), question=question,
                                                   choices=choices, clarify_id=cid,
@@ -2758,8 +3052,36 @@ async def print_resume_dispatch(event, gateway, **kwargs):
         await adapter.send(chat_id=source.chat_id, metadata=metadata, content='A resume prompt is already open. Nothing sent.')
         return {'action': 'skip', 'reason': 'resume prompt already active'}
     _seen[key] = time.monotonic()
+    live_key = gateway._session_key_for_source(source)
+    decided_status = None
+    if not pid:
+        candidates = _undecided_printer_ids(source, gateway)
+        if candidates:
+            # "Resume the current print" in a shared channel (#536): the
+            # printer with a resumable print is the target; two resumable
+            # prints is a question; none refuses, naming the printers.
+            statuses = await _candidate_statuses(candidates, pc.status)
+            resumable = {cid: st for cid, st in statuses.items()
+                         if isinstance(st, dict) and pc.resumable(st)}
+            chosen = None
+            if len(resumable) == 1:
+                chosen = next(iter(resumable))
+            elif len(resumable) > 1:
+                chosen = await _ask_which_printer(
+                    source, gateway, adapter, list(resumable),
+                    question='More than one printer has a paused print. Resume which one?',
+                    label_for=lambda cid: _busy_label(resumable.get(cid)))
+            if chosen is None:
+                _seen.pop(key, None)
+                names = ' or '.join(_printer_label(c) for c in candidates)
+                await adapter.send(chat_id=source.chat_id, metadata=metadata,
+                                   content=('No printer chosen. Nothing sent.' if resumable else
+                                            f'Nothing to resume: no paused print on {names}. Nothing sent.'))
+                return {'action': 'skip', 'reason': 'shared channel: no resume target decided'}
+            pid, decided_status = _routed_form(chosen), resumable[chosen]
+            live_key = _live_key_for(source, gateway, chosen)
     try:
-        st = await asyncio.to_thread(pc.status, **_pkw(pid))
+        st = decided_status if decided_status is not None else await asyncio.to_thread(pc.status, **_pkw(pid))
         if not pc.resumable(st):
             message = pc.not_resumable_text(st)
         else:
@@ -2768,7 +3090,7 @@ async def print_resume_dispatch(event, gateway, **kwargs):
             answer = await _confirm(adapter, source, metadata, 'print-resume',
                                     f"Resume {name}{' (' + where + ')' if where else ''}? Make sure nothing is in the way.",
                                     [pc.RESUME_LABEL, pc.KEEP_LABEL], (globals().get('_config').safety_confirm_timeout_s() if globals().get('_config') else 600),
-                                    live_key=gateway._session_key_for_source(source))
+                                    live_key=live_key)
             if answer != pc.RESUME_LABEL:
                 message = 'Left it paused. Nothing sent.'
             else:
@@ -2858,9 +3180,17 @@ async def print_again_dispatch(event, gateway, **kwargs):
             raise print_next.NextPlateError(
                 f"that print belongs to {_printer_label(_job_owner_pid(target['job_json']))}, "
                 f"not this channel's printer ({_printer_label(pid)})")
+        live_key = gateway._session_key_for_source(source)
+        if not pid:
+            candidates = _undecided_printer_ids(source, gateway)
+            if candidates:
+                # Shared channel (#536): the job record names its printer.
+                _owner = _job_owner_pid(target['job_json'])
+                pid = _routed_form(_owner)
+                live_key = _live_key_for(source, gateway, _owner)
         answer = await _confirm(adapter, source, metadata, 'print-again', question,
                                 [pc.AGAIN_LABEL, pc.AGAIN_CANCEL_LABEL], (globals().get('_config').question_timeout_s() if globals().get('_config') else 1800),
-                                live_key=gateway._session_key_for_source(source))
+                                live_key=live_key)
         if answer != pc.AGAIN_LABEL:
             message = 'Cancelled or expired. Nothing uploaded or started.'
         else:
@@ -2883,7 +3213,7 @@ async def print_again_dispatch(event, gateway, **kwargs):
                             + intake_plain_start_failure(detail))
             if not ok and _start_refused_needs_restart(detail):
                 message += '\n' + await _offer_force_restart(adapter, source, metadata, pc, detail,
-                                                             live_key=gateway._session_key_for_source(source),
+                                                             live_key=live_key,
                                                              **_pkw(pid))
     except print_next.NextPlateError as exc:
         message = f'Nothing to print again: {exc}. Nothing uploaded or started.'
@@ -2960,6 +3290,22 @@ async def print_reboot_dispatch(event, gateway, **kwargs):
         return {'action': 'skip', 'reason': 'reboot already active'}
     _seen[key] = time.monotonic()
     try:
+        live_key = gateway._session_key_for_source(source)
+    except Exception:
+        live_key = None  # a bare-namespace host may not offer session keys
+    _decide = globals().get('_decide_printer')
+    if _decide is not None and not pid:
+        decided = await _decide(source, gateway, adapter, metadata,
+                                question='Restart which printer?')
+        if decided is None:
+            _seen.pop(key, None)
+            return {'action': 'skip', 'reason': 'shared channel: no printer chosen for reboot'}
+        pid, chosen = decided
+        pkw = {'printer_id': pid} if pid else {}
+        _scoped = globals().get('_live_key_for')
+        if _scoped is not None:
+            live_key = _scoped(source, gateway, chosen)
+    try:
         st = await asyncio.to_thread(pc.status, **pkw)
         if st.get('klippy') == 'shutdown' and st.get('state') != 'printing':
             # Emergency stop: REBOOT is a G-code macro Klipper rejects while shut down.
@@ -2971,7 +3317,7 @@ async def print_reboot_dispatch(event, gateway, **kwargs):
                                     + "\nClear it with one firmware restart? No motion or heat. This ends the "
                                     "stopped job for good. Only do this after the bed and nozzle are clear.",
                                     [pc.REBOOT_LABEL, pc.CANCEL_REBOOT_LABEL], (globals().get('_config').safety_confirm_timeout_s() if globals().get('_config') else 600),
-                                    live_key=gateway._session_key_for_source(source))
+                                    live_key=live_key)
             if answer != pc.REBOOT_LABEL:
                 message = 'Not restarted. Nothing sent.'
             else:
@@ -2988,7 +3334,7 @@ async def print_reboot_dispatch(event, gateway, **kwargs):
                                     "Force restart the AD5X? This clears a stuck screen or heaters, and it wipes "
                                     "any Resume the printer screen is offering. Takes about two minutes.",
                                     [pc.REBOOT_LABEL, pc.CANCEL_REBOOT_LABEL], (globals().get('_config').safety_confirm_timeout_s() if globals().get('_config') else 600),
-                                    live_key=gateway._session_key_for_source(source))
+                                    live_key=live_key)
             if answer != pc.REBOOT_LABEL:
                 message = 'Not restarted. Nothing sent.'
             else:
@@ -3132,6 +3478,44 @@ async def model_link_dispatch(event, gateway, **kwargs):
     from print_handy.core.link_intake import PromptCancelled
     root = _state_dir() / 'model-link-intakes'
     pid = _routed_printer_id(source, gateway)
+    candidates = _undecided_printer_ids(source, gateway)
+    if candidates:
+        # A shared channel decides nothing (#536): ask BEFORE any printer
+        # state loads — pid=None here has always meant the default printer,
+        # and falling through would silently print on it. A reprint reuses
+        # an archived job, and the job already knows its printer.
+        chosen = None
+        if reuse is not None:
+            try:
+                from print_handy.core import model_job
+                chosen = model_job._job_printer_id(reuse)
+            except Exception:
+                chosen = None
+            if chosen not in candidates:
+                chosen = None
+        if chosen is None:
+            from print_handy.hermes import print_control as _print_control
+            statuses = await _candidate_statuses(candidates, _print_control.status)
+
+            def _picker_label(candidate, _statuses=statuses):
+                return _busy_label(_statuses.get(candidate))
+
+            chosen = await _ask_which_printer(source, gateway, adapter, candidates,
+                                              question='Which printer should I print this on?',
+                                              label_for=_picker_label)
+        if chosen is None:
+            await adapter.send(chat_id=source.chat_id,
+                content='No printer chosen, so nothing was sliced or sent anywhere.',
+                metadata={'thread_id': source.thread_id} if source.thread_id else None)
+            return {'action': 'skip', 'reason': 'shared channel: no printer chosen for intake'}
+        pid = _routed_form(chosen)
+        try:
+            source.printer_id = chosen
+        except Exception:
+            pass
+        # The intake's questions register under a printer-scoped session key
+        # so a second intake in this channel can never take their answers.
+        event.metadata['live_session_key'] = _live_key_for(source, gateway, chosen)
     try:
         # The intake channel's printer owns the job end to end (#335): its
         # state record feeds the flow and its id is stamped on the job.

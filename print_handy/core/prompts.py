@@ -102,6 +102,42 @@ def open_prompt_for(session_key):
     return hits[-1] if hits else None
 
 
+#: Separator between a live session key and the printer an intake in a
+#: shared channel was decided for (#536). Prompts of a decided intake
+#: register under ``<session key>:printer:<roster id>`` so two intakes in
+#: one shared channel never share a typed-answer route.
+PRINTER_KEY_SEP = ":printer:"
+
+
+def printer_scoped_key(session_key, printer_id):
+    """``session_key`` suffixed with the decided printer (#536)."""
+    if not session_key or not printer_id:
+        return session_key
+    return f"{session_key}{PRINTER_KEY_SEP}{printer_id}"
+
+
+def open_prompt_scoped(session_key):
+    """The newest open prompt for a session, honouring printer-scoped keys (#536).
+
+    Exact key first — every pre-#536 route behaves as before. Otherwise the
+    prompts registered under ``<session_key>:printer:<id>`` (a shared
+    channel's decided intakes): when exactly one printer has open prompts
+    there, its newest; when two printers do, None — a typed reply must
+    never be guessed across printers.
+    """
+    exact = open_prompt_for(session_key)
+    if exact is not None:
+        return exact
+    prefix = f"{session_key}{PRINTER_KEY_SEP}"
+    with _lock:
+        hits = [(cid, prompt.session_key) for cid, prompt in _prompts.items()
+                if prompt.session_key.startswith(prefix) and not prompt.event.is_set()]
+    printers = {key[len(prefix):] for _cid, key in hits}
+    if len(printers) != 1:
+        return None
+    return hits[-1][0] if hits else None
+
+
 def cancel_session(session_key):
     """Cancel every open prompt of one session key. Returns how many were cancelled."""
     with _lock:

@@ -61,8 +61,10 @@ With several printers (a `printers:` list, see
 to each, and put each room's ID in that printer's `chat_id` entry: each
 room then drives only its own printer, end to end. The `[matrix] room_id`
 below remains the fallback room for the one entry that sets no `chat_id`
-(the first, default printer). A room no printer claims gets silence, and
-two entries claiming one room refuse startup.
+(the first, default printer). A room no printer claims gets silence. Two
+entries may also claim the *same* room on purpose: that room becomes a
+shared channel (#536) where the bot asks which printer before anything
+printer-bound happens — see "Shared channels" in SETTINGS.md.
 
 ## 3. Configure Print Handy
 

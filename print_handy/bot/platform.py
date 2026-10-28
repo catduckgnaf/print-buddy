@@ -237,7 +237,19 @@ class BasePlatformAdapter:
         """The newest open button question asked under ``session_key``, else None."""
         # The registry key is the live chat session (who asked, where); send_clarify's key names the flow.
         hits = [cid for cid in self._prompts if self.registry.session_key(cid) == str(session_key)]
-        return hits[-1] if hits else None
+        if hits:
+            return hits[-1]
+        # Shared channels (#536): a decided intake registers its questions
+        # under '<session key>:printer:<id>'. A typed reply may follow it
+        # only when exactly one printer has open questions there — with two
+        # printers waiting, the reply is ambiguous and resolves nothing.
+        prefix = f"{session_key}{prompts.PRINTER_KEY_SEP}"
+        scoped = [(cid, str(self.registry.session_key(cid))) for cid in self._prompts
+                  if str(self.registry.session_key(cid)).startswith(prefix)]
+        printers = {key[len(prefix):] for _cid, key in scoped}
+        if len(printers) != 1:
+            return None
+        return scoped[-1][0] if scoped else None
 
     async def answer_typed(self, session_key, text):
         """A typed reply to the open question of this session (Hermes routes these the same way)."""

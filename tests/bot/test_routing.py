@@ -77,20 +77,23 @@ def test_channel_map_without_a_roster_is_empty():
     assert routing.channel_map({"discord": {"chat_id": "1"}}, "discord") == {}
 
 
-def test_channel_map_duplicate_claim_raises_naming_both_printers():
+def test_channel_map_duplicate_claim_makes_a_shared_channel():
+    # #536: a duplicate claim is no longer an error — it is a shared
+    # channel, routed to neither printer and listed for both.
     cfg = plain_cfg([{"id": "a", "chat_id": "111"}, {"id": "b", "chat_id": ""}])  # b falls back to the home a claimed
-    with pytest.raises(routing.RoutingError) as exc:
-        routing.channel_map(cfg, "discord")
-    assert "'a'" in str(exc.value) and "'b'" in str(exc.value) and "111" in str(exc.value)
+    assert routing.channel_map(cfg, "discord") == {}
+    assert routing.shared_channel_map(cfg, "discord") == {"111": ["a", "b"]}
+    assert routing.channel_claims(cfg, "discord") == {"111": ["a", "b"]}
 
 
-def test_channel_map_catches_a_telegram_home_collision_settings_cannot_see():
-    # Settings validate claims against the Discord home only; two entries are
-    # fine there but collide once the Telegram home is the fallback.
+def test_channel_map_telegram_home_fallback_can_share_too():
+    # Settings see claims against every platform home the same way now:
+    # two entries are distinct on Discord but share the Telegram home.
     cfg = plain_cfg([{"id": "a", "chat_id": "-100"}, {"id": "b", "chat_id": ""}])
     assert routing.channel_map(cfg, "discord") == {"111": "b", "-100": "a"}
-    with pytest.raises(routing.RoutingError):
-        routing.channel_map(cfg, "telegram")
+    assert routing.shared_channel_map(cfg, "discord") == {}
+    assert routing.channel_map(cfg, "telegram") == {}
+    assert routing.shared_channel_map(cfg, "telegram") == {"-100": ["a", "b"]}
 
 
 # ---------------------------------------------------------------------- BotCore routing
@@ -149,11 +152,26 @@ def test_botcore_both_mapped_channels_serve_commands(cfg):
     assert channels == {int(cfg["discord"]["chat_id"]), int(CHAT_B)}
 
 
-def test_botcore_refuses_to_start_on_a_duplicate_claim(cfg):
+def test_botcore_starts_on_a_duplicate_claim_and_serves_it_shared(cfg):
+    # #536: the bot starts; the shared channel is served undecided — the
+    # source carries the candidates, not a printer.
     cfg = two_printer_cfg(cfg)
     cfg["printers"][1]["chat_id"] = cfg["discord"]["chat_id"]  # workshop claims the home chat too
-    with pytest.raises(routing.RoutingError, match="workshop-ad5x"):
-        make(cfg)
+    discord = fake_discord.FakeDiscord(auto=False, chat_id=int(cfg["discord"]["chat_id"]),
+                                       operator_id=int(OPERATOR))
+    router = RecordingRouter()
+    core = runtime.BotCore(discord.client, cfg, router=router)
+    home = cfg["discord"]["chat_id"]
+    assert core.channel_printers == {}
+    assert core.shared_printers == {home: ["flashforge-ad5x", "workshop-ad5x"]}
+    run(core.handle_message(discord.message("hello")))
+    assert router.events, "the shared home channel must still serve"
+    source = router.events[-1].source
+    assert source.printer_id is None
+    assert list(source.shared_printer_ids) == ["flashforge-ad5x", "workshop-ad5x"]
+    assert core.gateway.printer_id_for(source) is None
+    assert core.gateway.shared_printer_ids_for(source) == ["flashforge-ad5x", "workshop-ad5x"]
+    assert core.status(False)["shared_printers"] == core.shared_printers
 
 
 def test_botcore_without_a_roster_keeps_single_chat_behaviour(cfg):

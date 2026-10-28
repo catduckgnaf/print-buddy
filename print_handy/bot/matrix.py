@@ -273,11 +273,14 @@ class MatrixClient:
         the home room alone, exactly as before."""
         rooms = set()
         core_map = getattr(self.core, "channel_printers", None) if self.core is not None else None
-        if core_map:
-            rooms.update(core_map)
+        core_shared = getattr(self.core, "shared_printers", None) if self.core is not None else None
+        if core_map or core_shared:
+            rooms.update(core_map or {})
+            rooms.update(core_shared or {})  # shared rooms are served too (#536)
         else:
             try:
                 rooms.update(routing.channel_map(self.cfg, "matrix"))
+                rooms.update(routing.shared_channel_map(self.cfg, "matrix"))
             except Exception:
                 pass  # BotCore's own map build reports a bad roster loudly at startup
         if self.room_id:

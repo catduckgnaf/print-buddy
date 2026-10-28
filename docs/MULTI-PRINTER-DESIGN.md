@@ -337,7 +337,9 @@ mechanism that already keeps instances apart:
   claims that channel for that printer. Two entries claiming the same
   channel is a startup configuration error — the Stage 0 rule "never
   share an approval channel" stops being a deployment discipline and
-  becomes a validated invariant.
+  becomes a validated invariant. *(Amended by #536: a duplicate claim is
+  no longer an error; it makes the channel shared — see the supersession
+  note below.)*
 - A message or interaction in a mapped channel is handled for that
   channel's printer: intake stamps the job with that printer, questions
   and approvals post in that channel, and the approval claim binds
@@ -367,6 +369,23 @@ shape: the channel scoping already isolates printers within one bot
 (the Stage 0 finding), and one bot is the simpler household deployment.
 Nothing in the map prevents a user from still running separate
 instances instead (§2.6).
+
+> **Superseded in part by [#536](https://github.com/catduckgnaf/print-handy/issues/536)
+> (2026-10-28).** The separate proposal this section called for exists and
+> was adopted: a channel claimed by two or more roster entries is a
+> **shared channel**. It is served, but the channel decides no printer —
+> dropping a model link asks *which printer* before any printer state
+> loads, job-bound commands resolve the printer from the job record,
+> "current print" commands follow which printer is actually printing
+> (asking when more than one is), and a shared channel never falls
+> through to the default printer. The binding proof the rejection asked
+> for is the prompt keying: a decided flow's questions register under a
+> printer-scoped session key, and typed answers resolve nothing when two
+> printers' prompts are open. The rest of this section stands unchanged:
+> a channel claimed by exactly one entry still routes to that printer
+> end to end, an unmapped channel still gets silence, and the duplicate
+> claim is no longer a startup error — it is precisely how a shared
+> channel is configured.
 
 ### 2.4 State and concurrency: per-printer state, per-printer leases
 
@@ -538,7 +557,9 @@ alone loads unchanged and behaves as the one-entry roster.
 ## 4. Non-goals for this design
 
 - **A shared channel with explicit printer targeting** — rejected in
-  §2.3; needs its own proposal with a binding proof.
+  §2.3; needs its own proposal with a binding proof. *(That proposal is
+  [#536](https://github.com/catduckgnaf/print-handy/issues/536), adopted
+  2026-10-28 — see the supersession note in §2.3.)*
 - **Cross-printer job failover** (a job started on one printer is never
   silently re-targeted to another; the printers differ physically).
 - **A combined "print to whichever is free" queue.** Jobs belong to a
@@ -620,7 +641,9 @@ behaviour for a single-printer install.
 ### Stage 2c — Discord routing — [#335](https://github.com/catduckgnaf/print-handy/issues/335)
 
 - **Scope.** The channel → printer map built at bot startup from the
-  roster (duplicate claim = startup error); `runtime.py` routing
+  roster (duplicate claim = startup error — *superseded by #536: a
+  duplicate claim makes the channel shared, not an error*);
+  `runtime.py` routing
   generalises from one `chat_id` to the map (unmapped = dropped, as
   today); the platform reply map re-keyed with the chat
   (`platform.py:301`); intake stamps the channel's printer into the
@@ -715,7 +738,10 @@ catduck's call:
 3. **Shared-channel targeting stays out.** §2.3 rejects one channel
    serving two printers even with explicit targeting, on approval-safety
    grounds. *Recommendation: confirm as a standing non-goal, so no stage
-   designs toward it.*
+   designs toward it.* *(Resolved the other way by
+   [#536](https://github.com/catduckgnaf/print-handy/issues/536)
+   (2026-10-28): shared channels were adopted with the ask-first model —
+   see §2.3's supersession note.)*
 4. **All platforms at once.** The routing map is platform-agnostic, so
    Telegram and Matrix get channel-per-printer in the same stage as
    Discord. *Recommendation: yes, one rule for every platform — the

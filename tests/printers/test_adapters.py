@@ -89,6 +89,7 @@ class ContractTests(unittest.TestCase):
         # The Qidi models share the Qidi fixture: trust + install each one.
         for key, model_facts in (("qidi.q1pro", qidi_facts.Q1PRO),
                                  ("qidi.xplus3", qidi_facts.XPLUS3),
+                                 ("qidi.xplus4", qidi_facts.XPLUS4),
                                  ("qidi.xmax3", qidi_facts.XMAX3),
                                  ("qidi.xsmart3", qidi_facts.XSMART3)):
             patcher = mock.patch.object(printers.MODELS[key].adapter, "facts",
@@ -119,7 +120,7 @@ class ContractTests(unittest.TestCase):
                                        "prusa.mk4s", "prusa.coreone", "prusa.xl", "prusa.miniplus",
                                        "elegoo.neptune4", "elegoo.neptune4pro", "elegoo.neptune4plus",
                                        "elegoo.neptune4max", "elegoo_sdcp.centauricarbon",
-                                       "qidi.q1pro", "qidi.xplus3", "qidi.xmax3", "qidi.xsmart3",
+                                       "qidi.q1pro", "qidi.xplus3", "qidi.xplus4", "qidi.xmax3", "qidi.xsmart3",
                                        "creality.ender3v3", "creality.ender3v3ke", "creality.ender3v3plus",
                                        "creality.k1", "creality.k1c", "creality.k1max",
                                        "octoprint.ender3", "octoprint.ender3pro", "octoprint.ender3v2",

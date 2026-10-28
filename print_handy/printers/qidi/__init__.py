@@ -1,4 +1,4 @@
-"""Qidi vendor profile: the Klipper-based Qidi line (Q1 Pro, X-Plus 3, X-Max 3, X-Smart 3) on Moonraker, generated Orca templates, .gcode.
+"""Qidi vendor profile: the Klipper-based Qidi line (Q1 Pro, X-Plus 3, X-Plus 4, X-Max 3, X-Smart 3) on Moonraker, generated Orca templates, .gcode.
 
 Qidi's current printers run a Klipper firmware behind Moonraker, but the generic Klipper
 profile's default bed matches none of them, so each model carries its own sourced facts and

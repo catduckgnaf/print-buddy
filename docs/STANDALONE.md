@@ -71,8 +71,8 @@ message. `python3 -m print_handy.doctor` warns when a Hermes profile holds the s
 Every key can come from the environment as `PRINT_HANDY__SECTION__KEY`, for example
 `PRINT_HANDY__BOT__MODE=standalone` or `PRINT_HANDY__DISCORD__ALLOWED_USER_IDS="111 222"`.
 
-For example, set `PRINT_HANDY__DISCORD__BOT_NAME="Print Bitch"` in the process environment, or
-`bot_name: "Print Bitch"` inside the YAML `discord:` mapping. Docker Compose reads
+For example, set `PRINT_HANDY__DISCORD__BOT_NAME="Workshop Printer"` in the process environment, or
+`bot_name: "Workshop Printer"` inside the YAML `discord:` mapping. Docker Compose reads
 the same variable from `.env`. Restart the bot after changing it. This changes its self-description,
 not the Discord account username or server nickname; set those in Discord. The default stays `Print Handy`.
 

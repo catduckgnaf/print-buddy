@@ -595,6 +595,16 @@ def create_spool(spec: dict[str, Any], *, client: Client = spoolman) -> dict[str
         reused = False
         body = {"name": spec["color"], "material": spec["material"], "diameter": 1.75,
                 "density": 1.24, "weight": spec["grams"]}
+        # Label temperatures from a spool photo (#514) are recorded on the
+        # filament as its Spoolman temperatures — data, not authority: the
+        # temperature resolution already lets a filament's recorded temps
+        # win over material defaults for every material, and the #512
+        # variant adjustments never override recorded data. A reused
+        # filament keeps the temps it already has; they are not rewritten.
+        if spec.get("nozzle_temp") is not None:
+            body["settings_extruder_temp"] = spec["nozzle_temp"]
+        if spec.get("bed_temp") is not None:
+            body["settings_bed_temp"] = spec["bed_temp"]
         if spec.get("hex"):
             body["color_hex"] = spec["hex"]
         if spec.get("brand"):

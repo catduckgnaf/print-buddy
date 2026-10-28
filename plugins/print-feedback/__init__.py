@@ -1431,7 +1431,9 @@ def _answer_spool_question(listener, spool_sync, context, choice):
         previous_slot = (state.get('ifs_slots') or {}).get(str(slot)) or {}
         existing_hex = spool_sync.screen_hex(previous_slot.get('hex'))
         made = spool_sync.create_spool({'brand': choice.get('brand'), 'material': choice['material'],
-                                        'color': choice['color'], 'grams': choice['grams'], 'hex': existing_hex})
+                                        'color': choice['color'], 'grams': choice['grams'], 'hex': existing_hex,
+                                        'nozzle_temp': choice.get('nozzle_temp'),
+                                        'bed_temp': choice.get('bed_temp')})
         spool_id = int(made['spool_id'])
         created = f'Created spool #{spool_id}. '
     else:
@@ -1501,6 +1503,33 @@ def _prompt_brand():
         return bool((_config.cfg().get('spool') or {}).get('prompt_brand'))
     except Exception:
         return False
+
+
+def _photo_intake_ready():
+    """Whether the photo label step can be offered (#514): the
+    visual_watch.vision_ready rule — PRINT_VISION_URL, or
+    services.vision_chat_url with its key. No endpoint, no offer, and the
+    walkthrough is exactly as it was without one."""
+    try:
+        from print_handy.hermes import moonraker_event_listener as listener
+        return bool(listener._vision_ready())
+    except Exception:
+        return False
+
+
+def _spool_label_vision_call():
+    """The shared vision call for label extraction (#514), carrying the
+    listener's configured values — the same endpoint the camera watch uses."""
+    from print_handy.hermes import moonraker_event_listener as listener
+    from print_handy.hermes import visual_watch
+
+    def call(image, prompt):
+        return visual_watch.visual_extract(
+            image, prompt, chat_url=listener._vision_chat_url, model=listener._VISION_MODEL,
+            api_key=lambda: listener._profile_env_value("CLIPROXY_API_KEY"),
+            context="Filament spool label photo. Reply with JSON only.")
+
+    return call
 
 
 async def _spool_ask(adapter, source, metadata, gateway, question, choices):
@@ -2848,8 +2877,91 @@ def alert_button_handlers(bot, adapter):
                  'predicted_id': predicted, 'prompt_brand': _prompt_brand(),
                  'types': types[:100], 'brand': None, 'material': None, 'color': None,
                  'grams': None, 'old_spool_id': old_spool_id, 'old_remaining': old_remaining,
-                 'disposition': None}
+                 'disposition': None, 'photo_offered': _photo_intake_ready(),
+                 'from_photo': False, 'nozzle_temp': None, 'bed_temp': None}
         await intake_advance(interaction, state)
+
+    async def intake_post_step(channel, state):
+        """Post the walkthrough's current step as a new channel message.
+
+        The photo path (#514) continues outside an interaction — the photo
+        arrives as a plain message — so its next step is a fresh post
+        carrying fresh buttons, in the modal-submit idiom.
+        """
+        aid = await asyncio.to_thread(pab.record, 'intake', '', **state)
+        await channel.send(pab.intake_step_text(state),
+                           view=intake_view(pab.intake_step_components(aid, state)))
+
+    _photo_tasks = set()
+
+    async def intake_photo_wait(interaction, state):
+        """Wait for the operator's label photo and pre-fill the walkthrough (#514).
+
+        Runs as a background task after the photo button's click (the click
+        itself only swaps the prompt text). The photo is the operator's next
+        message in this channel with an image attached; its bytes go to the
+        configured vision endpoint and nowhere else — nothing is saved or
+        recorded. A readable label lands the walkthrough on its disposition
+        or confirmation step with every extracted value shown; an unusable
+        one refuses with the named reason and re-posts the manual steps.
+        """
+        from print_handy.hermes import spool_label
+
+        def is_image(attachment):
+            if str(getattr(attachment, 'content_type', '') or '').startswith('image/'):
+                return True
+            return str(getattr(attachment, 'filename', '') or '').lower().endswith(
+                ('.jpg', '.jpeg', '.png', '.webp', '.gif'))
+
+        channel = getattr(interaction, 'channel', None)
+        user_id = str(getattr(getattr(interaction, 'user', None), 'id', ''))
+        channel_id = str(getattr(interaction, 'channel_id', '') or '')
+
+        def check(message):
+            if str(getattr(getattr(message, 'author', None), 'id', '')) != user_id:
+                return False
+            if str(getattr(getattr(message, 'channel', None), 'id', '') or '') != channel_id:
+                return False
+            return any(is_image(a) for a in (getattr(message, 'attachments', None) or []))
+
+        timeout = (globals().get('_config').question_timeout_s() if globals().get('_config') else 1800)
+        try:
+            message = await bot.wait_for('message', check=check, timeout=timeout)
+        except Exception:
+            logger.debug('label photo wait ended without a photo', exc_info=True)
+            with contextlib.suppress(Exception):
+                if channel is not None:
+                    await channel.send('No photo arrived, so nothing was changed. '
+                                       'Start again from the prompt whenever you are ready.')
+            return
+        if channel is None:
+            channel = getattr(message, 'channel', None)
+        if channel is None:
+            return
+        attachment = next(a for a in (getattr(message, 'attachments', None) or []) if is_image(a))
+        try:
+            image = await attachment.read()
+            spec = await asyncio.to_thread(spool_label.extract_spool_spec, image,
+                                           _spool_label_vision_call())
+        except spool_label.SpoolLabelError as exc:
+            refusal = str(exc)
+        except Exception:
+            logger.exception('label photo extraction failed')
+            refusal = spool_label.FAILURE_MESSAGES['unreadable']
+        else:
+            refusal = None
+        if refusal is not None:
+            await channel.send(refusal)
+            fresh = {**state, 'step': 'start', 'from_photo': False, 'brand': None,
+                     'material': None, 'color': None, 'grams': None,
+                     'nozzle_temp': None, 'bed_temp': None}
+            await intake_post_step(channel, {**fresh, 'step': pab.intake_next_step(fresh)})
+            return
+        filled = {**state, 'brand': spec['brand'], 'material': spec['material'],
+                  'color': spec['color'], 'grams': spec['grams'],
+                  'nozzle_temp': spec['nozzle_temp'], 'bed_temp': spec['bed_temp'],
+                  'from_photo': True, 'step': 'weight'}
+        await intake_post_step(channel, {**filled, 'step': pab.intake_next_step(filled)})
 
     async def intake_field_modal(interaction, state, field, label, max_length=100):
         """The walkthrough's only typed inputs: one field, for Other/Custom choices."""
@@ -2898,11 +3010,13 @@ def alert_button_handlers(bot, adapter):
         try:
             from print_handy.hermes import spool_sync
             values = {'brand': state.get('brand') or '', 'material': state.get('material') or '',
-                      'color': state.get('color') or '', 'grams': str(state.get('grams') or ''), 'lot': ''}
+                      'color': state.get('color') or '', 'grams': str(state.get('grams') or ''), 'lot': '',
+                      'nozzle_temp': state.get('nozzle_temp'), 'bed_temp': state.get('bed_temp')}
             if state.get('origin') == 'spool-question':
                 from print_handy.hermes import moonraker_event_listener as listener
                 choice = {'status': 'new', 'brand': values['brand'] or None, 'material': values['material'],
-                          'color': values['color'], 'grams': values['grams'], 'lot': None}
+                          'color': values['color'], 'grams': values['grams'], 'lot': None,
+                          'nozzle_temp': values['nozzle_temp'], 'bed_temp': values['bed_temp']}
                 result = await asyncio.to_thread(_answer_spool_question, listener, spool_sync,
                                                  state.get('context') or {}, choice)
             else:
@@ -2921,7 +3035,8 @@ def alert_button_handlers(bot, adapter):
             return
         state = {key: alert.get(key) for key in
                  ('origin', 'slot', 'context', 'step', 'predicted_id', 'prompt_brand', 'types',
-                  'brand', 'material', 'color', 'grams', 'old_spool_id', 'old_remaining', 'disposition')}
+                  'brand', 'material', 'color', 'grams', 'old_spool_id', 'old_remaining', 'disposition',
+                  'photo_offered', 'from_photo', 'nozzle_temp', 'bed_temp')}
         if action == 'cancel':
             await asyncio.to_thread(pab.take, aid)
             await interaction.response.edit_message(content='New spool cancelled. Nothing changed.', view=None)
@@ -2937,6 +3052,21 @@ def alert_button_handlers(bot, adapter):
         if action == 'brand_type':
             await asyncio.to_thread(pab.take, aid)
             await intake_field_modal(interaction, state, 'brand', 'Brand')
+            return
+        if action == 'photo':
+            await asyncio.to_thread(pab.take, aid)
+            await interaction.response.edit_message(
+                content=('Send one photo of the spool label — the box, or the sticker on the '
+                         'spool — as your next message in this channel. I will read it and show '
+                         'you exactly what I found before anything is created. The photo goes '
+                         'only to the configured vision endpoint; it is not saved.'), view=None)
+            task = asyncio.create_task(intake_photo_wait(interaction, state))
+            _photo_tasks.add(task)
+            task.add_done_callback(_photo_tasks.discard)
+            return
+        if action == 'edit':
+            await asyncio.to_thread(pab.take, aid)
+            await intake_advance(interaction, {**state, 'step': 'start'})
             return
         await asyncio.to_thread(pab.take, aid)
         material = pab.intake_material_for_action(action)
@@ -2962,7 +3092,8 @@ def alert_button_handlers(bot, adapter):
             return
         state = {key: alert.get(key) for key in
                  ('origin', 'slot', 'context', 'step', 'predicted_id', 'prompt_brand', 'types',
-                  'brand', 'material', 'color', 'grams', 'old_spool_id', 'old_remaining', 'disposition')}
+                  'brand', 'material', 'color', 'grams', 'old_spool_id', 'old_remaining', 'disposition',
+                  'photo_offered', 'from_photo', 'nozzle_temp', 'bed_temp')}
         value = str((getattr(interaction, 'data', {}) or {}).get('values', [''])[0] or '')
         if value == pab.INTAKE_OTHER:
             field = 'brand' if state.get('step') == 'brand' else 'color'

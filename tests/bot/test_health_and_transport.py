@@ -78,12 +78,14 @@ def test_listener_posts_over_rest_in_standalone_mode(monkeypatch):
     assert sent == [("tok", announcer.DISCORD_CHAT_ID, "Print started: cube")]
 
 
-def test_listener_keeps_hermes_send_in_hermes_mode(monkeypatch):
+def test_listener_posts_over_rest_in_hermes_mode(monkeypatch):
+    sent = []
     monkeypatch.setitem(_config.cfg()["bot"], "mode", "hermes")
-    with mock.patch.object(mel.subprocess, "run", return_value=mock.Mock(returncode=0, stderr="")) as run, \
-            mock.patch("print_handy.bot.rest.send", side_effect=AssertionError("REST in hermes mode")):
+    monkeypatch.setattr(mel, "_profile_env_value", lambda name: "tok" if name == "DISCORD_BOT_TOKEN" else "")
+    monkeypatch.setattr("print_handy.bot.rest.send", lambda token, chat, text: sent.append((token, chat, text)) or (True, "1"))
+    with mock.patch.object(mel.subprocess, "run", side_effect=AssertionError("hermes send was called")):
         assert mel.post("Print started: cube") is True
-    assert run.call_args[0][0][1:4] == ["-p", "3dprinting", "send"]
+    assert sent == [("tok", announcer.DISCORD_CHAT_ID, "Print started: cube")]
 
 
 def test_button_posts_use_the_configured_token_variable(monkeypatch):

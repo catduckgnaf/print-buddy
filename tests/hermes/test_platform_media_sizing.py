@@ -5,6 +5,10 @@ only), ffmpeg is a stub that writes a file of a chosen size, and the
 Telegram/Matrix senders run against stubbed urlopen transports — no
 network, no live platform. Discord's sizing and wording are pinned
 byte-for-byte against what they were before the generalisation.
+
+#524 narrowed one wording pin: the completion fallback says "too big"
+only when the video actually exceeds the platform limit; any other
+post failure gets the generic could-not-be-posted line.
 """
 import io
 import json
@@ -256,16 +260,86 @@ def test_too_big_wording_telegram(monkeypatch):
 
 
 def test_discord_fallback_post_is_byte_for_byte_unchanged(monkeypatch, tmp_path):
-    _use_settings(monkeypatch, PRINT_HANDY__BOT__MODE="standalone", PRINT_HANDY__BOT__PLATFORM="discord")
+    _use_settings(monkeypatch, PRINT_HANDY__BOT__MODE="standalone", PRINT_HANDY__BOT__PLATFORM="discord",
+                  PRINT_HANDY__DISCORD__UPLOAD_MAX_BYTES="1000")
+    video = _video(tmp_path, 2000)  # genuinely over the configured 1000-byte limit
     posted, results = [], [False, True]
     monkeypatch.setattr(mel, "log", lambda line: None)
     monkeypatch.setattr(mel, "post", lambda message: posted.append(message) or results.pop(0))
     monkeypatch.setattr(mel.announcer, "archive_completed_timelapse", lambda key: "/volume1/x/stand.mp4")
-    monkeypatch.setattr(mel.announcer, "materialize_archived_timelapse", lambda path: "/cache/stand.mp4")
+    monkeypatch.setattr(mel.announcer, "materialize_archived_timelapse", lambda path: str(video))
     monkeypatch.setattr(mel, "platform_sized_video", lambda path, max_bytes=None: path)
     mel._timelapse_post("stand.gcode", COMPLETE)
-    assert posted[0] == f"{COMPLETE}\nMEDIA:/cache/stand.mp4"
+    assert posted[0] == f"{COMPLETE}\nMEDIA:{video}"
     assert posted[1] == f"{COMPLETE}\nTimelapse archived but too big for Discord: stand.mp4"
+
+
+def test_fallback_text_claims_too_big_only_when_a_media_file_exceeds_the_limit(monkeypatch, tmp_path):
+    _use_settings(monkeypatch, PRINT_HANDY__DISCORD__UPLOAD_MAX_BYTES="1000")
+    big = _video(tmp_path, 2000, "big.mp4")
+    small = _video(tmp_path, 500, "small.mp4")
+    assert mel._timelapse_fallback_text(f"done\nMEDIA:{big}", "big.mp4") == \
+        "Timelapse archived but too big for Discord: big.mp4"
+    assert mel._timelapse_fallback_text(f"done\nMEDIA:{small}", "small.mp4") == \
+        "Timelapse archived but could not be posted: small.mp4"
+    # A missing file cannot be measured, so no size cause is claimed either.
+    assert mel._timelapse_fallback_text("done\nMEDIA:/no/such/file.mp4", "gone.mp4") == \
+        "Timelapse archived but could not be posted: gone.mp4"
+    assert mel._timelapse_fallback_text(f"done\nMEDIA:{big}", combined=True) == \
+        "Combined timelapse too big for Discord."
+    assert mel._timelapse_fallback_text(f"done\nMEDIA:{small}", combined=True) == \
+        "Combined timelapse could not be posted."
+
+
+def test_discord_fallback_post_names_no_cause_when_the_video_fits(monkeypatch, tmp_path):
+    _use_settings(monkeypatch, PRINT_HANDY__BOT__MODE="standalone", PRINT_HANDY__BOT__PLATFORM="discord",
+                  PRINT_HANDY__DISCORD__UPLOAD_MAX_BYTES="1000")
+    video = _video(tmp_path, 500)  # under the limit: the failure was something else
+    posted, results = [], [False, True]
+    monkeypatch.setattr(mel, "log", lambda line: None)
+    monkeypatch.setattr(mel, "post", lambda message: posted.append(message) or results.pop(0))
+    monkeypatch.setattr(mel.announcer, "archive_completed_timelapse", lambda key: "/volume1/x/stand.mp4")
+    monkeypatch.setattr(mel.announcer, "materialize_archived_timelapse", lambda path: str(video))
+    monkeypatch.setattr(mel, "platform_sized_video", lambda path, max_bytes=None: path)
+    mel._timelapse_post("stand.gcode", COMPLETE)
+    assert posted[0] == f"{COMPLETE}\nMEDIA:{video}"
+    assert posted[1] == f"{COMPLETE}\nTimelapse archived but could not be posted: stand.mp4"
+    assert "too big" not in posted[1]
+
+
+def test_captured_fallback_post_names_no_cause_when_the_video_fits(monkeypatch, tmp_path):
+    _use_settings(monkeypatch, PRINT_HANDY__DISCORD__UPLOAD_MAX_BYTES="1000")
+    captured = _video(tmp_path, 500, "captured.mp4")
+    posted, results = [], [False, True]
+    monkeypatch.setattr(mel, "log", lambda line: None)
+    monkeypatch.setattr(mel, "post", lambda message: posted.append(message) or results.pop(0))
+    monkeypatch.setattr(mel, "_captured_timelapse", lambda key: captured)
+    monkeypatch.setattr(mel, "_vertical_short_attachment", lambda video, key: None)
+    mel._timelapse_post("stand.gcode", COMPLETE)
+    assert posted[0] == f"{COMPLETE}\nMEDIA:{captured}"
+    assert posted[1] == f"{COMPLETE}\nTimelapse archived but could not be posted: captured.mp4"
+
+
+def test_combined_fallback_post_names_no_cause_when_the_video_fits(monkeypatch, tmp_path):
+    _use_settings(monkeypatch, PRINT_HANDY__DISCORD__UPLOAD_MAX_BYTES="1000")
+    combined = _video(tmp_path, 500, "combined.mp4")
+    posted, results = [], [False, True]
+    monkeypatch.setattr(mel, "log", lambda line: None)
+    monkeypatch.setattr(mel, "post", lambda message: posted.append(message) or results.pop(0))
+    monkeypatch.setattr(mel, "_captured_timelapse", lambda key: combined)
+    monkeypatch.setattr(mel.plan_timelapse, "add_clip", lambda plan, order, clip: clip)
+    monkeypatch.setattr(mel.plan_timelapse, "clips", lambda plan: [combined])
+    monkeypatch.setattr(mel.plan_timelapse, "expected_clips", lambda plan: 1)
+    monkeypatch.setattr(mel.plan_timelapse, "combine", lambda plan: combined)
+    monkeypatch.setattr(mel.plan_timelapse, "clear", lambda plan: None)
+    monkeypatch.setattr(mel.plan_timelapse, "prune", lambda: None)
+    monkeypatch.setattr(mel.announcer, "archive_local_timelapse", lambda plan, path: None)
+    monkeypatch.setattr(mel, "platform_sized_video", lambda path, max_bytes=None: path)
+    monkeypatch.setattr(mel, "_vertical_short_attachment", lambda video, key: None)
+    mel._plan_timelapse_post("stand.gcode", COMPLETE, ("plan-1", "final", 1))
+    assert posted[0] == f"{COMPLETE}\nMEDIA:{combined}"
+    assert posted[1] == f"{COMPLETE}\nCombined timelapse could not be posted."
+    assert "too big" not in posted[1]
 
 
 # --------------------------------------------------------------- offline end-to-end

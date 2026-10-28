@@ -90,6 +90,8 @@ OPEN_SECTIONS = {"cold_pull", "nozzle_temp_offsets", "material_temps"}
 OPTIONAL_KEYS = {("printer", "nozzle_type"): str, ("printer", "tool_count"): int,
                  ("visual_watch", "enabled"): bool,
                  ("vision", "roast_enabled"): bool,
+                 ("vision", "local_detector_enabled"): bool,
+                 ("vision", "local_model_path"): str,
                  ("vision", "auto_light_off_minutes"): int,
                  ("vision", "light_object"): str,
                  ("spool", "prompt_brand"): bool,
@@ -1028,6 +1030,21 @@ def _validate_vision(data):
     enabled = vision.setdefault("roast_enabled", True)
     if not isinstance(enabled, bool):
         raise SettingsError(f"[vision] roast_enabled must be true or false, got {enabled!r}")
+    # Local failure detector (#455): off by default. When on, the camera
+    # watchdog's verdicts can come from the built-in ONNX detector
+    # (hermes.local_vision) on installs with no vision endpoint route
+    # configured; endpoint routes keep precedence. local_model_path names
+    # the weights file when the operator supplies their own — empty uses
+    # the pinned model, downloaded once into the model directory.
+    local_detector = vision.setdefault("local_detector_enabled", False)
+    if not isinstance(local_detector, bool):
+        raise SettingsError(f"[vision] local_detector_enabled must be true or false, "
+                            f"got {local_detector!r}")
+    local_model_path = vision.setdefault("local_model_path", "")
+    if not isinstance(local_model_path, str):
+        raise SettingsError(f"[vision] local_model_path must be a path string or empty, "
+                            f"got {local_model_path!r}")
+    vision["local_model_path"] = local_model_path.strip()
     # Auto light-off (#516): off by default (0). When set above zero, the
     # printer's light turns on at print start and, after a print ends,
     # off again once the camera verdict has seen an empty plate for

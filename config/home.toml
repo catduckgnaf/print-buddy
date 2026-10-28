@@ -205,6 +205,17 @@ roast_model = "luna-latest"
 # (vision_chat_url plus CLIPROXY_API_KEY), on every platform, Telegram included.
 # Set false to turn roasts off; camera checks keep using the same endpoint.
 roast_enabled = true
+# Local failure detector (#455): off by default. When on, the camera
+# watchdog can judge frames with the built-in ONNX detector on installs
+# with no vision endpoint route configured (PRINT_VISION_URL and
+# services.vision_chat_url keep precedence). The pinned model
+# (about 202 MB) downloads once into a models folder under the Hermes
+# home, SHA-256 verified; nothing leaves the machine.
+local_detector_enabled = false
+# Path to the local detector's ONNX model file. Empty uses the default
+# location and the pinned model; set it to a file you placed yourself
+# to run fully offline.
+local_model_path = ""
 # Auto light-off (#516): 0 = off (the default). When set (30 suggested), the
 # Moonraker listener turns the printer's light on at print start and, after a
 # print ends, off again once the camera has seen an empty plate for that many

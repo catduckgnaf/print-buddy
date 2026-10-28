@@ -1,0 +1,371 @@
+"""Built-in local failure detector for the camera watchdog (#455, Stage 1).
+
+The watchdog's verdicts normally come from a vision endpoint:
+``PRINT_VISION_URL`` or the OpenAI-compatible chat route
+(``services.vision_chat_url``). An install with neither configured used to
+get no detection at all — ``vision_ready`` kept the watch off. This module
+is the strictly-local third route from the #455 verdict: an ONNX failure
+detector that runs on this machine, so a no-LLM, no-cloud install still
+gets bad-print detection. Nothing leaves the house; no key is needed.
+
+It is a failure detector only, not a vision model. It answers exactly one
+question — "does this frame show a print failure?" — so it can produce
+``spaghetti``, ``uncertain`` and ``ok`` verdicts, never ``air``,
+``detached`` or ``empty_idle``, and it never answers label/extraction
+reads (those still need an endpoint). Because it cannot certify an empty
+plate, auto light-off (#516) still requires an endpoint.
+
+Model provenance (pinned; the weights are fetched, never vendored —
+the same posture as the AGPL slicers the image downloads at build time):
+
+* Obico / The Spaghetti Detective failure-detection model, ONNX export
+  (YOLOv2-style region detector, single ``failure`` class), from the
+  obico-server project's ``ml_api/model/model-weights.onnx.url``.
+* URL: https://www.obico.io/static_pub/ml-models/model-weights-5a6b1be1fa.onnx
+* SHA-256: 0a6ebd8e30dbf6a450c50f9c0a5406f04ba7eb1c99fd5996e888c78bb383b9aa
+* Size: 202,223,918 bytes (~202 MB). The #455 Stage 0 report estimated
+  15–30 MB; the real export is much larger, which is why the weights are
+  downloaded once at runtime into the model directory instead of being
+  baked into the container image.
+* Licence: AGPL-3.0 (the obico-server project's licence).
+
+Fail-soft discipline (#387): a missing runtime, a missing or corrupt
+model, a failed download or an inference error raises
+:class:`LocalVisionError`, which the caller turns into an ``uncertain``
+verdict (which alerts) with the real error logged — never a crash, never
+a silent pass, never a blocked print. A failure is remembered for the
+life of the process so a broken setup logs once instead of retrying a
+202 MB download on every camera check.
+"""
+from __future__ import annotations
+
+import hashlib
+import logging
+import os
+import threading
+import urllib.request
+from pathlib import Path
+
+from . import _config
+
+logger = logging.getLogger(__name__)
+
+# --- Pinned model provenance (see module docstring) --------------------------
+MODEL_NAME = "Obico failure-detection model"
+MODEL_URL = "https://www.obico.io/static_pub/ml-models/model-weights-5a6b1be1fa.onnx"
+MODEL_SHA256 = "0a6ebd8e30dbf6a450c50f9c0a5406f04ba7eb1c99fd5996e888c78bb383b9aa"
+MODEL_SIZE_BYTES = 202_223_918
+MODEL_FILENAME = "obico-failure-detector.onnx"
+
+# --- Verdict mapping (single still frame) ------------------------------------
+# Obico's own serving code treats a detection above 0.08 confidence as a
+# positive (ml_api THRESH). One frame is weaker evidence than Obico's
+# multi-frame escalation, so the verdict needs a stronger single frame:
+# at or above FAILURE_AT the frame is judged a failure (``spaghetti``);
+# a weaker positive stays ``uncertain`` — which still alerts with the
+# photo attached, so nothing is silently passed either way.
+POSITIVE_FLOOR = 0.08
+FAILURE_AT = 0.5
+NMS_IOU = 0.45  # Obico's OnnxNet.detect default
+
+DOWNLOAD_TIMEOUT_S = 180
+
+
+class LocalVisionError(Exception):
+    """The local detector cannot judge this frame."""
+
+
+# --- Settings -----------------------------------------------------------------
+
+
+def enabled(cfg=None) -> bool:
+    cfg = _config.cfg() if cfg is None else cfg
+    return bool((cfg.get("vision") or {}).get("local_detector_enabled", False))
+
+
+def model_path(cfg=None) -> Path:
+    """Where the ONNX weights live: the operator's
+    ``vision.local_model_path`` when set, else ``models/`` under the
+    Hermes home (persistent in the container's ``/data/hermes`` volume)."""
+    cfg = _config.cfg() if cfg is None else cfg
+    raw = str((cfg.get("vision") or {}).get("local_model_path") or "").strip()
+    if raw:
+        return Path(os.path.expanduser(raw))
+    home = Path(os.path.expanduser(str(cfg["paths"]["hermes_home"])))
+    return home / "models" / MODEL_FILENAME
+
+
+def _is_default_path(path: Path, cfg=None) -> bool:
+    cfg = _config.cfg() if cfg is None else cfg
+    return not str((cfg.get("vision") or {}).get("local_model_path") or "").strip() \
+        and path.name == MODEL_FILENAME
+
+
+# --- Runtime / session caches (per process; failures are sticky) --------------
+
+_lock = threading.Lock()
+_ort = None
+_ort_error: Exception | None = None
+_sessions: dict[str, object] = {}
+_failures: dict[str, str] = {}
+_verified_files: set[str] = set()
+
+
+def _runtime():
+    global _ort, _ort_error
+    if _ort is None:
+        if _ort_error is not None:
+            raise LocalVisionError(
+                f"onnxruntime is not available: {_ort_error}")
+        try:
+            import onnxruntime
+
+            _ort = onnxruntime
+        except Exception as exc:  # noqa: BLE001 - reported, then verdicts degrade
+            _ort_error = exc
+            raise LocalVisionError(
+                f"onnxruntime is not available: {exc}") from exc
+    return _ort
+
+
+def _remembered_failure(key: str) -> str | None:
+    return _failures.get(key)
+
+
+def _fail(key: str, message: str) -> LocalVisionError:
+    _failures[key] = message
+    return LocalVisionError(message)
+
+
+# --- Model file ----------------------------------------------------------------
+
+
+def _sha256_of(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def _download_model(path: Path) -> None:
+    """Fetch the pinned weights into ``path``, SHA-256 verified. A
+    mismatch or a network error leaves no file behind."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    part = path.with_name(path.name + ".part")
+    digest = hashlib.sha256()
+    try:
+        request = urllib.request.Request(
+            MODEL_URL, headers={"User-Agent": "print-handy-local-vision"})
+        with urllib.request.urlopen(request, timeout=DOWNLOAD_TIMEOUT_S) as response, \
+                part.open("wb") as out:
+            for chunk in iter(lambda: response.read(1024 * 1024), b""):
+                digest.update(chunk)
+                out.write(chunk)
+    except Exception as exc:  # noqa: BLE001 - turned into a verdict-level failure
+        part.unlink(missing_ok=True)
+        raise LocalVisionError(
+            f"downloading the local detector model from {MODEL_URL} failed: {exc}") from exc
+    if digest.hexdigest() != MODEL_SHA256:
+        part.unlink(missing_ok=True)
+        raise LocalVisionError(
+            "downloaded local detector model failed its SHA-256 check "
+            f"(expected {MODEL_SHA256}, got {digest.hexdigest()}); refusing to use it")
+    os.replace(part, path)
+    logger.info("local detector model downloaded to %s (SHA-256 verified)", path)
+
+
+def _ensure_model_file(path: Path, cfg=None) -> None:
+    key = f"file:{path}"
+    remembered = _remembered_failure(key)
+    if remembered:
+        raise LocalVisionError(remembered)
+    # Locked: two printers' first checks could otherwise download into
+    # the same .part file at once and corrupt each other's download.
+    with _lock:
+        remembered = _remembered_failure(key)
+        if remembered:
+            raise LocalVisionError(remembered)
+        try:
+            if not path.is_file():
+                logger.info(
+                    "local detector model not present; downloading the pinned "
+                    "%s (~%d MB, one time) from %s",
+                    MODEL_NAME, MODEL_SIZE_BYTES // 1_000_000, MODEL_URL)
+                _download_model(path)
+                _verified_files.add(key)  # the download itself was SHA-256 verified
+            elif _is_default_path(path, cfg) and key not in _verified_files:
+                # A pre-existing file at the pinned location is only trusted
+                # after its checksum matches, checked once per process.
+                if _sha256_of(path) != MODEL_SHA256:
+                    raise LocalVisionError(
+                        f"the local detector model at {path} does not match the pinned "
+                        "SHA-256; refusing to use it (delete the file to re-download, "
+                        "or set vision.local_model_path to your own model)")
+                _verified_files.add(key)
+        except LocalVisionError as exc:
+            raise _fail(key, str(exc)) from exc
+        except Exception as exc:  # noqa: BLE001 - an unreadable model dir degrades the same way
+            raise _fail(key, f"the local detector model at {path} could not be "
+                             f"prepared: {exc}") from exc
+
+
+def _session(path: Path):
+    key = f"session:{path}"
+    remembered = _remembered_failure(key)
+    if remembered:
+        raise LocalVisionError(remembered)
+    with _lock:
+        if key in _sessions:
+            return _sessions[key]
+        try:
+            ort = _runtime()
+            session = ort.InferenceSession(str(path), providers=["CPUExecutionProvider"])
+        except LocalVisionError:
+            raise
+        except Exception as exc:  # noqa: BLE001 - corrupt model etc. degrade the same way
+            raise _fail(key, f"the local detector model at {path} could not be "
+                             f"loaded: {exc}") from exc
+        _sessions[key] = session
+        return session
+
+
+# --- Detection -------------------------------------------------------------------
+
+
+def _iou(a, b) -> float:
+    x1, y1 = max(a[0], b[0]), max(a[1], b[1])
+    x2, y2 = min(a[2], b[2]), min(a[3], b[3])
+    inter = max(0.0, x2 - x1) * max(0.0, y2 - y1)
+    if inter <= 0:
+        return 0.0
+    area_a = max(0.0, a[2] - a[0]) * max(0.0, a[3] - a[1])
+    area_b = max(0.0, b[2] - b[0]) * max(0.0, b[3] - b[1])
+    union = area_a + area_b - inter
+    return inter / union if union > 0 else 0.0
+
+
+def _postprocess(boxes, confs):
+    """The model's output contract: ``boxes`` [1, N, 1, 4] relative xyxy
+    and ``confs`` [1, N, 1], decoded in-graph. Returns the kept
+    (confidence, box) pairs after the positive floor and NMS, strongest
+    first — the same post-processing shape as Obico's own server code."""
+    import numpy as np
+
+    box_arr = np.asarray(boxes, dtype=np.float64)
+    conf_arr = np.asarray(confs, dtype=np.float64)
+    if box_arr.ndim != 4 or conf_arr.ndim != 3 or box_arr.shape[1] != conf_arr.shape[1]:
+        raise LocalVisionError(
+            f"unexpected local detector output shapes: boxes {box_arr.shape}, "
+            f"confs {conf_arr.shape}")
+    flat_boxes = box_arr[0, :, 0, :]
+    flat_confs = conf_arr[0, :, 0]
+    order = sorted(
+        (i for i in range(len(flat_confs)) if flat_confs[i] > POSITIVE_FLOOR),
+        key=lambda i: -flat_confs[i])
+    kept: list[int] = []
+    for i in order:
+        if all(_iou(flat_boxes[i], flat_boxes[j]) <= NMS_IOU for j in kept):
+            kept.append(i)
+    return [(float(flat_confs[i]), flat_boxes[i]) for i in kept]
+
+
+def _preprocess(image: bytes, width: int, height: int):
+    """JPEG bytes -> the model's input tensor: RGB, resized to the
+    model's input size, CHW, scaled to 0..1 (Obico's own preprocessing)."""
+    import io
+
+    import numpy as np
+    from PIL import Image
+
+    with Image.open(io.BytesIO(image)) as frame:
+        rgb = frame.convert("RGB").resize((width, height), Image.BILINEAR)
+        array = np.asarray(rgb, dtype=np.float32)
+    tensor = np.transpose(array, (2, 0, 1))[np.newaxis, ...]
+    return np.ascontiguousarray(tensor) / 255.0
+
+
+def detect(image: bytes, cfg=None):
+    """Run the detector on one JPEG frame. Returns the kept detections,
+    strongest first. Raises :class:`LocalVisionError` on any
+    infrastructure failure (runtime, model, inference)."""
+    cfg = _config.cfg() if cfg is None else cfg
+    path = model_path(cfg)
+    _ensure_model_file(path, cfg)
+    session = _session(path)
+    spec = session.get_inputs()[0]
+    try:
+        height, width = int(spec.shape[2]), int(spec.shape[3])
+    except (TypeError, ValueError, IndexError) as exc:
+        raise LocalVisionError(
+            f"the local detector model at {path} has an unexpected input "
+            f"shape {spec.shape!r}") from exc
+    try:
+        tensor = _preprocess(image, width, height)
+    except LocalVisionError:
+        raise
+    except Exception as exc:  # noqa: BLE001 - an unreadable frame is a failed check
+        raise LocalVisionError(f"the camera frame could not be read: {exc}") from exc
+    try:
+        outputs = session.run(None, {spec.name: tensor})
+    except LocalVisionError:
+        raise
+    except Exception as exc:  # noqa: BLE001 - inference errors degrade like endpoint errors
+        raise LocalVisionError(f"local detector inference failed: {exc}") from exc
+    if len(outputs) < 2:
+        raise LocalVisionError(
+            f"the local detector model returned {len(outputs)} outputs, expected 2")
+    try:
+        return _postprocess(outputs[0], outputs[1])
+    except LocalVisionError:
+        raise
+    except Exception as exc:  # noqa: BLE001 - malformed outputs are a failed check
+        raise LocalVisionError(f"local detector outputs could not be read: {exc}") from exc
+
+
+def local_verdict(image: bytes, cfg=None) -> tuple[str, str]:
+    """The detector's verdict for one frame, in the watchdog's
+    vocabulary. Raises :class:`LocalVisionError` when it cannot judge."""
+    kept = detect(image, cfg)
+    if kept:
+        confidence = kept[0][0]
+        if confidence >= FAILURE_AT:
+            areas = len(kept)
+            return "spaghetti", (
+                f"local failure detector: print failure at {confidence:.0%} "
+                f"confidence ({areas} area{'s' if areas != 1 else ''})")
+        return "uncertain", (
+            f"local failure detector: possible failure at {confidence:.0%} "
+            "confidence, below the single-frame failure threshold")
+    return "ok", "local failure detector: no failure detected"
+
+
+# --- Status (bot check / vision_ready) -------------------------------------------
+
+
+def detector_status(cfg=None) -> tuple[str, str]:
+    """``(state, detail)`` for surfaces that report the detector without
+    judging a frame: ``off`` / ``ready`` / ``unavailable``. Never touches
+    the network and never downloads."""
+    cfg = _config.cfg() if cfg is None else cfg
+    if not enabled(cfg):
+        return "off", ("vision.local_detector_enabled is false; the camera watchdog "
+                       "needs a vision endpoint, PRINT_VISION_URL or this detector")
+    try:
+        _runtime()
+    except LocalVisionError as exc:
+        return "unavailable", str(exc)
+    path = model_path(cfg)
+    key = f"file:{path}"
+    if _remembered_failure(key):
+        return "unavailable", _remembered_failure(key)
+    if _remembered_failure(f"session:{path}"):
+        return "unavailable", _remembered_failure(f"session:{path}")
+    if path.is_file():
+        return "ready", f"{MODEL_NAME} present at {path}"
+    return "ready", (f"model downloads on first use (~{MODEL_SIZE_BYTES // 1_000_000} MB "
+                     f"from the pinned source, SHA-256 verified) into {path}")
+
+
+def detector_ready(cfg=None) -> bool:
+    return detector_status(cfg)[0] == "ready"

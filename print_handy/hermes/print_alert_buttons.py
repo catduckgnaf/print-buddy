@@ -709,13 +709,16 @@ def bind_insertion_existing(slot: int, spool_id: int, spool_sync) -> str:
 
 
 def create_and_bind_insertion(slot: int, values: dict[str, Any], spool_sync,
-                              prior_disposition: str = "shelf") -> str:
+                              prior_disposition: str = "shelf",
+                              expected_prior_spool_id: int | None = None) -> str:
     """Create the operator-described spool and bind it in one inventory-only step.
 
     ``prior_disposition`` is the replaced spool's fate the operator picked in
     the walkthrough (#512 §3); it defaults to the shelf, which is what the
     pre-walkthrough flow silently did. The result names the fate so a silent
-    shelf move can never happen again.
+    shelf move can never happen again. ``expected_prior_spool_id`` is the
+    replaced spool the walkthrough's confirmation named; bind_slot re-checks
+    it before writing, so the disposition can only land on that spool (#515).
     """
     spec = spool_sync.parse_new(", ".join(str(values.get(key) or "").strip() for key in ("brand", "material", "color", "grams")))
     spec["lot"] = str(values.get("lot") or "").strip() or None
@@ -726,7 +729,8 @@ def create_and_bind_insertion(slot: int, values: dict[str, Any], spool_sync,
             spec[key] = values[key]
     made = spool_sync.create_spool(spec)
     result = spool_sync.bind_slot(slot, int(made["spool_id"]), note="Created and bound from Discord IFS insertion",
-                                  push_screen_update=False, prior_disposition=prior_disposition)
+                                  push_screen_update=False, prior_disposition=prior_disposition,
+                                  expected_prior_spool_id=expected_prior_spool_id)
     record = result["record"]
     prior = result.get("prior_spool_id")
     moved = ""

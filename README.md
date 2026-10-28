@@ -14,7 +14,7 @@ Current release: **2.1.6**
 
 ## How it works
 
-1. **Share a model.** Drop a MakerWorld, Printables or Thingiverse link in the chat, or upload an STL or 3MF file.
+1. **Share a model.** Drop a MakerWorld, Printables or Thingiverse link in the chat, or upload an STL or 3MF file. MyMiniFactory links are checked for their file inventory only; downloads are not supported yet.
 2. **Make a few choices.** Print Buddy walks you through colors and filament, fit and layout, then slices the model for your printer.
 3. **Check and confirm.** You see the result before anything happens. Only when you approve it does Print Buddy send the job to a configured printer.
 4. **Follow along.** Progress, alerts and timelapses come back to the same chat.

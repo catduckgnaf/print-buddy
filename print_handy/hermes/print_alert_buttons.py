@@ -423,15 +423,276 @@ def insertion_select_options(spools: list[dict[str, Any]], mapped: dict[str, Any
     return options
 
 
-def new_insertion_fields() -> list[dict[str, Any]]:
-    """Modal contract kept data-only so it can be covered without a gateway."""
-    return [
-        {"key": "brand", "label": "Brand (optional)", "required": False, "max_length": 100},
-        {"key": "material", "label": "Material", "required": True, "max_length": 50},
-        {"key": "color", "label": "Color / finish", "required": True, "max_length": 100},
-        {"key": "grams", "label": "Full starting grams", "required": True, "max_length": 12},
-        {"key": "lot", "label": "Lot (optional)", "required": False, "max_length": 100},
-    ]
+# ---------------------------------------------------------------------------
+# Conversational new-spool intake walkthrough (#512)
+#
+# "New spool" on an insertion prompt (or a paused spool question) used to
+# open one five-field text modal. The walkthrough replaces it with one
+# button/select step at a time — material, brand (only when the operator
+# turned spool.prompt_brand on), colour/finish, starting weight, the
+# replaced spool's disposition, and one confirmation — so it works on
+# mobile, where modals are at their worst. The state for one walkthrough
+# rides on the alert record (kind "intake"); this layer stays data-only so
+# the whole step machine is covered without a gateway. Single free-text
+# values (an "Other" material/colour, a custom weight, a typed brand) are
+# the only pieces the click layer still collects with a one-field modal.
+# When a vision endpoint is available, the first step also offers a photo
+# of the spool label (#514): the click layer waits for the photo message,
+# spool_label extracts a spec, and the values land here as a pre-filled
+# state that still ends at the same confirmation — nothing is created
+# from a photo without it.
+
+INTAKE_PREFIX = "pbintake"
+INTAKE_SELECT_PREFIX = "pbintakeselect"
+INTAKE_MATERIALS = ("PLA", "Silk PLA", "PLA+", "PETG", "TPU", "ABS")
+INTAKE_WEIGHTS = (1000, 500, 250)
+INTAKE_COMMON_COLORS = ("Black", "White", "Matte White", "Grey", "Red", "Blue", "Green",
+                        "Orange", "Yellow", "Pink", "Purple", "Natural")
+INTAKE_OTHER = "__other__"
+INTAKE_SKIP = "__skip__"
+
+_MATERIAL_ACTIONS = {f"mat_{i}": label for i, label in enumerate(INTAKE_MATERIALS)}
+_WEIGHT_ACTIONS = {f"w_{grams}": grams for grams in INTAKE_WEIGHTS}
+_DISPOSITION_ACTIONS = {"disp_shelf": "shelf", "disp_archive": "archive",
+                        "disp_depleted": "depleted", "disp_delete": "delete"}
+INTAKE_ACTIONS = frozenset(
+    [*_MATERIAL_ACTIONS, "mat_other", *_WEIGHT_ACTIONS, "w_custom",
+     *_DISPOSITION_ACTIONS, "brand_type", "brand_skip", "photo", "edit",
+     "confirm", "cancel"])
+
+
+def parse_intake_custom_id(custom_id: str) -> tuple[str, str] | None:
+    """Return the walkthrough action and alert id, or None for unrelated controls."""
+    parts = str(custom_id or "").split(":")
+    if len(parts) == 3 and parts[0] == INTAKE_PREFIX and parts[1] in INTAKE_ACTIONS and parts[2]:
+        return parts[1], parts[2]
+    return None
+
+
+def intake_material_for_action(action: str) -> str | None:
+    return _MATERIAL_ACTIONS.get(action)
+
+
+def intake_weight_for_action(action: str) -> int | None:
+    return _WEIGHT_ACTIONS.get(action)
+
+
+def intake_disposition_for_action(action: str) -> str | None:
+    return _DISPOSITION_ACTIONS.get(action)
+
+
+def intake_preview_text(predicted_id: Any, slot: Any) -> str:
+    """The early spool-number preview (#512 §2): said at the very first step,
+    so the operator can write the number on the physical spool right away."""
+    if predicted_id is None:
+        return f"Preparing a new spool for Slot {slot}. Nothing is created until you confirm at the end."
+    return (f"Preparing new **Spool #{predicted_id}** for Slot {slot} — you can write "
+            f"#{predicted_id} on the spool now. Nothing is created until you confirm at the end.")
+
+
+def intake_next_step(state: dict[str, Any]) -> str:
+    """The step after the one ``state['step']`` names as just completed.
+
+    Brand is asked only when the walkthrough was started with
+    prompt_brand on (#512 intake refinement); the disposition step exists
+    only for an insertion into an occupied slot (a paused spool question
+    keeps its own runout/shelf semantics in the answer path).
+    """
+    step = state.get("step")
+    if step == "start":
+        return "material"
+    if step == "material":
+        return "brand" if state.get("prompt_brand") else "color"
+    if step == "brand":
+        return "color"
+    if step == "color":
+        return "weight"
+    if step == "weight":
+        if state.get("origin") == "insertion" and state.get("old_spool_id"):
+            return "disposition"
+        return "confirm"
+    if step == "disposition":
+        return "confirm"
+    return "confirm"
+
+
+def _intake_spec_line(state: dict[str, Any]) -> str:
+    head = " ".join(x for x in (str(state.get("brand") or "").strip(),
+                                str(state.get("material") or "").strip()) if x)
+    color = str(state.get("color") or "").strip()
+    return ", ".join(x for x in (head, color) if x)
+
+
+def intake_step_text(state: dict[str, Any]) -> str:
+    """The message for the walkthrough step ``state['step']`` is about to ask."""
+    step = state.get("step")
+    slot = state.get("slot")
+    if step == "material":
+        return (intake_preview_text(state.get("predicted_id"), slot)
+                + "\n\n**Material** — pick one, or Other to type a different material.")
+    if step == "brand":
+        return "**Brand** — pick a known brand, type one, or skip. The spool works the same either way."
+    if step == "color":
+        return f"**Colour / finish** — {state.get('material')}: pick one, or Other to type it exactly as labelled."
+    if step == "weight":
+        return "**Starting weight** — how many grams is a full spool? Pick one, or Custom to type it."
+    if step == "disposition":
+        old = state.get("old_spool_id")
+        grams = state.get("old_remaining")
+        left = f" ({grams:g} g left)" if isinstance(grams, (int, float)) else ""
+        recommend = ("\nIt has nothing left, so **Archive as depleted** is the recommended choice."
+                     if isinstance(grams, (int, float)) and grams <= 0 else "")
+        return (f"Slot {slot} still holds Spool #{old}{left}. What should happen to it "
+                f"when the new spool goes in?{recommend}")
+    if step == "confirm":
+        predicted = state.get("predicted_id")
+        number = f"Spool #{predicted}" if predicted is not None else "A new spool"
+        fate = {"shelf": f" Spool #{state.get('old_spool_id')} goes back on the shelf.",
+                "archive": f" Spool #{state.get('old_spool_id')} will be archived.",
+                "depleted": f" Spool #{state.get('old_spool_id')} will be archived as depleted (0 g left).",
+                "delete": f" Spool #{state.get('old_spool_id')} will be DELETED from Spoolman."}.get(
+                    state.get("disposition") or "", "")
+        text = (f"Create {number} — {_intake_spec_line(state)}, {state.get('grams'):g} g — "
+                f"and load it into Slot {slot}?{fate}")
+        if state.get("from_photo"):
+            text += ("\nRead from the label photo — check every value before you confirm; "
+                     "Edit details walks the normal steps instead.")
+        temps = []
+        if state.get("nozzle_temp") is not None:
+            temps.append(f"nozzle {state['nozzle_temp']:g}°C")
+        if state.get("bed_temp") is not None:
+            temps.append(f"bed {state['bed_temp']:g}°C")
+        if temps:
+            text += (f"\nLabel print temps ({', '.join(temps)}) will be saved on the filament, "
+                     f"so prints use them.")
+        return text
+    return "New spool"
+
+
+def intake_material_components(aid: str, photo: bool = False) -> list[dict[str, Any]]:
+    buttons = [{"type": 2, "style": 1, "label": label, "custom_id": f"{INTAKE_PREFIX}:mat_{i}:{aid}"}
+               for i, label in enumerate(INTAKE_MATERIALS)]
+    last = [{"type": 2, "style": 2, "label": "Other material…", "custom_id": f"{INTAKE_PREFIX}:mat_other:{aid}"}]
+    if photo:
+        # The photo alternative (#514) rides the first step, and only when
+        # the caller knows a vision endpoint is available — with no endpoint
+        # the button is never rendered and the walkthrough is unchanged.
+        last.append({"type": 2, "style": 1, "label": "Use a photo of the label",
+                     "custom_id": f"{INTAKE_PREFIX}:photo:{aid}"})
+    last.append({"type": 2, "style": 2, "label": "Cancel", "custom_id": f"{INTAKE_PREFIX}:cancel:{aid}"})
+    return [{"type": 1, "components": buttons[:3]},
+            {"type": 1, "components": buttons[3:]},
+            {"type": 1, "components": last}]
+
+
+def intake_weight_components(aid: str) -> list[dict[str, Any]]:
+    return [{"type": 1, "components": [
+        *[{"type": 2, "style": 1, "label": f"{grams} g", "custom_id": f"{INTAKE_PREFIX}:w_{grams}:{aid}"}
+          for grams in INTAKE_WEIGHTS],
+        {"type": 2, "style": 2, "label": "Custom…", "custom_id": f"{INTAKE_PREFIX}:w_custom:{aid}"},
+        {"type": 2, "style": 2, "label": "Cancel", "custom_id": f"{INTAKE_PREFIX}:cancel:{aid}"}]}]
+
+
+def intake_disposition_components(aid: str, old_remaining: Any = None) -> list[dict[str, Any]]:
+    """The replaced spool's fate (#512 §3). At 0 g the depleted choice leads
+    and says so; Delete is offered but never first and never the default."""
+    depleted = {"type": 2, "style": 1, "label": "Archive as depleted",
+                "custom_id": f"{INTAKE_PREFIX}:disp_depleted:{aid}"}
+    if isinstance(old_remaining, (int, float)) and old_remaining <= 0:
+        depleted = {**depleted, "label": "Archive as depleted (recommended)"}
+        order = [depleted,
+                 {"type": 2, "style": 2, "label": "Move to shelf", "custom_id": f"{INTAKE_PREFIX}:disp_shelf:{aid}"},
+                 {"type": 2, "style": 2, "label": "Archive", "custom_id": f"{INTAKE_PREFIX}:disp_archive:{aid}"}]
+    else:
+        order = [{"type": 2, "style": 1, "label": "Move to shelf", "custom_id": f"{INTAKE_PREFIX}:disp_shelf:{aid}"},
+                 {"type": 2, "style": 2, "label": "Archive", "custom_id": f"{INTAKE_PREFIX}:disp_archive:{aid}"},
+                 depleted]
+    order.append({"type": 2, "style": 4, "label": "Delete", "custom_id": f"{INTAKE_PREFIX}:disp_delete:{aid}"})
+    order.append({"type": 2, "style": 2, "label": "Cancel", "custom_id": f"{INTAKE_PREFIX}:cancel:{aid}"})
+    return [{"type": 1, "components": order}]
+
+
+def intake_confirm_components(aid: str, editable: bool = False) -> list[dict[str, Any]]:
+    buttons = [{"type": 2, "style": 3, "label": "Create & load", "custom_id": f"{INTAKE_PREFIX}:confirm:{aid}"}]
+    if editable:
+        # A photo pre-fill (#514) can be walked back through the normal
+        # steps instead of confirmed as read.
+        buttons.append({"type": 2, "style": 2, "label": "Edit details",
+                        "custom_id": f"{INTAKE_PREFIX}:edit:{aid}"})
+    buttons.append({"type": 2, "style": 2, "label": "Cancel", "custom_id": f"{INTAKE_PREFIX}:cancel:{aid}"})
+    return [{"type": 1, "components": buttons}]
+
+
+def intake_brand_components(aid: str) -> list[dict[str, Any]]:
+    """Brand step when no brand is known yet: type one, or skip it."""
+    return [{"type": 1, "components": [
+        {"type": 2, "style": 1, "label": "Type the brand…", "custom_id": f"{INTAKE_PREFIX}:brand_type:{aid}"},
+        {"type": 2, "style": 2, "label": "Skip brand", "custom_id": f"{INTAKE_PREFIX}:brand_skip:{aid}"},
+        {"type": 2, "style": 2, "label": "Cancel", "custom_id": f"{INTAKE_PREFIX}:cancel:{aid}"}]}]
+
+
+def _select_components(aid: str, placeholder: str, options: list[dict[str, str]]) -> list[dict[str, Any]]:
+    return [{"type": 1, "components": [
+        {"type": 3, "custom_id": f"{INTAKE_SELECT_PREFIX}:{aid}", "placeholder": placeholder,
+         "min_values": 1, "max_values": 1,
+         "options": [{"label": o["label"][:100], "value": o["value"][:100]} for o in options[:25]]}]}]
+
+
+def intake_brand_options(types: list[dict[str, Any]] | None, material: Any) -> list[dict[str, str]]:
+    """Known brands for this material first, then every known brand, then skip/type."""
+    material = str(material or "").casefold()
+    first, rest = [], []
+    for entry in types or []:
+        brand = str(entry.get("brand") or "").strip()
+        if not brand:
+            continue
+        bucket = first if str(entry.get("material") or "").casefold() == material else rest
+        if brand not in bucket:
+            bucket.append(brand)
+    options = [{"label": b, "value": b} for b in (first + rest)[:22]]
+    options.append({"label": "Type a brand…", "value": INTAKE_OTHER})
+    options.append({"label": "No brand / skip", "value": INTAKE_SKIP})
+    return options
+
+
+def intake_color_options(types: list[dict[str, Any]] | None, material: Any) -> list[dict[str, str]]:
+    """Colours already known for this material first, then common colours, then Other."""
+    material = str(material or "").casefold()
+    known = []
+    for entry in types or []:
+        if str(entry.get("material") or "").casefold() != material:
+            continue
+        color = str(entry.get("color") or "").strip()
+        if color and color not in known:
+            known.append(color)
+    options = [{"label": c, "value": c} for c in known[:15]]
+    for color in INTAKE_COMMON_COLORS:
+        if len(options) >= 23:
+            break
+        if color not in known:
+            options.append({"label": color, "value": color})
+    options.append({"label": "Other (type it exactly)…", "value": INTAKE_OTHER})
+    return options
+
+
+def intake_step_components(aid: str, state: dict[str, Any]) -> list[dict[str, Any]]:
+    """The controls for the walkthrough step ``state['step']`` is about to ask."""
+    step = state.get("step")
+    if step == "material":
+        return intake_material_components(aid, photo=bool(state.get("photo_offered")))
+    if step == "brand":
+        options = intake_brand_options(state.get("types"), state.get("material"))
+        if len(options) > 2:  # at least one real brand is known
+            return _select_components(aid, "Choose the brand", options)
+        return intake_brand_components(aid)
+    if step == "color":
+        return _select_components(aid, "Choose the colour / finish",
+                                  intake_color_options(state.get("types"), state.get("material")))
+    if step == "weight":
+        return intake_weight_components(aid)
+    if step == "disposition":
+        return intake_disposition_components(aid, state.get("old_remaining"))
+    return intake_confirm_components(aid, editable=bool(state.get("from_photo")))
 
 
 def bind_insertion_existing(slot: int, spool_id: int, spool_sync) -> str:
@@ -442,15 +703,35 @@ def bind_insertion_existing(slot: int, spool_id: int, spool_sync) -> str:
     return f"Slot {slot} → spool #{spool_id} ({record['name']}{grams}). Inventory updated; printer untouched."
 
 
-def create_and_bind_insertion(slot: int, values: dict[str, Any], spool_sync) -> str:
-    """Create the operator-described spool and bind it in one inventory-only step."""
+def create_and_bind_insertion(slot: int, values: dict[str, Any], spool_sync,
+                              prior_disposition: str = "shelf") -> str:
+    """Create the operator-described spool and bind it in one inventory-only step.
+
+    ``prior_disposition`` is the replaced spool's fate the operator picked in
+    the walkthrough (#512 §3); it defaults to the shelf, which is what the
+    pre-walkthrough flow silently did. The result names the fate so a silent
+    shelf move can never happen again.
+    """
     spec = spool_sync.parse_new(", ".join(str(values.get(key) or "").strip() for key in ("brand", "material", "color", "grams")))
     spec["lot"] = str(values.get("lot") or "").strip() or None
+    # Label temperatures read from a spool photo (#514) ride along so
+    # create_spool records them on a new filament; absent values stay absent.
+    for key in ("nozzle_temp", "bed_temp"):
+        if values.get(key) is not None:
+            spec[key] = values[key]
     made = spool_sync.create_spool(spec)
     result = spool_sync.bind_slot(slot, int(made["spool_id"]), note="Created and bound from Discord IFS insertion",
-                                  push_screen_update=False)
+                                  push_screen_update=False, prior_disposition=prior_disposition)
     record = result["record"]
-    return f"Created spool #{made['spool_id']}; slot {slot} → #{made['spool_id']} ({record['name']}). Inventory updated; printer untouched."
+    prior = result.get("prior_spool_id")
+    moved = ""
+    if prior and int(prior) != int(made["spool_id"]):
+        moved = {"archive": f" Spool #{prior} was archived.",
+                 "depleted": f" Spool #{prior} was archived as depleted (0 g left).",
+                 "delete": f" Spool #{prior} was deleted from Spoolman.",
+                 }.get(prior_disposition, f" Spool #{prior} went back on the shelf.")
+    return (f"Created spool #{made['spool_id']}; slot {slot} → #{made['spool_id']} "
+            f"({record['name']}).{moved} Inventory updated; printer untouched.")
 
 
 def post_with_buttons(token: str, channel_id: str, content: str, kind: str, filename: str,
@@ -633,7 +914,7 @@ def parse_new_spool_custom_id(custom_id: str) -> tuple[str, str] | None:
     """
     parts = str(custom_id or "").split(":")
     if len(parts) == 3 and parts[0] == NEW_SPOOL_PREFIX and parts[1] in (
-            "load", "shelf", "dismiss", "archive", "depleted", "confirm", "cancel") and parts[2]:
+            "load", "shelf", "dismiss", "archive", "depleted", "delete", "confirm", "cancel") and parts[2]:
         return parts[1], parts[2]
     return None
 

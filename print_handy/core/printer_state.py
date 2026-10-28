@@ -45,6 +45,71 @@ DEFAULT_MATERIAL_TEMPS = {
 }
 
 
+# Per-variant adjustments on top of the family defaults (#512). A variant is
+# a named blend or finish within a family — Silk PLA, PLA+, Matte PLA, the
+# fibre-reinforced *-CF / *-GF variants — whose representative printing
+# behaviour differs from the plain family profile. Values are conservative
+# representative defaults, not universal guarantees: a temperature the
+# operator recorded on the Spoolman filament itself always wins and is never
+# adjusted, and the family [material_temps] configuration remains the base
+# these deltas apply to. ``outer_wall_speed_factor`` scales the process
+# profile's outer-wall speed when slicing (Silk PLA's gloss needs slower
+# outer walls); 1.0 means no change.
+MATERIAL_VARIANT_ADJUSTMENTS = {
+    "SILK PLA": {"nozzle_delta": 10, "bed_delta": 0, "outer_wall_speed_factor": 0.7,
+                 "note": "Silk PLA prints hotter than plain PLA and needs slower outer walls for its gloss."},
+    "PLA+": {"nozzle_delta": 5, "bed_delta": 0, "outer_wall_speed_factor": 1.0,
+             "note": "PLA+ / PLA Pro blends print slightly hotter than plain PLA."},
+    "MATTE PLA": {"nozzle_delta": 5, "bed_delta": 0, "outer_wall_speed_factor": 0.9,
+                  "note": "Matte PLA's additives print slightly hotter, with slightly slower outer walls."},
+    "PLA-CF": {"nozzle_delta": 5, "bed_delta": 0, "outer_wall_speed_factor": 1.0,
+               "note": "Carbon-fibre PLA prints slightly hotter than plain PLA."},
+    "PETG-CF": {"nozzle_delta": 5, "bed_delta": 0, "outer_wall_speed_factor": 1.0,
+                "note": "Carbon-fibre PETG prints slightly hotter than plain PETG."},
+    "PA-CF": {"nozzle_delta": 10, "bed_delta": 0, "outer_wall_speed_factor": 1.0,
+              "note": "Carbon-fibre nylon prints hotter than unfilled nylon."},
+    "REINFORCED": {"nozzle_delta": 5, "bed_delta": 0, "outer_wall_speed_factor": 1.0,
+                   "note": "Fibre-reinforced variants print slightly hotter than their base polymer."},
+}
+
+_NO_ADJUSTMENT = {"nozzle_delta": 0, "bed_delta": 0, "outer_wall_speed_factor": 1.0, "note": ""}
+
+
+def material_variant(material):
+    """The adjustment variant key for a material label, or None for a plain family label.
+
+    Silk and Matte are finishes that can sit either side of the family token
+    ("Silk PLA", "PLA Silk"); PLA+ / PLA Pro is its own blend; a fibre-
+    reinforced family (PLA-CF, PA-GF, …) keys by family, falling back to the
+    generic REINFORCED entry when no family-specific entry exists.
+    """
+    label = str(material or "").upper()
+    tokens = re.findall(r"[A-Z]+", label)
+    family = material_family(material)
+    if "SILK" in tokens:
+        return "SILK PLA" if family == "PLA" else None
+    if "MATTE" in tokens and family == "PLA":
+        return "MATTE PLA"
+    if family == "PLA" and ("+" in label or "PLUS" in tokens or "PRO" in tokens):
+        return "PLA+"
+    if family.endswith(("-CF", "-GF", "-CARBONFIBER", "-GLASSFIBER")):
+        return family if family in MATERIAL_VARIANT_ADJUSTMENTS else "REINFORCED"
+    return None
+
+
+def material_adjustments(material):
+    """The variant adjustments for a material label (#512): temperature deltas
+    on the family defaults plus the outer-wall speed factor, with its note.
+
+    Plain family labels (PLA, PETG, ABS, ASA, TPU, PA, PC, …) get the zero
+    adjustment. The returned dict always carries every key.
+    """
+    variant = material_variant(material)
+    if variant is None:
+        return {"variant": None, **_NO_ADJUSTMENT}
+    return {"variant": variant, **MATERIAL_VARIANT_ADJUSTMENTS[variant]}
+
+
 def material_family(material):
     """Slicing family for a material label: PLA+, PLA Pro, Matte PLA, Silk PLA -> PLA.
 
@@ -97,11 +162,17 @@ def resolve_material_temperatures(material, filament, config=None):
         if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(float(value)) or not 0 < float(value) <= 300:
             raise ValueError(f"Invalid configured {thermal_family} {key} temperature {value!r} °C")
     result, sources = {}, {}
+    adjustments = material_adjustments(material)
+    deltas = {"nozzle": adjustments["nozzle_delta"], "bed": adjustments["bed_delta"]}
     for key, field in (("nozzle", "settings_extruder_temp"), ("bed", "settings_bed_temp")):
         value = filament.get(field)
         if value is None:
-            value = base[key]
-            sources[key] = "material default"
+            # The variant adjustment (#512) refines the family default only:
+            # a temperature recorded on the Spoolman filament is explicit
+            # operator/manufacturer data and is never adjusted.
+            value = base[key] + deltas[key]
+            sources[key] = (f"material default + {adjustments['variant']} adjustment"
+                            if adjustments["variant"] and deltas[key] else "material default")
         else:
             sources[key] = "Spoolman filament"
         if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(float(value)) or not 0 < float(value) <= 300:
@@ -578,7 +649,7 @@ def main():
         effective_nozzle_temperature(nozzle_type, targets["nozzle"])
         st["temps_c"] = {"nozzle": targets["nozzle"], "bed": targets["bed"]}
         st["temperature_resolution"] = {"material_family": family, "sources": sources,
-                                         "source": "Spoolman filament" if all(v == "Spoolman filament" for v in sources.values()) else "material default / Spoolman filament" if len(set(sources.values())) > 1 else "material default"}
+                                         "source": "Spoolman filament" if all(v == "Spoolman filament" for v in sources.values()) else "material default / Spoolman filament" if len(set(sources.values())) > 1 else next(iter(sources.values()), "material default")}
         _get(f"{st['moonraker_url']}/server/spoolman/spool_id", {"spool_id": a.spool}, "POST")
     if a.nozzle is not None or a.nozzle_type is not None:
         from .nozzle import CANONICAL_NOZZLE_SIZES, NozzleError, normalize_nozzle_type, validate_nozzle_setting

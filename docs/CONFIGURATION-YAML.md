@@ -23,6 +23,18 @@ material_temps:
 
 The targets use representative points within the documented manufacturer/profile ranges: PLA 185–235/50–60 °C, PETG 215–270/70–90 °C, ABS 230–255/95–110 °C, ASA 220–275/90–110 °C, TPU 220–260/40–85 °C, PA 240–285/70–115 °C, and PC 270–275/100–115 °C. Brand, formulation, printer capability, and enclosure affect the correct settings. Every resolved nozzle target still passes the active nozzle type's safety limit, and the existing printer start/slice validation remains authoritative.
 
+Named variants within a family adjust the fallback (#512): Silk PLA resolves +10 °C over the PLA nozzle target (220 °C against the default above, inside Silk PLA's usual 215–230 °C range) and slices with its outer-wall speed scaled by 0.7; PLA+, Matte PLA and fibre-reinforced variants (any family's *-CF / *-GF) resolve +5 °C (PA-CF +10 °C), and Matte PLA scales outer-wall speed by 0.9. Adjustments apply only when the fallback is used — a temperature recorded on the Spoolman filament is never adjusted.
+
+```yaml
+spool:
+  # Ask for the brand/vendor during the conversational new-spool
+  # walkthrough. Default false: brand is skipped and spools are created
+  # without one. Set true only if you track brands.
+  prompt_brand: false
+```
+
+The walkthrough's photo label step (#514) has no setting of its own: it is offered only when a vision endpoint is available (`PRINT_VISION_URL`, or `services.vision_chat_url` with its key — the camera watchdog's rule), and the photo's label temperatures are recorded on the Spoolman filament, where they win over the material defaults above for every material.
+
 `logging.level` is `DEBUG`, `INFO`, `WARNING` or `ERROR` (case does not matter) and `logging.format` is `text` or `json`; anything else stops startup with a message naming the key. `logging.file` is empty by default; a path adds a rotating log file (5 MiB, 3 backups) next to the standard error output that systemd and Docker already capture. Logs name the component, the intake id while an intake runs, and how long each slicer run took. Discord and bearer tokens, `token=`/`password=` style values, URL credentials and the values of `*_TOKEN`, `*_KEY`, `*_SECRET` and `*_PASSWORD` environment variables are replaced with `***` in the message and the traceback. The Hermes gateway plugin does not configure logging; the standalone bot and the printer listener do.
 
 Example:

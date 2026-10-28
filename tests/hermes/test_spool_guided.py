@@ -264,20 +264,35 @@ def test_guided_new_typed_number_and_grams():
 
 
 def test_guided_new_new_type_never_asks_hex():
-    answers = ["New filament type", "Generic", "PETG", "Sky Blue", "500", "Create spool #20",
+    # Brand is not asked by default (#512: spool.prompt_brand is off), so the
+    # answers go straight to material.
+    answers = ["New filament type", "PETG", "Sky Blue", "500", "Create spool #20",
                "Leave it on the shelf"]
     out, adapter, fake = _run("/spool add", answers)
     questions = _questions(adapter)
     assert not any("hex" in q.lower() for q in questions)
+    assert not any("brand" in q.lower() for q in questions)
     filament_posts = [b for m, p, b in fake.writes if m == "POST" and p == "/api/v1/filament"]
     assert filament_posts and "color_hex" not in filament_posts[0]
     assert filament_posts[0]["name"] == "Sky Blue" and filament_posts[0]["material"] == "PETG"
     assert "Created spool #20" in adapter.sent[-1]
 
 
+def test_guided_new_prompt_brand_on_asks_brand_first():
+    answers = ["New filament type", "Generic", "PETG", "Sky Blue", "500", "Create spool #20",
+               "Leave it on the shelf"]
+    with mock.patch.object(plugin, "_prompt_brand", return_value=True):
+        out, adapter, fake = _run("/spool add", answers)
+    questions = _questions(adapter)
+    assert any("brand" in q.lower() for q in questions)
+    vendor_posts = [b for m, p, b in fake.writes if m == "POST" and p == "/api/v1/vendor"]
+    assert vendor_posts and vendor_posts[0]["name"] == "Generic"
+    assert "Created spool #20" in adapter.sent[-1]
+
+
 def test_guided_new_with_no_saved_types_skips_type_question():
     adapter = FakeAdapter()
-    queue = ["Skip brand", "PLA", "Green", "1000", "Create spool #1", "Leave it on the shelf"]
+    queue = ["PLA", "Green", "1000", "Create spool #1", "Leave it on the shelf"]
     from tools import clarify_gateway as cm
 
     def wait(cid, timeout=None):
@@ -291,7 +306,10 @@ def test_guided_new_with_no_saved_types_skips_type_question():
             mock.patch.object(spool_sync, "create_spool",
                               side_effect=lambda spec: real_create(spec, client=fake)):
         asyncio.run(plugin.spool_dispatch(_event("/spool new"), _gateway(adapter)))
-    assert _questions(adapter)[0].startswith("What brand")
+    # The first question carries the early spool-number preview (#512 §2)
+    # and, with brand off by default, asks the material directly.
+    assert _questions(adapter)[0].startswith("Preparing new spool #1")
+    assert "What material" in _questions(adapter)[0]
     assert "Created spool #20" in adapter.sent[-1]
 
 

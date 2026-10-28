@@ -25,6 +25,8 @@ services:
       PRINT_HANDY__SERVICES__CAMERA_SNAPSHOT_URL: ${PRINT_HANDY__SERVICES__CAMERA_SNAPSHOT_URL:-}
       PRINT_HANDY__VISION__MODEL: ${PRINT_HANDY__VISION__MODEL:-gemini-latest}
       PRINT_HANDY__VISION__ROAST_ENABLED: ${PRINT_HANDY__VISION__ROAST_ENABLED:-true}
+      # New-spool walkthrough brand step (#512): off by default.
+      PRINT_HANDY__SPOOL__PROMPT_BRAND: ${PRINT_HANDY__SPOOL__PROMPT_BRAND:-false}
       # In-container timelapse capture (#246): starts the bundled go2rtc
       # (loopback-only stream normalisation). Off by default; a local
       # WITH_GO2RTC=false build has no go2rtc, so enabling it there fails

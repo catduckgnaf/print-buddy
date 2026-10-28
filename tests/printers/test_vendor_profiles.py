@@ -34,6 +34,7 @@ def without_added(data):
     data.pop("design", None)  # added by #388 stage 1, after the golden files were captured
     data.pop("printers", None)  # added by #333 (the [[printers]] roster), after the golden files were captured
     data.get("vision", {}).pop("roast_enabled", None)  # added by the roast switch, after capture
+    data.pop("spool", None)  # added by #512 (spool.prompt_brand), after the golden files were captured
     data.pop("telegram", None)  # added by #164 stage 2, after the golden files were captured
     data.pop("matrix", None)  # added by #164 stage 3, after the golden files were captured
     data.get("slicer", {}).pop("flash_studio_path", None)  # added by the Flash Studio config, after capture

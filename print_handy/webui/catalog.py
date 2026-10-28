@@ -91,6 +91,7 @@ GROUP_OF = {
     "matrix.approval_user_id": "platform",
     "services.moonraker_url": "services",
     "services.spoolman_url": "services",
+    "spool.prompt_brand": "services",
     "services.camera_source": "images",
     "services.camera_snapshot_url": "images",
     "services.vision_chat_url": "images",
@@ -202,6 +203,12 @@ CATALOG = (
     _field("services", "spoolman_url", "Spoolman URL", "url",
            "Spoolman URL for filament inventory; empty when Spoolman is not used.",
            validator="guided Spoolman URL / settings services check"),
+    _field("spool", "prompt_brand", "Ask brand for new spools", "toggle",
+           "Ask for the brand/vendor during the conversational new-spool "
+           "walkthrough (#512). Off by default: the walkthrough skips brand "
+           "and the spool is created without one; on inserts the brand step "
+           "for operators who track brands.",
+           validator="settings spool check"),
     # Images (the camera source type, the snapshot URL and the vision
     # endpoint the watchdog uses; visual_watch itself is the next group.
     # API keys stay in the environment: vision_chat_url names no secret,

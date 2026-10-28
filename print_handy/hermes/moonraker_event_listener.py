@@ -1922,11 +1922,6 @@ async def maintenance_cancel_reminder():
         log(f"cancel maintenance reminder failed: {exc!r}")
 
 
-async def maintenance_airprint_reminder():
-    # TODO: t_16bad84c signal contract is not available here.
-    return None
-
-
 NATIVE_ERROR_HINTS = {
     "E0102": "the filament changer could not feed that slot to the head (tangle, chewed or bent tip, or tube not seated)",
 }

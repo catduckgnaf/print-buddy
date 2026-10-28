@@ -606,8 +606,10 @@ def handle_text(key, text, *, store, now=None, token_env="DISCORD_BOT_TOKEN",
             try:
                 detail = apply_config(session["answers"])
             except Exception as exc:  # a failed write must not lose the checklist
-                return ("Applying the settings failed: " + redact(str(exc), roots=[Path.home()]) +
-                        "\nYour checklist is unchanged. Reply `apply` to retry, `manual` for "
+                return ("The settings could not be saved, so nothing was changed. "
+                        "This looks like a problem on the Print Buddy side, not with your answers — "
+                        "the detail is in the log, and `/print-buddy bundle` gathers it for a report.\n"
+                        "Your checklist is unchanged. Reply `apply` to retry, `manual` for "
                         "steps, or `/print-buddy cancel` to pause.")
             session["status"] = "complete"
             session["updated_at"] = now
@@ -773,7 +775,7 @@ def run_diagnostics(*, loader=None, token_getter=None, probe=None, login_probe=N
             except Exception as exc:
                 findings.append(Finding("bot mode and login", "warn",
                                         clean(f"standalone; ${token_env} is set but the read-only "
-                                              f"login check failed: {exc}"),
+                                              "login check did not pass"),
                                         "Check network/DNS to discord.com and that the token was "
                                         "not reset in the developer portal."))
 
@@ -820,7 +822,7 @@ def run_diagnostics(*, loader=None, token_getter=None, probe=None, login_probe=N
                                         f"answered HTTP {status} on its read-only health path"))
             except Exception as exc:
                 findings.append(Finding(f"service: {label}", "warn",
-                                        clean(f"health probe failed: {exc}"),
+                                        clean("the health check did not answer"),
                                         f"Check the {label} service is running and reachable at "
                                         "the configured URL; debugging did not try to restart it."))
 

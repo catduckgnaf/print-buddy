@@ -1133,7 +1133,7 @@ def _validate_bot(data):
     user_ids(discord.setdefault("denied_user_ids", ""), key="denied_user_ids")
     # Discord's chat-LLM switch (#466): on by default, so a configured [llm]
     # words free-text replies on Discord exactly as before. False runs
-    # Discord as a pure bot — unmatched text gets the command list — while
+    # Discord as a pure bot — unmatched text gets the short reply — while
     # [llm] stays configured for the features that inherit it (/print-design)
     # and the separately gated roast/vision features keep their own switches.
     chat_llm_enabled = discord.setdefault("chat_llm_enabled", True)

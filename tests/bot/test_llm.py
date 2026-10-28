@@ -108,12 +108,12 @@ def test_llm_gcode_or_prose_is_only_text(llm_cfg):
     assert out["reason"] == "llm reply" and discord.sent == ["Sure! Send M112 and G28 to the printer."]
 
 
-def test_llm_failure_falls_back_to_the_command_list(llm_cfg):
+def test_llm_failure_falls_back_to_the_unmatched_reply(llm_cfg):
     def broken(req, timeout=None):
         raise OSError("llm down")
     discord, core = make(llm_cfg, broken)
     out = asyncio.run(core.handle_message(discord.message("hello?")))
-    assert out == {"action": "skip", "reason": "command list"} and discord.sent == [core.help]
+    assert out == {"action": "skip", "reason": "command list"} and discord.sent == [core.unmatched]
 
 
 def test_llm_is_never_asked_about_commands_or_links(llm_cfg):
@@ -188,21 +188,21 @@ def test_llm_answer_alone_is_the_only_reply_no_help_after_it(llm_cfg):
     assert len(opener.requests) == 1
 
 
-def test_llm_declining_falls_back_to_the_command_list_once(llm_cfg):
+def test_llm_declining_falls_back_to_the_unmatched_reply_once(llm_cfg):
     opener = FakeLLM("", None)
     discord, core = make(llm_cfg, opener)
     out = asyncio.run(core.handle_message(discord.message("what is the meaning of layer adhesion")))
     assert out == {"action": "skip", "reason": "command list"}
-    assert discord.sent == [core.help]
+    assert discord.sent == [core.unmatched]
     assert len(opener.requests) == 1
 
 
-def test_llm_timeout_falls_back_to_the_command_list_once(llm_cfg):
+def test_llm_timeout_falls_back_to_the_unmatched_reply_once(llm_cfg):
     def timing_out(req, timeout=None):
         raise TimeoutError("llm timed out")
     discord, core = make(llm_cfg, timing_out)
     out = asyncio.run(core.handle_message(discord.message("hello?")))
-    assert out == {"action": "skip", "reason": "command list"} and discord.sent == [core.help]
+    assert out == {"action": "skip", "reason": "command list"} and discord.sent == [core.unmatched]
 
 
 def test_llm_naming_print_help_sends_the_help_once_without_its_own_reply(llm_cfg):
@@ -217,7 +217,7 @@ def test_llm_naming_print_help_sends_the_help_once_without_its_own_reply(llm_cfg
 
 
 def test_no_llm_configured_never_calls_the_llm(cfg):
-    """Exploding stub for the disabled path (#437): no [llm], no call, help only."""
+    """Exploding stub for the disabled path (#437): no [llm], no call, unmatched reply only."""
     discord, core = make(cfg, None)
     calls = []
 
@@ -229,7 +229,7 @@ def test_no_llm_configured_never_calls_the_llm(cfg):
         out = asyncio.run(core.handle_message(discord.message("can you make my printer go brrr")))
     assert calls == []
     assert out == {"action": "skip", "reason": "command list"}
-    assert discord.sent == [core.help]
+    assert discord.sent == [core.unmatched]
 
 
 def test_use_llm_false_never_calls_the_llm_even_when_configured(llm_cfg):
@@ -248,4 +248,4 @@ def test_use_llm_false_never_calls_the_llm_even_when_configured(llm_cfg):
         out = asyncio.run(core.handle_message(discord.message("can you make my printer go brrr")))
     assert calls == []
     assert out == {"action": "skip", "reason": "command list"}
-    assert discord.sent == [core.help]
+    assert discord.sent == [core.unmatched]

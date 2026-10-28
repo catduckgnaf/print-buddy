@@ -551,7 +551,8 @@ def test_refused_start_reports_and_names_fresh_button_command(tmp_path, monkeypa
     go = Interaction(pick.out[0][2].items[0].custom_id)
     asyncio.run(on_interaction(go))
     assert starts == ['plate1']
-    assert go.out[-1][0] == 'followup' and 'REFUSED: printer is busy' in go.out[-1][1]
+    assert go.out[-1][0] == 'followup' and "Didn't start:" in go.out[-1][1]
+    assert 'REFUSED:' not in go.out[-1][1]  # the raw transport tail is translated for chat (#467)
 
 
 SWAPPED = ('REFUSED: slot 2 spool changed since slicing (was 3, now 7); reslice or confirm. '

@@ -5,7 +5,7 @@ The Telegram implementation of the platform interface in
 in ``print_buddy.bot.telegram_rest``). Telegram is a pure bot: this module
 never imports or calls the LLM fallback, the adapter reports
 ``uses_llm = False``, and ``BotCore`` therefore answers unmatched text with
-the command list only — the roll-test of the no-LLM standalone mode from
+the short unmatched reply only — the roll-test of the no-LLM standalone mode from
 #73, even when ``[llm]`` is configured for another platform.
 
 Prompts are inline keyboards. Callback data is the platform-neutral

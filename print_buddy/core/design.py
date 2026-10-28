@@ -287,7 +287,7 @@ def fetch_link_source(url, target_dir) -> Path:
     except DesignError:
         raise
     except Exception as exc:
-        raise DesignError(f"the linked model could not be fetched: {exc}") from None
+        raise DesignError("the linked model could not be downloaded — check the link is public and try again") from None
 
 
 def source_note(session) -> str:
@@ -502,7 +502,7 @@ def http_complete(cfg, messages, *, opener=None):
         with (opener or urllib.request.urlopen)(req, timeout=float(resolved["timeout_s"])) as resp:
             data = json.loads(resp.read())
     except Exception as exc:
-        raise DesignError(f"the design model call failed: {exc}") from None
+        raise DesignError("the design service did not answer — wait a moment and try again") from None
     try:
         return str(data["choices"][0]["message"]["content"] or "")
     except (KeyError, IndexError, TypeError):
@@ -537,7 +537,7 @@ async def hermes_complete(llm, messages, *, timeout_s=180):
                 "Hermes refused the design model call (plugin LLM trust gate). "
                 "Pin the design model in the profile's auxiliary.print_design block, "
                 "or grant the print-feedback plugin a model override in config.yaml") from None
-        raise DesignError(f"the design model call failed: {exc}") from None
+        raise DesignError("the design service did not answer — wait a moment and try again") from None
     text = getattr(result, "text", result)
     return str(text or "")
 
@@ -623,7 +623,7 @@ class DesignEngine:
             raise
         except Exception as exc:
             self.cancel(session)
-            raise DesignError(f"that model could not be prepared for editing: {exc}") from None
+            raise DesignError("that model could not be prepared for editing — try a single .stl or .3mf file") from None
         return _save(self.root, session)
 
     def cancel(self, session):

@@ -91,8 +91,9 @@ def test_roster_apply_refuses_a_file_that_already_describes_a_printer(tmp_path):
     local.write_text("printer:\n  model: flashforge.ad5x\n")
     before = local.read_bytes()
     reply = say(store_obj, "apply", apply_config=lambda answers: guided._apply_answers(answers, local))
-    assert "Applying the settings failed" in reply
-    assert "left unchanged" in reply
+    assert "The settings could not be saved" in reply
+    assert "nothing was changed" in reply
+    assert "checklist is unchanged" in reply
     assert local.read_bytes() == before
     assert store_obj.get("k")["status"] == "awaiting_consent"  # the checklist survives
 

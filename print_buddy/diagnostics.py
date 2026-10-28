@@ -104,6 +104,37 @@ def classify(exc: BaseException, *, category: Category | None = None) -> Categor
     return Category.UNKNOWN
 
 
+def plain_post(first_line: str, *, not_happened: str | None = None,
+               next_step: str | None = None, subsystem: str | None = None,
+               exc: BaseException | None = None,
+               category: Category | None = None) -> str:
+    """One user-facing failure/refusal post meeting the #467 plain-language bar.
+
+    The first line says in plain words what the person asked for and what
+    happened — no exception class names, no raw exception or stderr text,
+    no ALL-CAPS prefix, no internal jargon. ``not_happened`` states what
+    did *not* happen where that matters ("Nothing was uploaded or
+    started."), and ``next_step`` gives the one clear thing to do next.
+    Technical detail is demoted, not deleted: when ``subsystem`` is named
+    the post ends with the stable greppable ``PB_*`` marker (classified
+    from ``exc`` when given, never its text), and the full detail stays in
+    the log and the diagnostics bundle, where the caller already put it.
+
+    This is the shared builder for chat posts; the Discord action
+    handlers' ``_failure_post`` (#390) and the intake/guided surfaces use
+    it so there is one wording system, not two.
+    """
+    lines = [str(first_line).strip()]
+    tail = " ".join(part.strip() for part in (not_happened, next_step) if part and part.strip())
+    if tail:
+        lines.append(tail)
+    if subsystem is not None:
+        resolved = classify(exc, category=category) if exc is not None else (
+            Category(category) if category is not None else Category.UNKNOWN)
+        lines.append(f"Reference: {marker(subsystem, resolved)}")
+    return logs.redact("\n".join(lines))
+
+
 def operator_message(what: str, *, subsystem: str,
                      category: Category | None = None,
                      exc: BaseException | None = None,

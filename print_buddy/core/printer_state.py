@@ -361,7 +361,8 @@ def _check_spoolman(st, warnings, facts):
         if filament["name"] != st["spool"]["name"]:
             warnings.append(f"Spoolman #{sp['id']} is '{filament['name']}', state says '{st['spool']['name']}'")
     except Exception as e:
-        warnings.append(f"Spoolman lookup failed: {e}")
+        warnings.append("Spoolman could not be reached, so the recorded spool was used instead; "
+                        "printing can continue (#235)")
 
 
 def check(st=None, printer_id=None, adapter=None):
@@ -477,7 +478,7 @@ def check(st=None, printer_id=None, adapter=None):
                 "This is the probe trigger, not the user offset; do not copy it into gcode_offsets.z or zProbeOffset"
             )
     except Exception as e:
-        probs.append(f"Moonraker unreachable: {e}")
+        probs.append("the printer could not be reached — check it is on and on the network, then try again")
     if "klipper_nozzle" in facts and abs(facts["klipper_nozzle"] - st["nozzle"]["diameter_mm"]) > 1e-3:
         probs.append(f"Klipper nozzle_diameter {facts['klipper_nozzle']} != state {st['nozzle']['diameter_mm']}")
     try:
@@ -485,7 +486,7 @@ def check(st=None, printer_id=None, adapter=None):
         if facts["moonraker_active_spool"] != st["spool"]["spoolman_id"]:
             facts["active_spool_mismatch"] = f"Moonraker active spool {facts['moonraker_active_spool']} != state #{st['spool']['spoolman_id']}"
     except Exception as e:
-        warnings.append(f"Moonraker active spool lookup failed: {e}")
+        warnings.append("the printer's active spool could not be checked, so the recorded spool was used")
     _check_spoolman(st, warnings, facts)
     try:
         if not native:
@@ -497,7 +498,7 @@ def check(st=None, printer_id=None, adapter=None):
         facts["calibration_valid"] = not calibration_problems
         facts["calibration_owner"] = "native" if variables.get("display_off") == 0 else "screenless" if variables.get("display_off") == 1 else "unknown"
     except Exception as e:
-        probs.append(f"Calibration authority read failed: {e}")
+        probs.append("the printer's saved calibration could not be read — check the printer screen, then try again")
     return (not probs), probs, facts
 
 

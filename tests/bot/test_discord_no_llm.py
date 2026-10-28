@@ -12,7 +12,7 @@ Discord adapter on a fake discord.py client:
 In both, an exploding stub stands in for ``llm.ask``: any chat-LLM call
 fails the test. Deterministic work — commands, links, typed answers,
 button flows, ``print <number>`` (#436) — must be unchanged, unmatched
-text gets the command list exactly once, and ``bot check`` / ``status()``
+text gets the short not-understood reply (#467), and ``bot check`` / ``status()``
 state the chat-LLM state in both modes. Turning chat off must not touch
 the separately gated model touchpoints: design (its own endpoint
 inheritance and switch), the roast (``vision.roast_enabled``) and the
@@ -114,7 +114,7 @@ def test_discord_no_llm_configured_never_calls_the_llm(cfg):
         out = run(core.handle_message(discord.message("can you make my printer go brrr")))
     assert calls == []
     assert out == {"action": "skip", "reason": "command list"}
-    assert discord.sent == ["Slot 1: #7 black PLA", core.help]  # the list, once, nothing after it
+    assert discord.sent == ["Slot 1: #7 black PLA", core.unmatched]  # the short reply (#467), once, nothing after it
 
 
 # ---------------------------------------------------------------------- no-LLM mode, [llm] configured
@@ -143,7 +143,7 @@ def test_discord_chat_llm_off_never_calls_the_llm_even_when_configured(no_llm_cf
         out = run(core.handle_message(discord.message("what is the printer doing?")))
     assert calls == []
     assert out == {"action": "skip", "reason": "command list"}
-    assert discord.sent == ["Slot 1: #7 black PLA", core.help]
+    assert discord.sent == ["Slot 1: #7 black PLA", core.unmatched]
 
 
 def test_discord_chat_llm_off_typed_answers_and_buttons_still_work(no_llm_cfg):
@@ -173,14 +173,14 @@ def test_discord_chat_llm_off_typed_answers_and_buttons_still_work(no_llm_cfg):
 def test_discord_bot_check_llm_row_pins_every_mode(cfg, monkeypatch):
     monkeypatch.setenv("DISCORD_BOT_TOKEN", "x" * 20)
     rows = {label: (ok, detail) for label, ok, detail in bot_main.checks(cfg)}
-    assert rows["llm"] == (True, "off (unmatched messages get the command list)")
+    assert rows["llm"] == (True, "off (unmatched messages get the short not-understood reply)")
     cfg["llm"].update(chat_url=LLM_URL, model="m")
     rows = {label: (ok, detail) for label, ok, detail in bot_main.checks(cfg)}
     assert rows["llm"] == (True, f"m at {LLM_URL}")
     cfg["discord"]["chat_llm_enabled"] = False
     rows = {label: (ok, detail) for label, ok, detail in bot_main.checks(cfg)}
     assert rows["llm"] == (True, "off (discord.chat_llm_enabled is false: no chat LLM; "
-                                 "unmatched messages get the command list)")
+                                 "unmatched messages get the short not-understood reply)")
     # The roast row is a separate gate and does not follow the chat switch.
     assert rows["roast"][0] is True and rows["roast"][1].startswith("on (luna-latest at ")
 

@@ -95,7 +95,7 @@ Schema, validation limits and TOML migration: [CONFIGURATION-YAML.md](CONFIGURAT
 | `bot.health_port` | `PRINT_BUDDY__BOT__HEALTH_PORT` | `0` | Serve `GET /healthz` on this port; `0` turns the HTTP check off |
 | `bot.health_stale_s` | `PRINT_BUDDY__BOT__HEALTH_STALE_S` | `120` | Bot health fails when its heartbeat is older than this |
 | `bot.sync_commands` | `PRINT_BUDDY__BOT__SYNC_COMMANDS` | `true` | Register the slash commands with Discord at startup |
-| `llm.chat_url` | `PRINT_BUDDY__LLM__CHAT_URL` | empty | Optional OpenAI-compatible chat URL; empty: unmatched text gets the command list |
+| `llm.chat_url` | `PRINT_BUDDY__LLM__CHAT_URL` | empty | Optional OpenAI-compatible chat URL; empty: unmatched text gets the short “didn't understand” reply |
 | `llm.model` | `PRINT_BUDDY__LLM__MODEL` | empty | LLM model name, required when `chat_url` is set |
 | `llm.api_key_env` | `PRINT_BUDDY__LLM__API_KEY_ENV` | `LLM_API_KEY` | Name of the environment variable holding the LLM API key |
 | `llm.timeout_s` | `PRINT_BUDDY__LLM__TIMEOUT_S` | `20` | LLM request timeout |

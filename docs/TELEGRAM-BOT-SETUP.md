@@ -3,7 +3,7 @@
 Print Buddy can run its standalone bot on Telegram instead of Discord
 (#164). The same handlers, prompts and safety gates serve both platforms;
 only the transport changes. The Telegram bot is a **pure bot: it has no
-LLM**. Unmatched text gets the command list, and no `[llm]` setting is
+LLM**. Unmatched text gets the short “didn't understand” reply, and no `[llm]` setting is
 ever consulted for Telegram — that is deliberate, and it is how the
 no-LLM standalone mode from the standalone design is being proven first.
 

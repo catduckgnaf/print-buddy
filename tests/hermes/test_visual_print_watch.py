@@ -150,7 +150,8 @@ def test_visual_check_alerts_on_air_uncertain_and_endpoint_error(monkeypatch):
     asyncio.run(run_boom())
     assert any("air" in item for item in alerts)
     assert any("uncertain" in item for item in alerts)
-    assert any("vision check failed" in item for item in alerts)
+    assert any("the vision check could not be completed" in item for item in alerts)
+    assert all("endpoint down" not in item and "OSError" not in item for item in alerts)  # raw detail demoted (#467)
 
 
 def test_visual_check_promotes_unchanged_layers_and_ignores_motion(monkeypatch):
@@ -288,7 +289,7 @@ def test_low_sensitivity_still_alerts_on_a_bad_stall(monkeypatch):
             alerts = _stall_alerts(monkeypatch, level, verdict)
             assert alerts and "stalled_layers" in alerts[0] and verdict[0] in alerts[0], (level, verdict)
         alerts = _stall_alerts(monkeypatch, level, OSError("vision down"))
-        assert alerts and "vision check failed" in alerts[0], level
+        assert alerts and "the vision check could not be completed" in alerts[0], level
 
 
 def test_default_and_higher_sensitivity_alert_on_every_stall(monkeypatch):

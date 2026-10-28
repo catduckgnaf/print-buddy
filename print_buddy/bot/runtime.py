@@ -4,7 +4,8 @@ A message from a user the platform's access policy allows in the print channel, 
 ``[bot] platform`` names, becomes the same event the Hermes
 gateway hands the plugin: ``source`` (who and where), ``text``, ``media_urls`` (dropped model files,
 saved locally) and ``message_id``. The router runs the plugin's handlers on it. What no handler takes
-answers an open button question of the same person, or else gets the optional LLM or the command list.
+answers an open button question of the same person, or else gets the optional LLM or the short
+unmatched reply (#467: never the full command list as an error response).
 A user a list refuses is never dropped silently (#386): the refusal is logged at INFO with the reason
 and answered in channel once per user per hour.
 
@@ -36,7 +37,8 @@ PROFILE = "3dprinting"  # the plugin's handlers only answer events of the print 
 # a household member who was never told about a list learns it exists, never
 # often enough to spam the channel while they keep posting.
 REFUSAL_NOTICE_PERIOD_S = 3600
-REFUSAL_NOTICE = "You are not on this bot's allowed list."
+REFUSAL_NOTICE = ("You are not on this bot's allowed list, so I can't act on that. Nothing was changed. "
+                  "If you should have access, ask the person who runs Print Buddy to add you.")
 # .scad rides along for design edit sessions (#388 Stage 2): prepared intake
 # still only accepts .3mf/.stl (its own MODEL_FILE_EXTS), so a dropped .scad
 # is saved here and ignored by every non-design flow.
@@ -45,6 +47,24 @@ MAX_UPLOAD_BYTES = 200 * 1024 * 1024
 # The intake copies a dropped file into the job archive, so the cached upload is only needed briefly.
 UPLOAD_KEEP_S = 7 * 24 * 3600
 HELP_WORDS = {"/print-help", "/help", "help"}
+
+
+def unmatched_text(bot_name="Print Buddy"):
+    """The short plain reply for a message nothing took (#467).
+
+    The unmatched fallback used to post the whole command list as an
+    error response — a wall that said nothing about what went wrong with
+    what the person typed. This says it did not understand, names the
+    most common things people mean here, and offers the full list on
+    request (``/print-help``, or typing ``help``) instead of leading with
+    it. Did-you-mean suggestions for near-miss commands are #468's
+    research scope; this wording and the no-dump rule are #467's either
+    way.
+    """
+    return (f"I didn't understand that, so nothing happened.\n"
+            f"{bot_name} prints from this channel: post a MakerWorld, Printables or Thingiverse link, "
+            "or drop one .3mf or .stl file, and I will prepare it — nothing starts without a button press.\n"
+            "For everything I can do, type `/print-help`.")
 
 
 def listed_users(cfg, section="discord"):
@@ -75,7 +95,7 @@ def discord_chat_llm_enabled(cfg):
 
     On by default: a configured [llm] words Discord free-text replies, as
     before. False runs Discord as a pure bot (unmatched text gets the
-    command list) while [llm] stays configured for the features that
+    short not-understood reply, #467) while [llm] stays configured for the features that
     inherit it — /print-design resolves its endpoint from [design]/[llm]
     independently, and the roast and the camera watchdog keep their own
     vision gates — so turning chat off changes none of them.
@@ -205,7 +225,7 @@ class BotCore:
         self.upload_dir = Path(self.cfg["paths"]["cache"]) / f"{self.platform_name}-uploads"
         # Pure-bot platforms (the adapter reports uses_llm=False, Telegram in
         # #164 stage 2) never reach the LLM fallback, even when [llm] is
-        # configured: their unmatched text gets the command list only (#73).
+        # configured: their unmatched text gets the short unmatched reply only (#73, #467).
         # Discord has the operator-facing version of the same choice (#466):
         # [discord] chat_llm_enabled=false makes Discord a pure bot too,
         # without unconfiguring [llm] for design or the vision features.
@@ -216,6 +236,7 @@ class BotCore:
         self._refusal_notices: dict[str, float] = {}  # user_id -> last notice time (#386)
         self.bot_name = str(section.get("bot_name") or discord.get("bot_name") or "").strip() or "Print Buddy"
         self.help = commands.help_text(self.bot_name)
+        self.unmatched = unmatched_text(self.bot_name)
         self.started_at = time.time()
 
     # ------------------------------------------------------------------ routing
@@ -294,7 +315,7 @@ class BotCore:
         return await self.fallback(event, allow_llm=allow_llm, _llm_replied=_llm_replied)
 
     async def fallback(self, event, *, allow_llm=True, _llm_replied=False):
-        """No handler took it: the LLM tries first (#437), the help text is the last resort.
+        """No handler took it: the LLM tries first (#437), the short unmatched reply is last.
 
         Order of handling for a non-command message: explicit commands,
         deterministic handlers, links/files and typed answers to an open
@@ -303,8 +324,10 @@ class BotCore:
         platform: it may answer directly, or name one allowlisted command,
         which then runs through the exact same handler (and confirmation)
         as a typed command. Only when the LLM declines, names no usable
-        command, errors or times out does the help / command list go out —
-        once, and never alongside an LLM reply for the same message.
+        command, errors or times out does the short unmatched reply go
+        out (#467 — the full command list is an answer to ``/print-help``,
+        never an error response) — once, and never alongside an LLM reply
+        for the same message.
         """
         source = event.source
         metadata = {"thread_id": source.thread_id} if source.thread_id else None
@@ -313,7 +336,7 @@ class BotCore:
                 reply, command = await asyncio.to_thread(llm.ask, event.text, self.help, cfg=self.cfg,
                                                          opener=self.llm_opener)
             except Exception as exc:
-                logger.warning("LLM reply failed, sending the command list: %r", exc)
+                logger.warning("LLM reply failed, sending the unmatched reply: %r", exc)
             else:
                 if command:
                     # A named command is dispatched before any reply is
@@ -334,7 +357,7 @@ class BotCore:
             # The LLM already answered this message and its named command
             # fell through: a solved reply stands alone, no help after it.
             return {"action": "skip", "reason": "llm reply"}
-        await self.adapter.send(chat_id=source.chat_id, content=self.help, reply_to=event.message_id,
+        await self.adapter.send(chat_id=source.chat_id, content=self.unmatched, reply_to=event.message_id,
                                 metadata=metadata)
         return {"action": "skip", "reason": "command list"}
 

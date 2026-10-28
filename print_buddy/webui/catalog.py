@@ -168,7 +168,7 @@ CATALOG = (
            choices_source=SOURCE_TIMEZONES),
     _field("discord", "chat_llm_enabled", "Discord chat LLM", "toggle",
            "Free-text chat replies from the [llm] model on Discord. On by default; "
-           "off runs Discord as a pure bot (unmatched text gets the command list) "
+           "off runs Discord as a pure bot (unmatched text gets the short not-understood reply) "
            "while [llm] stays configured for /print-design. The roast and camera "
            "watchdog keep their own vision switches either way.",
            validator="settings discord check"),

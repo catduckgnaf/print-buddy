@@ -105,6 +105,15 @@ class BambuAdapter(PrinterAdapter):
         """Pause, resume or stop the current print over LAN MQTT."""
         return self.client().control(action)
 
+    def set_chamber_light(self, on):
+        """Switch the chamber light over LAN MQTT (#516).
+
+        The light is the one accessory the auto light-off feature may
+        touch; this is a plain transport call — the automation policy
+        and its gates live in hermes (light_control / family_control).
+        """
+        return self.client().set_chamber_light(on)
+
     # -- Camera (#294) ------------------------------------------------------
     def camera_kind(self):
         """The verified camera protocol for this model ("tcp6000" / "rtsps"), or None when unverified."""

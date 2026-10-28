@@ -244,13 +244,17 @@ CATALOG = (
            "Auto light-off (#516): the printer light turns on when a print "
            "starts and off again after the camera has seen an empty plate "
            "for this many minutes. 0 = off (the default). Needs a vision "
-           "endpoint, like the camera watchdog.",
+           "endpoint, like the camera watchdog. Covers Moonraker, Bambu "
+           "Lab and Elegoo SDCP printers; other families have no light "
+           "to switch.",
            validator="settings vision check", minimum=0),
     _field("vision", "light_object", "Light object", "text",
            "The Moonraker light object the auto light-off switches, for "
            "example 'led chamber_led', 'neopixel sb_leds' or "
            "'output_pin caselight'. Empty auto-discovers: the printer's "
-           "light object is used only when there is exactly one.",
+           "light object is used only when there is exactly one. Bambu "
+           "Lab and Elegoo SDCP printers ignore this — their chamber "
+           "light is a fixed protocol target.",
            validator="settings vision check"),
     # Camera watch.
     _field("visual_watch", "enabled", "Camera watch", "toggle",

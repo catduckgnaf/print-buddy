@@ -255,6 +255,18 @@ def test_sdcp_status_upload_start_control(tmp_path):
         client.control("explode")
 
 
+def test_sdcp_set_light_sends_cmd_403_with_light_status_only():
+    server = FakeSdcpServer()
+    client, _posts = sdcp_client(server)
+    assert client.set_light(True) is True
+    assert client.set_light(False) is True
+    sent = [e["Data"] for e in client._ws.sent if e["Data"]["Cmd"] == 403]
+    # Cmd 403 is a partial device-control update: LightStatus alone, so
+    # the fans and any RGB accent state are left exactly as they are.
+    assert [d["Data"] for d in sent] == [{"LightStatus": {"SecondLight": 1}},
+                                          {"LightStatus": {"SecondLight": 0}}]
+
+
 def test_sdcp_upload_size_mismatch_refuses(tmp_path):
     server = FakeSdcpServer()
     client, _posts = sdcp_client(server)

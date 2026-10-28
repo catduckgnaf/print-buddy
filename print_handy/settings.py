@@ -1034,15 +1034,18 @@ def _validate_vision(data):
     if not isinstance(enabled, bool):
         raise SettingsError(f"[vision] roast_enabled must be true or false, got {enabled!r}")
     # Auto light-off (#516): off by default (0). When set above zero, the
-    # Moonraker listener turns the printer's light on at print start and,
-    # after a print ends, off again once the camera verdict has seen an
-    # empty plate for that many minutes. It needs a vision endpoint (the
-    # same vision_ready gate as the camera watchdog) and a light target:
-    # light_object names one ("led chamber_led"); empty auto-discovers,
-    # and discovery only acts when the printer lists exactly one light
-    # object. The strict name validation lives in
-    # hermes.light_control (the listener refuses an unusable name there);
-    # here the shape is just int / string.
+    # printer's light turns on at print start and, after a print ends,
+    # off again once the camera verdict has seen an empty plate for
+    # that many minutes. It needs a vision endpoint (the same
+    # vision_ready gate as the camera watchdog) and a light target,
+    # which is family-shaped: on Moonraker, light_object names one
+    # ("led chamber_led") or empty auto-discovers (discovery only acts
+    # when the printer lists exactly one light object); on Bambu Lab
+    # the target is the chamber light and on Elegoo SDCP its Cmd 403
+    # light — light_object does not apply to either. The strict
+    # Moonraker name validation lives in hermes.light_control (the
+    # listener refuses an unusable name there); here the shape is just
+    # int / string.
     minutes = vision.setdefault("auto_light_off_minutes", 0)
     if isinstance(minutes, bool) or not isinstance(minutes, int) or minutes < 0:
         raise SettingsError(f"[vision] auto_light_off_minutes must be a whole number of minutes "

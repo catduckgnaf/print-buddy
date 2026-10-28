@@ -10,7 +10,8 @@ Shape of the protocol:
 - Control: a WebSocket at ``ws://<host>:3030/websocket``. Requests go to topic
   ``sdcp/request/<MainboardID>`` as ``{"Cmd": n, "Data": {...}}`` inside the SDCP envelope;
   answers arrive on ``sdcp/response/<MainboardID>`` matched by RequestID. Commands used here:
-  0 status, 128 start print, 129 pause, 130 stop, 131 resume, 258 list files, 260 file info.
+  0 status, 128 start print, 129 pause, 130 stop, 131 resume, 258 list files, 260 file info,
+  403 control device (the chamber light, #516).
 - Upload: chunked HTTP ``POST http://<host>:3030/uploadFile/upload`` (1 MiB chunks, MD5 of
   the whole file in the form fields), because the WebSocket channel carries no file data.
 
@@ -39,6 +40,7 @@ CMD_STOP = 130
 CMD_RESUME = 131
 CMD_LIST_FILES = 258
 CMD_FILE_INFO = 260
+CMD_CONTROL_DEVICE = 403
 
 _HOST_OK = re.compile(r"^[A-Za-z0-9.-]+$")
 _REMOTE_OK = re.compile(r"^[A-Za-z0-9][A-Za-z0-9 ._-]*\.(gcode|bgcode)$", re.IGNORECASE)
@@ -227,4 +229,21 @@ class SdcpClient:
         if action not in commands:
             raise SdcpError(f"unsupported SDCP control action: {action!r}")
         self.request(commands[action], {})
+        return True
+
+    def set_light(self, on):
+        """Switch the chamber light (Cmd 403, control device) — #516.
+
+        Cmd 403 is SDCP's partial device-control update: the same
+        command carries fan speeds and print speed, and only the field
+        being changed is sent, so this sends LightStatus alone and
+        leaves the fans and any RGB accent state exactly as they are.
+        ``SecondLight`` is the printer's LED chamber light in the
+        status answer's LightStatus block (1 on, 0 off). Note Cmd 386
+        is not a light command: the published command tables name it
+        the video-stream enable — it belongs to the camera audit in
+        camera.py, not here.
+        """
+        self.request(CMD_CONTROL_DEVICE,
+                     {"LightStatus": {"SecondLight": 1 if on else 0}})
         return True

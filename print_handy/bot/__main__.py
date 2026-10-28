@@ -154,17 +154,47 @@ def checks(cfg):
     # the light target is the named vision.light_object, or the printer's
     # single light object auto-discovered by the listener — bot check is
     # offline, so an unnamed target is reported as unresolved here rather
-    # than discovered.
+    # than discovered. The Bambu/SDCP follow-up made the target
+    # family-shaped: Bambu's chamber light is a fixed protocol target,
+    # SDCP's is its Cmd 403 light, and the remaining families have no
+    # light at all — the row names the configured printer's family,
+    # resolved from the model in cfg without contacting the printer.
     light_minutes = vision.get("auto_light_off_minutes", 0)
     light_object = str(vision.get("light_object") or "").strip()
+    light_connection = None
+    try:
+        from .. import printers as _printers
+        _light_model = _printers.MODELS.get(str((cfg.get("printer") or {}).get("model") or ""))
+        if _light_model is not None:
+            light_connection = getattr(getattr(_light_model, "vendor", None), "connection", None)
+    except Exception:
+        light_connection = None
     if not light_minutes:
         add("auto light", True, "off (vision.auto_light_off_minutes is 0; set it, "
                                 "e.g. 30, to turn the printer light off after the "
                                 "plate has been seen empty that long)")
+    elif light_connection == "elegoo_sdcp":
+        add("auto light", True, f"on (SDCP chamber light, Cmd 403; light on at print "
+                                f"start; auto-off cannot run yet — no SDCP camera "
+                                f"source is verified, so the empty-plate check has no "
+                                f"frame to judge and the light stays on; set "
+                                f"vision.auto_light_off_minutes=0 to turn auto light off)")
+    elif light_connection not in (None, "moonraker", "bambulab_lan"):
+        add("auto light", True, f"on, but unavailable for this printer: connection "
+                                f"{light_connection!r} has no light control (auto "
+                                f"light-off covers Moonraker, Bambu Lab and Elegoo "
+                                f"SDCP printers); the setting has no effect here")
     elif not vision_url and not os.environ.get("PRINT_VISION_URL"):
         add("auto light", True, "on, but no vision endpoint is available "
                                 "(services.vision_chat_url is empty and PRINT_VISION_URL "
                                 "is not set); the empty-plate check needs one")
+    elif light_connection == "bambulab_lan":
+        add("auto light", True, f"on (Bambu chamber light; light off after the plate has been "
+                                f"seen empty for {light_minutes} minutes; a model whose own "
+                                f"telemetry reports no chamber light is never switched — "
+                                f"the listener logs it unavailable; vision.light_object "
+                                f"applies to Moonraker printers only; set "
+                                f"vision.auto_light_off_minutes=0 to turn auto light off)")
     elif light_object:
         add("auto light", True, f"on ({light_object}; light off after the plate has been "
                                 f"seen empty for {light_minutes} minutes; set "

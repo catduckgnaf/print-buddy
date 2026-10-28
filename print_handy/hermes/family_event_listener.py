@@ -32,7 +32,11 @@ posts (``family_control.BambuEventSink``).
 
 The listener never writes to the printer. The only printer writes in
 this feature are the Resume/Cancel an operator explicitly presses,
-routed by the gateway to ``family_control.FamilyControl``.
+routed by the gateway to ``family_control.FamilyControl`` — plus, for
+the one family here with a light (Elegoo SDCP), the opt-in #516 auto
+light-off: the listener feeds print starts, print ends and idle polls
+to ``family_control.FamilyAutoLight``, which switches the chamber
+light and nothing else, only when the operator turned the feature on.
 """
 from __future__ import annotations
 
@@ -81,7 +85,7 @@ class FamilyListener:
                  claim_fn=None, start_poster=None, pause_poster=None,
                  terminal_poster=None, retirer=None, beat=None,
                  clock=time.monotonic, sleep=time.sleep, poll_s=POLL_S,
-                 state_path=None):
+                 state_path=None, light=None):
         self.connection = connection
         self._status_fn = status_fn
         self._runtime = runtime or RUNTIMES[connection]
@@ -91,6 +95,7 @@ class FamilyListener:
         self._pause_poster = pause_poster or family_control.post_pause_alert
         self._terminal_poster = terminal_poster or family_control.post_family_event
         self._retirer = retirer or family_control.retire_pause_alerts
+        self._light = light
         self._beat_fn = beat or (lambda **details: healthcheck.beat(runtime=self._runtime, **details))
         self._clock = clock
         self._sleep = sleep
@@ -176,6 +181,14 @@ class FamilyListener:
             self._retirer(name, family_control.retire_headline(state))
         except Exception as exc:
             log(f"family pause retire failed file={name!r}: {exc!r}")
+        # #516: a tracked print ended — open the auto light-off idle
+        # window (external and claimed prints alike; the light follows
+        # the printer, not the announcement split).
+        if self._light is not None:
+            try:
+                self._light.print_finished()
+            except Exception as exc:
+                log(f"auto light print-finished hook failed: {exc!r}")
 
     # -- one poll ---------------------------------------------------------------
 
@@ -219,6 +232,14 @@ class FamilyListener:
                     self._restored = None
                 elif superseded or (prev is not None and prev not in _ACTIVE):
                     self._current = self._begin(filename, witnessed=True)
+                    # #516: a witnessed fresh start turns the light on
+                    # (state event only — a baselined print, already
+                    # running when first seen, does not).
+                    if self._light is not None:
+                        try:
+                            self._light.print_started()
+                        except Exception as exc:
+                            log(f"auto light print-started hook failed: {exc!r}")
                 else:
                     self._current = self._begin(filename, witnessed=False)
             if prev == "printing" and state == "paused" \
@@ -235,6 +256,13 @@ class FamilyListener:
                 # active when classified, so it still ends properly.
                 self._end(state, filename, status.get("progress"))
             self._restored = None
+            # #516: idle observations drive the light policy's plate
+            # checks (its own interval gates how often one really runs).
+            if self._light is not None:
+                try:
+                    self._light.idle_tick(state)
+                except Exception as exc:
+                    log(f"auto light idle tick hook failed: {exc!r}")
         else:
             # An unreadable/unknown state is not an ending: a tracked
             # print stays tracked (its next active read resumes the
@@ -287,7 +315,11 @@ def main():
     listener = FamilyListener(
         connection, family_control.status_fn_for(adapter),
         runtime=RUNTIMES[connection],
-        printer_id=listeners.instance_printer_id())
+        printer_id=listeners.instance_printer_id(),
+        # #516: the auto-light driver for the families that have one
+        # (Elegoo SDCP here; None for PrusaLink / OctoPrint / stock
+        # FlashForge, which have no light target).
+        light=family_control.auto_light_for(adapter))
     return listener.run_forever()
 
 

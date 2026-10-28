@@ -13,6 +13,7 @@ from print_handy.printers.bambulab.a1 import A1Adapter
 from print_handy.printers.bambulab.p1s import P1SAdapter
 from print_handy.printers.base import BuildVolume, MultiColorUnsupported, PrinterAdapter
 
+from print_handy.printers.anycubic import facts as anycubic_facts
 from print_handy.printers.bambulab import facts as bambu_facts
 from print_handy.printers.creality import facts as creality_facts
 from print_handy.printers.elegoo import facts as elegoo_facts
@@ -20,8 +21,8 @@ from print_handy.printers.elegoo_sdcp import facts as sdcp_facts
 from print_handy.printers.prusa import facts as prusa_facts
 from print_handy.printers.qidi import facts as qidi_facts
 
-from . import (a1_fixture, bambu_family_fixture, creality_fixture, elegoo_fixture, p1s_fixture,
-               prusa_fixture, qidi_fixture)
+from . import (a1_fixture, anycubic_fixture, bambu_family_fixture, creality_fixture, elegoo_fixture,
+               p1s_fixture, prusa_fixture, qidi_fixture)
 
 AD5X_ARTIFACTS = re.compile(
     r"SET_EXTRUDER_SLOT|\bIFS\b|zmod|ZMOD|CHANGE_ZCOLOR|display_off|LOAD_ZOFFSET|START_PRINT|MESH=|8898|AD5X|/detail",
@@ -109,6 +110,17 @@ class ContractTests(unittest.TestCase):
             patcher.start()
             self.addCleanup(patcher.stop)
             creality_fixture.install(adapter_for(key), model_facts)
+        # The Anycubic models (#552) share the Anycubic fixture: trust + install each one.
+        for key, model_facts in (("anycubic.kobra2", anycubic_facts.KOBRA2),
+                                 ("anycubic.kobra2neo", anycubic_facts.KOBRA2NEO),
+                                 ("anycubic.kobra2pro", anycubic_facts.KOBRA2PRO),
+                                 ("anycubic.kobra2plus", anycubic_facts.KOBRA2PLUS),
+                                 ("anycubic.kobra2max", anycubic_facts.KOBRA2MAX)):
+            patcher = mock.patch.object(printers.MODELS[key].adapter, "facts",
+                                        anycubic_fixture.fixture_facts(model_facts))
+            patcher.start()
+            self.addCleanup(patcher.stop)
+            anycubic_fixture.install(adapter_for(key), model_facts)
 
     def test_registry_finds_every_model_file(self):
         self.assertEqual(set(MODELS), {AD5X, GENERIC, SV06, OCTOPRINT, BAMBU_A1, BAMBU_P1S, "flashforge_stock.ad5x",
@@ -124,7 +136,12 @@ class ContractTests(unittest.TestCase):
                                        "creality.ender3v3", "creality.ender3v3ke", "creality.ender3v3plus",
                                        "creality.k1", "creality.k1c", "creality.k1max",
                                        "octoprint.ender3", "octoprint.ender3pro", "octoprint.ender3v2",
-                                       "octoprint.ender3v3se"})
+                                       "octoprint.ender3v3se",
+                                       "anycubic.kobra2", "anycubic.kobra2neo", "anycubic.kobra2pro",
+                                       "anycubic.kobra2plus", "anycubic.kobra2max",
+                                       "octoprint.i3megas", "octoprint.vyper", "octoprint.chiron",
+                                       "octoprint.maxpro2", "octoprint.kobra", "octoprint.kobraneo",
+                                       "octoprint.kobraplus", "octoprint.kobramax"})
         for key, model in printers.MODELS.items():
             self.assertEqual(model.key, key)
             shipped = settings.ROOT / "print_handy" / "templates" / "orca" / model.templates
@@ -159,7 +176,7 @@ class ContractTests(unittest.TestCase):
                 folder = a.templates_dir()
                 for name in ("machine", "process", "filament"):
                     json.loads((folder / f"{name}.json").read_text())
-                if family != "flashforge_stock.ad5x" and not family.startswith(("octoprint.", "bambulab.", "prusa.", "elegoo", "qidi.", "creality.")):
+                if family != "flashforge_stock.ad5x" and not family.startswith(("octoprint.", "bambulab.", "prusa.", "elegoo", "qidi.", "creality.", "anycubic.")):
                     self.assertIn("[bed_temperature_initial_layer_single]", a.machine_start_gcode("X MESH=auto", "auto"))
                 plan = a.start_plan(60, 215)
                 if family == "flashforge_stock.ad5x":

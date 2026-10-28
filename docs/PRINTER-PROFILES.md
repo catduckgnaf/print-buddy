@@ -78,6 +78,14 @@ print_handy/printers/
     k1c.py               MODEL   creality.k1c: 220 x 220 mm bed, 250 mm height, enclosed CoreXY
     k1max.py             MODEL   creality.k1max: 300 x 300 mm bed, 300 mm height, enclosed CoreXY
                                  (adapter.py, guard.py, facts.py, profiles.py; see CREALITY.md)
+  anycubic/
+    __init__.py          VENDOR  Anycubic: Moonraker (community-firmware installs), template start code (fully inline), OrcaSlicer, .gcode
+    kobra2.py            MODEL   anycubic.kobra2: 220 x 220 mm bed, 250 mm height
+    kobra2neo.py         MODEL   anycubic.kobra2neo: 220 x 220 mm bed, 250 mm height
+    kobra2pro.py         MODEL   anycubic.kobra2pro: 220 x 220 mm bed, 250 mm height
+    kobra2plus.py        MODEL   anycubic.kobra2plus: 320 x 320 mm bed, 400 mm height
+    kobra2max.py         MODEL   anycubic.kobra2max: 420 x 420 mm bed, 500 mm height
+                                 (adapter.py, guard.py, facts.py, profiles.py; see ANYCUBIC.md)
 templates/orca/<folder>/ machine.json, process.json, filament.json per printer; a model with
                          generated_templates (the A1) ships none: <state>/orca-profiles/<folder>
 ```

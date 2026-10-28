@@ -169,7 +169,7 @@ Required environment: `PRINT_HANDY__BOT__MODE=standalone`, `DISCORD_BOT_TOKEN`, 
   quotes one copy's finish as the whole job's — sequential finishes depend on the bed-clear pauses
   between copies.
 * Slash commands: `/print-next`, `/print-stop`, `/print-resume`, `/print-again`, `/print-reboot`,
-  `/print-coldpull`, `/print-maintenance`, `/print-colors`, `/spool`, `/print-lookup`, `/print-troubleshoot`,
+  `/print-coldpull`, `/nozzle`, `/print-maintenance`, `/print-colors`, `/spool`, `/print-lookup`, `/print-troubleshoot`,
   `/print-macros` (Moonraker printers only; lists the macros the printer defines, and `run <name>` runs one behind a confirmation),
   `/print-handy` (guided setup and read-only debugging), `/print-help`. Typing the same text works too.
 * `/print-design <what to make>` (or the short `/design`) designs a new part with AI + OpenSCAD (see

@@ -67,14 +67,16 @@ A bed-clear approval starts one print. Starting the same G-code again needs a ne
   the old five-field text modal: material quick-select (PLA, Silk PLA, PLA+, PETG, TPU, ABS,
   Other), colour/finish picker (known colours for the material first), starting-weight buttons
   (1000 / 500 / 250 g or custom), the replaced spool's fate when the slot is occupied, and one
-  confirmation — nothing is created before it. When a vision endpoint is available (#514), the
-  first step also offers **Use a photo of the label**: the operator sends one photo of the spool's
-  box or sticker as the next message, the shared vision call extracts brand, material/sub-type,
-  colour/blend, net weight and any printed label temperatures, and the values pre-fill the
-  walkthrough at the same confirmation (Edit details walks the normal steps; an unusable photo
-  refuses with the reason and falls back to them). Label temperatures are recorded on the
-  Spoolman filament, so the usual precedence holds for every material, and the photo itself is
-  sent only to the configured vision endpoint and never stored.
+  confirmation — nothing is created before it. When any label-reading route is available (#514),
+  the first step also offers **Use a photo of the label**: the operator sends one photo of the
+  spool's box or sticker as the next message, and the label is read by the first route that can —
+  its own barcode/QR code (zxing-cpp, local), the shared vision call (when an endpoint is
+  configured), or local OCR (tesseract, matched against the known filament vocabulary) —
+  extracting brand, material/sub-type, colour/blend, net weight and any printed label
+  temperatures. The values pre-fill the walkthrough at the same confirmation, which names the
+  route that read them (Edit details walks the normal steps; an unusable photo refuses with the
+  reason and falls back to them). Label temperatures are recorded on the Spoolman filament, so
+  the usual precedence holds for every material, and the photo itself is never stored.
 * `/print-colors <JOB.json>` opens the color selection flow for an archived job. Preparation only: it slices nothing, uploads nothing and starts nothing, and the path must be an archived `JOB.json`.
 * A swapped spool can finish a job sliced for the old one, by explicit choice.
 * `PRINT_HANDY` Klipper macro confirms ZMod can fall back to a matching backup slot.
@@ -103,6 +105,7 @@ Live camera streaming (#311) starts with a delivery-agnostic core in `print_hand
 * Nightly catch up against Moonraker job history so nothing is missed.
 * `/print-maintenance` guided checklist and reminders by print hours and days.
 * `/print-coldpull` runs an operator confirmed cold pull at configured temperatures.
+* `/nozzle change` (#513) walks a physical nozzle change: pick the diameter (0.2/0.4/0.6/0.8 mm) and material (brass, hardened steel, stainless steel, tungsten carbide, diamond), confirm heating in person, and — on Moonraker/Klipper printers only — it heats to 250 °C for the hot loosen, waits for the *Old Nozzle Removed & New Nozzle Threaded* and hot-torque confirmations, turns the heater off and waits for a live readback below 50 °C. Other connections get manual-heat instructions and the same step confirmations; nothing is sent to them. Completing the walk records the new nozzle in `printer_hardware.json` with the previous calibration marked historical only, then offers Z-offset (`--sync-z`), bed mesh leveling and a pressure advance / flow check. Cancelling after heating turns the heater off and records nothing.
 * `/print-lookup` searches the root [knowledge, firmware and printer registries](TROUBLESHOOTING.md) for commands, macros, errors, symptoms and printer facts. Read-only; it sends nothing.
 * `/print-macros` lists the macros the configured Moonraker printer actually defines, read live from `/printer/objects/list` and classified against the registry (see [printer macros](MACROS.md)). The listing is read-only. `/print-macros run <name> [KEY=VALUE ...]` runs one live-discovered macro behind a confirmation that shows the exact script line, refusing internal (`_`-prefixed) names, unknown names, and any run while a print is running or paused. Non-Moonraker printers get a plain explanation.
 * `/print-live [start | stop | status]` runs the live camera viewing session (Discord only; see [live camera Activity](DISCORD-BOT-SETUP.md#7-live-camera-activity-optional-311)). Start posts the Activity pointer for the one configured voice channel; the bot sends no video itself and records nothing. Telegram and Matrix have no live command.
@@ -244,7 +247,7 @@ chmod 600 ~/.config/myminifactory/token
 | | `vertical_short`, `vertical_short_mode`, `vertical_short_overlay` | `false`, `pad`, `true` | Optional 9:16 vertical short posted alongside each timelapse (#317); mode is the blurred-pad or centre-crop framing, overlay burns in the title/printer/filament/time text |
 | `logging` | `level`, `format`, `file` | `INFO`, `text`, empty | Log verbosity (`DEBUG`, `INFO`, `WARNING`, `ERROR`), `text` or `json` lines, and an optional rotating log file |
 | `maintenance` | `quick_hours`, `full_hours`, `full_days` | `25`, `75`, `30` | When maintenance reminders come due |
-| `nozzle_temp_offsets` | supported nozzle type | `0.0` | Optional temperature compensation from −10 to +15 °C for a known nozzle type |
+| `nozzle_temp_offsets` | supported nozzle type | steel types `5.0`, others `0.0` | Temperature compensation from −10 to +15 °C for a known nozzle type; the per-type default applies generically to every filament baseline, and a value here overrides that type's default |
 | `material_temps` | PLA, PETG, ABS, ASA, TPU, PA, PC (`nozzle`, `bed`) | see `config/home.yaml` | Configurable fallback temperatures in °C; explicit Spoolman filament settings take precedence. Named variants adjust the fallback (#512): Silk PLA +10 °C and 0.7× outer-wall speed, PLA+ / Matte PLA / *-CF / *-GF +5 °C (PA-CF +10 °C), Matte PLA 0.9× outer-wall speed |
 | `spool` | `prompt_brand` | `false` | Ask for brand/vendor in the new-spool walkthrough (#512); off by default, brand is skipped |
 | `cold_pull` | profile name | `pla_trial = [220, 90]`, `petg = [245, 100]` | Hot and cold temperatures in °C; profile names are configurable |

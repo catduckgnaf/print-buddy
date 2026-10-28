@@ -192,7 +192,7 @@ class OverrideTests(unittest.TestCase):
             "llm": {"chat_url", "model", "api_key_env", "timeout_s"},
             "design": {"enabled", "chat_url", "model", "api_key_env", "timeout_s", "repair_attempts"},
             "listener": {"tick_s", "ifs_presence_poll_s", "spool_nag_s", "start_claim_ttl_s"},
-            "vision": {"model", "roast_model", "roast_enabled"},
+            "vision": {"model", "roast_model", "roast_enabled", "auto_light_off_minutes", "light_object"},
             "spool": {"prompt_brand"},
             "visual_watch": {"enabled", "sensitivity"},
             "timelapse": {"mode", "encoder", "archive_host", "archive_dir", "ssh_key", "render_wait_s", "render_poll_s",

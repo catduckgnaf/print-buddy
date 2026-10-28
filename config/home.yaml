@@ -162,6 +162,17 @@ vision:
   # Telegram included. Set false to turn roasts off; camera checks keep
   # using the same endpoint either way.
   roast_enabled: true
+  # Auto light-off (#516): 0 = off (the default). When set (30 is the
+  # suggested value), the Moonraker listener turns the printer's light
+  # on at print start and, after a print ends, off again once the camera
+  # has seen an empty plate for that many minutes. Needs a vision
+  # endpoint, like the camera watchdog.
+  auto_light_off_minutes: 0
+  # The Moonraker light object to switch, e.g. "led chamber_led",
+  # "neopixel sb_leds" or "output_pin caselight". Empty auto-discovers:
+  # the listener uses the printer's light object only when there is
+  # exactly one, and stays off (and logs the candidates) otherwise.
+  light_object: ''
 visual_watch:
   # Camera watchdog sensitivity, 1 (quietest) to 5 (most alerts). 3 is the original behavior.
   # Periodic camera checks run every 1800, 1200, 900, 600 or 450 seconds for levels 1 to 5;

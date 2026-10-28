@@ -5,6 +5,7 @@ check   validate settings, token, channel, users and handlers offline. Exit 1 on
 health  exit 0 only while a running bot reports a fresh heartbeat with no Hermes loaded.
 """
 import logging
+import os
 import sys
 from pathlib import Path
 
@@ -146,6 +147,33 @@ def checks(cfg):
     else:
         add("roast", True, "on by default, but no LLM/vision endpoint is available "
                            "(services.vision_chat_url is empty); set it to enable roasts")
+    # Auto light-off (#516): the listener turns the printer's light on at
+    # print start and off again after the camera verdict has seen an empty
+    # plate for vision.auto_light_off_minutes. Off by default (0). Like
+    # the watchdog it needs a vision endpoint (PRINT_VISION_URL counts);
+    # the light target is the named vision.light_object, or the printer's
+    # single light object auto-discovered by the listener — bot check is
+    # offline, so an unnamed target is reported as unresolved here rather
+    # than discovered.
+    light_minutes = vision.get("auto_light_off_minutes", 0)
+    light_object = str(vision.get("light_object") or "").strip()
+    if not light_minutes:
+        add("auto light", True, "off (vision.auto_light_off_minutes is 0; set it, "
+                                "e.g. 30, to turn the printer light off after the "
+                                "plate has been seen empty that long)")
+    elif not vision_url and not os.environ.get("PRINT_VISION_URL"):
+        add("auto light", True, "on, but no vision endpoint is available "
+                                "(services.vision_chat_url is empty and PRINT_VISION_URL "
+                                "is not set); the empty-plate check needs one")
+    elif light_object:
+        add("auto light", True, f"on ({light_object}; light off after the plate has been "
+                                f"seen empty for {light_minutes} minutes; set "
+                                f"vision.auto_light_off_minutes=0 to turn auto light off)")
+    else:
+        add("auto light", True, "on, but no light target is named (vision.light_object "
+                                "is empty); the listener auto-discovers only when the "
+                                "printer has exactly one light object — set "
+                                "vision.light_object to name the target for sure")
     # AI design (#388): tri-state enable — explicit design.enabled=false is
     # off; explicit true is on; unset is auto (on whenever a design/LLM
     # endpoint resolves — the roast posture). When on it needs OpenSCAD (the

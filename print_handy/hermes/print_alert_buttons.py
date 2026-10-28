@@ -436,8 +436,9 @@ def insertion_select_options(spools: list[dict[str, Any]], mapped: dict[str, Any
 # the whole step machine is covered without a gateway. Single free-text
 # values (an "Other" material/colour, a custom weight, a typed brand) are
 # the only pieces the click layer still collects with a one-field modal.
-# When a vision endpoint is available, the first step also offers a photo
-# of the spool label (#514): the click layer waits for the photo message,
+# When any extraction route is available (the label's barcode/QR code,
+# a vision endpoint, or local OCR), the first step also offers a photo of
+# the spool label (#514): the click layer waits for the photo message,
 # spool_label extracts a spec, and the values land here as a pre-filled
 # state that still ends at the same confirmation — nothing is created
 # from a photo without it.
@@ -555,7 +556,11 @@ def intake_step_text(state: dict[str, Any]) -> str:
         text = (f"Create {number} — {_intake_spec_line(state)}, {state.get('grams'):g} g — "
                 f"and load it into Slot {slot}?{fate}")
         if state.get("from_photo"):
-            text += ("\nRead from the label photo — check every value before you confirm; "
+            source = {"code": "the label's barcode/QR code",
+                      "vision": "the label photo, read by the vision endpoint",
+                      "ocr": "the label photo, read by local OCR"}.get(
+                          state.get("photo_route"), "the label photo")
+            text += (f"\nRead from {source} — check every value before you confirm; "
                      "Edit details walks the normal steps instead.")
         temps = []
         if state.get("nozzle_temp") is not None:

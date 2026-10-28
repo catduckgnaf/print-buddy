@@ -108,7 +108,7 @@ ARG WITH_GO2RTC=true
 ARG TARGETARCH
 ENV DEBIAN_FRONTEND=noninteractive PYTHONUNBUFFERED=1 PATH=/opt/venv/bin:$PATH
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    python3 python3-venv ca-certificates curl jq ffmpeg xvfb xauth tini openscad \
+    python3 python3-venv ca-certificates curl jq ffmpeg xvfb xauth tini openscad tesseract-ocr \
     libwebkit2gtk-4.1-0 libgstreamer1.0-0 libgstreamer-plugins-base1.0-0 \
     libgtk-3-0t64 libglew2.2 libsecret-1-0 libspnav0 libgstreamerd-3-0 \
     libosmesa6 libunwind8 libx264-164 libopengl0 libglu1-mesa libgl1 libegl1 \

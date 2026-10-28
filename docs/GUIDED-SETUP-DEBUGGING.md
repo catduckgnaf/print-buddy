@@ -2,12 +2,13 @@
 
 [Documentation home](README.md) · [Discord bot setup](DISCORD-BOT-SETUP.md) · [Standalone bot](STANDALONE.md)
 
-Print Handy has two guided Discord flows, available in both runtimes (the standalone bot and
+Print Handy has three guided Discord flows, available in both runtimes (the standalone bot and
 the Hermes print-feedback plugin) to allowed users in the print channel:
 
 | Command | What it does |
 | --- | --- |
 | `/print-handy setup` | Start or resume guided setup, one small question at a time |
+| `/print-handy add-printer` | Add another printer to this install by walkthrough, proven live |
 | `/print-handy debugging` | Run read-only diagnostics and report redacted, actionable findings |
 | `/print-handy status` | Show the saved setup checklist |
 | `/print-handy cancel` | Pause setup; the saved checklist is kept |
@@ -70,6 +71,46 @@ repeated back) and offers four replies:
 
 Setup never installs software, restarts a service, or changes network exposure. Those stay
 manual, deliberate actions from the install guides.
+
+## Adding a printer
+
+`/print-handy add-printer` onboards another printer onto an install that is already set up —
+including one still on the legacy single-printer settings shape. It runs on the same
+checklist machinery: one question at a time, the checklist saved after every step,
+`/print-handy cancel` pauses and `/print-handy add-printer` resumes, and nothing is written
+until `apply` at the review step.
+
+1. **Printer model** — a model key from the registry, as in setup.
+2. **Display name** — the name the which-printer picker and announcements show when several
+   printers share the channel (#536). It must differ from your other printers' names; the
+   roster id is derived from it.
+3. **Connection fields for that model's kind** — a Moonraker URL; a Bambu Lab LAN address,
+   serial and the LAN-mode choice; a PrusaLink host; an Elegoo SDCP host (with the note that
+   SDCP has no authentication at all); an OctoPrint URL; or a stock FlashForge host. Leaving
+   the address blank (or choosing no LAN connection) adds the printer as an offline entry.
+4. **Secrets are never collected in chat.** Where the connection needs one, the step names
+   the environment variable to store it in — a per-printer name for Bambu Lab
+   (`BAMBU_LAN_PASSWORD_<ID>`) and PrusaLink (`PRUSA_LINK_API_KEY_<ID>`), so each printer
+   keeps its own secret — and you reply `stored` when it is saved in the `.env`, exactly
+   like the token step in setup. OctoPrint and stock FlashForge use one shared variable
+   name today (`OCTOPRINT_API_KEY`, `AD5X_SERIAL`/`AD5X_CHECK_CODE`); when a second printer
+   of those kinds is added, the step says plainly that both printers must share it.
+5. **Live connection test** — before anything is saved, the flow tests the real connection
+   with the lightest proof the printer's kind offers (a Moonraker info read, a Bambu state
+   snapshot, the SDCP status read that also discovers the printer's board id, and so on).
+   A failure says why and offers `retry`, `back` to the step that failed, or `offline` to
+   save the printer unverified instead.
+6. **Review and `apply`** — the review names the printer, its id, its connection and whether
+   the live test passed. Applying appends the entry to the `printers:` roster in the
+   settings file (a legacy single-printer file is converted into the roster first — the
+   printer you already run becomes entry 1 with its connection values unchanged; a
+   timestamped backup of the file is always kept, and the rewrite does not preserve
+   comments) and creates the new printer's first hardware record. No `chat_id` is written:
+   the new printer serves the same shared channel under its name.
+
+Applying never restarts anything. Restart Print Handy afterwards to bring the new printer
+live; until then it has no listener and health checks report it missing, which the review
+and completion messages call out as expected rather than a failure.
 
 ## Debugging
 

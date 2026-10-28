@@ -103,6 +103,8 @@ OPTIONAL_KEYS = {("printer", "nozzle_type"): str, ("printer", "tool_count"): int
                  ("design", "enabled"): bool, ("design", "chat_url"): str,
                  ("design", "model"): str, ("design", "api_key_env"): str,
                  ("design", "timeout_s"): int, ("design", "repair_attempts"): int,
+                 ("agent", "chat_url"): str, ("agent", "model"): str,
+                 ("agent", "api_key_env"): str, ("agent", "timeout_s"): int,
                  ("timelapse", "mode"): str, ("timelapse", "encoder"): str,
                  ("services", "camera_source"): str,
                  ("live_stream", "enabled"): bool, ("live_stream", "voice_channel_id"): str,
@@ -1186,6 +1188,23 @@ def _validate_bot(data):
         raise SettingsError("[llm] model is required when chat_url is set")
     llm.setdefault("timeout_s", 20)
     llm["timeout_s"] = _positive(data, "llm", "timeout_s")
+    # The stray-chat agent lane (#524 stage 3): an operator-configured agent
+    # endpoint (any OpenAI-compatible chat completions URL, e.g. a Hermes
+    # agent behind its API) that answers Discord free text the handlers did
+    # not take, ahead of the bounded [llm] call. A separate section, not an
+    # [llm] extension: [llm]'s bounded, stateless, untrusted-output meaning
+    # is load-bearing for #466, while an agent endpoint is stateful and
+    # answers in its own voice. model is optional, unlike [llm]: an agent
+    # endpoint may not be model-addressable, and empty omits it from the
+    # request. timeout_s defaults to 120, not [llm]'s 20: an agent turn
+    # does real work, but the call stays bounded all the same.
+    agent = data.setdefault("agent", {})
+    for key, default in (("chat_url", ""), ("model", ""), ("api_key_env", "AGENT_API_KEY")):
+        agent.setdefault(key, default)
+    if agent["chat_url"] and not agent["chat_url"].startswith(("http://", "https://")):
+        raise SettingsError(f"[agent] chat_url must be a URL, got {agent['chat_url']!r}")
+    agent.setdefault("timeout_s", 120)
+    agent["timeout_s"] = _positive(data, "agent", "timeout_s")
 
 
 def validate(data):

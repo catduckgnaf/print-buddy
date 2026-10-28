@@ -17,7 +17,7 @@ logger = logging.getLogger(__name__)
 def checks(cfg):
     """[(label, ok, detail)]. Offline: nothing here contacts the chat platform."""
     from ..hermes import _config
-    from . import health, llm, platform
+    from . import agent, health, llm, platform
     from .runtime import allowed_users, discord_chat_llm_enabled
     rows = []
 
@@ -132,6 +132,26 @@ def checks(cfg):
     else:
         add("llm", True, f"{cfg['llm']['model']} at {cfg['llm']['chat_url']}" if llm.configured(cfg)
             else "off (unmatched messages get the short not-understood reply)")
+    # The stray-chat agent lane (#524 stage 3): a configured [agent]
+    # endpoint answers Discord free text ahead of the [llm] call above.
+    # Like the llm row it is a healthy-off row in every unconfigured or
+    # disabled state — the lane ships dark until an operator sets it.
+    if name in ("telegram", "matrix"):
+        add("agent", True, f"off ({name.capitalize()} is a pure bot: no agent lane; "
+                           "unmatched messages get the short not-understood reply)")
+    elif name == "discord" and not discord_chat_llm_enabled(cfg):
+        add("agent", True, "off (discord.chat_llm_enabled is false: no stray-chat model call "
+                           "of any kind, the agent lane included)")
+    elif agent.configured(cfg):
+        from urllib.parse import urlparse
+        agent_cfg = cfg.get("agent") or {}
+        host = urlparse(str(agent_cfg.get("chat_url") or "")).hostname or agent_cfg.get("chat_url")
+        model = str(agent_cfg.get("model") or "").strip()
+        add("agent", True, f"{model} at {host}" if model else
+            f"endpoint at {host} (no model set; the endpoint chooses)")
+    else:
+        add("agent", True, "not configured (set [agent] chat_url to let an agent endpoint "
+                           "answer stray chat; unmatched messages use the llm row above)")
     # The roast is separate from the chat fallback above: the print-started
     # post gains a one-line roast (exactly one per print, when printing
     # begins; the completion post never does) on every platform (Telegram

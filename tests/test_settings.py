@@ -190,6 +190,7 @@ class OverrideTests(unittest.TestCase):
                        "approval_user_id", "bot_user_id", "upload_max_bytes"},
             "bot": {"mode", "platform", "health_port", "health_stale_s", "sync_commands"},
             "llm": {"chat_url", "model", "api_key_env", "timeout_s"},
+            "agent": {"chat_url", "model", "api_key_env", "timeout_s"},
             "design": {"enabled", "chat_url", "model", "api_key_env", "timeout_s", "repair_attempts"},
             "listener": {"tick_s", "ifs_presence_poll_s", "spool_nag_s", "start_claim_ttl_s"},
             "vision": {"model", "roast_model", "roast_enabled", "auto_light_off_minutes", "light_object"},

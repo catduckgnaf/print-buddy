@@ -65,6 +65,10 @@ message. `python3 -m print_handy.doctor` warns when a Hermes profile holds the s
 | `llm.model` | empty | Model name, required when `chat_url` is set |
 | `llm.api_key_env` | `LLM_API_KEY` | Name of the environment variable that holds the LLM API key, if it needs one |
 | `llm.timeout_s` | `20` | LLM request timeout |
+| `agent.chat_url` | empty | Stray-chat agent lane (#524 stage 3): an agent endpoint — any OpenAI-compatible chat completions URL, e.g. a Hermes agent behind its API — answers Discord free text ahead of the `[llm]` call. Empty: no agent lane |
+| `agent.model` | empty | Agent model name; optional — empty omits `model` from the request |
+| `agent.api_key_env` | `AGENT_API_KEY` | Name of the environment variable that holds the agent endpoint's API key, if it needs one |
+| `agent.timeout_s` | `120` | Agent request timeout (one attempt, no retries) |
 | `vision.roast_enabled` | `true` | The one-line roast on the print-started post only (never on the completion post). On by default whenever an LLM/vision endpoint is available (`services.vision_chat_url` plus `CLIPROXY_API_KEY`), on every platform — Telegram and Matrix included, even though their chat never uses `[llm]`. `false` turns roasts off; camera checks are unaffected |
 | `vision.roast_model` | `luna-latest` | Model that writes the roast |
 
@@ -206,9 +210,16 @@ Required environment: `PRINT_HANDY__BOT__MODE=standalone`, `DISCORD_BOT_TOKEN`, 
 * A typed reply answers your own open question, as under Hermes ("2" for two copies, "split", "cancel"). It
   never answers another allowed user's question, even in the same channel or thread. Buttons are shared: any
   allowed user may press an open question's button, and the message then shows who chose.
-* Anything else is tried with the LLM first when `[llm]` is set, and only falls back to the short
+* Anything else is tried with a model lane first — the `[agent]` lane when an agent endpoint is
+  configured (#524 stage 3), else the LLM when `[llm]` is set — and only falls back to the short
   “didn't understand” reply when
-  the model cannot solve it. The order is: explicit commands, deterministic phrases (like "print 57" above),
+  the model cannot solve it. The agent lane is different in kind from the LLM call below: the bot
+  sends your text once, with no bot system prompt, and posts the endpoint's reply as-is — the
+  endpoint (a Hermes agent behind its API, say) answers in its own voice, and its reply can never
+  name a command into execution. The bot keeps no conversation history; it sends the live session
+  key as an `X-Print-Handy-Session` header the endpoint may key its own conversation on. If a
+  configured agent endpoint does not answer, the reply says so (“The chat agent didn't answer…”)
+  instead of pretending the message was not understood. The order is: explicit commands, deterministic phrases (like "print 57" above),
   links/files and typed answers to an open question run first and are never rerouted through the model; any
   other text goes to the model, which may answer directly or name one command from a fixed list (read-only or
   button-gated: `/print-stop`, `/print-next`, `/spool list`, ...). A named command runs through the same
@@ -224,7 +235,8 @@ Discord can run as a pure bot too, the way Telegram and Matrix always do. Set
 `discord.chat_llm_enabled` to `false` (or `PRINT_HANDY__DISCORD__CHAT_LLM_ENABLED=false`) and restart:
 unmatched text gets the short “didn't understand” reply, and no chat message is ever sent to a model — while everything
 deterministic (commands, links, files, typed answers, buttons, `print 57`) works exactly as before.
-`bot check` says so on its llm row, naming the switch, and the bot's status reports `"llm": false`.
+The switch gates every stray-chat model call: the `[llm]` call and the `[agent]` lane alike.
+`bot check` says so on its llm and agent rows, naming the switch, and the bot's status reports `"llm": false`.
 
 You do not have to remove `[llm]` to do this, and you should not if you use `/print-design`: design
 inherits the `[llm]` endpoint when `[design]` is unset, and that inheritance keeps working with chat

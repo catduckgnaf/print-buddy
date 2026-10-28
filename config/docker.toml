@@ -58,6 +58,19 @@ host = "127.0.0.1"
 port = 0
 access_token_env = "WEBUI_ACCESS_TOKEN"
 
+[agent]
+# Stray-chat agent lane (#524 stage 3): an agent endpoint — any
+# OpenAI-compatible chat completions URL, e.g. a Hermes agent behind its
+# API — that answers Discord free text the handlers did not take, ahead of
+# the [llm] call. Empty chat_url: no agent lane. The endpoint answers in
+# its own voice; its replies are posted as-is and can never run a command.
+# model is optional: empty omits it from the request.
+# PRINT_HANDY__DISCORD__CHAT_LLM_ENABLED=false turns this lane off too.
+chat_url = ""
+model = ""
+api_key_env = "AGENT_API_KEY"
+timeout_s = 120
+
 [design]
 # AI design with OpenSCAD (#388): no enabled key on purpose — unset is
 # AUTO (on whenever a design/LLM endpoint is configured, like roasts).

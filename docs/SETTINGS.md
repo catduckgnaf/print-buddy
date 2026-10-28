@@ -185,6 +185,17 @@ The contract is deliberately small:
 - **Timeout and failures:** Print Handy waits at most **30 seconds** for the answer. Anything that goes wrong — endpoint unreachable, timeout, an HTTP error status, or a body that is not a JSON object — degrades to verdict `uncertain` with the detail "the vision check could not be completed", so a broken endpoint produces visible alerts instead of silently passing frames. The underlying error is written to the log (`vision check failed via PRINT_VISION_URL: ...`), which is where a mis-configured URL is diagnosed.
 - **Label reads (#514):** the same endpoint may also receive the spool-label prompt (the photo intake above): the request shape is identical, the `image` is the operator's label photo, and the response body should be the JSON object the prompt describes (brand / material / color / grams / nozzle_temp / bed_temp) instead of a verdict object. An endpoint that only answers verdicts will simply fail the label read — the walkthrough refuses with the reason and falls back to its manual steps.
 
+## Semantic lookup endpoint (PRINT_FUZZY_URL)
+
+`/print-lookup` matches locally first — exact, substring, then the deterministic typo tolerance (#468 stages 1–3) — and those results never change. What local matching cannot do is meaning: "bed won't stick" shares no characters worth counting with the "bed adhesion" entries. Setting the plain environment variable `PRINT_FUZZY_URL` — not a `PRINT_HANDY__` setting, no config-file form — adds an **opt-in, stateless** semantic layer *behind* the local matcher: only when a lookup finds nothing locally is the query offered to your endpoint, and its answers come back labelled as endpoint suggestions in the same did-you-mean spirit. This is an operator option for installs that want it (the reference implementation is a small Cloudflare Worker over an embeddings model); nothing about a default install changes, and no lookup data is stored by Print Handy or, under this contract, by the endpoint.
+
+The contract is deliberately small:
+
+- **Request:** `POST` to the `PRINT_FUZZY_URL` URL with header `Content-Type: application/json` and no `Authorization` header (the URL carries its secret in the path, like `PRINT_VISION_URL`). The body is `{"query": "...", "candidates": [{"id": "...", "text": "..."}], "threshold": 0.55, "limit": 5}`. Candidates are Print Handy's own public registry entries — firmware topics, symptoms, guided flows, printer models (ids like `symptom:first-layer-not-sticking`, text the display name). Print numbers, spool IDs and per-install data (print-history titles) are never sent as candidates; only the query text you typed and those public entries leave the machine.
+- **Response:** HTTP 200 with `{"matches": [{"id": "...", "text": "...", "score": 0.0–1.0}], "degraded": false}` — cosine similarities, best first. An endpoint that cannot answer says `{"matches": [], "degraded": true, "reason": "..."}`. Matches whose id is not one of the candidates sent are ignored.
+- **Threshold:** the `0.55` sent today is the reference spike's placeholder, chosen before a live corpus existed; expect to tune it against your own lookups. Scores below it are the endpoint's to drop.
+- **Timeout and failures:** Print Handy waits at most **10 seconds**. Anything that goes wrong — unreachable, timeout, an HTTP error status, a malformed body, `degraded: true` — silently keeps the local behaviour (the usual "Nothing in the registries matches" reply), and the failure is written to the log (`semantic lookup via PRINT_FUZZY_URL failed, ...`).
+
 ## Local failure detector
 
 Setting `vision.local_detector_enabled` to `true` gives the camera watchdog a third verdict route (#455): a built-in ONNX failure detector that runs **on this machine**. It exists for installs with no LLM endpoint and no cloud service — before it, those installs got no bad-print detection at all, because every verdict route needed an endpoint. Nothing leaves the house and no API key is involved.
@@ -274,6 +285,7 @@ These configure the Compose deployment, not Print Handy itself. Set them in `.en
 | `PRINT_HANDY_BUNDLED_SPOOLMAN` | `true` | `true` runs the bundled Spoolman API; `false` uses `services.spoolman_url` only |
 | `SPOOLMAN_HOST` | `127.0.0.1` | Bundled Spoolman bind address; widen it only together with an approved port mapping, see docs/DOCKER.md |
 | `PRINT_VISION_URL` | empty | Custom vision endpoint for camera checks; takes precedence over `services.vision_chat_url` and needs no key. See [Custom vision endpoint](#custom-vision-endpoint-print_vision_url) |
+| `PRINT_FUZZY_URL` | empty | Opt-in semantic endpoint consulted only when a `/print-lookup` query matches nothing locally; stateless, no key sent. See [Semantic lookup endpoint](#semantic-lookup-endpoint-print_fuzzy_url) |
 
 `WITH_ORCA=false` (default) omits both Orca channels; slicing fails closed without either binary.
 

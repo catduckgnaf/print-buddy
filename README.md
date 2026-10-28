@@ -21,6 +21,23 @@ Current release: **2.1.6**
 
 That's the whole idea: the convenience of printing from chat, with a human — you — making the final call every time.
 
+<img src="assets/screenshots/discord-02-copies-and-confirm.png" alt="Print Handy in Discord: choose the number of copies, then confirm the estimate with Slice and print now, Slice only, Stop with colors saved or Cancel print request" width="720">
+
+<details>
+<summary><b>See a whole print in Discord, step by step</b></summary>
+
+1. **Share a link, pick colors.** ![Paste a model link and choose a color](assets/screenshots/discord-01-link-and-colors.png)
+2. **Choose copies and confirm.** ![Copies and the confirm buttons](assets/screenshots/discord-02-copies-and-confirm.png)
+3. **The print starts.** ![Print started post](assets/screenshots/discord-03-print-start.png)
+4. **It finishes, with a timelapse.** ![Print complete post with timelapse](assets/screenshots/discord-04-print-complete.png)
+5. **The camera watchdog spots trouble.** ![Camera alert with Pause, It's fine and Stop asking for this print](assets/screenshots/discord-05-camera-watchdog.png)
+6. **Pause, runout and the spool question.** ![Paused post and runout spool question](assets/screenshots/discord-06-pause-and-runout.png)
+7. **A spool added in Spoolman gets offered for a slot.** ![New spool prompt and load flow](assets/screenshots/discord-07-new-spool.png)
+
+These are mockups built from the bot's real message text and buttons, with placeholder names. Sources for every line are in [assets/screenshots](assets/screenshots/README.md).
+
+</details>
+
 ## Quick start (Docker)
 
 Docker is the easiest way to run Print Handy. One container does everything:

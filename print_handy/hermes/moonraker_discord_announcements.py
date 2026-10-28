@@ -520,6 +520,86 @@ def load_state():
         return {}
 
 
+# ------------------------------------------------------- pending completion
+# The pending completion (message + its timelapse job key) is filed per
+# printer (#536): one state root serves every roster printer's announcer,
+# and a single shared slot let one printer's completion overwrite — or be
+# cleared by — another's. The pre-#536 single slots are adopted on read as
+# the serving printer's: in a one-printer install they always were.
+
+
+def _pending_printer_key():
+    """The key pending completion state is filed under: the printer served."""
+    try:
+        from .. import listeners
+        pid = listeners.instance_printer_id()
+    except Exception:
+        pid = None
+    if pid:
+        return str(pid)
+    try:
+        entries = (_config.cfg() or {}).get("printers") or []
+        if entries:
+            return str(entries[0].get("id"))
+    except Exception:
+        pass
+    return "default"
+
+
+def _pending_get(state, plural, singular):
+    bucket = state.get(plural)
+    if isinstance(bucket, dict):
+        value = bucket.get(_pending_printer_key())
+        if value:
+            return value
+    return state.get(singular)
+
+
+def _pending_set(state, plural, singular, value):
+    bucket = state.get(plural)
+    if not isinstance(bucket, dict):
+        bucket = {}
+        state[plural] = bucket
+    bucket[_pending_printer_key()] = value
+    state.pop(singular, None)
+
+
+def _pending_clear(state, plural, singular, value=None):
+    bucket = state.get(plural)
+    if isinstance(bucket, dict):
+        key = _pending_printer_key()
+        if key in bucket and (value is None or bucket[key] == value):
+            bucket.pop(key, None)
+    if state.get(singular) is not None and (value is None or state.get(singular) == value):
+        state.pop(singular, None)
+
+
+def pending_completion_message(state):
+    """This printer's pending completion message, or None."""
+    return _pending_get(state, "pending_completion_messages", "pending_completion_message")
+
+
+def set_pending_completion_message(state, message):
+    _pending_set(state, "pending_completion_messages", "pending_completion_message", message)
+
+
+def clear_pending_completion_message(state, message=None):
+    _pending_clear(state, "pending_completion_messages", "pending_completion_message", message)
+
+
+def pending_timelapse_job_key(state):
+    """This printer's pending timelapse job key, or None."""
+    return _pending_get(state, "pending_timelapse_job_keys", "pending_timelapse_job_key")
+
+
+def set_pending_timelapse_job_key(state, job_key):
+    _pending_set(state, "pending_timelapse_job_keys", "pending_timelapse_job_key", job_key)
+
+
+def clear_pending_timelapse_job_key(state, job_key=None):
+    _pending_clear(state, "pending_timelapse_job_keys", "pending_timelapse_job_key", job_key)
+
+
 HISTORY_STATE = {"completed": "complete", "cancelled": "cancelled"}
 
 
@@ -606,9 +686,11 @@ def main():
         except Exception as exc:
             print(f"Stopped print record unavailable: {exc}", file=sys.stderr)
 
-    # A new job gets a fresh one-shot announcement state.
+    # A new job gets a fresh one-shot announcement state. Pending completions
+    # are per-printer (#536) and survive: another printer's undelivered
+    # completion is not this job's to discard.
     if job_key != previous_key:
-        previous = {
+        fresh = {
             "job_key": job_key,
             "completion": completion,
             "printing": state in ACTIVE_STATES,
@@ -616,6 +698,10 @@ def main():
             "record_written": False,
             "print_started_at": time.time() if state in ACTIVE_STATES else None,
         }
+        for pending_key in ("pending_completion_messages", "pending_timelapse_job_keys"):
+            if isinstance(previous.get(pending_key), dict) and previous[pending_key]:
+                fresh[pending_key] = previous[pending_key]
+        previous = fresh
         save_state(previous)
         return 0
 
@@ -635,7 +721,7 @@ def main():
             # to, so a listener restart during the render wait can re-drive
             # the retrieval instead of posting the pending text bare and
             # losing the video (#373).
-            previous["pending_timelapse_job_key"] = job_key
+            set_pending_timelapse_job_key(previous, job_key)
         # No roast here (#374): the one roast per print belongs to the start
         # announcement, added when printing begins. Completion never invokes
         # the roast generator.
@@ -673,7 +759,7 @@ def main():
             previous["memory_verified"] = False
             previous["memory_line"] = "deferred until the complete batch/job finishes"
         # Keep the completion retryable until the listener confirms Discord delivery.
-        previous["pending_completion_message"] = message
+        set_pending_completion_message(previous, message)
 
     # A cancel or error also finalizes the print record, without an announcement
     # or session cleanup, so every started print ends with a dated outcome.

@@ -658,19 +658,11 @@ def _validate_entry(stub):
 
 
 def _check_chat_claims(data, entries):
-    """Two entries may not claim the same channel (design §2.3): an entry's claim is its
-    own chat_id, or the global [discord] chat_id it falls back to. The routing behaviour
-    itself is Stage 2c (#335); the refusal lives here, at config level."""
-    fallback = str(data.get("discord", {}).get("chat_id") or "")
-    claims = {}
-    for entry in entries:
-        claim = entry["chat_id"] or fallback
-        if not claim:
-            continue
-        if claim in claims:
-            raise SettingsError(f"[printers] entries {claims[claim]!r} and {entry['id']!r} both claim "
-                                f"discord chat_id {claim}: give each printer its own chat_id")
-        claims[claim] = entry["id"]
+    """Shared claims are legal (#536): two entries claiming the same chat make it a
+    shared channel, where printer-bound handlers ask which printer instead of the
+    channel deciding. There is nothing to refuse here; the claim model itself lives
+    in print_handy.bot.routing (channel_claims / shared_channel_map). Kept as a
+    named validation step so the roster pass reads the same either way."""
 
 
 # Legacy per-printer locations a declared roster replaces, as environment names.

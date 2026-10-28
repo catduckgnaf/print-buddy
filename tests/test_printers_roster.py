@@ -270,9 +270,9 @@ printers:
     model: klipper.generic
 """)
 
-    def test_duplicate_chat_id_refuses(self):
-        with self.assertRaisesRegex(settings.SettingsError, "both claim discord chat_id 222"):
-            load_local("""
+    def test_duplicate_chat_id_loads_as_a_shared_claim(self):
+        # Two entries claiming one chat is a shared channel now (#536), not a refusal.
+        data = load_local("""
 printers:
   - id: a1
     model: bambulab.a1
@@ -281,10 +281,12 @@ printers:
     model: flashforge.ad5x
     chat_id: "222"
 """)
+        self.assertEqual([entry["id"] for entry in data["printers"]], ["a1", "ad5x"])
+        self.assertEqual([entry["chat_id"] for entry in data["printers"]], ["222", "222"])
 
-    def test_two_fallback_claims_on_the_global_channel_refuse(self):
-        with self.assertRaisesRegex(settings.SettingsError, "both claim discord chat_id 111"):
-            load_local("""
+    def test_two_fallback_claims_on_the_global_channel_load(self):
+        # Two fallback claims on the global channel: a shared channel (#536).
+        data = load_local("""
 discord:
   chat_id: "111"
 printers:
@@ -293,6 +295,7 @@ printers:
   - id: ad5x
     model: flashforge.ad5x
 """)
+        self.assertEqual([entry["id"] for entry in data["printers"]], ["a1", "ad5x"])
 
     def test_one_fallback_claim_is_the_design_example(self):
         # Design §3: one entry claims its own channel, the other falls back to the global one.

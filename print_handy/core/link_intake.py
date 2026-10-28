@@ -62,6 +62,22 @@ def typed_reply(source, text):
     keys = [key for key in _typed_prompts if key[:3] == scope]
     if not scope[2] or not keys:
         return None
+    # Two intakes of one operator decided for DIFFERENT printers in a
+    # shared channel (#536) register under different printer-scoped keys:
+    # a typed reply cannot tell them apart, so it resolves neither rather
+    # than feeding one printer's prompt the other's answer. Same-printer
+    # and unscoped prompts keep the newest-wins routing below.
+    from .prompts import PRINTER_KEY_SEP
+    printers = set()
+    for key in keys:
+        try:
+            registered = str(cm.session_key(_typed_prompts[key][0]) or '')
+        except Exception:
+            registered = ''
+        if PRINTER_KEY_SEP in registered:
+            printers.add(registered.rsplit(PRINTER_KEY_SEP, 1)[-1])
+    if len(printers) > 1:
+        return None
     cid, parser = _typed_prompts[keys[-1]]
     if str(text or '').strip().casefold() in CANCEL_WORDS:
         return '' if cm.resolve_gateway_clarify(cid, 'cancel') else None

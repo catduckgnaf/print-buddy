@@ -186,7 +186,8 @@ class HermesClarifyAdapter:
         (``prompts.open_prompt_for``) because the plugin holds the registry,
         not an adapter's session rows.
         """
-        cid = self.registry.open_prompt_for(session_key)
+        cid = self.registry.open_prompt_scoped(session_key) \
+            if hasattr(self.registry, "open_prompt_scoped") else self.registry.open_prompt_for(session_key)
         if cid is None or not self.registry.resolve_gateway_clarify(cid, str(text)):
             return False
         await self.close_prompt(cid, f"Answered by message: {str(text)[:100]}")

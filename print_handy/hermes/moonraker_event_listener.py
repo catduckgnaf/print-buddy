@@ -827,9 +827,9 @@ def _post_completion(message, completion_message):
     delivered = post(message)
     if delivered:
         state = announcer.load_state()
-        if state.get("pending_completion_message") == completion_message:
-            state.pop("pending_completion_message", None)
-            state.pop("pending_timelapse_job_key", None)
+        if announcer.pending_completion_message(state) == completion_message:
+            announcer.clear_pending_completion_message(state, completion_message)
+            announcer.clear_pending_timelapse_job_key(state)
             state["announced_completion"] = True
             announcer.save_state(state)
     return delivered
@@ -838,9 +838,9 @@ def _post_completion(message, completion_message):
 def run_announcer(reason):
     """Run announcer once; wait to make completion and its video one Discord message."""
     out = io.StringIO()
-    pending = announcer.load_state().get("pending_completion_message")
+    pending = announcer.pending_completion_message(announcer.load_state())
     if pending:
-        tl_key = announcer.load_state().get("pending_timelapse_job_key")
+        tl_key = announcer.pending_timelapse_job_key(announcer.load_state())
         if tl_key:
             # The completion's video leg was armed but never delivered — the
             # listener restarted (or the postprocess died) during the render
@@ -850,7 +850,7 @@ def run_announcer(reason):
             # twice; the postprocess's own fallbacks post text (with the
             # reason) if the video still cannot be attached.
             state = announcer.load_state()
-            state.pop("pending_timelapse_job_key", None)
+            announcer.clear_pending_timelapse_job_key(state, tl_key)
             announcer.save_state(state)
             threading.Thread(target=_timelapse_postprocess, args=(tl_key, pending, None, None),
                              daemon=True, name="timelapse-postprocess-retry").start()
@@ -861,7 +861,7 @@ def run_announcer(reason):
                 log(f"announcer error ({reason}): {exc!r}")
             return
         delivered = _post_completion(pending, pending)
-        if not delivered or announcer.load_state().get("pending_completion_message"):
+        if not delivered or announcer.pending_completion_message(announcer.load_state()):
             # Avoid a second identical delivery attempt from main() in this pass.
             try:
                 with contextlib.redirect_stdout(io.StringIO()):
@@ -1854,6 +1854,16 @@ def _visual_layer(stats):
     return value if isinstance(value, int) else None
 
 
+def _with_printer_name(text):
+    """Append the serving printer's name on a multi-printer roster (#536).
+
+    The watchdog texts are built here, not via format_event, so they take
+    the same trailing tag explicitly; a one-printer install is unchanged.
+    """
+    name = print_summary.announcement_printer_name()
+    return f"{text}\nPrinter: {name}" if name else text
+
+
 def _visual_alert(filename, image, reason, identity=None):
     # #317: a watchdog alert is blooper material; record() never raises.
     print_markers.record(filename, print_markers.WATCHDOG_ALERT, detail=reason)
@@ -1861,7 +1871,7 @@ def _visual_alert(filename, image, reason, identity=None):
     target.mkdir(parents=True, exist_ok=True)
     path = target / f"{int(time.time())}-{Path(filename or 'print').stem}.jpg"
     path.write_bytes(image)
-    text = f"Print camera check: {clean(filename)}\n{reason}"
+    text = _with_printer_name(f"Print camera check: {clean(filename)}\n{reason}")
     if _buttonless_standalone():
         post(text + f"\n{path}\nMEDIA:{path}")
         return path
@@ -1885,9 +1895,10 @@ def _visual_dark_notice(filename, identity=None):
     with only the "Stop asking for this print" button, via the alert-button
     transport. No image is attached — the frame is black.
     """
-    text = (f"Camera check: {clean(filename)} — the camera image is completely dark, "
-            "so I can't check the print. Check the camera or its light. "
-            "Monitoring continues; nothing was sent to the printer.")
+    text = _with_printer_name(
+        f"Camera check: {clean(filename)} — the camera image is completely dark, "
+        "so I can't check the print. Check the camera or its light. "
+        "Monitoring continues; nothing was sent to the printer.")
     if _buttonless_standalone():
         post(text)
         return

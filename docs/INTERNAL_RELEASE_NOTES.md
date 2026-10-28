@@ -4,6 +4,7 @@
 
 **What users can do now:**
 - Serve two printers from one Discord channel: when a channel is claimed by more than one printer, dropping a model link (or running a printer-bound command) asks which printer to use first — one question, answered by button or typed reply — and the job binds to that printer from there; lifecycle posts in a shared channel name their printer. Channel-per-printer routing is unchanged for installs that prefer it. A picker raised inside a thread is posted in that thread, and a typed reply that could belong to two printers' open questions resolves neither rather than crossing answers. Issue: #536.
+- Add a printer to a running install from Discord: `/print-handy add-printer` walks through the model, the display name the shared-channel picker shows, and the connection fields for that printer's kind, tests the connection live against the real printer before anything is saved (a failure loops back to the field that failed), and writes the roster entry only at the explicit `apply`. Secrets are never collected in chat — each step names the environment variable to store the value in (per-printer names for Bambu Lab and PrusaLink; the shared OctoPrint and stock FlashForge names are called out as shared when a second such printer is added). A legacy single-printer settings file is converted into the roster on the way, a timestamped backup is kept, and the new printer's first hardware record is created. Nothing is restarted: the flow says plainly that a restart brings the printer live. Issue: #537.
 
 # Version 2.1.8
 

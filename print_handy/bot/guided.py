@@ -17,7 +17,18 @@ print-feedback plugin share one implementation:
   output passes through :func:`redact`, which removes secret values, private filesystem
   paths, and long numeric identifiers.
 
-Printer operations and print authorization are deliberately out of scope for both flows.
+- ``/print-handy add-printer`` (#537) onboards another printer onto an already-configured
+  install, on the same checklist machinery: model, then the display name the shared-channel
+  picker shows, then the connection fields of that model's domain, then a live connection
+  probe (a step type of its own — :class:`ProbeStep` — that runs the per-domain proof from
+  ``core.connection_probe`` and loops back to the field that failed). Secrets are never
+  collected in chat: a step names the environment variable to store the value in and the
+  person replies when it is stored, exactly like the token step. Nothing is written until
+  ``apply`` at review; the write itself is the roster writer (which converts a legacy
+  single-printer config), followed by the printer's first hardware record. The flow never
+  restarts anything — it says plainly that a restart brings the new printer live.
+
+Printer operations and print authorization are deliberately out of scope for these flows.
 """
 from __future__ import annotations
 
@@ -41,6 +52,7 @@ SESSION_TIMEOUT_S = 24 * 3600
 
 HELP = """**Print Handy setup and debugging** — neither flow prints, moves, or authorizes a printer.
 - `/print-handy setup`: guided setup in small steps. Your checklist is saved, so you can stop and resume later. At the review step, reply `add` to set up more printers — each gets its own channel and state folder.
+- `/print-handy add-printer`: guided onboarding of another printer onto this install — name, connection, a live test of the printer, then your approval. Secrets are never collected in chat.
 - `/print-handy debugging`: read-only checks (configuration, bot login, permissions, connectivity, executables, state and logs). Secrets and private paths are redacted.
 - `/print-handy bundle`: write a redacted diagnostics bundle (versions, configuration summary, doctor output, recent log tail) into the state folder, ready to attach to a bug report. Nothing is uploaded.
 - `/print-handy debug on [minutes]` / `off` / `status`: debug log mode (#478) — temporary DEBUG capture (30 minutes by default, then it turns itself off). Turning it off delivers the sanitized log export for the session here in chat, with its sanitization report. Logging only; printing is unaffected.
@@ -170,6 +182,33 @@ class Step:
     validate: object  # callable(value, answers) -> stored value, raising ValueError
 
 
+@dataclass(frozen=True)
+class ProbeOutcome:
+    """The result of one probe-step run: what to tell the person, and — on
+    failure — which earlier step `back` returns to (the field that failed)."""
+    ok: bool
+    text: str
+    back_key: str | None = None
+
+
+@dataclass(frozen=True)
+class ProbeStep:
+    """A step that runs an action instead of collecting an answer (#537).
+
+    A connection test is not an answer: it takes seconds, is domain-specific,
+    and its failures must loop back to the field that caused them rather than
+    abort the flow — none of which the answer-shaped :class:`Step` expresses.
+    ``run`` takes the answers collected so far and returns a
+    :class:`ProbeOutcome`. The step is answered by the flow's probe protocol
+    (``test`` / ``retry`` / ``back`` / ``offline``), implemented by the
+    onboarding handler below; any future flow can reuse the type the same way.
+    """
+    key: str
+    label: str
+    prompt: str
+    run: object  # callable(answers) -> ProbeOutcome
+
+
 def steps(token_env="DISCORD_BOT_TOKEN"):
     model_list = ", ".join(sorted(printers.MODELS))
     return (
@@ -279,6 +318,641 @@ def _add_prompt_text(session, note=""):
         "\n\nReply with the answer, or `/print-handy cancel` to pause (your checklist is saved)."
 
 
+# ---------------------------------------------------------------------- printer onboarding (#537)
+#
+# A second flow on the same checklist machinery: add one printer to an
+# already-configured install. The step list is not static — it is derived from
+# the answers after every answer (the model's vendor decides the domain, the
+# domain decides the fields, a gate step prunes the rest), and the flow always
+# points at the first unanswered step. Secrets follow the house rule: a step
+# names the environment variable to store the value in, and the person replies
+# when it is stored; values are never collected, stored in the session, or
+# echoed. The connection is proven by a ProbeStep before review, and nothing
+# is written until `apply` — the roster writer plus the first hardware record.
+
+def _bambu_env_name(printer_id):
+    """The per-printer LAN access code variable (setup_wizard.py: the same
+    derivation the wizard writes into the roster entry)."""
+    return "BAMBU_LAN_PASSWORD_" + str(printer_id).upper().replace("-", "_")
+
+
+def _prusa_env_name(printer_id):
+    """The per-printer PrusaLink API key variable (same derivation rule)."""
+    return "PRUSA_LINK_API_KEY_" + str(printer_id).upper().replace("-", "_")
+
+
+def _derive_printer_id(name, taken_ids):
+    """The roster id for a chosen display name: the settings loader's slug
+    rule, uniquified with a numeric suffix (ids are append-stable keys)."""
+    base = settings._printer_id_slug(name)
+    candidate, suffix = base, 2
+    while candidate in taken_ids:
+        candidate = f"{base}-{suffix}"
+        suffix += 1
+    return candidate
+
+
+def _validate_ob_name(value, answers):
+    label = printers.MODELS[answers["model"]].label
+    name = label if value.strip().casefold() == "default" else value.strip()
+    if not name:
+        raise ValueError("reply with a name for this printer, or `default` for "
+                    f"{label!r}")
+    if len(name) > 48 or name.startswith("/") or "\n" in name:
+        raise ValueError("keep the name short (at most 48 characters) and free of "
+                    "newlines")
+    taken = {str(n).casefold() for n in answers["__existing"]["names"]}
+    if name.casefold() in taken:
+        raise ValueError(f"one of your printers is already called {name!r} — in a "
+                    "shared channel the name is how prints are told apart, so "
+                    "reply with a different name")
+    return name
+
+
+def _validate_ob_host(value, answers):
+    """A plain host, or blank/`skip` for an offline entry (stored as '')."""
+    host = value.strip()
+    if not host or host.casefold() == "skip":
+        return ""
+    from .. import setup_wizard
+    error = setup_wizard._host(host)
+    if error:
+        raise ValueError(error)
+    return host
+
+
+def _validate_ob_lan_host(value, answers):
+    host = value.strip()
+    from .. import setup_wizard
+    error = setup_wizard._host(host)
+    if error:
+        raise ValueError(error)
+    return host
+
+
+def _validate_ob_lan_serial(value, answers):
+    serial = value.strip()
+    from .. import setup_wizard
+    error = setup_wizard._serial(serial)
+    if error:
+        raise ValueError(error)
+    return serial
+
+
+def _validate_yes_no(value, answers):
+    low = value.strip().casefold()
+    if low in ("yes", "y"):
+        return True
+    if low in ("no", "n"):
+        return False
+    raise ValueError("reply `yes` or `no`")
+
+
+def _validate_secret_stored(value, answers):
+    """The token step's posture: `stored` asserts the value is in the .env
+    under the named variable; `skip` records that it is not (which, for a
+    required secret, moves the printer to the unverified path)."""
+    low = value.strip().casefold()
+    if low == "stored":
+        return True
+    if low == "skip":
+        return False
+    raise ValueError("reply `stored` once the value is in the .env under that name "
+                "(never paste the value here), or `skip`")
+
+
+def _validate_trust_ack(value, answers):
+    if value.strip().casefold() in ("ok", "yes", "continue"):
+        return True
+    raise ValueError("reply `ok` to continue on a trusted network, or "
+                "`/print-handy cancel` to stop")
+
+
+def _onboard_keys(answers):
+    """The step list implied by the answers so far. The probe step appears
+    only when the connection is complete enough to test (fields present and,
+    where the domain has one, its secret confirmed stored); otherwise the
+    flow goes straight to review and says the entry is unverified."""
+    keys = ["model", "name"]
+    model_key = answers.get("model")
+    if not model_key:
+        return keys
+    conn = printers.MODELS[model_key].vendor.connection
+    if conn == "moonraker":
+        keys.append("moonraker_url")
+        if answers.get("moonraker_url"):
+            if model_key == "flashforge.ad5x":
+                keys.append("zmod_secrets")
+            keys.append("probe")
+    elif conn == "bambulab_lan":
+        keys.append("lan_gate")
+        if answers.get("lan_gate"):
+            keys += ["lan_host", "lan_serial", "lan_secret"]
+            if answers.get("lan_secret"):
+                keys.append("probe")
+    elif conn == "prusalink":
+        keys.append("link_host")
+        if answers.get("link_host"):
+            keys.append("prusa_secret")
+            if answers.get("prusa_secret"):
+                keys.append("probe")
+    elif conn == "elegoo_sdcp":
+        keys.append("host")
+        if answers.get("host"):
+            keys += ["sdcp_trust", "probe"]
+    elif conn == "octoprint":
+        keys.append("octoprint_url")
+        if answers.get("octoprint_url"):
+            keys.append("octo_secret")
+            if answers.get("octo_secret"):
+                keys.append("probe")
+    elif conn == "flashforge_stock":
+        keys.append("host")
+        if answers.get("host"):
+            keys.append("stock_secrets")
+            if answers.get("stock_secrets"):
+                keys.append("probe")
+    return keys
+
+
+_STEP_LABELS_OB = {
+    "model": "Printer model", "name": "Display name",
+    "moonraker_url": "Moonraker URL", "zmod_secrets": "Stock side-channel secrets",
+    "lan_gate": "LAN connection", "lan_host": "Printer address (LAN)",
+    "lan_serial": "Printer serial", "lan_secret": "LAN access code (stored, never pasted)",
+    "link_host": "Printer address (PrusaLink)", "prusa_secret": "API key (stored, never pasted)",
+    "host": "Printer address", "sdcp_trust": "Network trust",
+    "octoprint_url": "OctoPrint URL", "octo_secret": "API key (stored, never pasted)",
+    "stock_secrets": "Serial + check code (stored, never pasted)",
+    "probe": "Live connection test",
+}
+
+
+def _onboard_step_defs(session, probe_runner=None):
+    """The step definitions for the session's domain, prompts interpolated
+    with the derived id / secret variable names, rebuilt per render."""
+    answers = session["ob_answers"]
+    existing = session["ob_existing"]
+    pid = answers.get("printer_id") or "printer"
+    model_key = answers.get("model")
+    label = printers.MODELS[model_key].label if model_key else ""
+    bambu_env = _bambu_env_name(pid)
+    prusa_env = _prusa_env_name(pid)
+    env_hint = (
+        "Store it in the profile/data folder's `.env` file (file mode 600), "
+        "the same place this bot's own secrets live.")
+    model_list = ", ".join(sorted(printers.MODELS))
+    defs = {
+        "model": Step("model", _STEP_LABELS_OB["model"],
+                      f"Which printer? Reply with its model key, one of: {model_list}.",
+                      _validate_model),
+        "name": Step("name", _STEP_LABELS_OB["name"],
+                     "What should this printer be called? The name is what the "
+                     "which-printer picker and every announcement in this shared "
+                     "channel show, and it must differ from your other printers' "
+                     f"names. Reply with a name, or `default` for {label!r}.",
+                     _validate_ob_name),
+        "moonraker_url": Step("moonraker_url", _STEP_LABELS_OB["moonraker_url"],
+                              "Reply with the printer's Moonraker URL (for example "
+                              "http://printer.local:7125). To add the printer offline "
+                              "instead — slicing only, nothing tested — reply `skip`.",
+                              _validate_service_url),
+        "zmod_secrets": Step(
+            "zmod_secrets", _STEP_LABELS_OB["zmod_secrets"],
+            "Optional: this printer's stock side channel (IFS occupancy, the "
+            "printer's own start button) uses two secrets, `$AD5X_SERIAL` and "
+            "`$AD5X_CHECK_CODE`, shared by every stock/ZMod printer on the "
+            "install. " + env_hint + " Reply `stored` if they are saved (the "
+            "main Moonraker connection does not need them), or `skip`.",
+            _validate_secret_stored),
+        "lan_gate": Step(
+            "lan_gate", _STEP_LABELS_OB["lan_gate"],
+            "Connect this Bambu Lab printer over your LAN? It must be in LAN "
+            "Mode — in LAN Mode the Bambu Handy app cannot reach it. Reply "
+            "`yes` to set up the live connection, or `no` to add the printer "
+            "as an offline entry (slicing only; nothing is tested).",
+            _validate_yes_no),
+        "lan_host": Step("lan_host", _STEP_LABELS_OB["lan_host"],
+                         "Reply with the printer's IP address or hostname on "
+                         "your LAN (plain host — no http://, no port).",
+                         _validate_ob_lan_host),
+        "lan_serial": Step("lan_serial", _STEP_LABELS_OB["lan_serial"],
+                           "Reply with the printer's serial number (on the "
+                           "printer: Settings > Device, or the WLAN page).",
+                           _validate_ob_lan_serial),
+        "lan_secret": Step(
+            "lan_secret", _STEP_LABELS_OB["lan_secret"],
+            "The printer's LAN access code is a secret and is never collected "
+            f"here. Store it as `${bambu_env}` — that per-printer name keeps "
+            "it separate from your other Bambu printers. " + env_hint + " "
+            "Reply `stored` when it is saved (the connection test uses it "
+            "next), or `skip` to save the printer unverified instead.",
+            _validate_secret_stored),
+        "link_host": Step(
+            "link_host", _STEP_LABELS_OB["link_host"],
+            "Reply with the printer's IP address or hostname (plain host, no "
+            "http:// and no port) — or reply `skip` to add it as an offline "
+            "printer.", _validate_ob_host),
+        "prusa_secret": Step(
+            "prusa_secret", _STEP_LABELS_OB["prusa_secret"],
+            "The PrusaLink API key is a secret and is never collected here. "
+            f"Store it as `${prusa_env}` — that per-printer name keeps it "
+            "separate from your other Prusa printers. " + env_hint + " Reply "
+            "`stored` when it is saved (the connection test uses it next), or "
+            "`skip` to save the printer unverified instead.",
+            _validate_secret_stored),
+        "host": Step("host", _STEP_LABELS_OB["host"],
+                     "Reply with the printer's IP address or hostname (plain "
+                     "host, no http:// and no port) — or reply `skip` to add "
+                     "it as an offline printer.", _validate_ob_host),
+        "sdcp_trust": Step(
+            "sdcp_trust", _STEP_LABELS_OB["sdcp_trust"],
+            "One caution before the test: SDCP has no password or key at all "
+            "— anyone who can reach the printer on the network can talk to "
+            "it. Only continue on a network you trust. Reply `ok` to continue.",
+            _validate_trust_ack),
+        "octoprint_url": Step(
+            "octoprint_url", _STEP_LABELS_OB["octoprint_url"],
+            "Reply with the OctoPrint URL (for example "
+            "http://ender.local:5000), or reply `skip` to add the printer "
+            "offline.",
+            lambda value, answers: ("" if value.strip().casefold() in ("", "skip")
+                                    else _url_or_err(value))),
+        "octo_secret": Step(
+            "octo_secret", _STEP_LABELS_OB["octo_secret"],
+            "OctoPrint's API key is a secret and is never collected here. "
+            "Store it as `$OCTOPRINT_API_KEY`. " + env_hint +
+            (" Note: that is one shared name — the OctoPrint printer you "
+             "already have uses it too, so both printers must accept the same "
+             "key; a second OctoPrint printer cannot hold a different one "
+             "today." if "octoprint" in existing["connections"] else "") +
+            " Reply `stored` when it is saved (the connection test uses it "
+            "next), or `skip` to save the printer unverified instead.",
+            _validate_secret_stored),
+        "stock_secrets": Step(
+            "stock_secrets", _STEP_LABELS_OB["stock_secrets"],
+            "The stock Flashforge API needs two secrets: the printer serial "
+            "(`$AD5X_SERIAL`) and its check code (`$AD5X_CHECK_CODE`). They "
+            "are never collected here. " + env_hint +
+            (" Note: those are shared names — the stock printer you already "
+             "have uses them too, so both printers must share one serial and "
+             "check code today." if "flashforge_stock" in existing["connections"]
+             else "") +
+            " Reply `stored` when both are saved (the connection test uses "
+            "them next), or `skip` to save the printer unverified instead.",
+            _validate_secret_stored),
+        "probe": ProbeStep(
+            "probe", _STEP_LABELS_OB["probe"],
+            "Everything is collected — now the printer is proven live. Reply "
+            "`test` to run the connection test against the real printer (it "
+            "can take a few seconds). If it fails, the reply says why: "
+            "`retry` tests again, `back` returns to the setting that failed, "
+            "and `offline` saves the printer unverified instead.",
+            probe_runner or _default_onboard_probe),
+    }
+    return defs
+
+
+def _url_or_err(value):
+    from .. import setup_wizard
+    error = setup_wizard._url(value.strip())
+    if error:
+        raise ValueError(error)
+    return value.strip()
+
+
+def _onboard_checklist_text(session):
+    answers = session["ob_answers"]
+    keys = session.get("ob_keys") or _onboard_keys(answers)
+    current = session.get("ob_step", 0)
+    in_review = session["status"] == "onboard_review"
+    lines = []
+    for index, key in enumerate(keys):
+        label = _STEP_LABELS_OB[key]
+        if in_review or key in answers:
+            mark = "☑"
+        elif index == current:
+            mark = "▶"
+        else:
+            mark = "☐"
+        lines.append(f"{mark} {index + 1}. {label}")
+    lines.append(f"{'▶' if in_review else '☐'} {len(keys) + 1}. "
+                 "Review and apply")
+    return "**Checklist**\n" + "\n".join(lines)
+
+
+def _onboard_prompt_text(session, note=""):
+    keys = session.get("ob_keys") or _onboard_keys(session["ob_answers"])
+    index = session["ob_step"]
+    step = _onboard_step_defs(session)[keys[index]]
+    text = f"**Add a printer ({index + 1} of {len(keys)}): {step.label}**\n{step.prompt}"
+    if isinstance(step, ProbeStep) and session.get("ob_probe_error"):
+        text = (f"**The connection test did not pass.** "
+                f"{session['ob_probe_error']}\n\n{text}")
+    if note:
+        text = f"{note}\n\n{text}"
+    return (f"{text}\n\n{_onboard_checklist_text(session)}\n\n"
+            "Reply with the answer, or `/print-handy cancel` to pause "
+            "(your checklist is saved).")
+
+
+def _onboard_entry(answers):
+    """The roster entry the answers describe: id/model/name always; the
+    domain's connection keys only when a connection was actually set up."""
+    entry = {"id": answers["printer_id"], "model": answers["model"],
+             "name": answers["name"]}
+    conn = printers.MODELS[answers["model"]].vendor.connection
+    if conn == "moonraker" and answers.get("moonraker_url"):
+        entry["moonraker_url"] = answers["moonraker_url"]
+    elif conn == "bambulab_lan" and answers.get("lan_gate"):
+        entry.update(lan_host=answers["lan_host"],
+                     lan_serial=answers["lan_serial"],
+                     lan_access_code_env=_bambu_env_name(answers["printer_id"]))
+    elif conn == "prusalink" and answers.get("link_host"):
+        entry.update(link_host=answers["link_host"],
+                     api_key_env=_prusa_env_name(answers["printer_id"]))
+    elif conn in ("elegoo_sdcp", "flashforge_stock") and answers.get("host"):
+        entry["host"] = answers["host"]
+    elif conn == "octoprint" and answers.get("octoprint_url"):
+        entry["octoprint_url"] = answers["octoprint_url"]
+    return entry
+
+
+def _default_onboard_probe(answers):
+    """Resolve the domain's secrets by name (never values in the session) and
+    run the per-domain proof from core.connection_probe."""
+    from ..core import connection_probe
+    from ..hermes import _config
+
+    conn = printers.MODELS[answers["model"]].vendor.connection
+    pid = answers.get("printer_id") or ""
+    secrets = {}
+    if conn == "moonraker":
+        secrets["moonraker_api_key"] = _config.profile_env_value("MOONRAKER_API_KEY")
+    elif conn == "bambulab_lan":
+        secrets["access_code"] = _config.profile_env_value(_bambu_env_name(pid))
+    elif conn == "prusalink":
+        secrets["api_key"] = _config.profile_env_value(_prusa_env_name(pid))
+    elif conn == "octoprint":
+        secrets["api_key"] = _config.profile_env_value("OCTOPRINT_API_KEY")
+    elif conn == "flashforge_stock":
+        secrets["serial"] = _config.profile_env_value("AD5X_SERIAL")
+        secrets["check_code"] = _config.profile_env_value("AD5X_CHECK_CODE")
+    result = connection_probe.probe(conn, _onboard_entry(answers), secrets)
+    if result.ok:
+        return ProbeOutcome(True, result.summary)
+    secret_step = {"bambulab_lan": "lan_secret", "prusalink": "prusa_secret",
+                   "octoprint": "octo_secret",
+                   "flashforge_stock": "stock_secrets"}.get(conn)
+    if result.category in ("auth", "missing_secret") and secret_step:
+        return ProbeOutcome(False, result.error, secret_step)
+    first_step = {"moonraker": "moonraker_url", "bambulab_lan": "lan_host",
+                  "prusalink": "link_host", "elegoo_sdcp": "host",
+                  "octoprint": "octoprint_url",
+                  "flashforge_stock": "host"}.get(conn)
+    return ProbeOutcome(False, result.error, first_step)
+
+
+def _apply_onboarding(answers):
+    """The onboarding apply: roster write (converting a legacy config on the
+    way), then the new printer's first hardware record. Raises on failure;
+    the handler keeps the session at review so nothing is lost."""
+    from .. import roster_write
+    from ..core import printer_state
+
+    entry = _onboard_entry(answers)
+    result = roster_write.add_printer(entry)
+    view = settings.view_for(entry["id"], settings.load())
+    seeded = printer_state.seed_hardware_record(entry["id"], view)
+    converted = (" Your existing single-printer settings were converted into "
+                 "the roster's first entry on the way."
+                 if result["converted"] else "")
+    record = (" Its first hardware record was created."
+              if seeded else
+              " A hardware record already existed for it and was kept.")
+    return (f"**{entry['name']}** (`{entry['id']}`) was added to "
+            f"{result['path'].name}; the previous file is kept as "
+            f"{result['backup'].name}.{converted}{record} "
+            "**Restart Print Handy to bring it live** — restart the container, "
+            "or the bot and listener services on a standalone install. Nothing "
+            "was restarted for you. Until the restart the new printer has no "
+            "listener and health checks will report it missing; that is "
+            "expected, not a failure. After the restart it serves this channel "
+            f"under the name {entry['name']}.")
+
+
+def _onboard_secret_line(answers):
+    conn = printers.MODELS[answers["model"]].vendor.connection
+    pid = answers["printer_id"]
+    if conn == "bambulab_lan" and answers.get("lan_gate"):
+        state = "stored" if answers.get("lan_secret") else "not stored — unverified"
+        return f"- Secret: LAN access code in `${_bambu_env_name(pid)}` ({state})"
+    if conn == "prusalink" and answers.get("link_host"):
+        state = "stored" if answers.get("prusa_secret") else "not stored — unverified"
+        return f"- Secret: API key in `${_prusa_env_name(pid)}` ({state})"
+    if conn == "octoprint" and answers.get("octoprint_url"):
+        state = "stored" if answers.get("octo_secret") else "not stored — unverified"
+        return f"- Secret: API key in `$OCTOPRINT_API_KEY` ({state})"
+    if conn == "flashforge_stock" and answers.get("host"):
+        state = "stored" if answers.get("stock_secrets") else "not stored — unverified"
+        return f"- Secrets: `$AD5X_SERIAL` + `$AD5X_CHECK_CODE` ({state})"
+    if conn == "moonraker" and answers.get("moonraker_url"):
+        side = ("stock side channel stored" if answers.get("zmod_secrets")
+                else "stock side channel off")
+        return f"- Secrets: none needed for Moonraker itself; {side}"
+    return None
+
+
+def _onboard_review_text(session, note=""):
+    answers = session["ob_answers"]
+    model = printers.MODELS[answers["model"]]
+    conn = model.vendor.connection
+    entry = _onboard_entry(answers)
+    target = (entry.get("moonraker_url") or entry.get("octoprint_url")
+              or entry.get("lan_host") or entry.get("link_host")
+              or entry.get("host"))
+    lines = ["**Ready to add this printer.** Nothing has been written yet.",
+             f"- Name: **{answers['name']}** — the name the which-printer "
+             "picker and announcements show",
+             f"- Id: `{answers['printer_id']}` (settings key and state folder)",
+             f"- Model: {model.label} (`{answers['model']}`)",
+             f"- Connection: {target or 'none — an offline entry (slicing only; no listener serves it)'}"]
+    secret_line = _onboard_secret_line(answers)
+    if secret_line:
+        lines.append(secret_line)
+    probe = answers.get("probe")
+    if probe and probe.get("ok"):
+        lines.append(f"- Live test: **passed** — {probe['summary']}")
+    elif probe:
+        lines.append("- Live test: **not passed** "
+                     f"({probe.get('reason') or 'the test was skipped'}) — the "
+                     "printer is saved with its connection settings but "
+                     "unverified; once the cause is fixed it connects at the "
+                     "next restart.")
+    elif target:
+        lines.append("- Live test: not run — the entry is saved unverified "
+                     "(its secret step was skipped).")
+    lines += ["",
+              _onboard_checklist_text(session),
+              "",
+              "Reply `apply` to write the roster entry into the settings file "
+              "(a timestamped backup is kept; a legacy single-printer file is "
+              "converted into the roster, and the rewrite does not preserve "
+              "comments) and create the printer's first hardware record. "
+              "Applying never restarts anything — you restart Print Handy "
+              "afterwards to bring the printer live. Reply `manual` for the "
+              "exact roster YAML to add by hand instead, or `/print-handy "
+              "cancel` to pause."]
+    if note:
+        lines.insert(0, note)
+    return "\n".join(lines)
+
+
+def _onboard_manual_text(session):
+    answers = session["ob_answers"]
+    entry = _onboard_entry(answers)
+    import yaml
+
+    snippet = yaml.safe_dump({"printers": [entry]}, sort_keys=False,
+                             default_flow_style=False).rstrip()
+    return ("Onboarding paused — nothing was written. To add the printer by "
+            "hand, put this entry in the `printers:` list of your settings "
+            "file (config/local.yaml; on a legacy single-printer file, first "
+            "convert it as docs/SETTINGS.md describes), store any secret under "
+            "the environment variable named in the entry — never in the file — "
+            "and restart Print Handy:\n\n```yaml\n"
+            f"{snippet}\n```\n\n"
+            "Run `/print-handy add-printer` any time to redo the walkthrough.")
+
+
+def _onboard_advance(session):
+    """Recompute the step list from the answers and point at the first
+    unanswered step; when every step is answered, move to review."""
+    keys = _onboard_keys(session["ob_answers"])
+    session["ob_keys"] = keys
+    for index, key in enumerate(keys):
+        if key not in session["ob_answers"]:
+            session["ob_step"] = index
+            session["status"] = "onboarding"
+            return
+    session["status"] = "onboard_review"
+
+
+def _onboard_answer(session, raw, *, store, now, probe_runner=None):
+    answers = session["ob_answers"]
+    keys = session.get("ob_keys") or _onboard_keys(answers)
+    key = keys[session["ob_step"]]
+    step = _onboard_step_defs(session, probe_runner)[key]
+    if isinstance(step, ProbeStep):
+        return _onboard_probe_answer(session, raw, step, store=store, now=now)
+    context = dict(answers)
+    context["__existing"] = session["ob_existing"]
+    try:
+        value = step.validate(raw, context)
+    except ValueError as exc:
+        return (f"That answer does not work: {exc}\n\n"
+                f"{_onboard_prompt_text(session)}")
+    answers[key] = value
+    if key == "name":
+        answers["printer_id"] = _derive_printer_id(
+            value, session["ob_existing"]["ids"])
+    session["updated_at"] = now
+    _onboard_advance(session)
+    store.save(session)
+    note = f"Saved: {step.label}."
+    if session["status"] == "onboard_review":
+        return _onboard_review_text(session, note=note)
+    return _onboard_prompt_text(session, note)
+
+
+def _onboard_probe_answer(session, raw, step, *, store, now):
+    answers = session["ob_answers"]
+    low = raw.strip().casefold()
+    if low in ("test", "retry"):
+        outcome = step.run(answers)
+        session["updated_at"] = now
+        if outcome.ok:
+            answers["probe"] = {"ok": True, "summary": outcome.text}
+            session.pop("ob_probe_error", None)
+            session.pop("ob_back_key", None)
+            _onboard_advance(session)
+            store.save(session)
+            note = f"Saved: {step.label}."
+            if session["status"] == "onboard_review":
+                return _onboard_review_text(session, note=note)
+            return _onboard_prompt_text(session, note)
+        session["ob_probe_error"] = outcome.text
+        session["ob_back_key"] = outcome.back_key
+        store.save(session)
+        back = (f", `back` to change the step that failed"
+                if outcome.back_key else "")
+        return (f"**The connection test did not pass.** {outcome.text}\n\n"
+                f"Fix the printer or the setting, then reply `retry` to test "
+                f"again{back}, or `offline` to save this printer unverified. "
+                "`/print-handy cancel` pauses; nothing has been written.")
+    if low == "back":
+        back_key = session.get("ob_back_key")
+        if not back_key:
+            return ("There is no failed test to go back from yet — reply "
+                    "`test` to run it, or `offline` to save without "
+                    f"testing.\n\n{_onboard_prompt_text(session)}")
+        keys = _onboard_keys(answers)
+        if back_key in keys:
+            for later in keys[keys.index(back_key):]:
+                answers.pop(later, None)
+        answers.pop("probe", None)
+        session.pop("ob_probe_error", None)
+        session.pop("ob_back_key", None)
+        session["updated_at"] = now
+        _onboard_advance(session)
+        store.save(session)
+        return _onboard_prompt_text(
+            session, "Back to the step that failed — correct it and the test "
+                     "will run again at the end.")
+    if low == "offline":
+        answers["probe"] = {
+            "ok": False, "offline": True,
+            "reason": session.get("ob_probe_error") or "the test was skipped",
+        }
+        session.pop("ob_probe_error", None)
+        session.pop("ob_back_key", None)
+        session["updated_at"] = now
+        _onboard_advance(session)
+        store.save(session)
+        note = f"Saved: {step.label}."
+        if session["status"] == "onboard_review":
+            return _onboard_review_text(session, note=note)
+        return _onboard_prompt_text(session, note)
+    return ("Reply `test` to run the connection test, `back` after a failure "
+            "to change the setting that failed, or `offline` to save without "
+            f"testing.\n\n{_onboard_prompt_text(session)}")
+
+
+def _onboard_review_answer(session, raw, *, store, now, onboard_apply=None):
+    low = raw.strip().casefold()
+    if low == "apply":
+        apply_fn = onboard_apply or _apply_onboarding
+        try:
+            detail = apply_fn(session["ob_answers"])
+        except Exception as exc:  # the roster writer refused: stay at review
+            return (f"**The printer was not added.** {exc}\nNothing was "
+                    "written and your answers are kept. Reply `apply` to try "
+                    "again once the cause is fixed, `manual` for the YAML to "
+                    "add by hand, or `/print-handy cancel` to pause.")
+        session["status"] = "complete"
+        session["updated_at"] = now
+        store.save(session)
+        return f"**Printer onboarding complete.** {detail}"
+    if low == "manual":
+        session["status"] = "cancelled"
+        session["updated_at"] = now
+        store.save(session)
+        return _onboard_manual_text(session)
+    return ("Reply `apply` to add the printer, `manual` for the YAML to add "
+            "by hand, or `/print-handy cancel` to pause.\n\n"
+            f"{_onboard_review_text(session)}")
+
+
 # ---------------------------------------------------------------------- session store
 
 class SetupStore:
@@ -325,7 +999,8 @@ def _new_session(key, now):
 
 
 def _expired(session, now):
-    return (session["status"] in ("in_progress", "awaiting_consent", "adding_printer")
+    return (session["status"] in ("in_progress", "awaiting_consent", "adding_printer",
+                                   "onboarding", "onboard_review")
             and now - float(session.get("updated_at") or 0) > SESSION_TIMEOUT_S)
 
 
@@ -525,7 +1200,8 @@ def _apply_answers(answers, config_path):
 # ---------------------------------------------------------------------- the flow
 
 def handle_text(key, text, *, store, now=None, token_env="DISCORD_BOT_TOKEN",
-                apply_config=None, report=None, bundle=None, debug=None):
+                apply_config=None, report=None, bundle=None, debug=None,
+                probe_runner=None, onboard_apply=None, config_loader=None):
     """One message in the guided flows. Returns the reply text, or None when not ours.
 
     ``key`` identifies one person's session in one channel/thread. ``report`` is a zero-arg
@@ -533,7 +1209,10 @@ def handle_text(key, text, *, store, now=None, token_env="DISCORD_BOT_TOKEN",
     the #390 diagnostics bundle and returns the reply saying where it went;
     ``debug`` is a one-arg callable taking the text after ``debug`` (``on``/``off``/``status``
     plus any duration) and returning the #478 debug-mode reply; ``apply_config`` writes the
-    consented settings.
+    consented settings. The onboarding kwargs are the same injection seam for #537:
+    ``probe_runner`` runs the live connection test, ``onboard_apply`` performs the
+    review-approved roster write, and ``config_loader`` reads the current settings the new
+    printer joins.
     """
     now = time.time() if now is None else now
     raw = str(text or "").strip()
@@ -564,18 +1243,76 @@ def handle_text(key, text, *, store, now=None, token_env="DISCORD_BOT_TOKEN",
                         "No guided setup has been started here. `/print-handy setup` begins one.")
             state = {"in_progress": "in progress", "adding_printer": "adding another printer",
                      "awaiting_consent": "waiting for your review choice",
+                     "onboarding": "adding a printer (guided onboarding)",
+                     "onboard_review": "adding a printer — waiting for your review choice",
                      "cancelled": "paused (cancelled)", "complete": "complete"}[session["status"]]
-            return f"Print Handy {__version__}\n**Guided setup: {state}**\n" + checklist_text(session)
+            checklist = (_onboard_checklist_text(session) if session.get("flow") == "onboard"
+                         else checklist_text(session))
+            return f"Print Handy {__version__}\n**Guided setup: {state}**\n" + checklist
         if rest == "cancel":
             if session is None or session["status"] == "complete":
                 return "No guided setup is in progress. Nothing was changed."
             session["status"] = "cancelled"
             session["updated_at"] = now
             store.save(session)
+            if session.get("flow") == "onboard":
+                return ("Printer onboarding paused. Your answers are saved in the checklist "
+                        "and nothing was written to the configuration.\n"
+                        + _onboard_checklist_text(session) +
+                        "\nResume any time with `/print-handy add-printer`.")
             return ("Setup paused. Your answers are saved in the checklist and nothing was "
                     "written to the configuration.\n" + checklist_text(session) +
                     "\nResume any time with `/print-handy setup`.")
+        if rest == "add-printer":
+            if (session is not None and session.get("flow") == "onboard"
+                    and session["status"] in ("onboarding", "onboard_review", "cancelled")):
+                note = ""
+                if session["status"] == "cancelled":
+                    note = "**Welcome back — resuming printer onboarding.**"
+                    _onboard_advance(session)
+                elif _expired(session, now):
+                    note = ("**Your previous session timed out; your saved answers were "
+                            "kept.** Resuming:")
+                session["updated_at"] = now
+                store.save(session)
+                if session["status"] == "onboard_review":
+                    return (note + "\n" if note else "") + _onboard_review_text(session)
+                return _onboard_prompt_text(session, note)
+            if (session is not None and session.get("flow") != "onboard"
+                    and session["status"] in ("in_progress", "awaiting_consent",
+                                              "adding_printer")):
+                return ("A guided setup is in progress here. Finish it, or "
+                        "`/print-handy cancel` to pause it, then run "
+                        "`/print-handy add-printer`.")
+            loader = config_loader or (lambda: settings.load())
+            try:
+                cfg = loader()
+            except Exception as exc:
+                return ("**Printer onboarding cannot start** — the current settings do not "
+                        f"load: {exc}\nFix the configuration first (`/print-handy debugging` "
+                        "shows the checks), then run `/print-handy add-printer` again.")
+            entries = cfg.get("printers") or []
+            session = {"key": key, "flow": "onboard", "status": "onboarding",
+                       "ob_answers": {}, "ob_step": 0, "ob_keys": ["model", "name"],
+                       "ob_existing": {
+                           "ids": [entry["id"] for entry in entries],
+                           "names": [str(entry["name"]) for entry in entries],
+                           "connections": [printers.MODELS[entry["model"]].vendor.connection
+                                           for entry in entries]},
+                       "created_at": now, "updated_at": now}
+            store.save(session)
+            return _onboard_prompt_text(
+                session,
+                "**Add a printer.** One question at a time; nothing is written until you "
+                "approve it at the end, and the printer is tested live before it is saved. "
+                "Secrets are never collected here — you store each value in the .env and "
+                "reply when it is stored.")
         if rest in ("setup", "setup restart"):
+            if (session is not None and session.get("flow") == "onboard"
+                    and session["status"] != "complete"):
+                return ("A printer onboarding is in progress here — `/print-handy add-printer` "
+                        "resumes it, or `/print-handy cancel` pauses it. Guided setup can "
+                        "start once it finishes.")
             if rest == "setup restart" or session is None or session["status"] == "complete":
                 session = _new_session(key, now)
                 store.save(session)
@@ -598,16 +1335,30 @@ def handle_text(key, text, *, store, now=None, token_env="DISCORD_BOT_TOKEN",
             if session["status"] == "awaiting_consent":
                 return (note + "\n" if note else "") + _review_text(session)
             return _prompt_text(session, note)
-        return ("Use `/print-handy setup`, `/print-handy debugging`, `/print-handy bundle`, "
-                "`/print-handy debug on|off|status`, `/print-handy status`, or `/print-handy cancel`.")
+        return ("Use `/print-handy setup`, `/print-handy add-printer`, `/print-handy debugging`, "
+                "`/print-handy bundle`, `/print-handy debug on|off|status`, `/print-handy status`, "
+                "or `/print-handy cancel`.")
 
-    if session is None or session["status"] not in ("in_progress", "awaiting_consent", "adding_printer"):
+    if session is None or session["status"] not in ("in_progress", "awaiting_consent",
+                                                     "adding_printer", "onboarding",
+                                                     "onboard_review"):
         return None
     if raw.startswith("/"):
         return None  # another command; setup stays open for a later plain reply
     if _expired(session, now):
+        if session.get("flow") == "onboard":
+            return ("This onboarding session timed out, so that reply was not used as an "
+                    "answer. Your saved answers were kept — run `/print-handy add-printer` "
+                    "to resume the checklist.")
         return ("This setup session timed out, so that reply was not used as an answer. "
                 "Your saved answers were kept — run `/print-handy setup` to resume the checklist.")
+
+    if session.get("flow") == "onboard":
+        if session["status"] == "onboard_review":
+            return _onboard_review_answer(session, raw, store=store, now=now,
+                                          onboard_apply=onboard_apply)
+        return _onboard_answer(session, raw, store=store, now=now,
+                               probe_runner=probe_runner)
 
     if session["status"] == "awaiting_consent":
         if low == "apply":

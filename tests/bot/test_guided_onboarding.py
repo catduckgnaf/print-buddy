@@ -1,0 +1,284 @@
+"""Guided printer onboarding (#537): add a printer to a configured install by
+walkthrough — model, name, per-domain fields, a live probe step, review,
+apply through the roster writer; secrets never collected or stored."""
+import json
+
+from print_handy.bot import commands, guided
+
+EXISTING = {"printers": [{"id": "ad5x", "model": "flashforge.ad5x",
+                          "name": "Workshop AD5X",
+                          "moonraker_url": "http://ad5x.local:7125"}]}
+
+
+def store(tmp_path):
+    return guided.SetupStore(tmp_path / "guided-setup.json")
+
+
+_CLOCK = [10_000]
+
+
+def say(store_obj, text, key="k", **kwargs):
+    kwargs.setdefault("report", lambda: "REPORT")
+    if "now" not in kwargs:  # one monotonic fake clock: sessions never expire mid-test
+        _CLOCK[0] += 10
+        kwargs["now"] = _CLOCK[0]
+    return guided.handle_text(key, text, store=store_obj, **kwargs)
+
+
+def loader():
+    return {"printers": [dict(entry) for entry in EXISTING["printers"]]}
+
+
+def ok_probe(answers):
+    return guided.ProbeOutcome(True, "the printer answered")
+
+
+def start(store_obj, **kwargs):
+    kwargs.setdefault("config_loader", loader)
+    return say(store_obj, "/print-handy add-printer", **kwargs)
+
+
+def walk(store_obj, answers, **kwargs):
+    reply = None
+    for answer in answers:
+        reply = say(store_obj, answer, **kwargs)
+    return reply
+
+
+# ---------------------------------------------------------------------- start and guards
+
+def test_add_printer_is_registered_and_in_help(tmp_path):
+    assert commands.as_text("print-handy", {"action": "add-printer"}) == "/print-handy add-printer"
+    reply = say(store(tmp_path), "/print-handy help")
+    assert "add-printer" in reply
+
+
+def test_start_asks_for_the_model_first(tmp_path):
+    st = store(tmp_path)
+    reply = start(st, now=1000)
+    assert "Add a printer (1 of 2): Printer model" in reply
+    assert "nothing is written until you approve" in reply
+    assert "Secrets are never collected" in reply
+
+
+def test_start_refuses_when_the_config_does_not_load(tmp_path):
+    st = store(tmp_path)
+    def broken():
+        raise ValueError("bad config")
+    reply = say(st, "/print-handy add-printer", config_loader=broken)
+    assert "cannot start" in reply and "bad config" in reply
+    assert st.get("k") is None
+
+
+def test_onboarding_and_setup_refuse_each_other(tmp_path):
+    st = store(tmp_path)
+    start(st, now=1000)
+    reply = say(st, "/print-handy setup")
+    assert "add-printer" in reply  # setup points at the running onboarding
+    st2 = store(tmp_path / "b")
+    say(st2, "/print-handy setup", now=1000)
+    reply = say(st2, "/print-handy add-printer", config_loader=loader)
+    assert "guided setup is in progress" in reply
+
+
+# ---------------------------------------------------------------------- walkthroughs
+
+def test_moonraker_walkthrough_probe_then_apply(tmp_path):
+    st = store(tmp_path)
+    applied = []
+    start(st, now=1000)
+    walk(st, ["creality.k1", "K1 Bench"], probe_runner=ok_probe)
+    reply = say(st, "http://k1.local:7125", probe_runner=ok_probe)
+    assert "Live connection test" in reply and "`test`" in reply
+    reply = say(st, "test", probe_runner=ok_probe)
+    assert "Ready to add this printer" in reply
+    assert "Live test: **passed**" in reply and "the printer answered" in reply
+    assert "K1 Bench" in reply and "`k1-bench`" in reply
+    reply = say(st, "apply", onboard_apply=lambda answers: applied.append(answers) or "written.")
+    assert "Printer onboarding complete" in reply and "written." in reply
+    assert applied[0]["model"] == "creality.k1"
+    assert applied[0]["moonraker_url"] == "http://k1.local:7125"
+    assert applied[0]["probe"]["ok"] is True
+    assert st.get("k")["status"] == "complete"
+
+
+def test_name_must_differ_from_existing_printers(tmp_path):
+    st = store(tmp_path)
+    start(st, now=1000)
+    say(st, "creality.k1")
+    reply = say(st, "workshop ad5x")  # case-insensitive clash
+    assert "already called" in reply
+    reply = say(st, "default")  # the model's own label is fine
+    assert "Moonraker URL" in reply
+    session = st.get("k")
+    assert session["ob_answers"]["name"] == "Creality K1"
+    assert session["ob_answers"]["printer_id"] == "creality-k1"
+
+
+def test_probe_failure_back_fix_and_retry(tmp_path):
+    st = store(tmp_path)
+    outcomes = [guided.ProbeOutcome(False, "nothing answered at that address",
+                                    "moonraker_url"),
+                guided.ProbeOutcome(True, "answered on the second address")]
+    calls = []
+    def flaky(answers):
+        calls.append(dict(answers))
+        return outcomes.pop(0)
+    start(st, now=1000)
+    walk(st, ["creality.k1", "K1", "http://wrong.local:7125"], probe_runner=flaky)
+    reply = say(st, "test", probe_runner=flaky)
+    assert "did not pass" in reply and "nothing answered" in reply
+    reply = say(st, "back", probe_runner=flaky)
+    assert "Moonraker URL" in reply  # returned to the failing field
+    assert "moonraker_url" not in st.get("k")["ob_answers"]
+    say(st, "http://right.local:7125", probe_runner=flaky)
+    reply = say(st, "test", probe_runner=flaky)
+    assert "Live test: **passed**" in reply
+    assert calls[1]["moonraker_url"] == "http://right.local:7125"
+
+
+def test_probe_failure_can_be_saved_offline(tmp_path):
+    st = store(tmp_path)
+    fail = lambda answers: guided.ProbeOutcome(False, "printer off", "moonraker_url")
+    start(st, now=1000)
+    walk(st, ["creality.k1", "K1", "http://k1.local:7125"], probe_runner=fail)
+    say(st, "test", probe_runner=fail)
+    reply = say(st, "offline", probe_runner=fail)
+    assert "not passed" in reply and "printer off" in reply
+    assert st.get("k")["ob_answers"]["probe"]["offline"] is True
+
+
+def test_bambu_walkthrough_uses_a_per_printer_secret_name(tmp_path):
+    st = store(tmp_path)
+    start(st, now=1000)
+    walk(st, ["bambulab.a1", "A1 Shelf"])
+    reply = say(st, "yes")
+    assert "Printer address (LAN)" in reply
+    walk(st, ["192.0.2.44", "01P00A000000001"])
+    reply = say(st, "stored")
+    assert "$BAMBU_LAN_PASSWORD_A1_SHELF" in reply or "Live connection test" in reply
+    session_text = (tmp_path / "guided-setup.json").read_text()
+    assert "a1-shelf" in session_text  # the derived id; the env NAME is derived, never stored
+    reply = say(st, "test", probe_runner=ok_probe)
+    assert "Live test: **passed**" in reply
+    entry = guided._onboard_entry(st.get("k")["ob_answers"])
+    assert entry == {"id": "a1-shelf", "model": "bambulab.a1", "name": "A1 Shelf",
+                     "lan_host": "192.0.2.44", "lan_serial": "01P00A000000001",
+                     "lan_access_code_env": "BAMBU_LAN_PASSWORD_A1_SHELF"}
+    assert "chat_id" not in entry  # shared channel under #536
+
+
+def test_bambu_secret_skip_goes_straight_to_unverified_review(tmp_path):
+    st = store(tmp_path)
+    start(st, now=1000)
+    walk(st, ["bambulab.a1", "A1", "yes", "192.0.2.44", "01P00A000000001"])
+    reply = say(st, "skip")  # secret not stored: no probe step at all
+    assert "Ready to add this printer" in reply
+    assert "not run" in reply and "unverified" in reply
+
+
+def test_bambu_lan_gate_no_is_an_offline_entry(tmp_path):
+    st = store(tmp_path)
+    start(st, now=1000)
+    walk(st, ["bambulab.a1", "A1"])
+    reply = say(st, "no")
+    assert "Ready to add this printer" in reply
+    assert "offline entry" in reply
+    entry = guided._onboard_entry(st.get("k")["ob_answers"])
+    assert entry == {"id": "a1", "model": "bambulab.a1", "name": "A1"}
+
+
+def test_sdcp_blank_host_is_offline_and_host_runs_trust_then_probe(tmp_path):
+    st = store(tmp_path)
+    start(st, now=1000)
+    walk(st, ["elegoo_sdcp.centauricarbon", "Centauri"])
+    reply = say(st, "skip")
+    assert "offline entry" in reply
+
+    st2 = store(tmp_path / "c")
+    start(st2, now=1000)
+    walk(st2, ["elegoo_sdcp.centauricarbon", "Centauri", "192.0.2.60"])
+    reply = say(st2, "ok")
+    assert "Live connection test" in reply
+    reply = say(st2, "test", probe_runner=ok_probe)
+    assert "Live test: **passed**" in reply
+
+
+def test_stock_walkthrough_names_the_shared_secret_limitation(tmp_path):
+    st = store(tmp_path)
+    def two_stock():
+        data = loader()
+        data["printers"].append({"id": "stock1", "model": "flashforge_stock.ad5x",
+                                  "name": "Stock One", "host": "192.0.2.9"})
+        return data
+    say(st, "/print-handy add-printer", config_loader=two_stock)
+    walk(st, ["flashforge_stock.ad5x", "Stock Two", "192.0.2.10"])
+    reply = say(st, "stored")
+    assert "shared" in reply or "Live connection test" in reply
+    # the prompt itself carried the limitation before answering:
+    st2 = store(tmp_path / "d")
+    say(st2, "/print-handy add-printer", config_loader=two_stock)
+    walk(st2, ["flashforge_stock.ad5x", "Stock Two"])
+    prompt = say(st2, "192.0.2.10")
+    assert "$AD5X_SERIAL" in prompt and "shared" in prompt
+
+
+# ---------------------------------------------------------------------- review, apply, lifecycle
+
+def test_apply_failure_keeps_the_session_at_review(tmp_path):
+    st = store(tmp_path)
+    start(st, now=1000)
+    walk(st, ["creality.k1", "K1", "skip"], probe_runner=ok_probe)
+    def refuse(answers):
+        raise RuntimeError("the settings file could not be rewritten")
+    reply = say(st, "apply", onboard_apply=refuse)
+    assert "was not added" in reply
+    assert st.get("k")["status"] == "onboard_review"
+    reply = say(st, "apply", onboard_apply=lambda answers: "written.")
+    assert "Printer onboarding complete" in reply
+
+
+def test_manual_at_review_prints_the_roster_yaml(tmp_path):
+    st = store(tmp_path)
+    start(st, now=1000)
+    walk(st, ["creality.k1", "K1", "http://k1.local:7125"], probe_runner=ok_probe)
+    say(st, "test", probe_runner=ok_probe)
+    reply = say(st, "manual")
+    assert "printers:" in reply and "moonraker_url: http://k1.local:7125" in reply
+    assert st.get("k")["status"] == "cancelled"
+
+
+def test_cancel_and_resume_mid_onboarding(tmp_path):
+    st = store(tmp_path)
+    start(st, now=1000)
+    say(st, "creality.k1")
+    reply = say(st, "/print-handy cancel")
+    assert "add-printer" in reply  # resume hint names the right command
+    reply = start(st)
+    assert "Welcome back" in reply and "Display name" in reply
+    reply = say(st, "/print-handy status")
+    assert "adding a printer" in reply
+
+
+def test_plain_replies_reach_the_flow_and_slash_text_does_not(tmp_path):
+    st = store(tmp_path)
+    start(st, now=1000)
+    assert say(st, "/print-stop") is None  # another command: not an answer
+    assert st.get("k")["ob_answers"] == {}
+    reply = say(st, "creality.k1")
+    assert reply is not None and "Display name" in reply
+
+
+def test_session_file_never_contains_a_secret_value(tmp_path):
+    st = store(tmp_path)
+    start(st, now=1000)
+    walk(st, ["prusa.mk4s", "Prusa Bench", "192.0.2.77", "stored"],
+         probe_runner=ok_probe)
+    raw = (tmp_path / "guided-setup.json").read_text()
+    data = json.loads(raw)
+    answers = data["k"]["ob_answers"]
+    assert answers["prusa_secret"] is True  # posture only, never a value
+    assert answers["printer_id"] == "prusa-bench"
+    assert "api_key_env" not in answers  # env names are derived at apply, not stored
+    entry = guided._onboard_entry(answers)
+    assert entry["api_key_env"] == "PRUSA_LINK_API_KEY_PRUSA_BENCH"

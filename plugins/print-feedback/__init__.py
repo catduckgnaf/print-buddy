@@ -371,7 +371,8 @@ async def guided_dispatch(event, gateway, **kwargs):
     store = guided.SetupStore(_state_dir() / guided.STORE_NAME)
     if not text.startswith('/print-handy'):
         session = store.get(key)
-        if not session or session.get('status') not in ('in_progress', 'awaiting_consent'):
+        if not session or session.get('status') not in ('in_progress', 'awaiting_consent',
+                                                        'onboarding', 'onboard_review'):
             return None
     adapter = _adapter_for(gateway, source)
     if adapter is None:

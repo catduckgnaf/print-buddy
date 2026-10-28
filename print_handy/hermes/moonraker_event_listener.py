@@ -995,10 +995,16 @@ def _dark_capture(job_key):
     """The #476 camera-dark capture outcome for a job (a manifest dict), or None.
 
     The manifest of a finished in-container capture that kept no frames
-    because every frame was completely dark. Never raises.
+    because every frame was completely dark. Gated on capture_enabled
+    exactly like _captured_timelapse's lookup: with capture off there is
+    no dark outcome to name, and the delivery thread does no extra work.
+    Never raises.
     """
     try:
-        return timelapse_encode.dark_capture(job_key, data=_config.cfg())
+        data = _config.cfg()
+        if not go2rtc.capture_enabled(data):
+            return None
+        return timelapse_encode.dark_capture(job_key, data=data)
     except Exception as exc:
         log(f"dark capture lookup failed for {job_key!r}: {exc!r}")
         return None

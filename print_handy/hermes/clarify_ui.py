@@ -10,12 +10,13 @@ shape), buttons carry the standalone ``pbq:<clarify_id>:<index>`` ids, clicks
 resolve Print Handy's own prompt registry (``print_handy.core.prompts``), and
 an answered question is edited in place by REST PATCH.
 
-NOT WIRED LIVE YET. Nothing constructs this adapter in production: the S5
-switch (``prompts.activate()`` in the plugin's ``register()``, the
-``_adapter_for`` substitution at the handler call sites, and the
-``[discord] clarify_ui`` setting) lands only after the S0 live spike on a
-real Hermes install. Until then Hermes' adapter renders questions exactly as
-before and this module is exercised by its tests only.
+WIRED BEHIND A SWITCH. The S5 wiring is live: the plugin's ``register()``
+activates Print Handy's prompt registry, ``alert_button_handlers`` installs
+this adapter, and the handlers' ``_adapter_for`` substitution routes
+``send_clarify`` here — all exactly when the operator turns on the
+``[discord] clarify_ui`` setting on a Hermes install. With the setting off
+(the default) nothing constructs this adapter in production and Hermes'
+adapter renders questions exactly as before.
 """
 from __future__ import annotations
 

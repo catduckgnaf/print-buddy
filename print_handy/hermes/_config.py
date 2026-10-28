@@ -173,6 +173,18 @@ def discord_token() -> str:
     return profile_env_value(name)
 
 
+def clarify_ui_enabled() -> bool:
+    """[discord] clarify_ui: Print Handy's own renderer draws handler questions under Hermes (#524 stage 2).
+
+    Off by default — Hermes' adapter keeps rendering, exactly as before the
+    switch existed. On, the plugin activates its own prompt registry, posts
+    questions by direct Discord REST (print_handy.hermes.clarify_ui) and
+    resolves clicks and typed answers itself: one renderer in both modes.
+    Read at plugin register/attach time; changing it takes effect on restart.
+    """
+    return bool((cfg().get("discord") or {}).get("clarify_ui", False))
+
+
 def question_timeout_s() -> int:
     """How long a Discord question waits for a button press."""
     return int(cfg()["discord"]["question_timeout_s"])

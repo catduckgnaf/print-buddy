@@ -37,6 +37,7 @@ def without_added(data):
     data.pop("agent", None)  # added by #524 stage 3 (the stray-chat agent lane), after capture
     data.pop("printers", None)  # added by #333 (the [[printers]] roster), after the golden files were captured
     data.get("vision", {}).pop("roast_enabled", None)  # added by the roast switch, after capture
+    data.get("discord", {}).pop("clarify_ui", None)  # added by #524 stage 2, after capture
     data.pop("spool", None)  # added by #512 (spool.prompt_brand), after the golden files were captured
     data.pop("telegram", None)  # added by #164 stage 2, after the golden files were captured
     data.pop("matrix", None)  # added by #164 stage 3, after the golden files were captured

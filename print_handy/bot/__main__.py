@@ -152,6 +152,19 @@ def checks(cfg):
     else:
         add("agent", True, "not configured (set [agent] chat_url to let an agent endpoint "
                            "answer stray chat; unmatched messages use the llm row above)")
+    # Question rendering (#524 stage 2): the standalone bot always draws
+    # its own questions; on a Hermes install the host adapter draws them
+    # unless the operator turns on Print Handy's own renderer, so Hermes
+    # mode renders exactly what standalone (and the README mockups) show.
+    # A healthy-off row in both states, like the agent row above. The
+    # setting is read at plugin register/attach time (restart to change).
+    if name == "discord":
+        if bool((cfg.get("discord") or {}).get("clarify_ui", False)):
+            add("clarify ui", True, "own renderer (discord.clarify_ui is on: in Hermes mode "
+                                    "Print Handy draws its questions itself, one renderer in both modes)")
+        else:
+            add("clarify ui", True, "host renderer (in Hermes mode Hermes draws the questions; "
+                                    "set discord.clarify_ui=true for Print Handy's own renderer)")
     # The roast is separate from the chat fallback above: the print-started
     # post gains a one-line roast (exactly one per print, when printing
     # begins; the completion post never does) on every platform (Telegram

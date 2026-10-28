@@ -116,6 +116,7 @@ OPTIONAL_KEYS = {("printer", "nozzle_type"): str, ("printer", "tool_count"): int
                  ("prusa", "link_host"): str, ("prusa", "api_key_env"): str,
                  ("discord", "denied_user_ids"): str,
                  ("discord", "chat_llm_enabled"): bool,
+                 ("discord", "clarify_ui"): bool,
                  ("elegoo_sdcp", "host"): str}
 # List settings that may also come from the environment, as a comma- or space-separated value
 # (PRINT_HANDY__DELIVERY__METHODS=discord,bambu_handoff,printer). Every other list or table is file
@@ -1181,6 +1182,13 @@ def _validate_bot(data):
     chat_llm_enabled = discord.setdefault("chat_llm_enabled", True)
     if not isinstance(chat_llm_enabled, bool):
         raise SettingsError(f"[discord] chat_llm_enabled must be true or false, got {chat_llm_enabled!r}")
+    # Print Handy's own question renderer on a Hermes install (#524 stage 2):
+    # off by default, so Hermes' adapter keeps drawing the questions exactly
+    # as before; on makes the plugin activate its own prompt registry and
+    # render questions itself, one renderer in both modes.
+    clarify_ui = discord.setdefault("clarify_ui", False)
+    if not isinstance(clarify_ui, bool):
+        raise SettingsError(f"[discord] clarify_ui must be true or false, got {clarify_ui!r}")
     _validate_telegram(data)
     _validate_matrix(data)
     llm = data.setdefault("llm", {})

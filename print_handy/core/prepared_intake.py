@@ -984,7 +984,7 @@ async def prepare_link(event, adapter, state, root, timeout=None, reuse=None, pr
         else:
             job = await asyncio.to_thread(mj.inventory_for_url, url)
         rows = job.get('sources', [])
-        if job['site'] in ('printables', 'thingiverse', 'myminifactory'):
+        if job['site'] in ('printables', 'thingiverse', 'myminifactory', 'cults3d'):
             rows = [r for r in rows if Path(r.get('name', '')).suffix.lower() in {'.3mf', '.stl'}]
         if not rows:
             raise ValueError(job.get('no_geometry_reason') or 'source inventory contains no selectable geometry')

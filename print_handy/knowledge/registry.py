@@ -19,6 +19,7 @@ import tomllib
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from ..core import fuzzy
 from .flows import Flow, Node, Option
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -89,7 +90,16 @@ def _norm(text):
 
 
 def _score(query, targets):
-    """Best match score of a normalized query against an item's names/aliases/ids. 0 is no match."""
+    """Best match score of a normalized query against an item's names/aliases/ids. 0 is no match.
+
+    The tiers are exact (100), substring (85) and shared tokens (75 / scaled),
+    plus the #468 stage-1 fuzzy tier: a typo'd query ("adheison", "nozzel
+    clog") shares too few tokens with the right entry for the tiers above, so
+    whole-string difflib similarity (``core.fuzzy``, floor 65, capped at 99)
+    is the last chance before no match. Lookup is read-only — a fuzzy hit is
+    a ranked candidate the user reads, never an action — and exact matches
+    still score 100 and sort first.
+    """
     q = _norm(query)
     if not q:
         return 0
@@ -109,6 +119,7 @@ def _score(query, targets):
             if qtokens <= ttokens:
                 best = max(best, 75)
             best = max(best, round(60 * len(shared) / max(len(qtokens), len(ttokens))))
+        best = max(best, fuzzy.fuzzy_score(q, t))
     return best
 
 

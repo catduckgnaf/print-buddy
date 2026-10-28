@@ -15,7 +15,7 @@ print stay separate unless --print-now is given, which means the operator clicke
 "bed clear" for exactly this job. `python3 -m print_handy.core.model_job print-now FILE|JOB.json` starts an
 already sliced job the same way.
 """
-import argparse, hashlib, html, json, logging, math, os, re, shutil, subprocess, sys, time, urllib.parse, urllib.request, zipfile
+import argparse, base64, hashlib, html, json, logging, math, os, re, shutil, subprocess, sys, time, urllib.parse, urllib.request, zipfile
 import xml.etree.ElementTree as ET
 from pathlib import Path
 from typing import Any, NamedTuple
@@ -363,26 +363,162 @@ def myminifactory_download(job, source, target):
     # routes here so any download attempt refuses with the named gap.
     raise RuntimeError(MYMINIFACTORY_DOWNLOAD_GAP)
 
+
+CULTS3D = "https://cults3d.com/graphql"
+
+# Cults3D is metadata-only through its API, permanently: Cults' own API page
+# (https://cults3d.com/en/api) states the API "will not give you access to the
+# 3D files… The files remain hosted on Cults" and are downloaded only through
+# the signed-in website. So, like MyMiniFactory, the provider below is
+# inventory (the listing's title) plus an honest refusal, and the refusal IS
+# the download behaviour: no credential an operator can supply changes it,
+# and Print Handy never scrapes the site or tries to get around its checks.
+CULTS_DOWNLOAD_GAP = (
+    "Print Handy cannot download files from Cults3D. Cults' own API page states "
+    "the API gives access to a listing's details (photos, titles, descriptions, "
+    "tags) but not its 3D files — the files remain hosted on Cults and are "
+    "downloaded through the signed-in website. Nothing was downloaded. "
+    "Workaround: open the model page in a browser, download the .stl/.3mf file "
+    "there, then send that file to Print Handy instead (upload it or drop it in "
+    "the folder Print Handy watches).")
+
+
+def cults_credentials():
+    """Return the Authorization header value for Cults' GraphQL API.
+
+    Cults API keys are per-account and authenticate as HTTP Basic
+    `nickname:api_key` (https://cults3d.com/en/api). Following the token-file
+    pattern of the other model sites, the pair is the only content of
+    ~/.config/cults3d/token, formatted `nickname:key` — the nickname must
+    match the Cults profile exactly, capitals included. The key is never
+    logged, and no error message includes it.
+    """
+    path = Path.home()/".config"/"cults3d"/"token"
+    if not path.exists():
+        raise RuntimeError(
+            f"Cults3D needs an API key first. Create one at https://cults3d.com/en/api/keys "
+            f"and save it as the only content of {path} in the form nickname:key (your Cults "
+            "nickname, a colon, then the API key), readable only by the account that runs "
+            "Print Handy. See docs/PROJECT-REFERENCE.md (Cults3D API key).")
+    raw = path.read_text(encoding="utf-8").strip()
+    nickname, sep, key = raw.partition(":")
+    if not sep or not nickname.strip() or not key.strip():
+        raise RuntimeError(
+            f"The Cults3D token file at {path} must contain exactly nickname:key — your "
+            "Cults nickname, a colon, then the API key from "
+            "https://cults3d.com/en/api/keys — as its only content.")
+    return "Basic " + base64.b64encode(
+        f"{nickname.strip()}:{key.strip()}".encode()).decode()
+
+
+def _cults_blocked(exc):
+    code = getattr(exc, "code", None)
+    if code == 401:
+        return RuntimeError(
+            "Cults3D refused the request (401), which usually means the nickname or API "
+            "key in ~/.config/cults3d/token is wrong — the nickname must match your Cults "
+            "profile exactly, capitals included. Check the file, then send the link again.")
+    if code == 403:
+        return RuntimeError(
+            "Cults3D refused the request (403), which can mean the site is challenging "
+            "automated access. Print Handy never tries to solve or bypass a site's "
+            "checks. Open cults3d.com in a browser, check the API key at "
+            "https://cults3d.com/en/api/keys, then send the link again.")
+    return exc
+
+
+def _cults_graphql(query, variables):
+    try:
+        return request_json(CULTS3D, data={"query": query, "variables": variables},
+                            headers={"Content-Type": "application/json",
+                                     "Authorization": cults_credentials()})
+    except urllib.error.HTTPError as exc:
+        raise _cults_blocked(exc) from exc
+
+
+def cults_id(url):
+    """The creation slug from a Cults model URL (/3d-model/<category>/<slug>)."""
+    path = urllib.parse.urlparse(str(url)).path
+    m = re.search(r"/3d-model/(?:[^/]+/)?([^/]+)/?$", path)
+    if not m: raise ValueError(f"Cults3D URL needs /3d-model/.../<slug>: {url}")
+    return m.group(1)
+
+
+def cults_inventory(url):
+    """Listing metadata for a Cults URL, via Cults' documented GraphQL API.
+
+    The lookup follows Cults' documented GraphQL surface (endpoint
+    https://cults3d.com/graphql, HTTP Basic nickname:api_key) and resolves the
+    creation through its Relay-style global id — base64 of "Creation/<slug>",
+    the format Cults publisher tooling documents. It is NOT verified live: no
+    Cults API key exists on the build machine, so parsing is defensive, and
+    the returned node's id is checked against the requested slug because the
+    API is known to answer with an unfiltered result for an id it does not
+    recognise. The API exposes no file list at all, so `sources` is always
+    empty and the job carries the download gap plus a no-geometry reason that
+    names the listing it did find.
+    """
+    slug = cults_id(url)
+    global_id = base64.b64encode(f"Creation/{slug}".encode()).decode()
+    resp = _cults_graphql(
+        "query($id: ID!) { node(id: $id) { ... on Creation { id name } } }",
+        {"id": global_id})
+    data = resp.get("data") if isinstance(resp, dict) else None
+    node = (data or {}).get("node") or (data or {}).get("creation")
+    errors = resp.get("errors") if isinstance(resp, dict) else None
+    if not isinstance(node, dict) or (errors and not node):
+        raise RuntimeError(
+            f"Cults3D creation not found for {url} — the link may be wrong, the "
+            "creation may have been removed, or Cults may have changed its API.")
+    returned = str(node.get("id") or "")
+    try:
+        decoded = base64.b64decode(returned).decode()
+    except Exception:
+        decoded = ""
+    if decoded != f"Creation/{slug}":
+        raise RuntimeError(
+            f"Cults3D creation not found for {url} — the API answered with a "
+            "different creation, so the link was not followed.")
+    title = str(node.get("name") or "").strip() or f"cults3d-{slug}"
+    reason = (
+        f"Cults3D listing \"{title}\" was found through the Cults API, but the API "
+        "does not expose a creation's files — it returns listing details only — and "
+        "Cults downloads happen only through the signed-in website, so there is no "
+        "selectable geometry to reslice. Workaround: open the model page in a "
+        "browser, download the .stl/.3mf file there, then upload or drop the file "
+        "here instead.")
+    return {"site": "cults3d", "model_id": slug, "title": title,
+            "slug": slug, "license": None, "sources": [],
+            "download_gap": CULTS_DOWNLOAD_GAP, "no_geometry_reason": reason}
+
+
+def cults_download(job, source, target):
+    """Refuse plainly: Cults' API exposes no files (see CULTS_DOWNLOAD_GAP)."""
+    raise RuntimeError(CULTS_DOWNLOAD_GAP)
+
 # Per-site registry (#462): site -> function NAME, resolved through this module's globals
 # at call time so existing tests that monkeypatch maker_*/printables_*/thingiverse_*/
 # myminifactory_* by name keep working exactly as before.
 SITE_INVENTORY_FUNCS={"makerworld":"maker_inventory","printables":"printables_inventory",
                       "thingiverse":"thingiverse_inventory",
-                      "myminifactory":"myminifactory_inventory"}
+                      "myminifactory":"myminifactory_inventory",
+                      "cults3d":"cults_inventory"}
 SITE_DOWNLOAD_FUNCS={"makerworld":"maker_download","printables":"printables_download",
                      "thingiverse":"thingiverse_download",
-                     "myminifactory":"myminifactory_download"}
+                     "myminifactory":"myminifactory_download",
+                     "cults3d":"cults_download"}
 SITE_HOSTS={"makerworld.com":"makerworld","www.makerworld.com":"makerworld",
             "printables.com":"printables","www.printables.com":"printables",
             "thingiverse.com":"thingiverse","www.thingiverse.com":"thingiverse",
-            "myminifactory.com":"myminifactory","www.myminifactory.com":"myminifactory"}
+            "myminifactory.com":"myminifactory","www.myminifactory.com":"myminifactory",
+            "cults3d.com":"cults3d","www.cults3d.com":"cults3d"}
 def inventory_for_url(url):
     site=SITE_HOSTS.get((urllib.parse.urlparse(url).hostname or "").lower())
-    if site is None: raise ValueError("supported sites: MakerWorld, Printables, Thingiverse, MyMiniFactory")
+    if site is None: raise ValueError("supported sites: MakerWorld, Printables, Thingiverse, MyMiniFactory, Cults3D")
     return globals()[SITE_INVENTORY_FUNCS[site]](url)
 def download_for_site(job, source, target):
     name=SITE_DOWNLOAD_FUNCS.get((job or {}).get("site"))
-    if name is None: raise ValueError("supported sites: MakerWorld, Printables, Thingiverse, MyMiniFactory")
+    if name is None: raise ValueError("supported sites: MakerWorld, Printables, Thingiverse, MyMiniFactory, Cults3D")
     return globals()[name](job, source, target)
 
 

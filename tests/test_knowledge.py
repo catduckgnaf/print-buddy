@@ -330,3 +330,56 @@ def test_troubleshoot_dispatch_lists_flows_without_an_argument():
     for flow_id in ("first-layer", "clog", "heat-creep", "bed-level", "ringing"):
         assert f"/print-troubleshoot {flow_id}" in adapter.sent[-1]
     assert adapter.clarified == []
+
+
+# ------------------------------------------------------- #468 fuzzy lookup
+
+# Typo corpus (stage 1): realistic misspellings of registry language, pinned
+# to the item a person means and the measured score band. Bands are the
+# Stage 0 report's: 85–99 high-confidence near-match, 65–84 suggestion
+# material. A fuzzy hit never scores 100 — that stays exact-only.
+TYPO_CORPUS = [
+    ("adheison", "flow", "first-layer", 85, 99),
+    ("nozzel clog", "flow", "clog", 85, 99),
+    ("bed adheison", "flow", "first-layer", 65, 99),
+    ("nozzel", "flow", "clog", 65, 99),
+    ("ofset", "flow", "first-layer", 65, 99),
+]
+
+
+@pytest.mark.parametrize("query,kind,ident,low,high", TYPO_CORPUS)
+def test_lookup_typo_corpus(registry, query, kind, ident, low, high):
+    hit = top(registry, query)
+    assert hit.kind == kind, query
+    assert getattr(hit.item, "id", getattr(hit.item, "key", None)) == ident, query
+    assert low <= hit.score <= high, (query, hit.score)
+
+
+@pytest.mark.parametrize("query", ["pizza", "weather", "banana", "fan"])
+def test_lookup_false_friend_corpus_returns_nothing(registry, query):
+    """Unrelated words must stay no-match: the fuzzy floor (65) holds against
+    the whole registry, so a nonsense query gets the same empty result as
+    before #468 — the false-friend rate target for unrelated text is zero."""
+    assert registry.lookup(query) == []
+
+
+def test_lookup_known_false_friend_stays_in_the_suggestion_band(registry):
+    """Measured honestly: "stringng" is a typo of "stringing", which has no
+    registry entry; the nearest string is "ringing". It surfaces at 80 —
+    inside the 65–84 suggestion band, never high-confidence — as a ranked
+    candidate the reader can judge. Lookup is read-only, so the cost of the
+    miss is one extra line, and no surface may treat a band-65–84 score as
+    an instruction to act."""
+    hit = top(registry, "stringng")
+    assert hit.kind == "symptom" and hit.item.id == "ringing-on-walls"
+    assert 65 <= hit.score <= 84
+
+
+def test_lookup_fuzzy_does_not_regrade_exact_matches(registry):
+    assert top(registry, "clog").score == 100
+    assert top(registry, "M600").score == 100
+    # A plain-language exact phrase still resolves exactly, ahead of any
+    # fuzzy candidates the new tier adds below it.
+    hit = top(registry, "first layer not sticking")
+    assert hit.kind == "symptom" and hit.item.id == "first-layer-not-sticking"
+    assert hit.score == 100

@@ -151,13 +151,21 @@ class FamilyListener:
                 log(f"family start post failed file={filename!r}: {exc!r}")
         return record
 
-    def _end(self, state, filename):
-        """Terminal handling for the tracked print: post (external only) + retire."""
+    def _end(self, state, filename, progress=None):
+        """Terminal handling for the tracked print: post (external only) + retire.
+
+        A return to standby is a stop at the printer, unless the job reached
+        100%: OctoPrint has no "complete" state, so a finished job reads as
+        standby with full progress (the rule octo_watch already applies to
+        launched prints).
+        """
         current, self._current = self._current, None
         self._save_record()
         if current is None:
             return
         name = current["filename"] or filename or ""
+        if state == "standby" and isinstance(progress, (int, float)) and progress >= 1.0:
+            state = "complete"
         kind = "cancelled" if state == "standby" else state
         if current["external"] and not current["baselined"] and name:
             try:
@@ -225,7 +233,7 @@ class FamilyListener:
                 # prev is active for the direct transition; an unknown
                 # gap in between lands here too — the tracked print was
                 # active when classified, so it still ends properly.
-                self._end(state, filename)
+                self._end(state, filename, status.get("progress"))
             self._restored = None
         else:
             # An unreadable/unknown state is not an ending: a tracked

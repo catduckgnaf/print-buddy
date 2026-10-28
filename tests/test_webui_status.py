@@ -59,7 +59,7 @@ class SnapshotTests(unittest.TestCase):
         self.assertEqual(snap["printer"]["connection"], "moonraker")
         self.assertEqual(snap["printer"]["vendor"], "flashforge")
         self.assertEqual(snap["bot"]["platform"], "discord")
-        self.assertEqual(snap["bot"]["mode"], "hermes")
+        self.assertEqual(snap["bot"]["mode"], "standalone")
         self.assertTrue(snap["bot"]["ok"])
         self.assertEqual(snap["bot"]["heartbeat"]["user"], "printhandy#0001")
         self.assertTrue(snap["listener"]["required"])

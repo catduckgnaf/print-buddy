@@ -127,6 +127,23 @@ class OverrideTests(unittest.TestCase):
         data = settings.load(local=path, environ={})
         self.assertIs(data["visual_watch"]["enabled"], True)
 
+    def test_bot_mode_defaults_to_standalone_when_unset(self):
+        # The shipped home template minus its [bot] mode line: the settings
+        # default itself must resolve to standalone (#524 stage 5). Configs
+        # that state a mode explicitly never see this default.
+        text = Path(settings.HOME).read_text().replace("  mode: standalone\n", "", 1)
+        self.assertNotIn("mode: standalone", text)
+        home = self.toml(text, "home.yaml")
+        data = settings.load(home=home, local=False, environ={})
+        self.assertEqual(data["bot"]["mode"], "standalone")
+
+    def test_bot_mode_explicit_hermes_is_preserved(self):
+        # An explicit hermes choice still resolves to hermes after the
+        # default flip (#524 stage 5): only an unset mode changes.
+        path = self.toml("bot:\n  mode: hermes\n", "local.yaml")
+        data = settings.load(local=path, environ={})
+        self.assertEqual(data["bot"]["mode"], "hermes")
+
     def test_yaml_home_preserves_effective_legacy_toml_values(self):
         yaml_data = settings.load(home=settings.HOME, local=False, environ={})
         toml_data = settings.load(home=settings.LEGACY_HOME, local=False, environ={})

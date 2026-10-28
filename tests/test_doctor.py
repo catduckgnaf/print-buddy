@@ -18,7 +18,10 @@ class DoctorTests(unittest.TestCase):
     def run_doctor(self, local_toml="", hardware=None, profile_config="enabled"):
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "local.toml"
-            path.write_text(local_toml)
+            # These tests model a Hermes home install (profile, gateway rows),
+            # so the mode is stated explicitly: since #524 an unset mode
+            # resolves to standalone and the doctor would check that instead.
+            path.write_text('[bot]\nmode = "hermes"\n' + local_toml)
             data = settings.load(local=path, environ={"PRINT_HANDY__PATHS__HERMES_HOME": str(self.profile)})
         if profile_config is not None:
             self.profile.mkdir(parents=True, exist_ok=True)

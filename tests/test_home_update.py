@@ -57,8 +57,11 @@ class HomeUpdateTests(unittest.TestCase):
         (profile / "state" / "printer_hardware.json").write_text(
             '{"spool": {"material": "PLA", "density": 1.24}, "temps_c": {"nozzle": 210, "bed": 60}, '
             '"nozzle": {"diameter_mm": 0.4}}')
+        # The install this fixture models is a Hermes install, and a real one
+        # states its mode explicitly (the shipped templates always did) — so
+        # the fixture does too; since #524 an unset mode means standalone.
         (self.home / "config" / "local.toml").write_text(
-            f'[printer]\nname = "Home AD5X"\n\n[orca]\ncommand = ["true"]\n\n[paths]\nhermes_home = "{profile}"\n')
+            f'[printer]\nname = "Home AD5X"\n\n[orca]\ncommand = ["true"]\n\n[paths]\nhermes_home = "{profile}"\n\n[bot]\nmode = "hermes"\n')
 
     def tearDown(self):
         self.tmp.cleanup()

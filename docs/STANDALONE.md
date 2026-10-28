@@ -249,7 +249,8 @@ inherits the `[llm]` endpoint when `[design]` is unset, and that inheritance kee
 off — design has its own switch (`design.enabled`). Two other features use a model through the
 separate vision endpoint, not the chat fallback, and keep their own gates: the print-started **roast**
 (`vision.roast_enabled`, on by default) and the **camera watchdog** (`visual_watch.enabled`, on
-`services.vision_chat_url`). Turning the chat LLM off changes none of them; turn each off at its own
+`services.vision_chat_url` — or, with no endpoint at all, on the built-in local failure detector,
+`vision.local_detector_enabled`, #455). Turning the chat LLM off changes none of them; turn each off at its own
 switch if you want no model calls at all.
 
 ## Hermes pieces and their replacement

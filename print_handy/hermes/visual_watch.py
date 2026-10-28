@@ -18,7 +18,7 @@ import logging
 import os
 import urllib.request
 
-from . import _config
+from . import _config, local_vision
 
 logger = logging.getLogger(__name__)
 
@@ -104,7 +104,8 @@ _vision_missing_logged = False
 
 
 def vision_ready(api_key, log=None):
-    """True when a frame can actually be judged: PRINT_VISION_URL, or vision_chat_url with its key.
+    """True when a frame can actually be judged: PRINT_VISION_URL, vision_chat_url with
+    its key, or the built-in local failure detector (#455).
 
     Without one, every verdict degrades to "uncertain", and "uncertain"
     alerts, so the watch would post a false alert at every check. The
@@ -115,10 +116,13 @@ def vision_ready(api_key, log=None):
         return True
     if _config.service_url("vision_chat_url") and api_key():
         return True
+    if local_vision.detector_ready():
+        return True
     if log is not None and not _vision_missing_logged:
         _vision_missing_logged = True
         log("camera watch skipped: no vision endpoint (set services.vision_chat_url with "
-            "CLIPROXY_API_KEY, or PRINT_VISION_URL)")
+            "CLIPROXY_API_KEY, or PRINT_VISION_URL, or enable the local detector "
+            "with vision.local_detector_enabled)")
     return False
 
 
@@ -167,13 +171,50 @@ def _vision_answer(image, prompt, *, chat_url, model, api_key, context):
         return content
 
 
-def visual_verdict(image, prompt, *, chat_url, model, api_key, context):
-    """Judge one frame through the configured vision endpoint. Returns (verdict, detail).
+def _local_verdict(image):
+    """The built-in local detector's verdict (#455), or None when it is not enabled.
 
+    Consulted only when no endpoint route is configured — the endpoint
+    routes keep their precedence untouched, and a configured-but-failing
+    endpoint still degrades generically rather than falling through. The
+    detector's own failures degrade exactly like a broken endpoint's:
+    ("uncertain", ...) with the real error logged.
+    """
+    if not local_vision.enabled():
+        return None
+    try:
+        return local_vision.local_verdict(image)
+    except Exception as exc:
+        logger.warning("vision check failed via local detector: %s: %s",
+                       type(exc).__name__, exc)
+        return "uncertain", "the vision check could not be completed"
+
+
+def _chat_route_configured(api_key):
+    """Whether the chat endpoint route is fully configured — the URL set
+    and its key present, the same rule ``vision_ready`` applies. Every
+    caller injects a chat_url built on ``services.vision_chat_url``, so
+    the setting is the honest test; a key that cannot even be read counts
+    as configured (endpoint semantics win ties)."""
+    if not _config.service_url("vision_chat_url"):
+        return False
+    try:
+        return bool(api_key())
+    except Exception:
+        return True
+
+
+def visual_verdict(image, prompt, *, chat_url, model, api_key, context):
+    """Judge one frame. Returns (verdict, detail).
+
+    Route order: PRINT_VISION_URL, then the chat endpoint
+    (``services.vision_chat_url``), then — only when neither endpoint
+    route is configured — the built-in local failure detector (#455).
     This is the listener's verdict call with its process-specific values
     injected (see ``_vision_answer`` for the shared transport). Any failure
     degrades to ("uncertain", ...) — an uncertain frame alerts, it never
-    silently passes.
+    silently passes. Label reads (``visual_extract``) never use the local
+    detector: it detects failures, it cannot read.
     """
     endpoint = os.environ.get("PRINT_VISION_URL")
     try:
@@ -182,8 +223,19 @@ def visual_verdict(image, prompt, *, chat_url, model, api_key, context):
         if not isinstance(parsed, dict):
             raise TypeError(f"vision answer is not a JSON object ({type(parsed).__name__})")
     except _VisionKeyMissing:
+        local = _local_verdict(image)
+        if local is not None:
+            return local
         return "uncertain", "vision key is not configured"
     except Exception as exc:
+        # The chat route can also fail simply by being half-configured
+        # (its URL unset raises inside the call when a key exists): that
+        # is "no endpoint route configured", so the local detector stands
+        # in. A configured endpoint that fails does NOT fall through.
+        if not endpoint and not _chat_route_configured(api_key):
+            local = _local_verdict(image)
+            if local is not None:
+                return local
         # The returned detail stays generic on purpose (#467: raw error text
         # does not belong in a chat alert), but the underlying error is
         # logged: without it a mis-configured endpoint — above all a custom

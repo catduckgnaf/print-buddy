@@ -99,6 +99,8 @@ GROUP_OF = {
     "vision.model": "images",
     "vision.roast_model": "images",
     "vision.roast_enabled": "images",
+    "vision.local_detector_enabled": "images",
+    "vision.local_model_path": "images",
     "vision.auto_light_off_minutes": "images",
     "vision.light_object": "images",
     "visual_watch.enabled": "images",
@@ -249,6 +251,22 @@ CATALOG = (
            "platform (Telegram included). On by default: it runs whenever an "
            "LLM/vision endpoint is available; off turns roasts off without "
            "disabling camera checks.",
+           validator="settings vision check"),
+    _field("vision", "local_detector_enabled", "Local failure detector", "toggle",
+           "Built-in ONNX failure detector for the camera watchdog (#455): "
+           "judges camera frames on this machine when no vision endpoint "
+           "is configured, so a no-LLM, no-cloud install still gets "
+           "bad-print detection. Off by default. The pinned model "
+           "(Obico failure detector, AGPL-3.0 weights, about 202 MB) "
+           "downloads once and is SHA-256 verified. It detects failures "
+           "only — roasts, spool-label reads and the empty-plate check "
+           "still need a vision endpoint.",
+           validator="settings vision check"),
+    _field("vision", "local_model_path", "Local detector model path", "text",
+           "Where the local failure detector's ONNX model file lives. "
+           "Empty uses the default location (a models folder under the "
+           "Hermes home) and the pinned model; name a model file you "
+           "placed yourself to run fully offline.",
            validator="settings vision check"),
     _field("vision", "auto_light_off_minutes", "Auto light-off minutes", "number",
            "Auto light-off (#516): the printer light turns on when a print "

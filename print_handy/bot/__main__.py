@@ -180,6 +180,19 @@ def checks(cfg):
     else:
         add("roast", True, "on by default, but no LLM/vision endpoint is available "
                            "(services.vision_chat_url is empty); set it to enable roasts")
+    # Local failure detector (#455): the built-in ONNX route for the camera
+    # watchdog on installs with no vision endpoint. Off by default; when on
+    # it judges frames only while no endpoint route is configured (endpoint
+    # routes keep precedence), and it never answers roasts or label reads.
+    from ..hermes import local_vision as _local_vision
+    _detector_state, _detector_detail = _local_vision.detector_status(cfg)
+    if _detector_state == "off":
+        add("local detector", True, f"off ({_detector_detail})")
+    elif _detector_state == "ready":
+        add("local detector", True, f"on ({_detector_detail}; used by the camera watchdog "
+                                    "only when no vision endpoint is configured)")
+    else:
+        add("local detector", False, f"on, but unavailable: {_detector_detail}")
     # Auto light-off (#516): the listener turns the printer's light on at
     # print start and off again after the camera verdict has seen an empty
     # plate for vision.auto_light_off_minutes. Off by default (0). Like
@@ -217,6 +230,12 @@ def checks(cfg):
                                 f"{light_connection!r} has no light control (auto "
                                 f"light-off covers Moonraker, Bambu Lab and Elegoo "
                                 f"SDCP printers); the setting has no effect here")
+    elif vision.get("local_detector_enabled") and not vision_url \
+            and not os.environ.get("PRINT_VISION_URL"):
+        add("auto light", True, "on, but the local failure detector cannot certify an "
+                                "empty plate (it never answers empty_idle), so the light "
+                                "will stay on; auto light-off needs a vision endpoint "
+                                "(services.vision_chat_url or PRINT_VISION_URL)")
     elif not vision_url and not os.environ.get("PRINT_VISION_URL"):
         add("auto light", True, "on, but no vision endpoint is available "
                                 "(services.vision_chat_url is empty and PRINT_VISION_URL "

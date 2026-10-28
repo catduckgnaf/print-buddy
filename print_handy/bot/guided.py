@@ -756,7 +756,7 @@ def run_diagnostics(*, loader=None, token_getter=None, probe=None, login_probe=N
                                       f"bed {printer.get('bed_mm')}")))
 
         # Bot mode, token presence, and (standalone only) a read-only login probe.
-        mode = str((cfg.get("bot") or {}).get("mode") or "hermes")
+        mode = str((cfg.get("bot") or {}).get("mode") or "standalone")
         token = ""
         if token_getter is not None or mode == "standalone":
             try:

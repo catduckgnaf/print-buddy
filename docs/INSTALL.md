@@ -1,5 +1,11 @@
 # Install on a Hermes box
 
+> **New installs default to the standalone bot** (#524): `bot.mode` defaults to `standalone`, and the
+> shipped config templates say so. Start with [docs/STANDALONE.md](STANDALONE.md) and
+> `scripts/install-standalone.sh` unless you specifically want Print Handy hosted inside a Hermes
+> profile. This page remains the install path for that explicit choice — `bot.mode: hermes` is still
+> supported — and the migration notes at the bottom are for installs moving off it.
+
 ## 1. Clone
 
 ```sh
@@ -76,3 +82,25 @@ in `config/after-update.sh`.
 ## Optional external plugins
 
 Not shipped here. Install them yourself if you want them: `openviking` (memory), `image_gen`.
+
+## Migration notes: the default mode is now standalone (#524)
+
+The `bot.mode` default flipped from `hermes` to `standalone`. Almost nothing changes by itself:
+existing configs state `mode: hermes` **explicitly** (the templates always shipped the line), so an
+explicit config keeps resolving to Hermes exactly as before — the flip only bites fresh installs and
+configs that omit the line. If you move an install to standalone deliberately, do these in order
+(the full checklist is [docs/STANDALONE.md](STANDALONE.md#moving-from-hermes)):
+
+1. **One token, one connection:** stop the Hermes gateway's Discord platform (or remove the print
+   channel from it) *before* starting the standalone bot. Two live connections on one bot token
+   answer twice and race the button flows; the doctor's shared-token check
+   (`python3 -m print_handy.bot check`) detects it, but stopping the gateway first is the control.
+2. **Keep the agent (optional):** set `[agent] chat_url` (plus `api_key_env`) pointing at Hermes'
+   API to keep stray-chat agent answers. Without it, stray chat gets the bounded `[llm]` call if one
+   is configured, else the short reply. Set `[discord] chat_llm_enabled` explicitly if you had an
+   opinion about chat answers.
+3. **Design model moves:** if you used the profile's `auxiliary.print_design` pin, set `[design]
+   model` (or `[llm]`) to the same model — the HTTP values are the normal path now.
+4. **Session resets become Hermes' own:** the bot's post-print session reset/archive is retired in
+   every mode; the profile's `session_reset: daily, at_hour 4` (already in the shipped template) is
+   the remaining behaviour.

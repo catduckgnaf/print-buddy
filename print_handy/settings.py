@@ -1150,7 +1150,7 @@ def _validate_logging(data):
 def _validate_bot(data):
     """The standalone bot sections (#73). Absent sections in a hand-made home file get the defaults."""
     bot = data.setdefault("bot", {})
-    bot.setdefault("mode", "hermes")
+    bot.setdefault("mode", "standalone")
     if bot["mode"] not in BOT_MODES:
         raise SettingsError(f"[bot] mode must be one of {', '.join(BOT_MODES)}, got {bot['mode']!r}")
     # The chat platform the standalone bot talks to (#164). The known set is

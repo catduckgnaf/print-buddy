@@ -90,7 +90,7 @@ Schema, validation limits and TOML migration: [CONFIGURATION-YAML.md](CONFIGURAT
 | `matrix.approval_user_id` | `PRINT_HANDY__MATRIX__APPROVAL_USER_ID` | empty | Matrix user ID allowed to approve |
 | `matrix.bot_user_id` | `PRINT_HANDY__MATRIX__BOT_USER_ID` | empty | The bot's own Matrix user ID; empty asks the homeserver (whoami) at startup |
 | `matrix.upload_max_bytes` | `PRINT_HANDY__MATRIX__UPLOAD_MAX_BYTES` | `50000000` | Largest file the Matrix bot uploads; lowered to the homeserver's media limit when the server reports a smaller one. Timelapse video is shrunk to that resulting limit; if even the smallest shrink cannot fit it, the completion post says the timelapse was recorded but is too large for the server instead of attaching the video |
-| `bot.mode` | `PRINT_HANDY__BOT__MODE` | `hermes`; `standalone` in the image | `hermes` or `standalone`; the image and Compose set `standalone` |
+| `bot.mode` | `PRINT_HANDY__BOT__MODE` | `standalone` | `standalone` or `hermes`; an explicit `hermes` in an existing config is unchanged — only an unset mode defaults to `standalone` (#524) |
 | `bot.platform` | `PRINT_HANDY__BOT__PLATFORM` | `discord` | Chat platform for the standalone bot (#164): `discord`, `telegram` or `matrix` |
 | `bot.health_port` | `PRINT_HANDY__BOT__HEALTH_PORT` | `0` | Serve `GET /healthz` on this port; `0` turns the HTTP check off |
 | `bot.health_stale_s` | `PRINT_HANDY__BOT__HEALTH_STALE_S` | `120` | Bot health fails when its heartbeat is older than this |

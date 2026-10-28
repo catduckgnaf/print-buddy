@@ -62,11 +62,125 @@ def test_new_spool_prompts_exactly_once_even_across_restart(tmp_path):
     fresh = watcher.poll()
     assert [row["id"] for row in fresh] == [21]
     assert known_ids(state) == [7, 21]
+    watcher.delivered(21)
     # Not again on the next poll...
     assert watcher.poll() == []
     # ...and not again after a restart (a fresh watcher over the persisted set).
     restarted = mel.SpoolmanNewSpoolWatcher(state_path=state, lister=lister)
     assert restarted.poll() == []
+
+
+def test_default_lister_asks_spoolman_for_archived_spools_too(tmp_path):
+    paths = []
+    with mock.patch("print_handy.core.spoolman_client.call",
+                    lambda method, path, **kw: paths.append(path) or [spool(7)]):
+        watcher = mel.SpoolmanNewSpoolWatcher(state_path=tmp_path / "known.json")
+        watcher.poll()
+    assert paths == ["/api/v1/spool?allow_archived=true"]
+
+
+def test_archiving_then_unarchiving_a_known_spool_does_not_prompt(tmp_path):
+    state = tmp_path / "known.json"
+    lister = FakeLister([spool(7), spool(9)])
+    watcher = mel.SpoolmanNewSpoolWatcher(state_path=state, lister=lister)
+    assert watcher.poll() == []
+    lister.rows = [spool(7), spool(9, archived=True)]
+    assert watcher.poll() == []
+    lister.rows = [spool(7), spool(9)]
+    assert watcher.poll() == []
+    assert known_ids(state) == [7, 9]
+
+
+class Clock:
+    def __init__(self, now=1_000_000.0):
+        self.now = now
+
+    def __call__(self):
+        return self.now
+
+
+def test_spools_print_handy_created_are_recorded_silently(tmp_path):
+    state = tmp_path / "known.json"
+    lister = FakeLister([spool(7)])
+    watcher = mel.SpoolmanNewSpoolWatcher(state_path=state, lister=lister)
+    assert watcher.poll() == []
+    made_here = dict(spool(40), comment=spool_sync.CREATED_SPOOL_COMMENT)
+    runout = dict(spool(41), comment=mel.RUNOUT_SPOOL_COMMENT)
+    elsewhere = dict(spool(42), comment="bought at the fair")
+    lister.rows = [spool(7), made_here, runout, elsewhere]
+    assert [row["id"] for row in watcher.poll()] == [42]
+    assert known_ids(state) == [7, 40, 41, 42]
+
+
+def test_create_spool_stamps_the_comment_the_watcher_skips():
+    calls = []
+
+    def client(method, path, body):
+        calls.append((method, path, body))
+        if path == "/api/v1/filament" and method == "GET":
+            return [{"id": 3, "material": "PLA", "name": "Black", "vendor": {"name": "eSun"}}]
+        return {"id": 55}
+
+    spool_sync.create_spool({"brand": "eSun", "material": "PLA", "color": "Black", "grams": 1000.0}, client=client)
+    body = next(body for method, path, body in calls if method == "POST" and path == "/api/v1/spool")
+    assert mel.created_by_print_handy({"comment": body["comment"]})
+
+
+def test_undelivered_prompt_is_retried_until_delivered_even_across_restart(tmp_path):
+    state = tmp_path / "known.json"
+    clock = Clock()
+    lister = FakeLister([spool(7)])
+    watcher = mel.SpoolmanNewSpoolWatcher(state_path=state, lister=lister, clock=clock)
+    assert watcher.poll() == []
+    lister.rows = [spool(7), spool(21)]
+    assert [row["id"] for row in watcher.poll()] == [21]  # first attempt; never delivered
+    clock.now += mel.NEW_SPOOL_RETRY_S - 1
+    assert watcher.poll() == []  # not hammered on every poll
+    clock.now += 1
+    restarted = mel.SpoolmanNewSpoolWatcher(state_path=state, lister=lister, clock=clock)
+    assert [row["id"] for row in restarted.poll()] == [21]  # retried, and the restart kept it
+    restarted.delivered(21)
+    clock.now += mel.NEW_SPOOL_RETRY_S
+    assert restarted.poll() == []
+
+
+def test_pending_prompt_is_dropped_when_archived_deleted_or_too_old(tmp_path):
+    state = tmp_path / "known.json"
+    clock = Clock()
+    lister = FakeLister([spool(7)])
+    watcher = mel.SpoolmanNewSpoolWatcher(state_path=state, lister=lister, clock=clock)
+    assert watcher.poll() == []
+    lister.rows = [spool(7), spool(21), spool(22), spool(23)]
+    assert [row["id"] for row in watcher.poll()] == [21, 22, 23]
+    lister.rows = [spool(7), spool(21, archived=True), spool(23)]  # 21 archived, 22 deleted
+    clock.now += mel.NEW_SPOOL_RETRY_S
+    assert [row["id"] for row in watcher.poll()] == [23]
+    clock.now += mel.NEW_SPOOL_GIVE_UP_S
+    assert watcher.poll() == []  # 23 given up after a day
+    assert json.loads(state.read_text())["pending"] == {}
+
+
+def test_listener_retries_a_prompt_whose_delivery_failed(tmp_path):
+    listener = mel.Listener()
+    clock = Clock()
+    lister = FakeLister([spool(7)])
+    listener.spoolman_watcher = mel.SpoolmanNewSpoolWatcher(
+        state_path=tmp_path / "known.json", lister=lister, clock=clock)
+    attempts = []
+    outcome = {"ok": False}
+    with mock.patch.object(mel, "post_new_spool_prompt",
+                           lambda row: attempts.append(row["id"]) or outcome["ok"]):
+        asyncio.run(listener.poll_spoolman_new_spools())
+        lister.rows = [spool(7), spool(21)]
+        asyncio.run(listener.poll_spoolman_new_spools())
+        assert attempts == [21]  # chat was down
+        outcome["ok"] = True
+        clock.now += mel.NEW_SPOOL_RETRY_S
+        asyncio.run(listener.poll_spoolman_new_spools())
+        assert attempts == [21, 21]  # retried and delivered
+        clock.now += mel.NEW_SPOOL_RETRY_S
+        asyncio.run(listener.poll_spoolman_new_spools())
+        assert attempts == [21, 21]  # and never again
 
 
 def test_archived_arrival_is_recorded_silently(tmp_path):

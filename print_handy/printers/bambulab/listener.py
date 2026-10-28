@@ -56,7 +56,7 @@ from __future__ import annotations
 import json
 import time
 
-from ... import healthcheck, listeners
+from ... import __version__, healthcheck, listeners
 from .client import (GET_VERSION, MQTT_PORT, PUSHALL, BambuLanError,
                      merge_print)
 
@@ -342,7 +342,7 @@ class BambuListener:
                 self._poll_debug_mode()
                 self._wait(LOOP_TICK_S)
             return 0
-        log(f"listener starting for the Bambu Lab printer at {self._lan.host} "
+        log(f"listener starting (Print Handy {__version__}) for the Bambu Lab printer at {self._lan.host} "
             f"(serial {self._lan.serial})")
         while not self._stopped:
             try:

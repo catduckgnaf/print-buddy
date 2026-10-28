@@ -143,6 +143,15 @@ def test_connect_requests_version_then_pushall_and_merges(monkeypatch):
     assert fake.disconnected
 
 
+def test_startup_line_names_the_version(monkeypatch, capsys):
+    from print_handy import __version__
+    fake = FakeMqtt([VERSION, full("IDLE")], stop_on_empty=True)
+    listener, _clock, _beats = make_listener(monkeypatch, [fake])
+    assert listener.run_forever() == 0
+    out = capsys.readouterr().out
+    assert f"bambu listener: listener starting (Print Handy {__version__})" in out
+
+
 def test_ack_frames_are_not_telemetry(monkeypatch):
     fake = FakeMqtt([
         full("RUNNING", mc_percent=10, subtask_name="a.gcode.3mf", layer_num=1, total_layer_num=9),

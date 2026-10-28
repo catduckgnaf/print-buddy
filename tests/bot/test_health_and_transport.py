@@ -2,6 +2,7 @@
 import asyncio
 import io
 import json
+import logging
 import os
 import shutil
 import subprocess
@@ -208,6 +209,14 @@ def test_run_refuses_to_start_when_checks_fail(monkeypatch):
     with mock.patch("print_handy.bot.client.PrintHandyBot") as bot:
         assert bot_main.run() == 2
     bot.assert_not_called()
+
+
+def test_run_logs_the_version_at_startup(monkeypatch, caplog):
+    from print_handy import __version__
+    monkeypatch.setattr(bot_main, "check", lambda out=None: 1)
+    with caplog.at_level(logging.INFO, logger="print_handy.bot.__main__"):
+        assert bot_main.run() == 2
+    assert f"standalone bot starting (Print Handy {__version__})" in caplog.text
 
 
 def test_doctor_reports_mode_users_and_a_shared_token(monkeypatch, tmp_path):

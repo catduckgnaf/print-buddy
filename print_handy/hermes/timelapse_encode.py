@@ -214,6 +214,53 @@ def find_capture(job_key, *, data=None, root=None) -> Path | None:
     return best
 
 
+def dark_capture(job_key, *, data=None, root=None) -> dict | None:
+    """The manifest of a finished capture that kept NO frames because every
+    frame was completely dark (#476), or None.
+
+    The named camera-dark outcome beside find_capture: matches a job the
+    same way (direct directory, then the newest finished manifest naming
+    the same file), but a dark capture is exactly what find_capture must
+    never hand to the encoder — zero kept frames and at least one frame
+    skipped as dark. The delivery path uses the returned manifest (its
+    dark_frames count) to name the outcome in the completion post.
+    """
+    data = _config.cfg() if data is None else data
+    root = timelapse_capture.capture_root(data) if root is None else Path(root)
+    if not root.is_dir():
+        return None
+    key = str(job_key or "")
+
+    def dark_manifest(directory) -> dict | None:
+        manifest = timelapse_capture.read_manifest(directory)
+        if not manifest or manifest.get("state") in (None, "new", "capturing"):
+            return None
+        if int(manifest.get("frames") or 0):
+            return None
+        if not int(manifest.get("dark_frames") or 0):
+            return None
+        return manifest
+
+    direct = timelapse_capture.job_dir(root, key)
+    manifest = dark_manifest(direct)
+    if manifest and manifest.get("job_key") == key:
+        return manifest
+    wanted = Path(key).name
+    best, best_stamp = None, None
+    for directory in sorted(root.iterdir()):
+        if not directory.is_dir() or directory == direct:
+            continue
+        manifest = dark_manifest(directory)
+        if not manifest:
+            continue
+        if Path(str(manifest.get("filename") or "")).name != wanted:
+            continue
+        stamp = manifest.get("finished_at") or 0
+        if best is None or stamp >= (best_stamp or 0):
+            best, best_stamp = manifest, stamp
+    return best
+
+
 def captured_video(job_key, *, data=None, max_bytes, log=None, probe=None,
                    ffmpeg=None, run=None) -> Path | None:
     """The assembled in-container timelapse for a job, or None. Never raises.

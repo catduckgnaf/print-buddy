@@ -39,7 +39,7 @@ def test_visual_alert_posts_image_and_components_together(monkeypatch, tmp_path)
     frame_dir = tmp_path / "frames"
     seen = {}
 
-    def posted(token, channel_id, content, filename, image):
+    def posted(token, channel_id, content, filename, image, identity=None):
         seen.update(token=token, channel_id=channel_id, content=content, filename=filename, image=image)
         return True
 
@@ -67,7 +67,7 @@ def test_layer_two_empty_bed_requests_check_and_alert_on_air(monkeypatch):
     watch = mel.VisualPrintWatch()
     calls = []
     monkeypatch.setattr(mel, "_visual_verdict", lambda image, prompt: ("air", "empty bed"))
-    monkeypatch.setattr(mel, "_visual_alert", lambda filename, image, reason: calls.append(reason))
+    monkeypatch.setattr(mel, "_visual_alert", lambda filename, image, reason, identity=None: calls.append(reason))
     assert watch.due(1, 10) is None
     assert watch.due(2, 11) == "layer2"
     watch.record(2, 11, b"frame")
@@ -127,7 +127,7 @@ def test_visual_check_alerts_on_air_uncertain_and_endpoint_error(monkeypatch):
 
     alerts = []
     monkeypatch.setattr(mel, "_camera_snapshot_bytes", lambda: _jpeg())
-    monkeypatch.setattr(mel, "_visual_alert", lambda filename, image, reason: alerts.append(reason) or reason)
+    monkeypatch.setattr(mel, "_visual_alert", lambda filename, image, reason, identity=None: alerts.append(reason) or reason)
 
     async def run(verdict):
         monkeypatch.setattr(mel, "_visual_verdict", lambda image, prompt: verdict)
@@ -165,7 +165,7 @@ def test_visual_check_promotes_unchanged_layers_and_ignores_motion(monkeypatch):
         return _jpeg() + bytes((frames["n"],))
 
     monkeypatch.setattr(mel, "_camera_snapshot_bytes", snapshot)
-    monkeypatch.setattr(mel, "_visual_alert", lambda filename, image, reason: alerts.append(reason))
+    monkeypatch.setattr(mel, "_visual_alert", lambda filename, image, reason, identity=None: alerts.append(reason))
     monkeypatch.setattr(mel, "_visual_verdict", lambda image, prompt: ("safe", "plastic present"))
 
     async def unchanged():
@@ -254,7 +254,7 @@ def _stall_alerts(monkeypatch, level, verdict):
 
     alerts = []
     monkeypatch.setattr(mel, "_camera_snapshot_bytes", lambda: _jpeg() + b"x")
-    monkeypatch.setattr(mel, "_visual_alert", lambda filename, image, reason: alerts.append(reason))
+    monkeypatch.setattr(mel, "_visual_alert", lambda filename, image, reason, identity=None: alerts.append(reason))
     monkeypatch.setattr(mel, "_frame_changed", lambda before, after: False)
     if isinstance(verdict, Exception):
         def failing(image, prompt):
@@ -346,3 +346,151 @@ def test_watchdog_snapshot_falls_back_direct_when_the_fanout_fails(monkeypatch):
     seen = _record_snapshot_requests(monkeypatch, FANOUT_URL, fail_urls={FANOUT_URL})
     assert mel._camera_snapshot_bytes() == _jpeg()
     assert seen == [FANOUT_URL, DIRECT_URL]  # sequential fallback, never parallel
+
+
+# -- #476: dark frames -------------------------------------------------------
+
+def _pil_jpeg(pixels, size=(64, 48)):
+    """A real PIL-encoded JPEG from a pixel function (x, y) -> gray level."""
+    import io
+    from PIL import Image
+    img = Image.new("L", size)
+    img.putdata([pixels(x, y) for y in range(size[1]) for x in range(size[0])])
+    buf = io.BytesIO()
+    img.save(buf, "JPEG", quality=95)
+    return buf.getvalue()
+
+
+def _dark_jpeg():
+    return _pil_jpeg(lambda x, y: 0)
+
+
+def _bright_jpeg():
+    return _pil_jpeg(lambda x, y: 200)
+
+
+def test_frame_dark_pins_completely_dark_frames():
+    from print_handy.hermes import visual_watch as vw
+    # Pure black and near-black noise are dark.
+    assert vw.frame_dark(_dark_jpeg()) is True
+    assert vw.frame_dark(_pil_jpeg(lambda x, y: (x + y) % 3)) is True
+    # A dim but real scene (mean ~30, a bright patch) is NOT dark.
+    assert vw.frame_dark(_pil_jpeg(lambda x, y: 30)) is False
+    assert vw.frame_dark(_pil_jpeg(lambda x, y: 200 if x < 8 and y < 8 else 10)) is False
+    # A normal bright frame is not dark, and neither is an undecodable one:
+    # garbage keeps the old handling (a vision failure alerts).
+    assert vw.frame_dark(_bright_jpeg()) is False
+    assert vw.frame_dark(_jpeg()) is False
+    assert vw.frame_dark(b"") is False
+
+
+def _record_snapshot_frames(monkeypatch, fanout, frames):
+    """Like _record_snapshot_requests, but each URL serves its own frame bytes."""
+    seen = []
+
+    class Response:
+        def __init__(self, body):
+            self._body = body
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return False
+
+        def read(self, _n=-1):
+            return self._body
+
+    def fake_open(req, timeout=0):
+        seen.append(req.full_url)
+        return Response(frames[req.full_url])
+
+    monkeypatch.setattr(mel, "_camera_url", lambda: DIRECT_URL)
+    monkeypatch.setattr(mel, "_config", type("Cfg", (), {"cfg": staticmethod(lambda: {})})())
+    monkeypatch.setattr(mel.go2rtc, "fanout_frame_url", lambda data: fanout)
+    monkeypatch.setattr(mel, "log", lambda line: None)
+    monkeypatch.setattr(mel.urllib.request, "urlopen", fake_open)
+    return seen
+
+
+def test_watchdog_snapshot_falls_back_direct_when_the_fanout_frame_is_dark(monkeypatch):
+    seen = _record_snapshot_frames(monkeypatch, FANOUT_URL,
+                                   {FANOUT_URL: _dark_jpeg(), DIRECT_URL: _bright_jpeg()})
+    assert mel._camera_snapshot_bytes() == _bright_jpeg()
+    assert seen == [FANOUT_URL, DIRECT_URL]  # dark counts as a fan-out failure: one sequential fallback
+
+
+def test_watchdog_snapshot_dark_direct_frame_is_returned_without_a_second_fanout_fetch(monkeypatch):
+    seen = _record_snapshot_frames(monkeypatch, FANOUT_URL,
+                                   {FANOUT_URL: _dark_jpeg(), DIRECT_URL: _dark_jpeg()})
+    assert mel._camera_snapshot_bytes() == _dark_jpeg()
+    assert seen == [FANOUT_URL, DIRECT_URL]
+
+
+def test_dark_frame_check_posts_one_notice_and_never_alerts_or_calls_vision(monkeypatch, tmp_path):
+    import asyncio
+    from unittest.mock import patch
+    from print_handy.hermes import print_alert_buttons as pab
+
+    alerts, notices = [], []
+    monkeypatch.setattr(mel, "_camera_snapshot_bytes", lambda: _dark_jpeg())
+    monkeypatch.setattr(mel, "_visual_verdict",
+                        lambda image, prompt: (_ for _ in ()).throw(AssertionError("vision called for a dark frame")))
+    monkeypatch.setattr(mel, "_visual_alert",
+                        lambda filename, image, reason, identity=None: alerts.append(reason))
+    monkeypatch.setattr(mel, "_visual_dark_notice",
+                        lambda filename, identity=None: notices.append(filename))
+
+    async def run():
+        listener = mel.Listener()
+        listener.filename = "dark.gcode"
+        with patch.object(pab, "STATE", tmp_path / "alerts.json"):
+            await listener.visual_check("periodic", 1)
+            await listener.visual_check("periodic", 2)
+
+    asyncio.run(run())
+    assert alerts == []
+    assert notices == ["dark.gcode"]  # once per print, not once per dark check
+
+
+def test_dark_frame_does_not_become_a_stall_baseline(monkeypatch, tmp_path):
+    import asyncio
+    from unittest.mock import patch
+    from print_handy.hermes import print_alert_buttons as pab
+
+    monkeypatch.setattr(mel, "_camera_snapshot_bytes", lambda: _dark_jpeg())
+    monkeypatch.setattr(mel, "_visual_dark_notice", lambda filename, identity=None: None)
+
+    async def run():
+        listener = mel.Listener()
+        listener.filename = "dark.gcode"
+        with patch.object(pab, "STATE", tmp_path / "alerts.json"):
+            await listener.visual_check("periodic", 9)
+        return listener
+
+    listener = asyncio.run(run())
+    assert listener.visual_frames == {}
+    assert listener.visual_watch.last_snapshot is None
+    assert listener.visual_watch.alerted_stall_layer is None
+
+
+def test_muted_print_posts_no_visual_alert(monkeypatch, tmp_path):
+    import asyncio
+    from unittest.mock import patch
+    from print_handy.hermes import print_alert_buttons as pab
+
+    alerts = []
+    monkeypatch.setattr(mel, "_camera_snapshot_bytes", lambda: _jpeg())
+    monkeypatch.setattr(mel, "_visual_verdict", lambda image, prompt: ("air", "empty bed"))
+    monkeypatch.setattr(mel, "_visual_alert",
+                        lambda filename, image, reason, identity=None: alerts.append(reason))
+
+    async def run():
+        listener = mel.Listener()
+        listener.filename = "bin.gcode"
+        with patch.object(pab, "STATE", tmp_path / "alerts.json"):
+            pab.mute_visual("bin.gcode", listener._visual_identity())
+            await listener.visual_check("layer2", 2)
+
+    asyncio.run(run())
+    assert alerts == []

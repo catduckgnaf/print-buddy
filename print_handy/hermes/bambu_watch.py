@@ -163,14 +163,16 @@ def vision_context(adapter) -> str:
             "uncertain means the frame is not clear enough to judge.")
 
 
-def deliver_visual_alert(filename, image, reason, *, post=None, token=None, chat_id=None, buttonless=None):
+def deliver_visual_alert(filename, image, reason, *, post=None, token=None, chat_id=None, buttonless=None,
+                         identity=None):
     """Post one watchdog alert with its snapshot, the Moonraker alert's shape (#294 stage 3).
 
     Same delivery as the listener's _visual_alert: the button post
-    (print_alert_buttons.post_visual_alert — Pause / "It's fine") when the
-    platform has buttons, a plain MEDIA: post on buttonless standalone
-    platforms, and a plain post as the fallback when the button post fails.
-    Returns the saved frame path.
+    (print_alert_buttons.post_visual_alert — Pause / "It's fine" / "Stop
+    asking for this print") when the platform has buttons, a plain MEDIA:
+    post on buttonless standalone platforms, and a plain post as the
+    fallback when the button post fails. ``identity`` is this print's mute
+    identity (#476). Returns the saved frame path.
     """
     path = write_frame(filename, image)
     text = f"Print camera check: {print_summary.safe_label(filename, 'print')}\n{reason}"
@@ -186,13 +188,44 @@ def deliver_visual_alert(filename, image, reason, *, post=None, token=None, chat
         return path
     try:
         from . import print_alert_buttons as pab
-        if pab.post_visual_alert(token, chat_id, text, filename, path):
+        if pab.post_visual_alert(token, chat_id, text, filename, path, identity=identity):
             return path
         log("bambu visual button post failed; falling back to text")
     except Exception as exc:
         log(f"bambu visual button post error: {exc!r}")
     post(text + f"\n{path}\nMEDIA:{path}")
     return path
+
+
+def deliver_dark_notice(filename, *, post=None, token=None, chat_id=None, buttonless=None,
+                        identity=None):
+    """Post the once-per-print dark-camera notice (#476), the listener's shape.
+
+    A camera problem, not a print alert: plain text on buttonless
+    platforms; on Discord the same text with only the "Stop asking for
+    this print" button. No image — the frame is black.
+    """
+    text = (f"Camera check: {print_summary.safe_label(filename, 'print')} — the camera image is "
+            "completely dark, so I can't check the print. Check the camera or its light. "
+            "Monitoring continues; nothing was sent to the printer.")
+    if post is None or token is None or chat_id is None or buttonless is None:
+        from . import moonraker_discord_announcements as announcer
+        from . import moonraker_event_listener as mel
+        post = post or mel.post
+        token = token if token is not None else mel._bot_token()
+        chat_id = chat_id if chat_id is not None else announcer.DISCORD_CHAT_ID
+        buttonless = mel._buttonless_standalone() if buttonless is None else buttonless
+    if buttonless:
+        post(text)
+        return
+    try:
+        from . import print_alert_buttons as pab
+        if pab.post_visual_dark_notice(token, chat_id, text, filename, identity=identity):
+            return
+        log("bambu visual dark button post failed; falling back to text")
+    except Exception as exc:
+        log(f"bambu visual dark notice post error: {exc!r}")
+    post(text)
 
 
 class BambuPrintMonitor:
@@ -210,6 +243,7 @@ class BambuPrintMonitor:
 
     def __init__(self, filename, *, status_fn, camera_fn, post,
                  watch=None, verdict=None, alert=None, changed=None,
+                 dark_notice=None,
                  camera_source_fn=None, begin_fn=None, encode_fn=None,
                  pause_alerts=None,
                  clock=time.monotonic, wall=time.time, sleep=time.sleep,
@@ -222,6 +256,12 @@ class BambuPrintMonitor:
         self._watch = watch
         self._verdict = verdict
         self._alert = alert
+        self._dark_notice = dark_notice
+        # This print's watchdog-mute identity (#476): one monitor exists per
+        # launched print, so filename + launch time identifies the print —
+        # a later reprint of the same file is a different monitor and asks
+        # again. Derived in __init__ from the injected wall clock.
+        self._identity = f"bambu:{self.filename}@{int(wall())}"
         self._changed = changed or _frame_changed_safe
         self._camera_source_fn = camera_source_fn
         self._begin_fn = begin_fn or self._begin_default
@@ -299,8 +339,17 @@ class BambuPrintMonitor:
                 log(f"bambu timelapse encode failed for {self.filename!r}: {exc!r}; "
                     "posting the completion without it")
         elif session is not None:
-            log(f"bambu timelapse for {self.filename!r} has no frames "
-                f"({session.failures} failed fetch(es)); posting the completion without it")
+            dark_frames = getattr(session, "dark_frames", 0)
+            if dark_frames:
+                # #476: name the camera-dark outcome in the completion
+                # post itself (the #383 principle), not just the log.
+                text = (f"{text}\n{timelapse_capture.dark_outcome_text(dark_frames)}")
+                log(f"bambu timelapse for {self.filename!r} has no usable frames: "
+                    f"all {dark_frames} frame(s) were completely dark; "
+                    "posting the completion without it")
+            else:
+                log(f"bambu timelapse for {self.filename!r} has no frames "
+                    f"({session.failures} failed fetch(es)); posting the completion without it")
         try:
             image = self._camera_fn()
             path = write_frame(self.filename, image)
@@ -445,6 +494,19 @@ class BambuPrintMonitor:
         image = None
         try:
             image = self._camera_fn()
+            if _vw.frame_dark(image):
+                # #476: a completely dark frame is a camera fact, never a
+                # print verdict — no vision call, no stall baseline, no
+                # print alert; at most one dark-camera notice per print.
+                log(f"bambu visual check file={self.filename!r} reason={reason} layer={layer} "
+                    "verdict=dark detail='camera image completely dark'")
+                if self._watch is not None and not self._watch.dark_noticed:
+                    self._watch.dark_noticed = True
+                    if self._visual_muted():
+                        log(f"bambu visual dark notice suppressed for muted print {self.filename!r}")
+                    elif self._dark_notice is not None:
+                        self._dark_notice(self.filename, identity=self._identity)
+                return
             prior = self._last_frame
             changed = None if prior is None else self._changed(prior, image)
             watch = self._watch
@@ -477,18 +539,34 @@ class BambuPrintMonitor:
             log(f"bambu visual check file={self.filename!r} reason={reason} layer={layer} "
                 f"changed={changed} verdict={verdict} detail={detail!r}")
             if suspicious:
-                self._alert(self.filename, image,
-                            f"{reason} at layer {layer or 'unknown'}: {verdict}; "
-                            f"{detail or 'visual check needs operator review'}")
+                if self._visual_muted():
+                    log(f"bambu visual alert suppressed for muted print {self.filename!r}")
+                else:
+                    self._alert(self.filename, image,
+                                f"{reason} at layer {layer or 'unknown'}: {verdict}; "
+                                f"{detail or 'visual check needs operator review'}",
+                                identity=self._identity)
         except Exception as exc:
             log(f"bambu visual check failed file={self.filename!r} reason={reason}: {exc!r}")
             if image is not None:
                 try:
-                    self._alert(self.filename, image,
-                                f"{reason} at layer {layer or 'unknown'}: the vision check could not be completed, "
-                                "so treat this as unreviewed and check the print on the printer screen")
+                    if self._visual_muted():
+                        log(f"bambu visual alert suppressed for muted print {self.filename!r}")
+                    else:
+                        self._alert(self.filename, image,
+                                    f"{reason} at layer {layer or 'unknown'}: the vision check could not be completed, "
+                                    "so treat this as unreviewed and check the print on the printer screen",
+                                    identity=self._identity)
                 except Exception as alert_exc:
                     log(f"bambu visual alert failed file={self.filename!r}: {alert_exc!r}")
+
+    def _visual_muted(self):
+        """True when this print's watchdog posts were muted (#476). Never raises."""
+        try:
+            from . import print_alert_buttons as pab
+            return pab.visual_muted(self.filename, self._identity)
+        except Exception:
+            return False
 
 
 def _frame_changed_safe(before, after):
@@ -549,11 +627,12 @@ def start_monitor(adapter, filename, *, post=None, camera_fn=None, status_fn=Non
         log(f"bambu monitor not started for {filename!r}: no chat is configured to post to")
         return None
     try:
-        watch = verdict = alert = None
+        watch = verdict = alert = dark_notice = None
         if _config.cfg()["visual_watch"]["enabled"]:
             watch = _vw.VisualPrintWatch()
             verdict = _default_verdict(adapter)
             alert = deliver_visual_alert
+            dark_notice = deliver_dark_notice
         if camera_source_fn is None and hasattr(adapter, "camera_frame_source"):
             camera_source_fn = adapter.camera_frame_source
         try:
@@ -566,7 +645,7 @@ def start_monitor(adapter, filename, *, post=None, camera_fn=None, status_fn=Non
             status_fn=status_fn or (lambda: adapter.normalize_status(adapter.client().snapshot())),
             camera_fn=camera_fn or adapter.camera_snapshot,
             post=post or _default_post,
-            watch=watch, verdict=verdict, alert=alert,
+            watch=watch, verdict=verdict, alert=alert, dark_notice=dark_notice,
             camera_source_fn=camera_source_fn, capture_poll_s=interval,
             pause_alerts=family_control.pause_alerts_for(adapter, filename))
         factory = thread_factory or (lambda target: threading.Thread(target=target, daemon=True,

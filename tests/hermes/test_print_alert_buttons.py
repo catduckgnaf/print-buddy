@@ -22,12 +22,78 @@ def test_explain_old_format_and_unknown_and_empty():
 def test_components_shutdown_has_no_resume(tmp_path):
     assert [b["label"] for b in pab.components("a", "shutdown")[0]["components"]] == ["Cancel print"]
     assert [b["label"] for b in pab.components("a", "paused")[0]["components"]] == ["Resume print", "Cancel print"]
-    assert [b["label"] for b in pab.components("a", "visual")[0]["components"]] == ["Pause", "It's fine"]
+    assert [b["label"] for b in pab.components("a", "visual")[0]["components"]] == [
+        "Pause", "It's fine", "Stop asking for this print"]
+    # The dark-camera notice carries the mute button and nothing else (#476).
+    assert [b["label"] for b in pab.components("a", "visual-dark")[0]["components"]] == [
+        "Stop asking for this print"]
 
 
 def test_visual_button_ids_parse():
     assert pab.parse_custom_id("pbalert:pause:ab12") == ("pause", "ab12")
     assert pab.parse_custom_id("pbalert:acknowledge:ab12") == ("acknowledge", "ab12")
+    assert pab.parse_custom_id("pbalert:mute:ab12") == ("mute", "ab12")
+
+
+def test_mute_visual_is_per_print_identity_not_filename(tmp_path):
+    with patch.object(pab, "STATE", tmp_path / "alerts.json"):
+        assert not pab.visual_muted("f.gcode", "job:1")
+        pab.mute_visual("f.gcode", "job:1")
+        assert pab.visual_muted("f.gcode", "job:1")
+        # The next print of the same file asks again.
+        assert not pab.visual_muted("f.gcode", "job:2")
+        assert not pab.visual_muted("other.gcode", "job:1")
+
+
+def test_mute_store_survives_alert_recording(tmp_path):
+    with patch.object(pab, "STATE", tmp_path / "alerts.json"):
+        pab.mute_visual("f.gcode", "job:1")
+        aid = pab.record("visual", "g.gcode")
+        assert pab.visual_muted("f.gcode", "job:1")
+        assert pab.take(aid)["filename"] == "g.gcode"
+        assert pab.visual_muted("f.gcode", "job:1")
+
+
+def test_mute_click_records_without_touching_the_printer(tmp_path):
+    with patch.object(pab, "STATE", tmp_path / "alerts.json"), \
+         patch("print_handy.hermes.print_control.status",
+               side_effect=AssertionError("printer read for a mute")), \
+         patch("print_handy.hermes.print_stop._lan_adapter",
+               side_effect=AssertionError("printer read for a mute")):
+        out = pab.handle_click("mute", {"kind": "visual", "filename": "f.gcode", "identity": "job:9"})
+        assert pab.visual_muted("f.gcode", "job:9")
+        out_dark = pab.handle_click("mute", {"kind": "visual-dark", "filename": "f.gcode", "identity": "job:9"})
+    assert "muted for the rest of this print" in out and "untouched" in out
+    assert out_dark == out
+
+
+def test_dark_notice_rejects_other_actions(tmp_path):
+    with patch.object(pab, "STATE", tmp_path / "alerts.json"):
+        out = pab.handle_click("pause", {"kind": "visual-dark", "filename": "f.gcode"})
+    assert "not recognized" in out and "Nothing sent" in out
+
+
+def test_post_visual_dark_notice_posts_only_the_mute_button(tmp_path, monkeypatch):
+    seen = {}
+
+    class Response:
+        status = 200
+        def __enter__(self): return self
+        def __exit__(self, *args): return False
+
+    def fake_open(request, timeout):
+        seen["request"] = request
+        return Response()
+
+    with patch.object(pab, "STATE", tmp_path / "alerts.json"), \
+         patch.object(pab.urllib.request, "urlopen", fake_open):
+        assert pab.post_visual_dark_notice("token", "channel", "Camera is dark", "f.gcode", identity="job:3")
+        rows = [r for r in pab._load().values() if isinstance(r, dict) and r.get("kind") == "visual-dark"]
+    import json as _json
+    body = _json.loads(seen["request"].data)
+    labels = [b["label"] for row in body["components"] for b in row["components"]]
+    assert labels == ["Stop asking for this print"]
+    assert rows and rows[0]["identity"] == "job:3"
 
 
 def test_post_visual_alert_uses_one_multipart_message_with_components(tmp_path, monkeypatch):

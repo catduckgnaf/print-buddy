@@ -166,13 +166,15 @@ def test_no_frames_returns_none(tmp_path):
 
 # --------------------------------------------------------------- lookup
 
-def write_capture(root, slug, *, job_key, filename, frames=3, state="complete", finished_at=100.0):
+def write_capture(root, slug, *, job_key, filename, frames=3, state="complete",
+                  finished_at=100.0, dark_frames=0):
     directory = Path(root) / slug
     (directory / "frames").mkdir(parents=True)
     for i in range(1, frames + 1):
         (directory / "frames" / f"frame-{i:06d}.jpg").write_bytes(b"\xff\xd8f")
     manifest = {"job_key": job_key, "filename": filename, "state": state,
-                "frames": frames, "finished_at": finished_at}
+                "frames": frames, "finished_at": finished_at,
+                "dark_frames": dark_frames}
     (directory / "capture.json").write_text(json.dumps(manifest), encoding="utf-8")
     return directory
 
@@ -197,6 +199,50 @@ def test_find_capture_skips_empty_and_missing(tmp_path):
     write_capture(tmp_path, "job-1", job_key="job:1", filename="benchy.gcode", frames=0)
     assert timelapse_encode.find_capture("benchy.gcode", root=tmp_path) is None
     assert timelapse_encode.find_capture("benchy.gcode", root=tmp_path / "nope") is None
+
+
+# --------------------------------------------------------------- dark outcome (#476)
+
+def test_dark_capture_finds_the_all_dark_manifest(tmp_path):
+    write_capture(tmp_path, "job-7", job_key="job:7", filename="benchy.gcode",
+                  frames=0, dark_frames=5)
+    found = timelapse_encode.dark_capture("job:7", root=tmp_path)
+    assert found is not None and found["dark_frames"] == 5
+    # …and the encoder lookup never hands it frames to encode.
+    assert timelapse_encode.find_capture("job:7", root=tmp_path) is None
+
+
+def test_dark_capture_matches_by_filename(tmp_path):
+    write_capture(tmp_path, "job-9", job_key="job:9", filename="benchy.gcode",
+                  frames=0, dark_frames=2, finished_at=90.0)
+    found = timelapse_encode.dark_capture("prints/benchy.gcode", root=tmp_path)
+    assert found is not None and found["job_key"] == "job:9"
+
+
+def test_dark_capture_ignores_mixed_plain_empty_and_live(tmp_path):
+    write_capture(tmp_path, "job-1", job_key="job:1", filename="a.gcode",
+                  frames=2, dark_frames=3)
+    write_capture(tmp_path, "job-2", job_key="job:2", filename="b.gcode",
+                  frames=0, dark_frames=0)
+    write_capture(tmp_path, "job-3", job_key="job:3", filename="c.gcode",
+                  frames=0, dark_frames=4, state="capturing")
+    assert timelapse_encode.dark_capture("job:1", root=tmp_path) is None
+    assert timelapse_encode.dark_capture("job:2", root=tmp_path) is None
+    assert timelapse_encode.dark_capture("job:3", root=tmp_path) is None
+    assert timelapse_encode.dark_capture("job:1", root=tmp_path / "nope") is None
+
+
+def test_captured_video_never_encodes_an_all_dark_capture(tmp_path):
+    root = Path(tmp_path) / "timelapse"
+    write_capture(root, "job-7", job_key="job:7", filename="benchy.gcode",
+                  frames=0, dark_frames=6)
+    fake = FakeEncode()
+    out = timelapse_encode.captured_video(
+        "job:7", data=capture_data(tmp_path), max_bytes=9_500_000,
+        probe=probe(), run=fake)
+    assert out is None
+    assert fake.calls == []  # no encode of an all-dark frame set
+    assert not (root / "job-7" / "timelapse.mp4").exists()
 
 
 # --------------------------------------------------------------- captured_video
@@ -252,6 +298,17 @@ def test_captured_video_wins_over_printer_rendered(monkeypatch, tmp_path, delive
     monkeypatch.setattr(mel.announcer, "archive_completed_timelapse", forbidden)
     mel._timelapse_post("benchy.gcode", "Print complete")
     assert delivery == [f"Print complete\nMEDIA:{captured}"]
+
+
+def test_dark_capture_names_the_outcome_in_the_completion_post(monkeypatch, tmp_path, delivery):
+    monkeypatch.setattr(mel, "_captured_timelapse", lambda key: None)
+    monkeypatch.setattr(mel.announcer, "archive_completed_timelapse", lambda key: None)
+    monkeypatch.setattr(mel, "_dark_capture", lambda key: {"dark_frames": 3})
+    mel._timelapse_post("benchy.gcode", "Print complete")
+    assert delivery == [
+        "Print complete\nTimelapse not attached: the camera image was completely "
+        "dark — all 3 captured frame(s) were skipped as dark, so there was "
+        "nothing to encode. Check the camera or its light."]
 
 
 def test_delivery_falls_back_to_printer_rendered(monkeypatch, tmp_path, delivery):

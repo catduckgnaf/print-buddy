@@ -221,6 +221,61 @@ class CapAndFailureTests(unittest.TestCase):
         self.assertIn("cam.example", manifest["source"])
 
 
+def _jpeg(rgb, size=(64, 48)):
+    import io
+
+    from PIL import Image
+    buffer = io.BytesIO()
+    Image.new("RGB", size, rgb).save(buffer, format="JPEG", quality=90)
+    return buffer.getvalue()
+
+
+DARK_JPEG = _jpeg((0, 0, 0))
+BRIGHT_JPEG = _jpeg((200, 200, 200))
+
+
+class DarkFrameCaptureTests(unittest.TestCase):
+    """#476: dark frames are skipped and counted, never stored."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.root = Path(self.tmp.name) / "timelapse"
+        self.clock = Clock()
+
+    def test_dark_frames_are_skipped_and_counted(self):
+        frames = iter([DARK_JPEG, BRIGHT_JPEG, DARK_JPEG])
+        session = make_session(self.root, self.clock, fetch=lambda url: next(frames))
+        session.start()
+        self.assertFalse(session.capture_once())
+        self.assertTrue(session.capture_once())
+        self.assertFalse(session.capture_once())
+        self.assertEqual(session.frame_count, 1)
+        self.assertEqual(session.dark_frames, 2)
+        stored = sorted(path.name for path in session.frames_dir.iterdir())
+        self.assertEqual(stored, ["frame-000001.jpg"])
+        self.assertEqual((session.frames_dir / "frame-000001.jpg").read_bytes(), BRIGHT_JPEG)
+        manifest = session.manifest()
+        self.assertEqual(manifest["frames"], 1)
+        self.assertEqual(manifest["dark_frames"], 2)
+
+    def test_all_dark_session_keeps_nothing(self):
+        logs = []
+        session = make_session(self.root, self.clock,
+                               fetch=lambda url: DARK_JPEG, log=logs.append)
+        session.start()
+        for _ in range(3):
+            self.assertFalse(session.capture_once())
+        manifest = session.stop()
+        self.assertEqual(session.frame_count, 0)
+        self.assertEqual(session.dark_frames, 3)
+        self.assertEqual(manifest["frames"], 0)
+        self.assertEqual(manifest["dark_frames"], 3)
+        self.assertEqual(list(session.frames_dir.iterdir()), [])
+        self.assertTrue(any("completely dark" in line for line in logs))
+        self.assertTrue(any("3 dark frame(s) skipped" in line for line in logs))
+
+
 class FrameUrlTests(unittest.TestCase):
     def test_go2rtc_endpoint_when_the_binary_is_present(self):
         with tempfile.NamedTemporaryFile() as fake_bin:

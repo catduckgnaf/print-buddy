@@ -6,7 +6,7 @@
 
 [![CI](https://github.com/catduckgnaf/print-handy/actions/workflows/ci.yml/badge.svg)](https://github.com/catduckgnaf/print-handy/actions/workflows/ci.yml)
 
-**Prepare and manage 3D prints right from your chat — Discord, Telegram or Matrix — and nothing ever prints without your explicit confirmation.**
+**Prepare and manage 3D prints from Discord, Telegram or Matrix. Just Drop a link or a file, answer a few questions and you are done!**
 
 Current release: **2.1.8**
 

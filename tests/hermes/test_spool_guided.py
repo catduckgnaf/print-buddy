@@ -333,6 +333,7 @@ def test_guided_new_then_load_into_empty_slot():
     bind.assert_called_once()
     args, kw = bind.call_args
     assert args == (1, 20) and kw.get("prior_disposition") == "shelf"
+    assert kw.get("expected_prior_spool_id") is None  # slot 1 held no spool to name
     assert "Created spool #20" in adapter.sent[-1] and "Slot 1" in adapter.sent[-1]
 
 
@@ -342,6 +343,7 @@ def test_guided_new_then_load_with_depleted_old_spool():
     out, adapter, fake = _run("/spool new", answers, bind=bind)
     args, kw = bind.call_args
     assert args == (2, 20) and kw.get("prior_disposition") == "depleted"
+    assert kw.get("expected_prior_spool_id") == 12  # the spool the fate question named (#515)
     assert "marked as depleted" in adapter.sent[-1]
 
 
@@ -353,6 +355,7 @@ def test_guided_change_archive():
     out, adapter, fake = _run("/spool change", answers, bind=bind)
     args, kw = bind.call_args
     assert args == (2, 7) and kw.get("prior_disposition") == "archive"
+    assert kw.get("expected_prior_spool_id") == 12  # the spool the confirmation named (#515)
     questions = _questions(adapter)
     assert "Slot 2: #12 Red PETG" in questions[0]
     assert "#7 Matte White" in questions[1]

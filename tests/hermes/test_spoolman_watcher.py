@@ -411,6 +411,7 @@ def test_load_path_walks_slot_disposition_confirm_and_binds(click_harness, monke
     asyncio.run(on_interaction(confirmed))
     assert confirmed.out[0][0] == "edit" and "Bound." in confirmed.out[0][1]
     assert binds == [(3, 21, {"prior_disposition": "archive",
+                              "expected_prior_spool_id": 9,
                               "note": "Bound from Discord new-spool prompt"})]
 
 
@@ -435,4 +436,5 @@ def test_load_into_empty_slot_skips_the_disposition_step(click_harness, monkeypa
     confirmed = Interaction(f"pbnewspool:confirm:{confirm_aid}")
     asyncio.run(on_interaction(confirmed))
     assert binds == [(1, 21, {"prior_disposition": "shelf",
+                              "expected_prior_spool_id": None,
                               "note": "Bound from Discord new-spool prompt"})]

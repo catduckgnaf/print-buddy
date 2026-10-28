@@ -1729,7 +1729,9 @@ async def _spool_guided_new(adapter, source, metadata, gateway, spool_sync, pid,
         if disposition is None:
             return made_id, f"{message} Nothing was loaded; slot {slot} is unchanged."
     result = await asyncio.to_thread(spool_sync.bind_slot, slot, made_id,
-                                     prior_disposition=disposition, **mr_kw)
+                                     prior_disposition=disposition,
+                                     expected_prior_spool_id=int(old_id) if old_id else None,
+                                     **mr_kw)
     return made_id, f"{message} {spool_sync.bind_text(result)}"
 
 
@@ -1805,7 +1807,9 @@ async def _spool_guided_change(adapter, source, metadata, gateway, spool_sync, p
                 if created_note else
                 _SPOOL_CANCELLED if _spool_is_cancel(answer) else _SPOOL_UNCLEAR)
     result = await asyncio.to_thread(spool_sync.bind_slot, slot, int(new_id),
-                                     prior_disposition=disposition, **mr_kw)
+                                     prior_disposition=disposition,
+                                     expected_prior_spool_id=int(old_id) if old_id else None,
+                                     **mr_kw)
     return created_note + spool_sync.bind_text(result)
 
 
@@ -3021,7 +3025,8 @@ def alert_button_handlers(bot, adapter):
                                                  state.get('context') or {}, choice)
             else:
                 result = await asyncio.to_thread(pab.create_and_bind_insertion, state['slot'], values,
-                                                 spool_sync, state.get('disposition') or 'shelf')
+                                                 spool_sync, state.get('disposition') or 'shelf',
+                                                 expected_prior_spool_id=state.get('old_spool_id'))
         except Exception:
             logger.exception('new spool walkthrough create failed')
             await interaction.response.edit_message(content='Nothing was changed. Check what you entered and try again.', view=None)
@@ -3037,24 +3042,26 @@ def alert_button_handlers(bot, adapter):
                  ('origin', 'slot', 'context', 'step', 'predicted_id', 'prompt_brand', 'types',
                   'brand', 'material', 'color', 'grams', 'old_spool_id', 'old_remaining', 'disposition',
                   'photo_offered', 'from_photo', 'nozzle_temp', 'bed_temp')}
+        # Claim the step before acting on it: two clicks can both peek the
+        # same alert, but only one take() succeeds. Without this check a
+        # double confirmation would run intake_finish twice and create/bind
+        # two spools (#515) — the plate picker's claim idiom.
+        if not await asyncio.to_thread(pab.take, aid):  # a parallel click got there first
+            await interaction.response.send_message('That new-spool walkthrough is old or was already answered. Nothing changed.', ephemeral=True)
+            return
         if action == 'cancel':
-            await asyncio.to_thread(pab.take, aid)
             await interaction.response.edit_message(content='New spool cancelled. Nothing changed.', view=None)
             return
         if action == 'mat_other':
-            await asyncio.to_thread(pab.take, aid)
             await intake_field_modal(interaction, state, 'material', 'Material')
             return
         if action == 'w_custom':
-            await asyncio.to_thread(pab.take, aid)
             await intake_field_modal(interaction, state, 'grams', 'Full starting grams', max_length=12)
             return
         if action == 'brand_type':
-            await asyncio.to_thread(pab.take, aid)
             await intake_field_modal(interaction, state, 'brand', 'Brand')
             return
         if action == 'photo':
-            await asyncio.to_thread(pab.take, aid)
             await interaction.response.edit_message(
                 content=('Send one photo of the spool label — the box, or the sticker on the '
                          'spool — as your next message in this channel. I will read it and show '
@@ -3065,10 +3072,8 @@ def alert_button_handlers(bot, adapter):
             task.add_done_callback(_photo_tasks.discard)
             return
         if action == 'edit':
-            await asyncio.to_thread(pab.take, aid)
             await intake_advance(interaction, {**state, 'step': 'start'})
             return
-        await asyncio.to_thread(pab.take, aid)
         material = pab.intake_material_for_action(action)
         if material is not None:
             state['material'] = material
@@ -3256,11 +3261,13 @@ def alert_button_handlers(bot, adapter):
             content=f'Which slot should spool {label} go into? Nothing changes until you confirm the load.',
             view=view)
 
-    async def new_spool_confirm(interaction, spool_id, label, slot, disposition, fate=''):
+    async def new_spool_confirm(interaction, spool_id, label, slot, disposition, fate='',
+                                old_spool_id=None):
         import discord
         confirm_aid = await asyncio.to_thread(pab.record, 'spoolman-new-confirm', '',
                                               spool_id=int(spool_id), label=label, slot=int(slot),
-                                              disposition=disposition)
+                                              disposition=disposition,
+                                              old_spool_id=int(old_spool_id) if old_spool_id else None)
         view = discord.ui.View(timeout=(globals().get('_config').question_timeout_s() if globals().get('_config') else 1800))
         view.add_item(discord.ui.Button(label='Confirm load', style=discord.ButtonStyle.success,
                                         custom_id=f'{pab.NEW_SPOOL_PREFIX}:confirm:{confirm_aid}'))
@@ -3300,7 +3307,8 @@ def alert_button_handlers(bot, adapter):
                     'archive': f' Spool #{old_id} will be archived.',
                     'depleted': f' Spool #{old_id} will be marked as depleted (0 g left).',
                     'delete': f' Spool #{old_id} will be DELETED from Spoolman.'}[action]
-            await new_spool_confirm(interaction, spool_id, label, alert.get('slot'), action, fate)
+            await new_spool_confirm(interaction, spool_id, label, alert.get('slot'), action, fate,
+                                    old_spool_id=old_id)
             return
         # spoolman-new-confirm + confirm: the one bind, through the same
         # spool_sync.bind_slot the guided /spool change flow ends in.
@@ -3308,6 +3316,8 @@ def alert_button_handlers(bot, adapter):
             from print_handy.hermes import spool_sync
             result = await asyncio.to_thread(spool_sync.bind_slot, int(alert['slot']), int(spool_id),
                                              prior_disposition=alert.get('disposition') or 'shelf',
+                                             expected_prior_spool_id=(int(alert['old_spool_id'])
+                                                                      if alert.get('old_spool_id') else None),
                                              note='Bound from Discord new-spool prompt')
             message = spool_sync.bind_text(result)
         except Exception as exc:

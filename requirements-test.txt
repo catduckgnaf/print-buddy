@@ -1,6 +1,9 @@
 # Offline test dependencies. The core itself only needs the standard library plus these for previews.
 jinja2>=3.1
 zxing-cpp>=3.0
+# Also a runtime dep (requirements.txt): listed here too, like zxing-cpp,
+# so the local failure-detector tests exercise the real inference path.
+onnxruntime>=1.17
 numpy>=1.26
 pillow>=10.0
 trimesh>=4.0

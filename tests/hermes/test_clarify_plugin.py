@@ -1,11 +1,13 @@
-"""Stage 2 plugin wiring that is built but not live (#524): the pbq: branch in
-on_interaction and the typed_answer_dispatch hook.
+"""Stage 2 plugin wiring (#524): the pbq: branch in on_interaction and the
+typed_answer_dispatch hook.
 
-The branch and the hook are inert until the S5 switch installs
-plugin._CLARIFY_UI (and registers the hook). These tests install a real
-HermesClarifyAdapter by hand — the posture S5 will create — and pin both
-sides: with no adapter installed nothing changes, with one installed clicks
-and typed answers resolve Print Handy's own registry.
+The branch and the hook are live exactly when the S5 switch installs
+plugin._CLARIFY_UI (Hermes host + [discord] clarify_ui on) and register()
+swaps the hook in. These tests install a real HermesClarifyAdapter by
+hand — the posture the switch creates — and pin both sides: with no
+adapter installed nothing changes, with one installed clicks and typed
+answers resolve Print Handy's own registry. The switch itself (register,
+install, delivery substitution) is pinned in test_clarify_wiring.py.
 """
 import asyncio
 import importlib.util
@@ -215,11 +217,14 @@ def test_typed_answer_dispatch_falls_through_when_nothing_is_open(monkeypatch):
     assert result is None and opener.requests == []
 
 
-def test_typed_answer_dispatch_is_not_registered_yet():
+def test_typed_answer_dispatch_is_not_registered_while_the_switch_is_off():
+    # The S5 switch defaults off ([discord] clarify_ui unset): register()
+    # keeps today's hook list byte-for-byte. The on-state swap is pinned in
+    # test_clarify_wiring.py.
     plugin = load_plugin()
     ctx = mock.Mock()
     plugin.register(ctx)
     hooks = [item.args for item in ctx.register_hook.call_args_list]
     dispatch = [fn for name, fn in hooks if name == "pre_gateway_dispatch"]
     assert plugin.typed_quantity_dispatch in dispatch  # today's hook keeps its place
-    assert plugin.typed_answer_dispatch not in dispatch  # S5 registers the generalization
+    assert plugin.typed_answer_dispatch not in dispatch  # the swap is the switch's, not the default

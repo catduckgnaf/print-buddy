@@ -1506,13 +1506,21 @@ def _prompt_brand():
 
 
 def _photo_intake_ready():
-    """Whether the photo label step can be offered (#514): the
-    visual_watch.vision_ready rule — PRINT_VISION_URL, or
-    services.vision_chat_url with its key. No endpoint, no offer, and the
+    """Whether the photo label step can be offered (#514): any extraction
+    route is available — the label's barcode/QR code (zxing-cpp wheel),
+    local OCR (a tesseract binary), or a vision endpoint (the
+    visual_watch.vision_ready rule: PRINT_VISION_URL, or
+    services.vision_chat_url with its key). No route, no offer, and the
     walkthrough is exactly as it was without one."""
     try:
         from print_handy.hermes import moonraker_event_listener as listener
-        return bool(listener._vision_ready())
+        if listener._vision_ready():
+            return True
+    except Exception:
+        pass
+    try:
+        from print_handy.hermes import spool_codes, spool_label
+        return bool(spool_codes.codes_available() or spool_label.tesseract_available())
     except Exception:
         return False
 
@@ -1530,6 +1538,35 @@ def _spool_label_vision_call():
             context="Filament spool label photo. Reply with JSON only.")
 
     return call
+
+
+def _spool_label_routes(state):
+    """The extraction routes for one label photo (#514), in precedence order.
+
+    The label's own barcode/QR code first (deterministic data the
+    manufacturer printed, readable offline), then the vision endpoint
+    (the richest reader, when configured), then local OCR via tesseract
+    (the offline fallback, matched against the known filament types the
+    walkthrough already loaded). Only available routes are included; the
+    chain (spool_label.extract_spool_spec_any) takes the first valid spec
+    and never merges partial results across routes.
+    """
+    from print_handy.hermes import spool_codes, spool_label
+
+    known = state.get('types') or []
+    routes = []
+    if spool_codes.codes_available():
+        routes.append(('code', lambda image: spool_codes.extract_via_codes(image, known)))
+    try:
+        from print_handy.hermes import moonraker_event_listener as listener
+        if listener._vision_ready():
+            call = _spool_label_vision_call()
+            routes.append(('vision', lambda image: spool_label.extract_spool_spec(image, call)))
+    except Exception:
+        pass
+    if spool_label.tesseract_available():
+        routes.append(('ocr', lambda image: spool_label.extract_via_ocr(image, known)))
+    return routes
 
 
 async def _spool_ask(adapter, source, metadata, gateway, question, choices):
@@ -2878,7 +2915,8 @@ def alert_button_handlers(bot, adapter):
                  'types': types[:100], 'brand': None, 'material': None, 'color': None,
                  'grams': None, 'old_spool_id': old_spool_id, 'old_remaining': old_remaining,
                  'disposition': None, 'photo_offered': _photo_intake_ready(),
-                 'from_photo': False, 'nozzle_temp': None, 'bed_temp': None}
+                 'from_photo': False, 'photo_route': None,
+                 'nozzle_temp': None, 'bed_temp': None}
         await intake_advance(interaction, state)
 
     async def intake_post_step(channel, state):
@@ -2899,11 +2937,12 @@ def alert_button_handlers(bot, adapter):
 
         Runs as a background task after the photo button's click (the click
         itself only swaps the prompt text). The photo is the operator's next
-        message in this channel with an image attached; its bytes go to the
-        configured vision endpoint and nowhere else — nothing is saved or
-        recorded. A readable label lands the walkthrough on its disposition
-        or confirmation step with every extracted value shown; an unusable
-        one refuses with the named reason and re-posts the manual steps.
+        message in this channel with an image attached; its bytes go only
+        to the extraction routes (_spool_label_routes) — nothing is saved
+        or recorded. A readable label lands the walkthrough on its
+        disposition or confirmation step with every extracted value shown;
+        an unusable one refuses with the named reason and re-posts the
+        manual steps.
         """
         from print_handy.hermes import spool_label
 
@@ -2941,8 +2980,8 @@ def alert_button_handlers(bot, adapter):
         attachment = next(a for a in (getattr(message, 'attachments', None) or []) if is_image(a))
         try:
             image = await attachment.read()
-            spec = await asyncio.to_thread(spool_label.extract_spool_spec, image,
-                                           _spool_label_vision_call())
+            spec, route = await asyncio.to_thread(
+                spool_label.extract_spool_spec_any, image, _spool_label_routes(state))
         except spool_label.SpoolLabelError as exc:
             refusal = str(exc)
         except Exception:
@@ -2952,15 +2991,15 @@ def alert_button_handlers(bot, adapter):
             refusal = None
         if refusal is not None:
             await channel.send(refusal)
-            fresh = {**state, 'step': 'start', 'from_photo': False, 'brand': None,
-                     'material': None, 'color': None, 'grams': None,
+            fresh = {**state, 'step': 'start', 'from_photo': False, 'photo_route': None,
+                     'brand': None, 'material': None, 'color': None, 'grams': None,
                      'nozzle_temp': None, 'bed_temp': None}
             await intake_post_step(channel, {**fresh, 'step': pab.intake_next_step(fresh)})
             return
         filled = {**state, 'brand': spec['brand'], 'material': spec['material'],
                   'color': spec['color'], 'grams': spec['grams'],
                   'nozzle_temp': spec['nozzle_temp'], 'bed_temp': spec['bed_temp'],
-                  'from_photo': True, 'step': 'weight'}
+                  'from_photo': True, 'photo_route': route, 'step': 'weight'}
         await intake_post_step(channel, {**filled, 'step': pab.intake_next_step(filled)})
 
     async def intake_field_modal(interaction, state, field, label, max_length=100):
@@ -3036,7 +3075,7 @@ def alert_button_handlers(bot, adapter):
         state = {key: alert.get(key) for key in
                  ('origin', 'slot', 'context', 'step', 'predicted_id', 'prompt_brand', 'types',
                   'brand', 'material', 'color', 'grams', 'old_spool_id', 'old_remaining', 'disposition',
-                  'photo_offered', 'from_photo', 'nozzle_temp', 'bed_temp')}
+                  'photo_offered', 'from_photo', 'photo_route', 'nozzle_temp', 'bed_temp')}
         if action == 'cancel':
             await asyncio.to_thread(pab.take, aid)
             await interaction.response.edit_message(content='New spool cancelled. Nothing changed.', view=None)
@@ -3057,9 +3096,10 @@ def alert_button_handlers(bot, adapter):
             await asyncio.to_thread(pab.take, aid)
             await interaction.response.edit_message(
                 content=('Send one photo of the spool label — the box, or the sticker on the '
-                         'spool — as your next message in this channel. I will read it and show '
-                         'you exactly what I found before anything is created. The photo goes '
-                         'only to the configured vision endpoint; it is not saved.'), view=None)
+                         'spool — as your next message in this channel. I will read it (the '
+                         "label's own barcode/QR code first, then the vision endpoint or local "
+                         'OCR) and show you exactly what I found before anything is created. '
+                         'The photo is not saved.'), view=None)
             task = asyncio.create_task(intake_photo_wait(interaction, state))
             _photo_tasks.add(task)
             task.add_done_callback(_photo_tasks.discard)
@@ -3093,7 +3133,7 @@ def alert_button_handlers(bot, adapter):
         state = {key: alert.get(key) for key in
                  ('origin', 'slot', 'context', 'step', 'predicted_id', 'prompt_brand', 'types',
                   'brand', 'material', 'color', 'grams', 'old_spool_id', 'old_remaining', 'disposition',
-                  'photo_offered', 'from_photo', 'nozzle_temp', 'bed_temp')}
+                  'photo_offered', 'from_photo', 'photo_route', 'nozzle_temp', 'bed_temp')}
         value = str((getattr(interaction, 'data', {}) or {}).get('values', [''])[0] or '')
         if value == pab.INTAKE_OTHER:
             field = 'brand' if state.get('step') == 'brand' else 'color'

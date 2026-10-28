@@ -1,5 +1,6 @@
 # Offline test dependencies. The core itself only needs the standard library plus these for previews.
 jinja2>=3.1
+zxing-cpp>=3.0
 numpy>=1.26
 pillow>=10.0
 trimesh>=4.0

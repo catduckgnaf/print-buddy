@@ -18,8 +18,9 @@ from unittest import mock
 
 import pytest
 
+from print_handy.hermes import moonraker_event_listener as mel
 from print_handy.hermes import print_alert_buttons as pab
-from print_handy.hermes import spool_label, spool_sync, visual_watch as vw
+from print_handy.hermes import spool_codes, spool_label, spool_sync, visual_watch as vw
 
 SPEC = importlib.util.spec_from_file_location(
     "pf_issue_514", Path(__file__).parents[2] / "plugins/print-feedback/__init__.py")
@@ -335,6 +336,7 @@ def _photo_harness(monkeypatch, tmp_path, vision_answer):
     monkeypatch.setattr(pab, "STATE", tmp_path / "alerts.json")
     monkeypatch.setattr(plugin, "_prompt_brand", lambda: False)
     monkeypatch.setattr(plugin, "_photo_intake_ready", lambda: True)
+    monkeypatch.setattr(mel, "_vision_ready", lambda *a, **k: True)
     monkeypatch.setattr(plugin, "_spool_label_vision_call",
                         lambda: (lambda image, prompt: vision_answer))
     monkeypatch.setattr(spool_sync, "next_spool_id", lambda: 18)
@@ -461,3 +463,256 @@ def test_photo_button_absent_without_a_vision_endpoint(tmp_path, monkeypatch):
         _interaction(sink, f"pbinsert:new:{insertion_aid}", _FakeChannel([]))))
     assert not any(":photo:" in cid for cid in _custom_ids(sink[-1][2]))
     assert any(":mat_0:" in cid for cid in _custom_ids(sink[-1][2]))
+
+
+# ------------------------------------------------- label text matching (OCR route)
+
+LABEL_TEXT = ("SUNLU\nSILK PLA\nRose Red Blue Green\nNet Weight: 500g\n"
+              "Nozzle Temp: 215-230C\nBed Temp: 60C\nDiameter: 1.75mm")
+
+
+def test_text_clean_label():
+    spec = spool_label.spec_from_label_text(LABEL_TEXT)
+    assert spec == {"brand": "Sunlu", "material": "Silk PLA", "color": "Rose Red Blue Green",
+                    "grams": 500.0, "nozzle_temp": 222.5, "bed_temp": 60.0}
+
+
+def test_text_noisy_ocr_still_matches_vocabulary():
+    spec = spool_label.spec_from_label_text("PETG\nTeal\n1 kg spool\nPrint Temperature: 240C\nBed: 85C")
+    assert spec["material"] == "PETG" and spec["color"] == "Teal" and spec["grams"] == 1000.0
+    assert spec["nozzle_temp"] == 240.0 and spec["bed_temp"] == 85.0
+
+
+def test_text_known_type_is_a_wholesale_match():
+    types = [{"brand": "Sunlu", "material": "Silk PLA", "color": "Rose Red Blue Green", "hex": None}]
+    spec = spool_label.spec_from_label_text("Silk PLA Rose Red Blue Green 500g", types)
+    assert spec["brand"] == "Sunlu" and spec["color"] == "Rose Red Blue Green"
+
+
+def test_text_partial_label_names_what_is_missing():
+    with pytest.raises(spool_label.SpoolLabelError) as caught:
+        spool_label.spec_from_label_text("PLA Black")
+    assert caught.value.reason == "missing_fields" and "weight" in str(caught.value)
+
+
+@pytest.mark.parametrize("text", ["", "   ", "asdf qwer zxcv"])
+def test_text_unreadable_when_nothing_matches(text):
+    with pytest.raises(spool_label.SpoolLabelError) as caught:
+        spool_label.spec_from_label_text(text)
+    assert caught.value.reason == "unreadable"
+
+
+def test_ocr_route_with_injected_text():
+    spec = spool_label.extract_via_ocr(b"img", text_fn=lambda image: LABEL_TEXT)
+    assert spec["material"] == "Silk PLA" and spec["grams"] == 500.0
+
+
+def test_ocr_route_empty_text_and_missing_binary():
+    with pytest.raises(spool_label.SpoolLabelError) as caught:
+        spool_label.extract_via_ocr(b"img", text_fn=lambda image: "")
+    assert caught.value.reason == "unreadable"
+
+
+@pytest.mark.skipif(not spool_label.tesseract_available(), reason="no tesseract binary")
+def test_ocr_route_real_tesseract_on_a_rendered_label(tmp_path):
+    font_path = Path("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf")
+    if not font_path.exists():
+        pytest.skip("no TrueType font to render a label with")
+    from PIL import Image, ImageDraw, ImageFont
+    img = Image.new("RGB", (900, 480), "white")
+    draw = ImageDraw.Draw(img)
+    bold = ImageFont.truetype(str(font_path), 44)
+    plain = ImageFont.truetype(str(font_path), 36)
+    draw.text((40, 30), "SUNLU", fill="black", font=bold)
+    draw.text((40, 100), "SILK PLA", fill="black", font=bold)
+    draw.text((40, 170), "Rose Red Blue Green", fill="black", font=plain)
+    draw.text((40, 240), "Net Weight: 500g", fill="black", font=plain)
+    draw.text((40, 300), "Nozzle Temp: 215-230C", fill="black", font=plain)
+    draw.text((40, 360), "Bed Temp: 60C", fill="black", font=plain)
+    import io as _io
+    buffer = _io.BytesIO()
+    img.save(buffer, format="PNG")
+    spec = spool_label.extract_via_ocr(buffer.getvalue())
+    assert spec["material"] == "Silk PLA" and spec["color"] == "Rose Red Blue Green"
+    assert spec["grams"] == 500.0 and spec["bed_temp"] == 60.0
+
+
+# ------------------------------------------------------------- barcode / QR route
+
+def test_codes_json_payload_uses_the_shared_validation():
+    spec = spool_codes.extract_via_codes(
+        b"img", reader=lambda image: ['{"brand": "Sunlu", "material": "PLA", "color": "Black", "grams": 1000}'])
+    assert spec["material"] == "PLA" and spec["grams"] == 1000.0
+
+
+def test_codes_text_payload_uses_label_text_matching():
+    spec = spool_codes.extract_via_codes(
+        b"img", reader=lambda image: ["Sunlu Silk PLA Rose Red Blue Green 500g"])
+    assert spec["color"] == "Rose Red Blue Green" and spec["grams"] == 500.0
+
+
+def test_codes_bare_product_number_carries_no_spec():
+    with pytest.raises(spool_label.SpoolLabelError):
+        spool_codes.extract_via_codes(b"img", reader=lambda image: ["6971234567890"])
+
+
+def test_codes_no_code_in_photo_is_unreadable():
+    with pytest.raises(spool_label.SpoolLabelError) as caught:
+        spool_codes.extract_via_codes(b"img", reader=lambda image: [])
+    assert caught.value.reason == "unreadable"
+
+
+@pytest.mark.skipif(not spool_codes.codes_available(), reason="zxing-cpp not installed")
+def test_codes_real_qr_roundtrip():
+    import io as _io
+    import numpy as np
+    import zxingcpp
+    from PIL import Image
+    payload = json.dumps({"brand": "Sunlu", "material": "Silk PLA",
+                          "color": "Rose Red Blue Green", "grams": 500,
+                          "nozzle_temp": 220, "bed_temp": 60})
+    qr = Image.fromarray(np.asarray(zxingcpp.write_barcode_to_image(
+        zxingcpp.create_barcode(payload, zxingcpp.BarcodeFormat.QRCode), scale=8),
+        dtype=np.uint8), mode="L")
+    buffer = _io.BytesIO()
+    qr.save(buffer, format="PNG")
+    spec = spool_codes.extract_via_codes(buffer.getvalue())
+    assert spec["material"] == "Silk PLA" and spec["nozzle_temp"] == 220.0
+    blank = Image.new("RGB", (100, 100), "white")
+    buffer = _io.BytesIO()
+    blank.save(buffer, format="PNG")
+    assert spool_codes.decode_payloads(buffer.getvalue()) == []
+
+
+# ------------------------------------------------------------- route chain + gate
+
+def _fail(reason, missing=()):
+    def route(image):
+        raise spool_label.SpoolLabelError(reason, missing)
+    return route
+
+
+def _ok(image):
+    return {"brand": None, "material": "PLA", "color": "Black", "grams": 1000.0,
+            "nozzle_temp": None, "bed_temp": None}
+
+
+def test_chain_first_success_wins_and_names_the_route():
+    spec, route = spool_label.extract_spool_spec_any(
+        b"x", [("code", _fail("unreadable")), ("vision", _ok), ("ocr", _fail("unreadable"))])
+    assert route == "vision" and spec["material"] == "PLA"
+
+
+def test_chain_all_fail_prefers_the_actionable_missing_fields():
+    with pytest.raises(spool_label.SpoolLabelError) as caught:
+        spool_label.extract_spool_spec_any(
+            b"x", [("code", _fail("unreadable")), ("ocr", _fail("missing_fields", ("weight",)))])
+    assert caught.value.reason == "missing_fields"
+
+
+def test_chain_no_routes_is_unreadable():
+    with pytest.raises(spool_label.SpoolLabelError) as caught:
+        spool_label.extract_spool_spec_any(b"x", [])
+    assert caught.value.reason == "unreadable"
+
+
+def test_gate_opens_on_any_route(monkeypatch):
+    monkeypatch.setattr(mel, "_vision_ready", lambda *a, **k: False)
+    monkeypatch.setattr(spool_codes, "codes_available", lambda: True)
+    monkeypatch.setattr(spool_label, "tesseract_available", lambda: False)
+    assert plugin._photo_intake_ready() is True
+    monkeypatch.setattr(spool_codes, "codes_available", lambda: False)
+    monkeypatch.setattr(spool_label, "tesseract_available", lambda: True)
+    assert plugin._photo_intake_ready() is True
+    monkeypatch.setattr(spool_label, "tesseract_available", lambda: False)
+    assert plugin._photo_intake_ready() is False
+
+
+def test_confirm_text_names_the_reading_route():
+    base = {"step": "confirm", "slot": 2, "predicted_id": 18, "brand": "Sunlu",
+            "material": "Silk PLA", "color": "Rose Red Blue Green", "grams": 500,
+            "from_photo": True, "nozzle_temp": None, "bed_temp": None, "disposition": None}
+    assert "barcode/QR code" in pab.intake_step_text({**base, "photo_route": "code"})
+    assert "local OCR" in pab.intake_step_text({**base, "photo_route": "ocr"})
+    assert "vision endpoint" in pab.intake_step_text({**base, "photo_route": "vision"})
+
+
+# ------------------------------------------- end-to-end: the code route reads it
+
+class _QrAttachment:
+    filename = "label.png"
+    content_type = "image/png"
+
+    def __init__(self, data):
+        self._data = data
+
+    async def read(self):
+        return self._data
+
+
+@pytest.mark.skipif(not spool_codes.codes_available(), reason="zxing-cpp not installed")
+def test_photo_walkthrough_code_route_prefills(tmp_path, monkeypatch):
+    import io as _io
+    import numpy as np
+    import zxingcpp
+    from PIL import Image
+    monkeypatch.setattr(pab, "STATE", tmp_path / "alerts.json")
+    monkeypatch.setattr(plugin, "_prompt_brand", lambda: False)
+    monkeypatch.setattr(plugin, "_photo_intake_ready", lambda: True)
+    monkeypatch.setattr(mel, "_vision_ready", lambda *a, **k: False)
+    monkeypatch.setattr(spool_sync, "next_spool_id", lambda: 18)
+    monkeypatch.setattr(spool_sync, "filament_types", lambda: [])
+    monkeypatch.setattr(spool_sync, "load_state", lambda: {
+        "ifs_slots": {"2": {"spoolman_id": 13, "name": "Matte White PLA+", "remaining_grams": 0.0}}})
+    created = []
+    monkeypatch.setattr(spool_sync, "create_spool",
+                        lambda spec: created.append(spec) or {"spool_id": 18})
+    monkeypatch.setattr(spool_sync, "bind_slot",
+                        lambda slot, spool_id, **kw: {"record": {"name": "Rose Silk PLA"},
+                                                      "prior_spool_id": 13})
+    payload = json.dumps({"brand": "Sunlu", "material": "Silk PLA",
+                          "color": "Rose Red Blue Green", "grams": 500,
+                          "nozzle_temp": 220, "bed_temp": 60})
+    qr = Image.fromarray(np.asarray(zxingcpp.write_barcode_to_image(
+        zxingcpp.create_barcode(payload, zxingcpp.BarcodeFormat.QRCode), scale=8),
+        dtype=np.uint8), mode="L")
+    buffer = _io.BytesIO()
+    qr.save(buffer, format="PNG")
+
+    channel_sink = []
+    channel = _FakeChannel(channel_sink)
+    photo_message = S(author=S(id="42"), channel=channel,
+                      attachments=[_QrAttachment(buffer.getvalue())])
+
+    async def wait_for(event, check=None, timeout=None):
+        assert check(photo_message)
+        return photo_message
+
+    bot = S(listeners={}, add_listener=lambda fn, name: bot.listeners.__setitem__(name, fn),
+            wait_for=wait_for)
+    plugin.alert_button_handlers(bot, S())
+    on_interaction = bot.listeners["on_interaction"]
+
+    async def main():
+        sink = []
+        insertion_aid = pab.record("insertion", "", slot=2)
+        await on_interaction(_interaction(sink, f"pbinsert:new:{insertion_aid}", channel))
+        photo = next(cid for cid in _custom_ids(sink[-1][2]) if ":photo:" in cid)
+        await on_interaction(_interaction(sink, photo, channel))
+        for _ in range(100):
+            if channel_sink:
+                break
+            await asyncio.sleep(0.05)
+        assert channel_sink, "the code route never posted"
+        kind, content, view = channel_sink[-1]
+        depleted = next(cid for cid in _custom_ids(view) if ":disp_depleted:" in cid)
+        sink.clear()
+        await on_interaction(_interaction(sink, depleted, channel))
+        kind, content, view = sink[-1]
+        assert "barcode/QR code" in content and "Sunlu" in content
+        assert created == []
+        confirm = next(cid for cid in _custom_ids(view) if ":confirm:" in cid)
+        await on_interaction(_interaction(sink, confirm, channel))
+        assert created and created[0]["nozzle_temp"] == 220.0
+
+    asyncio.run(main())

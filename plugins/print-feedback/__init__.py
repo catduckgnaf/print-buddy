@@ -6,6 +6,7 @@ the Print Handy package: print_handy.hermes (listener helpers, print control) an
 """
 import asyncio
 import contextlib
+import copy
 import json
 import logging
 import os
@@ -779,6 +780,164 @@ async def _deliver_receipt(source, adapter, message_id, text):
         logger.warning('Print receipt delivery exceeded %.1fs; continuing original request', ACK_TIMEOUT)
     except Exception:
         logger.exception('Print receipt delivery failed; continuing original request')
+
+
+async def _stray_chat_post(adapter, source, message_id, content, *, reply=True):
+    """Post one stray-chat answer through the delivery adapter; failures are logged, never raised.
+
+    The claim hook owns the message once it posts (or tries to): falling
+    through to the profile agent after a possibly-delivered send could
+    double-answer, so a failed send is a logged loss, not a hand-off.
+    """
+    try:
+        await adapter.send(
+            chat_id=source.chat_id, content=content,
+            reply_to=message_id if reply else None,
+            metadata={'thread_id': source.thread_id} if source.thread_id else None,
+        )
+    except Exception:
+        logger.exception('Stray-chat reply delivery failed')
+
+
+async def stray_chat_dispatch(event, gateway, **kwargs):
+    """Claim otherwise-unmatched Discord text for the bot's own stray-chat lanes (#524 stage 3).
+
+    Registered LAST among the pre_gateway_dispatch hooks, so every handler —
+    commands, deterministic phrases, links/files, typed answers — has already
+    had its claim, exactly where the standalone bot's fallback sits in
+    BotCore.process. It exists so `discord.chat_llm_enabled` (#466) means the
+    same thing in Hermes mode as standalone (design §2e): until this hook, the
+    switch had no effect here and unmatched text always fell through to the
+    in-process profile agent. The lanes, texts and order are the standalone
+    ones, imported from print_handy.bot so there is one definition:
+
+    * help words post the command list (BotCore answers those before any
+      lane, in both switch states);
+    * switch off: the short not-understood reply — no stray-chat model call
+      of any kind, and the profile agent never sees the text;
+    * a configured [agent] endpoint answers first; a failed call posts the
+      honest agent-unavailable line instead of the not-understood reply;
+    * else a configured [llm] answers: its reply posts, and a command it
+      names is re-run through the dispatch handlers below, as a typed
+      command would be — the agent lane's replies never gain that channel;
+    * neither lane configured (switch on): return None and leave the text
+      to the profile agent, as today — the hook only claims what the bot's
+      own lanes would have answered, so it ships dark on installs that
+      configured nothing.
+
+    Transitional by design: it is deleted with in-process hosting itself,
+    and the standalone Router never runs it (AGENT_ONLY_DISPATCH) — BotCore's
+    fallback is the same behaviour in the bot's own process.
+    """
+    if not _is_print_discord_event(event) or _platform_value(event.source) != 'discord':
+        return None
+    source = event.source
+    text = str(getattr(event, 'text', '') or '').strip()
+    if not text:
+        return None
+    # This hook is before core auth, like receive_ack: recheck the SAME core
+    # authorization before posting or claiming anything.
+    try:
+        if not getattr(source, 'user_id', None) or not gateway._is_user_authorized_for_source(source):
+            return None
+        adapter = gateway._delivery_adapter_for(source)
+        if adapter is None:
+            return None
+    except Exception:
+        logger.exception('Stray-chat authorization/delivery lookup failed')
+        return None
+    from print_handy.bot import agent as agent_lane
+    from print_handy.bot import commands as bot_commands
+    from print_handy.bot import llm as llm_lane
+    from print_handy.bot.runtime import (HELP_WORDS, agent_unavailable_text,
+                                         discord_chat_llm_enabled, session_key,
+                                         unmatched_text)
+    cfg = _config.cfg()
+    bot_name = str((cfg.get('discord') or {}).get('bot_name') or '').strip() or 'Print Handy'
+    message_id = getattr(event, 'message_id', None)
+    if text.casefold() in HELP_WORDS:
+        await _stray_chat_post(adapter, source, message_id,
+                               bot_commands.help_text(bot_name), reply=False)
+        return {'action': 'skip', 'reason': 'help'}
+    if not discord_chat_llm_enabled(cfg):
+        await _stray_chat_post(adapter, source, message_id, unmatched_text(bot_name))
+        return {'action': 'skip', 'reason': 'chat llm disabled'}
+    if agent_lane.configured(cfg):
+        try:
+            live_key = gateway._session_key_for_source(source)
+        except Exception:
+            live_key = session_key(source)
+        try:
+            reply = await asyncio.to_thread(agent_lane.ask, text, live_key, cfg=cfg)
+        except Exception as exc:
+            logger.warning('agent reply failed, sending the agent-unavailable reply: %r', exc)
+            await _stray_chat_post(adapter, source, message_id, agent_unavailable_text())
+            return {'action': 'skip', 'reason': 'agent unavailable'}
+        await _stray_chat_post(adapter, source, message_id, reply)
+        return {'action': 'skip', 'reason': 'agent reply'}
+    if llm_lane.configured(cfg):
+        help_text = bot_commands.help_text(bot_name)
+        try:
+            reply, command = await asyncio.to_thread(llm_lane.ask, text, help_text, cfg=cfg)
+        except Exception as exc:
+            logger.warning('LLM reply failed, sending the unmatched reply: %r', exc)
+            reply, command = '', None
+        if command:
+            if command.casefold() in HELP_WORDS:
+                # The command's own output IS the help text (BotCore routes
+                # it through process, which answers help words first), so
+                # the model's reply is not posted ahead of it.
+                await _stray_chat_post(adapter, source, message_id, help_text, reply=False)
+                return {'action': 'skip', 'reason': 'help'}
+            replied = bool(reply)
+            if replied:
+                await _stray_chat_post(adapter, source, message_id, reply)
+            routed = copy.copy(event)
+            routed.text = command
+            routed.metadata = {**dict(getattr(event, 'metadata', {}) or {}),
+                               'llm_command': True}
+            result = await _redispatch(routed, gateway)
+            if result is not None:
+                return result
+            if replied:
+                return {'action': 'skip', 'reason': 'llm reply'}
+            await _stray_chat_post(adapter, source, message_id, unmatched_text(bot_name))
+            return {'action': 'skip', 'reason': 'command list'}
+        if reply:
+            await _stray_chat_post(adapter, source, message_id, reply)
+            return {'action': 'skip', 'reason': 'llm reply'}
+        await _stray_chat_post(adapter, source, message_id, unmatched_text(bot_name))
+        return {'action': 'skip', 'reason': 'command list'}
+    return None
+
+
+async def _redispatch(event, gateway):
+    """Run a model-named command through the dispatch handlers, as if typed.
+
+    Mirrors print_handy.bot.router.Router.dispatch — the first hook that
+    answers wins, a failing hook ends the dispatch with its own skip — over
+    the effective ordered list register() installs (_ACTIVE_DISPATCH_HOOKS,
+    which carries the typed-answer swap when the own renderer is on; the
+    static _DISPATCH_HOOKS before register() ever ran), minus receive_ack
+    (the Router excludes it the same way: it promises an agent follow-up)
+    and minus this claim hook, so a named command can never re-enter the
+    stray-chat lanes.
+    """
+    import inspect
+    for hook in _ACTIVE_DISPATCH_HOOKS or _DISPATCH_HOOKS:
+        if hook is receive_ack:
+            continue
+        try:
+            result = hook(event, gateway)
+            if inspect.isawaitable(result):
+                result = await result
+        except Exception:
+            logger.exception('handler %s failed', getattr(hook, '__name__', hook))
+            return {'action': 'skip',
+                    'reason': f"{getattr(hook, '__name__', 'handler')} failed"}
+        if result is not None:
+            return result
+    return None
 
 
 def clarify_receipt(result):
@@ -3924,6 +4083,40 @@ def alert_button_handlers(bot, adapter):
     bot.add_listener(on_interaction, 'on_interaction')
 
 
+# The pre_gateway_dispatch handlers in registration order — the same order
+# the standalone Router runs them. register() installs this list (with the
+# typed-answer swap when the own renderer is on) and records the effective
+# list in _ACTIVE_DISPATCH_HOOKS; stray_chat_dispatch's model-named-command
+# re-dispatch walks the effective list.
+_DISPATCH_HOOKS = (
+    guided_dispatch,
+    design_dispatch,
+    maintenance_dispatch,
+    coldpull_dispatch,
+    lookup_dispatch,
+    troubleshoot_dispatch,
+    macros_dispatch,
+    typed_quantity_dispatch,
+    upload_wait_dispatch,
+    model_link_dispatch,
+    color_selection_dispatch,
+    print_next_dispatch,
+    runout_intake_dispatch,
+    print_stop_dispatch,
+    print_resume_dispatch,
+    print_again_dispatch,
+    spool_dispatch,
+    print_reboot_dispatch,
+    live_dispatch,
+    nozzle_dispatch,
+    receive_ack,
+)
+
+# The effective dispatch list register() installed (typed-answer swap
+# applied); empty until register() runs.
+_ACTIVE_DISPATCH_HOOKS = ()
+
+
 def register(ctx):
     # The S5 host record (#524 stage 2): the standalone Router offers neither
     # Hermes-only API below, so this stays False there and the own-renderer
@@ -3965,30 +4158,25 @@ def register(ctx):
                 defaults={'timeout': int((_config.cfg().get('design') or {}).get('timeout_s') or 180)})
     if getattr(ctx, 'llm', None) is not None:
         _HERMES_LLM = ctx.llm
-    ctx.register_hook('pre_gateway_dispatch', guided_dispatch)
-    ctx.register_hook('pre_gateway_dispatch', design_dispatch)
-    ctx.register_hook('pre_gateway_dispatch', maintenance_dispatch)
-    ctx.register_hook('pre_gateway_dispatch', coldpull_dispatch)
-    ctx.register_hook('pre_gateway_dispatch', lookup_dispatch)
-    ctx.register_hook('pre_gateway_dispatch', troubleshoot_dispatch)
-    ctx.register_hook('pre_gateway_dispatch', macros_dispatch)
     # With the own renderer on, typed answers route through
     # typed_answer_dispatch (parser prompts first, then the session's open
     # question in the own registry); off, today's quantity-only hook stays.
-    ctx.register_hook('pre_gateway_dispatch', typed_answer_dispatch if clarify_on else typed_quantity_dispatch)
-    ctx.register_hook('pre_gateway_dispatch', upload_wait_dispatch)
-    ctx.register_hook('pre_gateway_dispatch', model_link_dispatch)
-    ctx.register_hook('pre_gateway_dispatch', color_selection_dispatch)
-    ctx.register_hook('pre_gateway_dispatch', print_next_dispatch)
-    ctx.register_hook('pre_gateway_dispatch', runout_intake_dispatch)
-    ctx.register_hook('pre_gateway_dispatch', print_stop_dispatch)
-    ctx.register_hook('pre_gateway_dispatch', print_resume_dispatch)
-    ctx.register_hook('pre_gateway_dispatch', print_again_dispatch)
-    ctx.register_hook('pre_gateway_dispatch', spool_dispatch)
-    ctx.register_hook('pre_gateway_dispatch', print_reboot_dispatch)
-    ctx.register_hook('pre_gateway_dispatch', live_dispatch)
-    ctx.register_hook('pre_gateway_dispatch', nozzle_dispatch)
-    ctx.register_hook('pre_gateway_dispatch', receive_ack)
+    # _ACTIVE_DISPATCH_HOOKS records the effective list for
+    # stray_chat_dispatch's model-named-command re-dispatch.
+    global _ACTIVE_DISPATCH_HOOKS
+    _active = []
+    for hook in _DISPATCH_HOOKS:
+        if hook is typed_quantity_dispatch and clarify_on:
+            hook = typed_answer_dispatch
+        ctx.register_hook('pre_gateway_dispatch', hook)
+        _active.append(hook)
+    _ACTIVE_DISPATCH_HOOKS = tuple(_active)
+    # Stray chat goes last of all (#524 stage 3): the claim hook answers
+    # otherwise-unmatched Discord text with the bot's own lanes, so the
+    # chat-LLM switch and the [agent] endpoint mean the same thing in this
+    # mode as standalone. It is not part of _DISPATCH_HOOKS — a model-named
+    # command re-dispatch must never re-enter it.
+    ctx.register_hook('pre_gateway_dispatch', stray_chat_dispatch)
     ctx.register_hook('post_tool_call', clarify_ack)
     ctx.register_hook('pre_tool_call', cap_discord_clarifications)
     ctx.register_hook('pre_tool_call', guard_terminal_loop)

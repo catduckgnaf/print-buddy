@@ -238,6 +238,12 @@ deterministic (commands, links, files, typed answers, buttons, `print 57`) works
 The switch gates every stray-chat model call: the `[llm]` call and the `[agent]` lane alike.
 `bot check` says so on its llm and agent rows, naming the switch, and the bot's status reports `"llm": false`.
 
+The same is true under Hermes (#524 stage 3): the plugin's final dispatch hook claims
+otherwise-unmatched Discord text for these same lanes — with the switch off the profile agent
+never sees the text, a configured `[agent]` endpoint (or `[llm]`) answers through the bot
+instead, and only when the switch is on and no lane is configured does the profile agent keep
+answering as it does today.
+
 You do not have to remove `[llm]` to do this, and you should not if you use `/print-design`: design
 inherits the `[llm]` endpoint when `[design]` is unset, and that inheritance keeps working with chat
 off — design has its own switch (`design.enabled`). Two other features use a model through the

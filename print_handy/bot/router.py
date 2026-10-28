@@ -19,7 +19,9 @@ logger = logging.getLogger(__name__)
 PLUGIN = settings.ROOT / "plugins" / "print-feedback" / "__init__.py"
 MODULE_NAME = "print_handy_print_feedback"
 # receive_ack promises the agent will follow up ("Checking the requested action..."). Standalone has no agent.
-AGENT_ONLY_DISPATCH = {"receive_ack"}
+# stray_chat_dispatch is the transitional in-process claim hook (#524 stage 3): BotCore's own
+# fallback answers the same text in this process, with the same lanes and texts.
+AGENT_ONLY_DISPATCH = {"receive_ack", "stray_chat_dispatch"}
 
 
 def load_plugin(path=PLUGIN, name=MODULE_NAME):

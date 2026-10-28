@@ -662,3 +662,163 @@ def guide_text(which, entry) -> str:
             "steps would not match its firmware. Run `/print-firmware` to see what Print "
             "Handy can report for it, and docs/FIRMWARE-UPDATE.md for its own update "
             "path. Nothing was sent to the printer.")
+
+
+# --------------------------------------------------------------------- stage 4: guidance
+
+@dataclass(frozen=True)
+class FamilyGuidance:
+    """One family's stage 4 verdict: what can be reported, the manual steps, why no apply."""
+
+    title: str
+    can_report: str
+    manual_steps: str
+    why_no_apply: str
+
+
+_FORK_WHY = ("It runs its vendor's own Klipper-based firmware — a fork, not upstream "
+             "Klipper — and its releases are sequenced by the vendor. Driving a fork's "
+             "Update Manager at upstream releases is the documented breakage path, so "
+             "Print Handy never applies updates on vendor forks.")
+
+GUIDANCE = {
+    "elegoo_neptune": FamilyGuidance(
+        title="Elegoo Neptune 4 family (vendor Klipper fork)",
+        can_report=("the versions its Moonraker endpoint reports — the vendor fork's own "
+                    "versions, for information only"),
+        manual_steps=("Elegoo's own package: copy the `ELEGOO_UPDATE_DIR` folder from "
+                      "Elegoo's firmware download for your exact model and hardware "
+                      "version to a USB drive, insert it, and start the update at the "
+                      "touchscreen. The touchscreen's own firmware is a separate `.tft` "
+                      "file loaded from a TF card."),
+        why_no_apply=("Elegoo explicitly warns that updating a Neptune 4 to official "
+                      "Klipper/Moonraker/Fluidd \"will make the machine not work "
+                      "properly\". " + _FORK_WHY)),
+    "creality_klipper": FamilyGuidance(
+        title="Creality Klipper family (K1, Ender-3 V3 — vendor fork)",
+        can_report=("the versions its Moonraker endpoint reports — Creality's fork's own "
+                    "versions, for information only"),
+        manual_steps=("Creality's releases: the touchscreen OTA / Creality Cloud offer "
+                      "when one is presented, or Creality's USB firmware package for "
+                      "your exact model, installed at the printer."),
+        why_no_apply=_FORK_WHY),
+    "qidi_klipper": FamilyGuidance(
+        title="QIDI Klipper family (vendor fork)",
+        can_report=("the versions its Moonraker endpoint reports — QIDI's fork's own "
+                    "versions, for information only"),
+        manual_steps=("QIDI's official update file for your exact model, copied to a USB "
+                      "drive and installed at the printer."),
+        why_no_apply=("Online-updating Klipper/Moonraker through the printer's web UI is "
+                      "documented to break QIDI's OEM board/display connections — QIDI "
+                      "shipped replacement eMMC boards for exactly this. " + _FORK_WHY)),
+    "anycubic_kobra2": FamilyGuidance(
+        title="Anycubic Kobra 2 family",
+        can_report=("update state only where a Moonraker endpoint exists at all: stock "
+                    "KobraOS exposes none, and Print Handy's profiles cover "
+                    "Moonraker-exposed (community firmware) installs, whose reported "
+                    "state is whatever that install's own configuration says"),
+        manual_steps=("Stock installs: Anycubic's USB `update/update.swu` package, "
+                      "installed at the printer. Community-firmware installs follow "
+                      "that firmware's own update process."),
+        why_no_apply=("Neither stock (no endpoint to ask) nor community installs "
+                      "(unknown update remotes) give Print Handy a responsible apply "
+                      "path.")),
+    "flashforge_stock": FamilyGuidance(
+        title="Flashforge stock firmware (AD5X)",
+        can_report=("nothing programmatic: the stock LAN API Print Handy uses carries "
+                    "device info, not firmware update state"),
+        manual_steps=("At the printer: Device Info → Firmware Update for the OTA check, "
+                      "IFS Update separately for the IFS firmware, or a firmware file "
+                      "on a USB drive inserted while powered off. "
+                      "`/print-firmware guide stock` walks through it."),
+        why_no_apply=("No firmware-update endpoint exists in the stock LAN API Print "
+                      "Handy talks to.")),
+    "bambulab": FamilyGuidance(
+        title="Bambu Lab",
+        can_report=("the installed firmware version, from the LAN status Print Handy "
+                    "already reads; whether a newer version exists is a Bambu "
+                    "cloud/wiki fact, not something the LAN protocol answers"),
+        manual_steps=("Cloud OTA from the printer screen, Bambu Studio or Bambu Handy "
+                      "with cloud mode on — or the manual offline upgrade: Bambu's "
+                      "published firmware file on the printer's SD card, installed at "
+                      "the printer. LAN-only mode, the mode Print Handy uses, "
+                      "receives no OTA updates."),
+        why_no_apply=("No local trigger for a stock firmware update exists in the LAN "
+                      "protocol Print Handy uses.")),
+    "prusa": FamilyGuidance(
+        title="Prusa (PrusaLink)",
+        can_report=("the printer and firmware identity PrusaLink already exposes; "
+                    "PrusaLink carries no update-availability state"),
+        manual_steps=("Prusa's Buddy firmware `.bbf` file on a FAT32 USB drive: insert "
+                      "the drive and reboot, then confirm the flash at the printer's "
+                      "own prompt. Every Prusa update route ends at that USB flash."),
+        why_no_apply="No firmware-update endpoint exists in the PrusaLink API."),
+    "elegoo_sdcp": FamilyGuidance(
+        title="Elegoo Centauri Carbon (SDCP)",
+        can_report=("no firmware-update state: the SDCP protocol Print Handy "
+                    "implements has no firmware version or update fields"),
+        manual_steps=("Touchscreen OTA when the printer is online, or the USB package "
+                      "(`update.bin` / `update/update.swu`) — the USB path is also "
+                      "the rollback path."),
+        why_no_apply="No firmware command exists in the SDCP protocol."),
+    "octoprint_marlin": FamilyGuidance(
+        title="Marlin via OctoPrint",
+        can_report=("the board's firmware name and version where the printer reports "
+                    "it (the `M115` lineage); OctoPrint's own version describes "
+                    "OctoPrint, not the board"),
+        manual_steps=("Flash the board over serial with tooling configured for your "
+                      "board's flash method — in the OctoPrint world that is the "
+                      "Firmware Updater plugin. OctoPrint's built-in Software Update "
+                      "updates OctoPrint and its plugins, not the Marlin board."),
+        why_no_apply=("Print Handy does not install or control OctoPrint plugins, and "
+                      "it does not flash boards over serial.")),
+}
+
+
+def guidance_for(entry) -> FamilyGuidance | None:
+    """The stage 4 guidance for a registry entry, or None.
+
+    None means the entry has the full stage 1–2 path (eligible ZMod /
+    vanilla Klipper) or is a family this module does not know — the
+    coverage test in tests/test_firmware_update.py iterates the real
+    registry and fails loudly for any entry that is neither eligible nor
+    covered here, so a future family cannot be silently dropped.
+    """
+    if entry is None or is_apply_eligible(entry):
+        return None
+    if entry.connection == "octoprint" or entry.vendor == "octoprint":
+        return GUIDANCE["octoprint_marlin"]
+    if entry.vendor == "elegoo" and entry.connection == "moonraker":
+        return GUIDANCE["elegoo_neptune"]
+    if entry.vendor == "creality":
+        return GUIDANCE["creality_klipper"]
+    if entry.vendor == "qidi":
+        return GUIDANCE["qidi_klipper"]
+    if entry.vendor == "anycubic":
+        return GUIDANCE["anycubic_kobra2"]
+    if entry.vendor == "flashforge_stock":
+        return GUIDANCE["flashforge_stock"]
+    if entry.vendor == "bambulab":
+        return GUIDANCE["bambulab"]
+    if entry.vendor == "prusa":
+        return GUIDANCE["prusa"]
+    if entry.vendor == "elegoo_sdcp":
+        return GUIDANCE["elegoo_sdcp"]
+    return None
+
+
+def guidance_text(entry) -> str:
+    """The chat-ready stage 4 answer for one printer's family."""
+    guidance = guidance_for(entry)
+    label = entry.label if entry is not None else "your printer"
+    if guidance is None:
+        return not_moonraker_text(entry.connection if entry is not None else None)
+    return "\n".join([
+        f"**Firmware updates for {label}** — {guidance.title}",
+        "",
+        f"What Print Handy can report: {guidance.can_report}.",
+        f"How the update is done: {guidance.manual_steps}",
+        f"Why Print Handy doesn't apply it: {guidance.why_no_apply}",
+        "",
+        "Nothing was sent to the printer. The full per-family matrix is in "
+        "docs/FIRMWARE-UPDATE.md."])

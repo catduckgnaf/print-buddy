@@ -23,6 +23,7 @@ Do not run both Discord modes with the same token. Installing, enabling services
 - [Settings reference](SETTINGS.md): every setting with its YAML key, environment variable and Docker value, plus Docker build arguments and secrets.
 - [Detailed project reference](PROJECT-REFERENCE.md): workflow examples, commands, printer models, spool identity rules, monitoring and updates.
 - [Printer macros](MACROS.md): `/print-macros` live macro discovery on Moonraker printers, and the per-vendor macro matrix.
+- [Firmware updates](FIRMWARE-UPDATE.md): `/print-firmware` version reporting, guarded component updates on ZMod and vanilla Klipper, the guided ZMod base / stock firmware flows, and the per-family update matrix for every other printer.
 - [Printer profiles and offline delivery](PRINTER-PROFILES.md): vendor/model inheritance, supported delivery methods and verification limitations.
 - [Printer support](PRINTER-SUPPORT.md): what "supported" means for each printer, how to try one that is not listed, what a built-in printer consists of, and the hardware checklist for confirming a listed printer works.
 - [Optional Flash Studio slicer](FLASH-STUDIO.md): opt-in, user-installed Flash Studio executable for Flashforge printers; an empty path keeps the normal OrcaSlicer choice.

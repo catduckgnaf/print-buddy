@@ -340,7 +340,9 @@ def test_dispatch_explains_non_moonraker_printers_without_calling_out():
         out = asyncio.run(plugin.firmware_dispatch(_event("/print-firmware"), _gateway(adapter)))
     assert out["reason"] == "print firmware not applicable to this printer"
     assert transport.calls == []
-    assert "no Moonraker Update Manager" in adapter.sent[-1]
+    # Stage 4: a non-Moonraker printer gets its family's guidance, not an error.
+    assert "Firmware updates for Bambu Lab A1" in adapter.sent[-1]
+    assert "LAN-only mode" in adapter.sent[-1]
 
 
 def test_dispatch_reports_an_unreachable_moonraker_and_sends_nothing():
@@ -655,3 +657,55 @@ def test_dispatch_guide_zmod_on_the_ad5x():
     assert out["reason"] == "print firmware guide shown"
     assert "ZFLASH" in adapter.sent[-1]
     assert transport.calls == []
+
+
+# ------------------------------------------------------------------ stage 4: guidance
+
+def test_every_registry_family_is_eligible_or_has_guidance():
+    # Iterates the real registry: a future family that is neither eligible
+    # for apply nor covered by stage 4 guidance fails here loudly instead
+    # of being silently dropped.
+    from print_handy import knowledge
+    registry = knowledge.default_registry()
+    assert len(registry.printers) >= 50
+    for printer in registry.printers:
+        assert fw.is_apply_eligible(printer) or fw.guidance_for(printer) is not None, \
+            f"{printer.key} has neither apply eligibility nor stage 4 guidance"
+
+
+def test_guidance_covers_each_stage_4_family_with_steps_and_a_reason():
+    cases = {
+        "elegoo.neptune4": ("ELEGOO_UPDATE_DIR", "will make the machine not work properly"),
+        "creality.k1": ("USB", "vendor"),
+        "qidi.q1pro": ("USB", "eMMC"),
+        "anycubic.kobra2": ("update.swu", "responsible apply path"),
+        "flashforge_stock.ad5x": ("Firmware Update", "stock LAN API"),
+        "bambulab.a1": ("SD card", "LAN protocol"),
+        "prusa.mk4s": (".bbf", "PrusaLink API"),
+        "elegoo_sdcp.centauricarbon": ("update.bin", "SDCP"),
+        "octoprint.marlin": ("Firmware Updater", "serial"),
+    }
+    for key, (step_needle, why_needle) in cases.items():
+        guidance = fw.guidance_for(entry(key))
+        assert guidance is not None, key
+        assert step_needle in guidance.manual_steps, key
+        assert why_needle in guidance.why_no_apply, key
+        text = fw.guidance_text(entry(key))
+        assert guidance.title in text and "Nothing was sent to the printer." in text
+
+
+def test_guidance_is_none_for_eligible_printers():
+    assert fw.guidance_for(AD5X) is None
+    assert fw.guidance_for(GENERIC) is None
+    assert fw.guidance_for(None) is None
+
+
+def test_dispatch_bare_on_a_prusa_returns_its_guidance_without_any_call():
+    adapter = FakeAdapter()
+    transport = FakeTransport()
+    with _configured("prusa.mk4s", "prusalink"), \
+            mock.patch.object(spool_sync, "moonraker", transport):
+        out = asyncio.run(plugin.firmware_dispatch(_event("/print-firmware"), _gateway(adapter)))
+    assert out["reason"] == "print firmware not applicable to this printer"
+    assert transport.calls == []
+    assert ".bbf" in adapter.sent[-1]

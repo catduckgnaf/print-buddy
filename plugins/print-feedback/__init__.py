@@ -2836,7 +2836,7 @@ async def firmware_dispatch(event, gateway, **kwargs):
         return {'action': 'skip', 'reason': 'print firmware usage shown'}
     if connection != 'moonraker':
         await adapter.send(chat_id=source.chat_id, metadata=metadata,
-                           content=firmware_update.not_moonraker_text(connection))
+                           content=firmware_update.guidance_text(entry))
         return {'action': 'skip', 'reason': 'print firmware not applicable to this printer'}
     try:
         message = await asyncio.to_thread(firmware_update.firmware_report, mr, entry,

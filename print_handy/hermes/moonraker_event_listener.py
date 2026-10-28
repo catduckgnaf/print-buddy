@@ -4,7 +4,8 @@
 Holds a websocket subscription to Moonraker print_stats. On every print state change
 (and on every (re)connect) it runs the existing announcer logic in
 moonraker_discord_announcements.main(), captures what it would have printed, and
-posts that to #3d-printer through `hermes send` (bot token only, no LLM).
+posts that to #3d-printer through the bot's own Discord REST sender
+(bot token only, no LLM, no Hermes CLI).
 
 A light local tick (default 10 min) re-runs the same logic so the 2 hour post print
 quiet reset and the 4 AM ET backup reset fire without any external scheduler. The
@@ -54,7 +55,6 @@ _LISTENER = _config.cfg()["listener"]
 WS_URL = str(_config.cfg()["services"]["moonraker_ws_url"])
 DISCORD_TARGET = f"discord:{announcer.DISCORD_CHAT_ID}"
 TICK_SECONDS = float(_LISTENER["tick_s"])
-HERMES_BIN = _config.hermes_bin()
 LOG = announcer.PROFILE_HOME / "logs" / "moonraker_event_listener.log"
 TERMINAL = {"cancelled": "Print cancelled", "error": "Print stopped with an error"}
 
@@ -130,20 +130,7 @@ def post(message):
     """Deliver physical print lifecycle text to the print chat only, with no agent."""
     if _config.standalone():
         return _post_rest(message)
-    target = DISCORD_TARGET
-    if target == "discord:":
-        log("post skipped: discord.chat_id is not configured")
-        return False
-    try:
-        result = subprocess.run(
-            [HERMES_BIN, "-p", "3dprinting", "send", "--quiet", "--to", target, message],
-            capture_output=True, text=True, timeout=120,
-        )
-        log(f"post profile=3dprinting target={target} rc={result.returncode} {message.splitlines()[0][:120]!r} {result.stderr.strip()[:200]}")
-        return result.returncode == 0
-    except (OSError, subprocess.TimeoutExpired) as exc:
-        log(f"post failed profile=3dprinting target={target}: {exc!r}")
-        return False
+    return _post_rest_discord(message)
 
 
 def _post_rest(message):
@@ -173,6 +160,19 @@ def _post_rest(message):
         log(f"post rest target=matrix:{room} ok={ok} {message.splitlines()[0][:120] if message else ''!r}"
             f"{'' if ok else ' ' + str(detail)[:200]}")
         return ok
+    return _post_rest_discord(message)
+
+
+def _post_rest_discord(message):
+    """Discord delivery through the bot's own REST sender with its bot token (#524).
+
+    The one Discord post path in both modes: Hermes mode no longer shells
+    out to the `hermes send` CLI. The token and chat id resolve exactly as
+    the standalone path resolves them ([discord] token_env / chat_id, via
+    the profile env). rest.send refuses honestly when either is missing —
+    the failure is logged with its detail and False is returned; there is
+    no silent fallback to another transport.
+    """
     from print_handy.bot import rest
     ok, detail = rest.send(_bot_token(), announcer.DISCORD_CHAT_ID, message)
     log(f"post rest target={DISCORD_TARGET} ok={ok} {message.splitlines()[0][:120] if message else ''!r}"
@@ -1086,7 +1086,7 @@ def _plan_timelapse_post(job_key, completion_message, tl_plan):
             message += f"\nMEDIA:{short}"
         if not _post_completion(message, completion_message):
             log(f"combined timelapse attach failed for plan {plan!r}; posting text only")
-            _post_completion(f"{note}\n{_timelapse_too_big_text(combined=True)}", completion_message)
+            _post_completion(f"{note}\n{_timelapse_fallback_text(message, combined=True)}", completion_message)
     finally:
         plan_timelapse.clear(plan)
         with contextlib.suppress(Exception):
@@ -1106,7 +1106,7 @@ def _timelapse_post(job_key, completion_message):
                 message += f"\nMEDIA:{short}"
             if not _post_completion(message, completion_message):
                 log(f"captured timelapse attach failed for {job_key!r}; posting text only")
-                _post_completion(f"{completion_message}\n{_timelapse_too_big_text(captured.name)}",
+                _post_completion(f"{completion_message}\n{_timelapse_fallback_text(message, captured.name)}",
                                  completion_message)
             return
         archived = announcer.archive_completed_timelapse(job_key)
@@ -1144,7 +1144,7 @@ def _timelapse_post(job_key, completion_message):
         if not _post_completion(message, completion_message):
             # Never lose the completion notice because the platform refused the attachment.
             log(f"timelapse attach failed for {job_key!r}; posting text only")
-            _post_completion(f"{completion_message}\n{_timelapse_too_big_text(Path(str(archived)).name)}", completion_message)
+            _post_completion(f"{completion_message}\n{_timelapse_fallback_text(message, Path(str(archived)).name)}", completion_message)
     except Exception as exc:
         log(f"timelapse postprocess failed for {job_key!r}: {exc!r}")
         _post_completion(completion_message, completion_message)
@@ -1198,6 +1198,45 @@ def _timelapse_too_big_text(archived_name=None, *, combined=False):
     if combined:
         return "Combined timelapse too big for Discord."
     return f"Timelapse archived but too big for Discord: {archived_name}"
+
+
+def _timelapse_unposted_text(archived_name=None, *, combined=False):
+    """Why a timelapse is missing when its post failed for a non-size reason.
+
+    The cause is not known (transport, auth, network), so the line says
+    only what is true: the video exists — archived under the same name —
+    but could not be posted. It never names a cause that was not measured.
+    """
+    platform = _platform_name() if _config.standalone() else "discord"
+    if platform in ("matrix", "telegram"):
+        subject = "Combined timelapse" if combined else "Timelapse"
+        return f"{subject} was recorded but could not be posted."
+    if combined:
+        return "Combined timelapse could not be posted."
+    return f"Timelapse archived but could not be posted: {archived_name}"
+
+
+def _message_media_oversize(message):
+    """True when a MEDIA: attachment in the message exceeds the upload limit."""
+    limit = _media_upload_limit()
+    for match in re.finditer(r"MEDIA:(\S+)", str(message)):
+        try:
+            if Path(match.group(1)).stat().st_size > limit:
+                return True
+        except OSError:
+            continue
+    return False
+
+
+def _timelapse_fallback_text(message, archived_name=None, *, combined=False):
+    """The honest fallback line after a failed timelapse post (#524).
+
+    "Too big" is claimed only when an attached video actually exceeds the
+    platform's upload limit; every other failure gets the generic line.
+    """
+    if _message_media_oversize(message):
+        return _timelapse_too_big_text(archived_name, combined=combined)
+    return _timelapse_unposted_text(archived_name, combined=combined)
 
 
 def _video_duration(path):

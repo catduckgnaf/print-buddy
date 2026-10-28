@@ -122,7 +122,7 @@ def test_a_bare_number_alone_is_not_a_print_request(cfg, archive):
     with mock.patch.object(print_next, "start") as start:
         out = run(core.handle_message(discord.message("2")))
     assert out == {"action": "skip", "reason": "command list"}
-    assert discord.sent == [core.help]
+    assert discord.sent == [core.unmatched]
     start.assert_not_called()
 
 

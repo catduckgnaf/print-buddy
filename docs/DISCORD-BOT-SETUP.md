@@ -110,7 +110,10 @@ The actual token still comes from the variable named by `token_env` (default `DI
 not a `discord.token` field. `PRINT_HANDY_CONFIG` selects an explicit configuration file.
 See [settings and optional LLM/logging fields](STANDALONE.md#settings) and
 [configuration load order](CONFIGURATION-YAML.md). Leave `llm.chat_url` empty for command-list replies
-with no LLM. Separate from that chat LLM, the print-started post carries the
+with no LLM — or, when `[llm]` is set up for `/print-design`, set `discord.chat_llm_enabled` to `false`
+(or `PRINT_HANDY__DISCORD__CHAT_LLM_ENABLED=false`) to run Discord with no chat LLM while design keeps
+its endpoint; `bot check` names the switch on its llm row. See
+[Running Discord with no chat LLM](STANDALONE.md#running-discord-with-no-chat-llm). Separate from that chat LLM, the print-started post carries the
 one-line **roast** whenever an LLM/vision endpoint is configured (`services.vision_chat_url` plus
 `CLIPROXY_API_KEY`): `vision.roast_enabled` is on by default, and setting it `false` (or
 `PRINT_HANDY__VISION__ROAST_ENABLED=false`) turns roasts off. See
@@ -162,7 +165,8 @@ python3 -m print_handy.bot run
 ```
 
 Keep the printer listener stopped during this first check. As an allowed user in the configured
-channel, send `/print-help` or plain `hello` with the optional LLM disabled. Expect the command list;
+channel, send `/print-help` or plain `hello` with the optional LLM disabled. Expect the command list for
+`/print-help`, and the short “didn't understand” reply for `hello`;
 neither starts a print. Do not send model links, files or printer-control commands for verification.
 A stranger or a message in another channel is ignored.
 

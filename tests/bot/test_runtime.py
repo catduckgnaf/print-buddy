@@ -50,13 +50,14 @@ def test_router_runs_the_plugin_handlers_in_plugin_order_without_the_agent_recei
     assert router.platform_handlers["discord"], "listener button handlers were not registered"
 
 
-def test_unmatched_text_without_an_llm_gets_the_command_list_and_starts_nothing(cfg):
+def test_unmatched_text_without_an_llm_gets_the_short_reply_and_starts_nothing(cfg):
     discord, core = make(cfg)
     with mock.patch("print_handy.hermes.print_next.start") as start, \
             mock.patch("urllib.request.urlopen", side_effect=AssertionError("network")):
         out = run(core.handle_message(discord.message("can you make my printer go brrr")))
     assert out == {"action": "skip", "reason": "command list"}
-    assert discord.sent == [commands.help_text(cfg["discord"]["bot_name"])]
+    assert discord.sent == [runtime.unmatched_text(cfg["discord"]["bot_name"])]
+    assert discord.sent != [commands.help_text(cfg["discord"]["bot_name"])]
     start.assert_not_called()
 
 

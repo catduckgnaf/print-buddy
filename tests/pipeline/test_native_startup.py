@@ -1,6 +1,6 @@
 """Offline startup regression; no printer access."""
 import pytest
-from print_buddy.printers.flashforge.zmod.native_startup import normalize, valid
+from print_handy.printers.flashforge.zmod.native_startup import normalize, valid
 
 START = 'START_PRINT BED_TEMP=60 EXTRUDER_TEMP=210 MESH=MESH_DATA\n'
 PREFIX = 'M190 S60\nM104 S210 T0\n'

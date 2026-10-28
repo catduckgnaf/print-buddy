@@ -9,9 +9,9 @@ from pathlib import Path
 from unittest.mock import patch
 
 import pytest
-from print_buddy.core import model_job as job
-from print_buddy.printers.flashforge.zmod import multicolor_contract as contract
-from print_buddy.core import orca_adapter
+from print_handy.core import model_job as job
+from print_handy.printers.flashforge.zmod import multicolor_contract as contract
+from print_handy.core import orca_adapter
 
 
 def state():
@@ -90,9 +90,9 @@ def test_public_prepare_verify_launch(tmp_path, n, mapping, bare_upload, source)
     st=state(); path=tmp_path/'coupon.gcode'; path.write_text(artifact(n))
     if source == 'reviewed-orca':
         name = 'three' if n == 3 else 'four'
-        original_path = Path(os.environ.get('PRINT_BUDDY_COUPONS', '/nonexistent'))/name/'slice/plate_1.gcode'
+        original_path = Path(os.environ.get('PRINT_HANDY_COUPONS', '/nonexistent'))/name/'slice/plate_1.gcode'
         if not original_path.is_file():
-            pytest.skip('recorded Orca coupon G-code is not shipped; set PRINT_BUDDY_COUPONS to the sol_recovery folder')
+            pytest.skip('recorded Orca coupon G-code is not shipped; set PRINT_HANDY_COUPONS to the sol_recovery folder')
         expected = {3: 'c51764b501e1d4b1148b9b28fa1e7e6f4afd6c5b109c7b4bfd97ba631c89479e',
                     4: '797f722c81010623644b30917e06f36934387b19d6cd1712a79f2ed098af074a'}
         raw = original_path.read_bytes()
@@ -119,7 +119,7 @@ def test_public_prepare_verify_launch(tmp_path, n, mapping, bare_upload, source)
         cli(['finalize-gcode',str(path),'--tool-map',str(mapfile)])
         assert path.read_bytes()==finalized
         assert job.zmod_md5_valid(path)
-        from print_buddy.printers.flashforge.zmod.native_startup import commands
+        from print_handy.printers.flashforge.zmod.native_startup import commands
         expected_body = original
         if source == 'reviewed-orca':
             expected_body = original.replace('START_PRINT BED_TEMP=60 EXTRUDER_TEMP=210 MESH=MESH_DATA',
@@ -271,7 +271,7 @@ def test_startup_controls_normal_cli(tmp_path, n, initial, header):
         finalized = path.read_bytes()
         cli(['finalize-gcode',str(path),'--tool-map',str(mapfile)])
         assert path.read_bytes() == finalized
-        from print_buddy.printers.flashforge.zmod.native_startup import commands
+        from print_handy.printers.flashforge.zmod.native_startup import commands
         expected_body = original.replace(start, 'M190 S60\nM104 S210 T0\n'+start, 1) if variant == 'bare' else original
         assert commands(path.read_text()) == commands(expected_body)
         assert job.zmod_md5_valid(path)

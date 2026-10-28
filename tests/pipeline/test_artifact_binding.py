@@ -2,11 +2,11 @@ import json
 from pathlib import Path
 from unittest.mock import MagicMock
 import pytest
-from print_buddy.core import model_job as mj
-from print_buddy.core import orca_adapter
+from print_handy.core import model_job as mj
+from print_handy.core import orca_adapter
 from .test_color_intake import source, state
 from .test_discord_color_intake import Transport
-from print_buddy.core.discord_color_intake import collect
+from print_handy.core.discord_color_intake import collect
 
 
 def setup_job(tmp_path, monkeypatch):
@@ -24,7 +24,7 @@ def setup_job(tmp_path, monkeypatch):
         return out,{'offline_test':True},[]
     monkeypatch.setattr(orca_adapter,'slice_model',slice_fake)
     monkeypatch.setattr(mj,'verify_gcode',lambda _:None)
-    from print_buddy.printers.flashforge.zmod import multicolor_contract
+    from print_handy.printers.flashforge.zmod import multicolor_contract
     monkeypatch.setattr(multicolor_contract,'finalize',lambda *a,**k:None)
     old=mj.slice_job(jp)
     return jp,st,Path(old)
@@ -59,7 +59,7 @@ async def test_persisted_derived_binding_hash_keys_roundtrip_and_tamper_refusal(
 # print_mapped_native with exactly one SET_ZCOLOR, and replays cannot resubmit.
 def test_callback_swap_stale_refusal_and_reslice_launch(tmp_path, monkeypatch):
     import asyncio, copy, subprocess
-    from print_buddy.core import color_geometry, source_colors
+    from print_handy.core import color_geometry, source_colors
     from .test_multicolor_contract import artifact, detail, transport
     st = copy.deepcopy(mj.printer_state.load())
     monkeypatch.setattr(mj.printer_state, 'load', lambda: st)

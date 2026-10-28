@@ -2,7 +2,7 @@
 import io
 import json
 
-from print_buddy.bot import rest
+from print_handy.bot import rest
 
 
 class Opener:

@@ -31,14 +31,21 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           mkdir -p "$RUNNER_TEMP/corpus"
-          gh release download corpus-v1 --repo catduckgnaf/print-buddy-corpus --dir "$RUNNER_TEMP/corpus"
+          gh release download corpus-v1 --repo catduckgnaf/print-handy-corpus --dir "$RUNNER_TEMP/corpus"
           cd "$RUNNER_TEMP/corpus"
           sha256sum -c SHA256SUMS
-          tar -xzf print-buddy-corpus-v1.tar.gz
+          tar -xzf print-handy-corpus-v1.tar.gz
           test "$(find models -type f \( -name '*.3mf' -o -name '*.stl' \) | wc -l)" -eq 171
+          # corpus-v2: the #458 complex cases (manifest: tests/corpus/complex_cases.toml).
+          mkdir v2 && cd v2
+          gh release download corpus-v2 --repo catduckgnaf/print-handy-corpus --dir .
+          sha256sum -c SHA256SUMS
+          tar -xzf print-handy-corpus-v2.tar.gz -C ..
+          cd ..
+          test "$(find models -type f \( -name '*.3mf' -o -name '*.stl' \) | wc -l)" -gt 171
       - name: Run fake-Discord corpus shard
         env:
-          PRINT_BUDDY_PRIVATE_CORPUS: ${{ runner.temp }}/corpus/models
+          PRINT_HANDY_PRIVATE_CORPUS: ${{ runner.temp }}/corpus/models
           CORPUS_SHARD_INDEX: ${{ matrix.shard }}
           CORPUS_SHARD_COUNT: 6
           CORPUS_WORK: ${{ runner.temp }}/corpus-work

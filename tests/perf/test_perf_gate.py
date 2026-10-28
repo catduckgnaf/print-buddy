@@ -18,7 +18,7 @@ from pathlib import Path
 
 import pytest
 
-from print_buddy.core import mesh_fast, model_job, orca_adapter
+from print_handy.core import mesh_fast, model_job, orca_adapter
 
 NS = "http://schemas.microsoft.com/3dmanufacturing/core/2015/02"
 GRID = 100  # 2 * 99 * 99 = 19602 triangles

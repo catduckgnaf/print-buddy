@@ -1,6 +1,6 @@
 # 100%-scale geometry inspection, plate arrangement, and export
 
-`print_buddy.core.geometry_layout` inspects STL and 3MF geometry in millimeters, packs multi-object or single-object assemblies onto a nominal build volume at 100% physical scale without shrinking, and exports verified geometry artifacts plus a machine-readable `validation.json` report.
+`print_handy.core.geometry_layout` inspects STL and 3MF geometry in millimeters, packs multi-object or single-object assemblies onto a nominal build volume at 100% physical scale without shrinking, and exports verified geometry artifacts plus a machine-readable `validation.json` report.
 
 This workflow is offline preparation only. It never invokes a slicer, uploads files to Moonraker, or starts a print.
 
@@ -11,7 +11,7 @@ Every inspection or arrangement report includes a five-stage `status_ladder` so 
 1. `geometry_inspected`: STL/3MF triangles, unit conversion, transforms, and mesh topology were parsed and measured.
 2. `geometry_nominal_fit`: Every part's axis-aligned bounding box fits inside the usable nominal bed (`bed_mm` minus `2 * margin_mm` on X/Y, `0..bed_z` on Z) with `>= gap_mm` clearance between part bounding boxes.
 3. `slicer_capacity_verified`: Verified by OrcaSlicer plate capacity / exclusion-zone checks (`not_run` during offline geometry layout).
-4. `gcode_sliced_and_guarded`: Sliced by OrcaSlicer and passed Print Buddy offline G-code safety guards (`not_run` during offline geometry layout).
+4. `gcode_sliced_and_guarded`: Sliced by OrcaSlicer and passed Print Handy offline G-code safety guards (`not_run` during offline geometry layout).
 5. `physical_print_tested`: Confirmed on physical hardware (`not_run` during offline geometry layout).
 
 ## CLI usage
@@ -19,13 +19,13 @@ Every inspection or arrangement report includes a five-stage `status_ladder` so 
 Inspect an STL or 3MF without writing arranged geometry files:
 
 ```bash
-python3 -m print_buddy.core.model_job layout path/to/model.3mf --inspect-only
+python3 -m print_handy.core.model_job layout path/to/model.3mf --inspect-only
 ```
 
 Arrange and export 100%-scale artifacts (`*_100pct_arranged_GEOMETRY_ONLY.3mf`, `*_100pct_arranged.stl`, per-part `*_100pct.stl`, `plate_preview.png`, and `validation.json`):
 
 ```bash
-python3 -m print_buddy.core.model_job layout path/to/model.3mf -o out/model_layout
+python3 -m print_handy.core.model_job layout path/to/model.3mf -o out/model_layout
 ```
 
 Optional flags:

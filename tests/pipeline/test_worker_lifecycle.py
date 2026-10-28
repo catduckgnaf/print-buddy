@@ -1,6 +1,6 @@
 """Offline lifecycle tests for intake worker processes. Fake children only: no slicer, no printer.
 
-A fake executable stands in for `python -m print_buddy.core.heavy_worker`. It can hang, ignore
+A fake executable stands in for `python -m print_handy.core.heavy_worker`. It can hang, ignore
 SIGTERM, start a grandchild in its own process group, flood stdout or write late into the intake
 folder, so each test checks what the parent actually does with the child it started.
 """
@@ -15,8 +15,8 @@ from pathlib import Path
 
 import pytest
 
-from print_buddy.core import model_job, orca_adapter, prepared_intake, source_colors
-from print_buddy.core.background_slice import BackgroundSlice
+from print_handy.core import model_job, orca_adapter, prepared_intake, source_colors
+from print_handy.core.background_slice import BackgroundSlice
 
 FAKE = r'''
 import json, os, signal, subprocess, sys, time
@@ -81,7 +81,7 @@ class Fake:
         script.write_text(f'#!{sys.executable}\n' + FAKE)
         script.chmod(0o755)
         self.monkeypatch = monkeypatch
-        # _heavy launches `sys.executable -m print_buddy.core.heavy_worker`; the fake ignores the args.
+        # _heavy launches `sys.executable -m print_handy.core.heavy_worker`; the fake ignores the args.
         monkeypatch.setattr(sys, 'executable', str(script))
         monkeypatch.setenv('FAKE_DIR', str(self.box))
 
@@ -93,7 +93,7 @@ class Fake:
     def limits(self, **values):
         """Shorten worker limits. Before the owned worker exists this sets nothing, so the test fails on behavior."""
         try:
-            ow = importlib.import_module('print_buddy.core.owned_worker')
+            ow = importlib.import_module('print_handy.core.owned_worker')
         except ImportError:
             return
         for name, value in values.items():
@@ -185,7 +185,7 @@ def test_cancel_terminates_the_group_and_waits_for_it(fake):
 def test_shutdown_stops_every_running_worker(fake):
     fake.mode('hang_obey_term')
     fake.limits(GRACE_S=2.0)
-    from print_buddy.core import owned_worker
+    from print_handy.core import owned_worker
 
     async def run():
         task = asyncio.ensure_future(prepared_intake._heavy(source_colors.inventory, 'model.3mf'))
@@ -323,7 +323,7 @@ def test_interrupted_preparation_is_explained_and_its_approval_is_not_reused(tmp
     (folder / 'source').mkdir()
     (folder / 'source' / 'ghost.3mf').write_bytes(b'3mf')
     job_path.write_text(json.dumps(saved))
-    # Written by a Print Buddy process that is no longer running.
+    # Written by a Print Handy process that is no longer running.
     (folder / 'WORKER.json').write_text(json.dumps({'state': 'running', 'step': 'slicing',
                                                      'started_at': 1.0, 'worker_pid': 1, 'owner': 'previous-run'}))
     note = prepared_intake.interrupted_note(saved)

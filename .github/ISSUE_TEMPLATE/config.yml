@@ -1,5 +1,5 @@
 blank_issues_enabled: true
 contact_links:
   - name: Project documentation
-    url: https://github.com/catduckgnaf/print-buddy/tree/main/docs
+    url: https://github.com/catduckgnaf/print-handy/tree/main/docs
     about: Setup, configuration and printer guides live in the versioned docs — please check there before opening an issue.

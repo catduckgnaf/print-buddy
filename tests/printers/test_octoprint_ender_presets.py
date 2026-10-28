@@ -10,14 +10,14 @@ per-model dimensions instead of the octoprint.marlin placeholders.
 """
 import json
 
-from print_buddy import printers, settings
+from print_handy import printers, settings
 
 ENDER_PRESETS = ("octoprint.ender3", "octoprint.ender3pro", "octoprint.ender3v2",
                  "octoprint.ender3v3se")
 
 
 def config_for(key):
-    return settings.load(local=False, environ={"PRINT_BUDDY__PRINTER__MODEL": key})
+    return settings.load(local=False, environ={"PRINT_HANDY__PRINTER__MODEL": key})
 
 
 def test_ender_presets_are_registered_and_selectable():

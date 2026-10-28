@@ -8,8 +8,8 @@ printer's state must live in its own folder.
 """
 from pathlib import Path
 
-from print_buddy import settings
-from print_buddy.bot import routing
+from print_handy import settings
+from print_handy.bot import routing
 
 DESIGN_EXAMPLE = '''\
 [discord]

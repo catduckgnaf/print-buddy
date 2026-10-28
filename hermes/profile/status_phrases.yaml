@@ -1,4 +1,4 @@
-# Long running Discord heartbeat phrases for Print Buddy.
+# Long running Discord heartbeat phrases for Print Handy.
 # Used because display.platforms.discord.long_running_notifications = generic.
 # Never put tool names, commands, minutes, or model scratch text here.
 mode: replace

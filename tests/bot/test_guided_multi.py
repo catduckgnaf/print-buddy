@@ -10,8 +10,8 @@ from pathlib import Path
 
 import yaml
 
-from print_buddy import settings
-from print_buddy.bot import guided
+from print_handy import settings
+from print_handy.bot import guided
 
 CHAT = "100000000000000001"
 USER = "200000000000000002"
@@ -27,7 +27,7 @@ def say(store_obj, text, key="k", **kwargs):
 
 
 def finish_steps(store_obj, key="k"):
-    say(store_obj, "/print-buddy setup", key=key)
+    say(store_obj, "/print-handy setup", key=key)
     for answer in ("flashforge.ad5x", "standalone", CHAT, USER,
                    "http://ad5x.local:7125", "skip", "stored"):
         say(store_obj, answer, key=key)
@@ -80,7 +80,7 @@ def test_add_cycle_manual_text_spells_out_the_roster(tmp_path):
     text = say(store_obj, "manual")
     assert "[[printers]]" in text
     assert "`id` = `workshop-ad5x`" in text and "`id` = `garage-a1`" in text
-    assert "PRINT_BUDDY__PRINTERS__<ID>__<KEY>" in text
+    assert "PRINT_HANDY__PRINTERS__<ID>__<KEY>" in text
 
 
 def test_roster_apply_refuses_a_file_that_already_describes_a_printer(tmp_path):
@@ -111,6 +111,6 @@ def test_cancel_mid_add_cycle_resumes_the_cycle(tmp_path):
     finish_steps(store_obj)
     say(store_obj, "add")
     say(store_obj, "workshop-ad5x")
-    say(store_obj, "/print-buddy cancel")
-    reply = say(store_obj, "/print-buddy setup")
+    say(store_obj, "/print-handy cancel")
+    reply = say(store_obj, "/print-handy setup")
     assert "Add a printer (2 of 5)" in reply

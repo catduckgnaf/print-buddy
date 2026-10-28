@@ -4,7 +4,7 @@ from pathlib import Path
 import re
 
 
-from print_buddy import settings
+from print_handy import settings
 
 PROCESS_TEMPLATE = settings.current()["orca"]["templates"] / "process.json"
 MEASURED_X_MAX_ACCEL = 4747

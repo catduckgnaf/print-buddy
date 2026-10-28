@@ -12,8 +12,8 @@ import json
 import pytest
 from PIL import Image
 
-from print_buddy.printers.prusa import camera
-from print_buddy.printers.prusa.client import PrusaLinkClient, PrusaLinkError
+from print_handy.printers.prusa import camera
+from print_handy.printers.prusa.client import PrusaLinkClient, PrusaLinkError
 
 CAMERAS = [
     {"camera_id": "usb-cam", "connected": True, "config": {"name": "USB camera"}},

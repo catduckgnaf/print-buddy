@@ -1,6 +1,6 @@
 # Multi-printer design: one instance, many printers
 
-[Documentation home](README.md) · [More than one printer today](MULTI-INSTANCE.md) · [Listener domains](LISTENERS.md) · Issue [#257](https://github.com/catduckgnaf/print-buddy/issues/257)
+[Documentation home](README.md) · [More than one printer today](MULTI-INSTANCE.md) · [Listener domains](LISTENERS.md) · Issue [#257](https://github.com/catduckgnaf/print-handy/issues/257)
 
 **Status: design, not implemented.** This page is the output of the #257
 Stage 2 design spike (2026-10-26). It records an audit of every place the
@@ -20,7 +20,7 @@ Where things stand:
   non-Moonraker printer: the supervisor starts only the listener children
   the configured connection needs.
 - **Listener domains** (#299) landed the per-domain listener registry
-  (`print_buddy/listeners.py`) and the normalised status/event contract,
+  (`print_handy/listeners.py`) and the normalised status/event contract,
   and already committed to the shape this design builds on: *the domain
   selects the listener type; each configured printer gets its own
   listener instance, supervised and healthchecked independently*
@@ -33,20 +33,20 @@ Where things stand:
 Every integration consumes one resolved settings object, and that is a
 deliberate design: *"The resolved settings dictionary is the only data
 structure that most integrations consume. There is no global state lookup
-in those integrations."* (`print_buddy/settings.py:604-606`). The printer
+in those integrations."* (`print_handy/settings.py:604-606`). The printer
 identity inside it is singular end to end:
 
 - `[printer]` is one table: `model`, `name`, `vendor`, `firmware`,
   `slicer`, nozzle and bed geometry, IFS slots, start/end macros
   (defaults in `config/home.yaml:18-34`). `validate()` resolves exactly
-  one model (`print_buddy/settings.py:570-588`); when `model` is empty it
+  one model (`print_handy/settings.py:570-588`); when `model` is empty it
   silently adopts the first registry model (`settings.py:43-45, 582-584`).
 - One adapter hangs off the resolution: `printers.current()` reads a
-  single dict key (`print_buddy/printers/__init__.py:154-166`), and
+  single dict key (`print_handy/printers/__init__.py:154-166`), and
   `validate()` bundles one model + one vendor + one adapter into every
   consumer's hands (`settings.py:586-588, 610-622`). Callers with no
   printer argument are everywhere: the bot core, the wizard, the Web UI,
-  the CLI doctor (`print_buddy/doctor.py:18-26`).
+  the CLI doctor (`print_handy/doctor.py:18-26`).
 - Connection settings are per-printer facts wearing global clothes:
   `services.moonraker_url`, `services.octoprint_url` and the camera URL
   (`config/home.yaml:65-72`), plus one section per vendor — `[bambu]`
@@ -64,7 +64,7 @@ identity inside it is singular end to end:
   `load()` is `_merge(defaults, _merge(home, _merge(local, env)))` and
   `_from_env` runs over the merged result (`settings.py:625-643`).
   Environment names are exactly two-part
-  (`PRINT_BUDDY__SECTION__KEY`); anything else is an error. Lists cannot
+  (`PRINT_HANDY__SECTION__KEY`); anything else is an error. Lists cannot
   come from the environment at all (`settings.py:193-195`), and a config
   file is mandatory whenever a list setting exists (`settings.py:638-641`).
   Consequence: per-printer values cannot ride the existing env mechanism
@@ -82,18 +82,18 @@ identity inside it is singular end to end:
   writes exactly four printer answers, one of them the model
   (`.env.example:26`, the wizard's `_ask_printer_model`), the guided
   setup asks one model / one Moonraker URL and names the file for "the
-  printer" (`print_buddy/bot/guided.py:139, 145, 162`), and the Docker
+  printer" (`print_handy/bot/guided.py:139, 145, 162`), and the Docker
   variable tests pin the singular placeholder spelling
   (`tests/test_docker_release.py`, DockerFeatureVariablesTests). The Web
   UI catalog addresses settings by dotted *path*
-  (`print_buddy/webui/catalog.py:171-180`); a path that resolves into a
+  (`print_handy/webui/catalog.py:171-180`); a path that resolves into a
   list entry does not resolve at all today — its field model has no way
   to name "the second printer's host".
 
 ### 1.2 Core pipeline: identity, leases, records
 
 - **A job does not know its printer.** `JOB.json` stores `source_model`
-  and `model` — the same value twice (`print_buddy/core/model_job.py:1550-1551`)
+  and `model` — the same value twice (`print_handy/core/model_job.py:1550-1551`)
   — and no printer identity anywhere. Everything downstream re-derives
   "the printer" from ambient settings: the adapter is
   `printers.current()` in the state check, the guards, the delivery
@@ -103,18 +103,18 @@ identity inside it is singular end to end:
   own model* (`model_job.py:904`), not from settings.
 - **The launch lease is one row in one database.** `jobs.db` holds a
   `lease` table whose primary key is always the literal string
-  `"printer"` (`print_buddy/core/launch_state.py:30-33, 86-95`) — the
+  `"printer"` (`print_handy/core/launch_state.py:30-33, 86-95`) — the
   schema anticipated a key; the value never varied. The lease record does
   carry `model_key`, so a model swap under a held lease is detected and
   refused (`launch_state.py:63-77`). `LaunchState` is constructed at five
   sites that would all need the printer identity: the print path
   (`model_job.py:961`), the listener process
-  (`print_buddy/hermes/listener_process.py:505`), two watcher paths
-  (`print_buddy/hermes/printer_events.py:1108, 1339`) and a bot command
-  (`print_buddy/bot/core_commands.py:385`). Load-filament claims the same
-  single lease (`print_buddy/core/load_filament.py:141-151`).
+  (`print_handy/hermes/listener_process.py:505`), two watcher paths
+  (`print_handy/hermes/printer_events.py:1108, 1339`) and a bot command
+  (`print_handy/bot/core_commands.py:385`). Load-filament claims the same
+  single lease (`print_handy/core/load_filament.py:141-151`).
 - **Approvals are one row per instance.** The pending-approval table
-  holds a single row, replaced wholesale (`print_buddy/core/print_claims.py:74-79`);
+  holds a single row, replaced wholesale (`print_handy/core/print_claims.py:74-79`);
   a claim is already bound to `job_id` + approval event id, so a stale
   or cross-job approval is refused — but two *concurrent* approvals for
   two printers would collide in the table before leases are even
@@ -122,18 +122,18 @@ identity inside it is singular end to end:
   `(job_id, ident)` — `print_claims.py:143-153`.)
 - **The hardware record is a singleton file with process-wide caches.**
   One `printer_hardware.json` per state directory
-  (`print_buddy/core/printer_hardware.py:24, 324`); its loader caches by
+  (`print_handy/core/printer_hardware.py:24, 324`); its loader caches by
   path+mtime process-wide (`:27-40`) and the last-good snapshot `_LAST_GOOD`
   is one global dict (`:192-215`). Today the only thing keeping two
   printers' records apart is that they live in different processes
   (Stage 0 rule 1). Filament/IFS runtime state is even less visible: it
-  exists only in bot-process memory (`print_buddy/hermes/filament.py:33-61`),
+  exists only in bot-process memory (`print_handy/hermes/filament.py:33-61`),
   rebuilt at startup from the hardware record.
 - **Storage is closer than it looks.** Job folders already live at
   `archive/<job_id>` with instance-unique ids
-  (`print_buddy/state_files.py:20-24`); spool bindings are stored per
+  (`print_handy/state_files.py:20-24`); spool bindings are stored per
   spool id (`state_files.py:98-117`); the Orca profile cache is keyed by
-  content hash (`print_buddy/core/orca_profiles.py:15-38`) and the slicer
+  content hash (`print_handy/core/orca_profiles.py:15-38`) and the slicer
   runs with the job folder as its working directory — all safe to share.
   The singleton files are: `printer_hardware.json`, `jobs.db`,
   `selected_spools.json` (`model_job.py:968-973`), `maintenance.json`,
@@ -152,36 +152,36 @@ identity inside it is singular end to end:
 ### 1.3 Runtime: bot, listener, supervisor
 
 - **Discord routing is one integer.** The bot holds one `chat_id`
-  (`print_buddy/bot/runtime.py:208-209`); a message in any other channel
+  (`print_handy/bot/runtime.py:208-209`); a message in any other channel
   is dropped (`runtime.py:160-161`), and so is an interaction
   (`runtime.py:245-255`). Authorisation is the configured allowed-user
-  set (`print_buddy/bot/platform.py:270-279`). But the conversation
+  set (`print_handy/bot/platform.py:270-279`). But the conversation
   layer underneath is already multi-channel: sessions are keyed
-  `(chat_id, user_id)` (`print_buddy/bot/sessions.py:19-20`) and
+  `(chat_id, user_id)` (`print_handy/bot/sessions.py:19-20`) and
   conversation records are per `chat_id`
-  (`print_buddy/core/conversation.py:45-62`). Two latent issues for a
+  (`print_handy/core/conversation.py:45-62`). Two latent issues for a
   multi-channel world: platform replies are keyed by *message id only*,
   chat not included (`platform.py:301`), and one approval prompt's
   buttons resolve through the singleton claims table (§1.2).
 - **The listener process is structurally single-connection.** The
   Moonraker listener keeps module-level mutable globals for its socket,
   heartbeat thread and "one Moonraker WS URL"
-  (`print_buddy/hermes/moonraker_event_listener.py:128-163`); its `main()`
+  (`print_handy/hermes/moonraker_event_listener.py:128-163`); its `main()`
   takes no printer identity (`:1676`); the process wrapper keeps exactly
-  one status slot (`print_buddy/hermes/listener_process.py:78-79, 157, 185`).
+  one status slot (`print_handy/hermes/listener_process.py:78-79, 157, 185`).
   There is no event queue: consumers read the heartbeat file
-  (`print_buddy/healthcheck.py:12-21`) — one fixed filename,
+  (`print_handy/healthcheck.py:12-21`) — one fixed filename,
   `listener_health.json` (`healthcheck.py:23`) — and the container
   supervisor creates exactly one heartbeat touch file
   (`docker/supervise.sh:19`). The listener is also not just an observer:
   its print watcher consumes approvals and claims the lease
   (`printer_events.py:1041-1046, 1108`).
-- **The #299 registry is the ready-made seam.** `print_buddy/listeners.py`
+- **The #299 registry is the ready-made seam.** `print_handy/listeners.py`
   maps every connection to a `ListenerDomain` with a three-valued
   availability (`:40-55`), enforces completeness against the printer
   registry at import (`:83-89`), and its launcher resolves the domain for
   *the* configured adapter with the gate's 0/3/2 exit codes
-  (`:148-181`). The gate (`print_buddy/listener_gate.py:17-29`) and the
+  (`:148-181`). The gate (`print_handy/listener_gate.py:17-29`) and the
   supervisor's consumption of it (`docker/supervise.sh:29-46`) derive
   from the registry, so per-printer instances plug into an existing
   contract instead of a new one.
@@ -194,20 +194,20 @@ identity inside it is singular end to end:
   never take down the others — requires listener children to leave the
   `wait -n` contract.
 - **The camera watchdog reads the one heartbeat**
-  (`print_buddy/hermes/visual_watch.py:149-150`), and bot status answers
+  (`print_handy/hermes/visual_watch.py:149-150`), and bot status answers
   by checking the one current printer live
-  (`print_buddy/bot/status_text.py:52-53, 118-146`). Timelapse work is
+  (`print_handy/bot/status_text.py:52-53, 118-146`). Timelapse work is
   already per job folder, so completions generalise once the events that
   trigger them carry a printer identity; completion/start-claim
   callbacks are already keyed by `(job_id, source_message_id)` with an
-  opaque `ident` (`print_buddy/hermes/listener_process.py:834-896`) —
+  opaque `ident` (`print_handy/hermes/listener_process.py:834-896`) —
   the existing seam for printer routing.
 
 ### 1.4 What already generalises
 
 Adapters are stateless and re-instantiable from any model key
-(`print_buddy/printers/__init__.py:47-51, 137-151`); the registry knows
-every model's identity (`print_buddy/printers/base.py:43-106`); per-vendor
+(`print_handy/printers/__init__.py:47-51, 137-151`); the registry knows
+every model's identity (`print_handy/printers/base.py:43-106`); per-vendor
 settings validators already take a model argument; sessions and
 conversations are keyed by chat; job folders, spool bindings and the
 Orca cache are content- or id-keyed. The singleton is concentrated in
@@ -286,7 +286,7 @@ hand-written `[printers]` section.
 rule: lists cannot come from the environment
 (`settings.py:193-195, 638-641`). Scalar keys of a *declared* entry may
 be overridden from the environment with an indexed spelling,
-`PRINT_BUDDY__PRINTERS__<ID>__<KEY>` (the id uppercased), validated like
+`PRINT_HANDY__PRINTERS__<ID>__<KEY>` (the id uppercased), validated like
 any other env setting. The environment can never *create* an entry —
 mirroring `_from_env`'s refusal of unknown keys — because Docker and
 Unraid operators, the very users who configure by environment, still
@@ -421,7 +421,7 @@ and bound the blast radius of a corrupt state file to one printer.
 **Decision.** This layer follows #299, which already decided it: the
 domain selects the listener *type*; **each printer gets its own
 listener instance**, launched through the existing registry launcher
-with a printer selector (`python3 -m print_buddy.listeners --printer
+with a printer selector (`python3 -m print_handy.listeners --printer
 <id>`), keeping the 0/3/2 gate exit codes per instance. A printer whose
 domain is `planned` or `none` in the registry simply has no listener
 child — the same normal state as a single-printer install today.
@@ -555,20 +555,20 @@ Five stages, each an independently mergeable PR series with its own
 issue. Order is dependency order; no stage changes user-visible
 behaviour for a single-printer install.
 
-### Stage 2a — Config model and migration (no behaviour change) — [#333](https://github.com/catduckgnaf/print-buddy/issues/333)
+### Stage 2a — Config model and migration (no behaviour change) — [#333](https://github.com/catduckgnaf/print-handy/issues/333)
 
 - **Scope.** `[[printers]]` parsing and per-entry validation in
-  `print_buddy/settings.py` (entry slug rule, uniqueness, per-vendor
+  `print_handy/settings.py` (entry slug rule, uniqueness, per-vendor
   validators generalised to *(entry, model)*, legacy-shape refusal when
   both shapes are present); in-memory migration synthesising the
   one-entry roster from today's config; the roster API
   (`settings.printers()`, `by_id`) and the legacy singleton view
   (`printers.current()` and friends read the single/first entry);
   indexed env overrides for declared-entry scalars
-  (`PRINT_BUDDY__PRINTERS__<ID>__<KEY>`), file-only roster; the parity
+  (`PRINT_HANDY__PRINTERS__<ID>__<KEY>`), file-only roster; the parity
   test treatment for `[printers]` and a hand-written `[printers]`
   section in `docs/SETTINGS.md`.
-- **Key files.** `print_buddy/settings.py`, `print_buddy/printers/__init__.py`,
+- **Key files.** `print_handy/settings.py`, `print_handy/printers/__init__.py`,
   `config/home.yaml`, `config/docker.yaml`, `.env.example`,
   `docs/SETTINGS.md`, `tests/test_docker_release.py`,
   `tests/test_settings.py` (golden snapshots).
@@ -585,7 +585,7 @@ behaviour for a single-printer install.
   scalar and cannot create an entry; `printers.current()` is unchanged
   for all existing callers.
 
-### Stage 2b — Per-printer state, records and leases — [#334](https://github.com/catduckgnaf/print-buddy/issues/334)
+### Stage 2b — Per-printer state, records and leases — [#334](https://github.com/catduckgnaf/print-handy/issues/334)
 
 - **Scope.** The `printers/<id>/` state layout (§2.4): hardware record
   per printer with per-printer loader/last-good caches; per-printer
@@ -599,12 +599,12 @@ behaviour for a single-printer install.
   `printer_state.check` takes entry+adapter and reports the printer id;
   legacy state adoption (read legacy location, write per-printer,
   legacy files left in place for one release).
-- **Key files.** `print_buddy/core/launch_state.py`,
-  `print_buddy/core/print_claims.py`, `print_buddy/core/printer_hardware.py`,
-  `print_buddy/core/model_job.py`, `print_buddy/core/printer_state.py`,
-  `print_buddy/core/load_filament.py`, `print_buddy/hermes/filament.py`,
-  `print_buddy/hermes/printer_events.py`,
-  `print_buddy/hermes/listener_process.py`, `print_buddy/state_files.py`.
+- **Key files.** `print_handy/core/launch_state.py`,
+  `print_handy/core/print_claims.py`, `print_handy/core/printer_hardware.py`,
+  `print_handy/core/model_job.py`, `print_handy/core/printer_state.py`,
+  `print_handy/core/load_filament.py`, `print_handy/hermes/filament.py`,
+  `print_handy/hermes/printer_events.py`,
+  `print_handy/hermes/listener_process.py`, `print_handy/state_files.py`.
 - **Risks.** The listener process is a print *actor* (it consumes
   approvals and claims the lease), so identity plumbing must reach
   inside it, not just the bot paths. State adoption must never lose a
@@ -617,7 +617,7 @@ behaviour for a single-printer install.
   configured printer; an existing single-printer state directory is
   adopted with lease and hardware record intact.
 
-### Stage 2c — Discord routing — [#335](https://github.com/catduckgnaf/print-buddy/issues/335)
+### Stage 2c — Discord routing — [#335](https://github.com/catduckgnaf/print-handy/issues/335)
 
 - **Scope.** The channel → printer map built at bot startup from the
   roster (duplicate claim = startup error); `runtime.py` routing
@@ -628,9 +628,9 @@ behaviour for a single-printer install.
   and name the printer; status commands answer for their channel's
   printer (a roster-wide status answer is additive, in the default
   channel only). Telegram/Matrix ride the same map.
-- **Key files.** `print_buddy/bot/runtime.py`,
-  `print_buddy/bot/platform.py`, `print_buddy/bot/status_text.py`,
-  `print_buddy/bot/core_commands.py`, `print_buddy/core/conversation.py`.
+- **Key files.** `print_handy/bot/runtime.py`,
+  `print_handy/bot/platform.py`, `print_handy/bot/status_text.py`,
+  `print_handy/bot/core_commands.py`, `print_handy/core/conversation.py`.
 - **Depends on.** 2a (roster) for routing; the print-*starting* half
   also needs 2b (claims/leases keyed by printer).
 - **Risks.** Any path that silently falls back to "the current printer"
@@ -643,19 +643,19 @@ behaviour for a single-printer install.
   printer B (explicit test); silence in unmapped channels; the full
   existing bot suites pass unmodified for the single-channel case.
 
-### Stage 2d — Event sources, supervisor and healthcheck — [#336](https://github.com/catduckgnaf/print-buddy/issues/336)
+### Stage 2d — Event sources, supervisor and healthcheck — [#336](https://github.com/catduckgnaf/print-handy/issues/336)
 
 - **Scope.** The registry launcher gains a printer selector
-  (`python3 -m print_buddy.listeners --printer <id>`); heartbeat and
+  (`python3 -m print_handy.listeners --printer <id>`); heartbeat and
   listener-state paths move under `printers/<id>/`; bot status
   aggregation and the camera watchdog iterate the roster;
   `docker/supervise.sh` enumerates listener children per printer with
   restart-not-fatal semantics (bot and Spoolman remain the required
   children); `docker/healthcheck.py` aggregates one row per printer.
-- **Key files.** `print_buddy/listeners.py`,
-  `print_buddy/listener_gate.py`, `print_buddy/healthcheck.py`,
-  `print_buddy/hermes/moonraker_event_listener.py` (identity argument),
-  `print_buddy/hermes/visual_watch.py`, `docker/supervise.sh`,
+- **Key files.** `print_handy/listeners.py`,
+  `print_handy/listener_gate.py`, `print_handy/healthcheck.py`,
+  `print_handy/hermes/moonraker_event_listener.py` (identity argument),
+  `print_handy/hermes/visual_watch.py`, `docker/supervise.sh`,
   `docker/healthcheck.py`, `tests/test_listener_gate.py`,
   `tests/test_combined_supervisor.py`.
 - **Depends on.** 2a + 2b. Non-Moonraker domains light up per printer
@@ -670,7 +670,7 @@ behaviour for a single-printer install.
   has no listener adds no health requirement; single-printer container
   behaviour and health output are unchanged.
 
-### Stage 2e — Setup, Web UI decision and docs — [#337](https://github.com/catduckgnaf/print-buddy/issues/337)
+### Stage 2e — Setup, Web UI decision and docs — [#337](https://github.com/catduckgnaf/print-handy/issues/337)
 
 - **Scope.** `docs/DOCKER.md` gains the one-instance multi-printer
   shape; [MULTI-INSTANCE.md](MULTI-INSTANCE.md) is reframed as the
@@ -683,8 +683,8 @@ behaviour for a single-printer install.
   example of §3 is load-checked offline as a walkthrough, mirroring
   Stage 0's verification.
 - **Key files.** `docs/DOCKER.md`, `docs/MULTI-INSTANCE.md`,
-  `docs/SETTINGS.md`, `print_buddy/setup_wizard.py`,
-  `print_buddy/bot/guided.py`, `print_buddy/webui/catalog.py`.
+  `docs/SETTINGS.md`, `print_handy/setup_wizard.py`,
+  `print_handy/bot/guided.py`, `print_handy/webui/catalog.py`.
 - **Depends on.** 2a–2d.
 - **Risks.** Setup write-back is the one place configs are *written*;
   a bad write-back breaks a working install, so the wizard must refuse

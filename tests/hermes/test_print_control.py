@@ -6,8 +6,8 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from print_buddy.hermes import print_control
-from print_buddy.core import model_job
+from print_handy.hermes import print_control
+from print_handy.core import model_job
 
 OLD = "G4-Instant-Desk-Stand_plate_1_" + "e5" * 32 + ".gcode"
 NEW = "G4-Instant-Desk-Stand_plate_1_" + "10" * 32 + ".gcode"
@@ -37,7 +37,7 @@ def _st(state="paused", klippy="ready", filename="foo.gcode"):
 
 def test_resume_refuses_after_emergency_stop_without_sending_or_restarting():
     call = MagicMock()
-    with patch("print_buddy.hermes.print_control.status", return_value=_st(klippy="shutdown")), patch("print_buddy.hermes.print_control._call", call):
+    with patch("print_handy.hermes.print_control.status", return_value=_st(klippy="shutdown")), patch("print_handy.hermes.print_control._call", call):
         ok, msg = print_control.resume("foo.gcode")
     assert not ok
     call.assert_not_called()
@@ -45,13 +45,13 @@ def test_resume_refuses_after_emergency_stop_without_sending_or_restarting():
 
 
 def test_resume_not_paused():
-    with patch("print_buddy.hermes.print_control.status", return_value=_st(state="printing")):
+    with patch("print_handy.hermes.print_control.status", return_value=_st(state="printing")):
         ok, msg = print_control.resume("foo.gcode")
     assert not ok and "Nothing to resume" in msg
 
 
 def test_resume_paused_mismatched_filename():
-    with patch("print_buddy.hermes.print_control.status", return_value=_st(filename="other.gcode")):
+    with patch("print_handy.hermes.print_control.status", return_value=_st(filename="other.gcode")):
         ok, msg = print_control.resume("foo.gcode")
     assert not ok and "A different print is paused" in msg
 
@@ -59,7 +59,7 @@ def test_resume_paused_mismatched_filename():
 def test_resume_success_sends_one_resume():
     call = MagicMock(return_value={"result": "ok"})
     st = MagicMock(side_effect=[_st(), _st(state="printing")])
-    with patch("print_buddy.hermes.print_control._call", call), patch("print_buddy.hermes.print_control.status", st):
+    with patch("print_handy.hermes.print_control._call", call), patch("print_handy.hermes.print_control.status", st):
         ok, msg = print_control.resume("foo.gcode", wait_s=2, poll_s=0.01)
     assert ok and "Resumed" in msg and "layer 10/50" in msg
     call.assert_called_once_with("/printer/print/resume", method="POST", timeout=15)
@@ -104,7 +104,7 @@ def test_last_print_reuses_launched_slice_when_current(tmp_path):
 
 
 def test_last_print_with_no_records(tmp_path):
-    from print_buddy.hermes.print_next import NextPlateError
+    from print_handy.hermes.print_next import NextPlateError
     with pytest.raises(NextPlateError):
         print_control.resolve_last_print(tmp_path)
 
@@ -118,7 +118,7 @@ def test_force_reboot_refuses_mid_print():
 
 def test_force_reboot_waits_for_safe_idle():
     sender = MagicMock()
-    with patch("print_buddy.core.clear_job.safe_idle", side_effect=[False, True]):
+    with patch("print_handy.core.clear_job.safe_idle", side_effect=[False, True]):
         ok, msg = print_control.force_reboot(wait_grace_s=0, max_wait_s=2, poll_s=0.01, gcode_sender=sender,
                                              moonraker_reader=lambda: {}, native_reader=lambda: {},
                                              state_reader=lambda: _st(state="cancelled"))
@@ -128,7 +128,7 @@ def test_force_reboot_waits_for_safe_idle():
 
 def test_force_reboot_timeout_does_not_retry():
     sender = MagicMock()
-    with patch("print_buddy.core.clear_job.safe_idle", return_value=False):
+    with patch("print_handy.core.clear_job.safe_idle", return_value=False):
         ok, msg = print_control.force_reboot(wait_grace_s=0, max_wait_s=0.05, poll_s=0.01, gcode_sender=sender,
                                              moonraker_reader=lambda: {}, native_reader=lambda: {},
                                              state_reader=lambda: _st(state="standby"))
@@ -185,7 +185,7 @@ def test_resolve_by_number(tmp_path):
 
 
 def test_resolve_number_out_of_range(tmp_path):
-    from print_buddy.hermes.print_next import NextPlateError
+    from print_handy.hermes.print_next import NextPlateError
     _three(tmp_path)
     with pytest.raises(NextPlateError, match="no print #9"):
         print_control.resolve_print("9", tmp_path)
@@ -204,7 +204,7 @@ def test_resolve_exact_title_beats_substring(tmp_path):
 
 
 def test_resolve_ambiguous_name_lists_numbers_and_refuses(tmp_path):
-    from print_buddy.hermes.print_next import NextPlateError
+    from print_handy.hermes.print_next import NextPlateError
     _three(tmp_path)
     with pytest.raises(NextPlateError) as exc:
         print_control.resolve_print("funko", tmp_path)
@@ -213,7 +213,7 @@ def test_resolve_ambiguous_name_lists_numbers_and_refuses(tmp_path):
 
 
 def test_resolve_unknown_name(tmp_path):
-    from print_buddy.hermes.print_next import NextPlateError
+    from print_handy.hermes.print_next import NextPlateError
     _three(tmp_path)
     with pytest.raises(NextPlateError, match="no printed job matches"):
         print_control.resolve_print("benchy", tmp_path)

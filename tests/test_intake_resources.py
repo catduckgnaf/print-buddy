@@ -5,11 +5,11 @@ from unittest.mock import patch
 
 import pytest
 
-from print_buddy.core import intake_resources as limits
+from print_handy.core import intake_resources as limits
 
 
 def test_large_mesh_streams_successfully(tmp_path):
-    from print_buddy.core import mesh_fast
+    from print_handy.core import mesh_fast
     import tracemalloc
 
     source = tmp_path / 'large.3mf'
@@ -114,7 +114,7 @@ def test_stl_triangle_budget(tmp_path):
 
 
 def test_oversized_direct_entry_points_never_parse(tmp_path):
-    from print_buddy.core import model_job, source_colors, geometry_layout
+    from print_handy.core import model_job, source_colors, geometry_layout
     source = tmp_path / 'large.3mf'
     source.write_bytes(b'not even a zip')
     with patch.object(limits, 'MAX_DOWNLOAD_BYTES', 1):

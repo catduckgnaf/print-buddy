@@ -9,9 +9,9 @@ import struct
 
 import pytest
 
-from print_buddy import printers
-from print_buddy.printers.bambulab import camera
-from print_buddy.printers.bambulab.client import BambuLanError
+from print_handy import printers
+from print_handy.printers.bambulab import camera
+from print_handy.printers.bambulab.client import BambuLanError
 
 CODE = "12345678"
 HOST = "192.168.1.50"

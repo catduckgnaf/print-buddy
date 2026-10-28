@@ -15,9 +15,9 @@ from unittest import mock
 
 import pytest
 
-from print_buddy.core import model_job as model_job
-from print_buddy.core import prepared_intake
-from print_buddy.core.link_intake import model_link
+from print_handy.core import model_job as model_job
+from print_handy.core import prepared_intake
+from print_handy.core.link_intake import model_link
 from .test_color_intake import source, state  # noqa: F401  (state used by the e2e flow)
 from .test_prepared_intake import Adapter, env  # noqa: F401  (env is the shared harness fixture)
 

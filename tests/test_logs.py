@@ -10,9 +10,9 @@ from unittest import mock
 
 import pytest
 
-from print_buddy import logs, settings
-from print_buddy.core import orca_adapter
-from print_buddy.hermes import moonraker_event_listener as listener
+from print_handy import logs, settings
+from print_handy.core import orca_adapter
+from print_handy.hermes import moonraker_event_listener as listener
 
 # Built from parts so no token shaped string sits in the source (GitHub push protection flags those).
 DISCORD_TOKEN = ".".join(["MTIzNDU2Nzg5MDEyMzQ1Njc4OQ", "GabcDE", "abcdefghijklmnopqrstuvwxyz0123456789"])
@@ -39,13 +39,13 @@ def test_text_format_has_timestamp_severity_component_and_bound_context():
     logs.configure({"level": "INFO", "format": "text"}, stream=stream)
     token = logs.bind(intake="abc123")
     try:
-        logging.getLogger("print_buddy.core.demo").warning("slice failed")
+        logging.getLogger("print_handy.core.demo").warning("slice failed")
     finally:
         logs.unbind(token)
     (line,) = lines(stream)
     stamp, level, component, rest = line.split(" ", 3)
     assert stamp[:4].isdigit() and ("+" in stamp or "-" in stamp[10:])  # ISO time with an offset
-    assert (level, component) == ("WARNING", "print_buddy.core.demo:")
+    assert (level, component) == ("WARNING", "print_handy.core.demo:")
     assert rest == "slice failed intake=abc123"
 
 
@@ -55,9 +55,9 @@ def test_json_format_is_one_object_per_line_with_traceback():
     try:
         raise ValueError("bad plate")
     except ValueError:
-        logging.getLogger("print_buddy.demo").exception("fit failed")
+        logging.getLogger("print_handy.demo").exception("fit failed")
     record = json.loads(stream.getvalue())
-    assert record["level"] == "ERROR" and record["logger"] == "print_buddy.demo"
+    assert record["level"] == "ERROR" and record["logger"] == "print_handy.demo"
     assert record["message"] == "fit failed"
     assert "Traceback" in record["exception"] and "ValueError: bad plate" in record["exception"]
 
@@ -65,18 +65,18 @@ def test_json_format_is_one_object_per_line_with_traceback():
 def test_level_controls_verbosity_and_debug_shows_detail():
     stream = io.StringIO()
     logs.configure({"level": "INFO"}, stream=stream)
-    logging.getLogger("print_buddy.demo").debug("detail")
+    logging.getLogger("print_handy.demo").debug("detail")
     assert lines(stream) == []
     logs.configure({"level": "DEBUG"}, stream=stream)
-    logging.getLogger("print_buddy.demo").debug("detail")
-    assert "DEBUG print_buddy.demo: detail" in stream.getvalue()
+    logging.getLogger("print_handy.demo").debug("detail")
+    assert "DEBUG print_handy.demo: detail" in stream.getvalue()
 
 
 def test_configure_twice_does_not_duplicate_lines():
     stream = io.StringIO()
     logs.configure({}, stream=stream)
     logs.configure({}, stream=stream)
-    logging.getLogger("print_buddy.demo").info("once")
+    logging.getLogger("print_handy.demo").info("once")
     assert len(lines(stream)) == 1
 
 
@@ -84,14 +84,14 @@ def test_invalid_level_and_format_fall_back_to_defaults():
     stream = io.StringIO()
     logs.configure({"level": "LOUD", "format": "xml"}, stream=stream)
     assert logging.getLogger().level == logging.INFO
-    logging.getLogger("print_buddy.demo").info("hello")
-    assert "INFO print_buddy.demo: hello" in stream.getvalue()
+    logging.getLogger("print_handy.demo").info("hello")
+    assert "INFO print_handy.demo: hello" in stream.getvalue()
 
 
 def test_file_option_writes_a_rotating_log_file(tmp_path):
-    target = tmp_path / "logs" / "print-buddy.log"
+    target = tmp_path / "logs" / "print-handy.log"
     logs.configure({"level": "INFO", "file": str(target)}, stream=io.StringIO())
-    logging.getLogger("print_buddy.demo").info("to disk")
+    logging.getLogger("print_handy.demo").info("to disk")
     assert "to disk" in target.read_text()
     assert any(isinstance(h, logging.handlers.RotatingFileHandler) for h in logging.getLogger().handlers)
 
@@ -131,7 +131,7 @@ def test_handlers_redact_message_arguments_and_tracebacks():
     try:
         raise RuntimeError(f"rejected {DISCORD_TOKEN}")
     except RuntimeError:
-        logging.getLogger("print_buddy.demo").exception("failed with %s", "password=hunter2xyz")
+        logging.getLogger("print_handy.demo").exception("failed with %s", "password=hunter2xyz")
     output = stream.getvalue()
     assert DISCORD_TOKEN not in output and "hunter2xyz" not in output
     assert "Traceback" in output
@@ -140,7 +140,7 @@ def test_handlers_redact_message_arguments_and_tracebacks():
 def test_stage_logs_start_and_elapsed_time():
     stream = io.StringIO()
     logs.configure({"level": "INFO"}, stream=stream)
-    with logs.stage(logging.getLogger("print_buddy.demo"), "fit check", plate=2):
+    with logs.stage(logging.getLogger("print_handy.demo"), "fit check", plate=2):
         pass
     started, done = lines(stream)
     assert "fit check started plate=2" in started
@@ -151,10 +151,10 @@ def test_stage_failure_keeps_traceback_and_reraises():
     stream = io.StringIO()
     logs.configure({"level": "INFO"}, stream=stream)
     with pytest.raises(ValueError, match="no geometry"):
-        with logs.stage(logging.getLogger("print_buddy.demo"), "inspect"):
+        with logs.stage(logging.getLogger("print_handy.demo"), "inspect"):
             raise ValueError("no geometry")
     output = stream.getvalue()
-    assert "ERROR print_buddy.demo: inspect failed after" in output
+    assert "ERROR print_handy.demo: inspect failed after" in output
     assert "ValueError: no geometry" in output and "Traceback" in output
 
 
@@ -162,10 +162,10 @@ def test_stage_interruption_is_a_warning_without_a_traceback():
     stream = io.StringIO()
     logs.configure({"level": "INFO"}, stream=stream)
     with pytest.raises(KeyboardInterrupt):
-        with logs.stage(logging.getLogger("print_buddy.demo"), "slice"):
+        with logs.stage(logging.getLogger("print_handy.demo"), "slice"):
             raise KeyboardInterrupt
     output = stream.getvalue()
-    assert "WARNING print_buddy.demo: slice interrupted after" in output and "Traceback" not in output
+    assert "WARNING print_handy.demo: slice interrupted after" in output and "Traceback" not in output
 
 
 # --- settings -------------------------------------------------------------------------------------------
@@ -176,13 +176,13 @@ def test_logging_defaults_come_from_the_checked_in_config():
 
 
 def test_env_override_sets_debug_json_logging():
-    cfg = settings.load(local=False, environ={"PRINT_BUDDY__LOGGING__LEVEL": "debug", "PRINT_BUDDY__LOGGING__FORMAT": "JSON"})
+    cfg = settings.load(local=False, environ={"PRINT_HANDY__LOGGING__LEVEL": "debug", "PRINT_HANDY__LOGGING__FORMAT": "JSON"})
     assert cfg["logging"]["level"] == "DEBUG" and cfg["logging"]["format"] == "json"
 
 
 @pytest.mark.parametrize("env, message", [
-    ({"PRINT_BUDDY__LOGGING__LEVEL": "loud"}, "[logging] level must be one of"),
-    ({"PRINT_BUDDY__LOGGING__FORMAT": "xml"}, "[logging] format must be one of"),
+    ({"PRINT_HANDY__LOGGING__LEVEL": "loud"}, "[logging] level must be one of"),
+    ({"PRINT_HANDY__LOGGING__FORMAT": "xml"}, "[logging] format must be one of"),
 ])
 def test_invalid_logging_settings_are_rejected(env, message):
     with pytest.raises(settings.SettingsError, match=message.replace("[", r"\[")):

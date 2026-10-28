@@ -3,10 +3,10 @@
 
     python3 scripts/prusa-templates.py --printer mk4s --resources <OrcaSlicer resources folder> [--check]
 
-Print Buddy ships no OrcaSlicer or Prusa profiles. This reads the Prusa vendor profiles from an
+Print Handy ships no OrcaSlicer or Prusa profiles. This reads the Prusa vendor profiles from an
 installed OrcaSlicer (the folder that holds profiles/Prusa.json and profiles/Prusa/), resolves the
 printer's profiles, refuses unless they hash to an identity recorded in
-print_buddy/printers/prusa/facts.py, and writes them into <state>/orca-profiles/<printer> for the
+print_handy/printers/prusa/facts.py, and writes them into <state>/orca-profiles/<printer> for the
 configured profile. Nothing is downloaded and nothing is written into the repository.
 
 --check writes nothing: it reports whether the installed OrcaSlicer has a checked identity and
@@ -24,15 +24,15 @@ sys.path.insert(0, str(ROOT))
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--printer", default="mk4s", help="printer profile module under print_buddy/printers/prusa")
+    ap.add_argument("--printer", default="mk4s", help="printer profile module under print_handy/printers/prusa")
     ap.add_argument("--resources", required=True, type=Path, help="the installed OrcaSlicer resources folder")
     ap.add_argument("--check", action="store_true", help="verify only; write nothing")
     a = ap.parse_args()
-    from print_buddy import printers, settings
-    from print_buddy.printers.bambulab import profiles as _shared
-    from print_buddy.printers.prusa import profiles
-    model = importlib.import_module(f"print_buddy.printers.prusa.{a.printer}").MODEL
-    adapter = printers.get(model.key, settings.load(environ={**os.environ, "PRINT_BUDDY__PRINTER__MODEL": model.key}))
+    from print_handy import printers, settings
+    from print_handy.printers.bambulab import profiles as _shared
+    from print_handy.printers.prusa import profiles
+    model = importlib.import_module(f"print_handy.printers.prusa.{a.printer}").MODEL
+    adapter = printers.get(model.key, settings.load(environ={**os.environ, "PRINT_HANDY__PRINTER__MODEL": model.key}))
     try:
         upstream, version = _shared.flatten(a.resources, adapter.fact("orca_profiles"), vendor=profiles.VENDOR)
         hashes = {kind: profiles.sha256(upstream[kind]) for kind in profiles.KINDS}

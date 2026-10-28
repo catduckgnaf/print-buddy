@@ -4,8 +4,8 @@ from pathlib import Path
 
 import pytest
 
-from print_buddy import printers, settings
-from print_buddy.core import orca_adapter as adapter
+from print_handy import printers, settings
+from print_handy.core import orca_adapter as adapter
 from .test_orca_adapter import _allow_post, _source, _state
 
 
@@ -16,7 +16,7 @@ def flashforge_adapter(path=""):
 
 
 def fake_flash_studio(tmp_path, *, missing_help_flag=None, exit_code=0, generated_by="Flash Studio 1.7.19"):
-    """A local executable implementing only the CLI contract used by Print Buddy."""
+    """A local executable implementing only the CLI contract used by Print Handy."""
     executable = tmp_path / "fake-flash-studio"
     calls = tmp_path / "flash-studio-args.txt"
     flags = ["--load-settings", "--load-filaments", "--arrange", "--orient",

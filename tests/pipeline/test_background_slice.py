@@ -3,8 +3,8 @@ import asyncio
 import json
 from pathlib import Path
 
-from print_buddy.core import model_job
-from print_buddy.core.background_slice import BackgroundSlice, slice_binding
+from print_handy.core import model_job
+from print_handy.core.background_slice import BackgroundSlice, slice_binding
 
 
 def _job(decisions=None, **extra):

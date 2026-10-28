@@ -34,7 +34,7 @@ The printer currently exposes TMC drivers but no LED effect or toolchanger objec
 | Upload and delete files | `upload`; deletion uses `/server/files/<root>/<path>` with explicit confirmation |
 | Config file listing and reading | `/server/files/list?root=config` and `/server/files/config/<path>` |
 | G-code searching and comments | Local `grep` or `jq`, or download the file and inspect it locally |
-| Validate and analyze G-code | `python3 -m print_buddy.core.model_job verify-gcode`, Moonraker metadata, local shell parsing |
+| Validate and analyze G-code | `python3 -m print_handy.core.model_job verify-gcode`, Moonraker metadata, local shell parsing |
 | Extract layers and compare files | Local shell tools after downloading the G-code |
 | Back up configuration | `backup-config DIR`; restore is intentionally manual and confirmation gated |
 

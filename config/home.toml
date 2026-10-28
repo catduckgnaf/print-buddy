@@ -1,13 +1,13 @@
-# Print Buddy settings: catduck's home setup. Tests run against this exact file.
+# Print Handy settings: catduck's home setup. Tests run against this exact file.
 #
 # Change hardware values here, not in code. For anything private or machine specific
 # (addresses, tokens, paths on the home box), create config/local.toml. It is gitignored
-# and its values override this file key by key. PRINT_BUDDY_CONFIG=/path/to/file.toml
+# and its values override this file key by key. PRINT_HANDY_CONFIG=/path/to/file.toml
 # overrides with that file instead of config/local.toml.
 
 [printer]
 # Which printer this install drives, "brand.model": flashforge.ad5x, sovol.sv06 or klipper.generic.
-# The model's own file under print_buddy/printers/ supplies the bed, height, nozzle, slots, start and end
+# The model's own file under print_handy/printers/ supplies the bed, height, nozzle, slots, start and end
 # macros, edge margins, prime tower and cold pull defaults. Override any of them in config/local.toml.
 model = "flashforge.ad5x"
 
@@ -89,7 +89,7 @@ post_print_quiet_s = 7200
 daily_reset_hour = 4
 timezone = "America/New_York"
 # Name the bot uses for itself in the roast persona and the profile templates the installer renders.
-bot_name = "Print Buddy"
+bot_name = "Print Handy"
 # How long a Discord question waits for a button press, in seconds.
 question_timeout_s = 1800
 # How long a safety confirmation (bed clear, destructive start) waits.
@@ -138,7 +138,7 @@ upload_max_bytes = 50000000
 
 [bot]
 # hermes: the Hermes gateway runs the print-feedback plugin (the default).
-# standalone: python3 -m print_buddy.bot talks to Discord directly. No Hermes, no LLM needed.
+# standalone: python3 -m print_handy.bot talks to Discord directly. No Hermes, no LLM needed.
 # Use one mode per bot token.
 mode = "hermes"
 # Standalone bot only: the chat platform ([bot] platform, #164). discord is the default;
@@ -201,7 +201,7 @@ sensitivity = 3
 
 [timelapse]
 # Mode (#246/#295): rendered = the printer renders it (moonraker-timelapse),
-# container = Print Buddy captures and encodes it in-container, off = none.
+# container = Print Handy captures and encodes it in-container, off = none.
 # Empty derives: rendered when a Moonraker URL is configured, else off.
 mode = ""
 # Remote archive over ssh. Empty host disables the copy.
@@ -249,7 +249,7 @@ format = "text"
 # Also write a rotating log file here (5 MiB, 3 backups). Empty logs to stderr only (journald or docker logs).
 file = ""
 # Per-subsystem verbosity (#390): logger name -> level, e.g.
-# levels = { "print_buddy.core.orca_adapter" = "DEBUG" }
+# levels = { "print_handy.core.orca_adapter" = "DEBUG" }
 levels = {}
 
 [webui]

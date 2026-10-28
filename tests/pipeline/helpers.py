@@ -1,7 +1,7 @@
 """Shared test helpers for the pipeline tests."""
 import pytest
 
-from print_buddy.core import _external
+from print_handy.core import _external
 
 
 def external(name):

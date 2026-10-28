@@ -1,6 +1,6 @@
 from pathlib import Path
 import sys, zipfile
-from print_buddy.core import source_colors
+from print_handy.core import source_colors
 
 
 def test_duplicate_stl_names_use_bambu_plate_names(tmp_path):
@@ -23,7 +23,7 @@ def test_duplicate_stl_names_use_bambu_plate_names(tmp_path):
 
 
 def test_mesh_bodies_are_skipped_but_mesh_presence_is_kept():
-    from print_buddy.core import source_colors as sc
+    from print_handy.core import source_colors as sc
     data = (b'<model><resources><object id="1"><mesh><vertices><vertex x="0"/></vertices></mesh></object>'
             b'<object id="2"><components><component objectid="1"/></components></object></resources></model>')
     slim = sc._without_mesh_bodies(data)
@@ -31,7 +31,7 @@ def test_mesh_bodies_are_skipped_but_mesh_presence_is_kept():
 
 
 def test_paint_detection_matches_tags_and_attributes():
-    from print_buddy.core import source_colors as sc
+    from print_handy.core import source_colors as sc
     assert sc._has_paint(b'<m:basematerials id="1">')
     assert sc._has_paint(b'<triangle v1="0" paint_color="4"/>')
     assert sc._has_paint(b'<triangle v1="0" p1="2"/>')

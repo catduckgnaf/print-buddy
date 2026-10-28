@@ -1,7 +1,7 @@
 """#311 stage 4: the live-view gate, the shared session record, presence.
 
 The Activity server runs only when [live_stream] is enabled AND
-configured (print_buddy.live_gate, mirroring the Web UI gate #286 and
+configured (print_handy.live_gate, mirroring the Web UI gate #286 and
 the go2rtc gate #246): the decision comes from the resolved settings
 plus the presence — never the values — of the deployment environment
 (the Discord application ID and the two secrets). Offline throughout:
@@ -17,7 +17,7 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
-from print_buddy import live_activity, live_gate, live_stream, settings
+from print_handy import live_activity, live_gate, live_stream, settings
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -184,7 +184,7 @@ class DockerHealthcheckLiveRowTests(unittest.TestCase):
     """docker/healthcheck.py mirrors the live gate through the same helper."""
 
     def run_main(self, module, urlopen):
-        env = {"DISCORD_BOT_TOKEN": "", "PRINT_BUDDY_BUNDLED_SPOOLMAN": "true"}
+        env = {"DISCORD_BOT_TOKEN": "", "PRINT_HANDY_BUNDLED_SPOOLMAN": "true"}
         out = io.StringIO()
         with mock.patch.dict(os.environ, env), \
                 mock.patch.object(module, "listener_required", return_value=False), \

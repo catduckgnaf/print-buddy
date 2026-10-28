@@ -8,9 +8,9 @@ from pathlib import Path
 
 import pytest
 
-from print_buddy import settings
-from print_buddy.hermes import moonraker_event_listener as mel
-from print_buddy.hermes import vertical_short as vs
+from print_handy import settings
+from print_handy.hermes import moonraker_event_listener as mel
+from print_handy.hermes import vertical_short as vs
 
 
 # --- filter graphs / aspect handling -------------------------------------
@@ -160,14 +160,14 @@ def test_settings_defaults_are_off():
 
 def test_settings_env_override_and_validation():
     data = settings.load(local=False, environ={
-        "PRINT_BUDDY__TIMELAPSE__VERTICAL_SHORT": "true",
-        "PRINT_BUDDY__TIMELAPSE__VERTICAL_SHORT_MODE": "crop",
+        "PRINT_HANDY__TIMELAPSE__VERTICAL_SHORT": "true",
+        "PRINT_HANDY__TIMELAPSE__VERTICAL_SHORT_MODE": "crop",
     })
     assert data["timelapse"]["vertical_short"] is True
     assert data["timelapse"]["vertical_short_mode"] == "crop"
     with pytest.raises(settings.SettingsError):
         settings.load(local=False, environ={
-            "PRINT_BUDDY__TIMELAPSE__VERTICAL_SHORT_MODE": "stretch"})
+            "PRINT_HANDY__TIMELAPSE__VERTICAL_SHORT_MODE": "stretch"})
 
 
 # --- delivery wiring --------------------------------------------------------

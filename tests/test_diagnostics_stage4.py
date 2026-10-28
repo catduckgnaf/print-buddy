@@ -4,7 +4,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from print_buddy import logs, settings
+from print_handy import logs, settings
 
 
 class LevelsSettingsTests(unittest.TestCase):
@@ -15,14 +15,14 @@ class LevelsSettingsTests(unittest.TestCase):
             return settings.load(local=path, environ={})
 
     def test_levels_are_validated_and_normalised(self):
-        data = self._load('[logging]\nlevels = { "print_buddy.core.orca_adapter" = "debug" }\n')
+        data = self._load('[logging]\nlevels = { "print_handy.core.orca_adapter" = "debug" }\n')
         self.assertEqual(data["logging"]["levels"],
-                         {"print_buddy.core.orca_adapter": "DEBUG"})
+                         {"print_handy.core.orca_adapter": "DEBUG"})
 
     def test_bad_level_is_a_settings_error_naming_the_key(self):
         with self.assertRaises(settings.SettingsError) as ctx:
-            self._load('[logging]\nlevels = { "print_buddy.core" = "CHATTY" }\n')
-        self.assertIn("levels.print_buddy.core", str(ctx.exception))
+            self._load('[logging]\nlevels = { "print_handy.core" = "CHATTY" }\n')
+        self.assertIn("levels.print_handy.core", str(ctx.exception))
 
     def test_levels_default_to_empty(self):
         self.assertEqual(self._load("")["logging"]["levels"], {})
@@ -30,15 +30,15 @@ class LevelsSettingsTests(unittest.TestCase):
 
 class ConfigureLevelsTests(unittest.TestCase):
     def tearDown(self):
-        logging.getLogger("print_buddy.core.orca_adapter").setLevel(logging.NOTSET)
+        logging.getLogger("print_handy.core.orca_adapter").setLevel(logging.NOTSET)
         logs.configure({"level": "INFO", "format": "text"})
 
     def test_configure_applies_the_subsystem_level_only_there(self):
         logs.configure({"level": "INFO", "format": "text",
-                        "levels": {"print_buddy.core.orca_adapter": "DEBUG"}})
-        self.assertEqual(logging.getLogger("print_buddy.core.orca_adapter").level,
+                        "levels": {"print_handy.core.orca_adapter": "DEBUG"}})
+        self.assertEqual(logging.getLogger("print_handy.core.orca_adapter").level,
                          logging.DEBUG)
-        self.assertEqual(logging.getLogger("print_buddy.core.model_job").level,
+        self.assertEqual(logging.getLogger("print_handy.core.model_job").level,
                          logging.NOTSET)
 
 

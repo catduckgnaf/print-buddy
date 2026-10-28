@@ -15,9 +15,9 @@ from unittest import mock
 
 import pytest
 
-from print_buddy.core import design, prepared_intake, printer_state
-from print_buddy.core import prompts as core_prompts
-from print_buddy.hermes import _config
+from print_handy.core import design, prepared_intake, printer_state
+from print_handy.core import prompts as core_prompts
+from print_handy.hermes import _config
 
 ROOT = Path(__file__).parents[1]
 PLUGIN_PATH = ROOT / "plugins/print-feedback/__init__.py"
@@ -192,15 +192,15 @@ def test_design_on_telegram_and_matrix_answers_not_set_up_without_an_endpoint(
 def test_telegram_and_matrix_stay_pure_bots_for_ordinary_chat():
     # Design is a separate configured lane; it must not wire the [llm] chat
     # fallback on the pure-bot platforms (#164 posture, unchanged).
-    from print_buddy.bot import matrix as matrix_mod
-    from print_buddy.bot import telegram as telegram_mod
+    from print_handy.bot import matrix as matrix_mod
+    from print_handy.bot import telegram as telegram_mod
     assert telegram_mod.StandaloneAdapter.uses_llm is False
     assert matrix_mod.StandaloneAdapter.uses_llm is False
     assert matrix_mod.StandaloneAdapter.supports_buttons is False
 
 
 def test_design_alias_is_in_the_commands_table():
-    from print_buddy.bot import commands
+    from print_handy.bot import commands
     canonical = commands.by_name("print-design")
     assert commands.by_name("design") is canonical
     assert commands.as_text("design", {"prompt": "a hook"}) == "/design a hook"
@@ -243,7 +243,7 @@ def test_design_prompt_answers_a_numbered_reply_through_the_real_matrix_adapter(
     import json
     import urllib.parse
 
-    from print_buddy.bot import matrix as matrix_mod
+    from print_handy.bot import matrix as matrix_mod
 
     class _Response(io.BytesIO):
         def __enter__(self):
@@ -378,7 +378,7 @@ def _box_triangles(dx, dy, dz, ox=0.0, oy=0.0, oz=0.0):
 
 
 def _plate_stl(tmp_path, name="plate.stl"):
-    from print_buddy.core.geometry_layout import write_binary_stl
+    from print_handy.core.geometry_layout import write_binary_stl
     path = tmp_path / name
     write_binary_stl(_box_triangles(40, 20, 3, -20, -10, 0), path)
     return path

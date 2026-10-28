@@ -1,8 +1,8 @@
 """Offline tests for #317 print event markers (recorder, mapping, failure isolation)."""
 import pytest
 
-from print_buddy.hermes import moonraker_event_listener as mel
-from print_buddy.hermes import print_markers as pm
+from print_handy.hermes import moonraker_event_listener as mel
+from print_handy.hermes import print_markers as pm
 
 
 def test_record_each_event_kind(tmp_path):

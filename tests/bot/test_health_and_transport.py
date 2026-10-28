@@ -12,22 +12,22 @@ from unittest import mock
 
 import pytest
 
-from print_buddy import doctor, settings
-from print_buddy.bot import __main__ as bot_main
-from print_buddy.bot import health
-from print_buddy.hermes import _config
-from print_buddy.hermes import moonraker_discord_announcements as announcer
-from print_buddy.hermes import moonraker_event_listener as mel
+from print_handy import doctor, settings
+from print_handy.bot import __main__ as bot_main
+from print_handy.bot import health
+from print_handy.hermes import _config
+from print_handy.hermes import moonraker_discord_announcements as announcer
+from print_handy.hermes import moonraker_event_listener as mel
 
 
 def beat(**extra):
     return {"mode": "standalone", "pid": os.getpid(), "heartbeat_at": time.time(), "connected": True,
-            "user": "Print Buddy#0001", "handlers": 13, "hermes_modules": [], **extra}
+            "user": "Print Handy#0001", "handlers": 13, "hermes_modules": [], **extra}
 
 
 @pytest.mark.parametrize(("status", "ok", "reason"), [
     (None, False, "no heartbeat"),
-    (beat(), True, "connected as Print Buddy#0001"),
+    (beat(), True, "connected as Print Handy#0001"),
     (beat(heartbeat_at=time.time() - 3600), False, "old"),
     (beat(connected=False), False, "not connected"),
     (beat(hermes_modules=["tools.clarify_gateway"]), False, "Hermes modules loaded"),
@@ -71,7 +71,7 @@ def test_listener_posts_over_rest_in_standalone_mode(monkeypatch):
     sent = []
     monkeypatch.setitem(_config.cfg()["bot"], "mode", "standalone")
     monkeypatch.setattr(mel, "_profile_env_value", lambda name: "tok" if name == "DISCORD_BOT_TOKEN" else "")
-    monkeypatch.setattr("print_buddy.bot.rest.send", lambda token, chat, text: sent.append((token, chat, text)) or (True, "1"))
+    monkeypatch.setattr("print_handy.bot.rest.send", lambda token, chat, text: sent.append((token, chat, text)) or (True, "1"))
     with mock.patch.object(mel.subprocess, "run", side_effect=AssertionError("hermes send was called")):
         assert mel.post("Print started: cube") is True
     assert sent == [("tok", announcer.DISCORD_CHAT_ID, "Print started: cube")]
@@ -80,7 +80,7 @@ def test_listener_posts_over_rest_in_standalone_mode(monkeypatch):
 def test_listener_keeps_hermes_send_in_hermes_mode(monkeypatch):
     monkeypatch.setitem(_config.cfg()["bot"], "mode", "hermes")
     with mock.patch.object(mel.subprocess, "run", return_value=mock.Mock(returncode=0, stderr="")) as run, \
-            mock.patch("print_buddy.bot.rest.send", side_effect=AssertionError("REST in hermes mode")):
+            mock.patch("print_handy.bot.rest.send", side_effect=AssertionError("REST in hermes mode")):
         assert mel.post("Print started: cube") is True
     assert run.call_args[0][0][1:4] == ["-p", "3dprinting", "send"]
 
@@ -115,7 +115,7 @@ def test_bot_settings_defaults_and_validation(tmp_path):
     assert data["discord"]["token_env"] == "DISCORD_BOT_TOKEN" and data["discord"]["allowed_user_ids"] == ""
     assert data["llm"]["chat_url"] == "" and data["llm"]["api_key_env"] == "LLM_API_KEY"
     data = _load("bot:\n  mode: standalone\ndiscord:\n  allowed_user_ids: '1, 2 3'\n", tmp_path,
-                 {"PRINT_BUDDY__BOT__HEALTH_PORT": "8080"})
+                 {"PRINT_HANDY__BOT__HEALTH_PORT": "8080"})
     assert data["bot"]["mode"] == "standalone" and data["bot"]["health_port"] == 8080
     assert settings.user_ids(data["discord"]["allowed_user_ids"]) == ["1", "2", "3"]
     for text, error in (("bot:\n  mode: chatty\n", "mode must be one of"),
@@ -205,7 +205,7 @@ def test_check_names_a_disabled_hermes_discord_platform(monkeypatch, capsys, tmp
 
 def test_run_refuses_to_start_when_checks_fail(monkeypatch):
     monkeypatch.setattr(bot_main, "check", lambda out=None: 1)
-    with mock.patch("print_buddy.bot.client.PrintBuddyBot") as bot:
+    with mock.patch("print_handy.bot.client.PrintHandyBot") as bot:
         assert bot_main.run() == 2
     bot.assert_not_called()
 
@@ -233,8 +233,8 @@ def test_doctor_login_check_uses_the_token(monkeypatch):
     cfg = settings.load(local=Path(os.devnull), environ={})
     cfg["bot"]["mode"] = "standalone"
     monkeypatch.setenv("DISCORD_BOT_TOKEN", "tok")
-    with mock.patch("print_buddy.bot.rest.whoami", return_value={"id": "9", "username": "printbuddy"}) as who:
-        assert doctor.check_discord_login(cfg) == "printbuddy (9)"
+    with mock.patch("print_handy.bot.rest.whoami", return_value={"id": "9", "username": "printhandy"}) as who:
+        assert doctor.check_discord_login(cfg) == "printhandy (9)"
     assert who.call_args[0][0] == "tok"
     monkeypatch.delenv("DISCORD_BOT_TOKEN")
     monkeypatch.setattr(_config, "profile_env_value", lambda name, **kw: "")
@@ -257,10 +257,10 @@ import json, os, sys, tempfile
 sys.path.insert(0, os.path.join(os.getcwd(), 'tests'))
 import conftest  # the offline test settings: temp state, fake hosts
 from unittest import mock
-from print_buddy.core import printer_state
+from print_handy.core import printer_state
 from corpus import harness
-from print_buddy.bot import health
-import print_buddy.bot.client  # the discord.py client imports without Hermes too
+from print_handy.bot import health
+import print_handy.bot.client  # the discord.py client imports without Hermes too
 case = harness.load_case(harness.CASES / 'parts-one-plate')
 with mock.patch.object(printer_state, 'save', lambda state: None):
     run = harness.run_case(case, tempfile.mkdtemp(), transport='standalone')
@@ -272,7 +272,7 @@ print('REPORT ' + json.dumps({'status': run.receipt.get('status'), 'starts': len
 
 def test_a_clean_process_with_hermes_blocked_runs_the_whole_intake():
     """Acceptance (#73): core and bot import and run with no Hermes module; any Hermes import fails here."""
-    env = {k: v for k, v in os.environ.items() if not k.startswith(("PRINT_BUDDY", "HERMES_"))}
+    env = {k: v for k, v in os.environ.items() if not k.startswith(("PRINT_HANDY", "HERMES_"))}
     env.update(PYTHONPATH=str(settings.ROOT), PYTHONDONTWRITEBYTECODE="1")
     proc = subprocess.run([sys.executable, "-c", CHILD], cwd=str(settings.ROOT), env=env,
                           capture_output=True, text=True, timeout=300)
@@ -283,21 +283,21 @@ def test_a_clean_process_with_hermes_blocked_runs_the_whole_intake():
 
 
 def test_install_standalone_renders_units_and_data_folder(tmp_path):
-    env = {k: v for k, v in os.environ.items() if not k.startswith(("PRINT_BUDDY", "HERMES_"))}
+    env = {k: v for k, v in os.environ.items() if not k.startswith(("PRINT_HANDY", "HERMES_"))}
     env.update(SYSTEMD_USER_DIR=str(tmp_path / "units"), NO_SYSTEMCTL="1",
-               PRINT_BUDDY__PATHS__HERMES_HOME=str(tmp_path / "data"), PYTHON=sys.executable,
-               PRINT_BUDDY_CONFIG=str(tmp_path / "empty.yaml"))
+               PRINT_HANDY__PATHS__HERMES_HOME=str(tmp_path / "data"), PYTHON=sys.executable,
+               PRINT_HANDY_CONFIG=str(tmp_path / "empty.yaml"))
     (tmp_path / "empty.yaml").write_text("")
     script = settings.ROOT / "scripts" / "install-standalone.sh"
     first = subprocess.run(["bash", str(script)], env=env, capture_output=True, text=True, timeout=120)
     assert first.returncode == 0, first.stderr
-    for name in ("print-buddy-bot", "print-buddy-listener"):
+    for name in ("print-handy-bot", "print-handy-listener"):
         unit = (tmp_path / "units" / f"{name}.service").read_text()
-        assert "{{" not in unit and "PRINT_BUDDY__BOT__MODE=standalone" in unit
+        assert "{{" not in unit and "PRINT_HANDY__BOT__MODE=standalone" in unit
         assert f"EnvironmentFile=-{tmp_path / 'data'}/.env" in unit
         assert "HERMES_HOME" not in unit and "PartOf=" not in unit  # not tied to a Hermes gateway
         assert (tmp_path / "units" / f"{name}.service").stat().st_mode & 0o777 != 0o600
-    assert "-m print_buddy.bot run" in (tmp_path / "units" / "print-buddy-bot.service").read_text()
+    assert "-m print_handy.bot run" in (tmp_path / "units" / "print-handy-bot.service").read_text()
     assert (tmp_path / "data" / ".env").stat().st_mode & 0o777 == 0o600
     assert (tmp_path / "data" / "state").is_dir()
     again = subprocess.run(["bash", str(script)], env=env, capture_output=True, text=True, timeout=120)
@@ -317,10 +317,10 @@ def test_bot_health_command_rejects_foreign_or_invalid_identity(changes):
 
 
 def test_bot_shutdown_awaits_owned_resources(cfg):
-    from print_buddy.bot.client import PrintBuddyBot
+    from print_handy.bot.client import PrintHandyBot
 
     async def flow():
-        bot = PrintBuddyBot(cfg)
+        bot = PrintHandyBot(cfg)
         stopped = asyncio.Event()
         started = asyncio.Event()
 
@@ -337,7 +337,7 @@ def test_bot_shutdown_awaits_owned_resources(cfg):
         server.wait_closed = mock.AsyncMock()
         bot._background = [task, server]
         with mock.patch("discord.ext.commands.Bot.close", mock.AsyncMock()), \
-                mock.patch("print_buddy.core.owned_worker.shutdown", mock.AsyncMock()) as workers:
+                mock.patch("print_handy.core.owned_worker.shutdown", mock.AsyncMock()) as workers:
             await bot.close()
         workers.assert_awaited_once()  # no slicer or model-check worker outlives the bot
         assert stopped.is_set() and task.done()

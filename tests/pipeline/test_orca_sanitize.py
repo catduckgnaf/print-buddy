@@ -12,8 +12,8 @@ from pathlib import Path
 
 import pytest
 
-from print_buddy import settings
-from print_buddy.core import orca_adapter as adapter  # noqa: E402
+from print_handy import settings
+from print_handy.core import orca_adapter as adapter  # noqa: E402
 
 ARCHIVE = settings.current()['paths']['archive']
 
@@ -85,7 +85,7 @@ def test_list_values_clamped(tmp_path):
 
 
 def test_known_auto_sentinels_are_normalized_before_first_orca_attempt(tmp_path, monkeypatch):
-    from print_buddy.core import model_job
+    from print_handy.core import model_job
 
     source = tmp_path / 'bambu-2.5.3mf'
     _make(source, {'raft_first_layer_expansion': '-1', 'tree_support_wall_count': '-1',
@@ -121,7 +121,7 @@ def test_known_auto_sentinels_are_normalized_before_first_orca_attempt(tmp_path,
 
 
 def test_failure_includes_orca_result_json_details(tmp_path, monkeypatch):
-    from print_buddy.core import model_job
+    from print_handy.core import model_job
 
     source = tmp_path / 'bambu-2.5.3mf'
     _make(source, {})
@@ -152,7 +152,7 @@ REAL = next(ARCHIVE.glob('sticker-buddy-one-handed-sticker-assistant-21g--*/deri
                     or subprocess.run(['flatpak', 'info', 'com.orcaslicer.OrcaSlicer'], capture_output=True).returncode,
                     reason='Sticker Buddy reference or Orca not on this host')
 def test_real_sticker_buddy_slices(tmp_path):
-    from print_buddy.core import model_job
+    from print_handy.core import model_job
     state = model_job.printer_state.load()
     src = tmp_path / 'merged.3mf'
     shutil.copy(REAL, src)

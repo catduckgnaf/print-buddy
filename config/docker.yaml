@@ -1,4 +1,4 @@
-# Docker defaults for Print Buddy. Override with PRINT_BUDDY__SECTION__KEY.
+# Docker defaults for Print Handy. Override with PRINT_HANDY__SECTION__KEY.
 # Legacy config/docker.toml remains supported when explicitly selected.
 #
 # More than one printer (#257 Stage 2): declare a roster in YOUR mounted config
@@ -18,7 +18,7 @@
 #     model: flashforge.ad5x
 #     moonraker_url: "http://<ad5x-lan-ip>:7125"
 #
-# One entry value can be overridden with PRINT_BUDDY__PRINTERS__<ID>__<KEY>.
+# One entry value can be overridden with PRINT_HANDY__PRINTERS__<ID>__<KEY>.
 # Full reference: docs/SETTINGS.md, "Printers list".
 orca:
   # Source-installed binary; requires WITH_ORCA=true at image build time
@@ -29,7 +29,7 @@ bambu:
   # The default slicer for Bambu Lab printers; elsewhere only Orca's one-shot fallback.
   command:
     - /usr/bin/bambu-studio
-  # Read-only LAN telemetry (#187): set via PRINT_BUDDY__BAMBU__LAN_HOST / __LAN_SERIAL;
+  # Read-only LAN telemetry (#187): set via PRINT_HANDY__BAMBU__LAN_HOST / __LAN_SERIAL;
   # the access code comes from the BAMBU_LAN_PASSWORD environment secret, never from a file.
   lan_host: ""
   lan_serial: ""
@@ -56,7 +56,7 @@ services:
   vision_chat_url: ""
   stock_api_port: 8898
 printer:
-  # Override with PRINT_BUDDY__PRINTER__MODEL=sovol.sv06 etc.
+  # Override with PRINT_HANDY__PRINTER__MODEL=sovol.sv06 etc.
   model: flashforge.ad5x
 timelapse:
   # Mode (#246/#295): rendered, container or off. Empty derives: rendered
@@ -75,7 +75,7 @@ design:
   # AI design with OpenSCAD (#388): no enabled key on purpose — unset is
   # AUTO (on whenever a design/LLM endpoint is configured, like roasts).
   # Empty chat_url/model/api_key_env inherit the [llm] values. Force off
-  # with PRINT_BUDDY__DESIGN__ENABLED=false, or force on with =true plus a
+  # with PRINT_HANDY__DESIGN__ENABLED=false, or force on with =true plus a
   # model endpoint.
   chat_url: ""
   model: ""
@@ -100,8 +100,8 @@ live_stream:
   port: 0
 visual_watch:
   # Camera watchdog: alert-only spaghetti, detached-part, empty-bed and stall checks
-  # (docs/DOCKER.md "Camera watch"). Override with PRINT_BUDDY__VISUAL_WATCH__SENSITIVITY /
-  # PRINT_BUDDY__VISUAL_WATCH__ENABLED. Sensitivity 1 (quietest) to 5 (most alerts);
+  # (docs/DOCKER.md "Camera watch"). Override with PRINT_HANDY__VISUAL_WATCH__SENSITIVITY /
+  # PRINT_HANDY__VISUAL_WATCH__ENABLED. Sensitivity 1 (quietest) to 5 (most alerts);
   # 3 is the original behavior. Periodic checks run every 1800, 1200, 900, 600 or
   # 450 seconds for levels 1 to 5.
   sensitivity: 3

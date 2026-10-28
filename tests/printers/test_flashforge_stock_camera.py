@@ -7,8 +7,8 @@ no camera), and streamCtrl_cmd rides /control in a payload wrapper.
 """
 import pytest
 
-from print_buddy.printers.flashforge_stock import camera
-from print_buddy.printers.flashforge_stock.client import StockClient, StockLanError
+from print_handy.printers.flashforge_stock import camera
+from print_handy.printers.flashforge_stock.client import StockClient, StockLanError
 
 HOST = "192.0.2.10"
 STREAM = "http://192.0.2.10:8080/?action=stream"

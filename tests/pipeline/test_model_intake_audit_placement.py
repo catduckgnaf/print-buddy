@@ -2,7 +2,7 @@
 import hashlib
 import struct
 
-from print_buddy.core import model_job
+from print_handy.core import model_job
 
 
 def _write_cube_stl(path):

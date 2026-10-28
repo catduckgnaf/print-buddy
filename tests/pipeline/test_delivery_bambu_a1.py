@@ -8,8 +8,8 @@ from pathlib import Path
 
 import pytest
 
-from print_buddy import printers
-from print_buddy.core import delivery, model_job
+from print_handy import printers
+from print_handy.core import delivery, model_job
 from printers import a1_fixture
 from printers.test_bambulab_a1 import A1 as A1_KEY, a1_gcode, ad5x_gcode, adapter_for
 from .helpers import external

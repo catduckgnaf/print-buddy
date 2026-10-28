@@ -16,7 +16,7 @@ case "$arch" in
 esac
 case "$channel" in
     stable)
-        # Print Buddy ships OrcaSlicer v2.5.0-alpha (#356): it is the first release whose
+        # Print Handy ships OrcaSlicer v2.5.0-alpha (#356): it is the first release whose
         # BBL vendor profiles cover the H2C and A2L, and the profiles pipeline reads its
         # packed preset caches (profiles/<Vendor>.opc) directly. There is no newer
         # upstream release, so the alpha channel below currently pins the same build;

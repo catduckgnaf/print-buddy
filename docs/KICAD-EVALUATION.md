@@ -1,8 +1,8 @@
 # KiCad 3D models as slicing inputs and fixtures (evaluation for #122)
 
-**Recommendation: defer.** Print Buddy should not accept KiCad boards or projects as Discord input, and should not add KiCad as a runtime, CI or test dependency now. Revisit only for a concrete PCB-shaped printing need (see [Follow-up scope](#follow-up-scope-if-revisited)). #118 can proceed independently.
+**Recommendation: defer.** Print Handy should not accept KiCad boards or projects as Discord input, and should not add KiCad as a runtime, CI or test dependency now. Revisit only for a concrete PCB-shaped printing need (see [Follow-up scope](#follow-up-scope-if-revisited)). #118 can proceed independently.
 
-The export path works. In a sandbox, a KiCad 9 board-only STL passed Print Buddy's existing intake, fit probe, real OrcaSlicer slice and slice guard unchanged. But for fixtures it adds nothing that `tests/corpus/make_models.py` or the planned OpenSCAD fixtures (#118) cannot produce with fewer dependencies. It needs a 346 to 673 MiB toolchain, and its output geometry changed between the KiCad versions tested.
+The export path works. In a sandbox, a KiCad 9 board-only STL passed Print Handy's existing intake, fit probe, real OrcaSlicer slice and slice guard unchanged. But for fixtures it adds nothing that `tests/corpus/make_models.py` or the planned OpenSCAD fixtures (#118) cannot produce with fewer dependencies. It needs a 346 to 673 MiB toolchain, and its output geometry changed between the KiCad versions tested.
 
 ## Evidence labels
 
@@ -18,7 +18,7 @@ Every factual claim below carries one of these labels:
 | Area | Status | Where it was done |
 | --- | --- | --- |
 | 1. Export and geometry | Done **[observed]** | Ubuntu 24.04 sandbox: KiCad 7.0.11, and KiCad 9.0.3 in an Ubuntu 25.10 chroot |
-| 2. Real slicer and Print Buddy pipeline | Done **[observed]** | Same sandbox: OrcaSlicer 2.4.2 AppImage. Offline only, with no printer, Moonraker, Spoolman or Discord |
+| 2. Real slicer and Print Handy pipeline | Done **[observed]** | Same sandbox: OrcaSlicer 2.4.2 AppImage. Offline only, with no printer, Moonraker, Spoolman or Discord |
 | 3. Host availability on Dysprosium and Francium | **Not done; pending maintainer** | Neither host was inspected or contacted. A reproducible check is provided |
 | 4. Physical print | **Not done** | No printer access, and the issue rules out live printer actions |
 
@@ -59,7 +59,7 @@ These are the `kicad-cli pcb export` subcommands that write 3D geometry.
 
 Sources: the 7.0.11 and 9.0.3 columns come from `kicad-cli pcb export --help` and the export runs below. The 8.0 column comes from the [KiCad 8.0 CLI reference](https://gitlab.com/kicad/services/kicad-doc/-/blob/8.0/src/cli/cli.adoc), which has sections for STEP, GLB and VRML export and none for STL, PLY, BREP or XAO. KiCad 8 was not run. The [9.0 reference](https://gitlab.com/kicad/services/kicad-doc/-/blob/9.0/src/cli/cli.adoc) agrees with the observed 9.0.3 `--help` output.
 
-Print Buddy only slices `.3mf` and `.stl`: `MODEL_FILE_EXTS` in `print_buddy/core/prepared_intake.py`, and the guard in `model_job.py` that raises "only STL/3MF can be sliced". Orca 2.4.2's CLI refused every non-STL KiCad output (STEP from 7.0.11 and 9.0.3, plus PLY, GLB and WRL) with exit 250 and the same message **[observed]**:
+Print Handy only slices `.3mf` and `.stl`: `MODEL_FILE_EXTS` in `print_handy/core/prepared_intake.py`, and the guard in `model_job.py` that raises "only STL/3MF can be sliced". Orca 2.4.2's CLI refused every non-STL KiCad output (STEP from 7.0.11 and 9.0.3, plus PLY, GLB and WRL) with exit 250 and the same message **[observed]**:
 
 ```text
 <file>: Unknown file format. Input file must have .stl, .obj, .amf(.xml) extension.
@@ -90,7 +90,7 @@ mesh = trimesh.load("host7-board.step", force="mesh")
 mesh.apply_scale(1000.0); mesh.merge_vertices(); mesh.export("host7-board-cascadio.stl")
 ```
 
-Each STL was read with Print Buddy's own `orca_adapter.read_stl_triangles`. A small script in the session scratchpad (not committed) then computed:
+Each STL was read with Print Handy's own `orca_adapter.read_stl_triangles`. A small script in the session scratchpad (not committed) then computed:
 
 * bounds and signed volume;
 * directed edges with no matching opposite edge, which indicate holes or flipped faces;
@@ -113,7 +113,7 @@ Findings:
    * The same outline with the mask layers removed from the layer list exported as 1.53 mm (1.6 − 2 × 0.035) **[observed]**.
 
    A fixture regenerated on another KiCad version could change shape, so it would have to be committed as a mesh **[inference]**.
-3. **Y is flipped.** KiCad's Y-down board space comes out as STL and PLY Y −30–0, while GLB is Y-up in metres **[observed]**. Print Buddy re-centres STL input on the bed, and the pipeline runs below accepted it **[observed]**.
+3. **Y is flipped.** KiCad's Y-down board space comes out as STL and PLY Y −30–0, while GLB is Y-up in metres **[observed]**. Print Handy re-centres STL input on the bed, and the pipeline runs below accepted it **[observed]**.
 4. **Component exports are not printable solids.** The block's bottom is at z 1.595, 0.085 mm above the 1.51 mm body, so the mesh has two disjoint shells. `--fuse-shapes` changed nothing **[observed]**. The gap probably comes from KiCad placing models on the copper and mask surface rather than the dielectric **[inference]**. `--include-soldermask` adds zero-thickness open faces (360 unpaired edges), which is not a printable solid **[observed]**.
 5. **Missing models are dropped and exports still succeed.**
    * 9.0.3 prints `Could not add 3D model for R1.` and `File not found: …`, exits **2**, and still writes the STL without R1 **[observed]**.
@@ -121,9 +121,9 @@ Findings:
    * With 9.0.3, `${KIPRJMOD}` resolved only after a `.kicad_pro` existed next to the board. Before that, U1 was dropped too **[observed]**.
    * Pointing U1's model at an absolute path outside the project (`/work/block.step`) worked: the exporter read that file and embedded its geometry **[observed]**.
 
-## 2. Real slicer and Print Buddy pipeline [observed]
+## 2. Real slicer and Print Handy pipeline [observed]
 
-**Raw Orca CLI**, using the same flags as `tests/slicer/test_orca_real.py`, with `T=print_buddy/templates/orca/flashforge_ad5x`. The binary was the extracted AppImage's `AppRun`, run under `xvfb-run -a`.
+**Raw Orca CLI**, using the same flags as `tests/slicer/test_orca_real.py`, with `T=print_handy/templates/orca/flashforge_ad5x`. The binary was the extracted AppImage's `AppRun`, run under `xvfb-run -a`.
 
 ```bash
 AppRun --load-settings "$T/machine.json;$T/process.json" --load-filaments "$T/filament.json" \
@@ -138,7 +138,7 @@ AppRun --load-settings "$T/machine.json;$T/process.json" --load-filaments "$T/fi
 
 The AD5X profile slices at 0.24 mm layers, so the 1.51 mm plate became 6 layers **[observed]**: 1.44 mm, a 0.07 mm loss **[inference]**.
 
-**Print Buddy pipeline.** Each mesh was saved as a case in a private corpus outside the checkout (`PRINT_BUDDY_PRIVATE_CORPUS`, with `CI` unset) and run through `tests/corpus/test_corpus.py::test_discord_flow`. That test exercises the real Discord intake hook, colour and copies prompts, fit probe, `BackgroundSlice`, slice guard and `print_next` start gates against the stub print-now script. Each case expected `source_kind = ".stl"`, `source_size_mm = [50, 30, z]`, one G-code, scale 1.0, supports off and one slot.
+**Print Handy pipeline.** Each mesh was saved as a case in a private corpus outside the checkout (`PRINT_HANDY_PRIVATE_CORPUS`, with `CI` unset) and run through `tests/corpus/test_corpus.py::test_discord_flow`. That test exercises the real Discord intake hook, colour and copies prompts, fit probe, `BackgroundSlice`, slice guard and `print_next` start gates against the stub print-now script. Each case expected `source_kind = ".stl"`, `source_size_mm = [50, 30, z]`, one G-code, scale 1.0, supports off and one slot.
 
 | Case | Mock tier (fake Orca) | Real tier (Orca 2.4.2) |
 | --- | --- | --- |
@@ -147,8 +147,8 @@ The AD5X profile slices at 0.24 mm layers, so the 1.51 mm plate became 6 layers 
 | `kicad9-parts-stl` | passed | passed |
 
 ```bash
-env -u CI PRINT_BUDDY_PRIVATE_CORPUS=$PRIVATE python3 -m pytest -q tests/corpus/test_corpus.py::test_discord_flow -k kicad
-env -u CI PATH=$SHIM:$PATH PRINT_BUDDY_PRIVATE_CORPUS=$PRIVATE PRINT_BUDDY_REAL_SLICER=1 \
+env -u CI PRINT_HANDY_PRIVATE_CORPUS=$PRIVATE python3 -m pytest -q tests/corpus/test_corpus.py::test_discord_flow -k kicad
+env -u CI PATH=$SHIM:$PATH PRINT_HANDY_PRIVATE_CORPUS=$PRIVATE PRINT_HANDY_REAL_SLICER=1 \
   xvfb-run -a python3 -m pytest -v -s tests/corpus/test_corpus.py::test_discord_flow -k kicad
 ```
 
@@ -158,7 +158,7 @@ Control runs at upstream `0c3c0c1` in the same setup, all **[observed]**:
 
 * Offline suite: 1195 passed, 36 skipped.
 * `tests/corpus` real tier: 72 passed.
-* `PB_ORCA_CMD=<AppRun> PRINT_BUDDY_REAL_SLICER=1 pytest tests/slicer`: 10 passed.
+* `PB_ORCA_CMD=<AppRun> PRINT_HANDY_REAL_SLICER=1 pytest tests/slicer`: 10 passed.
 
 The two-shell parts mesh also passed. So the pipeline accepts what KiCad produces even when the result is not a sensible print. That is a reason not to feed it component exports, not evidence that they print well **[inference]**.
 
@@ -175,10 +175,10 @@ Known from outside the hosts:
 | `ppa:kicad/kicad-9.0-releases` | Its [package list](https://launchpad.net/~kicad/+archive/ubuntu/kicad-9.0-releases/+packages) shows `kicad 9.0.9~ubuntu24.04.1` and builds for other Ubuntu series **[docs]**. Not installed here: the package archive was blocked |
 | Flathub KiCad | Not reachable from the sandbox; app ID and `flatpak run --command=kicad-cli` usage unverified **[docs not checked]**. If Flatpak is used, expect the same private `/tmp` as the Orca Flatpak, so write under the checkout **[inference]** |
 
-The **host check** below is self-contained and read-only apart from `.slicer-work/kicad-check/`, which is gitignored. Run it from the repository root on each host. It prints the OS and KiCad version, exports the representative board to STL, and reads the STL back with Print Buddy's own reader. It does not touch the printer, Moonraker, Spoolman or Discord.
+The **host check** below is self-contained and read-only apart from `.slicer-work/kicad-check/`, which is gitignored. Run it from the repository root on each host. It prints the OS and KiCad version, exports the representative board to STL, and reads the STL back with Print Handy's own reader. It does not touch the printer, Moonraker, Spoolman or Discord.
 
 ```bash
-# Run from the print-buddy checkout root. Writes only under .slicer-work/kicad-check/.
+# Run from the print-handy checkout root. Writes only under .slicer-work/kicad-check/.
 KICAD_CLI=${KICAD_CLI:-kicad-cli}   # Flatpak (unverified): KICAD_CLI="flatpak run --command=kicad-cli org.kicad.KiCad"
 out="$PWD/.slicer-work/kicad-check"; mkdir -p "$out"
 echo "host=$(hostname) os=$(. /etc/os-release; echo "$PRETTY_NAME")"
@@ -207,7 +207,7 @@ cat > "$out/demo.kicad_pcb" <<'EOF'
 )
 EOF
 if $KICAD_CLI pcb export stl --board-only -f -o "$out/demo.stl" "$out/demo.kicad_pcb" >"$out/export.log" 2>&1; then
-  python3 -c 'import sys; from print_buddy.core.orca_adapter import read_stl_triangles as r
+  python3 -c 'import sys; from print_handy.core.orca_adapter import read_stl_triangles as r
 t = r(sys.argv[1]); p = [v for x in t for v in x]
 print("native STL export: ok,", len(t), "triangles, bounds", [(round(min(q[a] for q in p), 2), round(max(q[a] for q in p), 2)) for a in range(3)])' "$out/demo.stl"
 else
@@ -245,9 +245,9 @@ Not tested. No claim is made about how the plate prints, bed adhesion of a 1.5 m
 * **STEP converter for KiCad 7 and 8.**
   * trimesh and cascadio both declare the MIT licence in their pip metadata **[observed]**.
   * The cascadio wheel is about 99 MiB and bundles Open CASCADE 8.0.1 shared libraries (`libTK*.so.8.0.1`), but its `dist-info/licenses` holds only the MIT file **[observed]**.
-  * Open CASCADE itself is LGPL-2.1 with an additional exception **[docs, not checked here]**. That would only matter if Print Buddy redistributed the wheel.
+  * Open CASCADE itself is LGPL-2.1 with an additional exception **[docs, not checked here]**. That would only matter if Print Handy redistributed the wheel.
   * FreeCAD or gmsh could also do the conversion; they were not tried.
-* **KiCad itself.** The Debian copyright file in the 9.0.3 package lists GPL-3+ for KiCad **[observed]**. The GPL covers KiCad's code, not the designs users make or the files they export, and Print Buddy would not redistribute KiCad **[inference; not legal advice]**.
+* **KiCad itself.** The Debian copyright file in the 9.0.3 package lists GPL-3+ for KiCad **[observed]**. The GPL covers KiCad's code, not the designs users make or the files they export, and Print Handy would not redistribute KiCad **[inference; not legal advice]**.
 * **KiCad libraries** (symbols, footprints, 3D models) use CC-BY-SA 4.0 with an exception that waives article 3 "with respect to these designs and any generated files which use data provided as part of the 'Licensed Material'". The exception does not apply to redistributing the libraries themselves as a collection ([kicad-packages3D `LICENSE.md`](https://gitlab.com/kicad/libraries/kicad-packages3D/-/blob/master/LICENSE.md), fetched during the evaluation) **[docs]**.
   * A board exported with stock models is therefore probably redistributable **[inference]**. But no label for it is accepted by the corpus allowlist (`PUBLIC_LICENSE` in `tests/corpus/test_corpus.py`) **[observed]**.
   * Board-only exports of an own-work board contain no library data and fit the existing `own work` label **[inference]**.
@@ -257,7 +257,7 @@ Not tested. No claim is made about how the plate prints, bed adhesion of a 1.5 m
 
 | Option | Verdict | Why |
 | --- | --- | --- |
-| Accept `.kicad_pcb` or a project in Discord and export on the bot host | **Reject** | It needs KiCad 9 or newer on the bot host, which the default Ubuntu 24.04 archive does not provide **[observed]**. Missing models still produce an STL **[observed]**. Model paths can point at arbitrary local files, which the exporter reads **[observed]**. It would run a large C++ parser on untrusted uploads, and Print Buddy would have no bound on export time or size **[inference]**. |
+| Accept `.kicad_pcb` or a project in Discord and export on the bot host | **Reject** | It needs KiCad 9 or newer on the bot host, which the default Ubuntu 24.04 archive does not provide **[observed]**. Missing models still produce an STL **[observed]**. Model paths can point at arbitrary local files, which the exporter reads **[observed]**. It would run a large C++ parser on untrusted uploads, and Print Handy would have no bound on export time or size **[inference]**. |
 | Accept exported STEP, VRML, GLB or PLY | **Reject** | Orca 2.4.2's CLI accepts none of them **[observed]**. Supporting them means adding a CAD kernel to intake, with unit traps: GLB and cascadio output in metres, VRML in inches by default **[observed]**. |
 | Users export STL from KiCad 9 themselves and upload it | **Already supported** | A KiCad 9 STL went through the existing STL intake end to end **[observed]**. Nothing to build. |
 | Use KiCad offline to generate test fixtures | **Defer** | It works **[observed]**. But a board-only export is a thin extruded outline with holes, which the stdlib generator `tests/corpus/make_models.py` could also produce without a 346+ MiB dependency **[inference]**. Component exports are multi-shell **[observed]**, and stock models come from a ~5.4 GiB package **[docs]**. |

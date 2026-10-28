@@ -14,8 +14,8 @@ from pathlib import Path
 
 import pytest
 
-from print_buddy.core import prepared_intake
-from print_buddy.printers.bambulab import profiles
+from print_handy.core import prepared_intake
+from print_handy.printers.bambulab import profiles
 
 from . import a1_fixture
 from .test_bambulab_a1 import a1_gcode, adapter_for, config_for, fake_slice, petg_state, problems, state
@@ -252,7 +252,7 @@ def run_cli(monkeypatch, *args):
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     monkeypatch.setattr(sys, "argv", ["bambu-templates.py", "--printer", "a1", *args])
-    monkeypatch.setenv("PRINT_BUDDY__PATHS__HERMES_HOME", str(a1_fixture.HERMES))
+    monkeypatch.setenv("PRINT_HANDY__PATHS__HERMES_HOME", str(a1_fixture.HERMES))
     return module.main()
 
 

@@ -18,8 +18,8 @@ from types import SimpleNamespace as S
 import pytest
 
 
-from print_buddy.core import model_job  # noqa: E402
-from print_buddy.core import prepared_intake  # noqa: E402
+from print_handy.core import model_job  # noqa: E402
+from print_handy.core import prepared_intake  # noqa: E402
 from .helpers import external  # noqa: E402
 print_next = external("print_next")
 from .test_color_intake import state  # noqa: E402

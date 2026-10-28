@@ -7,7 +7,7 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
-from print_buddy import doctor, settings
+from print_handy import doctor, settings
 
 
 HARDWARE = {"spool": {"material": "PLA", "density": 1.24}, "temps_c": {"nozzle": 210, "bed": 60},
@@ -19,7 +19,7 @@ class DoctorTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "local.toml"
             path.write_text(local_toml)
-            data = settings.load(local=path, environ={"PRINT_BUDDY__PATHS__HERMES_HOME": str(self.profile)})
+            data = settings.load(local=path, environ={"PRINT_HANDY__PATHS__HERMES_HOME": str(self.profile)})
         if profile_config is not None:
             self.profile.mkdir(parents=True, exist_ok=True)
             (self.profile / "config.yaml").write_text(

@@ -40,8 +40,8 @@ jobs:
         run: |
           set -euo pipefail
           cp .env.example .env
-          sed -i 's#^PRINT_BUDDY_IMAGE=.*#PRINT_BUDDY_IMAGE=print-buddy:static-check#' .env
-          export ACCEPTANCE_FIXTURES="$PWD/tests/docker" PRINT_BUDDY_IMAGE=print-buddy:static-check
+          sed -i 's#^PRINT_HANDY_IMAGE=.*#PRINT_HANDY_IMAGE=print-handy:static-check#' .env
+          export ACCEPTANCE_FIXTURES="$PWD/tests/docker" PRINT_HANDY_IMAGE=print-handy:static-check
           for files in \
               "docker-compose.yml" \
               "docker-compose.yml tests/docker/compose.acceptance.yml"; do
@@ -50,9 +50,9 @@ jobs:
             docker compose "${args[@]}" config --quiet
           done
           # Without an image the base file must refuse to render.
-          sed -i 's#^PRINT_BUDDY_IMAGE=.*#PRINT_BUDDY_IMAGE=#' .env
-          unset PRINT_BUDDY_IMAGE
-          if docker compose config --quiet 2>/dev/null; then echo "rendered without PRINT_BUDDY_IMAGE"; exit 1; fi
+          sed -i 's#^PRINT_HANDY_IMAGE=.*#PRINT_HANDY_IMAGE=#' .env
+          unset PRINT_HANDY_IMAGE
+          if docker compose config --quiet 2>/dev/null; then echo "rendered without PRINT_HANDY_IMAGE"; exit 1; fi
       - name: Unraid templates parse
         run: |
           for f in docker/unraid/*.xml; do python3 -c "import sys, xml.etree.ElementTree as ET; ET.parse(sys.argv[1])" "$f"; done

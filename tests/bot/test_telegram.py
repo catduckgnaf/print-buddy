@@ -17,12 +17,12 @@ from unittest import mock
 
 import pytest
 
-from print_buddy import settings
-from print_buddy.bot import __main__ as bot_main
-from print_buddy.bot import runtime, telegram, telegram_rest
-from print_buddy.bot.router import Router
-from print_buddy.core import link_intake, prompts
-from print_buddy.hermes import _config
+from print_handy import settings
+from print_handy.bot import __main__ as bot_main
+from print_handy.bot import runtime, telegram, telegram_rest
+from print_handy.bot.router import Router
+from print_handy.core import link_intake, prompts
+from print_handy.hermes import _config
 
 TOKEN = "123456789:AA" + "x" * 33  # the shape logs.py redacts; never a real token
 CHAT = "-1001234567890"
@@ -60,7 +60,7 @@ class BotApiStub:
         self._next_id += 1
         result = {"message_id": self._next_id}
         if method == "getMe":
-            result = {"id": 999, "username": "printbuddybot"}
+            result = {"id": 999, "username": "printhandybot"}
         elif method == "getFile":
             result = {"file_path": "documents/file_1.stl"}
         elif method == "getUpdates":
@@ -144,7 +144,7 @@ def test_parse_message_strips_the_bot_suffix_and_maps_forum_threads():
     parsed = telegram.parse_message({
         "message_id": 7, "from": {"id": int(USER), "is_bot": False},
         "chat": {"id": int(CHAT)}, "message_thread_id": 55,
-        "text": "/print-next@PrintBuddyBot plan-1"})
+        "text": "/print-next@PrintHandyBot plan-1"})
     assert parsed.content == "/print-next plan-1"
     assert parsed.channel.parent_id == int(CHAT) and parsed.channel.id == 55
     assert runtime.channel_scope(parsed.channel) == (CHAT, "55")
@@ -333,8 +333,8 @@ def test_telegram_adapter_drives_a_full_intake_through_the_real_handlers(cfg):
             await client.handle_update({"update_id": 2, "callback_query": _callback(cid, index)})
         return await task
 
-    with mock.patch("print_buddy.core.prepared_intake.prepare_link", fake_prepare), \
-            mock.patch("print_buddy.core.printer_state.load", return_value={}):
+    with mock.patch("print_handy.core.prepared_intake.prepare_link", fake_prepare), \
+            mock.patch("print_handy.core.printer_state.load", return_value={}):
         out = run(flow())
     assert out == {"action": "skip", "reason": "test intake"}
     assert seen["adapter"] is core.adapter and seen["answers"] == (1, 0)
@@ -351,14 +351,14 @@ def test_telegram_settings_defaults_and_validation():
     assert data["telegram"] == {"token_env": "TELEGRAM_BOT_TOKEN", "chat_id": "",
                                 "allowed_user_ids": "", "approval_user_id": "",
                                 "upload_max_bytes": 50_000_000}
-    data = settings.load(local=False, environ={"PRINT_BUDDY__TELEGRAM__CHAT_ID": "-100999",
-                                               "PRINT_BUDDY__TELEGRAM__ALLOWED_USER_IDS": "1, 2"})
+    data = settings.load(local=False, environ={"PRINT_HANDY__TELEGRAM__CHAT_ID": "-100999",
+                                               "PRINT_HANDY__TELEGRAM__ALLOWED_USER_IDS": "1, 2"})
     assert data["telegram"]["chat_id"] == "-100999"
     assert settings.user_ids(data["telegram"]["allowed_user_ids"], "telegram", "Telegram") == ["1", "2"]
-    for env, match in (({"PRINT_BUDDY__TELEGRAM__CHAT_ID": "abc"}, "chat_id"),
-                       ({"PRINT_BUDDY__TELEGRAM__ALLOWED_USER_IDS": "me"}, "numeric Telegram user IDs"),
-                       ({"PRINT_BUDDY__TELEGRAM__TOKEN_ENV": "not a name"}, "token_env"),
-                       ({"PRINT_BUDDY__TELEGRAM__UPLOAD_MAX_BYTES": "0"}, "upload_max_bytes")):
+    for env, match in (({"PRINT_HANDY__TELEGRAM__CHAT_ID": "abc"}, "chat_id"),
+                       ({"PRINT_HANDY__TELEGRAM__ALLOWED_USER_IDS": "me"}, "numeric Telegram user IDs"),
+                       ({"PRINT_HANDY__TELEGRAM__TOKEN_ENV": "not a name"}, "token_env"),
+                       ({"PRINT_HANDY__TELEGRAM__UPLOAD_MAX_BYTES": "0"}, "upload_max_bytes")):
         with pytest.raises(settings.SettingsError, match=match):
             settings.load(local=False, environ=env)
 
@@ -378,16 +378,16 @@ def test_a_config_without_a_telegram_section_loads_unchanged(tmp_path):
 
 
 def test_listener_post_routes_to_telegram_in_standalone_mode(monkeypatch):
-    from print_buddy.hermes import moonraker_event_listener as mel
+    from print_handy.hermes import moonraker_event_listener as mel
     sent = []
     monkeypatch.setitem(_config.cfg()["bot"], "mode", "standalone")
     monkeypatch.setitem(_config.cfg()["bot"], "platform", "telegram")
     monkeypatch.setitem(_config.cfg()["telegram"], "chat_id", CHAT)
     monkeypatch.setattr(mel, "_profile_env_value",
                         lambda name: TOKEN if name == "TELEGRAM_BOT_TOKEN" else "")
-    monkeypatch.setattr("print_buddy.bot.telegram_rest.send",
+    monkeypatch.setattr("print_handy.bot.telegram_rest.send",
                         lambda token, chat, text: sent.append((token, chat, text)) or (True, "7"))
-    monkeypatch.setattr("print_buddy.bot.rest.send",
+    monkeypatch.setattr("print_handy.bot.rest.send",
                         lambda *a, **k: (_ for _ in ()).throw(AssertionError("Discord REST used")))
     with mock.patch.object(mel.subprocess, "run", side_effect=AssertionError("hermes send was called")):
         assert mel.post("Print started: cube") is True
@@ -395,18 +395,18 @@ def test_listener_post_routes_to_telegram_in_standalone_mode(monkeypatch):
 
 
 def test_listener_alert_buttons_degrade_to_plain_text_on_telegram(monkeypatch):
-    from print_buddy.hermes import moonraker_event_listener as mel
+    from print_handy.hermes import moonraker_event_listener as mel
     monkeypatch.setitem(_config.cfg()["bot"], "mode", "standalone")
     monkeypatch.setitem(_config.cfg()["bot"], "platform", "telegram")
     monkeypatch.setattr(mel, "post", lambda message: True)
-    with mock.patch("print_buddy.hermes.print_alert_buttons.post_with_buttons",
+    with mock.patch("print_handy.hermes.print_alert_buttons.post_with_buttons",
                     side_effect=AssertionError("Discord buttons used")):
         assert mel.post_alert("Print paused", "paused", "cube.gcode") is True
     assert mel.post_plate_picker("plan-1") is True
 
 
 def test_delivery_upload_limit_follows_the_platform(cfg):
-    from print_buddy.core import delivery
+    from print_handy.core import delivery
     assert delivery.upload_limit(cfg) == 50_000_000
     cfg["bot"]["platform"] = "discord"
     assert delivery.upload_limit(cfg) == cfg["discord"]["upload_max_bytes"]

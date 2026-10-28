@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Generate Print Buddy's Bambu Lab HMS error table from Bambu Studio's own HMS resources.
+"""Generate Print Handy's Bambu Lab HMS error table from Bambu Studio's own HMS resources.
 
     python3 scripts/bambu-hms.py --hms-dir <folder with hms_en_*.json> --commit <BambuStudio commit>
     python3 scripts/bambu-hms.py --hms-dir <folder> --commit <sha> --check
@@ -7,8 +7,8 @@
 Provenance (#306, from the #298 Stage 0 audit): the code -> description mapping for Bambu HMS
 faults is Bambu Lab's own data, bundled in Bambu Studio under `resources/hms/hms_en_<prefix>.json`
 (one file per device prefix; each has `device_hms`, keyed by the 16-hex attr+code, and
-`device_error`, keyed by the 8-hex value, every entry carrying `ecode`/`intro`). Print Buddy's
-table is generated from those files by THIS script — Print Buddy's own generator — at a pinned
+`device_error`, keyed by the 8-hex value, every entry carrying `ecode`/`intro`). Print Handy's
+table is generated from those files by THIS script — Print Handy's own generator — at a pinned
 Bambu Studio commit recorded in the output. No third-party catalog is used: in particular nothing
 is taken from maziggy/bambuddy (AGPL-3.0; protocol facts only, see docs/BAMBU-CONNECTIVITY.md).
 
@@ -17,7 +17,7 @@ What the generator does:
   (ties go to the lowest sorted prefix); a prefix whose text differs keeps it as a per-model
   override. The two key spaces are kept strictly separate (16-hex HMS vs 8-hex print_error).
 - Shortens each description to its first sentence: Bambu's `intro` usually leads with the fault
-  description and follows with remediation steps; Print Buddy's status output shows the fault.
+  description and follows with remediation steps; Print Handy's status output shows the fault.
 - Preserves listed-but-empty texts as "" — a code Bambu lists with no text is listed, not a fault.
 
 --check writes nothing: it regenerates in memory and fails (exit 1) when the shipped table differs.
@@ -30,11 +30,11 @@ from collections import Counter, defaultdict
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-OUT = ROOT / "print_buddy" / "printers" / "bambulab" / "hms_data.json"
+OUT = ROOT / "print_handy" / "printers" / "bambulab" / "hms_data.json"
 
 
 def concise(intro):
-    """Print Buddy's concise form of a Bambu intro text: the first sentence, whitespace-normalised."""
+    """Print Handy's concise form of a Bambu intro text: the first sentence, whitespace-normalised."""
     text = re.sub(r"\s+", " ", (intro or "").strip())
     if not text:
         return ""
@@ -77,7 +77,7 @@ def build(hms_dir, commit):
         "_provenance": {
             "source": "bambulab/BambuStudio resources/hms/hms_en_<prefix>.json (device_hms + device_error, ecode/intro)",
             "bambu_studio_commit": commit,
-            "generated_by": "scripts/bambu-hms.py (Print Buddy's own generator; no third-party catalog used)",
+            "generated_by": "scripts/bambu-hms.py (Print Handy's own generator; no third-party catalog used)",
             "texts": "Bambu's intro texts shortened to the first sentence by the generator; "
                      "listed-but-empty texts are preserved as empty strings",
             "prefixes": sorted(files),

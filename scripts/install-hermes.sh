@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
-# Install the Print Buddy Hermes profile by symlink. Safe to run again.
+# Install the Print Handy Hermes profile by symlink. Safe to run again.
 #
 #   scripts/install-hermes.sh [--dry-run] [--hermes-home DIR] [--python PATH]
 #
 # Env: PYTHON, SYSTEMD_USER_DIR (default ~/.config/systemd/user),
-#      PRINT_BUDDY_OVERLAY (default config/overlay), NO_SYSTEMCTL=1 to skip daemon-reload.
+#      PRINT_HANDY_OVERLAY (default config/overlay), NO_SYSTEMCTL=1 to skip daemon-reload.
 #      Template values: LLM_PROVIDER LLM_MODEL LLM_BASE_URL TIMEZONE DISCORD_CHANNEL_ID DISPLAY_NAME BOT_NAME
 #      (BOT_NAME defaults to [discord] bot_name in config/home.yaml).
 #
@@ -18,7 +18,7 @@ set -eu
 REPO=$(cd "$(dirname "$0")/.." && pwd)
 DRY=0
 # Not read from the environment: the Hermes gateway exports HERMES_HOME=~/.hermes for every profile.
-# Use --hermes-home, PRINT_BUDDY__PATHS__HERMES_HOME or [paths] hermes_home.
+# Use --hermes-home, PRINT_HANDY__PATHS__HERMES_HOME or [paths] hermes_home.
 HERMES_HOME=""
 while [ $# -gt 0 ]; do
     case "$1" in
@@ -32,12 +32,12 @@ while [ $# -gt 0 ]; do
 done
 
 if [ -z "${HERMES_HOME:-}" ]; then
-    HERMES_HOME=$(cd "$REPO" && python3 -m print_buddy.settings get paths.hermes_home 2>/dev/null) || HERMES_HOME=""
+    HERMES_HOME=$(cd "$REPO" && python3 -m print_handy.settings get paths.hermes_home 2>/dev/null) || HERMES_HOME=""
     [ -n "$HERMES_HOME" ] || HERMES_HOME="$HOME/.hermes/profiles/3dprinting"
 fi
 if [ -z "${BOT_NAME:-}" ]; then
-    BOT_NAME=$(cd "$REPO" && python3 -m print_buddy.settings get discord.bot_name 2>/dev/null) || BOT_NAME=""
-    [ -n "$BOT_NAME" ] || BOT_NAME="Print Buddy"
+    BOT_NAME=$(cd "$REPO" && python3 -m print_handy.settings get discord.bot_name 2>/dev/null) || BOT_NAME=""
+    [ -n "$BOT_NAME" ] || BOT_NAME="Print Handy"
 fi
 if [ -z "${PYTHON:-}" ]; then
     if [ -x "$HOME/.hermes/hermes-agent/venv/bin/python" ]; then
@@ -47,7 +47,7 @@ if [ -z "${PYTHON:-}" ]; then
     fi
 fi
 SYSTEMD_USER_DIR=${SYSTEMD_USER_DIR:-$HOME/.config/systemd/user}
-OVERLAY=${PRINT_BUDDY_OVERLAY:-$REPO/config/overlay}
+OVERLAY=${PRINT_HANDY_OVERLAY:-$REPO/config/overlay}
 STAMP=$(date +%Y%m%d-%H%M%S)
 LAST_CHANGED=0
 
@@ -161,15 +161,15 @@ link "$REPO/hermes/skills/ad5x-multicolor-slicing" "$HERMES_HOME/skills/smart-ho
 link "$REPO/plugins/print-feedback" "$HERMES_HOME/plugins/print-feedback"
 link "$REPO/hermes/profile/docs" "$HERMES_HOME/docs"
 
-# 1b. Make `python -m print_buddy` importable from any cwd for the Hermes interpreter only.
+# 1b. Make `python -m print_handy` importable from any cwd for the Hermes interpreter only.
 purelib=$("$PYTHON" -c 'import sysconfig; print(sysconfig.get_paths()["purelib"])' 2>/dev/null) || purelib=""
 if [ -z "$purelib" ] || [ ! -d "$purelib" ]; then
-    say "warning: cannot find site-packages for $PYTHON; skipped print_buddy.pth (run the agent from $REPO instead)"
-elif [ -f "$purelib/print_buddy.pth" ] && [ "$(cat "$purelib/print_buddy.pth")" = "$REPO" ]; then
-    say "ok      $purelib/print_buddy.pth"
+    say "warning: cannot find site-packages for $PYTHON; skipped print_handy.pth (run the agent from $REPO instead)"
+elif [ -f "$purelib/print_handy.pth" ] && [ "$(cat "$purelib/print_handy.pth")" = "$REPO" ]; then
+    say "ok      $purelib/print_handy.pth"
 else
-    act "write  $purelib/print_buddy.pth -> $REPO"
-    [ "$DRY" = 1 ] || printf '%s\n' "$REPO" > "$purelib/print_buddy.pth" || say "warning: could not write print_buddy.pth"
+    act "write  $purelib/print_handy.pth -> $REPO"
+    [ "$DRY" = 1 ] || printf '%s\n' "$REPO" > "$purelib/print_handy.pth" || say "warning: could not write print_handy.pth"
 fi
 
 # 1c. Old private layout: stale scripts dir and state files kept in $HOME.
@@ -178,8 +178,8 @@ if [ -d "$HERMES_HOME/scripts" ] && [ ! -L "$HERMES_HOME/scripts" ] \
     say "note    old private scripts/ dir found in the profile; moving it out of the way"
     backup "$HERMES_HOME/scripts"
 fi
-for pair in .print_bitch_context.json:print_buddy_context.json \
-            .print_bitch_start_claims.json:print_buddy_start_claims.json \
+for pair in .print_bitch_context.json:print_handy_context.json \
+            .print_bitch_start_claims.json:print_handy_start_claims.json \
             .moonraker_discord_announcements.json:moonraker_discord_announcements.json; do
     old="$HOME/${pair%%:*}"; new="$HERMES_HOME/state/${pair##*:}"
     [ -f "$old" ] || continue
@@ -236,11 +236,11 @@ if [ "$LAST_CHANGED" = 1 ] && [ -z "${NO_SYSTEMCTL:-}" ] && command -v systemctl
     [ "$DRY" = 1 ] || systemctl --user daemon-reload || say "warning: daemon-reload failed"
 fi
 
-# 5. Remove Print Buddy state files stranded outside the profile state folder (only when the
+# 5. Remove Print Handy state files stranded outside the profile state folder (only when the
 # profile holds the real copy, or the stray is empty).
 if [ "$DRY" = 1 ]; then strays_flag="--dry-run --remove"; else strays_flag="--remove"; fi
 # shellcheck disable=SC2086
-PRINT_BUDDY__PATHS__HERMES_HOME="$HERMES_HOME" PYTHONPATH="$REPO${PYTHONPATH:+:$PYTHONPATH}" \
-    "$PYTHON" -m print_buddy.state_files $strays_flag || say "warning: could not check for stray state files"
+PRINT_HANDY__PATHS__HERMES_HOME="$HERMES_HOME" PYTHONPATH="$REPO${PYTHONPATH:+:$PYTHONPATH}" \
+    "$PYTHON" -m print_handy.state_files $strays_flag || say "warning: could not check for stray state files"
 
 say "done. Enable the listener with: systemctl --user enable --now hermes-3dprinting-moonraker-listener.service"

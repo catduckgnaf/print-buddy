@@ -1,12 +1,12 @@
-"""Tests for print_buddy.hermes.panic: force-restart, purge, and status."""
+"""Tests for print_handy.hermes.panic: force-restart, purge, and status."""
 import json
 import threading
 from unittest import mock
 
 import pytest
 
-from print_buddy.hermes import panic
-from print_buddy.hermes import print_control as pc
+from print_handy.hermes import panic
+from print_handy.hermes import print_control as pc
 
 
 # ============================================================================
@@ -112,7 +112,7 @@ def test_force_restart_falls_back_to_reboot_macro():
     ]
 
     with mock.patch("time.sleep", return_value=None), \
-         mock.patch("print_buddy.core.clear_job.safe_idle", return_value=True):
+         mock.patch("print_handy.core.clear_job.safe_idle", return_value=True):
         res = panic.force_restart(
             caller=mock_caller,
             status_reader=mock_reader,

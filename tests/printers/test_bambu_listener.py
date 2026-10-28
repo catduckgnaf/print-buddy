@@ -11,9 +11,9 @@ import json
 
 import pytest
 
-from print_buddy import healthcheck, printers, settings
-from print_buddy.printers.bambulab.client import BambuLanError
-from print_buddy.printers.bambulab.listener import (RECONNECT_COOLDOWN_S,
+from print_handy import healthcheck, printers, settings
+from print_handy.printers.bambulab.client import BambuLanError
+from print_handy.printers.bambulab.listener import (RECONNECT_COOLDOWN_S,
                                                     STALE_AFTER_S,
                                                     BambuListener)
 
@@ -103,9 +103,9 @@ VERSION = {"info": {"command": "get_version", "module": [{"name": "mc", "hw_ver"
 def lan_adapter(monkeypatch):
     monkeypatch.setenv("BAMBU_LAN_PASSWORD", CODE)
     cfg = settings.load(local=False, environ={
-        "PRINT_BUDDY__PRINTER__MODEL": "bambulab.a1",
-        "PRINT_BUDDY__BAMBU__LAN_HOST": "192.168.1.50",
-        "PRINT_BUDDY__BAMBU__LAN_SERIAL": SERIAL.lower()})
+        "PRINT_HANDY__PRINTER__MODEL": "bambulab.a1",
+        "PRINT_HANDY__BAMBU__LAN_HOST": "192.168.1.50",
+        "PRINT_HANDY__BAMBU__LAN_SERIAL": SERIAL.lower()})
     return printers.get("bambulab.a1", cfg)
 
 
@@ -255,7 +255,7 @@ def test_error_event_carries_decoded_hms(monkeypatch):
 
 
 def test_status_events_validate_against_the_contract(monkeypatch):
-    from print_buddy import listeners
+    from print_handy import listeners
     fake = FakeMqtt([full("RUNNING", subtask_name="a.gcode.3mf", mc_percent=5,
                           layer_num=2, total_layer_num=9)], stop_on_empty=True)
     listener, _clock, _beats = make_listener(monkeypatch, [fake])
@@ -268,7 +268,7 @@ def test_status_events_validate_against_the_contract(monkeypatch):
 # --------------------------------------------------------------------- liveness / configuration
 
 def test_unconfigured_listener_idles_beats_and_never_touches_the_network(monkeypatch):
-    cfg = settings.load(local=False, environ={"PRINT_BUDDY__PRINTER__MODEL": "bambulab.a1"})
+    cfg = settings.load(local=False, environ={"PRINT_HANDY__PRINTER__MODEL": "bambulab.a1"})
     adapter = printers.get("bambulab.a1", cfg)
     beats = []
     calls = {"sleeps": 0}
@@ -319,8 +319,8 @@ class _FakeMainListener:
 def _call_main(monkeypatch, adapter):
     import types
 
-    from print_buddy import logs
-    from print_buddy.printers.bambulab import listener as listener_module
+    from print_handy import logs
+    from print_handy.printers.bambulab import listener as listener_module
 
     _FakeMainListener.built = []
     monkeypatch.setattr(logs, "configure", lambda *args, **kwargs: None)
@@ -340,7 +340,7 @@ def test_main_returns_3_for_a_non_bambu_printer(monkeypatch):
 
 
 def test_main_returns_3_for_a_real_non_bambu_adapter(monkeypatch):
-    cfg = settings.load(local=False, environ={"PRINT_BUDDY__PRINTER__MODEL": "flashforge.ad5x"})
+    cfg = settings.load(local=False, environ={"PRINT_HANDY__PRINTER__MODEL": "flashforge.ad5x"})
     adapter = printers.get("flashforge.ad5x", cfg)
     assert _call_main(monkeypatch, adapter) == 3
     assert _FakeMainListener.built == []
@@ -362,7 +362,7 @@ def test_main_starts_for_a_real_bambu_adapter(monkeypatch):
     assert _FakeMainListener.built and _FakeMainListener.built[0][0] is adapter
 
 
-# --- main(): the entry point `python -m print_buddy.listeners --printer <id>` runs through runpy (#409, from #420) ---
+# --- main(): the entry point `python -m print_handy.listeners --printer <id>` runs through runpy (#409, from #420) ---
 
 class _Adapter:
     def __init__(self, transport, vendor=None):
@@ -373,13 +373,13 @@ class _Adapter:
 def test_main_refuses_a_non_bambu_printer_through_the_adapter_transport(monkeypatch):
     # #409: `from .. import logs, printers` raised ImportError (one package too low) and the
     # vendor check read adapter.vendor.connection on an adapter whose vendor is None.
-    from print_buddy.printers.bambulab import listener as listener_mod
+    from print_handy.printers.bambulab import listener as listener_mod
     monkeypatch.setattr(printers, "current", lambda: _Adapter("moonraker", vendor=None))
     assert listener_mod.main() == 3
 
 
 def test_main_builds_the_listener_for_a_bambu_lan_adapter(monkeypatch):
-    from print_buddy.printers.bambulab import listener as listener_mod
+    from print_handy.printers.bambulab import listener as listener_mod
     seen = {}
 
     class FakeListener:

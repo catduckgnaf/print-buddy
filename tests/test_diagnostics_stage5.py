@@ -4,7 +4,7 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
-from print_buddy import doctor
+from print_handy import doctor
 
 
 class LoggingRowTests(unittest.TestCase):
@@ -22,19 +22,19 @@ class LoggingRowTests(unittest.TestCase):
     def test_writable_log_file_passes_and_counts_overrides(self):
         with tempfile.TemporaryDirectory() as tmp:
             data = {"logging": {"file": str(Path(tmp) / "pb.log"),
-                                "levels": {"print_buddy.core": "DEBUG"}}}
+                                "levels": {"print_handy.core": "DEBUG"}}}
             detail = doctor.check_logging(data)
         self.assertIn("1 subsystem level override(s)", detail)
 
 
 class ListenerHeartbeatRowTests(unittest.TestCase):
     def test_no_required_listener_is_no_warning(self):
-        with mock.patch("print_buddy.healthcheck.listener_statuses",
+        with mock.patch("print_handy.healthcheck.listener_statuses",
                         return_value={"p1": {"required": False, "ok": None, "reason": "no listener"}}):
             self.assertIsNone(doctor.check_listener_heartbeats({}))
 
     def test_down_listener_warns_naming_printer_reason_and_marker(self):
-        with mock.patch("print_buddy.healthcheck.listener_statuses",
+        with mock.patch("print_handy.healthcheck.listener_statuses",
                         return_value={"ad5x": {"required": True, "ok": False,
                                                 "reason": "listener heartbeat stale or invalid"}}):
             warning = doctor.check_listener_heartbeats({})
@@ -43,7 +43,7 @@ class ListenerHeartbeatRowTests(unittest.TestCase):
         self.assertIn("PB_LISTENER_TRANSIENT", warning)
 
     def test_healthy_required_listener_is_no_warning(self):
-        with mock.patch("print_buddy.healthcheck.listener_statuses",
+        with mock.patch("print_handy.healthcheck.listener_statuses",
                         return_value={"ad5x": {"required": True, "ok": True, "reason": "alive"}}):
             self.assertIsNone(doctor.check_listener_heartbeats({}))
 

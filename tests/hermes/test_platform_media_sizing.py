@@ -16,9 +16,9 @@ from pathlib import Path
 
 import pytest
 
-from print_buddy import settings
-from print_buddy.bot import matrix_rest
-from print_buddy.hermes import moonraker_event_listener as mel
+from print_handy import settings
+from print_handy.bot import matrix_rest
+from print_handy.hermes import moonraker_event_listener as mel
 
 COMPLETE = "Print complete: Stand"
 
@@ -65,10 +65,10 @@ def _matrix_helpers(monkeypatch, server_limit):
 
 
 MATRIX_ENV = {
-    "PRINT_BUDDY__BOT__MODE": "standalone",
-    "PRINT_BUDDY__BOT__PLATFORM": "matrix",
-    "PRINT_BUDDY__MATRIX__HOMESERVER_URL": "https://matrix.example.org",
-    "PRINT_BUDDY__MATRIX__ROOM_ID": "!prints:example.org",
+    "PRINT_HANDY__BOT__MODE": "standalone",
+    "PRINT_HANDY__BOT__PLATFORM": "matrix",
+    "PRINT_HANDY__MATRIX__HOMESERVER_URL": "https://matrix.example.org",
+    "PRINT_HANDY__MATRIX__ROOM_ID": "!prints:example.org",
 }
 
 
@@ -78,20 +78,20 @@ MATRIX_ENV = {
 def test_limit_resolution_discord_default_and_override(monkeypatch):
     _use_settings(monkeypatch)
     assert mel._media_upload_limit() == 9_500_000
-    _use_settings(monkeypatch, PRINT_BUDDY__DISCORD__UPLOAD_MAX_BYTES="4000000")
+    _use_settings(monkeypatch, PRINT_HANDY__DISCORD__UPLOAD_MAX_BYTES="4000000")
     assert mel._media_upload_limit() == 4_000_000
 
 
 def test_limit_resolution_telegram_default_and_configured(monkeypatch):
-    _use_settings(monkeypatch, PRINT_BUDDY__BOT__PLATFORM="telegram")
+    _use_settings(monkeypatch, PRINT_HANDY__BOT__PLATFORM="telegram")
     assert mel._media_upload_limit() == 50_000_000
-    _use_settings(monkeypatch, PRINT_BUDDY__BOT__PLATFORM="telegram",
-                  PRINT_BUDDY__TELEGRAM__UPLOAD_MAX_BYTES="5000000")
+    _use_settings(monkeypatch, PRINT_HANDY__BOT__PLATFORM="telegram",
+                  PRINT_HANDY__TELEGRAM__UPLOAD_MAX_BYTES="5000000")
     assert mel._media_upload_limit() == 5_000_000
 
 
 def test_limit_resolution_matrix_configured_without_server_value(monkeypatch):
-    _use_settings(monkeypatch, **MATRIX_ENV, PRINT_BUDDY__MATRIX__UPLOAD_MAX_BYTES="6000000")
+    _use_settings(monkeypatch, **MATRIX_ENV, PRINT_HANDY__MATRIX__UPLOAD_MAX_BYTES="6000000")
     _matrix_helpers(monkeypatch, None)  # the server reports no m.upload.size
     assert mel._media_upload_limit() == 6_000_000
 
@@ -103,13 +103,13 @@ def test_limit_resolution_matrix_server_clamps_below_configured(monkeypatch):
 
 
 def test_limit_resolution_matrix_configured_wins_when_smaller(monkeypatch):
-    _use_settings(monkeypatch, **MATRIX_ENV, PRINT_BUDDY__MATRIX__UPLOAD_MAX_BYTES="4000000")
+    _use_settings(monkeypatch, **MATRIX_ENV, PRINT_HANDY__MATRIX__UPLOAD_MAX_BYTES="4000000")
     _matrix_helpers(monkeypatch, 5_000_000)
     assert mel._media_upload_limit() == 4_000_000
 
 
 def test_limit_resolution_matrix_clamp_failure_degrades_to_configured(monkeypatch):
-    _use_settings(monkeypatch, **MATRIX_ENV, PRINT_BUDDY__MATRIX__UPLOAD_MAX_BYTES="6000000")
+    _use_settings(monkeypatch, **MATRIX_ENV, PRINT_HANDY__MATRIX__UPLOAD_MAX_BYTES="6000000")
     monkeypatch.setattr(mel, "_matrix_token", lambda: "syt_test")
     monkeypatch.setattr(mel, "_matrix_homeserver", lambda: "https://matrix.example.org")
 
@@ -124,15 +124,15 @@ def test_limit_resolution_matrix_clamp_failure_degrades_to_configured(monkeypatc
 
 
 def test_telegram_sizing_passes_a_discord_oversized_video_through(monkeypatch, tmp_path):
-    _use_settings(monkeypatch, PRINT_BUDDY__BOT__MODE="standalone", PRINT_BUDDY__BOT__PLATFORM="telegram")
+    _use_settings(monkeypatch, PRINT_HANDY__BOT__MODE="standalone", PRINT_HANDY__BOT__PLATFORM="telegram")
     _no_ffmpeg(monkeypatch)
     source = _video(tmp_path, 20_000_000)  # over Discord's cap, under Telegram's 50 MB
     assert mel.platform_sized_video(source) == source
 
 
 def test_telegram_sizing_uses_the_configured_telegram_value(monkeypatch, tmp_path):
-    _use_settings(monkeypatch, PRINT_BUDDY__BOT__MODE="standalone", PRINT_BUDDY__BOT__PLATFORM="telegram",
-                  PRINT_BUDDY__TELEGRAM__UPLOAD_MAX_BYTES="5000000")
+    _use_settings(monkeypatch, PRINT_HANDY__BOT__MODE="standalone", PRINT_HANDY__BOT__PLATFORM="telegram",
+                  PRINT_HANDY__TELEGRAM__UPLOAD_MAX_BYTES="5000000")
     calls = _fake_ffmpeg(monkeypatch, 4_000_000)
     result = mel.platform_sized_video(_video(tmp_path, 20_000_000))
     assert result.name == "stand.sized.mp4" and result.stat().st_size == 4_000_000
@@ -148,7 +148,7 @@ def test_discord_sizing_is_unchanged(monkeypatch, tmp_path):
 
 
 def test_matrix_sizing_uses_the_configured_matrix_value(monkeypatch, tmp_path):
-    _use_settings(monkeypatch, **MATRIX_ENV, PRINT_BUDDY__MATRIX__UPLOAD_MAX_BYTES="6000000")
+    _use_settings(monkeypatch, **MATRIX_ENV, PRINT_HANDY__MATRIX__UPLOAD_MAX_BYTES="6000000")
     _matrix_helpers(monkeypatch, None)
     _fake_ffmpeg(monkeypatch, 5_500_000)
     result = mel.platform_sized_video(_video(tmp_path, 7_000_000))
@@ -194,14 +194,14 @@ def test_shrink_is_an_ffmpeg_cpu_encode_by_default(monkeypatch, tmp_path):
 
 
 def test_shrink_uses_the_configured_nvenc_encoder(monkeypatch, tmp_path):
-    _use_settings(monkeypatch, PRINT_BUDDY__TIMELAPSE__ENCODER="nvenc")
+    _use_settings(monkeypatch, PRINT_HANDY__TIMELAPSE__ENCODER="nvenc")
     calls = _fake_ffmpeg(monkeypatch, 9_000_000)
     mel.platform_sized_video(_video(tmp_path, 20_000_000))
     assert "h264_nvenc" in calls[0] and "libx264" not in calls[0]
 
 
 def test_shrink_uses_the_configured_vaapi_encoder_with_device_and_upload(monkeypatch, tmp_path):
-    _use_settings(monkeypatch, PRINT_BUDDY__TIMELAPSE__ENCODER="vaapi")
+    _use_settings(monkeypatch, PRINT_HANDY__TIMELAPSE__ENCODER="vaapi")
     calls = _fake_ffmpeg(monkeypatch, 9_000_000)
     mel.platform_sized_video(_video(tmp_path, 20_000_000))
     argv = calls[0]
@@ -211,7 +211,7 @@ def test_shrink_uses_the_configured_vaapi_encoder_with_device_and_upload(monkeyp
 
 
 def test_hardware_encode_failure_falls_back_to_cpu(monkeypatch, tmp_path):
-    _use_settings(monkeypatch, PRINT_BUDDY__TIMELAPSE__ENCODER="nvenc")
+    _use_settings(monkeypatch, PRINT_HANDY__TIMELAPSE__ENCODER="nvenc")
     calls = _fake_ffmpeg_unless(monkeypatch, 9_000_000, "h264_nvenc")
     result = mel.platform_sized_video(_video(tmp_path, 20_000_000))
     assert result.stat().st_size == 9_000_000  # the shrink still succeeded...
@@ -227,14 +227,14 @@ def test_cpu_encode_failure_still_raises_for_the_callers_fallback(monkeypatch, t
 
 def test_settings_reject_an_unknown_timelapse_encoder():
     with pytest.raises(settings.SettingsError):
-        settings.load(local=False, environ={"PRINT_BUDDY__TIMELAPSE__ENCODER": "bogus"})
+        settings.load(local=False, environ={"PRINT_HANDY__TIMELAPSE__ENCODER": "bogus"})
 
 
 # --------------------------------------------------------------- failure wording
 
 
 def test_too_big_wording_discord_is_byte_for_byte_the_old_text(monkeypatch):
-    _use_settings(monkeypatch, PRINT_BUDDY__BOT__MODE="standalone", PRINT_BUDDY__BOT__PLATFORM="discord")
+    _use_settings(monkeypatch, PRINT_HANDY__BOT__MODE="standalone", PRINT_HANDY__BOT__PLATFORM="discord")
     assert mel._timelapse_too_big_text("stand.mp4") == "Timelapse archived but too big for Discord: stand.mp4"
     assert mel._timelapse_too_big_text(combined=True) == "Combined timelapse too big for Discord."
 
@@ -248,7 +248,7 @@ def test_too_big_wording_matrix_names_the_server_limit(monkeypatch):
 
 
 def test_too_big_wording_telegram(monkeypatch):
-    _use_settings(monkeypatch, PRINT_BUDDY__BOT__MODE="standalone", PRINT_BUDDY__BOT__PLATFORM="telegram")
+    _use_settings(monkeypatch, PRINT_HANDY__BOT__MODE="standalone", PRINT_HANDY__BOT__PLATFORM="telegram")
     assert mel._timelapse_too_big_text("stand.mp4") == \
         "Timelapse was recorded but is too large for Telegram's upload limit."
     assert mel._timelapse_too_big_text(combined=True) == \
@@ -256,7 +256,7 @@ def test_too_big_wording_telegram(monkeypatch):
 
 
 def test_discord_fallback_post_is_byte_for_byte_unchanged(monkeypatch, tmp_path):
-    _use_settings(monkeypatch, PRINT_BUDDY__BOT__MODE="standalone", PRINT_BUDDY__BOT__PLATFORM="discord")
+    _use_settings(monkeypatch, PRINT_HANDY__BOT__MODE="standalone", PRINT_HANDY__BOT__PLATFORM="discord")
     posted, results = [], [False, True]
     monkeypatch.setattr(mel, "log", lambda line: None)
     monkeypatch.setattr(mel, "post", lambda message: posted.append(message) or results.pop(0))
@@ -367,8 +367,8 @@ class FakeTelegram:
 
 
 def test_telegram_completion_delivers_the_full_size_timelapse(monkeypatch, tmp_path):
-    _use_settings(monkeypatch, PRINT_BUDDY__BOT__MODE="standalone", PRINT_BUDDY__BOT__PLATFORM="telegram",
-                  PRINT_BUDDY__TELEGRAM__CHAT_ID="-100123")
+    _use_settings(monkeypatch, PRINT_HANDY__BOT__MODE="standalone", PRINT_HANDY__BOT__PLATFORM="telegram",
+                  PRINT_HANDY__TELEGRAM__CHAT_ID="-100123")
     monkeypatch.setattr(mel, "_telegram_token", lambda: "123456:TEST")
     api = FakeTelegram()
     monkeypatch.setattr(urllib.request, "urlopen", api)

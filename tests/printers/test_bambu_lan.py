@@ -11,12 +11,12 @@ import ssl
 
 import pytest
 
-from print_buddy import printers, settings
-from print_buddy.core import printer_state, spoolman_client
-from print_buddy.printers.bambulab import adapter as bambu_adapter
-from print_buddy.printers.bambulab.client import (BambuLanClient, BambuLanError, lan_ssl_context,
+from print_handy import printers, settings
+from print_handy.core import printer_state, spoolman_client
+from print_handy.printers.bambulab import adapter as bambu_adapter
+from print_handy.printers.bambulab.client import (BambuLanClient, BambuLanError, lan_ssl_context,
                                                   merge_print, signature_required)
-from print_buddy.setup_wizard import Wizard, build_plan
+from print_handy.setup_wizard import Wizard, build_plan
 
 SERIAL = "00M00A000000000"
 CODE = "12345678"
@@ -150,13 +150,13 @@ def test_merge_print_merges_nested_dicts_and_replaces_leaves():
 # --------------------------------------------------------------------- adapter
 
 def config_for(**environ):
-    env = {"PRINT_BUDDY__PRINTER__MODEL": "bambulab.a1", **environ}
+    env = {"PRINT_HANDY__PRINTER__MODEL": "bambulab.a1", **environ}
     return settings.load(local=False, environ=env)
 
 
 def lan_adapter(monkeypatch, **environ):
     monkeypatch.setenv("BAMBU_LAN_PASSWORD", CODE)
-    cfg = config_for(PRINT_BUDDY__BAMBU__LAN_HOST="192.168.1.50", PRINT_BUDDY__BAMBU__LAN_SERIAL=SERIAL.lower(),
+    cfg = config_for(PRINT_HANDY__BAMBU__LAN_HOST="192.168.1.50", PRINT_HANDY__BAMBU__LAN_SERIAL=SERIAL.lower(),
                      **environ)
     return printers.get("bambulab.a1", cfg)
 
@@ -210,14 +210,14 @@ def test_readiness_adds_live_problems_only_with_a_snapshot():
 
 def test_settings_validate_the_lan_pair():
     with pytest.raises(settings.SettingsError, match="must be set together"):
-        config_for(PRINT_BUDDY__BAMBU__LAN_HOST="192.168.1.50")
+        config_for(PRINT_HANDY__BAMBU__LAN_HOST="192.168.1.50")
     with pytest.raises(settings.SettingsError, match="only apply to Bambu Lab"):
-        settings.load(local=False, environ={"PRINT_BUDDY__PRINTER__MODEL": "flashforge.ad5x",
-                                            "PRINT_BUDDY__BAMBU__LAN_HOST": "192.168.1.50",
-                                            "PRINT_BUDDY__BAMBU__LAN_SERIAL": SERIAL})
+        settings.load(local=False, environ={"PRINT_HANDY__PRINTER__MODEL": "flashforge.ad5x",
+                                            "PRINT_HANDY__BAMBU__LAN_HOST": "192.168.1.50",
+                                            "PRINT_HANDY__BAMBU__LAN_SERIAL": SERIAL})
     with pytest.raises(settings.SettingsError, match="environment variable name"):
-        config_for(PRINT_BUDDY__BAMBU__LAN_ACCESS_CODE_ENV="not a name")
-    cfg = config_for(PRINT_BUDDY__BAMBU__LAN_HOST="192.168.1.50", PRINT_BUDDY__BAMBU__LAN_SERIAL=SERIAL.lower())
+        config_for(PRINT_HANDY__BAMBU__LAN_ACCESS_CODE_ENV="not a name")
+    cfg = config_for(PRINT_HANDY__BAMBU__LAN_HOST="192.168.1.50", PRINT_HANDY__BAMBU__LAN_SERIAL=SERIAL.lower())
     assert cfg["bambu"]["lan_serial"] == SERIAL  # stored upper case
 
 

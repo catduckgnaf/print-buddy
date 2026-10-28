@@ -19,9 +19,9 @@ from unittest import mock
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT))
 
-from print_buddy import settings  # noqa: E402
-from print_buddy.hermes import _config, timelapse_capture  # noqa: E402
-from print_buddy.hermes import moonraker_event_listener as mel  # noqa: E402
+from print_handy import settings  # noqa: E402
+from print_handy.hermes import _config, timelapse_capture  # noqa: E402
+from print_handy.hermes import moonraker_event_listener as mel  # noqa: E402
 
 JPEG = b"\xff\xd8" + b"fake-jpeg-payload" + b"\xff\xd9"
 SECRET_URL = "http://user:hunter2@cam.example/webcam/?action=snapshot"
@@ -385,9 +385,9 @@ class CaptureSettingsValidationTests(unittest.TestCase):
 
     def test_env_overrides(self):
         data = settings.load(environ={
-            "PRINT_BUDDY__TIMELAPSE__CAPTURE_TRIGGER": "both",
-            "PRINT_BUDDY__TIMELAPSE__CAPTURE_INTERVAL_S": "2.5",
-            "PRINT_BUDDY__TIMELAPSE__CAPTURE_ENCODER": "vaapi",
+            "PRINT_HANDY__TIMELAPSE__CAPTURE_TRIGGER": "both",
+            "PRINT_HANDY__TIMELAPSE__CAPTURE_INTERVAL_S": "2.5",
+            "PRINT_HANDY__TIMELAPSE__CAPTURE_ENCODER": "vaapi",
         })
         self.assertEqual(data["timelapse"]["capture_trigger"], "both")
         self.assertEqual(data["timelapse"]["capture_interval_s"], 2.5)
@@ -395,12 +395,12 @@ class CaptureSettingsValidationTests(unittest.TestCase):
 
     def test_bad_values_are_refused(self):
         for environ in (
-                {"PRINT_BUDDY__TIMELAPSE__CAPTURE_TRIGGER": "sometimes"},
-                {"PRINT_BUDDY__TIMELAPSE__CAPTURE_ENCODER": "gpu"},
-                {"PRINT_BUDDY__TIMELAPSE__CAPTURE_INTERVAL_S": "0"},
-                {"PRINT_BUDDY__TIMELAPSE__CAPTURE_INTERVAL_S": "-3"},
-                {"PRINT_BUDDY__TIMELAPSE__CAPTURE_MAX_FRAMES": "-1"},
-                {"PRINT_BUDDY__TIMELAPSE__CAPTURE_MAX_BYTES": "-1"}):
+                {"PRINT_HANDY__TIMELAPSE__CAPTURE_TRIGGER": "sometimes"},
+                {"PRINT_HANDY__TIMELAPSE__CAPTURE_ENCODER": "gpu"},
+                {"PRINT_HANDY__TIMELAPSE__CAPTURE_INTERVAL_S": "0"},
+                {"PRINT_HANDY__TIMELAPSE__CAPTURE_INTERVAL_S": "-3"},
+                {"PRINT_HANDY__TIMELAPSE__CAPTURE_MAX_FRAMES": "-1"},
+                {"PRINT_HANDY__TIMELAPSE__CAPTURE_MAX_BYTES": "-1"}):
             with self.subTest(environ=environ):
                 with self.assertRaises(settings.SettingsError):
                     settings.load(environ=environ)

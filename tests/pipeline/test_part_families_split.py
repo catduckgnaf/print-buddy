@@ -5,14 +5,14 @@ from pathlib import Path
 
 import pytest
 
-from print_buddy.core import model_job  # noqa: E402
-from print_buddy.core import plate_merge  # noqa: E402
-from print_buddy.core import prepared_intake  # noqa: E402
+from print_handy.core import model_job  # noqa: E402
+from print_handy.core import plate_merge  # noqa: E402
+from print_handy.core import prepared_intake  # noqa: E402
 from .helpers import external  # noqa: E402
 print_next = external("print_next")
-from print_buddy.core import source_colors  # noqa: E402
+from print_handy.core import source_colors  # noqa: E402
 
-from print_buddy import settings
+from print_handy import settings
 
 ARCHIVE = settings.current()['paths']['archive']
 
@@ -73,7 +73,7 @@ def test_postit_merges_on_one_plate_with_tower():
     src = next(ARCHIVE.glob('holder-for-post-it-notes-stencils-included--bbb*/source/*.3mf'), None)
     if src is None:
         pytest.skip('post-it reference model not archived on this host')
-    from print_buddy.core import printer_state
+    from print_handy.core import printer_state
     m = source_colors.inventory(src)
     slots = {p['key']: (2 if 'Holder' in p['name'] else 1) for p in m['parts']}
     plates = [{'id': 1, 'name': 'Plate 1', 'status': 'planned',

@@ -30,10 +30,10 @@ from unittest.mock import patch
 
 import pytest
 
-from print_buddy import settings
-from print_buddy.core import model_job, orca_adapter, spoolman_client
-from print_buddy.hermes import moonraker_discord_announcements as watcher
-from print_buddy.hermes import print_records
+from print_handy import settings
+from print_handy.core import model_job, orca_adapter, spoolman_client
+from print_handy.hermes import moonraker_discord_announcements as watcher
+from print_handy.hermes import print_records
 
 DEAD = "http://127.0.0.1:9"  # nothing ever connects: urlopen is faked below
 
@@ -109,7 +109,7 @@ def test_slice_succeeds_with_spoolman_connection_refused(tmp_path, monkeypatch, 
 def test_slice_succeeds_with_spoolman_500_warning_logged_and_notice(tmp_path, monkeypatch, capsys, caplog):
     use_spoolman_url(monkeypatch, DEAD)
     monkeypatch.setattr(urllib.request, "urlopen", urlopen_raising(HTTP_500))
-    with caplog.at_level(logging.WARNING, logger="print_buddy.core.spoolman_client"):
+    with caplog.at_level(logging.WARNING, logger="print_handy.core.spoolman_client"):
         output, _, _ = _slice_derived(tmp_path, _derived_state())
     assert output.exists()
     assert any("Spoolman GET /api/v1/spool/" in rec.message and "failed" in rec.message

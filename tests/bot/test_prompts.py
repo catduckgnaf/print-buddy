@@ -1,9 +1,9 @@
-"""The core prompt registry: the Hermes clarify gateway's API, owned by Print Buddy."""
+"""The core prompt registry: the Hermes clarify gateway's API, owned by Print Handy."""
 import sys
 import threading
 import types
 
-from print_buddy.core import prompts
+from print_handy.core import prompts
 
 
 def test_answer_reaches_the_waiter_once():

@@ -27,16 +27,16 @@ from unittest import mock
 import pytest
 
 from corpus import fake_discord
-from print_buddy import settings
-from print_buddy.bot import __main__ as bot_main
-from print_buddy.bot import runtime
-from print_buddy.bot.adapter import StandaloneAdapter, parse_custom_id
-from print_buddy.bot.router import Router
-from print_buddy.core import design, link_intake, prompts
-from print_buddy.hermes import discord_print_summary as summary
-from print_buddy.hermes import moonraker_event_listener as mel
-from print_buddy.hermes import print_control as pc
-from print_buddy.hermes import print_next
+from print_handy import settings
+from print_handy.bot import __main__ as bot_main
+from print_handy.bot import runtime
+from print_handy.bot.adapter import StandaloneAdapter, parse_custom_id
+from print_handy.bot.router import Router
+from print_handy.core import design, link_intake, prompts
+from print_handy.hermes import discord_print_summary as summary
+from print_handy.hermes import moonraker_event_listener as mel
+from print_handy.hermes import print_control as pc
+from print_handy.hermes import print_next
 
 LLM_URL = "http://llm.invalid/v1"
 
@@ -88,10 +88,10 @@ def test_discord_adapter_can_use_the_llm_and_the_setting_defaults_on(cfg):
 def test_discord_chat_llm_setting_loads_from_env_and_validates():
     data = settings.load(local=False, environ={})
     assert data["discord"]["chat_llm_enabled"] is True
-    data = settings.load(local=False, environ={"PRINT_BUDDY__DISCORD__CHAT_LLM_ENABLED": "false"})
+    data = settings.load(local=False, environ={"PRINT_HANDY__DISCORD__CHAT_LLM_ENABLED": "false"})
     assert data["discord"]["chat_llm_enabled"] is False
     with pytest.raises(settings.SettingsError, match="CHAT_LLM_ENABLED must be true or false"):
-        settings.load(local=False, environ={"PRINT_BUDDY__DISCORD__CHAT_LLM_ENABLED": "sometimes"})
+        settings.load(local=False, environ={"PRINT_HANDY__DISCORD__CHAT_LLM_ENABLED": "sometimes"})
 
 
 # ---------------------------------------------------------------------- no [llm] configured
@@ -108,7 +108,7 @@ def test_discord_no_llm_configured_never_calls_the_llm(cfg):
     assert core.use_llm is True and core.status(True)["llm"] is False
     calls = []
     with mock.patch.object(runtime.llm, "ask", exploding_ask(calls)), \
-            mock.patch("print_buddy.hermes.spool_sync.list_text", return_value="Slot 1: #7 black PLA"):
+            mock.patch("print_handy.hermes.spool_sync.list_text", return_value="Slot 1: #7 black PLA"):
         out = run(core.handle_message(discord.message("/spool list")))
         assert discord.sent == ["Slot 1: #7 black PLA"]
         out = run(core.handle_message(discord.message("can you make my printer go brrr")))
@@ -137,7 +137,7 @@ def test_discord_chat_llm_off_never_calls_the_llm_even_when_configured(no_llm_cf
     calls = []
     with mock.patch.object(runtime.llm, "ask", exploding_ask(calls)), \
             mock.patch.object(runtime.llm, "configured", return_value=True), \
-            mock.patch("print_buddy.hermes.spool_sync.list_text", return_value="Slot 1: #7 black PLA"):
+            mock.patch("print_handy.hermes.spool_sync.list_text", return_value="Slot 1: #7 black PLA"):
         out = run(core.handle_message(discord.message("/spool list")))
         assert discord.sent == ["Slot 1: #7 black PLA"]  # deterministic commands unchanged
         out = run(core.handle_message(discord.message("what is the printer doing?")))
@@ -280,8 +280,8 @@ def test_discord_adapter_drives_a_full_intake_in_no_llm_mode(no_llm_cfg):
     calls = []
     with mock.patch.object(runtime.llm, "ask", exploding_ask(calls)), \
             mock.patch.object(runtime.llm, "configured", return_value=True), \
-            mock.patch("print_buddy.core.prepared_intake.prepare_link", fake_prepare), \
-            mock.patch("print_buddy.core.printer_state.load", return_value={}):
+            mock.patch("print_handy.core.prepared_intake.prepare_link", fake_prepare), \
+            mock.patch("print_handy.core.printer_state.load", return_value={}):
         out = run(flow())
     assert calls == []
     assert out == {"action": "skip", "reason": "test intake"}

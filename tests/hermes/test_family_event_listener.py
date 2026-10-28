@@ -3,13 +3,13 @@
 Offline throughout: scripted normalised statuses drive the polling
 listener; synthetic contract events drive the Bambu sink. The contract
 under test is the Moonraker listener's: a print started outside Print
-Buddy gets exactly one start post, one pause alert per pause episode and
+Handy gets exactly one start post, one pause alert per pause episode and
 one terminal post; a claimed print gets none of them (its monitor owns
 it) but its pause alerts are still retired when it ends; a print first
 seen mid-flight is a baseline and gets nothing.
 """
-from print_buddy.hermes import family_control as fc
-from print_buddy.hermes import family_event_listener as fel
+from print_handy.hermes import family_control as fc
+from print_handy.hermes import family_event_listener as fel
 
 REMOTE = "benchy.gcode"
 

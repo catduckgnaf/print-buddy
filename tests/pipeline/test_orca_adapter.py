@@ -4,8 +4,8 @@ import struct
 import sys
 from unittest.mock import patch
 
-from print_buddy.core import orca_adapter as adapter
-from print_buddy.core import model_job as job
+from print_handy.core import orca_adapter as adapter
+from print_handy.core import model_job as job
 
 
 def _state():
@@ -24,7 +24,7 @@ def _source(tmp_path):
 
 
 def _allow_post(monkeypatch):
-    from print_buddy.core import slice_guard
+    from print_handy.core import slice_guard
     monkeypatch.setattr(adapter, 'pre_slice', lambda **kwargs: slice_guard.Result())
     monkeypatch.setattr(adapter, 'post_slice', lambda *_args, **_kwargs: slice_guard.Result())
     monkeypatch.setattr(adapter.sg, 'enforce_approved_baseline', lambda *_args: slice_guard.Result())
@@ -32,7 +32,7 @@ def _allow_post(monkeypatch):
 
 
 def test_orca_adapter_pre_slice_guard_blocks_before_orca_invocation(tmp_path, monkeypatch):
-    from print_buddy.core import slice_guard
+    from print_handy.core import slice_guard
     monkeypatch.setattr(adapter, 'pre_slice', lambda **kwargs: slice_guard.Result(status='blocked', blocked=['test block']))
     with patch.object(adapter.subprocess, 'run') as run:
         try:
@@ -134,7 +134,7 @@ def test_bambu_fallback_converts_percent_line_widths(tmp_path, monkeypatch):
 
 
 def test_bambu_output_still_fails_the_same_post_slice_gate(tmp_path, monkeypatch):
-    from print_buddy.core import slice_guard
+    from print_handy.core import slice_guard
     _allow_post(monkeypatch)
     monkeypatch.setattr(adapter, 'post_slice', lambda *_args, **_kwargs: slice_guard.Result(status='blocked', blocked=['unsafe toolchange']))
     calls = []

@@ -1,7 +1,7 @@
 import copy
 import unittest
 from unittest import mock
-from print_buddy.core import printer_state
+from print_handy.core import printer_state
 
 class OffsetAuthorityTests(unittest.TestCase):
     def setUp(self):

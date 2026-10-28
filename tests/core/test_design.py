@@ -14,7 +14,7 @@ from pathlib import Path
 
 import pytest
 
-from print_buddy.core import design
+from print_handy.core import design
 
 GOOD = ("plate_z = 3;\n$fn = 48;\ndifference() {\n"
         "  translate([-20, -10, 0]) cube([40, 20, plate_z]);\n"
@@ -312,7 +312,7 @@ def _box_triangles(dx, dy, dz, ox=0.0, oy=0.0, oz=0.0):
 
 
 def _plate_stl(tmp_path, name="plate.stl"):
-    from print_buddy.core.geometry_layout import write_binary_stl
+    from print_handy.core.geometry_layout import write_binary_stl
     path = tmp_path / name
     write_binary_stl(_box_triangles(40, 20, 3, -20, -10, 0), path)
     return path
@@ -440,8 +440,8 @@ def test_scad_edit_with_external_references_is_flagged_plainly(tmp_path):
 
 
 def test_3mf_converts_through_the_geometry_loader(tmp_path):
-    from print_buddy.core.geometry_layout import describe_triangles
-    from print_buddy.core.orca_adapter import read_stl_triangles
+    from print_handy.core.geometry_layout import describe_triangles
+    from print_handy.core.orca_adapter import read_stl_triangles
     out = tmp_path / "converted.stl"
     design.convert_to_stl(_tiny_3mf(tmp_path), out)
     info = describe_triangles(read_stl_triangles(out))
@@ -467,7 +467,7 @@ def test_link_edit_session_uses_the_injected_fetcher(tmp_path):
     def fake_fetcher(url, target_dir):
         seen.append(url)
         target = Path(target_dir) / "linked.stl"
-        from print_buddy.core.geometry_layout import write_binary_stl
+        from print_handy.core.geometry_layout import write_binary_stl
         write_binary_stl(_box_triangles(10, 10, 2), target)
         return target
 

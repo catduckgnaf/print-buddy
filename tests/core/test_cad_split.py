@@ -7,9 +7,9 @@ from pathlib import Path
 
 import pytest
 
-from print_buddy.core import cad_split, heavy_worker, prepared_intake
-from print_buddy.core.geometry_layout import describe_triangles, write_binary_stl
-from print_buddy.core.orca_adapter import read_stl_triangles
+from print_handy.core import cad_split, heavy_worker, prepared_intake
+from print_handy.core.geometry_layout import describe_triangles, write_binary_stl
+from print_handy.core.orca_adapter import read_stl_triangles
 
 
 def _box_triangles(xmin: float, ymin: float, zmin: float, xmax: float, ymax: float, zmax: float):

@@ -1,6 +1,6 @@
 """Test settings for the Hermes helpers, installed before any test module imports them.
 
-print_buddy.hermes reads its hosts and paths through print_buddy.hermes._config. Here that is replaced by
+print_handy.hermes reads its hosts and paths through print_handy.hermes._config. Here that is replaced by
 a copy of the checked-in home config with fake `.test` hosts and temp directories, so no suite (hermes or pipeline)
 can read a live profile or reach a live service through those modules.
 """
@@ -10,8 +10,8 @@ from pathlib import Path
 
 import pytest
 
-from print_buddy import settings
-from print_buddy.hermes import _config
+from print_handy import settings
+from print_handy.hermes import _config
 
 _tmp = Path(tempfile.mkdtemp(prefix="3dp-test-state-"))
 os.environ.setdefault("PRINT_BOT_CANCEL_MARKER", str(_tmp / "last_bot_cancel.json"))
@@ -40,4 +40,4 @@ _config.set_override(TEST_SETTINGS)
 @pytest.fixture(autouse=True)
 def _isolated_launch_state(tmp_path, monkeypatch):
     """Printer leases and consumed approvals live in a per-test database, never the profile's."""
-    monkeypatch.setenv("PRINT_BUDDY_LAUNCH_DB", str(tmp_path / "print_buddy_launches.sqlite3"))
+    monkeypatch.setenv("PRINT_HANDY_LAUNCH_DB", str(tmp_path / "print_handy_launches.sqlite3"))

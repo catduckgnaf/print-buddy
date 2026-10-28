@@ -1,13 +1,13 @@
 import json,os,re,zipfile,xml.etree.ElementTree as ET
 from pathlib import Path
 import pytest
-from print_buddy.core import source_colors, model_job
-from print_buddy.core.color_geometry import export_color_geometry, export_single_color_plate
+from print_handy.core import source_colors, model_job
+from print_handy.core.color_geometry import export_color_geometry, export_single_color_plate
 
-ROOT=Path(os.environ.get('PRINT_BUDDY_COUPONS','/nonexistent'))
+ROOT=Path(os.environ.get('PRINT_HANDY_COUPONS','/nonexistent'))
 STATE=Path(__file__).parent/'fixtures'/'printer_hardware.json'
 needs_coupon=pytest.mark.skipif(not (ROOT/'three/three_core_geometry.3mf').is_file(),
- reason='recorded coupon 3MF is not shipped; set PRINT_BUDDY_COUPONS to the sol_recovery folder')
+ reason='recorded coupon 3MF is not shipped; set PRINT_HANDY_COUPONS to the sol_recovery folder')
 
 def decisions(src,st):
  m=source_colors.inventory(src)
@@ -55,7 +55,7 @@ def test_invalid_geometry_mapping_refused(tmp_path,failure):
   m=source_colors.inventory(src);m['painted']=True
   # Painted sources are supported now; a painted flag whose decisions do not
   # cover the painted states must still fail closed with no output.
-  with patch('print_buddy.core.color_geometry.inventory',return_value=m),pytest.raises(RuntimeError):
+  with patch('print_handy.core.color_geometry.inventory',return_value=m),pytest.raises(RuntimeError):
    export_color_geometry(src,tmp_path/'out.3mf',d)
   assert not (tmp_path/'out.3mf').exists()
   return
@@ -239,7 +239,7 @@ def test_slice_job_emits_both_slots_without_calling_the_printer(tmp_path, monkey
         return out, {'slot': filament_slot}, []
 
     monkeypatch.setattr(model_job.printer_state, 'check', lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError('slice contacted the printer')))
-    monkeypatch.setattr('print_buddy.core.orca_adapter.slice_model', fake_slice)
+    monkeypatch.setattr('print_handy.core.orca_adapter.slice_model', fake_slice)
     paths = model_job.slice_job(job_path)
     saved = json.loads(job_path.read_text())
     assert len(paths) == 2
@@ -347,7 +347,7 @@ def _two_slot_job(tmp_path, **extra):
 
 
 def test_compose_matches_sequential_application():
-    from print_buddy.core.color_geometry import _apply, _compose
+    from print_handy.core.color_geometry import _apply, _compose
     item = [0, 1, 0, -1, 0, 0, 0, 0, 1, 100, 5, 0]
     component = [2, 0, 0, 0, 1, 0, 0, 0, 1, 10, 0, 3]
     for point in [(1, 2, 3), (0, 0, 0), (-4, 7, 1)]:
@@ -355,8 +355,8 @@ def test_compose_matches_sequential_application():
 
 
 def test_fit_transform_matches_orca_rotation_and_scale():
-    from print_buddy.core.color_geometry import _apply, fit_transform
-    from print_buddy.core.orca_adapter import _rotate, _yaw
+    from print_handy.core.color_geometry import _apply, fit_transform
+    from print_handy.core.orca_adapter import _rotate, _yaw
     assert fit_transform(None) is None
     assert fit_transform({'scale': 1.0, 'rotation': None}) is None
     rotation = _yaw(90)
@@ -369,8 +369,8 @@ def test_fit_transform_matches_orca_rotation_and_scale():
 
 def test_resized_plate_composes_fit_into_selected_items_only(tmp_path):
     source, state, decisions, _ = _two_slot_job(tmp_path)
-    from print_buddy.core.orca_adapter import _yaw
-    from print_buddy.core.color_geometry import _compose, fit_transform
+    from print_handy.core.orca_adapter import _yaw
+    from print_handy.core.color_geometry import _compose, fit_transform
     before = source.read_bytes()
     fit = {'scale': 0.5, 'rotation': _yaw(90)}
     report = export_single_color_plate(source, tmp_path / 'white.3mf', decisions, ['1:1'], slot_colors=state['ifs_slots'], fit=fit)
@@ -411,7 +411,7 @@ def test_resized_layout_that_lifts_a_part_is_refused(tmp_path):
 
 
 def test_slice_job_applies_chosen_fit_to_every_slot_plate(tmp_path, monkeypatch):
-    from print_buddy.core.orca_adapter import _yaw
+    from print_handy.core.orca_adapter import _yaw
     rotation = _yaw(90)
     _, _, _, job_path = _two_slot_job(tmp_path, scale=0.6, orientation={'rotation': rotation, 'supports': True, 'brim': True})
     calls = []
@@ -426,7 +426,7 @@ def test_slice_job_applies_chosen_fit_to_every_slot_plate(tmp_path, monkeypatch)
         return out, {'slot': filament_slot}, []
 
     monkeypatch.setattr(model_job.printer_state, 'check', lambda *a, **k: (_ for _ in ()).throw(AssertionError('slice contacted the printer')))
-    monkeypatch.setattr('print_buddy.core.orca_adapter.slice_model', fake_slice)
+    monkeypatch.setattr('print_handy.core.orca_adapter.slice_model', fake_slice)
     paths = model_job.slice_job(job_path)
     saved = json.loads(job_path.read_text())
     assert len(paths) == 2

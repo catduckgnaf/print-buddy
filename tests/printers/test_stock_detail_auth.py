@@ -3,7 +3,7 @@ from pathlib import Path
 
 import pytest
 
-from print_buddy.printers.flashforge.zmod import stock
+from print_handy.printers.flashforge.zmod import stock
 
 ROOT = Path(__file__).resolve().parents[2]
 

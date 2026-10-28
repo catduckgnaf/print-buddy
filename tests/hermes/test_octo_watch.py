@@ -1,6 +1,6 @@
 """OctoPrint launched-print monitor contract (#373 audit).
 
-Before this monitor existed, an OctoPrint print launched by Print Buddy
+Before this monitor existed, an OctoPrint print launched by Print Handy
 got a start confirmation and then nothing: no completion post at all, and
 the timelapse OctoPrint itself renders never reached the chat. These
 tests pin the contract the monitor establishes — a completed job with a
@@ -13,7 +13,7 @@ import itertools
 
 import pytest
 
-from print_buddy.hermes import octo_watch
+from print_handy.hermes import octo_watch
 
 SHA = "aabbccddeeff00112233445566778899" * 2
 REMOTE = f"Benchy_plate_1_{SHA}.gcode"
@@ -160,7 +160,7 @@ def test_movie_for_job_matching():
 
 
 def test_start_monitor_needs_a_post_target(monkeypatch):
-    from print_buddy.hermes import bambu_watch
+    from print_handy.hermes import bambu_watch
     monkeypatch.setattr(bambu_watch, "_post_target_configured", lambda: False)
     assert octo_watch.start_monitor(object(), REMOTE) is None
     assert any("no chat is configured" in line for line in Harness.logs)

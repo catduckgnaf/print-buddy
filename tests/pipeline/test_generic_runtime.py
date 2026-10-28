@@ -13,9 +13,9 @@ from unittest import mock
 
 import pytest
 
-from print_buddy import printers, settings
-from print_buddy.core import model_job, orca_adapter, printer_state
-from print_buddy.printers.base import MultiColorUnsupported
+from print_handy import printers, settings
+from print_handy.core import model_job, orca_adapter, printer_state
+from print_handy.printers.base import MultiColorUnsupported
 
 ZMOD_STEPS = re.compile(r"SET_EXTRUDER_SLOT|\bSTART_PRINT\b|CHANGE_ZCOLOR|SET_ZCOLOR|LOAD_ZOFFSET|\bM8\d\d\b|"
                         r"zmod|display_off|save_variables|Adventurer5M|8898|/detail|\bIFS\b", re.I)
@@ -43,7 +43,7 @@ STATE = {"moonraker_url": "http://printer.test:7125", "printer": "Test Klipper",
 
 
 def use_model(monkeypatch, family):
-    data = settings.load(local=False, environ={"PRINT_BUDDY__PRINTER__MODEL": family})
+    data = settings.load(local=False, environ={"PRINT_HANDY__PRINTER__MODEL": family})
     adapter = printers.get(family, data)
     monkeypatch.setattr(printers, "current", lambda config=None: adapter)
     return adapter
@@ -220,8 +220,8 @@ def slice_job_rig(monkeypatch, tmp_path, family):
 def test_generic_slice_records_model_and_skips_zmod_finalize(monkeypatch, tmp_path):
     job, out = slice_job_rig(monkeypatch, tmp_path, "klipper.generic")
     forbid = mock.Mock(side_effect=AssertionError("ZMod finalization ran"))
-    with mock.patch("print_buddy.printers.flashforge.zmod.multicolor_contract.finalize", forbid), \
-         mock.patch("print_buddy.printers.flashforge.zmod.finalize", forbid), \
+    with mock.patch("print_handy.printers.flashforge.zmod.multicolor_contract.finalize", forbid), \
+         mock.patch("print_handy.printers.flashforge.zmod.finalize", forbid), \
          mock.patch.object(orca_adapter, "slice_model", return_value=(out, {}, [])) as sliced, \
          mock.patch.object(model_job, "verify_gcode") as verify:
         assert model_job.slice_job(job) == out
@@ -235,12 +235,12 @@ def test_generic_slice_records_model_and_skips_zmod_finalize(monkeypatch, tmp_pa
 def test_generic_slice_refuses_multicolor_source(monkeypatch, tmp_path):
     job, out = slice_job_rig(monkeypatch, tmp_path, "klipper.generic")
     manifest = {"requires_choices": True, "source_sha256": "abc"}
-    with mock.patch("print_buddy.core.source_colors.inventory", return_value=manifest), \
+    with mock.patch("print_handy.core.source_colors.inventory", return_value=manifest), \
          mock.patch.object(orca_adapter, "slice_model") as sliced:
         with pytest.raises(MultiColorUnsupported, match="single extruder"):
             model_job.slice_job(job)
         sliced.assert_not_called()
-    with mock.patch("print_buddy.core.source_colors.inventory", return_value=manifest):
+    with mock.patch("print_handy.core.source_colors.inventory", return_value=manifest):
         with pytest.raises(MultiColorUnsupported, match="single extruder"):
             model_job.intake_color_choices(job, dict(STATE))
     argv = ["model_job.py", "slice", str(job), "--approved"]
@@ -257,7 +257,7 @@ def test_orca_adapter_skips_zmod_md5_for_generic(monkeypatch):
 
 
 def test_listener_skips_screen_machinery_for_generic(monkeypatch):
-    from print_buddy.hermes import moonraker_event_listener as listener
+    from print_handy.hermes import moonraker_event_listener as listener
     use_model(monkeypatch, "klipper.generic")
     boom = mock.AsyncMock(side_effect=AssertionError("stock detail read"))
     obj = listener.Listener()

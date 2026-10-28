@@ -6,8 +6,8 @@ import pytest
 import sys
 from pathlib import Path
 
-from print_buddy.hermes import print_records as records
-from print_buddy.hermes import moonraker_discord_announcements as watcher
+from print_handy.hermes import print_records as records
+from print_handy.hermes import moonraker_discord_announcements as watcher
 
 
 def test_batch_copy_and_multipart_guards(monkeypatch, tmp_path):
@@ -174,7 +174,7 @@ def test_watcher_records_mocked_moonraker_completion(tmp_path, monkeypatch):
         "discord_session_id": "session-1",
         "discord_chat_id": "100000000000000001",
     }}}))
-    monkeypatch.setenv("PRINT_BUDDY_CONTEXT_PATH", str(context_path))
+    monkeypatch.setenv("PRINT_HANDY_CONTEXT_PATH", str(context_path))
     responses = iter((
         {"job": {"file": {"path": "part.gcode", "display": "part.gcode"}}, "progress": {"completion": 25}, "state": "Printing", "stats": {"state": "printing"}},
         {"job": {"file": {"path": "part.gcode", "display": "part.gcode"}}, "progress": {"completion": 100}, "state": "Completed", "stats": {"state": "complete", "print_duration": 30}},
@@ -207,7 +207,7 @@ def test_failing_record_write_does_not_break_the_watcher(tmp_path, monkeypatch):
         "discord_session_id": "session-1",
         "discord_chat_id": "100000000000000001",
     }}}))
-    monkeypatch.setenv("PRINT_BUDDY_CONTEXT_PATH", str(context_path))
+    monkeypatch.setenv("PRINT_HANDY_CONTEXT_PATH", str(context_path))
     responses = iter((
         {"job": {"file": {"path": "part.gcode", "display": "part.gcode"}}, "progress": {"completion": 25}, "state": "Printing", "stats": {"state": "printing"}},
         {"job": {"file": {"path": "part.gcode", "display": "part.gcode"}}, "progress": {"completion": 100}, "state": "Completed", "stats": {"state": "complete", "print_duration": 30}},
@@ -365,7 +365,7 @@ def test_second_print_gets_its_own_numbered_file(tmp_path, monkeypatch):
 def test_print_number_resolved_from_launch_registry(tmp_path, monkeypatch):
     monkeypatch.setattr(records, "PRINTS_DIR", tmp_path / "Prints")
     monkeypatch.setattr(records, "PLANS_DIR", tmp_path / "Plans")
-    from print_buddy.hermes import print_control
+    from print_handy.hermes import print_control
     job_dir = tmp_path / "archive" / "bag-clip"
     job_dir.mkdir(parents=True)
     job_json = job_dir / "JOB.json"
@@ -405,7 +405,7 @@ def test_cancel_to_standby_finalizes_record_from_history(tmp_path, monkeypatch):
     ctx["record_path"] = records.write_start_record(ctx)
     context_path = tmp_path / "context.json"
     context_path.write_text(json.dumps({"jobs": {"stand.gcode": ctx}}))
-    monkeypatch.setenv("PRINT_BUDDY_CONTEXT_PATH", str(context_path))
+    monkeypatch.setenv("PRINT_HANDY_CONTEXT_PATH", str(context_path))
     responses = iter((
         {"job": {"file": {"path": "stand.gcode", "display": "stand.gcode"}}, "progress": {"completion": 0.4}, "state": "Printing", "stats": {"state": "printing"}},
         {"job": {"file": {"path": "stand.gcode", "display": "stand.gcode"}}, "progress": {"completion": 0.4}, "state": "Printing", "stats": {"state": "printing"}},

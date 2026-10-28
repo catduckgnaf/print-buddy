@@ -13,8 +13,8 @@ from types import SimpleNamespace as S
 
 import pytest
 
-from print_buddy import printers, settings
-from print_buddy.core import link_intake, model_job, prepared_intake
+from print_handy import printers, settings
+from print_handy.core import link_intake, model_job, prepared_intake
 from .test_color_intake import state as ad5x_state
 from .test_prepared_intake import AD5X_ROW, Adapter, env, run_preview  # noqa: F401  (pytest fixture)
 
@@ -23,7 +23,7 @@ A1 = "bambulab.a1"
 
 
 def use_model(monkeypatch, key):
-    data = settings.load(local=False, environ={"PRINT_BUDDY__PRINTER__MODEL": key})
+    data = settings.load(local=False, environ={"PRINT_HANDY__PRINTER__MODEL": key})
     adapter = printers.get(key, data)
     monkeypatch.setattr(printers, "current", lambda config=None: adapter)
     return adapter

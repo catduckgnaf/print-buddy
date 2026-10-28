@@ -1,7 +1,7 @@
 # Knowledge registry
 
-Root-level troubleshooting knowledge for Print Buddy (issue #169). These files are
-data, read by `print_buddy/knowledge/` and surfaced through `/print-lookup` and
+Root-level troubleshooting knowledge for Print Handy (issue #169). These files are
+data, read by `print_handy/knowledge/` and surfaced through `/print-lookup` and
 `/print-troubleshoot`. They are advisory only: nothing here is ever sent to a
 printer by the lookup or troubleshooting code.
 
@@ -43,7 +43,7 @@ One `[[flow]]` per workflow, with `[[flow.node]]` graph nodes under it:
 | node `option` | Question only: `label` (the button text) and `next` (a node id). |
 | node `next` | Advice only, optional: continue to this node after showing the advice. No `next` ends the flow. |
 
-Rules the loader enforces (`print_buddy/knowledge/registry.py`): unique ids,
+Rules the loader enforces (`print_handy/knowledge/registry.py`): unique ids,
 every `next`/`start` resolves inside the flow, every question has at least two
 options, every symptom's `flow` and `firmware_entries` exist, and no flow text
 may present a printer action as something the bot will do for the user.

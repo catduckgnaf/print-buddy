@@ -8,17 +8,17 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
-from print_buddy import printers, settings
-from print_buddy.printers.bambulab.a1 import A1Adapter
-from print_buddy.printers.bambulab.p1s import P1SAdapter
-from print_buddy.printers.base import BuildVolume, MultiColorUnsupported, PrinterAdapter
+from print_handy import printers, settings
+from print_handy.printers.bambulab.a1 import A1Adapter
+from print_handy.printers.bambulab.p1s import P1SAdapter
+from print_handy.printers.base import BuildVolume, MultiColorUnsupported, PrinterAdapter
 
-from print_buddy.printers.bambulab import facts as bambu_facts
-from print_buddy.printers.creality import facts as creality_facts
-from print_buddy.printers.elegoo import facts as elegoo_facts
-from print_buddy.printers.elegoo_sdcp import facts as sdcp_facts
-from print_buddy.printers.prusa import facts as prusa_facts
-from print_buddy.printers.qidi import facts as qidi_facts
+from print_handy.printers.bambulab import facts as bambu_facts
+from print_handy.printers.creality import facts as creality_facts
+from print_handy.printers.elegoo import facts as elegoo_facts
+from print_handy.printers.elegoo_sdcp import facts as sdcp_facts
+from print_handy.printers.prusa import facts as prusa_facts
+from print_handy.printers.qidi import facts as qidi_facts
 
 from . import (a1_fixture, bambu_family_fixture, creality_fixture, elegoo_fixture, p1s_fixture,
                prusa_fixture, qidi_fixture)
@@ -36,8 +36,8 @@ BAMBU_P1S = "bambulab.p1s"
 
 
 def config_for(family):
-    return settings.load(local=False, environ={"PRINT_BUDDY__PRINTER__MODEL": family,
-                                               "PRINT_BUDDY__PATHS__HERMES_HOME": str(a1_fixture.HERMES)})
+    return settings.load(local=False, environ={"PRINT_HANDY__PRINTER__MODEL": family,
+                                               "PRINT_HANDY__PATHS__HERMES_HOME": str(a1_fixture.HERMES)})
 
 
 def adapter_for(family):
@@ -126,7 +126,7 @@ class ContractTests(unittest.TestCase):
                                        "octoprint.ender3v3se"})
         for key, model in printers.MODELS.items():
             self.assertEqual(model.key, key)
-            shipped = settings.ROOT / "print_buddy" / "templates" / "orca" / model.templates
+            shipped = settings.ROOT / "print_handy" / "templates" / "orca" / model.templates
             # Generated templates (third-party profiles) are never shipped; every other model ships its own.
             self.assertEqual(shipped.is_dir(), not model.generated_templates, key)
             self.assertTrue(issubclass(model.adapter, PrinterAdapter))
@@ -466,10 +466,10 @@ class GenericKlipperTests(unittest.TestCase):
         self.assertIn("SV06", machine["name"])
 
     def test_stock_klipper_does_not_import_zmod_code(self):
-        code = (f"import sys\nsys.path.insert(0, {str(settings.ROOT)!r})\nfrom print_buddy import printers\n"
+        code = (f"import sys\nsys.path.insert(0, {str(settings.ROOT)!r})\nfrom print_handy import printers\n"
                 "printers.get('klipper.generic'); printers.get('sovol.sv06')\n"
-                "bad=[m for m in sys.modules if m.startswith(('print_buddy.printers.flashforge.zmod',"
-                "'print_buddy.hermes.spool_sync'))]\n"
+                "bad=[m for m in sys.modules if m.startswith(('print_handy.printers.flashforge.zmod',"
+                "'print_handy.hermes.spool_sync'))]\n"
                 "print(bad)\n")
         root = Path(settings.ROOT)
         out = subprocess.run([sys.executable, "-c", code], cwd=root, capture_output=True, text=True,
@@ -480,7 +480,7 @@ class GenericKlipperTests(unittest.TestCase):
 
 class SettingsModelTests(unittest.TestCase):
     def load(self, **printer):
-        env = {f"PRINT_BUDDY__PRINTER__{k.upper()}": str(v) for k, v in printer.items()}
+        env = {f"PRINT_HANDY__PRINTER__{k.upper()}": str(v) for k, v in printer.items()}
         return settings.load(local=False, environ=env)
 
     def test_selection_accepts_registered_models(self):
@@ -539,7 +539,7 @@ class SettingsModelTests(unittest.TestCase):
             self.load(start_macro="PRINT START; M112")
 
     def test_doctor_reports_the_model(self):
-        from print_buddy import doctor
+        from print_handy import doctor
         self.assertEqual(doctor.check_model(self.load()), "flashforge.ad5x (Flashforge AD5X (ZMod)), 4 slots (multi-slot)")
         self.assertIn("single extruder", doctor.check_model(self.load(model=SV06)))
 

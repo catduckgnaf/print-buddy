@@ -12,10 +12,10 @@ from types import SimpleNamespace as S
 
 import pytest
 
-from print_buddy import printers, settings
-from print_buddy.core import delivery, model_job, prepared_intake
-from print_buddy.printers.base import PrinterModel
-from print_buddy.printers.klipper.adapter import KlipperAdapter
+from print_handy import printers, settings
+from print_handy.core import delivery, model_job, prepared_intake
+from print_handy.printers.base import PrinterModel
+from print_handy.printers.klipper.adapter import KlipperAdapter
 from .test_prepared_intake import env, run_flow  # noqa: F401  (pytest fixture)
 from .helpers import external
 
@@ -144,7 +144,7 @@ def test_discord_candidates_size_each_file_before_the_button_is_offered(tmp_path
     assert measured == [big_text, noise]  # a menu shown twice measures once
     msg = delivery.oversize_message(list(fit.values()), limit)
     assert msg.startswith(f"noise.gcode is 0.3 MB and {fit['noise.gcode'].packed / 1e6:.1f} MB zipped, over the "
-                          f"0.0 MB Discord upload limit, so it cannot be sent here. It stays on the Print Buddy host at {noise}.")
+                          f"0.0 MB Discord upload limit, so it cannot be sent here. It stays on the Print Handy host at {noise}.")
     assert "is not offered" not in msg  # the others still fit, so the button stays
     assert delivery.oversize_message([fit["small.gcode"], fit["big.gcode"]], limit) == ""
     # Bambu Lab: the attachment is the package. Not built yet, it is sized from its G-code ...
@@ -155,7 +155,7 @@ def test_discord_candidates_size_each_file_before_the_button_is_offered(tmp_path
     msg = delivery.oversize_message([est], limit)
     assert msg.startswith(f"noise.gcode.3mf would be about {est.packed / 1e6:.1f} MB (its G-code noise.gcode is 0.3 MB), "
                           "over the 0.0 MB Discord upload limit, so it cannot be sent here. "
-                          f"'Package for Bambu (no upload)' writes it to {est.source} on the Print Buddy host.")
+                          f"'Package for Bambu (no upload)' writes it to {est.source} on the Print Handy host.")
     assert msg.endswith("'Send the files here' is not offered for this slice; "
                         "[discord] upload_max_bytes is the limit (docs/SETTINGS.md).")
     # ... and once built, exactly, with no deflate pass (a .3mf is already compressed).
@@ -165,7 +165,7 @@ def test_discord_candidates_size_each_file_before_the_button_is_offered(tmp_path
     assert not exact.fits and measured == [big_text, noise]
     assert delivery.oversize_message([exact], limit, for_handoff=True) == (
         f"noise.gcode.3mf is {exact.size / 1e6:.1f} MB, over the 0.0 MB Discord upload limit, so it cannot be "
-        f"sent here. It stays on the Print Buddy host at {package}.")
+        f"sent here. It stays on the Print Handy host at {package}.")
     [tiny] = delivery.discord_candidates([small], limit, bambu, cache)
     assert tiny.fits and tiny.size is None and tiny.packed is None
 
@@ -255,7 +255,7 @@ def test_too_big_for_discord_is_said_up_front_and_the_send_is_not_offered(env, m
     assert menu["choices"] == [print_next.START_LABEL, delivery.DONE_LABEL]
     size = Path(env.sliced[0]).stat().st_size / 1e6
     assert (f"\nplate_1.gcode is {size:.1f} MB and {delivery.deflated_size(env.sliced[0]) / 1e6:.1f} MB zipped, "
-            f"over the 0.0 MB Discord upload limit, so it cannot be sent here. It stays on the Print Buddy host at "
+            f"over the 0.0 MB Discord upload limit, so it cannot be sent here. It stays on the Print Handy host at "
             f"{env.sliced[0]}.\n'Send the files here' is not offered for this slice; [discord] upload_max_bytes "
             "is the limit (docs/SETTINGS.md).") in menu["question"]
     assert not any("MEDIA:" in m or "Too big for Discord" in m for m in adapter.sent)
@@ -384,14 +384,14 @@ def test_bambu_package_over_the_limit_is_never_offered_for_download(env, monkeyp
     assert menu["choices"] == ["Package for Bambu (no upload)", delivery.DONE_LABEL]
     assert (f"\nplate_1.gcode.3mf would be about {packed / 1e6:.1f} MB (its G-code plate_1.gcode is "
             f"{gcode.stat().st_size / 1e6:.1f} MB), over the 0.1 MB Discord upload limit, so it cannot be sent here. "
-            f"'Package for Bambu (no upload)' writes it to {package} on the Print Buddy host.\n"
+            f"'Package for Bambu (no upload)' writes it to {package} on the Print Handy host.\n"
             "'Send the files here' is not offered for this slice; [discord] upload_max_bytes is the limit "
             "(docs/SETTINGS.md).") in menu["question"]
     ready = next(m for m in adapter.sent if m.startswith("Bambu package ready: plate_1.gcode.3mf."))
     assert package.is_file() and package.stat().st_size > limit
     assert ready.startswith(f"Bambu package ready: plate_1.gcode.3mf. plate_1.gcode.3mf is "
                             f"{package.stat().st_size / 1e6:.1f} MB, over the 0.1 MB Discord upload limit, so it "
-                            f"cannot be sent here. It stays on the Print Buddy host at {package}.\n")
+                            f"cannot be sent here. It stays on the Print Handy host at {package}.\n")
     assert "Use 'Send the files here'" not in ready
     assert not any("MEDIA:" in m or "Too big for Discord" in m for m in adapter.sent)
     assert sum("over the 0.1 MB Discord upload limit" in m for m in adapter.sent) == 1  # said once after packaging

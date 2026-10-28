@@ -9,7 +9,7 @@ from pathlib import Path
 
 import pytest
 
-from print_buddy.core import background_slice, geometry_layout, heavy_worker, model_job, orca_adapter, prepared_intake
+from print_handy.core import background_slice, geometry_layout, heavy_worker, model_job, orca_adapter, prepared_intake
 
 
 def _box_triangles(dx: float, dy: float, dz: float, offset=(0.0, 0.0, 0.0)):
@@ -299,7 +299,7 @@ def test_intake_fit_choice_rows_and_cli_layout_subcommand(tmp_path):
 
     cli_out = tmp_path / 'cli_out'
     proc = subprocess.run(
-        [sys.executable, '-m', 'print_buddy.core.model_job', 'layout', str(src), '-o', str(cli_out)],
+        [sys.executable, '-m', 'print_handy.core.model_job', 'layout', str(src), '-o', str(cli_out)],
         capture_output=True,
         text=True,
         check=True,

@@ -6,9 +6,9 @@ from pathlib import Path
 
 import pytest
 
-from print_buddy.core import model_job
-from print_buddy.core import plate_merge
-from print_buddy.core import source_colors
+from print_handy.core import model_job
+from print_handy.core import plate_merge
+from print_handy.core import source_colors
 
 STATE = Path(__file__).parent / 'fixtures' / 'printer_hardware.json'
 
@@ -86,7 +86,7 @@ def test_fits_is_merged_into_one_gcode_with_every_object(tmp_path, monkeypatch):
     _source(source, {'1': (60, 40, 10), '2': (50, 50, 8), '3': (30, 30, 5)}, [['1', '2'], ['3']])
     job_path = _job(tmp_path, source)
     fake = _fake_slice()
-    monkeypatch.setattr('print_buddy.core.orca_adapter.slice_model', fake)
+    monkeypatch.setattr('print_handy.core.orca_adapter.slice_model', fake)
     out = model_job.slice_job(job_path)
     saved = json.loads(job_path.read_text())
     assert isinstance(out, (str, Path)) and len(fake.calls) == 1
@@ -111,7 +111,7 @@ def test_too_big_splits_with_reason_and_still_covers_every_part(tmp_path, monkey
     _source(source, {'1': (150, 150, 10), '2': (150, 150, 10), '3': (30, 30, 5)}, [['1'], ['2', '3']])
     job_path = _job(tmp_path, source)
     fake = _fake_slice()
-    monkeypatch.setattr('print_buddy.core.orca_adapter.slice_model', fake)
+    monkeypatch.setattr('print_handy.core.orca_adapter.slice_model', fake)
     paths = model_job.slice_job(job_path)
     saved = json.loads(job_path.read_text())
     assert len(paths) == 2 and len(fake.calls) == 2
@@ -130,7 +130,7 @@ def test_estimate_over_twelve_hours_splits_with_reason(tmp_path, monkeypatch):
     def fake(*args, **kwargs):
         calls.append(Path(args[0]).name)
         return _fake_slice(next(seq))(*args, **kwargs)
-    monkeypatch.setattr('print_buddy.core.orca_adapter.slice_model', fake)
+    monkeypatch.setattr('print_handy.core.orca_adapter.slice_model', fake)
     paths = model_job.slice_job(job_path)
     saved = json.loads(job_path.read_text())
     assert len(paths) == 2 and calls[0] == 'merged.3mf' and 'merged' not in ''.join(calls[1:])
@@ -142,7 +142,7 @@ def test_author_note_requests_separate_printing(tmp_path, monkeypatch):
     _source(source, {'1': (40, 40, 10), '2': (40, 40, 10)}, [['1'], ['2']], notes='Please print the parts separately, one at a time.')
     job_path = _job(tmp_path, source)
     fake = _fake_slice()
-    monkeypatch.setattr('print_buddy.core.orca_adapter.slice_model', fake)
+    monkeypatch.setattr('print_handy.core.orca_adapter.slice_model', fake)
     paths = model_job.slice_job(job_path)
     saved = json.loads(job_path.read_text())
     assert len(paths) == 2
@@ -159,7 +159,7 @@ def test_explicit_separate_mode_skips_merge(tmp_path, monkeypatch):
     assert not plate_merge.full_size_split_possible(source, source_colors.inventory(source))
     _source(source, {'1': (40, 40, 10), '2': (40, 40, 10)}, [['1'], ['2']])
     job_path = _job(tmp_path, source, plate_mode='separate')
-    monkeypatch.setattr('print_buddy.core.orca_adapter.slice_model', _fake_slice())
+    monkeypatch.setattr('print_handy.core.orca_adapter.slice_model', _fake_slice())
     assert len(model_job.slice_job(job_path)) == 2
     assert json.loads(job_path.read_text())['plate_merge']['reason'] == 'Print parts separately was chosen'
 
@@ -181,7 +181,7 @@ def test_missing_object_in_merged_output_is_refused(tmp_path, monkeypatch):
         out, prov, cfg = real(*args, **kwargs)
         out.write_text(out.read_text().replace('; printing object Part 2 id:1 copy 0\n', ''))
         return out, prov, cfg
-    monkeypatch.setattr('print_buddy.core.orca_adapter.slice_model', drop_one)
+    monkeypatch.setattr('print_handy.core.orca_adapter.slice_model', drop_one)
     with pytest.raises(RuntimeError, match='prints 1 objects but the source has 2'):
         model_job.slice_job(job_path)
 
@@ -200,7 +200,7 @@ def _two_slot_decisions(manifest):
 
 def test_multi_slot_merge_collapses_plates_and_parks_other_slot(tmp_path):
     """Regression for real Orca -50 (empty plate 2) and -52 (printable=0 item overlapping the bed)."""
-    from print_buddy.core import color_geometry
+    from print_handy.core import color_geometry
     source = tmp_path / 's.3mf'
     _source(source, {'1': (60, 40, 10), '2': (50, 50, 8), '3': (30, 30, 5)}, [['1'], ['2'], ['3']])
     manifest = source_colors.inventory(source)
@@ -230,7 +230,7 @@ def test_multi_slot_merge_collapses_plates_and_parks_other_slot(tmp_path):
 
 
 def test_multi_slot_merge_other_slot_gets_its_own_plate(tmp_path):
-    from print_buddy.core import color_geometry
+    from print_handy.core import color_geometry
     source = tmp_path / 's.3mf'
     _source(source, {'1': (60, 40, 10), '2': (50, 50, 8), '3': (30, 30, 5)}, [['1'], ['2'], ['3']])
     manifest = source_colors.inventory(source)
@@ -245,7 +245,7 @@ def test_multi_slot_merge_other_slot_gets_its_own_plate(tmp_path):
 
 
 def test_multi_slot_item_shifts_must_name_exactly_selected_objects(tmp_path):
-    from print_buddy.core import color_geometry
+    from print_handy.core import color_geometry
     source = tmp_path / 's.3mf'
     _source(source, {'1': (60, 40, 10), '2': (50, 50, 8)}, [['1'], ['2']])
     manifest = source_colors.inventory(source)
@@ -301,7 +301,7 @@ def _plan(source):
 
 
 def _placed_hulls(source, verdict):
-    from print_buddy.core import color_geometry
+    from print_handy.core import color_geometry
     placed = {}
     with zipfile.ZipFile(source) as archive:
         for oid, shift in verdict['shifts'].items():
@@ -433,7 +433,7 @@ def _yaw_merge_source(path):
 
 
 def _placed_hull(source, verdict, oid):
-    from print_buddy.core import color_geometry, split_fit
+    from print_handy.core import color_geometry, split_fit
     with zipfile.ZipFile(source) as archive:
         hull, _bounds = color_geometry._world_hull_xy(archive, {oid})[0]
     if oid in (verdict.get('yaw_by_object') or {}):
@@ -494,7 +494,7 @@ def test_plan_yawed_merge_still_refuses_a_part_that_fits_at_no_yaw(tmp_path):
 
 
 def test_pack_polygon_rotated_hulls_charge_feature_and_exclusions_once():
-    from print_buddy.core import split_fit
+    from print_handy.core import split_fit
     bar = split_fit._rotate_hull_xy(YAW_BAR, 45.0)
     placed = plate_merge.pack_polygon({'a': bar, 'b': YAW_SQ}, 220, feature=6.0,
                                       exclusions=[(190, 8, 212, 60)])
@@ -522,7 +522,7 @@ def test_pack_polygon_rotated_hulls_charge_feature_and_exclusions_once():
 
 
 def test_yawed_merge_slices_to_one_gcode_at_the_recorded_turn(tmp_path, monkeypatch):
-    from print_buddy.core import color_geometry
+    from print_handy.core import color_geometry
     import math
     source = tmp_path / 'yaw-merge.3mf'
     _yaw_merge_source(source)
@@ -530,7 +530,7 @@ def test_yawed_merge_slices_to_one_gcode_at_the_recorded_turn(tmp_path, monkeypa
     assert verdict['yaw_by_object'] == {'1': 45.0}
     job_path = _job(tmp_path, source)
     fake = _fake_slice()
-    monkeypatch.setattr('print_buddy.core.orca_adapter.slice_model', fake)
+    monkeypatch.setattr('print_handy.core.orca_adapter.slice_model', fake)
     out = model_job.slice_job(job_path)
     saved = json.loads(job_path.read_text())
     assert isinstance(out, (str, Path)) and len(fake.calls) == 1
@@ -578,7 +578,7 @@ def test_slicing_a_merge_refuses_unproved_yaws(tmp_path, monkeypatch):
         monkeypatch.setattr(plate_merge, 'plan', lambda *a, **k: verdict)
         job_path = _job(tmp_path, source)
         fake = _fake_slice()
-        monkeypatch.setattr('print_buddy.core.orca_adapter.slice_model', fake)
+        monkeypatch.setattr('print_handy.core.orca_adapter.slice_model', fake)
         with pytest.raises(RuntimeError, match=match):
             model_job.slice_job(job_path)
         assert fake.calls == []
@@ -597,8 +597,8 @@ def _yaw_merge_small_source(path):
 
 
 def test_multicolor_merge_export_rotates_the_turned_object(tmp_path):
-    from print_buddy.core import color_geometry
-    from print_buddy.core.orca_adapter import _rotate, _yaw
+    from print_handy.core import color_geometry
+    from print_handy.core.orca_adapter import _rotate, _yaw
     source = tmp_path / 'yaw-merge.3mf'
     _yaw_merge_small_source(source)
     verdict = _plan(source)
@@ -629,8 +629,8 @@ def test_multicolor_merge_export_rotates_the_turned_object(tmp_path):
 
 
 def test_multicolor_merge_export_refuses_unproved_fits(tmp_path):
-    from print_buddy.core import color_geometry
-    from print_buddy.core.orca_adapter import _yaw
+    from print_handy.core import color_geometry
+    from print_handy.core.orca_adapter import _yaw
     source = tmp_path / 'yaw-merge.3mf'
     _yaw_merge_source(source)
     verdict = _plan(source)
@@ -658,8 +658,8 @@ def test_multicolor_merge_export_refuses_unproved_fits(tmp_path):
 
 
 def test_multi_slot_yawed_merge_slices_with_the_recorded_turn(tmp_path, monkeypatch):
-    from print_buddy.core import color_geometry
-    from print_buddy.core.orca_adapter import _rotate, _yaw
+    from print_handy.core import color_geometry
+    from print_handy.core.orca_adapter import _rotate, _yaw
     source = tmp_path / 'yaw-merge.3mf'
     _yaw_merge_small_source(source)
     verdict = _plan(source)
@@ -693,7 +693,7 @@ def test_multi_slot_yawed_merge_slices_with_the_recorded_turn(tmp_path, monkeypa
                        f'START_PRINT BED_TEMP={state["temps_c"]["bed"]} EXTRUDER_TEMP={state["temps_c"]["nozzle"]}\n'
                        f'{labels}G1 X10 Y10 Z0.2\nEND_PRINT\n')
         return out, {'geometry': geometry}, []
-    monkeypatch.setattr('print_buddy.core.orca_adapter.slice_model', fake_slice)
+    monkeypatch.setattr('print_handy.core.orca_adapter.slice_model', fake_slice)
     out = model_job.slice_job(job_path)
     saved = json.loads(job_path.read_text())
     assert isinstance(out, (str, Path)) and len(calls) == 1
@@ -714,14 +714,14 @@ def test_multi_slot_yawed_merge_slices_with_the_recorded_turn(tmp_path, monkeypa
 
 
 def test_polygon_merge_slices_to_one_gcode_at_the_recorded_corners(tmp_path, monkeypatch):
-    from print_buddy.core import color_geometry
+    from print_handy.core import color_geometry
     source = tmp_path / 'tri.3mf'
     _prism_source(source, {'1': (TRI_A, 10, (20, 30)), '2': (TRI_B, 10, (100, 90))}, [['1'], ['2']])
     verdict = _plan(source)
     assert verdict['mode'] == 'merge' and verdict['packing'] == 'polygon'
     job_path = _job(tmp_path, source)
     fake = _fake_slice()
-    monkeypatch.setattr('print_buddy.core.orca_adapter.slice_model', fake)
+    monkeypatch.setattr('print_handy.core.orca_adapter.slice_model', fake)
     out = model_job.slice_job(job_path)
     saved = json.loads(job_path.read_text())
     assert isinstance(out, (str, Path)) and len(fake.calls) == 1

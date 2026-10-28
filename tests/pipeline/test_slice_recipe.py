@@ -9,9 +9,9 @@ from pathlib import Path
 
 import pytest
 
-from print_buddy.core import model_job as mj
-from print_buddy.core import orca_adapter, printer_state
-from print_buddy.core.background_slice import slice_binding
+from print_handy.core import model_job as mj
+from print_handy.core import orca_adapter, printer_state
+from print_handy.core.background_slice import slice_binding
 
 from .test_artifact_binding import setup_job
 
@@ -102,7 +102,7 @@ def test_resolved_profile_bytes_change_the_binding(tmp_path, monkeypatch):
     monkeypatch.setattr(orca_adapter, 'TEMPLATES', templates)
     before = slice_binding(_job(), 'source-a')
     process = json.loads((templates / 'process.json').read_text())
-    process['print_buddy_test_change'] = '1'
+    process['print_handy_test_change'] = '1'
     (templates / 'process.json').write_text(json.dumps(process))
     assert slice_binding(_job(), 'source-a') != before
 
@@ -120,7 +120,7 @@ def test_slice_records_versioned_recipe_hash_in_the_artifact(tmp_path, monkeypat
     assert record['version'] == 1
     assert job['artifact_binding']['recipe_version'] == 1
     assert job['artifact_binding']['recipe_sha256'] == record['sha256']
-    from print_buddy.core import slice_recipe
+    from print_handy.core import slice_recipe
     expected = slice_binding(job, mj.file_sha256(job['downloaded_file']))
     assert record['sha256'] == slice_recipe.binding_sha256(expected)
     mj.require_current_artifact(job, job['gcode'])
@@ -175,7 +175,7 @@ def test_worker_accepts_the_recipe_intake_bound_before_the_first_slice(tmp_path,
     # Intake binds the job as saved before slicing; slice_job then normalizes the job
     # (printer model, resolved slot selection) and must still see the same recipe.
     from .test_color_intake import source, state
-    from print_buddy.core import slice_recipe
+    from print_handy.core import slice_recipe
     st = state(); st.update(bed_mm=[220, 220], max_print_height_mm=220, moonraker_url='offline://fake')
     for slot in st['ifs_slots'].values():
         slot['physical_color_verified'] = True
@@ -196,7 +196,7 @@ def test_worker_accepts_the_recipe_intake_bound_before_the_first_slice(tmp_path,
         return out, {'offline_test': True}, []
     monkeypatch.setattr(orca_adapter, 'slice_model', slice_fake)
     monkeypatch.setattr(mj, 'verify_gcode', lambda _: None)
-    from print_buddy.printers.flashforge.zmod import multicolor_contract
+    from print_handy.printers.flashforge.zmod import multicolor_contract
     monkeypatch.setattr(multicolor_contract, 'finalize', lambda *a, **k: None)
     requested = slice_recipe.binding_sha256(slice_binding(job, mj.file_sha256(job['downloaded_file'])))
     mj.slice_job(str(jp), copies=2, recipe_sha256=requested)

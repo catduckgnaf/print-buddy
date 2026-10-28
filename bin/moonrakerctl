@@ -5,7 +5,7 @@ set -euo pipefail
 # It intentionally replaces the retired Klipper MCP transport with direct REST calls.
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-setting() { PYTHONPATH="$ROOT${PYTHONPATH:+:$PYTHONPATH}" python3 -m print_buddy.settings get "$1"; }
+setting() { PYTHONPATH="$ROOT${PYTHONPATH:+:$PYTHONPATH}" python3 -m print_handy.settings get "$1"; }
 M="${MOONRAKER_URL:-$(setting services.moonraker_url)}"
 CAMERA_SNAPSHOT_URL="${PRINTER_CAMERA_SNAPSHOT_URL:-$(setting services.camera_snapshot_url)}"
 SPOOLMAN_URL="${SPOOLMAN_URL:-$(setting services.spoolman_url)}"

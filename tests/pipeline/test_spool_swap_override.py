@@ -9,8 +9,8 @@ from unittest import mock
 
 import pytest
 
-from print_buddy.core import model_job
-from print_buddy.printers.flashforge.zmod import multicolor_contract as contract
+from print_handy.core import model_job
+from print_handy.printers.flashforge.zmod import multicolor_contract as contract
 
 
 def _state():
@@ -53,8 +53,8 @@ def test_print_now_reports_contract_refusal_as_one_line():
     with tempfile.TemporaryDirectory() as d, contextlib.ExitStack() as stack:
         _ready(stack)
         stack.enter_context(mock.patch.object(model_job, "verify_gcode"))
-        stack.enter_context(mock.patch("print_buddy.printers.flashforge.zmod.multicolor_contract.embedded_mapping", return_value={"0": {}}))
-        stack.enter_context(mock.patch("print_buddy.printers.flashforge.zmod.multicolor_contract.normalize_mapping",
+        stack.enter_context(mock.patch("print_handy.printers.flashforge.zmod.multicolor_contract.embedded_mapping", return_value={"0": {}}))
+        stack.enter_context(mock.patch("print_handy.printers.flashforge.zmod.multicolor_contract.normalize_mapping",
                                        side_effect=RuntimeError("slot 2 spool changed since slicing (was 3, now 7);\n reslice or confirm")))
         with pytest.raises(SystemExit) as exc:
             model_job.print_now(_gcode(d))

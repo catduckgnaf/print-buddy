@@ -2,7 +2,7 @@
 
 ## Provenance and reconciliation
 
-Standalone bot foundations came from zaheria985/print-buddy commit
+Standalone bot foundations came from zaheria985/print-handy commit
 fba5727184dd8f0070e59c8f1fc088751142a003, integrated through #132. Actual tree
 comparison with #132 merge 362c1642ed34f090f6f81c786c0b91c4f01cb514 differs
 only in two timelapse files (53 added lines): #135 is not missing standalone

@@ -24,12 +24,12 @@ import yaml
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
-from print_buddy import go2rtc, settings  # noqa: E402
+from print_handy import go2rtc, settings  # noqa: E402
 
 DOCKERFILE = (ROOT / "Dockerfile").read_text()
 COMPOSE_TEXT = (ROOT / "docker-compose.yml").read_text()
 COMPOSE = yaml.safe_load(COMPOSE_TEXT)
-UNRAID_TEXT = (ROOT / "docker/unraid/print-buddy.xml").read_text()
+UNRAID_TEXT = (ROOT / "docker/unraid/print-handy.xml").read_text()
 PREBUILT = ROOT / "docker" / "go2rtc-prebuilt.sh"
 
 AMD64_SHA = "20b46c6910734cb05ecefb234066f36868ff19b42ba1418a7a32e13a3e035712"
@@ -105,7 +105,7 @@ class TimelapseCaptureSettingsTests(unittest.TestCase):
         self.assertEqual(data["timelapse"]["capture_source_url"], "")
 
     def test_env_override_enables_capture(self):
-        data = settings.load(environ={"PRINT_BUDDY__TIMELAPSE__CAPTURE_ENABLED": "true"})
+        data = settings.load(environ={"PRINT_HANDY__TIMELAPSE__CAPTURE_ENABLED": "true"})
         self.assertIs(data["timelapse"]["capture_enabled"], True)
 
 
@@ -223,7 +223,7 @@ class Go2rtcLiveGateTests(unittest.TestCase):
         self.assertEqual(go2rtc.gate(data), 3)
 
     def test_the_stream_name_is_the_one_the_activity_page_requests(self):
-        from print_buddy import live_activity, live_stream
+        from print_handy import live_activity, live_stream
         config = go2rtc.render_config(go2rtc.resolve_source(make_live_data()))
         self.assertIn(f"  {live_stream.GO2RTC_STREAM_NAME}: ", config)
         self.assertEqual(live_activity.DEFAULT_STREAM_NAME,
@@ -238,12 +238,12 @@ class SupervisorGo2rtcGateTests(unittest.TestCase):
         fake_python.write_text(
             "#!/bin/bash\n"
             "case \"$*\" in\n"
-            "  *print_buddy.listener_gate*--roster*) printf 'printer1\\n'; exit 0 ;;\n"
-            "  *print_buddy.listener_gate*) exit 3 ;;\n"
-            "  *print_buddy.webui_gate*) exit 3 ;;\n"
-            "  *print_buddy.live_gate*) exit 3 ;;\n"
-            "  *print_buddy.go2rtc*--write-config*) printf '%s\\n' \"$GO2RTC_TEST_CONFIG\" ;;\n"
-            f"  *print_buddy.go2rtc*) exit {gate_code} ;;\n"
+            "  *print_handy.listener_gate*--roster*) printf 'printer1\\n'; exit 0 ;;\n"
+            "  *print_handy.listener_gate*) exit 3 ;;\n"
+            "  *print_handy.webui_gate*) exit 3 ;;\n"
+            "  *print_handy.live_gate*) exit 3 ;;\n"
+            "  *print_handy.go2rtc*--write-config*) printf '%s\\n' \"$GO2RTC_TEST_CONFIG\" ;;\n"
+            f"  *print_handy.go2rtc*) exit {gate_code} ;;\n"
             "  *) echo 'unexpected python3 call: $*' >&2; exit 9 ;;\n"
             "esac\n")
         fake_python.chmod(0o755)
@@ -254,8 +254,8 @@ class SupervisorGo2rtcGateTests(unittest.TestCase):
             "exec sleep 60\n")
         fake_go2rtc.chmod(0o755)
         return {**os.environ, "PATH": directory + ":" + os.environ["PATH"],
-                "PRINT_BUDDY_BUNDLED_SPOOLMAN": "false",
-                "PRINT_BUDDY__SERVICES__SPOOLMAN_URL": "http://external.invalid:8000",
+                "PRINT_HANDY_BUNDLED_SPOOLMAN": "false",
+                "PRINT_HANDY__SERVICES__SPOOLMAN_URL": "http://external.invalid:8000",
                 "DISCORD_BOT_TOKEN": "",
                 "GO2RTC_BIN": str(fake_go2rtc),
                 "GO2RTC_TEST_CONFIG": str(Path(directory, "go2rtc.yaml")),
@@ -334,13 +334,13 @@ class DeploymentContractTests(unittest.TestCase):
         self.assertIn("/dev/dri", UNRAID_TEXT)  # the opt-in note in the header comment
         variables = {c.get("Target"): c for c in root.findall("Config")
                      if c.get("Type") == "Variable"}
-        self.assertEqual(variables["PRINT_BUDDY__TIMELAPSE__CAPTURE_ENABLED"].text, "false")
-        self.assertIn("PRINT_BUDDY__TIMELAPSE__CAPTURE_SOURCE_URL", variables)
+        self.assertEqual(variables["PRINT_HANDY__TIMELAPSE__CAPTURE_ENABLED"].text, "false")
+        self.assertIn("PRINT_HANDY__TIMELAPSE__CAPTURE_SOURCE_URL", variables)
 
     def test_compose_carries_capture_with_off_default(self):
         environment = COMPOSE["services"]["combined"]["environment"]
-        self.assertEqual(environment["PRINT_BUDDY__TIMELAPSE__CAPTURE_ENABLED"],
-                         "${PRINT_BUDDY__TIMELAPSE__CAPTURE_ENABLED:-false}")
+        self.assertEqual(environment["PRINT_HANDY__TIMELAPSE__CAPTURE_ENABLED"],
+                         "${PRINT_HANDY__TIMELAPSE__CAPTURE_ENABLED:-false}")
 
     def test_healthcheck_covers_go2rtc_only_through_the_gate(self):
         text = (ROOT / "docker/healthcheck.py").read_text()
@@ -352,7 +352,7 @@ class DeploymentContractTests(unittest.TestCase):
         text = (ROOT / "docker/supervise.sh").read_text()
         self.assertIn('go2rtc_bin="${GO2RTC_BIN:-/usr/local/bin/go2rtc}"', text)
         self.assertIn('if [ -x "$go2rtc_bin" ]', text)
-        self.assertIn("python3 -m print_buddy.go2rtc", text)
+        self.assertIn("python3 -m print_handy.go2rtc", text)
 
 
 class FanoutFrameUrlTests(unittest.TestCase):
@@ -396,7 +396,7 @@ class FanoutFrameUrlTests(unittest.TestCase):
         self.assertIsNone(self.fanout(data))
 
     def test_frame_url_is_the_one_timelapse_capture_uses(self):
-        from print_buddy.hermes import timelapse_capture
+        from print_handy.hermes import timelapse_capture
         self.assertEqual(timelapse_capture.GO2RTC_FRAME_URL, go2rtc.FRAME_URL)
 
 

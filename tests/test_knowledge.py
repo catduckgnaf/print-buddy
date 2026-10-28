@@ -13,10 +13,10 @@ from unittest import mock
 
 import pytest
 
-from print_buddy import knowledge, printers
-from print_buddy.bot import commands as bot_commands, llm
-from print_buddy.core import prompts
-from print_buddy.knowledge import FlowError, RegistryError
+from print_handy import knowledge, printers
+from print_handy.bot import commands as bot_commands, llm
+from print_handy.core import prompts
+from print_handy.knowledge import FlowError, RegistryError
 
 ROOT = Path(__file__).parents[1]
 PLUGIN_PATH = ROOT / "plugins/print-feedback/__init__.py"
@@ -39,7 +39,7 @@ def test_registries_load_and_validate(registry):
 
 
 def test_printer_registry_matches_code_profiles(registry):
-    """The root printer registry must not drift from print_buddy/printers."""
+    """The root printer registry must not drift from print_handy/printers."""
     assert {p.key for p in registry.printers} == set(printers.MODELS)
     for entry in registry.printers:
         model = printers.MODELS[entry.key]
@@ -99,7 +99,7 @@ STAGE3_IDS = {
     "zmod.clear-nozzle", "zmod.set-extruder-slot", "zmod.set-active-spool",
     "zmod.clear-active-spool", "zmod.save-zmod-data", "zmod.get-zmod-data",
     "zmod.nozzle-control", "zmod.pid-tune-extruder", "zmod.pid-tune-bed", "zmod.zshaper",
-    "zmod.display-off", "zmod.display-on", "zmod.print-buddy",
+    "zmod.display-off", "zmod.display-on", "zmod.print-handy",
     "klipper.pause", "klipper.resume", "klipper.cancel-print",
     "klipper.set-pause-next-layer", "klipper.set-pause-at-layer", "klipper.set-print-stats-info",
 }
@@ -114,7 +114,7 @@ def test_stage3_registry_growth_is_complete_and_provenanced(registry):
         entry = by_id[entry_id]
         assert entry.kind == "macro", entry_id
         assert entry.notes, entry_id
-        assert ("@" in entry.notes) or ("print-buddy.cfg" in entry.notes), entry_id
+        assert ("@" in entry.notes) or ("print-handy.cfg" in entry.notes), entry_id
 
 
 def test_lookup_stage3_entries_by_name_and_alias(registry):
@@ -122,7 +122,7 @@ def test_lookup_stage3_entries_by_name_and_alias(registry):
     assert top(registry, "cold pull").item.id == "zmod.coldpull"
     assert top(registry, "set extruder slot").item.id == "zmod.set-extruder-slot"
     assert top(registry, "save zmod data").item.id == "zmod.save-zmod-data"
-    assert top(registry, "PRINT_BUDDY").item.id == "zmod.print-buddy"
+    assert top(registry, "PRINT_HANDY").item.id == "zmod.print-handy"
     assert top(registry, "pause next layer").item.id == "klipper.set-pause-next-layer"
     assert top(registry, "pause at layer").item.id == "klipper.set-pause-at-layer"
     # The Stage 3 growth must not re-top the pinned cross-family M600 lookup:
@@ -207,9 +207,9 @@ def test_unknown_flow_rejected():
 # --------------------------------------------------------------- no-command proof
 
 def test_knowledge_package_has_no_printer_or_network_imports():
-    forbidden = ("print_buddy.printers", "print_buddy.hermes", "print_buddy.core",
+    forbidden = ("print_handy.printers", "print_handy.hermes", "print_handy.core",
                  "requests", "urllib", "socket", "subprocess", "discord")
-    package = ROOT / "print_buddy" / "knowledge"
+    package = ROOT / "print_handy" / "knowledge"
     for path in package.glob("*.py"):
         tree = ast.parse(path.read_text())
         for node in ast.walk(tree):

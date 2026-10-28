@@ -1,6 +1,6 @@
 """Generated public Discord-flow model intake regressions.
 
-Mock tier: fake Discord and Orca transport; real Print Buddy parsing, fit logic, receipts,
+Mock tier: fake Discord and Orca transport; real Print Handy parsing, fit logic, receipts,
 G-code gates, and start path. No device or Discord network access occurs.
 """
 import json
@@ -13,11 +13,11 @@ from pathlib import Path
 
 import pytest
 
-from print_buddy import settings
+from print_handy import settings
 
 from . import harness
 
-REAL = os.environ.get("PRINT_BUDDY_REAL_SLICER") == "1"
+REAL = os.environ.get("PRINT_HANDY_REAL_SLICER") == "1"
 PUBLIC_LICENSE = re.compile(
     r"(?:cc0(?:[- ]1\.0(?:\s+universal)?)?"
     r"|cc[- ]by(?:[- ]sa)?(?:[- ]\d+(?:\.\d+)?(?:\s+international)?)?"
@@ -208,7 +208,7 @@ def test_checked_in_models_match_the_generator(tmp_path, monkeypatch):
 def test_million_triangle_mesh_audit_completes_offline(tmp_path, monkeypatch):
     """Generate the million-triangle ring at runtime and exercise real audit and placement paths."""
     from . import make_models
-    from print_buddy.core import model_job, orca_adapter
+    from print_handy.core import model_job, orca_adapter
     source = make_models.generate_large_torus(tmp_path / "flexy-ring-million.stl")
     assert source.stat().st_size == 50_000_084
     original_read = orca_adapter.read_stl_triangles

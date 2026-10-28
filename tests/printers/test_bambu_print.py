@@ -12,9 +12,9 @@ import zipfile
 
 import pytest
 
-from print_buddy import printers, settings
-from print_buddy.core import delivery, launch_state, model_job
-from print_buddy.printers.bambulab.client import (BambuLanClient, BambuLanError,
+from print_handy import printers, settings
+from print_handy.core import delivery, launch_state, model_job
+from print_handy.printers.bambulab.client import (BambuLanClient, BambuLanError,
                                                   project_file_payload)
 
 SERIAL = "00M00A000000000"
@@ -102,8 +102,8 @@ class FakeClock:
 def lan_adapter(monkeypatch):
     monkeypatch.setenv("BAMBU_LAN_PASSWORD", CODE)
     cfg = settings.load(local=False, environ={
-        "PRINT_BUDDY__PRINTER__MODEL": "bambulab.a1",
-        "PRINT_BUDDY__BAMBU__LAN_HOST": "192.168.1.50", "PRINT_BUDDY__BAMBU__LAN_SERIAL": SERIAL})
+        "PRINT_HANDY__PRINTER__MODEL": "bambulab.a1",
+        "PRINT_HANDY__BAMBU__LAN_HOST": "192.168.1.50", "PRINT_HANDY__BAMBU__LAN_SERIAL": SERIAL})
     return printers.get("bambulab.a1", cfg)
 
 
@@ -124,7 +124,7 @@ def test_start_print_publishes_the_project_file_payload():
     body = payload["print"]
     assert body["param"] == "Metadata/plate_1.gcode" and body["file"] == "benchy.gcode.3mf"
     assert body["url"] == "ftp:///benchy.gcode.3mf"
-    # Print Buddy never asks for calibration passes it did not slice for; the legacy default
+    # Print Handy never asks for calibration passes it did not slice for; the legacy default
     # starts from the recorded spool with no AMS mapping and no nozzle_mapping (#308).
     assert not any(body[k] for k in ("bed_leveling", "flow_cali", "vibration_cali", "layer_inspect", "use_ams", "timelapse"))
     assert body["sequence_id"] == "20000" and "nozzle_mapping" not in body and "cfg" not in body
@@ -248,7 +248,7 @@ def test_print_bambu_unconfirmed_start_is_uncertain_not_a_resubmit(monkeypatch, 
 
 def test_print_bambu_confirms_on_the_second_poll_when_the_printer_reaches_prepare(monkeypatch, rig, caplog):
     """The live A1 run: idle right after project_file, then PREPARE with the file. Confirmed, no wait-out."""
-    caplog.set_level(logging.INFO, logger="print_buddy.core.model_job")
+    caplog.set_level(logging.INFO, logger="print_handy.core.model_job")
     remote = rig["package"].name
     wire_client(monkeypatch, rig, [snapshot_script(), snapshot_script(), [],
                                    snapshot_script("IDLE"),
@@ -358,6 +358,6 @@ def test_print_bambu_refuses_a_multi_plate_package(monkeypatch, tmp_path, rig):
 
 def test_adapter_control_requires_configuration(monkeypatch):
     plain = printers.get("bambulab.a1", settings.load(
-        local=False, environ={"PRINT_BUDDY__PRINTER__MODEL": "bambulab.a1"}))
+        local=False, environ={"PRINT_HANDY__PRINTER__MODEL": "bambulab.a1"}))
     with pytest.raises(BambuLanError, match="not configured"):
         plain.control("pause")

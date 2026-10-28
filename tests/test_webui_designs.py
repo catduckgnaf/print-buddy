@@ -3,7 +3,7 @@
 Everything runs offline: settings come from temp YAML files, design
 sessions are fabricated records in a temp cache (the same shape the
 engine writes), and the server binds an ephemeral loopback port. The
-catalog reads the session store through print_buddy.core.design, so
+catalog reads the session store through print_handy.core.design, so
 the engine-level tests here pin that read API too.
 """
 import http.client
@@ -14,9 +14,9 @@ import time
 import unittest
 from pathlib import Path
 
-from print_buddy import settings
-from print_buddy.core import design
-from print_buddy.webui import designs, server
+from print_handy import settings
+from print_handy.core import design
+from print_handy.webui import designs, server
 
 TOKEN = "webui-test-token"
 NOW = time.time()

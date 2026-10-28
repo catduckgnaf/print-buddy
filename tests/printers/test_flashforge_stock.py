@@ -3,7 +3,7 @@ import json
 
 import pytest
 
-from print_buddy.printers.flashforge_stock.client import (
+from print_handy.printers.flashforge_stock.client import (
     BUSY_CODE,
     STOCK_PORT,
     StockClient,
@@ -191,8 +191,8 @@ class _FakeStock:
 
 
 def _stock_print(monkeypatch, tmp_path, details, *, slot=1, after=None):
-    from print_buddy.core import launch_state, model_job
-    from print_buddy.printers.flashforge_stock.adapter import StockFlashforgeAdapter
+    from print_handy.core import launch_state, model_job
+    from print_handy.printers.flashforge_stock.adapter import StockFlashforgeAdapter
 
     events = []
     gcode = tmp_path / "plate.gcode"
@@ -226,8 +226,8 @@ def _stock_print(monkeypatch, tmp_path, details, *, slot=1, after=None):
 
 
 def test_stock_print_refuses_an_empty_slot_before_upload(monkeypatch, tmp_path):
-    from print_buddy.core import model_job
-    from print_buddy.printers.flashforge_stock.adapter import StockFlashforgeAdapter
+    from print_handy.core import model_job
+    from print_handy.printers.flashforge_stock.adapter import StockFlashforgeAdapter
 
     gcode = tmp_path / "plate.gcode"
     gcode.write_text("G1 X1\n")
@@ -247,8 +247,8 @@ def test_stock_print_refuses_an_empty_slot_before_upload(monkeypatch, tmp_path):
 
 
 def test_stock_print_refuses_start_print_before_upload(monkeypatch, tmp_path):
-    from print_buddy.core import model_job
-    from print_buddy.printers.flashforge_stock.adapter import StockFlashforgeAdapter
+    from print_handy.core import model_job
+    from print_handy.printers.flashforge_stock.adapter import StockFlashforgeAdapter
 
     gcode = tmp_path / "plate.gcode"
     gcode.write_text("START_PRINT BED_TEMP=60 EXTRUDER_TEMP=215 MESH=auto\\n")
@@ -279,7 +279,7 @@ def test_stock_print_starts_only_the_occupied_slot(monkeypatch, tmp_path):
 
 def test_stock_print_starts_the_timelapse_monitor_on_a_confirmed_start(monkeypatch, tmp_path):
     """#373: the launched-print monitor is the stock family's completion/timelapse path."""
-    from print_buddy.hermes import stock_watch
+    from print_handy.hermes import stock_watch
 
     started = []
     monkeypatch.setattr(stock_watch, "start_monitor",
@@ -291,7 +291,7 @@ def test_stock_print_starts_the_timelapse_monitor_on_a_confirmed_start(monkeypat
 
 
 def test_stock_print_starts_no_monitor_when_the_start_is_unconfirmed(monkeypatch, tmp_path):
-    from print_buddy.hermes import stock_watch
+    from print_handy.hermes import stock_watch
 
     started = []
     monkeypatch.setattr(stock_watch, "start_monitor",

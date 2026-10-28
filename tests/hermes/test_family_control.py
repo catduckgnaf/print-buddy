@@ -8,7 +8,7 @@ nothing at all.
 """
 import pytest
 
-from print_buddy.hermes import family_control as fc
+from print_handy.hermes import family_control as fc
 
 REMOTE = "benchy.gcode"
 
@@ -126,7 +126,7 @@ class _Current:
 
 
 def test_control_for_only_serves_family_printers(monkeypatch):
-    from print_buddy import printers
+    from print_handy import printers
     family = FakeAdapter("elegoo_sdcp")
     monkeypatch.setattr(printers, "current", _Current(family))
     assert fc.control_for().connection == "elegoo_sdcp"
@@ -241,8 +241,8 @@ def test_pause_alerts_never_actuates_the_printer():
 
 def test_octoprint_adapter_translates_stop_to_cancel():
     from unittest import mock
-    from print_buddy.printers.octoprint.adapter import OctoPrintAdapter
-    from print_buddy.printers.octoprint.client import OctoPrintError
+    from print_handy.printers.octoprint.adapter import OctoPrintAdapter
+    from print_handy.printers.octoprint.client import OctoPrintError
 
     calls = []
 
@@ -262,8 +262,8 @@ def test_octoprint_adapter_translates_stop_to_cancel():
 
 def test_stock_adapter_translates_resume_to_continue_via_jobctl():
     from unittest import mock
-    from print_buddy.printers.flashforge_stock.adapter import StockFlashforgeAdapter
-    from print_buddy.printers.flashforge_stock.client import StockLanError
+    from print_handy.printers.flashforge_stock.adapter import StockFlashforgeAdapter
+    from print_handy.printers.flashforge_stock.client import StockLanError
 
     calls = []
 

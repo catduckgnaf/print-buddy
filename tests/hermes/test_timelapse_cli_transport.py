@@ -1,7 +1,7 @@
 """Offline contract tests for timelapse delivery through the Hermes CLI boundary."""
 from types import SimpleNamespace
 
-from print_buddy.hermes import moonraker_event_listener as listener
+from print_handy.hermes import moonraker_event_listener as listener
 
 
 def test_post_passes_media_marker_and_configured_discord_target_to_hermes(monkeypatch):

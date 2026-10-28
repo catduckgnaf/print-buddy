@@ -9,12 +9,12 @@ name: Publish Docker image to GHCR (manual)
 # of this workflow (version releases only — nightly has its own workflow,
 # .github/workflows/nightly.yml, and is never gated). It checks that the
 # README and package version match the version being published and that
-# the GitHub Pages site (catduckgnaf/print-buddy-docs) has no drift
+# the GitHub Pages site (catduckgnaf/print-handy-docs) has no drift
 # against docs/ at this ref, using the docs repo's own drift definition.
 # Candidate dispatches (publish=false) only warn; a publication dispatch
 # (publish=true) fails here, before any image is built or pushed, until
 # the stale surfaces listed in the gate report are fixed (the remedy —
-# the Docs auto-sync in print-buddy-docs — is printed in the report).
+# the Docs auto-sync in print-handy-docs — is printed in the report).
 on:
   workflow_dispatch:
     inputs:
@@ -49,10 +49,10 @@ jobs:
       - name: Clone the docs site for the drift comparison
         run: |
           set -euo pipefail
-          git clone --depth 1 https://github.com/catduckgnaf/print-buddy-docs.git "$RUNNER_TEMP/print-buddy-docs"
+          git clone --depth 1 https://github.com/catduckgnaf/print-handy-docs.git "$RUNNER_TEMP/print-handy-docs"
       - name: Check release surfaces (README, version and Pages drift)
         env:
-          DOCS_DIR: ${{ runner.temp }}/print-buddy-docs
+          DOCS_DIR: ${{ runner.temp }}/print-handy-docs
         run: python3 scripts/check_release_surfaces.py
 
   build:
@@ -77,7 +77,7 @@ jobs:
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 350
     env:
-      IMAGE: ghcr.io/catduckgnaf/print-buddy
+      IMAGE: ghcr.io/catduckgnaf/print-handy
       APP_CHANNEL: stable
       # Inputs reach the shell only as environment variables, never interpolated into scripts.
       PUBLISH_VERSION: ${{ inputs.version }}
@@ -89,7 +89,7 @@ jobs:
       WITH_GO2RTC: "true"
       WITH_BAMBU: "false"
       SPOOLMAN_MODE: included
-      LOCAL_IMAGE: print-buddy-publish-candidate:${{ inputs.version }}-${{ matrix.arch }}
+      LOCAL_IMAGE: print-handy-publish-candidate:${{ inputs.version }}-${{ matrix.arch }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
       - name: Validate release version and prepare evidence
@@ -127,7 +127,7 @@ jobs:
             --build-arg "WITH_ORCA=$WITH_ORCA" \
             --build-arg "WITH_GO2RTC=$WITH_GO2RTC" \
             --build-arg "WITH_BAMBU=$WITH_BAMBU" \
-            --label "org.opencontainers.image.source=https://github.com/catduckgnaf/print-buddy" \
+            --label "org.opencontainers.image.source=https://github.com/catduckgnaf/print-handy" \
             --label "org.opencontainers.image.version=$PUBLISH_VERSION" \
             --label "org.opencontainers.image.revision=$GITHUB_SHA" \
             . 2>&1 | tee evidence/build.log
@@ -145,7 +145,7 @@ jobs:
             docker run --rm --network none --cpus 2 --memory 4g --pids-limit 256 \
               --cap-drop ALL --security-opt no-new-privileges:true \
               --tmpfs /data:uid=1000,gid=1000,size=512m \
-              -e "PRINT_BUDDY_ORCA_CHANNEL=$channel" \
+              -e "PRINT_HANDY_ORCA_CHANNEL=$channel" \
               "$LOCAL_IMAGE" python3 /app/docker/slicer-smoke.py \
               2>&1 | tee "evidence/slicer-$channel.log"
           done
@@ -172,7 +172,7 @@ jobs:
             --build-arg "WITH_ORCA=$WITH_ORCA" \
             --build-arg "WITH_GO2RTC=$WITH_GO2RTC" \
             --build-arg "WITH_BAMBU=$WITH_BAMBU" \
-            --label "org.opencontainers.image.source=https://github.com/catduckgnaf/print-buddy" \
+            --label "org.opencontainers.image.source=https://github.com/catduckgnaf/print-handy" \
             --label "org.opencontainers.image.version=$PUBLISH_VERSION" \
             --label "org.opencontainers.image.revision=$GITHUB_SHA" \
             . 2>&1 | tee evidence/push.log
@@ -214,7 +214,7 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 60
     env:
-      IMAGE: ghcr.io/catduckgnaf/print-buddy
+      IMAGE: ghcr.io/catduckgnaf/print-handy
       # Inputs reach the shell only as environment variables, never interpolated into scripts.
       PUBLISH_VERSION: ${{ inputs.version }}
     steps:

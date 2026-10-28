@@ -1,7 +1,7 @@
 """Profile-scoped truthful receipt feedback and print controls via supported gateway hooks.
 
 The gateway loads this folder through a symlink into the Hermes profile. Everything it needs lives in
-the Print Buddy package: print_buddy.hermes (listener helpers, print control) and print_buddy.core
+the Print Handy package: print_handy.hermes (listener helpers, print control) and print_handy.core
 (the slicing and print pipeline). Hosts, paths and temperatures come from the home configuration.
 """
 import asyncio
@@ -20,10 +20,10 @@ logger = logging.getLogger(__name__)
 
 
 def _make_package_importable():
-    """The gateway does not run from the repo. When print_buddy is not installed, use the repo
+    """The gateway does not run from the repo. When print_handy is not installed, use the repo
     this plugin symlink points into (plugins/print-feedback/__init__.py -> repo root)."""
     try:
-        import print_buddy  # noqa: F401
+        import print_handy  # noqa: F401
     except ImportError:
         root = str(Path(__file__).resolve().parents[2])
         if root not in sys.path:
@@ -31,7 +31,7 @@ def _make_package_importable():
 
 
 _make_package_importable()
-from print_buddy.hermes import _config  # noqa: E402
+from print_handy.hermes import _config  # noqa: E402
 
 
 def _hermes_home():
@@ -66,7 +66,7 @@ def _failure_post(label, exc, note, *, subsystem):
     shared ``diagnostics.plain_post`` so every platform surface uses the
     one wording system.
     """
-    from print_buddy import diagnostics
+    from print_handy import diagnostics
     return diagnostics.plain_post(
         f"{label} didn't work.", next_step=note,
         subsystem=subsystem, exc=exc)
@@ -123,7 +123,7 @@ def _routed_printer_id(source, gateway=None):
     if not isinstance(pid, str) or not pid:
         return None  # only a real stamped id routes; anything else is the legacy path
     try:
-        from print_buddy import settings
+        from print_handy import settings
         if str(pid) == str(settings.default_printer_id(_config.cfg())):
             return None
     except Exception:
@@ -139,7 +139,7 @@ def _pkw(pid):
 def _printer_label(pid):
     """A routed printer's display name for user-facing text (the default printer is named, design §6.1)."""
     try:
-        from print_buddy import settings
+        from print_handy import settings
         entry = settings.by_id(pid, _config.cfg())
         return entry.get('name') or str(pid)
     except Exception:
@@ -149,7 +149,7 @@ def _printer_label(pid):
 def _job_owner_pid(job_json):
     """The roster printer a JOB.json belongs to: its recorded printer_id, else the default printer."""
     try:
-        from print_buddy.core import model_job
+        from print_handy.core import model_job
         return model_job._job_printer_id(json.loads(Path(job_json).read_text()))
     except Exception:
         return None
@@ -183,9 +183,9 @@ async def upload_wait_dispatch(event, gateway, **kwargs):
 
 
 async def guided_dispatch(event, gateway, **kwargs):
-    """/print-buddy setup|debugging|status|cancel, plus plain replies to an open setup checklist (#162).
+    """/print-handy setup|debugging|status|cancel, plus plain replies to an open setup checklist (#162).
 
-    One state machine (print_buddy.bot.guided) serves both runtimes. Setup never collects a
+    One state machine (print_handy.bot.guided) serves both runtimes. Setup never collects a
     token, never writes configuration without the explicit `apply` reply, and never touches a
     printer; debugging is read-only and redacted.
     """
@@ -195,10 +195,10 @@ async def guided_dispatch(event, gateway, **kwargs):
     if not getattr(source, 'user_id', None) or not gateway._is_user_authorized_for_source(source):
         return None
     text = str(getattr(event, 'text', '') or '').strip()
-    from print_buddy.bot import guided
+    from print_handy.bot import guided
     key = f"{source.chat_id}:{source.thread_id or ''}:{source.user_id}"
     store = guided.SetupStore(_state_dir() / guided.STORE_NAME)
-    if not text.startswith('/print-buddy'):
+    if not text.startswith('/print-handy'):
         session = store.get(key)
         if not session or session.get('status') not in ('in_progress', 'awaiting_consent'):
             return None
@@ -214,7 +214,7 @@ async def guided_dispatch(event, gateway, **kwargs):
                                        secrets=[token] if token else [])
 
     def bundle():
-        from print_buddy import diagnostics_bundle
+        from print_handy import diagnostics_bundle
         target = diagnostics_bundle.write_bundle(_state_dir() / diagnostics_bundle.BUNDLE_NAME,
                                                  data=_config.cfg())
         return (f"**Diagnostics bundle written**: `{target}`\n"
@@ -231,7 +231,7 @@ async def guided_dispatch(event, gateway, **kwargs):
                                         token_env=token_env, report=report, bundle=bundle)
     except Exception:
         logger.exception('guided setup/debugging failed')
-        reply = 'That guided step failed and nothing was changed. Try `/print-buddy status`, or `/print-buddy cancel` to pause setup.'
+        reply = 'That guided step failed and nothing was changed. Try `/print-handy status`, or `/print-handy cancel` to pause setup.'
     if reply is None:
         return None
     metadata = {'thread_id': source.thread_id} if source.thread_id else None
@@ -246,7 +246,7 @@ _HERMES_LLM = None
 
 
 def _design_root(cfg):
-    from print_buddy.core import design
+    from print_handy.core import design
     cache = (cfg.get('paths') or {}).get('cache')
     return design.sessions_root(cache) if cache else design.sessions_root(_hermes_home() / 'cache')
 
@@ -260,7 +260,7 @@ def _design_transport(cfg):
     The HTTP transport (standalone, or the Hermes fallback when ctx.llm is
     unavailable) resolves its endpoint from [design] inheriting [llm].
     """
-    from print_buddy.core import design
+    from print_handy.core import design
     design_cfg = cfg.get('design') or {}
     timeout_s = int(design_cfg.get('timeout_s') or 180)
     if (cfg.get('bot') or {}).get('mode') == 'hermes' and _HERMES_LLM is not None:
@@ -286,9 +286,9 @@ async def _design_handoff(event, gateway, adapter, session, stl_path):
     """
     import copy as _copy
     import uuid as _uuid
-    from print_buddy.core import printer_state
-    from print_buddy.core.link_intake import PromptCancelled
-    from print_buddy.core.prepared_intake import prepare_link
+    from print_handy.core import printer_state
+    from print_handy.core.link_intake import PromptCancelled
+    from print_handy.core.prepared_intake import prepare_link
     source = event.source
     metadata = {'thread_id': source.thread_id} if source.thread_id else None
     await adapter.send(chat_id=source.chat_id, metadata=metadata,
@@ -319,7 +319,7 @@ async def _design_handoff(event, gateway, adapter, session, stl_path):
 
 def _fetch_design_link(url, target_dir):
     """Seam over design.fetch_link_source so dispatch tests can fake the network."""
-    from print_buddy.core import design
+    from print_handy.core import design
     return design.fetch_link_source(url, target_dir)
 
 
@@ -372,7 +372,7 @@ def _recent_design_source(source):
     if url:
         return None, url
     try:
-        from print_buddy.core.prepared_intake import last_job
+        from print_handy.core.prepared_intake import last_job
         job = last_job()
     except Exception:
         job = None
@@ -429,9 +429,9 @@ async def design_dispatch(event, gateway, **kwargs):
     text = str(getattr(event, 'text', '') or '').strip()
     command_args = _design_command_args(text)
     is_command = command_args is not None
-    from print_buddy.core import design
-    from print_buddy.core.link_intake import model_link
-    from print_buddy.core.prepared_intake import model_file
+    from print_handy.core import design
+    from print_handy.core.link_intake import model_link
+    from print_handy.core.prepared_intake import model_file
     cfg = _config.cfg()
     root = _design_root(cfg)
     owner = f"{source.chat_id}:{source.thread_id or ''}:{source.user_id}"
@@ -489,7 +489,7 @@ async def design_dispatch(event, gateway, **kwargs):
     design_raw = (cfg.get('design') or {}).get('enabled')
     if design_raw is False:
         await say('Design is not set up: design.enabled is false — set design.enabled = true '
-                  '(PRINT_BUDDY__DESIGN__ENABLED=true) or remove it to turn design on when a '
+                  '(PRINT_HANDY__DESIGN__ENABLED=true) or remove it to turn design on when a '
                   'model is configured — see docs/DESIGN.md. Nothing was designed.')
         return {'action': 'skip', 'reason': 'design not enabled'}
     if complete is None:
@@ -501,7 +501,7 @@ async def design_dispatch(event, gateway, **kwargs):
         # Auto posture with nothing configured anywhere: the same "not set
         # up" answer the command has always given (#422).
         await say('Design is not set up: configure a design model — set [design] chat_url/model '
-                  '(or the [llm] values they inherit), or PRINT_BUDDY__DESIGN__ENABLED=true with '
+                  '(or the [llm] values they inherit), or PRINT_HANDY__DESIGN__ENABLED=true with '
                   'a design endpoint — see docs/DESIGN.md. Nothing was designed.')
         return {'action': 'skip', 'reason': 'design not enabled'}
     engine = design.DesignEngine((cfg.get('paths') or {}).get('cache') or (_hermes_home() / 'cache'),
@@ -563,7 +563,7 @@ async def design_dispatch(event, gateway, **kwargs):
     except Exception:
         logger.exception('design turn failed unexpectedly')
         await say('That design change did not work, and I could not tell why from here. Nothing was sliced or started. '
-                  'If it keeps happening, run `/print-buddy bundle` and share the bundle so it can be looked into.')
+                  'If it keeps happening, run `/print-handy bundle` and share the bundle so it can be looked into.')
         return {'action': 'skip', 'reason': 'design turn failed'}
     session = result['session']
     lines = [f"**Design turn {session['turns']}** — {design.summary_text(result)}"]
@@ -830,10 +830,10 @@ async def color_selection_dispatch(event, gateway, **kwargs):
     adapter = gateway._delivery_adapter_for(source)
     if adapter is None:
         return {'action': 'skip', 'reason': 'color UI delivery unavailable'}
-    from print_buddy.core import printer_state
-    from print_buddy.core.discord_color_intake import collect
-    from print_buddy.core.link_intake import PromptCancelled
-    from print_buddy.core import model_job
+    from print_handy.core import printer_state
+    from print_handy.core.discord_color_intake import collect
+    from print_handy.core.link_intake import PromptCancelled
+    from print_handy.core import model_job
     ARCHIVE = model_job.ARCHIVE
     path = Path(text[len('/print-colors '):]).expanduser().resolve()
     metadata = {'thread_id': source.thread_id} if source.thread_id else None
@@ -871,7 +871,7 @@ def intake_plain_start_failure(detail):
     receipt and log; chat gets prepared_intake's translation, which the
     intake flow already uses for the same tails.
     """
-    from print_buddy.core import prepared_intake
+    from print_handy.core import prepared_intake
     return prepared_intake.plain_start_failure(detail)
 
 
@@ -892,7 +892,7 @@ async def _offer_spool_change(adapter, source, metadata, print_next, target, det
     Only the slice-time spool id is waived; material family and live slot checks still run.
     """
     import uuid
-    from print_buddy.core.prompts import gateway as _prompts
+    from print_handy.core.prompts import gateway as _prompts
     cm = _prompts()
     question = _spool_change_text(target, detail)
     choices = [USE_LOADED_SPOOL, print_next.CANCEL_LABEL]
@@ -929,7 +929,7 @@ async def print_next_dispatch(event, gateway, **kwargs):
     if adapter is None:
         return {'action': 'skip', 'reason': 'next plate UI delivery unavailable'}
     import uuid
-    from print_buddy.hermes import print_next
+    from print_handy.hermes import print_next
     metadata = {'thread_id': source.thread_id} if source.thread_id else None
     args = text[len('/print-next'):].split()
     plan_id = args[0] if args else ''
@@ -949,14 +949,14 @@ async def print_next_dispatch(event, gateway, **kwargs):
         if pid:
             # The channel is the target (#335): a plan whose job belongs to
             # another printer is refused here, before any prompt is shown.
-            from print_buddy.core import model_job as _mj
+            from print_handy.core import model_job as _mj
             _job = json.loads(Path(target['job_json']).read_text())
             _job_pid = _mj._job_printer_id(_job)
             if _job_pid != pid:
                 raise print_next.NextPlateError(
                     f"that plan belongs to {_printer_label(_job_pid)}, not this channel's printer "
                     f"({_printer_label(pid)})")
-        from print_buddy.hermes import discord_print_summary as print_summary
+        from print_handy.hermes import discord_print_summary as print_summary
         job, plate = print_summary.find_job(target['gcode'])
         seconds = (plate or {}).get('seconds')
         number = print_summary._print_number({'_job_path': str(Path(target['job_json']).parent)})
@@ -964,7 +964,7 @@ async def print_next_dispatch(event, gateway, **kwargs):
                                    f"plus warmup ~{print_summary.human(seconds + print_summary.WARMUP_S)} total"
                                    if isinstance(seconds, (int, float)) else
                                    f"Print #{number if number else 'unknown'}; estimated print time unknown")
-        from print_buddy.core.prompts import gateway as _prompts
+        from print_handy.core.prompts import gateway as _prompts
         cm = _prompts()
         choices = [print_next.START_LABEL, print_next.CANCEL_LABEL]
         question = print_next.question_text(target)
@@ -992,7 +992,7 @@ async def print_next_dispatch(event, gateway, **kwargs):
                        else f"Did not start {target['label']}. Not retrying.\n"
                             + intake_plain_start_failure(detail))
             if not ok and _start_refused_needs_restart(detail):
-                from print_buddy.hermes import print_control as pc
+                from print_handy.hermes import print_control as pc
                 message += '\n' + await _offer_force_restart(adapter, source, metadata, pc, detail,
                                                              live_key=gateway._session_key_for_source(source),
                                                              **_pkw(pid))
@@ -1022,7 +1022,7 @@ def _discord_operator(event, gateway):
 
 
 def _maintenance_hours_now(printer_id=None):
-    from print_buddy.hermes import print_control
+    from print_handy.hermes import print_control
     payload = (print_control._send('/server/history/totals', printer_id=printer_id)
                if printer_id else print_control._call('/server/history/totals'))
     result = payload.get('result') or {}
@@ -1034,7 +1034,7 @@ def _maintenance_hours_now(printer_id=None):
 
 def _cold_pull_temps():
     """(pla_hot, pla_cold, petg_hot, petg_cold, pla_retry_cold) from [cold_pull] in the home configuration."""
-    from print_buddy.hermes import print_control as pc
+    from print_handy.hermes import print_control as pc
     pla_hot, pla_cold = pc.COLD_PULL_PROFILES['pla_trial']
     petg_hot, petg_cold = pc.COLD_PULL_PROFILES['petg']
     return pla_hot, pla_cold, petg_hot, petg_cold, pla_cold + 5
@@ -1043,8 +1043,8 @@ def _cold_pull_temps():
 async def _coldpull_workflow(adapter, source, metadata, *, source_tag, initial_cold=None, selected_material=None,
                              printer_id=None, live_key=None):
     """Shared user interaction for the standalone and maintenance cold-pull paths."""
-    from print_buddy.hermes import maintenance
-    from print_buddy.hermes import print_control as pc
+    from print_handy.hermes import maintenance
+    from print_handy.hermes import print_control as pc
 
     if printer_id is None:
         # No explicit printer (the standalone /print-coldpull call): the
@@ -1164,7 +1164,7 @@ async def maintenance_dispatch(event, gateway, **kwargs):
         return {'action': 'skip', 'reason': 'maintenance UI delivery unavailable'}
     import json as _json
     import uuid
-    from print_buddy.hermes import maintenance
+    from print_handy.hermes import maintenance
     metadata = {'thread_id': source.thread_id} if source.thread_id else None
     pid = _routed_printer_id(source, gateway)
     mode = str(getattr(event, 'text', '')).strip()[len('/print-maintenance'):].strip().casefold() or 'full'
@@ -1180,7 +1180,7 @@ async def maintenance_dispatch(event, gateway, **kwargs):
         return {'action': 'skip', 'reason': 'maintenance already active'}
     _seen[key] = time.monotonic()
     try:
-        from print_buddy.hermes import print_control as pc
+        from print_handy.hermes import print_control as pc
         st = await asyncio.to_thread(pc.status, **_pkw(pid))
         if st.get('state') in {'printing', 'paused'}:
             message = f"Maintenance is unavailable while the printer is {st['state']}. Nothing changed."
@@ -1276,7 +1276,7 @@ def _cancel_spool_question_print(listener, spool_sync, context):
     this raises and the question stays open and answerable, so the operator
     is never deadlocked by a failed cancel.
     """
-    from print_buddy.hermes import print_stop
+    from print_handy.hermes import print_stop
     current = listener.load_runout_pause()
     if current is None:
         raise spool_sync.SpoolError('that spool question was already answered; nothing changed')
@@ -1312,7 +1312,7 @@ async def runout_intake_dispatch(event, gateway, **kwargs):
     text = str(getattr(event, 'text', '')).strip()
     if source is None or not text or text.startswith('/'):
         return None
-    from print_buddy.hermes import moonraker_event_listener as listener
+    from print_handy.hermes import moonraker_event_listener as listener
     context = listener.load_runout_pause()
     if context is None:
         return None
@@ -1324,7 +1324,7 @@ async def runout_intake_dispatch(event, gateway, **kwargs):
     adapter = gateway._delivery_adapter_for(source)
     metadata = {'thread_id': source.thread_id} if source.thread_id else None
     if listener.parse_cancel_print_reply(text):
-        from print_buddy.hermes import spool_sync
+        from print_handy.hermes import spool_sync
         try:
             message = await asyncio.to_thread(_cancel_spool_question_print, listener, spool_sync, context)
         except Exception as exc:
@@ -1343,7 +1343,7 @@ async def runout_intake_dispatch(event, gateway, **kwargs):
             'Spool question is still open and usage is still paused. Reply with a spool number, '
             '`same`, brand, material, color, grams — or `cancel the print`. Nothing was changed.'))
         return {'action': 'skip', 'reason': 'spool reply needs a choice'}
-    from print_buddy.hermes import spool_sync
+    from print_handy.hermes import spool_sync
     try:
         message = await asyncio.to_thread(_answer_spool_question, listener, spool_sync, context, choice)
     except Exception as exc:
@@ -1404,7 +1404,7 @@ async def spool_dispatch(event, gateway, **kwargs):
         return None
     if adapter is None:
         return {'action': 'skip', 'reason': 'spool UI delivery unavailable'}
-    from print_buddy.hermes import spool_sync
+    from print_handy.hermes import spool_sync
     metadata = {'thread_id': source.thread_id} if source.thread_id else None
     pid = _routed_printer_id(source, gateway)
     # A routed channel's spool state and screen pushes are that printer's:
@@ -1450,7 +1450,7 @@ async def lookup_dispatch(event, gateway, **kwargs):
         return None
     if adapter is None:
         return {'action': 'skip', 'reason': 'lookup UI delivery unavailable'}
-    from print_buddy import knowledge
+    from print_handy import knowledge
     metadata = {'thread_id': source.thread_id} if source.thread_id else None
     query = str(getattr(event, 'text', '')).strip()[len('/print-lookup'):].strip()
     try:
@@ -1480,15 +1480,15 @@ async def macros_dispatch(event, gateway, **kwargs):
         return None
     if adapter is None:
         return {'action': 'skip', 'reason': 'macros UI delivery unavailable'}
-    from print_buddy import macros, printers
-    from print_buddy.hermes import spool_sync
+    from print_handy import macros, printers
+    from print_handy.hermes import spool_sync
     metadata = {'thread_id': source.thread_id} if source.thread_id else None
     pid = _routed_printer_id(source, gateway)
     mr = spool_sync.moonraker_for(pid)
     args = str(getattr(event, 'text', '')).strip()[len('/print-macros'):].split()
     try:
         if pid:
-            from print_buddy import settings
+            from print_handy import settings
             connection = printers.get(settings.by_id(pid, _config.cfg())["model"],
                                       settings.view_for(pid, _config.cfg())).connection
         else:
@@ -1557,7 +1557,7 @@ _LIVE_SESSION = None
 def _live_session():
     global _LIVE_SESSION
     if _LIVE_SESSION is None:
-        from print_buddy import live_stream
+        from print_handy import live_stream
         _LIVE_SESSION = live_stream.LiveStreamSession()
     return _LIVE_SESSION
 
@@ -1567,15 +1567,15 @@ async def live_dispatch(event, gateway, **kwargs):
 
     Discord only, and deliberately not a voice connection: the Stage 0
     audit found Discord's bot API cannot send video (the custom-sender
-    lineage is selfbot-only, which Print Buddy will never use), and the
+    lineage is selfbot-only, which Print Handy will never use), and the
     chosen transport is the Embedded App (Activity) in the voice
     channel. So start/stop drive the LiveStreamSession state machine in
-    print_buddy.live_stream and answer with the Activity pointer for
+    print_handy.live_stream and answer with the Activity pointer for
     the one configured voice channel; other platforms get no command
     surface at all — the dispatch returns None for their sources, like
     an unknown command. The [live_stream] activity page and its OAuth
-    allowlist live in print_buddy.live_activity; stage 4 serves that
-    page from the supervised Activity server (print_buddy.live_gate)
+    allowlist live in print_handy.live_activity; stage 4 serves that
+    page from the supervised Activity server (print_handy.live_gate)
     behind the named tunnel, shares this session through the on-disk
     record (auto-start on print, viewer presence, the empty timeout),
     and is documented in docs/DISCORD-BOT-SETUP.md section 7.
@@ -1587,7 +1587,7 @@ async def live_dispatch(event, gateway, **kwargs):
         return None
     if adapter is None:
         return {'action': 'skip', 'reason': 'live UI delivery unavailable'}
-    from print_buddy import live_stream
+    from print_handy import live_stream
     metadata = {'thread_id': source.thread_id} if source.thread_id else None
     section = _config.cfg().get('live_stream') or {}
     args = str(getattr(event, 'text', '')).strip()[len('/print-live'):].split()
@@ -1670,7 +1670,7 @@ async def troubleshoot_dispatch(event, gateway, **kwargs):
         return None
     if adapter is None:
         return {'action': 'skip', 'reason': 'troubleshoot UI delivery unavailable'}
-    from print_buddy import knowledge
+    from print_handy import knowledge
     metadata = {'thread_id': source.thread_id} if source.thread_id else None
     arg = str(getattr(event, 'text', '')).strip()[len('/print-troubleshoot'):].strip().casefold()
     registry = knowledge.default_registry()
@@ -1749,8 +1749,8 @@ async def print_stop_dispatch(event, gateway, **kwargs):
     if adapter is None:
         return {'action': 'skip', 'reason': 'print stop UI delivery unavailable'}
     import uuid
-    from print_buddy.hermes import print_stop
-    from print_buddy.hermes import discord_print_summary as summary
+    from print_handy.hermes import print_stop
+    from print_handy.hermes import discord_print_summary as summary
     metadata = {'thread_id': source.thread_id} if source.thread_id else None
     pid = _routed_printer_id(source, gateway)
     key = ('print-stop', source.chat_id, source.thread_id)
@@ -1771,7 +1771,7 @@ async def print_stop_dispatch(event, gateway, **kwargs):
         if st['state'] not in print_stop.ACTIVE:
             message = f"Nothing to stop: printer is {st['state']}. Nothing sent."
         else:
-            from print_buddy.core.prompts import gateway as _prompts
+            from print_handy.core.prompts import gateway as _prompts
             cm = _prompts()
             name = summary.format_event('started', st['filename']).splitlines()[0].split(': ', 1)[-1]
             where = print_stop.where_text(st)
@@ -1826,7 +1826,7 @@ def _control_gate(event, gateway):
 
 async def _confirm(adapter, source, metadata, prefix, question, choices, timeout, live_key=None):
     import uuid
-    from print_buddy.core.prompts import gateway as _prompts
+    from print_handy.core.prompts import gateway as _prompts
     cm = _prompts()
     cid = uuid.uuid4().hex
     session_key = f'{prefix}:{source.chat_id}:{source.thread_id}'
@@ -1855,8 +1855,8 @@ async def print_resume_dispatch(event, gateway, **kwargs):
         return None
     if adapter is None:
         return {'action': 'skip', 'reason': 'print resume UI delivery unavailable'}
-    from print_buddy.hermes import print_control as pc
-    from print_buddy.hermes import discord_print_summary as summary
+    from print_handy.hermes import print_control as pc
+    from print_handy.hermes import discord_print_summary as summary
     metadata = {'thread_id': source.thread_id} if source.thread_id else None
     pid = _routed_printer_id(source, gateway)
     key = ('print-resume', source.chat_id, source.thread_id)
@@ -1918,8 +1918,8 @@ async def print_again_dispatch(event, gateway, **kwargs):
         return None
     if adapter is None:
         return {'action': 'skip', 'reason': 'print again UI delivery unavailable'}
-    from print_buddy.hermes import print_control as pc
-    from print_buddy.hermes import print_next
+    from print_handy.hermes import print_control as pc
+    from print_handy.hermes import print_next
     metadata = {'thread_id': source.thread_id} if source.thread_id else None
     pid = _routed_printer_id(source, gateway)
     query = str(plain_number) if plain_number is not None else text[len('/print-again'):].strip()
@@ -1970,7 +1970,7 @@ async def print_again_dispatch(event, gateway, **kwargs):
         if answer != pc.AGAIN_LABEL:
             message = 'Cancelled or expired. Nothing uploaded or started.'
         else:
-            from print_buddy.hermes import discord_print_summary as print_summary
+            from print_handy.hermes import discord_print_summary as print_summary
             gcode_seconds, filament_g = print_summary.gcode_metadata(target['gcode'])
             number = print_summary._print_number({'_job_path': str(Path(target['job_json']).parent)})
             estimate = pc.start_estimate_text(target, gcode_seconds, filament_g)
@@ -2053,7 +2053,7 @@ async def print_reboot_dispatch(event, gateway, **kwargs):
             return {'action': 'skip', 'reason': 'print reboot UI delivery unavailable'}
     if adapter is None:
         return {'action': 'skip', 'reason': 'print reboot UI delivery unavailable'}
-    from print_buddy.hermes import print_control as pc
+    from print_handy.hermes import print_control as pc
     metadata = {'thread_id': source.thread_id} if source.thread_id else None
     # The routing helpers are resolved defensively: an offline regression
     # test execs this function alone in a bare namespace (test_reboot_standby).
@@ -2070,7 +2070,7 @@ async def print_reboot_dispatch(event, gateway, **kwargs):
         if st.get('klippy') == 'shutdown' and st.get('state') != 'printing':
             # Emergency stop: REBOOT is a G-code macro Klipper rejects while shut down.
             # One FIRMWARE_RESTART clears it; no motion, no heat. Still needs the confirm button.
-            from print_buddy.hermes import print_alert_buttons as pab
+            from print_handy.hermes import print_alert_buttons as pab
             reason = await asyncio.to_thread(pab.shutdown_message, **pkw)
             answer = await _confirm(adapter, source, metadata, 'print-reboot',
                                     "The printer is in an emergency stop. " + pab.explain(reason)
@@ -2117,7 +2117,7 @@ async def typed_quantity_dispatch(event, gateway, **kwargs):
     source = event.source
     if not getattr(source, 'user_id', None) or not gateway._is_user_authorized_for_source(source):
         return None
-    from print_buddy.core.link_intake import typed_reply
+    from print_handy.core.link_intake import typed_reply
     error = typed_reply(source, getattr(event, 'text', ''))
     if error is None:
         return None
@@ -2152,12 +2152,12 @@ def _recent_model_link_from_db():
 
 
 def _recent_model_link(source):
-    """The last model link in this channel: Print Buddy's own state first, then Hermes' state.db."""
-    from print_buddy.bot import recent_links
+    """The last model link in this channel: Print Handy's own state first, then Hermes' state.db."""
+    from print_handy.bot import recent_links
     found = recent_links.recall(getattr(source, 'chat_id', None), getattr(source, 'thread_id', None))
     if found:
         return found
-    from print_buddy.core import prompts
+    from print_handy.core import prompts
     if prompts.active():
         return None  # standalone: there is no Hermes session history to read
     return _recent_model_link_from_db()
@@ -2190,8 +2190,8 @@ async def model_link_dispatch(event, gateway, **kwargs):
         return None
     if not getattr(source, 'user_id', None) or not gateway._is_user_authorized_for_source(source):
         return None
-    from print_buddy.core.link_intake import model_link
-    from print_buddy.core.prepared_intake import prepare_link as collect_link, model_file, reprint_request, last_job
+    from print_handy.core.link_intake import model_link
+    from print_handy.core.prepared_intake import prepare_link as collect_link, model_file, reprint_request, last_job
     text = getattr(event, 'text', '')
     reuse = None
     if not (model_link(text) or model_file(event)):
@@ -2207,7 +2207,7 @@ async def model_link_dispatch(event, gateway, **kwargs):
                 return None
     linked = model_link(text)
     if linked:
-        from print_buddy.bot import recent_links
+        from print_handy.bot import recent_links
         recent_links.remember(source.chat_id, linked, getattr(source, 'thread_id', None))
     event.metadata['fresh_model_intake_handled'] = True
     event.metadata['live_session_key'] = gateway._session_key_for_source(source)
@@ -2220,8 +2220,8 @@ async def model_link_dispatch(event, gateway, **kwargs):
         ack = None  # the preview and color picker are the acknowledgement
         if ack:
             await _deliver_receipt(source, adapter, mid, ack)
-    from print_buddy.core import printer_state
-    from print_buddy.core.link_intake import PromptCancelled
+    from print_handy.core import printer_state
+    from print_handy.core.link_intake import PromptCancelled
     root = _state_dir() / 'model-link-intakes'
     pid = _routed_printer_id(source, gateway)
     try:
@@ -2250,7 +2250,7 @@ async def model_link_dispatch(event, gateway, **kwargs):
 
 def alert_button_handlers(bot, adapter):
     """Handle listener buttons, including IFS inventory choices, for authorized Discord users."""
-    from print_buddy.hermes import print_alert_buttons as pab
+    from print_handy.hermes import print_alert_buttons as pab
 
     def allowed(interaction):
         user = getattr(interaction, 'user', None)
@@ -2269,7 +2269,7 @@ def alert_button_handlers(bot, adapter):
     async def reject(interaction):
         await interaction.response.send_message('Not allowed. Nothing changed.', ephemeral=True)
 
-    from print_buddy.core import prepared_intake as _pi
+    from print_handy.core import prepared_intake as _pi
     STOP_PREFIX = _pi.STOP_CUSTOM_ID
 
     async def send_stop(source, text, clarify_id):
@@ -2289,7 +2289,7 @@ def alert_button_handlers(bot, adapter):
     async def edit_refusal(source, message, text, context, raw):
         """Retire Stop and replace it with plain guidance plus a single Retry button."""
         import discord
-        from print_buddy.hermes import print_alert_buttons as pab
+        from print_handy.hermes import print_alert_buttons as pab
         receipt = (context or {}).get('receipt') or {}
         receipt_id = str(receipt.get('intake_id') or '')
         if not re.fullmatch(r'[a-f0-9]{32}', receipt_id):
@@ -2304,7 +2304,7 @@ def alert_button_handlers(bot, adapter):
     _pi.REFUSAL_EDITOR = edit_refusal
 
     async def handle_stop(interaction, clarify_id):
-        from print_buddy.core.prompts import gateway as _prompts
+        from print_handy.core.prompts import gateway as _prompts
         cm = _prompts()
         resolved = cm.resolve_gateway_clarify(clarify_id, _pi.STOP_LABEL)
         note = 'Stopping.' if resolved else 'That step already finished. Nothing to stop.'
@@ -2317,7 +2317,7 @@ def alert_button_handlers(bot, adapter):
     _pi.STOP_SENDER = send_stop
     async def insertion_select(interaction, aid, alert):
         import discord
-        from print_buddy.hermes import spool_sync
+        from print_handy.hermes import spool_sync
         slot = alert.get('slot')
         if slot not in (1, 2, 3, 4):
             await interaction.response.send_message('That insertion prompt is invalid. Nothing changed.', ephemeral=True)
@@ -2367,7 +2367,7 @@ def alert_button_handlers(bot, adapter):
                     await modal_interaction.response.send_message('That form is old or was already submitted. Nothing changed.', ephemeral=True)
                     return
                 try:
-                    from print_buddy.hermes import spool_sync
+                    from print_handy.hermes import spool_sync
                     values = {key: str(item.value or '') for key, item in self.fields.items()}
                     result = await asyncio.to_thread(pab.create_and_bind_insertion, pending['slot'], values, spool_sync)
                 except Exception as exc:
@@ -2380,7 +2380,7 @@ def alert_button_handlers(bot, adapter):
 
     async def spool_question_select(interaction, alert):
         import discord
-        from print_buddy.hermes import spool_sync
+        from print_handy.hermes import spool_sync
         context = alert.get('context') or {}
         slot = context.get('slot')
         if slot not in (1, 2, 3, 4):
@@ -2431,8 +2431,8 @@ def alert_button_handlers(bot, adapter):
                     await modal_interaction.response.send_message('That form is old or was already submitted. Nothing changed.', ephemeral=True)
                     return
                 try:
-                    from print_buddy.hermes import moonraker_event_listener as listener
-                    from print_buddy.hermes import spool_sync
+                    from print_handy.hermes import moonraker_event_listener as listener
+                    from print_handy.hermes import spool_sync
                     values = {key: str(item.value or '') for key, item in self.fields.items()}
                     choice = {'status': 'new', 'brand': values['brand'] or None, 'material': values['material'],
                               'color': values['color'], 'grams': values['grams'], 'lot': values['lot'] or None}
@@ -2457,8 +2457,8 @@ def alert_button_handlers(bot, adapter):
             logger.debug('could not strip spool-question buttons', exc_info=True)
         if action == 'cancel':
             try:
-                from print_buddy.hermes import moonraker_event_listener as listener
-                from print_buddy.hermes import spool_sync
+                from print_handy.hermes import moonraker_event_listener as listener
+                from print_handy.hermes import spool_sync
                 result = await asyncio.to_thread(_cancel_spool_question_print, listener, spool_sync,
                                                  alert.get('context') or {})
             except Exception as exc:
@@ -2477,8 +2477,8 @@ def alert_button_handlers(bot, adapter):
             await spool_question_modal(interaction, alert)
             return
         try:
-            from print_buddy.hermes import moonraker_event_listener as listener
-            from print_buddy.hermes import spool_sync
+            from print_handy.hermes import moonraker_event_listener as listener
+            from print_handy.hermes import spool_sync
             result = await asyncio.to_thread(_answer_spool_question, listener, spool_sync,
                                              alert.get('context') or {}, {'status': 'same'})
         except Exception as exc:
@@ -2494,8 +2494,8 @@ def alert_button_handlers(bot, adapter):
             return
         try:
             spool_id = int((getattr(interaction, 'data', {}) or {}).get('values', [None])[0])
-            from print_buddy.hermes import moonraker_event_listener as listener
-            from print_buddy.hermes import spool_sync
+            from print_handy.hermes import moonraker_event_listener as listener
+            from print_handy.hermes import spool_sync
             result = await asyncio.to_thread(_answer_spool_question, listener, spool_sync,
                                              pending['context'], {'status': 'existing', 'spool_id': spool_id})
         except Exception as exc:
@@ -2528,7 +2528,7 @@ def alert_button_handlers(bot, adapter):
             return
         try:
             spool_id = int((getattr(interaction, 'data', {}) or {}).get('values', [None])[0])
-            from print_buddy.hermes import spool_sync
+            from print_handy.hermes import spool_sync
             result = await asyncio.to_thread(pab.bind_insertion_existing, pending['slot'], spool_id, spool_sync)
         except Exception as exc:
             logger.exception('existing insertion spool failed')
@@ -2539,7 +2539,7 @@ def alert_button_handlers(bot, adapter):
     async def handle_plate_pick(interaction, aid):
         """Choosing a plate only prepares one Confirm button; nothing starts here."""
         import discord
-        from print_buddy.hermes import print_next
+        from print_handy.hermes import print_next
         alert = await asyncio.to_thread(pab.peek, aid)
         if not alert or alert.get('kind') != 'plate-picker':
             await interaction.response.send_message('That plate picker is old or was already used. Nothing started.', ephemeral=True)
@@ -2561,7 +2561,7 @@ def alert_button_handlers(bot, adapter):
 
     async def handle_plate_go(interaction, aid):
         """The one Confirm tap. The alert is single use and print_next.start re-checks the printer and claim."""
-        from print_buddy.hermes import print_next
+        from print_handy.hermes import print_next
         alert = await asyncio.to_thread(pab.take, aid)
         if not alert or alert.get('kind') != 'plate-confirm':
             await interaction.response.send_message('That confirmation is old or was already used. Nothing started.', ephemeral=True)
@@ -2577,7 +2577,7 @@ def alert_button_handlers(bot, adapter):
     async def run_plate_start(interaction, target, alert, accept_spool_change=False):
         """Start the plate once. A spool swapped since slicing gets one extra single-use button, not a retry."""
         import discord
-        from print_buddy.hermes import print_next
+        from print_handy.hermes import print_next
         view = None
         try:
             ok, detail = await print_next.start({**target, 'accept_spool_change': True} if accept_spool_change else target)
@@ -2599,7 +2599,7 @@ def alert_button_handlers(bot, adapter):
 
     async def handle_plate_spool(interaction, aid):
         """Single-use 'use the loaded spool' tap. start() still re-checks the printer, claim and live slot."""
-        from print_buddy.hermes import print_next
+        from print_handy.hermes import print_next
         alert = await asyncio.to_thread(pab.take, aid)
         if not alert or alert.get('kind') != 'plate-spool':
             await interaction.response.send_message('That spool confirmation is old or was already used. Nothing started.', ephemeral=True)
@@ -2615,8 +2615,8 @@ def alert_button_handlers(bot, adapter):
     async def handle_intake_retry(interaction, receipt_id):
         """Retry this exact refused plate through print_next.start and all of its guards."""
         import discord
-        from print_buddy.hermes import print_alert_buttons as pab, print_next
-        from print_buddy.core import prepared_intake as intake
+        from print_handy.hermes import print_alert_buttons as pab, print_next
+        from print_handy.core import prepared_intake as intake
         receipt_path = _state_dir() / 'model-link-intakes' / f'{receipt_id}.json'
 
         def retry_view():
@@ -2737,7 +2737,7 @@ def alert_button_handlers(bot, adapter):
 
 
 def register(ctx):
-    # Print Buddy's button prompts already say what to do; drop Hermes's generic
+    # Print Handy's button prompts already say what to do; drop Hermes's generic
     # "Pick one below, or click Other..." line for this gateway (a locale overlay, not a core patch).
     with contextlib.suppress(Exception):
         ctx.register_locale('en', {'platform': {'discord': {'prompt': {'clarify_hint_buttons': ''}}}})

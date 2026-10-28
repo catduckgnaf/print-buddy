@@ -10,8 +10,8 @@ existing shape.
 import time
 from pathlib import Path
 
-from print_buddy import settings
-from print_buddy.webui import server, status
+from print_handy import settings
+from print_handy.webui import server, status
 
 ROSTER = """\
 printers:
@@ -32,7 +32,7 @@ services:
 
 def _heartbeat():
     return {"heartbeat_at": time.time(), "pid": 1, "mode": "standalone",
-            "connected": True, "user": "printbuddy#0001", "handlers": 1,
+            "connected": True, "user": "printhandy#0001", "handlers": 1,
             "hermes_modules": []}
 
 

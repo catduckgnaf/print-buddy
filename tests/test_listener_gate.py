@@ -12,7 +12,7 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
-from print_buddy import healthcheck, listener_gate, printers, settings
+from print_handy import healthcheck, listener_gate, printers, settings
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -43,7 +43,7 @@ class ListenerGateDecisionTests(unittest.TestCase):
                 self.assertTrue(healthcheck.listener_required(data(model)))
 
     def test_every_registered_model_is_classified_by_its_connection(self):
-        from print_buddy import listeners
+        from print_handy import listeners
         for key, model in printers.MODELS.items():
             with self.subTest(model=key):
                 domain = listeners.DOMAINS[model.vendor.connection]
@@ -133,7 +133,7 @@ class DockerHealthcheckTests(unittest.TestCase):
     def run_main(self, module):
         response = mock.MagicMock()
         response.__enter__.return_value.status = 200
-        env = {"DISCORD_BOT_TOKEN": "", "PRINT_BUDDY_BUNDLED_SPOOLMAN": "true"}
+        env = {"DISCORD_BOT_TOKEN": "", "PRINT_HANDY_BUNDLED_SPOOLMAN": "true"}
         out = io.StringIO()
         with mock.patch.dict(os.environ, env), \
                 mock.patch.object(module.urllib.request, "urlopen",

@@ -33,7 +33,7 @@ grep -a "estimated printing time" out.gcode
 
 **Verify the sliced output, not just the ini.** Grepping the G-code body for `TYPE:Brim` returns zero even when a brim exists, because PrusaSlicer emits brim extrusions under the shared `;TYPE:Skirt/Brim` marker. Check the distinct `;TYPE:` set and the extrusion-line count within that block against the known-good reference instead of grepping for a literal `Brim` token and concluding the setting did not apply.
 
-**Klipper mesh verification:** Ensure the current start G-code loads the intended profile with `BED_MESH_PROFILE LOAD=default` when that is not already handled by an installed start macro. Validate the selected G-code with `python3 -m print_buddy.core.model_job verify-gcode`; do not insert Marlin `M420` or `M851` commands into a Klipper job.
+**Klipper mesh verification:** Ensure the current start G-code loads the intended profile with `BED_MESH_PROFILE LOAD=default` when that is not already handled by an installed start macro. Validate the selected G-code with `python3 -m print_handy.core.model_job verify-gcode`; do not insert Marlin `M420` or `M851` commands into a Klipper job.
 
 ## Mid-air extrusion curling vs. nozzle tightness
 
@@ -53,7 +53,7 @@ When filament curls violently upward or loops in circles immediately upon exitin
 
 Every replacement nozzle has manufacturing dimensional variations. Even 0.05mm to 0.10mm variation changes the nozzle tip height relative to the inductive probe:
 - **Hot-tightening requirement:** Always perform the final torque on the nozzle at 240°C–250°C while firmly bracing the heater block with pliers. Aluminum expands faster than brass when heated; cold-tightened nozzles develop a gap at operating temperatures, leaking plastic backward through the threads.
-- **Klipper Z-offset reset:** Never start a print job using an assumed offset immediately following a nozzle swap. Mark the stored hardware state unverified with `python3 -m print_buddy.core.printer_state set --nozzle <diameter> --nozzle-type <type>`, then run the heated `PROBE_CALIBRATE` paper-test workflow. Finish with `ACCEPT`, `SAVE_CONFIG`, and `python3 -m print_buddy.core.printer_state set --sync-z`; do not use Marlin `M851` or `M500`.
+- **Klipper Z-offset reset:** Never start a print job using an assumed offset immediately following a nozzle swap. Mark the stored hardware state unverified with `python3 -m print_handy.core.printer_state set --nozzle <diameter> --nozzle-type <type>`, then run the heated `PROBE_CALIBRATE` paper-test workflow. Finish with `ACCEPT`, `SAVE_CONFIG`, and `python3 -m print_handy.core.printer_state set --sync-z`; do not use Marlin `M851` or `M500`.
 
 ## Source-model recovery
 

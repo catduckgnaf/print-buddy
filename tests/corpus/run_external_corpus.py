@@ -10,7 +10,7 @@ from types import SimpleNamespace as S
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 from tests.corpus import harness
 
-root = Path(os.environ["PRINT_BUDDY_PRIVATE_CORPUS"]).resolve()
+root = Path(os.environ["PRINT_HANDY_PRIVATE_CORPUS"]).resolve()
 models = sorted(p for p in root.rglob("*") if p.is_file() and p.suffix.lower() in {".3mf", ".stl"})
 shard_index, shard_count = int(os.environ["CORPUS_SHARD_INDEX"]), int(os.environ["CORPUS_SHARD_COUNT"])
 results = []

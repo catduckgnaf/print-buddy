@@ -11,9 +11,9 @@ from pathlib import Path
 
 import pytest
 
-from print_buddy import settings
-from print_buddy.core import model_job  # noqa: E402
-from print_buddy.core import source_colors  # noqa: E402
+from print_handy import settings
+from print_handy.core import model_job  # noqa: E402
+from print_handy.core import source_colors  # noqa: E402
 
 ARCHIVE = settings.current()['paths']['archive']
 STATE = Path(__file__).parent / 'fixtures' / 'printer_hardware.json'

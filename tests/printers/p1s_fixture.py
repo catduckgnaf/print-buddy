@@ -3,8 +3,8 @@ import json
 import tempfile
 from pathlib import Path
 
-from print_buddy.printers.bambulab import facts, profiles
-from print_buddy.printers.bambulab.p1s import P1SAdapter
+from print_handy.printers.bambulab import facts, profiles
+from print_handy.printers.bambulab.p1s import P1SAdapter
 
 HERMES = Path(tempfile.mkdtemp(prefix="p1s-test-profile-"))
 # The checked profile names are whatever facts.P1S selects (the default filament became the
@@ -18,7 +18,7 @@ def resources(root):
     bbl = root / "profiles" / "BBL"
     for folder in (bbl / "machine", bbl / "process", bbl / "filament"):
         folder.mkdir(parents=True, exist_ok=True)
-    index = {"name": "Print Buddy invented P1S test data", "version": "00.00.00.00"}
+    index = {"name": "Print Handy invented P1S test data", "version": "00.00.00.00"}
     for kind, filename in (("machine", "machine"), ("process", "process"), ("filament", "filament")):
         index[f"{kind}_list"] = [{"name": NAMES[kind], "sub_path": f"{kind}/{filename}.json"}]
     (root / "profiles").mkdir(parents=True, exist_ok=True)
@@ -57,7 +57,7 @@ def resources(root):
 def identity(root=None):
     root = resources(root or Path(tempfile.mkdtemp(prefix="p1s-resources-")))
     upstream, version = profiles.flatten(root, NAMES)
-    return {"label": "Print Buddy invented P1S fixture (not OrcaSlicer)", "vendor_version": version,
+    return {"label": "Print Handy invented P1S fixture (not OrcaSlicer)", "vendor_version": version,
             "sha256": {kind: profiles.sha256(upstream[kind]) for kind in profiles.KINDS},
             "filaments": {name: profiles.sha256(data)
                           for name, data in profiles.flatten_filaments(root, FILAMENTS.values()).items()}}

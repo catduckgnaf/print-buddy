@@ -10,7 +10,7 @@ An empty `DISCORD_BOT_TOKEN` disables only the Discord consumer for staging. Nev
 
 ## Which processes run
 
-Which children the supervisor starts depends on each configured printer's **listener domain** (#256, #299): the listener registry (`print_buddy/listeners.py`) maps the printer model's connection to a domain, decided from the resolved configuration (`python3 -m print_buddy.listener_gate`, per printer since #336), never from whether a service URL is filled in. The table reads per roster printer — a multi-printer roster gets one listener instance per printer whose domain has one:
+Which children the supervisor starts depends on each configured printer's **listener domain** (#256, #299): the listener registry (`print_handy/listeners.py`) maps the printer model's connection to a domain, decided from the resolved configuration (`python3 -m print_handy.listener_gate`, per printer since #336), never from whether a service URL is filled in. The table reads per roster printer — a multi-printer roster gets one listener instance per printer whose domain has one:
 
 | Listener domain (connection) | Printer listener | Discord bot | Bundled Spoolman |
 |---|---|---|---|
@@ -22,20 +22,20 @@ The `moonraker` and `bambulab_lan` domains have listener implementations today; 
 
 ## Included Spoolman
 
-Spoolman 0.27.0 is built from exact upstream revision `bed3f14ee77a3a571d31b14215d54b0b88a7519c` with its committed uv.lock, isolated from Print Buddy dependencies. No third-party source is patched. No Node, npm or web UI assets are built or copied. A local static placeholder satisfies upstream's static-directory check. Print Buddy spool commands and slicing lookups are the interface; `/api/v1` remains available.
+Spoolman 0.27.0 is built from exact upstream revision `bed3f14ee77a3a571d31b14215d54b0b88a7519c` with its committed uv.lock, isolated from Print Handy dependencies. No third-party source is patched. No Node, npm or web UI assets are built or copied. A local static placeholder satisfies upstream's static-directory check. Print Handy spool commands and slicing lookups are the interface; `/api/v1` remains available.
 
-Default bind is `127.0.0.1:8000` inside the container. Print Buddy defaults to `http://127.0.0.1:8000`. Compose publishes no port by default, and with no port mapped Spoolman stays loopback-only and unexposed.
+Default bind is `127.0.0.1:8000` inside the container. Print Handy defaults to `http://127.0.0.1:8000`. Compose publishes no port by default, and with no port mapped Spoolman stays loopback-only and unexposed.
 
 **Optional LAN access (#443, opt-in only):** Moonraker running on printer hardware (for example a ZMod AD5X at its own LAN address) and Home Assistant need network access to the bundled API. Both deployment surfaces now carry the opt-in:
 
 - **Unraid template:** the advanced **Spoolman port** mapping (host 7912 to container 8000) plus the advanced **Spoolman bind host** variable. Keep `SPOOLMAN_HOST=127.0.0.1` (the default) and Spoolman stays loopback-only even with the mapping present; set `SPOOLMAN_HOST=0.0.0.0` to actually serve the LAN.
 - **Compose:** uncomment the `#   - "7912:8000"` line under the combined service and set `SPOOLMAN_HOST=0.0.0.0` in `.env`.
 
-Then point Moonraker's `[spoolman]` section at `server: http://<unraid-ip>:7912` (see [ZMod printers](ZMOD.md#bundled-spoolman-from-printer-moonraker-443)); a healthy bundled Spoolman answers `GET http://<unraid-ip>:7912/api/v1/info` with HTTP 200. The API is unauthenticated: keep it on the LAN only and never forward its port from a router. Spoolman's web UI is not bundled (#214) — Print Buddy remains the interface.
+Then point Moonraker's `[spoolman]` section at `server: http://<unraid-ip>:7912` (see [ZMod printers](ZMOD.md#bundled-spoolman-from-printer-moonraker-443)); a healthy bundled Spoolman answers `GET http://<unraid-ip>:7912/api/v1/info` with HTTP 200. The API is unauthenticated: keep it on the LAN only and never forward its port from a router. Spoolman's web UI is not bundled (#214) — Print Handy remains the interface.
 
 Persist `/data/spoolman` separately, including database, config, logs and backups. Upstream Alembic migrations remain intact for existing 0.26.1/0.27.0 databases. Runtime migration acceptance is required before deployment; retaining migration files alone is not evidence of a successful migration. Preserve source data and reconcile inventory at final cutover. No automatic downgrade is provided.
 
-For an existing external instance set `PRINT_BUDDY__SERVICES__SPOOLMAN_URL=http://spoolman.example:8000`. Its data is not migrated or reset; the local database remains separate. Optionally set `PRINT_BUDDY_BUNDLED_SPOOLMAN=false` to skip the local API, requiring a nonlocal URL. Healthcheck then checks the external API. Changing a URL never moves or deletes a database.
+For an existing external instance set `PRINT_HANDY__SERVICES__SPOOLMAN_URL=http://spoolman.example:8000`. Its data is not migrated or reset; the local database remains separate. Optionally set `PRINT_HANDY_BUNDLED_SPOOLMAN=false` to skip the local API, requiring a nonlocal URL. Healthcheck then checks the external API. Changing a URL never moves or deletes a database.
 
 ## Print records
 
@@ -68,7 +68,7 @@ external app required:
 ```
 
 Fields the system does not know are omitted, never invented (`print_number`
-is present as `null` for prints that never went through a Print Buddy
+is present as `null` for prints that never went through a Print Handy
 launch, which instead get a dated filename). A record starts as
 `"status": "printing"` when the print starts and is finalized in place when
 the print ends. Example lookup: `jq -r 'select(.status != "completed") |
@@ -94,7 +94,7 @@ moonraker_url = "http://<ad5x-lan-ip>:7125"
 
 The first entry is the default printer and is named wherever output talks about "the printer". Each printer keeps its own state folder and job queue under `state/printers/<id>/` inside the one data directory, gets its own listener child under the supervisor (a dead listener never takes the bot or a sibling listener down), and is bound to its own chat channel — an approval in a channel can only start that channel's printer. The healthcheck reports every listener, and the Web UI status page lists the roster read-only. Spoolman stays one shared inventory for all printers. The full roster reference is [SETTINGS.md — Printers list](SETTINGS.md#printers-list).
 
-On Unraid the template has no per-printer variables (the roster is file-only), so mount a config file: copy `config/docker.yaml`, replace its `[printer]` section with your `[[printers]]` list, mount the file and point `PRINT_BUDDY_CONFIG` at it. Any single value inside a declared entry can still be overridden from the environment with the indexed spelling `PRINT_BUDDY__PRINTERS__<ID>__<KEY>` — the entry's `id` uppercased in the `<ID>` position, the key in the `<KEY>` position.
+On Unraid the template has no per-printer variables (the roster is file-only), so mount a config file: copy `config/docker.yaml`, replace its `[printer]` section with your `[[printers]]` list, mount the file and point `PRINT_HANDY_CONFIG` at it. Any single value inside a declared entry can still be overridden from the environment with the indexed spelling `PRINT_HANDY__PRINTERS__<ID>__<KEY>` — the entry's `id` uppercased in the `<ID>` position, the key in the `<KEY>` position.
 
 Run a second *instance* instead only when you want hard process isolation between printers; that remains an alternative, not the only answer — see [More than one printer](MULTI-INSTANCE.md).
 
@@ -102,56 +102,56 @@ Run a second *instance* instead only when you want hard process isolation betwee
 
 While a print runs, the listener checks the printer camera at layer 2, layer 5 and then periodically. A vision model classifies each frame; spaghetti, a detached part, an empty bed, a stalled print, an uncertain frame or a failed check posts the camera photo to Discord with **Pause** and **It's fine** buttons. The watchdog is alert-only and never controls the printer: pausing, resuming or cancelling is always an operator tap (the paused post offers Resume and Cancel). A camera classification is not a guarantee of safe unattended printing.
 
-It needs a Moonraker URL, a camera snapshot (`PRINT_BUDDY__SERVICES__CAMERA_SNAPSHOT_URL`; derived from the Moonraker host when empty) and a vision endpoint (`PRINT_BUDDY__SERVICES__VISION_CHAT_URL` plus the `CLIPROXY_API_KEY` secret in `.env`; an empty vision URL disables camera checks and roasts).
+It needs a Moonraker URL, a camera snapshot (`PRINT_HANDY__SERVICES__CAMERA_SNAPSHOT_URL`; derived from the Moonraker host when empty) and a vision endpoint (`PRINT_HANDY__SERVICES__VISION_CHAT_URL` plus the `CLIPROXY_API_KEY` secret in `.env`; an empty vision URL disables camera checks and roasts).
 
-The same endpoint powers the **roast**: the one-line joke added to the print-started post only (one per print, when printing begins; never on the completion post) on every platform, Telegram included. It is **enabled by default whenever an LLM/vision endpoint is available** — `PRINT_BUDDY__VISION__ROAST_ENABLED` defaults to `true` in Compose and the Unraid template (`vision.roast_enabled` in YAML). Set it to `false` to turn roasts off; camera checks keep working.
+The same endpoint powers the **roast**: the one-line joke added to the print-started post only (one per print, when printing begins; never on the completion post) on every platform, Telegram included. It is **enabled by default whenever an LLM/vision endpoint is available** — `PRINT_HANDY__VISION__ROAST_ENABLED` defaults to `true` in Compose and the Unraid template (`vision.roast_enabled` in YAML). Set it to `false` to turn roasts off; camera checks keep working.
 
 Two settings tune it, settable in the mounted YAML (`visual_watch` in `config/docker.yaml`), in TOML (`[visual_watch]` in `config/docker.toml`), or as Compose/`.env` variables — Compose and the Unraid template both carry them:
 
 | YAML key | Environment variable | Default | What it does |
 |---|---|---|---|
-| `visual_watch.enabled` | `PRINT_BUDDY__VISUAL_WATCH__ENABLED` | `true` | Camera monitoring switch |
-| `visual_watch.sensitivity` | `PRINT_BUDDY__VISUAL_WATCH__SENSITIVITY` | `3` | How readily the watchdog alerts, 1 (quietest) to 5 (most alerts) |
+| `visual_watch.enabled` | `PRINT_HANDY__VISUAL_WATCH__ENABLED` | `true` | Camera monitoring switch |
+| `visual_watch.sensitivity` | `PRINT_HANDY__VISUAL_WATCH__SENSITIVITY` | `3` | How readily the watchdog alerts, 1 (quietest) to 5 (most alerts) |
 
 Sensitivity also sets the periodic check interval (30, 20, 15, 10 or 7.5 minutes for levels 1 to 5) and how many unchanged layers count as a stall; level 3 is the original behavior. The full per-level table is in the [project reference](PROJECT-REFERENCE.md#camera-stall-sensitivity), and every setting is listed in [SETTINGS.md](SETTINGS.md). Restart the container after a change; settings are read once at start.
 
 ## Web UI (optional, #286)
 
-Print Buddy has an optional Web UI: a simple status page plus a picker configuration page that reads and writes the same YAML settings file as everything else. It is **off by default** in the settings and Compose — with it disabled the supervisor starts no extra child and nothing listens. (The Unraid template is the one exception: it enables it, gated on the access token below, so its WebUI link works — #440.) The supervisor decides from the resolved configuration (`python3 -m print_buddy.webui_gate`, mirroring the listener gate), and the container healthcheck reports a Web UI row that is skipped while disabled.
+Print Handy has an optional Web UI: a simple status page plus a picker configuration page that reads and writes the same YAML settings file as everything else. It is **off by default** in the settings and Compose — with it disabled the supervisor starts no extra child and nothing listens. (The Unraid template is the one exception: it enables it, gated on the access token below, so its WebUI link works — #440.) The supervisor decides from the resolved configuration (`python3 -m print_handy.webui_gate`, mirroring the listener gate), and the container healthcheck reports a Web UI row that is skipped while disabled.
 
 Enable it in the mounted YAML (`webui` in `config/docker.yaml`), in TOML (`[webui]` in `config/docker.toml`), or with Compose/`.env` variables — Compose and the Unraid template both carry them:
 
 | YAML key | Environment variable | Default | What it does |
 |---|---|---|---|
-| `webui.enabled` | `PRINT_BUDDY__WEBUI__ENABLED` | `false` | Web UI switch; `true` plus a port starts the supervised Web UI child |
-| `webui.host` | `PRINT_BUDDY__WEBUI__HOST` | `127.0.0.1` | Host the Web UI binds to inside the container |
-| `webui.port` | `PRINT_BUDDY__WEBUI__PORT` | `0` | Port the Web UI binds to; `0` means no port chosen, so nothing starts |
-| `webui.access_token_env` | `PRINT_BUDDY__WEBUI__ACCESS_TOKEN_ENV` | `WEBUI_ACCESS_TOKEN` | Name of the environment variable holding the access token; the token itself is never a setting |
+| `webui.enabled` | `PRINT_HANDY__WEBUI__ENABLED` | `false` | Web UI switch; `true` plus a port starts the supervised Web UI child |
+| `webui.host` | `PRINT_HANDY__WEBUI__HOST` | `127.0.0.1` | Host the Web UI binds to inside the container |
+| `webui.port` | `PRINT_HANDY__WEBUI__PORT` | `0` | Port the Web UI binds to; `0` means no port chosen, so nothing starts |
+| `webui.access_token_env` | `PRINT_HANDY__WEBUI__ACCESS_TOKEN_ENV` | `WEBUI_ACCESS_TOKEN` | Name of the environment variable holding the access token; the token itself is never a setting |
 
 To reach the Web UI from another machine, all four pieces are needed: enable it with a port (the examples use 8088), bind `0.0.0.0` instead of loopback, publish the port, and set the `WEBUI_ACCESS_TOKEN` secret in `.env`. **A non-loopback bind without the token never runs** (#440): the standalone server still refuses that start outright, and in the container the Web UI gate reports the blocked start with the fix in the log and the supervisor carries on without the Web UI — the bot, listener and Spoolman are unaffected, and the healthcheck reports the same blocked state as healthy. Set the token (API requests send it as the `X-WebUI-Token` header; a browser gets the login page — an unauthenticated browser navigation to `/` or another Web UI page redirects to `/login` instead of returning raw JSON). Compose ships the port mapping commented out and the Web UI off; the Unraid template enables the Web UI and carries a Web UI port mapping (8088) plus the same variables, with the bind host defaulting to `0.0.0.0` and the token as a masked field, so its WebUI link opens the login page as soon as a token is set — with no token set, the link answers nothing and the container log explains why. Keep the Web UI on the LAN only: never forward its port from a router or expose it publicly. Settings changes saved in the Web UI take effect on the next container start; settings are read once at start. The full guide — pages, save flow, limits and troubleshooting — is [Web UI](WEBUI.md).
 
 ## Live camera in Discord (optional, #311)
 
-Print Buddy can show the printer camera live inside a Discord voice channel. The bot itself cannot send video — Discord's bot API is audio-only — so the live view is an **Activity**: a small web page served by this container that runs inside the voice channel of the *same* Discord application as the bot (no second bot, no second token). The full operator walkthrough (Developer Portal, tunnel, allowlist, privacy) is [Discord bot setup](DISCORD-BOT-SETUP.md#7-live-camera-activity-optional-311); this section is the container side. **Honest status: the Stage 0 live Discord spike has not run yet, so this path is built and contract-tested offline but not yet exercised live against Discord — treat it as unverified until that sitting happens.**
+Print Handy can show the printer camera live inside a Discord voice channel. The bot itself cannot send video — Discord's bot API is audio-only — so the live view is an **Activity**: a small web page served by this container that runs inside the voice channel of the *same* Discord application as the bot (no second bot, no second token). The full operator walkthrough (Developer Portal, tunnel, allowlist, privacy) is [Discord bot setup](DISCORD-BOT-SETUP.md#7-live-camera-activity-optional-311); this section is the container side. **Honest status: the Stage 0 live Discord spike has not run yet, so this path is built and contract-tested offline but not yet exercised live against Discord — treat it as unverified until that sitting happens.**
 
 It is **off by default** — with it disabled the supervisor starts no extra child and nothing new listens. Two pieces run when it is enabled *and* configured:
 
-- The **Activity server** (`python3 -m print_buddy.live_activity`), a supervised child gated exactly like the Web UI (`python3 -m print_buddy.live_gate`, mirroring the supervisor decision in the healthcheck's live-view row). It binds **loopback only** on `[live_stream] port`, serves the self-contained page behind server-side OAuth + allowlist auth, and ends sessions that stay empty past `empty_timeout_s`. Enabled but incompletely configured (no voice channel, no activity origin, no port, or a missing secret below) starts nothing and is a healthy, reported state — the gate lists what is missing.
+- The **Activity server** (`python3 -m print_handy.live_activity`), a supervised child gated exactly like the Web UI (`python3 -m print_handy.live_gate`, mirroring the supervisor decision in the healthcheck's live-view row). It binds **loopback only** on `[live_stream] port`, serves the self-contained page behind server-side OAuth + allowlist auth, and ends sessions that stay empty past `empty_timeout_s`. Enabled but incompletely configured (no voice channel, no activity origin, no port, or a missing secret below) starts nothing and is a healthy, reported state — the gate lists what is missing.
 - **go2rtc** now starts when *either* feature needs the camera fan-out — timelapse capture or live viewing — still as the single upstream camera pull both share. While go2rtc is running, the camera watchdog reads its stills from that same fan-out (go2rtc's loopback frame endpoint), so it never opens a second direct camera connection; when neither feature is on, the watchdog uses the direct snapshot URL as before, and a failed fan-out fetch falls back to it once so a broken stream never degrades the watchdog. Enabling live viewing in a local `WITH_GO2RTC=false` build fails the healthcheck with that reason, because the binary is not there.
 
 Discord clients never connect to this container directly. They reach the Activity server through a **named Cloudflare Tunnel** (stable hostname) and the Developer Portal **URL mapping** for that hostname; `activity_origin` is that hostname's https origin. The tunnel connector is a **sidecar, not part of this image**:
 
 - **Compose:** the `cloudflared` service under the `live-stream` profile (`docker compose --profile live-stream up -d`). It shares the combined container's network namespace, so its ingress target is the loopback Activity port (`http://127.0.0.1:<port>` — point the tunnel's public hostname at it in the Cloudflare dashboard). Set `CLOUDFLARED_IMAGE` to a tested connector image and `TUNNEL_TOKEN` in `.env` — without a token the sidecar exits immediately (cloudflared refuses to run), which affects only the live view.
-- **Unraid:** run a separate `cloudflared` container the same way; the in-repo template carries the token as a masked field beside the other live fields for convenience, and Print Buddy itself never reads it.
+- **Unraid:** run a separate `cloudflared` container the same way; the in-repo template carries the token as a masked field beside the other live fields for convenience, and Print Handy itself never reads it.
 
 If the tunnel is down, only the live view is unreachable — the bot, listener and Spoolman are unaffected, and nothing about a print changes.
 
 | YAML key / variable | Environment variable | Default | What it does |
 |---|---|---|---|
-| `live_stream.enabled` | `PRINT_BUDDY__LIVE_STREAM__ENABLED` | `false` | Live view switch; `true` plus the rows below starts the Activity server and the go2rtc fan-out |
-| `live_stream.voice_channel_id` | `PRINT_BUDDY__LIVE_STREAM__VOICE_CHANNEL_ID` | empty | The one private voice channel the Activity is launched in |
-| `live_stream.activity_origin` | `PRINT_BUDDY__LIVE_STREAM__ACTIVITY_ORIGIN` | empty | The tunnel hostname's https origin, mapped in the Developer Portal |
-| `live_stream.port` | `PRINT_BUDDY__LIVE_STREAM__PORT` | `0` | Loopback port the Activity server binds; `0` means no port chosen, so nothing starts (the Unraid template pre-fills 8091 as the fixed tunnel target) |
+| `live_stream.enabled` | `PRINT_HANDY__LIVE_STREAM__ENABLED` | `false` | Live view switch; `true` plus the rows below starts the Activity server and the go2rtc fan-out |
+| `live_stream.voice_channel_id` | `PRINT_HANDY__LIVE_STREAM__VOICE_CHANNEL_ID` | empty | The one private voice channel the Activity is launched in |
+| `live_stream.activity_origin` | `PRINT_HANDY__LIVE_STREAM__ACTIVITY_ORIGIN` | empty | The tunnel hostname's https origin, mapped in the Developer Portal |
+| `live_stream.port` | `PRINT_HANDY__LIVE_STREAM__PORT` | `0` | Loopback port the Activity server binds; `0` means no port chosen, so nothing starts (the Unraid template pre-fills 8091 as the fixed tunnel target) |
 | — | `DISCORD_CLIENT_ID` | empty | The Discord application ID (a plain identifier, not a secret) |
 | — | `DISCORD_CLIENT_SECRET` | empty | Secret: the application's client secret for the server-side OAuth exchange |
 | — | `LIVE_STREAM_SESSION_SECRET` | empty | Secret: signs the Activity session markers |
@@ -165,8 +165,8 @@ All three stages of #246 have landed: Stage 1 is the container plumbing below, S
 
 - The image bundles **go2rtc** (upstream AlexxIT/go2rtc v1.9.15, one static binary per architecture, downloaded at build time and verified by SHA256 in `docker/go2rtc-prebuilt.sh`, like the OrcaSlicer prebuilts) and the **VAAPI driver stack** (`intel-media-va-driver`, `mesa-va-drivers`, `libva-drm2`, `vainfo`). Both are under the `WITH_GO2RTC` build toggle, which the published image sets; a local `WITH_GO2RTC=false` build omits both.
 - The image bundles **ffmpeg** (the Debian package, in the runtime stage's unconditional package list, so every image variant carries it): it is the timelapse workhorse — sizing printer-rendered videos to the chat platform's limit, assembling captured frames, and building the vertical short. Debian's ffmpeg provides `libx264` (the `[timelapse] encoder` CPU path) and the `h264_vaapi` encoder for the VAAPI stack above; the NVENC/QSV encoders are in the package too and activate only when the host runtime provides the device (see the encoder table below). The image acceptance probe verifies that `ffmpeg` resolves and runs for the runtime user and that both encoders are listed (#373).
-- With `timelapse.capture_enabled` set (`PRINT_BUDDY__TIMELAPSE__CAPTURE_ENABLED=true`, or `timelapse.capture_enabled` in the config file), the supervisor starts go2rtc as a supervised child and the healthcheck covers it. The gate is resolved from settings (`python3 -m print_buddy.go2rtc`), never guessed: capture disabled — or enabled with no camera source configured — starts nothing and is a healthy state, reported in the healthcheck like the disabled-bot case. Enabling capture in an image built without go2rtc fails the healthcheck with that reason, because the binary is not there. Since #311 the same gate also starts go2rtc for live viewing (`live_stream.enabled`) with the same generated config and the same one-upstream rule — the two features share the single camera pull.
-- The supervisor generates go2rtc's config from settings — no hand-edited YAML for the standard case. The source is `[timelapse] capture_source_url` when set (an MJPEG/RTSP URL or a go2rtc `ffmpeg:` source), otherwise it derives from `services.camera_snapshot_url` / the Moonraker webcam exactly like the camera watchdog's source. The generated file lives at `<cache>/go2rtc/go2rtc.yaml`, is written `0600`, and holds the raw camera URL, which may carry credentials; Print Buddy's own logs only ever show it redacted.
+- With `timelapse.capture_enabled` set (`PRINT_HANDY__TIMELAPSE__CAPTURE_ENABLED=true`, or `timelapse.capture_enabled` in the config file), the supervisor starts go2rtc as a supervised child and the healthcheck covers it. The gate is resolved from settings (`python3 -m print_handy.go2rtc`), never guessed: capture disabled — or enabled with no camera source configured — starts nothing and is a healthy state, reported in the healthcheck like the disabled-bot case. Enabling capture in an image built without go2rtc fails the healthcheck with that reason, because the binary is not there. Since #311 the same gate also starts go2rtc for live viewing (`live_stream.enabled`) with the same generated config and the same one-upstream rule — the two features share the single camera pull.
+- The supervisor generates go2rtc's config from settings — no hand-edited YAML for the standard case. The source is `[timelapse] capture_source_url` when set (an MJPEG/RTSP URL or a go2rtc `ffmpeg:` source), otherwise it derives from `services.camera_snapshot_url` / the Moonraker webcam exactly like the camera watchdog's source. The generated file lives at `<cache>/go2rtc/go2rtc.yaml`, is written `0600`, and holds the raw camera URL, which may carry credentials; Print Handy's own logs only ever show it redacted.
 - go2rtc does stream normalisation only: it restreams the camera on **loopback**. Its API (1984) and RTSP (8554) bind `127.0.0.1` inside the container, are never published by Compose or the Unraid template, and its WebUI is not exposed.
 
 ### Frame capture (stage 2)
@@ -210,39 +210,39 @@ Hardware encoding is opportunistic and never required; without a GPU everything 
 
 ## First-run configuration
 
-1. Copy `.env.example` to a private `.env`. Set `PRINT_BUDDY_IMAGE` to a tested digest. Configure Moonraker with `PRINT_BUDDY__SERVICES__MOONRAKER_URL`; do not use a real printer for offline validation.
-2. Set `PRINT_BUDDY_DATA` to a persistent directory with `hermes`, `archive`, `records`, `cache` and `spoolman` subdirectories writable by UID/GID 1000:1000; `PRINT_BUDDY_SPOOLMAN_DATA` can point the Spoolman data elsewhere, such as an existing Spoolman data folder. They map separately to `/data/hermes`, `/data/archive`, `/data/records`, `/data/cache`, `/data/spoolman`.
+1. Copy `.env.example` to a private `.env`. Set `PRINT_HANDY_IMAGE` to a tested digest. Configure Moonraker with `PRINT_HANDY__SERVICES__MOONRAKER_URL`; do not use a real printer for offline validation.
+2. Set `PRINT_HANDY_DATA` to a persistent directory with `hermes`, `archive`, `records`, `cache` and `spoolman` subdirectories writable by UID/GID 1000:1000; `PRINT_HANDY_SPOOLMAN_DATA` can point the Spoolman data elsewhere, such as an existing Spoolman data folder. They map separately to `/data/hermes`, `/data/archive`, `/data/records`, `/data/cache`, `/data/spoolman`.
 3. Leave the token empty for staging. At separately authorized live cutover configure token and chat ID (allowed user IDs are optional; empty lets everyone in the channel use the bot). Stop previous consumers before enabling the replacement. Live startup never authorizes heating, movement or printing.
-4. Use `PRINT_BUDDY__SECTION__KEY` scalar overrides from [SETTINGS.md](SETTINGS.md), or mount YAML/TOML and set `PRINT_BUDDY_CONFIG`. The image sets `PRINT_BUDDY_CONFIG=/app/config/docker.yaml`; a mounted file you point it at **replaces** `docker.yaml` rather than layering on it, so copy `config/docker.yaml`, edit the copy and mount that. Lists stay file-only except `delivery.methods`: `PRINT_BUDDY__DELIVERY__METHODS=discord,bambu_handoff,printer` (comma- or space-separated, values from the vendor profile) enables the Bambu LAN print opt-in without a mounted file (#270). Never bake secrets into images or mount host source over `/app`.
+4. Use `PRINT_HANDY__SECTION__KEY` scalar overrides from [SETTINGS.md](SETTINGS.md), or mount YAML/TOML and set `PRINT_HANDY_CONFIG`. The image sets `PRINT_HANDY_CONFIG=/app/config/docker.yaml`; a mounted file you point it at **replaces** `docker.yaml` rather than layering on it, so copy `config/docker.yaml`, edit the copy and mount that. Lists stay file-only except `delivery.methods`: `PRINT_HANDY__DELIVERY__METHODS=discord,bambu_handoff,printer` (comma- or space-separated, values from the vendor profile) enables the Bambu LAN print opt-in without a mounted file (#270). Never bake secrets into images or mount host source over `/app`.
 5. One Compose service, `combined`, uses 2 CPUs, 2 GiB RAM, 256 PIDs and 256 MiB shared memory by default. Real slicing may require more RAM. Capabilities are dropped and logs rotate.
 6. MakerWorld, Thingiverse and MyMiniFactory links only: provide the token file and keep it on the host; see [MakerWorld account token](#makerworld-account-token). Printables links and uploads need no token.
 
 ### MakerWorld account token
 
-The image sets `HOME=/data`, so Print Buddy reads the MakerWorld token from `/data/.config/bambu/token`. How to get and renew the token is in the [project reference](PROJECT-REFERENCE.md#makerworld-account-token). `/data/.config` is not one of the persistent paths above, so a token written inside a running container is lost when the container is recreated. Keep it on the host and bind-mount it with a local Compose override, for example a `docker-compose.override.yml` next to `docker-compose.yml`:
+The image sets `HOME=/data`, so Print Handy reads the MakerWorld token from `/data/.config/bambu/token`. How to get and renew the token is in the [project reference](PROJECT-REFERENCE.md#makerworld-account-token). `/data/.config` is not one of the persistent paths above, so a token written inside a running container is lost when the container is recreated. Keep it on the host and bind-mount it with a local Compose override, for example a `docker-compose.override.yml` next to `docker-compose.yml`:
 
 ```yaml
 services:
   combined:
     volumes:
-      - ${PRINT_BUDDY_DATA:-./data}/dot-config:/data/.config
+      - ${PRINT_HANDY_DATA:-./data}/dot-config:/data/.config
 ```
 
-On the host, put only the token in `dot-config/bambu/token` under `PRINT_BUDDY_DATA`. Make `dot-config` and everything in it owned by UID/GID 1000:1000, with mode 0700 on `bambu` and 0600 on `token`, then recreate the container. Thingiverse links use the same mounted directory: the App Token (see the [project reference](PROJECT-REFERENCE.md#thingiverse-app-token)) goes in `dot-config/thingiverse/token`, with mode 0700 on `thingiverse` and 0600 on `token`, so it survives container recreation exactly the way the MakerWorld token does. MyMiniFactory links (inventory only) use it too: the API key (see the [project reference](PROJECT-REFERENCE.md#myminifactory-api-key)) goes in `dot-config/myminifactory/token`, with mode 0700 on `myminifactory` and 0600 on `token`. Mount the whole `/data/.config` directory, not just `bambu`: the image does not create `/data/.config`, and a mount point Docker has to create itself is owned by root, which leaves the rest of `~/.config` unwritable for the container user. Anything else the container keeps under `~/.config` persists in that host directory too. On Unraid, add a Path mapping from a host folder such as `/mnt/user/appdata/print-buddy/dot-config` to container path `/data/.config`; the template does not ship one.
+On the host, put only the token in `dot-config/bambu/token` under `PRINT_HANDY_DATA`. Make `dot-config` and everything in it owned by UID/GID 1000:1000, with mode 0700 on `bambu` and 0600 on `token`, then recreate the container. Thingiverse links use the same mounted directory: the App Token (see the [project reference](PROJECT-REFERENCE.md#thingiverse-app-token)) goes in `dot-config/thingiverse/token`, with mode 0700 on `thingiverse` and 0600 on `token`, so it survives container recreation exactly the way the MakerWorld token does. MyMiniFactory links (inventory only) use it too: the API key (see the [project reference](PROJECT-REFERENCE.md#myminifactory-api-key)) goes in `dot-config/myminifactory/token`, with mode 0700 on `myminifactory` and 0600 on `token`. Mount the whole `/data/.config` directory, not just `bambu`: the image does not create `/data/.config`, and a mount point Docker has to create itself is owned by root, which leaves the rest of `~/.config` unwritable for the container user. Anything else the container keeps under `~/.config` persists in that host directory too. On Unraid, add a Path mapping from a host folder such as `/mnt/user/appdata/print-handy/dot-config` to container path `/data/.config`; the template does not ship one.
 
 ## Unraid DockerMan
 
-Use `docker/unraid/print-buddy.xml`, replacing the prior three templates. One entry runs all required processes; leave PostArgs empty. The template specifies UID/GID 1000:1000 and five persistent paths under `/mnt/user/appdata/print-buddy`. Set Repository to the tested immutable digest before deployment. It publishes no port; add an approved API mapping only as described under Included Spoolman. Image HEALTHCHECK covers the combined runtime.
+Use `docker/unraid/print-handy.xml`, replacing the prior three templates. One entry runs all required processes; leave PostArgs empty. The template specifies UID/GID 1000:1000 and five persistent paths under `/mnt/user/appdata/print-handy`. Set Repository to the tested immutable digest before deployment. It publishes no port; add an approved API mapping only as described under Included Spoolman. Image HEALTHCHECK covers the combined runtime.
 
-The runtime selector `PRINT_BUDDY_ORCA_CHANNEL` (Compose, `.env.example` and the template) defaults to `stable` and accepts `alpha`; any other value stops container startup.
+The runtime selector `PRINT_HANDY_ORCA_CHANNEL` (Compose, `.env.example` and the template) defaults to `stable` and accepts `alpha`; any other value stops container startup.
 
-The template and the Compose environment also carry the feature-enabling variables (#252) — the ones that turn a feature on, as opposed to tuning settings, which stay in a mounted YAML pointed to by `PRINT_BUDDY_CONFIG`:
+The template and the Compose environment also carry the feature-enabling variables (#252) — the ones that turn a feature on, as opposed to tuning settings, which stay in a mounted YAML pointed to by `PRINT_HANDY_CONFIG`:
 
-- **Camera watch:** `PRINT_BUDDY__SERVICES__VISION_CHAT_URL`, `PRINT_BUDDY__SERVICES__CAMERA_SNAPSHOT_URL`, `PRINT_BUDDY__VISION__MODEL` and the `CLIPROXY_API_KEY` secret; see [Camera watch](#camera-watch-visual_watch).
-- **Stock Flashforge LAN:** `PRINT_BUDDY__FLASHFORGE_STOCK__HOST` with the `AD5X_SERIAL` and `AD5X_CHECK_CODE` secrets.
-- **Bambu Lab LAN status:** `PRINT_BUDDY__BAMBU__LAN_HOST`, `PRINT_BUDDY__BAMBU__LAN_SERIAL` and the `BAMBU_LAN_PASSWORD` secret. The template's printer model list includes `bambulab.a1` and `bambulab.p1s` (offline only).
+- **Camera watch:** `PRINT_HANDY__SERVICES__VISION_CHAT_URL`, `PRINT_HANDY__SERVICES__CAMERA_SNAPSHOT_URL`, `PRINT_HANDY__VISION__MODEL` and the `CLIPROXY_API_KEY` secret; see [Camera watch](#camera-watch-visual_watch).
+- **Stock Flashforge LAN:** `PRINT_HANDY__FLASHFORGE_STOCK__HOST` with the `AD5X_SERIAL` and `AD5X_CHECK_CODE` secrets.
+- **Bambu Lab LAN status:** `PRINT_HANDY__BAMBU__LAN_HOST`, `PRINT_HANDY__BAMBU__LAN_SERIAL` and the `BAMBU_LAN_PASSWORD` secret. The template's printer model list includes `bambulab.a1` and `bambulab.p1s` (offline only).
 - **Key-protected Moonraker:** the `MOONRAKER_API_KEY` secret.
-- **Discord and LLM:** `PRINT_BUDDY__DISCORD__APPROVAL_USER_ID`, `PRINT_BUDDY__DISCORD__TIMEZONE`, `PRINT_BUDDY__LLM__CHAT_URL`, `PRINT_BUDDY__LLM__MODEL` and the `LLM_API_KEY` secret.
+- **Discord and LLM:** `PRINT_HANDY__DISCORD__APPROVAL_USER_ID`, `PRINT_HANDY__DISCORD__TIMEZONE`, `PRINT_HANDY__LLM__CHAT_URL`, `PRINT_HANDY__LLM__MODEL` and the `LLM_API_KEY` secret.
 
 In Compose, the settings are environment entries with their documented defaults and the secrets reach the container through the `.env` file, like `DISCORD_BOT_TOKEN`. In the template, secrets are masked fields. Leaving every one of them at its default or empty changes nothing about a running install.
 
@@ -254,12 +254,12 @@ One image is published, on two platforms. It is a multi-arch manifest, so `docke
 
 | Build toggles | Tags | Contents |
 |---|---|---|
-| `WITH_ORCA=true`, `WITH_GO2RTC=true`, `WITH_BAMBU=false` | `ghcr.io/catduckgnaf/print-buddy:VERSION` and `:latest` | Discord bot, Moonraker listener, bundled Spoolman API, OpenSCAD, ffmpeg, both pinned OrcaSlicer channels (stable and alpha), go2rtc and the VAAPI stack (#246) |
+| `WITH_ORCA=true`, `WITH_GO2RTC=true`, `WITH_BAMBU=false` | `ghcr.io/catduckgnaf/print-handy:VERSION` and `:latest` | Discord bot, Moonraker listener, bundled Spoolman API, OpenSCAD, ffmpeg, both pinned OrcaSlicer channels (stable and alpha), go2rtc and the VAAPI stack (#246) |
 
 Platforms are `linux/amd64` and `linux/arm64`. There is no `linux/arm/v7` image: upstream OrcaSlicer ships no 32-bit ARM Linux build, and 32-bit hosts are out of scope.
 
 ```bash
-docker pull ghcr.io/catduckgnaf/print-buddy:VERSION
+docker pull ghcr.io/catduckgnaf/print-handy:VERSION
 ```
 
 Replace `VERSION` with a published release version. The manifest scheme starts with the first release published after this support landed; the earlier single-arch amd64 tags (2.1.1, 2.1.2 and 2.1.3 era) are unchanged and are never republished or overwritten. No image is published by a source change alone — publication is the separate maintainer dispatch described under Validation and publication, and no multi-arch image is claimed published or validated on hardware until that dispatch's evidence exists.
@@ -269,14 +269,14 @@ Up to 2.1.4 a second, slicer-free `-light` variant was also published (`:VERSION
 There is also a floating **nightly** channel for trying current code between releases:
 
 ```bash
-docker pull ghcr.io/catduckgnaf/print-buddy:nightly
+docker pull ghcr.io/catduckgnaf/print-handy:nightly
 ```
 
 Nightly is built from the `nightly` branch, which is a pointer, not a development branch: it only ever names a commit on `main` whose CI run completed successfully (see the nightly workflow under Validation and publication). Nightly images carry the same offline acceptance as release images, but they are development builds — features may be unfinished and settings may change without a release note. Pin a release `VERSION` for anything you rely on. (Nightly also had a `:nightly-light` tag up to this change; it is no longer published.)
 
 ### What happens when a slicer is needed in a no-Orca build
 
-The published image always bundles OrcaSlicer. A locally built `WITH_ORCA=false` image (a supported build option, just not a published one) behaves exactly as it always has: slicing fails closed. The configured slicer executable (`/usr/local/bin/orca-slicer-stable` or `-alpha`, selected by `PRINT_BUDDY_ORCA_CHANNEL`) is absent, so a slicing attempt raises `FileNotFoundError`, produces no G-code and sends nothing to a printer, while everything that does not slice still runs. The offline acceptance harness proves this behaviour for a no-Orca image (its slice probe requires the refusal and checks that no `.gcode` file was written).
+The published image always bundles OrcaSlicer. A locally built `WITH_ORCA=false` image (a supported build option, just not a published one) behaves exactly as it always has: slicing fails closed. The configured slicer executable (`/usr/local/bin/orca-slicer-stable` or `-alpha`, selected by `PRINT_HANDY_ORCA_CHANNEL`) is absent, so a slicing attempt raises `FileNotFoundError`, produces no G-code and sends nothing to a printer, while everything that does not slice still runs. The offline acceptance harness proves this behaviour for a no-Orca image (its slice probe requires the refusal and checks that no `.gcode` file was written).
 
 ### How the ARM images are built
 
@@ -284,7 +284,7 @@ Each architecture is built on its matching native runner — `ubuntu-24.04` for 
 
 ## Build dimensions and slicers
 
-All OS stages use Debian 13 slim. `APP_CHANNEL=stable|development` labels provenance, not a source switch. `WITH_ORCA=true` includes Orca; default false omits it. OrcaSlicer is never built from source: `WITH_ORCA=true` installs the pinned official prebuilt release on both channels — since #356 both pin v2.5.0-alpha, the shipped slicer (the first release whose BBL profiles cover the H2C and A2L, and whose packed preset caches Print Buddy reads directly); the alpha channel diverges again when upstream publishes a newer alpha. `PRINT_BUDDY_ORCA_CHANNEL=stable|alpha` selects wrappers; absent executables and invalid selections fail closed. `/usr/local/bin/orca-slicer` remains the stable path. Existing entrypoint preserves Xvfb for headless slicing.
+All OS stages use Debian 13 slim. `APP_CHANNEL=stable|development` labels provenance, not a source switch. `WITH_ORCA=true` includes Orca; default false omits it. OrcaSlicer is never built from source: `WITH_ORCA=true` installs the pinned official prebuilt release on both channels — since #356 both pin v2.5.0-alpha, the shipped slicer (the first release whose BBL profiles cover the H2C and A2L, and whose packed preset caches Print Handy reads directly); the alpha channel diverges again when upstream publishes a newer alpha. `PRINT_HANDY_ORCA_CHANNEL=stable|alpha` selects wrappers; absent executables and invalid selections fail closed. `/usr/local/bin/orca-slicer` remains the stable path. Existing entrypoint preserves Xvfb for headless slicing.
 
 The official prebuilt archives are downloaded and extracted only inside approved hosted image builds, never installed on a Hermes host. Each channel's version and source revision (per channel, shared by both architectures) and each architecture's asset name and SHA256 are pinned by `docker/orca-prebuilt.sh`, and the SHA256 is verified before extraction; any architecture other than amd64 or arm64 fails closed in that script. `ORCA_BUILD_JOBS=auto` bounds CPU/memory usage for the optional Bambu Studio source build only; explicit values accept 1 through 64. See [SETTINGS.md](SETTINGS.md#build-arguments).
 
@@ -296,7 +296,7 @@ The manual `.github/workflows/docker-image-validation.yml` validates ONE archite
 
 The scheduled `.github/workflows/nightly.yml` publishes the nightly channel. Its promote job fast-forwards the `nightly` branch to the newest `main` commit with a successful CI run — it refuses to move the branch to anything that is not a descendant of its current commit, and it never forces the ref — then the build and manifest jobs repeat the release publisher's matrix, acceptance and push-by-digest flow for that exact commit and publish the one floating tag `:nightly`. A scheduled run whose promotion moved nothing builds nothing. A maintainer can also dispatch it manually (`promote` and `publish` both default to true; `publish=false` is the no-push candidate mode). This workflow never creates or moves release tags or `latest`.
 
-Every `docker-publish` dispatch starts with the **release surfaces gate** (the `surfaces-gate` job, running `scripts/check_release_surfaces.py`). The gate checks that the README and the `print_buddy` package version match the version being published, that the README's links resolve, and that the GitHub Pages site (`catduckgnaf/print-buddy-docs`) has no drift against `docs/` at the release ref — drift as defined by the docs repo's own Docs sync check (`scripts/check-sync.sh` there), including removed pages. In candidate mode (`publish=false`) stale surfaces are only reported as warnings. With `publish=true` the gate fails the run before any image is built or pushed until the surfaces are current. The remedy is the **Docs auto-sync** workflow in `print-buddy-docs` (`gh workflow run docs-auto-sync.yml --repo catduckgnaf/print-buddy-docs -f ref=<version>`): it opens a sync PR there; merge it, then re-dispatch the publish. Publishing the GitHub release also triggers that sync automatically via `repository_dispatch` when the `DOCS_SYNC_TOKEN` secret is configured on this repo (a token with contents + pull-requests write on `print-buddy-docs`); without it, the post-release surfaces checklist issue records the skip and the manual link. The gate applies to version releases only: nightly is a separate workflow (`.github/workflows/nightly.yml`) and is never gated.
+Every `docker-publish` dispatch starts with the **release surfaces gate** (the `surfaces-gate` job, running `scripts/check_release_surfaces.py`). The gate checks that the README and the `print_handy` package version match the version being published, that the README's links resolve, and that the GitHub Pages site (`catduckgnaf/print-handy-docs`) has no drift against `docs/` at the release ref — drift as defined by the docs repo's own Docs sync check (`scripts/check-sync.sh` there), including removed pages. In candidate mode (`publish=false`) stale surfaces are only reported as warnings. With `publish=true` the gate fails the run before any image is built or pushed until the surfaces are current. The remedy is the **Docs auto-sync** workflow in `print-handy-docs` (`gh workflow run docs-auto-sync.yml --repo catduckgnaf/print-handy-docs -f ref=<version>`): it opens a sync PR there; merge it, then re-dispatch the publish. Publishing the GitHub release also triggers that sync automatically via `repository_dispatch` when the `DOCS_SYNC_TOKEN` secret is configured on this repo (a token with contents + pull-requests write on `print-handy-docs`); without it, the post-release surfaces checklist issue records the skip and the manual link. The gate applies to version releases only: nightly is a separate workflow (`.github/workflows/nightly.yml`) and is never gated.
 
 The manual `.github/workflows/docker-publish.yml` covers the whole matrix in one dispatch. Its build job runs both legs (amd64 and arm64) on native runners; each leg builds its platform image, runs the headless slicer smoke and the offline runtime acceptance for that arch. Only with `publish=true`, and only after that leg's acceptance succeeded, does a leg log in and push — by digest only, never by tag. A final manifest job (publication dispatches only, after every leg succeeded) combines the pushed digests with `docker buildx imagetools create` into the two tags `:VERSION` and `:latest`, and writes the manifest digests to the step summary and the uploaded evidence. With `publish=false` (candidate mode) every leg still builds and must pass acceptance, and nothing is pushed and no manifest is created. Candidate inputs for the next release are `version=<next MAJOR.MINOR.PATCH>`, `publish=false`. Preserve every existing tag (2.1.1, 2.1.2, 2.1.3 era tags included); never overwrite or republish an existing tag.
 
@@ -306,4 +306,4 @@ Upgrade: stop prior consumers, preserve source state and immutable digest, recon
 
 ## Attribution
 
-Standalone foundations originated in zaheria985/print-buddy commit fba5727184dd8f0070e59c8f1fc088751142a003 and merged through #132. Docker contribution #139 commit 3bb0984250c20eb336d11ba1da06633950b45182 (MIT) informed context filtering and listener heartbeat. Original notices remain. Spoolman is MIT; slicers retain upstream licenses. [DOCKER-117-PROGRESS.md](DOCKER-117-PROGRESS.md) contains historical evidence, not acceptance of this candidate.
+Standalone foundations originated in zaheria985/print-handy commit fba5727184dd8f0070e59c8f1fc088751142a003 and merged through #132. Docker contribution #139 commit 3bb0984250c20eb336d11ba1da06633950b45182 (MIT) informed context filtering and listener heartbeat. Original notices remain. Spoolman is MIT; slicers retain upstream licenses. [DOCKER-117-PROGRESS.md](DOCKER-117-PROGRESS.md) contains historical evidence, not acceptance of this candidate.

@@ -6,7 +6,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from print_buddy.core import slice_guard as sg
+from print_handy.core import slice_guard as sg
 
 GOOD_GCODE = "; estimated printing time = 1h 2m\nG28\nT0\nG1 X10 Y10 E1\nG1 X200 Y200 E2\n"
 

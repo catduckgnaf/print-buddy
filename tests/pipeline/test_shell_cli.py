@@ -38,13 +38,13 @@ printf '200'
 
 @needs_tools
 @pytest.mark.parametrize("env,expected", [
-    ({"PRINT_BUDDY__SERVICES__MOONRAKER_URL": "http://settings.test:7125"}, "http://settings.test:7125/printer/print/pause"),
-    ({"PRINT_BUDDY__SERVICES__MOONRAKER_URL": "http://settings.test:7125", "MOONRAKER_URL": "http://env.test:7125"},
+    ({"PRINT_HANDY__SERVICES__MOONRAKER_URL": "http://settings.test:7125"}, "http://settings.test:7125/printer/print/pause"),
+    ({"PRINT_HANDY__SERVICES__MOONRAKER_URL": "http://settings.test:7125", "MOONRAKER_URL": "http://env.test:7125"},
      "http://env.test:7125/printer/print/pause"),
 ])
 def test_moonrakerctl_url_comes_from_settings_and_env_overrides(tmp_path, env, expected):
     import os
-    from print_buddy import settings
+    from print_handy import settings
     (tmp_path / "curl").write_text(FAKE_CURL)
     (tmp_path / "curl").chmod(0o755)
     capture = tmp_path / "url"

@@ -1,6 +1,6 @@
 """#387 contract: Spoolman HTTP lives in exactly one module.
 
-print_buddy.core.spoolman_client is the only place that may open an HTTP
+print_handy.core.spoolman_client is the only place that may open an HTTP
 connection to Spoolman. This test fails CI if a future change reintroduces
 a direct Spoolman call anywhere else:
 
@@ -23,7 +23,7 @@ import ast
 import re
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parents[2] / "print_buddy"
+ROOT = Path(__file__).resolve().parents[2] / "print_handy"
 WRAPPER = ROOT / "core" / "spoolman_client.py"
 
 SPOOLMAN_PATH = re.compile(r"/api/v1/(?:spool|filament|vendor|health)\b")
@@ -74,7 +74,7 @@ def test_no_spoolman_path_with_direct_transport_outside_wrapper():
                     violations.append(
                         f"{path.relative_to(ROOT)}:{node.lineno} {name}() pairs a Spoolman "
                         f"API path with direct transport {sorted(bad)}; route it through "
-                        "print_buddy.core.spoolman_client (#387)")
+                        "print_handy.core.spoolman_client (#387)")
     assert not violations, "\n".join(violations)
 
 
@@ -90,5 +90,5 @@ def test_no_spoolman_base_resolution_with_raw_transport_outside_wrapper():
                     violations.append(
                         f"{path.relative_to(ROOT)}:{node.lineno} {name}() resolves a Spoolman "
                         f"base URL and opens raw HTTP {sorted(bad)}; route it through "
-                        "print_buddy.core.spoolman_client (#387)")
+                        "print_handy.core.spoolman_client (#387)")
     assert not violations, "\n".join(violations)

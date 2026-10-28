@@ -9,8 +9,8 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from print_buddy import printers as printer_registry
-from print_buddy import settings
+from print_handy import printers as printer_registry
+from print_handy import settings
 
 
 def load_local(text, environ=None, suffix=".yaml"):
@@ -317,8 +317,8 @@ services:
 """)
 
     def test_roster_plus_legacy_environment_refuses(self):
-        with self.assertRaisesRegex(settings.SettingsError, r"\$PRINT_BUDDY__PRINTER__MODEL"):
-            load_local(TWO_PRINTERS, environ={"PRINT_BUDDY__PRINTER__MODEL": "flashforge.ad5x"})
+        with self.assertRaisesRegex(settings.SettingsError, r"\$PRINT_HANDY__PRINTER__MODEL"):
+            load_local(TWO_PRINTERS, environ={"PRINT_HANDY__PRINTER__MODEL": "flashforge.ad5x"})
         with self.assertRaisesRegex(settings.SettingsError, r"\$MOONRAKER_URL"):
             load_local(TWO_PRINTERS, environ={"MOONRAKER_URL": "http://192.168.1.99:7125"})
 
@@ -337,7 +337,7 @@ bambu:
 class EnvOverrideTests(unittest.TestCase):
     def test_override_applies_to_a_declared_entry(self):
         data = load_local(TWO_PRINTERS, environ={
-            "PRINT_BUDDY__PRINTERS__WORKSHOP-AD5X__MOONRAKER_URL": "http://10.0.0.5:7125"})
+            "PRINT_HANDY__PRINTERS__WORKSHOP-AD5X__MOONRAKER_URL": "http://10.0.0.5:7125"})
         second = settings.by_id("workshop-ad5x", data)
         self.assertEqual(second["moonraker_url"], "http://10.0.0.5:7125")
         self.assertEqual(second["moonraker_ws_url"], "ws://10.0.0.5:7125/websocket")
@@ -347,25 +347,25 @@ class EnvOverrideTests(unittest.TestCase):
 
     def test_override_of_the_default_entry_flows_into_the_legacy_view(self):
         data = load_local(TWO_PRINTERS, environ={
-            "PRINT_BUDDY__PRINTERS__GARAGE-A1__LAN_HOST": "10.0.0.9",
-            "PRINT_BUDDY__PRINTERS__GARAGE-A1__START_CONFIRM_S": "45"})
+            "PRINT_HANDY__PRINTERS__GARAGE-A1__LAN_HOST": "10.0.0.9",
+            "PRINT_HANDY__PRINTERS__GARAGE-A1__START_CONFIRM_S": "45"})
         self.assertEqual(data["bambu"]["lan_host"], "10.0.0.9")
         self.assertEqual(data["printers"][0]["start_confirm_s"], 45)
 
     def test_env_cannot_create_an_entry(self):
         with self.assertRaisesRegex(settings.SettingsError, "no printer with id 'nope' is declared"):
-            load_local(TWO_PRINTERS, environ={"PRINT_BUDDY__PRINTERS__NOPE__LAN_HOST": "10.0.0.9"})
+            load_local(TWO_PRINTERS, environ={"PRINT_HANDY__PRINTERS__NOPE__LAN_HOST": "10.0.0.9"})
         # ... and with no roster declared at all, an indexed name is refused the same way.
         with self.assertRaisesRegex(settings.SettingsError, "no printer with id 'ad5x' is declared"):
             settings.load(home=settings.HOME, local=False,
-                          environ={"PRINT_BUDDY__PRINTERS__AD5X__LAN_HOST": "10.0.0.9"})
+                          environ={"PRINT_HANDY__PRINTERS__AD5X__LAN_HOST": "10.0.0.9"})
 
     def test_malformed_indexed_names_are_refused_loudly(self):
-        for name in ("PRINT_BUDDY__PRINTERS__GARAGE-A1",
-                     "PRINT_BUDDY__PRINTERS__GARAGE-A1__LAN_HOST__EXTRA",
-                     "PRINT_BUDDY__PRINTERS__GARAGE-A1__BOGUS",
-                     "PRINT_BUDDY__PRINTERS__GARAGE-A1__MODEL",
-                     "PRINT_BUDDY__PRINTERS__GARAGE-A1__ID"):
+        for name in ("PRINT_HANDY__PRINTERS__GARAGE-A1",
+                     "PRINT_HANDY__PRINTERS__GARAGE-A1__LAN_HOST__EXTRA",
+                     "PRINT_HANDY__PRINTERS__GARAGE-A1__BOGUS",
+                     "PRINT_HANDY__PRINTERS__GARAGE-A1__MODEL",
+                     "PRINT_HANDY__PRINTERS__GARAGE-A1__ID"):
             with self.subTest(name=name):
                 with self.assertRaises(settings.SettingsError):
                     load_local(TWO_PRINTERS, environ={name: "x"})

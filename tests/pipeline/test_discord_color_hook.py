@@ -5,8 +5,8 @@ from unittest.mock import AsyncMock,patch
 import pytest
 from .test_discord_color_intake import Transport
 from .test_color_intake import source,state
-from print_buddy import settings
-from print_buddy.core import source_colors, model_job
+from print_handy import settings
+from print_handy.core import source_colors, model_job
 
 PLUGIN = settings.ROOT/'plugins/print-feedback/__init__.py'
 

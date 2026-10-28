@@ -3,8 +3,8 @@ import tracemalloc
 
 import pytest
 
-from print_buddy.core.compact_geometry import CompactTriangles, TransformedTriangles
-from print_buddy.core.geometry_layout import pack_parts, rotate_triangles_z
+from print_handy.core.compact_geometry import CompactTriangles, TransformedTriangles
+from print_handy.core.geometry_layout import pack_parts, rotate_triangles_z
 
 
 def test_rotation_preserves_scalar_math_and_reiterability():

@@ -4,8 +4,8 @@ import sys
 from pathlib import Path
 from types import SimpleNamespace as S
 import pytest
-from print_buddy.core import source_colors, model_job
-from print_buddy.core.discord_color_intake import collect
+from print_handy.core import source_colors, model_job
+from print_handy.core.discord_color_intake import collect
 from .test_color_intake import source, state
 
 class Adapter:
@@ -140,7 +140,7 @@ def test_cancel_on_first_question_saves_nothing(tmp_path):
         jp.write_text(json.dumps({'downloaded_file': str(p), 'color_manifest': source_colors.inventory(p)}))
         before = jp.read_text()
         adapter = Adapter([2])  # the Cancel button appended after the two color choices
-        from print_buddy.core.link_intake import PromptCancelled
+        from print_handy.core.link_intake import PromptCancelled
         with pytest.raises(PromptCancelled):
             await collect(jp, state(), adapter, 'offline', 'colors-cancel', timeout=1)
         assert jp.read_text() == before

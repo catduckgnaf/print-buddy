@@ -1,7 +1,7 @@
 """#390 Stage 2: the audited surfaces meet the operator-message bar."""
 import unittest
 
-from print_buddy.core import spoolman_client
+from print_handy.core import spoolman_client
 
 
 class SpoolmanNoticeTests(unittest.TestCase):

@@ -12,11 +12,11 @@ from pathlib import Path
 
 import pytest
 
-from print_buddy import live_stream
-from print_buddy.hermes import _config
-from print_buddy.hermes import moonraker_event_listener as mel
-from print_buddy.hermes import plan_timelapse
-from print_buddy.hermes import timelapse_capture, timelapse_encode
+from print_handy import live_stream
+from print_handy.hermes import _config
+from print_handy.hermes import moonraker_event_listener as mel
+from print_handy.hermes import plan_timelapse
+from print_handy.hermes import timelapse_capture, timelapse_encode
 
 ALL = {"h264_vaapi", "h264_nvenc", "h264_qsv", "libx264"}
 

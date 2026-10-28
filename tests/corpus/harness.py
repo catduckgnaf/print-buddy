@@ -9,7 +9,7 @@ print-now script.
 Two tiers (see tests/corpus/README or the main README):
   mock tier  - the Orca CLI is replaced by a small fake that writes valid G-code, and the plate fit
                probe is modelled in Python. Runs everywhere, no Orca needed.
-  real tier  - PRINT_BUDDY_REAL_SLICER=1: the real Orca CLI slices and probes. Work happens under
+  real tier  - PRINT_HANDY_REAL_SLICER=1: the real Orca CLI slices and probes. Work happens under
                <repo>/.slicer-work because the Flatpak sandbox cannot see /tmp.
 
 This module does not import pytest, so tests/corpus/test_corpus.py and the gateway-environment child
@@ -35,7 +35,7 @@ from pathlib import Path
 from types import SimpleNamespace as S
 from unittest import mock
 
-from print_buddy import settings
+from print_handy import settings
 
 CORPUS = Path(__file__).resolve().parent
 CASES = CORPUS / "cases"
@@ -78,7 +78,7 @@ class UnansweredPrompt(AssertionError):
 
 def private_corpus_root():
     """Return the opted-in local corpus root, refusing repository paths and CI use."""
-    configured = os.environ.get("PRINT_BUDDY_PRIVATE_CORPUS")
+    configured = os.environ.get("PRINT_HANDY_PRIVATE_CORPUS")
     if not configured:
         return None
     if os.environ.get("CI", "").strip().casefold() in {"1", "true", "yes"}:
@@ -275,7 +275,7 @@ def model_capacity(real_multi_plate, source_triangles, plate_count):
             return real_multi_plate(source, state, scale=float(scale))
         tris = source_triangles(source)
         if rotation is not None:
-            from print_buddy.core import orca_adapter
+            from print_handy.core import orca_adapter
             tris = [[orca_adapter._rotate(p, rotation) for p in tri] for tri in tris]
         extent = [(max(p[a] for t in tris for p in t) - min(p[a] for t in tris for p in t)) * float(scale)
                   for a in range(3)]
@@ -311,7 +311,7 @@ def run_case(case, work, *, real_slicer=False, state_file=FIXTURE_STATE, in_gate
     environment exactly as the gateway sees them.
 
     transport="hermes" calls the plugin hook the way the gateway does, with the FakeAdapter.
-    transport="standalone" posts the file to the standalone bot (print_buddy.bot) on a fake discord.py
+    transport="standalone" posts the file to the standalone bot (print_handy.bot) on a fake discord.py
     client: real adapter, real buttons, clicks resolved through the core prompt registry.
     """
     if transport not in ("hermes", "standalone"):
@@ -320,8 +320,8 @@ def run_case(case, work, *, real_slicer=False, state_file=FIXTURE_STATE, in_gate
         raise ValueError("the gateway environment check is Hermes only")
     if transport == "hermes":
         install_clarify_stand_in()
-    from print_buddy.core import background_slice, model_job, orca_adapter, prepared_intake, printer_state, source_colors
-    from print_buddy.hermes import _config, print_next, print_records
+    from print_handy.core import background_slice, model_job, orca_adapter, prepared_intake, printer_state, source_colors
+    from print_handy.hermes import _config, print_next, print_records
 
     work = Path(work)
     work.mkdir(parents=True, exist_ok=True)
@@ -420,10 +420,10 @@ async def _noop_receipt(*args, **kwargs):
 def _run_standalone(case, work, model, plugin, events, patch, *, auto=True):
     """Drop the model in a fake Discord channel and let the standalone bot handle the message."""
     import copy
-    from print_buddy.bot.router import Router
-    from print_buddy.bot.runtime import BotCore
-    from print_buddy.core import prepared_intake, prompts
-    from print_buddy.hermes import _config
+    from print_handy.bot.router import Router
+    from print_handy.bot.runtime import BotCore
+    from print_handy.core import prepared_intake, prompts
+    from print_handy.hermes import _config
     from . import fake_discord
 
     discord = fake_discord.FakeDiscord(case.clicks, events=events, auto=auto)
@@ -486,8 +486,8 @@ def slice_support_setting(run):
 
 def gcode_checks(run):
     """The offline G-code checks the pipeline itself runs, applied again to each final file."""
-    from print_buddy.core import slice_guard
-    from print_buddy.printers.flashforge.zmod import multicolor_contract
+    from print_handy.core import slice_guard
+    from print_handy.printers.flashforge.zmod import multicolor_contract
     rows = []
     for path in run.gcodes:
         text = path.read_text(errors="replace")
@@ -500,7 +500,7 @@ def gcode_checks(run):
 
 
 def model_job_verify(path, state):
-    from print_buddy.core import model_job
+    from print_handy.core import model_job
     return model_job.verify_gcode_offline(path, state)
 
 
@@ -577,16 +577,16 @@ def run_in_gateway_env(case, work, gateway_home, home, real_slicer=False):
     """
     import os
     import subprocess
-    env = {k: v for k, v in os.environ.items() if not k.startswith(("PRINT_BUDDY__", "HERMES_"))}
-    env.pop("PRINT_BUDDY_CONFIG", None)
-    env.pop("PRINT_BUDDY_REAL_SLICER", None)  # set again below only when asked; the CI real tier exports it
+    env = {k: v for k, v in os.environ.items() if not k.startswith(("PRINT_HANDY__", "HERMES_"))}
+    env.pop("PRINT_HANDY_CONFIG", None)
+    env.pop("PRINT_HANDY_REAL_SLICER", None)  # set again below only when asked; the CI real tier exports it
     Path(work).mkdir(parents=True, exist_ok=True)
     empty = Path(work) / "empty.toml"
     empty.write_text("")
-    env.update(HOME=str(home), HERMES_HOME=str(gateway_home), PRINT_BUDDY_CONFIG=str(empty),
+    env.update(HOME=str(home), HERMES_HOME=str(gateway_home), PRINT_HANDY_CONFIG=str(empty),
                PYTHONPATH=str(settings.ROOT), PYTHONDONTWRITEBYTECODE="1")
     if real_slicer:
-        env["PRINT_BUDDY_REAL_SLICER"] = "1"
+        env["PRINT_HANDY_REAL_SLICER"] = "1"
     code = ("import json,sys;from tests.corpus import harness;"
             "print('REPORT '+json.dumps(harness._env_child(sys.argv[1], sys.argv[2])))")
     proc = subprocess.run([sys.executable, "-c", code, str(case.dir), str(work)], cwd=str(settings.ROOT), env=env,
@@ -598,12 +598,12 @@ def run_in_gateway_env(case, work, gateway_home, home, real_slicer=False):
 
 def _env_child(case_dir, work):
     import os
-    from print_buddy.core import printer_state
+    from print_handy.core import printer_state
     report = {"hermes_home_env": os.environ.get("HERMES_HOME"), "printer_state": str(printer_state.STATE),
               "settings_home": str(settings.current()["paths"]["hermes_home"])}
     try:
         case = load_case(case_dir)
-        run = run_case(case, Path(work) / "run", real_slicer=os.environ.get("PRINT_BUDDY_REAL_SLICER") == "1",
+        run = run_case(case, Path(work) / "run", real_slicer=os.environ.get("PRINT_HANDY_REAL_SLICER") == "1",
                        in_gateway_env=True)
     except Exception as exc:  # the parent asserts on the report, so say what broke instead of a traceback
         return {**report, "status": "CRASHED", "error": f"{type(exc).__name__}: {exc}", "receipts": []}

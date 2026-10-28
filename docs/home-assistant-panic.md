@@ -53,7 +53,7 @@ Purging extrudes filament already loaded into the toolhead.
 ### Why Purge Must Call the CLI
 
 Guarded purge requires several critical safety checks:
-1. **Concurrency Lock:** Acquiring Print Buddy's `_CONTROL_LOCK` to ensure no conflicting print or maintenance operations run simultaneously.
+1. **Concurrency Lock:** Acquiring Print Handy's `_CONTROL_LOCK` to ensure no conflicting print or maintenance operations run simultaneously.
 2. **State Gate:** Verifying printer state is safe (`standby`, `complete`, `cancelled`, or `error`) and Klipper is `ready` (refusing while printing or paused).
 3. **Head Sensor Check:** Verifying `filament_switch_sensor head_switch_sensor` reports `filament_detected == True`.
 4. **Thermal Safety:** Clamping extrusion volume (<= 150 mm) and temperature (180–260°C), feeding in 10 mm increments, and **guaranteeing heater target reset to 0 in a finally block** with post-run readback confirmation.
@@ -62,7 +62,7 @@ Because Home Assistant `rest_command` alone cannot atomically acquire the Python
 
 ```yaml
 shell_command:
-  printer_purge: "/home/dysprosium/print-buddy/bin/pb-purge --mm 60 --temp 210"
+  printer_purge: "/home/dysprosium/print-handy/bin/ph-purge --mm 60 --temp 210"
 ```
 
 ### Direct Moonraker Script (Alternative)
@@ -79,7 +79,7 @@ rest_command:
       {"script": "M104 S210\nTEMPERATURE_WAIT SENSOR=extruder MINIMUM=205\nM83\nG1 E10 F150\nG1 E10 F150\nG1 E10 F150\nG1 E10 F150\nG1 E10 F150\nG1 E10 F150\nM104 S0"}
 ```
 
-*Note: The direct Moonraker script bypasses Print Buddy's `_CONTROL_LOCK` and the physical head sensor check. Use the CLI wrapper whenever possible.*
+*Note: The direct Moonraker script bypasses Print Handy's `_CONTROL_LOCK` and the physical head sensor check. Use the CLI wrapper whenever possible.*
 
 ---
 

@@ -12,9 +12,9 @@ from pathlib import Path
 import pytest
 import yaml
 
-from print_buddy import settings
-from print_buddy.bot import routing
-from print_buddy.setup_wizard import Wizard, build_plan, merge_config
+from print_handy import settings
+from print_handy.bot import routing
+from print_handy.setup_wizard import Wizard, build_plan, merge_config
 
 
 def _wizard(answers):
@@ -29,7 +29,7 @@ ONE_PRINTER = {
     "spoolman": "existing", "spoolman_url": "http://spoolman.home:7912",
     "camera": "no",
     "have_bot": "yes", "discord_app_id": "", "discord_chat_id": "100000000000000001",
-    "discord_user_ids": "200000000000000002", "bot_name": "Print Buddy",
+    "discord_user_ids": "200000000000000002", "bot_name": "Print Handy",
     "discord_bot_token": "tok", "hermes": "no",
     "add_printer_2": "no",
 }

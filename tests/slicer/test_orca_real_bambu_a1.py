@@ -1,12 +1,12 @@
 """Bambu Lab A1 with the real Orca CLI: profiles generated from the installed OrcaSlicer, the production slice path,
 the A1 guards on real output, the baseline proposal.
 
-Skipped unless PRINT_BUDDY_REAL_SLICER=1; CI's real-slicer jobs run tests/slicer with the pinned
+Skipped unless PRINT_HANDY_REAL_SLICER=1; CI's real-slicer jobs run tests/slicer with the pinned
 OrcaSlicer v2.5.0-alpha bundle (#356: the shipped slicer). The A1 templates are generated
 (profiles.install, production identities only) from that OrcaSlicer's own resources folder:
 PB_ORCA_RESOURCES, else the Flatpak's install location. OrcaSlicer 2.5 packs its vendor profiles
-into a preset cache (BBL.opc); print_buddy reads the cache directly (preset_cache), which
-test_generation_from_the_installed_tree records. Locally: PRINT_BUDDY_REAL_SLICER=1 python3 -m
+into a preset cache (BBL.opc); print_handy reads the cache directly (preset_cache), which
+test_generation_from_the_installed_tree records. Locally: PRINT_HANDY_REAL_SLICER=1 python3 -m
 pytest -s tests/slicer/test_orca_real_bambu_a1.py with a supported OrcaSlicer as the configured
 [orca] command (PB_ORCA_CMD overrides it). Printed lines record the slicer version, profile
 identity, effective settings and exact toolpath bounds for the review log.
@@ -22,14 +22,14 @@ from pathlib import Path
 
 import pytest
 
-from print_buddy import printers, settings
-from print_buddy.core import slice_guard as sg
-from print_buddy.printers.bambulab import facts, guard, profiles
+from print_handy import printers, settings
+from print_handy.core import slice_guard as sg
+from print_handy.printers.bambulab import facts, guard, profiles
 
 from .test_orca_real import WORK, _orca_command, write_cube
 
-REAL = os.environ.get("PRINT_BUDDY_REAL_SLICER") == "1"
-pytestmark = pytest.mark.skipif(not REAL, reason="set PRINT_BUDDY_REAL_SLICER=1 to slice with the real Orca CLI")
+REAL = os.environ.get("PRINT_HANDY_REAL_SLICER") == "1"
+pytestmark = pytest.mark.skipif(not REAL, reason="set PRINT_HANDY_REAL_SLICER=1 to slice with the real Orca CLI")
 ROOT = Path(__file__).resolve().parents[2]
 PROPOSAL = ROOT / "config" / "protected-settings-baseline.bambulab.a1.proposed.json"
 
@@ -59,9 +59,9 @@ def packed():
 
 
 def adapter_for(key, hermes=None):
-    env = {"PRINT_BUDDY__PRINTER__MODEL": key}
+    env = {"PRINT_HANDY__PRINTER__MODEL": key}
     if hermes is not None:
-        env["PRINT_BUDDY__PATHS__HERMES_HOME"] = str(hermes)
+        env["PRINT_HANDY__PATHS__HERMES_HOME"] = str(hermes)
     return printers.get(key, settings.load(local=False, environ=env))
 
 
@@ -84,8 +84,8 @@ def work():
 def production_flow(work, stl):
     """tests.printers.a1_flow with the real configured Orca: slice_job -> verification -> bambu_handoff -> print_now."""
     # Bambu Studio is the Bambu Lab default; this file checks the OrcaSlicer path ([printer] slicer: orca).
-    env = {**os.environ, "PRINT_BUDDY__PRINTER__MODEL": "bambulab.a1", "PRINT_BUDDY__PRINTER__SLICER": "orca",
-           "PRINT_BUDDY__PATHS__HERMES_HOME": str(work / "flow-hermes")}
+    env = {**os.environ, "PRINT_HANDY__PRINTER__MODEL": "bambulab.a1", "PRINT_HANDY__PRINTER__SLICER": "orca",
+           "PRINT_HANDY__PATHS__HERMES_HOME": str(work / "flow-hermes")}
     out = subprocess.run([sys.executable, "-m", "tests.printers.a1_flow", str(work / "flow"), "--stl", str(stl),
                           "--resources", str(installed_resources())],
                          cwd=ROOT, capture_output=True, text=True, env=env, timeout=900)

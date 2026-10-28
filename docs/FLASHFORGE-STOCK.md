@@ -9,28 +9,28 @@ the two are different printer profiles and never mix.
 |---|---|---|
 | `flashforge_stock.ad5x` | Adventurer 5X (stock firmware) | LAN upload/start implemented; see verification status below |
 
-## How Print Buddy talks to it
+## How Print Handy talks to it
 
 - **Transport:** HTTP POSTs to port **8898** on `[flashforge_stock] host`
   (`/detail`, `/uploadGcode`, `/printGcode`, `/control`). Every request
   carries the printer serial number and check code in the body; both come
   from the environment (`AD5X_SERIAL`, `AD5X_CHECK_CODE`), never from a
   settings file, a URL or a log line.
-- **Prints:** one tool (T0) fed from one of the four IFS bays. Print Buddy
+- **Prints:** one tool (T0) fed from one of the four IFS bays. Print Handy
   uploads the G-code with printing disabled, reads slot occupancy back
   from `/detail`, and starts only the file it uploaded, only after the
   bed-clear approval is consumed. Stock firmware does not speak
-  Moonraker, and Print Buddy sends it no Klipper macros, temperatures or
+  Moonraker, and Print Handy sends it no Klipper macros, temperatures or
   fan commands — the slicer's G-code owns the print.
-- **No listener:** stock firmware has no event stream Print Buddy can
+- **No listener:** stock firmware has no event stream Print Handy can
   subscribe to, so a monitor started by the print path itself polls
-  `/detail` for the prints Print Buddy launched (below). Prints started
+  `/detail` for the prints Print Handy launched (below). Prints started
   from the printer screen or another app are not watched.
 
 ## Timelapse
 
 With `[timelapse] capture_enabled` on, the monitor that watches a
-Print Buddy-launched print also captures a timelapse and attaches it to
+Print Handy-launched print also captures a timelapse and attaches it to
 the completion post:
 
 1. On the first active poll, the monitor reads the camera source **the
@@ -70,17 +70,17 @@ Read this before expecting a video:
 - **Protocol:** MJPEG over HTTP on port **8080**, `http://<printer-ip>:8080/?action=stream`.
   The stream URL is whatever `/detail` returns in `cameraStreamUrl` —
   empty means no camera is installed or the camera is disabled, and
-  Print Buddy then captures nothing and says so in the log. The stream
+  Print Handy then captures nothing and says so in the log. The stream
   itself carries no credentials in any documented example; the serial +
   check code authentication belongs to the 8898 API above.
-- **Not live-verified.** No AD5X running Print Buddy has yet confirmed a
+- **Not live-verified.** No AD5X running Print Handy has yet confirmed a
   `cameraStreamUrl`, a frame, or an attached timelapse on real hardware.
   Everything above is implemented and proven offline against recorded
   fixtures; the endpoint's behaviour on a real AD5X (with a camera
   accessory fitted) is the remaining verification step. Until then, treat
   AD5X timelapse as **protocol-documented, not verified**.
 - **Other Flashforge models** (5M, 5M Pro, Creator 5 series) have no
-  stock-firmware Print Buddy profile on this path today, so nothing here
+  stock-firmware Print Handy profile on this path today, so nothing here
   claims timelapse — or any other support — for them. The 5M Pro's
   built-in camera is documented by the same source, but there is no
   stock 5M Pro print path for it to attach to yet.

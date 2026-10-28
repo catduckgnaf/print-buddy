@@ -1,4 +1,4 @@
-# Implementation & Loading Contract: Print Buddy AD5X Selection & Validation
+# Implementation & Loading Contract: Print Handy AD5X Selection & Validation
 
 ## 1. Executive Summary & Inventory
 - **Hardware Architecture:** Flashforge AD5X running ZMod with a four-slot IFS feeder. Do not treat AD5M or AD5M Pro as equivalent. Configured Moonraker: `services.moonraker_url`, authoritative for read-only active-job phase, filename, progress, and queue. The stock detail adapter is authenticated `POST /detail` on port 8898 and is limited to IFS occupancy and native start-readiness. Do not use port 8898 as a general status API: unauthenticated `GET /`, `GET /status`, and `GET /detail` 404 by design. Spoolman: `services.spoolman_url`. These are existing endpoints, not instructions to add listeners.
@@ -12,13 +12,13 @@
    - Path: `state/printer_hardware.json`
    - Role: Tracks installed nozzle (0.4mm), Moonraker/Spoolman URLs, active spool ID, and limits.
 2. **State & Validation Utilities:**
-   - Path: `python3 -m print_buddy.core.printer_state`
+   - Path: `python3 -m print_handy.core.printer_state`
    - Role: Live hardware cross-check against Klipper nozzle and Moonraker/Spoolman active spool.
 3. **Model Intake, Slicing & Print Orchestrator:**
-   - Path: `python3 -m print_buddy.core.model_job`
+   - Path: `python3 -m print_handy.core.model_job`
    - Role: Manages fetch from MakerWorld/Printables, selection dialogue, OrcaSlicer invocation, G-code verification, upload, and print start via Moonraker.
 4. **Print Logging & Context:**
-   - Path: `print_buddy/core/print_records.py`
+   - Path: `print_handy/core/print_records.py`
    - Role: Writes print record notes and tracks context in `the context file under the state directory`.
 5. **Klipper / ZMod Firmware Macros & Configuration:**
    - Moonraker REST endpoints: `/printer/objects/query?zmod_color&filament_switch_sensor%20head_switch_sensor&save_variables`
@@ -35,14 +35,14 @@
   - Also, `zmod_color.channel` (0=unloaded/bypass, 1-4=active slot) tracks the currently fed slot.
   - Sensor endpoints: `filament_switch_sensor head_switch_sensor` and `zmod_ifs_switch_sensor head_switch_sensor` report `filament_detected`.
 - **The Blind Spot / Flaw:**
-  - In `python3 -m print_buddy.core.model_job`, model slicing and verification assume a single-spool machine inherited from the Sovol SV06 (`st["spool"]["material"]`, `st["spool"]["spoolman_id"]`).
+  - In `python3 -m print_handy.core.model_job`, model slicing and verification assume a single-spool machine inherited from the Sovol SV06 (`st["spool"]["material"]`, `st["spool"]["spoolman_id"]`).
   - It checks `verify_gcode` against `st["spool"]["material"]` only.
   - It does NOT inspect `zmod_color.slots` or verify whether the required filament/color is actually physically present (`hasFilament == True`) in the assigned IFS slot.
   - When `hasFilament` is `false` or the sensor cannot verify loaded filament, previous code fell back to assuming whatever spool was last used or saved in `state/printer_hardware.json`.
 
 ### B. Legacy SV06 Spool Preference Leakage
 - `printer_hardware.json` retains a single `"spool"` key (e.g., `#8 Sunlu Black PLA`).
-- When slicing a model, `python3 -m print_buddy.core.model_job` blindly pulls `st["spool"]["material"]` and replaces slicer tokens with that single spool.
+- When slicing a model, `python3 -m print_handy.core.model_job` blindly pulls `st["spool"]["material"]` and replaces slicer tokens with that single spool.
 - If a user requests a print or a model has multiple colors, the code had no concept of mapping tool numbers (T0, T1, T2, T3) to IFS slots (1, 2, 3, 4) or Spoolman spool IDs.
 
 ---
@@ -91,10 +91,10 @@
 
 ## 6. Implementation Architecture
 
-1. **Update `python3 -m print_buddy.core.printer_state`:**
+1. **Update `python3 -m print_handy.core.printer_state`:**
    - Add inspection of `zmod_color` objects from Moonraker (`/printer/objects/query?zmod_color`).
    - Cross-reference IFS slots 1-4 with Spoolman inventory where mapped.
-2. **Update `python3 -m print_buddy.core.model_job`:**
+2. **Update `python3 -m print_handy.core.model_job`:**
    - In `fetch` / intake: inspect model metadata for multicolor tools and material requirements.
    - Dialogue handler: ensure the concise pre-download/slice question is triggered if ambiguous.
    - Slicer mapping: generate tool-to-slot mapping for OrcaSlicer (T0-T3 -> Slots 1-4).

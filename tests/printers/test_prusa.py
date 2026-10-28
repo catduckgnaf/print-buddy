@@ -10,10 +10,10 @@ from pathlib import Path
 
 import pytest
 
-from print_buddy import printers, settings
-from print_buddy.printers.prusa import VENDOR, facts, profiles
-from print_buddy.printers.prusa.adapter import PrusaAdapter
-from print_buddy.printers.prusa.client import PrusaLinkClient, PrusaLinkError, _Response
+from print_handy import printers, settings
+from print_handy.printers.prusa import VENDOR, facts, profiles
+from print_handy.printers.prusa.adapter import PrusaAdapter
+from print_handy.printers.prusa.client import PrusaLinkClient, PrusaLinkError, _Response
 
 from . import prusa_fixture as fixture
 
@@ -30,9 +30,9 @@ def model_facts(key):
 
 
 def config_for(key, hermes=fixture.HERMES, environ=None, **printer):
-    env = {"PRINT_BUDDY__PRINTER__MODEL": key, "PRINT_BUDDY__PATHS__HERMES_HOME": str(hermes),
+    env = {"PRINT_HANDY__PRINTER__MODEL": key, "PRINT_HANDY__PATHS__HERMES_HOME": str(hermes),
            **(environ or {}),
-           **{f"PRINT_BUDDY__PRINTER__{k.upper()}": str(v) for k, v in printer.items()}}
+           **{f"PRINT_HANDY__PRINTER__{k.upper()}": str(v) for k, v in printer.items()}}
     return settings.load(local=False, environ=env)
 
 
@@ -62,14 +62,14 @@ def test_model_registration_and_defaults(key):
 
 
 def test_prusa_settings_validation():
-    cfg = config_for("prusa.mk4s", environ={"PRINT_BUDDY__PRUSA__LINK_HOST": "192.168.1.70"})
+    cfg = config_for("prusa.mk4s", environ={"PRINT_HANDY__PRUSA__LINK_HOST": "192.168.1.70"})
     assert cfg["prusa"] == {"link_host": "192.168.1.70", "api_key_env": "PRUSA_LINK_API_KEY"}
     with pytest.raises(settings.SettingsError, match="only applies to Prusa"):
-        config_for("sovol.sv06", environ={"PRINT_BUDDY__PRUSA__LINK_HOST": "192.168.1.70"})
+        config_for("sovol.sv06", environ={"PRINT_HANDY__PRUSA__LINK_HOST": "192.168.1.70"})
     with pytest.raises(settings.SettingsError, match="plain IP address or hostname"):
-        config_for("prusa.mk4s", environ={"PRINT_BUDDY__PRUSA__LINK_HOST": "http://192.168.1.70"})
+        config_for("prusa.mk4s", environ={"PRINT_HANDY__PRUSA__LINK_HOST": "http://192.168.1.70"})
     with pytest.raises(settings.SettingsError, match="moonraker_url and octoprint_url must be empty"):
-        config_for("prusa.mk4s", environ={"PRINT_BUDDY__SERVICES__MOONRAKER_URL": "http://x:7125"})
+        config_for("prusa.mk4s", environ={"PRINT_HANDY__SERVICES__MOONRAKER_URL": "http://x:7125"})
 
 
 # --------------------------------------------------------------------------- profiles
@@ -260,7 +260,7 @@ def test_adapter_unconfigured_and_status_normalization(monkeypatch):
 
 def test_adapter_env_api_key(monkeypatch):
     monkeypatch.setenv("PRUSA_LINK_API_KEY", "from-env")
-    cfg = config_for("prusa.coreone", environ={"PRINT_BUDDY__PRUSA__LINK_HOST": "192.168.1.70"})
+    cfg = config_for("prusa.coreone", environ={"PRINT_HANDY__PRUSA__LINK_HOST": "192.168.1.70"})
     a = adapter_for("prusa.coreone", cfg)
     assert a.link_configured() is True and a.api_key() == "from-env"
     client = a.client()

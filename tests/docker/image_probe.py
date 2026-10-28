@@ -1,4 +1,4 @@
-"""Checks run INSIDE a Print Buddy image by tests/docker/image_acceptance.sh. Standard library only.
+"""Checks run INSIDE a Print Handy image by tests/docker/image_acceptance.sh. Standard library only.
 
     python3 /probe/image_probe.py payload | closure | slice | egress | ffmpeg | openscad
 
@@ -42,8 +42,8 @@ def report(check, ok, **details):
 
 def payload():
     """Handlers, config, templates and plugins come from the image, not a mounted checkout."""
-    from print_buddy import printers, settings
-    from print_buddy.bot.router import PLUGIN, Router
+    from print_handy import printers, settings
+    from print_handy.bot.router import PLUGIN, Router
     root = settings.ROOT
     data = settings.load()
     missing = [str(p) for p in (root / "config" / "docker.yaml", root / "config" / "docker.toml",
@@ -52,7 +52,7 @@ def payload():
     for key, model in printers.MODELS.items():
         if model.generated_templates:  # Bambu: profiles come from the user's slicer at runtime; none ship
             continue
-        folder = root / "print_buddy" / "templates" / "orca" / model.templates
+        folder = root / "print_handy" / "templates" / "orca" / model.templates
         templates[key] = all((folder / f"{n}.json").is_file() for n in ("machine", "process", "filament"))
     mounts = [line.split()[4] for line in Path("/proc/self/mountinfo").read_text().splitlines()]
     source_mounted = any(m == "/app" or m.startswith("/app/") for m in mounts)
@@ -60,7 +60,7 @@ def payload():
     ok = (str(root) == "/app" and not missing and all(templates.values()) and not source_mounted
           and len(handlers) > 0 and not (root / "tests").exists())
     return report("payload", ok, root=root, missing=missing, templates=templates, handlers=len(handlers),
-                  source_mounted=source_mounted, config=os.environ.get("PRINT_BUDDY_CONFIG"),
+                  source_mounted=source_mounted, config=os.environ.get("PRINT_HANDY_CONFIG"),
                   slicer=data["orca"]["command"])
 
 
@@ -74,7 +74,7 @@ def closure():
     # when it cannot (the image's /app is not writable by the runtime user),
     # so --help runs from a writable work directory under the cache mount,
     # like every other Orca invocation in the probe and in production.
-    from print_buddy import settings
+    from print_handy import settings
     work = Path(tempfile.mkdtemp(prefix="probe-closure-", dir=settings.current()["paths"]["cache"]))
     try:
         env = _orca_env()
@@ -108,9 +108,9 @@ def _cube(path, size=20.0):
 def slice_check():
     """With Orca: slice a 20 mm cube with the packaged templates and pass the G-code guards.
     Without: the slicer path refuses with FileNotFoundError and writes no G-code."""
-    from print_buddy import settings
-    from print_buddy.core import orca_adapter
-    from print_buddy.core import slice_guard as sg
+    from print_handy import settings
+    from print_handy.core import orca_adapter
+    from print_handy.core import slice_guard as sg
     data = settings.current()
     work = Path(tempfile.mkdtemp(prefix="probe-slice-", dir=data["paths"]["cache"]))
     try:

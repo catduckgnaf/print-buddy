@@ -17,9 +17,9 @@ from pathlib import Path
 import pytest
 from PIL import Image
 
-from print_buddy.hermes import elegoo_watch, moonraker_event_listener as mel
-from print_buddy.hermes import timelapse_capture
-from print_buddy.printers.elegoo_sdcp import camera as elegoo_camera
+from print_handy.hermes import elegoo_watch, moonraker_event_listener as mel
+from print_handy.hermes import timelapse_capture
+from print_handy.printers.elegoo_sdcp import camera as elegoo_camera
 
 REMOTE = "benchy.gcode"
 STILL_URL = "sdcp-camera://unverified-fixture"
@@ -286,7 +286,7 @@ class FakeAdapter:
         return self._client
 
     def normalize_status(self, raw):
-        from print_buddy.printers.elegoo_sdcp.adapter import ElegooSdcpAdapter
+        from print_handy.printers.elegoo_sdcp.adapter import ElegooSdcpAdapter
         return ElegooSdcpAdapter.normalize_status(object.__new__(ElegooSdcpAdapter), raw)
 
 
@@ -336,7 +336,7 @@ def test_start_monitor_default_posture_is_the_completion_post_only(capture_logs)
 def test_start_monitor_unconfigured_adapter_starts_nothing():
     class UnconfiguredAdapter(FakeAdapter):
         def client(self):
-            from print_buddy.printers.elegoo_sdcp.client import SdcpError
+            from print_handy.printers.elegoo_sdcp.client import SdcpError
             raise SdcpError("SDCP is not configured")
 
     assert elegoo_watch.start_monitor(UnconfiguredAdapter([]), REMOTE, post=lambda _m: None) is None

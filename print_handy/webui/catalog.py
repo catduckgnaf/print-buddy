@@ -82,6 +82,7 @@ GROUP_OF = {
     "discord.approval_user_id": "platform",
     "discord.timezone": "platform",
     "discord.chat_llm_enabled": "platform",
+    "discord.clarify_ui": "platform",
     "telegram.chat_id": "platform",
     "telegram.allowed_user_ids": "platform",
     "telegram.approval_user_id": "platform",
@@ -175,6 +176,14 @@ CATALOG = (
            "off runs Discord as a pure bot (unmatched text gets the short not-understood reply) "
            "while [llm] stays configured for /print-design. The roast and camera "
            "watchdog keep their own vision switches either way.",
+           validator="settings discord check"),
+    _field("discord", "clarify_ui", "Discord clarify UI", "toggle",
+           "Who draws Print Handy's questions on a Hermes install (#524 stage 2). "
+           "Off by default: Hermes' adapter renders them, as before. On: Print Handy "
+           "posts its questions itself by direct Discord REST and resolves clicks and "
+           "typed answers in its own prompt registry — one renderer in both modes, "
+           "matching the standalone rendering. The standalone bot always uses its "
+           "own renderer either way. Takes effect on restart.",
            validator="settings discord check"),
     _field("telegram", "chat_id", "Telegram chat", "text",
            "Telegram chat (group) ID; group and channel IDs are negative.",

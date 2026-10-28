@@ -203,7 +203,7 @@ async def guided_dispatch(event, gateway, **kwargs):
         session = store.get(key)
         if not session or session.get('status') not in ('in_progress', 'awaiting_consent'):
             return None
-    adapter = gateway._delivery_adapter_for(source)
+    adapter = _adapter_for(gateway, source)
     if adapter is None:
         return {'action': 'skip', 'reason': 'guided UI delivery unavailable'}
 
@@ -301,11 +301,61 @@ _HERMES_LLM = None
 
 
 # Plugin-owned clarify rendering (#524 stage 2): the HermesClarifyAdapter
-# (print_handy.hermes.clarify_ui) the S5 switch installs here. None until
-# then — the pbq: branch in on_interaction and typed_answer_dispatch both
-# stay inert, no handler substitutes the adapter, and Hermes' adapter keeps
-# rendering questions exactly as before.
+# (print_handy.hermes.clarify_ui) the S5 switch installs here — under Hermes
+# only, and only when the operator turns on [discord] clarify_ui. None
+# otherwise: the pbq: branch in on_interaction and typed_answer_dispatch
+# both stay inert, no handler substitutes the adapter, and Hermes' adapter
+# keeps rendering questions exactly as before.
 _CLARIFY_UI = None
+
+# Set by register(): True when the host offered a Hermes-only plugin API
+# (register_auxiliary_task or the llm lane). The standalone Router offers
+# neither, and its own adapter already renders Print Handy's questions —
+# the S5 switch must never substitute there.
+_HOST_HERMES = False
+
+
+def _clarify_ui_on():
+    """The S5 switch, evaluated at register/attach time: Hermes host + [discord] clarify_ui on."""
+    return _HOST_HERMES and _config.clarify_ui_enabled()
+
+
+class _ClarifyAdapter:
+    """The delivery substitution (Stage 2 design §3.2): questions go to the
+    plugin-owned clarify adapter, plain posts keep travelling through the
+    host adapter, and every other attribute reads as the host adapter's.
+    Handlers keep calling the surface they already call; the blast radius
+    is send_clarify alone.
+    """
+
+    def __init__(self, ui, host):
+        self._ui = ui
+        self._host = host
+
+    async def send_clarify(self, *args, **kwargs):
+        return await self._ui.send_clarify(*args, **kwargs)
+
+    async def send(self, *args, **kwargs):
+        return await self._host.send(*args, **kwargs)
+
+    def __getattr__(self, name):
+        return getattr(self._host, name)
+
+
+def _adapter_for(gateway, source):
+    """The adapter a dispatch handler renders through (Stage 2 design §3.2).
+
+    The host adapter, unless the S5 switch installed the plugin-owned
+    clarify adapter and this source is Discord — then a wrapper that
+    substitutes send_clarify only. Any gap (the platform handler never ran,
+    no token resolved, the setting is off, a non-Discord source) falls back
+    to the host adapter: today's behaviour, no new failure mode.
+    """
+    ui = _CLARIFY_UI
+    if ui is not None and _platform_value(source) == 'discord' and _config.clarify_ui_enabled():
+        host = gateway._delivery_adapter_for(source)
+        return _ClarifyAdapter(ui, host) if host is not None else None
+    return gateway._delivery_adapter_for(source)
 
 
 def _design_root(cfg):
@@ -542,7 +592,7 @@ async def design_dispatch(event, gateway, **kwargs):
     # consume the message. Messages that matched no trigger returned None
     # during intent resolution above, so non-design chat is untouched
     # whatever the design state.
-    adapter = gateway._delivery_adapter_for(source)
+    adapter = _adapter_for(gateway, source)
     if adapter is None:
         return {'action': 'skip', 'reason': 'design UI delivery unavailable'}
     metadata = {'thread_id': source.thread_id} if source.thread_id else None
@@ -696,7 +746,7 @@ async def receive_ack(event, gateway, **kwargs):
     try:
         if not getattr(source, 'user_id', None) or not gateway._is_user_authorized_for_source(source):
             return None
-        adapter = gateway._delivery_adapter_for(source)
+        adapter = _adapter_for(gateway, source)
         if adapter is None:
             return None
     except Exception:
@@ -863,12 +913,15 @@ async def _redispatch(event, gateway):
 
     Mirrors print_handy.bot.router.Router.dispatch — the first hook that
     answers wins, a failing hook ends the dispatch with its own skip — over
-    the same ordered list register() installs, minus receive_ack (the Router
-    excludes it the same way: it promises an agent follow-up) and minus this
-    claim hook, so a named command can never re-enter the stray-chat lanes.
+    the effective ordered list register() installs (_ACTIVE_DISPATCH_HOOKS,
+    which carries the typed-answer swap when the own renderer is on; the
+    static _DISPATCH_HOOKS before register() ever ran), minus receive_ack
+    (the Router excludes it the same way: it promises an agent follow-up)
+    and minus this claim hook, so a named command can never re-enter the
+    stray-chat lanes.
     """
     import inspect
-    for hook in _DISPATCH_HOOKS:
+    for hook in _ACTIVE_DISPATCH_HOOKS or _DISPATCH_HOOKS:
         if hook is receive_ack:
             continue
         try:
@@ -1048,7 +1101,7 @@ async def color_selection_dispatch(event, gateway, **kwargs):
         return None
     if not getattr(source, 'user_id', None) or not gateway._is_user_authorized_for_source(source):
         return None
-    adapter = gateway._delivery_adapter_for(source)
+    adapter = _adapter_for(gateway, source)
     if adapter is None:
         return {'action': 'skip', 'reason': 'color UI delivery unavailable'}
     from print_handy.core import printer_state
@@ -1150,7 +1203,7 @@ async def print_next_dispatch(event, gateway, **kwargs):
         return None
     if not getattr(source, 'user_id', None) or not gateway._is_user_authorized_for_source(source):
         return None
-    adapter = gateway._delivery_adapter_for(source)
+    adapter = _adapter_for(gateway, source)
     if adapter is None:
         return {'action': 'skip', 'reason': 'next plate UI delivery unavailable'}
     import uuid
@@ -1693,7 +1746,7 @@ async def runout_intake_dispatch(event, gateway, **kwargs):
         # printer until the listener itself is per-printer (Stage 2d). A
         # routed channel must not answer it or bind its printer's slots.
         return None
-    adapter = gateway._delivery_adapter_for(source)
+    adapter = _adapter_for(gateway, source)
     metadata = {'thread_id': source.thread_id} if source.thread_id else None
     if listener.parse_cancel_print_reply(text):
         from print_handy.hermes import spool_sync
@@ -2579,7 +2632,7 @@ async def print_stop_dispatch(event, gateway, **kwargs):
         return None
     if not getattr(source, 'user_id', None) or not gateway._is_user_authorized_for_source(source):
         return None
-    adapter = gateway._delivery_adapter_for(source)
+    adapter = _adapter_for(gateway, source)
     if adapter is None:
         return {'action': 'skip', 'reason': 'print stop UI delivery unavailable'}
     import uuid
@@ -2659,7 +2712,7 @@ def _control_gate(event, gateway):
         return None, None
     if not getattr(source, 'user_id', None) or not gateway._is_user_authorized_for_source(source):
         return None, None
-    return source, gateway._delivery_adapter_for(source)
+    return source, _adapter_for(gateway, source)
 
 
 async def _confirm(adapter, source, metadata, prefix, question, choices, timeout, live_key=None):
@@ -2886,7 +2939,7 @@ async def print_reboot_dispatch(event, gateway, **kwargs):
         source = event.source
         if not getattr(source, 'user_id', None) or not gateway._is_user_authorized_for_source(source):
             return None
-        adapter = gateway._delivery_adapter_for(source)
+        adapter = _adapter_for(gateway, source)
         if adapter is None:
             return {'action': 'skip', 'reason': 'print reboot UI delivery unavailable'}
     if adapter is None:
@@ -2960,7 +3013,7 @@ async def typed_quantity_dispatch(event, gateway, **kwargs):
     if error is None:
         return None
     if error:
-        adapter = gateway._delivery_adapter_for(source)
+        adapter = _adapter_for(gateway, source)
         if adapter is not None:
             await adapter.send(chat_id=source.chat_id, content=error,
                                metadata={'thread_id': source.thread_id} if source.thread_id else None)
@@ -2968,7 +3021,7 @@ async def typed_quantity_dispatch(event, gateway, **kwargs):
 
 
 async def typed_answer_dispatch(event, gateway, **kwargs):
-    """A typed reply answers this session's open question (#524 stage 2; NOT registered yet).
+    """A typed reply answers this session's open question (#524 stage 2).
 
     Generalizes typed_quantity_dispatch: parser prompts (quantities and the
     other typed values) keep first claim through link_intake.typed_reply,
@@ -2978,11 +3031,9 @@ async def typed_answer_dispatch(event, gateway, **kwargs):
     which the plugin-owned renderer provides itself once it owns the
     questions (HermesClarifyAdapter.answer_typed).
 
-    Deliberately absent from register(): registration is the S5 switch and
-    lands with the rest of the own-renderer wiring after the S0 live spike,
-    replacing typed_quantity_dispatch in the hook list. Until then this hook
-    is inert even if called directly — with no _CLARIFY_UI installed it
-    behaves exactly like typed_quantity_dispatch.
+    register() swaps this hook in for typed_quantity_dispatch exactly when
+    the S5 switch is on (Hermes host + [discord] clarify_ui); with no
+    _CLARIFY_UI installed it behaves exactly like typed_quantity_dispatch.
     """
     if not _is_print_discord_event(event):
         return None
@@ -3000,7 +3051,7 @@ async def typed_answer_dispatch(event, gateway, **kwargs):
             return None
         return {'action': 'skip', 'reason': 'typed clarify answer handled'}
     if error:
-        adapter = gateway._delivery_adapter_for(source)
+        adapter = _adapter_for(gateway, source)
         if adapter is not None:
             await adapter.send(chat_id=source.chat_id, content=error,
                                metadata={'thread_id': source.thread_id} if source.thread_id else None)
@@ -3065,7 +3116,7 @@ async def model_link_dispatch(event, gateway, **kwargs):
         recent_links.remember(source.chat_id, linked, getattr(source, 'thread_id', None))
     event.metadata['fresh_model_intake_handled'] = True
     event.metadata['live_session_key'] = gateway._session_key_for_source(source)
-    adapter = gateway._delivery_adapter_for(source)
+    adapter = _adapter_for(gateway, source)
     if adapter is None:
         return {'action': 'skip', 'reason': 'new model color UI delivery unavailable'}
     # Receipt BEFORE the slow download/inventory: receive_ack never sees handled events.
@@ -3878,9 +3929,9 @@ def alert_button_handlers(bot, adapter):
         from print_handy.bot.platform import parse_custom_id as _parse_pbq
         clarify_press = _parse_pbq(custom_id)
         if clarify_press is not None:
-            # Plugin-owned question buttons (#524 stage 2). Inert until the
-            # S5 switch installs _CLARIFY_UI: no pbq: buttons are posted
-            # under Hermes before then, and the standalone bot's own
+            # Plugin-owned question buttons (#524 stage 2). Inert while
+            # _CLARIFY_UI is unset (the S5 switch off): no pbq: buttons are
+            # posted under Hermes then, and the standalone bot's own
             # listener owns its pbq: presses.
             ui = _CLARIFY_UI
             if ui is None:
@@ -3975,12 +4026,26 @@ def alert_button_handlers(bot, adapter):
             result = _failure_post(label, exc, 'Check the printer screen. Not retrying.', subsystem='printer')
         await interaction.followup.send(result)
 
+    # The S5 install (#524 stage 2, design §3.2): under Hermes with
+    # [discord] clarify_ui on and a resolvable bot token, the plugin-owned
+    # clarify adapter goes live — pbq: presses stop being inert and
+    # _adapter_for starts substituting send_clarify. Any gap (standalone
+    # host, setting off, no token) leaves _CLARIFY_UI unset and handlers on
+    # the host adapter: today's behaviour, no new failure mode. An adapter
+    # already installed (or installed by hand in tests) is kept.
+    global _CLARIFY_UI
+    if _CLARIFY_UI is None and _clarify_ui_on() and _config.discord_token():
+        from print_handy.hermes.clarify_ui import HermesClarifyAdapter
+        _CLARIFY_UI = HermesClarifyAdapter()
+
     bot.add_listener(on_interaction, 'on_interaction')
 
 
 # The pre_gateway_dispatch handlers in registration order — the same order
-# the standalone Router runs them. register() installs exactly this list;
-# stray_chat_dispatch's model-named-command re-dispatch walks it too.
+# the standalone Router runs them. register() installs this list (with the
+# typed-answer swap when the own renderer is on) and records the effective
+# list in _ACTIVE_DISPATCH_HOOKS; stray_chat_dispatch's model-named-command
+# re-dispatch walks the effective list.
 _DISPATCH_HOOKS = (
     guided_dispatch,
     design_dispatch,
@@ -4005,8 +4070,26 @@ _DISPATCH_HOOKS = (
     receive_ack,
 )
 
+# The effective dispatch list register() installed (typed-answer swap
+# applied); empty until register() runs.
+_ACTIVE_DISPATCH_HOOKS = ()
+
 
 def register(ctx):
+    # The S5 host record (#524 stage 2): the standalone Router offers neither
+    # Hermes-only API below, so this stays False there and the own-renderer
+    # switch can never engage in standalone mode.
+    global _HOST_HERMES
+    _HOST_HERMES = hasattr(ctx, 'register_auxiliary_task') or getattr(ctx, 'llm', None) is not None
+    clarify_on = _clarify_ui_on()
+    if clarify_on:
+        # The own-renderer switch (Stage 2 design §3.1): handler questions
+        # register into Print Handy's own prompt registry from here on. This
+        # lands in the same step as the _adapter_for delivery substitution
+        # and the typed-answer hook swap below, so no prompt can register in
+        # ours and resolve in Hermes' (or the reverse).
+        from print_handy.core import prompts as _prompts
+        _prompts.activate()
     # Print Handy's button prompts already say what to do; drop Hermes's generic
     # "Pick one below, or click Other..." line for this gateway (a locale overlay, not a core patch).
     with contextlib.suppress(Exception):
@@ -4028,8 +4111,19 @@ def register(ctx):
                 defaults={'timeout': int((_config.cfg().get('design') or {}).get('timeout_s') or 180)})
     if getattr(ctx, 'llm', None) is not None:
         _HERMES_LLM = ctx.llm
+    # With the own renderer on, typed answers route through
+    # typed_answer_dispatch (parser prompts first, then the session's open
+    # question in the own registry); off, today's quantity-only hook stays.
+    # _ACTIVE_DISPATCH_HOOKS records the effective list for
+    # stray_chat_dispatch's model-named-command re-dispatch.
+    global _ACTIVE_DISPATCH_HOOKS
+    _active = []
     for hook in _DISPATCH_HOOKS:
+        if hook is typed_quantity_dispatch and clarify_on:
+            hook = typed_answer_dispatch
         ctx.register_hook('pre_gateway_dispatch', hook)
+        _active.append(hook)
+    _ACTIVE_DISPATCH_HOOKS = tuple(_active)
     # Stray chat goes last of all (#524 stage 3): the claim hook answers
     # otherwise-unmatched Discord text with the bot's own lanes, so the
     # chat-LLM switch and the [agent] endpoint mean the same thing in this

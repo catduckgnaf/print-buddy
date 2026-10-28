@@ -159,8 +159,8 @@ def discord_chat_id() -> str:
 
 
 def bot_mode() -> str:
-    """hermes (the gateway runs the plugin) or standalone (python3 -m print_handy.bot)."""
-    return str((cfg().get("bot") or {}).get("mode") or "hermes")
+    """standalone (python3 -m print_handy.bot, the default) or hermes (the gateway runs the plugin)."""
+    return str((cfg().get("bot") or {}).get("mode") or "standalone")
 
 
 def standalone() -> bool:
@@ -171,6 +171,18 @@ def discord_token() -> str:
     """The Discord bot token: the [discord] token_env variable, then the profile .env files."""
     name = str((cfg().get("discord") or {}).get("token_env") or "DISCORD_BOT_TOKEN")
     return profile_env_value(name)
+
+
+def clarify_ui_enabled() -> bool:
+    """[discord] clarify_ui: Print Handy's own renderer draws handler questions under Hermes (#524 stage 2).
+
+    Off by default — Hermes' adapter keeps rendering, exactly as before the
+    switch existed. On, the plugin activates its own prompt registry, posts
+    questions by direct Discord REST (print_handy.hermes.clarify_ui) and
+    resolves clicks and typed answers itself: one renderer in both modes.
+    Read at plugin register/attach time; changing it takes effect on restart.
+    """
+    return bool((cfg().get("discord") or {}).get("clarify_ui", False))
 
 
 def question_timeout_s() -> int:

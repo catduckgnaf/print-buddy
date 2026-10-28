@@ -102,7 +102,7 @@ def _load(text, tmp_path, environ=None):
 
 def test_bot_settings_defaults_and_validation(tmp_path):
     data = _load("", tmp_path)
-    assert data["bot"] == {"mode": "hermes", "platform": "discord", "health_port": 0, "health_stale_s": 120, "sync_commands": True}
+    assert data["bot"] == {"mode": "standalone", "platform": "discord", "health_port": 0, "health_stale_s": 120, "sync_commands": True}
     assert data["discord"]["token_env"] == "DISCORD_BOT_TOKEN" and data["discord"]["allowed_user_ids"] == ""
     assert data["llm"]["chat_url"] == "" and data["llm"]["api_key_env"] == "LLM_API_KEY"
     data = _load("bot:\n  mode: standalone\ndiscord:\n  allowed_user_ids: '1, 2 3'\n", tmp_path,
@@ -121,6 +121,7 @@ def test_bot_settings_defaults_and_validation(tmp_path):
 
 def test_check_command_names_every_problem(monkeypatch, capsys, tmp_path):
     cfg = settings.load(local=Path(os.devnull), environ={})
+    cfg["bot"]["mode"] = "hermes"  # this check run is the Hermes-mode one (#524: no longer the default)
     cfg["paths"]["hermes_home"] = tmp_path / "profile"
     monkeypatch.setattr(settings, "current", lambda: cfg)
     monkeypatch.setattr(_config, "cfg", lambda: cfg)
@@ -173,6 +174,7 @@ def test_check_names_a_disabled_hermes_discord_platform(monkeypatch, capsys, tmp
     """#384: credentials present but the profile disables the platform: the
     check must name the problem and the remedy, never report healthy."""
     cfg = settings.load(local=Path(os.devnull), environ={})
+    cfg["bot"]["mode"] = "hermes"  # the platform-switch rows only exist in Hermes mode (#524)
     profile = tmp_path / "profile"
     profile.mkdir()
     cfg["paths"]["hermes_home"] = profile
@@ -351,6 +353,7 @@ def _check_with_profile(monkeypatch, capsys, tmp_path, profile_text):
     """Drive bot check with the Hermes profile config set to profile_text
     (None = no config file at all), mirroring the #384 disabled test."""
     cfg = settings.load(local=Path(os.devnull), environ={})
+    cfg["bot"]["mode"] = "hermes"  # the platform-switch rows only exist in Hermes mode (#524)
     profile = tmp_path / "profile"
     profile.mkdir()
     cfg["paths"]["hermes_home"] = profile

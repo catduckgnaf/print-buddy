@@ -170,7 +170,8 @@ def test_llm_named_command_is_redispatched_through_the_handlers():
     endpoint = FakeEndpoint(llm_content=json.dumps({"reply": "Listing your spools.",
                                                     "command": "/spool list"}))
     with mock.patch("urllib.request.urlopen", endpoint), \
-            mock.patch.object(plugin, "_DISPATCH_HOOKS", (fake_handler,)):
+            mock.patch.object(plugin, "_DISPATCH_HOOKS", (fake_handler,)), \
+            mock.patch.object(plugin, "_ACTIVE_DISPATCH_HOOKS", (fake_handler,)):
         result = run_hook(make_event("what filament do I have?"), make_gateway(adapter),
                           cfg_for(llm_url=LLM_URL))
     assert result == {"action": "skip", "reason": "fake handled"}

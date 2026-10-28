@@ -492,7 +492,7 @@ def build_plan(w, *, hermes_found=False, existing_profiles=()):
     w.say()
     w.say("Print Handy runs either as its own Discord bot (standalone) or as a Hermes Agent profile.")
     hermes = w.confirm("hermes", "Do you use Hermes Agent?" + (" (found on this machine)" if hermes_found else ""),
-                       default=hermes_found)
+                       default=False)
     profile = ""
     if hermes:
         profile = w.ask("profile", "Hermes profile name", "3dprinting", profile_name_error)

@@ -127,6 +127,23 @@ class OverrideTests(unittest.TestCase):
         data = settings.load(local=path, environ={})
         self.assertIs(data["visual_watch"]["enabled"], True)
 
+    def test_bot_mode_defaults_to_standalone_when_unset(self):
+        # The shipped home template minus its [bot] mode line: the settings
+        # default itself must resolve to standalone (#524 stage 5). Configs
+        # that state a mode explicitly never see this default.
+        text = Path(settings.HOME).read_text().replace("  mode: standalone\n", "", 1)
+        self.assertNotIn("mode: standalone", text)
+        home = self.toml(text, "home.yaml")
+        data = settings.load(home=home, local=False, environ={})
+        self.assertEqual(data["bot"]["mode"], "standalone")
+
+    def test_bot_mode_explicit_hermes_is_preserved(self):
+        # An explicit hermes choice still resolves to hermes after the
+        # default flip (#524 stage 5): only an unset mode changes.
+        path = self.toml("bot:\n  mode: hermes\n", "local.yaml")
+        data = settings.load(local=path, environ={})
+        self.assertEqual(data["bot"]["mode"], "hermes")
+
     def test_yaml_home_preserves_effective_legacy_toml_values(self):
         yaml_data = settings.load(home=settings.HOME, local=False, environ={})
         toml_data = settings.load(home=settings.LEGACY_HOME, local=False, environ={})
@@ -184,7 +201,8 @@ class OverrideTests(unittest.TestCase):
             "discord": {"chat_id", "approval_user_id", "upload_max_bytes", "post_print_quiet_s",
                         "daily_reset_hour", "timezone", "bot_name", "question_timeout_s",
                         "safety_confirm_timeout_s", "upload_wait_s", "cold_pull_outcome_s",
-                        "token_env", "allowed_user_ids", "denied_user_ids", "chat_llm_enabled"},
+                        "token_env", "allowed_user_ids", "denied_user_ids", "chat_llm_enabled",
+                        "clarify_ui"},
             "telegram": {"token_env", "chat_id", "allowed_user_ids", "approval_user_id", "upload_max_bytes"},
             "matrix": {"homeserver_url", "access_token_env", "room_id", "allowed_user_ids",
                        "approval_user_id", "bot_user_id", "upload_max_bytes"},

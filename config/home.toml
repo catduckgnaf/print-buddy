@@ -137,10 +137,10 @@ bot_user_id = ""
 upload_max_bytes = 50000000
 
 [bot]
-# hermes: the Hermes gateway runs the print-feedback plugin (the default).
-# standalone: python3 -m print_handy.bot talks to Discord directly. No Hermes, no LLM needed.
+# standalone: python3 -m print_handy.bot talks to Discord directly (the default). No Hermes, no LLM needed.
+# hermes: the Hermes gateway runs the print-feedback plugin instead.
 # Use one mode per bot token.
-mode = "hermes"
+mode = "standalone"
 # Standalone bot only: the chat platform ([bot] platform, #164). discord is the default;
 # telegram (#164 stage 2) and matrix (stage 3) are implemented.
 platform = "discord"

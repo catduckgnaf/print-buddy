@@ -12,7 +12,7 @@
     "bot": {
       "health_port": 0,
       "health_stale_s": 120,
-      "mode": "hermes",
+      "mode": "standalone",
       "sync_commands": true
     },
     "cold_pull": {
@@ -181,7 +181,7 @@
     "bot": {
       "health_port": 0,
       "health_stale_s": 120,
-      "mode": "hermes",
+      "mode": "standalone",
       "sync_commands": true
     },
     "cold_pull": {
@@ -350,7 +350,7 @@
     "bot": {
       "health_port": 0,
       "health_stale_s": 120,
-      "mode": "hermes",
+      "mode": "standalone",
       "sync_commands": true
     },
     "cold_pull": {
@@ -519,7 +519,7 @@
     "bot": {
       "health_port": 0,
       "health_stale_s": 120,
-      "mode": "hermes",
+      "mode": "standalone",
       "sync_commands": true
     },
     "cold_pull": {

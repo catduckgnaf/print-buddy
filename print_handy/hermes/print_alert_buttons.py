@@ -25,6 +25,8 @@ PREFIX = "pbalert"
 RETRY_PREFIX = "pbretry"
 INSERTION_PREFIX = "pbinsert"
 SPOOL_QUESTION_PREFIX = "pbspool"
+NEW_SPOOL_PREFIX = "pbnewspool"
+NEW_SPOOL_SELECT_PREFIX = "pbnewspoolselect"
 PLATE_PREFIX = "pbplate"
 CONFIRM_LABEL = "Confirm bed is clear & print"
 TTL = 24 * 3600
@@ -346,6 +348,52 @@ def post_insertion_confirmation(token: str, channel_id: str, content: str, slot:
         return False
 
 
+def new_spool_components(aid: str) -> list[dict[str, Any]]:
+    """Load / shelf / dismiss for one spool created outside Print Handy (#483).
+
+    Every choice is inventory-only at this step: Load opens the slot choice,
+    the other two simply close the prompt (the watcher already recorded the
+    spool as known when it prompted, so no answer is ever asked twice).
+    """
+    return [{"type": 1, "components": [
+        {"type": 2, "style": 1, "label": "Load into a slot", "custom_id": f"{NEW_SPOOL_PREFIX}:load:{aid}"},
+        {"type": 2, "style": 2, "label": "Leave on the shelf", "custom_id": f"{NEW_SPOOL_PREFIX}:shelf:{aid}"},
+        {"type": 2, "style": 2, "label": "Dismiss", "custom_id": f"{NEW_SPOOL_PREFIX}:dismiss:{aid}"},
+    ]}]
+
+
+def post_new_spool(token: str, channel_id: str, content: str, spool_id: int, label: str) -> bool:
+    """Post the one-time new-spool prompt (#483). False means the caller should fall back to plain text."""
+    if not token or not channel_id or not spool_id:
+        return False
+    aid = record("spoolman-new", "", spool_id=int(spool_id), label=str(label))
+    body = json.dumps({"content": content[:1990], "components": new_spool_components(aid),
+                       "allowed_mentions": {"parse": []}}).encode()
+    req = urllib.request.Request(f"https://discord.com/api/v10/channels/{channel_id}/messages", data=body,
+                                 method="POST", headers={"Authorization": f"Bot {token}",
+                                                         "Content-Type": "application/json",
+                                                         "User-Agent": "DiscordBot (hermes-3dprinting, 1.0)"})
+    try:
+        with urllib.request.urlopen(req, timeout=15) as resp:
+            return 200 <= resp.status < 300
+    except Exception:
+        take(aid)
+        return False
+
+
+def new_spool_slot_options(state: dict[str, Any] | None) -> list[dict[str, str]]:
+    """Select options for the new-spool load step: every slot, with what it holds now."""
+    slots = (state or {}).get("ifs_slots") or {}
+    options = []
+    for slot in (1, 2, 3, 4):
+        rec = slots.get(str(slot)) or {}
+        sid = rec.get("spoolman_id")
+        detail = f"#{sid} {rec.get('name') or ''}".strip() if sid else "empty"
+        options.append({"label": f"Slot {slot}", "value": str(slot),
+                        "description": f"Now holds {detail}"[:100]})
+    return options
+
+
 def insertion_select_options(spools: list[dict[str, Any]], mapped: dict[str, Any] | None = None,
                              excluded_ids: set[int] | None = None) -> list[dict[str, str]]:
     """Discord select options, closest material/color to the old slot record first."""
@@ -569,6 +617,21 @@ def parse_spool_question_custom_id(custom_id: str) -> tuple[str, str] | None:
     """Return a paused-spool choice and alert id, or None for unrelated controls."""
     parts = str(custom_id or "").split(":")
     if len(parts) == 3 and parts[0] == SPOOL_QUESTION_PREFIX and parts[1] in ("same", "existing", "new", "cancel") and parts[2]:
+        return parts[1], parts[2]
+    return None
+
+
+def parse_new_spool_custom_id(custom_id: str) -> tuple[str, str] | None:
+    """Return a new-spool choice and alert id, or None for unrelated controls (#483).
+
+    One prefix serves the whole prompt chain; the alert record's kind says
+    which step an action belongs to (the prompt itself: load/shelf/dismiss;
+    the disposition step: shelf/archive/depleted/cancel; the confirmation
+    step: confirm/cancel).
+    """
+    parts = str(custom_id or "").split(":")
+    if len(parts) == 3 and parts[0] == NEW_SPOOL_PREFIX and parts[1] in (
+            "load", "shelf", "dismiss", "archive", "depleted", "confirm", "cancel") and parts[2]:
         return parts[1], parts[2]
     return None
 

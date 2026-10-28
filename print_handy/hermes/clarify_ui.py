@@ -162,6 +162,22 @@ class HermesClarifyAdapter:
         await asyncio.to_thread(self._edit, row["channel_id"], row["message_id"],
                                 f"{row['question']}\n> {note}")
 
+    async def retire_prompt(self, clarify_id):
+        """Strip a still-open prompt's buttons, question text unchanged. True when retired.
+
+        The completion half of the Stop retirement (#524 stage 2, S6): a
+        later step (prepared_intake's Stop) superseded this question, and
+        on the clarify path no second message may be posted to say so, so
+        the question simply stops being answerable — the same end state a
+        click produces, minus the answer line close_prompt adds.
+        """
+        row = self._prompts.pop(str(clarify_id), None)
+        if not row or not row.get("message_id"):
+            return False
+        await asyncio.to_thread(self._edit, row["channel_id"], row["message_id"],
+                                row["question"])
+        return True
+
     async def answer_typed(self, session_key, text):
         """A typed reply to this session's newest open question, resolved in the own registry.
 

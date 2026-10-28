@@ -122,41 +122,67 @@ def vision_ready(api_key, log=None):
     return False
 
 
+class _VisionKeyMissing(Exception):
+    """The chat vision route is configured but its API key is not."""
+
+
+def _vision_answer(image, prompt, *, chat_url, model, api_key, context):
+    """One vision call: POST ``image`` + ``prompt`` and return the endpoint's answer.
+
+    This is the one transport both vision consumers share (#294's rule):
+    ``visual_verdict`` judges a frame with it, and ``visual_extract`` reads a
+    spool label with it (#514). ``chat_url`` and ``api_key`` are zero-argument
+    callables (so a missing setting fails inside the call exactly as the
+    verdict path has always behaved), ``model`` and ``context`` are the
+    caller's strings. A PRINT_VISION_URL endpoint, when set, takes the simple
+    {image, prompt} shape (the operator-facing contract is documented in
+    docs/SETTINGS.md, "Custom vision endpoint") and its response body is
+    parsed as JSON; otherwise the OpenAI-compatible chat endpoint is used
+    with the env-named key and its message content is parsed as JSON when it
+    parses, else returned as the raw string. Transport and parse failures
+    raise; a missing chat key raises _VisionKeyMissing.
+    """
+    endpoint = os.environ.get("PRINT_VISION_URL")
+    if endpoint:
+        payload = json.dumps({"image": base64.b64encode(image).decode(), "prompt": prompt}).encode()
+        req = urllib.request.Request(endpoint, data=payload, headers={"Content-Type": "application/json"})
+        with urllib.request.urlopen(req, timeout=30) as response:
+            return json.loads(response.read())
+    key = api_key()
+    if not key:
+        raise _VisionKeyMissing("vision key is not configured")
+    encoded = base64.b64encode(image).decode()
+    body = {"model": model, "temperature": 0, "max_tokens": 200,
+            "messages": [{"role": "user", "content": [{"type": "text", "text": context + str(prompt)},
+                         {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{encoded}"}}]}]}
+    req = urllib.request.Request(chat_url(),
+                                 data=json.dumps(body).encode(),
+                                 headers={"Authorization": f"Bearer {key}", "Content-Type": "application/json"})
+    with urllib.request.urlopen(req, timeout=60) as response:
+        result = json.loads(response.read())
+    content = _strip_json_fence(result["choices"][0]["message"]["content"])
+    try:
+        return json.loads(content)
+    except ValueError:
+        return content
+
+
 def visual_verdict(image, prompt, *, chat_url, model, api_key, context):
     """Judge one frame through the configured vision endpoint. Returns (verdict, detail).
 
     This is the listener's verdict call with its process-specific values
-    injected: ``chat_url`` and ``api_key`` are zero-argument callables (so a
-    missing setting fails inside the guarded body exactly as before), ``model``
-    and ``context`` are the caller's strings. A PRINT_VISION_URL endpoint, when
-    set, takes the simple {image, prompt} shape (the operator-facing contract
-    is documented in docs/SETTINGS.md, "Custom vision endpoint"); otherwise the
-    OpenAI-compatible chat endpoint is used with the env-named key. Any failure
+    injected (see ``_vision_answer`` for the shared transport). Any failure
     degrades to ("uncertain", ...) — an uncertain frame alerts, it never
     silently passes.
     """
     endpoint = os.environ.get("PRINT_VISION_URL")
     try:
-        if endpoint:
-            payload = json.dumps({"image": base64.b64encode(image).decode(), "prompt": prompt}).encode()
-            req = urllib.request.Request(endpoint, data=payload, headers={"Content-Type": "application/json"})
-            with urllib.request.urlopen(req, timeout=30) as response:
-                result = json.loads(response.read())
-            return str(result.get("verdict", "uncertain")).casefold(), str(result.get("reason", ""))[:300]
-        key = api_key()
-        if not key:
-            return "uncertain", "vision key is not configured"
-        encoded = base64.b64encode(image).decode()
-        body = {"model": model, "temperature": 0, "max_tokens": 200,
-                "messages": [{"role": "user", "content": [{"type": "text", "text": context + str(prompt)},
-                             {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{encoded}"}}]}]}
-        req = urllib.request.Request(chat_url(),
-                                     data=json.dumps(body).encode(),
-                                     headers={"Authorization": f"Bearer {key}", "Content-Type": "application/json"})
-        with urllib.request.urlopen(req, timeout=60) as response:
-            result = json.loads(response.read())
-        parsed = json.loads(_strip_json_fence(result["choices"][0]["message"]["content"]))
-        return str(parsed.get("verdict", "uncertain")).casefold(), str(parsed.get("reason", ""))[:300]
+        parsed = _vision_answer(image, prompt, chat_url=chat_url, model=model,
+                                api_key=api_key, context=context)
+        if not isinstance(parsed, dict):
+            raise TypeError(f"vision answer is not a JSON object ({type(parsed).__name__})")
+    except _VisionKeyMissing:
+        return "uncertain", "vision key is not configured"
     except Exception as exc:
         # The returned detail stays generic on purpose (#467: raw error text
         # does not belong in a chat alert), but the underlying error is
@@ -166,6 +192,29 @@ def visual_verdict(image, prompt, *, chat_url, model, api_key, context):
                        "PRINT_VISION_URL" if endpoint else "services.vision_chat_url",
                        type(exc).__name__, exc)
         return "uncertain", "the vision check could not be completed"
+    return str(parsed.get("verdict", "uncertain")).casefold(), str(parsed.get("reason", ""))[:300]
+
+
+def visual_extract(image, prompt, *, chat_url, model, api_key, context):
+    """Ask the configured vision endpoint to extract data from one image (#514).
+
+    The same call shape as ``visual_verdict`` — image bytes plus a JSON-only
+    prompt, with the caller's values injected — but the answer is data, not a
+    verdict: the endpoint's parsed JSON (a dict when it answered a JSON
+    object, the raw string when its answer was not JSON), or None when the
+    call could not be completed at all. Never raises; the failure is logged
+    with its route, like the verdict path. Interpreting the answer — and
+    refusing it when it is unusable — is the caller's job (spool_label).
+    """
+    try:
+        return _vision_answer(image, prompt, chat_url=chat_url, model=model,
+                              api_key=api_key, context=context)
+    except Exception as exc:
+        logger.warning("vision extraction failed via %s: %s: %s",
+                       "PRINT_VISION_URL" if os.environ.get("PRINT_VISION_URL")
+                       else "services.vision_chat_url",
+                       type(exc).__name__, exc)
+        return None
 
 
 class VisualPrintWatch:

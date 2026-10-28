@@ -436,6 +436,11 @@ def insertion_select_options(spools: list[dict[str, Any]], mapped: dict[str, Any
 # the whole step machine is covered without a gateway. Single free-text
 # values (an "Other" material/colour, a custom weight, a typed brand) are
 # the only pieces the click layer still collects with a one-field modal.
+# When a vision endpoint is available, the first step also offers a photo
+# of the spool label (#514): the click layer waits for the photo message,
+# spool_label extracts a spec, and the values land here as a pre-filled
+# state that still ends at the same confirmation — nothing is created
+# from a photo without it.
 
 INTAKE_PREFIX = "pbintake"
 INTAKE_SELECT_PREFIX = "pbintakeselect"
@@ -452,7 +457,8 @@ _DISPOSITION_ACTIONS = {"disp_shelf": "shelf", "disp_archive": "archive",
                         "disp_depleted": "depleted", "disp_delete": "delete"}
 INTAKE_ACTIONS = frozenset(
     [*_MATERIAL_ACTIONS, "mat_other", *_WEIGHT_ACTIONS, "w_custom",
-     *_DISPOSITION_ACTIONS, "brand_type", "brand_skip", "confirm", "cancel"])
+     *_DISPOSITION_ACTIONS, "brand_type", "brand_skip", "photo", "edit",
+     "confirm", "cancel"])
 
 
 def parse_intake_custom_id(custom_id: str) -> tuple[str, str] | None:
@@ -546,19 +552,37 @@ def intake_step_text(state: dict[str, Any]) -> str:
                 "depleted": f" Spool #{state.get('old_spool_id')} will be archived as depleted (0 g left).",
                 "delete": f" Spool #{state.get('old_spool_id')} will be DELETED from Spoolman."}.get(
                     state.get("disposition") or "", "")
-        return (f"Create {number} — {_intake_spec_line(state)}, {state.get('grams'):g} g — "
+        text = (f"Create {number} — {_intake_spec_line(state)}, {state.get('grams'):g} g — "
                 f"and load it into Slot {slot}?{fate}")
+        if state.get("from_photo"):
+            text += ("\nRead from the label photo — check every value before you confirm; "
+                     "Edit details walks the normal steps instead.")
+        temps = []
+        if state.get("nozzle_temp") is not None:
+            temps.append(f"nozzle {state['nozzle_temp']:g}°C")
+        if state.get("bed_temp") is not None:
+            temps.append(f"bed {state['bed_temp']:g}°C")
+        if temps:
+            text += (f"\nLabel print temps ({', '.join(temps)}) will be saved on the filament, "
+                     f"so prints use them.")
+        return text
     return "New spool"
 
 
-def intake_material_components(aid: str) -> list[dict[str, Any]]:
+def intake_material_components(aid: str, photo: bool = False) -> list[dict[str, Any]]:
     buttons = [{"type": 2, "style": 1, "label": label, "custom_id": f"{INTAKE_PREFIX}:mat_{i}:{aid}"}
                for i, label in enumerate(INTAKE_MATERIALS)]
+    last = [{"type": 2, "style": 2, "label": "Other material…", "custom_id": f"{INTAKE_PREFIX}:mat_other:{aid}"}]
+    if photo:
+        # The photo alternative (#514) rides the first step, and only when
+        # the caller knows a vision endpoint is available — with no endpoint
+        # the button is never rendered and the walkthrough is unchanged.
+        last.append({"type": 2, "style": 1, "label": "Use a photo of the label",
+                     "custom_id": f"{INTAKE_PREFIX}:photo:{aid}"})
+    last.append({"type": 2, "style": 2, "label": "Cancel", "custom_id": f"{INTAKE_PREFIX}:cancel:{aid}"})
     return [{"type": 1, "components": buttons[:3]},
             {"type": 1, "components": buttons[3:]},
-            {"type": 1, "components": [
-                {"type": 2, "style": 2, "label": "Other material…", "custom_id": f"{INTAKE_PREFIX}:mat_other:{aid}"},
-                {"type": 2, "style": 2, "label": "Cancel", "custom_id": f"{INTAKE_PREFIX}:cancel:{aid}"}]}]
+            {"type": 1, "components": last}]
 
 
 def intake_weight_components(aid: str) -> list[dict[str, Any]]:
@@ -588,10 +612,15 @@ def intake_disposition_components(aid: str, old_remaining: Any = None) -> list[d
     return [{"type": 1, "components": order}]
 
 
-def intake_confirm_components(aid: str) -> list[dict[str, Any]]:
-    return [{"type": 1, "components": [
-        {"type": 2, "style": 3, "label": "Create & load", "custom_id": f"{INTAKE_PREFIX}:confirm:{aid}"},
-        {"type": 2, "style": 2, "label": "Cancel", "custom_id": f"{INTAKE_PREFIX}:cancel:{aid}"}]}]
+def intake_confirm_components(aid: str, editable: bool = False) -> list[dict[str, Any]]:
+    buttons = [{"type": 2, "style": 3, "label": "Create & load", "custom_id": f"{INTAKE_PREFIX}:confirm:{aid}"}]
+    if editable:
+        # A photo pre-fill (#514) can be walked back through the normal
+        # steps instead of confirmed as read.
+        buttons.append({"type": 2, "style": 2, "label": "Edit details",
+                        "custom_id": f"{INTAKE_PREFIX}:edit:{aid}"})
+    buttons.append({"type": 2, "style": 2, "label": "Cancel", "custom_id": f"{INTAKE_PREFIX}:cancel:{aid}"})
+    return [{"type": 1, "components": buttons}]
 
 
 def intake_brand_components(aid: str) -> list[dict[str, Any]]:
@@ -650,7 +679,7 @@ def intake_step_components(aid: str, state: dict[str, Any]) -> list[dict[str, An
     """The controls for the walkthrough step ``state['step']`` is about to ask."""
     step = state.get("step")
     if step == "material":
-        return intake_material_components(aid)
+        return intake_material_components(aid, photo=bool(state.get("photo_offered")))
     if step == "brand":
         options = intake_brand_options(state.get("types"), state.get("material"))
         if len(options) > 2:  # at least one real brand is known
@@ -663,7 +692,7 @@ def intake_step_components(aid: str, state: dict[str, Any]) -> list[dict[str, An
         return intake_weight_components(aid)
     if step == "disposition":
         return intake_disposition_components(aid, state.get("old_remaining"))
-    return intake_confirm_components(aid)
+    return intake_confirm_components(aid, editable=bool(state.get("from_photo")))
 
 
 def bind_insertion_existing(slot: int, spool_id: int, spool_sync) -> str:
@@ -685,6 +714,11 @@ def create_and_bind_insertion(slot: int, values: dict[str, Any], spool_sync,
     """
     spec = spool_sync.parse_new(", ".join(str(values.get(key) or "").strip() for key in ("brand", "material", "color", "grams")))
     spec["lot"] = str(values.get("lot") or "").strip() or None
+    # Label temperatures read from a spool photo (#514) ride along so
+    # create_spool records them on a new filament; absent values stay absent.
+    for key in ("nozzle_temp", "bed_temp"):
+        if values.get(key) is not None:
+            spec[key] = values[key]
     made = spool_sync.create_spool(spec)
     result = spool_sync.bind_slot(slot, int(made["spool_id"]), note="Created and bound from Discord IFS insertion",
                                   push_screen_update=False, prior_disposition=prior_disposition)

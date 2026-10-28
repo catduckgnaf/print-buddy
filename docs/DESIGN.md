@@ -37,7 +37,7 @@ Where the model comes from:
   configured `[design]` endpoint (or the `[llm]` values it inherits)
   serves design there, and nothing else changes — ordinary chat on those
   platforms still has no LLM fallback and unmatched text still gets the
-  command list.
+  short “didn't understand” reply.
 - **Hermes:** the design model is the profile's auxiliary task, not a
   Print Handy setting. Uncomment the `auxiliary.print_design` block in the
   profile config (the shipped template carries a commented example) to pin

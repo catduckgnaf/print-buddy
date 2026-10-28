@@ -39,6 +39,10 @@ class StandaloneAdapter(BasePlatformAdapter):
     Discord is a channel-boundary platform (#386): with no allow list
     configured, anyone who can post in the print channel may use the bot;
     ``allowed``/``denied`` are opt-in lists on top of that default.
+
+    Discord keeps ``uses_llm = True`` (it is the one platform whose chat
+    may use the LLM); the operator's per-install choice is the
+    ``[discord] chat_llm_enabled`` setting BotCore applies (#466).
     """
 
     name = "discord"

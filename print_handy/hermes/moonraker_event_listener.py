@@ -2054,7 +2054,8 @@ class Listener:
                     else:
                         await asyncio.to_thread(
                             _visual_alert, self.filename, image,
-                            f"{reason} at layer {layer or 'unknown'}: vision check failed: {exc!r}",
+                            f"{reason} at layer {layer or 'unknown'}: the vision check could not be completed, "
+                            "so treat this as unreviewed and check the print on the printer screen",
                             identity=self._visual_identity())
                 except Exception as alert_exc:
                     log(f"visual alert failed file={self.filename!r}: {alert_exc!r}")

@@ -54,7 +54,12 @@ A bed-clear approval starts one print. Starting the same G-code again needs a ne
 **Filament and spools**
 * Colors matched to loaded IFS slots from Spoolman. PLA+ is accepted in a PLA slot.
 * Filament estimates split across parts that share a spool, never multiplied.
-* `/spool` lists, changes, creates, and syncs spools without moving the printer.
+* `/spool` lists, changes, creates, and syncs spools without moving the printer. Bare or incomplete
+  forms open a guided button flow (#475): known Spoolman filament types are offered first (their
+  colour/hex come from the database; hex is never asked), the create confirmation names the spool
+  number the new spool will be, and changing a slot asks the old spool's fate (shelf / archive /
+  depleted). Anchored plain phrases ("add new filament", "swap the filament", …) start the same flow
+  with no LLM involved; the complete typed forms stay one-shot.
 * `/print-colors <JOB.json>` opens the color selection flow for an archived job. Preparation only: it slices nothing, uploads nothing and starts nothing, and the path must be an archived `JOB.json`.
 * A swapped spool can finish a job sliced for the old one, by explicit choice.
 * `PRINT_HANDY` Klipper macro confirms ZMod can fall back to a matching backup slot.

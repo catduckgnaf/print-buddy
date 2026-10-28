@@ -41,9 +41,9 @@ COMMANDS = (
             (Option("mode", "full or quick", ("full", "quick")),), "/print-maintenance [full | quick]"),
     Command("print-colors", "Choose part colors for an archived job",
             (Option("job", "Path to the archived JOB.json"),), "/print-colors <JOB.json>"),
-    Command("spool", "List, change, add or sync spools (never moves the printer)",
-            (Option("args", "list | change <slot> <spool#> | new brand, material, color, grams | sync"),),
-            "/spool [list | change <slot> <spool#> | new ... | sync]"),
+    Command("spool", "Add or change spools with guided buttons, or list/sync them (never moves the printer)",
+            (Option("args", "guided when blank | list | change <slot> <spool#> | new brand, material, color, grams | sync"),),
+            "/spool [guided | list | change <slot> <spool#> | new ... | sync]"),
     Command("print-lookup", "Look up a firmware command, macro, error, symptom or printer (read-only, sends nothing)",
             (Option("query", "e.g. M600, zmod ifs load, bed mesh klipper, first layer not sticking"),),
             "/print-lookup <query>"),
@@ -88,7 +88,8 @@ def help_text(bot_name="Print Handy"):
     lines = [f"**{bot_name}** prints from this channel. Nothing starts without a button press.",
              "- Post a MakerWorld or Printables link, or drop one .3mf or .stl file, to slice and print it.",
              '- "print it" after a link, or "print the last one again", reuses the last model.',
-             '- "print 57" (or "print #57") reprints print #57, exactly like "/print-again 57".']
+             '- "print 57" (or "print #57") reprints print #57, exactly like "/print-again 57".',
+             '- "add new filament" / "add a new spool" / "swap the filament" starts the guided /spool flow.']
     lines += [f"- `{c.usage}`: {c.description}"
               + (f" (also `/{c.aliases[0]}`)" if c.aliases else "")
               for c in COMMANDS if c.name != "print-help"]

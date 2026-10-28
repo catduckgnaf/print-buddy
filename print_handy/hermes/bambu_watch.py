@@ -554,7 +554,8 @@ class BambuPrintMonitor:
                         log(f"bambu visual alert suppressed for muted print {self.filename!r}")
                     else:
                         self._alert(self.filename, image,
-                                    f"{reason} at layer {layer or 'unknown'}: vision check failed: {exc!r}",
+                                    f"{reason} at layer {layer or 'unknown'}: the vision check could not be completed, "
+                                    "so treat this as unreviewed and check the print on the printer screen",
                                     identity=self._identity)
                 except Exception as alert_exc:
                     log(f"bambu visual alert failed file={self.filename!r}: {alert_exc!r}")

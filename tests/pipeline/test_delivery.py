@@ -314,7 +314,7 @@ def test_changed_gcode_is_not_delivered(env, monkeypatch):  # noqa: F811
         return await real(adapter, source, metadata, method, receipt, jp, gcodes, pending)
     monkeypatch.setattr(prepared_intake, "_deliver", tamper)
     adapter, result, receipt = run_flow(env, [1, 0, 1, 1, 1])
-    assert any(m.startswith("Not delivered: plate_1.gcode changed after slicing") for m in adapter.sent)
+    assert any(m.startswith("The files were not sent here: plate_1.gcode changed after slicing") for m in adapter.sent)
     assert not any("MEDIA:" in m for m in adapter.sent) and env.starts == []
 
 

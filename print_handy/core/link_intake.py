@@ -2,12 +2,15 @@
 import asyncio
 import hashlib
 import json
+import logging
 import re
 from pathlib import Path
 from urllib.parse import urlsplit
 import uuid
 
 from .. import settings
+
+logger = logging.getLogger(__name__)
 
 
 def model_link(text):
@@ -234,7 +237,13 @@ async def collect_link(event, adapter, state, root, timeout=300):
     except Exception as exc:
         receipt['status'] = 'FAILED'
         path.write_text(json.dumps(receipt, indent=2) + '\n')
+        logger.exception('new model color selection failed')
+        from .. import diagnostics
         await adapter.send(chat_id=source.chat_id,
-            content=f'New model color selection stopped: {exc}. No slicing, upload or print started.',
+            content=diagnostics.plain_post(
+                'Choosing the colours for that model stopped before a choice was saved.',
+                not_happened='No slicing, upload or print started.',
+                next_step='Send the link or file again to pick the colours again.',
+                subsystem='intake', exc=exc),
             metadata={'thread_id': source.thread_id} if source.thread_id else None)
         return {'action': 'skip', 'reason': 'new model color confirmation failed'}

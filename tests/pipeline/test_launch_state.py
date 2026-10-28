@@ -284,7 +284,7 @@ def test_crash_before_submission_is_released_after_restart_and_approval_stays_us
 def test_upload_failure_releases_the_lease(printer):
     a, _ = make_job(printer.root, "a")
     printer.run.side_effect = lambda cmd, *a_, **k: mock.Mock(returncode=1, stdout="", stderr="boom")
-    with pytest.raises(SystemExit, match="UPLOAD FAILED"):
+    with pytest.raises(SystemExit, match="could not be uploaded to the printer"):
         model_job.print_now(a)
     assert leases() == []
 

@@ -56,20 +56,20 @@ def _wait_key(source):
 
 
 def _failure_post(label, exc, note, *, subsystem):
-    """One Discord failure post meeting the #390 operator bar (stage 6).
+    """One Discord failure post meeting the #390 bar, in #467 plain language.
 
-    ``label`` says what failed, the exception text is the detail the print
-    paths already phrase for operators, ``note`` says what state the print
-    is in and what to do, and the line ends with the stable greppable
-    ``PB_<SUBSYSTEM>_<CATEGORY>`` marker so a support thread can start from
-    one searchable string. The result is redacted like every diagnostics
-    string, so no secret material can ride along.
+    ``label`` says what was being done, in the person's words; ``note``
+    says what state things are in and what to do next. The raw exception
+    text is *not* posted (#467): it is classified for the stable greppable
+    ``PB_<SUBSYSTEM>_<CATEGORY>`` marker that ends the post, and the full
+    detail stays in the log and the diagnostics bundle. Built through the
+    shared ``diagnostics.plain_post`` so every platform surface uses the
+    one wording system.
     """
-    from print_handy import diagnostics, logs
-    category = diagnostics.classify(exc)
-    return logs.redact(
-        f'{label} failed: {exc}. {note}\n'
-        f'Reference: {diagnostics.marker(subsystem, category)}')
+    from print_handy import diagnostics
+    return diagnostics.plain_post(
+        f"{label} didn't work.", next_step=note,
+        subsystem=subsystem, exc=exc)
 
 
 # Platforms whose standalone sources these handlers serve (#164): Discord,
@@ -558,11 +558,12 @@ async def design_dispatch(event, gateway, **kwargs):
                     session, instruction or
                     'Show the model unchanged so I can preview it before asking for changes.')
     except design.DesignError as exc:
-        await say(f'Design turn failed: {exc}')
+        await say(f'That design change did not work: {exc} Nothing was sliced or started.')
         return {'action': 'skip', 'reason': 'design turn failed'}
     except Exception:
         logger.exception('design turn failed unexpectedly')
-        await say('Design turn failed unexpectedly. Nothing was sliced or started.')
+        await say('That design change did not work, and I could not tell why from here. Nothing was sliced or started. '
+                  'If it keeps happening, run `/print-handy bundle` and share the bundle so it can be looked into.')
         return {'action': 'skip', 'reason': 'design turn failed'}
     session = result['session']
     lines = [f"**Design turn {session['turns']}** — {design.summary_text(result)}"]
@@ -863,6 +864,17 @@ async def color_selection_dispatch(event, gateway, **kwargs):
     return {'action': 'skip', 'reason': 'deterministic color selection handled'}
 
 
+def intake_plain_start_failure(detail):
+    """Plain chat wording for a print-now detail tail (#467).
+
+    The tail itself (REFUSED lines, upload/start stderr) stays in the
+    receipt and log; chat gets prepared_intake's translation, which the
+    intake flow already uses for the same tails.
+    """
+    from print_handy.core import prepared_intake
+    return prepared_intake.plain_start_failure(detail)
+
+
 USE_LOADED_SPOOL = 'Use the loaded spool · bed is clear'
 SPOOL_CHANGED = 'spool changed since slicing'
 
@@ -977,7 +989,8 @@ async def print_next_dispatch(event, gateway, **kwargs):
             if not ok and SPOOL_CHANGED in str(detail):
                 ok, detail = await _offer_spool_change(adapter, source, metadata, print_next, target, detail)
             message = (None if ok
-                       else f"Did not start {target['label']}. Not retrying.\n{detail}")
+                       else f"Did not start {target['label']}. Not retrying.\n"
+                            + intake_plain_start_failure(detail))
             if not ok and _start_refused_needs_restart(detail):
                 from print_handy.hermes import print_control as pc
                 message += '\n' + await _offer_force_restart(adapter, source, metadata, pc, detail,
@@ -1135,7 +1148,7 @@ async def coldpull_dispatch(event, gateway, **kwargs):
                                                     **_pkw(pid))
     except Exception as exc:
         logger.exception('/print-coldpull failed')
-        message = f'Cold pull stopped: {exc}. Do not retry unless printer state is checked.'
+        message = 'The cold pull stopped early. Do not retry until the printer state is checked on its screen.'
     finally:
         _seen.pop(key, None)
     await adapter.send(chat_id=source.chat_id, metadata=metadata, content=message)
@@ -1241,7 +1254,7 @@ async def maintenance_dispatch(event, gateway, **kwargs):
         await adapter.send(chat_id=source.chat_id, metadata=metadata, content=message)
     except Exception as exc:
         logger.exception('maintenance workflow failed')
-        await adapter.send(chat_id=source.chat_id, metadata=metadata, content=f'Maintenance stopped: {exc}. No further printer action was sent.')
+        await adapter.send(chat_id=source.chat_id, metadata=metadata, content='The maintenance checklist stopped early. No further printer action was sent — check the printer screen before retrying.')
     finally:
         _seen.pop(key, None)
     return {'action': 'skip', 'reason': 'maintenance handled'}
@@ -1317,7 +1330,7 @@ async def runout_intake_dispatch(event, gateway, **kwargs):
         except Exception as exc:
             logger.exception('spool question cancel failed')
             await adapter.send(chat_id=source.chat_id, metadata=metadata, content=(
-                f'The print was not cancelled: {exc} The spool question is still open and usage '
+                'The print was not cancelled. The spool question is still open and usage '
                 'is still paused — answer it, or try cancelling again.'))
             return {'action': 'skip', 'reason': 'spool question cancel failed, question left open'}
         await adapter.send(chat_id=source.chat_id, metadata=metadata, content=message)
@@ -1336,7 +1349,7 @@ async def runout_intake_dispatch(event, gateway, **kwargs):
     except Exception as exc:
         logger.exception('spool question answer failed')
         await adapter.send(chat_id=source.chat_id, metadata=metadata,
-                           content=f'Nothing changed: {exc}. Usage is still paused; answer again.')
+                           content='That answer did not work, so nothing was changed. Usage is still paused; please answer again.')
         return {'action': 'skip', 'reason': 'spool answer failed closed'}
     await adapter.send(chat_id=source.chat_id, metadata=metadata, content=message)
     return {'action': 'skip', 'reason': 'spool question answered'}
@@ -1384,9 +1397,309 @@ def _answer_spool_question(listener, spool_sync, context, choice):
     return f'{created}{spool_sync.bind_text(result)}{gone} Usage tracking is back on, charged to #{spool_id}.'
 
 
+_SPOOL_CANCELLED = 'Cancelled. Nothing changed.'
+_SPOOL_UNCLEAR = 'That answer was not clear. Nothing changed.'
+_SPOOL_MENU_NEW = 'Add a new spool'
+_SPOOL_MENU_CHANGE = 'Change a spool'
+_SPOOL_MENU_LIST = 'List spools'
+_SPOOL_DISPOSITIONS = {'Back on the shelf': 'shelf', 'Archive it': 'archive',
+                       'Mark it as depleted': 'depleted'}
+
+_SPOOL_NL_NEW_RES = (
+    re.compile(r"(?:please\s+)?add(?:ing)?\s+(?:a\s+|an\s+|some\s+)?(?:new\s+)?(?:filament|spool)\s*[.!]?", re.I),
+    re.compile(r"(?:we|i)\s+(?:need|want)\s+to\s+add\s+(?:a\s+|an\s+|some\s+)?(?:new\s+)?(?:filament|spool)\s*[.!]?", re.I),
+    re.compile(r"(?:we|i)\s+(?:need|want)\s+(?:a\s+)?new\s+(?:filament|spool)\s*[.!]?", re.I),
+    re.compile(r"new\s+(?:filament|spool)\s*[.!]?", re.I),
+)
+_SPOOL_NL_CHANGE_RES = (
+    re.compile(r"(?:please\s+)?(?:change|swap|replace)\s+(?:the\s+|a\s+|an\s+)?(?:filament|spool)(?:\s+in\s+slot\s+[1-4])?\s*[.!]?", re.I),
+    re.compile(r"(?:we|i)\s+(?:need|want)\s+to\s+(?:change|swap|replace)\s+(?:the\s+|a\s+|an\s+)?(?:filament|spool)\s*[.!]?", re.I),
+)
+
+
+def _spool_nl_intent(text):
+    """Deterministic plain-text spool requests (#475): 'new' or 'change', else None.
+
+    Anchored full-message patterns in the style of 'print 57' (#436), not
+    loose substring matching: 'add new filament', 'we need to add new
+    filament', 'new spool', 'swap the filament'. Discussion ('the filament
+    is tangled', 'add new filament to my shopping list', questions about
+    filament) never matches, and this runs with no LLM configured.
+    """
+    text = ' '.join(str(text or '').split()).strip()
+    if not text or text.startswith('/'):
+        return None
+    if any(pattern.fullmatch(text) for pattern in _SPOOL_NL_NEW_RES):
+        return 'new'
+    if any(pattern.fullmatch(text) for pattern in _SPOOL_NL_CHANGE_RES):
+        return 'change'
+    return None
+
+
+def _spool_timeout():
+    return (globals().get('_config').question_timeout_s() if globals().get('_config') else 1800)
+
+
+async def _spool_ask(adapter, source, metadata, gateway, question, choices):
+    """One guided /spool question through the shared button prompt (_confirm)."""
+    return await _confirm(adapter, source, metadata, 'spool', question, list(choices),
+                          _spool_timeout(), live_key=gateway._session_key_for_source(source))
+
+
+def _spool_is_cancel(answer):
+    if answer is None or not isinstance(answer, str):
+        return True
+    return answer.strip().casefold() in ('cancel', '__cancelled__')
+
+
+def _spool_type_label(filament_type):
+    head = ' '.join(x for x in (filament_type.get('brand'), filament_type.get('material')) if x)
+    return f"{head} — {filament_type['color']}" if head else str(filament_type['color'])
+
+
+def _spool_spec_text(spec):
+    head = ' '.join(x for x in (spec.get('brand'), spec.get('material')) if x)
+    return f"{head}, {spec['color']}" if head else str(spec['color'])
+
+
+async def _spool_slot_ask(adapter, source, metadata, gateway, spool_sync, state, lead):
+    """Ask which slot, showing what each slot holds. (slot, None) or (None, final message)."""
+    slots = (state or {}).get('ifs_slots') or {}
+    lines = [lead]
+    for slot in spool_sync.SLOTS:
+        rec = slots.get(str(slot)) or {}
+        sid = rec.get('spoolman_id')
+        lines.append(f"Slot {slot}: #{sid} {rec.get('name') or ''}".rstrip() if sid else f"Slot {slot}: empty")
+    answer = await _spool_ask(adapter, source, metadata, gateway, '\n'.join(lines),
+                              [f'Slot {slot}' for slot in spool_sync.SLOTS])
+    if _spool_is_cancel(answer):
+        return None, _SPOOL_CANCELLED
+    match = re.fullmatch(r'(?:slot\s*)?([1-4])', str(answer).strip().casefold())
+    if not match:
+        return None, _SPOOL_UNCLEAR
+    return int(match.group(1)), None
+
+
+async def _spool_disposition_ask(adapter, source, metadata, gateway, slot, old_id):
+    """The old spool's fate, as buttons. (disposition, None) or (None, final message)."""
+    answer = await _spool_ask(adapter, source, metadata, gateway,
+                              f"Slot {slot} still holds spool #{old_id}. What happens to spool #{old_id}?",
+                              list(_SPOOL_DISPOSITIONS) + ['Cancel'])
+    if _spool_is_cancel(answer):
+        return None, _SPOOL_CANCELLED
+    disposition = _SPOOL_DISPOSITIONS.get(str(answer).strip())
+    return (disposition, None) if disposition else (None, _SPOOL_UNCLEAR)
+
+
+async def _spool_new_type_details(adapter, source, metadata, gateway):
+    """Brand / material / colour for a filament type the database does not know.
+
+    Returns a spec dict, or a final message string when the flow ends.
+    Hex is never asked and never required (#475).
+    """
+    answer = await _spool_ask(adapter, source, metadata, gateway,
+                              'What brand is the new filament? Type the brand name, or choose Skip brand.',
+                              ['Skip brand', 'Cancel'])
+    if _spool_is_cancel(answer):
+        return _SPOOL_CANCELLED
+    brand = None if str(answer).strip().casefold() in ('skip brand', 'skip') else str(answer).strip()
+    if brand is not None and not brand:
+        return _SPOOL_UNCLEAR
+    answer = await _spool_ask(adapter, source, metadata, gateway,
+                              'What material is it? Pick one, or type another material.',
+                              ['PLA', 'PLA+', 'PETG', 'Cancel'])
+    if _spool_is_cancel(answer):
+        return _SPOOL_CANCELLED
+    material = str(answer).strip()
+    if not material:
+        return _SPOOL_UNCLEAR
+    answer = await _spool_ask(adapter, source, metadata, gateway,
+                              'What is the colour called? Type the colour name — no colour code is needed.',
+                              ['Cancel'])
+    if _spool_is_cancel(answer):
+        return _SPOOL_CANCELLED
+    color = str(answer).strip()
+    if not color:
+        return _SPOOL_UNCLEAR
+    return {'brand': brand, 'material': material, 'color': color, 'hex': None}
+
+
+async def _spool_grams_ask(adapter, source, metadata, gateway):
+    """Full-spool grams: a preset button or a typed positive number. A float, or a final message."""
+    answer = await _spool_ask(adapter, source, metadata, gateway,
+                              'How many grams is a full spool? Pick one, or type the weight in grams.',
+                              ['1000', '500', '250', 'Cancel'])
+    if _spool_is_cancel(answer):
+        return _SPOOL_CANCELLED
+    try:
+        grams = float(re.sub(r'[^0-9.]', '', str(answer)))
+    except ValueError:
+        return _SPOOL_UNCLEAR
+    if grams <= 0:
+        return _SPOOL_UNCLEAR
+    return round(grams, 1)
+
+
+async def _spool_guided_new(adapter, source, metadata, gateway, spool_sync, pid, mr_kw, *, offer_load=True):
+    """Walk through adding a spool (#475). Returns (created spool id or None, final message).
+
+    Database first: a known filament type supplies brand/material/colour/hex,
+    so no colour or hex question follows. Nothing is created before the
+    confirmation button that names the number the new spool will be.
+    """
+    types = await asyncio.to_thread(spool_sync.filament_types)
+    predicted = await asyncio.to_thread(spool_sync.next_spool_id)
+    spec = None
+    if types:
+        listed = types[:8]
+        lines = ['Which filament is the new spool? Pick a type already in the database, '
+                 'or choose New filament type.']
+        lines += [f"{i}. {_spool_type_label(t)}" for i, t in enumerate(listed, 1)]
+        choices = [_spool_type_label(t) for t in listed[:3]] + ['New filament type']
+        answer = await _spool_ask(adapter, source, metadata, gateway, '\n'.join(lines), choices)
+        if _spool_is_cancel(answer):
+            return None, _SPOOL_CANCELLED
+        text = str(answer).strip()
+        pick = None
+        if text.casefold() in ('new', 'new filament type'):
+            pick = 'new'
+        elif text.isdigit() and 1 <= int(text) <= len(listed):
+            pick = listed[int(text) - 1]
+        else:
+            pick = next((t for t in listed if text.casefold() == _spool_type_label(t).casefold()), None)
+        if pick is None:
+            return None, _SPOOL_UNCLEAR
+        if pick != 'new':
+            spec = {'brand': pick.get('brand'), 'material': pick['material'],
+                    'color': pick['color'], 'hex': pick.get('hex')}
+    if spec is None:
+        details = await _spool_new_type_details(adapter, source, metadata, gateway)
+        if isinstance(details, str):
+            return None, details
+        spec = details
+    grams = await _spool_grams_ask(adapter, source, metadata, gateway)
+    if isinstance(grams, str):
+        return None, grams
+    spec = {**spec, 'grams': grams}
+    create_label = f'Create spool #{predicted}'
+    answer = await _spool_ask(adapter, source, metadata, gateway,
+                              f"This will be spool #{predicted} — {_spool_spec_text(spec)}, "
+                              f"{grams:g} g, on the shelf. Create it?",
+                              [create_label, 'Cancel'])
+    if answer != create_label:
+        return None, _SPOOL_CANCELLED if _spool_is_cancel(answer) else _SPOOL_UNCLEAR
+    made = await asyncio.to_thread(spool_sync.create_spool, spec)
+    made_id = int(made['spool_id'])
+    message = (f"Created spool #{made_id} on the shelf"
+               f"{' (existing filament type reused)' if made.get('reused_filament') else ''}.")
+    if not offer_load:
+        return made_id, message
+    answer = await _spool_ask(adapter, source, metadata, gateway,
+                              f"Load spool #{made_id} into a slot now, or leave it on the shelf?",
+                              ['Load it into a slot', 'Leave it on the shelf'])
+    if answer != 'Load it into a slot':
+        return made_id, message
+    state = await asyncio.to_thread(spool_sync.load_state, **_pkw(pid))
+    slot, problem = await _spool_slot_ask(adapter, source, metadata, gateway, spool_sync, state,
+                                          f"Which slot should spool #{made_id} go into?")
+    if slot is None:
+        return made_id, f"{message} Nothing was loaded; no slot changed."
+    old_id = ((state.get('ifs_slots') or {}).get(str(slot)) or {}).get('spoolman_id')
+    disposition = 'shelf'
+    if old_id and int(old_id) != made_id:
+        disposition, problem = await _spool_disposition_ask(adapter, source, metadata, gateway, slot, old_id)
+        if disposition is None:
+            return made_id, f"{message} Nothing was loaded; slot {slot} is unchanged."
+    result = await asyncio.to_thread(spool_sync.bind_slot, slot, made_id,
+                                     prior_disposition=disposition, **mr_kw)
+    return made_id, f"{message} {spool_sync.bind_text(result)}"
+
+
+async def _spool_guided_change(adapter, source, metadata, gateway, spool_sync, pid, mr_kw):
+    """Walk through changing a slot's spool (#475): slot -> replacement ->
+    the old spool's fate -> one confirmation -> bind_slot."""
+    state = await asyncio.to_thread(spool_sync.load_state, **_pkw(pid))
+    slot, problem = await _spool_slot_ask(adapter, source, metadata, gateway, spool_sync, state,
+                                          'Which slot are you changing?')
+    if slot is None:
+        return problem
+    old_id = ((state.get('ifs_slots') or {}).get(str(slot)) or {}).get('spoolman_id')
+    shelf = await asyncio.to_thread(spool_sync.shelf_spools, **_pkw(pid))
+    listed = shelf[:12]
+    lines = [f"Which spool goes into slot {slot}? Pick one from the shelf, or choose Add a new spool."]
+    if listed:
+        for i, entry in enumerate(listed, 1):
+            grams = (f", {entry['remaining_grams']:g} g left" if entry.get('remaining_grams') is not None else '')
+            lines.append(f"{i}. #{entry['spool_id']} {entry['name']} {entry['material']}{grams}".rstrip())
+    else:
+        lines.append('(nothing on the shelf)')
+    choices = [f"#{entry['spool_id']} {entry['name']}"[:80] for entry in listed[:3]] + ['Add a new spool']
+    if not listed:
+        choices = ['Add a new spool', 'Cancel']
+    answer = await _spool_ask(adapter, source, metadata, gateway, '\n'.join(lines), choices)
+    if _spool_is_cancel(answer):
+        return _SPOOL_CANCELLED
+    text = str(answer).strip()
+    created_note = ''
+    new_id = None
+    if text.casefold() == 'add a new spool':
+        made_id, made_message = await _spool_guided_new(adapter, source, metadata, gateway,
+                                                        spool_sync, pid, mr_kw, offer_load=False)
+        if made_id is None:
+            return made_message
+        new_id = made_id
+        created_note = made_message + ' '
+    else:
+        if text.startswith('#') and text[1:].isdigit():
+            wanted = int(text[1:])
+            new_id = wanted if any(entry['spool_id'] == wanted for entry in shelf) else None
+        elif text.isdigit():
+            number = int(text)
+            if 1 <= number <= len(listed):
+                new_id = listed[number - 1]['spool_id']
+            elif any(entry['spool_id'] == number for entry in shelf):
+                new_id = number
+        else:
+            pick = next((entry for entry in listed
+                         if text.casefold() == f"#{entry['spool_id']} {entry['name']}".casefold()), None)
+            new_id = pick['spool_id'] if pick else None
+        if new_id is None:
+            return _SPOOL_UNCLEAR
+    if old_id and int(old_id) == int(new_id):
+        return f"{created_note}Slot {slot} already holds spool #{new_id}. Nothing changed."
+    disposition = 'shelf'
+    if old_id:
+        disposition, problem = await _spool_disposition_ask(adapter, source, metadata, gateway, slot, old_id)
+        if disposition is None:
+            return (f"{created_note}The change was cancelled; slot {slot} is unchanged."
+                    if created_note else problem)
+    fate = {'shelf': f" Spool #{old_id} goes back on the shelf.",
+            'archive': f" Spool #{old_id} will be archived.",
+            'depleted': f" Spool #{old_id} will be marked as depleted (0 g left)."}.get(disposition, '') if old_id else ''
+    confirm_label = f'Change slot {slot}'
+    answer = await _spool_ask(adapter, source, metadata, gateway,
+                              f"Change slot {slot} to spool #{new_id}?{fate}", [confirm_label, 'Cancel'])
+    if answer != confirm_label:
+        return (f"{created_note}The change was cancelled; slot {slot} is unchanged."
+                if created_note else
+                _SPOOL_CANCELLED if _spool_is_cancel(answer) else _SPOOL_UNCLEAR)
+    result = await asyncio.to_thread(spool_sync.bind_slot, slot, int(new_id),
+                                     prior_disposition=disposition, **mr_kw)
+    return created_note + spool_sync.bind_text(result)
+
+
 async def spool_dispatch(event, gateway, **kwargs):
-    """/spool list | change <slot> <spool#> | new brand, material, color, grams[, hex] | sync. Never moves the printer."""
-    source, adapter = _control_preamble(event, gateway, '/spool', with_args=True)
+    """/spool: bare, incomplete or natural-language forms open the guided flow (#475);
+    the complete typed forms (list | change <slot> <spool#> | new brand, material,
+    color, grams[, hex] | sync) keep their one-shot behaviour. Never moves the printer."""
+    text = str(getattr(event, 'text', '')).strip()
+    nl_intent = None if text.startswith('/spool') else _spool_nl_intent(text)
+    if nl_intent is not None:
+        # The plain-text twin of /spool (#475, in the style of 'print 57'):
+        # same gate, same guided flow — never the LLM and never the help dump.
+        source, adapter = _control_gate(event, gateway)
+    else:
+        source, adapter = _control_preamble(event, gateway, '/spool', with_args=True)
     if source is None:
         return None
     if adapter is None:
@@ -1397,33 +1710,86 @@ async def spool_dispatch(event, gateway, **kwargs):
     # A routed channel's spool state and screen pushes are that printer's:
     # its hardware record and its own Moonraker (#335). Spoolman itself is shared.
     mr_kw = {'mr': spool_sync.moonraker_for(pid), 'printer_id': pid} if pid else {}
-    args = str(getattr(event, 'text', '')).strip()[len('/spool'):].strip()
+    args = text[len('/spool'):].strip() if nl_intent is None else ''
     verb, _, rest = args.partition(' ')
     verb = verb.casefold()
+    # Decide up front whether this entry needs the guided flow, so the
+    # already-open guard covers exactly the button conversations.
+    guided = nl_intent is not None or verb == ''
+    change_parts = rest.replace('#', ' ').split() if verb in ('change', 'set', 'load') else []
+    change_complete = len(change_parts) == 2 and all(p.isdigit() for p in change_parts)
+    new_spec = None
+    if verb in ('new', 'add'):
+        try:
+            new_spec = spool_sync.parse_new(rest)
+        except Exception:
+            new_spec = None
+        guided = new_spec is None
+    if verb in ('change', 'set', 'load'):
+        guided = not change_complete
+    key = ('spool', source.chat_id, source.thread_id)
+    if guided:
+        if key in _seen:
+            await adapter.send(chat_id=source.chat_id, metadata=metadata,
+                               content='A spool question is already open here. Nothing changed.')
+            return {'action': 'skip', 'reason': 'spool flow already active'}
+        _seen[key] = time.monotonic()
     try:
-        if verb in ('', 'list', 'ls'):
+        if nl_intent == 'new':
+            _made, message = await _spool_guided_new(adapter, source, metadata, gateway,
+                                                     spool_sync, pid, mr_kw)
+        elif nl_intent == 'change':
+            message = await _spool_guided_change(adapter, source, metadata, gateway,
+                                                 spool_sync, pid, mr_kw)
+        elif verb in ('list', 'ls'):
             message = await asyncio.to_thread(spool_sync.list_text, **_pkw(pid))
         elif verb in ('change', 'set', 'load'):
-            parts = rest.replace('#', ' ').split()
-            if len(parts) != 2 or not all(p.isdigit() for p in parts):
-                raise spool_sync.SpoolError('format: /spool change <slot 1-4> <spool#>')
-            result = await asyncio.to_thread(spool_sync.bind_slot, int(parts[0]), int(parts[1]), **mr_kw)
-            message = spool_sync.bind_text(result)
+            if change_complete:
+                result = await asyncio.to_thread(spool_sync.bind_slot, int(change_parts[0]),
+                                                 int(change_parts[1]), **mr_kw)
+                message = spool_sync.bind_text(result)
+            else:
+                message = await _spool_guided_change(adapter, source, metadata, gateway,
+                                                     spool_sync, pid, mr_kw)
         elif verb in ('new', 'add'):
-            made = await asyncio.to_thread(spool_sync.create_spool, spool_sync.parse_new(rest))
-            message = (f"Created spool #{made['spool_id']} on the shelf"
-                       f"{' (existing filament type reused)' if made['reused_filament'] else ''}. "
-                       f"Load it with `/spool change <slot> {made['spool_id']}`.")
+            if new_spec is not None:
+                made = await asyncio.to_thread(spool_sync.create_spool, new_spec)
+                message = (f"Created spool #{made['spool_id']} on the shelf"
+                           f"{' (existing filament type reused)' if made['reused_filament'] else ''}. "
+                           f"Load it with `/spool change <slot> {made['spool_id']}`.")
+            else:
+                _made, message = await _spool_guided_new(adapter, source, metadata, gateway,
+                                                         spool_sync, pid, mr_kw)
         elif verb == 'sync':
             message = 'Printer screen from Spoolman:\n' + '\n'.join(await asyncio.to_thread(spool_sync.sync_all_screens, **mr_kw))
+        elif verb == '':
+            answer = await _spool_ask(adapter, source, metadata, gateway,
+                                      'What would you like to do with the spools?',
+                                      [_SPOOL_MENU_NEW, _SPOOL_MENU_CHANGE, _SPOOL_MENU_LIST, 'Cancel'])
+            picked = str(answer).strip().casefold() if isinstance(answer, str) else ''
+            if answer == _SPOOL_MENU_NEW or picked in ('new', 'add', 'add a new spool'):
+                _made, message = await _spool_guided_new(adapter, source, metadata, gateway,
+                                                         spool_sync, pid, mr_kw)
+            elif answer == _SPOOL_MENU_CHANGE or picked in ('change', 'change a spool', 'swap', 'replace'):
+                message = await _spool_guided_change(adapter, source, metadata, gateway,
+                                                     spool_sync, pid, mr_kw)
+            elif answer == _SPOOL_MENU_LIST or picked == 'list':
+                message = await asyncio.to_thread(spool_sync.list_text, **_pkw(pid))
+            elif _spool_is_cancel(answer):
+                message = _SPOOL_CANCELLED
+            else:
+                message = _SPOOL_UNCLEAR
         else:
             message = ('`/spool list` · `/spool change <slot> <spool#>` · '
                        '`/spool new brand, material, color, grams[, hex]` · `/spool sync`')
     except Exception as exc:
         logger.exception('/spool failed')
-        message = f'Nothing changed: {exc}'
+        message = 'That spool change did not work, so nothing was changed. Check the slot and spool number and try again.'
+    finally:
+        if guided:
+            _seen.pop(key, None)
     await adapter.send(chat_id=source.chat_id, metadata=metadata, content=message)
-    return {'action': 'skip', 'reason': 'spool command handled'}
+    return {'action': 'skip', 'reason': 'spool NL intent handled' if nl_intent else 'spool command handled'}
 
 
 async def lookup_dispatch(event, gateway, **kwargs):
@@ -1972,7 +2338,8 @@ async def print_again_dispatch(event, gateway, **kwargs):
             # including the model roast. A successful print-now request may still
             # be preparing, so do not race it with a second, incomplete receipt.
             message = (None if ok
-                       else f"Did not start {target['title']}. Not retrying.\n{detail}")
+                       else f"Did not start {target['title']}. Not retrying.\n"
+                            + intake_plain_start_failure(detail))
             if not ok and _start_refused_needs_restart(detail):
                 message += '\n' + await _offer_force_restart(adapter, source, metadata, pc, detail,
                                                              live_key=gateway._session_key_for_source(source),
@@ -2315,7 +2682,7 @@ def alert_button_handlers(bot, adapter):
         try:
             spools = await asyncio.to_thread(spool_sync.spoolman, 'GET', '/api/v1/spool?allow_archived=false', None)
         except Exception as exc:
-            await interaction.response.send_message(f'Could not load shelf spools: {exc}. Nothing changed.', ephemeral=True)
+            await interaction.response.send_message('The shelf spools could not be loaded, so nothing was changed. Check that Spoolman is running, then try again.', ephemeral=True)
             return
         options = pab.insertion_select_options(spools, mapped, loaded_ids)
         if not options:
@@ -2358,7 +2725,7 @@ def alert_button_handlers(bot, adapter):
                     result = await asyncio.to_thread(pab.create_and_bind_insertion, pending['slot'], values, spool_sync)
                 except Exception as exc:
                     logger.exception('new insertion spool failed')
-                    await modal_interaction.response.send_message(f'Nothing changed: {exc}', ephemeral=True)
+                    await modal_interaction.response.send_message('Nothing was changed. Check what you entered and try again.', ephemeral=True)
                     return
                 await modal_interaction.response.send_message(result)
 
@@ -2379,7 +2746,7 @@ def alert_button_handlers(bot, adapter):
         try:
             spools = await asyncio.to_thread(spool_sync.spoolman, 'GET', '/api/v1/spool?allow_archived=false', None)
         except Exception as exc:
-            await interaction.response.send_message(f'Could not load shelf spools: {exc}. Nothing changed.', ephemeral=True)
+            await interaction.response.send_message('The shelf spools could not be loaded, so nothing was changed. Check that Spoolman is running, then try again.', ephemeral=True)
             return
         options = pab.insertion_select_options(spools, mapped, loaded_ids)
         if not options:
@@ -2426,7 +2793,7 @@ def alert_button_handlers(bot, adapter):
                                                      pending['context'], choice)
                 except Exception as exc:
                     logger.exception('new spool-question spool failed')
-                    await modal_interaction.response.send_message(f'Nothing changed: {exc}', ephemeral=True)
+                    await modal_interaction.response.send_message('Nothing was changed. Check what you entered and try again.', ephemeral=True)
                     return
                 await modal_interaction.response.send_message(result)
 
@@ -2450,7 +2817,7 @@ def alert_button_handlers(bot, adapter):
             except Exception as exc:
                 logger.exception('spool-question cancel failed')
                 await interaction.response.send_message(
-                    f'The print was not cancelled: {exc} The spool question is still open — answer it '
+                    'The print was not cancelled. The spool question is still open — answer it '
                     'in text (a spool number, `same`, or `cancel the print`); the next reminder '
                     're-posts its buttons.', ephemeral=True)
                 return
@@ -2469,7 +2836,7 @@ def alert_button_handlers(bot, adapter):
                                              alert.get('context') or {}, {'status': 'same'})
         except Exception as exc:
             logger.exception('same spool-question answer failed')
-            await interaction.response.send_message(f'Nothing changed: {exc}', ephemeral=True)
+            await interaction.response.send_message('Nothing was changed. Check what you entered and try again.', ephemeral=True)
             return
         await interaction.response.send_message(result)
 
@@ -2486,7 +2853,7 @@ def alert_button_handlers(bot, adapter):
                                              pending['context'], {'status': 'existing', 'spool_id': spool_id})
         except Exception as exc:
             logger.exception('existing spool-question spool failed')
-            await interaction.response.send_message(f'Nothing changed: {exc}', ephemeral=True)
+            await interaction.response.send_message('Nothing was changed. Check what you entered and try again.', ephemeral=True)
             return
         await interaction.response.edit_message(content=result, view=None)
 
@@ -2518,7 +2885,7 @@ def alert_button_handlers(bot, adapter):
             result = await asyncio.to_thread(pab.bind_insertion_existing, pending['slot'], spool_id, spool_sync)
         except Exception as exc:
             logger.exception('existing insertion spool failed')
-            await interaction.response.send_message(f'Nothing changed: {exc}', ephemeral=True)
+            await interaction.response.send_message('Nothing was changed. Check what you entered and try again.', ephemeral=True)
             return
         await interaction.response.edit_message(content=result, view=None)
 
@@ -2568,7 +2935,8 @@ def alert_button_handlers(bot, adapter):
         try:
             ok, detail = await print_next.start({**target, 'accept_spool_change': True} if accept_spool_change else target)
             message = None if ok else (f"Did not start {target['label']}. Not retrying. "
-                                       f"`/print-next {alert['plan_id']} {alert['part_id']}` offers a fresh button.\n{detail}")
+                                       f"`/print-next {alert['plan_id']} {alert['part_id']}` offers a fresh button.\n"
+                                       + intake_plain_start_failure(detail))
             if not ok and not accept_spool_change and SPOOL_CHANGED in str(detail):
                 spool_aid = await asyncio.to_thread(pab.record, 'plate-spool', '',
                                                     plan_id=alert['plan_id'], part_id=alert['part_id'])

@@ -5,7 +5,7 @@ The Matrix implementation of the platform interface in
 calls live in ``print_handy.bot.matrix_rest``). Matrix is a pure bot, like
 Telegram: this module never imports or calls the LLM fallback, the adapter
 reports ``uses_llm = False``, and ``BotCore`` therefore answers unmatched
-text with the command list only, even when ``[llm]`` is configured.
+text with the short unmatched reply only, even when ``[llm]`` is configured (#467).
 
 One configured room is the print chat; threads are out of scope, and
 encrypted rooms are out of scope — ``m.room.encrypted`` events are ignored,

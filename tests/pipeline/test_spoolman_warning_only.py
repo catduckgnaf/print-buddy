@@ -99,7 +99,8 @@ def test_spoolman_unreachable_is_a_warning_not_a_problem(monkeypatch):
         ok, probs, facts = printer_state.check(dict(GENERIC_STATE))
     assert ok is True
     assert probs == []
-    assert any("Spoolman lookup failed" in w and "Connection refused" in w for w in facts["warnings"])
+    assert any("Spoolman could not be reached" in w and "recorded spool was used" in w for w in facts["warnings"])
+    assert all("Connection refused" not in w for w in facts["warnings"])  # raw detail demoted (#467)
     assert facts["spoolman_warnings"] is facts["warnings"]
     assert "spool_remaining_g" not in facts
 
@@ -124,7 +125,7 @@ def test_spoolman_missing_record_is_a_warning(monkeypatch):
          mock.patch.object(spoolman_client, "request", spoolman_request(missing)):
         ok, probs, facts = printer_state.check(dict(GENERIC_STATE))
     assert ok is True and probs == []
-    assert any("Spoolman lookup failed" in w for w in facts["warnings"])
+    assert any("Spoolman could not be reached" in w for w in facts["warnings"])
 
 
 def test_offline_check_spoolman_down_still_ok(monkeypatch):
@@ -137,7 +138,7 @@ def test_offline_check_spoolman_down_still_ok(monkeypatch):
         ok, probs, facts = printer_state.check(dict(GENERIC_STATE))
     assert ok is True and probs == []
     assert facts["connection"] == "offline"
-    assert any("Spoolman lookup failed" in w for w in facts["warnings"])
+    assert any("Spoolman could not be reached" in w for w in facts["warnings"])
 
 
 def test_real_hardware_problem_still_blocks_despite_spoolman_warning(monkeypatch):
@@ -157,7 +158,7 @@ def test_real_hardware_problem_still_blocks_despite_spoolman_warning(monkeypatch
         ok, probs, facts = printer_state.check(dict(GENERIC_STATE))
     assert ok is False
     assert any("nozzle_diameter" in p for p in probs)
-    assert any("Spoolman lookup failed" in w for w in facts["warnings"])
+    assert any("Spoolman could not be reached" in w for w in facts["warnings"])
 
 
 # --------------------------------------------------------------------- URL resolution
@@ -208,7 +209,7 @@ def test_verify_gcode_proceeds_and_warns_when_spoolman_down(monkeypatch, tmp_pat
     captured = capsys.readouterr()
     # Warning channel unified with #240 during the merge of origin/main:
     # check warnings are reported on stderr, the G-code verdict stays on stdout.
-    assert "WARNING: Spoolman lookup failed" in captured.err
+    assert "WARNING: Spoolman could not be reached" in captured.err
     assert "G-CODE OK" in captured.out
 
 

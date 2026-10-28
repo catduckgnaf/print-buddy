@@ -26,8 +26,9 @@ Safety shape (Stage 0 audit on #388, spike-proven):
   and POSIX CPU/memory rlimits, following cad_split._run_openscad's discipline.
 
 The engine takes a ``complete(messages) -> str`` callable and never knows the transport:
-standalone resolves an OpenAI-compatible HTTP endpoint from [design]/[llm]; Hermes resolves
-the plugin's ``ctx.llm`` lane with its registered ``print_design`` auxiliary task.
+every mode resolves an OpenAI-compatible HTTP endpoint from [design]/[llm] first; only
+when no endpoint resolves does Hermes mode fall back to the plugin's ``ctx.llm`` lane
+with its registered ``print_design`` auxiliary task (#524 Stage 3).
 """
 from __future__ import annotations
 
@@ -435,7 +436,7 @@ def validate_stl(stl_path: Path) -> dict:
 # --------------------------------------------------------------------- transports
 
 def resolve_http_config(cfg) -> dict | None:
-    """The effective standalone design endpoint: [design] first, [llm] as the fallback."""
+    """The effective design endpoint (the normal path in every mode): [design] first, [llm] as the fallback."""
     design = (cfg or {}).get("design") or {}
     llm = (cfg or {}).get("llm") or {}
     chat_url = str(design.get("chat_url") or llm.get("chat_url") or "").strip()
@@ -449,7 +450,7 @@ def resolve_http_config(cfg) -> dict | None:
 
 
 def endpoint_configured(cfg) -> bool:
-    """True when a standalone design endpoint resolves ([design] inheriting [llm])."""
+    """True when a design endpoint resolves ([design] inheriting [llm])."""
     return resolve_http_config(cfg) is not None
 
 
@@ -512,7 +513,9 @@ def http_complete(cfg, messages, *, opener=None):
 async def hermes_complete(llm, messages, *, timeout_s=180):
     """One design model call through the Hermes plugin LLM lane (ctx.llm).
 
-    The model is the plugin's registered ``print_design`` auxiliary task: the
+    This lane is the legacy fallback (#524 Stage 3): it serves a design
+    turn only when no [design]/[llm] HTTP endpoint resolves. The model is
+    the plugin's registered ``print_design`` auxiliary task: the
     operator pins provider/model/reasoning for it in the profile's
     ``auxiliary.print_design`` block; with no pin it follows the profile's
     active model. A trust-gate refusal (an operator who has not granted a

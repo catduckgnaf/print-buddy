@@ -34,6 +34,7 @@ def without_added(data):
     data.pop("webui", None)  # added by #286 stage 1, after the golden files were captured
     data.pop("live_stream", None)  # added by #311 stage 3, after the golden files were captured
     data.pop("design", None)  # added by #388 stage 1, after the golden files were captured
+    data.pop("agent", None)  # added by #524 stage 3 (the stray-chat agent lane), after capture
     data.pop("printers", None)  # added by #333 (the [[printers]] roster), after the golden files were captured
     data.get("vision", {}).pop("roast_enabled", None)  # added by the roast switch, after capture
     data.pop("spool", None)  # added by #512 (spool.prompt_brand), after the golden files were captured

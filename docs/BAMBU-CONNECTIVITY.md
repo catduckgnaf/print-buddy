@@ -78,7 +78,7 @@ Published to `device/<serial>/request` (**verified** in pybambu `commands.py` / 
 - Pause / resume / stop: `{"print": {"command": "pause" | "resume" | "stop", …}}`, gated client-side on state (pause only while running, resume only while paused).
 - Speed: `{"print": {"command": "print_speed", "param": "1".."4"}}`.
 - Temperatures and fans are **not** dedicated commands: they are sent as raw G-code via `{"print": {"command": "gcode_line", "param": "M104 S…\n"}}` and similar. That is a sharp edge for Print Handy: a `gcode_line` channel is arbitrary code execution on the printer, and any design must allowlist what may be sent rather than exposing the channel generally.
-- Lights, AMS filament change/settings, skip-objects and similar exist; none are in Print Handy's staged scope.
+- AMS filament change/settings, skip-objects and similar exist; none are in Print Handy's staged scope. The chamber light is the one exception, wired since the #516 follow-up through `system/ledctrl` (`led_node: chamber_light`, `led_mode` on/off) purely as the auto light-off's target — on at print start, off after a sustained empty-plate verdict — with availability read from the printer's own `lights_report` telemetry, so a model that reports no chamber light is never switched.
 - There is **no standalone calibration command** in the inspected library; calibration appears only as boolean flags on print start and as reported stages.
 
 **Print start is `project_file`, and it does not upload anything.** The command names a file *already on the printer*:

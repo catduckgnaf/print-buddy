@@ -103,6 +103,8 @@ OPTIONAL_KEYS = {("printer", "nozzle_type"): str, ("printer", "tool_count"): int
                  ("design", "enabled"): bool, ("design", "chat_url"): str,
                  ("design", "model"): str, ("design", "api_key_env"): str,
                  ("design", "timeout_s"): int, ("design", "repair_attempts"): int,
+                 ("agent", "chat_url"): str, ("agent", "model"): str,
+                 ("agent", "api_key_env"): str, ("agent", "timeout_s"): int,
                  ("timelapse", "mode"): str, ("timelapse", "encoder"): str,
                  ("services", "camera_source"): str,
                  ("live_stream", "enabled"): bool, ("live_stream", "voice_channel_id"): str,
@@ -1034,15 +1036,18 @@ def _validate_vision(data):
     if not isinstance(enabled, bool):
         raise SettingsError(f"[vision] roast_enabled must be true or false, got {enabled!r}")
     # Auto light-off (#516): off by default (0). When set above zero, the
-    # Moonraker listener turns the printer's light on at print start and,
-    # after a print ends, off again once the camera verdict has seen an
-    # empty plate for that many minutes. It needs a vision endpoint (the
-    # same vision_ready gate as the camera watchdog) and a light target:
-    # light_object names one ("led chamber_led"); empty auto-discovers,
-    # and discovery only acts when the printer lists exactly one light
-    # object. The strict name validation lives in
-    # hermes.light_control (the listener refuses an unusable name there);
-    # here the shape is just int / string.
+    # printer's light turns on at print start and, after a print ends,
+    # off again once the camera verdict has seen an empty plate for
+    # that many minutes. It needs a vision endpoint (the same
+    # vision_ready gate as the camera watchdog) and a light target,
+    # which is family-shaped: on Moonraker, light_object names one
+    # ("led chamber_led") or empty auto-discovers (discovery only acts
+    # when the printer lists exactly one light object); on Bambu Lab
+    # the target is the chamber light and on Elegoo SDCP its Cmd 403
+    # light — light_object does not apply to either. The strict
+    # Moonraker name validation lives in hermes.light_control (the
+    # listener refuses an unusable name there); here the shape is just
+    # int / string.
     minutes = vision.setdefault("auto_light_off_minutes", 0)
     if isinstance(minutes, bool) or not isinstance(minutes, int) or minutes < 0:
         raise SettingsError(f"[vision] auto_light_off_minutes must be a whole number of minutes "
@@ -1072,19 +1077,20 @@ def _validate_design(data):
     """The [design] section (#388 Stage 1; auto-on posture from the close-out ruling).
 
     ``enabled`` is tri-state. Absent (None here) means AUTO: design turns
-    on whenever a design/LLM endpoint is resolvable — standalone resolves
-    [design] inheriting [llm]; Hermes uses the plugin's ``print_design``
-    auxiliary-task lane — the same posture roasts have via
-    ``vision.roast_enabled`` (on whenever an endpoint is available).
+    on whenever a design/LLM endpoint is resolvable — every mode resolves
+    [design] inheriting [llm] first; Hermes mode additionally counts the
+    plugin's ``print_design`` auxiliary-task lane as available — the same
+    posture roasts have via ``vision.roast_enabled`` (on whenever an
+    endpoint is available).
     ``enabled = true`` forces it on (an unconfigured endpoint is then a
     visible failure, not a silent off), and ``enabled = false`` turns it
     off in all cases. ``chat_url``, ``model`` and ``api_key_env`` are empty
     to inherit the [llm] values, so the common single-endpoint setup only
-    sets ``design.model`` (a stronger model for design turns). In Hermes
-    mode these endpoint fields are not used at all: the plugin calls the
-    Hermes host's own LLM lane with its registered ``print_design``
-    auxiliary task, and the profile's ``auxiliary.print_design`` block is
-    where the design model is pinned (see docs/DESIGN.md). The shipped
+    sets ``design.model`` (a stronger model for design turns). The Hermes
+    host's own LLM lane (with its registered ``print_design`` auxiliary
+    task, pinned in the profile's ``auxiliary.print_design`` block) is
+    only the fallback for a Hermes install with no endpoint configured
+    (#524 Stage 3; see docs/DESIGN.md). The shipped
     config files deliberately carry no ``enabled`` line, so a config that
     never mentions it gets the auto posture; the effective state is
     resolved by ``print_handy.core.design.effective_enabled``.
@@ -1186,6 +1192,23 @@ def _validate_bot(data):
         raise SettingsError("[llm] model is required when chat_url is set")
     llm.setdefault("timeout_s", 20)
     llm["timeout_s"] = _positive(data, "llm", "timeout_s")
+    # The stray-chat agent lane (#524 stage 3): an operator-configured agent
+    # endpoint (any OpenAI-compatible chat completions URL, e.g. a Hermes
+    # agent behind its API) that answers Discord free text the handlers did
+    # not take, ahead of the bounded [llm] call. A separate section, not an
+    # [llm] extension: [llm]'s bounded, stateless, untrusted-output meaning
+    # is load-bearing for #466, while an agent endpoint is stateful and
+    # answers in its own voice. model is optional, unlike [llm]: an agent
+    # endpoint may not be model-addressable, and empty omits it from the
+    # request. timeout_s defaults to 120, not [llm]'s 20: an agent turn
+    # does real work, but the call stays bounded all the same.
+    agent = data.setdefault("agent", {})
+    for key, default in (("chat_url", ""), ("model", ""), ("api_key_env", "AGENT_API_KEY")):
+        agent.setdefault(key, default)
+    if agent["chat_url"] and not agent["chat_url"].startswith(("http://", "https://")):
+        raise SettingsError(f"[agent] chat_url must be a URL, got {agent['chat_url']!r}")
+    agent.setdefault("timeout_s", 120)
+    agent["timeout_s"] = _positive(data, "agent", "timeout_s")
 
 
 def validate(data):

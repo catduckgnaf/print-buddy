@@ -27,7 +27,7 @@ from types import SimpleNamespace
 from .. import settings
 from ..core import prompts
 from ..hermes import _config
-from . import commands, llm, platform, routing
+from . import agent, commands, llm, platform, routing
 from .router import Router
 
 logger = logging.getLogger(__name__)
@@ -65,6 +65,18 @@ def unmatched_text(bot_name="Print Handy"):
             f"{bot_name} prints from this channel: post a MakerWorld, Printables or Thingiverse link, "
             "or drop one .3mf or .stl file, and I will prepare it — nothing starts without a button press.\n"
             "For everything I can do, type `/print-help`.")
+
+
+def agent_unavailable_text():
+    """The honest reply when a configured [agent] endpoint did not answer (#524 stage 3).
+
+    The unmatched reply would be the wrong wording here: the message may
+    have been perfectly understandable — the configured agent endpoint
+    failed, timed out or answered nonsense. Name the real cause, like the
+    rewrite refusal does, and say what still works.
+    """
+    return ("The chat agent didn't answer, so nothing happened. "
+            "Commands and links still work — post a link or type `/print-help`.")
 
 
 def listed_users(cfg, section="discord"):
@@ -178,8 +190,8 @@ class Gateway:
 
 
 class BotCore:
-    def __init__(self, client, cfg=None, *, router=None, llm_opener=None, platform_name=None,
-                 adapter=None, chat_id=None, use_llm=None):
+    def __init__(self, client, cfg=None, *, router=None, llm_opener=None, agent_opener=None,
+                 platform_name=None, adapter=None, chat_id=None, use_llm=None):
         """Run the handlers against one platform adapter.
 
         With no ``adapter`` the adapter is built for ``platform_name`` (or
@@ -229,10 +241,15 @@ class BotCore:
         # Discord has the operator-facing version of the same choice (#466):
         # [discord] chat_llm_enabled=false makes Discord a pure bot too,
         # without unconfiguring [llm] for design or the vision features.
+        # The switch gates every stray-chat model call (#524 stage 3): the
+        # bounded [llm] call and the [agent] lane alike — use_llm is the one
+        # gate the fallback checks for both.
         self.chat_llm_enabled = discord_chat_llm_enabled(self.cfg) if self.platform_name == "discord" else True
         self.use_llm = (bool(getattr(self.adapter, "uses_llm", True)) and self.chat_llm_enabled) \
             if use_llm is None else bool(use_llm)
         self.llm_opener = llm_opener
+        self.agent_opener = agent_opener
+        self.agent_unavailable = agent_unavailable_text()
         self._refusal_notices: dict[str, float] = {}  # user_id -> last notice time (#386)
         self.bot_name = str(section.get("bot_name") or discord.get("bot_name") or "").strip() or "Print Handy"
         self.help = commands.help_text(self.bot_name)
@@ -315,22 +332,42 @@ class BotCore:
         return await self.fallback(event, allow_llm=allow_llm, _llm_replied=_llm_replied)
 
     async def fallback(self, event, *, allow_llm=True, _llm_replied=False):
-        """No handler took it: the LLM tries first (#437), the short unmatched reply is last.
+        """No handler took it: a model lane tries first (#437), the short unmatched reply is last.
 
         Order of handling for a non-command message: explicit commands,
         deterministic handlers, links/files and typed answers to an open
         prompt have already run in ``process`` and are never rerouted here.
-        What is left goes to the LLM when one is enabled on a ``uses_llm``
-        platform: it may answer directly, or name one allowlisted command,
-        which then runs through the exact same handler (and confirmation)
-        as a typed command. Only when the LLM declines, names no usable
-        command, errors or times out does the short unmatched reply go
-        out (#467 — the full command list is an answer to ``/print-help``,
-        never an error response) — once, and never alongside an LLM reply
-        for the same message.
+        What is left goes to a stray-chat lane when one is enabled on a
+        ``uses_llm`` platform — the [agent] lane first when an agent
+        endpoint is configured (#524 stage 3: an operator who configures
+        one means the agent to be the chat brain; its reply posts as-is
+        and can never name a command), else the bounded [llm] call: it may
+        answer directly, or name one allowlisted command, which then runs
+        through the exact same handler (and confirmation) as a typed
+        command. Only when no lane answers does the short unmatched reply
+        go out (#467 — the full command list is an answer to
+        ``/print-help``, never an error response) — once, and never
+        alongside a lane reply for the same message. A configured agent
+        endpoint that fails gets the honest agent-unavailable line
+        instead: the message may have been fine; the endpoint was not.
+        Both lanes sit behind the one ``use_llm`` gate, so
+        ``discord.chat_llm_enabled=false`` (#466) means no stray-chat
+        model call of any kind.
         """
         source = event.source
         metadata = {"thread_id": source.thread_id} if source.thread_id else None
+        if allow_llm and self.use_llm and agent.configured(self.cfg):
+            try:
+                reply = await asyncio.to_thread(agent.ask, event.text, session_key(source),
+                                                cfg=self.cfg, opener=self.agent_opener)
+            except Exception as exc:
+                logger.warning("agent reply failed, sending the agent-unavailable reply: %r", exc)
+                await self.adapter.send(chat_id=source.chat_id, content=self.agent_unavailable,
+                                        reply_to=event.message_id, metadata=metadata)
+                return {"action": "skip", "reason": "agent unavailable"}
+            await self.adapter.send(chat_id=source.chat_id, content=reply, reply_to=event.message_id,
+                                    metadata=metadata)
+            return {"action": "skip", "reason": "agent reply"}
         if allow_llm and self.use_llm and llm.configured(self.cfg):
             try:
                 reply, command = await asyncio.to_thread(llm.ask, event.text, self.help, cfg=self.cfg,
@@ -440,5 +477,7 @@ class BotCore:
                 "allowed_users": len(self.adapter.allowed),
                 "access": self.adapter.access_description(),
                 "handlers": len(self.router.dispatch_hooks),
-                "llm": bool(self.use_llm and llm.configured(self.cfg)), "open_prompts": prompts.open_count(),
+                "llm": bool(self.use_llm and llm.configured(self.cfg)),
+                "agent": bool(self.use_llm and agent.configured(self.cfg)),
+                "open_prompts": prompts.open_count(),
                 "hermes_modules": health.hermes_modules_loaded()}

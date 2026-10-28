@@ -78,30 +78,20 @@ def test_listener_posts_over_rest_in_standalone_mode(monkeypatch):
     assert sent == [("tok", announcer.DISCORD_CHAT_ID, "Print started: cube")]
 
 
-def test_listener_keeps_hermes_send_in_hermes_mode(monkeypatch):
+def test_listener_posts_over_rest_in_hermes_mode(monkeypatch):
+    sent = []
     monkeypatch.setitem(_config.cfg()["bot"], "mode", "hermes")
-    with mock.patch.object(mel.subprocess, "run", return_value=mock.Mock(returncode=0, stderr="")) as run, \
-            mock.patch("print_handy.bot.rest.send", side_effect=AssertionError("REST in hermes mode")):
+    monkeypatch.setattr(mel, "_profile_env_value", lambda name: "tok" if name == "DISCORD_BOT_TOKEN" else "")
+    monkeypatch.setattr("print_handy.bot.rest.send", lambda token, chat, text: sent.append((token, chat, text)) or (True, "1"))
+    with mock.patch.object(mel.subprocess, "run", side_effect=AssertionError("hermes send was called")):
         assert mel.post("Print started: cube") is True
-    assert run.call_args[0][0][1:4] == ["-p", "3dprinting", "send"]
+    assert sent == [("tok", announcer.DISCORD_CHAT_ID, "Print started: cube")]
 
 
 def test_button_posts_use_the_configured_token_variable(monkeypatch):
     monkeypatch.setitem(_config.cfg()["discord"], "token_env", "MY_BOT_TOKEN")
     monkeypatch.setattr(mel, "_profile_env_value", lambda name: {"MY_BOT_TOKEN": "mine"}.get(name, ""))
     assert mel._bot_token() == "mine"
-
-
-def test_standalone_mode_has_no_agent_session_to_reset(monkeypatch):
-    monkeypatch.setitem(_config.cfg()["bot"], "mode", "standalone")
-    with mock.patch.object(announcer, "_live_channel_sessions", side_effect=AssertionError("state.db read")), \
-            mock.patch.object(announcer, "_queued_jobs", return_value=[]), \
-            mock.patch.object(announcer, "_open_multipart_plans", return_value=[]):
-        assert announcer.check_and_reset_idle_discord_session(time.time()) == (
-            False, "standalone mode: no agent session", True)
-        assert announcer.silently_reset_discord_session("1")[0] is False
-        state = announcer.process_pending_cleanups({"pending_cleanups": [{"cleanup_due_at": 0}]})
-    assert state["pending_cleanups"] == []
 
 
 def _load(text, tmp_path, environ=None):

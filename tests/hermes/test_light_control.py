@@ -194,3 +194,50 @@ def test_check_cadence():
 
 def test_default_check_interval_is_five_minutes():
     assert lc.AutoLightPolicy(30).check_interval_s == 300
+
+
+# -------------------------------------------- Bambu lights_report reader
+
+def test_bambu_light_report_finds_the_chamber_light():
+    snap = {"print": {"gcode_state": "IDLE",
+                      "lights_report": [{"node": "chamber_light", "mode": "on"},
+                                        {"node": "chamber_light2", "mode": "off"}]},
+            "info": None}
+    assert lc.bambu_light_report(snap) is True
+    # The bare print payload is accepted too.
+    assert lc.bambu_light_report(snap["print"]) is True
+
+
+def test_bambu_light_report_without_the_node_is_a_reported_absence():
+    snap = {"print": {"lights_report": [{"node": "work_light", "mode": "on"}]}}
+    assert lc.bambu_light_report(snap) is False
+    assert lc.bambu_light_report({"print": {"lights_report": []}}) is False
+
+
+def test_bambu_light_report_without_a_report_is_unknown():
+    assert lc.bambu_light_report({"print": {"gcode_state": "IDLE"}}) is None
+    assert lc.bambu_light_report({"print": {"lights_report": "chamber_light"}}) is None
+    assert lc.bambu_light_report({}) is None
+    assert lc.bambu_light_report(None) is None
+    assert lc.bambu_light_report("junk") is None
+
+
+# ------------------------------------------------ SDCP LightStatus reader
+
+def test_sdcp_light_state_reads_second_light():
+    raw = {"Status": {"CurrentStatus": [0], "LightStatus": {"SecondLight": 1}},
+           "PrintInfo": {}}
+    assert lc.sdcp_light_state(raw) is True
+    raw["Status"]["LightStatus"]["SecondLight"] = 0
+    assert lc.sdcp_light_state(raw) is False
+    # Top-level nesting (firmware builds differ) reads too.
+    assert lc.sdcp_light_state({"LightStatus": {"SecondLight": 1}}) is True
+
+
+def test_sdcp_light_state_unknown_shapes():
+    assert lc.sdcp_light_state({"Status": {"CurrentStatus": [0]}}) is None
+    assert lc.sdcp_light_state({"Status": {"LightStatus": {"SecondLight": 2}}}) is None
+    assert lc.sdcp_light_state({"Status": {"LightStatus": {"SecondLight": True}}}) is None
+    assert lc.sdcp_light_state({"Status": {"LightStatus": "on"}}) is None
+    assert lc.sdcp_light_state(None) is None
+    assert lc.sdcp_light_state({}) is None

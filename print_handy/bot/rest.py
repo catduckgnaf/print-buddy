@@ -1,6 +1,7 @@
 """Discord REST posts with the bot token: no gateway connection, no Hermes, no LLM.
 
-The listener posts through here in standalone mode, in place of ``hermes send``. A ``MEDIA:/path``
+The listener posts through here in both modes; since #524 it replaces the ``hermes send`` subprocess
+in Hermes mode too. A ``MEDIA:/path``
 marker in the text becomes a file attachment, the same marker convention ``hermes send`` reads.
 """
 from __future__ import annotations

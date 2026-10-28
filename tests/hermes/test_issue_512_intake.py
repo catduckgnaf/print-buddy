@@ -13,6 +13,8 @@ from pathlib import Path
 from types import SimpleNamespace as S
 from unittest import mock
 
+import pytest
+
 from print_handy.hermes import print_alert_buttons as pab
 from print_handy.hermes import spool_sync
 
@@ -170,6 +172,62 @@ def test_new_spool_prompt_parser_accepts_delete():
     assert pab.parse_new_spool_custom_id("pbnewspool:delete:deadbeef") == ("delete", "deadbeef")
 
 
+# --------------------------------------- #515 review fixes: identity + claim
+
+def test_create_and_bind_insertion_passes_expected_prior_spool():
+    calls = []
+
+    class Sync:
+        @staticmethod
+        def parse_new(text):
+            return {"material": "PLA", "color": "Black", "grams": 1000}
+
+        @staticmethod
+        def create_spool(spec):
+            return {"spool_id": 18}
+
+        @staticmethod
+        def bind_slot(slot, spool_id, **kwargs):
+            calls.append(kwargs)
+            return {"record": {"name": "Black PLA"}, "prior_spool_id": 13}
+
+    pab.create_and_bind_insertion(1, {"brand": "", "material": "PLA", "color": "Black",
+                                      "grams": "1000", "lot": ""}, Sync,
+                                  prior_disposition="delete", expected_prior_spool_id=13)
+    assert calls[0]["expected_prior_spool_id"] == 13
+
+
+def test_bind_slot_delete_refuses_when_slot_mapping_changed(tmp_path):
+    """The confirmation named spool #99; slot 2 now holds #3. Abort, no writes."""
+    state, client, printer, calls = _bind_harness(tmp_path)
+    with pytest.raises(spool_sync.SpoolError) as excinfo:
+        spool_sync.bind_slot(2, 7, client=client, mr=printer, state_path=state,
+                             push_screen_update=False, prior_disposition="delete",
+                             expected_prior_spool_id=99)
+    message = str(excinfo.value)
+    assert "#99" in message and "#3" in message
+    assert not any(c[0] in ("PATCH", "DELETE") for c in calls)
+
+
+def test_bind_slot_mismatch_guard_covers_every_disposition(tmp_path):
+    state, client, printer, calls = _bind_harness(tmp_path)
+    with pytest.raises(spool_sync.SpoolError):
+        spool_sync.bind_slot(2, 7, client=client, mr=printer, state_path=state,
+                             push_screen_update=False, prior_disposition="archive",
+                             expected_prior_spool_id=99)
+    assert not any(c[0] in ("PATCH", "DELETE") for c in calls)
+
+
+def test_bind_slot_delete_with_matching_expected_id_deletes_that_spool(tmp_path):
+    state, client, printer, calls = _bind_harness(tmp_path)
+    result = spool_sync.bind_slot(2, 7, client=client, mr=printer, state_path=state,
+                                  push_screen_update=False, prior_disposition="delete",
+                                  expected_prior_spool_id=3)
+    assert ("DELETE", "/api/v1/spool/3", None) in calls
+    assert not any(c[0] == "PATCH" and c[1] == "/api/v1/spool/3" for c in calls)
+    assert result["prior_spool_id"] == 3
+
+
 # ------------------------------------------------- end-to-end click walkthrough
 
 class _FakeResponse:
@@ -259,3 +317,72 @@ def test_walkthrough_clicks_create_and_bind_with_disposition(tmp_path, monkeypat
     kind, content, view = sink[-1]
     assert "Created spool #18" in content and "archived as depleted" in content
     assert binds and binds[0][2].get("prior_disposition") == "depleted"
+    assert binds[0][2].get("expected_prior_spool_id") == 13
+
+
+def _walk_to_confirm(tmp_path, monkeypatch):
+    """Drive the click walkthrough to its confirmation step; return the rig."""
+    monkeypatch.setattr(pab, "STATE", tmp_path / "alerts.json")
+    monkeypatch.setattr(plugin, "_prompt_brand", lambda: False)
+    monkeypatch.setattr(spool_sync, "next_spool_id", lambda: 18)
+    monkeypatch.setattr(spool_sync, "filament_types", lambda: [
+        {"filament_id": 5, "brand": "Sunlu", "material": "Silk PLA",
+         "color": "Rose Red Blue Green", "hex": None}])
+    monkeypatch.setattr(spool_sync, "load_state", lambda: {
+        "ifs_slots": {"2": {"spoolman_id": 13, "name": "Matte White PLA+", "remaining_grams": 0.0}}})
+    created = []
+
+    def fake_create(spec):
+        created.append(spec)
+        return {"spool_id": 18}
+
+    monkeypatch.setattr(spool_sync, "create_spool", fake_create)
+    binds = []
+
+    def fake_bind(slot, spool_id, **kwargs):
+        binds.append((slot, spool_id, kwargs))
+        return {"record": {"name": "Rose Red Blue Green Silk PLA"}, "prior_spool_id": 13}
+
+    monkeypatch.setattr(spool_sync, "bind_slot", fake_bind)
+    bot = S(listeners={}, add_listener=lambda fn, name: bot.listeners.__setitem__(name, fn))
+    plugin.alert_button_handlers(bot, S())
+    on_interaction = bot.listeners["on_interaction"]
+    sink = []
+    insertion_aid = pab.record("insertion", "", slot=2)
+    asyncio.run(on_interaction(_interaction(sink, f"pbinsert:new:{insertion_aid}")))
+    mat = next(cid for cid in _custom_ids(sink[-1][2]) if ":mat_1:" in cid)
+    asyncio.run(on_interaction(_interaction(sink, mat)))
+    select_id = _custom_ids(sink[-1][2])[0]
+    asyncio.run(on_interaction(_interaction(sink, select_id, values=["Rose Red Blue Green"])))
+    weight = next(cid for cid in _custom_ids(sink[-1][2]) if ":w_500:" in cid)
+    asyncio.run(on_interaction(_interaction(sink, weight)))
+    depleted = next(cid for cid in _custom_ids(sink[-1][2]) if ":disp_depleted:" in cid)
+    asyncio.run(on_interaction(_interaction(sink, depleted)))
+    confirm = next(cid for cid in _custom_ids(sink[-1][2]) if ":confirm:" in cid)
+    return on_interaction, sink, confirm, created, binds
+
+
+def test_walkthrough_second_confirm_click_creates_and_binds_nothing(tmp_path, monkeypatch):
+    on_interaction, sink, confirm, created, binds = _walk_to_confirm(tmp_path, monkeypatch)
+    asyncio.run(on_interaction(_interaction(sink, confirm)))
+    assert len(created) == 1 and len(binds) == 1
+    sink.clear()
+    asyncio.run(on_interaction(_interaction(sink, confirm)))
+    kind, content, view = sink[-1]
+    assert kind == "send" and "already answered" in content
+    assert len(created) == 1 and len(binds) == 1
+
+
+def test_walkthrough_confirm_that_loses_the_claim_race_creates_nothing(tmp_path, monkeypatch):
+    """Both clicks peeked the same alert; the loser's take() returns None.
+
+    Regression for #515 finding 1: the confirm path used to ignore take()'s
+    result and run intake_finish anyway, creating and binding a second spool.
+    """
+    on_interaction, sink, confirm, created, binds = _walk_to_confirm(tmp_path, monkeypatch)
+    monkeypatch.setattr(pab, "take", lambda aid: None)  # a parallel click claimed it first
+    sink.clear()
+    asyncio.run(on_interaction(_interaction(sink, confirm)))
+    kind, content, view = sink[-1]
+    assert kind == "send" and "already answered" in content
+    assert created == [] and binds == []

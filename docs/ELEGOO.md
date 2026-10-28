@@ -63,6 +63,6 @@ In the combined Docker container the supervisor honours that (#256): for a Centa
 
 - The open-frame Centauri and the Centauri Carbon 2 / Centauri 2 (profiles exist in Orca; follow-ups on #243 once their SDCP behaviour is confirmed to match).
 - Elegoo resin printers (Mars/Saturn/Jupiter) and their `.goo` files.
-- Chamber light/fan control over SDCP (commands 386/403 exist; not wired up).
+- Fan control over SDCP (not wired up). The chamber light **is** wired, as the auto light-off's target (#516 follow-up): Cmd 403 (`LightStatus.SecondLight`) turns it on at print start. (Cmd 386 is the video-stream enable in published SDCP command tables, not a light command.) Auto-off still cannot run on SDCP — see the timelapse note below.
 - Timelapse video for launched Centauri prints: the monitor and the shared capture/encode pipeline are in place, but no SDCP camera endpoint is verified, so completion posts carry no video until one is (see above).
 - Any claim of a successful print on real hardware.

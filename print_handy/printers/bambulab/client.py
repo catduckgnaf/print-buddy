@@ -48,6 +48,24 @@ START_PUSH = {"pushing": {"sequence_id": "0", "command": "start"}}
 PRINT_CONTROLS = ("pause", "resume", "stop")
 
 
+def chamber_light_payload(on):
+    """The `system/ledctrl` command switching the chamber light (#516).
+
+    The chamber light is a fixed protocol target — led_node
+    "chamber_light" — switched with led_mode on/off; the timing fields
+    are the steady-state values pybambu and the Home Assistant
+    integration send (500 ms on/off times, no looping), as recorded in
+    docs/BAMBU-CONNECTIVITY.md. Whether a given printer has the light
+    is reported by the printer itself in its `lights_report` telemetry;
+    this builder just builds the command.
+    """
+    return {"system": {"sequence_id": "0", "command": "ledctrl",
+                       "led_node": "chamber_light",
+                       "led_mode": "on" if on else "off",
+                       "led_on_time": 500, "led_off_time": 500,
+                       "loop_times": 0, "interval_time": 0}}
+
+
 # The `project_file` sequence id every maintained client uses for a print start
 # (#308, from the #298 Stage 0 audit of maziggy/bambuddy at 98ecaf5: protocol facts
 # only, no code copied — Bambuddy is AGPL-3.0, this repo is MIT).
@@ -479,3 +497,12 @@ class BambuLanClient:
             raise BambuLanError(f"unsupported Bambu Lab print control {action!r}; use one of "
                                 f"{', '.join(PRINT_CONTROLS)}")
         self._send({"print": {"sequence_id": "0", "command": action}})
+
+    def set_chamber_light(self, on):
+        """Switch the chamber light on or off (#516). Transport only.
+
+        A successful return means the command was handed to the MQTT
+        client — callers confirm the effect from a fresh snapshot's
+        lights_report, the same posture as the print controls.
+        """
+        self._send(chamber_light_payload(on))

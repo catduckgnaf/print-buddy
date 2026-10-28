@@ -128,6 +128,30 @@ def test_client_refuses_bad_configuration_before_any_connection(kwargs):
         BambuLanClient(mqtt_factory=factory_for(FakeMqtt()), **args)
 
 
+def test_chamber_light_payload_shape():
+    from print_handy.printers.bambulab.client import chamber_light_payload
+    assert chamber_light_payload(True) == {
+        "system": {"sequence_id": "0", "command": "ledctrl",
+                   "led_node": "chamber_light", "led_mode": "on",
+                   "led_on_time": 500, "led_off_time": 500,
+                   "loop_times": 0, "interval_time": 0}}
+    assert chamber_light_payload(False)["system"]["led_mode"] == "off"
+
+
+def test_set_chamber_light_publishes_ledctrl_to_the_request_topic():
+    fake = FakeMqtt()
+    client = BambuLanClient("192.168.1.50", SERIAL, CODE, mqtt_factory=factory_for(fake), timeout_s=5)
+    client.set_chamber_light(True)
+    assert fake.published == [(f"device/{SERIAL}/request",
+                               {"system": {"sequence_id": "0", "command": "ledctrl",
+                                           "led_node": "chamber_light", "led_mode": "on",
+                                           "led_on_time": 500, "led_off_time": 500,
+                                           "loop_times": 0, "interval_time": 0}})]
+    assert fake.disconnected
+    client.set_chamber_light(False)
+    assert fake.published[-1][1]["system"]["led_mode"] == "off"
+
+
 def test_tls_context_verifies_the_bambu_ca_chain_without_hostname_matching():
     context = lan_ssl_context()
     assert context.verify_mode == ssl.CERT_REQUIRED

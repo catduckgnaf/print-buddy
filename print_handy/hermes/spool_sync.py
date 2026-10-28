@@ -345,7 +345,8 @@ def _slot_record(slot: int, spool: dict[str, Any], old: dict[str, Any] | None, n
 def bind_slot(slot: int, spool_id: int, *, client: Client = spoolman, mr: Client = moonraker,
               state_path: Path | None = None, pending_path: Path | None = None,
               prior_disposition: str = "shelf", note: str = "Bound from Discord /spool",
-              push_screen_update: bool = True, printer_id: str | None = None) -> dict[str, Any]:
+              push_screen_update: bool = True, printer_id: str | None = None,
+              expected_prior_spool_id: int | None = None) -> dict[str, Any]:
     """Make `spool_id` the spool in `slot`, everywhere, with Spoolman winning.
 
     prior_disposition: 'shelf' puts the replaced spool on the shelf; 'keep' leaves
@@ -357,6 +358,11 @@ def bind_slot(slot: int, spool_id: int, *, client: Client = spoolman, mr: Client
     archive/depleted/delete after the operator picked that fate on a button.
     `printer_id` binds in that printer's own hardware record (#334) and refuses
     a spool another printer's record already loads.
+    `expected_prior_spool_id` is the replaced spool the operator's confirmation
+    named: when a flow supplies it, the slot's current mapping is re-checked
+    before any write and the bind aborts on a mismatch, so a slot rebound
+    while the confirmation was open can never make a disposition — above all
+    'delete' — land on a different spool than the one confirmed (#515).
     """
     if prior_disposition not in ("shelf", "keep", "archive", "depleted", "delete"):
         raise SpoolError(f"unknown prior disposition {prior_disposition!r}. Nothing changed")
@@ -379,6 +385,13 @@ def bind_slot(slot: int, spool_id: int, *, client: Client = spoolman, mr: Client
                          "One spool cannot be loaded on two printers. Nothing changed")
     old = slots.get(str(slot)) or {}
     prior = old.get("spoolman_id")
+    if expected_prior_spool_id is not None and \
+            int(prior or 0) != int(expected_prior_spool_id):
+        actual = f"spool #{prior}" if prior else "no spool"
+        raise SpoolError(f"slot {slot} was expected to hold spool "
+                         f"#{int(expected_prior_spool_id)} (the spool in the confirmation), "
+                         f"but it now holds {actual}. Nothing changed — the confirmed "
+                         "spool was not touched. Start the change again")
     client("PATCH", f"/api/v1/spool/{int(spool_id)}", {"location": f"IFS Slot {slot}"})
     if prior and int(prior) != int(spool_id) and prior_disposition == "shelf":
         prior_rec = client("GET", f"/api/v1/spool/{int(prior)}", None)

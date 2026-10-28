@@ -28,6 +28,14 @@ that closes that gap:
 - ``BambuEventSink`` — the consumer that wires the Bambu domain
   listener's already-detected transitions (#299 Stage B) to these
   posts. The listener detected pauses all along; its sink was log-only.
+- ``FamilyAutoLight`` — the #516 auto light-off automation for the two
+  families with a switchable chamber light (Bambu Lab, Elegoo SDCP):
+  the Moonraker listener's light hooks are the reference, this driver
+  is their family counterpart, feeding the same pure
+  ``light_control.AutoLightPolicy`` the family's lifecycle transitions
+  and idle verdicts. It is the one printer write a family listener
+  makes unprompted, and it extends to exactly one accessory — the
+  light — only when the operator opted in.
 
 Who posts what, per print — exactly one owner for each post:
 
@@ -48,7 +56,9 @@ Who posts what, per print — exactly one owner for each post:
 """
 from __future__ import annotations
 
+import contextlib
 import logging
+import threading
 import time
 from typing import Any
 
@@ -349,6 +359,269 @@ def pause_alerts_for(adapter, filename, printer_id=None) -> PauseAlerts | None:
     return PauseAlerts(filename, connection, printer_id)
 
 
+# ------------------------------------------------------------- auto light (#516)
+
+def _idle_context(adapter) -> str:
+    """The verdict context for a family printer's idle plate check.
+
+    The Bambu watchdog's wording (bambu_watch.vision_context) with no
+    plate-type claim: the vocabulary definitions are the verdict
+    contract, and a frame judged against another printer's description
+    would be a wrong prompt.
+    """
+    label = getattr(adapter, "label", None) or "3D printer"
+    return (f"Printer: {label}, enclosed, build plate. "
+            "Reply with JSON only, no markdown: {\"verdict\":\"ok|air|spaghetti|detached|empty_idle|uncertain\",\"reason\":\"short\"}. "
+            "ok means plastic is on the bed and printing normally. "
+            "air means the bed is empty while a print should be there. "
+            "spaghetti means a tangled failed extrusion. "
+            "detached means a printed part has come off the plate. "
+            "empty_idle means the printer is idle and the bed is empty. "
+            "uncertain means the frame is not clear enough to judge.")
+
+
+def _family_verdict(adapter):
+    """A verdict(image, prompt) through the shared vision call (visual_watch)."""
+    mel = _mel()
+    context = _idle_context(adapter)
+
+    def verdict(image, prompt):
+        from . import visual_watch as vw
+        return vw.visual_verdict(
+            image, prompt, chat_url=mel._vision_chat_url, model=mel._VISION_MODEL,
+            api_key=lambda: mel._profile_env_value("CLIPROXY_API_KEY"), context=context)
+
+    return verdict
+
+
+class FamilyAutoLight:
+    """The #516 auto light-off automation for one non-Moonraker printer.
+
+    The Moonraker listener's light hooks are the reference; this driver
+    is their family counterpart, with the same pure policy
+    (``light_control.AutoLightPolicy``) and the same gate order —
+    policy enabled, vision endpoint ready, light target available —
+    before anything is switched. Every collaborator is injected:
+
+    - ``send(on)`` switches the light through the family's own
+      transport (Bambu MQTT ledctrl, SDCP Cmd 403).
+    - ``available()`` probes the printer's own report for the light
+      (Bambu ``lights_report``, SDCP ``LightStatus``) and answers
+      True/False/None. An explicit False is cached and reported once:
+      that printer has no chamber light and the feature is unavailable
+      for it. None is unknown — a failed or light-less-shaped report
+      is never treated as proof of absence and never blocks a send.
+    - ``snapshot()`` returns one camera frame as bytes, or None when
+      the family has no frame source to judge. SDCP is that case
+      today (no camera endpoint is verified — see
+      printers/elegoo_sdcp/camera.py): its idle checks find no frame,
+      say so once, and the light stays on; the verdict leg is wired so
+      a source verified later slots in unchanged.
+    - ``verdict(image, prompt)`` judges a frame (visual_watch).
+    - ``vision_ready()`` is the camera watchdog's endpoint gate.
+    - ``runner(fn)`` runs the idle-check leg; the Bambu factory runs
+      it on a daemon thread because its sink sits on the MQTT callback
+      thread, while the polling family listener runs it inline.
+
+    Nothing here raises, and nothing here touches anything but the
+    light: a failed send logs and the print flow never notices.
+    """
+
+    def __init__(self, connection, *, send, snapshot=None, verdict=None,
+                 available=None, vision_ready=None, policy=None,
+                 clock=time.time, runner=None):
+        from . import light_control
+        self.connection = connection
+        self._send = send
+        self._snapshot = snapshot
+        self._verdict = verdict
+        self._available_probe = available
+        self._vision_ready = vision_ready or (lambda: True)
+        self._clock = clock
+        self._runner = runner or (lambda fn: fn())
+        if policy is None:
+            from . import _config
+            vision = _config.cfg().get("vision") or {}
+            policy = light_control.AutoLightPolicy(vision.get("auto_light_off_minutes", 0))
+        self._policy = policy
+        self._absent = False
+        self._absent_logged = False
+        self._no_frame_logged = False
+        self._check_inflight = False
+
+    @property
+    def enabled(self):
+        return self._policy.enabled
+
+    def _available(self):
+        """True when the light may be switched; False only on a reported absence."""
+        if self._absent:
+            return False
+        if self._available_probe is None:
+            return True
+        try:
+            probed = self._available_probe()
+        except Exception:
+            return True  # a failed probe is unknown, never a verdict of absence
+        if probed is False:
+            self._absent = True
+            if not self._absent_logged:
+                self._absent_logged = True
+                log(f"auto light: this {self.connection} printer reports no chamber "
+                    "light; the feature is unavailable for it and nothing will be switched")
+            return False
+        return True
+
+    def print_started(self):
+        """Print-start transition: light on, from state only (never vision)."""
+        try:
+            if not self._policy.enabled:
+                return
+            if self._policy.print_started(self._clock()) != "turn_on":
+                return
+            if not self._vision_ready():
+                return
+            if not self._available():
+                return
+            self._send(True)
+            log(f"auto light: print started; light on ({self.connection})")
+        except Exception as exc:
+            # Best-effort: a failed light command logs once per start and
+            # never blocks or fails the print flow.
+            log(f"auto light: light-on at print start failed ({self.connection}): {exc!r}")
+
+    def print_finished(self):
+        """Terminal print-end transition: open the idle window."""
+        try:
+            self._policy.print_finished(self._clock())
+        except Exception as exc:
+            log(f"auto light: opening the idle window failed ({self.connection}): {exc!r}")
+
+    def idle_tick(self, state):
+        """An idle observation: run one plate check when the policy says one is due."""
+        try:
+            policy = self._policy
+            if not policy.enabled or state not in TERMINAL_STATES:
+                return
+            if not policy.should_check(self._clock()):
+                return
+            if self._check_inflight:
+                return
+            self._check_inflight = True
+
+            def leg():
+                try:
+                    self._idle_check()
+                finally:
+                    self._check_inflight = False
+
+            self._runner(leg)
+        except Exception as exc:
+            self._check_inflight = False
+            log(f"auto light idle tick failed ({self.connection}): {exc!r}")
+
+    def _idle_check(self):
+        """One idle plate check. Never raises.
+
+        Mirrors the Moonraker listener's: no vision endpoint or no
+        light target notes the check and moves on; no frame (SDCP's
+        unverified camera) notes it too — an unjudgeable plate can
+        never turn the light off; a completely dark frame is judged
+        "uncertain" (#476's rule), which resets the empty streak.
+        Only a sustained empty_idle streak spanning the configured
+        minutes switches the light off.
+        """
+        from . import light_control, visual_watch
+        policy = self._policy
+        try:
+            if not self._vision_ready():
+                policy.note_check(self._clock())
+                return
+            if not self._available():
+                policy.note_check(self._clock())
+                return
+            image = self._snapshot() if self._snapshot is not None else None
+            if image is None:
+                if not self._no_frame_logged:
+                    self._no_frame_logged = True
+                    log(f"auto light: no camera frame is available for {self.connection} "
+                        "idle checks, so the plate cannot be judged and the light stays on")
+                policy.note_check(self._clock())
+                return
+            if visual_watch.frame_dark(image):
+                verdict, detail = "uncertain", "camera frame completely dark"
+            else:
+                verdict, detail = self._verdict(image, light_control.IDLE_CHECK_PROMPT)
+            action = policy.note_verdict(verdict, self._clock())
+            log(f"auto light idle check verdict={verdict} detail={detail!r} ({self.connection})")
+            if action == "turn_off":
+                self._send(False)
+                log(f"auto light: plate seen empty for {policy.minutes} minutes; "
+                    f"light off ({self.connection})")
+        except Exception as exc:
+            log(f"auto light idle check failed ({self.connection}): {exc!r}")
+            with contextlib.suppress(Exception):
+                policy.note_check(self._clock())
+
+
+def _thread_runner(fn):
+    threading.Thread(target=fn, daemon=True, name="family-auto-light").start()
+
+
+def auto_light_for(adapter, printer_id=None) -> FamilyAutoLight | None:
+    """The auto-light driver for one family adapter, or None.
+
+    Bambu Lab (its chamber light) and Elegoo SDCP (Cmd 403) are the
+    families with a light to switch. The other parity families —
+    PrusaLink, OctoPrint, stock FlashForge — and offline have no light
+    target at all: None, their listeners run exactly as before, and
+    bot check names the feature unavailable for them. Construction
+    never raises: a driver that cannot be built is a logged None,
+    never a broken listener.
+    """
+    connection = connection_of(adapter)
+    try:
+        if connection == "bambulab_lan":
+            from . import bambu_watch, light_control
+            return FamilyAutoLight(
+                connection,
+                send=lambda on: adapter.set_chamber_light(on),
+                snapshot=lambda: adapter.camera_snapshot(),
+                verdict=bambu_watch._default_verdict(adapter),
+                available=lambda: light_control.bambu_light_report(
+                    adapter.client().snapshot()),
+                vision_ready=lambda: _mel()._vision_ready(),
+                runner=_thread_runner)
+        if connection == "elegoo_sdcp":
+            from . import light_control
+            from ..printers.elegoo_sdcp import camera as elegoo_camera
+            client_box: dict = {}
+
+            def client():
+                if "client" not in client_box:
+                    client_box["client"] = adapter.client()
+                return client_box["client"]
+
+            def probe():
+                state = light_control.sdcp_light_state(client().status())
+                return True if state is not None else None
+
+            def snapshot():
+                _url, fetch = elegoo_camera.camera_source(client())
+                return fetch() if fetch is not None else None
+
+            return FamilyAutoLight(
+                connection,
+                send=lambda on: adapter.set_light(on),
+                snapshot=snapshot,
+                verdict=_family_verdict(adapter),
+                available=probe,
+                vision_ready=lambda: _mel()._vision_ready())
+    except Exception as exc:
+        log(f"auto light: driver for connection {connection!r} could not be built: {exc!r}")
+    return None
+
+
 # ------------------------------------------------------------- Bambu sink
 
 class BambuEventSink:
@@ -371,13 +644,14 @@ class BambuEventSink:
     """
 
     def __init__(self, *, claim_fn=None, start_poster=None, pause_poster=None,
-                 terminal_poster=None, retirer=None, printer_id=None):
+                 terminal_poster=None, retirer=None, printer_id=None, light=None):
         self._claim_fn = claim_fn
         self._start_poster = start_poster or post_family_event
         self._pause_poster = pause_poster or post_pause_alert
         self._terminal_poster = terminal_poster or post_family_event
         self._retirer = retirer or retire_pause_alerts
         self._printer_id = printer_id
+        self._light = light
         self._saw_inactive = False
         self._external: set[str] = set()
 
@@ -392,6 +666,16 @@ class BambuEventSink:
         state = str(status.get("state") or "unknown")
         transition = (event or {}).get("transition")
         try:
+            if self._light is not None:
+                # #516: the light automation follows every print, claimed
+                # or external — the light is not a post, so the claim
+                # split below does not apply to it. Starts and terminal
+                # transitions feed the policy; idle status observations
+                # drive its plate checks.
+                if transition == "started" and filename:
+                    self._light.print_started()
+                elif kind == "status" and state in TERMINAL_STATES:
+                    self._light.idle_tick(state)
             if kind == "status":
                 if state in TERMINAL_STATES or state == "unknown":
                     self._saw_inactive = True
@@ -416,6 +700,8 @@ class BambuEventSink:
         external = filename in self._external
         self._external.discard(filename)
         self._saw_inactive = True
+        if self._light is not None:
+            self._light.print_finished()
         if external:
             self._terminal_poster(kind, filename)
         self._retirer(filename, retire_headline(
@@ -424,4 +710,9 @@ class BambuEventSink:
 
 def bambu_event_sink(printer_id=None) -> BambuEventSink:
     """The sink the Bambu listener's main() wires as its emit target."""
-    return BambuEventSink(printer_id=printer_id)
+    light = None
+    try:
+        light = auto_light_for(adapter_for(printer_id))
+    except Exception as exc:
+        log(f"auto light: Bambu driver could not be built: {exc!r}")
+    return BambuEventSink(printer_id=printer_id, light=light)

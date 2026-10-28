@@ -219,8 +219,8 @@ chmod 600 ~/.config/myminifactory/token
 | | `stock_api_port` | `8898` | Flashforge stock API for IFS presence |
 | `discord` | `chat_id`, `approval_user_id` | empty | Channel and approver IDs |
 | | `upload_max_bytes` | `9500000` | Largest upload before video is shrunk |
-| | `post_print_quiet_s` | `7200` | Quiet time before a chat session resets |
-| | `daily_reset_hour`, `timezone` | `4`, `America/New_York` | Daily session reset |
+| | `post_print_quiet_s` | `7200` | Retired (#524): the bot no longer resets chat sessions; kept so existing configs load |
+| | `daily_reset_hour`, `timezone` | `4`, `America/New_York` | `daily_reset_hour` retired with it (#524); `timezone` is the display zone |
 | | `bot_name` | `Print Handy` | Name the bot uses in the roast persona and the rendered profile templates (`SOUL.md`, locale strings). Set it to anything, for example your old name |
 | | `question_timeout_s` | `1800` | How long a Discord question waits for a button press |
 | | `safety_confirm_timeout_s` | `600` | How long a safety confirmation (stop, resume, reboot, cold-pull go-ahead) waits |
@@ -233,7 +233,7 @@ chmod 600 ~/.config/myminifactory/token
 | | `health_port`, `health_stale_s` | `0`, `120` | Standalone bot: `GET /healthz` port (0 off) and heartbeat age limit |
 | | `sync_commands` | `true` | Standalone bot: register slash commands at startup |
 | `llm` | `chat_url`, `model`, `api_key_env`, `timeout_s` | empty, empty, `LLM_API_KEY`, `20` | Optional OpenAI-compatible model for standalone free-text replies; never starts anything itself |
-| `design` | `enabled`, `chat_url`, `model`, `api_key_env`, `timeout_s`, `repair_attempts` | unset (auto), empty, empty, empty, `180`, `3` | `/print-design` (alias `/design`) AI design (#388); `enabled` unset = auto-on when an endpoint is configured, `false` forces off; empty fields inherit `llm`; in Hermes mode the profile's `auxiliary.print_design` block picks the model instead |
+| `design` | `enabled`, `chat_url`, `model`, `api_key_env`, `timeout_s`, `repair_attempts` | unset (auto), empty, empty, empty, `180`, `3` | `/print-design` (alias `/design`) AI design (#388); `enabled` unset = auto-on when an endpoint is configured, `false` forces off; empty fields inherit `llm`; the endpoint wins in Hermes mode too, and the profile's `auxiliary.print_design` block is the fallback when no endpoint is configured |
 | `listener` | `tick_s` | `600` | Listener housekeeping interval |
 | | `ifs_presence_poll_s` | `15` | IFS spool presence poll |
 | | `spool_nag_s` | `600` | Reminder interval for an unanswered spool question |

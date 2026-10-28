@@ -17,7 +17,7 @@ logger = logging.getLogger(__name__)
 def checks(cfg):
     """[(label, ok, detail)]. Offline: nothing here contacts the chat platform."""
     from ..hermes import _config
-    from . import health, llm, platform
+    from . import agent, health, llm, platform
     from .runtime import allowed_users, discord_chat_llm_enabled
     rows = []
 
@@ -132,6 +132,26 @@ def checks(cfg):
     else:
         add("llm", True, f"{cfg['llm']['model']} at {cfg['llm']['chat_url']}" if llm.configured(cfg)
             else "off (unmatched messages get the short not-understood reply)")
+    # The stray-chat agent lane (#524 stage 3): a configured [agent]
+    # endpoint answers Discord free text ahead of the [llm] call above.
+    # Like the llm row it is a healthy-off row in every unconfigured or
+    # disabled state — the lane ships dark until an operator sets it.
+    if name in ("telegram", "matrix"):
+        add("agent", True, f"off ({name.capitalize()} is a pure bot: no agent lane; "
+                           "unmatched messages get the short not-understood reply)")
+    elif name == "discord" and not discord_chat_llm_enabled(cfg):
+        add("agent", True, "off (discord.chat_llm_enabled is false: no stray-chat model call "
+                           "of any kind, the agent lane included)")
+    elif agent.configured(cfg):
+        from urllib.parse import urlparse
+        agent_cfg = cfg.get("agent") or {}
+        host = urlparse(str(agent_cfg.get("chat_url") or "")).hostname or agent_cfg.get("chat_url")
+        model = str(agent_cfg.get("model") or "").strip()
+        add("agent", True, f"{model} at {host}" if model else
+            f"endpoint at {host} (no model set; the endpoint chooses)")
+    else:
+        add("agent", True, "not configured (set [agent] chat_url to let an agent endpoint "
+                           "answer stray chat; unmatched messages use the llm row above)")
     # The roast is separate from the chat fallback above: the print-started
     # post gains a one-line roast (exactly one per print, when printing
     # begins; the completion post never does) on every platform (Telegram
@@ -154,17 +174,47 @@ def checks(cfg):
     # the light target is the named vision.light_object, or the printer's
     # single light object auto-discovered by the listener — bot check is
     # offline, so an unnamed target is reported as unresolved here rather
-    # than discovered.
+    # than discovered. The Bambu/SDCP follow-up made the target
+    # family-shaped: Bambu's chamber light is a fixed protocol target,
+    # SDCP's is its Cmd 403 light, and the remaining families have no
+    # light at all — the row names the configured printer's family,
+    # resolved from the model in cfg without contacting the printer.
     light_minutes = vision.get("auto_light_off_minutes", 0)
     light_object = str(vision.get("light_object") or "").strip()
+    light_connection = None
+    try:
+        from .. import printers as _printers
+        _light_model = _printers.MODELS.get(str((cfg.get("printer") or {}).get("model") or ""))
+        if _light_model is not None:
+            light_connection = getattr(getattr(_light_model, "vendor", None), "connection", None)
+    except Exception:
+        light_connection = None
     if not light_minutes:
         add("auto light", True, "off (vision.auto_light_off_minutes is 0; set it, "
                                 "e.g. 30, to turn the printer light off after the "
                                 "plate has been seen empty that long)")
+    elif light_connection == "elegoo_sdcp":
+        add("auto light", True, f"on (SDCP chamber light, Cmd 403; light on at print "
+                                f"start; auto-off cannot run yet — no SDCP camera "
+                                f"source is verified, so the empty-plate check has no "
+                                f"frame to judge and the light stays on; set "
+                                f"vision.auto_light_off_minutes=0 to turn auto light off)")
+    elif light_connection not in (None, "moonraker", "bambulab_lan"):
+        add("auto light", True, f"on, but unavailable for this printer: connection "
+                                f"{light_connection!r} has no light control (auto "
+                                f"light-off covers Moonraker, Bambu Lab and Elegoo "
+                                f"SDCP printers); the setting has no effect here")
     elif not vision_url and not os.environ.get("PRINT_VISION_URL"):
         add("auto light", True, "on, but no vision endpoint is available "
                                 "(services.vision_chat_url is empty and PRINT_VISION_URL "
                                 "is not set); the empty-plate check needs one")
+    elif light_connection == "bambulab_lan":
+        add("auto light", True, f"on (Bambu chamber light; light off after the plate has been "
+                                f"seen empty for {light_minutes} minutes; a model whose own "
+                                f"telemetry reports no chamber light is never switched — "
+                                f"the listener logs it unavailable; vision.light_object "
+                                f"applies to Moonraker printers only; set "
+                                f"vision.auto_light_off_minutes=0 to turn auto light off)")
     elif light_object:
         add("auto light", True, f"on ({light_object}; light off after the plate has been "
                                 f"seen empty for {light_minutes} minutes; set "
@@ -177,9 +227,10 @@ def checks(cfg):
     # AI design (#388): tri-state enable — explicit design.enabled=false is
     # off; explicit true is on; unset is auto (on whenever a design/LLM
     # endpoint resolves — the roast posture). When on it needs OpenSCAD (the
-    # design engine) and a model: in Hermes mode the profile's
-    # auxiliary.print_design task, in standalone mode the [design] endpoint
-    # inheriting [llm]. A forced-on-but-unusable design fails the check, like
+    # design engine) and a model: the [design] endpoint inheriting [llm] is
+    # the normal path in every mode (#524 Stage 3); in Hermes mode with no
+    # endpoint configured, the profile's auxiliary.print_design task is the
+    # fallback lane. A forced-on-but-unusable design fails the check, like
     # a missing token, so the misconfiguration is visible before a user
     # hits it mid-conversation; auto with no endpoint is a healthy off.
     import shutil as _shutil
@@ -196,11 +247,11 @@ def checks(cfg):
     elif not _shutil.which("openscad"):
         add("design", False, "enabled, but openscad is not on PATH; install OpenSCAD "
                              "(it is in the Docker image) or set design.enabled=false")
+    elif resolved:
+        add("design", True, f"{design_mode} ({resolved['model']} at {resolved['chat_url']})")
     elif mode == "hermes":
         add("design", True, f"{design_mode} (Hermes print_design auxiliary task; pin its model in the "
                             "profile's auxiliary.print_design block)")
-    elif resolved:
-        add("design", True, f"{design_mode} ({resolved['model']} at {resolved['chat_url']})")
     else:
         add("design", False, "enabled, but no model endpoint: set [design] chat_url and "
                              "model, or the [llm] values they inherit")

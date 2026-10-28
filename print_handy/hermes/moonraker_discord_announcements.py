@@ -44,13 +44,9 @@ OPENVIKING_VERIFY_TIMEOUT = float(os.environ.get("OPENVIKING_VERIFY_TIMEOUT", "1
 DISCORD_CHAT_ID = _config.discord_chat_id()
 
 from .print_records import (
-    CLEANUP_DELAY_SECONDS,
-    archive_discord_session,
     build_record_data,
-    discover_discord_session,
     load_context,
     plan_is_complete,
-    update_cleanup_record,
     utc_now,
     write_completed_record,
     format_multipart_summary,
@@ -81,7 +77,7 @@ TIMELAPSE_MAX_BYTES = int(_TIMELAPSE["max_bytes"])
 TIMELAPSE_LOCAL_RETENTION_DAYS = float(_TIMELAPSE["local_retention_days"])
 ACTIVE_STATES = {"Printing", "Paused", "Pausing", "Resuming"}
 # Pinned to the print profile from config. The multiplex gateway exports the launching profile's
-# HERMES_HOME to cron scripts, which silently pointed every session reset at the wrong state.db.
+# HERMES_HOME to cron scripts, which would point profile-relative files at the wrong profile.
 PROFILE_HOME = _config.pinned_hermes_home()
 
 
@@ -109,7 +105,7 @@ def _queued_jobs():
 
 
 def _batch_fully_complete(context):
-    """Only reset after all copies and multipart steps are complete."""
+    """True only once all copies and multipart steps are complete."""
     total = _context_value(context, "total_copies", "copies", "copy_count", "batch_size")
     index = _context_value(context, "copy_index", "copy_number", "batch_index")
     try:
@@ -168,139 +164,6 @@ def write_and_verify_print_memory(filename, stats, context):
     except Exception as exc:
         print(f"Print memory write/verification failed: {exc}", file=sys.stderr)
         return False, line
-
-
-# Reset policy (the operator, 2026-09-29): never reset on completion itself. A finished
-# print/batch arms a timer; the session resets only after DISCORD_POST_PRINT_QUIET_SECONDS
-# of no chat and no new print. A daily backup (discord.daily_reset_hour) resets sessions quiet since before the
-# boundary. Nothing resets while printing, with jobs queued, or with a multipart plan open.
-DISCORD_POST_PRINT_QUIET_SECONDS = float(_config.cfg()["discord"]["post_print_quiet_s"])
-
-
-def _live_channel_sessions(chat_id):
-    """Every unended Discord session routed to the channel, one per user (group_sessions_per_user).
-
-    ``archived`` is deliberately NOT filtered: sessions.auto_archive hides rows from the UI
-    after a few days while the gateway keeps routing to them, so an archived row can still
-    be the live conversation (a Sep 7 session survived to Sep 23 exactly this way).
-    """
-    import sqlite3
-    with sqlite3.connect(PROFILE_HOME / "state.db") as conn:
-        conn.row_factory = sqlite3.Row
-        return conn.execute(
-            "SELECT id, started_at, last_activity_at FROM sessions "
-            "WHERE source = 'discord' AND chat_id = ? AND ended_at IS NULL "
-            "ORDER BY COALESCE(last_activity_at, started_at) DESC",
-            (str(chat_id),),
-        ).fetchall()
-
-
-def _promote_reset(session_ids, reason):
-    _config.add_hermes_agent_to_path()
-    from hermes_state import SessionDB
-    db = SessionDB(PROFILE_HOME / "state.db")
-    try:
-        return [sid for sid in session_ids if db.promote_to_session_reset(str(sid), reason)]
-    finally:
-        close = getattr(db, "close", None)
-        if callable(close):
-            close()
-
-
-def silently_reset_discord_session(chat_id, session_id=None, reason="print_complete_auto_reset"):
-    """End the route(s) without dispatching visible /stop or /new replies.
-
-    With no explicit session_id, every live per-user session in the channel is reset;
-    the old single-match discovery refused whenever two users had sessions, so the
-    completion reset never fired.
-    """
-    if _config.standalone():
-        return False, "standalone mode: no agent session"
-    try:
-        ids = [session_id] if session_id else [r["id"] for r in _live_channel_sessions(chat_id)]
-        if not ids:
-            return False, "no live Discord session in channel"
-        changed = _promote_reset(ids, reason)
-        return bool(changed), f"session reset boundary recorded silently for {len(changed)}/{len(ids)}"
-    except Exception as exc:
-        return False, f"silent reset failed: {exc}"
-
-
-def _open_multipart_plans():
-    """Plan ids with at least one part not completed; unreadable plan files count as open."""
-    from .print_records import PLANS_DIR
-    open_ids = []
-    if not PLANS_DIR.is_dir():
-        return open_ids
-    for path in PLANS_DIR.glob("*.json"):
-        try:
-            parts = (json.loads(path.read_text(encoding="utf-8")) or {}).get("parts") or []
-        except (OSError, json.JSONDecodeError, AttributeError):
-            open_ids.append(path.stem)
-            continue
-        if parts and any(part.get("status") != "completed" for part in parts):
-            open_ids.append(path.stem)
-    return open_ids
-
-
-def check_and_reset_idle_discord_session(armed_at=None, chat_id=DISCORD_CHAT_ID,
-                                        quiet_seconds=DISCORD_POST_PRINT_QUIET_SECONDS):
-    """Post-print quiet reset plus 4 AM backup. Returns (changed, detail, disarm)."""
-    if _config.standalone():
-        # The standalone bot keeps no agent conversation, so there is no session to reset.
-        return False, "standalone mode: no agent session", True
-    queued = _queued_jobs()
-    if queued is None:
-        return False, "queue check failed", False
-    if len(queued) > 0:
-        return False, "jobs currently queued", False
-    try:
-        open_plans = _open_multipart_plans()
-    except Exception as exc:
-        return False, f"multipart plan check failed: {exc}", False
-    if open_plans:
-        return False, f"multipart project open: {', '.join(sorted(open_plans))}", False
-
-    now = time.time()
-    try:
-        rows = _live_channel_sessions(chat_id)
-    except Exception as exc:
-        return False, f"database query failed: {exc}", False
-    if not rows:
-        return False, "no active unended Discord session", bool(armed_at)
-
-    boundary = _daily_boundary_epoch(now)
-    quiet, overnight = [], []
-    for r in rows:
-        last = float(r["last_activity_at"] or r["started_at"] or 0)
-        if not last:
-            continue
-        if armed_at and now - max(last, float(armed_at)) >= quiet_seconds:
-            quiet.append(r["id"])
-        elif last < boundary:
-            overnight.append(r["id"])
-    if not quiet and not overnight:
-        return False, "no session past a reset boundary", False
-    try:
-        changed = _promote_reset(quiet, "post_print_2h_quiet_reset") if quiet else []
-        changed += _promote_reset(overnight, "daily_4am_backup_reset") if overnight else []
-    except Exception as exc:
-        return False, f"silent reset failed: {exc}", False
-    return bool(changed), (f"reset {len(changed)}/{len(quiet) + len(overnight)} "
-                           f"(post_print={len(quiet)}, daily={len(overnight)})"), bool(quiet)
-
-
-DISCORD_DAILY_RESET_HOUR = int(_config.cfg()["discord"]["daily_reset_hour"])
-
-
-def _daily_boundary_epoch(now=None):
-    """Most recent DISCORD_DAILY_RESET_HOUR:00 in the configured timezone, as epoch seconds."""
-    from datetime import timedelta
-    local = datetime.fromtimestamp(now or time.time(), _config.tz())
-    b = local.replace(hour=DISCORD_DAILY_RESET_HOUR, minute=0, second=0, microsecond=0)
-    if b > local:
-        b -= timedelta(days=1)
-    return b.timestamp()
 
 
 def get_job():
@@ -708,80 +571,8 @@ def record_completion(job_key, filename, stats, completed_at=None):
 
 
 def queue_completion_record(previous, job_key, filename, stats):
-    record = record_completion(job_key, filename, stats)
+    record_completion(job_key, filename, stats)
     previous["record_written"] = True
-    previous.setdefault("pending_cleanups", []).append({
-        "record_path": record["record_path"],
-        "plan_id": record.get("plan_id"),
-        "cleanup_eligible": record.get("cleanup_eligible", False),
-        "discord_session_id": record.get("discord_session_id"),
-        "discord_chat_id": record.get("discord_chat_id"),
-        "print_started_at": previous.get("print_started_at"),
-        "cleanup_due_at": time.time() + CLEANUP_DELAY_SECONDS,
-    })
-
-
-def process_pending_cleanups(state, now=None):
-    """Archive only verified channel sessions after the five-minute delay."""
-    if _config.standalone():
-        # No agent sessions exist to archive; never open (and so create) a Hermes state.db.
-        state["pending_cleanups"] = []
-        return state
-    now = time.time() if now is None else now
-    pending = state.get("pending_cleanups")
-    if not isinstance(pending, list):
-        pending = []
-    remaining = []
-    dry_run = os.environ.get("PRINT_HANDY_CLEANUP_DRY_RUN") == "1"
-    for item in pending:
-        if not isinstance(item, dict):
-            continue
-        plan_id = item.get("plan_id")
-        if plan_id and not plan_is_complete(plan_id):
-            remaining.append(item)
-            continue
-        try:
-            due_at = float(item.get("cleanup_due_at", 0))
-        except (TypeError, ValueError):
-            due_at = now + CLEANUP_DELAY_SECONDS
-        if due_at > now:
-            remaining.append(item)
-            continue
-
-        session_id = item.get("discord_session_id")
-        detail = ""
-        chat_id = str(item.get("discord_chat_id") or DISCORD_CHAT_ID)
-        if not chat_id:
-            item["last_cleanup_error"] = "discord.chat_id is not configured"
-            remaining.append(item)
-            continue
-        if not session_id:
-            session_id, detail = discover_discord_session(
-                chat_id,
-                not_before=float(item.get("print_started_at") or 0) - 3600,
-                db_path=PROFILE_HOME / "state.db",
-            )
-        if not session_id:
-            item["last_cleanup_error"] = detail
-            remaining.append(item)
-            continue
-        archived, detail = archive_discord_session(
-            str(session_id),
-            chat_id,
-            dry_run=dry_run,
-            db_path=PROFILE_HOME / "state.db",
-        )
-        if not archived:
-            item["last_cleanup_error"] = detail
-            remaining.append(item)
-            continue
-        if dry_run:
-            item["last_cleanup_dry_run"] = detail
-            remaining.append(item)
-            continue
-        update_cleanup_record(item.get("record_path", ""), "archived", str(session_id), detail)
-    state["pending_cleanups"] = remaining
-    return state
 
 
 def main():
@@ -802,26 +593,6 @@ def main():
         completion = None
 
     previous = load_state()
-    if state not in ACTIVE_STATES:
-        previous = process_pending_cleanups(previous)
-        try:
-            idle_reset, idle_detail, disarm = check_and_reset_idle_discord_session(
-                previous.get("reset_armed_at"))
-            if disarm:
-                previous.pop("reset_armed_at", None)
-            try:  # audit trail; stdout would be posted to Discord
-                log = PROFILE_HOME / "logs" / "discord_session_reset.log"
-                log.parent.mkdir(parents=True, exist_ok=True)
-                with log.open("a") as fh:
-                    fh.write(f"{datetime.now().astimezone().isoformat(timespec='seconds')} "
-                             f"home={_config.hermes_home()} reset={idle_reset} {idle_detail}\n")
-            except OSError:
-                pass
-            if idle_reset:
-                previous["last_idle_reset"] = time.time()
-                previous["last_idle_reset_detail"] = idle_detail
-        except Exception as exc:
-            print(f"Idle session reset check failed: {exc}", file=sys.stderr)
     job_key = str((job.get("file") or {}).get("path") or filename)
     previous_key = previous.get("job_key")
 
@@ -844,9 +615,6 @@ def main():
             "announced_completion": False,
             "record_written": False,
             "print_started_at": time.time() if state in ACTIVE_STATES else None,
-            "pending_cleanups": previous.get("pending_cleanups", []),
-            # A new print is activity: drop any armed post-print timer.
-            "reset_armed_at": None if state in ACTIVE_STATES else previous.get("reset_armed_at"),
         }
         save_state(previous)
         return 0
@@ -904,9 +672,6 @@ def main():
             memory_ok = False
             previous["memory_verified"] = False
             previous["memory_line"] = "deferred until the complete batch/job finishes"
-        if batch_complete:
-            # No immediate reset: arm the 2h quiet timer instead.
-            previous["reset_armed_at"] = time.time()
         # Keep the completion retryable until the listener confirms Discord delivery.
         previous["pending_completion_message"] = message
 

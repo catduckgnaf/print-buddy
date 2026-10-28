@@ -294,8 +294,17 @@ async def guided_dispatch(event, gateway, **kwargs):
 
 # The Hermes plugin LLM lane (ctx.llm), stashed by register() when the host
 # offers it (#388 Stage 1). The standalone Router offers neither attribute,
-# so this stays None there and design uses its HTTP transport instead.
+# so this stays None there. Design uses it only as the fallback when no
+# [design]/[llm] HTTP endpoint resolves (#524 Stage 3).
 _HERMES_LLM = None
+
+
+# Plugin-owned clarify rendering (#524 stage 2): the HermesClarifyAdapter
+# (print_handy.hermes.clarify_ui) the S5 switch installs here. None until
+# then — the pbq: branch in on_interaction and typed_answer_dispatch both
+# stay inert, no handler substitutes the adapter, and Hermes' adapter keeps
+# rendering questions exactly as before.
+_CLARIFY_UI = None
 
 
 def _design_root(cfg):
@@ -307,15 +316,22 @@ def _design_root(cfg):
 def _design_transport(cfg):
     """(complete, kind) for a design turn, or (None, '') when no model is reachable.
 
-    Hermes mode prefers the host's plugin LLM lane with the registered
-    print_design auxiliary task — [design].model is NOT consulted there, the
-    profile's auxiliary.print_design block is the setting (Stage 0 on #388).
-    The HTTP transport (standalone, or the Hermes fallback when ctx.llm is
-    unavailable) resolves its endpoint from [design] inheriting [llm].
+    The HTTP transport is the normal path in EVERY mode (#524 Stage 3):
+    its endpoint resolves from [design] inheriting [llm], Hermes mode
+    included. The host's plugin LLM lane (ctx.llm, with the registered
+    print_design auxiliary task — Stage 0 on #388) is the legacy fallback,
+    used only when no HTTP endpoint resolves: an install with no
+    [design]/[llm] endpoint configured sees no change at all, and the
+    profile's auxiliary.print_design block stays its design model.
     """
     from print_handy.core import design
     design_cfg = cfg.get('design') or {}
     timeout_s = int(design_cfg.get('timeout_s') or 180)
+    if design.resolve_http_config(cfg) is not None:
+        def http(messages):
+            return asyncio.to_thread(design.http_complete, cfg, messages)
+
+        return http, 'http'
     if (cfg.get('bot') or {}).get('mode') == 'hermes' and _HERMES_LLM is not None:
         llm = _HERMES_LLM
 
@@ -323,11 +339,6 @@ def _design_transport(cfg):
             return await design.hermes_complete(llm, messages, timeout_s=timeout_s)
 
         return hermes, 'hermes'
-    if design.resolve_http_config(cfg) is not None:
-        def http(messages):
-            return asyncio.to_thread(design.http_complete, cfg, messages)
-
-        return http, 'http'
     return None, ''
 
 
@@ -547,9 +558,10 @@ async def design_dispatch(event, gateway, **kwargs):
         return {'action': 'skip', 'reason': 'design not enabled'}
     if complete is None:
         if design_raw is True:
-            await say('Design is enabled but no design model is configured: in standalone mode set '
-                      '[design] chat_url/model (or the [llm] values they inherit); in Hermes mode the '
-                      'profile needs the print_design auxiliary task. Nothing was designed.')
+            await say('Design is enabled but no design model is configured: set '
+                      '[design] chat_url/model (or the [llm] values they inherit); in Hermes mode '
+                      'without an endpoint, the profile needs the print_design auxiliary task. '
+                      'Nothing was designed.')
             return {'action': 'skip', 'reason': 'design model not configured'}
         # Auto posture with nothing configured anywhere: the same "not set
         # up" answer the command has always given (#422).
@@ -939,7 +951,7 @@ def _spool_change_text(target, detail):
             "Same material family is still required.")
 
 
-async def _offer_spool_change(adapter, source, metadata, print_next, target, detail):
+async def _offer_spool_change(adapter, source, metadata, print_next, target, detail, live_key=None):
     """A slot's spool was swapped after slicing (ran out, changed color). Ask once; on yes, start with it.
 
     Only the slice-time spool id is waived; material family and live slot checks still run.
@@ -951,7 +963,11 @@ async def _offer_spool_change(adapter, source, metadata, print_next, target, det
     choices = [USE_LOADED_SPOOL, print_next.CANCEL_LABEL]
     cid = uuid.uuid4().hex
     session_key = f'print-next-spool:{source.chat_id}:{source.thread_id}'
-    cm.register(cid, session_key, question, choices)
+    # Register under the live chat session key (the _confirm pattern):
+    # typed replies route by that key, so a flow-key registration can
+    # never be answered on buttonless platforms. send_clarify keeps
+    # the flow key for delivery.
+    cm.register(cid, live_key or session_key, question, choices)
     try:
         sent = await adapter.send_clarify(chat_id=str(source.chat_id), question=question, choices=choices,
                                           clarify_id=cid, session_key=session_key, metadata=metadata)
@@ -1023,7 +1039,11 @@ async def print_next_dispatch(event, gateway, **kwargs):
         question = print_next.question_text(target)
         cid = uuid.uuid4().hex
         session_key = f'print-next:{source.chat_id}:{source.thread_id}'
-        cm.register(cid, session_key, question, choices)
+        # Register under the live chat session key (the _confirm pattern):
+        # typed replies route by that key, so a flow-key registration can
+        # never be answered on buttonless platforms. send_clarify keeps
+        # the flow key for delivery.
+        cm.register(cid, gateway._session_key_for_source(source) or session_key, question, choices)
         try:
             sent = await adapter.send_clarify(chat_id=str(source.chat_id), question=question,
                                               choices=choices, clarify_id=cid,
@@ -1040,7 +1060,8 @@ async def print_next_dispatch(event, gateway, **kwargs):
                                content=f"Preparing to start {target['label']}. {target.get('estimate_text', 'estimated print time unknown')}.")
             ok, detail = await print_next.start(target)
             if not ok and SPOOL_CHANGED in str(detail):
-                ok, detail = await _offer_spool_change(adapter, source, metadata, print_next, target, detail)
+                ok, detail = await _offer_spool_change(adapter, source, metadata, print_next, target, detail,
+                                                        live_key=gateway._session_key_for_source(source))
             message = (None if ok
                        else f"Did not start {target['label']}. Not retrying.\n"
                             + intake_plain_start_failure(detail))
@@ -1908,7 +1929,9 @@ async def _spool_guided_new(adapter, source, metadata, gateway, spool_sync, pid,
         if disposition is None:
             return made_id, f"{message} Nothing was loaded; slot {slot} is unchanged."
     result = await asyncio.to_thread(spool_sync.bind_slot, slot, made_id,
-                                     prior_disposition=disposition, **mr_kw)
+                                     prior_disposition=disposition,
+                                     expected_prior_spool_id=int(old_id) if old_id else None,
+                                     **mr_kw)
     return made_id, f"{message} {spool_sync.bind_text(result)}"
 
 
@@ -1984,7 +2007,9 @@ async def _spool_guided_change(adapter, source, metadata, gateway, spool_sync, p
                 if created_note else
                 _SPOOL_CANCELLED if _spool_is_cancel(answer) else _SPOOL_UNCLEAR)
     result = await asyncio.to_thread(spool_sync.bind_slot, slot, int(new_id),
-                                     prior_disposition=disposition, **mr_kw)
+                                     prior_disposition=disposition,
+                                     expected_prior_spool_id=int(old_id) if old_id else None,
+                                     **mr_kw)
     return created_note + spool_sync.bind_text(result)
 
 
@@ -2432,7 +2457,11 @@ async def print_stop_dispatch(event, gateway, **kwargs):
             choices = [print_stop.STOP_LABEL, print_stop.KEEP_LABEL]
             cid = uuid.uuid4().hex
             session_key = f'print-stop:{source.chat_id}:{source.thread_id}'
-            cm.register(cid, session_key, question, choices)
+            # Register under the live chat session key (the _confirm pattern):
+            # typed replies route by that key, so a flow-key registration can
+            # never be answered on buttonless platforms. send_clarify keeps
+            # the flow key for delivery.
+            cm.register(cid, gateway._session_key_for_source(source) or session_key, question, choices)
             try:
                 sent = await adapter.send_clarify(chat_id=str(source.chat_id), question=question,
                                                   choices=choices, clarify_id=cid,
@@ -2774,6 +2803,46 @@ async def typed_quantity_dispatch(event, gateway, **kwargs):
     error = typed_reply(source, getattr(event, 'text', ''))
     if error is None:
         return None
+    if error:
+        adapter = gateway._delivery_adapter_for(source)
+        if adapter is not None:
+            await adapter.send(chat_id=source.chat_id, content=error,
+                               metadata={'thread_id': source.thread_id} if source.thread_id else None)
+    return {'action': 'skip', 'reason': 'typed print quantity handled'}
+
+
+async def typed_answer_dispatch(event, gateway, **kwargs):
+    """A typed reply answers this session's open question (#524 stage 2; NOT registered yet).
+
+    Generalizes typed_quantity_dispatch: parser prompts (quantities and the
+    other typed values) keep first claim through link_intake.typed_reply,
+    exactly as today. What no parser prompt claims falls to the session's
+    newest prompt in Print Handy's own registry, registered under the live
+    session key — the route Hermes' gateway session routing provides today,
+    which the plugin-owned renderer provides itself once it owns the
+    questions (HermesClarifyAdapter.answer_typed).
+
+    Deliberately absent from register(): registration is the S5 switch and
+    lands with the rest of the own-renderer wiring after the S0 live spike,
+    replacing typed_quantity_dispatch in the hook list. Until then this hook
+    is inert even if called directly — with no _CLARIFY_UI installed it
+    behaves exactly like typed_quantity_dispatch.
+    """
+    if not _is_print_discord_event(event):
+        return None
+    source = event.source
+    if not getattr(source, 'user_id', None) or not gateway._is_user_authorized_for_source(source):
+        return None
+    from print_handy.core.link_intake import typed_reply
+    error = typed_reply(source, getattr(event, 'text', ''))
+    if error is None:
+        ui = _CLARIFY_UI
+        if ui is None:
+            return None
+        if not await ui.answer_typed(gateway._session_key_for_source(source),
+                                     getattr(event, 'text', '')):
+            return None
+        return {'action': 'skip', 'reason': 'typed clarify answer handled'}
     if error:
         adapter = gateway._delivery_adapter_for(source)
         if adapter is not None:
@@ -3178,7 +3247,8 @@ def alert_button_handlers(bot, adapter):
                                                  state.get('context') or {}, choice)
             else:
                 result = await asyncio.to_thread(pab.create_and_bind_insertion, state['slot'], values,
-                                                 spool_sync, state.get('disposition') or 'shelf')
+                                                 spool_sync, state.get('disposition') or 'shelf',
+                                                 expected_prior_spool_id=state.get('old_spool_id'))
         except Exception:
             logger.exception('new spool walkthrough create failed')
             await interaction.response.edit_message(content='Nothing was changed. Check what you entered and try again.', view=None)
@@ -3194,24 +3264,26 @@ def alert_button_handlers(bot, adapter):
                  ('origin', 'slot', 'context', 'step', 'predicted_id', 'prompt_brand', 'types',
                   'brand', 'material', 'color', 'grams', 'old_spool_id', 'old_remaining', 'disposition',
                   'photo_offered', 'from_photo', 'photo_route', 'nozzle_temp', 'bed_temp')}
+        # Claim the step before acting on it: two clicks can both peek the
+        # same alert, but only one take() succeeds. Without this check a
+        # double confirmation would run intake_finish twice and create/bind
+        # two spools (#515) — the plate picker's claim idiom.
+        if not await asyncio.to_thread(pab.take, aid):  # a parallel click got there first
+            await interaction.response.send_message('That new-spool walkthrough is old or was already answered. Nothing changed.', ephemeral=True)
+            return
         if action == 'cancel':
-            await asyncio.to_thread(pab.take, aid)
             await interaction.response.edit_message(content='New spool cancelled. Nothing changed.', view=None)
             return
         if action == 'mat_other':
-            await asyncio.to_thread(pab.take, aid)
             await intake_field_modal(interaction, state, 'material', 'Material')
             return
         if action == 'w_custom':
-            await asyncio.to_thread(pab.take, aid)
             await intake_field_modal(interaction, state, 'grams', 'Full starting grams', max_length=12)
             return
         if action == 'brand_type':
-            await asyncio.to_thread(pab.take, aid)
             await intake_field_modal(interaction, state, 'brand', 'Brand')
             return
         if action == 'photo':
-            await asyncio.to_thread(pab.take, aid)
             await interaction.response.edit_message(
                 content=('Send one photo of the spool label — the box, or the sticker on the '
                          'spool — as your next message in this channel. I will read it (the '
@@ -3223,10 +3295,8 @@ def alert_button_handlers(bot, adapter):
             task.add_done_callback(_photo_tasks.discard)
             return
         if action == 'edit':
-            await asyncio.to_thread(pab.take, aid)
             await intake_advance(interaction, {**state, 'step': 'start'})
             return
-        await asyncio.to_thread(pab.take, aid)
         material = pab.intake_material_for_action(action)
         if material is not None:
             state['material'] = material
@@ -3414,11 +3484,13 @@ def alert_button_handlers(bot, adapter):
             content=f'Which slot should spool {label} go into? Nothing changes until you confirm the load.',
             view=view)
 
-    async def new_spool_confirm(interaction, spool_id, label, slot, disposition, fate=''):
+    async def new_spool_confirm(interaction, spool_id, label, slot, disposition, fate='',
+                                old_spool_id=None):
         import discord
         confirm_aid = await asyncio.to_thread(pab.record, 'spoolman-new-confirm', '',
                                               spool_id=int(spool_id), label=label, slot=int(slot),
-                                              disposition=disposition)
+                                              disposition=disposition,
+                                              old_spool_id=int(old_spool_id) if old_spool_id else None)
         view = discord.ui.View(timeout=(globals().get('_config').question_timeout_s() if globals().get('_config') else 1800))
         view.add_item(discord.ui.Button(label='Confirm load', style=discord.ButtonStyle.success,
                                         custom_id=f'{pab.NEW_SPOOL_PREFIX}:confirm:{confirm_aid}'))
@@ -3458,7 +3530,8 @@ def alert_button_handlers(bot, adapter):
                     'archive': f' Spool #{old_id} will be archived.',
                     'depleted': f' Spool #{old_id} will be marked as depleted (0 g left).',
                     'delete': f' Spool #{old_id} will be DELETED from Spoolman.'}[action]
-            await new_spool_confirm(interaction, spool_id, label, alert.get('slot'), action, fate)
+            await new_spool_confirm(interaction, spool_id, label, alert.get('slot'), action, fate,
+                                    old_spool_id=old_id)
             return
         # spoolman-new-confirm + confirm: the one bind, through the same
         # spool_sync.bind_slot the guided /spool change flow ends in.
@@ -3466,6 +3539,8 @@ def alert_button_handlers(bot, adapter):
             from print_handy.hermes import spool_sync
             result = await asyncio.to_thread(spool_sync.bind_slot, int(alert['slot']), int(spool_id),
                                              prior_disposition=alert.get('disposition') or 'shelf',
+                                             expected_prior_spool_id=(int(alert['old_spool_id'])
+                                                                      if alert.get('old_spool_id') else None),
                                              note='Bound from Discord new-spool prompt')
             message = spool_sync.bind_text(result)
         except Exception as exc:
@@ -3644,6 +3719,21 @@ def alert_button_handlers(bot, adapter):
     async def on_interaction(interaction):
         data = getattr(interaction, 'data', None) or {}
         custom_id = data.get('custom_id', '')
+        from print_handy.bot.platform import parse_custom_id as _parse_pbq
+        clarify_press = _parse_pbq(custom_id)
+        if clarify_press is not None:
+            # Plugin-owned question buttons (#524 stage 2). Inert until the
+            # S5 switch installs _CLARIFY_UI: no pbq: buttons are posted
+            # under Hermes before then, and the standalone bot's own
+            # listener owns its pbq: presses.
+            ui = _CLARIFY_UI
+            if ui is None:
+                return
+            if not allowed(interaction):
+                await reject(interaction)
+                return
+            await ui.handle_click(interaction, *clarify_press)
+            return
         if str(custom_id).startswith(_pi.RETRY_CUSTOM_ID):
             if not allowed(interaction):
                 await reject(interaction)
@@ -3740,6 +3830,9 @@ def register(ctx):
     # AI design (#388): when the host offers the plugin LLM lane, register the
     # design auxiliary task (the operator pins its model in the profile's
     # auxiliary.print_design block) and keep the lane for design_dispatch.
+    # Since #524 Stage 3 the lane is design's fallback — a configured
+    # [design]/[llm] HTTP endpoint wins in every mode — but the registration
+    # stays so endpoint-less Hermes installs keep working unchanged.
     # The standalone Router offers neither API, so both stay unset there.
     global _HERMES_LLM
     if hasattr(ctx, 'register_auxiliary_task'):

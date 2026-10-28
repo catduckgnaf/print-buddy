@@ -12,9 +12,14 @@ everything this codebase actually speaks comes back empty:
   stream, and no snapshot or stream URL for the printer is recorded
   anywhere in the vendor facts (`facts.py`), the vendor doc
   (`docs/ELEGOO.md`), or the client.
-- The only other SDCP commands the repo records at all — 386/403 in
-  `docs/ELEGOO.md`'s "not supported" list — are chamber light/fan
-  control, not camera, and they are not wired up either.
+- The only other SDCP commands the repo records at all are 386/403 in
+  `docs/ELEGOO.md`'s "not supported" list. Cmd 403 is device control
+  (chamber light/fan) — wired for the light by the #516 follow-up,
+  not a camera command. Cmd 386 is named the video-stream enable in
+  the published SDCP command tables (an MJPEG URL on :3031 in the
+  OpenCentauri protocol notes): a lead worth one hardware check, but
+  unverified against any firmware this codebase can cite, so it does
+  not change this audit's answer — no endpoint is guessed from it.
 
 So there is no camera source to wire: this module — the vendor's
 camera seam, the counterpart of `printers.prusa.camera` and

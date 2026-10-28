@@ -152,7 +152,8 @@ def _event(text="/print-stop"):
 
 
 def _gateway(adapter):
-    return S(_is_user_authorized_for_source=lambda s: True, _delivery_adapter_for=lambda s: adapter)
+    return S(_is_user_authorized_for_source=lambda s: True, _delivery_adapter_for=lambda s: adapter,
+             _session_key_for_source=lambda s: "session-key")
 
 
 def test_stop_command_idle_sends_nothing():

@@ -553,7 +553,6 @@ def test_announcer_completion_uses_model_title_not_hash(job, tmp_path, monkeypat
     monkeypatch.setattr(records, "PRINTS_DIR", tmp_path / "Prints")
     monkeypatch.setattr(records, "PLANS_DIR", tmp_path / "Plans")
     monkeypatch.setattr(watcher, "STATE_PATH", tmp_path / "state.json")
-    monkeypatch.setattr(watcher, "PROFILE_HOME", tmp_path / "profile")
     context_path = tmp_path / "context.json"
     context_path.write_text(json.dumps({"jobs": {job.hashed: {"selected_option": records.NATIVE_PRINT_OPTIONS[0],
                                                               "discord_session_id": "s1", "discord_chat_id": "1"}}}))
@@ -581,7 +580,8 @@ def test_announcer_completion_uses_model_title_not_hash(job, tmp_path, monkeypat
     assert "Print timelapse archived" not in posted
     assert "MEDIA:" not in posted and "Expected model" not in posted
     state = json.loads((tmp_path / "state.json").read_text())
-    assert state["reset_armed_at"] == 12345.0
+    # #524: a completion no longer arms any agent-session reset.
+    assert "reset_armed_at" not in state
     assert state["memory_verified"] is True
     assert not HEX.search(posted)
     record = json.loads(next((tmp_path / "Prints").glob("*.json")).read_text())
@@ -600,7 +600,6 @@ def test_announcer_completion_has_no_roast_and_never_calls_the_generator(job, tm
     monkeypatch.setattr(records, "PRINTS_DIR", tmp_path / "Prints")
     monkeypatch.setattr(records, "PLANS_DIR", tmp_path / "Plans")
     monkeypatch.setattr(watcher, "STATE_PATH", tmp_path / "state.json")
-    monkeypatch.setattr(watcher, "PROFILE_HOME", tmp_path / "profile")
     context_path = tmp_path / "context.json"
     context_path.write_text(json.dumps({"jobs": {job.hashed: {"selected_option": records.NATIVE_PRINT_OPTIONS[0],
                                                               "discord_session_id": "s1", "discord_chat_id": "1"}}}))

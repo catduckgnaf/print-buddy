@@ -18,6 +18,12 @@ out as a cancel) and passes with the live_key pass-through. One test
 covers a direct dispatch (macros); the other covers the helper-threaded
 shape (cold pull, whose `_coldpull_workflow` helper has no gateway in
 scope and receives the key from `coldpull_dispatch`).
+
+The last three tests cover the flows that register inline instead of
+going through `_confirm` — /print-next, its spool-change follow-up
+(`_offer_spool_change`, which receives the key from `print_next_dispatch`
+exactly like the cold pull helper does) and /print-stop — which kept the
+flow-key registration after the `_confirm` callers were fixed (#524).
 """
 import asyncio
 import importlib.util
@@ -32,7 +38,8 @@ import pytest
 
 from print_handy import macros, printers
 from print_handy.core import prompts as core_prompts
-from print_handy.hermes import _config, maintenance, spool_sync
+from print_handy.hermes import _config, maintenance, print_next, print_stop, spool_sync
+from print_handy.hermes import discord_print_summary as print_summary
 from print_handy.hermes import print_control as pc
 
 ROOT = Path(__file__).parents[1]
@@ -195,3 +202,111 @@ def test_coldpull_prompts_answer_numbered_replies_through_the_real_matrix_adapte
     assert appended and appended[-1]["cold_pull"]["result"] == "clean"
     assert any("Cold pull finished; heater target is 0." in body for body in stub.bodies)
     assert sum(body.startswith("> Answered by message:") for body in stub.bodies) == 3
+
+
+# ------------------------------------------- inline registration: /print-stop
+
+def test_print_stop_prompt_answers_a_numbered_reply_through_the_real_matrix_adapter(confirm_env):
+    stub = HomeserverStub()
+    adapter = _matrix_adapter(stub)
+    cancelled = []
+    state = {"state": "printing", "filename": "a.gcode", "layer": None, "total_layer": None,
+             "progress": None, "print_duration": None, "camera_image_path": None}
+
+    async def scenario():
+        with mock.patch.object(core_prompts, "gateway", return_value=core_prompts), \
+                mock.patch.object(print_stop, "status", lambda **kw: dict(state)), \
+                mock.patch.object(print_stop, "cancel",
+                                  lambda filename, **kw: cancelled.append(filename)
+                                  or (True, "Stopped. Printer now reports cancelled.")), \
+                mock.patch.object(print_summary, "format_event", lambda *a, **k: "Started: a.gcode"):
+            task = asyncio.create_task(plugin.print_stop_dispatch(
+                _event("/print-stop"), _gateway(adapter)))
+            await _wait_for_prompt(stub, 1)
+            answered = await adapter.answer_typed(LIVE_KEY, "1")
+            out = await asyncio.wait_for(task, 15)
+            return answered, out
+
+    answered, out = asyncio.run(scenario())
+    assert answered is True
+    assert out == {"action": "skip", "reason": "deterministic print stop handled"}
+    # The confirmation was honoured: exactly one cancel, for the confirmed file.
+    assert cancelled == ["a.gcode"]
+    assert any(body.startswith("> Answered by message:") for body in stub.bodies)
+    assert any("Stopped. Printer now reports cancelled." in body for body in stub.bodies)
+
+
+# ------------------------------------------- inline registration: /print-next
+
+NEXT_TARGET = {"label": "Tail", "title": "Widget", "copy": 1, "quantity": 1, "where": "",
+               "gcode": "/tmp/tail.gcode", "job_json": "/tmp/JOB.json"}
+
+
+def _print_next_env(start):
+    return mock.patch.multiple(
+        print_next, load_plan=lambda plan_id: {"plan_id": plan_id},
+        resolve_next=lambda plan, part_id=None: dict(NEXT_TARGET), start=start)
+
+
+def test_print_next_prompt_answers_a_numbered_reply_through_the_real_matrix_adapter(confirm_env):
+    stub = HomeserverStub()
+    adapter = _matrix_adapter(stub)
+    started = []
+
+    async def fake_start(target):
+        started.append(target)
+        return True, "START REQUEST ACCEPTED"
+
+    async def scenario():
+        with mock.patch.object(core_prompts, "gateway", return_value=core_prompts), \
+                _print_next_env(fake_start), \
+                mock.patch.object(print_summary, "find_job",
+                                  lambda gcode: ({"derived_plates": []}, {"seconds": 600})), \
+                mock.patch.object(print_summary, "_print_number", lambda job: 3):
+            task = asyncio.create_task(plugin.print_next_dispatch(
+                _event("/print-next ghost"), _gateway(adapter)))
+            await _wait_for_prompt(stub, 1)
+            answered = await adapter.answer_typed(LIVE_KEY, "1")
+            out = await asyncio.wait_for(task, 15)
+            return answered, out
+
+    answered, out = asyncio.run(scenario())
+    assert answered is True
+    assert out == {"action": "skip", "reason": "deterministic next plate handled"}
+    # The confirmation was honoured: exactly one start, for the exact plate.
+    assert [target["gcode"] for target in started] == ["/tmp/tail.gcode"]
+    assert any(body.startswith("Preparing to start Tail") for body in stub.bodies)
+
+
+def test_print_next_spool_change_prompt_answers_a_numbered_reply_through_the_real_matrix_adapter(confirm_env):
+    stub = HomeserverStub()
+    adapter = _matrix_adapter(stub)
+    started = []
+    results = [(False, "slot 0 spool changed since slicing (was 11, now 22)"),
+               (True, "START REQUEST ACCEPTED")]
+
+    async def fake_start(target):
+        started.append(target)
+        return results[len(started) - 1]
+
+    async def scenario():
+        with mock.patch.object(core_prompts, "gateway", return_value=core_prompts), \
+                _print_next_env(fake_start), \
+                mock.patch.object(print_summary, "find_job",
+                                  lambda gcode: ({"derived_plates": []}, {"seconds": 600})), \
+                mock.patch.object(print_summary, "_print_number", lambda job: 3):
+            task = asyncio.create_task(plugin.print_next_dispatch(
+                _event("/print-next ghost"), _gateway(adapter)))
+            await _wait_for_prompt(stub, 1)
+            first = await adapter.answer_typed(LIVE_KEY, "1")
+            await _wait_for_prompt(stub, 2)
+            second = await adapter.answer_typed(LIVE_KEY, "1")
+            out = await asyncio.wait_for(task, 15)
+            return first, second, out
+
+    first, second, out = asyncio.run(scenario())
+    # Both the start confirmation and the spool-change follow-up answered by number.
+    assert (first, second) == (True, True)
+    assert out == {"action": "skip", "reason": "deterministic next plate handled"}
+    assert len(started) == 2
+    assert started[1].get("accept_spool_change") is True

@@ -6,7 +6,6 @@ Tests install an override with set_override() so no code path reads a live setup
 from __future__ import annotations
 
 import os
-import sys
 from pathlib import Path
 from typing import Any
 
@@ -75,7 +74,7 @@ def pinned_hermes_home() -> Path:
     """The profile home from config files only, ignoring $HERMES_HOME.
 
     A cron job's HERMES_HOME is the launching profile, not the print profile, so anything that
-    must find the print profile's state.db reads this instead.
+    must find the print profile reads this instead.
     """
     global _pinned
     if _override is not None:
@@ -192,13 +191,6 @@ def upload_wait_s() -> int:
 def cold_pull_outcome_s() -> int:
     """How long a cold-pull outcome prompt stays open."""
     return int(cfg()["discord"]["cold_pull_outcome_s"])
-
-
-def add_hermes_agent_to_path() -> None:
-    """Make hermes_state / hermes_cli importable, using [paths] hermes_agent."""
-    agent = str(Path(cfg()["paths"]["hermes_agent"]).expanduser())
-    if agent not in sys.path:
-        sys.path.insert(0, agent)
 
 
 def _env_file_value(path: Path, name: str) -> str:

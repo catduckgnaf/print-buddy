@@ -22,6 +22,7 @@ import urllib.request
 from pathlib import Path
 from typing import Any
 
+from ..core import fuzzy
 from . import _config
 
 BASE = _config.moonraker_url()
@@ -315,6 +316,22 @@ def match_printed(query: str, rows: list[dict[str, Any]]) -> list[dict[str, Any]
     return [r for r in rows if all(w in _fold(r["title"]) for w in words)]
 
 
+def fuzzy_printed(query: str, rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """#468 stage 2: typo-tolerant near matches over printed titles, best score first.
+
+    Suggestion-only by construction: resolve_print turns these into a
+    numbered pick-list and still refuses — a fuzzy hit is never resolved to
+    a target, not even a single high-confidence one, and print numbers never
+    reach here (the bare-integer path in resolve_print stays exact, #436).
+    Scores come from core.fuzzy (floor 65, windowed for long titles); ties
+    keep the rows' newest-first order.
+    """
+    scored = [(fuzzy.windowed_fuzzy_score(query, r["title"]), pos, r) for pos, r in enumerate(rows)]
+    scored = [entry for entry in scored if entry[0]]
+    scored.sort(key=lambda entry: (-entry[0], entry[1]))
+    return [row for _score_value, _pos, row in scored]
+
+
 def printed_list_text(rows: list[dict[str, Any]], limit: int = AGAIN_LIST_LIMIT) -> str:
     if not rows:
         return "No archived print has been started yet."
@@ -334,7 +351,9 @@ def resolve_print(query: str = "", archive: Path | None = None) -> dict[str, Any
 
     Empty query -> the last print. A bare integer -> that row of printed_jobs().
     Anything else -> case insensitive title match; several matches raise with a
-    numbered list so the operator can pick by number.
+    numbered list so the operator can pick by number. When nothing matches
+    exactly, typo-close titles (#468 stage 2) raise the same kind of numbered
+    list as a "Did you mean" pick-list — a fuzzy hit never resolves directly.
     """
     from .print_next import NextPlateError
 
@@ -353,6 +372,12 @@ def resolve_print(query: str = "", archive: Path | None = None) -> dict[str, Any
         return _target_from_record(hit["record"], archive)
     hits = match_printed(query, rows)
     if not hits:
+        near = fuzzy_printed(query, rows)
+        if near:
+            options = "\n".join(f"{r['index']}. {r['title']} ({_et(r['launched_at'])})" for r in near[:AGAIN_LIST_LIMIT])
+            raise NextPlateError(
+                f"no printed job matches \"{query}\" exactly. Did you mean one of these?\n{options}\n"
+                "Pick one with /print-again <number>")
         raise NextPlateError(f"no printed job matches \"{query}\". Type /print-again list")
     if len(hits) > 1:
         options = "\n".join(f"{r['index']}. {r['title']} ({_et(r['launched_at'])})" for r in hits[:AGAIN_LIST_LIMIT])

@@ -224,6 +224,68 @@ def test_resolve_empty_query_is_last_print(tmp_path):
     assert print_control.resolve_print("", tmp_path)["gcode"] == str(a.resolve())
 
 
+# ------------------------------------------------------- #468 stage 2 corpus
+
+def test_resolve_typo_suggests_a_pick_list_and_refuses(tmp_path):
+    """A typo'd name gets a numbered did-you-mean list in the same shape as
+    the ambiguous-name refusal — and still refuses. The follow-up is the
+    existing exact path: /print-again <number>."""
+    from print_handy.hermes.print_next import NextPlateError
+    _three(tmp_path)
+    with pytest.raises(NextPlateError) as exc:
+        print_control.resolve_print("funco shelf", tmp_path)
+    msg = str(exc.value)
+    assert "Did you mean one of these?" in msg and "3. FUNKO Shelf HC" in msg
+    assert "Pick one with /print-again <number>" in msg
+
+
+def test_resolve_typo_in_part_of_a_long_title_suggests_it(tmp_path):
+    from print_handy.hermes.print_next import NextPlateError
+    _three(tmp_path)
+    with pytest.raises(NextPlateError) as exc:
+        print_control.resolve_print("desk stadn", tmp_path)
+    assert "2. G4 Instant Desk Stand" in str(exc.value)
+
+
+def test_resolve_single_strong_fuzzy_hit_still_never_resolves(tmp_path):
+    """The safety pin for stage 2: even one candidate at 97/100 similarity
+    ("funko pop riserr") is offered, never resolved — a fuzzy match may
+    suggest, it may not pick the print."""
+    from print_handy.hermes.print_next import NextPlateError
+    _three(tmp_path)
+    with pytest.raises(NextPlateError) as exc:
+        print_control.resolve_print("funko pop riserr", tmp_path)
+    assert "1. Funko Pop Riser" in str(exc.value)
+
+
+def test_fuzzy_printed_orders_best_score_first(tmp_path):
+    _printed(tmp_path, "desk-stand--a", "Desk Stand", 100)
+    _printed(tmp_path, "desk-stand-pro--b", "Desk Stand Pro Max", 200)
+    rows = print_control.printed_jobs(tmp_path)
+    near = print_control.fuzzy_printed("desk stadn pro", rows)
+    assert [r["title"] for r in near] == ["Desk Stand Pro Max", "Desk Stand"]
+    assert print_control.fuzzy_printed("benchy", rows) == []
+
+
+def test_resolve_unrelated_name_gets_no_suggestions(tmp_path):
+    """No near match -> the pre-#468 refusal, byte-identical: no did-you-mean
+    is attached when nothing is close enough to mean."""
+    from print_handy.hermes.print_next import NextPlateError
+    _three(tmp_path)
+    with pytest.raises(NextPlateError) as exc:
+        print_control.resolve_print("benchy", tmp_path)
+    assert str(exc.value) == 'no printed job matches "benchy". Type /print-again list'
+
+
+def test_resolve_number_like_query_never_goes_fuzzy(tmp_path):
+    """Print numbers stay exact (#436): an out-of-range number is a number
+    error, never a fuzzy suggestion, whatever the titles look like."""
+    from print_handy.hermes.print_next import NextPlateError
+    _three(tmp_path)
+    with pytest.raises(NextPlateError, match="no print #22"):
+        print_control.resolve_print("22", tmp_path)
+
+
 def _copy_gcode(tmp_path, duration="1h", grams=12.0):
     g = tmp_path / "copy.gcode"
     g.write_text(f"; estimated printing time (normal mode) = {duration}\n"

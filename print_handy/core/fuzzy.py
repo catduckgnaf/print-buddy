@@ -74,3 +74,28 @@ def fuzzy_score(query, target) -> int:
 def best_fuzzy_score(query, targets) -> int:
     """The best ``fuzzy_score`` of a query over a candidate's names/aliases/ids."""
     return max((fuzzy_score(query, target) for target in targets), default=0)
+
+
+def windowed_fuzzy_score(query, target) -> int:
+    """Best ``fuzzy_score`` of a query against a target or a word window of it.
+
+    For long candidate names where the query names only part of the name —
+    print titles are the case in point: "desk stadn" scores 52 against the
+    whole of "G4 Instant Desk Stand" but 90 against its "desk stand"
+    window. Windows run one word shorter and one word longer than the query
+    too, so a missing or extra space ("deskstand") still finds its window.
+    The token-coverage guard applies inside every window: a window must
+    still hold partners for at least half the query's words.
+    """
+    q, t = norm(query), norm(target)
+    if not q or not t:
+        return 0
+    best = fuzzy_score(q, t)
+    qtokens, ttokens = q.split(), t.split()
+    if len(ttokens) > 1:
+        for size in {len(qtokens) - 1, len(qtokens), len(qtokens) + 1}:
+            if size < 1 or size >= len(ttokens):
+                continue
+            for start in range(len(ttokens) - size + 1):
+                best = max(best, fuzzy_score(q, " ".join(ttokens[start:start + size])))
+    return best

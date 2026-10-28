@@ -60,6 +60,17 @@ def test_coverage_guard_rejects_one_shared_word_false_friends():
     assert fuzzy.fuzzy_score("nozzel clog fix", "nozzle clog") >= fuzzy.FUZZY_FLOOR
 
 
+def test_windowed_score_finds_a_partial_title():
+    # Long print titles (stage 2): the query names part of the title, and a
+    # typo in it. Whole-string scores 52 here; the "desk stand" window is 90.
+    assert fuzzy.windowed_fuzzy_score("desk stadn", "G4 Instant Desk Stand") == 90
+    # A missing space is a window-size difference, not a different query.
+    assert fuzzy.windowed_fuzzy_score("deskstand", "G4 Instant Desk Stand") >= 85
+    # Windows do not rescue unrelated text.
+    assert fuzzy.windowed_fuzzy_score("benchy", "G4 Instant Desk Stand") == 0
+    assert fuzzy.windowed_fuzzy_score("warp drive calibration", "Probe Calibrate Mount") == 0
+
+
 def test_best_fuzzy_score_takes_the_best_target():
     assert fuzzy.best_fuzzy_score("adheison", ["zzz", "adhesion failure", "adhesion"]) >= 85
     assert fuzzy.best_fuzzy_score("pizza", ["zzz", "adhesion"]) == 0

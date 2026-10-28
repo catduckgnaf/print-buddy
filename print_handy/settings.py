@@ -90,6 +90,8 @@ OPEN_SECTIONS = {"cold_pull", "nozzle_temp_offsets", "material_temps"}
 OPTIONAL_KEYS = {("printer", "nozzle_type"): str, ("printer", "tool_count"): int,
                  ("visual_watch", "enabled"): bool,
                  ("vision", "roast_enabled"): bool,
+                 ("vision", "auto_light_off_minutes"): int,
+                 ("vision", "light_object"): str,
                  ("spool", "prompt_brand"): bool,
                  ("services", "octoprint_url"): str,
                  ("bambu", "lan_host"): str, ("bambu", "lan_serial"): str,
@@ -1031,6 +1033,25 @@ def _validate_vision(data):
     enabled = vision.setdefault("roast_enabled", True)
     if not isinstance(enabled, bool):
         raise SettingsError(f"[vision] roast_enabled must be true or false, got {enabled!r}")
+    # Auto light-off (#516): off by default (0). When set above zero, the
+    # Moonraker listener turns the printer's light on at print start and,
+    # after a print ends, off again once the camera verdict has seen an
+    # empty plate for that many minutes. It needs a vision endpoint (the
+    # same vision_ready gate as the camera watchdog) and a light target:
+    # light_object names one ("led chamber_led"); empty auto-discovers,
+    # and discovery only acts when the printer lists exactly one light
+    # object. The strict name validation lives in
+    # hermes.light_control (the listener refuses an unusable name there);
+    # here the shape is just int / string.
+    minutes = vision.setdefault("auto_light_off_minutes", 0)
+    if isinstance(minutes, bool) or not isinstance(minutes, int) or minutes < 0:
+        raise SettingsError(f"[vision] auto_light_off_minutes must be a whole number of minutes "
+                            f"from 0 (off) up, got {minutes!r}")
+    light_object = vision.setdefault("light_object", "")
+    if not isinstance(light_object, str):
+        raise SettingsError(f"[vision] light_object must be a Moonraker light object name "
+                            f"like 'led chamber_led' or empty, got {light_object!r}")
+    vision["light_object"] = light_object.strip()
 
 
 def _validate_spool(data):

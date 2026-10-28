@@ -25,6 +25,11 @@ services:
       PRINT_HANDY__SERVICES__CAMERA_SNAPSHOT_URL: ${PRINT_HANDY__SERVICES__CAMERA_SNAPSHOT_URL:-}
       PRINT_HANDY__VISION__MODEL: ${PRINT_HANDY__VISION__MODEL:-gemini-latest}
       PRINT_HANDY__VISION__ROAST_ENABLED: ${PRINT_HANDY__VISION__ROAST_ENABLED:-true}
+      # Auto light-off (#516): light on at print start, off after the plate
+      # has been seen empty for this many minutes. 0 = off (the default).
+      PRINT_HANDY__VISION__AUTO_LIGHT_OFF_MINUTES: ${PRINT_HANDY__VISION__AUTO_LIGHT_OFF_MINUTES:-0}
+      # Moonraker light object to switch; empty auto-discovers a single one.
+      PRINT_HANDY__VISION__LIGHT_OBJECT: ${PRINT_HANDY__VISION__LIGHT_OBJECT:-}
       # New-spool walkthrough brand step (#512): off by default.
       PRINT_HANDY__SPOOL__PROMPT_BRAND: ${PRINT_HANDY__SPOOL__PROMPT_BRAND:-false}
       # In-container timelapse capture (#246): starts the bundled go2rtc

@@ -188,6 +188,15 @@ roast_model = "luna-latest"
 # (vision_chat_url plus CLIPROXY_API_KEY), on every platform, Telegram included.
 # Set false to turn roasts off; camera checks keep using the same endpoint.
 roast_enabled = true
+# Auto light-off (#516): 0 = off (the default). When set (30 suggested), the
+# Moonraker listener turns the printer's light on at print start and, after a
+# print ends, off again once the camera has seen an empty plate for that many
+# minutes. Needs a vision endpoint, like the camera watchdog.
+auto_light_off_minutes = 0
+# The Moonraker light object to switch, e.g. "led chamber_led",
+# "neopixel sb_leds" or "output_pin caselight". Empty auto-discovers: the
+# listener uses the printer's light object only when there is exactly one.
+light_object = ""
 
 [visual_watch]
 # Camera stall alert sensitivity, 1 (quietest) to 5 (most alerts). 3 is the original behavior.

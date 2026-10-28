@@ -39,6 +39,7 @@ from . import plan_timelapse
 from . import timelapse_capture
 from . import timelapse_encode
 from . import print_control
+from . import light_control
 from . import visual_watch as _visual_watch
 from . import print_markers
 from . import print_records
@@ -1773,6 +1774,39 @@ def _vision_ready():
     return _visual_watch.vision_ready(lambda: _profile_env_value("CLIPROXY_API_KEY"), log)
 
 
+# -- #516: auto light-off ---------------------------------------------------
+# The pure policy (light_control.AutoLightPolicy) decides; this listener
+# owns the I/O: the Moonraker object list for light discovery (the #442
+# precedent — names come from the printer, never hardcoded), the existing
+# _camera_snapshot_bytes + _visual_verdict path for idle plate checks,
+# and print_control's G-code script endpoint for the switch itself.
+# Switching happens in Moonraker, so Home Assistant's Moonraker
+# integration sees the same light state — Print Handy never talks to HA
+# for this. Every entry point below is fail-soft: an exception is
+# caught, logged, and can never break announcements or the watchdog.
+
+_AUTO_LIGHT_PROMPT = "Is there plastic on the bed under the nozzle, or is there spaghetti/detachment?"
+_AUTO_LIGHT_IDLE_STATES = ("complete", "cancelled", "error", "standby")
+
+
+def _light_object_names():
+    """Moonraker object names for light discovery; None when the list is unreadable."""
+    try:
+        listing = print_control._call("/printer/objects/list")
+    except Exception as exc:
+        log(f"auto light: Moonraker object list failed: {exc!r}")
+        return None
+    objects = ((listing.get("result") or {}).get("objects")
+               if isinstance(listing, dict) else None)
+    return objects if isinstance(objects, list) else None
+
+
+def _send_light_script(script):
+    """Send one light G-code script to Moonraker. Raises on failure; callers log."""
+    print_control._send("/printer/gcode/script", method="POST",
+                        data={"script": script}, timeout=15)
+
+
 def _visual_layer(stats):
     info = stats.get("info") if isinstance(stats, dict) else None
     if not isinstance(info, dict):
@@ -1970,6 +2004,10 @@ class Listener:
         self.pause_context = None
         self.native_error_alerted = None
         self.capture_session = None  # #246 stage 2: active timelapse_capture session, if any
+        self._auto_light = None  # #516: AutoLightPolicy, built lazily from [vision]
+        self.light_target = None  # #516: resolved Moonraker light object, cached
+        self.light_target_resolved = False
+        self.light_unresolved_logged = False
 
     async def read_slots(self):
         from print_handy.core import printer_state
@@ -2254,6 +2292,10 @@ class Listener:
             # (re)connected): open the #246 stage 2 capture session. A
             # resume keeps the session the pause left open.
             self._capture_begin(identity)
+        if new_state == "printing" and old != "paused":
+            # #516: auto light-on at a fresh print start (a resume is not
+            # a start; the light never went off during a pause).
+            await self.light_print_started()
         if new_state == "printing" and _config.cfg()["visual_watch"]["enabled"]:
             layer = _visual_layer(self.last_stats)
             reason_due = self.visual_watch.due(layer, time.time(), snapshot_changed=None)
@@ -2314,6 +2356,8 @@ class Listener:
             self.visual_watch.reset()
             self.visual_frames.pop(self.filename, None)
             self._capture_end(new_state)
+            # #516: the print is over; open the auto light-off idle window.
+            await self.light_print_finished()
             # An auto-started live session ends with its print (#311 stage 4).
             await asyncio.to_thread(_live_auto_on_print_end)
             await self._retire_paused_prompt(new_state)
@@ -2384,6 +2428,132 @@ class Listener:
             prompt = print_control.next_copy_prompt(self.filename)
             if prompt:
                 await asyncio.to_thread(post, prompt)
+
+    # -- #516: auto light-off ----------------------------------------------
+    # A side feature like capture below: every hook fails soft, and with
+    # vision.auto_light_off_minutes at its default of 0 the policy is
+    # disabled and nothing here changes any existing behaviour. The
+    # feature gate is the policy's minutes AND a vision endpoint
+    # (_vision_ready) AND a resolved light target; the first two are
+    # re-checked at each use, the target is resolved lazily once.
+
+    def _auto_light_policy(self):
+        if self._auto_light is None:
+            vision = _config.cfg().get("vision") or {}
+            self._auto_light = light_control.AutoLightPolicy(
+                vision.get("auto_light_off_minutes", 0))
+        return self._auto_light
+
+    async def _light_target_object(self):
+        """The resolved light object name, or None when the feature cannot act.
+
+        The operator's vision.light_object wins; otherwise the printer's
+        object list is asked (once, cached) and auto-discovery resolves
+        only an exactly-one candidate. An unusable configured name, or
+        zero/several candidates, logs once and stays unresolved; an
+        unreadable object list is transient and retried next time.
+        """
+        if self.light_target_resolved:
+            return self.light_target
+        vision = _config.cfg().get("vision") or {}
+        configured = str(vision.get("light_object") or "").strip()
+        if configured:
+            try:
+                target, _candidates = light_control.resolve_light_object(configured, [])
+            except ValueError as exc:
+                if not self.light_unresolved_logged:
+                    self.light_unresolved_logged = True
+                    log(f"auto light: vision.light_object is unusable ({exc}); "
+                        f"the feature stays off until it names one light object")
+                return None
+            self.light_target, self.light_target_resolved = target, True
+            return target
+        objects = await asyncio.to_thread(_light_object_names)
+        if objects is None:
+            return None
+        target, candidates = light_control.resolve_light_object("", objects)
+        if target:
+            self.light_target, self.light_target_resolved = target, True
+            log(f"auto light: using the printer's only light object {target!r}")
+            return target
+        if not self.light_unresolved_logged:
+            self.light_unresolved_logged = True
+            if candidates:
+                log(f"auto light: the printer lists several light objects {candidates}; "
+                    f"set vision.light_object to choose one — the feature stays off until then")
+            else:
+                log("auto light: the printer lists no light object "
+                    "(led/neopixel/output_pin); the feature stays off")
+        return None
+
+    async def light_print_started(self):
+        """Print-start transition: light on, from state only (never vision)."""
+        try:
+            policy = self._auto_light_policy()
+            if not policy.enabled:
+                return
+            if policy.print_started(time.time()) != "turn_on":
+                return
+            if not _vision_ready():
+                return
+            target = await self._light_target_object()
+            if not target:
+                return
+            on_script, _off = light_control.light_scripts(target)
+            await asyncio.to_thread(_send_light_script, on_script)
+            log(f"auto light: print started; light on ({target})")
+        except Exception as exc:
+            # Best-effort: a failed light command logs once per start and
+            # never blocks or fails the print flow.
+            log(f"auto light: light-on at print start failed: {exc!r}")
+
+    async def light_print_finished(self):
+        """Terminal print-end transition: open the idle window."""
+        try:
+            self._auto_light_policy().print_finished(time.time())
+        except Exception as exc:
+            log(f"auto light: opening the idle window failed: {exc!r}")
+
+    async def light_idle_tick(self):
+        """One idle plate check when the policy says one is due. Never raises.
+
+        Runs on the native-presence poll cadence; the policy's own check
+        interval (300s) is the real cadence. The frame is judged through
+        the same snapshot + verdict path as the watchdog. A completely
+        dark frame is fed as "uncertain" (#476's rule: an unjudgeable
+        frame is uncertain), which resets the empty streak — darkness
+        never turns the light off.
+        """
+        try:
+            policy = self._auto_light_policy()
+            if not policy.enabled or self.state not in _AUTO_LIGHT_IDLE_STATES:
+                return
+            now = time.time()
+            if not policy.should_check(now):
+                return
+            if not _vision_ready():
+                policy.note_check(now)
+                return
+            target = await self._light_target_object()
+            if not target:
+                policy.note_check(now)
+                return
+            image = await asyncio.to_thread(_camera_snapshot_bytes)
+            if await asyncio.to_thread(_visual_watch.frame_dark, image):
+                verdict, detail = "uncertain", "camera frame completely dark"
+            else:
+                verdict, detail = await asyncio.to_thread(_visual_verdict, image, _AUTO_LIGHT_PROMPT)
+            action = policy.note_verdict(verdict, time.time())
+            log(f"auto light idle check verdict={verdict} detail={detail!r}")
+            if action == "turn_off":
+                _on, off_script = light_control.light_scripts(target)
+                await asyncio.to_thread(_send_light_script, off_script)
+                log(f"auto light: plate seen empty for "
+                    f"{policy.minutes} minutes; light off ({target})")
+        except Exception as exc:
+            log(f"auto light idle check failed: {exc!r}")
+            with contextlib.suppress(Exception):
+                self._auto_light_policy().note_check(time.time())
 
     # -- #246 stage 2: in-container timelapse capture ---------------------
     # Capture is a side feature: every hook fails soft and, with
@@ -2486,6 +2656,10 @@ class Listener:
                         await self.nag_if_due()
                     except Exception as exc:
                         log(f"spool nag failed: {exc!r}")
+                    try:
+                        await self.light_idle_tick()
+                    except Exception as exc:
+                        log(f"auto light idle tick failed: {exc!r}")
                 if time.monotonic() - self.maintenance_last_check >= 3600:
                     self.maintenance_last_check = time.monotonic()
                     await maintenance_reminder_tick(self)

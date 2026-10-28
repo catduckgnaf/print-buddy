@@ -46,6 +46,24 @@ def test_cancel_session_only_touches_that_session():
     prompts.wait_for_response("b2", 0.001)
 
 
+def test_open_prompt_for_finds_the_newest_open_prompt_of_the_session():
+    prompts.register("c1", "mine", "Q1?", ["Yes"])
+    prompts.register("c2", "other", "Q2?", ["Yes"])
+    prompts.register("c3", "mine", "Q3?", ["Yes"])
+    assert prompts.open_prompt_for("mine") == "c3"
+    assert prompts.open_prompt_for("other") == "c2"
+    assert prompts.open_prompt_for("nobody") is None
+    # An answered prompt stops being the session's open one.
+    assert prompts.resolve_gateway_clarify("c3", "Yes")
+    assert prompts.open_prompt_for("mine") == "c1"
+    assert prompts.wait_for_response("c3", 0.01) == "Yes"
+    prompts.resolve_gateway_clarify("c1", prompts.CANCELLED)
+    prompts.resolve_gateway_clarify("c2", prompts.CANCELLED)
+    prompts.wait_for_response("c1", 0.001)
+    prompts.wait_for_response("c2", 0.001)
+    assert prompts.open_prompt_for("mine") is None
+
+
 def test_gateway_prefers_hermes_unless_the_standalone_bot_is_active(monkeypatch):
     hermes = types.ModuleType("tools.clarify_gateway")
     package = types.ModuleType("tools")

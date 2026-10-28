@@ -2851,38 +2851,14 @@ async def typed_answer_dispatch(event, gateway, **kwargs):
     return {'action': 'skip', 'reason': 'typed print quantity handled'}
 
 
-def _recent_model_link_from_db():
-    import sqlite3, re
-    db_path = _hermes_home() / 'state.db'
-    if not db_path.exists():
-        return None
-    try:
-        conn = sqlite3.connect(db_path)
-        cur = conn.cursor()
-        cur.execute("SELECT content FROM messages WHERE role in ('assistant', 'user') ORDER BY id DESC LIMIT 25")
-        rows = cur.fetchall()
-        URL_RE = re.compile(r'https?://(?:www\.)?(?:makerworld\.com/en/models/\d+[^\s\)\>\]]*|printables\.com/model/\d+[^\s\)\>\]]*)')
-        for (content,) in rows:
-            if not content:
-                continue
-            m = URL_RE.findall(content)
-            if m:
-                return m[0]
-    except Exception:
-        pass
-    return None
-
-
 def _recent_model_link(source):
-    """The last model link in this channel: Print Handy's own state first, then Hermes' state.db."""
+    """The last model link in this channel, from Print Handy's own recent-links state.
+
+    The single source in every mode (#524): the Hermes state.db messages scan
+    is gone, so a link the plugin's own intake never recorded is not recalled.
+    """
     from print_handy.bot import recent_links
-    found = recent_links.recall(getattr(source, 'chat_id', None), getattr(source, 'thread_id', None))
-    if found:
-        return found
-    from print_handy.core import prompts
-    if prompts.active():
-        return None  # standalone: there is no Hermes session history to read
-    return _recent_model_link_from_db()
+    return recent_links.recall(getattr(source, 'chat_id', None), getattr(source, 'thread_id', None))
 
 
 def _is_affirmative_followup(text: str) -> bool:

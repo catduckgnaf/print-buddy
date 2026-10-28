@@ -6,7 +6,7 @@ Hermes and no LLM are needed. An OpenAI-compatible LLM is an optional extra for 
 
 It can also run on Telegram instead (#164): set `bot.platform` to `telegram` and follow
 [Telegram bot setup](TELEGRAM-BOT-SETUP.md). The Telegram bot is a pure bot with no LLM at all — unmatched
-text gets the command list even when `[llm]` is configured for another platform.
+text gets the short “didn't understand” reply even when `[llm]` is configured for another platform.
 
 Or in a Matrix room: set `bot.platform` to `matrix` and follow
 [Matrix bot setup](MATRIX-BOT-SETUP.md). The Matrix bot is a pure bot with no LLM too; prompts are a
@@ -60,7 +60,8 @@ message. `python3 -m print_handy.doctor` warns when a Hermes profile holds the s
 | `discord.denied_user_ids` | empty | Optional deny list of Discord user IDs; a denied user is refused even when whitelisted or the approval user |
 | `discord.approval_user_id` | empty | Always allowed as well; setting one does not restrict anyone else |
 | `discord.token_env` | `DISCORD_BOT_TOKEN` | Name of the environment variable that holds the bot token |
-| `llm.chat_url` | empty | Optional OpenAI-compatible chat completions URL. Empty: unmatched text gets the command list |
+| `discord.chat_llm_enabled` | `true` | Discord's chat-LLM switch (#466). `false` runs Discord as a pure bot — unmatched text gets the short “didn't understand” reply — while `[llm]` stays configured for `/print-design`. Roasts and camera checks keep their own vision switches |
+| `llm.chat_url` | empty | Optional OpenAI-compatible chat completions URL. Empty: unmatched text gets the short “didn't understand” reply |
 | `llm.model` | empty | Model name, required when `chat_url` is set |
 | `llm.api_key_env` | `LLM_API_KEY` | Name of the environment variable that holds the LLM API key, if it needs one |
 | `llm.timeout_s` | `20` | LLM request timeout |
@@ -165,7 +166,7 @@ Required environment: `PRINT_HANDY__BOT__MODE=standalone`, `DISCORD_BOT_TOKEN`, 
   the machine (the container image includes it; a native install must add it, e.g. `apt install openscad`).
   Design runs on Discord, Telegram and Matrix; on Telegram and Matrix it is the one model-backed
   feature, served by the configured `[design]` endpoint only — ordinary chat there still gets no LLM
-  reply and falls back to the command list, exactly as before.
+  reply and falls back to the short “didn't understand” reply, exactly as before.
 * Listener posts (started, complete, failed, timelapse) and alert buttons (Resume, Cancel, spool questions, IFS
   insertion, plate picker) work with the Hermes gateway stopped.
 * A pending spool question (filament runout or a mid-print swap) can also end the print: tap its **Cancel print**
@@ -183,16 +184,33 @@ Required environment: `PRINT_HANDY__BOT__MODE=standalone`, `DISCORD_BOT_TOKEN`, 
 * A typed reply answers your own open question, as under Hermes ("2" for two copies, "split", "cancel"). It
   never answers another allowed user's question, even in the same channel or thread. Buttons are shared: any
   allowed user may press an open question's button, and the message then shows who chose.
-* Anything else is tried with the LLM first when `[llm]` is set, and only falls back to the command list when
+* Anything else is tried with the LLM first when `[llm]` is set, and only falls back to the short
+  “didn't understand” reply when
   the model cannot solve it. The order is: explicit commands, deterministic phrases (like "print 57" above),
   links/files and typed answers to an open question run first and are never rerouted through the model; any
   other text goes to the model, which may answer directly or name one command from a fixed list (read-only or
   button-gated: `/print-stop`, `/print-next`, `/spool list`, ...). A named command runs through the same
   handler as a typed one and asks for its button the same way. Only if the model declines, names no usable
-  command, errors or times out does the command list appear — once, and never together with a model reply for
+  command, errors or times out does that reply appear — once, and never together with a model reply for
   the same message. The model can never run `/spool change`, `/spool new`, `/spool sync`, `/print-colors` or
   `/print-again stop`, and it never sees links, files or the printer. With no `[llm]` configured, unmatched
-  text gets the command list as before, and Telegram and Matrix never use the LLM at all (see above).
+  text gets that short reply as before, and Telegram and Matrix never use the LLM at all (see above).
+
+## Running Discord with no chat LLM
+
+Discord can run as a pure bot too, the way Telegram and Matrix always do. Set
+`discord.chat_llm_enabled` to `false` (or `PRINT_HANDY__DISCORD__CHAT_LLM_ENABLED=false`) and restart:
+unmatched text gets the short “didn't understand” reply, and no chat message is ever sent to a model — while everything
+deterministic (commands, links, files, typed answers, buttons, `print 57`) works exactly as before.
+`bot check` says so on its llm row, naming the switch, and the bot's status reports `"llm": false`.
+
+You do not have to remove `[llm]` to do this, and you should not if you use `/print-design`: design
+inherits the `[llm]` endpoint when `[design]` is unset, and that inheritance keeps working with chat
+off — design has its own switch (`design.enabled`). Two other features use a model through the
+separate vision endpoint, not the chat fallback, and keep their own gates: the print-started **roast**
+(`vision.roast_enabled`, on by default) and the **camera watchdog** (`visual_watch.enabled`, on
+`services.vision_chat_url`). Turning the chat LLM off changes none of them; turn each off at its own
+switch if you want no model calls at all.
 
 ## Hermes pieces and their replacement
 

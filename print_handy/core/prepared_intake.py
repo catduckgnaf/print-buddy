@@ -20,7 +20,7 @@ import time
 from types import SimpleNamespace
 from urllib.parse import urlsplit
 
-from .. import logs, printers, settings
+from .. import diagnostics, logs, printers, settings
 from . import _external, delivery, owned_worker, split_fit
 
 BED = settings.current()['printer']['bed_mm']
@@ -699,6 +699,25 @@ def _refusal_text(tail):
             "resolve any warning, then press Retry.")
 
 
+def plain_start_failure(tail):
+    """The plain chat wording for a failed/refused print-now run (#467).
+
+    ``tail`` is the print-now transport text: it stays in the receipt and
+    the log, but it is never posted raw — REFUSED lines, UPLOAD FAILED /
+    START FAILED stderr tails and UNCERTAIN markers are machinery, not a
+    message for the person who pressed the button. A confirmed pre-upload
+    refusal gets the specific _refusal_text guidance; anything else gets
+    the honest uncertain wording (the printer may or may not have it).
+    """
+    if _safe_preupload_refusal(tail):
+        return _refusal_text(tail)
+    if str(tail or '').lstrip().upper().startswith('UNCERTAIN:') or not _raw_preupload_refusal(tail):
+        return ("The printer did not confirm whether the print started. Check the printer "
+                "screen before doing anything else, and do not press Start again until "
+                "you know.")
+    return _refusal_text(tail)
+
+
 def _restart_helps(tail):
     """A stale heater target, stuck screen or leftover job: a force restart clears these."""
     text = str(tail or '').casefold()
@@ -831,7 +850,7 @@ async def _deliver(adapter, source, metadata, method, receipt, jp, gcodes, pendi
         await say(' '.join(parts) + ' Nothing was uploaded to a printer or started.')
     except delivery.DeliveryRefused as exc:
         delivery.record(receipt, method, [], False, str(exc))
-        await say(f'Not delivered: {exc}. Nothing was uploaded to a printer or started.')
+        await say(f'The files were not sent here: {exc}. Nothing was uploaded to a printer or started.')
 
 
 async def _send_render_preview(adapter, source, path, scale=1.0, rotation=None, bed=tuple(BED)):
@@ -1147,7 +1166,11 @@ async def prepare_link(event, adapter, state, root, timeout=None, reuse=None, pr
             receipt['fit_error'] = str(exc)
             receipt_path.write_text(json.dumps(receipt, indent=2) + '\n')
             await adapter.send(chat_id=source.chat_id,
-                               content=f"Fit check is unverified and can be resumed. No slice or print was started. {exc}",
+                               content=diagnostics.plain_post(
+                                   "I could not finish checking whether this model fits the bed, so the check is unverified.",
+                                   not_happened="No slice or print was started.",
+                                   next_step="Send the link or file again to resume the check.",
+                                   subsystem='intake', exc=exc),
                                metadata=metadata)
             return {'action': 'skip', 'reason': 'fit unknown; resumable'}
         if (job.get('unit_decision') or {}).get('units') == 'inch':
@@ -1207,7 +1230,11 @@ async def prepare_link(event, adapter, state, root, timeout=None, reuse=None, pr
                 receipt['fit_error'] = str(exc)
                 receipt_path.write_text(json.dumps(receipt, indent=2) + '\n')
                 await adapter.send(chat_id=source.chat_id,
-                                   content=f"Resize checks are unverified and can be resumed. No slice or print was started. {exc}",
+                                   content=diagnostics.plain_post(
+                                   "I could not finish checking the resize options, so they are unverified.",
+                                   not_happened="No slice or print was started.",
+                                   next_step="Send the link or file again to resume the check.",
+                                   subsystem='intake', exc=exc),
                                    metadata=metadata)
                 return {'action': 'skip', 'reason': 'fit unknown; resumable'}
             title = latest.get('title') or 'This model'
@@ -1350,7 +1377,7 @@ async def prepare_link(event, adapter, state, root, timeout=None, reuse=None, pr
                         tuple(state.get('bed_mm') or BED))
                 except Exception as exc:
                     await adapter.send(chat_id=source.chat_id,
-                        content=f'Preview unavailable: {exc}. No blank image was sent.', metadata=metadata)
+                        content='I could not make a preview image, so no image was sent. The model itself is unchanged — you can still choose a size.', metadata=metadata)
             if silent is not None:
                 row = silent
                 receipt['fit_auto_rotated'] = True
@@ -1537,7 +1564,10 @@ async def prepare_link(event, adapter, state, root, timeout=None, reuse=None, pr
                 receipt.pop(stale, None)
             receipt_path.write_text(json.dumps(receipt, indent=2) + '\n')
             retry = await _ask(adapter, source, key,
-                f'Slicing failed: {slice_error}. No G-code was retained. Retry once from the saved model?',
+                diagnostics.plain_post('Slicing this model did not work.',
+                                       not_happened='No G-code was kept, and nothing was uploaded or started.',
+                                       next_step='Retry once from the saved model?',
+                                       subsystem='slicing', exc=slice_error),
                 ['Retry slice once (no print)', 'Cancel'], timeout)
             if retry != 0:
                 receipt.update(status='CANCELLED', sliced=False, uploaded=False, started=False)
@@ -1591,8 +1621,9 @@ async def prepare_link(event, adapter, state, root, timeout=None, reuse=None, pr
         fallback = provenance.get('fallback') or {}
         if fallback.get('from') == 'OrcaSlicer':
             reason = str(fallback.get('reason') or 'Orca slicer failure')
+            logger.info('sliced with the Bambu Studio fallback: %s', logs.redact(reason))
             await adapter.send(chat_id=source.chat_id,
-                               content=f'Bambu Studio sliced it because OrcaSlicer failed: {reason}.',
+                               content='Sliced with the backup slicer (Bambu Studio) because the main slicer could not slice this model.',
                                metadata=metadata)
         has_dur_q = has_duration_question(getattr(event, 'text', ''))
         breakdown = print_summary.format_estimate_breakdown(sliced)
@@ -1647,7 +1678,7 @@ async def prepare_link(event, adapter, state, root, timeout=None, reuse=None, pr
                 if _map:
                     slot_lines = native.describe_mapping(_map, state)
         except Exception as exc:  # a bad map is refused later by print-now; show why now
-            slot_lines = f'Position map problem: {exc}' if job_adapter is not None and job_adapter.multi_tool else f'Slot map problem: {exc}'
+            slot_lines = f'Heads-up on the filament positions: {exc}'
         estimate_text = (f"~{mj.human_dur(actual_estimate)} printing, ~{mj.human_dur(actual_estimate + 300)} total "
                          "including ~5 min warmup" if actual_estimate is not None else 'estimate unknown')
         target = {'plan_id': plan_id, 'part_id': parts[picked_plate]['id'] if split else 'plate1', 'copy': 1,
@@ -1805,7 +1836,24 @@ async def prepare_link(event, adapter, state, root, timeout=None, reuse=None, pr
         logger.exception('intake failed')
         receipt.update(status='FAILED', error=str(exc))
         receipt_path.write_text(json.dumps(receipt, indent=2) + '\n')
-        await adapter.send(chat_id=source.chat_id, content=f'New model preparation stopped: {exc}. Nothing sliced, uploaded or started.', metadata=metadata)
+        from .intake_resources import IntakeLimitExceeded
+        if isinstance(exc, IntakeLimitExceeded):
+            # A curated, user-phrased refusal (its text names the limit and
+            # the remedy): keep its reason, lead plainly, drop its prefix.
+            reason = str(exc).removeprefix('Model intake refused: ')
+            content = (f'That model could not be prepared. {reason}')
+        elif isinstance(exc, ValueError) and str(exc).startswith('requires one to four distinct configured'):
+            # Also curated and user-phrased: a multi-slot/toolhead printer
+            # with nothing configured. The text names the exact setup gap,
+            # so keep it — the generic wording would hide the remedy.
+            content = (f'That model could not be prepared: this printer {exc}. '
+                       'Nothing was sliced, uploaded or started.')
+        else:
+            content = diagnostics.plain_post('Preparing that model stopped before it was ready.',
+                                               not_happened='Nothing was sliced, uploaded or started.',
+                                               next_step='Send the link or file again; if it stops again, run `/print-handy bundle` and share the bundle so it can be looked into.',
+                                               subsystem='intake', exc=exc)
+        await adapter.send(chat_id=source.chat_id, content=content, metadata=metadata)
         return {'action': 'skip', 'reason': 'source-first intake failed closed'}
     finally:
         if jp is not None:

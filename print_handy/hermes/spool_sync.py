@@ -394,7 +394,7 @@ def bind_slot(slot: int, spool_id: int, *, client: Client = spoolman, mr: Client
             resume_usage(int(spool_id), mr)
             usage = f"now charged to #{spool_id}"
     except Exception as exc:
-        usage = f"NOT updated ({exc})"
+        usage = "not updated — the spool change itself is saved; run `/spool sync` to fix the charging"
     if push_screen_update:
         try:
             if printer_id:
@@ -404,7 +404,7 @@ def bind_slot(slot: int, spool_id: int, *, client: Client = spoolman, mr: Client
             else:
                 screen = push_screen(slot, record["material"], record["hex"], mr=mr, pending_path=pending_path)
         except Exception as exc:
-            screen = f"not updated ({exc})"
+            screen = "not updated — run `/spool sync` to try again"
     else:
         screen = "not requested"
     return {"slot": slot, "spool_id": int(spool_id), "prior_spool_id": prior, "record": record,
@@ -441,7 +441,7 @@ def sync_all_screens(*, mr: Client = moonraker, state_path: Path | None = None,
                 pushed = push_screen(slot, rec.get('material') or '', rec.get('hex') or '', mr=mr, pending_path=pending_path)
             out.append(f"Slot {slot}: {pushed}")
         except Exception as exc:
-            out.append(f"Slot {slot}: {exc}")
+            out.append(f"Slot {slot}: the screen could not be updated — try again")
     return out
 
 

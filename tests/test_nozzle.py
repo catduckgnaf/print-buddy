@@ -287,13 +287,17 @@ def test_nozzle_type_characteristics_and_adjustments(monkeypatch):
     brass = get_nozzle_type_adjustments("brass")
     assert brass["max_temperature_c"] == 300.0
     assert get_nozzle_type_adjustments("brass")["temp_offset_c"] == 0.0
-    for nozzle_type in ("hardened_steel", "stainless_steel", "ruby", "tungsten_carbide", "diamond"):
+    # #513 defaults: high-conductivity types stay at the brass baseline;
+    # hardened/stainless steel default to +5 C (documented +5..+10 C band).
+    for nozzle_type in ("ruby", "tungsten_carbide", "diamond"):
         assert get_nozzle_type_adjustments(nozzle_type)["temp_offset_c"] == 0.0
+    for nozzle_type in ("hardened_steel", "stainless_steel"):
+        assert get_nozzle_type_adjustments(nozzle_type)["temp_offset_c"] == 5.0
     assert brass["flow_multiplier"] == 1.0
 
     hardened = get_nozzle_type_adjustments("hardened steel")
     assert hardened["max_temperature_c"] == 450.0
-    assert hardened["temp_offset_c"] == 0.0
+    assert hardened["temp_offset_c"] == 5.0
     assert hardened["flow_multiplier"] == 0.95
     monkeypatch.setattr(settings, "current", lambda: {"nozzle_temp_offsets": {"hardened_steel": 5}})
     assert get_nozzle_type_adjustments("hardened_steel")["temp_offset_c"] == 5.0
@@ -304,7 +308,7 @@ def test_nozzle_type_characteristics_and_adjustments(monkeypatch):
 
     stainless = get_nozzle_type_adjustments("stock")  # alias to stainless_steel
     assert stainless["max_temperature_c"] == 300.0
-    assert stainless["temp_offset_c"] == 0.0
+    assert stainless["temp_offset_c"] == 5.0
     assert stainless["flow_multiplier"] == 0.95
 
     ruby = get_nozzle_type_adjustments("ruby")

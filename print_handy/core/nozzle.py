@@ -26,6 +26,11 @@ CANONICAL_NOZZLE_TYPES: tuple[str, ...] = (
 NOZZLE_TYPE_ALIASES: dict[str, str] = {
     "brass": "brass",
     "copper": "brass",
+    # Plated copper conducts like brass (#513): baseline +0 C, as brass.
+    "plated_copper": "brass",
+    "plated copper": "brass",
+    "nickel_plated_copper": "brass",
+    "nickel plated copper": "brass",
     "hardened": "hardened_steel",
     "hardened_steel": "hardened_steel",
     "hardened steel": "hardened_steel",
@@ -225,7 +230,13 @@ def get_nozzle_type_adjustments(nozzle_type: str | None) -> dict[str, float]:
     """Return validated thermal and flow characteristics for a nozzle type.
 
     A per-type offset in ``[nozzle_temp_offsets]`` overrides the data-file default.
-    Offsets are bounded to -10..+15 °C; every type defaults to zero.
+    Offsets are bounded to -10..+15 °C. Data-file defaults (#513): brass, ruby,
+    tungsten carbide and diamond are the baseline (+0 °C, high conductivity);
+    hardened steel and stainless steel default to +5 °C for their lower
+    conductivity. The offset is a property of the nozzle material only — it
+    composes on top of any filament baseline (PLA, PLA+, PETG, TPU, ABS, ASA,
+    PC, PA/nylon, composites such as Silk/CF/GF variants, …) and is never
+    special-cased to one filament.
     """
     norm = normalize_nozzle_type(nozzle_type) if nozzle_type else "hardened_steel"
     values = _nozzle_type_defaults()[norm].copy()
@@ -241,7 +252,15 @@ def get_nozzle_type_adjustments(nozzle_type: str | None) -> dict[str, float]:
 
 
 def effective_nozzle_temperature(nozzle_type: str | None, base_temperature_c: float | int) -> float:
-    """Resolve requested temperature plus offset, refusing rather than clamping above max."""
+    """Resolve requested temperature plus offset, refusing rather than clamping above max.
+
+    Generic over filament materials (#513, catduck's direction): callers pass
+    whatever baseline the filament resolved to — a material default, a
+    Spoolman filament value, or a slicer profile value, for any material —
+    and this adds only the nozzle-material offset. There is deliberately no
+    material parameter: the compensation must not be special-cased per
+    filament (e.g. only for Silk PLA).
+    """
     adjustments = get_nozzle_type_adjustments(nozzle_type)
     effective = float(base_temperature_c) + adjustments["temp_offset_c"]
     check_nozzle_temperature_safety(nozzle_type or "hardened_steel", effective)

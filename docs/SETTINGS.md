@@ -155,7 +155,7 @@ Schema, validation limits and TOML migration: [CONFIGURATION-YAML.md](CONFIGURAT
 | `maintenance.quick_hours` | `PRINT_HANDY__MAINTENANCE__QUICK_HOURS` | `25` | Quick maintenance due after these print hours |
 | `maintenance.full_hours` | `PRINT_HANDY__MAINTENANCE__FULL_HOURS` | `75` | Full maintenance due after these print hours |
 | `maintenance.full_days` | `PRINT_HANDY__MAINTENANCE__FULL_DAYS` | `30` | Full maintenance due after these days |
-| `nozzle_temp_offsets.<type>` | `PRINT_HANDY__NOZZLE_TEMP_OFFSETS__<TYPE>` | `0.0` | Temperature offset, −10 to +15 °C, for `brass`, `hardened_steel`, `stainless_steel`, `ruby`, `tungsten_carbide`, `diamond` |
+| `nozzle_temp_offsets.<type>` | `PRINT_HANDY__NOZZLE_TEMP_OFFSETS__<TYPE>` | per type: `hardened_steel` and `stainless_steel` `5.0`, others `0.0` | Temperature offset, −10 to +15 °C, for `brass`, `hardened_steel`, `stainless_steel`, `ruby`, `tungsten_carbide`, `diamond`. The steel defaults compensate for lower thermal conductivity and apply on top of every filament's baseline temperature (all materials, not one); set a type here to override its default |
 | `material_temps.<MATERIAL>` | file only | see `config/home.yaml` | `{nozzle, bed}` fallback temperatures for PLA, PETG, ABS, ASA, TPU, PA, PC; Spoolman filament values win |
 | `spool.prompt_brand` | `PRINT_HANDY__SPOOL__PROMPT_BRAND` | `false` | Ask for the brand/vendor during the conversational new-spool walkthrough (#512). Off by default: the walkthrough skips brand entirely and the spool is created without one. Set `true` only if you track brands |
 

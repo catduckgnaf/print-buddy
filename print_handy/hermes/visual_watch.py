@@ -14,10 +14,13 @@ from __future__ import annotations
 
 import base64
 import json
+import logging
 import os
 import urllib.request
 
 from . import _config
+
+logger = logging.getLogger(__name__)
 
 VISUAL_VERDICTS = {"ok", "air", "spaghetti", "detached", "empty_idle", "uncertain"}
 VISUAL_ALERT_VERDICTS = {"air", "spaghetti", "detached", "uncertain"}
@@ -126,7 +129,8 @@ def visual_verdict(image, prompt, *, chat_url, model, api_key, context):
     injected: ``chat_url`` and ``api_key`` are zero-argument callables (so a
     missing setting fails inside the guarded body exactly as before), ``model``
     and ``context`` are the caller's strings. A PRINT_VISION_URL endpoint, when
-    set, takes the simple {image, prompt} shape; otherwise the
+    set, takes the simple {image, prompt} shape (the operator-facing contract
+    is documented in docs/SETTINGS.md, "Custom vision endpoint"); otherwise the
     OpenAI-compatible chat endpoint is used with the env-named key. Any failure
     degrades to ("uncertain", ...) — an uncertain frame alerts, it never
     silently passes.
@@ -154,6 +158,13 @@ def visual_verdict(image, prompt, *, chat_url, model, api_key, context):
         parsed = json.loads(_strip_json_fence(result["choices"][0]["message"]["content"]))
         return str(parsed.get("verdict", "uncertain")).casefold(), str(parsed.get("reason", ""))[:300]
     except Exception as exc:
+        # The returned detail stays generic on purpose (#467: raw error text
+        # does not belong in a chat alert), but the underlying error is
+        # logged: without it a mis-configured endpoint — above all a custom
+        # PRINT_VISION_URL (#501) — is undiagnosable from the alert alone.
+        logger.warning("vision check failed via %s: %s: %s",
+                       "PRINT_VISION_URL" if endpoint else "services.vision_chat_url",
+                       type(exc).__name__, exc)
         return "uncertain", "the vision check could not be completed"
 
 

@@ -34,7 +34,7 @@ message. `python3 -m print_handy.doctor` warns when a Hermes profile holds the s
 
 | Key | Default | What it does |
 |---|---|---|
-| `bot.mode` | `hermes` | `standalone` runs `python3 -m print_handy.bot` with no Hermes. `hermes` keeps the gateway plugin |
+| `bot.mode` | `standalone` | `standalone` runs `python3 -m print_handy.bot` with no Hermes; it is the default when a config does not state a mode (#524). `hermes` keeps the gateway plugin on installs that state it explicitly |
 | `bot.platform` | `discord` | The chat platform the standalone bot talks to (#164): `discord`, `telegram` or `matrix`. A config without this key keeps `discord` |
 | `telegram.token_env` | `TELEGRAM_BOT_TOKEN` | Name of the environment variable that holds the Telegram bot token |
 | `telegram.chat_id` | empty | The print chat. Group and channel IDs are negative. The bot ignores every other chat (forum topics inside it work like threads) |

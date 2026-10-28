@@ -361,3 +361,235 @@ def test_dispatch_ignores_other_text():
                                                 _gateway(FakeAdapter()))) is None
     assert asyncio.run(plugin.firmware_dispatch(_event("print-firmware"),
                                                 _gateway(FakeAdapter()))) is None
+
+
+# ------------------------------------------------------------------ stage 2: apply
+
+STATUS_AFTER = {
+    "result": {
+        "version_info": {
+            "klipper": {"version": "v0.12.0-310", "remote_version": "v0.12.0-310"},
+            "moonraker": {"version": "v0.9.3-10", "remote_version": "v0.9.3-10"},
+            "zmod": {"version": "1.9.2", "remote_version": "1.9.2"},
+            "fluidd": {"version": "1.31.3", "remote_version": "1.31.3"},
+            "system": {"package_count": 0, "package_list": []},
+        }
+    }
+}
+
+
+class ApplyTransport(FakeTransport):
+    """FakeTransport that accepts the one upgrade POST and swaps the status."""
+
+    def __init__(self, *args, post_status=None, upgrade_error=None,
+                 drop_after_upgrade=False, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.post_status = post_status
+        self.upgrade_error = upgrade_error
+        self.drop_after_upgrade = drop_after_upgrade
+
+    def __call__(self, method, path, body=None):
+        if path == fw.UPDATE_UPGRADE_PATH:
+            self.calls.append((method, path, body))
+            self.posts.append((path, body))
+            if self.upgrade_error is not None:
+                raise self.upgrade_error
+            if self.post_status is not None:
+                self.status = self.post_status
+            if self.drop_after_upgrade:
+                self.error = OSError("printer went away")
+            return {"result": "ok"}
+        return super().__call__(method, path, body)
+
+
+def _no_sleep(_seconds):
+    return None
+
+
+def test_eligibility_comes_from_the_registry_profile():
+    assert fw.is_apply_eligible(AD5X)
+    assert fw.is_apply_eligible(GENERIC)
+    assert fw.is_apply_eligible(entry("sovol.sv06"))
+    # Vendor Klipper forks: Moonraker printers, refused by vendor/family.
+    for key in ("elegoo.neptune4", "elegoo.neptune4pro", "creality.k1", "creality.ender3v3",
+                "qidi.q1pro", "anycubic.kobra2"):
+        assert not fw.is_apply_eligible(entry(key)), key
+        assert "vendor" in fw.apply_block_reason(entry(key)).casefold(), key
+    # Non-Moonraker families: refused as non-Moonraker.
+    for key in ("bambulab.a1", "prusa.mk4s", "elegoo_sdcp.centauricarbon",
+                "octoprint.marlin", "flashforge_stock.ad5x"):
+        assert not fw.is_apply_eligible(entry(key)), key
+        assert "Moonraker" in fw.apply_block_reason(entry(key)), key
+    assert fw.apply_block_reason(None) is not None
+
+
+def test_prepare_resolves_the_component_against_the_live_status():
+    transport = ApplyTransport(system_info=SYSTEM_INFO_194)
+    prepared = fw.prepare_update(transport, AD5X, "KLIPPER")
+    assert prepared.name == "klipper"
+    assert prepared.component.current == "v0.12.0-289"
+    assert prepared.component.remote == "v0.12.0-310"
+    assert transport.posts == []  # prepare sends nothing
+
+
+def test_prepare_refuses_a_component_the_printer_does_not_list():
+    with pytest.raises(fw.FirmwareRefusal) as excinfo:
+        fw.prepare_update(ApplyTransport(), AD5X, "nozzle")
+    assert "does not list a component named" in str(excinfo.value)
+    assert "Nothing was sent" in str(excinfo.value)
+
+
+def test_prepare_refuses_a_component_with_no_update_available():
+    with pytest.raises(fw.FirmwareRefusal) as excinfo:
+        fw.prepare_update(ApplyTransport(), AD5X, "moonraker")
+    assert "already up to date" in str(excinfo.value)
+
+
+@pytest.mark.parametrize("state", ["printing", "paused"])
+def test_prepare_refuses_while_printing_or_paused(state):
+    transport = ApplyTransport(states=(state,))
+    with pytest.raises(fw.FirmwareRefusal) as excinfo:
+        fw.prepare_update(transport, AD5X, "klipper")
+    assert state in str(excinfo.value) and "Nothing was sent" in str(excinfo.value)
+    assert transport.posts == []
+
+
+def test_prepare_refuses_an_unrecognised_state_fail_closed():
+    with pytest.raises(fw.FirmwareRefusal):
+        fw.prepare_update(ApplyTransport(states=("warming_up",)), AD5X, "klipper")
+
+
+def test_prepare_refuses_the_neptune_4_before_reading_anything():
+    transport = ApplyTransport()
+    with pytest.raises(fw.FirmwareRefusal) as excinfo:
+        fw.prepare_update(transport, NEPTUNE4, "klipper")
+    assert "vendor fork" in str(excinfo.value)
+    assert transport.calls == []  # eligibility is the profile's, checked first
+
+
+def test_prepare_refuses_a_bambu_before_reading_anything():
+    transport = ApplyTransport()
+    with pytest.raises(fw.FirmwareRefusal) as excinfo:
+        fw.prepare_update(transport, BAMBU_A1, "klipper")
+    assert "does not connect over Moonraker" in str(excinfo.value)
+    assert transport.calls == []
+
+
+def test_prepare_is_blocked_by_a_zmod_pairing_mismatch():
+    transport = ApplyTransport(system_info=SYSTEM_INFO_180)
+    with pytest.raises(fw.FirmwareRefusal) as excinfo:
+        fw.prepare_update(transport, AD5X, "klipper")
+    assert "guide zmod" in str(excinfo.value)
+    assert transport.posts == []
+
+
+def test_update_prompt_shows_the_exact_version_change():
+    prepared = fw.prepare_update(ApplyTransport(system_info=SYSTEM_INFO_194), AD5X, "klipper")
+    text = fw.update_prompt_text(prepared)
+    assert "**klipper**: v0.12.0-289 -> v0.12.0-310" in text
+    assert "Only this one component updates" in text
+
+
+def test_send_posts_exactly_one_upgrade_and_verifies_by_rereading():
+    transport = ApplyTransport(system_info=SYSTEM_INFO_194, post_status=STATUS_AFTER)
+    prepared = fw.prepare_update(transport, AD5X, "klipper")
+    calls_before = len(transport.calls)
+    message = fw.send_update(transport, prepared, verify_delay_s=0, sleep=_no_sleep)
+    assert transport.posts == [(fw.UPDATE_UPGRADE_PATH, {"name": "klipper"})]
+    verify_calls = transport.calls[calls_before:]
+    assert ("GET", fw.UPDATE_STATUS_PATH, None) in verify_calls  # the post-update re-read
+    assert message.startswith("Updated **klipper** to v0.12.0-310")
+    assert "verified by re-reading" in message
+
+
+def test_send_rechecks_idle_and_sends_nothing_when_a_print_started():
+    # prepare sees standby; by send time the printer is printing.
+    transport = ApplyTransport(states=("standby", "printing"), post_status=STATUS_AFTER)
+    prepared = fw.prepare_update(transport, AD5X, "klipper")
+    with pytest.raises(fw.FirmwareRefusal) as excinfo:
+        fw.send_update(transport, prepared, verify_delay_s=0, sleep=_no_sleep)
+    assert "re-check" in str(excinfo.value)
+    assert transport.posts == []
+
+
+@pytest.mark.parametrize("state", ["printing", "paused"])
+def test_send_refuses_while_printing_or_paused(state):
+    transport = ApplyTransport(states=(state,), post_status=STATUS_AFTER)
+    prepared = fw.PreparedUpdate(component=fw.Component("klipper", "v0.12.0-289", "v0.12.0-310"))
+    with pytest.raises(fw.FirmwareRefusal):
+        fw.send_update(transport, prepared, verify_delay_s=0, sleep=_no_sleep)
+    assert transport.posts == []
+
+
+def test_send_reports_a_still_available_update_as_failed_not_success():
+    transport = ApplyTransport(post_status=None)  # status never changes
+    prepared = fw.PreparedUpdate(component=fw.Component("klipper", "v0.12.0-289", "v0.12.0-310"))
+    message = fw.send_update(transport, prepared, verify_attempts=2,
+                             verify_delay_s=0, sleep=_no_sleep)
+    assert "still shows v0.12.0-310 as available" in message
+    assert "failed" in message and not message.startswith("Updated")
+
+
+def test_send_reports_a_printer_that_never_comes_back_as_unverified():
+    transport = ApplyTransport(drop_after_upgrade=True)
+    prepared = fw.PreparedUpdate(component=fw.Component("klipper", "v0.12.0-289", "v0.12.0-310"))
+    message = fw.send_update(transport, prepared, verify_attempts=2,
+                             verify_delay_s=0, sleep=_no_sleep)
+    assert "did not answer" in message and "cannot verify" in message
+    assert not message.startswith("Updated")
+
+
+def test_send_reports_a_failed_post_as_uncertain():
+    transport = ApplyTransport(upgrade_error=OSError("connection reset"))
+    prepared = fw.PreparedUpdate(component=fw.Component("klipper", "v0.12.0-289", "v0.12.0-310"))
+    with pytest.raises(fw.FirmwareError) as excinfo:
+        fw.send_update(transport, prepared, verify_delay_s=0, sleep=_no_sleep)
+    assert "not known whether the printer started updating" in str(excinfo.value)
+
+
+# ------------------------------------------------------------- dispatch: update
+
+async def _confirm_yes(*args, **kwargs):
+    return fw.UPDATE_LABEL
+
+
+async def _confirm_no(*args, **kwargs):
+    return fw.CANCEL_LABEL
+
+
+def test_dispatch_update_applies_one_component_after_confirmation():
+    adapter = FakeAdapter()
+    transport = ApplyTransport(system_info=SYSTEM_INFO_194, post_status=STATUS_AFTER)
+    with _configured("flashforge.ad5x", "moonraker"), \
+            mock.patch.object(spool_sync, "moonraker", transport), \
+            mock.patch.object(plugin, "_confirm", _confirm_yes):
+        out = asyncio.run(plugin.firmware_dispatch(
+            _event("/print-firmware update klipper"), _gateway(adapter)))
+    assert out == {"action": "skip", "reason": "print firmware update handled"}
+    assert transport.posts == [(fw.UPDATE_UPGRADE_PATH, {"name": "klipper"})]
+    assert adapter.sent[-1].startswith("Updated **klipper** to v0.12.0-310")
+
+
+def test_dispatch_update_sends_nothing_when_the_operator_cancels():
+    adapter = FakeAdapter()
+    transport = ApplyTransport(system_info=SYSTEM_INFO_194, post_status=STATUS_AFTER)
+    with _configured("flashforge.ad5x", "moonraker"), \
+            mock.patch.object(spool_sync, "moonraker", transport), \
+            mock.patch.object(plugin, "_confirm", _confirm_no):
+        asyncio.run(plugin.firmware_dispatch(
+            _event("/print-firmware update klipper"), _gateway(adapter)))
+    assert transport.posts == []
+    assert adapter.sent[-1] == "Update not applied. Nothing sent."
+
+
+def test_dispatch_update_refuses_the_neptune_4_without_any_call():
+    adapter = FakeAdapter()
+    transport = ApplyTransport()
+    with _configured("elegoo.neptune4", "moonraker"), \
+            mock.patch.object(spool_sync, "moonraker", transport), \
+            mock.patch.object(plugin, "_confirm", _confirm_yes):
+        out = asyncio.run(plugin.firmware_dispatch(
+            _event("/print-firmware update klipper"), _gateway(adapter)))
+    assert out["reason"] == "print firmware update refused for this printer"
+    assert transport.calls == []
+    assert "vendor fork" in adapter.sent[-1]

@@ -404,3 +404,161 @@ def not_moonraker_text(connection) -> str:
             "read its firmware update state. Its firmware updates run at the printer "
             "itself — see docs/FIRMWARE-UPDATE.md for the per-family guide. "
             "Nothing was sent to the printer.")
+
+
+# --------------------------------------------------------------------- stage 2: apply
+
+def print_state(transport) -> str:
+    """The printer's print_stats state, case-folded, through `transport`.
+
+    Same contract as the macro guard: a response without a readable
+    state is a FirmwareError, not a guess.
+    """
+    try:
+        payload = transport("GET", PRINT_STATE_PATH)
+    except FirmwareError:
+        raise
+    except Exception as exc:
+        raise FirmwareError(f"the print-state request failed: {exc}") from exc
+    try:
+        state = payload["result"]["status"]["print_stats"]["state"]
+    except (TypeError, KeyError):
+        raise FirmwareError("Moonraker's print-state response had no print_stats state") from None
+    if not isinstance(state, str) or not state.strip():
+        raise FirmwareError("Moonraker's print-state response had no print_stats state")
+    return state.strip().casefold()
+
+
+def _require_idle(state, *, recheck=False):
+    if state in IDLE_STATES:
+        return
+    when = "On the re-check just now, the" if recheck else "The"
+    if state in BUSY_STATES:
+        raise FirmwareRefusal(f"{when} printer is {state}, and firmware must not update "
+                              "while a print is running or paused. Nothing was sent.")
+    raise FirmwareRefusal(f"{when} printer reported an unrecognised state ({state!r}), so "
+                          "Print Handy cannot confirm it is idle. Nothing was sent.")
+
+
+@dataclass(frozen=True)
+class PreparedUpdate:
+    """One validated update: the live component and its exact version change."""
+
+    component: Component
+
+    @property
+    def name(self):
+        return self.component.name
+
+
+def prepare_update(transport, entry, component_token) -> PreparedUpdate:
+    """Validate one update request against the profile and the live printer; send nothing.
+
+    The component name is only ever resolved against the live status just
+    read — never trusted as typed — and the printer must be eligible,
+    idle, and (on ZMod) free of a base/component pairing mismatch.
+    """
+    reason = apply_block_reason(entry)
+    if reason is not None:
+        raise FirmwareRefusal(reason + " Nothing was sent.")
+    try:
+        status = fetch_status(transport)
+    except FirmwareError:
+        raise FirmwareError(UPDATE_COULD_NOT_READ_TEXT) from None
+    component = status.component(component_token)
+    if component is None:
+        raise FirmwareRefusal(f"The printer's update status does not list a component named "
+                              f"{component_token!r}. Run `/print-firmware` to see the "
+                              "components it actually reports — a typed name is never sent "
+                              "on trust. Nothing was sent.")
+    if not component.update_available:
+        raise FirmwareRefusal(f"**{component.name}** is already up to date "
+                              f"({component.current or 'version not reported'}); there is "
+                              "no update to apply. Nothing was sent.")
+    if entry is not None and entry.firmware_family == "zmod":
+        zmod = status.component("zmod")
+        pairing = pairing_state(fetch_os_version(transport),
+                                zmod.current if zmod else None)
+        if pairing == "mismatch":
+            raise FirmwareRefusal("The printer's ZMod OS and `zmod` component versions do "
+                                  "not pair (their first two version numbers differ), and "
+                                  "ZMod component updates fail in that state. Update the "
+                                  "ZMod base from USB first — `/print-firmware guide zmod` "
+                                  "walks through it. Nothing was sent.")
+    try:
+        state = print_state(transport)
+    except FirmwareError:
+        raise FirmwareError("Could not read the printer's state from Moonraker, so Print "
+                            "Handy cannot confirm it is idle. Nothing was sent.") from None
+    _require_idle(state)
+    return PreparedUpdate(component=component)
+
+
+def update_prompt_text(prepared: PreparedUpdate) -> str:
+    """The confirmation question: the exact component and version change."""
+    component = prepared.component
+    if component.name == "system" and not component.remote:
+        change = f"{component.package_count} system packages"
+    else:
+        change = f"**{component.name}**: {component.current or 'version not reported'} " \
+                 f"-> {component.remote}"
+    return "\n".join([
+        "Update printer firmware?",
+        "",
+        f"This applies exactly one update: {change}.",
+        "",
+        "The printer must stay on and connected while it updates, and it may restart. "
+        "Print Handy re-checks the printer is idle immediately before sending, then "
+        "re-reads the firmware state afterwards and reports the verified result.",
+        "Only this one component updates — ZMod's own guidance is one module at a time."])
+
+
+def send_update(transport, prepared: PreparedUpdate, *, verify_attempts=3,
+                verify_delay_s=5.0, sleep=time.sleep) -> str:
+    """Re-check idle, POST the one confirmed upgrade, then verify by re-reading.
+
+    The state can change while the operator decides, so prepare_update's
+    idle check is repeated here; a busy or unreadable re-check sends
+    nothing. After the POST, the status is re-read (a bounded number of
+    attempts, waiting between them for a printer that may be restarting)
+    and the outcome reported from that re-read only: updated, still
+    showing the update (failed or unverified), or the printer never came
+    back. A failed POST is reported as failed/uncertain.
+    """
+    try:
+        state = print_state(transport)
+    except FirmwareError:
+        raise FirmwareRefusal("Could not re-check the printer's state just now, so the "
+                              "update was not sent. Nothing was sent.") from None
+    _require_idle(state, recheck=True)
+    name = prepared.component.name
+    try:
+        transport("POST", UPDATE_UPGRADE_PATH, {"name": name})
+    except Exception as exc:
+        raise FirmwareError(f"The update request did not succeed ({exc}). It is not known "
+                            "whether the printer started updating — check the printer "
+                            "before trying again.") from exc
+    last_status = None
+    for attempt in range(max(1, verify_attempts)):
+        if attempt:
+            sleep(verify_delay_s)
+        try:
+            last_status = fetch_status(transport)
+        except FirmwareError:
+            last_status = None
+            continue
+        component = last_status.component(name)
+        if component is not None and not component.update_available:
+            return (f"Updated **{name}** to {component.current or 'its latest version'} — "
+                    "verified by re-reading the printer's firmware state after the update.")
+    if last_status is not None:
+        component = last_status.component(name)
+        if component is not None:
+            return (f"The update was requested, but **{name}** still shows "
+                    f"{component.remote} as available (current: "
+                    f"{component.current or 'version not reported'}). Treat the update as "
+                    "failed or not yet applied — check the printer's own update screen "
+                    "before trying again.")
+    return ("The printer did not answer after the update request, so Print Handy cannot "
+            f"verify what happened to **{name}**. It may still be restarting — give it a "
+            "few minutes, then run `/print-firmware` to see the state it reports.")

@@ -2723,6 +2723,14 @@ async def firmware_dispatch(event, gateway, **kwargs):
     and Klipper 13 MCU extras where the data exposes them. Printers whose
     connection is not Moonraker have no Update Manager to read and get a
     plain explanation instead of an error. The report path is read-only.
+
+    The update form (stage 2) applies one component: eligibility comes
+    from the printer's registry profile (vendor Klipper forks and
+    non-Moonraker printers are refused before anything is read), the
+    component is resolved against the live status, the printer must be
+    idle, and the usual _confirm button shows the exact version change
+    before the single upgrade POST; the result is verified by re-reading
+    the status, never taken from the POST alone.
     """
     source, adapter = _control_preamble(event, gateway, '/print-firmware', with_args=True)
     if source is None:
@@ -2753,11 +2761,67 @@ async def firmware_dispatch(event, gateway, **kwargs):
         entry = firmware_update.printer_entry(model_key)
     except Exception:
         logger.exception('/print-firmware could not resolve the configured printer')
+    if args and args[0].casefold() == 'update':
+        if len(args) != 2:
+            await adapter.send(chat_id=source.chat_id, metadata=metadata,
+                               content=('Use `/print-firmware update <component>` with one '
+                                        'component name from the `/print-firmware` report '
+                                        '(for example `/print-firmware update klipper`). '
+                                        'One component at a time. Nothing was sent to '
+                                        'the printer.'))
+            return {'action': 'skip', 'reason': 'print firmware usage shown'}
+        if connection != 'moonraker' or not firmware_update.is_apply_eligible(entry):
+            reason = firmware_update.apply_block_reason(entry)
+            message = (reason + ' Nothing was sent to the printer.') if reason else \
+                firmware_update.not_moonraker_text(connection)
+            await adapter.send(chat_id=source.chat_id, metadata=metadata, content=message)
+            return {'action': 'skip', 'reason': 'print firmware update refused for this printer'}
+        key = ('print-firmware-update', source.chat_id, source.thread_id)
+        if key in _seen:
+            await adapter.send(chat_id=source.chat_id, metadata=metadata,
+                               content='A firmware update prompt is already open here. Nothing sent.')
+            return {'action': 'skip', 'reason': 'firmware update prompt already active'}
+        _seen[key] = time.monotonic()
+        live_key = _live_key_for(source, gateway, chosen)
+        try:
+            try:
+                prepared = await asyncio.to_thread(firmware_update.prepare_update, mr,
+                                                   entry, args[1])
+            except (firmware_update.FirmwareRefusal, firmware_update.FirmwareError) as exc:
+                message = str(exc)
+            else:
+                answer = await _confirm(adapter, source, metadata, 'print-firmware',
+                                        firmware_update.update_prompt_text(prepared),
+                                        [firmware_update.UPDATE_LABEL,
+                                         firmware_update.CANCEL_LABEL],
+                                        (globals().get('_config').safety_confirm_timeout_s()
+                                         if globals().get('_config') else 600),
+                                        live_key=live_key)
+                if answer != firmware_update.UPDATE_LABEL:
+                    message = 'Update not applied. Nothing sent.'
+                else:
+                    try:
+                        message = await asyncio.to_thread(firmware_update.send_update, mr,
+                                                          prepared)
+                    except (firmware_update.FirmwareRefusal,
+                            firmware_update.FirmwareError) as exc:
+                        message = str(exc)
+        except Exception:
+            logger.exception('/print-firmware update failed')
+            message = ('The firmware update stopped on an error. No confirmation was '
+                       'completed, so nothing was sent.')
+        finally:
+            _seen.pop(key, None)
+        await adapter.send(chat_id=source.chat_id, metadata=metadata, content=message)
+        return {'action': 'skip', 'reason': 'print firmware update handled'}
     if args:
         await adapter.send(chat_id=source.chat_id, metadata=metadata,
                            content=('Use `/print-firmware` to see the firmware versions '
-                                    'your printer reports and what updates are available. '
-                                    'Nothing was sent to the printer.'))
+                                    'your printer reports and what updates are available, '
+                                    '`/print-firmware update <component>` to apply one, or '
+                                    '`/print-firmware guide zmod` / `/print-firmware guide '
+                                    'stock` for the manual update guides. Nothing was sent '
+                                    'to the printer.'))
         return {'action': 'skip', 'reason': 'print firmware usage shown'}
     if connection != 'moonraker':
         await adapter.send(chat_id=source.chat_id, metadata=metadata,

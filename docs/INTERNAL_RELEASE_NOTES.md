@@ -2,6 +2,9 @@
 
 # Unreleased
 
+**What users can do now:**
+- Serve two printers from one Discord channel: when a channel is claimed by more than one printer, dropping a model link (or running a printer-bound command) asks which printer to use first — one question, answered by button or typed reply — and the job binds to that printer from there; lifecycle posts in a shared channel name their printer. Channel-per-printer routing is unchanged for installs that prefer it. A picker raised inside a thread is posted in that thread, and a typed reply that could belong to two printers' open questions resolves neither rather than crossing answers. Issue: #536.
+
 # Version 2.1.8
 
 **Release Date:** 2026-10-28

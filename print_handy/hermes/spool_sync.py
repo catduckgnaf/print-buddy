@@ -29,6 +29,9 @@ MOONRAKER = _config.moonraker_url()
 SPOOLMAN = _config.service_url("spoolman_url")
 SHELF = "Shelf"
 SLOTS = (1, 2, 3, 4)
+# Stamped on every spool create_spool makes; the Spoolman new-spool watcher
+# reads it to tell Print Handy's own spools from ones added elsewhere (#483).
+CREATED_SPOOL_COMMENT = "added from Discord /spool new"
 
 Client = Callable[[str, str, Any], Any]
 
@@ -595,6 +598,6 @@ def create_spool(spec: dict[str, Any], *, client: Client = spoolman) -> dict[str
         match = client("POST", "/api/v1/filament", body)
     created = client("POST", "/api/v1/spool", {
         "filament_id": match["id"], "initial_weight": spec["grams"], "remaining_weight": spec["grams"],
-        "location": SHELF, "lot_nr": spec.get("lot"), "comment": "added from Discord /spool new",
+        "location": SHELF, "lot_nr": spec.get("lot"), "comment": CREATED_SPOOL_COMMENT,
     })
     return {"spool_id": created["id"], "filament_id": match["id"], "reused_filament": reused}

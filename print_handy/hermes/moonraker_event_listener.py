@@ -790,7 +790,7 @@ def apply_runout_choice(state, context, choice, *, client, filaments=None):
     created = client("POST", "/api/v1/spool", {
         "filament_id": match["id"], "initial_weight": grams, "remaining_weight": grams,
         "used_weight": 0, "location": f"IFS Slot {slot}", "lot_nr": choice.get("lot"),
-        "comment": "runout replacement; starting weight supplied by operator",
+        "comment": RUNOUT_SPOOL_COMMENT,
     })
     if prior_id:
         client("PATCH", f"/api/v1/spool/{int(prior_id)}",
@@ -1354,6 +1354,10 @@ IFS_EDGE_STATE = _config.state_file("IFS_EDGE_STATE", "ifs_presence_edges.json")
 IFS_PENDING_STATE = _config.state_file("IFS_PENDING_STATE", "ifs_pending_prompts.json")
 RUNOUT_PAUSE_STATE = _config.state_file("RUNOUT_PAUSE_STATE", "runout_pause.json")
 SPOOLMAN_KNOWN_STATE = _config.state_file("SPOOLMAN_KNOWN_STATE", "spoolman_known_spools.json")
+RUNOUT_SPOOL_COMMENT = "runout replacement; starting weight supplied by operator"
+# An undelivered new-spool prompt is retried this often, and given up after a day.
+NEW_SPOOL_RETRY_S = 300.0
+NEW_SPOOL_GIVE_UP_S = 24 * 3600.0
 HARDWARE_STATE = _config.state_file("PRINTER_HARDWARE_STATE", "printer_hardware.json")
 
 
@@ -1425,32 +1429,60 @@ def post_new_spool_prompt(spool):
     return post(new_spool_plain_text(spool))
 
 
+def created_by_print_handy(spool):
+    """True for a spool Print Handy made itself: /spool new, the insertion modal or a runout replacement."""
+    from . import spool_sync
+    comment = str((spool or {}).get("comment") or "").strip()
+    return comment in (spool_sync.CREATED_SPOOL_COMMENT, RUNOUT_SPOOL_COMMENT)
+
+
+def _pending_entries(raw):
+    """{spool id: {"since", "tried"}} from the persisted pending map, skipping anything malformed."""
+    entries = {}
+    if not isinstance(raw, dict):
+        return entries
+    for key, value in raw.items():
+        try:
+            entries[int(key)] = {"since": float(value["since"]), "tried": float(value["tried"])}
+        except (TypeError, ValueError, KeyError):
+            continue
+    return entries
+
+
 class SpoolmanNewSpoolWatcher:
-    """Diff Spoolman inventory against a persisted known-set; report each new spool once (#483).
+    """Diff Spoolman inventory against a persisted known-set; prompt once per new spool (#483).
 
     The Spoolman-side twin of FilamentInsertionMonitor: that one watches IFS
     slot presence at the printer, this one watches Spoolman itself, so a
     spool created in Spoolman's UI (or by another tool) gets its Discord
     prompt too. The first successful poll seeds the known-set silently —
-    existing inventory is history, not news. A spool is recorded as known in
-    the same poll that reports it, so it is prompted exactly once, answered
-    or not, across restarts. A new spool that arrives already archived is
-    recorded silently (a history import, not a new physical spool), and
-    deleted IDs drop out of the set silently. Fail-soft, per the #387
-    posture: when Spoolman does not answer, list_spools returns None and the
-    poll reports nothing and changes nothing.
+    existing inventory is history, not news. Spools Print Handy created
+    itself (recognised by the comment it stamps on them) are recorded
+    silently, as are new spools that arrive already archived (a history
+    import, not a new physical spool); deleted IDs drop out of the set.
+
+    A new spool waits in "pending" until the caller reports the prompt
+    delivered, so a chat outage does not lose it: a pending prompt is
+    retried every NEW_SPOOL_RETRY_S, across restarts, and given up after
+    NEW_SPOOL_GIVE_UP_S. Pending spools that are archived or deleted in the
+    meantime are dropped. Fail-soft, per the #387 posture: when Spoolman
+    does not answer, list_spools returns None and the poll reports nothing
+    and changes nothing.
     """
 
-    def __init__(self, state_path=SPOOLMAN_KNOWN_STATE, lister=None):
+    def __init__(self, state_path=SPOOLMAN_KNOWN_STATE, lister=None, clock=time.time):
         self.state_path = Path(state_path)
         self.lister = lister
+        self.clock = clock
 
     def poll(self):
-        """New non-archived spool records since the last successful poll."""
+        """Spool records to prompt for now: new ones, plus undelivered ones due for a retry."""
         lister = self.lister
         if lister is None:
+            # Archived spools included: Spoolman hides them by default, and a spool
+            # that left the list on archiving would be "new" again when unarchived.
             from print_handy.core import spoolman_client
-            lister = spoolman_client.list_spools
+            lister = lambda: spoolman_client.list_spools(allow_archived=True)  # noqa: E731
         rows = lister()
         if not isinstance(rows, list):
             return []
@@ -1462,14 +1494,38 @@ class SpoolmanNewSpoolWatcher:
         state = read_json_object(self.state_path)
         known = state.get("known")
         if not state.get("seeded") or not isinstance(known, list):
-            atomic_write_json(self.state_path, {"seeded": True, "known": sorted(current)})
+            atomic_write_json(self.state_path, {"seeded": True, "known": sorted(current), "pending": {}})
             return []
         known_ids = {item for item in known if isinstance(item, int) and not isinstance(item, bool)}
-        fresh = [current[sid] for sid in sorted(current)
-                 if sid not in known_ids and not current[sid].get("archived")]
-        if set(current) != known_ids:
-            atomic_write_json(self.state_path, {"seeded": True, "known": sorted(current)})
-        return fresh
+        pending = _pending_entries(state.get("pending"))
+        now = self.clock()
+        for sid in sorted(current):
+            row = current[sid]
+            if sid not in known_ids and not row.get("archived") and not created_by_print_handy(row):
+                pending[sid] = {"since": now, "tried": 0.0}
+        due = []
+        for sid in sorted(pending):
+            row, entry = current.get(sid), pending[sid]
+            if row is None or row.get("archived"):
+                del pending[sid]  # deleted or archived since: nothing left to ask about
+            elif now - entry["since"] >= NEW_SPOOL_GIVE_UP_S:
+                log(f"spoolman watcher gave up on the undelivered prompt for spool #{sid}")
+                del pending[sid]
+            elif now - entry["tried"] >= NEW_SPOOL_RETRY_S:
+                entry["tried"] = now
+                due.append(row)
+        updated = {"seeded": True, "known": sorted(current),
+                   "pending": {str(sid): entry for sid, entry in sorted(pending.items())}}
+        if updated != state:
+            atomic_write_json(self.state_path, updated)
+        return due
+
+    def delivered(self, spool_id):
+        """Clear a spool's pending prompt once it has reached the chat."""
+        state = read_json_object(self.state_path)
+        pending = state.get("pending")
+        if isinstance(pending, dict) and pending.pop(str(int(spool_id)), None) is not None:
+            atomic_write_json(self.state_path, state)
 
 
 class FilamentInsertionMonitor:
@@ -1945,10 +2001,13 @@ class Listener:
         reports nothing when Spoolman does not answer, and the caller logs
         and continues on any error — this poll never stalls the loop.
         """
-        fresh = await asyncio.to_thread(self.spoolman_watcher.poll)
-        for spool in fresh:
-            await asyncio.to_thread(post_new_spool_prompt, spool)
-            log(f"spoolman watcher prompted for new spool #{spool.get('id')}")
+        due = await asyncio.to_thread(self.spoolman_watcher.poll)
+        for spool in due:
+            if await asyncio.to_thread(post_new_spool_prompt, spool):
+                await asyncio.to_thread(self.spoolman_watcher.delivered, spool["id"])
+                log(f"spoolman watcher prompted for new spool #{spool.get('id')}")
+            else:
+                log(f"spoolman watcher could not deliver the prompt for spool #{spool.get('id')}; will retry")
 
     async def nag_if_due(self):
         record = load_runout_pause()

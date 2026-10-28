@@ -112,10 +112,11 @@ def get_spool(spool_id: int, *, base_url: str | None = None,
     return result if isinstance(result, dict) else None
 
 
-def list_spools(*, base_url: str | None = None,
-                timeout: float | None = None) -> list[Any] | None:
-    """All spool records, or None when Spoolman is unavailable."""
-    result = call("GET", "/api/v1/spool", base_url=base_url, timeout=timeout)
+def list_spools(*, base_url: str | None = None, timeout: float | None = None,
+                allow_archived: bool = False) -> list[Any] | None:
+    """Spool records (archived ones only with allow_archived), or None when Spoolman is unavailable."""
+    path = "/api/v1/spool?allow_archived=true" if allow_archived else "/api/v1/spool"
+    result = call("GET", path, base_url=base_url, timeout=timeout)
     return result if isinstance(result, list) else None
 
 

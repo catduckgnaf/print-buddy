@@ -177,9 +177,10 @@ def checks(cfg):
     # AI design (#388): tri-state enable — explicit design.enabled=false is
     # off; explicit true is on; unset is auto (on whenever a design/LLM
     # endpoint resolves — the roast posture). When on it needs OpenSCAD (the
-    # design engine) and a model: in Hermes mode the profile's
-    # auxiliary.print_design task, in standalone mode the [design] endpoint
-    # inheriting [llm]. A forced-on-but-unusable design fails the check, like
+    # design engine) and a model: the [design] endpoint inheriting [llm] is
+    # the normal path in every mode (#524 Stage 3); in Hermes mode with no
+    # endpoint configured, the profile's auxiliary.print_design task is the
+    # fallback lane. A forced-on-but-unusable design fails the check, like
     # a missing token, so the misconfiguration is visible before a user
     # hits it mid-conversation; auto with no endpoint is a healthy off.
     import shutil as _shutil
@@ -196,11 +197,11 @@ def checks(cfg):
     elif not _shutil.which("openscad"):
         add("design", False, "enabled, but openscad is not on PATH; install OpenSCAD "
                              "(it is in the Docker image) or set design.enabled=false")
+    elif resolved:
+        add("design", True, f"{design_mode} ({resolved['model']} at {resolved['chat_url']})")
     elif mode == "hermes":
         add("design", True, f"{design_mode} (Hermes print_design auxiliary task; pin its model in the "
                             "profile's auxiliary.print_design block)")
-    elif resolved:
-        add("design", True, f"{design_mode} ({resolved['model']} at {resolved['chat_url']})")
     else:
         add("design", False, "enabled, but no model endpoint: set [design] chat_url and "
                              "model, or the [llm] values they inherit")

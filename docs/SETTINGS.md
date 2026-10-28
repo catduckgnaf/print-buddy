@@ -100,7 +100,7 @@ Schema, validation limits and TOML migration: [CONFIGURATION-YAML.md](CONFIGURAT
 | `llm.api_key_env` | `PRINT_HANDY__LLM__API_KEY_ENV` | `LLM_API_KEY` | Name of the environment variable holding the LLM API key |
 | `llm.timeout_s` | `PRINT_HANDY__LLM__TIMEOUT_S` | `20` | LLM request timeout |
 | `design.enabled` | `PRINT_HANDY__DESIGN__ENABLED` | unset (auto) | `/print-design` / `/design` AI design (#388). Unset = auto: on whenever a design/LLM endpoint is configured (like roasts); `false` forces off (the command answers "not set up"); `true` forces on (an unconfigured endpoint is then reported, not silent) |
-| `design.chat_url` | `PRINT_HANDY__DESIGN__CHAT_URL` | empty (inherit) | Design model endpoint; empty uses `llm.chat_url`. Hermes mode ignores this — the profile's `auxiliary.print_design` block is the design model there |
+| `design.chat_url` | `PRINT_HANDY__DESIGN__CHAT_URL` | empty (inherit) | Design model endpoint; empty uses `llm.chat_url`. Wins in Hermes mode too — the profile's `auxiliary.print_design` block is the fallback only when no endpoint is configured |
 | `design.model` | `PRINT_HANDY__DESIGN__MODEL` | empty (inherit) | Design model name; empty uses `llm.model`. Point this at a stronger model than chat if the endpoint offers one |
 | `design.api_key_env` | `PRINT_HANDY__DESIGN__API_KEY_ENV` | empty (inherit) | Environment variable holding the design endpoint's key; empty uses `llm.api_key_env` |
 | `design.timeout_s` | `PRINT_HANDY__DESIGN__TIMEOUT_S` | `180` | Design model-call timeout in seconds; also the OpenSCAD render wall-clock limit |

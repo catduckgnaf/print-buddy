@@ -298,6 +298,14 @@ async def guided_dispatch(event, gateway, **kwargs):
 _HERMES_LLM = None
 
 
+# Plugin-owned clarify rendering (#524 stage 2): the HermesClarifyAdapter
+# (print_handy.hermes.clarify_ui) the S5 switch installs here. None until
+# then — the pbq: branch in on_interaction and typed_answer_dispatch both
+# stay inert, no handler substitutes the adapter, and Hermes' adapter keeps
+# rendering questions exactly as before.
+_CLARIFY_UI = None
+
+
 def _design_root(cfg):
     from print_handy.core import design
     cache = (cfg.get('paths') or {}).get('cache')
@@ -2786,6 +2794,46 @@ async def typed_quantity_dispatch(event, gateway, **kwargs):
     return {'action': 'skip', 'reason': 'typed print quantity handled'}
 
 
+async def typed_answer_dispatch(event, gateway, **kwargs):
+    """A typed reply answers this session's open question (#524 stage 2; NOT registered yet).
+
+    Generalizes typed_quantity_dispatch: parser prompts (quantities and the
+    other typed values) keep first claim through link_intake.typed_reply,
+    exactly as today. What no parser prompt claims falls to the session's
+    newest prompt in Print Handy's own registry, registered under the live
+    session key — the route Hermes' gateway session routing provides today,
+    which the plugin-owned renderer provides itself once it owns the
+    questions (HermesClarifyAdapter.answer_typed).
+
+    Deliberately absent from register(): registration is the S5 switch and
+    lands with the rest of the own-renderer wiring after the S0 live spike,
+    replacing typed_quantity_dispatch in the hook list. Until then this hook
+    is inert even if called directly — with no _CLARIFY_UI installed it
+    behaves exactly like typed_quantity_dispatch.
+    """
+    if not _is_print_discord_event(event):
+        return None
+    source = event.source
+    if not getattr(source, 'user_id', None) or not gateway._is_user_authorized_for_source(source):
+        return None
+    from print_handy.core.link_intake import typed_reply
+    error = typed_reply(source, getattr(event, 'text', ''))
+    if error is None:
+        ui = _CLARIFY_UI
+        if ui is None:
+            return None
+        if not await ui.answer_typed(gateway._session_key_for_source(source),
+                                     getattr(event, 'text', '')):
+            return None
+        return {'action': 'skip', 'reason': 'typed clarify answer handled'}
+    if error:
+        adapter = gateway._delivery_adapter_for(source)
+        if adapter is not None:
+            await adapter.send(chat_id=source.chat_id, content=error,
+                               metadata={'thread_id': source.thread_id} if source.thread_id else None)
+    return {'action': 'skip', 'reason': 'typed print quantity handled'}
+
+
 def _recent_model_link_from_db():
     import sqlite3, re
     db_path = _hermes_home() / 'state.db'
@@ -3678,6 +3726,21 @@ def alert_button_handlers(bot, adapter):
     async def on_interaction(interaction):
         data = getattr(interaction, 'data', None) or {}
         custom_id = data.get('custom_id', '')
+        from print_handy.bot.platform import parse_custom_id as _parse_pbq
+        clarify_press = _parse_pbq(custom_id)
+        if clarify_press is not None:
+            # Plugin-owned question buttons (#524 stage 2). Inert until the
+            # S5 switch installs _CLARIFY_UI: no pbq: buttons are posted
+            # under Hermes before then, and the standalone bot's own
+            # listener owns its pbq: presses.
+            ui = _CLARIFY_UI
+            if ui is None:
+                return
+            if not allowed(interaction):
+                await reject(interaction)
+                return
+            await ui.handle_click(interaction, *clarify_press)
+            return
         if str(custom_id).startswith(_pi.RETRY_CUSTOM_ID):
             if not allowed(interaction):
                 await reject(interaction)

@@ -88,6 +88,20 @@ def session_key(clarify_id):
         return prompt.session_key if prompt is not None and not prompt.event.is_set() else None
 
 
+def open_prompt_for(session_key):
+    """The newest open prompt registered under ``session_key``, else None.
+
+    The registry-level twin of ``BasePlatformAdapter.open_prompt``: adapters
+    that keep their own prompt rows scan those, but a caller holding only
+    the registry (the plugin's typed-answer route, #524) asks here.
+    Registration order decides "newest", as in the adapters.
+    """
+    with _lock:
+        hits = [cid for cid, prompt in _prompts.items()
+                if prompt.session_key == str(session_key) and not prompt.event.is_set()]
+    return hits[-1] if hits else None
+
+
 def cancel_session(session_key):
     """Cancel every open prompt of one session key. Returns how many were cancelled."""
     with _lock:

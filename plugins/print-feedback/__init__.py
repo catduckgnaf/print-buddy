@@ -2714,6 +2714,65 @@ async def macros_dispatch(event, gateway, **kwargs):
     return {'action': 'skip', 'reason': 'print macros run handled'}
 
 
+async def firmware_dispatch(event, gateway, **kwargs):
+    """/print-firmware: the configured printer's firmware update state (issue #561).
+
+    Bare form (stage 1) reports Moonraker's Update Manager state: one
+    user-invoked check (a refresh, then the status read) through the spool
+    client, rendered by print_handy.firmware_update with the ZMod pairing
+    and Klipper 13 MCU extras where the data exposes them. Printers whose
+    connection is not Moonraker have no Update Manager to read and get a
+    plain explanation instead of an error. The report path is read-only.
+    """
+    source, adapter = _control_preamble(event, gateway, '/print-firmware', with_args=True)
+    if source is None:
+        return None
+    if adapter is None:
+        return {'action': 'skip', 'reason': 'firmware UI delivery unavailable'}
+    from print_handy import firmware_update, printers
+    from print_handy.hermes import spool_sync
+    metadata = {'thread_id': source.thread_id} if source.thread_id else None
+    decided = await _decide_printer(source, gateway, adapter, metadata,
+                                    question='Firmware on which printer?')
+    if decided is None:
+        return {'action': 'skip', 'reason': 'shared channel: no printer chosen for firmware'}
+    pid, chosen = decided
+    mr = spool_sync.moonraker_for(pid)
+    args = str(getattr(event, 'text', '')).strip()[len('/print-firmware'):].split()
+    entry, connection = None, None
+    try:
+        if pid:
+            from print_handy import settings
+            model_key = settings.by_id(pid, _config.cfg())["model"]
+            connection = printers.get(model_key,
+                                      settings.view_for(pid, _config.cfg())).connection
+        else:
+            current = printers.current()
+            model_key = current.model.key
+            connection = current.connection
+        entry = firmware_update.printer_entry(model_key)
+    except Exception:
+        logger.exception('/print-firmware could not resolve the configured printer')
+    if args:
+        await adapter.send(chat_id=source.chat_id, metadata=metadata,
+                           content=('Use `/print-firmware` to see the firmware versions '
+                                    'your printer reports and what updates are available. '
+                                    'Nothing was sent to the printer.'))
+        return {'action': 'skip', 'reason': 'print firmware usage shown'}
+    if connection != 'moonraker':
+        await adapter.send(chat_id=source.chat_id, metadata=metadata,
+                           content=firmware_update.not_moonraker_text(connection))
+        return {'action': 'skip', 'reason': 'print firmware not applicable to this printer'}
+    try:
+        message = await asyncio.to_thread(firmware_update.firmware_report, mr, entry,
+                                          refresh=True)
+    except Exception:
+        logger.exception('/print-firmware failed')
+        message = firmware_update.COULD_NOT_READ_TEXT
+    await adapter.send(chat_id=source.chat_id, metadata=metadata, content=message)
+    return {'action': 'skip', 'reason': 'print firmware handled'}
+
+
 _LIVE_SESSION = None
 
 
@@ -4490,6 +4549,7 @@ _DISPATCH_HOOKS = (
     lookup_dispatch,
     troubleshoot_dispatch,
     macros_dispatch,
+    firmware_dispatch,
     typed_quantity_dispatch,
     upload_wait_dispatch,
     model_link_dispatch,

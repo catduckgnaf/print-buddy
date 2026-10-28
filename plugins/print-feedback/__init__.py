@@ -1296,9 +1296,9 @@ async def _nozzle_change_workflow(adapter, source, metadata, *, printer_id=None,
                                           printer_id=printer_id,
                                           supported_sizes=supported_sizes,
                                           supported_types=supported_types)
-    except Exception as exc:
+    except Exception:
         logger.exception('/nozzle change record failed')
-        return (f'The physical change is done, but recording it failed: {exc}. '
+        return ('The physical change is done, but recording it in the printer state failed. '
                 'Record it with `printer_state set --nozzle '
                 f'{dia:g} --nozzle-type {nozzle_type}` before printing.')
     mesh = await _confirm(adapter, source, metadata, 'nozzle-mesh',

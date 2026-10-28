@@ -147,6 +147,20 @@ Required environment: `PRINT_HANDY__BOT__MODE=standalone`, `DISCORD_BOT_TOKEN`, 
   buttons. "print it" after a link, and "print the last one again", work. "print 57" (or "print #57") reprints
   print #57 behind the same bed-clear button as `/print-again 57`; an unknown number gets a "no such print"
   reply pointing at `/print-again list`, not the help text. A bare number on its own is not a print request.
+* `/spool` walks you through spools with buttons: it asks whether you are adding a **new** spool or
+  **changing** the spool in a slot (listing and screen sync stay in the same menu). Adding offers the
+  filament types already in the Spoolman database first — picking a known type supplies its colour and
+  colour code from the database, so you are never asked for a hex code and never re-type a known colour;
+  only a genuinely new type asks for brand / material / colour name and grams. Before anything is
+  created, the confirmation names the spool number the new spool will be, and the result reports the
+  number actually created. Changing a slot walks slot → replacement (a shelf spool, or add-new first) →
+  what happens to the old spool: **back on the shelf**, **archive it**, or **mark it as depleted**
+  (archived with 0 g left). Nothing is created, bound, archived or zeroed before that flow's
+  confirmation, and cancelling or letting a question expire changes nothing. The full typed forms
+  (`/spool new <brand, material, color, grams>`, `/spool change <slot> <spool#>`, `/spool list`,
+  `/spool sync`) still work in one shot. Plain requests work too, with no LLM configured: "add new
+  filament", "add a new spool", "we need to add new filament" and "change / swap / replace the
+  filament" start the same guided flow; ordinary discussion about filament does not.
 * Estimates account for copies. Copies cloned onto one plate carry their totals in the sliced G-code
   itself, and the slice summary, estimate breakdown and start post show those totals as-is. Sequential
   copies (`/print-again … x3`, and multi-copy parts in a multipart plan) are labelled per copy: the

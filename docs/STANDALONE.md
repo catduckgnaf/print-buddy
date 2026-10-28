@@ -245,7 +245,7 @@ switch if you want no model calls at all.
 | Platform handler registration and the adapter's `_is_allowed_user` | The router hands the plugin's `alert_button_handlers` our discord.py client; the adapter implements `_is_allowed_user` |
 | `hermes send` subprocess in the listener | `print_handy.bot.rest.send`: Discord REST with the bot token, `MEDIA:` files as attachments. Since #524 this is the listener's Discord post path in Hermes mode too — no `hermes send` subprocess remains anywhere |
 | Hermes `state.db` messages for "print it" | `print_handy.bot.recent_links`: the last model link per channel in `<state>/recent_model_links.json`. Under Hermes, `state.db` is still read when that file has nothing |
-| Agent session resets and cleanups after a print (`state.db`, `SessionDB`) | Not needed: there is no agent conversation. Skipped in standalone mode, so no `state.db` is created |
+| Agent session resets and cleanups after a print (`state.db`, `SessionDB`) | Retired in every mode (#524): the bot no longer resets or archives agent sessions and never opens `state.db`. Session lifetime belongs to the agent host — the shipped Hermes profile template resets its sessions daily at 4 AM |
 | Tool-call hooks (`pre_tool_call`, `post_tool_call`) | Not needed: they only guard an agent's tool calls. Kept registered for Hermes |
 | Hermes home, install script, systemd units, restart drop-in | `paths.hermes_home` is just the data folder; `scripts/install-standalone.sh` and `systemd/*.service.template` with no gateway coupling |
 

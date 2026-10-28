@@ -105,16 +105,11 @@ def _scratch_root_is_not_an_ancestor(tmp_path_factory, monkeypatch):
 
 
 @pytest.fixture
-def hermes_agent():
-    """Needs the real Hermes agent checkout (paths.hermes_agent) for hermes_state; skipped when absent."""
-    _config.add_hermes_agent_to_path()
-    pytest.importorskip("hermes_state")
-
-
-@pytest.fixture
 def hermes_cli_plugins():
     """Needs the real Hermes agent checkout for hermes_cli.plugins; skipped when absent."""
-    _config.add_hermes_agent_to_path()
+    agent = str(Path(_config.cfg()["paths"]["hermes_agent"]).expanduser())
+    if agent not in sys.path:
+        sys.path.insert(0, agent)
     pytest.importorskip("hermes_cli.plugins")
 
 

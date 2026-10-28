@@ -94,18 +94,6 @@ def test_button_posts_use_the_configured_token_variable(monkeypatch):
     assert mel._bot_token() == "mine"
 
 
-def test_standalone_mode_has_no_agent_session_to_reset(monkeypatch):
-    monkeypatch.setitem(_config.cfg()["bot"], "mode", "standalone")
-    with mock.patch.object(announcer, "_live_channel_sessions", side_effect=AssertionError("state.db read")), \
-            mock.patch.object(announcer, "_queued_jobs", return_value=[]), \
-            mock.patch.object(announcer, "_open_multipart_plans", return_value=[]):
-        assert announcer.check_and_reset_idle_discord_session(time.time()) == (
-            False, "standalone mode: no agent session", True)
-        assert announcer.silently_reset_discord_session("1")[0] is False
-        state = announcer.process_pending_cleanups({"pending_cleanups": [{"cleanup_due_at": 0}]})
-    assert state["pending_cleanups"] == []
-
-
 def _load(text, tmp_path, environ=None):
     path = tmp_path / "local.yaml"
     path.write_text(text)

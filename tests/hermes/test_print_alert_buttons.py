@@ -96,6 +96,34 @@ def test_post_visual_dark_notice_posts_only_the_mute_button(tmp_path, monkeypatc
     assert rows and rows[0]["identity"] == "job:3"
 
 
+def test_no_hardcoded_discord_api_base():
+    # #502: every request URL must be built from the shared bot.rest.API base.
+    import pathlib
+    source = pathlib.Path(pab.__file__).read_text(encoding="utf-8")
+    assert "discord.com/api" not in source
+
+
+def test_posts_follow_the_shared_rest_api_base(tmp_path, monkeypatch):
+    # Redirecting rest.API (the #358 sandbox approach) must redirect button posts too.
+    from print_handy.bot import rest
+    monkeypatch.setattr(rest, "API", "http://sandbox.invalid/api")
+    seen = {}
+
+    class Response:
+        status = 200
+        def __enter__(self): return self
+        def __exit__(self, *args): return False
+
+    def fake_open(request, timeout):
+        seen["request"] = request
+        return Response()
+
+    with patch.object(pab, "STATE", tmp_path / "alerts.json"), \
+         patch.object(pab.urllib.request, "urlopen", fake_open):
+        assert pab.post_visual_dark_notice("token", "channel", "Camera is dark", "f.gcode", identity="job:3")
+    assert seen["request"].full_url == "http://sandbox.invalid/api/channels/channel/messages"
+
+
 def test_post_visual_alert_uses_one_multipart_message_with_components(tmp_path, monkeypatch):
     image = tmp_path / "camera.jpg"
     image.write_bytes(b"jpeg-data")

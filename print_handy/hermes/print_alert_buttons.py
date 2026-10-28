@@ -17,6 +17,8 @@ import urllib.request
 from pathlib import Path
 from typing import Any
 
+from print_handy.bot import rest
+
 from . import _config
 
 STATE = _config.state_file("PRINT_ALERT_STATE", "print_alert_buttons.json")
@@ -274,7 +276,7 @@ def post_plate_picker(token: str, channel_id: str, content: str, plan_id: str,
     aid = record("plate-picker", "", plan_id=plan_id)
     body = json.dumps({"content": content[:1990], "components": plate_picker_components(aid, options),
                        "allowed_mentions": {"parse": []}}).encode()
-    req = urllib.request.Request(f"https://discord.com/api/v10/channels/{channel_id}/messages", data=body,
+    req = urllib.request.Request(f"{rest.API}/channels/{channel_id}/messages", data=body,
                                  method="POST", headers={"Authorization": f"Bot {token}",
                                                          "Content-Type": "application/json",
                                                          "User-Agent": "DiscordBot (hermes-3dprinting, 1.0)"})
@@ -295,7 +297,7 @@ def post_spool_question(token: str, channel_id: str, content: str, context: dict
     body = json.dumps({"content": content[:1990],
                        "components": spool_question_components(aid, context.get("prior_spool_id")),
                        "allowed_mentions": {"parse": []}}).encode()
-    url = f"https://discord.com/api/v10/channels/{channel_id}/messages"
+    url = f"{rest.API}/channels/{channel_id}/messages"
     method = "POST"
     if message_id:
         url += f"/{message_id}"
@@ -318,7 +320,7 @@ def edit_message(token: str, channel_id: str, message_id: str, content: str) -> 
     if not (token and channel_id and message_id):
         return False
     req = urllib.request.Request(
-        f"https://discord.com/api/v10/channels/{channel_id}/messages/{message_id}",
+        f"{rest.API}/channels/{channel_id}/messages/{message_id}",
         data=json.dumps({"content": content[:1990], "allowed_mentions": {"parse": []}}).encode(),
         method="PATCH", headers={"Authorization": f"Bot {token}", "Content-Type": "application/json",
                                  "User-Agent": "DiscordBot (hermes-3dprinting, 1.0)"})
@@ -336,7 +338,7 @@ def post_insertion_confirmation(token: str, channel_id: str, content: str, slot:
     aid = record("insertion", "", slot=slot)
     body = json.dumps({"content": content[:1990], "components": insertion_components(aid),
                        "allowed_mentions": {"parse": []}}).encode()
-    req = urllib.request.Request(f"https://discord.com/api/v10/channels/{channel_id}/messages", data=body,
+    req = urllib.request.Request(f"{rest.API}/channels/{channel_id}/messages", data=body,
                                  method="POST", headers={"Authorization": f"Bot {token}",
                                                          "Content-Type": "application/json",
                                                          "User-Agent": "DiscordBot (hermes-3dprinting, 1.0)"})
@@ -369,7 +371,7 @@ def post_new_spool(token: str, channel_id: str, content: str, spool_id: int, lab
     aid = record("spoolman-new", "", spool_id=int(spool_id), label=str(label))
     body = json.dumps({"content": content[:1990], "components": new_spool_components(aid),
                        "allowed_mentions": {"parse": []}}).encode()
-    req = urllib.request.Request(f"https://discord.com/api/v10/channels/{channel_id}/messages", data=body,
+    req = urllib.request.Request(f"{rest.API}/channels/{channel_id}/messages", data=body,
                                  method="POST", headers={"Authorization": f"Bot {token}",
                                                          "Content-Type": "application/json",
                                                          "User-Agent": "DiscordBot (hermes-3dprinting, 1.0)"})
@@ -469,7 +471,7 @@ def post_with_buttons(token: str, channel_id: str, content: str, kind: str, file
     aid = record(kind, filename, **extra)
     body = json.dumps({"content": content[:1990], "components": components(aid, kind),
                        "allowed_mentions": {"parse": []}}).encode()
-    req = urllib.request.Request(f"https://discord.com/api/v10/channels/{channel_id}/messages", data=body,
+    req = urllib.request.Request(f"{rest.API}/channels/{channel_id}/messages", data=body,
                                  method="POST", headers={"Authorization": f"Bot {token}",
                                                          "Content-Type": "application/json",
                                                          "User-Agent": "DiscordBot (hermes-3dprinting, 1.0)"})
@@ -507,7 +509,7 @@ def retire_alerts(token: str, filename: str | None, note: str, kinds: tuple[str,
         if not (token and mid and chan):
             continue
         req = urllib.request.Request(
-            f"https://discord.com/api/v10/channels/{chan}/messages/{mid}",
+            f"{rest.API}/channels/{chan}/messages/{mid}",
             data=json.dumps({"components": [], "content": f"~~{headline}~~ {note}"[:1990],
                              "allowed_mentions": {"parse": []}}).encode(),
             method="PATCH", headers={"Authorization": f"Bot {token}", "Content-Type": "application/json",
@@ -543,7 +545,7 @@ def post_visual_alert(token: str, channel_id: str, content: str, filename: str, 
             "Content-Type: image/jpeg\r\n\r\n".encode() + frame + b"\r\n",
             f"--{boundary}--\r\n".encode(),
         ))
-        req = urllib.request.Request(f"https://discord.com/api/v10/channels/{channel_id}/messages", data=body,
+        req = urllib.request.Request(f"{rest.API}/channels/{channel_id}/messages", data=body,
                                      method="POST", headers={"Authorization": f"Bot {token}",
                                                               "Content-Type": f"multipart/form-data; boundary={boundary}",
                                                               "User-Agent": "DiscordBot (hermes-3dprinting, 1.0)"})
@@ -567,7 +569,7 @@ def post_visual_dark_notice(token: str, channel_id: str, content: str, filename:
     aid = record("visual-dark", filename, **({"identity": str(identity)} if identity else {}))
     body = json.dumps({"content": content[:1990], "components": components(aid, "visual-dark"),
                        "allowed_mentions": {"parse": []}}).encode()
-    req = urllib.request.Request(f"https://discord.com/api/v10/channels/{channel_id}/messages", data=body,
+    req = urllib.request.Request(f"{rest.API}/channels/{channel_id}/messages", data=body,
                                  method="POST", headers={"Authorization": f"Bot {token}",
                                                          "Content-Type": "application/json",
                                                          "User-Agent": "DiscordBot (hermes-3dprinting, 1.0)"})

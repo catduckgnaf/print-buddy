@@ -176,7 +176,7 @@ class DockerReleaseContract(unittest.TestCase):
             Path(data, "archive").mkdir()
             Path(data, "records").mkdir()
             Path(data, "cache").mkdir()
-            command = ["sh", "-c", "printf \"%s\\n\" \"$PB_ORCA_CMD\""]
+            command = ["sh", "-c", "printf \"%s\\n\" \"$PRINT_HANDY_ORCA_CMD\""]
             env = {"PATH": os.environ["PATH"], "HOME": data, "PRINT_HANDY_ORCA_CHANNEL": "alpha"}
             alpha = subprocess.run(["bash", str(script), *command], cwd=data, env=env,
                                    text=True, capture_output=True, check=True)
@@ -202,7 +202,7 @@ class DockerReleaseContract(unittest.TestCase):
         self.assertIn('COPY --from=orca-prebuilt /out/ /', dockerfile)
         entrypoint = (ROOT / "docker" / "entrypoint.sh").read_text()
         self.assertIn("PRINT_HANDY_ORCA_CHANNEL:-stable", entrypoint)
-        self.assertIn("export PB_ORCA_CMD=\"$selected\"", entrypoint)
+        self.assertIn("export PRINT_HANDY_ORCA_CMD=\"$selected\"", entrypoint)
         self.assertIn("must be 'stable' or 'alpha'", entrypoint)
         runtime = dockerfile.split("AS runtime", 1)[1]
         self.assertIn("openscad", runtime)

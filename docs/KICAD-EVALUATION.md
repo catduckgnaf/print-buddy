@@ -158,7 +158,7 @@ Control runs at upstream `0c3c0c1` in the same setup, all **[observed]**:
 
 * Offline suite: 1195 passed, 36 skipped.
 * `tests/corpus` real tier: 72 passed.
-* `PB_ORCA_CMD=<AppRun> PRINT_HANDY_REAL_SLICER=1 pytest tests/slicer`: 10 passed.
+* `PRINT_HANDY_ORCA_CMD=<AppRun> PRINT_HANDY_REAL_SLICER=1 pytest tests/slicer`: 10 passed.
 
 The two-shell parts mesh also passed. So the pipeline accepts what KiCad produces even when the result is not a sensible print. That is a reason not to feed it component exports, not evidence that they print well **[inference]**.
 

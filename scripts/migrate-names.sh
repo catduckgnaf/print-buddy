@@ -10,7 +10,8 @@
 #    in the profile state dir and in the archive dir. A target that already exists is skipped.
 # 2. Replaces PRINT_BUDDY_ / PRINT_BITCH_ with PRINT_HANDY_ in the selected config/local.yaml or
 #    config/local.toml, the profile .env and config.yaml, and the listener systemd unit and
-#    drop-ins. Each edited file is first copied to <file>.pre-rename.
+#    drop-ins. The leftover short-prefix PB_ORCA_CMD becomes PRINT_HANDY_ORCA_CMD in the same
+#    pass. Each edited file is first copied to <file>.pre-rename.
 # 3. Rewrites [printer] family = "flashforge_zmod" (or generic_klipper, sovol_klipper) in
 #    config/local.yaml or config/local.toml to model = "flashforge.ad5x" (klipper.generic,
 #    sovol.sv06). The file is first copied to <file>.pre-model.
@@ -74,12 +75,12 @@ rename_tree "$ARCHIVE" print_buddy print_handy
 edit_file() {  # edit_file FILE
     local f="$1"
     if [ ! -f "$f" ]; then say "skipped $f (not found)"; return 0; fi
-    if ! grep -qE 'PRINT_(BUDDY|BITCH)_' "$f"; then say "ok      $f (no old names)"; return 0; fi
+    if ! grep -qE 'PRINT_(BUDDY|BITCH)_|\bPB_ORCA_CMD\b' "$f"; then say "ok      $f (no old names)"; return 0; fi
     if [ -e "$f.pre-rename" ]; then say "skipped $f (backup $f.pre-rename already exists; check it by hand)"; return 0; fi
     act "backup $f -> $f.pre-rename"
     [ "$DRY" = 1 ] || cp -p "$f" "$f.pre-rename"
-    act "edit   $f: PRINT_BUDDY_/PRINT_BITCH_ -> PRINT_HANDY_ ($(grep -cE 'PRINT_(BUDDY|BITCH)_' "$f") lines)"
-    [ "$DRY" = 1 ] || sed -i 's/PRINT_BUDDY_/PRINT_HANDY_/g; s/PRINT_BITCH_/PRINT_HANDY_/g' "$f"
+    act "edit   $f: PRINT_BUDDY_/PRINT_BITCH_ -> PRINT_HANDY_, PB_ORCA_CMD -> PRINT_HANDY_ORCA_CMD ($(grep -cE 'PRINT_(BUDDY|BITCH)_|\bPB_ORCA_CMD\b' "$f") lines)"
+    [ "$DRY" = 1 ] || sed -i 's/PRINT_BUDDY_/PRINT_HANDY_/g; s/PRINT_BITCH_/PRINT_HANDY_/g; s/\bPB_ORCA_CMD\b/PRINT_HANDY_ORCA_CMD/g' "$f"
 }
 edit_file "$LOCAL_CONFIG"
 edit_file "$HERMES_HOME/.env"

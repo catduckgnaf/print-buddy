@@ -84,6 +84,14 @@ class MigrateNamesTests(unittest.TestCase):
         self.assertFalse((self.home / "config.yaml.pre-rename").exists())
         self.assertIn("FIRMWARE_RESTART", out)
 
+    def test_pb_orca_cmd_is_renamed_too(self):
+        # #504: the leftover short-prefix variable rides along with the PRINT_BUDDY_ pass,
+        # including in a file that carries no PRINT_BUDDY_ name at all.
+        (self.home / ".env").write_text("PB_ORCA_CMD=/opt/orca\nOTHER=1\n")
+        self.run_script()
+        self.assertEqual("PRINT_HANDY_ORCA_CMD=/opt/orca\nOTHER=1\n", (self.home / ".env").read_text())
+        self.assertEqual("PB_ORCA_CMD=/opt/orca\nOTHER=1\n", (self.home / ".env.pre-rename").read_text())
+
     def test_second_run_is_a_no_op(self):
         self.run_script()
         after_first = self.snapshot()

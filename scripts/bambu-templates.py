@@ -5,11 +5,11 @@
     python3 scripts/bambu-templates.py --printer a1 --resources <...> --import-filament <preset.json> [--material PETG]
     python3 scripts/bambu-templates.py --printer a1 --remove-filament PETG
 
-Print Buddy ships no OrcaSlicer or Bambu Lab profiles. This reads the BBL vendor profiles from an installed
+Print Handy ships no OrcaSlicer or Bambu Lab profiles. This reads the BBL vendor profiles from an installed
 OrcaSlicer (the folder that holds profiles/BBL.json and profiles/BBL/; a Flatpak keeps it under
 `flatpak info --show-location com.orcaslicer.OrcaSlicer`/files/share/OrcaSlicer/resources), resolves the
-printer's profiles, refuses unless they hash to an identity recorded in print_buddy/printers/bambulab/facts.py,
-and writes them with Print Buddy's overrides into <state>/orca-profiles/<printer> for the configured profile.
+printer's profiles, refuses unless they hash to an identity recorded in print_handy/printers/bambulab/facts.py,
+and writes them with Print Handy's overrides into <state>/orca-profiles/<printer> for the configured profile.
 That includes one checked filament profile per material the printer lists (`orca_filaments`; A1 and P1S: PLA, PETG,
 TPU, PVA); slicing picks the one for the loaded material. Nothing is downloaded and nothing is written into the
 repository.
@@ -35,7 +35,7 @@ sys.path.insert(0, str(ROOT))
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--printer", default="a1", help="printer profile module under print_buddy/printers/bambulab")
+    ap.add_argument("--printer", default="a1", help="printer profile module under print_handy/printers/bambulab")
     ap.add_argument("--resources", type=Path, help="the installed OrcaSlicer resources folder")
     ap.add_argument("--check", action="store_true", help="verify only; write nothing")
     ap.add_argument("--import-filament", type=Path, metavar="PRESET",
@@ -43,10 +43,10 @@ def main():
     ap.add_argument("--material", help="the material --import-filament must be for (checked, not chosen)")
     ap.add_argument("--remove-filament", metavar="MATERIAL", help="remove the operator preset for a material")
     a = ap.parse_args()
-    from print_buddy import printers, settings
-    from print_buddy.printers.bambulab import profiles
-    model = importlib.import_module(f"print_buddy.printers.bambulab.{a.printer}").MODEL
-    adapter = printers.get(model.key, settings.load(environ={**os.environ, "PRINT_BUDDY__PRINTER__MODEL": model.key}))
+    from print_handy import printers, settings
+    from print_handy.printers.bambulab import profiles
+    model = importlib.import_module(f"print_handy.printers.bambulab.{a.printer}").MODEL
+    adapter = printers.get(model.key, settings.load(environ={**os.environ, "PRINT_HANDY__PRINTER__MODEL": model.key}))
     materials = profiles.filament_set(adapter) or {"default": adapter.fact("orca_profiles")["filament"]}
     checked = ", ".join(f"{m} ({name})" for m, name in materials.items())
     try:

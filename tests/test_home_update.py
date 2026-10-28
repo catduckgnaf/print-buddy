@@ -8,7 +8,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from print_buddy.settings import LEGACY_ENV
+from print_handy.settings import LEGACY_ENV
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -17,7 +17,7 @@ SMOKE_TEST = (
     "import unittest\n"
     "class Smoke(unittest.TestCase):\n"
     "    def test_package_imports_and_settings_load(self):\n"
-    "        from print_buddy import settings\n"
+    "        from print_handy import settings\n"
     "        self.assertTrue(settings.load)\n"
 )
 
@@ -27,7 +27,7 @@ def git(cwd, *args):
                           check=True, capture_output=True, text=True).stdout.strip()
 
 
-@unittest.skipIf(os.environ.get("PRINT_BUDDY_UPDATE_CHECK"), "already inside an update check")
+@unittest.skipIf(os.environ.get("PRINT_HANDY_UPDATE_CHECK"), "already inside an update check")
 @unittest.skipUnless(shutil.which("git"), "git is not installed")
 class HomeUpdateTests(unittest.TestCase):
     def setUp(self):
@@ -95,7 +95,7 @@ class HomeUpdateTests(unittest.TestCase):
         legacy = fake_home / ".print_bitch_context.json"
         legacy.write_text('{"ctx": 1}')
         profile = Path(self.tmp.name) / "profile"
-        (profile / "state" / "print_buddy_context.json").write_text('{"ctx": 1}')
+        (profile / "state" / "print_handy_context.json").write_text('{"ctx": 1}')
         self.commit_upstream("tests/test_broken.py",
                              "import unittest\nclass T(unittest.TestCase):\n    def test_x(self):\n        self.fail('broken')\n")
         self.assertEqual(self.update(home=fake_home).returncode, 1)

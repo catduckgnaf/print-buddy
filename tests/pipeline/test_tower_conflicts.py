@@ -4,10 +4,10 @@ import json
 import re
 import zipfile
 
-from print_buddy.core import color_geometry
-from print_buddy.core import orca_adapter
+from print_handy.core import color_geometry
+from print_handy.core import orca_adapter
 from . import test_color_geometry as tcg
-from print_buddy.core.color_geometry import export_color_geometry, prime_tower_candidates
+from print_handy.core.color_geometry import export_color_geometry, prime_tower_candidates
 
 
 @tcg.needs_coupon

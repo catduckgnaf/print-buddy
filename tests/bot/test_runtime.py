@@ -5,11 +5,11 @@ from unittest import mock
 import pytest
 
 from corpus import fake_discord
-from print_buddy.bot import commands, recent_links, runtime
-from print_buddy.bot.adapter import parse_custom_id
-from print_buddy.bot.router import Router
-from print_buddy.core import prompts
-from print_buddy.hermes import print_stop
+from print_handy.bot import commands, recent_links, runtime
+from print_handy.bot.adapter import parse_custom_id
+from print_handy.bot.router import Router
+from print_handy.core import prompts
+from print_handy.hermes import print_stop
 
 
 def make(cfg, auto=False, router=None):
@@ -52,7 +52,7 @@ def test_router_runs_the_plugin_handlers_in_plugin_order_without_the_agent_recei
 
 def test_unmatched_text_without_an_llm_gets_the_short_reply_and_starts_nothing(cfg):
     discord, core = make(cfg)
-    with mock.patch("print_buddy.hermes.print_next.start") as start, \
+    with mock.patch("print_handy.hermes.print_next.start") as start, \
             mock.patch("urllib.request.urlopen", side_effect=AssertionError("network")):
         out = run(core.handle_message(discord.message("can you make my printer go brrr")))
     assert out == {"action": "skip", "reason": "command list"}
@@ -78,7 +78,7 @@ def test_a_strangers_message_is_refused_with_one_notice_not_silence(cfg, caplog)
     """#386: a list refusal is never silent — one notice in channel, an INFO log, no intake."""
     discord, core = make(cfg)
     stranger = fake_discord.FakeUser(999, "stranger")
-    with caplog.at_level("INFO", logger="print_buddy.bot.runtime"):
+    with caplog.at_level("INFO", logger="print_handy.bot.runtime"):
         assert run(core.handle_message(discord.message("/print-help", author=stranger))) is None
         assert run(core.handle_message(discord.message("/print-help", author=stranger))) is None
     assert discord.sent == [runtime.REFUSAL_NOTICE]  # throttled: the second message adds none
@@ -164,7 +164,7 @@ def test_a_second_click_on_an_answered_question_changes_nothing(cfg):
 def test_slash_command_runs_as_its_typed_text(cfg):
     discord, core = make(cfg)
     interaction = fake_discord.FakeInteraction(discord, discord.operator, channel=discord.channel)
-    with mock.patch("print_buddy.hermes.spool_sync.list_text", return_value="Slot 1: #7 black PLA"):
+    with mock.patch("print_handy.hermes.spool_sync.list_text", return_value="Slot 1: #7 black PLA"):
         run(core.run_slash(interaction, "spool", {"args": "list"}))
     assert interaction.replies[0] == {"content": "`/spool list`", "ephemeral": False}
     assert discord.sent[-1] == "Slot 1: #7 black PLA"
@@ -174,7 +174,7 @@ def test_slash_command_from_a_stranger_is_refused(cfg):
     discord, core = make(cfg)
     stranger = fake_discord.FakeUser(999, "stranger")
     interaction = fake_discord.FakeInteraction(discord, stranger, channel=discord.channel)
-    with mock.patch("print_buddy.hermes.spool_sync.list_text") as listing:
+    with mock.patch("print_handy.hermes.spool_sync.list_text") as listing:
         run(core.run_slash(interaction, "spool", {"args": "list"}))
     assert interaction.replies == [{"content": "Not allowed. Nothing changed.", "ephemeral": True}]
     listing.assert_not_called()
@@ -198,7 +198,7 @@ def test_typed_text_answers_only_the_askers_open_question(cfg):
     assert run(flow()) == "2"
 
 
-def test_print_it_follow_up_reuses_the_last_link_from_print_buddy_state(cfg):
+def test_print_it_follow_up_reuses_the_last_link_from_print_handy_state(cfg):
     discord, core = make(cfg)
     url = "https://makerworld.com/en/models/931302-holder"
     seen = []
@@ -207,8 +207,8 @@ def test_print_it_follow_up_reuses_the_last_link_from_print_buddy_state(cfg):
         seen.append(event.text)
         return {"action": "skip", "reason": "test intake"}
 
-    with mock.patch("print_buddy.core.prepared_intake.prepare_link", fake_prepare), \
-            mock.patch("print_buddy.core.printer_state.load", return_value={}):
+    with mock.patch("print_handy.core.prepared_intake.prepare_link", fake_prepare), \
+            mock.patch("print_handy.core.printer_state.load", return_value={}):
         run(core.handle_message(discord.message(url)))
         assert recent_links.recall(str(discord.channel.id)) == url
         run(core.handle_message(discord.message("print it")))
@@ -224,7 +224,7 @@ def test_dropped_model_file_is_saved_where_the_intake_reads_it(cfg, tmp_path):
     message = discord.message(attachments=[fake_discord.FakeAttachment(model), fake_discord.FakeAttachment(note)])
     paths = run(core.save_attachments(message))
     assert len(paths) == 1 and paths[0].endswith("_Bracket.stl")
-    from print_buddy.core.prepared_intake import upload_job
+    from print_handy.core.prepared_intake import upload_job
     assert upload_job(paths[0])["title"] == "Bracket"
     import os
     stale = core.upload_dir / "doc_000000000000_old.stl"
@@ -245,7 +245,7 @@ def test_dropped_scad_is_saved_for_design_but_intake_ignores_it(cfg, tmp_path):
     paths = run(core.save_attachments(message))
     assert len(paths) == 1 and paths[0].endswith("_widget.scad")
     from types import SimpleNamespace
-    from print_buddy.core.prepared_intake import model_file
+    from print_handy.core.prepared_intake import model_file
     assert model_file(SimpleNamespace(media_urls=paths)) is None
 
 
@@ -261,12 +261,12 @@ def test_listener_alert_buttons_are_wired_and_checked(cfg):
     discord, core = make(cfg)
     message = fake_discord.FakeMessage(discord.channel, discord.bot_user, "Paused", None)
     stranger = fake_discord.FakeUser(999, "stranger")
-    with mock.patch("print_buddy.hermes.print_alert_buttons.handle_click") as handle_click:
+    with mock.patch("print_handy.hermes.print_alert_buttons.handle_click") as handle_click:
         refused = run(discord.press(message, "pbalert:resume:abcd1234", user=stranger))
         handle_click.assert_not_called()
         assert refused.replies[0]["content"] == "Not allowed. Nothing changed."
         handle_click.return_value = "Resumed."
-        with mock.patch("print_buddy.hermes.print_alert_buttons.take", return_value={"kind": "paused"}):
+        with mock.patch("print_handy.hermes.print_alert_buttons.take", return_value={"kind": "paused"}):
             clicked = run(discord.press(message, "pbalert:resume:abcd1234"))
     handle_click.assert_called_once()
     assert clicked.replies[-1]["content"] == "Resumed."
@@ -274,10 +274,10 @@ def test_listener_alert_buttons_are_wired_and_checked(cfg):
 
 def test_discord_client_registers_commands_and_reports_connection(cfg):
     """The real discord.py Bot subclass, set up offline: slash commands, handlers, heartbeat, disconnects."""
-    from print_buddy.bot import client, health
+    from print_handy.bot import client, health
 
     async def flow():
-        bot = client.PrintBuddyBot(cfg)
+        bot = client.PrintHandyBot(cfg)
         with mock.patch.object(bot.tree, "sync", mock.AsyncMock(return_value=[])) as sync:
             await bot.setup_hook()
         try:
@@ -298,7 +298,7 @@ def test_discord_client_registers_commands_and_reports_connection(cfg):
     run(flow())
 
 
-@pytest.mark.parametrize("name", ["Print Bitch", "Print Buddy"])
+@pytest.mark.parametrize("name", ["Print Bitch", "Print Handy"])
 def test_custom_name_is_used_in_help_and_wrong_channel_refusal(cfg, name):
     cfg["discord"]["bot_name"] = name
     discord, core = make(cfg)

@@ -1,6 +1,6 @@
 # Diagnostics: error taxonomy, markers and the audit inventory (#390)
 
-Print Buddy's diagnostics overhaul (issue #390, milestone 2.1.6) gives every
+Print Handy's diagnostics overhaul (issue #390, milestone 2.1.6) gives every
 failure one vocabulary, one searchable marker, and one operator-facing bar:
 a message says **what failed**, the **most likely cause**, and **what the
 operator can do about it**. No bare exception text, no silent drops, and no
@@ -10,14 +10,14 @@ exports a bundle (Stage 3).
 ## Error taxonomy
 
 Every failure at a main boundary is classified by
-`print_buddy.diagnostics.classify` into exactly one category:
+`print_handy.diagnostics.classify` into exactly one category:
 
 | Category | Meaning | Typical remedy shape |
 | --- | --- | --- |
 | `transient` | Network weather: DNS, refused/reset connections, timeouts, 429/5xx | Wait and retry; then check the network path |
 | `configuration` | A setting, profile or credential is wrong or missing | Fix the named setting; re-run the doctor |
 | `hardware` | The printer or a physical subsystem did not do what was asked | Check the printer; nothing was started by the message |
-| `programming` | A Print Buddy bug | File a report with the marker and a diagnostics bundle |
+| `programming` | A Print Handy bug | File a report with the marker and a diagnostics bundle |
 | `unknown` | Nothing honest can be said yet | Run the doctor; include the marker in any report |
 
 An explicit category from a boundary that knows better always wins over the
@@ -31,17 +31,17 @@ Each (subsystem, category) pair has one stable marker,
 Markers are append-only: once one has shipped in a log line or a message
 it is never renamed, so old support threads stay searchable. The pre-#390
 marker `DISCORD_STARTUP_RETRY` (#364/#369) is registered as a legacy marker
-in `print_buddy.diagnostics.LEGACY_MARKERS` and likewise never changes.
+in `print_handy.diagnostics.LEGACY_MARKERS` and likewise never changes.
 
 ## Staged plan
 
 1. **Stage 1 (this page's PR):** taxonomy + markers + the operator-message
-   builder (`print_buddy/diagnostics.py`), first wiring in the Spoolman
+   builder (`print_handy/diagnostics.py`), first wiring in the Spoolman
    client's failure warning, and this audit inventory.
 2. **Stage 2:** Discord message audit fixes — apply the operator-message
    bar to the surfaces the inventory below marks as failing it.
-3. **Stage 3 (done):** diagnostics bundle — `/print-buddy bundle` in the bot
-   and `python3 -m print_buddy.diagnostics_bundle` on the host assemble
+3. **Stage 3 (done):** diagnostics bundle — `/print-handy bundle` in the bot
+   and `python3 -m print_handy.diagnostics_bundle` on the host assemble
    versions, image digest (when the environment records one), a redacted
    config summary (env-name indirection only; secret values never
    included), printer/roster summary, doctor output and a bounded
@@ -89,13 +89,13 @@ the messages a person in chat actually reads to a plainer bar:
    nothing uploaded / nothing changed / your print is still running.
 3. **One clear next step** — the button, command or check that fixes or
    retries it. If there is no user fix (it looks like a bug), the post
-   says so and points at the diagnostics bundle (`/print-buddy bundle`).
+   says so and points at the diagnostics bundle (`/print-handy bundle`).
 4. **Technical detail demoted, not deleted** — the `PB_*` marker rides as
    a secondary `Reference:` line, and the full detail stays in the log,
    the intake receipt and the bundle.
 5. **Never silent, never a dead end.**
 
-The shared builder is `print_buddy.diagnostics.plain_post`; the Discord
+The shared builder is `print_handy.diagnostics.plain_post`; the Discord
 handlers' `_failure_post` (#390) is built on it, so there is one wording
 system. `tests/test_friendly_errors.py` pins the rewritten corpus,
 including the negative pin: no inventoried chat post may contain a raw
@@ -110,7 +110,7 @@ What changed, surface by surface:
 | Fit / resize checks unverified | trailing raw exception → plain unverified wording + resume step + marker |
 | Preview failure | `Preview unavailable: {exc}` → "I could not make a preview image, so no image was sent…" |
 | Slot/toolhead map problem | `Slot map problem: {exc}` → "Heads-up on the filament positions: …" (the adapter's own phrased reason) |
-| Intake preparation failure | `New model preparation stopped: {exc}` → plain post + "Send the link or file again; … `/print-buddy bundle`" + marker |
+| Intake preparation failure | `New model preparation stopped: {exc}` → plain post + "Send the link or file again; … `/print-handy bundle`" + marker |
 | Colour-selection failure (link intake) | `New model color selection stopped: {exc}` → plain post + retry step + marker |
 | Delivery refusal | `Not delivered: …` → "The files were not sent here: …" (the `DeliveryRefused` reason is curated and kept) |
 | Start failures (plugin next-plate / print-again / plate picker) | the raw print-now tail (`REFUSED:` / upload / start lines) was posted verbatim → `prepared_intake.plain_start_failure` translates it: a confirmed pre-upload refusal gets the specific plain guidance; anything else gets the honest "did not confirm whether the print started" wording |
@@ -122,7 +122,7 @@ What changed, surface by surface:
 | Print-control / spool / cold-pull / maintenance generic failures | `…: {exc}` posts → plain posts naming the state ("nothing was changed", "usage is still paused; answer again", "do not retry until the printer state is checked") |
 | Vision-watch alerts | `vision check failed: {exc!r}` in the alert post → "the vision check could not be completed, so treat this as unreviewed…"; the raw error stays in the log |
 | Spool sync results | `NOT updated ({exc})` / per-slot raw errors → plain "not updated — run `/spool sync`…" wording |
-| Access refusal notice | "You are not on this bot's allowed list." → adds why and the next step ("…ask the person who runs Print Buddy to add you"); the house "Not allowed. Nothing changed." posts are unchanged |
+| Access refusal notice | "You are not on this bot's allowed list." → adds why and the next step ("…ask the person who runs Print Handy to add you"); the house "Not allowed. Nothing changed." posts are unchanged |
 | Unmatched message | the full command list posted as an error response → a short reply: "I didn't understand that, so nothing happened." + the one common next step (post a link / drop a file) + the list on request via `/print-help`. Explicit `/print-help` / `help` still returns the full list, and the #437 LLM-first order is unchanged |
 
 Deliberately unchanged, and why:

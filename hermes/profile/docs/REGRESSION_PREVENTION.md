@@ -1,4 +1,4 @@
-# print-buddy regression prevention plan (2026-10-12)
+# print-handy regression prevention plan (2026-10-12)
 
 ## What keeps happening
 1. Synthetic tests pass while real artifacts fail: the 2026-10-05 Orca preamble rejection, and the PLA+ vs PLA spool mismatch fixed in commit b13a980.

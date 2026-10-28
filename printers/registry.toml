@@ -1,7 +1,7 @@
 # Root-level printer registry. See printers/README.md for the schema.
 #
-# This is the discoverable data index of the printers Print Buddy knows about. The
-# executable profiles stay in print_buddy/printers/<vendor>/<printer>.py (one MODEL
+# This is the discoverable data index of the printers Print Handy knows about. The
+# executable profiles stay in print_handy/printers/<vendor>/<printer>.py (one MODEL
 # per file); every entry here must match a registered model, and tests check the
 # key, firmware, connection, bed and height against the model's own defaults so
 # this file cannot silently drift from the code.
@@ -21,7 +21,7 @@ kinematics = "CoreXY"
 bed_mm = [220.0, 220.0]
 max_height_mm = 220.0
 filament_slots = 4
-profile = "print_buddy/printers/flashforge/ad5x.py"
+profile = "print_handy/printers/flashforge/ad5x.py"
 notes = "Physical sheet is 235 mm; the usable print area is 220 mm. IFS with 4 slots and a native screen that owns Z offset and mesh in native mode."
 
 [[printer]]
@@ -35,8 +35,8 @@ kinematics = "CoreXY"
 bed_mm = [220.0, 220.0]
 max_height_mm = 220.0
 filament_slots = 1
-profile = "print_buddy/printers/flashforge/ad5m.py"
-notes = "Single extruder, no IFS. Same 220 mm cube as the AD5X without the filament system; the PRINT_BUDDY spool-match macro is AD5X-only."
+profile = "print_handy/printers/flashforge/ad5m.py"
+notes = "Single extruder, no IFS. Same 220 mm cube as the AD5X without the filament system; the PRINT_HANDY spool-match macro is AD5X-only."
 
 [[printer]]
 key = "flashforge.ad5m_pro"
@@ -49,7 +49,7 @@ kinematics = "CoreXY"
 bed_mm = [220.0, 220.0]
 max_height_mm = 220.0
 filament_slots = 1
-profile = "print_buddy/printers/flashforge/ad5m_pro.py"
+profile = "print_handy/printers/flashforge/ad5m_pro.py"
 notes = "Single extruder, no IFS. The Pro adds the enclosure, camera and air filtration over the AD5M; print geometry is identical."
 
 [[printer]]
@@ -63,7 +63,7 @@ kinematics = "CoreXY"
 bed_mm = [256.0, 256.0]
 max_height_mm = 256.0
 tools = 4
-profile = "print_buddy/printers/flashforge/creator5.py"
+profile = "print_handy/printers/flashforge/creator5.py"
 notes = "Four independent toolheads (a tool changer, T0-T3), not an IFS feeder: tools are recorded under tools, and there are no filament_slots. No active chamber heating. ZMod documents no Klipper 13 support on the Creator models. Print start is not verified on a live printer."
 
 [[printer]]
@@ -77,7 +77,7 @@ kinematics = "CoreXY"
 bed_mm = [256.0, 256.0]
 max_height_mm = 256.0
 tools = 4
-profile = "print_buddy/printers/flashforge/creator5_pro.py"
+profile = "print_handy/printers/flashforge/creator5_pro.py"
 notes = "Four independent toolheads (a tool changer, T0-T3), not an IFS feeder: tools are recorded under tools, and there are no filament_slots. The Pro adds the enclosed frame, active chamber heating and air filtration over the Creator 5; print geometry is identical. ZMod documents no Klipper 13 support on the Creator models. Print start is not verified on a live printer."
 
 [[printer]]
@@ -91,7 +91,7 @@ kinematics = "CoreXY"
 bed_mm = [220.0, 220.0]
 max_height_mm = 220.0
 filament_slots = 4
-profile = "print_buddy/printers/flashforge_stock/ad5x.py"
+profile = "print_handy/printers/flashforge_stock/ad5x.py"
 notes = "Stock Adventurer firmware over its LAN HTTP API; no Moonraker. Print start is not verified on a live printer."
 
 [[printer]]
@@ -105,7 +105,7 @@ kinematics = "unspecified"
 bed_mm = [220.0, 220.0]
 max_height_mm = 220.0
 filament_slots = 1
-profile = "print_buddy/printers/klipper/generic.py"
+profile = "print_handy/printers/klipper/generic.py"
 notes = "Placeholder dimensions for a stock Klipper printer; override bed and height in local config for a real machine."
 
 [[printer]]
@@ -119,7 +119,7 @@ kinematics = "Cartesian (moving bed)"
 bed_mm = [220.0, 220.0]
 max_height_mm = 220.0
 filament_slots = 1
-profile = "print_buddy/printers/sovol/sv06.py"
+profile = "print_handy/printers/sovol/sv06.py"
 notes = "Stock Klipper profile under the Sovol name."
 
 [[printer]]
@@ -133,7 +133,7 @@ kinematics = "unspecified"
 bed_mm = [220.0, 220.0]
 max_height_mm = 220.0
 filament_slots = 1
-profile = "print_buddy/printers/octoprint/marlin.py"
+profile = "print_handy/printers/octoprint/marlin.py"
 notes = "Marlin support goes through OctoPrint's serial connection and REST API, not direct USB/serial. Dimensions are placeholders to override in local config."
 
 [[printer]]
@@ -147,7 +147,7 @@ kinematics = "Cartesian (moving bed)"
 bed_mm = [220.0, 220.0]
 max_height_mm = 250.0
 filament_slots = 1
-profile = "print_buddy/printers/octoprint/ender3.py"
+profile = "print_handy/printers/octoprint/ender3.py"
 notes = "Ender-3 preset of the OctoPrint/Marlin support: real dimensions instead of the octoprint.marlin placeholders. Dimensions are the pinned Orca profile's printable area/height (OrcaSlicer v2.5.0-alpha, Creality profiles 02.03.02.87)."
 
 [[printer]]
@@ -161,7 +161,7 @@ kinematics = "Cartesian (moving bed)"
 bed_mm = [220.0, 220.0]
 max_height_mm = 250.0
 filament_slots = 1
-profile = "print_buddy/printers/octoprint/ender3pro.py"
+profile = "print_handy/printers/octoprint/ender3pro.py"
 notes = "Ender-3 Pro preset of the OctoPrint/Marlin support: real dimensions instead of the octoprint.marlin placeholders. Dimensions are the pinned Orca profile's printable area/height (OrcaSlicer v2.5.0-alpha, Creality profiles 02.03.02.87)."
 
 [[printer]]
@@ -175,7 +175,7 @@ kinematics = "Cartesian (moving bed)"
 bed_mm = [220.0, 220.0]
 max_height_mm = 250.0
 filament_slots = 1
-profile = "print_buddy/printers/octoprint/ender3v2.py"
+profile = "print_handy/printers/octoprint/ender3v2.py"
 notes = "Ender-3 V2 preset of the OctoPrint/Marlin support: real dimensions instead of the octoprint.marlin placeholders. Dimensions are the pinned Orca profile's printable area/height (OrcaSlicer v2.5.0-alpha, Creality profiles 02.03.02.87); upstream ships only a 0.4 mm nozzle machine profile for this model."
 
 [[printer]]
@@ -189,7 +189,7 @@ kinematics = "Cartesian (moving bed)"
 bed_mm = [220.0, 220.0]
 max_height_mm = 250.0
 filament_slots = 1
-profile = "print_buddy/printers/octoprint/ender3v3se.py"
+profile = "print_handy/printers/octoprint/ender3v3se.py"
 notes = "Despite the V3 name, the stock firmware is Marlin-based — the pinned Orca profile declares gcode_flavor marlin2 — so this is an OctoPrint preset, not a Klipper one; the printer has no Moonraker endpoint. Dimensions are the pinned Orca profile's printable area/height (OrcaSlicer v2.5.0-alpha, Creality profiles 02.03.02.87)."
 
 [[printer]]
@@ -203,7 +203,7 @@ kinematics = "Cartesian (moving bed)"
 bed_mm = [256.0, 256.0]
 max_height_mm = 256.0
 filament_slots = 1
-profile = "print_buddy/printers/bambulab/a1.py"
+profile = "print_handy/printers/bambulab/a1.py"
 notes = "Slicing, fit checks and G-code validation, plus opt-in read-only LAN status when configured. AMS Lite is not driven."
 
 [[printer]]
@@ -217,7 +217,7 @@ kinematics = "CoreXY"
 bed_mm = [256.0, 256.0]
 max_height_mm = 256.0
 filament_slots = 1
-profile = "print_buddy/printers/bambulab/p1s.py"
+profile = "print_handy/printers/bambulab/p1s.py"
 notes = "Slicing, fit checks and G-code validation, plus opt-in read-only LAN status when configured."
 
 [[printer]]
@@ -231,7 +231,7 @@ kinematics = "Cartesian (moving bed)"
 bed_mm = [180.0, 180.0]
 max_height_mm = 180.0
 filament_slots = 1
-profile = "print_buddy/printers/bambulab/a1mini.py"
+profile = "print_handy/printers/bambulab/a1mini.py"
 notes = "180 mm sibling of the A1 with an AMS Lite that is not driven. Same opt-in LAN path as every Bambu Lab model."
 
 [[printer]]
@@ -245,7 +245,7 @@ kinematics = "CoreXY"
 bed_mm = [256.0, 256.0]
 max_height_mm = 256.0
 filament_slots = 1
-profile = "print_buddy/printers/bambulab/p1p.py"
+profile = "print_handy/printers/bambulab/p1p.py"
 notes = "Open-frame P1/X1 platform printer; Orca slices to 250 mm with an 18 x 28 mm front-left exclusion. AMS is not driven."
 
 [[printer]]
@@ -259,7 +259,7 @@ kinematics = "CoreXY"
 bed_mm = [256.0, 256.0]
 max_height_mm = 256.0
 filament_slots = 1
-profile = "print_buddy/printers/bambulab/x1.py"
+profile = "print_handy/printers/bambulab/x1.py"
 notes = "Original X1; Orca slices to 250 mm with an 18 x 28 mm front-left exclusion. AMS is not driven."
 
 [[printer]]
@@ -273,7 +273,7 @@ kinematics = "CoreXY"
 bed_mm = [256.0, 256.0]
 max_height_mm = 256.0
 filament_slots = 1
-profile = "print_buddy/printers/bambulab/x1c.py"
+profile = "print_handy/printers/bambulab/x1c.py"
 notes = "X1 Carbon with hardened steel stock hotend; Orca slices to 250 mm with an 18 x 28 mm front-left exclusion. AMS is not driven."
 
 [[printer]]
@@ -287,7 +287,7 @@ kinematics = "CoreXY"
 bed_mm = [256.0, 256.0]
 max_height_mm = 256.0
 filament_slots = 1
-profile = "print_buddy/printers/bambulab/x1e.py"
+profile = "print_handy/printers/bambulab/x1e.py"
 notes = "Enterprise X1E with Ethernet and heated chamber (chamber not driven); Orca slices to 250 mm. AMS is not driven."
 
 [[printer]]
@@ -301,7 +301,7 @@ kinematics = "CoreXY"
 bed_mm = [256.0, 256.0]
 max_height_mm = 256.0
 filament_slots = 1
-profile = "print_buddy/printers/bambulab/p2s.py"
+profile = "print_handy/printers/bambulab/p2s.py"
 notes = "P1S successor; Orca uses the full 256 mm height and no bed exclusion. AMS 2 Pro is not driven beyond a single path."
 
 [[printer]]
@@ -315,7 +315,7 @@ kinematics = "CoreXY"
 bed_mm = [340.0, 320.0]
 max_height_mm = 340.0
 filament_slots = 1
-profile = "print_buddy/printers/bambulab/h2s.py"
+profile = "print_handy/printers/bambulab/h2s.py"
 notes = "Single-nozzle H2 model with a 350 C hotend. The dual-nozzle H2D and H2C are registered separately (#308, #356)."
 
 [[printer]]
@@ -329,7 +329,7 @@ kinematics = "CoreXY"
 bed_mm = [350.0, 320.0]
 max_height_mm = 325.0
 filament_slots = 1
-profile = "print_buddy/printers/bambulab/h2d.py"
+profile = "print_handy/printers/bambulab/h2d.py"
 notes = "Dual-nozzle flagship (two extruders). Print starts resolve AMS trays per filament slot (#308). The 350 mm width spans both tools; a single tool reaches 305 mm."
 
 [[printer]]
@@ -343,7 +343,7 @@ kinematics = "CoreXY"
 bed_mm = [350.0, 320.0]
 max_height_mm = 325.0
 filament_slots = 1
-profile = "print_buddy/printers/bambulab/h2dpro.py"
+profile = "print_handy/printers/bambulab/h2dpro.py"
 notes = "Pro variant of the dual-nozzle H2D, with its own Orca profiles and identity (#308)."
 
 [[printer]]
@@ -357,7 +357,7 @@ kinematics = "CoreXY"
 bed_mm = [256.0, 256.0]
 max_height_mm = 261.0
 filament_slots = 1
-profile = "print_buddy/printers/bambulab/x2d.py"
+profile = "print_handy/printers/bambulab/x2d.py"
 notes = "Dual-nozzle X-series model (two extruders). Print starts resolve AMS trays per filament slot (#308)."
 
 [[printer]]
@@ -371,7 +371,7 @@ kinematics = "CoreXY"
 bed_mm = [330.0, 320.0]
 max_height_mm = 325.0
 filament_slots = 1
-profile = "print_buddy/printers/bambulab/h2c.py"
+profile = "print_handy/printers/bambulab/h2c.py"
 notes = "Dual-nozzle H-series model (two extruders) with a 350 C hotend. Print starts resolve AMS trays per filament slot (#308). Registered from OrcaSlicer v2.5.0-alpha's BBL profiles (#356)."
 
 [[printer]]
@@ -385,7 +385,7 @@ kinematics = "Cartesian (moving bed)"
 bed_mm = [330.0, 320.0]
 max_height_mm = 325.0
 filament_slots = 1
-profile = "print_buddy/printers/bambulab/a2l.py"
+profile = "print_handy/printers/bambulab/a2l.py"
 notes = "Large-format A-series bed-slinger with a single 0.4 nozzle, as its OrcaSlicer profile declares; AMS Lite is not driven. Registered from OrcaSlicer v2.5.0-alpha's BBL profiles (#356)."
 
 [[printer]]
@@ -399,7 +399,7 @@ kinematics = "Cartesian (moving bed)"
 bed_mm = [250.0, 210.0]
 max_height_mm = 220.0
 filament_slots = 1
-profile = "print_buddy/printers/prusa/mk4s.py"
+profile = "print_handy/printers/prusa/mk4s.py"
 notes = "PrusaLink LAN (status, verified upload, gated start) when configured; otherwise slicing/checks/Discord delivery only. Not tested on hardware."
 [[printer]]
 key = "prusa.coreone"
@@ -412,7 +412,7 @@ kinematics = "CoreXY"
 bed_mm = [250.0, 220.0]
 max_height_mm = 270.0
 filament_slots = 1
-profile = "print_buddy/printers/prusa/coreone.py"
+profile = "print_handy/printers/prusa/coreone.py"
 notes = "Enclosed CoreXY on PrusaLink. Chamber is not driven. Not tested on hardware."
 [[printer]]
 key = "prusa.xl"
@@ -425,8 +425,8 @@ kinematics = "CoreXY"
 bed_mm = [360.0, 360.0]
 max_height_mm = 360.0
 filament_slots = 1
-profile = "print_buddy/printers/prusa/xl.py"
-notes = "Five toolheads; Print Buddy slices single-tool (tool 0) jobs only. PrusaLink as the other Prusa models."
+profile = "print_handy/printers/prusa/xl.py"
+notes = "Five toolheads; Print Handy slices single-tool (tool 0) jobs only. PrusaLink as the other Prusa models."
 [[printer]]
 key = "prusa.miniplus"
 label = "Prusa MINI+"
@@ -438,7 +438,7 @@ kinematics = "Cartesian (moving bed)"
 bed_mm = [180.0, 180.0]
 max_height_mm = 180.0
 filament_slots = 1
-profile = "print_buddy/printers/prusa/miniplus.py"
+profile = "print_handy/printers/prusa/miniplus.py"
 notes = "Runs Orca MINI profiles (printer_model Prusa MINI). PrusaLink as the other Prusa models."
 
 
@@ -453,7 +453,7 @@ kinematics = "Cartesian"
 bed_mm = [230.0, 230.0]
 max_height_mm = 265.0
 filament_slots = 1
-profile = "print_buddy/printers/elegoo/neptune4.py"
+profile = "print_handy/printers/elegoo/neptune4.py"
 notes = "Stock Klipper + Moonraker. Marketed bed is 235 x 235 mm; the pinned Orca profile's printable area is 230 x 230 mm and is what is recorded."
 
 [[printer]]
@@ -467,7 +467,7 @@ kinematics = "Cartesian"
 bed_mm = [230.0, 230.0]
 max_height_mm = 265.0
 filament_slots = 1
-profile = "print_buddy/printers/elegoo/neptune4pro.py"
+profile = "print_handy/printers/elegoo/neptune4pro.py"
 notes = "Stock Klipper + Moonraker. Marketed bed is 235 x 235 mm; the pinned Orca profile's printable area is 230 x 230 mm and is what is recorded."
 
 [[printer]]
@@ -481,7 +481,7 @@ kinematics = "Cartesian"
 bed_mm = [325.0, 325.0]
 max_height_mm = 385.0
 filament_slots = 1
-profile = "print_buddy/printers/elegoo/neptune4plus.py"
+profile = "print_handy/printers/elegoo/neptune4plus.py"
 notes = "Stock Klipper + Moonraker. Marketed bed is 320 x 320 mm; the pinned Orca profile's printable area is 325 x 325 mm and is what is recorded."
 
 [[printer]]
@@ -495,7 +495,7 @@ kinematics = "Cartesian"
 bed_mm = [426.0, 426.0]
 max_height_mm = 480.0
 filament_slots = 1
-profile = "print_buddy/printers/elegoo/neptune4max.py"
+profile = "print_handy/printers/elegoo/neptune4max.py"
 notes = "Stock Klipper + Moonraker. Marketed bed is 420 x 420 mm; the pinned Orca profile's printable area is 426 x 426 mm and is what is recorded."
 
 [[printer]]
@@ -509,7 +509,7 @@ kinematics = "CoreXY"
 bed_mm = [256.0, 256.0]
 max_height_mm = 256.0
 filament_slots = 1
-profile = "print_buddy/printers/elegoo_sdcp/centauricarbon.py"
+profile = "print_handy/printers/elegoo_sdcp/centauricarbon.py"
 notes = "Closed firmware; SDCP v3.0 LAN protocol (unauthenticated). Marketed bed is 260 x 260 mm; the pinned Orca profile's printable area is 256 x 256 mm and is what is recorded."
 
 [[printer]]
@@ -523,7 +523,7 @@ kinematics = "CoreXY"
 bed_mm = [245.0, 245.0]
 max_height_mm = 240.0
 filament_slots = 1
-profile = "print_buddy/printers/qidi/q1pro.py"
+profile = "print_handy/printers/qidi/q1pro.py"
 notes = "Stock Klipper + Moonraker. Enclosed CoreXY with an actively heated chamber (set by the template start code, not driven separately). The pinned Orca profile records a bed exclusion polygon along the back edge; not tested on hardware."
 
 [[printer]]
@@ -537,7 +537,7 @@ kinematics = "CoreXY"
 bed_mm = [280.0, 280.0]
 max_height_mm = 270.0
 filament_slots = 1
-profile = "print_buddy/printers/qidi/xplus3.py"
+profile = "print_handy/printers/qidi/xplus3.py"
 notes = "Stock Klipper + Moonraker. Enclosed CoreXY; not tested on hardware."
 
 [[printer]]
@@ -551,7 +551,7 @@ kinematics = "CoreXY"
 bed_mm = [325.0, 325.0]
 max_height_mm = 315.0
 filament_slots = 1
-profile = "print_buddy/printers/qidi/xmax3.py"
+profile = "print_handy/printers/qidi/xmax3.py"
 notes = "Stock Klipper + Moonraker. Enclosed CoreXY; not tested on hardware."
 
 [[printer]]
@@ -565,7 +565,7 @@ kinematics = "CoreXY"
 bed_mm = [175.0, 180.0]
 max_height_mm = 170.0
 filament_slots = 1
-profile = "print_buddy/printers/qidi/xsmart3.py"
+profile = "print_handy/printers/qidi/xsmart3.py"
 notes = "Stock Klipper + Moonraker. Marketed bed is 180 x 180 mm; the pinned Orca profile's printable area is 175 x 180 mm and is what is recorded. Not tested on hardware."
 
 [[printer]]
@@ -579,7 +579,7 @@ kinematics = "Cartesian (moving bed)"
 bed_mm = [220.0, 220.0]
 max_height_mm = 250.0
 filament_slots = 1
-profile = "print_buddy/printers/creality/ender3v3.py"
+profile = "print_handy/printers/creality/ender3v3.py"
 notes = "Creality OS (Klipper-based) + Moonraker. Open-frame bed-slinger; not tested on hardware. Marlin Enders are not this vendor — they use octoprint.marlin."
 
 [[printer]]
@@ -593,7 +593,7 @@ kinematics = "Cartesian (moving bed)"
 bed_mm = [220.0, 220.0]
 max_height_mm = 245.0
 filament_slots = 1
-profile = "print_buddy/printers/creality/ender3v3ke.py"
+profile = "print_handy/printers/creality/ender3v3ke.py"
 notes = "Creality OS (Klipper-based) + Moonraker. Its Orca start code is fully inline (no START_PRINT macro call); the adapter ships the template sequence verbatim. Not tested on hardware."
 
 [[printer]]
@@ -607,7 +607,7 @@ kinematics = "Cartesian (moving bed)"
 bed_mm = [300.0, 300.0]
 max_height_mm = 330.0
 filament_slots = 1
-profile = "print_buddy/printers/creality/ender3v3plus.py"
+profile = "print_handy/printers/creality/ender3v3plus.py"
 notes = "Creality OS (Klipper-based) + Moonraker. Open-frame bed-slinger; not tested on hardware. Marlin Enders are not this vendor — they use octoprint.marlin."
 
 [[printer]]
@@ -621,7 +621,7 @@ kinematics = "CoreXY"
 bed_mm = [220.0, 220.0]
 max_height_mm = 250.0
 filament_slots = 1
-profile = "print_buddy/printers/creality/k1.py"
+profile = "print_handy/printers/creality/k1.py"
 notes = "Creality OS (Klipper-based) + Moonraker. Enclosed CoreXY; not tested on hardware."
 
 [[printer]]
@@ -635,7 +635,7 @@ kinematics = "CoreXY"
 bed_mm = [220.0, 220.0]
 max_height_mm = 250.0
 filament_slots = 1
-profile = "print_buddy/printers/creality/k1c.py"
+profile = "print_handy/printers/creality/k1c.py"
 notes = "Creality OS (Klipper-based) + Moonraker. Enclosed CoreXY; not tested on hardware."
 
 [[printer]]
@@ -649,5 +649,5 @@ kinematics = "CoreXY"
 bed_mm = [300.0, 300.0]
 max_height_mm = 300.0
 filament_slots = 1
-profile = "print_buddy/printers/creality/k1max.py"
+profile = "print_handy/printers/creality/k1max.py"
 notes = "Creality OS (Klipper-based) + Moonraker. Enclosed CoreXY; not tested on hardware."

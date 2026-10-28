@@ -5,7 +5,7 @@ Printer support is organised **vendor first, then printer**. A vendor profile ho
 ## Layout
 
 ```
-print_buddy/printers/
+print_handy/printers/
   base.py                VendorProfile, PrinterModel, PrinterAdapter, start_code_problems
   flashforge/
     __init__.py          VENDOR  Flashforge: Moonraker, ZMod START_PRINT start code, OrcaSlicer, .gcode
@@ -100,7 +100,7 @@ Settings merge in this order, later wins key by key:
 1. vendor `settings`
 2. printer `settings`
 3. `config/home.yaml`
-4. `config/local.yaml` (or `PRINT_BUDDY_CONFIG`)
+4. `config/local.yaml` (or `PRINT_HANDY_CONFIG`)
 5. environment variables
 
 The loaded settings also carry `printer.vendor`, `printer.slicer` and `delivery.methods`.
@@ -134,7 +134,7 @@ Combinations the vendor does not offer stop startup and name the setting. Exampl
 A new Sovol printer is one module plus its Orca templates. Everything not listed comes from the Sovol vendor profile:
 
 ```python
-# print_buddy/printers/sovol/sv08.py
+# print_handy/printers/sovol/sv08.py
 """Sovol SV08 on stock Klipper. Templates: templates/orca/sovol_sv08."""
 from ..base import PrinterModel
 from ..klipper.adapter import KlipperAdapter
@@ -152,7 +152,7 @@ MODEL = PrinterModel(
 )
 ```
 
-Then add `print_buddy/templates/orca/sovol_sv08/{machine,process,filament}.json` and select it with `printer: {model: sovol.sv08}`. Discovery registers the new module automatically. A module that leaves out `vendor=` inherits its package's `VENDOR`. A module that names another vendor is refused.
+Then add `print_handy/templates/orca/sovol_sv08/{machine,process,filament}.json` and select it with `printer: {model: sovol.sv08}`. Discovery registers the new module automatically. A module that leaves out `vendor=` inherits its package's `VENDOR`. A module that names another vendor is refused.
 
 A new vendor is a package with an `__init__.py` defining `VENDOR = VendorProfile(key="<package name>", ...)`. `VendorProfile` checks its own consistency. An offline vendor cannot offer `printer`, and only Bambu start code can offer `bambu_handoff`.
 
@@ -179,11 +179,11 @@ Slicer choice, file delivery, printer handoff and print authorization are separa
 
 - A file under the cap is attached as is.
 - A larger `.gcode` is zipped (G-code usually shrinks 4 to 6 times) and the zip is sent if it fits.
-- If it still does not fit, or it is already compressed (`.3mf`), it is not sent. The reply gives its size and its path on the Print Buddy host.
+- If it still does not fit, or it is already compressed (`.3mf`), it is not sent. The reply gives its size and its path on the Print Handy host.
 
 Every file is one message with one `MEDIA:` attachment, labelled "Plate n of m". A summary line follows: "Sent n of m file(s) here. Too big for Discord: ... Failed: ...".
 
-**Said before the button, not after (#272).** The post-slice menu sizes each file before it offers "Send the files here". A plain `.gcode` over the cap is deflated once, in memory, to learn what its zip would weigh; a `.gcode.3mf` package counts as is. A file that cannot fit in any form is named in the same message with its size, the cap and its path on the Print Buddy host (for a Bambu package, `<archive>/<job>/sliced/.../bambu/plate_1.gcode.3mf`), and when nothing fits the button is left out, so the operator never picks a download that fails. Files under the cap are attached exactly as before. The per-file check at send time stays as a safety net for a borderline file. The cap is [`discord.upload_max_bytes`](SETTINGS.md) (`PRINT_BUDDY__DISCORD__UPLOAD_MAX_BYTES`); raise it only when your server's boost level allows larger uploads. Large files stay on the host; Print Buddy has no download server, so fetch them from the archive path it names.
+**Said before the button, not after (#272).** The post-slice menu sizes each file before it offers "Send the files here". A plain `.gcode` over the cap is deflated once, in memory, to learn what its zip would weigh; a `.gcode.3mf` package counts as is. A file that cannot fit in any form is named in the same message with its size, the cap and its path on the Print Handy host (for a Bambu package, `<archive>/<job>/sliced/.../bambu/plate_1.gcode.3mf`), and when nothing fits the button is left out, so the operator never picks a download that fails. Files under the cap are attached exactly as before. The per-file check at send time stays as a safety net for a borderline file. The cap is [`discord.upload_max_bytes`](SETTINGS.md) (`PRINT_HANDY__DISCORD__UPLOAD_MAX_BYTES`); raise it only when your server's boost level allows larger uploads. Large files stay on the host; Print Handy has no download server, so fetch them from the archive path it names.
 
 **Failures and retries.** A failed upload (the adapter reports `success=False`, or the send raises) is reported with the error, and the option stays in the menu. A retry sends only the files not yet delivered. Too-big files cannot be fixed by a retry, so they count as reported and the option closes. Every attempt is recorded under `deliveries` in the intake receipt. Expiry and cancellation behave as before.
 
@@ -195,7 +195,7 @@ Every file is one message with one `MEDIA:` attachment, labelled "Plate n of m".
 | Start-code guard | Implemented. After slicing, and again before packaging, every G-code line for a Bambu printer must be a plain G, M or T code. Klipper or ZMod macros (`PRINT_START`, `START_PRINT ... MESH=`, `CHANGE_ZCOLOR`, `LOAD_ZOFFSET`, `BED_MESH_*`) block the slice or the package |
 | `.gcode.3mf` packaging | Implemented, offline and deterministic. Contents: `Metadata/plate_<n>.gcode`, its upper-case MD5 in `Metadata/plate_<n>.gcode.md5`, `Metadata/slice_info.config` with the plate index and nozzle, and an empty `3D/3dmodel.model`, plus the plate previews `Metadata/plate_<n>.png` (512 px) and `Metadata/plate_<n>_small.png` (128 px) from Orca's embedded thumbnail or an offline render of the sliced geometry (#275; `top_<n>.png` and `pick_<n>.png` are not written), laid out the way Bambu Studio exports a sliced plate. **Not yet verified on Bambu hardware or in Bambu Studio.** `printer_model_id` is not written |
 | Discord delivery | Implemented. Bambu Lab's primary format is `.gcode.3mf`, so "Send the files here" sends the packages |
-| Bambu Studio as the primary slicer | Implemented, opt-in with `printer.slicer: bambu_studio`, allowed only by the Bambu Lab profile. Runs the configured `[bambu] command` (Flathub Bambu Studio with `--unshare=network`) with the same CLI flags as the existing fallback: `--datadir`, `--load-settings`, `--load-filaments`, `--arrange`/`--orient`, `--slice 0`, `--outputdir`. Orca is not run and there is no fallback. Every Print Buddy guard still applies to its output. The real-slicer CI job covers OrcaSlicer only, so this path is tested with a mocked CLI |
+| Bambu Studio as the primary slicer | Implemented, opt-in with `printer.slicer: bambu_studio`, allowed only by the Bambu Lab profile. Runs the configured `[bambu] command` (Flathub Bambu Studio with `--unshare=network`) with the same CLI flags as the existing fallback: `--datadir`, `--load-settings`, `--load-filaments`, `--arrange`/`--orient`, `--slice 0`, `--outputdir`. Orca is not run and there is no fallback. Every Print Handy guard still applies to its output. The real-slicer CI job covers OrcaSlicer only, so this path is tested with a mocked CLI |
 | LAN upload | Implemented opt-in (#187 stage c): FTPS upload with size readback, used by the gated LAN print path. Cloud upload is unsupported. Read-only LAN MQTT *status* is separate — see the telemetry row in [BAMBU-LAB](BAMBU-LAB.md) |
 | Starting a print | Opt-in (#187 stage d): the Start button appears only when the operator adds `printer` to `[delivery] methods`, with LAN configured and the printer in Developer Mode; the start then runs every gate (readiness twice, bed-clear approval, verified upload, telemetry confirmation). Otherwise no Start button is offered — open the package in Bambu Studio or Bambu Handy, or copy it to the SD card |
 | Pausing or stopping a print | Commands exist on the LAN client; the external Discord print-control module does not call them yet |

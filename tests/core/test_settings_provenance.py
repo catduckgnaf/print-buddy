@@ -13,9 +13,9 @@ from pathlib import Path
 
 import pytest
 
-from print_buddy import settings
-from print_buddy.core import orca_adapter, slice_guard
-from print_buddy.printers.flashforge.ad5x import MODEL
+from print_handy import settings
+from print_handy.core import orca_adapter, slice_guard
+from print_handy.printers.flashforge.ad5x import MODEL
 
 GOOD_GCODE = (
     "; estimated printing time = 1h 2m\n"
@@ -95,7 +95,7 @@ def test_slice_guard_passes_normal_lift_footer():
 
 def test_ad5x_filament_template_resolves_to_normal_lift():
     """(d) The AD5X filament template resolves to Normal Lift."""
-    template_dir = settings.ROOT / "print_buddy" / "templates" / "orca" / MODEL.templates
+    template_dir = settings.ROOT / "print_handy" / "templates" / "orca" / MODEL.templates
     filament_path = template_dir / "filament.json"
     assert filament_path.is_file(), f"Expected template file at {filament_path}"
 
@@ -105,7 +105,7 @@ def test_ad5x_filament_template_resolves_to_normal_lift():
 
 
 def test_is_allowed_filament_id_allowlist():
-    """Verify that Print Buddy generated Hermes slot IDs and own template IDs pass the allowlist."""
+    """Verify that Print Handy generated Hermes slot IDs and own template IDs pass the allowlist."""
     own = {"Flashforge Generic PLA"}
     assert slice_guard.is_allowed_filament_id("Flashforge Generic PLA", own)
     assert slice_guard.is_allowed_filament_id('"Flashforge Generic PLA"', own)

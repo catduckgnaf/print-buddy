@@ -1,8 +1,8 @@
 """Scale and copy-count choices offered in Discord. No slicer: fit checks are stubbed."""
 import unittest
 
-from print_buddy.core import orca_adapter as oa
-from print_buddy.core import quantity_selection as qs
+from print_handy.core import orca_adapter as oa
+from print_handy.core import quantity_selection as qs
 import math
 
 
@@ -39,7 +39,7 @@ class FeatureClearanceTests(unittest.TestCase):
         self.assertIsNone(capacity.call_args.kwargs['brim_policy'])
 
     def test_fit_question_names_part_extent_options_and_future_cut_issue(self):
-        from print_buddy.core.prepared_intake import fit_question
+        from print_handy.core.prepared_intake import fit_question
         text = fit_question('Model', {'scales': [0.95], 'parts': [{'name': 'Stand', 'extent_mm': [130, 230, 30],
                              'orientations_checked': ['authored XY', 'best yaw 90°']} ]})
         self.assertIn('Stand (130 × 230 × 30 mm)', text)
@@ -48,7 +48,7 @@ class FeatureClearanceTests(unittest.TestCase):
         self.assertNotIn('issues/83', text)  # no GitHub links or option essays in chat
 
     def test_fit_question_explains_an_individually_oversized_part(self):
-        from print_buddy.core.prepared_intake import fit_question
+        from print_handy.core.prepared_intake import fit_question
         text = fit_question('Model', {'scales': [0.956], 'parts': [{
             'name': 'Stand', 'extent_mm': [130, 230, 30], 'fits_full_size': False,
             'blocking_reason': 'footprint 130 x 230 mm exceeds the usable 204 x 204 mm bed '
@@ -59,7 +59,7 @@ class FeatureClearanceTests(unittest.TestCase):
         self.assertIn('95.6%', text)  # shrink stays a separate, labelled option
 
     def test_fit_question_does_not_call_a_yaw_fitting_part_blocking(self):
-        from print_buddy.core.prepared_intake import fit_question
+        from print_handy.core.prepared_intake import fit_question
         text = fit_question('Model', {'scales': [], 'parts': [{
             'name': 'Rail', 'extent_mm': [230, 50, 20], 'fits_full_size': True,
             'blocking_reason': None}]})
@@ -67,7 +67,7 @@ class FeatureClearanceTests(unittest.TestCase):
         self.assertNotIn('does not shrink this part', text)
 
     def test_painted_scale_search_uses_small_coarse_ladder(self):
-        from print_buddy.core.model_job import PAINTED_SCALE_STEPS
+        from print_handy.core.model_job import PAINTED_SCALE_STEPS
         self.assertLessEqual(len(PAINTED_SCALE_STEPS), 12)
         self.assertEqual(PAINTED_SCALE_STEPS[0], 1.0)
         self.assertEqual(PAINTED_SCALE_STEPS[-1], 0.5)
@@ -176,7 +176,7 @@ class MultiPlateFitFailureTests(unittest.TestCase):
         import tempfile
         from pathlib import Path
         from unittest import mock
-        from print_buddy.core import model_job as mj
+        from print_handy.core import model_job as mj
         with tempfile.TemporaryDirectory() as tmp:
             source = Path(tmp) / 'broken.3mf'
             source.write_bytes(b'not a zip')

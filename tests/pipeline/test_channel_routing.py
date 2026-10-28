@@ -14,8 +14,8 @@ from types import SimpleNamespace as S
 
 import pytest
 
-from print_buddy import settings
-from print_buddy.core import prepared_intake
+from print_handy import settings
+from print_handy.core import prepared_intake
 from .test_prepared_intake import Adapter, env  # noqa: F401  (env is the shared harness fixture)
 from .test_color_intake import state
 

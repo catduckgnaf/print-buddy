@@ -2,16 +2,16 @@
 
 [Documentation home](README.md) · [Discord bot setup](DISCORD-BOT-SETUP.md) · [Standalone bot](STANDALONE.md)
 
-Print Buddy has two guided Discord flows, available in both runtimes (the standalone bot and
+Print Handy has two guided Discord flows, available in both runtimes (the standalone bot and
 the Hermes print-feedback plugin) to allowed users in the print channel:
 
 | Command | What it does |
 | --- | --- |
-| `/print-buddy setup` | Start or resume guided setup, one small question at a time |
-| `/print-buddy debugging` | Run read-only diagnostics and report redacted, actionable findings |
-| `/print-buddy status` | Show the saved setup checklist |
-| `/print-buddy cancel` | Pause setup; the saved checklist is kept |
-| `/print-buddy help` | List these commands |
+| `/print-handy setup` | Start or resume guided setup, one small question at a time |
+| `/print-handy debugging` | Run read-only diagnostics and report redacted, actionable findings |
+| `/print-handy status` | Show the saved setup checklist |
+| `/print-handy cancel` | Pause setup; the saved checklist is kept |
+| `/print-handy help` | List these commands |
 
 Typing the same text works, like the other commands. Neither flow prints, moves, heats, or
 authorizes a printer, and neither flow can start one.
@@ -42,11 +42,11 @@ Setup asks seven small steps, validating each answer before moving on:
 - After each answer the bot replies with the next question and a checklist showing what is
   done, what is current, and what remains.
 - The checklist is saved in the state folder (`guided-setup.json`, file mode 600) after
-  every step. `/print-buddy cancel` pauses setup without losing it; a bot restart does not
-  lose it either. `/print-buddy setup` resumes at the first unfinished step, and
-  `/print-buddy setup restart` discards the saved answers and starts over.
+  every step. `/print-handy cancel` pauses setup without losing it; a bot restart does not
+  lose it either. `/print-handy setup` resumes at the first unfinished step, and
+  `/print-handy setup restart` discards the saved answers and starts over.
 - A session that has been idle for 24 hours is timed out: a plain reply after that is not
-  treated as an answer. Run `/print-buddy setup` to resume the saved checklist.
+  treated as an answer. Run `/print-handy setup` to resume the saved checklist.
 - An invalid answer (a non-numeric ID, a bad URL, an unknown model key) is rejected with the
   reason and the same question is asked again; the step does not advance.
 
@@ -66,14 +66,14 @@ repeated back) and offers four replies:
   channel binding and state folder; Spoolman stays one shared inventory.
 - `manual` — nothing is written; the bot returns precise manual steps naming the file,
   sections, and keys to set, where the token belongs, and the offline checks to run.
-- `/print-buddy cancel` — leave setup unfinished and resume later.
+- `/print-handy cancel` — leave setup unfinished and resume later.
 
 Setup never installs software, restarts a service, or changes network exposure. Those stay
 manual, deliberate actions from the install guides.
 
 ## Debugging
 
-`/print-buddy debugging` runs these read-only checks and reports each as ok, warning,
+`/print-handy debugging` runs these read-only checks and reports each as ok, warning,
 failed, or skipped, with a concrete next step for anything that needs one:
 
 - **Configuration** — the settings load and validate; the failing key is named when not.
@@ -105,7 +105,7 @@ Every line of the report is redacted before it is sent: token and password value
 removed, secret-shaped values and Discord-token-shaped strings are removed, private
 filesystem paths are replaced with a placeholder, and long numeric identifiers (channel
 and user IDs) are masked. Exact state/log paths therefore do not appear in Discord; run
-`python3 -m print_buddy.bot check` locally when you need the exact path.
+`python3 -m print_handy.bot check` locally when you need the exact path.
 
 ## How this relates to the CLI checks
 
@@ -113,10 +113,10 @@ and user IDs) are masked. Exact state/log paths therefore do not appear in Disco
   its `/config` page renders the catalogued settings with their source layer, previews a
   change before writing, and applies the same settings validation. It does not replace
   this guided flow, and neither surface collects secret values.
-- `python3 -m print_buddy.setup_wizard` is the full terminal installer wizard (printer
+- `python3 -m print_handy.setup_wizard` is the full terminal installer wizard (printer
   registry menus, service installs with their own confirmations). The Discord setup flow
   covers initial configuration only and reuses the wizard's validation and config merge.
-- `python3 -m print_buddy.bot check` validates the standalone bot offline.
-- `python3 -m print_buddy.doctor` remains the machine-level check; unlike `/print-buddy
+- `python3 -m print_handy.bot check` validates the standalone bot offline.
+- `python3 -m print_handy.doctor` remains the machine-level check; unlike `/print-handy
   debugging` it is a terminal command whose output is not redacted for Discord, and it can
   contact configured services — run it only where those contacts are authorized.

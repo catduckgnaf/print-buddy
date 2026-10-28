@@ -5,7 +5,7 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
-from print_buddy import diagnostics_bundle, settings
+from print_handy import diagnostics_bundle, settings
 
 
 def _data(tmp, extra_toml=""):
@@ -20,9 +20,9 @@ class BundleTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             data = _data(tmp)
             with mock.patch.dict(os.environ, {"DISCORD_BOT_TOKEN": secret,
-                                              "PRINT_BUDDY_IMAGE_DIGEST": "sha256:deadbeef"}):
+                                              "PRINT_HANDY_IMAGE_DIGEST": "sha256:deadbeef"}):
                 text = diagnostics_bundle.build_bundle(data, include_doctor=False)
-        for heading in ("# Print Buddy diagnostics bundle", "## Configuration summary",
+        for heading in ("# Print Handy diagnostics bundle", "## Configuration summary",
                         "## Printers", "## Doctor", "## Recent log tail"):
             self.assertIn(heading, text)
         self.assertIn("sha256:deadbeef", text)

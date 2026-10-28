@@ -9,11 +9,11 @@ import re
 
 import pytest
 
-from print_buddy import printers, settings
-from print_buddy.printers.bambulab import profiles as _shared
-from print_buddy.printers.creality import VENDOR as CREALITY_VENDOR
-from print_buddy.printers.creality import facts as creality_facts
-from print_buddy.printers.creality import profiles
+from print_handy import printers, settings
+from print_handy.printers.bambulab import profiles as _shared
+from print_handy.printers.creality import VENDOR as CREALITY_VENDOR
+from print_handy.printers.creality import facts as creality_facts
+from print_handy.printers.creality import profiles
 
 from . import creality_fixture as fixture
 
@@ -28,7 +28,7 @@ MODELS = {
 
 
 def config_for(key, hermes=fixture.HERMES, environ=None):
-    env = {"PRINT_BUDDY__PRINTER__MODEL": key, "PRINT_BUDDY__PATHS__HERMES_HOME": str(hermes),
+    env = {"PRINT_HANDY__PRINTER__MODEL": key, "PRINT_HANDY__PATHS__HERMES_HOME": str(hermes),
            **(environ or {})}
     return settings.load(local=False, environ=env)
 
@@ -53,7 +53,7 @@ def test_creality_registration_and_defaults(key):
     assert cfg["printer"]["slicer"] == "orca" and cfg["printer"]["firmware"] == "Klipper"
     assert cfg["delivery"]["methods"] == ["printer"]  # Moonraker path: printer is the default
     with pytest.raises(settings.SettingsError, match="not supported by model"):
-        config_for(key, environ={"PRINT_BUDDY__PRINTER__NOZZLE_DIAMETER_MM": "0.6"})
+        config_for(key, environ={"PRINT_HANDY__PRINTER__NOZZLE_DIAMETER_MM": "0.6"})
 
 
 # --------------------------------------------------------------------------- profiles
@@ -82,7 +82,7 @@ def test_creality_fixture_profile_install(key, monkeypatch):
 def test_creality_profiles_refuse_unrecorded_identity(tmp_path):
     a = adapter_for("creality.k1")
     root = fixture.resources(tmp_path / "resources", creality_facts.K1)
-    with pytest.raises(profiles.ProfileError, match="not a version Print Buddy has checked"):
+    with pytest.raises(profiles.ProfileError, match="not a version Print Handy has checked"):
         profiles.install(a, root)
 
 

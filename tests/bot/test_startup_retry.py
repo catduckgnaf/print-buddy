@@ -9,8 +9,8 @@ import discord
 import pytest
 from aiohttp.client_reqrep import ConnectionKey
 
-from print_buddy.bot import client
-from print_buddy.hermes import _config
+from print_handy.bot import client
+from print_handy.hermes import _config
 
 
 @pytest.fixture(autouse=True)
@@ -39,7 +39,7 @@ def _bot_factory(monkeypatch, outcomes):
             if isinstance(outcome, BaseException):
                 raise outcome
 
-    monkeypatch.setattr(client, "PrintBuddyBot", FakeBot)
+    monkeypatch.setattr(client, "PrintHandyBot", FakeBot)
     return instances
 
 

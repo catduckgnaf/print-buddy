@@ -18,18 +18,18 @@ from unittest import mock
 
 import pytest
 
-from print_buddy import settings
-from print_buddy.bot import __main__ as bot_main
-from print_buddy.bot import matrix, matrix_rest, runtime
-from print_buddy.bot.router import Router
-from print_buddy.core import link_intake, prompts
-from print_buddy.hermes import _config
+from print_handy import settings
+from print_handy.bot import __main__ as bot_main
+from print_handy.bot import matrix, matrix_rest, runtime
+from print_handy.bot.router import Router
+from print_handy.core import link_intake, prompts
+from print_handy.hermes import _config
 
 HOMESERVER = "https://matrix.example.org"
 TOKEN = "mx-test-access-token"
 ROOM = "!prints:example.org"
 USER = "@catduck:example.org"
-BOT = "@printbuddy:example.org"
+BOT = "@printhandy:example.org"
 MXC = "mxc://example.org/media123"
 
 
@@ -420,7 +420,7 @@ def test_file_download_uses_the_doc_prefix_the_intake_expects(cfg, tmp_path):
 
 
 def test_plugin_gate_serves_matrix_sources():
-    from print_buddy.bot.router import load_plugin
+    from print_handy.bot.router import load_plugin
     assert "matrix" in load_plugin().BOT_PLATFORMS
 
 
@@ -460,8 +460,8 @@ def test_matrix_adapter_drives_a_full_intake_through_the_real_handlers(cfg, tmp_
             await client.handle_event(text_event(answer, event_id=f"$a-{expected}"))
         return await task
 
-    with mock.patch("print_buddy.core.prepared_intake.prepare_link", fake_prepare), \
-            mock.patch("print_buddy.core.printer_state.load", return_value={}):
+    with mock.patch("print_handy.core.prepared_intake.prepare_link", fake_prepare), \
+            mock.patch("print_handy.core.printer_state.load", return_value={}):
         out = run(flow())
     assert out == {"action": "skip", "reason": "test intake"}
     assert seen["adapter"] is core.adapter and seen["answers"] == (1, 0)
@@ -478,17 +478,17 @@ def test_matrix_settings_defaults_and_validation():
     assert data["matrix"] == {"homeserver_url": "", "access_token_env": "MATRIX_ACCESS_TOKEN",
                               "room_id": "", "allowed_user_ids": "", "approval_user_id": "",
                               "bot_user_id": "", "upload_max_bytes": 50_000_000}
-    data = settings.load(local=False, environ={"PRINT_BUDDY__MATRIX__ROOM_ID": ROOM,
-                                               "PRINT_BUDDY__MATRIX__ALLOWED_USER_IDS": f"{USER}, @other:example.org",
-                                               "PRINT_BUDDY__MATRIX__HOMESERVER_URL": "https://matrix.org/"})
+    data = settings.load(local=False, environ={"PRINT_HANDY__MATRIX__ROOM_ID": ROOM,
+                                               "PRINT_HANDY__MATRIX__ALLOWED_USER_IDS": f"{USER}, @other:example.org",
+                                               "PRINT_HANDY__MATRIX__HOMESERVER_URL": "https://matrix.org/"})
     assert data["matrix"]["room_id"] == ROOM and data["matrix"]["homeserver_url"] == "https://matrix.org"
     assert settings.matrix_user_ids(data["matrix"]["allowed_user_ids"]) == [USER, "@other:example.org"]
-    for env, match in (({"PRINT_BUDDY__MATRIX__ALLOWED_USER_IDS": "424242"}, "full Matrix user IDs"),
-                       ({"PRINT_BUDDY__MATRIX__ROOM_ID": "prints:example.org"}, "starting with '!'"),
-                       ({"PRINT_BUDDY__MATRIX__HOMESERVER_URL": "matrix.org"}, "homeserver_url"),
-                       ({"PRINT_BUDDY__MATRIX__ACCESS_TOKEN_ENV": "not a name"}, "access_token_env"),
-                       ({"PRINT_BUDDY__MATRIX__BOT_USER_ID": "printbuddy"}, "bot_user_id"),
-                       ({"PRINT_BUDDY__MATRIX__UPLOAD_MAX_BYTES": "0"}, "upload_max_bytes")):
+    for env, match in (({"PRINT_HANDY__MATRIX__ALLOWED_USER_IDS": "424242"}, "full Matrix user IDs"),
+                       ({"PRINT_HANDY__MATRIX__ROOM_ID": "prints:example.org"}, "starting with '!'"),
+                       ({"PRINT_HANDY__MATRIX__HOMESERVER_URL": "matrix.org"}, "homeserver_url"),
+                       ({"PRINT_HANDY__MATRIX__ACCESS_TOKEN_ENV": "not a name"}, "access_token_env"),
+                       ({"PRINT_HANDY__MATRIX__BOT_USER_ID": "printhandy"}, "bot_user_id"),
+                       ({"PRINT_HANDY__MATRIX__UPLOAD_MAX_BYTES": "0"}, "upload_max_bytes")):
         with pytest.raises(settings.SettingsError, match=match):
             settings.load(local=False, environ=env)
 
@@ -508,7 +508,7 @@ def test_a_config_without_a_matrix_section_loads_unchanged(tmp_path):
 
 
 def test_listener_post_routes_to_matrix_in_standalone_mode(monkeypatch):
-    from print_buddy.hermes import moonraker_event_listener as mel
+    from print_handy.hermes import moonraker_event_listener as mel
     sent = []
     monkeypatch.setitem(_config.cfg()["bot"], "mode", "standalone")
     monkeypatch.setitem(_config.cfg()["bot"], "platform", "matrix")
@@ -516,9 +516,9 @@ def test_listener_post_routes_to_matrix_in_standalone_mode(monkeypatch):
     monkeypatch.setitem(_config.cfg()["matrix"], "homeserver_url", HOMESERVER)
     monkeypatch.setattr(mel, "_profile_env_value",
                         lambda name: TOKEN if name == "MATRIX_ACCESS_TOKEN" else "")
-    monkeypatch.setattr("print_buddy.bot.matrix_rest.send",
+    monkeypatch.setattr("print_handy.bot.matrix_rest.send",
                         lambda homeserver, token, room, text: sent.append((homeserver, token, room, text)) or (True, "$e1"))
-    monkeypatch.setattr("print_buddy.bot.rest.send",
+    monkeypatch.setattr("print_handy.bot.rest.send",
                         lambda *a, **k: (_ for _ in ()).throw(AssertionError("Discord REST used")))
     with mock.patch.object(mel.subprocess, "run", side_effect=AssertionError("hermes send was called")):
         assert mel.post("Print started: cube") is True
@@ -526,18 +526,18 @@ def test_listener_post_routes_to_matrix_in_standalone_mode(monkeypatch):
 
 
 def test_listener_alert_buttons_degrade_to_plain_text_on_matrix(monkeypatch):
-    from print_buddy.hermes import moonraker_event_listener as mel
+    from print_handy.hermes import moonraker_event_listener as mel
     monkeypatch.setitem(_config.cfg()["bot"], "mode", "standalone")
     monkeypatch.setitem(_config.cfg()["bot"], "platform", "matrix")
     monkeypatch.setattr(mel, "post", lambda message: True)
-    with mock.patch("print_buddy.hermes.print_alert_buttons.post_with_buttons",
+    with mock.patch("print_handy.hermes.print_alert_buttons.post_with_buttons",
                     side_effect=AssertionError("Discord buttons used")):
         assert mel.post_alert("Print paused", "paused", "cube.gcode") is True
     assert mel.post_plate_picker("plan-1") is True
 
 
 def test_delivery_upload_limit_follows_the_platform(cfg):
-    from print_buddy.core import delivery
+    from print_handy.core import delivery
     cfg["matrix"]["upload_max_bytes"] = 12_345
     assert delivery.upload_limit(cfg) == 12_345
     cfg["bot"]["platform"] = "discord"

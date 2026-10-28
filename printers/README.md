@@ -1,10 +1,10 @@
 # Printer registry
 
-Root-level data index of the printers Print Buddy knows about (issue #169).
+Root-level data index of the printers Print Handy knows about (issue #169).
 
 The executable printer profiles stay where they are —
-`print_buddy/printers/<vendor>/<printer>.py`, one `MODEL` per file, discovered by
-`print_buddy/printers/__init__.py`. Moving that code would break every import,
+`print_handy/printers/<vendor>/<printer>.py`, one `MODEL` per file, discovered by
+`print_handy/printers/__init__.py`. Moving that code would break every import,
 config key and template path for no user benefit. This registry is the
 discoverable front door to those profiles: hardware facts and firmware family in
 one place, for lookups, troubleshooting and humans browsing the repository.
@@ -17,10 +17,10 @@ one place, for lookups, troubleshooting and humans browsing the repository.
 | --- | --- |
 | `key` | The `vendor.printer` model key, identical to the profile's `MODEL.key` and the `[printer] model` config value. |
 | `label` | Display name, identical to `MODEL.label`. |
-| `vendor` | The vendor package name under `print_buddy/printers/`. |
+| `vendor` | The vendor package name under `print_handy/printers/`. |
 | `firmware` | The firmware string from the model's own defaults. |
 | `firmware_family` | Lookup family in `../firmware/commands.toml`: `zmod`, `klipper`, `marlin`, or `none` when no command registry exists for it yet. |
-| `connection` | How Print Buddy reaches the printer (the vendor profile's connection). |
+| `connection` | How Print Handy reaches the printer (the vendor profile's connection). |
 | `kinematics` | Motion system, or `unspecified` for the generic placeholder profiles. |
 | `bed_mm`, `max_height_mm` | Usable print area and height from the model's defaults. |
 | `filament_slots` | Independent filament paths the profile drives. |

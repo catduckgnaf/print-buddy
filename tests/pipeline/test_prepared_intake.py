@@ -13,10 +13,10 @@ from types import SimpleNamespace as S
 
 import pytest
 
-from print_buddy.core import model_job  # noqa: E402
-from print_buddy.core import prepared_intake  # noqa: E402
-from print_buddy.core.background_slice import slice_binding  # noqa: E402
-from print_buddy.core.slice_recipe import binding_sha256  # noqa: E402
+from print_handy.core import model_job  # noqa: E402
+from print_handy.core import prepared_intake  # noqa: E402
+from print_handy.core.background_slice import slice_binding  # noqa: E402
+from print_handy.core.slice_recipe import binding_sha256  # noqa: E402
 from .helpers import external  # noqa: E402
 print_next = external("print_next")
 from .test_color_intake import source, state  # noqa: E402
@@ -98,7 +98,7 @@ def env(tmp_path, monkeypatch):
     monkeypatch.setattr(model_job, 'audit', lambda path: {'plates': 1})
     # This fixture's synthetic 3MF intentionally lacks triangles; these intake tests
     # exercise approvals/lifecycle, so model a separately verified one-copy fit.
-    from print_buddy.core import orca_adapter
+    from print_handy.core import orca_adapter
     monkeypatch.setattr(orca_adapter, 'orca_plate_capacity', lambda path, st: 1)
     sliced = []
     kept = _Kept(sliced)
@@ -159,7 +159,7 @@ def final_choices(adapter):
 
 
 def test_resource_refusal_precedes_audit_and_color_prompts(env, monkeypatch):
-    from print_buddy.core import intake_resources
+    from print_handy.core import intake_resources
     monkeypatch.setattr(intake_resources, 'MAX_XML_BYTES', 1)
 
     def unexpected_audit(path):
@@ -644,7 +644,7 @@ def test_intake_spool_weights_prefers_spoolman_then_slot_record_never_guesses():
 
 
 def test_color_save_prompt_shows_spool_projection_and_estimate_before_print_choice(env, monkeypatch):
-    from print_buddy.core import source_colors
+    from print_handy.core import source_colors
     real = source_colors.inventory
     monkeypatch.setattr(source_colors, 'inventory',
                         lambda path: {**real(path), 'filament_stats': {'total_g': 25, 'total_m': 8, 'extruders': {}}})
@@ -727,7 +727,7 @@ def test_preview_does_no_printer_or_network_io(env, monkeypatch):
     'How many fit? https://makerworld.com/en/models/3382409-miniature-baroque-frame#profileId-3848581',
 ])
 def test_model_question_link_is_still_recognized(text):
-    from print_buddy.core.link_intake import model_link
+    from print_handy.core.link_intake import model_link
     assert model_link(text) == 'https://makerworld.com/en/models/3382409-miniature-baroque-frame#profileId-3848581'
 
 
@@ -758,7 +758,7 @@ def test_linked_maker_profile_is_selected_automatically(env, monkeypatch):
 
 
 def test_quantity_buttons_choose_midpoint_and_answer_duration(env, monkeypatch):
-    from print_buddy.core import orca_adapter
+    from print_handy.core import orca_adapter
     assert orca_adapter.quantity_buttons(0) == [1]
     assert orca_adapter.quantity_buttons(4) == [1, 2, 4]
     monkeypatch.setattr(orca_adapter, 'orca_plate_capacity', lambda path, st: 3)
@@ -795,7 +795,7 @@ def test_quantity_buttons_choose_midpoint_and_answer_duration(env, monkeypatch):
 
 
 def test_typed_quantity_uses_value_not_button_position(env, monkeypatch):
-    from print_buddy.core import orca_adapter
+    from print_handy.core import orca_adapter
     monkeypatch.setattr(orca_adapter, 'orca_plate_capacity', lambda path, st: 6)
     calls = []
 
@@ -812,7 +812,7 @@ def test_typed_quantity_uses_value_not_button_position(env, monkeypatch):
         async def send_clarify(self, **kw):
             self.questions.append(kw)
             import tools.clarify_gateway as cm
-            from print_buddy.core import link_intake
+            from print_handy.core import link_intake
             if 'How many copies' in kw['question']:
                 assert 'will not fit' in link_intake.typed_reply(event.source, '9')
                 assert link_intake.typed_reply(event.source, '4') == ''
@@ -829,7 +829,7 @@ def test_typed_quantity_uses_value_not_button_position(env, monkeypatch):
 
 
 def test_capacity_zero_full_size_split_saves_separate_mode_before_slice(env, monkeypatch):
-    from print_buddy.core import orca_adapter
+    from print_handy.core import orca_adapter
     from .test_plate_merge import _source
     path = env.tmp / 'two-large-parts.3mf'
     _source(path, {'1': (150, 150, 10), '2': (150, 150, 10)}, [['1', '2']])
@@ -878,7 +878,7 @@ def test_capacity_zero_full_size_split_saves_separate_mode_before_slice(env, mon
 def test_capacity_zero_full_size_split_names_the_reorientation_and_its_supports(env, monkeypatch):
     # #221 R1: the split offer names the reorientation and its recorded
     # supports; choosing the split is the approval of those supports.
-    from print_buddy.core import orca_adapter
+    from print_handy.core import orca_adapter
     from .test_split_fit import _frame_source
     path = env.tmp / 'frame-and-box.3mf'
     _frame_source(path)
@@ -924,7 +924,7 @@ def test_capacity_zero_full_size_split_names_a_diagonal_reorientation_turn(env, 
     # #221 diagonal: the split offer names the actual bed turn of a
     # diagonal reorientation — the #76 Stand, reoriented at 45 degrees —
     # never a rounded or cardinal-ized angle.
-    from print_buddy.core import orca_adapter
+    from print_handy.core import orca_adapter
     from .test_split_fit import _box_tris, _solid_source
     path = env.tmp / 'stand-and-base.3mf'
     _solid_source(path, {'1': _box_tris(0, 130, 0, 230, 0, 30),
@@ -968,7 +968,7 @@ def test_capacity_zero_full_size_split_names_a_diagonal_reorientation_turn(env, 
 
 
 def test_capacity_zero_offers_rotation_alternative(env, monkeypatch):
-    from print_buddy.core import orca_adapter
+    from print_handy.core import orca_adapter
     monkeypatch.setattr(orca_adapter, 'orca_plate_capacity',
                         lambda path, st, scale=1.0, copy_limit=16, **kw: 0 if scale == 1.0 and not kw.get('rotation') else 1)
     rot = {'axis': '+Y', 'name': 'Rotate 90° on X', 'scale': 1.0, 'dims_mm': [126.5, 209.8, 219.8],
@@ -992,7 +992,7 @@ def test_capacity_zero_offers_rotation_alternative(env, monkeypatch):
 
 
 def test_capacity_zero_cancel_stops_without_slice(env, monkeypatch):
-    from print_buddy.core import orca_adapter
+    from print_handy.core import orca_adapter
     monkeypatch.setattr(orca_adapter, 'orca_plate_capacity', lambda path, st, **kw: 0)
     monkeypatch.setattr(orca_adapter, 'fit_options',
                         lambda path, st: {'scales': [0.98, 0.75, 0.5], 'rotations': []})
@@ -1006,7 +1006,7 @@ def test_capacity_zero_cancel_stops_without_slice(env, monkeypatch):
 
 
 def _per_part_oversized(env, monkeypatch, honored, answers):
-    from print_buddy.core import orca_adapter
+    from print_handy.core import orca_adapter
     monkeypatch.setattr(orca_adapter, 'orca_plate_capacity', lambda path, st, **kw: 0 if not kw else 1)
     monkeypatch.setattr(orca_adapter, 'fit_options',
                         lambda path, st: {'scales': [0.882, 0.5], 'rotations': [
@@ -1101,7 +1101,7 @@ def test_many_profiles_without_fragment_still_require_a_button(env, monkeypatch)
 def _slow_inventory_flow(env, monkeypatch, audit_manifest=None):
     """Run a multipart (Shell/Eyes) intake with a slow inventory; return what ran where."""
     import threading
-    from print_buddy.core import source_colors
+    from print_handy.core import source_colors
     real_inventory = source_colors.inventory
     seen = {'threads': [], 'ticks': 0}
 
@@ -1168,7 +1168,7 @@ def test_multipart_first_prompt_states_part_count_and_asks_color_choice(env, mon
 
 
 def test_audit_manifest_reused_only_when_bound_to_current_source_bytes(env, monkeypatch):
-    from print_buddy.core import source_colors
+    from print_handy.core import source_colors
     real = source_colors.inventory  # captured before the helper patches it
     # Matching hash: the audit's manifest is reused, so no second inspection happens.
     _, _, seen, _ = _slow_inventory_flow(env, monkeypatch, audit_manifest=real)
@@ -1245,7 +1245,7 @@ def test_reprint_after_restart_explains_interrupted_slice_and_asks_again(env):
     run_flow(env, [1, 0, 0], mid='first')
     prev = prepared_intake.last_job()
     folder = Path(prev['downloaded_file']).parents[1]
-    # Left by a Print Buddy process that stopped mid-slice.
+    # Left by a Print Handy process that stopped mid-slice.
     (folder / 'WORKER.json').write_text(json.dumps({'state': 'running', 'step': 'slicing', 'started_at': 1.0,
                                                      'worker_pid': 1, 'owner': 'previous-run'}))
     event = S(source=S(profile='3dprinting', chat_id='c1', thread_id=None, user_id='u'), message_id='again',
@@ -1275,7 +1275,7 @@ def test_declined_reprint_does_nothing(env):
 
 def _split_env(env, monkeypatch, tag):
     """Two-plate full-size split with distinct per-plate durations."""
-    from print_buddy.core import orca_adapter
+    from print_handy.core import orca_adapter
     from .test_plate_merge import _source
     path = env.tmp / f'{tag}.3mf'
     _source(path, {'1': (150, 150, 10), '2': (150, 150, 10)}, [['1', '2']])
@@ -1376,7 +1376,7 @@ def test_copies_supported_only_for_single_plate_jobs(job, expected):
 
 def test_per_part_job_is_never_offered_copies(env, monkeypatch):
     """#37: only the single plate path clones copies, so per-part intake must not ask for a count."""
-    from print_buddy.core import orca_adapter
+    from print_handy.core import orca_adapter
     monkeypatch.setattr(orca_adapter, 'orca_plate_capacity', lambda path, st, **kw: 3)
     # Per-part mode, both parts on the first slot, slice only, then decline start.
     adapter, result, receipt = run_flow(env, [0, 0, 0, 1, 1], mid='per-part-copies')

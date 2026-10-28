@@ -18,9 +18,9 @@ from pathlib import Path
 from unittest import mock
 from urllib.parse import urlencode
 
-from print_buddy import settings
-from print_buddy.webui import config as config_api
-from print_buddy.webui import server
+from print_handy import settings
+from print_handy.webui import config as config_api
+from print_handy.webui import server
 
 TOKEN = "test-webui-token-12345"
 WRONG = "wrong-token-attempt-999"
@@ -55,7 +55,7 @@ class LoginTests(unittest.TestCase):
         local = Path(tmp) / "local.yaml"
         local.write_text(f"paths:\n  hermes_home: {tmp}/hermes\n"
                          "webui:\n  enabled: true\n  port: 8765\n" + extra)
-        environ = {"PRINT_BUDDY_CONFIG": str(local), **(environ or {})}
+        environ = {"PRINT_HANDY_CONFIG": str(local), **(environ or {})}
         data = settings.load(local=local, environ=environ)
         httpd = server.make_server(data, environ=environ, port=0,
                                    snapshot_func=lambda: FAKE_SNAPSHOT)
@@ -197,7 +197,7 @@ class LoginTests(unittest.TestCase):
     def test_healthz_stays_unauthenticated(self):
         record = {"heartbeat_at": time.time(), "pid": os.getpid(),
                   "mode": "standalone", "connected": True,
-                  "user": "printbuddy#0001", "handlers": 12,
+                  "user": "printhandy#0001", "handlers": 12,
                   "hermes_modules": []}
         with tempfile.TemporaryDirectory() as tmp:
             _httpd, port, _local, _environ = self.start(

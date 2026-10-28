@@ -9,8 +9,8 @@ import json
 import tempfile
 from pathlib import Path
 
-from print_buddy.printers.bambulab import profiles as _shared
-from print_buddy.printers.prusa import profiles
+from print_handy.printers.bambulab import profiles as _shared
+from print_handy.printers.prusa import profiles
 
 HERMES = Path(tempfile.mkdtemp(prefix="prusa-test-profile-"))
 
@@ -25,7 +25,7 @@ def resources(root, facts):
     vendor_dir = root / "profiles" / "Prusa"
     for folder in (vendor_dir / "machine", vendor_dir / "process", vendor_dir / "filament"):
         folder.mkdir(parents=True, exist_ok=True)
-    index = {"name": "Print Buddy invented Prusa test data", "version": "00.00.00.00"}
+    index = {"name": "Print Handy invented Prusa test data", "version": "00.00.00.00"}
     for kind in ("machine", "process", "filament"):
         index[f"{kind}_list"] = [{"name": names[kind], "sub_path": f"{kind}/{kind}.json"}]
     (root / "profiles").mkdir(parents=True, exist_ok=True)
@@ -58,12 +58,12 @@ def resources(root, facts):
 def identity(facts, root=None):
     root = resources(root or Path(tempfile.mkdtemp(prefix="prusa-resources-")), facts)
     upstream, version = _shared.flatten(root, facts["orca_profiles"].value, vendor=profiles.VENDOR)
-    return {"label": "Print Buddy invented Prusa fixture (not OrcaSlicer)", "vendor_version": version,
+    return {"label": "Print Handy invented Prusa fixture (not OrcaSlicer)", "vendor_version": version,
             "sha256": {kind: profiles.sha256(upstream[kind]) for kind in profiles.KINDS}}
 
 
 def fixture_facts(facts):
-    from print_buddy.printers.prusa.facts import Fact
+    from print_handy.printers.prusa.facts import Fact
     return {**facts, "orca_identity": Fact((identity(facts),), "TEST", False)}
 
 

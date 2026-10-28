@@ -5,8 +5,8 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
-from print_buddy.core import orca_adapter
-from print_buddy.core import slice_guard as sg
+from print_handy.core import orca_adapter
+from print_handy.core import slice_guard as sg
 
 GCODE = "; estimated printing time = 1h 2m\n; brim_type = {brim}\nG28\nT0\nG1 X10 Y10 E1\nG1 X200 Y200 E2\n"
 
@@ -55,7 +55,7 @@ class FailureLogTests(unittest.TestCase):
             (folder / 'orca.log').write_text('boom')
             (folder / 'result.json').write_text('{"return_code": -100}')
             state = Path(tmp, 'state')
-            from print_buddy.hermes import _config
+            from print_handy.hermes import _config
             with mock.patch.object(_config, 'hermes_home', return_value=Path(tmp)):
                 kept = orca_adapter._keep_failure_logs(folder)
             self.assertEqual(kept, state / 'slice-failures' / 'abc123')
@@ -63,7 +63,7 @@ class FailureLogTests(unittest.TestCase):
             self.assertTrue((kept / 'result.json').is_file())
 
     def test_a_logging_error_never_masks_the_slice_error(self):
-        from print_buddy.hermes import _config
+        from print_handy.hermes import _config
         with mock.patch.object(_config, 'hermes_home', side_effect=OSError('ro')):
             self.assertEqual(orca_adapter._keep_failure_logs('/nope/x'), Path('/nope/x'))
 

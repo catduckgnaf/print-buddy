@@ -1,11 +1,11 @@
 import pytest
 
-from print_buddy import printers, settings
-from print_buddy.core import model_job, printer_state, spoolman_client
+from print_handy import printers, settings
+from print_handy.core import model_job, printer_state, spoolman_client
 
 
 def test_live_check_spoolman_offline_is_warning_not_fatal(monkeypatch):
-    config = settings.load(local=False, environ={"PRINT_BUDDY__PRINTER__MODEL": "klipper.generic"})
+    config = settings.load(local=False, environ={"PRINT_HANDY__PRINTER__MODEL": "klipper.generic"})
     adapter = printers.get("klipper.generic", config)
     monkeypatch.setattr(printers, "current", lambda config=None: adapter)
     monkeypatch.setattr(settings, "current", lambda: {**config, "services": {"spoolman_url": "http://configured-spoolman"}})
@@ -44,7 +44,7 @@ def test_live_check_spoolman_offline_is_warning_not_fatal(monkeypatch):
 
 
 def test_verify_gcode_continues_when_spoolman_offline(monkeypatch, tmp_path, capsys):
-    config = settings.load(local=False, environ={"PRINT_BUDDY__PRINTER__MODEL": "klipper.generic"})
+    config = settings.load(local=False, environ={"PRINT_HANDY__PRINTER__MODEL": "klipper.generic"})
     adapter = printers.get("klipper.generic", config)
     monkeypatch.setattr(printers, "current", lambda config=None: adapter)
     state = {

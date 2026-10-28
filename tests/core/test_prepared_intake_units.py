@@ -11,7 +11,7 @@ from pathlib import Path
 
 import pytest
 
-from print_buddy.core import model_job, orca_adapter, owned_worker, prepared_intake, source_colors
+from print_handy.core import model_job, orca_adapter, owned_worker, prepared_intake, source_colors
 
 
 def _cube(size=1.0, offset=(0.0, 0.0, 0.0)):

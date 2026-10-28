@@ -8,8 +8,8 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
-from print_buddy import settings
-from print_buddy.core import orca_adapter, plate_merge, slice_guard
+from print_handy import settings
+from print_handy.core import orca_adapter, plate_merge, slice_guard
 
 
 class HomeSettingsTests(unittest.TestCase):
@@ -104,12 +104,12 @@ class OverrideTests(unittest.TestCase):
 
     def test_explicit_config_path_selects_yaml(self):
         path = self.toml("visual_watch:\n  enabled: false\n", "selected.yaml")
-        data = settings.load(local=None, environ={"PRINT_BUDDY_CONFIG": str(path)})
+        data = settings.load(local=None, environ={"PRINT_HANDY_CONFIG": str(path)})
         self.assertFalse(data["visual_watch"]["enabled"])
 
     def test_environment_overrides_yaml(self):
         path = self.toml("visual_watch:\n  sensitivity: 2\n", "local.yaml")
-        data = settings.load(local=path, environ={"PRINT_BUDDY__VISUAL_WATCH__SENSITIVITY": "4"})
+        data = settings.load(local=path, environ={"PRINT_HANDY__VISUAL_WATCH__SENSITIVITY": "4"})
         self.assertEqual(data["visual_watch"]["sensitivity"], 4)
 
     def test_yaml_boolean_enabled_defaults_to_legacy_behavior(self):
@@ -156,12 +156,12 @@ class OverrideTests(unittest.TestCase):
 
     def test_env_can_enable_visual_watch_with_legacy_home_toml(self):
         home = self.toml(Path(settings.LEGACY_HOME).read_text(), "legacy-home.toml")
-        data = settings.load(home=home, local=False, environ={"PRINT_BUDDY__VISUAL_WATCH__ENABLED": "true"})
+        data = settings.load(home=home, local=False, environ={"PRINT_HANDY__VISUAL_WATCH__ENABLED": "true"})
         self.assertIs(data["visual_watch"]["enabled"], True)
-        disabled = settings.load(home=home, local=False, environ={"PRINT_BUDDY__VISUAL_WATCH__ENABLED": "false"})
+        disabled = settings.load(home=home, local=False, environ={"PRINT_HANDY__VISUAL_WATCH__ENABLED": "false"})
         self.assertIs(disabled["visual_watch"]["enabled"], False)
         with self.assertRaisesRegex(settings.SettingsError, "must be true or false"):
-            settings.load(home=home, local=False, environ={"PRINT_BUDDY__VISUAL_WATCH__ENABLED": "sometimes"})
+            settings.load(home=home, local=False, environ={"PRINT_HANDY__VISUAL_WATCH__ENABLED": "sometimes"})
 
     def test_settings_inventory_covers_every_model_default_key(self):
         inventory = settings.load(home=settings.HOME, local=False, environ={})
@@ -228,7 +228,7 @@ class OverrideTests(unittest.TestCase):
     def test_bambu_start_confirm_window_defaults_and_limits(self):
         home = self.toml(Path(settings.LEGACY_HOME).read_text(), "legacy-home.toml")
         self.assertEqual(settings.load(home=home, local=False, environ={})["bambu"]["start_confirm_s"], 90)
-        env = {"PRINT_BUDDY__BAMBU__START_CONFIRM_S": "120"}
+        env = {"PRINT_HANDY__BAMBU__START_CONFIRM_S": "120"}
         self.assertEqual(settings.load(home=home, local=False, environ=env)["bambu"]["start_confirm_s"], 120)
         # An older home file without the key still accepts it from the environment and from YAML.
         older = self.toml(Path(settings.LEGACY_HOME).read_text().replace("start_confirm_s = 90\n", ""), "older-home.toml")
@@ -238,7 +238,7 @@ class OverrideTests(unittest.TestCase):
         self.assertEqual(settings.load(home=older, local=local, environ={})["bambu"]["start_confirm_s"], 60)
         for bad, message in (("0", "positive"), ("301", "at most 300")):
             with self.assertRaisesRegex(settings.SettingsError, message):
-                settings.load(home=home, local=False, environ={"PRINT_BUDDY__BAMBU__START_CONFIRM_S": bad})
+                settings.load(home=home, local=False, environ={"PRINT_HANDY__BAMBU__START_CONFIRM_S": bad})
         with self.assertRaisesRegex(settings.SettingsError, "whole number"):
             settings.load(home=home, local=self.toml("bambu:\n  start_confirm_s: 12.5\n", "frac.yaml"), environ={})
 
@@ -253,24 +253,24 @@ class OverrideTests(unittest.TestCase):
         self.assertEqual(settings.load(local=explicit, environ={})["timelapse"]["mode"], "container")
         off = self.toml("timelapse:\n  mode: 'off'\n", "off.yaml")
         self.assertEqual(settings.load(local=off, environ={})["timelapse"]["mode"], "off")
-        env = {"PRINT_BUDDY__TIMELAPSE__MODE": "container"}
+        env = {"PRINT_HANDY__TIMELAPSE__MODE": "container"}
         self.assertEqual(settings.load(local=off, environ=env)["timelapse"]["mode"], "container")
         with self.assertRaisesRegex(settings.SettingsError, "timelapse.*mode"):
             settings.load(local=self.toml("timelapse:\n  mode: sometimes\n", "bad.yaml"), environ={})
         with self.assertRaisesRegex(settings.SettingsError, "timelapse.*mode"):
-            settings.load(local=False, environ={"PRINT_BUDDY__TIMELAPSE__MODE": "sometimes"})
+            settings.load(local=False, environ={"PRINT_HANDY__TIMELAPSE__MODE": "sometimes"})
 
     def test_camera_source_defaults_to_auto_and_validates(self):
         self.assertEqual(settings.load(local=False, environ={})["services"]["camera_source"], "auto")
         for source in ("moonraker", "bambu", "go2rtc", "none"):
             local = self.toml(f"services:\n  camera_source: {source}\n", f"{source}.yaml")
             self.assertEqual(settings.load(local=local, environ={})["services"]["camera_source"], source)
-        env = {"PRINT_BUDDY__SERVICES__CAMERA_SOURCE": "bambu"}
+        env = {"PRINT_HANDY__SERVICES__CAMERA_SOURCE": "bambu"}
         self.assertEqual(settings.load(local=False, environ=env)["services"]["camera_source"], "bambu")
         with self.assertRaisesRegex(settings.SettingsError, "camera_source"):
             settings.load(local=self.toml("services:\n  camera_source: webcam\n", "bad.yaml"), environ={})
         with self.assertRaisesRegex(settings.SettingsError, "camera_source"):
-            settings.load(local=False, environ={"PRINT_BUDDY__SERVICES__CAMERA_SOURCE": "webcam"})
+            settings.load(local=False, environ={"PRINT_HANDY__SERVICES__CAMERA_SOURCE": "webcam"})
 
     def test_docker_yaml_matches_legacy_toml_effective_settings(self):
         docker_yaml = settings.ROOT / "config" / "docker.yaml"
@@ -285,11 +285,11 @@ class OverrideTests(unittest.TestCase):
 
         dockerfile = (settings.ROOT / "Dockerfile").read_text()
         compose = (settings.ROOT / "docker-compose.yml").read_text()
-        self.assertIn("ENV PRINT_BUDDY_CONFIG=/app/config/docker.yaml", dockerfile)
-        self.assertIn("PRINT_BUDDY_CONFIG: ${PRINT_BUDDY_CONFIG:-/app/config/docker.yaml}", compose)
+        self.assertIn("ENV PRINT_HANDY_CONFIG=/app/config/docker.yaml", dockerfile)
+        self.assertIn("PRINT_HANDY_CONFIG: ${PRINT_HANDY_CONFIG:-/app/config/docker.yaml}", compose)
         self.assertIn("/app/config/docker.toml", compose)
         env = (settings.ROOT / ".env.example").read_text()
-        self.assertIn("PRINT_BUDDY_CONFIG=/app/config/docker.toml", env)
+        self.assertIn("PRINT_HANDY_CONFIG=/app/config/docker.toml", env)
         yaml_data = yaml.safe_load((settings.ROOT / "config/docker.yaml").read_text())
         toml_data = tomllib.loads((settings.ROOT / "config/docker.toml").read_text())
         self.assertEqual(yaml_data["orca"], toml_data["orca"])
@@ -313,16 +313,16 @@ class OverrideTests(unittest.TestCase):
 
     def test_env_var_points_at_another_file(self):
         path = self.toml("[layout]\nmulti_copy_edge_mm = 5\n", "docker.toml")
-        with mock.patch.dict(os.environ, {"PRINT_BUDDY_CONFIG": str(path)}):
+        with mock.patch.dict(os.environ, {"PRINT_HANDY_CONFIG": str(path)}):
             self.assertEqual(settings.load()["layout"]["multi_copy_edge_mm"], 5.0)
 
     def test_env_var_to_missing_file_fails_loudly(self):
-        with mock.patch.dict(os.environ, {"PRINT_BUDDY_CONFIG": str(self.dir / "nope.toml")}):
+        with mock.patch.dict(os.environ, {"PRINT_HANDY_CONFIG": str(self.dir / "nope.toml")}):
             with self.assertRaisesRegex(settings.SettingsError, "missing file"):
                 settings.load()
 
     def test_bad_values_are_rejected(self):
-        from print_buddy.settings import validate
+        from print_handy.settings import validate
         for text, message in [("[printer]\nbed_mm = [220]\n", "bed_mm"),
                               ("[printer]\nbed_mm = [220, -1]\n", "bed_mm"),
                               ("[printer]\nifs_slots = 2.5\n", "whole number"),
@@ -358,25 +358,25 @@ class OverrideTests(unittest.TestCase):
         self.assertEqual(data["design"], {"enabled": None, "chat_url": "", "model": "",
                                           "api_key_env": "", "timeout_s": 180,
                                           "repair_attempts": 3})
-        from print_buddy.core import design as _design
+        from print_handy.core import design as _design
         self.assertEqual(_design.mode_name(data), "auto-off")
         self.assertFalse(_design.effective_enabled(data))
         with_llm = settings.load(local=False, environ={
-            "PRINT_BUDDY__LLM__CHAT_URL": "http://llm.invalid/v1",
-            "PRINT_BUDDY__LLM__MODEL": "luna"})
+            "PRINT_HANDY__LLM__CHAT_URL": "http://llm.invalid/v1",
+            "PRINT_HANDY__LLM__MODEL": "luna"})
         self.assertEqual(_design.mode_name(with_llm), "auto-on")
         self.assertTrue(_design.effective_enabled(with_llm))
         forced_off = settings.load(local=False, environ={
-            "PRINT_BUDDY__LLM__CHAT_URL": "http://llm.invalid/v1",
-            "PRINT_BUDDY__LLM__MODEL": "luna",
-            "PRINT_BUDDY__DESIGN__ENABLED": "false"})
+            "PRINT_HANDY__LLM__CHAT_URL": "http://llm.invalid/v1",
+            "PRINT_HANDY__LLM__MODEL": "luna",
+            "PRINT_HANDY__DESIGN__ENABLED": "false"})
         self.assertIs(forced_off["design"]["enabled"], False)
         self.assertEqual(_design.mode_name(forced_off), "off")
         self.assertFalse(_design.effective_enabled(forced_off))
 
     def test_design_env_and_file_overrides(self):
-        env = {"PRINT_BUDDY__DESIGN__ENABLED": "true", "PRINT_BUDDY__DESIGN__MODEL": "sol-x",
-               "PRINT_BUDDY__DESIGN__TIMEOUT_S": "240", "PRINT_BUDDY__DESIGN__REPAIR_ATTEMPTS": "1"}
+        env = {"PRINT_HANDY__DESIGN__ENABLED": "true", "PRINT_HANDY__DESIGN__MODEL": "sol-x",
+               "PRINT_HANDY__DESIGN__TIMEOUT_S": "240", "PRINT_HANDY__DESIGN__REPAIR_ATTEMPTS": "1"}
         data = settings.load(local=False, environ=env)
         self.assertIs(data["design"]["enabled"], True)
         self.assertEqual(data["design"]["model"], "sol-x")
@@ -397,26 +397,26 @@ class OverrideTests(unittest.TestCase):
             "chat_url = \"\"\nmodel = \"\"\napi_key_env = \"\"\ntimeout_s = 180\n"
             "repair_attempts = 3\n\n", ""), "older-home.toml")
         data = settings.load(home=home, local=False,
-                             environ={"PRINT_BUDDY__DESIGN__ENABLED": "true"})
+                             environ={"PRINT_HANDY__DESIGN__ENABLED": "true"})
         self.assertIs(data["design"]["enabled"], True)
         self.assertEqual(data["design"]["timeout_s"], 180)
 
     def test_design_bad_values_are_refused(self):
-        for env, message in (({"PRINT_BUDDY__DESIGN__ENABLED": "sometimes"}, "true or false"),
-                             ({"PRINT_BUDDY__DESIGN__TIMEOUT_S": "0"}, "positive"),
-                             ({"PRINT_BUDDY__DESIGN__REPAIR_ATTEMPTS": "99"}, "0 to 10"),
-                             ({"PRINT_BUDDY__DESIGN__CHAT_URL": "ftp://x"}, "must be a URL"),
-                             ({"PRINT_BUDDY__DESIGN__API_KEY_ENV": "not a name"}, "environment variable name")):
+        for env, message in (({"PRINT_HANDY__DESIGN__ENABLED": "sometimes"}, "true or false"),
+                             ({"PRINT_HANDY__DESIGN__TIMEOUT_S": "0"}, "positive"),
+                             ({"PRINT_HANDY__DESIGN__REPAIR_ATTEMPTS": "99"}, "0 to 10"),
+                             ({"PRINT_HANDY__DESIGN__CHAT_URL": "ftp://x"}, "must be a URL"),
+                             ({"PRINT_HANDY__DESIGN__API_KEY_ENV": "not a name"}, "environment variable name")):
             with self.subTest(env=env):
                 with self.assertRaisesRegex(settings.SettingsError, message):
                     settings.load(local=False, environ=env)
 
     def test_override_changes_core_behavior_in_a_fresh_process(self):
         path = self.toml("[printer]\nbed_mm = [300, 300]\n")
-        code = ("from print_buddy.core import slice_guard, orca_adapter;"
+        code = ("from print_handy.core import slice_guard, orca_adapter;"
                 "print(slice_guard.pre_slice(bounds=(0, 0, 250, 250), tool_slots={0: 1}).ok, orca_adapter.BED)")
         out = subprocess.run([sys.executable, "-c", code], cwd=settings.ROOT, capture_output=True, text=True,
-                             env={**os.environ, "PRINT_BUDDY_CONFIG": str(path)}, check=True).stdout
+                             env={**os.environ, "PRINT_HANDY_CONFIG": str(path)}, check=True).stdout
         self.assertEqual(out.strip(), "True [300.0, 300.0]")
 
 
@@ -433,11 +433,11 @@ class RuntimeSettingsTests(unittest.TestCase):
         # sent the print plugin to ~/.hermes/state, where printer_hardware.json does not exist.
         data = settings.load(local=False, environ={"HERMES_HOME": "/somewhere/else/.hermes"})
         self.assertEqual(data["paths"]["hermes_home"], Path("~/.hermes/profiles/3dprinting").expanduser())
-        data = settings.load(local=False, environ={"PRINT_BUDDY__PATHS__HERMES_HOME": "/tmp/pb-profile"})
-        self.assertEqual(data["paths"]["hermes_home"], Path("/tmp/pb-profile"))
+        data = settings.load(local=False, environ={"PRINT_HANDY__PATHS__HERMES_HOME": "/tmp/ph-profile"})
+        self.assertEqual(data["paths"]["hermes_home"], Path("/tmp/ph-profile"))
 
     def test_generic_env_override(self):
-        data = settings.load(local=False, environ={"PRINT_BUDDY__MAINTENANCE__FULL_DAYS": "45"})
+        data = settings.load(local=False, environ={"PRINT_HANDY__MAINTENANCE__FULL_DAYS": "45"})
         self.assertEqual(data["maintenance"]["full_days"], 45)
 
     def test_discord_timeouts_are_positive_whole_seconds(self):
@@ -446,18 +446,18 @@ class RuntimeSettingsTests(unittest.TestCase):
         self.assertEqual(data["discord"]["safety_confirm_timeout_s"], 600)
         self.assertEqual(data["discord"]["upload_wait_s"], 3600)
         self.assertEqual(data["discord"]["cold_pull_outcome_s"], 1800)
-        data = settings.load(local=False, environ={"PRINT_BUDDY__DISCORD__QUESTION_TIMEOUT_S": "2400"})
+        data = settings.load(local=False, environ={"PRINT_HANDY__DISCORD__QUESTION_TIMEOUT_S": "2400"})
         self.assertEqual(data["discord"]["question_timeout_s"], 2400)
         for key, raw in [("question_timeout_s", "0"), ("upload_wait_s", "-10"),
                          ("safety_confirm_timeout_s", "1.5"), ("cold_pull_outcome_s", "nope")]:
             with self.subTest(key=key), self.assertRaises(settings.SettingsError):
-                settings.load(local=False, environ={f"PRINT_BUDDY__DISCORD__{key.upper()}": raw})
+                settings.load(local=False, environ={f"PRINT_HANDY__DISCORD__{key.upper()}": raw})
 
     def test_roast_is_enabled_by_default_and_can_be_turned_off(self):
         """[vision] roast_enabled: on by default (roasts run whenever an LLM/vision
         endpoint is available), off via file or env, and a non-boolean is refused."""
         self.assertIs(settings.load(local=False, environ={})["vision"]["roast_enabled"], True)
-        data = settings.load(local=False, environ={"PRINT_BUDDY__VISION__ROAST_ENABLED": "false"})
+        data = settings.load(local=False, environ={"PRINT_HANDY__VISION__ROAST_ENABLED": "false"})
         self.assertIs(data["vision"]["roast_enabled"], False)
         with tempfile.TemporaryDirectory() as tmp:
             local = Path(tmp) / "local.yaml"
@@ -469,11 +469,11 @@ class RuntimeSettingsTests(unittest.TestCase):
 
     def test_visual_watch_sensitivity_is_one_to_five(self):
         self.assertEqual(settings.load(local=False, environ={})["visual_watch"]["sensitivity"], 3)
-        data = settings.load(local=False, environ={"PRINT_BUDDY__VISUAL_WATCH__SENSITIVITY": "1"})
+        data = settings.load(local=False, environ={"PRINT_HANDY__VISUAL_WATCH__SENSITIVITY": "1"})
         self.assertEqual(data["visual_watch"]["sensitivity"], 1)
         for bad in ("0", "6"):
             with self.subTest(value=bad), self.assertRaisesRegex(settings.SettingsError, "1 to 5"):
-                settings.load(local=False, environ={"PRINT_BUDDY__VISUAL_WATCH__SENSITIVITY": bad})
+                settings.load(local=False, environ={"PRINT_HANDY__VISUAL_WATCH__SENSITIVITY": bad})
         with tempfile.TemporaryDirectory() as tmp:
             local = Path(tmp) / "local.toml"
             local.write_text("[visual_watch]\nsensitivity = 2.5\n")
@@ -481,18 +481,18 @@ class RuntimeSettingsTests(unittest.TestCase):
                 settings.load(local=local, environ={})
 
     def test_env_typos_and_bad_numbers_fail(self):
-        for env, message in [({"PRINT_BUDDY__LISTENER__TICKS": "5"}, "unknown setting"),
+        for env, message in [({"PRINT_HANDY__LISTENER__TICKS": "5"}, "unknown setting"),
                              ({"SPOOL_NAG_SECONDS": "ten"}, "should be a number"),
-                             ({"PRINT_BUDDY__COLD_PULL__PETG": "1"}, "list")]:
+                             ({"PRINT_HANDY__COLD_PULL__PETG": "1"}, "list")]:
             with self.subTest(env=env), self.assertRaisesRegex(settings.SettingsError, message):
                 settings.load(local=False, environ=env)
 
     def test_delivery_methods_env_list_is_parsed_and_validated(self):
-        """PRINT_BUDDY__DELIVERY__METHODS (#270): comma- or space-separated, checked like the YAML list."""
-        a1 = {"PRINT_BUDDY__PRINTER__MODEL": "bambulab.a1"}
+        """PRINT_HANDY__DELIVERY__METHODS (#270): comma- or space-separated, checked like the YAML list."""
+        a1 = {"PRINT_HANDY__PRINTER__MODEL": "bambulab.a1"}
         for raw in ("discord,bambu_handoff,printer", "discord bambu_handoff printer", " printer , discord,  bambu_handoff "):
             with self.subTest(raw=raw):
-                data = settings.load(local=False, environ={**a1, "PRINT_BUDDY__DELIVERY__METHODS": raw})
+                data = settings.load(local=False, environ={**a1, "PRINT_HANDY__DELIVERY__METHODS": raw})
                 methods = data["delivery"]["methods"]
                 self.assertIsInstance(methods, list)
                 self.assertTrue(all(type(m) is str for m in methods))
@@ -500,19 +500,19 @@ class RuntimeSettingsTests(unittest.TestCase):
                 self.assertEqual(methods, ["printer", "discord", "bambu_handoff"])
         # The .env.example line itself loads for the printer it is written for.
         example = next(line.split("=", 1)[1] for line in (settings.ROOT / ".env.example").read_text().splitlines()
-                       if line.startswith("# PRINT_BUDDY__DELIVERY__METHODS="))
-        data = settings.load(local=False, environ={**a1, "PRINT_BUDDY__DELIVERY__METHODS": example})
+                       if line.startswith("# PRINT_HANDY__DELIVERY__METHODS="))
+        data = settings.load(local=False, environ={**a1, "PRINT_HANDY__DELIVERY__METHODS": example})
         self.assertIn("printer", data["delivery"]["methods"])
         # A value the Bambu vendor does not offer is refused, naming the key, exactly like YAML.
         for raw in ("discord,sd_card", "printer,Discord"):
             with self.subTest(raw=raw), self.assertRaisesRegex(settings.SettingsError, r"\[delivery\] methods .* not offered"):
-                settings.load(local=False, environ={**a1, "PRINT_BUDDY__DELIVERY__METHODS": raw})
+                settings.load(local=False, environ={**a1, "PRINT_HANDY__DELIVERY__METHODS": raw})
         # A list of only separators is an empty list, refused like `methods: []` in YAML.
         with self.assertRaisesRegex(settings.SettingsError, r"\[delivery\] methods must be a non-empty list"):
-            settings.load(local=False, environ={**a1, "PRINT_BUDDY__DELIVERY__METHODS": ","})
+            settings.load(local=False, environ={**a1, "PRINT_HANDY__DELIVERY__METHODS": ","})
         # The Flashforge vendor offers no Bambu handoff: the same check applies to every vendor.
         with self.assertRaisesRegex(settings.SettingsError, r"\[delivery\] methods \['bambu_handoff'\] are not offered"):
-            settings.load(local=False, environ={"PRINT_BUDDY__DELIVERY__METHODS": "bambu_handoff"})
+            settings.load(local=False, environ={"PRINT_HANDY__DELIVERY__METHODS": "bambu_handoff"})
 
     def test_delivery_methods_env_wins_over_yaml_and_yaml_stands_when_env_unset(self):
         tmp = tempfile.TemporaryDirectory()
@@ -521,16 +521,16 @@ class RuntimeSettingsTests(unittest.TestCase):
         local.write_text("printer:\n  model: bambulab.a1\ndelivery:\n  methods: [discord]\n")
         self.assertEqual(settings.load(local=local, environ={})["delivery"]["methods"], ["discord"])
         # An empty value leaves the file value alone, like every other Docker feature variable left blank.
-        self.assertEqual(settings.load(local=local, environ={"PRINT_BUDDY__DELIVERY__METHODS": ""})["delivery"]["methods"],
+        self.assertEqual(settings.load(local=local, environ={"PRINT_HANDY__DELIVERY__METHODS": ""})["delivery"]["methods"],
                          ["discord"])
-        data = settings.load(local=local, environ={"PRINT_BUDDY__DELIVERY__METHODS": "discord,printer"})
+        data = settings.load(local=local, environ={"PRINT_HANDY__DELIVERY__METHODS": "discord,printer"})
         self.assertEqual(data["delivery"]["methods"], ["printer", "discord"])
         # The vendor default stands when neither the file nor the environment sets it: `printer` is never a default.
-        self.assertEqual(settings.load(local=False, environ={"PRINT_BUDDY__PRINTER__MODEL": "bambulab.a1"})["delivery"]["methods"],
+        self.assertEqual(settings.load(local=False, environ={"PRINT_HANDY__PRINTER__MODEL": "bambulab.a1"})["delivery"]["methods"],
                          ["discord", "bambu_handoff"])
 
     def test_other_lists_stay_file_only(self):
-        for env in ({"PRINT_BUDDY__ORCA__COMMAND": "orca-slicer"}, {"PRINT_BUDDY__PRINTER__BED_MM": "220,220"}):
+        for env in ({"PRINT_HANDY__ORCA__COMMAND": "orca-slicer"}, {"PRINT_HANDY__PRINTER__BED_MM": "220,220"}):
             with self.subTest(env=env), self.assertRaisesRegex(settings.SettingsError, "cannot come from the environment"):
                 settings.load(local=False, environ=env)
 
@@ -553,7 +553,7 @@ class RuntimeSettingsTests(unittest.TestCase):
 
 class SettingsCliTests(unittest.TestCase):
     def run_cli(self, *args, env=None):
-        return subprocess.run([sys.executable, "-m", "print_buddy.settings", *args], cwd=settings.ROOT,
+        return subprocess.run([sys.executable, "-m", "print_handy.settings", *args], cwd=settings.ROOT,
                               capture_output=True, text=True, env={**os.environ, **(env or {})})
 
     def test_get_prints_the_value(self):
@@ -587,12 +587,12 @@ class LiveStreamSettingsTests(unittest.TestCase):
             self.assertEqual(data["live_stream"]["voice_channel_id"], "123456789012345678")
             self.assertEqual(data["live_stream"]["encoder"], "nvenc")
             self.assertEqual(data["live_stream"]["activity_origin"], "https://pb.example")
-            env = {"PRINT_BUDDY__LIVE_STREAM__ENABLED": "false", "PRINT_BUDDY__LIVE_STREAM__FPS": "30"}
+            env = {"PRINT_HANDY__LIVE_STREAM__ENABLED": "false", "PRINT_HANDY__LIVE_STREAM__FPS": "30"}
             data = settings.load(local=local, environ=env)
             self.assertEqual((data["live_stream"]["enabled"], data["live_stream"]["fps"]), (False, 30))
 
     def test_encoder_names_match_the_stage_2_plan(self):
-        from print_buddy import live_stream
+        from print_handy import live_stream
         self.assertEqual(settings.LIVE_STREAM_ENCODERS, live_stream.ENCODER_PREFERENCES)
 
     def test_bad_values_are_rejected(self):
@@ -615,4 +615,4 @@ class LiveStreamSettingsTests(unittest.TestCase):
                 with self.assertRaises(settings.SettingsError):
                     settings.load(local=local, environ={})
         with self.assertRaisesRegex(settings.SettingsError, "encoder"):
-            settings.load(local=False, environ={"PRINT_BUDDY__LIVE_STREAM__ENCODER": "vp9"})
+            settings.load(local=False, environ={"PRINT_HANDY__LIVE_STREAM__ENCODER": "vp9"})

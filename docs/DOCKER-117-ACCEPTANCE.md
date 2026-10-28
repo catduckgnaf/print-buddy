@@ -6,7 +6,7 @@ Commands and exact-head CI are recorded on the Phase 2 card and PR134.
 
 | Original acceptance criterion | Native evidence | Remaining gate |
 | --- | --- | --- |
-| Clean host deploys published Compose release without building | Compose requires explicit PRINT_BUDDY_IMAGE; DOCKER.md states unreleased; contract tests cover commands, paths, health, no source mount | No published image, release install or clean-host recreation; publication is outside these phases |
+| Clean host deploys published Compose release without building | Compose requires explicit PRINT_HANDY_IMAGE; DOCKER.md states unreleased; contract tests cover commands, paths, health, no source mount | No published image, release install or clean-host recreation; publication is outside these phases |
 | Starts healthy without Hermes | copied-payload subprocess imports with Hermes blocked, network forbidden and no source checkout on sys.path; bot check loads all 13 handlers; existing standalone-no-hermes CI installs runtime-only requirements | Actual OCI COPY/plugin/dependency closure, real startup and signals; healthy Discord login cannot be demonstrated with dummy token |
 | Pinned 2.5 alpha and stable transition | OrcaSlicer is prebuilt-only: `docker/orca-prebuilt.sh` pins both channels by version, source revision and SHA256 (stable 2.4.2, alpha 2.5.0-alpha) and the SHA256 is verified before extraction; independent runtime selectors; native contract validates selectors; DOCKER.md explains manual stable transition | Pins do not prove usable binaries; each channel is proven by the hosted headless-slice smoke and runtime acceptance on the exact image |
 | External endpoints and both Spoolman modes, bundled persistence | YAML/TOML effective parity, all supported scalar defaults round-trip through environment; external Spoolman blank default; optional pinned override with persistent directory; existing native service mocks/CI | Bundled OCI Spoolman recreation, real external-mode integration and data migration not proven |
@@ -27,7 +27,7 @@ Commands and exact-head CI are recorded on the Phase 2 card and PR134.
   FileNotFoundError, with no artifact or network fallback. Direct slice_model
   refusal is also covered in tests/pipeline/test_orca_adapter.py. This does not certify
   the user-facing complete intake or a no-Orca OCI image.
-- Copied payload contains print_buddy, plugins and config only. A child launched
+- Copied payload contains print_handy, plugins and config only. A child launched
   outside the checkout validates setup with dummy credentials, all handlers and
   forbidden Hermes/socket access. It exercises relocated source, not Docker COPY.
 - Source-built binary help, actual slicing/guards, loader dependencies, tini/xvfb
@@ -108,7 +108,7 @@ Evidence below comes from a contributor cloud sandbox (Docker 29.9.1, BuildKit, 
 - First dispatch: `app_channel=development`, `with_orca=true`, `orca_channel=stable`,
   `orca_build_jobs=auto`, `spoolman_mode=external`. A bundled-Spoolman run is a separate dispatch.
 - Containers: one BuildKit build into the VM's image store; then about a dozen one-off `--rm` probe
-  containers with `--network none`; then one Compose project (`pb-accept-<mode>-<run>`: bot,
+  containers with `--network none`; then one Compose project (`ph-accept-<mode>-<run>`: bot,
   listener, fake Moonraker, plus Spoolman when bundled) on an internal network with no route out,
   `restart: "no"`, no published ports, dummy secrets, recreated twice by the harness.
 - Lifetime and cleanup: bounded by the job timeout; the harness removes its own project and tag; the
@@ -119,7 +119,7 @@ Evidence below comes from a contributor cloud sandbox (Docker 29.9.1, BuildKit, 
 
 ### Phase 4: installable package proposal (PROPOSAL, not publication)
 
-- Registry: GHCR `ghcr.io/catduckgnaf/print-buddy`, published only from a maintainer-approved
+- Registry: GHCR `ghcr.io/catduckgnaf/print-handy`, published only from a maintainer-approved
   workflow run gated by a protected environment. Nothing in this PR publishes.
 - Build once, promote by digest: a validated development image is promoted to stable by re-tagging
   its exact digest (for example `docker buildx imagetools create`), never by rebuilding.
@@ -132,4 +132,4 @@ Evidence below comes from a contributor cloud sandbox (Docker 29.9.1, BuildKit, 
 - Rollback: redeploy the previous recorded digest with unchanged data paths (see the upgrade and
   rollback procedure in DOCKER.md). A genuine cross-version test needs two identified digests; the
   harness's same-image tag switch is recreation coverage only.
-- Install: `PRINT_BUDDY_IMAGE` set to the published digest in `.env`, or the Unraid templates' Repository.
+- Install: `PRINT_HANDY_IMAGE` set to the published digest in `.env`, or the Unraid templates' Repository.

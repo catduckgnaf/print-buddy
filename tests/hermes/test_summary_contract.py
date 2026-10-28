@@ -2,10 +2,10 @@ import json
 import sys
 from pathlib import Path
 
-from print_buddy.core import discord_color_intake
-from print_buddy.core import model_job
-from print_buddy.hermes import print_records
-from print_buddy.hermes import continuation_contract
+from print_handy.core import discord_color_intake
+from print_handy.core import model_job
+from print_handy.hermes import print_records
+from print_handy.hermes import continuation_contract
 
 
 def test_sanitized_summary_contract_for_discord_and_homeassistant():

@@ -12,7 +12,7 @@ services:
     networks: [isolated]
     restart: "no"
     environment:
-      PRINT_BUDDY__SERVICES__MOONRAKER_URL: http://fake-moonraker:7125
+      PRINT_HANDY__SERVICES__MOONRAKER_URL: http://fake-moonraker:7125
     depends_on:
       fake-moonraker:
         condition: service_healthy
@@ -26,7 +26,7 @@ services:
 
   fake-moonraker:
     # Served by the image under test's own Python and websockets: no extra image is pulled.
-    image: ${PRINT_BUDDY_IMAGE:?Set PRINT_BUDDY_IMAGE}
+    image: ${PRINT_HANDY_IMAGE:?Set PRINT_HANDY_IMAGE}
     entrypoint: [python3, /fixture/fake_moonraker.py, "7125"]
     volumes:
       - ${ACCEPTANCE_FIXTURES:?Set ACCEPTANCE_FIXTURES}:/fixture:ro

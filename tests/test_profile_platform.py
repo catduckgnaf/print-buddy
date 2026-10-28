@@ -3,14 +3,14 @@
 The incident: platforms.discord.enabled was false in the profile config, so
 the Hermes gateway never connected Discord and attachment intake was silently
 absent — credentials do not override an explicit platform disable, and the
-gateway only logged a warning. Print Buddy never writes this file; these
+gateway only logged a warning. Print Handy never writes this file; these
 tests pin the reader the check surfaces (bot check, doctor) rely on.
 """
 import copy
 
 import pytest
 
-from print_buddy.hermes import _config
+from print_handy.hermes import _config
 
 
 @pytest.fixture

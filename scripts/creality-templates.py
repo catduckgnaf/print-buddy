@@ -3,7 +3,7 @@
 
     python3 scripts/creality-templates.py --printer k1 --resources <OrcaSlicer resources folder> [--check]
 
-Print Buddy ships no OrcaSlicer or Creality profiles. This reads the Creality vendor profiles
+Print Handy ships no OrcaSlicer or Creality profiles. This reads the Creality vendor profiles
 from an installed OrcaSlicer (the folder that holds profiles/Creality.json and
 profiles/Creality/, or — OrcaSlicer 2.5 and later — the packed preset cache
 profiles/Creality.opc), resolves the printer's profiles, refuses unless they hash to an
@@ -26,15 +26,15 @@ sys.path.insert(0, str(ROOT))
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--printer", default="ender3v3", help="printer profile module under print_buddy/printers/creality")
+    ap.add_argument("--printer", default="ender3v3", help="printer profile module under print_handy/printers/creality")
     ap.add_argument("--resources", required=True, type=Path, help="the installed OrcaSlicer resources folder")
     ap.add_argument("--check", action="store_true", help="verify only; write nothing")
     a = ap.parse_args()
-    from print_buddy import printers, settings
-    from print_buddy.printers.bambulab import profiles as _shared
-    from print_buddy.printers.creality import profiles
-    model = importlib.import_module(f"print_buddy.printers.creality.{a.printer}").MODEL
-    adapter = printers.get(model.key, settings.load(environ={**os.environ, "PRINT_BUDDY__PRINTER__MODEL": model.key}))
+    from print_handy import printers, settings
+    from print_handy.printers.bambulab import profiles as _shared
+    from print_handy.printers.creality import profiles
+    model = importlib.import_module(f"print_handy.printers.creality.{a.printer}").MODEL
+    adapter = printers.get(model.key, settings.load(environ={**os.environ, "PRINT_HANDY__PRINTER__MODEL": model.key}))
     try:
         upstream, version = _shared.flatten(a.resources, adapter.fact("orca_profiles"), vendor=profiles.VENDOR)
         hashes = {kind: profiles.sha256(upstream[kind]) for kind in profiles.KINDS}

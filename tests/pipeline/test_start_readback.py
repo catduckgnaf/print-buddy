@@ -1,6 +1,6 @@
 """Unit tests for classify_start_readback and start readback integration (Issue #84)."""
 import pytest
-from print_buddy.core.model_job import classify_start_readback, StartReadback
+from print_handy.core.model_job import classify_start_readback, StartReadback
 
 
 def test_classify_failed_error():

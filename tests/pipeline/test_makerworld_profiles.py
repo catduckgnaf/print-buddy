@@ -6,8 +6,8 @@ import pytest
 
 HERE = Path(__file__).resolve().parent
 
-from print_buddy.core import makerworld_profiles as profiles
-from print_buddy.core import model_job
+from print_handy.core import makerworld_profiles as profiles
+from print_handy.core import model_job
 
 
 def test_902337_one_profile_one_plate_not_23_designs(monkeypatch):

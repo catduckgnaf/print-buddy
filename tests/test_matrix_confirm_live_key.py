@@ -30,10 +30,10 @@ from unittest import mock
 
 import pytest
 
-from print_buddy import macros, printers
-from print_buddy.core import prompts as core_prompts
-from print_buddy.hermes import _config, maintenance, spool_sync
-from print_buddy.hermes import print_control as pc
+from print_handy import macros, printers
+from print_handy.core import prompts as core_prompts
+from print_handy.hermes import _config, maintenance, spool_sync
+from print_handy.hermes import print_control as pc
 
 ROOT = Path(__file__).parents[1]
 PLUGIN_PATH = ROOT / "plugins/print-feedback/__init__.py"
@@ -75,7 +75,7 @@ class HomeserverStub:
 
 
 def _matrix_adapter(stub):
-    from print_buddy.bot import matrix as matrix_mod
+    from print_handy.bot import matrix as matrix_mod
     return matrix_mod.StandaloneAdapter(None, ["42"], homeserver="https://matrix.example.org",
                                         token="mx-test-access", opener=stub)
 

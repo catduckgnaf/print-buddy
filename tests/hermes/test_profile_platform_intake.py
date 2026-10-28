@@ -1,5 +1,5 @@
 """#384 verification tail: with the profile's Discord platform enabled, a
-dropped model file delivered by the gateway reaches Print Buddy's intake.
+dropped model file delivered by the gateway reaches Print Handy's intake.
 
 The incident could only be verified up to "the adapter connected" — the
 original attachment was never replayed. This pins the offline half of the
@@ -17,8 +17,8 @@ from pathlib import Path
 from types import SimpleNamespace as S
 from unittest import mock
 
-from print_buddy.core import prepared_intake, printer_state
-from print_buddy.hermes import _config
+from print_handy.core import prepared_intake, printer_state
+from print_handy.hermes import _config
 
 SPEC = importlib.util.spec_from_file_location(
     "print_feedback_384", Path(__file__).parents[2] / "plugins/print-feedback/__init__.py")

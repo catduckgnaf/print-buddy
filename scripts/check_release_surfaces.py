@@ -2,9 +2,9 @@
 """Release surfaces gate for the docker-publish workflow.
 
 A version release may only be published when the surfaces that describe
-Print Buddy match what is being released:
+Print Handy match what is being released:
 
-- the Pages site (catduckgnaf/print-buddy-docs) has no drift against
+- the Pages site (catduckgnaf/print-handy-docs) has no drift against
   ``docs/`` at the release ref — drift is defined exactly the way the
   docs repo's own Docs sync check defines it (its ``scripts/check-sync.sh``
   and ``scripts/sync-manifest.tsv``, including REMOVED pages), and
@@ -24,7 +24,7 @@ Environment:
   PUBLISH_VERSION  release version, MAJOR.MINOR.PATCH (required)
   PUBLISH          "true" for a publication dispatch, anything else is a
                    candidate (default "false")
-  DOCS_DIR         path to a catduckgnaf/print-buddy-docs checkout
+  DOCS_DIR         path to a catduckgnaf/print-handy-docs checkout
                    (required for the drift check)
   GITHUB_OUTPUT / GITHUB_STEP_SUMMARY are honoured when set.
 
@@ -38,21 +38,21 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-SITE_PREFIX = "https://catduckgnaf.github.io/print-buddy-docs/"
+SITE_PREFIX = "https://catduckgnaf.github.io/print-handy-docs/"
 DRIFT_PREFIXES = ("CHANGED:", "ADDED:", "REMOVED:", "MISSING-SITE-COPY:")
 
 REMEDY = """\
 Remedy:
 - Pages drift: run the Docs auto-sync for this release, then merge the
-  sync PR it opens in catduckgnaf/print-buddy-docs:
-    gh workflow run docs-auto-sync.yml --repo catduckgnaf/print-buddy-docs -f ref={version}
+  sync PR it opens in catduckgnaf/print-handy-docs:
+    gh workflow run docs-auto-sync.yml --repo catduckgnaf/print-handy-docs -f ref={version}
   (Publishing the GitHub release also sends this sync a
   repository_dispatch automatically when the DOCS_SYNC_TOKEN secret is
   configured on this repo; the manual dispatch above always works.)
   Once the sync PR is merged and the site matches, re-dispatch this
   publish.
 - README / version problems: fix them in the release PR (the version in
-  print_buddy/__init__.py, the README's current-version references and
+  print_handy/__init__.py, the README's current-version references and
   its links), merge, re-tag and re-dispatch. Never move a published tag.
 """
 
@@ -60,13 +60,13 @@ Remedy:
 def readme_problems(root, docs_dir, version):
     """In-repo consistency checks for the README and the package version."""
     problems = []
-    init_text = (root / "print_buddy" / "__init__.py").read_text()
+    init_text = (root / "print_handy" / "__init__.py").read_text()
     match = re.search(r'__version__\s*=\s*"([^"]+)"', init_text)
     if match is None:
-        problems.append("print_buddy/__init__.py: no __version__ found")
+        problems.append("print_handy/__init__.py: no __version__ found")
     elif match.group(1) != version:
         problems.append(
-            f"print_buddy/__init__.py: __version__ is {match.group(1)}, "
+            f"print_handy/__init__.py: __version__ is {match.group(1)}, "
             f"not the version being published ({version})"
         )
     readme_path = root / "README.md"
@@ -88,7 +88,7 @@ def readme_problems(root, docs_dir, version):
                 if not any(candidate.exists() for candidate in candidates):
                     problems.append(
                         f"README.md: Pages site link {target} has no page "
-                        f"in print-buddy-docs (expected docs/{route}.md)"
+                        f"in print-handy-docs (expected docs/{route}.md)"
                     )
             continue
         if re.match(r"^[a-z][a-z0-9+.-]*:", target):
@@ -106,7 +106,7 @@ def drift_problems(root, docs_dir):
     check_sync = docs_dir / "scripts" / "check-sync.sh"
     if not check_sync.is_file():
         return [f"Pages drift: {check_sync} not found in the docs checkout"]
-    env = dict(os.environ, PRINT_BUDDY_DIR=str(root))
+    env = dict(os.environ, PRINT_HANDY_DIR=str(root))
     proc = subprocess.run(
         ["bash", str(check_sync)],
         env=env,

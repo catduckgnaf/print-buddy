@@ -3,14 +3,14 @@
 The fake implements the small ftplib-shaped surface client.upload uses (storbinary / size /
 quit). The real transport's firmware quirks (implicit TLS, data-connection session reuse) are
 wiring in client._ImplicitFTPS and can only be exercised against a printer; what is pinned
-here is everything Print Buddy controls: names, verification, and failure behaviour.
+here is everything Print Handy controls: names, verification, and failure behaviour.
 """
 import ssl
 
 import pytest
 
-from print_buddy import printers, settings
-from print_buddy.printers.bambulab.client import (BambuLanClient, BambuLanError, _ImplicitFTPS,
+from print_handy import printers, settings
+from print_handy.printers.bambulab.client import (BambuLanClient, BambuLanError, _ImplicitFTPS,
                                                   lan_ssl_context)
 
 SERIAL = "00M00A000000000"
@@ -117,8 +117,8 @@ def test_implicit_ftps_uses_the_verified_bambu_context():
 # --------------------------------------------------------------------- adapter
 
 def lan_config(**environ):
-    env = {"PRINT_BUDDY__PRINTER__MODEL": "bambulab.a1",
-           "PRINT_BUDDY__BAMBU__LAN_HOST": "192.168.1.50", "PRINT_BUDDY__BAMBU__LAN_SERIAL": SERIAL,
+    env = {"PRINT_HANDY__PRINTER__MODEL": "bambulab.a1",
+           "PRINT_HANDY__BAMBU__LAN_HOST": "192.168.1.50", "PRINT_HANDY__BAMBU__LAN_SERIAL": SERIAL,
            **environ}
     return settings.load(local=False, environ=env)
 
@@ -130,7 +130,7 @@ def test_adapter_upload_requires_the_package_format_and_a_configured_lan(monkeyp
     raw.write_text("G1 X1\n")
     with pytest.raises(BambuLanError, match="only a packaged .gcode.3mf"):
         adapter.upload(raw)
-    plain = printers.get("bambulab.a1", settings.load(local=False, environ={"PRINT_BUDDY__PRINTER__MODEL": "bambulab.a1"}))
+    plain = printers.get("bambulab.a1", settings.load(local=False, environ={"PRINT_HANDY__PRINTER__MODEL": "bambulab.a1"}))
     with pytest.raises(BambuLanError, match="not configured"):
         plain.upload(package)
 

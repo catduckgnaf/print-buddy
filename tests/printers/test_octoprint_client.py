@@ -6,7 +6,7 @@ import json
 
 import pytest
 
-from print_buddy.printers.octoprint.client import OctoPrintClient, OctoPrintError
+from print_handy.printers.octoprint.client import OctoPrintClient, OctoPrintError
 
 
 class _Response:
@@ -95,7 +95,7 @@ def test_upload_posts_the_file_once_and_returns_the_remote_name(tmp_path):
     assert req.full_url == "http://octo.test:5000/api/files/local"
     assert req.get_method() == "POST"
     assert req.get_header("X-api-key") == "SECRETKEY"
-    assert req.get_header("Content-type").startswith("multipart/form-data; boundary=PrintBuddy")
+    assert req.get_header("Content-type").startswith("multipart/form-data; boundary=PrintHandy")
     assert b'filename="benchy.gcode"' in req.data
     assert b"G28\nG1 X1\n" in req.data
 

@@ -4,12 +4,12 @@ import json
 import re
 from pathlib import Path
 
-from print_buddy import settings
-from print_buddy.core import prepared_intake, slice_guard, source_colors
+from print_handy import settings
+from print_handy.core import prepared_intake, slice_guard, source_colors
 
 from .test_color_intake import source
 
-CORE = Path(settings.ROOT) / "print_buddy" / "core"
+CORE = Path(settings.ROOT) / "print_handy" / "core"
 
 
 def test_shipped_protected_baseline_matches_the_orca_machine_template():

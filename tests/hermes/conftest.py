@@ -16,8 +16,8 @@ from pathlib import Path
 
 import pytest
 
-from print_buddy import settings
-from print_buddy.hermes import _config
+from print_handy import settings
+from print_handy.hermes import _config
 
 TEST_SETTINGS = _config.cfg()
 
@@ -93,7 +93,7 @@ def _no_live_network(monkeypatch):
 @pytest.fixture(autouse=True)
 def _neutral_printer_hardware(monkeypatch):
     """Tests that read the hardware record get the neutral AD5X fixture, never the home machine's."""
-    from print_buddy.core import printer_state
+    from print_handy.core import printer_state
     monkeypatch.setattr(printer_state, "save", lambda *a, **k: None)
     monkeypatch.setattr(printer_state, "STATE", str(Path(__file__).parents[1] / "pipeline/fixtures/printer_hardware.json"))
 
@@ -122,7 +122,7 @@ def hermes_cli_plugins():
 def _never_touch_live_printer(monkeypatch, request):
     """No test may send a POST to Moonraker or auto restart the printer."""
     try:
-        from print_buddy.hermes import print_control
+        from print_handy.hermes import print_control
     except Exception:
         print_control = None
     if print_control is not None:
@@ -135,7 +135,7 @@ def _never_touch_live_printer(monkeypatch, request):
         monkeypatch.setattr(print_control, "_call", guarded)
     if "test_screen_cancel_reboot_paths" not in request.node.name:
         try:
-            from print_buddy.hermes import moonraker_event_listener as mel
+            from print_handy.hermes import moonraker_event_listener as mel
             monkeypatch.setattr(mel, "screen_cancel_reboot", lambda *a, **k: (False, "test stub"))
         except Exception:
             pass

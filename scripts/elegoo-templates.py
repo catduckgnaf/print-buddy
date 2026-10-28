@@ -4,7 +4,7 @@
     python3 scripts/elegoo-templates.py --printer neptune4 --resources <OrcaSlicer resources folder> [--check]
     python3 scripts/elegoo-templates.py --vendor elegoo_sdcp --printer centauricarbon --resources <folder>
 
-Print Buddy ships no OrcaSlicer or Elegoo profiles. This reads the Elegoo vendor profiles from
+Print Handy ships no OrcaSlicer or Elegoo profiles. This reads the Elegoo vendor profiles from
 an installed OrcaSlicer (the folder that holds profiles/Elegoo.json and profiles/Elegoo/),
 resolves the printer's profiles, refuses unless they hash to an identity recorded in the
 printer's facts.py, and writes them into <state>/orca-profiles/<printer> for the configured
@@ -25,17 +25,17 @@ sys.path.insert(0, str(ROOT))
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--printer", default="neptune4", help="printer profile module under print_buddy/printers/<vendor>")
+    ap.add_argument("--printer", default="neptune4", help="printer profile module under print_handy/printers/<vendor>")
     ap.add_argument("--vendor", default="elegoo", choices=("elegoo", "elegoo_sdcp"),
                     help="the Elegoo vendor package the printer belongs to")
     ap.add_argument("--resources", required=True, type=Path, help="the installed OrcaSlicer resources folder")
     ap.add_argument("--check", action="store_true", help="verify only; write nothing")
     a = ap.parse_args()
-    from print_buddy import printers, settings
-    from print_buddy.printers.bambulab import profiles as _shared
-    from print_buddy.printers.elegoo import profiles
-    model = importlib.import_module(f"print_buddy.printers.{a.vendor}.{a.printer}").MODEL
-    adapter = printers.get(model.key, settings.load(environ={**os.environ, "PRINT_BUDDY__PRINTER__MODEL": model.key}))
+    from print_handy import printers, settings
+    from print_handy.printers.bambulab import profiles as _shared
+    from print_handy.printers.elegoo import profiles
+    model = importlib.import_module(f"print_handy.printers.{a.vendor}.{a.printer}").MODEL
+    adapter = printers.get(model.key, settings.load(environ={**os.environ, "PRINT_HANDY__PRINTER__MODEL": model.key}))
     try:
         upstream, version = _shared.flatten(a.resources, adapter.fact("orca_profiles"), vendor=profiles.VENDOR)
         hashes = {kind: profiles.sha256(upstream[kind]) for kind in profiles.KINDS}

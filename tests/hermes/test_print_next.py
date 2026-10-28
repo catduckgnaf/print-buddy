@@ -10,8 +10,8 @@ from unittest import mock
 import pytest
 
 HERE = Path(__file__).resolve().parent
-from print_buddy.hermes import print_next
-from print_buddy.hermes import print_records
+from print_handy.hermes import print_next
+from print_handy.hermes import print_records
 
 
 def make_job(tmp_path, plates=2):
@@ -318,7 +318,7 @@ def test_plate_choice_label_uses_plan_facts_and_says_unknown(tmp_path):
     plans, rows = three_plate_plan(tmp_path)
     part = print_next.load_plan('trio', plans)['parts'][1]
     Path(rows[1]['gcode']).write_text('; estimated printing time (normal mode) = 2h 5m 0s\n')
-    with mock.patch('print_buddy.hermes.discord_print_summary.find_job', return_value=(None, None)):
+    with mock.patch('print_handy.hermes.discord_print_summary.find_job', return_value=(None, None)):
         assert print_next.plate_choice_label(part) == 'Plate 2: Part 2 · colors unknown · ~2h 5m'
         Path(rows[1]['gcode']).write_text('G1 X1\n')
         assert print_next.plate_choice_label(part) == 'Plate 2: Part 2 · colors unknown · time unknown'
@@ -362,7 +362,7 @@ def test_hook_accepts_explicit_part_id(tmp_path):
 
 
 def run_announcer(monkeypatch, lines):
-    from print_buddy.hermes import moonraker_event_listener as mel
+    from print_handy.hermes import moonraker_event_listener as mel
     sent, pickers = [], []
     monkeypatch.setattr(mel, 'log', lambda _: None)
     monkeypatch.setattr(mel, 'post', lambda text: sent.append(text) or True)
@@ -381,7 +381,7 @@ def test_completion_posts_picker_not_command_text(monkeypatch):
 
 
 def test_picker_follows_timelapse_post(monkeypatch):
-    from print_buddy.hermes import moonraker_event_listener as mel
+    from print_handy.hermes import moonraker_event_listener as mel
     order = []
     monkeypatch.setattr(mel, 'log', lambda _: None)
     monkeypatch.setattr(mel, 'post', lambda text: order.append('post') or True)
@@ -402,8 +402,8 @@ def test_picker_follows_timelapse_post(monkeypatch):
 
 
 def test_post_plate_picker_posts_select_then_falls_back_to_command_text(tmp_path, monkeypatch):
-    from print_buddy.hermes import moonraker_event_listener as mel
-    from print_buddy.hermes import print_alert_buttons as pab
+    from print_handy.hermes import moonraker_event_listener as mel
+    from print_handy.hermes import print_alert_buttons as pab
     plans, _rows = three_plate_plan(tmp_path)
     real_load = print_next.load_plan
     monkeypatch.setattr(print_next, 'load_plan', lambda pid: real_load(pid, plans))
@@ -467,7 +467,7 @@ class Interaction:
 
 
 def plate_clicks(tmp_path, monkeypatch, starts, start_result=(True, 'START ACCEPTED')):
-    from print_buddy.hermes import print_alert_buttons as pab
+    from print_handy.hermes import print_alert_buttons as pab
     plans, rows = three_plate_plan(tmp_path)
     real_load, real_resolve = print_next.load_plan, print_next.resolve_next
     monkeypatch.setattr(print_next, 'load_plan', lambda pid: real_load(pid, plans))
@@ -610,7 +610,7 @@ def test_picker_other_refusal_offers_no_spool_button(tmp_path, monkeypatch):
 
 
 def test_start_spawns_print_now_from_the_repo_root(tmp_path):
-    from print_buddy import settings
+    from print_handy import settings
     folder, rows = make_job(tmp_path)
     plans = make_plan(tmp_path, folder, rows)
     target = print_next.resolve_next(print_next.load_plan('ghost', plans), tmp_path / 'archive')
@@ -629,8 +629,8 @@ def test_start_spawns_print_now_from_the_repo_root(tmp_path):
 
 def _adapter_with(monkeypatch, transport, check):
     """Route live_idle_check through a fake adapter transport and a fake printer_state.check."""
-    from print_buddy import printers
-    from print_buddy.core import model_job, printer_state
+    from print_handy import printers
+    from print_handy.core import model_job, printer_state
     monkeypatch.setattr(printers, 'current', lambda: S(transport=transport))
     monkeypatch.setattr(printer_state, 'load', lambda: {'printer': 'fake'})
     monkeypatch.setattr(printer_state, 'check', lambda st: check)
@@ -662,8 +662,8 @@ def test_live_idle_check_uses_the_adapter_status_for_octoprint(monkeypatch):
 
 
 def test_live_idle_check_still_queries_moonraker_for_moonraker_printers(monkeypatch):
-    from print_buddy import printers
-    from print_buddy.core import model_job, printer_state
+    from print_handy import printers
+    from print_handy.core import model_job, printer_state
     monkeypatch.setattr(printers, 'current', lambda: S(transport='moonraker'))
     monkeypatch.setattr(printer_state, 'load', lambda: {})
     monkeypatch.setattr(printer_state, 'check', lambda st: pytest.fail('adapter status used for a Moonraker printer'))

@@ -19,9 +19,9 @@ import time
 
 import pytest
 
-from print_buddy.bot import health, recent_links
-from print_buddy.hermes import print_alert_buttons as pab
-from print_buddy.hermes import print_next
+from print_handy.bot import health, recent_links
+from print_handy.hermes import print_alert_buttons as pab
+from print_handy.hermes import print_next
 
 NOW = 1_760_000_000.0
 
@@ -42,7 +42,7 @@ def alerts(tmp_path, monkeypatch):
 
 @pytest.fixture
 def starts(tmp_path, monkeypatch):
-    path = tmp_path / "print_buddy_start_messages.json"
+    path = tmp_path / "print_handy_start_messages.json"
     monkeypatch.setattr(print_next, "START_MESSAGES", path)
     return path
 

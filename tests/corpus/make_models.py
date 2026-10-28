@@ -73,7 +73,7 @@ def write_stl(path, mesh, *, binary=True, invert=False, lying_solid=False):
     target = Path(path)
     target.parent.mkdir(parents=True, exist_ok=True)
     if not binary:
-        rows = ["solid Print Buddy CC0 generated model"]
+        rows = ["solid Print Handy CC0 generated model"]
         for face in faces:
             points = [vertices[index] for index in face]
             n = _normal(*points)
@@ -84,10 +84,10 @@ def write_stl(path, mesh, *, binary=True, invert=False, lying_solid=False):
             rows.append("  outer loop")
             rows.extend("   vertex " + " ".join(f"{x:.7g}" for x in point) for point in points)
             rows.extend(("  endloop", " endfacet"))
-        rows.append("endsolid Print Buddy CC0 generated model")
+        rows.append("endsolid Print Handy CC0 generated model")
         target.write_text("\n".join(rows) + "\n", encoding="ascii")
         return
-    head = (b"solid generated binary model" if lying_solid else b"Print Buddy generated corpus model (CC0)").ljust(80, b"\0")[:80]
+    head = (b"solid generated binary model" if lying_solid else b"Print Handy generated corpus model (CC0)").ljust(80, b"\0")[:80]
     with target.open("wb") as stream:
         stream.write(head)
         stream.write(struct.pack("<I", len(faces)))
@@ -105,7 +105,7 @@ def write_binary_stl(path, triangles):
     target = Path(path)
     target.parent.mkdir(parents=True, exist_ok=True)
     with target.open("wb") as stream:
-        stream.write(b"Print Buddy generated binary STL".ljust(80, b"\0"))
+        stream.write(b"Print Handy generated binary STL".ljust(80, b"\0"))
         stream.write(struct.pack("<I", len(triangles)))
         for tri in triangles:
             n = _normal(*tri)
@@ -118,7 +118,7 @@ def write_binary_stl_stream(path, triangles):
     target.parent.mkdir(parents=True, exist_ok=True)
     count = 0
     with target.open("wb") as stream:
-        stream.write(b"Print Buddy generated binary STL".ljust(80, b"\0"))
+        stream.write(b"Print Handy generated binary STL".ljust(80, b"\0"))
         stream.write(b"\0\0\0\0")
         for tri in triangles:
             n = _normal(*tri)

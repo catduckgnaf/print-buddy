@@ -9,8 +9,8 @@ Studio at the commit in hms_data.json's _provenance block), chosen for the case 
 - print_error 0x07FFC010 (decimal 134209808): listed with text.
 - print_error 0x05008030: listed with empty text.
 """
-from print_buddy import printers, settings
-from print_buddy.printers.bambulab import hms
+from print_handy import printers, settings
+from print_handy.printers.bambulab import hms
 
 RECORD = {"bed_mm": [256, 256], "max_print_height_mm": 256,
           "nozzle": {"diameter_mm": 0.4, "type": "stainless_steel"}}
@@ -22,10 +22,10 @@ UNKNOWN_HMS = {"attr": 0x0BADF00D, "code": 0x00009999}
 
 
 def adapter(serial=None):
-    env = {"PRINT_BUDDY__PRINTER__MODEL": "bambulab.a1"}
+    env = {"PRINT_HANDY__PRINTER__MODEL": "bambulab.a1"}
     if serial:
-        env["PRINT_BUDDY__BAMBU__LAN_HOST"] = "192.168.1.50"
-        env["PRINT_BUDDY__BAMBU__LAN_SERIAL"] = serial
+        env["PRINT_HANDY__BAMBU__LAN_HOST"] = "192.168.1.50"
+        env["PRINT_HANDY__BAMBU__LAN_SERIAL"] = serial
     return printers.get("bambulab.a1", settings.load(local=False, environ=env))
 
 

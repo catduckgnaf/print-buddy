@@ -3,8 +3,8 @@
 ## 1. Clone
 
 ```sh
-git clone https://github.com/<you>/print-buddy.git ~/print-buddy
-cd ~/print-buddy
+git clone https://github.com/<you>/print-handy.git ~/print-handy
+cd ~/print-handy
 python3 -m pip install -r requirements-test.txt
 ```
 
@@ -38,8 +38,8 @@ systemctl --user enable --now hermes-3dprinting-moonraker-listener.service
 Options: `--hermes-home DIR`, `--python PATH`, env `SYSTEMD_USER_DIR`.
 It symlinks the skills, `print-feedback` plugin and docs into the profile, renders templates only
 where the target is missing, applies the overlay, and installs the systemd user units.
-It also writes a `print_buddy.pth` into the Hermes venv's site-packages so `python -m print_buddy...`
-works from any directory, and copies old `~/.print_bitch_*.json` (to the `print_buddy_*` names) and `~/.moonraker_discord_announcements.json`
+It also writes a `print_handy.pth` into the Hermes venv's site-packages so `python -m print_handy...`
+works from any directory, and copies old `~/.print_bitch_*.json` (to the `print_handy_*` names) and `~/.moonraker_discord_announcements.json`
 state files into `<hermes home>/state/` when the new copy is missing. An old private `scripts/` folder in the
 profile is moved aside. Anything replaced is moved to `<hermes home>/.install-backups/<time>/<path>` (units go under
 `<systemd dir>/.install-backups/`), never next to the original, so Hermes cannot load a backup as a duplicate
@@ -51,14 +51,14 @@ setup used, so installing it replaces the old unit instead of running a second l
 ## 5. Check
 
 ```sh
-python3 -m print_buddy.doctor
+python3 -m print_handy.doctor
 ```
 
 The doctor also checks the Hermes profile itself. If `platforms.discord.enabled` is `false` in
 `<hermes home>/config.yaml`, the gateway never connects Discord — environment credentials do not
 override an explicit platform disable — so attachment intake is silently absent while everything
-else looks healthy. The doctor (and `python3 -m print_buddy.bot check`) report that as a named
-failure with the fix: set it to `true` and restart the gateway. Print Buddy's template renders it
+else looks healthy. The doctor (and `python3 -m print_handy.bot check`) report that as a named
+failure with the fix: set it to `true` and restart the gateway. Print Handy's template renders it
 `true` and the installer never rewrites an existing profile config, so a `false` there always
 comes from outside the installer: a private overlay `config.yaml`, a hand edit, or Hermes-side
 tooling.

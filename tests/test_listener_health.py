@@ -6,7 +6,7 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
-from print_buddy import healthcheck as health
+from print_handy import healthcheck as health
 
 
 class ListenerHealthTests(unittest.TestCase):
@@ -37,7 +37,7 @@ class ListenerHealthTests(unittest.TestCase):
 
     def test_listener_cancels_heartbeat_on_shutdown(self):
         import asyncio
-        from print_buddy.hermes import moonraker_event_listener as mel
+        from print_handy.hermes import moonraker_event_listener as mel
 
         async def flow():
             listener = mel.Listener.__new__(mel.Listener)
@@ -97,7 +97,7 @@ class PerPrinterHeartbeatTests(unittest.TestCase):
         return dict(self.ROSTER)
 
     def test_heartbeats_are_independent_per_printer(self):
-        from print_buddy.printers.bambulab.listener import RUNTIME as BAMBU_RUNTIME
+        from print_handy.printers.bambulab.listener import RUNTIME as BAMBU_RUNTIME
         health.beat(data=self.roster(), printer_id="moon-two")
         self.assertTrue(health.check(self.roster(), printer_id="moon-two")[0])
         ok, reason = health.check(self.roster(), printer_id="bambu-two")
@@ -109,7 +109,7 @@ class PerPrinterHeartbeatTests(unittest.TestCase):
         self.assertTrue(health.check(self.roster(), printer_id="moon-two")[0])
 
     def test_record_names_its_printer_and_a_foreign_record_fails(self):
-        from print_buddy.printers.bambulab.listener import RUNTIME as BAMBU_RUNTIME
+        from print_handy.printers.bambulab.listener import RUNTIME as BAMBU_RUNTIME
         health.beat(data=self.roster(), printer_id="moon-two")
         record = json.loads(health.heartbeat_path(
             self.roster(), "moon-two").read_text())
@@ -142,10 +142,10 @@ class PerPrinterHeartbeatTests(unittest.TestCase):
         self.assertTrue(statuses["bambu-two"]["required"])
 
     def test_instance_context_routes_an_unaddressed_beat(self):
-        from print_buddy import listeners
+        from print_handy import listeners
         listeners._set_instance_printer_id("bambu-two")
         self.addCleanup(listeners._set_instance_printer_id, None)
-        from print_buddy.printers.bambulab.listener import RUNTIME as BAMBU_RUNTIME
+        from print_handy.printers.bambulab.listener import RUNTIME as BAMBU_RUNTIME
         health.beat(runtime=BAMBU_RUNTIME, data=self.roster())
         self.assertTrue(health.check(self.roster(), printer_id="bambu-two")[0])
         self.assertFalse(health.check(self.roster(), printer_id="moon-two")[0])

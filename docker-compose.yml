@@ -1,71 +1,71 @@
 # Combined single-container runtime; Spoolman data persists independently.
 services:
   combined:
-    image: ${PRINT_BUDDY_IMAGE:?Set PRINT_BUDDY_IMAGE to a tested image digest or local tag}
+    image: ${PRINT_HANDY_IMAGE:?Set PRINT_HANDY_IMAGE to a tested image digest or local tag}
     restart: unless-stopped
     env_file: [.env]
     environment:
       # To use legacy TOML, select /app/config/docker.toml in .env.
       # Mount a custom config at the selected path with a local Compose override.
-      PRINT_BUDDY_CONFIG: ${PRINT_BUDDY_CONFIG:-/app/config/docker.yaml}
-      PRINT_BUDDY__BOT__MODE: standalone
+      PRINT_HANDY_CONFIG: ${PRINT_HANDY_CONFIG:-/app/config/docker.yaml}
+      PRINT_HANDY__BOT__MODE: standalone
       # Bundled OrcaSlicer channel the entrypoint selects at startup (docs/SETTINGS.md
       # "Runtime environment"); stable is the default, alpha is the other accepted value.
-      PRINT_BUDDY_ORCA_CHANNEL: ${PRINT_BUDDY_ORCA_CHANNEL:-stable}
-      PRINT_BUDDY__SERVICES__SPOOLMAN_URL: ${PRINT_BUDDY__SERVICES__SPOOLMAN_URL:-http://127.0.0.1:8000}
+      PRINT_HANDY_ORCA_CHANNEL: ${PRINT_HANDY_ORCA_CHANNEL:-stable}
+      PRINT_HANDY__SERVICES__SPOOLMAN_URL: ${PRINT_HANDY__SERVICES__SPOOLMAN_URL:-http://127.0.0.1:8000}
       # Camera watchdog (docs/DOCKER.md "Camera watch"): alert-only spaghetti, detached,
       # empty-bed and stall checks. Sensitivity 1 (quietest) to 5 (most alerts).
-      PRINT_BUDDY__VISUAL_WATCH__ENABLED: ${PRINT_BUDDY__VISUAL_WATCH__ENABLED:-true}
-      PRINT_BUDDY__VISUAL_WATCH__SENSITIVITY: ${PRINT_BUDDY__VISUAL_WATCH__SENSITIVITY:-3}
+      PRINT_HANDY__VISUAL_WATCH__ENABLED: ${PRINT_HANDY__VISUAL_WATCH__ENABLED:-true}
+      PRINT_HANDY__VISUAL_WATCH__SENSITIVITY: ${PRINT_HANDY__VISUAL_WATCH__SENSITIVITY:-3}
       # Feature-enabling variables (#252): empty means the feature stays off. Secrets
       # (CLIPROXY_API_KEY, AD5X_SERIAL, AD5X_CHECK_CODE, BAMBU_LAN_PASSWORD,
       # MOONRAKER_API_KEY, LLM_API_KEY) are not listed here; they reach the container
       # through the .env env_file above, like DISCORD_BOT_TOKEN.
-      PRINT_BUDDY__SERVICES__VISION_CHAT_URL: ${PRINT_BUDDY__SERVICES__VISION_CHAT_URL:-}
-      PRINT_BUDDY__SERVICES__CAMERA_SNAPSHOT_URL: ${PRINT_BUDDY__SERVICES__CAMERA_SNAPSHOT_URL:-}
-      PRINT_BUDDY__VISION__MODEL: ${PRINT_BUDDY__VISION__MODEL:-gemini-latest}
-      PRINT_BUDDY__VISION__ROAST_ENABLED: ${PRINT_BUDDY__VISION__ROAST_ENABLED:-true}
+      PRINT_HANDY__SERVICES__VISION_CHAT_URL: ${PRINT_HANDY__SERVICES__VISION_CHAT_URL:-}
+      PRINT_HANDY__SERVICES__CAMERA_SNAPSHOT_URL: ${PRINT_HANDY__SERVICES__CAMERA_SNAPSHOT_URL:-}
+      PRINT_HANDY__VISION__MODEL: ${PRINT_HANDY__VISION__MODEL:-gemini-latest}
+      PRINT_HANDY__VISION__ROAST_ENABLED: ${PRINT_HANDY__VISION__ROAST_ENABLED:-true}
       # In-container timelapse capture (#246): starts the bundled go2rtc
       # (loopback-only stream normalisation). Off by default; a local
       # WITH_GO2RTC=false build has no go2rtc, so enabling it there fails
       # the healthcheck with that reason instead of running.
-      PRINT_BUDDY__TIMELAPSE__CAPTURE_ENABLED: ${PRINT_BUDDY__TIMELAPSE__CAPTURE_ENABLED:-false}
-      PRINT_BUDDY__TIMELAPSE__CAPTURE_SOURCE_URL: ${PRINT_BUDDY__TIMELAPSE__CAPTURE_SOURCE_URL:-}
+      PRINT_HANDY__TIMELAPSE__CAPTURE_ENABLED: ${PRINT_HANDY__TIMELAPSE__CAPTURE_ENABLED:-false}
+      PRINT_HANDY__TIMELAPSE__CAPTURE_SOURCE_URL: ${PRINT_HANDY__TIMELAPSE__CAPTURE_SOURCE_URL:-}
       # Stage 2 frame capture knobs (#246): trigger interval (default) | layer | both,
       # per-job caps (0 disables a cap) and the Stage 3 encoder preference.
-      PRINT_BUDDY__TIMELAPSE__CAPTURE_TRIGGER: ${PRINT_BUDDY__TIMELAPSE__CAPTURE_TRIGGER:-interval}
-      PRINT_BUDDY__TIMELAPSE__CAPTURE_INTERVAL_S: ${PRINT_BUDDY__TIMELAPSE__CAPTURE_INTERVAL_S:-5.0}
-      PRINT_BUDDY__TIMELAPSE__CAPTURE_MAX_FRAMES: ${PRINT_BUDDY__TIMELAPSE__CAPTURE_MAX_FRAMES:-3600}
-      PRINT_BUDDY__TIMELAPSE__CAPTURE_MAX_BYTES: ${PRINT_BUDDY__TIMELAPSE__CAPTURE_MAX_BYTES:-536870912}
-      PRINT_BUDDY__TIMELAPSE__CAPTURE_ENCODER: ${PRINT_BUDDY__TIMELAPSE__CAPTURE_ENCODER:-auto}
-      PRINT_BUDDY__FLASHFORGE_STOCK__HOST: ${PRINT_BUDDY__FLASHFORGE_STOCK__HOST:-}
-      PRINT_BUDDY__BAMBU__LAN_HOST: ${PRINT_BUDDY__BAMBU__LAN_HOST:-}
-      PRINT_BUDDY__BAMBU__LAN_SERIAL: ${PRINT_BUDDY__BAMBU__LAN_SERIAL:-}
-      PRINT_BUDDY__DISCORD__APPROVAL_USER_ID: ${PRINT_BUDDY__DISCORD__APPROVAL_USER_ID:-}
-      PRINT_BUDDY__DISCORD__TIMEZONE: ${PRINT_BUDDY__DISCORD__TIMEZONE:-America/New_York}
+      PRINT_HANDY__TIMELAPSE__CAPTURE_TRIGGER: ${PRINT_HANDY__TIMELAPSE__CAPTURE_TRIGGER:-interval}
+      PRINT_HANDY__TIMELAPSE__CAPTURE_INTERVAL_S: ${PRINT_HANDY__TIMELAPSE__CAPTURE_INTERVAL_S:-5.0}
+      PRINT_HANDY__TIMELAPSE__CAPTURE_MAX_FRAMES: ${PRINT_HANDY__TIMELAPSE__CAPTURE_MAX_FRAMES:-3600}
+      PRINT_HANDY__TIMELAPSE__CAPTURE_MAX_BYTES: ${PRINT_HANDY__TIMELAPSE__CAPTURE_MAX_BYTES:-536870912}
+      PRINT_HANDY__TIMELAPSE__CAPTURE_ENCODER: ${PRINT_HANDY__TIMELAPSE__CAPTURE_ENCODER:-auto}
+      PRINT_HANDY__FLASHFORGE_STOCK__HOST: ${PRINT_HANDY__FLASHFORGE_STOCK__HOST:-}
+      PRINT_HANDY__BAMBU__LAN_HOST: ${PRINT_HANDY__BAMBU__LAN_HOST:-}
+      PRINT_HANDY__BAMBU__LAN_SERIAL: ${PRINT_HANDY__BAMBU__LAN_SERIAL:-}
+      PRINT_HANDY__DISCORD__APPROVAL_USER_ID: ${PRINT_HANDY__DISCORD__APPROVAL_USER_ID:-}
+      PRINT_HANDY__DISCORD__TIMEZONE: ${PRINT_HANDY__DISCORD__TIMEZONE:-America/New_York}
       # Discord chat LLM (#466): true by default; false runs Discord as a
       # pure bot while the LLM below stays configured for /print-design.
-      PRINT_BUDDY__DISCORD__CHAT_LLM_ENABLED: ${PRINT_BUDDY__DISCORD__CHAT_LLM_ENABLED:-true}
-      PRINT_BUDDY__LLM__CHAT_URL: ${PRINT_BUDDY__LLM__CHAT_URL:-}
-      PRINT_BUDDY__LLM__MODEL: ${PRINT_BUDDY__LLM__MODEL:-}
+      PRINT_HANDY__DISCORD__CHAT_LLM_ENABLED: ${PRINT_HANDY__DISCORD__CHAT_LLM_ENABLED:-true}
+      PRINT_HANDY__LLM__CHAT_URL: ${PRINT_HANDY__LLM__CHAT_URL:-}
+      PRINT_HANDY__LLM__MODEL: ${PRINT_HANDY__LLM__MODEL:-}
       # AI design (#388) has no ENABLED line here on purpose: unset is AUTO
       # (on whenever a design/LLM endpoint above is configured, like roasts).
-      # To force it off or on, set PRINT_BUDDY__DESIGN__ENABLED=false/true in
+      # To force it off or on, set PRINT_HANDY__DESIGN__ENABLED=false/true in
       # the .env env_file.
-      PRINT_BUDDY__DESIGN__CHAT_URL: ${PRINT_BUDDY__DESIGN__CHAT_URL:-}
-      PRINT_BUDDY__DESIGN__MODEL: ${PRINT_BUDDY__DESIGN__MODEL:-}
-      PRINT_BUDDY__DESIGN__API_KEY_ENV: ${PRINT_BUDDY__DESIGN__API_KEY_ENV:-}
-      PRINT_BUDDY__DESIGN__TIMEOUT_S: ${PRINT_BUDDY__DESIGN__TIMEOUT_S:-180}
-      PRINT_BUDDY__DESIGN__REPAIR_ATTEMPTS: ${PRINT_BUDDY__DESIGN__REPAIR_ATTEMPTS:-3}
+      PRINT_HANDY__DESIGN__CHAT_URL: ${PRINT_HANDY__DESIGN__CHAT_URL:-}
+      PRINT_HANDY__DESIGN__MODEL: ${PRINT_HANDY__DESIGN__MODEL:-}
+      PRINT_HANDY__DESIGN__API_KEY_ENV: ${PRINT_HANDY__DESIGN__API_KEY_ENV:-}
+      PRINT_HANDY__DESIGN__TIMEOUT_S: ${PRINT_HANDY__DESIGN__TIMEOUT_S:-180}
+      PRINT_HANDY__DESIGN__REPAIR_ATTEMPTS: ${PRINT_HANDY__DESIGN__REPAIR_ATTEMPTS:-3}
       # Optional Web UI (#286, docs/DOCKER.md "Web UI"): off by default. To serve
       # it beyond the container, set ENABLED=true and PORT (for example 8088),
       # set HOST=0.0.0.0, publish the port below, and set WEBUI_ACCESS_TOKEN in
       # .env — a non-loopback bind without the token is refused. The token is a
       # secret: it reaches the container through the .env env_file only, never
       # an environment: entry here.
-      PRINT_BUDDY__WEBUI__ENABLED: ${PRINT_BUDDY__WEBUI__ENABLED:-false}
-      PRINT_BUDDY__WEBUI__HOST: ${PRINT_BUDDY__WEBUI__HOST:-127.0.0.1}
-      PRINT_BUDDY__WEBUI__PORT: ${PRINT_BUDDY__WEBUI__PORT:-0}
+      PRINT_HANDY__WEBUI__ENABLED: ${PRINT_HANDY__WEBUI__ENABLED:-false}
+      PRINT_HANDY__WEBUI__HOST: ${PRINT_HANDY__WEBUI__HOST:-127.0.0.1}
+      PRINT_HANDY__WEBUI__PORT: ${PRINT_HANDY__WEBUI__PORT:-0}
       # Live camera in Discord (#311, docs/DOCKER.md "Live camera in Discord"):
       # off by default. ENABLED=true plus a voice channel, the tunnel's https
       # activity origin and a loopback PORT (for example 8091) starts the
@@ -75,35 +75,35 @@ services:
       # they reach the containers through the .env env_file only, never an
       # environment: entry here. The tunnel itself is the optional
       # cloudflared sidecar below (profile "live-stream").
-      PRINT_BUDDY__LIVE_STREAM__ENABLED: ${PRINT_BUDDY__LIVE_STREAM__ENABLED:-false}
-      PRINT_BUDDY__LIVE_STREAM__VOICE_CHANNEL_ID: ${PRINT_BUDDY__LIVE_STREAM__VOICE_CHANNEL_ID:-}
-      PRINT_BUDDY__LIVE_STREAM__AUTO_START_ON_PRINT: ${PRINT_BUDDY__LIVE_STREAM__AUTO_START_ON_PRINT:-false}
-      PRINT_BUDDY__LIVE_STREAM__MAX_HEIGHT: ${PRINT_BUDDY__LIVE_STREAM__MAX_HEIGHT:-720}
-      PRINT_BUDDY__LIVE_STREAM__FPS: ${PRINT_BUDDY__LIVE_STREAM__FPS:-15}
-      PRINT_BUDDY__LIVE_STREAM__MAX_BITRATE_KBPS: ${PRINT_BUDDY__LIVE_STREAM__MAX_BITRATE_KBPS:-2500}
-      PRINT_BUDDY__LIVE_STREAM__ENCODER: ${PRINT_BUDDY__LIVE_STREAM__ENCODER:-auto}
-      PRINT_BUDDY__LIVE_STREAM__EMPTY_TIMEOUT_S: ${PRINT_BUDDY__LIVE_STREAM__EMPTY_TIMEOUT_S:-300}
-      PRINT_BUDDY__LIVE_STREAM__ACTIVITY_ORIGIN: ${PRINT_BUDDY__LIVE_STREAM__ACTIVITY_ORIGIN:-}
-      PRINT_BUDDY__LIVE_STREAM__PORT: ${PRINT_BUDDY__LIVE_STREAM__PORT:-0}
+      PRINT_HANDY__LIVE_STREAM__ENABLED: ${PRINT_HANDY__LIVE_STREAM__ENABLED:-false}
+      PRINT_HANDY__LIVE_STREAM__VOICE_CHANNEL_ID: ${PRINT_HANDY__LIVE_STREAM__VOICE_CHANNEL_ID:-}
+      PRINT_HANDY__LIVE_STREAM__AUTO_START_ON_PRINT: ${PRINT_HANDY__LIVE_STREAM__AUTO_START_ON_PRINT:-false}
+      PRINT_HANDY__LIVE_STREAM__MAX_HEIGHT: ${PRINT_HANDY__LIVE_STREAM__MAX_HEIGHT:-720}
+      PRINT_HANDY__LIVE_STREAM__FPS: ${PRINT_HANDY__LIVE_STREAM__FPS:-15}
+      PRINT_HANDY__LIVE_STREAM__MAX_BITRATE_KBPS: ${PRINT_HANDY__LIVE_STREAM__MAX_BITRATE_KBPS:-2500}
+      PRINT_HANDY__LIVE_STREAM__ENCODER: ${PRINT_HANDY__LIVE_STREAM__ENCODER:-auto}
+      PRINT_HANDY__LIVE_STREAM__EMPTY_TIMEOUT_S: ${PRINT_HANDY__LIVE_STREAM__EMPTY_TIMEOUT_S:-300}
+      PRINT_HANDY__LIVE_STREAM__ACTIVITY_ORIGIN: ${PRINT_HANDY__LIVE_STREAM__ACTIVITY_ORIGIN:-}
+      PRINT_HANDY__LIVE_STREAM__PORT: ${PRINT_HANDY__LIVE_STREAM__PORT:-0}
       DISCORD_CLIENT_ID: ${DISCORD_CLIENT_ID:-}
       SPOOLMAN_DIR_DATA: /data/spoolman
       SPOOLMAN_DIR_CONFIG: /data/spoolman/config
       SPOOLMAN_DIR_LOGS: /data/spoolman/logs
       SPOOLMAN_DIR_BACKUPS: /data/spoolman/backups
       SPOOLMAN_HOST: ${SPOOLMAN_HOST:-127.0.0.1}
-      PRINT_BUDDY_BUNDLED_SPOOLMAN: ${PRINT_BUDDY_BUNDLED_SPOOLMAN:-true}
+      PRINT_HANDY_BUNDLED_SPOOLMAN: ${PRINT_HANDY_BUNDLED_SPOOLMAN:-true}
       SPOOLMAN_PORT: 8000
     volumes:
-      - ${PRINT_BUDDY_DATA:-./data}/hermes:/data/hermes
-      - ${PRINT_BUDDY_DATA:-./data}/archive:/data/archive
-      - ${PRINT_BUDDY_DATA:-./data}/records:/data/records
-      - ${PRINT_BUDDY_DATA:-./data}/cache:/data/cache
-      - ${PRINT_BUDDY_SPOOLMAN_DATA:-./data/spoolman}:/data/spoolman
+      - ${PRINT_HANDY_DATA:-./data}/hermes:/data/hermes
+      - ${PRINT_HANDY_DATA:-./data}/archive:/data/archive
+      - ${PRINT_HANDY_DATA:-./data}/records:/data/records
+      - ${PRINT_HANDY_DATA:-./data}/cache:/data/cache
+      - ${PRINT_HANDY_SPOOLMAN_DATA:-./data/spoolman}:/data/spoolman
     # No port is published by default. To reach the optional Web UI from the
     # host when it is enabled above, uncomment (host port 8088 to the Web UI
     # port) — keep it on the LAN only, never forward it from a router:
     # ports:
-    #   - "8088:${PRINT_BUDDY__WEBUI__PORT:-8088}"
+    #   - "8088:${PRINT_HANDY__WEBUI__PORT:-8088}"
     # Optional bundled Spoolman API on the LAN (#443): for Moonraker on
     # printer hardware (for example a ZMod AD5X) or Home Assistant, ALSO
     # uncomment the Spoolman line and set SPOOLMAN_HOST=0.0.0.0 in .env —
@@ -134,7 +134,7 @@ services:
       driver: json-file
       options: {max-size: 10m, max-file: "3"}
     healthcheck:
-      test: [CMD, python3, /usr/local/bin/print-buddy-healthcheck]
+      test: [CMD, python3, /usr/local/bin/print-handy-healthcheck]
       interval: 30s
       timeout: 10s
       start_period: 90s
@@ -142,13 +142,13 @@ services:
   # Optional Cloudflare Tunnel connector for the live view (#311): a named
   # tunnel with a stable hostname, run only under the "live-stream" profile
   # (docker compose --profile live-stream up -d). It is a sidecar, never
-  # part of the Print Buddy image: it shares the combined container's
+  # part of the Print Handy image: it shares the combined container's
   # network namespace so it can reach the Activity server and go2rtc on
   # loopback, and if the tunnel is down only the live view is unreachable —
   # the bot, listener and Spoolman are unaffected. The tunnel token is a
   # secret: set TUNNEL_TOKEN in .env (never here, never in a settings
   # file), and point the tunnel's ingress at
-  # http://127.0.0.1:${PRINT_BUDDY__LIVE_STREAM__PORT:-8091} in the
+  # http://127.0.0.1:${PRINT_HANDY__LIVE_STREAM__PORT:-8091} in the
   # Cloudflare dashboard. CLOUDFLARED_IMAGE names the connector image the
   # operator tested (a pinned tag or digest). Both variables use the
   # repo's ${VAR:-default} form on purpose: a token has no safe default

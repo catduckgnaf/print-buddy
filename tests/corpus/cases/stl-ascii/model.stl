@@ -1,4 +1,4 @@
-solid Print Buddy CC0 generated model
+solid Print Handy CC0 generated model
  facet normal 0 0 -1
   outer loop
    vertex 0 0 0
@@ -83,4 +83,4 @@ solid Print Buddy CC0 generated model
    vertex 24 0 8
   endloop
  endfacet
-endsolid Print Buddy CC0 generated model
+endsolid Print Handy CC0 generated model

@@ -1,4 +1,4 @@
-# Generic Hermes profile config for Print Buddy.
+# Generic Hermes profile config for Print Handy.
 # Dollar-brace placeholders are filled by scripts/install-hermes.sh from the environment (see docs/INSTALL.md).
 # Anything it cannot fill stays as a placeholder; set it in config/overlay/config.yaml, which replaces this file.
 # Never put tokens here. Secrets belong in the profile .env.
@@ -18,7 +18,7 @@ providers:
 # Auxiliary tasks: models Hermes calls for side jobs, separate from the chat
 # model above. Uncomment print_design to give /print-design (#388) a stronger
 # model than chat; chat itself stays on the profile model. The design timeout
-# comes from Print Buddy's [design] timeout_s, not from here.
+# comes from Print Handy's [design] timeout_s, not from here.
 # auxiliary:
 #   print_design:
 #     provider: ${LLM_PROVIDER}

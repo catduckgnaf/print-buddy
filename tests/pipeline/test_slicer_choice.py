@@ -4,10 +4,10 @@ from pathlib import Path
 
 import pytest
 
-from print_buddy import printers, settings
-from print_buddy.core import orca_adapter as adapter
-from print_buddy.printers.base import PrinterModel
-from print_buddy.printers.klipper.adapter import KlipperAdapter
+from print_handy import printers, settings
+from print_handy.core import orca_adapter as adapter
+from print_handy.printers.base import PrinterModel
+from print_handy.printers.klipper.adapter import KlipperAdapter
 from .test_orca_adapter import _allow_post, _source, _state
 
 KEY = "bambulab.zz_test_printer"
@@ -19,7 +19,7 @@ def bambu_adapter(monkeypatch, slicer):
     monkeypatch.setitem(printers.MODELS, KEY, model)
     cfg = copy.deepcopy(settings.current())
     cfg["printer"].update(model=KEY, vendor="bambulab", slicer=slicer)
-    cfg["orca"]["templates"] = settings.ROOT / "print_buddy" / "templates" / "orca" / "klipper_generic"
+    cfg["orca"]["templates"] = settings.ROOT / "print_handy" / "templates" / "orca" / "klipper_generic"
     return printers.get(KEY, cfg)
 
 

@@ -5,18 +5,18 @@ import sys
 import urllib.error
 import urllib.request
 
-# Installed as /usr/local/bin/print-buddy-healthcheck: for a script invocation Python
+# Installed as /usr/local/bin/print-handy-healthcheck: for a script invocation Python
 # puts the SCRIPT's directory on sys.path, not /app, so without this the probe dies
 # with ModuleNotFoundError (the combined container could never report healthy).
 # Same pattern as tests/docker/image_probe.py and docker/slicer-smoke.py.
 sys.path.insert(0, "/app")
 
-from print_buddy import go2rtc, settings
-from print_buddy.bot.health import check as bot_check
-from print_buddy.healthcheck import check as listener_check
-from print_buddy.healthcheck import listener_domain, listener_required
-from print_buddy.live_gate import live_config
-from print_buddy.webui_gate import start_blocked, webui_config
+from print_handy import go2rtc, settings
+from print_handy.bot.health import check as bot_check
+from print_handy.healthcheck import check as listener_check
+from print_handy.healthcheck import listener_domain, listener_required
+from print_handy.live_gate import live_config
+from print_handy.webui_gate import start_blocked, webui_config
 
 
 def main():
@@ -26,7 +26,7 @@ def main():
     else:
         print("ok  Discord bot disabled by empty token")
     # The listener is required exactly when the supervisor started it: the
-    # listener registry (print_buddy.listeners, #299) decides from the
+    # listener registry (print_handy.listeners, #299) decides from the
     # instance's domain, mirroring the disabled-bot branch above. Since
     # #336 there is one instance per roster printer: a one-printer roster
     # keeps the original single row; a larger roster gets one row per
@@ -84,7 +84,7 @@ def main():
                     detail = f" (domain {domain.name!r} {state})"
                 print(f"ok  listener ({printer_id}): not required for this printer connection{detail}")
     # go2rtc (#246 stage 1) is covered exactly when the supervisor started
-    # it: the same gate decision (print_buddy.go2rtc), mirroring the
+    # it: the same gate decision (print_handy.go2rtc), mirroring the
     # disabled-bot branch above. The gate is feature-aware since #311:
     # timelapse capture OR live viewing needing it starts the one child.
     # Neither feature needing it (or one needing it with no camera
@@ -106,8 +106,8 @@ def main():
             healthy &= ok
     try:
         url = ("http://127.0.0.1:" + os.environ.get("SPOOLMAN_PORT", "8000")
-               if os.environ.get("PRINT_BUDDY_BUNDLED_SPOOLMAN", "true") == "true"
-               else os.environ["PRINT_BUDDY__SERVICES__SPOOLMAN_URL"].rstrip("/"))
+               if os.environ.get("PRINT_HANDY_BUNDLED_SPOOLMAN", "true") == "true"
+               else os.environ["PRINT_HANDY__SERVICES__SPOOLMAN_URL"].rstrip("/"))
         with urllib.request.urlopen(url + "/api/v1/health", timeout=3) as response:
             healthy &= response.status == 200
             print(f"{'ok' if response.status == 200 else 'FAIL'}  Spoolman: HTTP {response.status}")
@@ -162,7 +162,7 @@ def main():
     elif webui_resolved:
         print("ok  webui: disabled")
     # The live-view row mirrors the supervisor's live gate (#311 stage 4)
-    # through the same shared helper (print_buddy.live_gate.live_config):
+    # through the same shared helper (print_handy.live_gate.live_config):
     # skipped as healthy when the feature is disabled, reported with its
     # missing pieces when enabled but incompletely configured (the
     # supervisor started nothing then), and probed on its open /health

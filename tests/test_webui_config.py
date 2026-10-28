@@ -4,10 +4,10 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from print_buddy import printers, settings
-from print_buddy.bot import guided
-from print_buddy.bot.platform import KNOWN_PLATFORMS
-from print_buddy.webui import (CATALOG, ENVIRONMENT, HOME_CONFIG, MODEL_DEFAULT,
+from print_handy import printers, settings
+from print_handy.bot import guided
+from print_handy.bot.platform import KNOWN_PLATFORMS
+from print_handy.webui import (CATALOG, ENVIRONMENT, HOME_CONFIG, MODEL_DEFAULT,
                                SETTINGS_FILE, WebUIConfigError, choices_for,
                                field_by_id, read_fields, settings_file_path,
                                write_changes)
@@ -47,7 +47,7 @@ class WebUISettingsTests(unittest.TestCase):
             local.write_text("webui:\n  enabled: true\n  host: 0.0.0.0\n  port: 8080\n")
             data = settings.load(local=local, environ={})
             self.assertEqual(data["webui"]["port"], 8080)
-            env = {"PRINT_BUDDY__WEBUI__PORT": "9090", "PRINT_BUDDY__WEBUI__ENABLED": "false"}
+            env = {"PRINT_HANDY__WEBUI__PORT": "9090", "PRINT_HANDY__WEBUI__ENABLED": "false"}
             data = settings.load(local=local, environ=env)
             self.assertEqual((data["webui"]["port"], data["webui"]["enabled"]), (9090, False))
 
@@ -61,7 +61,7 @@ class WebUISettingsTests(unittest.TestCase):
                 with self.assertRaises(settings.SettingsError):
                     settings.load(local=local, environ={})
         with self.assertRaisesRegex(settings.SettingsError, "port"):
-            settings.load(local=False, environ={"PRINT_BUDDY__WEBUI__PORT": "70000"})
+            settings.load(local=False, environ={"PRINT_HANDY__WEBUI__PORT": "70000"})
 
 
 class CatalogTests(unittest.TestCase):
@@ -204,7 +204,7 @@ class ReadAPITests(unittest.TestCase):
             self.assertEqual((values["discord.chat_id"].value, values["discord.chat_id"].provenance),
                              ("123", SETTINGS_FILE))
             # Environment wins over the file and is reported as overridden.
-            env = {"PRINT_BUDDY__DISCORD__CHAT_ID": "456"}
+            env = {"PRINT_HANDY__DISCORD__CHAT_ID": "456"}
             values = values_by_id(local=local, environ=env)
             self.assertEqual((values["discord.chat_id"].value, values["discord.chat_id"].provenance),
                              ("456", ENVIRONMENT))
@@ -214,7 +214,7 @@ class ReadAPITests(unittest.TestCase):
         self.assertEqual(settings_file_path({}), settings.LOCAL)
         with tempfile.TemporaryDirectory() as tmp:
             named = Path(tmp) / "chosen.yaml"
-            self.assertEqual(settings_file_path({"PRINT_BUDDY_CONFIG": str(named)}), named)
+            self.assertEqual(settings_file_path({"PRINT_HANDY_CONFIG": str(named)}), named)
 
 
 class WriteAPITests(unittest.TestCase):
@@ -329,7 +329,7 @@ class WriteAPITests(unittest.TestCase):
 
     def test_env_overridden_field_write_is_refused(self):
         before = self.write_file("visual_watch:\n  sensitivity: 3\n")
-        env = {"PRINT_BUDDY__VISUAL_WATCH__SENSITIVITY": "4"}
+        env = {"PRINT_HANDY__VISUAL_WATCH__SENSITIVITY": "4"}
         with self.assertRaisesRegex(WebUIConfigError, "overridden by the environment"):
             write_changes({"visual_watch.sensitivity": 2}, config_path=self.local, environ=env)
         self.assertEqual(self.local.read_bytes(), before)

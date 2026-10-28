@@ -9,7 +9,7 @@ import struct
 import numpy as np
 from PIL import Image
 
-from print_buddy.core import plate_thumbnail as pt
+from print_handy.core import plate_thumbnail as pt
 
 
 def _png(width, height, colour=(200, 30, 30, 255)):
@@ -51,7 +51,7 @@ def test_embedded_thumbnails_are_parsed_largest_first_and_bad_blocks_skipped():
 
 
 def test_render_plate_draws_the_model_on_the_bed_as_a_square_rgba_png(tmp_path):
-    from print_buddy.core.orca_adapter import source_triangles
+    from print_handy.core.orca_adapter import source_triangles
     triangles = source_triangles(box_stl(tmp_path / 'box.stl', origin=(118, 123, 0)))
     for top in (False, True):
         image = Image.open(io.BytesIO(pt.render_plate(triangles, 256, (256, 256), top=top)))

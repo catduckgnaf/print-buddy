@@ -1,7 +1,7 @@
 #!/bin/bash
 set -euo pipefail
 mkdir -p "${HOME:-/data}/hermes/state" "${HOME:-/data}/archive" "${HOME:-/data}/records" "${HOME:-/data}/cache"
-channel="${PRINT_BUDDY_ORCA_CHANNEL:-stable}"
+channel="${PRINT_HANDY_ORCA_CHANNEL:-stable}"
 case "$channel" in
     stable)
         selected=/usr/local/bin/orca-slicer-stable
@@ -10,7 +10,7 @@ case "$channel" in
         selected=/usr/local/bin/orca-slicer-alpha
         ;;
     *)
-        echo "PRINT_BUDDY_ORCA_CHANNEL must be 'stable' or 'alpha'; got '$channel'" >&2
+        echo "PRINT_HANDY_ORCA_CHANNEL must be 'stable' or 'alpha'; got '$channel'" >&2
         exit 2
         ;;
 esac

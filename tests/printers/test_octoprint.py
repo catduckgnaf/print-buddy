@@ -4,7 +4,7 @@ from unittest.mock import Mock
 
 import pytest
 
-from print_buddy.printers.octoprint.client import OctoPrintClient, OctoPrintError
+from print_handy.printers.octoprint.client import OctoPrintClient, OctoPrintError
 
 
 def client():

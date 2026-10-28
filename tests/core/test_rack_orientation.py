@@ -6,7 +6,7 @@ import struct
 
 import pytest
 
-from print_buddy.core import orca_adapter as oa
+from print_handy.core import orca_adapter as oa
 
 
 def test_quarter_turn_on_rectangular_bed_is_not_discarded():
@@ -58,7 +58,7 @@ def test_full_size_bed_turn_precedes_equally_fitting_face_change():
 
 
 def test_typed_full_size_selects_unique_verified_rotation():
-    from print_buddy.core.prepared_intake import _fit_choice_reply
+    from print_handy.core.prepared_intake import _fit_choice_reply
     rows = [{'kind': 'rotate', 'scale': 1.0}, {'kind': 'scale', 'scale': .85},
             {'kind': 'cancel'}]
     assert _fit_choice_reply('full size', rows) == 0

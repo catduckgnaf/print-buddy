@@ -7,9 +7,9 @@ from types import SimpleNamespace as S
 
 import pytest
 
-from print_buddy.core import link_intake
-from print_buddy.core import model_job
-from print_buddy.core import prepared_intake
+from print_handy.core import link_intake
+from print_handy.core import model_job
+from print_handy.core import prepared_intake
 from .test_color_intake import state
 from .test_prepared_intake import Adapter, env
 
@@ -55,7 +55,7 @@ def test_linked_profile_is_selected_automatically(env, monkeypatch):
 
 
 def test_quantity_buttons_calculation():
-    from print_buddy.core import orca_adapter
+    from print_handy.core import orca_adapter
     assert orca_adapter.quantity_buttons(0) == [1]
     assert orca_adapter.quantity_buttons(1) == [1]
     assert orca_adapter.quantity_buttons(2) == [1, 2]
@@ -66,7 +66,7 @@ def test_quantity_buttons_calculation():
 
 
 def test_duration_question_detection():
-    from print_buddy.core import link_intake
+    from print_handy.core import link_intake
     assert link_intake.has_duration_question('https://makerworld.com/en/models/123 how long would this take?') is True
     assert link_intake.has_duration_question('How much time will this take? https://makerworld.com/en/models/123') is True
     assert link_intake.has_duration_question('https://makerworld.com/en/models/123 what is the duration?') is True
@@ -75,7 +75,7 @@ def test_duration_question_detection():
 
 
 def test_intake_flow_quantity_prompt_and_duration_answer(env, monkeypatch):
-    from print_buddy.core import orca_adapter
+    from print_handy.core import orca_adapter
     monkeypatch.setattr(orca_adapter, 'orca_plate_capacity', lambda path, st: 3)
     slice_calls = []
 

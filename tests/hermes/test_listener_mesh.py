@@ -5,7 +5,7 @@ import unittest
 import json
 from pathlib import Path
 from unittest import mock
-from print_buddy.hermes import moonraker_event_listener as mel
+from print_handy.hermes import moonraker_event_listener as mel
 
 
 
@@ -156,7 +156,7 @@ class RunoutIntakeTest(unittest.TestCase):
     def test_failed_or_untracked_nag_never_posts_plain_text(self):
         tracked = {"slot": 3, "discord_message_id": "12345", "nags": 1}
         untracked = {"slot": 3, "nags": 1}
-        with mock.patch("print_buddy.hermes.print_alert_buttons.post_spool_question", return_value=None) as component, \
+        with mock.patch("print_handy.hermes.print_alert_buttons.post_spool_question", return_value=None) as component, \
              mock.patch.object(mel, "post") as text_post, \
              mock.patch.object(mel, "log"):
             self.assertFalse(mel.post_spool_question(tracked, nag=True))

@@ -7,8 +7,8 @@ import copy
 
 import pytest
 
-from print_buddy.core import prepared_intake, prompts
-from print_buddy.hermes import _config
+from print_handy.core import prepared_intake, prompts
+from print_handy.hermes import _config
 
 
 @pytest.fixture(autouse=True)

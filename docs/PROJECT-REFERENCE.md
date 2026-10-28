@@ -4,23 +4,23 @@
 
 This page preserves the detailed project reference. Start with the setup guides for installation; features and defaults vary by printer and configuration.
 
-[![CI](https://github.com/catduckgnaf/print-buddy/actions/workflows/ci.yml/badge.svg)](https://github.com/catduckgnaf/print-buddy/actions/workflows/ci.yml)
+[![CI](https://github.com/catduckgnaf/print-handy/actions/workflows/ci.yml/badge.svg)](https://github.com/catduckgnaf/print-handy/actions/workflows/ci.yml)
 
 [Contributing](../CONTRIBUTING.md) · [User documentation](../docs/README.md)
 
-Print Buddy is an automated 3D printing pipeline driven from a Discord channel, for Sovol and other Klipper printers, and Flashforge printers running ZMod. Post a MakerWorld, Printables or Thingiverse link, or a 3MF or STL file, and the bot downloads the model, merges multi plate parts, matches colors to loaded spools in Spoolman, and slices headless with OrcaSlicer. Once someone confirms the bed is clear, it sends the job to the printer through Moonraker, watches it through the camera, and posts the result.
+Print Handy is an automated 3D printing pipeline driven from a Discord channel, for Sovol and other Klipper printers, and Flashforge printers running ZMod. Post a MakerWorld, Printables or Thingiverse link, or a 3MF or STL file, and the bot downloads the model, merges multi plate parts, matches colors to loaded spools in Spoolman, and slices headless with OrcaSlicer. Once someone confirms the bed is clear, it sends the job to the printer through Moonraker, watches it through the camera, and posts the result.
 
 ## About
 
-Print Buddy is almost entirely Python. Downloading, plate merging, color matching, slicing, job start, printer monitoring, spool sync, timelapses, and print records are all plain scripts with fixed rules, so they are fast and make no LLM calls.
+Print Handy is almost entirely Python. Downloading, plate merging, color matching, slicing, job start, printer monitoring, spool sync, timelapses, and print records are all plain scripts with fixed rules, so they are fast and make no LLM calls.
 
-The Discord side runs one of two ways. As a **standalone bot** (`python3 -m print_buddy.bot`), Print Buddy talks to Discord itself with a bot token: links, files, buttons, slash commands, slicing, print start and printer alerts need no Hermes and no LLM; an OpenAI-compatible model can optionally word replies to free text. See [Standalone bot](../docs/STANDALONE.md). Or the conversation runs on [Hermes Agent](https://github.com/NousResearch/hermes-agent) using Luna at medium reasoning, with the same handlers loaded as a Hermes plugin. Two optional extras also call a model: the camera watchdog asks a vision model to classify a print frame, and the "print started" post adds a one line roast. Leave `services.vision_chat_url` empty and neither runs. The roast is its own switch, `vision.roast_enabled`, **on by default whenever an LLM/vision endpoint is available**, and it applies on every platform — the Telegram and Matrix bots are pure bots for chat (no `[llm]` fallback), but their print-started posts carry the roast just like Discord's (completion posts never do). Set `vision.roast_enabled` to `false` to turn roasts off while keeping camera checks.
+The Discord side runs one of two ways. As a **standalone bot** (`python3 -m print_handy.bot`), Print Handy talks to Discord itself with a bot token: links, files, buttons, slash commands, slicing, print start and printer alerts need no Hermes and no LLM; an OpenAI-compatible model can optionally word replies to free text. See [Standalone bot](../docs/STANDALONE.md). Or the conversation runs on [Hermes Agent](https://github.com/NousResearch/hermes-agent) using Luna at medium reasoning, with the same handlers loaded as a Hermes plugin. Two optional extras also call a model: the camera watchdog asks a vision model to classify a print frame, and the "print started" post adds a one line roast. Leave `services.vision_chat_url` empty and neither runs. The roast is its own switch, `vision.roast_enabled`, **on by default whenever an LLM/vision endpoint is available**, and it applies on every platform — the Telegram and Matrix bots are pure bots for chat (no `[llm]` fallback), but their print-started posts carry the roast just like Discord's (completion posts never do). Set `vision.roast_enabled` to `false` to turn roasts off while keeping camera checks.
 
 Supported printers:
-* **Sovol** on stock Klipper, where Print Buddy started, plus any other Klipper printer with Moonraker. Single extruder.
+* **Sovol** on stock Klipper, where Print Handy started, plus any other Klipper printer with Moonraker. Single extruder.
 * **Flashforge (running ZMod)**, including IFS multi color slots and the ZMod plugin below.
 
-Pick one with `[printer] model` (see Settings). The offline core in `print_buddy/core/` runs with no printer.
+Pick one with `[printer] model` (see Settings). The offline core in `print_handy/core/` runs with no printer.
 
 ## How it works
 
@@ -28,15 +28,15 @@ In the `#3d-printer` channel, someone posts a link. The bot replies with a job s
 
 > **Mrs catduck:** https://makerworld.com/en/models/931302-holder-for-post-it-notes
 >
-> **Print Buddy:** Model: Post it Note Holder with Stencils. Filament: Matte Black PLA (~48g). Estimated print time: 1 hour 14 minutes. Target printer: Flashforge (ZMod).
+> **Print Handy:** Model: Post it Note Holder with Stencils. Filament: Matte Black PLA (~48g). Estimated print time: 1 hour 14 minutes. Target printer: Flashforge (ZMod).
 >
 > [Slice and print now (bed is clear)]
 >
-> **Print Buddy:** Bed heating started. Job sent to Moonraker. Finish time estimated for 4:22 PM ET. Don't touch the build plate.
+> **Print Handy:** Bed heating started. Job sent to Moonraker. Finish time estimated for 4:22 PM ET. Don't touch the build plate.
 
 The print starts only when someone clicks the button. On completion, the bot posts stats and writes a JSON print record for the job.
 
-A bed-clear approval starts one print. Starting the same G-code again needs a new confirmation (`print-now --reprint`). Only one start runs per printer at a time. If Print Buddy cannot tell whether a start reached the printer (it stopped during the request, or the printer never confirmed it), it refuses later starts on that printer until the printer reports that exact file. An operator can also check the printer and run `python3 -m print_buddy.core.model_job reconcile-launch --started` or `--not-started`; without a flag, the command only shows the pending start. Print Buddy never resends that start on its own. This launch state is kept in `<hermes_home>/state/print_buddy_launches.sqlite3`.
+A bed-clear approval starts one print. Starting the same G-code again needs a new confirmation (`print-now --reprint`). Only one start runs per printer at a time. If Print Handy cannot tell whether a start reached the printer (it stopped during the request, or the printer never confirmed it), it refuses later starts on that printer until the printer reports that exact file. An operator can also check the printer and run `python3 -m print_handy.core.model_job reconcile-launch --started` or `--not-started`; without a flag, the command only shows the pending start. Print Handy never resends that start on its own. This launch state is kept in `<hermes_home>/state/print_handy_launches.sqlite3`.
 
 ## Features
 
@@ -57,7 +57,7 @@ A bed-clear approval starts one print. Starting the same G-code again needs a ne
 * `/spool` lists, changes, creates, and syncs spools without moving the printer.
 * `/print-colors <JOB.json>` opens the color selection flow for an archived job. Preparation only: it slices nothing, uploads nothing and starts nothing, and the path must be an archived `JOB.json`.
 * A swapped spool can finish a job sliced for the old one, by explicit choice.
-* `PRINT_BUDDY` Klipper macro confirms ZMod can fall back to a matching backup slot.
+* `PRINT_HANDY` Klipper macro confirms ZMod can fall back to a matching backup slot.
 
 **Printing**
 * Nothing starts without a bed clear button press.
@@ -73,10 +73,10 @@ A bed-clear approval starts one print. Starting the same G-code again needs a ne
 * Stop and pause alerts carry Resume and Cancel buttons.
 * Klipper report posted when a print is cancelled.
 * Timelapse per print, or one combined video for a multi plate plan, sized to fit Discord.
-* Print event markers (#317): the listener records timestamped markers — start, camera-watchdog alert, pause, resume, cancel, error, and completion with its outcome (`success` / `failed` / `cancelled`) — to `<state_dir>/print_markers/<job>.json`, one file per print keyed by G-code filename, written atomically like the plan timelapse stores. Each marker carries the wall-clock time and, when known, the print-elapsed offset; `print_buddy/hermes/print_markers.py` also provides the duration-proportional mapping from an elapsed offset into a rendered timelapse's time, which the future blooper-reel builder will use. Recording is fail-safe — a storage error is logged and skipped, never breaking the listener or a post. Developers adding a new listener domain (#299) should feed its normalised events into `print_markers.record()` so every domain's prints get the same record.
-* Optional vertical short (#317): with `timelapse.vertical_short` on, the completion post also carries a 9:16 (720x1280) version of the timelapse from `print_buddy/hermes/vertical_short.py` — blurred-background pad framing by default or a centre crop, an optional burned-in overlay (print title, printer, filament, elapsed time, outcome), and a one-second hold on the final frame. It is an extra attachment, never a replacement: it is clamped to the configured platform's upload limit, and any failure to build it is logged and skipped so the completion post always goes out with the timelapse itself.
+* Print event markers (#317): the listener records timestamped markers — start, camera-watchdog alert, pause, resume, cancel, error, and completion with its outcome (`success` / `failed` / `cancelled`) — to `<state_dir>/print_markers/<job>.json`, one file per print keyed by G-code filename, written atomically like the plan timelapse stores. Each marker carries the wall-clock time and, when known, the print-elapsed offset; `print_handy/hermes/print_markers.py` also provides the duration-proportional mapping from an elapsed offset into a rendered timelapse's time, which the future blooper-reel builder will use. Recording is fail-safe — a storage error is logged and skipped, never breaking the listener or a post. Developers adding a new listener domain (#299) should feed its normalised events into `print_markers.record()` so every domain's prints get the same record.
+* Optional vertical short (#317): with `timelapse.vertical_short` on, the completion post also carries a 9:16 (720x1280) version of the timelapse from `print_handy/hermes/vertical_short.py` — blurred-background pad framing by default or a centre crop, an optional burned-in overlay (print title, printer, filament, elapsed time, outcome), and a one-second hold on the final frame. It is an extra attachment, never a replacement: it is clamped to the configured platform's upload limit, and any failure to build it is logged and skipped so the completion post always goes out with the timelapse itself.
 
-Live camera streaming (#311) starts with a delivery-agnostic core in `print_buddy/live_stream.py`: it resolves one normalised camera source from Moonraker's webcams API — the same Moonraker path whether the household runs Fluidd, Mainsail or neither, since both are frontends over Moonraker's webcam registry — with a stream URL derived from the existing snapshot URL as fallback, from OctoPrint's webcam settings, or as a snapshot-only source, and it plans a codec-aware ffmpeg encode (H.264: VAAPI, NVENC, QSV, then CPU `libx264`; VP8: VAAPI, then CPU `libvpx`; NVENC never serves VP8) from an injected hardware probe. Stage 3 adds the Discord surface: the `[live_stream]` settings, the `/print-live` command and its viewing-session state machine (same module), and the Activity core in `print_buddy/live_activity.py` — because Discord's bot API cannot send video, the live view is an Embedded App (Activity) in the voice channel whose page plays the go2rtc MSE-over-WebSocket feed behind a server-side OAuth allowlist check. Stage 4 adds the deployment wiring: the supervised Activity server (`python3 -m print_buddy.live_activity`, gated by `print_buddy.live_gate` and mirrored in the container healthcheck), the Activity server's own authenticated proxy of the feed to go2rtc on loopback (one public origin, one Portal URL mapping), go2rtc starting for live viewing as well as timelapse capture under the same one-upstream rule, the auto-start-on-print trigger and empty-timeout enforcement over the shared session record, the Web UI catalog's Live camera group, and the Compose/Unraid surfaces (live settings, the two live secrets, the Discord application ID, and the profile-gated `cloudflared` sidecar for the named tunnel). The operator guide is [Discord bot setup §7](DISCORD-BOT-SETUP.md#7-live-camera-activity-optional-311). The Stage 0 live Discord spike has not run, so the feature is offline-verified only — nothing about it is claimed live-verified.
+Live camera streaming (#311) starts with a delivery-agnostic core in `print_handy/live_stream.py`: it resolves one normalised camera source from Moonraker's webcams API — the same Moonraker path whether the household runs Fluidd, Mainsail or neither, since both are frontends over Moonraker's webcam registry — with a stream URL derived from the existing snapshot URL as fallback, from OctoPrint's webcam settings, or as a snapshot-only source, and it plans a codec-aware ffmpeg encode (H.264: VAAPI, NVENC, QSV, then CPU `libx264`; VP8: VAAPI, then CPU `libvpx`; NVENC never serves VP8) from an injected hardware probe. Stage 3 adds the Discord surface: the `[live_stream]` settings, the `/print-live` command and its viewing-session state machine (same module), and the Activity core in `print_handy/live_activity.py` — because Discord's bot API cannot send video, the live view is an Embedded App (Activity) in the voice channel whose page plays the go2rtc MSE-over-WebSocket feed behind a server-side OAuth allowlist check. Stage 4 adds the deployment wiring: the supervised Activity server (`python3 -m print_handy.live_activity`, gated by `print_handy.live_gate` and mirrored in the container healthcheck), the Activity server's own authenticated proxy of the feed to go2rtc on loopback (one public origin, one Portal URL mapping), go2rtc starting for live viewing as well as timelapse capture under the same one-upstream rule, the auto-start-on-print trigger and empty-timeout enforcement over the shared session record, the Web UI catalog's Live camera group, and the Compose/Unraid surfaces (live settings, the two live secrets, the Discord application ID, and the profile-gated `cloudflared` sidecar for the named tunnel). The operator guide is [Discord bot setup §7](DISCORD-BOT-SETUP.md#7-live-camera-activity-optional-311). The Stage 0 live Discord spike has not run, so the feature is offline-verified only — nothing about it is claimed live-verified.
 
 **Records and upkeep**
 * Every finished job written as a JSON print record and to the job archive.
@@ -87,11 +87,11 @@ Live camera streaming (#311) starts with a delivery-agnostic core in `print_budd
 * `/print-macros` lists the macros the configured Moonraker printer actually defines, read live from `/printer/objects/list` and classified against the registry (see [printer macros](MACROS.md)). The listing is read-only. `/print-macros run <name> [KEY=VALUE ...]` runs one live-discovered macro behind a confirmation that shows the exact script line, refusing internal (`_`-prefixed) names, unknown names, and any run while a print is running or paused. Non-Moonraker printers get a plain explanation.
 * `/print-live [start | stop | status]` runs the live camera viewing session (Discord only; see [live camera Activity](DISCORD-BOT-SETUP.md#7-live-camera-activity-optional-311)). Start posts the Activity pointer for the one configured voice channel; the bot sends no video itself and records nothing. Telegram and Matrix have no live command.
 * `/print-troubleshoot` walks a guided physical troubleshooting flow (first layer, clog, heat creep, bed level, ringing) one question at a time. Advice only; it never commands the printer.
-* `/print-help` answers with what Print Buddy can do and the commands it registers. Read-only.
+* `/print-help` answers with what Print Handy can do and the commands it registers. Read-only.
 
 ## Settings
 
-`config/home.yaml` holds the shared defaults and picks the printer. Printer-specific defaults (bed, height, nozzle, slots, margins, prime tower and macros) come from the selected model and can be overridden in YAML. Put machine-specific overrides in the gitignored `config/local.yaml`; YAML is preferred for new configuration. Existing `config/home.toml` and `config/local.toml` remain supported during migration. When both formats are present, YAML wins; TOML is used when the corresponding YAML file is absent. `PRINT_BUDDY_CONFIG=/path/to/settings.yaml` selects one YAML file, and `.toml` paths remain supported. Environment variables (`PRINT_BUDDY__SECTION__KEY` and the existing legacy names) override file settings.
+`config/home.yaml` holds the shared defaults and picks the printer. Printer-specific defaults (bed, height, nozzle, slots, margins, prime tower and macros) come from the selected model and can be overridden in YAML. Put machine-specific overrides in the gitignored `config/local.yaml`; YAML is preferred for new configuration. Existing `config/home.toml` and `config/local.toml` remain supported during migration. When both formats are present, YAML wins; TOML is used when the corresponding YAML file is absent. `PRINT_HANDY_CONFIG=/path/to/settings.yaml` selects one YAML file, and `.toml` paths remain supported. Environment variables (`PRINT_HANDY__SECTION__KEY` and the existing legacy names) override file settings.
 
 Settings merge in this order: printer-model defaults, home configuration, the selected local or explicit configuration, then environment. A typo or invalid value stops startup and identifies the setting. Python 3.11 or newer is required. Changes require restarting the relevant process; settings are loaded once at process startup. See [YAML configuration and TOML migration](../docs/CONFIGURATION-YAML.md) for schema, precedence, safety limits and migration guidance.
 
@@ -107,9 +107,9 @@ visual_watch:
 
 ### Printer models
 
-One package per brand under `print_buddy/printers/`, one file per printer inside it: `flashforge/ad5x.py`, `sovol/sv06.py`, `klipper/generic.py`. A model file holds the printer's defaults, its adapter and the name of its Orca template folder (`print_buddy/templates/orca/<folder>`). Its user-adjustable keys are `printer.name`, `printer.firmware`, `printer.start_macro`, `printer.end_macro`, `printer.bed_mm`, `printer.max_print_height_mm`, `printer.nozzle_diameter_mm`, `printer.ifs_slots`, `layout.single_copy_edge_mm`, `layout.multi_copy_edge_mm`, `layout.merge_edge_margin_mm`, `layout.merge_spacing_mm`, `prime_tower.size_mm`, `prime_tower.part_clearance_mm`, `prime_tower.edge_mm`, `prime_tower.merge_slack_mm`, `cold_pull` profile names and values, and `orca.templates`. `config/home.yaml` picks one with `printer.model: flashforge.ad5x`; settings merge in this order, later wins: model defaults, home configuration, selected local or explicit configuration, environment.
+One package per brand under `print_handy/printers/`, one file per printer inside it: `flashforge/ad5x.py`, `sovol/sv06.py`, `klipper/generic.py`. A model file holds the printer's defaults, its adapter and the name of its Orca template folder (`print_handy/templates/orca/<folder>`). Its user-adjustable keys are `printer.name`, `printer.firmware`, `printer.start_macro`, `printer.end_macro`, `printer.bed_mm`, `printer.max_print_height_mm`, `printer.nozzle_diameter_mm`, `printer.ifs_slots`, `layout.single_copy_edge_mm`, `layout.multi_copy_edge_mm`, `layout.merge_edge_margin_mm`, `layout.merge_spacing_mm`, `prime_tower.size_mm`, `prime_tower.part_clearance_mm`, `prime_tower.edge_mm`, `prime_tower.merge_slack_mm`, `cold_pull` profile names and values, and `orca.templates`. `config/home.yaml` picks one with `printer.model: flashforge.ad5x`; settings merge in this order, later wins: model defaults, home configuration, selected local or explicit configuration, environment.
 
-Adding a printer is one new file in its brand package plus its templates; nothing in `core/` changes. The AD5X and ZMod code lives in `print_buddy/printers/flashforge/zmod/`, and `base.py` lists what core still shares with it.
+Adding a printer is one new file in its brand package plus its templates; nothing in `core/` changes. The AD5X and ZMod code lives in `print_handy/printers/flashforge/zmod/`, and `base.py` lists what core still shares with it.
 
 Upgrading from `[printer] family`: replace it in `config/local.toml` with `model = "flashforge.ad5x"` (or `sovol.sv06`, `klipper.generic`). A leftover `family` stops the import and names the key.
 
@@ -129,7 +129,7 @@ Empty bed, spaghetti, detached part, uncertain, and vision failure alerts fire a
 
 ### MakerWorld account token
 
-MakerWorld links need a MakerWorld (Bambu Lab) account token. It is a file, not a setting or environment variable: Print Buddy reads `~/.config/bambu/token` in the home directory of the account that runs it (in Docker, `/data/.config/bambu/token`; see [Docker](DOCKER.md#makerworld-account-token)) and sends it as an `Authorization: Bearer` header on the MakerWorld model lookup and on the file download. Printables links and uploaded files need no token.
+MakerWorld links need a MakerWorld (Bambu Lab) account token. It is a file, not a setting or environment variable: Print Handy reads `~/.config/bambu/token` in the home directory of the account that runs it (in Docker, `/data/.config/bambu/token`; see [Docker](DOCKER.md#makerworld-account-token)) and sends it as an `Authorization: Bearer` header on the MakerWorld model lookup and on the file download. Printables links and uploaded files need no token.
 
 To get the token, sign in at makerworld.com in a browser and copy the value of the site cookie named `token` from the browser's developer tools. Store it as the only content of the file, readable only by that account, and never commit or share it:
 
@@ -139,11 +139,11 @@ mkdir -p ~/.config/bambu && chmod 700 ~/.config/bambu
 chmod 600 ~/.config/bambu/token
 ```
 
-Without the file, MakerWorld intake stops before the model summary with a message naming the file; an empty file stops it too. Print Buddy does not check the token when it reads it. Tokens expire: when MakerWorld downloads start failing, sign in again and replace the file. Observed by the reporter on 25 Oct 2026 ([#262](https://github.com/catduckgnaf/print-buddy/issues/262)): with an invalid token, the MakerWorld model lookup still answered and the summary was posted, and the download was then refused with HTTP 403 ("Please log in to download models."). A wrong or expired token can therefore show up only at download time, after the model summary.
+Without the file, MakerWorld intake stops before the model summary with a message naming the file; an empty file stops it too. Print Handy does not check the token when it reads it. Tokens expire: when MakerWorld downloads start failing, sign in again and replace the file. Observed by the reporter on 25 Oct 2026 ([#262](https://github.com/catduckgnaf/print-handy/issues/262)): with an invalid token, the MakerWorld model lookup still answered and the summary was posted, and the download was then refused with HTTP 403 ("Please log in to download models."). A wrong or expired token can therefore show up only at download time, after the model summary.
 
 ### Thingiverse App Token
 
-Thingiverse links use Thingiverse's official REST API (`api.thingiverse.com`) and need a free Thingiverse App Token. It is a file, not a setting or environment variable: Print Buddy reads `~/.config/thingiverse/token` in the home directory of the account that runs it (in Docker, `/data/.config/thingiverse/token`; see [Docker](DOCKER.md#makerworld-account-token) — the same bind-mounted `dot-config` directory holds both token files) and sends it as an `Authorization: Bearer` header when it looks up a thing, lists its files and downloads the chosen file. The token is read on each request and is never logged.
+Thingiverse links use Thingiverse's official REST API (`api.thingiverse.com`) and need a free Thingiverse App Token. It is a file, not a setting or environment variable: Print Handy reads `~/.config/thingiverse/token` in the home directory of the account that runs it (in Docker, `/data/.config/thingiverse/token`; see [Docker](DOCKER.md#makerworld-account-token) — the same bind-mounted `dot-config` directory holds both token files) and sends it as an `Authorization: Bearer` header when it looks up a thing, lists its files and downloads the chosen file. The token is read on each request and is never logged.
 
 To get the token, sign in at thingiverse.com and create an app/token at <https://www.thingiverse.com/developers> under your Thingiverse account. Store the App Token as the only content of the file, readable only by that account, and never commit or share it:
 
@@ -153,7 +153,7 @@ mkdir -p ~/.config/thingiverse && chmod 700 ~/.config/thingiverse
 chmod 600 ~/.config/thingiverse/token
 ```
 
-Without the file, Thingiverse intake stops before the model summary with a message naming the file and where to create the token; an empty file stops it too. Only `.stl` and `.3mf` files from a thing are selectable sources — a "download all" zip and other file types are not — and, as with the other sites, the chosen geometry is resliced locally; baked site G-code is never used. If Thingiverse answers with a 401/403 or a Cloudflare robot check (challenge), intake reports that plainly and stops; Print Buddy never tries to solve or bypass a robot check. Open thingiverse.com in a browser and pass any check there, or check/replace the token, then send the link again.
+Without the file, Thingiverse intake stops before the model summary with a message naming the file and where to create the token; an empty file stops it too. Only `.stl` and `.3mf` files from a thing are selectable sources — a "download all" zip and other file types are not — and, as with the other sites, the chosen geometry is resliced locally; baked site G-code is never used. If Thingiverse answers with a 401/403 or a Cloudflare robot check (challenge), intake reports that plainly and stops; Print Handy never tries to solve or bypass a robot check. Open thingiverse.com in a browser and pass any check there, or check/replace the token, then send the link again.
 
 ### All settings
 
@@ -172,7 +172,7 @@ Without the file, Thingiverse intake stops before the model summary with a messa
 | | `merge_edge_margin_mm`, `merge_spacing_mm` | `8`, `10` | Gaps when merging plates |
 | | `max_merged_hours` | `12` | Longer merged plates stay separate |
 | `prime_tower` | `size_mm`, `part_clearance_mm`, `edge_mm`, `merge_slack_mm` | `45`, `8`, `10`, `5` | Prime tower size and clearances |
-| `orca` | `templates` | the model's folder under `print_buddy/templates/orca` | Orca machine, process, and filament JSON |
+| `orca` | `templates` | the model's folder under `print_handy/templates/orca` | Orca machine, process, and filament JSON |
 | | `command` | Flathub OrcaSlicer | How to start the Orca CLI |
 | `bambu` | `command` | Flathub Bambu Studio, no network | Fallback slicer |
 | `paths` | `hermes_home` | `~/.hermes/profiles/3dprinting` | Hermes profile the bot runs in |
@@ -186,7 +186,7 @@ Without the file, Thingiverse intake stops before the model summary with a messa
 | | `upload_max_bytes` | `9500000` | Largest upload before video is shrunk |
 | | `post_print_quiet_s` | `7200` | Quiet time before a chat session resets |
 | | `daily_reset_hour`, `timezone` | `4`, `America/New_York` | Daily session reset |
-| | `bot_name` | `Print Buddy` | Name the bot uses in the roast persona and the rendered profile templates (`SOUL.md`, locale strings). Set it to anything, for example your old name |
+| | `bot_name` | `Print Handy` | Name the bot uses in the roast persona and the rendered profile templates (`SOUL.md`, locale strings). Set it to anything, for example your old name |
 | | `question_timeout_s` | `1800` | How long a Discord question waits for a button press |
 | | `safety_confirm_timeout_s` | `600` | How long a safety confirmation (stop, resume, reboot, cold-pull go-ahead) waits |
 | | `upload_wait_s` | `3600` | How long an upload-wait freeze stays active |
@@ -194,7 +194,7 @@ Without the file, Thingiverse intake stops before the model summary with a messa
 | | `token_env` | `DISCORD_BOT_TOKEN` | Standalone bot: environment variable holding the bot token |
 | | `allowed_user_ids` | empty | Standalone bot: optional whitelist of Discord user IDs, comma or space separated; empty lets everyone in the print channel use the bot |
 | | `denied_user_ids` | empty | Standalone bot: optional deny list of Discord user IDs; a denied user is refused even when whitelisted or the approver |
-| `bot` | `mode` | `hermes` | `standalone` runs `python3 -m print_buddy.bot` with no Hermes; see [Standalone bot](../docs/STANDALONE.md) |
+| `bot` | `mode` | `hermes` | `standalone` runs `python3 -m print_handy.bot` with no Hermes; see [Standalone bot](../docs/STANDALONE.md) |
 | | `health_port`, `health_stale_s` | `0`, `120` | Standalone bot: `GET /healthz` port (0 off) and heartbeat age limit |
 | | `sync_commands` | `true` | Standalone bot: register slash commands at startup |
 | `llm` | `chat_url`, `model`, `api_key_env`, `timeout_s` | empty, empty, `LLM_API_KEY`, `20` | Optional OpenAI-compatible model for standalone free-text replies; never starts anything itself |
@@ -220,26 +220,26 @@ Without the file, Thingiverse intake stops before the model summary with a messa
 
 See [docs/INSTALL.md](../docs/INSTALL.md) to install into a Hermes profile, or [docs/STANDALONE.md](../docs/STANDALONE.md) and `scripts/install-standalone.sh` to run the standalone bot with no Hermes.
 
-Update only from a commit that is green in CI. On the machine running Print Buddy:
+Update only from a commit that is green in CI. On the machine running Print Handy:
 ```bash
 scripts/home-update.sh          # fast-forward to origin/main
 scripts/home-update.sh <tag>    # or a release tag
 ```
 The script refuses to run if tracked files were edited by hand. It runs the offline tests and the doctor after the update, and resets to the previous commit if either fails. `config/local.yaml` and legacy `config/local.toml` are never touched. A listener restart command can go in `config/after-update.sh` (gitignored), which runs after a good update.
 
-Check the setup any time with `python3 -m print_buddy.doctor`. It also checks Moonraker and Spoolman when they are set in `[services]`, and warns about Print Buddy state files stranded outside the profile `state` folder. The update and install scripts remove those strays when the profile holds the real copy (or the stray is empty); files in other profiles are only reported; `python3 -m print_buddy.state_files [--dry-run] [--remove]` does the same by hand.
+Check the setup any time with `python3 -m print_handy.doctor`. It also checks Moonraker and Spoolman when they are set in `[services]`, and warns about Print Handy state files stranded outside the profile `state` folder. The update and install scripts remove those strays when the profile holds the real copy (or the stray is empty); files in other profiles are only reported; `python3 -m print_handy.state_files [--dry-run] [--remove]` does the same by hand.
 
 ## Run with Docker
 
-Prerequisites: Docker Engine with the Docker Compose plugin, and Git. From the repository root, copy `.env.example` to `.env` and set `PRINT_BUDDY__SERVICES__MOONRAKER_URL` to your printer's Moonraker URL. Set other scalar settings with `PRINT_BUDDY__SECTION__KEY` variables in `.env`; `config/docker.yaml` supplies Docker defaults. Lists such as `orca.command` belong in a config file, not environment variables. To replace the full config, mount YAML and set `PRINT_BUDDY_CONFIG` to its container path. Existing TOML mounts remain compatible by mounting at `/app/config/docker.toml` and setting `PRINT_BUDDY_CONFIG=/app/config/docker.toml` in `.env`.
+Prerequisites: Docker Engine with the Docker Compose plugin, and Git. From the repository root, copy `.env.example` to `.env` and set `PRINT_HANDY__SERVICES__MOONRAKER_URL` to your printer's Moonraker URL. Set other scalar settings with `PRINT_HANDY__SECTION__KEY` variables in `.env`; `config/docker.yaml` supplies Docker defaults. Lists such as `orca.command` belong in a config file, not environment variables. To replace the full config, mount YAML and set `PRINT_HANDY_CONFIG` to its container path. Existing TOML mounts remain compatible by mounting at `/app/config/docker.toml` and setting `PRINT_HANDY_CONFIG=/app/config/docker.toml` in `.env`.
 
-Compose stores persistent data in `./data/hermes`, `./data/archive`, `./data/records`, and `./data/cache`; the included Spoolman uses `./data/spoolman`. Create these directories before starting. Spoolman is included in the Compose stack and published on no host port; Print Buddy has no published host port and connects to Moonraker and Spoolman over the Compose network.
+Compose stores persistent data in `./data/hermes`, `./data/archive`, `./data/records`, and `./data/cache`; the included Spoolman uses `./data/spoolman`. Create these directories before starting. Spoolman is included in the Compose stack and published on no host port; Print Handy has no published host port and connects to Moonraker and Spoolman over the Compose network.
 
 ```bash
 cp .env.example .env
 mkdir -p data/hermes data/archive data/records data/cache data/spoolman
 docker compose up -d
-docker compose logs -f print-buddy
+docker compose logs -f print-handy
 ```
 
 To update a checkout, pull the desired source revision and rebuild/recreate the services with `docker compose up -d --build`. Stop the stack with `docker compose down`; the bind-mounted data directories remain. See [Docker details](../docs/DOCKER.md) for the full configuration notes.
@@ -251,7 +251,7 @@ From the repository root, CI runs this on every push and pull request:
 python3 -m pip install -r requirements-test.txt
 python3 -m pytest tests
 ```
-A second CI job installs the Flathub OrcaSlicer, slices small test models with the templates, and runs the slice guards on the real G-code. Run it locally with `PRINT_BUDDY_REAL_SLICER=1 python3 -m pytest -s tests/slicer`.
+A second CI job installs the Flathub OrcaSlicer, slices small test models with the templates, and runs the slice guards on the real G-code. Run it locally with `PRINT_HANDY_REAL_SLICER=1 python3 -m pytest -s tests/slicer`.
 
 ### Discord flow corpus
 
@@ -272,7 +272,7 @@ To add a model that broke Discord: make `tests/corpus/cases/<name>/` with one su
 
 ```bash
 python3 -m pytest -q tests/corpus                                # fake Orca
-PRINT_BUDDY_REAL_SLICER=1 python3 -m pytest -q -s tests/corpus   # real Orca, slices under .slicer-work/
+PRINT_HANDY_REAL_SLICER=1 python3 -m pytest -q -s tests/corpus   # real Orca, slices under .slicer-work/
 ```
 
 #### Local private corpus
@@ -280,9 +280,9 @@ PRINT_BUDDY_REAL_SLICER=1 python3 -m pytest -q -s tests/corpus   # real Orca, sl
 Personal or non-redistributable models must stay outside the checkout. Create one folder per case under a private directory, with the model and a `case.toml` copied from a public example. The private corpus is selected only when explicitly configured:
 
 ```bash
-export PRINT_BUDDY_PRIVATE_CORPUS="$HOME/.local/share/print-buddy/private-cases"
+export PRINT_HANDY_PRIVATE_CORPUS="$HOME/.local/share/print-handy/private-cases"
 python3 -m pytest -q tests/corpus
-unset PRINT_BUDDY_PRIVATE_CORPUS
+unset PRINT_HANDY_PRIVATE_CORPUS
 ```
 
 Private cases use the same offline flow and skip only the public redistribution-license check. The configured directory must exist outside the repository and contain at least one case. Private-corpus opt-in fails when `CI=true`; never set it in CI. The private model is not added to the checkout, public diff, or CI artifacts. Real-slicer output is temporary local scratch under the ignored `.slicer-work/` directory; do not commit or upload it.
@@ -290,32 +290,32 @@ Private cases use the same offline flow and skip only the public redistribution-
 ## ZMod plugin and spool matching
 
 This section is AD5X-only: the macro and the spool matching below describe the IFS
-printer. The AD5M and AD5M Pro run the same ZMod firmware family and Print Buddy
+printer. The AD5M and AD5M Pro run the same ZMod firmware family and Print Handy
 supports them as single-extruder models, but they have no IFS and no spool matching;
 the Creator 5 and Creator 5 Pro are toolhead machines whose spools bind per
 toolhead rather than per IFS slot, which this macro's slot model does not cover;
 see [ZMod printers](ZMOD.md) for all five ZMod models and their differences.
 
-ZMod switches to a backup spool mid-print only when another slot holds the exact same color and material. The `print-buddy.cfg` macro lets you check that before a job starts:
+ZMod switches to a backup spool mid-print only when another slot holds the exact same color and material. The `print-handy.cfg` macro lets you check that before a job starts:
 ```gcode
-PRINT_BUDDY SLOT=1
+PRINT_HANDY SLOT=1
 ```
 If slot 1 and slot 3 are both black PETG, it confirms:
 ```
-PRINT_BUDDY: black / PETG also on slot 3. ZMod can switch. This macro does not.
+PRINT_HANDY: black / PETG also on slot 3. ZMod can switch. This macro does not.
 ```
-`PRINT_BUDDY COLOR=black MATERIAL=PETG` checks all four slots without assuming an active toolhead.
+`PRINT_HANDY COLOR=black MATERIAL=PETG` checks all four slots without assuming an active toolhead.
 
 To install, run this on the printer console:
 ```gcode
-ENABLE_PLUGIN name=print-buddy
+ENABLE_PLUGIN name=print-handy
 ```
-Then add your slot assignments to `mod_data/user.cfg` in a `[gcode_macro _PRINT_BUDDY_VARS]` block and run `FIRMWARE_RESTART`. Moonraker update manager entry, in `mod_data/user.moonraker.conf`:
+Then add your slot assignments to `mod_data/user.cfg` in a `[gcode_macro _PRINT_HANDY_VARS]` block and run `FIRMWARE_RESTART`. Moonraker update manager entry, in `mod_data/user.moonraker.conf`:
 ```ini
-[update_manager print-buddy]
+[update_manager print-handy]
 type: git_repo
-path: /root/printer_data/config/mod_data/plugins/print-buddy
-origin: https://github.com/catduckgnaf/print-buddy.git
+path: /root/printer_data/config/mod_data/plugins/print-handy
+origin: https://github.com/catduckgnaf/print-handy.git
 primary_branch: main
 managed_services: klipper
 channel: dev
@@ -323,7 +323,7 @@ is_system_service: False
 ```
 
 On Telegram, a ZMod household can also run moonraker-telegram-bot — the
-bot ZMod itself uses — alongside Print Buddy's Telegram bot for live
+bot ZMod itself uses — alongside Print Handy's Telegram bot for live
 printer control, notifications and timelapse: see
 [Telegram bot setup](TELEGRAM-BOT-SETUP.md#pairing-with-moonraker-telegram-bot-zmod-companion)
 for the division of labour, the two-token rule and how to keep only one
@@ -332,17 +332,17 @@ bot posting progress notifications.
 ## Repository structure
 
 * `config/home.yaml`: default settings. Legacy TOML remains supported during migration. See Settings.
-* `print_buddy/settings.py`: loads and validates settings.
-* `print_buddy/doctor.py`: checks that a machine can run Print Buddy.
-* `print_buddy/core/`: offline 3MF and STL pipeline. No printer connection.
-* `print_buddy/hermes/`: Moonraker listener, Discord posts, spool sync, print control, and records.
-* `print_buddy/printers/`: one package per brand, one file per printer model; see `base.py` for what each one owns.
-* `print_buddy/templates/orca/<model folder>/`: Orca machine, process, and filament JSON per printer.
+* `print_handy/settings.py`: loads and validates settings.
+* `print_handy/doctor.py`: checks that a machine can run Print Handy.
+* `print_handy/core/`: offline 3MF and STL pipeline. No printer connection.
+* `print_handy/hermes/`: Moonraker listener, Discord posts, spool sync, print control, and records.
+* `print_handy/printers/`: one package per brand, one file per printer model; see `base.py` for what each one owns.
+* `print_handy/templates/orca/<model folder>/`: Orca machine, process, and filament JSON per printer.
 * `plugins/print-feedback/`: the Discord command handlers and interaction guards, loaded by the Hermes gateway or by the standalone bot.
-* `print_buddy/bot/`: standalone bot. `platform.py` is the chat-platform interface (#164: `send`, `send_clarify`, `answer_typed`, `close_prompt`, `is_allowed_id`, per-platform limits on the adapter); `adapter.py` is its Discord implementation over discord.py, `telegram.py`/`telegram_rest.py` its Telegram implementation over the standard-library Bot API (long polling, inline keyboards) and `matrix.py`/`matrix_rest.py` its Matrix implementation over the standard-library Client-Server API (/sync long polling with a persisted next_batch token, media repo uploads/downloads, numbered-list prompts — Matrix has no buttons — and auto-join of the print room on invite), selected by `[bot] platform` (default `discord`). The Telegram and Matrix adapters are pure bots (`uses_llm = False`): BotCore never calls the LLM fallback for them. Plus the router, health check and optional LLM; `systemd/` holds its units.
+* `print_handy/bot/`: standalone bot. `platform.py` is the chat-platform interface (#164: `send`, `send_clarify`, `answer_typed`, `close_prompt`, `is_allowed_id`, per-platform limits on the adapter); `adapter.py` is its Discord implementation over discord.py, `telegram.py`/`telegram_rest.py` its Telegram implementation over the standard-library Bot API (long polling, inline keyboards) and `matrix.py`/`matrix_rest.py` its Matrix implementation over the standard-library Client-Server API (/sync long polling with a persisted next_batch token, media repo uploads/downloads, numbered-list prompts — Matrix has no buttons — and auto-join of the print room on invite), selected by `[bot] platform` (default `discord`). The Telegram and Matrix adapters are pure bots (`uses_llm = False`): BotCore never calls the LLM fallback for them. Plus the router, health check and optional LLM; `systemd/` holds its units.
 * `hermes/`: profile templates and skills installed by `scripts/install-hermes.sh`.
 * `scripts/`: `install-hermes.sh`, `install-standalone.sh`, `home-update.sh`, and `migrate-names.sh` (one-shot, see `docs/RENAME-MIGRATION.md`).
-* `print-buddy.cfg`, `install.sh`, `uninstall.sh`, `update.sh`: ZMod plugin macro and lifecycle scripts. The cfg file name must match the plugin name (`print-buddy`) or ZMod refuses to enable the plugin (#289).
+* `print-handy.cfg`, `install.sh`, `uninstall.sh`, `update.sh`: ZMod plugin macro and lifecycle scripts. The cfg file name must match the plugin name (`print-handy`) or ZMod refuses to enable the plugin (#289).
 * `tests/`: offline suite, real slicer checks, the Discord flow corpus (`tests/corpus/`), and the Klipper macro tests.
 * `docs/`: install guide and AD5X integration specs.
 
@@ -352,8 +352,8 @@ bot posting progress notifications.
 * ZMod firmware project: [ghzserg/zmod](https://github.com/ghzserg/zmod)
 * ZMod plugin guide: [wiki.zmod.link/Plugin](https://wiki.zmod.link/Plugin/)
 * OrcaSlicer CLI documentation: [CLI mode](https://github.com/OrcaSlicer/OrcaSlicer/wiki/cli_mode)
-* Releases: [GitHub releases](https://github.com/catduckgnaf/print-buddy/releases)
+* Releases: [GitHub releases](https://github.com/catduckgnaf/print-handy/releases)
 
 ## Spool / IFS source of truth
 
-Spoolman is authoritative for spool identity, filament material/color, and location (`IFS Slot N` versus `Shelf`). `printer_hardware.json` caches verified slot-to-Spoolman-ID bindings; it is not authoritative when Spoolman is available. Spoolman availability is never a gate, though (#235): when Spoolman is unreachable, errors, or disagrees with the record, the hardware check, G-code verification and slicing warn and continue on the recorded spool state (material, density and temperatures in `printer_hardware.json`) instead of refusing work. Since #387 that is structural rather than per-callsite discipline: every Spoolman HTTP call (lookup, spool assignment, usage reporting, active-spool set, inventory, health probe) goes through the one client, `print_buddy/core/spoolman_client.py` — short timeout, every transport or HTTP error caught and logged as a WARNING — and a contract test fails CI if a Spoolman API path is paired with a direct HTTP transport anywhere else. The print-start active-spool sync is best-effort too: when Spoolman does not answer, or the Moonraker spool-pointer write fails, the launch proceeds on the slot's recorded data, the user sees the single line "Spoolman unavailable; spool tracking skipped for this job.", and the usage that could not be reported is recorded as pending (`spoolman_usage_pending` in the job record at start, and in the completion record when Spoolman is down at completion) for later reconciliation; it is never retried in a way that blocks the job. A live Spoolman answer that the spool is archived or a different material than the slot record still refuses a launch: that is Spoolman data contradicting the operator's record, not an outage. The Spoolman address itself comes from `services.spoolman_url` in settings (including the `PRINT_BUDDY__SERVICES__SPOOLMAN_URL` environment variable) whenever that is set; the URL cached in `printer_hardware.json` is only a fallback, so a stale cached address cannot redirect lookups to a decommissioned host. A single-extruder printer (one slot) with no `ifs_slots` record offers its configured `spool` as slot 1 in the Discord color questions (#263); when that spool has no Spoolman binding (`spoolman_id: null`) the selection carries none, whether or not a Spoolman URL is set. Multi-slot printers and the four-bay stock Flashforge still need their recorded slot map and a Spoolman ID per slot. Physical feeder slots are 1-based (1–4); G-code tools are zero-based (T0–T3), and mappings explicitly translate between them. On a multi-tool printer (Creator 5 / 5 Pro) the same recorded map is per toolhead instead — Spoolman locations are `Toolhead N` — and the Discord color questions follow suit (#346): one question per source color asking which toolhead prints it, toolhead labels instead of slot labels, a toolhead already assigned a different color is not offered again, and more distinct colors than toolheads is refused (one color per toolhead; printing everything in one color on one toolhead stays available). The picks slice through the model's four-extruder templates as the identity tool mapping, and summaries name `Toolhead N`, never a slot. G-code/job snapshots are provenance, not permission to override newer Spoolman facts. Normalize screen colors to six-digit RGB; never infer missing color from another spool or slot. Correct missing/invalid Spoolman color before binding. Screen updates are immediate when idle or persisted pending while printing; deferred/failed updates require explicit sync after printing. Moonraker active spool is usage accounting only: single-slot launch repoints it; multi-slot launch leaves it unchanged, so usage can be approximate. Selected physical slot determines identity/readiness, not the global accounting pointer.
+Spoolman is authoritative for spool identity, filament material/color, and location (`IFS Slot N` versus `Shelf`). `printer_hardware.json` caches verified slot-to-Spoolman-ID bindings; it is not authoritative when Spoolman is available. Spoolman availability is never a gate, though (#235): when Spoolman is unreachable, errors, or disagrees with the record, the hardware check, G-code verification and slicing warn and continue on the recorded spool state (material, density and temperatures in `printer_hardware.json`) instead of refusing work. Since #387 that is structural rather than per-callsite discipline: every Spoolman HTTP call (lookup, spool assignment, usage reporting, active-spool set, inventory, health probe) goes through the one client, `print_handy/core/spoolman_client.py` — short timeout, every transport or HTTP error caught and logged as a WARNING — and a contract test fails CI if a Spoolman API path is paired with a direct HTTP transport anywhere else. The print-start active-spool sync is best-effort too: when Spoolman does not answer, or the Moonraker spool-pointer write fails, the launch proceeds on the slot's recorded data, the user sees the single line "Spoolman unavailable; spool tracking skipped for this job.", and the usage that could not be reported is recorded as pending (`spoolman_usage_pending` in the job record at start, and in the completion record when Spoolman is down at completion) for later reconciliation; it is never retried in a way that blocks the job. A live Spoolman answer that the spool is archived or a different material than the slot record still refuses a launch: that is Spoolman data contradicting the operator's record, not an outage. The Spoolman address itself comes from `services.spoolman_url` in settings (including the `PRINT_HANDY__SERVICES__SPOOLMAN_URL` environment variable) whenever that is set; the URL cached in `printer_hardware.json` is only a fallback, so a stale cached address cannot redirect lookups to a decommissioned host. A single-extruder printer (one slot) with no `ifs_slots` record offers its configured `spool` as slot 1 in the Discord color questions (#263); when that spool has no Spoolman binding (`spoolman_id: null`) the selection carries none, whether or not a Spoolman URL is set. Multi-slot printers and the four-bay stock Flashforge still need their recorded slot map and a Spoolman ID per slot. Physical feeder slots are 1-based (1–4); G-code tools are zero-based (T0–T3), and mappings explicitly translate between them. On a multi-tool printer (Creator 5 / 5 Pro) the same recorded map is per toolhead instead — Spoolman locations are `Toolhead N` — and the Discord color questions follow suit (#346): one question per source color asking which toolhead prints it, toolhead labels instead of slot labels, a toolhead already assigned a different color is not offered again, and more distinct colors than toolheads is refused (one color per toolhead; printing everything in one color on one toolhead stays available). The picks slice through the model's four-extruder templates as the identity tool mapping, and summaries name `Toolhead N`, never a slot. G-code/job snapshots are provenance, not permission to override newer Spoolman facts. Normalize screen colors to six-digit RGB; never infer missing color from another spool or slot. Correct missing/invalid Spoolman color before binding. Screen updates are immediate when idle or persisted pending while printing; deferred/failed updates require explicit sync after printing. Moonraker active spool is usage accounting only: single-slot launch repoints it; multi-slot launch leaves it unchanged, so usage can be approximate. Selected physical slot determines identity/readiness, not the global accounting pointer.

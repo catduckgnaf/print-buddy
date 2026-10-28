@@ -11,8 +11,8 @@ from unittest import mock
 import pytest
 
 from corpus import fake_discord
-from print_buddy.bot import runtime
-from print_buddy.core import link_intake, prompts
+from print_handy.bot import runtime
+from print_handy.core import link_intake, prompts
 
 A = "200000000000000002"
 B = "200000000000000003"

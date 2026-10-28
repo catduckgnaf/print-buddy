@@ -11,7 +11,7 @@ import zipfile
 
 import pytest
 
-from print_buddy.core import mesh_fast, orca_adapter
+from print_handy.core import mesh_fast, orca_adapter
 
 NS = 'http://schemas.microsoft.com/3dmanufacturing/core/2015/02'
 VERTS = ('<vertices><vertex x="0" y="0" z="0"/><vertex x="2" y="0" z="0"/>'

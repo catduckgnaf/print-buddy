@@ -13,10 +13,10 @@ from pathlib import Path
 from types import SimpleNamespace as S
 from unittest import mock
 
-from print_buddy.hermes import moonraker_event_listener as mel
-from print_buddy.hermes import print_alert_buttons as pab
-from print_buddy.hermes import print_control
-from print_buddy.hermes import print_stop
+from print_handy.hermes import moonraker_event_listener as mel
+from print_handy.hermes import print_alert_buttons as pab
+from print_handy.hermes import print_control
+from print_handy.hermes import print_stop
 
 HEAD_SENSOR = "filament_switch_sensor head_switch_sensor"
 ISSUE_SENSOR_STATUS = {HEAD_SENSOR: {"filament_detected": False, "enabled": True}}

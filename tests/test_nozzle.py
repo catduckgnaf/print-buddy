@@ -1,8 +1,8 @@
 """Tests for nozzle validation, nozzle types, and abrasive safety guards (Issue #59)."""
 import pytest
 
-from print_buddy import settings
-from print_buddy.core.nozzle import (
+from print_handy import settings
+from print_handy.core.nozzle import (
     AbrasiveNozzleError,
     NozzleError,
     NozzleTemperatureError,
@@ -91,27 +91,27 @@ def test_validate_nozzle_setting():
 
 def test_settings_validation_nozzle_size_and_type(monkeypatch):
     # Valid nozzle size & type for ad5x
-    monkeypatch.setenv("PRINT_BUDDY__PRINTER__MODEL", "flashforge.ad5x")
-    monkeypatch.setenv("PRINT_BUDDY__PRINTER__NOZZLE_DIAMETER_MM", "0.6")
-    monkeypatch.setenv("PRINT_BUDDY__PRINTER__NOZZLE_TYPE", "hardened_steel")
+    monkeypatch.setenv("PRINT_HANDY__PRINTER__MODEL", "flashforge.ad5x")
+    monkeypatch.setenv("PRINT_HANDY__PRINTER__NOZZLE_DIAMETER_MM", "0.6")
+    monkeypatch.setenv("PRINT_HANDY__PRINTER__NOZZLE_TYPE", "hardened_steel")
     cfg = settings.load(local=False)
     assert cfg["printer"]["nozzle_diameter_mm"] == 0.6
     assert cfg["printer"]["nozzle_type"] == "hardened_steel"
 
     # Unsupported nozzle size for ad5x (0.2 is not in supported (0.25, 0.4, 0.6, 0.8))
-    monkeypatch.setenv("PRINT_BUDDY__PRINTER__NOZZLE_DIAMETER_MM", "0.2")
+    monkeypatch.setenv("PRINT_HANDY__PRINTER__NOZZLE_DIAMETER_MM", "0.2")
     with pytest.raises(settings.SettingsError, match="nozzle_diameter_mm 0.2 is not supported by model 'flashforge.ad5x'"):
         settings.load(local=False)
 
     # Unsupported nozzle type for ad5x (brass is not in supported (stainless_steel, hardened_steel))
-    monkeypatch.setenv("PRINT_BUDDY__PRINTER__NOZZLE_DIAMETER_MM", "0.4")
-    monkeypatch.setenv("PRINT_BUDDY__PRINTER__NOZZLE_TYPE", "brass")
+    monkeypatch.setenv("PRINT_HANDY__PRINTER__NOZZLE_DIAMETER_MM", "0.4")
+    monkeypatch.setenv("PRINT_HANDY__PRINTER__NOZZLE_TYPE", "brass")
     with pytest.raises(settings.SettingsError, match="nozzle_type 'brass' is not supported by model 'flashforge.ad5x'"):
         settings.load(local=False)
 
 
 def test_pre_slice_guard_abrasive_material_on_brass():
-    from print_buddy.core.slice_guard import pre_slice
+    from print_handy.core.slice_guard import pre_slice
     res = pre_slice(nozzle_type="brass", materials=["PLA-CF"], bed=(220, 220), ifs_slots=1)
     assert res.status == "blocked"
     assert any("Refusing to slice abrasive material 'PLA-CF' on a brass nozzle" in msg for msg in res.blocked)
@@ -127,7 +127,7 @@ def test_pre_slice_guard_abrasive_material_on_brass():
 
 
 def test_printer_state_set_nozzle_validation():
-    from print_buddy.core import printer_state
+    from print_handy.core import printer_state
     from unittest import mock
 
     # Mock printer_state.load
@@ -158,8 +158,8 @@ def test_printer_state_set_nozzle_validation():
 
 
 def test_untuned_nozzle_profile_refusal(tmp_path):
-    from print_buddy.core import orca_adapter
-    from print_buddy.core.nozzle import UntunedNozzleError
+    from print_handy.core import orca_adapter
+    from print_handy.core.nozzle import UntunedNozzleError
     # State specifying 0.5mm nozzle when no tuned profile exists for 0.5mm
     mock_state = {
         "nozzle": {"diameter_mm": 0.5, "type": "hardened_steel"},
@@ -173,7 +173,7 @@ def test_untuned_nozzle_profile_refusal(tmp_path):
 
 
 def test_toml_backed_nozzle_profiles():
-    from print_buddy.core import nozzle
+    from print_handy.core import nozzle
 
     # Test loading and lookup from nozzles.toml
     prof_04 = nozzle.get_tuned_nozzle_profile(0.4)
@@ -192,7 +192,7 @@ def test_toml_backed_nozzle_profiles():
 def test_tuned_nozzle_profiles_configured(tmp_path, monkeypatch):
     import json
     from pathlib import Path
-    from print_buddy.core import orca_adapter, slice_guard
+    from print_handy.core import orca_adapter, slice_guard
 
     monkeypatch.setattr(orca_adapter, "pre_slice", lambda **kwargs: slice_guard.Result())
     monkeypatch.setattr(orca_adapter, "post_slice", lambda *_args, **_kwargs: slice_guard.Result())
@@ -239,7 +239,7 @@ def test_tuned_nozzle_profiles_configured(tmp_path, monkeypatch):
 def test_printer_state_cli_persistence(tmp_path, monkeypatch):
     """Verify set --nozzle and set --nozzle-type persist to disk through load/save round-trip."""
     import json
-    from print_buddy.core import printer_state
+    from print_handy.core import printer_state
 
     state_file = tmp_path / "printer_hardware.json"
     initial_st = {
@@ -336,7 +336,7 @@ def test_nozzle_temperature_safety(monkeypatch):
 
 
 def test_pre_slice_guard_nozzle_temperature():
-    from print_buddy.core.slice_guard import pre_slice
+    from print_handy.core.slice_guard import pre_slice
 
     # Brass with temperature > 300 should block
     res = pre_slice(nozzle_type="brass", nozzle_temp=310, bed=(220, 220), ifs_slots=1)
@@ -351,7 +351,7 @@ def test_pre_slice_guard_nozzle_temperature():
 def test_orca_adapter_thermal_and_flow_adjustments(tmp_path, monkeypatch):
     from pathlib import Path
     import json
-    from print_buddy.core import orca_adapter, slice_guard
+    from print_handy.core import orca_adapter, slice_guard
 
     monkeypatch.setattr(orca_adapter, "pre_slice", lambda **kwargs: slice_guard.Result())
     monkeypatch.setattr(orca_adapter, "post_slice", lambda *_args, **_kwargs: slice_guard.Result())
@@ -395,7 +395,7 @@ def test_orca_adapter_thermal_and_flow_adjustments(tmp_path, monkeypatch):
     assert filament_cfg["nozzle_temperature_initial_layer"] == ["225"]
     # max nozzle temperature guard must reject an offset that pushes above 450 °C
     monkeypatch.setattr(settings, "current", lambda: {**base_config, "nozzle_temp_offsets": {"hardened_steel": 10}})
-    from print_buddy.core.nozzle import NozzleTemperatureError
+    from print_handy.core.nozzle import NozzleTemperatureError
     with pytest.raises(NozzleTemperatureError, match="exceeds maximum safe limit of 450"):
         orca_adapter.slice_model(dummy_stl, tmp_path / "too_hot", {**state, "temps_c": {"nozzle": 445, "bed": 60}})
     # flow ratio 1.0 * 0.95 = 0.95

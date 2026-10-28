@@ -12,7 +12,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 import pytest
 
-from print_buddy.core import spoolman_client
+from print_handy.core import spoolman_client
 
 
 def refused_url():

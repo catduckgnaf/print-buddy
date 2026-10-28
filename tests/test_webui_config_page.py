@@ -3,7 +3,7 @@
 GET /config renders the stage 1 catalog as a form; saving is
 preview (diff, writes nothing) -> confirm (the stage 1 validated write).
 Everything runs offline against a temp settings file named by
-PRINT_BUDDY_CONFIG, with the server on an ephemeral loopback port.
+PRINT_HANDY_CONFIG, with the server on an ephemeral loopback port.
 """
 import http.client
 import re
@@ -13,9 +13,9 @@ import unittest
 from pathlib import Path
 from urllib.parse import urlencode
 
-from print_buddy import settings
-from print_buddy.webui import config as config_api
-from print_buddy.webui import server
+from print_handy import settings
+from print_handy.webui import config as config_api
+from print_handy.webui import server
 
 TOKEN = "test-webui-token-12345"
 OTHER_SECRET = "test-discord-token-67890"
@@ -49,7 +49,7 @@ class ConfigPageTests(unittest.TestCase):
         local = Path(tmp) / "local.yaml"
         local.write_text(f"paths:\n  hermes_home: {tmp}/hermes\n"
                          "webui:\n  enabled: true\n  port: 8765\n" + extra)
-        environ = {"PRINT_BUDDY_CONFIG": str(local), **(environ or {})}
+        environ = {"PRINT_HANDY_CONFIG": str(local), **(environ or {})}
         data = settings.load(local=local, environ=environ)
         httpd = server.make_server(data, environ=environ, port=0,
                                    snapshot_func=lambda: FAKE_SNAPSHOT)
@@ -154,7 +154,7 @@ class ConfigPageTests(unittest.TestCase):
         self.assertIn('href="/config"', body)
 
     def test_env_overridden_field_is_disabled_and_never_written(self):
-        environ = {"PRINT_BUDDY__VISUAL_WATCH__SENSITIVITY": "4"}
+        environ = {"PRINT_HANDY__VISUAL_WATCH__SENSITIVITY": "4"}
         with tempfile.TemporaryDirectory() as tmp:
             port, local, environ = self.start(tmp, environ=environ)
             code, body, csrf = self.get_config(port)

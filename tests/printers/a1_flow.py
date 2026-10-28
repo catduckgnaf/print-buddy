@@ -1,6 +1,6 @@
 """The Bambu Lab A1 production path, offline, in a process configured as bambulab.a1.
 
-    PRINT_BUDDY__PRINTER__MODEL=bambulab.a1 python3 -m tests.printers.a1_flow <workdir> \
+    PRINT_HANDY__PRINTER__MODEL=bambulab.a1 python3 -m tests.printers.a1_flow <workdir> \
         (--resources ORCA_RESOURCES | --fixture-resources DIR) [--fake-gcode FILE] [--stl FILE]
 
 Runs what the Discord intake runs after an approval: model_job.slice_job (slice, post-slice guards, offline
@@ -34,9 +34,9 @@ def main(argv):
     work = Path(argv[0])
     fake = Path(argv[argv.index("--fake-gcode") + 1]) if "--fake-gcode" in argv else None
     stl = Path(argv[argv.index("--stl") + 1]) if "--stl" in argv else ROOT / "tests" / "slicer" / "fixtures" / "cube.stl"
-    from print_buddy import printers
-    from print_buddy.core import delivery, model_job, orca_adapter, printer_state, slice_guard
-    from print_buddy.printers.bambulab import profiles
+    from print_handy import printers
+    from print_handy.core import delivery, model_job, orca_adapter, printer_state, slice_guard
+    from print_handy.printers.bambulab import profiles
 
     assert printers.current().key == "bambulab.a1", printers.current().key
     if "--fixture-resources" in argv:

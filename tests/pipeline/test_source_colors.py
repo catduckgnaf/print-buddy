@@ -6,8 +6,8 @@ import zipfile
 from unittest.mock import patch
 
 import pytest
-from print_buddy.core import model_job as job
-from print_buddy.core import source_colors as colors
+from print_handy.core import model_job as job
+from print_handy.core import source_colors as colors
 
 
 def source(tmp_path, painted=False):
@@ -84,7 +84,7 @@ def test_slice_stops_before_adapter_when_multicolor_is_unresolved(tmp_path):
     p = source(tmp_path)
     jp = tmp_path / 'JOB.json'
     jp.write_text(json.dumps({'model_id': '1', 'downloaded_file': str(p), 'audit': {'plates': 1}}))
-    from print_buddy.core import orca_adapter
+    from print_handy.core import orca_adapter
     with patch.object(job.printer_state, 'load', return_value={}), patch.object(job.printer_state, 'check', return_value=(True, [], {})), patch.object(orca_adapter, 'slice_model') as slicer:
         with pytest.raises(RuntimeError, match='choices required'):
             job.slice_job(jp)
@@ -139,7 +139,7 @@ def test_slice_job_stl_binds_source_hash_before_decision_validation(tmp_path, mo
     monkeypatch.setattr(job.printer_state, 'load', lambda: st)
     monkeypatch.setattr(job.printer_state, 'check', lambda _: (True, [], {}))
     monkeypatch.setattr(job, 'slice_model', stop, raising=False)
-    from print_buddy.core import orca_adapter
+    from print_handy.core import orca_adapter
     monkeypatch.setattr(orca_adapter, 'slice_model', stop)
     with pytest.raises(RuntimeError, match='reached slicer'):
         job.slice_job(jp)

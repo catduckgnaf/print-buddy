@@ -14,9 +14,9 @@ from pathlib import Path
 import pytest
 from PIL import Image
 
-from print_buddy.hermes import moonraker_event_listener as mel
-from print_buddy.hermes import prusa_watch, timelapse_capture
-from print_buddy.printers.prusa import camera as prusa_camera
+from print_handy.hermes import moonraker_event_listener as mel
+from print_handy.hermes import prusa_watch, timelapse_capture
+from print_handy.printers.prusa import camera as prusa_camera
 
 REMOTE = "benchy.gcode"
 SNAP_URL = "http://192.0.2.20/api/v1/cameras/usb-cam/snap"
@@ -279,7 +279,7 @@ class FakeAdapter:
         return self._client
 
     def normalize_status(self, raw):
-        from print_buddy.printers.prusa.adapter import PrusaAdapter
+        from print_handy.printers.prusa.adapter import PrusaAdapter
         return PrusaAdapter.normalize_status(object.__new__(PrusaAdapter), raw)
 
 

@@ -28,7 +28,7 @@ this file when a suite is added, moved, or starts/stops pinning an area.
 | Docker image, release contracts, supervisor, healthcheck | `tests/test_docker_release*.py`, `tests/docker/`, `tests/test_combined_supervisor.py`, `tests/test_go2rtc_container.py`, `tests/test_native_release_acceptance.py` |
 | Web UI (status, config, login, roster) | `tests/test_webui_*.py` |
 | Doctor / bot check surfaces | `tests/test_doctor.py`, `tests/bot/test_health_and_transport.py` |
-| Settings / config loading | `tests/test_settings.py`, `tests/test_print_buddy_cfg.py`, `tests/test_webui_config*.py` |
+| Settings / config loading | `tests/test_settings.py`, `tests/test_print_handy_cfg.py`, `tests/test_webui_config*.py` |
 | Docs / contribution policy / post-release surfaces | `tests/test_docs_index_contract.py`, `tests/test_contribution_policy.py`, `tests/test_post_release_surfaces_workflow.py` |
 | Knowledge, macros, live stream | `tests/test_knowledge.py`, `tests/test_macros.py`, `tests/test_live_*.py` |
 
@@ -120,7 +120,7 @@ remainder), and the Matrix message-ordering flake root cause (scope 4).
   new room message sent via `asyncio.to_thread`, so the answer note and
   the flow's next message raced, and either could land first.
 - Fix: the Matrix adapter posts its answer note before resolving the
-  prompt (`StandaloneAdapter.answer_typed` in `print_buddy/bot/matrix.py`);
+  prompt (`StandaloneAdapter.answer_typed` in `print_handy/bot/matrix.py`);
   other platforms are unchanged. Deterministic local reproduction with
   the note's send artificially delayed inverted the order on the old
   code every run and never on the fixed code.

@@ -3,7 +3,7 @@
 
     python3 scripts/qidi-templates.py --printer q1pro --resources <OrcaSlicer resources folder> [--check]
 
-Print Buddy ships no OrcaSlicer or Qidi profiles. This reads the Qidi vendor profiles from
+Print Handy ships no OrcaSlicer or Qidi profiles. This reads the Qidi vendor profiles from
 an installed OrcaSlicer (the folder that holds profiles/Qidi.json and profiles/Qidi/, or —
 OrcaSlicer 2.5 and later — the packed preset cache profiles/Qidi.opc), resolves the printer's
 profiles, refuses unless they hash to an identity recorded in the printer's facts.py, and
@@ -25,15 +25,15 @@ sys.path.insert(0, str(ROOT))
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--printer", default="q1pro", help="printer profile module under print_buddy/printers/qidi")
+    ap.add_argument("--printer", default="q1pro", help="printer profile module under print_handy/printers/qidi")
     ap.add_argument("--resources", required=True, type=Path, help="the installed OrcaSlicer resources folder")
     ap.add_argument("--check", action="store_true", help="verify only; write nothing")
     a = ap.parse_args()
-    from print_buddy import printers, settings
-    from print_buddy.printers.bambulab import profiles as _shared
-    from print_buddy.printers.qidi import profiles
-    model = importlib.import_module(f"print_buddy.printers.qidi.{a.printer}").MODEL
-    adapter = printers.get(model.key, settings.load(environ={**os.environ, "PRINT_BUDDY__PRINTER__MODEL": model.key}))
+    from print_handy import printers, settings
+    from print_handy.printers.bambulab import profiles as _shared
+    from print_handy.printers.qidi import profiles
+    model = importlib.import_module(f"print_handy.printers.qidi.{a.printer}").MODEL
+    adapter = printers.get(model.key, settings.load(environ={**os.environ, "PRINT_HANDY__PRINTER__MODEL": model.key}))
     try:
         upstream, version = _shared.flatten(a.resources, adapter.fact("orca_profiles"), vendor=profiles.VENDOR)
         hashes = {kind: profiles.sha256(upstream[kind]) for kind in profiles.KINDS}

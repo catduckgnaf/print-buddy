@@ -26,8 +26,8 @@ from unittest.mock import patch
 
 import pytest
 
-from print_buddy import printers, settings
-from print_buddy.core import model_job, orca_adapter, printer_state, spoolman_client
+from print_handy import printers, settings
+from print_handy.core import model_job, orca_adapter, printer_state, spoolman_client
 
 FIXTURE = Path(__file__).parent / "fixtures" / "printer_hardware.json"
 
@@ -53,7 +53,7 @@ PRINT_END
 
 
 def use_generic(monkeypatch):
-    data = settings.load(local=False, environ={"PRINT_BUDDY__PRINTER__MODEL": "klipper.generic"})
+    data = settings.load(local=False, environ={"PRINT_HANDY__PRINTER__MODEL": "klipper.generic"})
     adapter = printers.get("klipper.generic", data)
     monkeypatch.setattr(printers, "current", lambda config=None: adapter)
     return adapter
@@ -63,7 +63,7 @@ def moonraker_get(spool_reply):
     """printer_state._get stand-in for the Moonraker legs only (#387).
 
     Spoolman no longer travels over _get: it goes through
-    print_buddy.core.spoolman_client, faked by spoolman_request below.
+    print_handy.core.spoolman_client, faked by spoolman_request below.
     """
     def get(url, data=None, method=None, timeout=6):
         if "/api/v1/spool/" in url:

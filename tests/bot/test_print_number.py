@@ -14,11 +14,11 @@ from unittest import mock
 import pytest
 
 from corpus import fake_discord
-from print_buddy.bot import runtime
-from print_buddy.bot.router import Router
-from print_buddy.hermes import discord_print_summary as summary
-from print_buddy.hermes import print_control as pc
-from print_buddy.hermes import print_next
+from print_handy.bot import runtime
+from print_handy.bot.router import Router
+from print_handy.hermes import discord_print_summary as summary
+from print_handy.hermes import print_control as pc
+from print_handy.hermes import print_next
 
 
 def run(coro):

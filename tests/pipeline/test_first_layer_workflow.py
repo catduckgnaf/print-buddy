@@ -5,7 +5,7 @@ import pytest
 from pathlib import Path
 from unittest import mock
 
-from print_buddy.core import model_job as job
+from print_handy.core import model_job as job
 
 
 @pytest.fixture(autouse=True)
@@ -61,7 +61,7 @@ def test_real_slicer_prepares_one_layer_without_network(tmp_path):
 def test_selection_mismatch_refuses_before_slicing(
         tmp_path, offline_hardware, slot, color, material, spoolman_id, active_spool):
     offline_hardware['spool']['spoolman_id'] = active_spool
-    from print_buddy.core import orca_adapter
+    from print_handy.core import orca_adapter
     with mock.patch.object(job, 'ARCHIVE', tmp_path), \
          mock.patch.object(orca_adapter, 'slice_model') as slicer, \
          mock.patch.object(job.subprocess, 'run') as run:

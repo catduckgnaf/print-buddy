@@ -11,9 +11,9 @@ layer's output.
 """
 import re
 
-from print_buddy import diagnostics
-from print_buddy.bot import guided, runtime
-from print_buddy.core import prepared_intake
+from print_handy import diagnostics
+from print_handy.bot import guided, runtime
+from print_handy.core import prepared_intake
 
 RAW_MARKERS = ("Slicing failed:", "UPLOAD FAILED", "START FAILED", "REFUSED:",
                "G-CODE REFUSED", "Traceback", "RuntimeError", "OSError",
@@ -60,7 +60,7 @@ def test_unmatched_reply_is_short_plain_and_offers_help_on_request():
 
 def test_explicit_help_still_returns_the_full_list():
     # The no-dump rule is about the *error* path only; asking for help works.
-    from print_buddy.bot import commands
+    from print_handy.bot import commands
     assert "/print-next" in commands.help_text()
 
 
@@ -94,9 +94,9 @@ def test_plain_start_failure_upload_and_start_tails_become_uncertain_wording():
 # --------------------------------------------------------------------- printer_state warnings
 
 def test_printer_state_warnings_are_plain_and_keep_the_fail_soft_posture(monkeypatch):
-    from print_buddy import printers, settings
-    from print_buddy.core import printer_state, spoolman_client
-    config = settings.load(local=False, environ={"PRINT_BUDDY__PRINTER__MODEL": "klipper.generic"})
+    from print_handy import printers, settings
+    from print_handy.core import printer_state, spoolman_client
+    config = settings.load(local=False, environ={"PRINT_HANDY__PRINTER__MODEL": "klipper.generic"})
     adapter = printers.get("klipper.generic", config)
     monkeypatch.setattr(printers, "current", lambda config=None: adapter)
     monkeypatch.setattr(settings, "current",
@@ -129,9 +129,9 @@ def test_printer_state_warnings_are_plain_and_keep_the_fail_soft_posture(monkeyp
 
 
 def test_printer_state_unreachable_problem_is_plain(monkeypatch):
-    from print_buddy import printers, settings
-    from print_buddy.core import printer_state
-    config = settings.load(local=False, environ={"PRINT_BUDDY__PRINTER__MODEL": "klipper.generic"})
+    from print_handy import printers, settings
+    from print_handy.core import printer_state
+    config = settings.load(local=False, environ={"PRINT_HANDY__PRINTER__MODEL": "klipper.generic"})
     adapter = printers.get("klipper.generic", config)
     monkeypatch.setattr(printers, "current", lambda config=None: adapter)
 
@@ -155,7 +155,7 @@ def test_printer_state_unreachable_problem_is_plain(monkeypatch):
 def test_guided_debugging_findings_do_not_carry_raw_exceptions(tmp_path):
     import os
     from pathlib import Path
-    from print_buddy import settings
+    from print_handy import settings
     cfg = settings.load(local=Path(os.devnull), environ={})
     cfg["paths"]["hermes_home"] = tmp_path / "profile"
     (tmp_path / "profile" / "state").mkdir(parents=True, exist_ok=True)
@@ -186,7 +186,7 @@ def test_guided_debugging_findings_do_not_carry_raw_exceptions(tmp_path):
 # --------------------------------------------------------------------- model_job pipeline exits
 
 def test_model_job_detail_tail_demotes_raw_text():
-    from print_buddy.core import model_job
+    from print_handy.core import model_job
     assert model_job._detail_tail("") == ""
     tail = model_job._detail_tail("some\n  raw   stderr tail")
     assert tail == "\nDetail: some raw stderr tail"

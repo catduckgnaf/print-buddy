@@ -19,13 +19,13 @@ from unittest import mock
 
 import pytest
 
-from print_buddy import settings
-from print_buddy.bot import __main__ as bot_main
-from print_buddy.bot import platform, runtime
-from print_buddy.bot.platform import BasePlatformAdapter, SendResult
-from print_buddy.bot.rest import split_media
-from print_buddy.bot.router import Router
-from print_buddy.core import link_intake, prompts
+from print_handy import settings
+from print_handy.bot import __main__ as bot_main
+from print_handy.bot import platform, runtime
+from print_handy.bot.platform import BasePlatformAdapter, SendResult
+from print_handy.bot.rest import split_media
+from print_handy.bot.router import Router
+from print_handy.core import link_intake, prompts
 
 
 class FakeClient:
@@ -98,7 +98,7 @@ def message(text, user_id, chat_id):
 # ---------------------------------------------------------------------- capabilities and ids
 
 def test_discord_adapter_reports_its_capabilities(cfg):
-    from print_buddy.bot.adapter import StandaloneAdapter
+    from print_handy.bot.adapter import StandaloneAdapter
     adapter = StandaloneAdapter(FakeClient(), ["1"], upload_max_bytes=9500000)
     assert adapter.name == "discord" and adapter.message_limit == 2000
     assert adapter.supports_buttons is True and adapter.max_buttons == 25
@@ -110,9 +110,9 @@ def test_live_stream_is_a_discord_only_capability():
     # #311: the live camera view is a Discord Activity. Discord opts in;
     # the base default and the Telegram/Matrix adapters stay False, so
     # those platforms expose no /print-live command or stub.
-    from print_buddy.bot import adapter as discord_adapter
-    from print_buddy.bot import matrix as matrix_adapter
-    from print_buddy.bot import telegram as telegram_adapter
+    from print_handy.bot import adapter as discord_adapter
+    from print_handy.bot import matrix as matrix_adapter
+    from print_handy.bot import telegram as telegram_adapter
     assert platform.BasePlatformAdapter.supports_live_stream is False
     assert discord_adapter.StandaloneAdapter.supports_live_stream is True
     assert telegram_adapter.StandaloneAdapter.supports_live_stream is False
@@ -125,7 +125,7 @@ def test_prompt_ids_round_trip_through_the_interface():
     assert platform.parse_custom_id(f"pbq:{cid}:3") == (cid, 3)
     assert platform.parse_custom_id("other:1") is None and platform.parse_custom_id("pbq:x:y") is None
     # The Discord adapter re-exports the same helpers the existing tests import.
-    from print_buddy.bot import adapter as discord_adapter
+    from print_handy.bot import adapter as discord_adapter
     assert discord_adapter.custom_id is platform.custom_id
     assert discord_adapter.parse_custom_id is platform.parse_custom_id
     assert discord_adapter.SendResult is platform.SendResult
@@ -153,8 +153,8 @@ def test_a_config_without_the_platform_key_still_yields_discord(tmp_path):
 def test_matrix_platform_validates_and_passes_the_platform_check(tmp_path):
     # Stage 1 pinned matrix as known-but-unimplemented; stage 3 (#164)
     # implements it, so the platform row now passes like telegram's.
-    data = settings.load(local=False, environ={"PRINT_BUDDY__BOT__PLATFORM": "matrix",
-                                               "PRINT_BUDDY__BOT__MODE": "standalone"})
+    data = settings.load(local=False, environ={"PRINT_HANDY__BOT__PLATFORM": "matrix",
+                                               "PRINT_HANDY__BOT__MODE": "standalone"})
     assert data["bot"]["platform"] == "matrix"
     rows = {label: (ok, detail) for label, ok, detail in bot_main.checks(data)}
     assert rows["platform"] == (True, "matrix")
@@ -210,8 +210,8 @@ def test_fake_transport_drives_a_full_intake_through_the_real_handlers(cfg):
                 assert await adapter.press(row["clarify_id"], 0, user_id=user_id) == "Print it"
         return await task
 
-    with mock.patch("print_buddy.core.prepared_intake.prepare_link", fake_prepare), \
-            mock.patch("print_buddy.core.printer_state.load", return_value={}):
+    with mock.patch("print_handy.core.prepared_intake.prepare_link", fake_prepare), \
+            mock.patch("print_handy.core.printer_state.load", return_value={}):
         out = run(flow())
     assert out == {"action": "skip", "reason": "test intake"}
     assert seen["adapter"] is adapter and seen["answers"] == (1, 0)

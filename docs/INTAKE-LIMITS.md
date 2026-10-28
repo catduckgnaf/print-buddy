@@ -1,6 +1,6 @@
 # Model intake resource limits
 
-Print Buddy streams supported 3MF mesh XML into compact float32 vertex and
+Print Handy streams supported 3MF mesh XML into compact float32 vertex and
 int32 triangle buffers, retaining only the small model structure as XML.
 Large geometry is not rejected at the former 32 MiB model XML threshold.
 Unsupported XML layouts and encodings use the existing ElementTree fallback.
@@ -42,6 +42,6 @@ streaming-success and allocation-bound tests cover the parser and individual
 consumers; they do not by themselves establish an end-to-end RSS guarantee.
 Private-model capped intake and successful slicing acceptance remains
 required before claiming this revision solves the observed memory problem.
-OrcaSlicer's memory use must be measured separately from Print Buddy's.
+OrcaSlicer's memory use must be measured separately from Print Handy's.
 
 [Documentation home](README.md)

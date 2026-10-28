@@ -47,32 +47,32 @@ class CombinedSupervisorTests(unittest.TestCase):
         fake = Path(directory, 'python3')
         # The supervisor probes the listener gate (#256, per printer since
         # #336) and the Web UI gate (#286) before starting children; the
-        # fake answers them from PRINT_BUDDY_TEST_LISTENER_GATE (default 0
-        # = listener required) and PRINT_BUDDY_TEST_WEBUI_GATE (default 3
+        # fake answers them from PRINT_HANDY_TEST_LISTENER_GATE (default 0
+        # = listener required) and PRINT_HANDY_TEST_WEBUI_GATE (default 3
         # = Web UI disabled). The gate's --roster form prints
-        # PRINT_BUDDY_TEST_ROSTER (default: one printer) and fails only
+        # PRINT_HANDY_TEST_ROSTER (default: one printer) and fails only
         # when the gate code is 2 (unresolved configuration). Listener
-        # invocations (print_buddy.listeners --printer <id>) run the
+        # invocations (print_handy.listeners --printer <id>) run the
         # listener body; every other python3 invocation runs the child body.
         if listener_child is None:
             listener_child = child
         gate = ('case "$*" in '
-                '*print_buddy.listener_gate*--roster*) '
-                'if [ "${PRINT_BUDDY_TEST_LISTENER_GATE:-0}" = 2 ]; then exit 2; fi; '
-                'printf "%s\\n" "${PRINT_BUDDY_TEST_ROSTER:-printer1}"; exit 0;; '
-                '*print_buddy.listener_gate*) '
-                'exit "${PRINT_BUDDY_TEST_LISTENER_GATE:-0}";; '
-                '*print_buddy.webui_gate*) '
-                'exit "${PRINT_BUDDY_TEST_WEBUI_GATE:-3}";; '
-                '*print_buddy.live_gate*) '
-                'exit "${PRINT_BUDDY_TEST_LIVE_GATE:-3}";; '
-                '*print_buddy.listeners*) ' + listener_child + ';; '
+                '*print_handy.listener_gate*--roster*) '
+                'if [ "${PRINT_HANDY_TEST_LISTENER_GATE:-0}" = 2 ]; then exit 2; fi; '
+                'printf "%s\\n" "${PRINT_HANDY_TEST_ROSTER:-printer1}"; exit 0;; '
+                '*print_handy.listener_gate*) '
+                'exit "${PRINT_HANDY_TEST_LISTENER_GATE:-0}";; '
+                '*print_handy.webui_gate*) '
+                'exit "${PRINT_HANDY_TEST_WEBUI_GATE:-3}";; '
+                '*print_handy.live_gate*) '
+                'exit "${PRINT_HANDY_TEST_LIVE_GATE:-3}";; '
+                '*print_handy.listeners*) ' + listener_child + ';; '
                 'esac\n')
         fake.write_text('#!/bin/bash\n' + gate + child)
         fake.chmod(0o755)
         return {**os.environ, 'PATH': directory + ':' + os.environ['PATH'],
-                'PRINT_BUDDY_BUNDLED_SPOOLMAN': 'false',
-                'PRINT_BUDDY__SERVICES__SPOOLMAN_URL': 'http://external.invalid:8000',
+                'PRINT_HANDY_BUNDLED_SPOOLMAN': 'false',
+                'PRINT_HANDY__SERVICES__SPOOLMAN_URL': 'http://external.invalid:8000',
                 'DISCORD_BOT_TOKEN': ''}
 
     def test_explicit_command_is_executed_without_services(self):
@@ -86,7 +86,7 @@ class CombinedSupervisorTests(unittest.TestCase):
         # required child whose clean exit must fail the container is the bot.
         with tempfile.TemporaryDirectory() as directory:
             env = self.environment(directory, 'exit 0\n')
-            env['PRINT_BUDDY_TEST_LISTENER_GATE'] = '3'
+            env['PRINT_HANDY_TEST_LISTENER_GATE'] = '3'
             env['DISCORD_BOT_TOKEN'] = 'dummy'
             result = subprocess.run(['bash', str(SCRIPT)], env=env,
                                     capture_output=True, text=True, timeout=15)
@@ -96,7 +96,7 @@ class CombinedSupervisorTests(unittest.TestCase):
     def test_child_failure_status_is_preserved(self):
         with tempfile.TemporaryDirectory() as directory:
             env = self.environment(directory, 'exit 7\n')
-            env['PRINT_BUDDY_TEST_LISTENER_GATE'] = '3'
+            env['PRINT_HANDY_TEST_LISTENER_GATE'] = '3'
             env['DISCORD_BOT_TOKEN'] = 'dummy'
             result = subprocess.run(['bash', str(SCRIPT)], env=env,
                                     capture_output=True, text=True, timeout=15)
@@ -128,7 +128,7 @@ class CombinedSupervisorTests(unittest.TestCase):
         """Gate says no listener (#256): only the bot child runs, and its exit rules."""
         with tempfile.TemporaryDirectory() as directory:
             env = self.environment(directory, 'exit 5\n')
-            env['PRINT_BUDDY_TEST_LISTENER_GATE'] = '3'
+            env['PRINT_HANDY_TEST_LISTENER_GATE'] = '3'
             env['DISCORD_BOT_TOKEN'] = 'dummy'
             result = subprocess.run(['bash', str(SCRIPT)], env=env,
                                     capture_output=True, text=True, timeout=15)
@@ -139,7 +139,7 @@ class CombinedSupervisorTests(unittest.TestCase):
         """An unresolved configuration stops the supervisor before any child starts."""
         with tempfile.TemporaryDirectory() as directory:
             env = self.environment(directory, 'exit 9\n')
-            env['PRINT_BUDDY_TEST_LISTENER_GATE'] = '2'
+            env['PRINT_HANDY_TEST_LISTENER_GATE'] = '2'
             result = subprocess.run(['bash', str(SCRIPT)], env=env,
                                     capture_output=True, text=True, timeout=15)
         self.assertEqual(result.returncode, 2, result.stderr)
@@ -149,8 +149,8 @@ class CombinedSupervisorTests(unittest.TestCase):
         """Web UI gate 0 (#286): with no listener and no bot, the Web UI child runs and its exit rules."""
         with tempfile.TemporaryDirectory() as directory:
             env = self.environment(directory, 'exit 6\n')
-            env['PRINT_BUDDY_TEST_LISTENER_GATE'] = '3'
-            env['PRINT_BUDDY_TEST_WEBUI_GATE'] = '0'
+            env['PRINT_HANDY_TEST_LISTENER_GATE'] = '3'
+            env['PRINT_HANDY_TEST_WEBUI_GATE'] = '0'
             result = subprocess.run(['bash', str(SCRIPT)], env=env,
                                     capture_output=True, text=True, timeout=15)
         self.assertEqual(result.returncode, 6, result.stderr)
@@ -160,8 +160,8 @@ class CombinedSupervisorTests(unittest.TestCase):
         """An unresolved configuration at the Web UI gate stops the supervisor before the child starts."""
         with tempfile.TemporaryDirectory() as directory:
             env = self.environment(directory, 'exit 9\n')
-            env['PRINT_BUDDY_TEST_LISTENER_GATE'] = '3'
-            env['PRINT_BUDDY_TEST_WEBUI_GATE'] = '2'
+            env['PRINT_HANDY_TEST_LISTENER_GATE'] = '3'
+            env['PRINT_HANDY_TEST_WEBUI_GATE'] = '2'
             result = subprocess.run(['bash', str(SCRIPT)], env=env,
                                     capture_output=True, text=True, timeout=15)
         self.assertEqual(result.returncode, 2, result.stderr)
@@ -171,8 +171,8 @@ class CombinedSupervisorTests(unittest.TestCase):
         """Live gate 0 (#311): with no listener and no bot, the Activity server child runs and its exit rules."""
         with tempfile.TemporaryDirectory() as directory:
             env = self.environment(directory, 'exit 8\n')
-            env['PRINT_BUDDY_TEST_LISTENER_GATE'] = '3'
-            env['PRINT_BUDDY_TEST_LIVE_GATE'] = '0'
+            env['PRINT_HANDY_TEST_LISTENER_GATE'] = '3'
+            env['PRINT_HANDY_TEST_LIVE_GATE'] = '0'
             result = subprocess.run(['bash', str(SCRIPT)], env=env,
                                     capture_output=True, text=True, timeout=15)
         self.assertEqual(result.returncode, 8, result.stderr)
@@ -182,8 +182,8 @@ class CombinedSupervisorTests(unittest.TestCase):
         """An unresolved configuration at the live gate stops the supervisor before the child starts."""
         with tempfile.TemporaryDirectory() as directory:
             env = self.environment(directory, 'exit 9\n')
-            env['PRINT_BUDDY_TEST_LISTENER_GATE'] = '3'
-            env['PRINT_BUDDY_TEST_LIVE_GATE'] = '2'
+            env['PRINT_HANDY_TEST_LISTENER_GATE'] = '3'
+            env['PRINT_HANDY_TEST_LIVE_GATE'] = '2'
             result = subprocess.run(['bash', str(SCRIPT)], env=env,
                                     capture_output=True, text=True, timeout=15)
         self.assertEqual(result.returncode, 2, result.stderr)
@@ -193,7 +193,7 @@ class CombinedSupervisorTests(unittest.TestCase):
         """No listener, no bot token, external Spoolman: stay up, exit 0 on SIGTERM."""
         with tempfile.TemporaryDirectory() as directory:
             env = self.environment(directory, 'exit 9\n')
-            env['PRINT_BUDDY_TEST_LISTENER_GATE'] = '3'
+            env['PRINT_HANDY_TEST_LISTENER_GATE'] = '3'
             process = subprocess.Popen(['bash', str(SCRIPT)], env=env,
                                        stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
             try:
@@ -211,7 +211,7 @@ class CombinedSupervisorTests(unittest.TestCase):
     def test_disabled_backend_requires_external_url(self):
         with tempfile.TemporaryDirectory() as directory:
             env = self.environment(directory, 'exit 0\n')
-            env['PRINT_BUDDY__SERVICES__SPOOLMAN_URL'] = 'http://127.0.0.1:8000'
+            env['PRINT_HANDY__SERVICES__SPOOLMAN_URL'] = 'http://127.0.0.1:8000'
             result = subprocess.run(['bash', str(SCRIPT)], env=env,
                                     capture_output=True, text=True, timeout=3)
         self.assertEqual(result.returncode, 2)
@@ -249,7 +249,7 @@ class MultiPrinterSupervisorTests(unittest.TestCase):
             listener = (f'echo "listener $$ $*" >> {calls}\n'
                         'exec sleep 60\n')
             env = self.environment(directory, 'exec sleep 60\n', listener)
-            env['PRINT_BUDDY_TEST_ROSTER'] = 'printer-a\nprinter-b'
+            env['PRINT_HANDY_TEST_ROSTER'] = 'printer-a\nprinter-b'
             process = self.start(env)
             pids = []
             try:
@@ -278,8 +278,8 @@ class MultiPrinterSupervisorTests(unittest.TestCase):
                         f'echo "run $$ $*" >> {calls}\n'
                         'exec sleep 60\n')
             env = self.environment(directory, 'exec sleep 60\n', listener)
-            env['PRINT_BUDDY_TEST_ROSTER'] = 'printer-a\nprinter-b'
-            env['PRINT_BUDDY_LISTENER_RESTART_BACKOFF_S'] = '1'
+            env['PRINT_HANDY_TEST_ROSTER'] = 'printer-a\nprinter-b'
+            env['PRINT_HANDY_LISTENER_RESTART_BACKOFF_S'] = '1'
             process = self.start(env)
             try:
                 def settled():
@@ -302,8 +302,8 @@ class MultiPrinterSupervisorTests(unittest.TestCase):
             listener = (f'echo "try $$" >> {calls}\n'
                         'exit 1\n')
             env = self.environment(directory, 'exec sleep 60\n', listener)
-            env['PRINT_BUDDY_LISTENER_RESTART_BACKOFF_S'] = '1'
-            env['PRINT_BUDDY_LISTENER_RESTART_BUDGET'] = '2'
+            env['PRINT_HANDY_LISTENER_RESTART_BACKOFF_S'] = '1'
+            env['PRINT_HANDY_LISTENER_RESTART_BUDGET'] = '2'
             process = self.start(env)
             try:
                 # Initial start + 2 budgeted restarts = 3 invocations, then

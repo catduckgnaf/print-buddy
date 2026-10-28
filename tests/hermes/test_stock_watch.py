@@ -11,8 +11,8 @@ from pathlib import Path
 
 import pytest
 
-from print_buddy.hermes import moonraker_event_listener as mel
-from print_buddy.hermes import stock_watch, timelapse_capture
+from print_handy.hermes import moonraker_event_listener as mel
+from print_handy.hermes import stock_watch, timelapse_capture
 
 REMOTE = "bag_clip.gcode"
 STREAM_URL = "http://192.0.2.10:8080/?action=stream"
@@ -274,7 +274,7 @@ class FakeAdapter:
         return self._details()
 
     def normalize_status(self, raw):
-        from print_buddy.printers.flashforge_stock.client import StockClient
+        from print_handy.printers.flashforge_stock.client import StockClient
         return StockClient.status_of(raw)
 
 

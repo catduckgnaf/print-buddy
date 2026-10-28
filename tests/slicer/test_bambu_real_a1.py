@@ -1,6 +1,6 @@
 """Bambu Lab A1 with the real Bambu Studio CLI: the vendor-default primary path and the Orca->Bambu fallback.
 
-Skipped unless PRINT_BUDDY_REAL_SLICER=1 and PRINT_BUDDY_REAL_BAMBU=1; CI's real-slicer-bambu job
+Skipped unless PRINT_HANDY_REAL_SLICER=1 and PRINT_HANDY_REAL_BAMBU=1; CI's real-slicer-bambu job
 runs this file with the Flathub Bambu Studio the home configuration uses ([bambu] command in
 config/home.yaml: flatpak run --command=bambu-studio com.bambulab.BambuStudio). The A1 templates
 still come from the installed OrcaSlicer's resources: that is the production arrangement
@@ -16,7 +16,7 @@ identity from the header block (core.slice_guard.generator_identity) and the Bam
 accepts either verified slicer, so the two production-flow tests below run for real.
 
 Locally: install both Flatpaks like the CI job does, then
-PRINT_BUDDY_REAL_SLICER=1 PRINT_BUDDY_REAL_BAMBU=1 python3 -m pytest -s tests/slicer/test_bambu_real_a1.py
+PRINT_HANDY_REAL_SLICER=1 PRINT_HANDY_REAL_BAMBU=1 python3 -m pytest -s tests/slicer/test_bambu_real_a1.py
 """
 import json
 import os
@@ -26,16 +26,16 @@ from pathlib import Path
 
 import pytest
 
-from print_buddy import printers, settings
-from print_buddy.printers.bambulab import profiles
+from print_handy import printers, settings
+from print_handy.printers.bambulab import profiles
 
 from .test_orca_real import WORK, write_cube
 from .test_orca_real_bambu_a1 import adapter_for, installed_resources, toolpath_bounds
 
-REAL = os.environ.get("PRINT_BUDDY_REAL_SLICER") == "1"
-REAL_BAMBU = os.environ.get("PRINT_BUDDY_REAL_BAMBU") == "1"
+REAL = os.environ.get("PRINT_HANDY_REAL_SLICER") == "1"
+REAL_BAMBU = os.environ.get("PRINT_HANDY_REAL_BAMBU") == "1"
 pytestmark = pytest.mark.skipif(not (REAL and REAL_BAMBU),
-                                reason="set PRINT_BUDDY_REAL_SLICER=1 and PRINT_BUDDY_REAL_BAMBU=1 "
+                                reason="set PRINT_HANDY_REAL_SLICER=1 and PRINT_HANDY_REAL_BAMBU=1 "
                                        "to slice with the real Bambu Studio CLI")
 ROOT = Path(__file__).resolve().parents[2]
 
@@ -62,8 +62,8 @@ def bambu_flow(work, stl, **overrides):
 
     overrides are extra environment for the flow process; the caller picks the slicer path there.
     """
-    env = {**os.environ, "PRINT_BUDDY__PRINTER__MODEL": "bambulab.a1",
-           "PRINT_BUDDY__PATHS__HERMES_HOME": str(work / "flow-hermes"), **overrides}
+    env = {**os.environ, "PRINT_HANDY__PRINTER__MODEL": "bambulab.a1",
+           "PRINT_HANDY__PATHS__HERMES_HOME": str(work / "flow-hermes"), **overrides}
     out = subprocess.run([sys.executable, "-m", "tests.printers.a1_flow", str(work / "flow"), "--stl", str(stl),
                           "--resources", str(installed_resources())],
                          cwd=ROOT, capture_output=True, text=True, env=env, timeout=900)
@@ -76,7 +76,7 @@ def bambu_flow(work, stl, **overrides):
 
 def test_bambu_studio_cli_is_the_configured_command():
     """The configured [bambu] command starts the real Bambu Studio and answers its CLI help."""
-    from print_buddy.core import orca_adapter
+    from print_handy.core import orca_adapter
     result = subprocess.run([*orca_adapter.BAMBU_COMMAND, "--help"], capture_output=True, text=True, timeout=300)
     log = result.stdout + result.stderr
     print(f"\n$ {' '.join(orca_adapter.BAMBU_COMMAND)} --help\nexit {result.returncode}\n{log[:2000]}")
@@ -87,7 +87,7 @@ def test_bambu_studio_cli_is_the_configured_command():
 def test_bambu_studio_cli_slices_a_cube_with_the_a1_templates(work, a1):
     """The binary's own CLI slicing path, driven exactly the way slice_model drives it
     (datadir + the A1 machine/process/filament templates): a real slice, a real header block."""
-    from print_buddy.core import orca_adapter
+    from print_handy.core import orca_adapter
     templates = a1.pinned_templates()
     out = work / "cli-out"
     out.mkdir()
@@ -113,7 +113,7 @@ def test_a1_bambu_studio_primary_production_slice(work, a1):
     """[printer] slicer: bambu_studio is the Bambu Lab default: Bambu Studio slices, the result
     verifies, packages as .gcode.3mf and print_now still refuses (offline flow)."""
     result = bambu_flow(work, write_cube(work / "cube.stl", 20),
-                        PRINT_BUDDY__PRINTER__SLICER="bambu_studio")
+                        PRINT_HANDY__PRINTER__SLICER="bambu_studio")
     assert "error" not in result, result
     assert result["printer_model"] == "bambulab.a1" and result["gcode_verified"] is True
     assert result["packages"] and result["print_now"].startswith("REFUSED: Bambu Lab A1")
@@ -132,7 +132,7 @@ def test_orca_failure_falls_back_to_bambu_studio(work, a1):
     """With [printer] slicer: orca and an Orca command that cannot run at all (PB_ORCA_CMD=/bin/false),
     the one isolated fallback attempt slices with Bambu Studio and the job still verifies and packages."""
     result = bambu_flow(work, write_cube(work / "cube.stl", 20),
-                        PRINT_BUDDY__PRINTER__SLICER="orca", PB_ORCA_CMD="/bin/false")
+                        PRINT_HANDY__PRINTER__SLICER="orca", PB_ORCA_CMD="/bin/false")
     assert "error" not in result, result
     assert result["printer_model"] == "bambulab.a1" and result["gcode_verified"] is True
     # /bin/false cannot generate anything: this output can only be the Bambu Studio fallback's.

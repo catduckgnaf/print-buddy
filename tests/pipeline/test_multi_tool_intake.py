@@ -12,10 +12,10 @@ from types import SimpleNamespace as S
 
 import pytest
 
-from print_buddy import printers, settings
-from print_buddy.core import model_job as mj
-from print_buddy.core import orca_adapter, prepared_intake, source_colors
-from print_buddy.printers.base import MultiColorUnsupported
+from print_handy import printers, settings
+from print_handy.core import model_job as mj
+from print_handy.core import orca_adapter, prepared_intake, source_colors
+from print_handy.printers.base import MultiColorUnsupported
 
 from .test_source_colors import source
 
@@ -25,7 +25,7 @@ MODELS = ("flashforge.creator5", "flashforge.creator5_pro")
 
 
 def creator_config(model_key):
-    return settings.load(local=False, environ={"PRINT_BUDDY__PRINTER__MODEL": model_key})
+    return settings.load(local=False, environ={"PRINT_HANDY__PRINTER__MODEL": model_key})
 
 
 @pytest.fixture(params=MODELS, ids=["creator5", "creator5_pro"])
@@ -144,7 +144,7 @@ class PickAdapter:
 
 
 def test_collect_asks_per_toolhead_and_never_reoffers_a_taken_toolhead(creator, tmp_path):
-    from print_buddy.core.discord_color_intake import collect
+    from print_handy.core.discord_color_intake import collect
     src = source(tmp_path)
     jp = write_job(tmp_path, src, creator)
     manifest = source_colors.inventory(src)
@@ -170,7 +170,7 @@ def test_collect_asks_per_toolhead_and_never_reoffers_a_taken_toolhead(creator, 
 
 
 def test_collect_refuses_five_colours(creator, tmp_path):
-    from print_buddy.core.discord_color_intake import collect
+    from print_handy.core.discord_color_intake import collect
     src = CASES / 'five-colors-over-slots' / 'model.3mf'
     jp = write_job(tmp_path, src, creator)
     manifest = source_colors.inventory(src)
@@ -182,7 +182,7 @@ def test_collect_refuses_five_colours(creator, tmp_path):
 
 
 def test_duplicate_spool_colours_are_labelled_by_toolhead(creator, tmp_path):
-    from print_buddy.core.discord_color_intake import collect
+    from print_handy.core.discord_color_intake import collect
     state = tool_state()
     state['ifs_slots']['3'] = {'color': 'black', 'material': 'PLA', 'spoolman_id': 12, 'hex': '111111',
                                'physical_color_verified': True}
@@ -199,7 +199,7 @@ def test_duplicate_spool_colours_are_labelled_by_toolhead(creator, tmp_path):
 
 
 def test_summary_wording_names_toolheads(creator, tmp_path):
-    from print_buddy.hermes import discord_print_summary as summary
+    from print_handy.hermes import discord_print_summary as summary
     gcode = tmp_path / 'plate_1.gcode'
     gcode.write_text('; estimated printing time (normal mode) = 1h 0m 0s\nG1 X1\n')
     job = {'printer_model': creator, 'title': 'Ghost Stand', 'gcode': str(gcode),
@@ -262,7 +262,7 @@ def flow_env(creator, tmp_path, monkeypatch):
         return out
     monkeypatch.setattr(mj, 'printables_download', download)
     monkeypatch.setattr(mj, 'audit', lambda path: {'plates': 1})
-    from print_buddy.core import orca_adapter as oa
+    from print_handy.core import orca_adapter as oa
     monkeypatch.setattr(oa, 'orca_plate_capacity', lambda path, st: 1)
 
     async def thread_heavy(func, *args, **kwargs):
@@ -354,7 +354,7 @@ def test_prepare_link_five_colours_refused_after_mode_pick(creator, flow_env):
 # ---------------------------------------------------------------- slicing through the four-extruder templates
 
 def slice_capture(model_key, decisions, tmp_path, monkeypatch):
-    from print_buddy.core import slice_guard
+    from print_handy.core import slice_guard
     monkeypatch.setattr(orca_adapter, 'pre_slice', lambda **k: slice_guard.Result())
     monkeypatch.setattr(orca_adapter, 'post_slice', lambda *a, **k: slice_guard.Result())
     monkeypatch.setattr(orca_adapter.sg, 'enforce_approved_baseline', lambda out, **k: slice_guard.Result())

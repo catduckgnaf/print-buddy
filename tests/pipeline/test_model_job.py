@@ -15,14 +15,14 @@ import pytest
 from pathlib import Path
 from unittest import mock
 
-from print_buddy import settings
-from print_buddy.printers.flashforge.zmod import stock
-from print_buddy.core import _external, model_job
+from print_handy import settings
+from print_handy.printers.flashforge.zmod import stock
+from print_handy.core import _external, model_job
 
 from .helpers import external
 
 CTL = settings.ROOT / "bin" / "moonrakerctl"
-CLI = [sys.executable, "-m", "print_buddy.core.model_job"]
+CLI = [sys.executable, "-m", "print_handy.core.model_job"]
 CLI_ENV = {**os.environ, "PYTHONPATH": os.pathsep.join(filter(None, [str(settings.ROOT), os.environ.get("PYTHONPATH", "")]))}
 
 
@@ -353,7 +353,7 @@ class SliceVerificationTests(unittest.TestCase):
             fake_adapter.slice_model.return_value = (gcode, provenance, [])
             with mock.patch.object(model_job.printer_state, "load", return_value=state), \
                  mock.patch.object(model_job, "verify_gcode"), \
-                 mock.patch.dict(sys.modules, {"print_buddy.core.orca_adapter": fake_adapter}):
+                 mock.patch.dict(sys.modules, {"print_handy.core.orca_adapter": fake_adapter}):
                 model_job.slice_job(job_path, copies=3)
             self.assertEqual(fake_adapter.slice_model.call_args.kwargs["copies"], 3)
             self.assertEqual(json.loads(job_path.read_text())["copies"], 3)
@@ -439,7 +439,7 @@ def test_explicit_scale_overrides_inch_auto_scale(tmp_path, monkeypatch):
     fake_adapter.slice_model.return_value = (gcode, {'source_sha256': model_job.file_sha256(source)}, [])
     monkeypatch.setattr(model_job.printer_state, 'load', _slice_state)
     monkeypatch.setattr(model_job, 'verify_gcode', lambda *_args: None)
-    with mock.patch.dict(sys.modules, {'print_buddy.core.orca_adapter': fake_adapter}):
+    with mock.patch.dict(sys.modules, {'print_handy.core.orca_adapter': fake_adapter}):
         model_job.slice_job(manifest)
     assert fake_adapter.slice_model.call_args.kwargs['scale'] == 2.0
     assert 'auto_scale' not in json.loads(manifest.read_text())
@@ -464,7 +464,7 @@ def test_small_stl_without_unit_confirmation_is_not_sliced(tmp_path, monkeypatch
     manifest.write_text(json.dumps({'downloaded_file': str(source),
                                     'audit': {'size_x': '5', 'size_y': '2', 'size_z': '2'}, 'title': 'Pin'}))
     fake_adapter = _fake_adapter_slice(tmp_path, monkeypatch, source)
-    with mock.patch.dict(sys.modules, {'print_buddy.core.orca_adapter': fake_adapter}):
+    with mock.patch.dict(sys.modules, {'print_handy.core.orca_adapter': fake_adapter}):
         with pytest.raises(RuntimeError, match=r'do not record units.*confirm'):
             model_job.slice_job(manifest)
     fake_adapter.slice_model.assert_not_called()
@@ -490,7 +490,7 @@ def test_5mm_pin_stays_5mm_after_mm_confirmation(tmp_path, monkeypatch, capsys):
     assert saved['unit_decision']['source_sha256'] == model_job.file_sha256(source)
     assert saved['unit_provenance']['source'] == 'user_confirmation'
     fake_adapter = _fake_adapter_slice(tmp_path, monkeypatch, source)
-    with mock.patch.dict(sys.modules, {'print_buddy.core.orca_adapter': fake_adapter}):
+    with mock.patch.dict(sys.modules, {'print_handy.core.orca_adapter': fake_adapter}):
         model_job.slice_job(manifest)
     assert fake_adapter.slice_model.call_args.kwargs.get('scale') is None
     saved = json.loads(manifest.read_text())
@@ -509,7 +509,7 @@ def test_unit_confirmation_for_another_source_is_refused(tmp_path, monkeypatch):
                                                       'original_mm': [5.0, 2.0, 2.0],
                                                       'source': 'user_confirmation'}}))
     fake_adapter = _fake_adapter_slice(tmp_path, monkeypatch, source)
-    with mock.patch.dict(sys.modules, {'print_buddy.core.orca_adapter': fake_adapter}):
+    with mock.patch.dict(sys.modules, {'print_handy.core.orca_adapter': fake_adapter}):
         with pytest.raises(RuntimeError, match=r'do not record units'):
             model_job.slice_job(manifest)
     fake_adapter.slice_model.assert_not_called()
@@ -523,7 +523,7 @@ def test_explicit_scale_1_is_never_auto_scaled(tmp_path, monkeypatch):
                                     'audit': {'size_x': '5', 'size_y': '2', 'size_z': '2'}, 'title': 'Pin'}))
     assert model_job.unit_question(json.loads(manifest.read_text())) is None
     fake_adapter = _fake_adapter_slice(tmp_path, monkeypatch, source)
-    with mock.patch.dict(sys.modules, {'print_buddy.core.orca_adapter': fake_adapter}):
+    with mock.patch.dict(sys.modules, {'print_handy.core.orca_adapter': fake_adapter}):
         model_job.slice_job(manifest)
     assert fake_adapter.slice_model.call_args.kwargs['scale'] == 1.0
     saved = json.loads(manifest.read_text())
@@ -539,7 +539,7 @@ def test_generated_mm_part_is_never_auto_scaled_or_asked(tmp_path, monkeypatch):
                                     'audit': {'size_x': '5', 'size_y': '2', 'size_z': '2'}, 'title': 'Generated'}))
     assert model_job.unit_question(json.loads(manifest.read_text())) is None
     fake_adapter = _fake_adapter_slice(tmp_path, monkeypatch, source)
-    with mock.patch.dict(sys.modules, {'print_buddy.core.orca_adapter': fake_adapter}):
+    with mock.patch.dict(sys.modules, {'print_handy.core.orca_adapter': fake_adapter}):
         model_job.slice_job(manifest)
     assert fake_adapter.slice_model.call_args.kwargs.get('scale') is None
     saved = json.loads(manifest.read_text())
@@ -560,7 +560,7 @@ def test_normal_size_stl_is_not_auto_scaled(tmp_path, monkeypatch):
     fake_adapter.slice_model.return_value = (gcode, {'source_sha256': model_job.file_sha256(source)}, [])
     monkeypatch.setattr(model_job.printer_state, 'load', _slice_state)
     monkeypatch.setattr(model_job, 'verify_gcode', lambda *_args: None)
-    with mock.patch.dict(sys.modules, {'print_buddy.core.orca_adapter': fake_adapter}):
+    with mock.patch.dict(sys.modules, {'print_handy.core.orca_adapter': fake_adapter}):
         model_job.slice_job(manifest)
     assert fake_adapter.slice_model.call_args.kwargs.get('scale') is None
     saved = json.loads(manifest.read_text())
@@ -752,7 +752,7 @@ class MeshTopologyAuditTests(unittest.TestCase):
         # A child timeout makes quadratic regressions fail, rather than hang
         # the entire test runner. 20k faces would create ~400M pair links.
         code = (
-            "import json; from print_buddy.core.model_job import mesh_topology; "
+            "import json; from print_handy.core.model_job import mesh_topology; "
             "print(json.dumps(mesh_topology([[(0,0,0),(1,0,0),(0,i+1,1)] "
             "for i in range(20000)])))"
         )
@@ -961,7 +961,7 @@ class EnglishAndPrintNowTests(unittest.TestCase):
         offline = mock.Mock(_call=mock.Mock(side_effect=OSError("offline")))
         with tempfile.TemporaryDirectory() as d, \
              mock.patch.dict(os.environ, {"PRINTER_MAINTENANCE_STATE": str(Path(d) / "maintenance.json")}), \
-             mock.patch.dict("sys.modules", {"print_control": offline, "print_buddy.core.print_control": offline}):
+             mock.patch.dict("sys.modules", {"print_control": offline, "print_handy.core.print_control": offline}):
             state_path = Path(d) / "maintenance.json"
             maintenance.save({"runs": runs}, state_path)
             with mock.patch.object(maintenance, "load", return_value={"runs": runs}), \
@@ -1198,7 +1198,7 @@ class EnglishAndPrintNowTests(unittest.TestCase):
             result = model_job.subprocess.run([
                 *CLI, "filament-select", str(job_path),
                 "--slot", "4", "--color", "dark green", "--material", "PLA", "--spoolman-id", "12",
-            ], capture_output=True, text=True, timeout=15, env={**CLI_ENV, "PRINT_BUDDY__PATHS__HERMES_HOME": str(home)})
+            ], capture_output=True, text=True, timeout=15, env={**CLI_ENV, "PRINT_HANDY__PATHS__HERMES_HOME": str(home)})
             self.assertEqual(result.returncode, 0, result.stderr)
             self.assertEqual(json.loads(job_path.read_text())["filament_selection"]["slot"], 4)
 
@@ -2102,7 +2102,7 @@ def test_assign_print_number_appends_once_and_ignores_scratch_jobs(tmp_path, mon
 
 def test_shared_extruder_total_is_split_across_parts_and_checked_against_model_page():
     """Valentines stand regression: 5 parts on one guessed extruder showed 5 x 247.8 g = 1,239 g."""
-    from print_buddy.core import model_job as mj
+    from print_handy.core import model_job as mj
     parts = [{'key': f'p{i}', 'source_extruder': 1, 'volume_mm3': v} for i, v in enumerate([10, 10, 30, 50, 100])]
     manifest = {'parts': parts, 'filament_stats': {'total_g': 247.8, 'extruders': {1: {'g': 247.8}}, 'estimated': True}}
     pick = {'slot': 1, 'color': 'white', 'material': 'PLA', 'spoolman_id': 13}

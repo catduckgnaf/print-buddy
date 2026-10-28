@@ -283,23 +283,106 @@ def thingiverse_download(job, source, target):
         raise
     return dest
 
+MYMINIFACTORY="https://www.myminifactory.com/api/v2"
+# #462 Stage 2 (catduck's decision, 2026-10-27): MyMiniFactory is INVENTORY-ONLY.
+# Per MyMiniFactory's own API guidelines
+# (https://www.myminifactory.com/pages/api-guidelines), browsing needs no user
+# login, but downloading an object inside an app requires the downloader to be
+# logged in to their MyMiniFactory account (OAuth). That login route is not
+# built, so downloads refuse with this named gap instead of failing obscurely
+# or pretending the link is printable.
+MYMINIFACTORY_DOWNLOAD_GAP=(
+    "Print Handy cannot download files from MyMiniFactory. MyMiniFactory's API only "
+    "allows downloads when the person downloading is logged in to their MyMiniFactory "
+    "account (OAuth login), and that login route is not built yet, so nothing was "
+    "downloaded. Workaround: open the model page in a browser, download the .stl/.3mf "
+    "file there, then upload or drop the file here instead.")
+def myminifactory_api_key():
+    path=Path.home()/".config/myminifactory/token"
+    try:
+        key=path.read_text().strip()
+    except FileNotFoundError:
+        raise RuntimeError(f"MyMiniFactory links need an API key in {path}; create an API key "
+                           "in your MyMiniFactory account and store it as the only content of "
+                           "that file; see docs/PROJECT-REFERENCE.md (MyMiniFactory API key)") from None
+    if not key: raise RuntimeError("MyMiniFactory API key empty")
+    return key
+def _mmf_blocked(exc):
+    """Plain RuntimeError for a MyMiniFactory 401/403, else None. Never bypass a challenge."""
+    if getattr(exc, "code", None) not in (401, 403): return None
+    return RuntimeError("MyMiniFactory refused the request (401/403), which usually means the API key "
+                        "is missing, invalid or expired, or the site is challenging this connection. "
+                        "Check the API key file (see docs/PROJECT-REFERENCE.md, MyMiniFactory API key), "
+                        "then send the link again. Print Handy does not try to bypass robot checks.")
+def _mmf_json(path):
+    sep="&" if "?" in path else "?"
+    try:
+        return request_json(f"{MYMINIFACTORY}{path}{sep}key={myminifactory_api_key()}")
+    except urllib.error.HTTPError as exc:
+        blocked=_mmf_blocked(exc)
+        if blocked is not None: raise blocked from None
+        raise
+def myminifactory_id(url):
+    m=re.search(r'/object/(?:[^/?#]*-)?(\d+)(?:[/?#]|$)', url)
+    if not m: raise ValueError("MyMiniFactory URL needs /object/...-<number> "
+                               "(an object page URL ending in its number)")
+    return m.group(1)
+def myminifactory_inventory(url):
+    # The shape follows MyMiniFactory API v2's documented object response
+    # (GET /objects/{id} -> {id, name, license, files}), parsed defensively: the
+    # file list may be a plain list or {"items": [...]}, a file's name may sit
+    # under "filename" or "name", its size under "size", and the license may be
+    # a string or {"name": ...}. No live request has verified this shape: no
+    # API key was available when this was built (2026-10-27), which the #462
+    # Stage 2 PR body names explicitly.
+    mid=myminifactory_id(url)
+    d=_mmf_json(f"/objects/{mid}")
+    if not isinstance(d, dict) or not d: raise RuntimeError("MyMiniFactory object not found")
+    listed=d.get("files")
+    if isinstance(listed, dict): listed=listed.get("items")
+    rows=[]
+    for f in listed or []:
+        if not isinstance(f, dict): continue
+        name=str(f.get("filename") or f.get("name") or "")
+        if Path(name).suffix.lower() not in {".stl", ".3mf"}: continue
+        rows.append({"id":f.get("id"),"name":name,"bytes":f.get("size"),"kind":"files"})
+    title=str(d.get("name") or "").strip() or f"myminifactory-{mid}"
+    slug=re.sub(r'[^a-z0-9]+','-',title.lower()).strip('-') or mid
+    license_value=d.get("license")
+    if isinstance(license_value, dict): license_value=license_value.get("name")
+    job={"site":"myminifactory","model_id":mid,"title":title,"slug":slug,
+         "license":license_value,"sources":rows,
+         "download_gap":MYMINIFACTORY_DOWNLOAD_GAP}
+    if not rows:
+        job["no_geometry_reason"]=(
+            f"MyMiniFactory listing for object {mid} exposes no STL/3MF in its file "
+            "list, so there is no selectable geometry to reslice")
+    return job
+def myminifactory_download(job, source, target):
+    # Inventory-only (#462 Stage 2): never touches the network. The registry
+    # routes here so any download attempt refuses with the named gap.
+    raise RuntimeError(MYMINIFACTORY_DOWNLOAD_GAP)
+
 # Per-site registry (#462): site -> function NAME, resolved through this module's globals
-# at call time so existing tests that monkeypatch maker_*/printables_*/thingiverse_* by
-# name keep working exactly as before.
+# at call time so existing tests that monkeypatch maker_*/printables_*/thingiverse_*/
+# myminifactory_* by name keep working exactly as before.
 SITE_INVENTORY_FUNCS={"makerworld":"maker_inventory","printables":"printables_inventory",
-                      "thingiverse":"thingiverse_inventory"}
+                      "thingiverse":"thingiverse_inventory",
+                      "myminifactory":"myminifactory_inventory"}
 SITE_DOWNLOAD_FUNCS={"makerworld":"maker_download","printables":"printables_download",
-                     "thingiverse":"thingiverse_download"}
+                     "thingiverse":"thingiverse_download",
+                     "myminifactory":"myminifactory_download"}
 SITE_HOSTS={"makerworld.com":"makerworld","www.makerworld.com":"makerworld",
             "printables.com":"printables","www.printables.com":"printables",
-            "thingiverse.com":"thingiverse","www.thingiverse.com":"thingiverse"}
+            "thingiverse.com":"thingiverse","www.thingiverse.com":"thingiverse",
+            "myminifactory.com":"myminifactory","www.myminifactory.com":"myminifactory"}
 def inventory_for_url(url):
     site=SITE_HOSTS.get((urllib.parse.urlparse(url).hostname or "").lower())
-    if site is None: raise ValueError("supported sites: MakerWorld, Printables, Thingiverse")
+    if site is None: raise ValueError("supported sites: MakerWorld, Printables, Thingiverse, MyMiniFactory")
     return globals()[SITE_INVENTORY_FUNCS[site]](url)
 def download_for_site(job, source, target):
     name=SITE_DOWNLOAD_FUNCS.get((job or {}).get("site"))
-    if name is None: raise ValueError("supported sites: MakerWorld, Printables, Thingiverse")
+    if name is None: raise ValueError("supported sites: MakerWorld, Printables, Thingiverse, MyMiniFactory")
     return globals()[name](job, source, target)
 
 

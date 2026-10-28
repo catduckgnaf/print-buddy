@@ -954,10 +954,21 @@ async def prepare_link(event, adapter, state, root, timeout=None, reuse=None, pr
         else:
             job = await asyncio.to_thread(mj.inventory_for_url, url)
         rows = job.get('sources', [])
-        if job['site'] in ('printables', 'thingiverse'):
+        if job['site'] in ('printables', 'thingiverse', 'myminifactory'):
             rows = [r for r in rows if Path(r.get('name', '')).suffix.lower() in {'.3mf', '.stl'}]
         if not rows:
             raise ValueError(job.get('no_geometry_reason') or 'source inventory contains no selectable geometry')
+        if job['site'] == 'myminifactory':
+            # Inventory-only (#462 Stage 2): the listing is real, but MyMiniFactory
+            # downloads need a login this build does not have, so refuse here —
+            # before any profile choice, preview, download or slicing — with the
+            # named gap and the browser-download workaround.
+            names = ', '.join(str(r.get('name') or 'unnamed file') for r in rows[:5])
+            raise ValueError(
+                f"MyMiniFactory model \"{job.get('title') or 'untitled'}\": the inventory found "
+                f"{len(rows)} printable file(s): {names}. "
+                + (job.get('download_gap') or mj.MYMINIFACTORY_DOWNLOAD_GAP)
+                + " Nothing was downloaded or sliced.")
         hint = re.fullmatch(r'profileId-(\d+)', urlsplit(url or '').fragment or '')
         suggested = [r for r in rows if hint and str(r.get('instance_id')) == hint[1]]
         if job['site'] == 'makerworld':

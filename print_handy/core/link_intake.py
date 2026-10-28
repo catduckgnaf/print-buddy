@@ -30,6 +30,8 @@ def model_link(text):
         return text
     if host in {'thingiverse.com', 'www.thingiverse.com'} and re.match(r'/thing:\d+', path):
         return text
+    if host in {'myminifactory.com', 'www.myminifactory.com'} and re.match(r'/object/(?:[^/]*-)?\d+/?$', path):
+        return text
     return None
 
 

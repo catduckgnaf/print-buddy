@@ -41,7 +41,7 @@ A bed-clear approval starts one print. Starting the same G-code again needs a ne
 ## Features
 
 **Intake and slicing**
-* MakerWorld, Printables and Thingiverse links, or uploaded 3MF and STL files. MakerWorld links need an [account token](#makerworld-account-token); Thingiverse links need an [App Token](#thingiverse-app-token); Printables links and uploads do not.
+* MakerWorld, Printables and Thingiverse links, or uploaded 3MF and STL files. MakerWorld links need an [account token](#makerworld-account-token); Thingiverse links need an [App Token](#thingiverse-app-token); Printables links and uploads do not. MyMiniFactory links need an [API key](#myminifactory-api-key) and are inventory-only: the bot lists the model's files and then stops with the download gap named — it cannot download from MyMiniFactory yet.
 * Print time and grams from the model page in the first reply.
 * Multi plate models merged onto one bed when they fit; plates that would run longer than `layout.max_merged_hours` stay separate. Merging first tries the established rectangle packing; when that fails and at least one part is genuinely non-rectangular, the merge planner retries with the parts' actual convex hulls (translation only, at their authored orientation, with the same spacing measured hull-to-hull instead of rectangle-to-rectangle), so multi-plate sources that split only because of rectangular over-estimation — two diagonal or triangular parts, for example — can still merge onto one plate. Under that hull fallback rectangle-only sources keep exactly their previous merge verdicts and placements, and a hull placement that cannot be found within a bounded search falls back to the previous split outcome. When rectangle and hull packing both fail, the merge planner makes one more attempt with per-object yaw: a part that fits the usable bed only when turned in the bed plane is packed by its hull rotated to the same recorded yaw the full-size split evaluation chooses for such a part (recorded as `yaw_by_object` in the merge plan), while parts that fit as authored keep their authored orientation, so a source that split only because one part needed a turn can now merge. Slicing realizes each recorded turn through the exporters' per-object fit channels, composed with the plan's recorded shifts (a turned part's shift is measured from its rotated bounds), and proves the merged output landed at each turned part's rotated bounds plus its shift before accepting it; a merge plan that records a turn for an unknown object, a non-finite or out-of-range angle, or a turn without the shifts that realize it is refused rather than sliced as authored. A part that fits the bed at no checked yaw still blocks the merge, eligibility matches the hull fallback (single-build-item parts only), and every merge verdict that succeeds without a turn is unchanged.
 * Oversized models split across plates, tracked as one plan.
@@ -159,6 +159,18 @@ chmod 600 ~/.config/thingiverse/token
 ```
 
 Without the file, Thingiverse intake stops before the model summary with a message naming the file and where to create the token; an empty file stops it too. Only `.stl` and `.3mf` files from a thing are selectable sources — a "download all" zip and other file types are not — and, as with the other sites, the chosen geometry is resliced locally; baked site G-code is never used. If Thingiverse answers with a 401/403 or a Cloudflare robot check (challenge), intake reports that plainly and stops; Print Handy never tries to solve or bypass a robot check. Open thingiverse.com in a browser and pass any check there, or check/replace the token, then send the link again.
+
+### MyMiniFactory API key
+
+MyMiniFactory links use MyMiniFactory's official API v2 (`www.myminifactory.com/api/v2`) and need an API key from the operator's MyMiniFactory account. It is a file, not a setting or environment variable: Print Handy reads `~/.config/myminifactory/token` in the home directory of the account that runs it (in Docker, `/data/.config/myminifactory/token`; see [Docker](DOCKER.md#makerworld-account-token) — the same bind-mounted `dot-config` directory holds all the token files) and sends it as the `key` query parameter when it looks up an object. The key is read on each request and is never logged.
+
+```bash
+mkdir -p ~/.config/myminifactory && chmod 700 ~/.config/myminifactory
+(umask 077 && cat > ~/.config/myminifactory/token)   # paste the API key, press Enter, then Ctrl-D
+chmod 600 ~/.config/myminifactory/token
+```
+
+**MyMiniFactory support is inventory-only.** With the key, pasting a MyMiniFactory object link lists the model's `.stl`/`.3mf` files — and then intake stops. Print Handy cannot download files from MyMiniFactory: under [MyMiniFactory's own API guidelines](https://www.myminifactory.com/pages/api-guidelines), downloading an object inside an app requires the person downloading to be logged in to their MyMiniFactory account (OAuth), and that login route is not built yet. The refusal names this gap, lists the files the inventory found, and states that nothing was downloaded or sliced. The workaround is to open the model page in a browser, download the file there, and upload or drop the file in the chat instead. Without the key file, MyMiniFactory intake stops with a message naming the file; an empty file stops it too. If MyMiniFactory answers with a 401/403, intake reports that plainly (key missing, invalid or expired, or the site challenging the connection) and stops; Print Handy never tries to solve or bypass a robot check.
 
 ### All settings
 

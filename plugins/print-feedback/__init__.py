@@ -951,7 +951,7 @@ def _spool_change_text(target, detail):
             "Same material family is still required.")
 
 
-async def _offer_spool_change(adapter, source, metadata, print_next, target, detail):
+async def _offer_spool_change(adapter, source, metadata, print_next, target, detail, live_key=None):
     """A slot's spool was swapped after slicing (ran out, changed color). Ask once; on yes, start with it.
 
     Only the slice-time spool id is waived; material family and live slot checks still run.
@@ -963,7 +963,11 @@ async def _offer_spool_change(adapter, source, metadata, print_next, target, det
     choices = [USE_LOADED_SPOOL, print_next.CANCEL_LABEL]
     cid = uuid.uuid4().hex
     session_key = f'print-next-spool:{source.chat_id}:{source.thread_id}'
-    cm.register(cid, session_key, question, choices)
+    # Register under the live chat session key (the _confirm pattern):
+    # typed replies route by that key, so a flow-key registration can
+    # never be answered on buttonless platforms. send_clarify keeps
+    # the flow key for delivery.
+    cm.register(cid, live_key or session_key, question, choices)
     try:
         sent = await adapter.send_clarify(chat_id=str(source.chat_id), question=question, choices=choices,
                                           clarify_id=cid, session_key=session_key, metadata=metadata)
@@ -1035,7 +1039,11 @@ async def print_next_dispatch(event, gateway, **kwargs):
         question = print_next.question_text(target)
         cid = uuid.uuid4().hex
         session_key = f'print-next:{source.chat_id}:{source.thread_id}'
-        cm.register(cid, session_key, question, choices)
+        # Register under the live chat session key (the _confirm pattern):
+        # typed replies route by that key, so a flow-key registration can
+        # never be answered on buttonless platforms. send_clarify keeps
+        # the flow key for delivery.
+        cm.register(cid, gateway._session_key_for_source(source) or session_key, question, choices)
         try:
             sent = await adapter.send_clarify(chat_id=str(source.chat_id), question=question,
                                               choices=choices, clarify_id=cid,
@@ -1052,7 +1060,8 @@ async def print_next_dispatch(event, gateway, **kwargs):
                                content=f"Preparing to start {target['label']}. {target.get('estimate_text', 'estimated print time unknown')}.")
             ok, detail = await print_next.start(target)
             if not ok and SPOOL_CHANGED in str(detail):
-                ok, detail = await _offer_spool_change(adapter, source, metadata, print_next, target, detail)
+                ok, detail = await _offer_spool_change(adapter, source, metadata, print_next, target, detail,
+                                                        live_key=gateway._session_key_for_source(source))
             message = (None if ok
                        else f"Did not start {target['label']}. Not retrying.\n"
                             + intake_plain_start_failure(detail))
@@ -2448,7 +2457,11 @@ async def print_stop_dispatch(event, gateway, **kwargs):
             choices = [print_stop.STOP_LABEL, print_stop.KEEP_LABEL]
             cid = uuid.uuid4().hex
             session_key = f'print-stop:{source.chat_id}:{source.thread_id}'
-            cm.register(cid, session_key, question, choices)
+            # Register under the live chat session key (the _confirm pattern):
+            # typed replies route by that key, so a flow-key registration can
+            # never be answered on buttonless platforms. send_clarify keeps
+            # the flow key for delivery.
+            cm.register(cid, gateway._session_key_for_source(source) or session_key, question, choices)
             try:
                 sent = await adapter.send_clarify(chat_id=str(source.chat_id), question=question,
                                                   choices=choices, clarify_id=cid,

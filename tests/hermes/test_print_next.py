@@ -345,7 +345,8 @@ def test_hook_accepts_explicit_part_id(tmp_path):
     mod = load_plugin()
     adapter = Transport(0)
     src = S(platform=S(value='discord'), profile='3dprinting', user_id='42', chat_id='c', thread_id=None)
-    gateway = S(_is_user_authorized_for_source=lambda s: True, _delivery_adapter_for=lambda s: adapter)
+    gateway = S(_is_user_authorized_for_source=lambda s: True, _delivery_adapter_for=lambda s: adapter,
+                _session_key_for_source=lambda s: 'session-key')
     started = []
 
     async def fake_start(target):

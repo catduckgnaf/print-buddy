@@ -2942,6 +2942,125 @@ def alert_button_handlers(bot, adapter):
             return
         await interaction.response.edit_message(content=result, view=None)
 
+    async def new_spool_slot_select(interaction, spool_id, label):
+        """The load step of the new-spool prompt (#483): pick a slot, preselected spool.
+
+        Mirrors the guided /spool change flow's steps (slot → the old spool's
+        fate → one confirmation → bind) with the replacement already chosen,
+        in the click-layer idiom the insertion and spool-question prompts use:
+        a gateway dispatch flow needs a live message source and session key,
+        which a button press does not carry in either runtime.
+        """
+        import discord
+        from print_handy.hermes import spool_sync
+        state = await asyncio.to_thread(spool_sync.load_state)
+        select_aid = await asyncio.to_thread(pab.record, 'spoolman-new-slot', '',
+                                             spool_id=int(spool_id), label=label)
+        select = discord.ui.Select(placeholder='Choose the slot for the new spool', min_values=1, max_values=1,
+                                   options=[discord.SelectOption(**option)
+                                            for option in pab.new_spool_slot_options(state)],
+                                   custom_id=f'{pab.NEW_SPOOL_SELECT_PREFIX}:{select_aid}')
+        view = discord.ui.View(timeout=(globals().get('_config').question_timeout_s() if globals().get('_config') else 1800))
+        view.add_item(select)
+        await interaction.response.edit_message(
+            content=f'Which slot should spool {label} go into? Nothing changes until you confirm the load.',
+            view=view)
+
+    async def new_spool_confirm(interaction, spool_id, label, slot, disposition, fate=''):
+        import discord
+        confirm_aid = await asyncio.to_thread(pab.record, 'spoolman-new-confirm', '',
+                                              spool_id=int(spool_id), label=label, slot=int(slot),
+                                              disposition=disposition)
+        view = discord.ui.View(timeout=(globals().get('_config').question_timeout_s() if globals().get('_config') else 1800))
+        view.add_item(discord.ui.Button(label='Confirm load', style=discord.ButtonStyle.success,
+                                        custom_id=f'{pab.NEW_SPOOL_PREFIX}:confirm:{confirm_aid}'))
+        view.add_item(discord.ui.Button(label='Cancel', style=discord.ButtonStyle.secondary,
+                                        custom_id=f'{pab.NEW_SPOOL_PREFIX}:cancel:{confirm_aid}'))
+        await interaction.response.edit_message(content=f'Load spool {label} into slot {slot}?{fate}', view=view)
+
+    async def handle_new_spool(interaction, action, aid):
+        alert = await asyncio.to_thread(pab.take, aid)
+        if not alert or alert.get('kind') not in ('spoolman-new', 'spoolman-new-disposition',
+                                                  'spoolman-new-confirm'):
+            await interaction.response.send_message('That new-spool prompt is old or was already answered. Nothing changed.', ephemeral=True)
+            return
+        kind = alert.get('kind')
+        spool_id = alert.get('spool_id')
+        label = alert.get('label') or f'#{spool_id}'
+        if kind == 'spoolman-new':
+            if action == 'load':
+                await new_spool_slot_select(interaction, spool_id, label)
+                return
+            # Shelf and Dismiss both just close the prompt: the watcher
+            # recorded the spool as known when it prompted, so neither
+            # answer — and no answer — is ever asked about twice.
+            text = (f'Spool {label} stays on the shelf. Load it any time with '
+                    f'`/spool change <slot> {spool_id}`.' if action == 'shelf' else
+                    f'Dismissed — spool {label} stays on the shelf, and you will not be asked about it again.')
+            await interaction.response.edit_message(content=text, view=None)
+            return
+        if action == 'cancel':
+            await interaction.response.edit_message(
+                content=f'Load cancelled. Spool {label} stays on the shelf; nothing changed.', view=None)
+            return
+        if kind == 'spoolman-new-disposition':
+            # The action names the disposition itself (the #475 guided labels).
+            old_id = alert.get('old_spool_id')
+            fate = {'shelf': f' Spool #{old_id} goes back on the shelf.',
+                    'archive': f' Spool #{old_id} will be archived.',
+                    'depleted': f' Spool #{old_id} will be marked as depleted (0 g left).'}[action]
+            await new_spool_confirm(interaction, spool_id, label, alert.get('slot'), action, fate)
+            return
+        # spoolman-new-confirm + confirm: the one bind, through the same
+        # spool_sync.bind_slot the guided /spool change flow ends in.
+        try:
+            from print_handy.hermes import spool_sync
+            result = await asyncio.to_thread(spool_sync.bind_slot, int(alert['slot']), int(spool_id),
+                                             prior_disposition=alert.get('disposition') or 'shelf',
+                                             note='Bound from Discord new-spool prompt')
+            message = spool_sync.bind_text(result)
+        except Exception as exc:
+            logger.exception('new spool load failed')
+            await interaction.response.send_message('Nothing was changed. Check the slot and spool number and try again.', ephemeral=True)
+            return
+        await interaction.response.edit_message(content=message, view=None)
+
+    async def handle_new_spool_select(interaction, aid):
+        pending = await asyncio.to_thread(pab.take, aid)
+        if not pending or pending.get('kind') != 'spoolman-new-slot':
+            await interaction.response.send_message('That slot choice is old or was already used. Nothing changed.', ephemeral=True)
+            return
+        import discord
+        from print_handy.hermes import spool_sync
+        spool_id = pending.get('spool_id')
+        label = pending.get('label') or f'#{spool_id}'
+        try:
+            slot = int((getattr(interaction, 'data', {}) or {}).get('values', [None])[0])
+        except (TypeError, ValueError):
+            slot = None
+        if slot not in (1, 2, 3, 4):
+            await interaction.response.send_message('That slot choice is not usable. Nothing changed.', ephemeral=True)
+            return
+        state = await asyncio.to_thread(spool_sync.load_state)
+        old_id = ((state.get('ifs_slots') or {}).get(str(slot)) or {}).get('spoolman_id')
+        if old_id and int(old_id) == int(spool_id):
+            await interaction.response.edit_message(
+                content=f'Slot {slot} already holds spool {label}. Nothing changed.', view=None)
+            return
+        if old_id:
+            disp_aid = await asyncio.to_thread(pab.record, 'spoolman-new-disposition', '',
+                                               spool_id=int(spool_id), label=label, slot=slot,
+                                               old_spool_id=int(old_id))
+            view = discord.ui.View(timeout=(globals().get('_config').question_timeout_s() if globals().get('_config') else 1800))
+            for text, key in (('Back on the shelf', 'shelf'), ('Archive it', 'archive'),
+                              ('Mark it as depleted', 'depleted'), ('Cancel', 'cancel')):
+                view.add_item(discord.ui.Button(label=text, style=discord.ButtonStyle.secondary,
+                                                custom_id=f'{pab.NEW_SPOOL_PREFIX}:{key}:{disp_aid}'))
+            await interaction.response.edit_message(
+                content=f'Slot {slot} still holds spool #{old_id}. What happens to spool #{old_id}?', view=view)
+            return
+        await new_spool_confirm(interaction, spool_id, label, slot, 'shelf')
+
     async def handle_plate_pick(interaction, aid):
         """Choosing a plate only prepares one Confirm button; nothing starts here."""
         import discord
@@ -3102,9 +3221,12 @@ def alert_button_handlers(bot, adapter):
         parsed = pab.parse_custom_id(custom_id)
         insertion = pab.parse_insertion_custom_id(custom_id)
         spool_question = pab.parse_spool_question_custom_id(custom_id)
+        new_spool = pab.parse_new_spool_custom_id(custom_id)
         is_select = str(custom_id).startswith('pbinsertselect:')
         is_spool_select = str(custom_id).startswith('pbspoolselect:')
-        if not parsed and not insertion and not spool_question and not is_select and not is_spool_select:
+        is_new_spool_select = str(custom_id).startswith(f'{pab.NEW_SPOOL_SELECT_PREFIX}:')
+        if not parsed and not insertion and not spool_question and not new_spool \
+                and not is_select and not is_spool_select and not is_new_spool_select:
             return
         if not allowed(interaction):
             await reject(interaction)
@@ -3115,6 +3237,9 @@ def alert_button_handlers(bot, adapter):
         if spool_question:
             await handle_spool_question(interaction, *spool_question)
             return
+        if new_spool:
+            await handle_new_spool(interaction, *new_spool)
+            return
         if is_select:
             _, aid = str(custom_id).split(':', 1)
             await handle_insertion_select(interaction, aid)
@@ -3122,6 +3247,10 @@ def alert_button_handlers(bot, adapter):
         if is_spool_select:
             _, aid = str(custom_id).split(':', 1)
             await handle_spool_question_select(interaction, aid)
+            return
+        if is_new_spool_select:
+            _, aid = str(custom_id).split(':', 1)
+            await handle_new_spool_select(interaction, aid)
             return
         action, aid = parsed
         alert = await asyncio.to_thread(pab.take, aid)

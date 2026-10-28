@@ -174,6 +174,17 @@ def test_inventory_for_url_routes_myminifactory(monkeypatch):
         model_job.inventory_for_url('https://example.com/object/3d-print-x-1')
 
 
+def test_design_fetch_myminifactory_link_names_the_gap(tmp_path, monkeypatch):
+    # The /design link path must name the same download gap instead of falling
+    # through to the Printables lookup (#462 Stage 2 parity with the
+    # Thingiverse arm in fetch_link_source).
+    from print_handy.core import design
+    monkeypatch.setattr(model_job, 'printables_inventory',
+                        mock.Mock(side_effect=AssertionError('printables lookup attempted')))
+    with pytest.raises(design.DesignError, match='cannot download files from MyMiniFactory'):
+        design.fetch_link_source(MMF_URL, tmp_path / 'src')
+
+
 def test_prepared_intake_myminifactory_refuses_with_the_gap(env, monkeypatch):
     monkeypatch.setattr(model_job, 'myminifactory_inventory', lambda url: {
         'site': 'myminifactory', 'model_id': '12345', 'slug': 'benchy-boat',

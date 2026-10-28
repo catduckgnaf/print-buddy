@@ -254,6 +254,15 @@ def fetch_link_source(url, target_dir) -> Path:
     target_dir.mkdir(parents=True, exist_ok=True)
     host = urlsplit(str(url)).hostname or ""
     try:
+        if "cults3d.com" in host:
+            # Metadata-only (#462 Stage 3): Cults' API exposes no files at all,
+            # so there is nothing design could fetch — name the gap instead of
+            # falling through to the Printables lookup.
+            raise DesignError(
+                "Print Handy cannot download files from Cults3D: its API exposes a "
+                "listing's details only, never its 3D files, which are downloaded "
+                "through the signed-in website. Download the file from the model "
+                "page in a browser and drop the file here instead.")
         if "makerworld.com" in host:
             job = mj.maker_inventory(str(url))
             from .makerworld_profiles import choose as choose_profile
@@ -275,6 +284,16 @@ def fetch_link_source(url, target_dir) -> Path:
                     f"that Thingiverse link has {len(rows)} model files, so design cannot pick "
                     "one; drop the file you want edited")
             return Path(mj.thingiverse_download(job, rows[0], target_dir))
+        if "myminifactory.com" in host:
+            # Inventory-only (#462 Stage 2): there is no file design could fetch —
+            # MyMiniFactory downloads need a login this build does not have — so
+            # name the gap instead of falling through to the Printables lookup,
+            # which would fail with a misleading "check the link" error.
+            raise DesignError(
+                "Print Handy cannot download files from MyMiniFactory: its API only "
+                "allows downloads when the person downloading is logged in to their "
+                "MyMiniFactory account, and that login route is not built yet. "
+                "Download the file from the model page in a browser and drop the file here instead.")
         job = mj.printables_inventory(str(url))
         rows = [row for row in job["sources"]
                 if Path(str(row.get("name") or "")).suffix.lower() in (".3mf", ".stl")]

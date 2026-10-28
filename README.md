@@ -14,7 +14,7 @@ Current release: **2.1.8**
 
 ## How it works
 
-1. **Share a model.** Drop a MakerWorld, Printables or Thingiverse link in the chat, or upload an STL or 3MF file. MyMiniFactory links are checked for their file inventory only; downloads are not supported yet.
+1. **Share a model.** Drop a MakerWorld, Printables or Thingiverse link in the chat, or upload an STL or 3MF file. MyMiniFactory links are checked for their file inventory only; downloads are not supported yet. Cults3D links are recognised the same way, but Cults' API exposes listing details only, never the files, so intake names that gap instead.
 2. **Make a few choices.** Print Handy walks you through colors and filament, how many copies, and — if the model needs it — how it should fit on the bed. Then it slices the model for your printer.
 3. **Check and confirm.** You see the result before anything happens. Only when you approve it does Print Handy send the job to a configured printer.
 4. **Follow along.** Progress, alerts and timelapses come back to the same chat.
@@ -156,7 +156,7 @@ The same bot, with the same prompts and safety gates, runs on **Discord, Telegra
 
 Everything in this list is plain, deterministic code. No model endpoint is configured, and none is needed:
 
-- **Prepare models.** MakerWorld, Printables and Thingiverse links and STL/3MF uploads go through guided choices for colors and filament. MyMiniFactory links are inventory-only for now (the bot lists the files and names the download gap).
+- **Prepare models.** MakerWorld, Printables and Thingiverse links and STL/3MF uploads go through guided choices for colors and filament. MyMiniFactory links are inventory-only for now (the bot lists the files and names the download gap). Cults3D links stop with the named gap too — Cults' API never exposes a listing's files.
 - **Slicing that respects geometry.** Every model is measured at full size first. Print Handy never silently shrinks a part: if it doesn't fit, you choose — rearrange it on one plate, split it across plates at 100%, turn it on the bed or onto another face, or shrink it on purpose. A small STL gets the millimeters-or-inches question shown above, because STL files record no units. Copies are offered only where the G-code will actually contain them, multi-plate plans are tracked as one job, and each slice records its full recipe so a reprint is exact.
 - **Manage filament.** `/spool` lists, changes, creates and syncs spools without moving the printer — the guided change is in the walkthrough above, and typing "add new filament" or "swap the filament" starts the same flow. A spool created in Spoolman gets offered for a slot. If a print pauses on filament runout, the spool question the bot posts has a **Cancel print** button, so you can always stop the print without answering the question first. And if Spoolman is down, slicing and printing carry on without it — spool tracking is skipped for that job, never a blocker.
 - **Run approved jobs.** Confirm bed clearance, work through multi-plate plans with `/print-next`, and reprint archived jobs with `/print-again` — all behind the same guarded controls.

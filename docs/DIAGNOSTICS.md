@@ -143,6 +143,68 @@ Deliberately unchanged, and why:
 The fail-soft posture is preserved throughout (#235): warnings never block
 a print, and no print path changes behaviour beyond reporting.
 
+## Debug log mode and sanitized exports (#478)
+
+On top of the bundle and the static `[logging] levels` above, Print Handy
+has a temporary **debug log mode** for reproducing a problem:
+
+- **Surfaces.** `/print-handy debug on [minutes]` / `off` / `status` in the
+  bot, the Debug log mode form on the Web UI status page, and
+  `python3 -m print_handy.debug_mode on|off|status` on the host are all
+  equivalent — they read and write one shared state file
+  (`debug-state.json`) in the state folder. No config edit, no restart.
+- **Duration.** `on` lasts **30 minutes by default** (an explicit number
+  of minutes may follow, up to 24 hours), then the mode turns itself off.
+  Starting it again ends the old session cleanly and starts a new one.
+- **While on.** Print Handy's own loggers run at DEBUG; noisy library
+  loggers (discord, websockets, asyncio) stay at INFO. Records are also
+  written to a dedicated, size-bounded capture file
+  (`debug-capture.log`, rotating, in the state folder), delimited by
+  `DEBUG_SESSION_START` / `DEBUG_SESSION_END` markers carrying the
+  session id. The capture exists whether or not a `[logging] file` is
+  configured, so a Docker (stderr-only) install still produces logs.
+  **Listener processes are covered**: the mode is shared state, not a
+  per-process switch — every process applies it when it configures
+  logging, the standalone bot re-checks it on its heartbeat, and the
+  Moonraker, family and Bambu listeners poll it in their run loops.
+  `bot check`, the doctor and the Web UI status page show a
+  "debug mode: ON — session …, off in …" row (marker
+  `PB_DEBUG_CONFIGURATION`) while a session is live.
+- **Logging only.** Turning the mode on or off, and exporting, never
+  changes print behaviour, confirmation gates or readiness guards.
+
+**Sanitized export.** Turning the mode off in the bot builds the export
+for that session's window (the capture lines between its markers) and
+delivers the file **in chat**, after showing its sanitization report;
+the CLI's `off` writes the same export to `state/debug-exports/`. The
+file is named `print-handy-debug-<date>-<session>.md`. With no session
+window, the export (and the #390 bundle, which uses the same path) falls
+back to the existing bounded log tail. Nothing is uploaded anywhere:
+the operator reviews the export and attaches it to the issue themselves,
+and the bug-report form asks for the debug session ID and the
+sanitization report next to the bundle field.
+
+Exports are sanitized by `print_handy/sanitize_logs.py`, layered on
+`logs.redact` (which already strips tokens, credentials and secret env
+values). The export pass additionally removes:
+
+- IP addresses and internal hostnames, in URLs and bare text — the URL
+  scheme, port and path shape stay, so the line remains diagnosable;
+- Discord/Telegram/Matrix user and channel IDs, plus IDs the config
+  itself names — replaced with **consistent pseudonyms** within one
+  export (`user-1`, `channel-1`, …) so lines still correlate;
+- local file paths, email addresses, MAC addresses, serial-number-shaped
+  values, and URL query strings.
+
+A **verification pass** then re-runs the whole sanitizer over the result;
+anything the first pass missed is removed there and counted too. Every
+export carries the **sanitization report** — counts by category, never
+the removed values (for example: "removed: 4 secrets/tokens, 6 IP
+addresses, 3 user IDs. Verification pass found nothing further.") — so
+the operator can see at a glance what was taken out before attaching it
+to a public issue. The diagnostics bundle's config summary and log
+sections use the same sanitizer and carry the same report.
+
 ## Audit inventory (Stage 1)
 
 User-facing failure/warning surfaces, audited against the bar above.

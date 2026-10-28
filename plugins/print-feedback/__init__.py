@@ -222,13 +222,66 @@ async def guided_dispatch(event, gateway, **kwargs):
                 "the printer roster, the doctor output and a bounded recent-log tail. "
                 "Review it, then attach it to your bug report — nothing was uploaded anywhere.")
 
+    def debug(action):
+        """#478 debug log mode: on/off/status over the shared state file.
+
+        ``off`` delivers the session's sanitized export in chat (the
+        MEDIA: marker the delivery layer turns into an attachment), with
+        the counts-only sanitization report shown first. A failed export
+        answers plainly with a PB marker instead of dropping silently,
+        and leaves the mode on so the operator can retry.
+        """
+        from print_handy import debug_mode
+        cfg = _config.cfg()
+        parts = (action or "").split()
+        verb = parts[0] if parts else "status"
+        if verb == "on":
+            minutes = None
+            if len(parts) > 1:
+                try:
+                    minutes = int(parts[1])
+                except ValueError:
+                    return (f"`{parts[1]}` is not a number of minutes; debug mode was not "
+                            "started. Use `/print-handy debug on` (30 minutes) or "
+                            "`/print-handy debug on 60`.")
+            state = debug_mode.start(cfg, minutes=minutes)
+            return (f"**Debug mode ON** — session `{state['session']}`, off in "
+                    f"{state['minutes']} minute(s) [{debug_mode.MARKER}].\n"
+                    "Reproduce the problem, then run `/print-handy debug off`: the sanitized "
+                    "log export for this session will be posted here with its sanitization "
+                    "report. Printing is unaffected — this is logging only.")
+        if verb == "off":
+            if debug_mode._read_state(cfg) is None and debug_mode.latest_session(cfg) is None:
+                return "Debug mode is already off, and there is no debug session to export."
+            try:
+                target, report, ended = debug_mode.off_and_export(cfg)
+            except Exception as exc:
+                logger.exception('debug log export failed')
+                from print_handy import diagnostics
+                return diagnostics.operator_message(
+                    "The debug log export failed, so nothing was attached.",
+                    subsystem="debug", exc=exc,
+                    remedy="Debug mode is still on and the capture is kept. Try "
+                           "`/print-handy debug off` again, or on the host run "
+                           "`python3 -m print_handy.debug_mode off`.")
+            return (f"**Debug mode OFF** (session `{ended.get('session')}`).\n"
+                    f"{report}\n"
+                    "The sanitized export is attached below — review it, then attach it to "
+                    "your bug report. Nothing was uploaded anywhere.\n"
+                    f"MEDIA:{target}")
+        if verb == "status":
+            return debug_mode.status_text(cfg)
+        return ("Use `/print-handy debug on [minutes]`, `/print-handy debug off`, "
+                "or `/print-handy debug status`.")
+
     try:
         token_env = str(_config.cfg()['discord'].get('token_env') or 'DISCORD_BOT_TOKEN')
     except Exception:
         token_env = 'DISCORD_BOT_TOKEN'
     try:
         reply = await asyncio.to_thread(guided.handle_text, key, text, store=store,
-                                        token_env=token_env, report=report, bundle=bundle)
+                                        token_env=token_env, report=report, bundle=bundle,
+                                        debug=debug)
     except Exception:
         logger.exception('guided setup/debugging failed')
         reply = 'That guided step failed and nothing was changed. Try `/print-handy status`, or `/print-handy cancel` to pause setup.'

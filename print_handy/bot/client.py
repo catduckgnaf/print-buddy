@@ -196,6 +196,13 @@ class PrintHandyBot(ext_commands.Bot):
                 health.write(self.core.status(self.connected))
             except Exception:
                 logger.exception("heartbeat write failed")
+            try:
+                # Debug log mode (#478) is shared state; observe it here so
+                # a session started from the CLI or Web UI reaches the bot.
+                from .. import debug_mode
+                await asyncio.to_thread(debug_mode.poll)
+            except Exception:
+                pass
             await asyncio.sleep(HEARTBEAT_S)
 
     async def on_disconnect(self):

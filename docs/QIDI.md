@@ -1,4 +1,4 @@
-# Qidi printers (Klipper line: Q1 Pro, X-Plus 3, X-Max 3, X-Smart 3)
+# Qidi printers (Klipper line: Q1 Pro, X-Plus 3, X-Plus 4, X-Max 3, X-Smart 3)
 
 [Documentation home](README.md) · [Printer profiles](PRINTER-PROFILES.md)
 
@@ -8,12 +8,13 @@ Print Handy supports Qidi's current Klipper-based printers through **Moonraker**
 |---|---|---|---|---|
 | Q1 Pro | `qidi.q1pro` | 245 × 245 | 240 | Enclosed CoreXY; actively heated chamber (set by the template start code) |
 | X-Plus 3 | `qidi.xplus3` | 280 × 280 | 270 | Enclosed CoreXY |
+| X-Plus 4 | `qidi.xplus4` | 305 × 305 | 280 | Enclosed CoreXY; actively heated chamber (set by the template start code) |
 | X-Max 3 | `qidi.xmax3` | 325 × 325 | 315 | Enclosed CoreXY |
 | X-Smart 3 | `qidi.xsmart3` | 175 × 180 | 170 | Enclosed CoreXY; marketed as 180 × 180 (see below) |
 
 Select one with `printer.model: qidi.q1pro` (etc.).
 
-Bed sizes are the pinned Orca profiles' printable areas — the values slicing enforces. Qidi's marketed beds differ in one case: the X-Smart 3 is sold as 180 × 180 mm, but its Orca profile's printable area is 175 × 180 mm; both figures are recorded in the model's facts, and the Orca value is the one used. The Q1 Pro's profile also records a bed exclusion polygon (the purge zone along the back edge), which is carried into the model facts point for point.
+Bed sizes are the pinned Orca profiles' printable areas — the values slicing enforces. Qidi's marketed beds differ in one case: the X-Smart 3 is sold as 180 × 180 mm, but its Orca profile's printable area is 175 × 180 mm; both figures are recorded in the model's facts, and the Orca value is the one used. The Q1 Pro's profile also records a bed exclusion polygon (the purge zone along the back edge), which is carried into the model facts point for point; the X-Plus 4's profile records one too.
 
 ## Set up the profiles
 
@@ -29,11 +30,11 @@ The resources folder holds `profiles/Qidi.json` and `profiles/Qidi/`, or — Orc
 
 The Qidi line runs stock Klipper behind Moonraker, so everything Moonraker-shaped works the way it does for any Klipper printer: set `services.moonraker_url` to the printer's Moonraker endpoint on the standard port 7125 (for example `http://192.168.1.60:7125`) and Print Handy uploads, starts and watches prints through the usual path, with `printer` delivery on by default. Because the connection is Moonraker, prints are covered by the Moonraker listener's start/pause/completion posts like any other Moonraker printer. What the dedicated `qidi` vendor adds over `klipper.generic` is the correct bed size and height per model and the pinned templates: the generic profile's 220 × 220 × 250 mm defaults match no Qidi model and would silently mis-slice.
 
-Qidi's start G-code opens with the printer's own `PRINT_START` macro — the Q1 Pro passes `BED=`/`HOTEND=`/`CHAMBER=` — and continues with an inline sequence from the template; the adapter ships that sequence verbatim. The guard refuses other ecosystems' start code (a `START_PRINT`-led file, for example), a file sliced for a different model, temperatures above the model's published limits (Q1 Pro / X-Plus 3 / X-Max 3: 350 °C nozzle, 120 °C bed; X-Smart 3: 300 °C nozzle, 110 °C bed) and nozzle sizes with no template here. The Q1 Pro's heated chamber is driven by the template's start code (the slicer's chamber temperature), not by a separate Print Handy control.
+Qidi's start G-code opens with the printer's own `PRINT_START` macro — the Q1 Pro passes `BED=`/`HOTEND=`/`CHAMBER=` — and continues with an inline sequence from the template; the adapter ships that sequence verbatim. The guard refuses other ecosystems' start code (a `START_PRINT`-led file, for example), a file sliced for a different model, temperatures above the model's published limits (Q1 Pro / X-Plus 3 / X-Max 3: 350 °C nozzle, 120 °C bed; X-Plus 4: 370 °C nozzle, 120 °C bed; X-Smart 3: 300 °C nozzle, 110 °C bed) and nozzle sizes with no template here. The Q1 Pro's heated chamber is driven by the template's start code (the slicer's chamber temperature), not by a separate Print Handy control.
 
 ## What is not supported
 
-- The newer Qidi generation (X-Plus 4, X-Max 4, Plus 5, Q2 / Q2C / Q2 Pro, QD Plus): profiles exist in Orca, but their identities are not pinned here yet; they are follow-ups on this vendor pack, added the same way once checked.
+- The rest of the newer Qidi generation (X-Max 4, Plus 5, Q2 / Q2C / Q2 Pro, QD Plus): profiles exist in Orca, but their identities are not pinned here yet; they are follow-ups on this vendor pack, added the same way once checked.
 - The older X-Max / X-Plus / X-CF Pro generation and the X-Pro / X-One line.
 - Multi-nozzle variants: templates are pinned to the stock 0.4 mm nozzle profiles, as with the other generated-template vendors.
 - Any claim of a successful print on real hardware.

@@ -84,6 +84,14 @@ MODELS = {
         nozzle_type='hardened_steel', hotend=350, bed_temp=120,
         materials=('PLA', 'PETG', 'TPU', 'ABS', 'ASA', 'PC', 'PA'), enclosed=True,
     ),
+    "xplus4": _model(
+        printer_model='Qidi X-Plus 4',
+        names={"machine": 'Qidi X-Plus 4 0.4 nozzle', "process": '0.20mm Standard @Qidi XPlus4', "filament": 'Generic PLA @Qidi X-Plus 4 0.4 nozzle'},
+        hashes=({'machine': '0368426d92c4e66458eaac49d4e61542b8f74871d3ce90ebd1e183bcaa01641b', 'process': '5b26eb63a7ca8f15cbaeab94e9517df6558032cf1807367fe99f91840ee6a0c9', 'filament': 'cc7b8726f0722f8ba7ad86a34880920185a04635c086c4f340a90393fbd1b021'}, {'machine': '2117e7f0b0b91f1212a7a8f2b431b373570719857ba08378df493da98c071a59', 'process': '48916463e190b07f3aabcb050506dc043f75d80bd27eae60657410ec6a0a525b', 'filament': 'd92c17d6285cd15f7eda979d8641c07853426da4874ccaf6c2794c7607a1c7ef'}, {'machine': 'dc5a422f8a36fa4d3812c3032b8ca60d066e492cf66f0cb0e06e6ce72401cae5', 'process': '742e7d6f060cce40863d47b85221127f18ca70aa0b05e3a4e9d013cff476bd45', 'filament': '1582c2d45fbaf6a479dfa9f34d607e0d45134cdc6d8d14118890322dc0baf95a'}),
+        bed=(305, 305), height=280, exclusion=((0, 305), (0, 302), (35, 302), (35, 305), (305, 305), (305, 305), (305, 305), (305, 20), (293, 20), (293, 0), (305, 0), (305, 20), (305, 305)), marketed=(305, 305),
+        nozzle_type='hardened_steel', hotend=370, bed_temp=120,
+        materials=('PLA', 'PETG', 'TPU', 'ABS', 'ASA', 'PC', 'PA'), enclosed=True,
+    ),
     "xmax3": _model(
         printer_model='Qidi X-Max 3',
         names={"machine": 'Qidi X-Max 3 0.4 nozzle', "process": '0.20mm Standard @Qidi XMax3', "filament": 'Generic PLA @Qidi'},
@@ -105,5 +113,6 @@ MODELS = {
 
 Q1PRO = MODELS["q1pro"]
 XPLUS3 = MODELS["xplus3"]
+XPLUS4 = MODELS["xplus4"]
 XMAX3 = MODELS["xmax3"]
 XSMART3 = MODELS["xsmart3"]

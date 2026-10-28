@@ -541,6 +541,20 @@ profile = "print_handy/printers/qidi/xplus3.py"
 notes = "Stock Klipper + Moonraker. Enclosed CoreXY; not tested on hardware."
 
 [[printer]]
+key = "qidi.xplus4"
+label = "Qidi X-Plus 4"
+vendor = "qidi"
+firmware = "Klipper"
+firmware_family = "klipper"
+connection = "moonraker"
+kinematics = "CoreXY"
+bed_mm = [305.0, 305.0]
+max_height_mm = 280.0
+filament_slots = 1
+profile = "print_handy/printers/qidi/xplus4.py"
+notes = "Stock Klipper + Moonraker. Enclosed CoreXY with an actively heated chamber (set by the template start code, not driven separately). The pinned Orca profile records a bed exclusion polygon; not tested on hardware."
+
+[[printer]]
 key = "qidi.xmax3"
 label = "Qidi X-Max 3"
 vendor = "qidi"

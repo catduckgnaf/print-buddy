@@ -1,4 +1,4 @@
-"""Qidi vendor: the Klipper-based Qidi line on Moonraker (Q1 Pro, X-Plus 3, X-Max 3, X-Smart 3).
+"""Qidi vendor: the Klipper-based Qidi line on Moonraker (Q1 Pro, X-Plus 3, X-Plus 4, X-Max 3, X-Smart 3).
 
 Everything is offline: profiles run against invented resources (qidi_fixture) and no test
 touches a network or a printer. Live support is unclaimed — there is no Qidi hardware to
@@ -20,6 +20,7 @@ from . import qidi_fixture as fixture
 MODELS = {
     "qidi.q1pro": "Q1PRO",
     "qidi.xplus3": "XPLUS3",
+    "qidi.xplus4": "XPLUS4",
     "qidi.xmax3": "XMAX3",
     "qidi.xsmart3": "XSMART3",
 }

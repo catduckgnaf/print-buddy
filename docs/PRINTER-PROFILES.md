@@ -65,6 +65,7 @@ print_handy/printers/
     __init__.py          VENDOR  Qidi: Moonraker, template start code (PRINT_START-led), OrcaSlicer, .gcode
     q1pro.py             MODEL   qidi.q1pro: 245 x 245 mm bed, 240 mm height, enclosed CoreXY
     xplus3.py            MODEL   qidi.xplus3: 280 x 280 mm bed, 270 mm height, enclosed CoreXY
+    xplus4.py            MODEL   qidi.xplus4: 305 x 305 mm bed, 280 mm height, enclosed CoreXY
     xmax3.py             MODEL   qidi.xmax3: 325 x 325 mm bed, 315 mm height, enclosed CoreXY
     xsmart3.py           MODEL   qidi.xsmart3: 175 x 180 mm bed, 170 mm height, enclosed CoreXY
                                  (adapter.py, guard.py, facts.py, profiles.py; see QIDI.md)

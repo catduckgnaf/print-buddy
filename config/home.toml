@@ -160,6 +160,22 @@ model = ""
 api_key_env = "LLM_API_KEY"
 timeout_s = 20
 
+[agent]
+# Stray-chat agent lane (#524 stage 3): an agent endpoint — any
+# OpenAI-compatible chat completions URL, e.g. a Hermes agent behind its
+# API — that answers Discord free text the handlers did not take, ahead of
+# the [llm] call above. Empty chat_url: no agent lane; stray chat uses
+# [llm] if configured, else the short not-understood reply. The endpoint
+# answers in its own voice; its replies are posted as-is and can never run
+# a command. model is optional: empty omits it from the request, for
+# endpoints that are not model-addressable. discord.chat_llm_enabled=false
+# turns this lane off too — no stray-chat model call of any kind.
+chat_url = ""
+model = ""
+# Environment variable holding the API key for chat_url, if it needs one.
+api_key_env = "AGENT_API_KEY"
+timeout_s = 120
+
 [design]
 # AI design with OpenSCAD (#388): /print-design creates a new printable part
 # from a description. No enabled line on purpose: unset means AUTO — design

@@ -77,7 +77,7 @@ Schema, validation limits and TOML migration: [CONFIGURATION-YAML.md](CONFIGURAT
 | `discord.token_env` | `PRINT_HANDY__DISCORD__TOKEN_ENV` | `DISCORD_BOT_TOKEN` | Name of the environment variable holding the bot token |
 | `discord.allowed_user_ids` | `PRINT_HANDY__DISCORD__ALLOWED_USER_IDS` | empty | Optional whitelist of Discord user IDs for the standalone bot, comma or space separated. Empty (the default) lets everyone in the print channel use the bot — the channel is the access boundary (#386) |
 | `discord.denied_user_ids` | `PRINT_HANDY__DISCORD__DENIED_USER_IDS` | empty | Optional deny list of Discord user IDs, comma or space separated. A denied user is refused even when whitelisted or the approval user; a refusal is logged at INFO and answered in channel once per user per hour. Applies to bot messages, commands and button presses; the live camera Activity keeps its own allowlist (`approval_user_id` plus `allowed_user_ids`) |
-| `discord.chat_llm_enabled` | `PRINT_HANDY__DISCORD__CHAT_LLM_ENABLED` | `true` | Discord's chat-LLM switch (#466). `false` runs Discord as a pure bot: no chat LLM, unmatched messages get the short not-understood reply, even while `[llm]` stays configured for `/print-design` (which inherits it). The roast and the camera watchdog use the separate vision endpoint and their own switches, so they are unaffected. `bot check` names this switch on its llm row when it is off |
+| `discord.chat_llm_enabled` | `PRINT_HANDY__DISCORD__CHAT_LLM_ENABLED` | `true` | Discord's chat-LLM switch (#466). `false` runs Discord as a pure bot: no stray-chat model call of any kind (no `[llm]` call, no `[agent]` lane call), unmatched messages get the short not-understood reply, even while `[llm]` stays configured for `/print-design` (which inherits it). The roast and the camera watchdog use the separate vision endpoint and their own switches, so they are unaffected. `bot check` names this switch on its llm and agent rows when it is off |
 | `telegram.token_env` | `PRINT_HANDY__TELEGRAM__TOKEN_ENV` | `TELEGRAM_BOT_TOKEN` | Name of the environment variable holding the Telegram bot token |
 | `telegram.chat_id` | `PRINT_HANDY__TELEGRAM__CHAT_ID` | empty | Telegram chat (group) ID; group and channel IDs are negative |
 | `telegram.allowed_user_ids` | `PRINT_HANDY__TELEGRAM__ALLOWED_USER_IDS` | empty | Telegram user IDs allowed to use the standalone bot, comma or space separated |
@@ -99,6 +99,10 @@ Schema, validation limits and TOML migration: [CONFIGURATION-YAML.md](CONFIGURAT
 | `llm.model` | `PRINT_HANDY__LLM__MODEL` | empty | LLM model name, required when `chat_url` is set |
 | `llm.api_key_env` | `PRINT_HANDY__LLM__API_KEY_ENV` | `LLM_API_KEY` | Name of the environment variable holding the LLM API key |
 | `llm.timeout_s` | `PRINT_HANDY__LLM__TIMEOUT_S` | `20` | LLM request timeout |
+| `agent.chat_url` | `PRINT_HANDY__AGENT__CHAT_URL` | empty | Stray-chat agent lane (#524 stage 3): an agent endpoint — any OpenAI-compatible chat completions URL, e.g. a Hermes agent behind its API — answers Discord free text the handlers did not take, ahead of the `[llm]` call. Empty: no agent lane; stray chat uses `[llm]` if configured, else the short not-understood reply. The endpoint answers in its own voice; its replies are posted as-is and can never run a command. `discord.chat_llm_enabled=false` turns this lane off too |
+| `agent.model` | `PRINT_HANDY__AGENT__MODEL` | empty | Agent model name; optional, unlike `llm.model` — empty omits `model` from the request, for endpoints that are not model-addressable |
+| `agent.api_key_env` | `PRINT_HANDY__AGENT__API_KEY_ENV` | `AGENT_API_KEY` | Name of the environment variable holding the agent endpoint's API key |
+| `agent.timeout_s` | `PRINT_HANDY__AGENT__TIMEOUT_S` | `120` | Agent request timeout; one attempt, no retries. Longer than `llm.timeout_s` because an agent turn does real work |
 | `design.enabled` | `PRINT_HANDY__DESIGN__ENABLED` | unset (auto) | `/print-design` / `/design` AI design (#388). Unset = auto: on whenever a design/LLM endpoint is configured (like roasts); `false` forces off (the command answers "not set up"); `true` forces on (an unconfigured endpoint is then reported, not silent) |
 | `design.chat_url` | `PRINT_HANDY__DESIGN__CHAT_URL` | empty (inherit) | Design model endpoint; empty uses `llm.chat_url`. Wins in Hermes mode too — the profile's `auxiliary.print_design` block is the fallback only when no endpoint is configured |
 | `design.model` | `PRINT_HANDY__DESIGN__MODEL` | empty (inherit) | Design model name; empty uses `llm.model`. Point this at a stronger model than chat if the endpoint offers one |
@@ -286,6 +290,7 @@ Secrets come from the environment only (Docker: `.env`, never committed or share
 | `LIVE_STREAM_SESSION_SECRET` | Live camera in Discord (#311): signs the Activity session markers. Never a setting |
 | `TUNNEL_TOKEN` | Live camera in Discord (#311): the named Cloudflare Tunnel's token. Read only by the optional `cloudflared` sidecar; Print Handy itself never uses it |
 | `LLM_API_KEY` | Optional key for `llm.chat_url`. The variable name is `llm.api_key_env` |
+| `AGENT_API_KEY` | Optional key for `agent.chat_url`. The variable name is `agent.api_key_env` |
 | `OCTOPRINT_API_KEY` | `octoprint.marlin` printers: OctoPrint application key |
 | `BAMBU_LAN_PASSWORD` | Bambu Lab printers: the LAN access code for read-only status. The variable name is `bambu.lan_access_code_env` |
 | `MOONRAKER_API_KEY` | Moonraker API key, only when Moonraker requires one |

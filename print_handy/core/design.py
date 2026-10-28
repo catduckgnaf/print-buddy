@@ -254,6 +254,15 @@ def fetch_link_source(url, target_dir) -> Path:
     target_dir.mkdir(parents=True, exist_ok=True)
     host = urlsplit(str(url)).hostname or ""
     try:
+        if "cults3d.com" in host:
+            # Metadata-only (#462 Stage 3): Cults' API exposes no files at all,
+            # so there is nothing design could fetch — name the gap instead of
+            # falling through to the Printables lookup.
+            raise DesignError(
+                "Print Handy cannot download files from Cults3D: its API exposes a "
+                "listing's details only, never its 3D files, which are downloaded "
+                "through the signed-in website. Download the file from the model "
+                "page in a browser and drop the file here instead.")
         if "makerworld.com" in host:
             job = mj.maker_inventory(str(url))
             from .makerworld_profiles import choose as choose_profile

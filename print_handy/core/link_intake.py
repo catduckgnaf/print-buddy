@@ -32,6 +32,8 @@ def model_link(text):
         return text
     if host in {'myminifactory.com', 'www.myminifactory.com'} and re.match(r'/object/(?:[^/]*-)?\d+/?$', path):
         return text
+    if host in {'cults3d.com', 'www.cults3d.com'} and re.match(r'/(?:[a-z]{2}/)?3d-model/(?:[^/]+/)?[^/]+/?$', path):
+        return text
     return None
 
 

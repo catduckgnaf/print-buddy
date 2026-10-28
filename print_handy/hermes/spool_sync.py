@@ -351,13 +351,14 @@ def bind_slot(slot: int, spool_id: int, *, client: Client = spoolman, mr: Client
     prior_disposition: 'shelf' puts the replaced spool on the shelf; 'keep' leaves
     its Spoolman record alone (the caller already handled it, e.g. depleted);
     'archive' archives the replaced spool; 'depleted' archives it with 0 g
-    left at the 'depleted' location (the runout pattern). The guided change
-    flow (#475) only passes archive/depleted after the operator picked that
-    fate on a button.
+    left at the 'depleted' location (the runout pattern); 'delete' removes
+    the replaced spool's Spoolman record entirely (#512). The guided change
+    flow (#475) and the conversational intake (#512) only pass
+    archive/depleted/delete after the operator picked that fate on a button.
     `printer_id` binds in that printer's own hardware record (#334) and refuses
     a spool another printer's record already loads.
     """
-    if prior_disposition not in ("shelf", "keep", "archive", "depleted"):
+    if prior_disposition not in ("shelf", "keep", "archive", "depleted", "delete"):
         raise SpoolError(f"unknown prior disposition {prior_disposition!r}. Nothing changed")
     slot = int(slot)
     if slot not in SLOTS:
@@ -392,6 +393,11 @@ def bind_slot(slot: int, spool_id: int, *, client: Client = spoolman, mr: Client
         # Same shape as the runout pattern: archived, 0 g left, depleted.
         client("PATCH", f"/api/v1/spool/{int(prior)}",
                {"archived": True, "remaining_weight": 0, "location": "depleted"})
+    if prior and int(prior) != int(spool_id) and prior_disposition == "delete":
+        # The operator explicitly picked Delete for the replaced spool
+        # (#512): its Spoolman record is removed, not archived. This is the
+        # one destructive disposition, so no flow passes it by default.
+        client("DELETE", f"/api/v1/spool/{int(prior)}", None)
     record = _slot_record(slot, spool, old, note)
     slots[str(slot)] = record
     if (state.get("spool") or {}).get("spoolman_id") == prior and prior is not None:
@@ -439,6 +445,8 @@ def bind_text(result: dict[str, Any]) -> str:
             moved = f" Spool #{prior} was archived."
         elif disposition == "depleted":
             moved = f" Spool #{prior} was marked as depleted (0 g left)."
+        elif disposition == "delete":
+            moved = f" Spool #{prior} was deleted from Spoolman."
         elif disposition == "shelf":
             moved = f" Spool #{prior} went back to the shelf."
     screen = {"pushed": "Printer screen updated.",

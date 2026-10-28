@@ -148,6 +148,11 @@ listener:
   ifs_presence_poll_s: 15
   spool_nag_s: 600
   start_claim_ttl_s: 1800
+spool:
+  # Ask for the brand/vendor during the conversational new-spool
+  # walkthrough (#512). Off by default: the walkthrough skips brand and
+  # the spool is created without one. Set true if you track brands.
+  prompt_brand: false
 vision:
   model: gemini-latest
   roast_model: luna-latest

@@ -989,6 +989,18 @@ def slice_model(source, folder, state, brim=None, first_layer=False, color_decis
             filament['filament_flow_ratio'] = [str(adj_flow)]
         except (ValueError, TypeError):
             pass
+    # Material-variant process adjustments (#512): a variant like Silk PLA
+    # needs slower outer walls than its family's plain profile. The factor
+    # scales the process profile's authored outer-wall speed when it has
+    # one; it never invents a speed for a profile that does not set one.
+    from .printer_state import material_adjustments
+    _variant = material_adjustments(state['spool']['material'])
+    if _variant['outer_wall_speed_factor'] != 1.0 and process.get('outer_wall_speed'):
+        try:
+            process['outer_wall_speed'] = str(round(
+                float(process['outer_wall_speed']) * _variant['outer_wall_speed_factor'], 1))
+        except (ValueError, TypeError):
+            pass
     for key in ('cool_plate_temp', 'eng_plate_temp', 'hot_plate_temp', 'textured_plate_temp'):
         filament[key] = filament[key + '_initial_layer'] = [str(state['temps_c']['bed'])]
     configs = []

@@ -51,6 +51,34 @@ def _visual_profile(level=None):
     return VISUAL_SENSITIVITY[_visual_level(level)]
 
 
+# "Completely dark" thresholds for frame_dark: a frame counts as dark only
+# when its mean grayscale luminance is below DARK_MEAN_MAX (of 255) AND its
+# brightest pixel is at most DARK_PIXEL_MAX. Both bounds together keep a dim
+# but real scene (a dark room still has a lit screen, a status LED, plate
+# reflections) out of the dark class: this is for frames that carry no image
+# at all — a black go2rtc placeholder, a covered lens, a dead camera.
+DARK_MEAN_MAX = 4.0
+DARK_PIXEL_MAX = 24
+
+
+def frame_dark(image):
+    """True when a JPEG frame is completely dark, i.e. it carries no usable image.
+
+    A camera fact, not a print verdict (#476): a dark frame must never be
+    judged by the vision endpoint or posted as a print alert. Anything that
+    cannot be decoded is *not* dark — undecodable frames keep their existing
+    handling (a vision failure alerts, it never silently passes).
+    """
+    try:
+        from PIL import Image, ImageStat
+        import io as _io
+        gray = Image.open(_io.BytesIO(image)).convert("L")
+        stat = ImageStat.Stat(gray)
+        return stat.mean[0] < DARK_MEAN_MAX and stat.extrema[0][1] <= DARK_PIXEL_MAX
+    except Exception:
+        return False
+
+
 def _frame_changed(before, after, threshold=None):
     """Cheap whole-frame perceptual difference; false means visually unchanged."""
     from PIL import Image, ImageChops, ImageStat
@@ -104,7 +132,7 @@ def visual_verdict(image, prompt, *, chat_url, model, api_key, context):
         parsed = json.loads(_strip_json_fence(result["choices"][0]["message"]["content"]))
         return str(parsed.get("verdict", "uncertain")).casefold(), str(parsed.get("reason", ""))[:300]
     except Exception as exc:
-        return "uncertain", f"vision check failed: {exc!r}"
+        return "uncertain", "the vision check could not be completed"
 
 
 class VisualPrintWatch:
@@ -124,6 +152,10 @@ class VisualPrintWatch:
         self.layer2_checked = False
         self.layer5_checked = False
         self.last_alert_at = 0.0
+        # The one dark-camera notice for this print (#476): dark frames are
+        # a camera problem, so the operator hears about them at most once
+        # per print, never as a repeating print alert.
+        self.dark_noticed = False
 
     def due(self, layer, now, *, snapshot_changed=None):
         if not isinstance(layer, int) or layer < 1:

@@ -167,7 +167,7 @@ def _watch_monitor(*, sensitivity=3, verdict=("ok", "looks fine"), changed=True)
         post=lambda text: None,
         watch=vw.VisualPrintWatch(sensitivity=sensitivity),
         verdict=lambda image, prompt: verdict,
-        alert=lambda filename, image, reason: alerts.append((filename, image, reason)),
+        alert=lambda filename, image, reason, identity=None: alerts.append((filename, image, reason)),
         changed=lambda before, after: changed,
         clock=clock, wall=clock, sleep=clock.sleep, poll_s=10)
     return monitor, alerts, clock
@@ -241,11 +241,94 @@ def test_periodic_checks_still_run_when_the_firmware_reports_no_layer():
     assert len(verdicts) == 1
 
 
+# -- #476: dark frames and the per-print mute --------------------------------
+
+def _pil_jpeg(gray, size=(64, 48)):
+    import io as _io2
+    from PIL import Image
+    buf = _io2.BytesIO()
+    Image.new("L", size, gray).save(buf, "JPEG", quality=95)
+    return buf.getvalue()
+
+
+DARK_JPEG = _pil_jpeg(0)
+BRIGHT_JPEG = _pil_jpeg(200)
+
+
+def _dark_monitor(*, verdict=("ok", "looks fine")):
+    alerts, notices = [], []
+    clock = FakeClock()
+    monitor = bambu_watch.BambuPrintMonitor(
+        REMOTE, status_fn=scripted([st("complete")]), camera_fn=lambda: DARK_JPEG,
+        post=lambda text: None,
+        watch=vw.VisualPrintWatch(sensitivity=3),
+        verdict=lambda image, prompt: (_ for _ in ()).throw(AssertionError("vision called for a dark frame"))
+        if verdict == "explode" else verdict,
+        alert=lambda filename, image, reason, identity=None: alerts.append((filename, image, reason)),
+        dark_notice=lambda filename, identity=None: notices.append((filename, identity)),
+        changed=lambda before, after: True,
+        clock=clock, wall=clock, sleep=clock.sleep, poll_s=10)
+    return monitor, alerts, notices
+
+
+def test_dark_frame_posts_one_notice_and_never_alerts():
+    monitor, alerts, notices = _dark_monitor(verdict="explode")
+    monitor.visual_check("periodic", 1)
+    monitor.visual_check("periodic", 2)
+    assert alerts == []
+    assert len(notices) == 1 and notices[0][0] == REMOTE and notices[0][1] == monitor._identity
+    # The dark frames never became a stall baseline.
+    assert monitor._last_frame is None
+    assert monitor._watch.last_snapshot is None
+
+
+def test_muted_bambu_print_posts_no_alert(monkeypatch, tmp_path):
+    from unittest.mock import patch as _patch
+    from print_handy.hermes import print_alert_buttons as pab
+    alerts = []
+    clock = FakeClock()
+    monitor = bambu_watch.BambuPrintMonitor(
+        REMOTE, status_fn=scripted([st("complete")]), camera_fn=lambda: BRIGHT_JPEG,
+        post=lambda text: None,
+        watch=vw.VisualPrintWatch(sensitivity=3),
+        verdict=lambda image, prompt: ("spaghetti", "mess"),
+        alert=lambda filename, image, reason, identity=None: alerts.append(reason),
+        changed=lambda before, after: True,
+        clock=clock, wall=clock, sleep=clock.sleep, poll_s=10)
+    with _patch.object(pab, "STATE", tmp_path / "alerts.json"):
+        pab.mute_visual(REMOTE, monitor._identity)
+        monitor.visual_check("layer2", 2)
+        # A different print (new identity, same filename) is NOT muted.
+        other = bambu_watch.BambuPrintMonitor(
+            REMOTE, status_fn=scripted([st("complete")]), camera_fn=lambda: BRIGHT_JPEG,
+            post=lambda text: None,
+            watch=vw.VisualPrintWatch(sensitivity=3),
+            verdict=lambda image, prompt: ("spaghetti", "mess"),
+            alert=lambda filename, image, reason, identity=None: alerts.append(reason),
+            changed=lambda before, after: True,
+            clock=clock, wall=clock, sleep=clock.sleep, poll_s=10)
+        other._identity = monitor._identity + "-next"
+        other.visual_check("layer2", 2)
+    assert len(alerts) == 1  # only the unmuted print alerted
+
+
+def test_dark_notice_delivery_posts_only_the_mute_button(monkeypatch):
+    from print_handy.hermes import print_alert_buttons as pab
+    seen = {}
+    monkeypatch.setattr(pab, "post_visual_dark_notice",
+                        lambda token, chat, text, filename, identity=None: seen.update(
+                            text=text, filename=filename, identity=identity) or True)
+    bambu_watch.deliver_dark_notice(REMOTE, post=lambda text: (_ for _ in ()).throw(AssertionError("fallback used")),
+                                    token="tok", chat_id="42", buttonless=None, identity="bambu:job")
+    assert seen["filename"] == REMOTE and seen["identity"] == "bambu:job"
+    assert "completely dark" in seen["text"]
+
+
 def test_visual_alert_delivery_posts_buttons_like_the_moonraker_alert(monkeypatch):
     from print_handy.hermes import print_alert_buttons as pab
     seen = {}
     monkeypatch.setattr(pab, "post_visual_alert",
-                        lambda token, chat, text, filename, path: seen.update(
+                        lambda token, chat, text, filename, path, identity=None: seen.update(
                             token=token, chat=chat, text=text, filename=filename, path=path) or True)
     path = bambu_watch.deliver_visual_alert(REMOTE, JPEG, "layer2: spaghetti; test",
                                             post=lambda text: (_ for _ in ()).throw(AssertionError("fallback used")),
@@ -318,9 +401,10 @@ SOURCE_URL = "bambu-tcp6000://192.168.1.50"
 
 
 class FakeSession:
-    def __init__(self, frames=3, failures=0):
+    def __init__(self, frames=3, failures=0, dark_frames=0):
         self.frames = frames
         self.failures = failures
+        self.dark_frames = dark_frames
         self.ticks = 0
         self.stopped = None
         self.filename = REMOTE
@@ -430,6 +514,16 @@ def test_zero_frames_posts_the_snapshot_without_encoding(capture_logs):
     assert rig.encodes == []
     assert rig.posts[0].count("MEDIA:") == 1
     assert any("has no frames" in line for line in capture_logs)
+
+
+def test_all_dark_session_names_the_camera_dark_outcome(capture_logs):
+    rig = CaptureRig([st("printing"), st("complete")],
+                     session=FakeSession(frames=0, failures=0, dark_frames=4))
+    assert rig.monitor.run() == "complete"
+    assert rig.encodes == []
+    assert ("Timelapse not attached: the camera image was completely dark"
+            in rig.posts[0])
+    assert any("completely dark" in line for line in capture_logs)
 
 
 def test_encode_failure_degrades_to_the_snapshot_post(capture_logs):

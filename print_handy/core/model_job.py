@@ -1269,6 +1269,18 @@ def _verify_offline(gcode_path, state):
     return {'offline': True, 'connection': printers.current().connection}
 
 
+def _detail_tail(detail):
+    """Demote raw machinery to a secondary Detail line (#467).
+
+    User-facing pipeline exits lead with a plain sentence; the raw stderr
+    tail / response body that used to *be* the message rides along after
+    it, whitespace-collapsed and capped, so a terminal or log reader keeps
+    the evidence without a chat reader having to start there.
+    """
+    text = " ".join(str(detail or "").split())[:300]
+    return f"\nDetail: {text}" if text else ""
+
+
 def _print_check_warnings(facts):
     """Surface non-blocking check warnings (Spoolman, #235) without refusing work.
 
@@ -1290,11 +1302,11 @@ def verify_gcode(gcode_path):
     if printers.current().connection in ('offline', 'bambulab_lan', 'prusalink', 'elegoo_sdcp'):
         st = printer_state.load(); ok, probs, facts = printer_state.check(st)
         _print_check_warnings(facts)
-        if not ok: raise RuntimeError("hardware record check failed:\n  " + "\n  ".join(probs))
+        if not ok: raise RuntimeError("the printer check did not pass:\n  " + "\n  ".join(probs))
         return _verify_offline(gcode_path, st)
     st=printer_state.load(); ok, probs, facts=printer_state.check(st)
     _print_check_warnings(facts)
-    if not ok: raise RuntimeError("live hardware check failed:\n  " + "\n  ".join(probs))
+    if not ok: raise RuntimeError("the printer check did not pass:\n  " + "\n  ".join(probs))
     p=Path(gcode_path); raw=p.read_bytes(); text=raw.decode(errors="ignore")
     errors=[]
     # The installed native screen requires ZMod's documented first-line MD5.
@@ -1433,7 +1445,7 @@ def verify_gcode(gcode_path):
                 continue
             med=sorted(ws)[len(ws)//2]
             if med<floor: errors.append(f"{name} line width {med:.2f} mm < {floor:.2f} mm (90% of {nozzle} nozzle): starved extrusion, reslice")
-    if errors: raise RuntimeError("G-CODE REFUSED: " + "; ".join(errors))
+    if errors: raise RuntimeError("the G-code did not pass its safety checks: " + "; ".join(errors))
     print(f"G-CODE OK: {p.name} | {printer_state.summary(st)}")
     return True
 
@@ -4243,7 +4255,9 @@ def print_mapped_native(g, st, mesh, mapping, job, job_path, wait_s, reprint):
         uploaded = subprocess.run([str(MOONRAKERCTL), 'upload', str(g), remote, sha],
                                   text=True, capture_output=True, timeout=300)
         if uploaded.returncode:
-            raise RuntimeError('UPLOAD FAILED: ' + (uploaded.stderr or uploaded.stdout)[-500:])
+            raise RuntimeError('The file could not be uploaded to the printer, so nothing started. '
+                               'Check the printer is on and reachable, then try again.'
+                               + _detail_tail(uploaded.stderr or uploaded.stdout))
         upload_json = json.loads(uploaded.stdout)
         g.with_suffix('.upload.json').write_text(json.dumps(upload_json, indent=2) + '\n')
         result = upload_json.get('result', upload_json)
@@ -5169,16 +5183,22 @@ def print_now(target, wait_s=25, accept_default_z_offset=False, reprint=False, r
         if job_path is not None: _consume_approval(job_path, job, g, reprint=reprint)
         _timing(job_path, 'upload_begin')
         r=subprocess.run([str(MOONRAKERCTL),"upload",str(g),remote,sha],text=True,capture_output=True,timeout=300)
-        if r.returncode: raise SystemExit(f"UPLOAD FAILED: {(r.stderr or r.stdout)[-500:]}")
+        if r.returncode: raise SystemExit("The file could not be uploaded to the printer, so nothing started. "
+                                          "Check the printer is on and reachable, then try again."
+                                          + _detail_tail(r.stderr or r.stdout))
         try:
             up_json=json.loads(r.stdout)
         except Exception as e:
-            raise SystemExit(f"UPLOAD FAILED: malformed upload response: {e}")
+            raise SystemExit("The printer's reply to the upload could not be understood, so nothing started. "
+                             "Try again; if it keeps happening, check the printer screen."
+                             + _detail_tail(str(e)))
         res=up_json.get("result", up_json) if isinstance(up_json, dict) else {}
         item=res.get("item") if isinstance(res, dict) else None
         if not isinstance(item, dict) or item.get("root")!="gcodes" or item.get("path")!=remote:
-            raise SystemExit(f"UPLOAD FAILED: upload target mismatch or invalid response: {up_json}")
-        # Moonraker verified the SHA256 sent with the upload (mismatch = HTTP 400 = UPLOAD FAILED above).
+            raise SystemExit("The printer did not confirm the uploaded file landed where it should, so nothing started. "
+                             "Try again; if it keeps happening, check the printer screen."
+                             + _detail_tail(json.dumps(up_json)[:300]))
+        # Moonraker verified the SHA256 sent with the upload (mismatch = HTTP 400 = the upload failure above).
         _timing(job_path, 'upload_verified')
         try: claim_start_announcement(remote)
         except OSError as e: print(f"WARNING: start announcement claim failed, listener may also post: {e}")
@@ -5232,7 +5252,8 @@ def print_now(target, wait_s=25, accept_default_z_offset=False, reprint=False, r
         release_start_announcement(remote)
         lease.release()  # the printer reports the start failed
         fail_msg = readback.message if (readback and readback.outcome == "failed") else f"printer state is {state!r} after {method}"
-        raise SystemExit(f"START FAILED: {fail_msg}. Not retrying; check the printer screen.")
+        raise SystemExit("The printer did not start the print, and it was not retried. "
+                         "Check the printer screen before trying again." + _detail_tail(fail_msg))
     lease.release()  # printing; the busy printer now refuses another start
     record_path=None
     try: record_path=record_start(g, remote)
@@ -5434,7 +5455,7 @@ def _main():
         ok, probs, facts = printer_state.check(st)
         _print_check_warnings(facts)
         if not ok:
-            raise RuntimeError('live hardware check failed: ' + '; '.join(probs))
+            raise RuntimeError('the printer check did not pass, so the G-code was not finalized: ' + '; '.join(probs))
         path = Path(a.gcode)
         backup = path.with_suffix(path.suffix + '.before-finalize')
         if not backup.exists():
@@ -5488,7 +5509,8 @@ def _main():
         return
     ok,probs,facts=printer_state.check(st)
     _print_check_warnings(facts)
-    if not ok: raise SystemExit("REFUSED: live hardware check failed:\n  " + "\n  ".join(probs))
+    if not ok: raise SystemExit("I could not check the printer before starting, so nothing was sliced, uploaded or started. "
+                                "Fix the check below, then try again:\n  " + "\n  ".join(probs))
     selection = None
     filament_specified = (a.filament_slot is not None or a.filament_color is not None or
                           a.filament_material is not None or a.filament_spoolman_id is not None)
@@ -5499,7 +5521,7 @@ def _main():
                 "material": a.filament_material, "spoolman_id": a.filament_spoolman_id,
             })
         except ValueError as exc:
-            raise SystemExit(f"REFUSED: invalid filament selection: {exc}")
+            raise SystemExit(f"That filament choice does not work: {exc} Nothing was sliced, uploaded or started.")
     job=inventory_for_url(a.url)
     if not job.get("sources"):
         raise SystemExit("REFUSED: source inventory contains no selectable files or profiles")

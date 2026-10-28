@@ -113,7 +113,10 @@ def record(kind: str, filename: str, now: float | None = None, **extra: Any) -> 
     now = time.time() if now is None else now
     aid = secrets.token_hex(4)
     with _LOCK:
-        data = {k: v for k, v in _load().items() if _fresh(v, now)}
+        loaded = _load()
+        data = {k: v for k, v in loaded.items() if _fresh(v, now)}
+        if isinstance(loaded.get(_MUTE_STORE), dict):
+            data[_MUTE_STORE] = loaded[_MUTE_STORE]  # the per-print mute store is not an alert row
         data[aid] = {"kind": kind, "filename": filename, "at": now, **extra}
         _save(data)
     return aid
@@ -138,12 +141,75 @@ def take(aid: str) -> dict[str, Any] | None:
     return None
 
 
+# ---------------------------------------------------------------------------
+# Per-print visual-watchdog mute (#476)
+#
+# "Stop asking for this print" silences every watchdog post (suspicious-
+# verdict alerts and dark-camera notices) for ONE print. The record lives in
+# this module's shared state file, under a reserved key the alert pruning in
+# record() must carry over untouched, so the listener process that checks
+# the mute and the gateway process that records a button press see the same
+# store. The mute keys to the print's identity (the listener's notification
+# identity / the Bambu monitor's job key), never to the filename alone: the
+# next print asks again even when it has the same filename. When a caller
+# has no identity, the fallback key is filename + day, so an old same-named
+# job can mute at most the rest of that day, never a later reprint.
+
+_MUTE_STORE = "visual_muted"
+_MUTE_KEEP_S = 7 * 24 * 3600
+
+
+def _mute_key(filename: str, identity: Any = None) -> str:
+    identity = str(identity or "").strip()
+    if identity:
+        return f"id:{identity}|{filename or ''}"
+    return f"file:{filename or ''}|day:{time.strftime('%Y-%m-%d')}"
+
+
+def mute_visual(filename: str, identity: Any = None, now: float | None = None) -> str:
+    """Record the per-print watchdog mute; returns the store key used."""
+    now = time.time() if now is None else now
+    key = _mute_key(filename, identity)
+    with _LOCK:
+        data = _load()
+        store = data.get(_MUTE_STORE)
+        if not isinstance(store, dict):
+            store = {}
+        store = {k: v for k, v in store.items()
+                 if isinstance(v, dict) and now - (_timestamp(v.get("at")) or 0) < _MUTE_KEEP_S}
+        store[key] = {"filename": str(filename or ""), "identity": str(identity or ""), "at": now}
+        data[_MUTE_STORE] = store
+        _save(data)
+    return key
+
+
+def visual_muted(filename: str, identity: Any = None) -> bool:
+    """True when the operator muted watchdog posts for this print (#476)."""
+    store = _load().get(_MUTE_STORE)
+    if not isinstance(store, dict):
+        return False
+    return _mute_key(filename, identity) in store
+
+
+MUTE_LABEL = "Stop asking for this print"
+
+
+def _mute_button(aid: str) -> dict[str, Any]:
+    """The per-print watchdog mute (#476): silences camera posts for one print only."""
+    return {"type": 2, "style": 2, "label": MUTE_LABEL, "custom_id": f"{PREFIX}:mute:{aid}"}
+
+
 def components(aid: str, kind: str) -> list[dict[str, Any]]:
     if kind == "visual":
         return [{"type": 1, "components": [
             {"type": 2, "style": 2, "label": "Pause", "custom_id": f"{PREFIX}:pause:{aid}"},
             {"type": 2, "style": 3, "label": "It's fine", "custom_id": f"{PREFIX}:acknowledge:{aid}"},
+            _mute_button(aid),
         ]}]
+    if kind == "visual-dark":
+        # The dark-camera notice (#476) carries no print-action buttons at
+        # all — only the mute, so a dead camera cannot nag for a whole print.
+        return [{"type": 1, "components": [_mute_button(aid)]}]
     buttons = []
     if kind == "paused":
         buttons.append({"type": 2, "style": 3, "label": "Resume print", "custom_id": f"{PREFIX}:resume:{aid}"})
@@ -404,11 +470,17 @@ def retire_alerts(token: str, filename: str | None, note: str, kinds: tuple[str,
     return retired
 
 
-def post_visual_alert(token: str, channel_id: str, content: str, filename: str, image: Path) -> bool:
-    """Post one camera image and its safe visual-review buttons in a single Discord message."""
+def post_visual_alert(token: str, channel_id: str, content: str, filename: str, image: Path,
+                      identity: Any = None) -> bool:
+    """Post one camera image and its safe visual-review buttons in a single Discord message.
+
+    ``identity`` is the caller's per-print identity (#476): it rides on the
+    alert record so a "Stop asking for this print" press mutes that print,
+    not just that filename.
+    """
     if not token or not channel_id or not image.is_file():
         return False
-    aid = record("visual", filename)
+    aid = record("visual", filename, **({"identity": str(identity)} if identity else {}))
     boundary = f"----hermes-print-{secrets.token_hex(12)}"
     payload = json.dumps({"content": content[:1990], "components": components(aid, "visual"),
                           "allowed_mentions": {"parse": []}}).encode()
@@ -433,9 +505,34 @@ def post_visual_alert(token: str, channel_id: str, content: str, filename: str, 
         take(aid)
         return False
 
+
+def post_visual_dark_notice(token: str, channel_id: str, content: str, filename: str,
+                            identity: Any = None) -> bool:
+    """Post the once-per-print dark-camera notice (#476): text plus the mute button only.
+
+    No image (the frame is black; it would only look like a failed upload)
+    and no print-action buttons — a dark feed is a camera problem, never a
+    print alert. False means the caller should fall back to a plain post.
+    """
+    if not token or not channel_id:
+        return False
+    aid = record("visual-dark", filename, **({"identity": str(identity)} if identity else {}))
+    body = json.dumps({"content": content[:1990], "components": components(aid, "visual-dark"),
+                       "allowed_mentions": {"parse": []}}).encode()
+    req = urllib.request.Request(f"https://discord.com/api/v10/channels/{channel_id}/messages", data=body,
+                                 method="POST", headers={"Authorization": f"Bot {token}",
+                                                         "Content-Type": "application/json",
+                                                         "User-Agent": "DiscordBot (hermes-3dprinting, 1.0)"})
+    try:
+        with urllib.request.urlopen(req, timeout=15) as resp:
+            return 200 <= resp.status < 300
+    except Exception:
+        take(aid)
+        return False
+
 def parse_custom_id(custom_id: str) -> tuple[str, str] | None:
     parts = str(custom_id or "").split(":")
-    if len(parts) == 3 and parts[0] == PREFIX and parts[1] in ("resume", "cancel", "pause", "acknowledge"):
+    if len(parts) == 3 and parts[0] == PREFIX and parts[1] in ("resume", "cancel", "pause", "acknowledge", "mute"):
         return parts[1], parts[2]
     return None
 
@@ -511,7 +608,15 @@ def handle_click(action: str, alert: dict[str, Any] | None) -> str:
     if not alert:
         return "That alert is old or was already answered. Nothing sent."
     filename = alert.get("filename") or ""
-    if alert.get("kind") == "visual":
+    if alert.get("kind") in ("visual", "visual-dark"):
+        if action == "mute":
+            # #476: mute this print's watchdog posts. Records only — the
+            # printer is never read or touched for a mute.
+            mute_visual(filename, alert.get("identity"))
+            return ("Camera checks muted for the rest of this print. You'll get no more "
+                    "camera alerts for it; the print itself is untouched.")
+        if alert.get("kind") == "visual-dark":
+            return "That camera notice action is not recognized. Nothing sent."
         if action == "acknowledge":
             return "Visual check acknowledged. Monitoring continues; nothing sent to the printer."
         if action == "pause":

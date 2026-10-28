@@ -346,10 +346,16 @@ def bind_slot(slot: int, spool_id: int, *, client: Client = spoolman, mr: Client
     """Make `spool_id` the spool in `slot`, everywhere, with Spoolman winning.
 
     prior_disposition: 'shelf' puts the replaced spool on the shelf; 'keep' leaves
-    its Spoolman record alone (the caller already handled it, e.g. depleted).
+    its Spoolman record alone (the caller already handled it, e.g. depleted);
+    'archive' archives the replaced spool; 'depleted' archives it with 0 g
+    left at the 'depleted' location (the runout pattern). The guided change
+    flow (#475) only passes archive/depleted after the operator picked that
+    fate on a button.
     `printer_id` binds in that printer's own hardware record (#334) and refuses
     a spool another printer's record already loads.
     """
+    if prior_disposition not in ("shelf", "keep", "archive", "depleted"):
+        raise SpoolError(f"unknown prior disposition {prior_disposition!r}. Nothing changed")
     slot = int(slot)
     if slot not in SLOTS:
         raise SpoolError(f"slot {slot} is not 1-4")
@@ -375,6 +381,14 @@ def bind_slot(slot: int, spool_id: int, *, client: Client = spoolman, mr: Client
         if isinstance(prior_rec, dict) and not prior_rec.get("archived") and \
                 str(prior_rec.get("location") or "") in ("", f"IFS Slot {slot}"):
             client("PATCH", f"/api/v1/spool/{int(prior)}", {"location": SHELF})
+    if prior and int(prior) != int(spool_id) and prior_disposition == "archive":
+        # The operator picked this fate in the guided change flow (#475):
+        # the old spool leaves the live inventory, its record kept.
+        client("PATCH", f"/api/v1/spool/{int(prior)}", {"archived": True})
+    if prior and int(prior) != int(spool_id) and prior_disposition == "depleted":
+        # Same shape as the runout pattern: archived, 0 g left, depleted.
+        client("PATCH", f"/api/v1/spool/{int(prior)}",
+               {"archived": True, "remaining_weight": 0, "location": "depleted"})
     record = _slot_record(slot, spool, old, note)
     slots[str(slot)] = record
     if (state.get("spool") or {}).get("spoolman_id") == prior and prior is not None:
@@ -394,7 +408,7 @@ def bind_slot(slot: int, spool_id: int, *, client: Client = spoolman, mr: Client
             resume_usage(int(spool_id), mr)
             usage = f"now charged to #{spool_id}"
     except Exception as exc:
-        usage = f"NOT updated ({exc})"
+        usage = "not updated — the spool change itself is saved; run `/spool sync` to fix the charging"
     if push_screen_update:
         try:
             if printer_id:
@@ -404,18 +418,26 @@ def bind_slot(slot: int, spool_id: int, *, client: Client = spoolman, mr: Client
             else:
                 screen = push_screen(slot, record["material"], record["hex"], mr=mr, pending_path=pending_path)
         except Exception as exc:
-            screen = f"not updated ({exc})"
+            screen = "not updated — run `/spool sync` to try again"
     else:
         screen = "not requested"
     return {"slot": slot, "spool_id": int(spool_id), "prior_spool_id": prior, "record": record,
-            "screen": screen, "usage": usage}
+            "screen": screen, "usage": usage, "prior_disposition": prior_disposition}
 
 
 def bind_text(result: dict[str, Any]) -> str:
     r = result["record"]
     grams = f", {r['remaining_grams']:g} g left" if r.get("remaining_grams") is not None else ""
     prior = result.get("prior_spool_id")
-    moved = (f" Spool #{prior} went back to the shelf." if prior and prior != result["spool_id"] else "")
+    moved = ""
+    if prior and prior != result["spool_id"]:
+        disposition = result.get("prior_disposition") or "shelf"
+        if disposition == "archive":
+            moved = f" Spool #{prior} was archived."
+        elif disposition == "depleted":
+            moved = f" Spool #{prior} was marked as depleted (0 g left)."
+        elif disposition == "shelf":
+            moved = f" Spool #{prior} went back to the shelf."
     screen = {"pushed": "Printer screen updated.",
               "deferred": "Printer screen will update when this print ends."}.get(result["screen"],
                                                                                    f"Printer screen {result['screen']}.")
@@ -441,7 +463,7 @@ def sync_all_screens(*, mr: Client = moonraker, state_path: Path | None = None,
                 pushed = push_screen(slot, rec.get('material') or '', rec.get('hex') or '', mr=mr, pending_path=pending_path)
             out.append(f"Slot {slot}: {pushed}")
         except Exception as exc:
-            out.append(f"Slot {slot}: {exc}")
+            out.append(f"Slot {slot}: the screen could not be updated — try again")
     return out
 
 
@@ -472,8 +494,62 @@ def list_text(*, client: Client = spoolman, state_path: Path | None = None,
         lines.append(f"#{s['id']} {f.get('name') or '?'} {f.get('material') or ''}{g}".rstrip())
     if not shelf:
         lines.append("(nothing on the shelf)")
-    lines.append("Change: `/spool change <slot> <spool#>` · New: `/spool new brand, material, color, grams[, hex]`")
+    lines.append("Guided: `/spool` walks you through adding or changing a spool with buttons · "
+                 "One-shot: `/spool change <slot> <spool#>` · `/spool new brand, material, color, grams[, hex]`")
     return "\n".join(lines)
+
+
+def filament_types(*, client: Client = spoolman) -> list[dict[str, Any]]:
+    """The filament types the Spoolman database already knows (#475).
+
+    One entry per distinct (brand, material, colour): the guided new-spool
+    flow offers these so a known type supplies its colour and hex from the
+    database instead of asking the user to re-type them.
+    """
+    rows = client("GET", "/api/v1/filament", None) or []
+    seen: dict[tuple[str, str, str], dict[str, Any]] = {}
+    for row in rows:
+        if not isinstance(row, dict) or row.get("id") is None:
+            continue
+        brand = str((row.get("vendor") or {}).get("name") or "").strip()
+        material = str(row.get("material") or "").strip()
+        color = str(row.get("name") or "").strip()
+        key = (brand.casefold(), material.casefold(), color.casefold())
+        if key in seen:
+            continue
+        seen[key] = {"filament_id": int(row["id"]), "brand": brand or None,
+                     "material": material, "color": color,
+                     "hex": screen_hex(row.get("color_hex"))}
+    return sorted(seen.values(),
+                  key=lambda t: ((t["brand"] or "").casefold(), t["material"].casefold(),
+                                 t["color"].casefold()))
+
+
+def next_spool_id(*, client: Client = spoolman) -> int:
+    """The spool number the next created spool will get: max id + 1, archived included."""
+    rows = client("GET", "/api/v1/spool?allow_archived=true", None) or []
+    ids = [int(row["id"]) for row in rows
+           if isinstance(row, dict) and isinstance(row.get("id"), int) and not isinstance(row.get("id"), bool)]
+    return max(ids) + 1 if ids else 1
+
+
+def shelf_spools(*, client: Client = spoolman, state_path: Path | None = None,
+                 printer_id: str | None = None) -> list[dict[str, Any]]:
+    """Live spools that are not loaded in any slot, sorted by number (#475)."""
+    state = load_state(state_path, printer_id=printer_id)
+    loaded = _loaded_spool_ids(state)
+    rows = client("GET", "/api/v1/spool?allow_archived=false", None) or []
+    out = []
+    for row in rows:
+        if not isinstance(row, dict) or row.get("id") is None or int(row["id"]) in loaded:
+            continue
+        filament = row.get("filament") or {}
+        grams = row.get("remaining_weight")
+        out.append({"spool_id": int(row["id"]),
+                    "name": str(filament.get("name") or f"Spool #{row['id']}"),
+                    "material": str(filament.get("material") or ""),
+                    "remaining_grams": float(grams) if isinstance(grams, (int, float)) else None})
+    return sorted(out, key=lambda s: s["spool_id"])
 
 
 def parse_new(text: str) -> dict[str, Any]:

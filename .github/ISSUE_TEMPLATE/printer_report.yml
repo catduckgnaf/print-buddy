@@ -1,0 +1,107 @@
+name: Printer support request or verification report
+description: Ask for a printer to be supported, confirm a listed printer works on real hardware, or report a problem with a listed printer.
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Read [Printer support](https://github.com/catduckgnaf/print-handy/blob/main/docs/PRINTER-SUPPORT.md) first. It explains the support levels and has the full hardware checklist this form mirrors.
+
+        - Search open and closed issues for your printer first; duplicates are closed with a link to the canonical issue.
+        - Remove credentials, access codes, tokens, private model files and personal data from anything you paste.
+        - A report never authorises anyone to operate a live printer. Run the physical checks only on a printer you own, with a small test part, the bed clear and a hand near the stop button. If something moved unexpectedly, heated when it should not have, or ignored a confirmation, say so in the first line of the notes.
+  - type: dropdown
+    id: report_type
+    attributes:
+      label: What are you reporting?
+      options:
+        - Request support for a printer that is not listed
+        - Verification report, a listed printer works on real hardware
+        - Problem with a listed printer
+    validations:
+      required: true
+  - type: input
+    id: printer
+    attributes:
+      label: Printer model
+      description: The make and model, and the Print Handy model key if you use one (for example "Qidi Q1 Pro, qidi.q1pro" or "klipper.generic"). Say "klipper.generic" or "octoprint.marlin" if you are running the generic route.
+    validations:
+      required: true
+  - type: input
+    id: firmware
+    attributes:
+      label: Firmware and version
+      description: The firmware or mod and its version (for example "Klipper with Moonraker v0.9", "Marlin via OctoPrint 1.10", "Bambu Lab LAN mode, firmware 01.08").
+    validations:
+      required: true
+  - type: dropdown
+    id: connection
+    attributes:
+      label: Connection type
+      options:
+        - Moonraker (Klipper)
+        - OctoPrint (Marlin)
+        - PrusaLink
+        - Bambu Lab LAN
+        - Elegoo SDCP
+        - Stock Flashforge LAN
+        - Offline only (files moved by hand)
+        - Other or not sure
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: Print Handy version
+      description: Release version, image tag, or commit SHA.
+    validations:
+      required: true
+  - type: textarea
+    id: config
+    attributes:
+      label: Bed, height, nozzle and slicer profile
+      description: For an unlisted printer, the bed size, maximum height, nozzle and start/end macros you configured, and the slicer profiles you used. For a listed printer, the values that differ from the defaults. Say where each number came from.
+    validations:
+      required: false
+  - type: checkboxes
+    id: checklist
+    attributes:
+      label: Hardware checks you ran and that passed
+      description: Tick only what you watched happen on the real printer. Leave a box empty if it failed, was not possible on your printer, or you did not run it, and say which in the notes below. Details for each check are in the printer support guide.
+      options:
+        - label: Model, bed size, height and nozzle in the settings match the printer.
+        - label: The doctor (or /print-handy debugging) reported the printer reachable with no blocking errors.
+        - label: The sliced G-code opened with the printer's real start sequence, stayed inside the bed, and the guard did not refuse it.
+        - label: The file uploaded with the right name and size and did not start by itself.
+        - label: The print started only after the bed-clear confirmation, and it was the file that was uploaded.
+        - label: The printer homed, heated, levelled and began the first layer in the right place.
+        - label: Status and progress posts matched the printer's own display.
+        - label: Pause, resume and cancel from chat worked, and cancel left the printer safe.
+        - label: Filament, slot mapping or runout handling worked (skip if not applicable).
+        - label: A camera still or timelapse appeared (skip if the printer has no supported camera source).
+        - label: One completion post appeared with the correct outcome and the job was recorded.
+    validations:
+      required: false
+  - type: textarea
+    id: notes
+    attributes:
+      label: Notes on failed, skipped or not possible checks
+      description: For each check you did not tick, say whether it failed, was not possible on this printer, or was not run, and what you saw. State measured facts, and label estimates and suspicions as such. For a problem report, describe what happened and what you expected.
+    validations:
+      required: true
+  - type: textarea
+    id: diagnostics_bundle
+    attributes:
+      label: Diagnostics bundle
+      description: Run `/print-handy bundle` in chat (or `python3 -m print_handy.diagnostics_bundle` on the host) and attach the generated diagnostics-bundle.md file, or paste its Doctor section here. The bundle is redacted — it contains versions, a configuration summary with secret values removed, the printer roster, doctor output and a bounded log tail. Review it before attaching.
+    validations:
+      required: true
+  - type: checkboxes
+    id: attestations
+    attributes:
+      label: Before submitting
+      options:
+        - label: I searched open and closed issues for this printer.
+          required: true
+        - label: I removed credentials, access codes, tokens, private model files and personal data from this report.
+          required: true

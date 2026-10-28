@@ -74,6 +74,14 @@ One thing to know either way: slicing needs a compatible OrcaSlicer and the righ
 
 Some profiles can also offer chat file delivery or an offline Bambu package after slicing; delivery never authorizes printing, and Bambu packaging is not verified in Bambu Studio or on hardware. Details are in [printer profiles](docs/PRINTER-PROFILES.md).
 
+### Printer not listed, or want to confirm yours?
+
+The full guide is [Printer support: levels, new printers and hardware checks](docs/PRINTER-SUPPORT.md).
+
+- **Not listed.** A Klipper printer with Moonraker can use `klipper.generic`; a Marlin printer behind OctoPrint can use `octoprint.marlin`. Set your real bed size, height, nozzle and start/end macros first, because the placeholder numbers will not match your machine. Then open a [printer request](https://github.com/catduckgnaf/print-handy/issues/new?template=printer_report.yml).
+- **Add support or docs.** A built-in printer is one model file, its sourced facts, a registry entry and tests. The guide lists each piece and the tests that must pass.
+- **Listed, and it works for you.** Apart from one Bambu Lab A1 run, every entry above is covered by offline tests only. If you ran the hardware checklist in the guide on your printer, file a verification report through the same form and attach a redacted `/print-handy bundle`. Do the physical checks with the bed clear and a hand near the stop button.
+
 ## Which chat platform?
 
 The same bot, with the same prompts and safety gates, runs on **Discord, Telegram or Matrix** — only the transport changes. Setup: [Discord](docs/DISCORD-BOT-SETUP.md) · [Telegram](docs/TELEGRAM-BOT-SETUP.md) · [Matrix](docs/MATRIX-BOT-SETUP.md).

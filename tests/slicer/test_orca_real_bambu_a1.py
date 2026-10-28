@@ -8,7 +8,7 @@ PB_ORCA_RESOURCES, else the Flatpak's install location. OrcaSlicer 2.5 packs its
 into a preset cache (BBL.opc); print_handy reads the cache directly (preset_cache), which
 test_generation_from_the_installed_tree records. Locally: PRINT_HANDY_REAL_SLICER=1 python3 -m
 pytest -s tests/slicer/test_orca_real_bambu_a1.py with a supported OrcaSlicer as the configured
-[orca] command (PB_ORCA_CMD overrides it). Printed lines record the slicer version, profile
+[orca] command (PRINT_HANDY_ORCA_CMD overrides it). Printed lines record the slicer version, profile
 identity, effective settings and exact toolpath bounds for the review log.
 """
 import json

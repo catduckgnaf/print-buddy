@@ -129,10 +129,10 @@ def test_a1_bambu_studio_primary_production_slice(work, a1):
 
 
 def test_orca_failure_falls_back_to_bambu_studio(work, a1):
-    """With [printer] slicer: orca and an Orca command that cannot run at all (PB_ORCA_CMD=/bin/false),
+    """With [printer] slicer: orca and an Orca command that cannot run at all (PRINT_HANDY_ORCA_CMD=/bin/false),
     the one isolated fallback attempt slices with Bambu Studio and the job still verifies and packages."""
     result = bambu_flow(work, write_cube(work / "cube.stl", 20),
-                        PRINT_HANDY__PRINTER__SLICER="orca", PB_ORCA_CMD="/bin/false")
+                        PRINT_HANDY__PRINTER__SLICER="orca", PRINT_HANDY_ORCA_CMD="/bin/false")
     assert "error" not in result, result
     assert result["printer_model"] == "bambulab.a1" and result["gcode_verified"] is True
     # /bin/false cannot generate anything: this output can only be the Bambu Studio fallback's.

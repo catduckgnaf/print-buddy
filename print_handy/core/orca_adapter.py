@@ -27,11 +27,11 @@ BED = _S['printer']['bed_mm']
 MAX_HEIGHT_MM = _S['printer']['max_print_height_mm']
 IFS_SLOTS = _S['printer']['ifs_slots']
 NOZZLE_MM = _S['printer']['nozzle_diameter_mm']
-# PB_ORCA_CMD selects a native OrcaSlicer binary without changing the home Flatpak default.
+# PRINT_HANDY_ORCA_CMD selects a native OrcaSlicer binary without changing the home Flatpak default.
 # ORCA_FLATPAK_APP_ID selects a different installed Flatpak app while preserving that default.
 def _orca_command():
     """Return the effective command, honoring runtime overrides for test tracks."""
-    override = os.environ.get('PB_ORCA_CMD')
+    override = os.environ.get('PRINT_HANDY_ORCA_CMD')
     if override:
         return [override]
     command = list(_S['orca']['command'])

@@ -14,7 +14,7 @@ case "$channel" in
         exit 2
         ;;
 esac
-export PB_ORCA_CMD="$selected"
+export PRINT_HANDY_ORCA_CMD="$selected"
 # xvfb-run owns its display and cleanup; no fixed display or procps dependency.
 if [[ ( -x "$selected" || -x /usr/bin/bambu-studio ) && -z "${DISPLAY:-}" ]]; then
     exec xvfb-run -a -s '-screen 0 1024x768x24' "$@"

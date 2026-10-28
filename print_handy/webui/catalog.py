@@ -98,6 +98,8 @@ GROUP_OF = {
     "vision.model": "images",
     "vision.roast_model": "images",
     "vision.roast_enabled": "images",
+    "vision.auto_light_off_minutes": "images",
+    "vision.light_object": "images",
     "visual_watch.enabled": "images",
     "visual_watch.sensitivity": "images",
     "timelapse.mode": "timelapse",
@@ -237,6 +239,18 @@ CATALOG = (
            "platform (Telegram included). On by default: it runs whenever an "
            "LLM/vision endpoint is available; off turns roasts off without "
            "disabling camera checks.",
+           validator="settings vision check"),
+    _field("vision", "auto_light_off_minutes", "Auto light-off minutes", "number",
+           "Auto light-off (#516): the printer light turns on when a print "
+           "starts and off again after the camera has seen an empty plate "
+           "for this many minutes. 0 = off (the default). Needs a vision "
+           "endpoint, like the camera watchdog.",
+           validator="settings vision check", minimum=0),
+    _field("vision", "light_object", "Light object", "text",
+           "The Moonraker light object the auto light-off switches, for "
+           "example 'led chamber_led', 'neopixel sb_leds' or "
+           "'output_pin caselight'. Empty auto-discovers: the printer's "
+           "light object is used only when there is exactly one.",
            validator="settings vision check"),
     # Camera watch.
     _field("visual_watch", "enabled", "Camera watch", "toggle",

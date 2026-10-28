@@ -244,13 +244,17 @@ def _question_timeout():
     return cfg.question_timeout_s() if cfg is not None else 1800
 
 
-async def _ask_which_printer(source, gateway, adapter, candidates, *, question=None, label_for=None):
+async def _ask_which_printer(source, gateway, adapter, candidates, *, question=None, label_for=None,
+                             metadata=None):
     """Ask which printer, in a shared channel (#536). Returns the chosen roster id, or None.
 
     Choices are the roster display names; ``label_for`` may add a per-printer
     suffix (a busy printer is labelled with its state, so picking it is
     deliberate). Duplicate display names are disambiguated with the roster
-    id — two printers may share a name, never an id.
+    id — two printers may share a name, never an id. ``metadata`` is the
+    caller's delivery metadata, passed through to ``_confirm`` like every
+    other prompt: the adapter addresses the question from it (a thread's
+    picker belongs in the thread, not the parent channel).
     """
     names = {}
     for pid in candidates:
@@ -268,7 +272,7 @@ async def _ask_which_printer(source, gateway, adapter, candidates, *, question=N
             if suffix:
                 label = f'{label} — {suffix}'
         labels[label] = pid
-    answer = await _confirm(adapter, source, {}, 'which-printer',
+    answer = await _confirm(adapter, source, metadata, 'which-printer',
                             question or 'Which printer should I use?',
                             list(labels), timeout=_question_timeout(),
                             live_key=_live_key_for(source, gateway))
@@ -289,7 +293,8 @@ async def _decide_printer(source, gateway, adapter, metadata, *, question=None):
     candidates = _undecided_printer_ids(source, gateway)
     if not candidates:
         return pid, None
-    chosen = await _ask_which_printer(source, gateway, adapter, candidates, question=question)
+    chosen = await _ask_which_printer(source, gateway, adapter, candidates, question=question,
+                                      metadata=metadata)
     if chosen is None:
         await adapter.send(chat_id=source.chat_id, metadata=metadata,
                            content='No printer chosen, so nothing was sent to any printer.')
@@ -595,7 +600,8 @@ async def _design_handoff(event, gateway, adapter, session, stl_path):
         statuses = await _candidate_statuses(candidates, _print_control.status)
         chosen = await _ask_which_printer(source, gateway, adapter, candidates,
                                           question='Which printer should I print this design on?',
-                                          label_for=lambda cid: _busy_label(statuses.get(cid)))
+                                          label_for=lambda cid: _busy_label(statuses.get(cid)),
+                                          metadata=metadata)
         if chosen is None:
             await adapter.send(chat_id=source.chat_id, metadata=metadata,
                                content='No printer chosen, so nothing was sliced or sent anywhere. '
@@ -2487,7 +2493,8 @@ async def spool_dispatch(event, gateway, **kwargs):
         if not candidates:
             return True
         chosen = await _ask_which_printer(source, gateway, adapter, candidates,
-                                          question='Which printer are the spools for?')
+                                          question='Which printer are the spools for?',
+                                          metadata=metadata)
         if chosen is None:
             return False
         pid = _routed_form(chosen)
@@ -2933,7 +2940,7 @@ async def print_stop_dispatch(event, gateway, **kwargs):
                 chosen = await _ask_which_printer(
                     source, gateway, adapter, list(active),
                     question='More than one printer has a print running. Stop which one?',
-                    label_for=lambda cid: _busy_label(active.get(cid)))
+                    label_for=lambda cid: _busy_label(active.get(cid)), metadata=metadata)
             if chosen is None:
                 _seen.pop(key, None)
                 names = ' or '.join(_printer_label(c) for c in candidates)
@@ -3070,7 +3077,7 @@ async def print_resume_dispatch(event, gateway, **kwargs):
                 chosen = await _ask_which_printer(
                     source, gateway, adapter, list(resumable),
                     question='More than one printer has a paused print. Resume which one?',
-                    label_for=lambda cid: _busy_label(resumable.get(cid)))
+                    label_for=lambda cid: _busy_label(resumable.get(cid)), metadata=metadata)
             if chosen is None:
                 _seen.pop(key, None)
                 names = ' or '.join(_printer_label(c) for c in candidates)
@@ -3502,7 +3509,9 @@ async def model_link_dispatch(event, gateway, **kwargs):
 
             chosen = await _ask_which_printer(source, gateway, adapter, candidates,
                                               question='Which printer should I print this on?',
-                                              label_for=_picker_label)
+                                              label_for=_picker_label,
+                                              metadata={'thread_id': source.thread_id}
+                                              if source.thread_id else None)
         if chosen is None:
             await adapter.send(chat_id=source.chat_id,
                 content='No printer chosen, so nothing was sliced or sent anywhere.',

@@ -46,6 +46,13 @@ def has_duration_question(text: str) -> bool:
 # (chat_id, thread_id, user_id, session_key) -> (clarify_id, parser). Newest last.
 _typed_prompts = {}
 
+# Every prompt ask() opens, parser or not, under the same key shape ->
+# clarify_id. Newest last. typed_reply's cross-printer ambiguity check
+# reads this alongside _typed_prompts: a button-only question (a colour
+# pick) for another printer is still an open question a typed reply could
+# be answering, so it must count when deciding a reply is ambiguous (#536).
+_open_prompts = {}
+
 
 def _scope(source):
     return (str(getattr(source, 'chat_id', '')), str(getattr(source, 'thread_id', '') or ''),
@@ -66,12 +73,17 @@ def typed_reply(source, text):
     # shared channel (#536) register under different printer-scoped keys:
     # a typed reply cannot tell them apart, so it resolves neither rather
     # than feeding one printer's prompt the other's answer. Same-printer
-    # and unscoped prompts keep the newest-wins routing below.
+    # and unscoped prompts keep the newest-wins routing below. The scan
+    # covers every open prompt in this scope, not only the parser ones in
+    # _typed_prompts: an open button-only question for another printer
+    # (tracked in _open_prompts) makes the reply just as ambiguous.
     from .prompts import PRINTER_KEY_SEP
+    open_ids = [_typed_prompts[key][0] for key in keys]
+    open_ids += [cid for key, cid in list(_open_prompts.items()) if key[:3] == scope]
     printers = set()
-    for key in keys:
+    for cid in open_ids:
         try:
-            registered = str(cm.session_key(_typed_prompts[key][0]) or '')
+            registered = str(cm.session_key(cid) or '')
         except Exception:
             registered = ''
         if PRINTER_KEY_SEP in registered:
@@ -151,6 +163,8 @@ async def ask(adapter, source, session_key, question, choices, timeout=None, all
             # and re-registering afterwards would discard that answer.
             cid = uuid.uuid4().hex
             cm.register(cid, registration_key, question, shown)
+            _open_prompts.pop(typed_key, None)  # re-added last, like _typed_prompts below
+            _open_prompts[typed_key] = cid
             if parser is not None:
                 _typed_prompts.pop(typed_key, None)  # re-added last: the newest open question takes typed text
                 _typed_prompts[typed_key] = (cid, parser)
@@ -193,6 +207,8 @@ async def ask(adapter, source, session_key, question, choices, timeout=None, all
                 question += '\nPick a button or type split / 100% / shrink / cancel.'
         raise RuntimeError('clarification requires a valid button choice; no decision saved')
     finally:
+        if _open_prompts.get(typed_key) == cid:
+            _open_prompts.pop(typed_key, None)
         if parser is not None and _typed_prompts.get(typed_key, (None,))[0] == cid:
             _typed_prompts.pop(typed_key, None)
         cm.resolve_gateway_clarify(cid, cm.CANCELLED)

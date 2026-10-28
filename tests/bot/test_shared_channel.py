@@ -11,6 +11,7 @@ by printer. The dedicated-channel shapes stay byte-identical.
 import asyncio
 import copy
 import json
+import sys
 from types import SimpleNamespace as S
 from unittest import mock
 
@@ -85,6 +86,7 @@ class PickingAdapter:
     def __init__(self, pick=None):
         self.sent = []
         self.questions = []
+        self.targets = []
         self.pick = pick or (lambda question, choices: choices[0])
 
     async def send(self, chat_id, content, reply_to=None, metadata=None):
@@ -94,6 +96,10 @@ class PickingAdapter:
     async def send_clarify(self, chat_id, question, choices, clarify_id=None, session_key=None,
                            metadata=None):
         self.questions.append((question, list(choices)))
+        # Where the real adapters would post it: the thread when the
+        # delivery metadata names one, else the channel (clarify_ui's
+        # target rule). Recorded so a test can pin the destination.
+        self.targets.append(str((metadata or {}).get("thread_id") or chat_id))
         prompts.resolve_gateway_clarify(clarify_id, self.pick(question, list(choices)))
         return S(success=True)
 
@@ -217,6 +223,28 @@ def test_host_without_a_channel_map_asks_from_the_roster(plugin_cfg, monkeypatch
     out = run(plugin.model_link_dispatch(event, gateway))
     assert out == {"action": "skip", "reason": "recorded intake"}
     assert any("Which printer" in q for q, _choices in adapter.questions)
+    assert calls[-1] == ("prepare", {"reuse": None, "printer_id": WORKSHOP})
+
+
+def test_picker_raised_in_a_thread_is_posted_to_the_thread(plugin_cfg, monkeypatch):
+    # The picker must carry the caller's delivery metadata like every
+    # other _confirm prompt: the adapter addresses a clarify from
+    # metadata['thread_id'], so a picker dropped in a thread belongs in
+    # the thread — posted to the parent channel it could never be
+    # answered by a typed reply where it appeared (#536 close-out).
+    plugin = _plugin()
+    calls = []
+    _intake_stubs(monkeypatch, calls)
+    adapter = PickingAdapter(pick=lambda q, choices: "Workshop AD5X")
+    gateway = SharedGateway(adapter, shared={HOME: [GARAGE, WORKSHOP]})
+    thread_id = "777000111222333444"
+    source = runtime.make_source(OPERATOR, HOME, thread_id=thread_id, platform_name="discord",
+                                 shared_printer_ids=[GARAGE, WORKSHOP])
+    event = S(source=source, text=LINK, internal=False, metadata={}, media_urls=[], message_id="m1")
+    out = run(plugin.model_link_dispatch(event, gateway))
+    assert out == {"action": "skip", "reason": "recorded intake"}
+    assert adapter.targets[0] == thread_id  # not HOME, the parent channel
+    # And it was answerable there: the pick decided the intake's printer.
     assert calls[-1] == ("prepare", {"reuse": None, "printer_id": WORKSHOP})
 
 
@@ -415,6 +443,65 @@ def test_typed_reply_with_two_printers_open_resolves_neither(monkeypatch):
         prompts.resolve_gateway_clarify("cid-i1", "x")
 
 
+class _HoldingAdapter:
+    """Records questions and leaves them open (no immediate answer)."""
+
+    def __init__(self):
+        self.asked = []
+
+    async def send_clarify(self, **kw):
+        self.asked.append(kw)
+        return S(success=True)
+
+
+def test_typed_reply_counts_an_open_button_only_prompt_for_another_printer(monkeypatch):
+    # The ambiguity check must see every open prompt, not only the ones
+    # that registered a typed parser: a button-only colour question for
+    # the workshop printer is open beside a typed quantity question for
+    # the garage one, and a typed "2" could be answering either — so it
+    # resolves neither (#536 close-out; before, it fed the garage parser).
+    monkeypatch.setattr(prompts, "_active", True)
+    monkeypatch.setattr(link_intake, "_typed_prompts", {})
+    monkeypatch.setattr(link_intake, "_open_prompts", {})
+    source = runtime.make_source(OPERATOR, HOME, platform_name="discord")
+    base = "sess:536-closeout"
+
+    async def flow():
+        adapter = _HoldingAdapter()
+
+        async def open_prompt(flow_key, question, choices, pid, parser=None):
+            before = len(adapter.asked)
+            task = asyncio.create_task(link_intake.ask(
+                adapter, source, flow_key, question, choices, timeout=30, parser=parser,
+                live_key=prompts.printer_scoped_key(base, pid)))
+            for _ in range(200):
+                if len(adapter.asked) > before:
+                    return task, adapter.asked[-1]["clarify_id"]
+                await asyncio.sleep(0)
+            raise AssertionError("question was not sent")
+
+        garage_task, garage_cid = await open_prompt(
+            "model-link:g1", "How many copies?", ["1", "2"], GARAGE,
+            parser=lambda text: int(text))
+        shop_task, shop_cid = await open_prompt(
+            "model-link:w1", "Which colour?", ["Red", "Blue"], WORKSHOP)
+        try:
+            assert link_intake.typed_reply(source, "2") is None  # ambiguous: resolves nothing
+            assert prompts.is_open(garage_cid) and prompts.is_open(shop_cid)
+            # The colour question closes by button; the reply has one home left.
+            assert prompts.resolve_gateway_clarify(shop_cid, "Red")
+            assert await asyncio.wait_for(shop_task, 2) == 0
+            assert link_intake.typed_reply(source, "2") == ""
+            assert await asyncio.wait_for(garage_task, 2) == 1
+        finally:
+            for task in (garage_task, shop_task):
+                if not task.done():
+                    task.cancel()
+            await asyncio.gather(garage_task, shop_task, return_exceptions=True)
+
+    run(flow())
+
+
 # ----------------------------------------------------------------------
 # announcements name the printer
 
@@ -486,20 +573,40 @@ def test_pending_completion_adopts_the_legacy_single_slot(monkeypatch):
 def test_picker_flow_through_corpus_harness_fakes(plugin_cfg, monkeypatch):
     from corpus import harness
 
+    # install_clarify_stand_in() writes a fake tools.clarify_gateway into
+    # sys.modules for the whole process: prompts.gateway() then returns the
+    # stand-in instead of the bot registry, and a later suite whose adapter
+    # answers through the registry (test_routing's stop confirm) waits on a
+    # registry nothing resolves. Snapshot the module table and put it back
+    # when this test is done.
+    saved = {name: sys.modules.get(name) for name in ("tools", "tools.clarify_gateway")}
+    saved_pkg_attr = getattr(saved["tools"], "clarify_gateway", None) if saved["tools"] else None
     harness.install_clarify_stand_in()
-    plugin = harness.load_plugin()
-    calls = []
-    _intake_stubs(monkeypatch, calls)
-    adapter = harness.FakeAdapter([{"question": "Which printer", "button": "Workshop"}])
-    gateway = S(_is_user_authorized_for_source=lambda source: True,
-                _delivery_adapter_for=lambda source: adapter,
-                _session_key_for_source=lambda source: f"{source.chat_id}:{source.user_id}",
-                printer_id_for=lambda source: None,
-                shared_printer_ids_for=lambda source: [GARAGE, WORKSHOP])
-    out = run(plugin.model_link_dispatch(shared_event(LINK), gateway))
-    assert out == {"action": "skip", "reason": "recorded intake"}
-    assert adapter.questions and adapter.questions[0]["picked"] == "Workshop AD5X"
-    assert calls[-1] == ("prepare", {"reuse": None, "printer_id": WORKSHOP})
+    try:
+        plugin = harness.load_plugin()
+        calls = []
+        _intake_stubs(monkeypatch, calls)
+        adapter = harness.FakeAdapter([{"question": "Which printer", "button": "Workshop"}])
+        gateway = S(_is_user_authorized_for_source=lambda source: True,
+                    _delivery_adapter_for=lambda source: adapter,
+                    _session_key_for_source=lambda source: f"{source.chat_id}:{source.user_id}",
+                    printer_id_for=lambda source: None,
+                    shared_printer_ids_for=lambda source: [GARAGE, WORKSHOP])
+        out = run(plugin.model_link_dispatch(shared_event(LINK), gateway))
+        assert out == {"action": "skip", "reason": "recorded intake"}
+        assert adapter.questions and adapter.questions[0]["picked"] == "Workshop AD5X"
+        assert calls[-1] == ("prepare", {"reuse": None, "printer_id": WORKSHOP})
+    finally:
+        for name, module in saved.items():
+            if module is None:
+                sys.modules.pop(name, None)
+            else:
+                sys.modules[name] = module
+        if saved["tools"] is not None:
+            if saved_pkg_attr is None:
+                vars(saved["tools"]).pop("clarify_gateway", None)
+            else:
+                saved["tools"].clarify_gateway = saved_pkg_attr
 
 
 def test_picker_flow_through_the_standalone_bot(cfg, monkeypatch):

@@ -67,14 +67,16 @@ A bed-clear approval starts one print. Starting the same G-code again needs a ne
   the old five-field text modal: material quick-select (PLA, Silk PLA, PLA+, PETG, TPU, ABS,
   Other), colour/finish picker (known colours for the material first), starting-weight buttons
   (1000 / 500 / 250 g or custom), the replaced spool's fate when the slot is occupied, and one
-  confirmation — nothing is created before it. When a vision endpoint is available (#514), the
-  first step also offers **Use a photo of the label**: the operator sends one photo of the spool's
-  box or sticker as the next message, the shared vision call extracts brand, material/sub-type,
-  colour/blend, net weight and any printed label temperatures, and the values pre-fill the
-  walkthrough at the same confirmation (Edit details walks the normal steps; an unusable photo
-  refuses with the reason and falls back to them). Label temperatures are recorded on the
-  Spoolman filament, so the usual precedence holds for every material, and the photo itself is
-  sent only to the configured vision endpoint and never stored.
+  confirmation — nothing is created before it. When any label-reading route is available (#514),
+  the first step also offers **Use a photo of the label**: the operator sends one photo of the
+  spool's box or sticker as the next message, and the label is read by the first route that can —
+  its own barcode/QR code (zxing-cpp, local), the shared vision call (when an endpoint is
+  configured), or local OCR (tesseract, matched against the known filament vocabulary) —
+  extracting brand, material/sub-type, colour/blend, net weight and any printed label
+  temperatures. The values pre-fill the walkthrough at the same confirmation, which names the
+  route that read them (Edit details walks the normal steps; an unusable photo refuses with the
+  reason and falls back to them). Label temperatures are recorded on the Spoolman filament, so
+  the usual precedence holds for every material, and the photo itself is never stored.
 * `/print-colors <JOB.json>` opens the color selection flow for an archived job. Preparation only: it slices nothing, uploads nothing and starts nothing, and the path must be an archived `JOB.json`.
 * A swapped spool can finish a job sliced for the old one, by explicit choice.
 * `PRINT_HANDY` Klipper macro confirms ZMod can fall back to a matching backup slot.

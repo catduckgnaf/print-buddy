@@ -2438,8 +2438,12 @@ def verify_gcode(gcode_path):
             errors.append('Marlin slicer end G-code must turn off nozzle and bed (M104 S0, M140 S0)')
     elif not native:
         macro = printers.current().start_macro
-        if not numeric_macro_match(rf'^{re.escape(macro)}\s+([^;]*)', 'BED', 'HOTEND'):
-            errors.append(f"missing {macro} matching bed {bed} and effective hotend {hotend}")
+        if not (numeric_macro_match(rf'^{re.escape(macro)}\s+([^;]*)', 'BED', 'HOTEND') or
+                sovol_style_start_matches(text, bed, hotend)):
+            errors.append(f"missing {macro} matching bed {bed} and effective hotend {hotend}"
+                          " (accepted starts: the configured macro with BED/HOTEND arguments,"
+                          " START_PRINT with BED_TEMP/EXTRUDER_TEMP arguments, or a bare"
+                          " START_PRINT whose M190/M109 heater lines match those temperatures)")
     elif not (numeric_macro_match(r'^PRINT_START\s+([^;]*)', 'BED', 'HOTEND') or
               numeric_macro_match(r'^START_PRINT\s+([^;]*)', 'BED_TEMP', 'EXTRUDER_TEMP')):
         errors.append(f"missing START_PRINT/PRINT_START matching bed {bed} and effective hotend {hotend}")
@@ -2619,6 +2623,43 @@ def release_start_announcement(remote):
     if claims.pop(remote, None) is not None:
         try: _write_claims(claims)
         except OSError: pass
+
+
+def sovol_style_start_matches(text, bed, hotend):
+    """Whether a START_PRINT-led job (Sovol stock style, issue #612) proves its temperatures.
+
+    Sovol's own profiles lead with START_PRINT, not the PRINT_START BED/HOTEND
+    form Print Handy's Klipper templates emit. Two shapes prove the job's
+    temperatures, and only these:
+
+    - START_PRINT carrying BED_TEMP=<bed> EXTRUDER_TEMP=<hotend> arguments, or
+    - a bare START_PRINT whose first M190 (bed wait) and first M109 (nozzle
+      wait) lines carry the temperatures — the shape the Sovol Zero profiles
+      emit, where the macro takes no temperature arguments at all.
+
+    A START_PRINT that carries temperature arguments which disagree never
+    passes on its heater lines: the macro would run with its arguments, so
+    the arguments are the contract the file states.
+    """
+    m = re.search(r'^START_PRINT\b\s*([^;]*)', text, re.M)
+    if not m:
+        return False
+    args = dict(re.findall(r'([A-Z_]+)=([+-]?(?:\d+(?:\.\d*)?|\.\d+))', m.group(1)))
+    if 'BED_TEMP' in args or 'EXTRUDER_TEMP' in args:
+        try:
+            return (math.isclose(float(args.get('BED_TEMP', 'nan')), float(bed), abs_tol=1e-3) and
+                    math.isclose(float(args.get('EXTRUDER_TEMP', 'nan')), float(hotend), abs_tol=1e-3))
+        except ValueError:
+            return False
+
+    def first_temp(command):
+        match = re.search(rf'^{command}\s+S([+-]?(?:\d+(?:\.\d*)?|\.\d+))', text, re.M)
+        return float(match.group(1)) if match else None
+
+    bed_line, hotend_line = first_temp('M190'), first_temp('M109')
+    return (bed_line is not None and hotend_line is not None and
+            math.isclose(bed_line, float(bed), abs_tol=1e-3) and
+            math.isclose(hotend_line, float(hotend), abs_tol=1e-3))
 
 
 def start_print_settings(text):

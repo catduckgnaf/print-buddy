@@ -302,3 +302,22 @@ def test_a_lease_on_the_jobs_own_printer_refuses_the_print(moonraker):
         assert "approvals" not in json.loads(jp.read_text())  # a refused lease consumes nothing
     finally:
         held.release()
+
+
+def test_upload_goes_to_the_jobs_printer_not_the_global_url(moonraker, monkeypatch):
+    # bin/moonrakerctl reads only MOONRAKER_URL / services.moonraker_url; the
+    # start goes to the job's printer (st), so the upload must be aimed there too.
+    monkeypatch.setenv("MOONRAKER_URL", "http://global-default:7125")
+    jp, _g, _job = _make_job(moonraker, "a", DEFAULT_ID)
+    with mock.patch.object(model_job.printer_state, "load",
+                           return_value={"moonraker_url": "http://printer-b:7125/"}):
+        assert model_job.print_now(jp)["started"] is True
+    uploads = [c for c in model_job.subprocess.run.call_args_list
+               if len(c.args[0]) >= 2 and c.args[0][1] == "upload"]
+    assert uploads and all(c.kwargs["env"]["MOONRAKER_URL"] == "http://printer-b:7125" for c in uploads)
+
+
+def test_moonrakerctl_env_keeps_the_environment_without_a_printer_url(monkeypatch):
+    monkeypatch.setenv("MOONRAKER_URL", "http://global-default:7125")
+    assert model_job._moonrakerctl_env({})["MOONRAKER_URL"] == "http://global-default:7125"
+    assert model_job._moonrakerctl_env({"moonraker_url": "http://b"})["MOONRAKER_URL"] == "http://b"

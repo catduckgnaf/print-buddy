@@ -39,6 +39,20 @@ PROFILE = settings.current()["paths"]["hermes_home"]
 STATE = settings.state_dir()/"printer_hardware.json"
 ARCHIVE = settings.current()["paths"]["archive"]
 MOONRAKERCTL = settings.ROOT/"bin"/"moonrakerctl"
+
+
+def _moonrakerctl_env(st):
+    """Environment for bin/moonrakerctl aimed at the job's printer.
+
+    moonrakerctl reads only MOONRAKER_URL / services.moonraker_url, the
+    global (default printer's) URL; on a roster the start goes to the job's
+    printer (st), so the upload must go there too.
+    """
+    env = dict(os.environ)
+    url = st.get("moonraker_url") if isinstance(st, dict) else None
+    if url:
+        env["MOONRAKER_URL"] = str(url).rstrip("/")
+    return env
 TIMEZONE = settings.current()["discord"]["timezone"]
 IFS_SLOTS = settings.current()["printer"]["ifs_slots"]
 BED_MM = int(min(settings.current()["printer"]["bed_mm"]))
@@ -4531,7 +4545,7 @@ def print_mapped_native(g, st, mesh, mapping, job, job_path, wait_s, reprint):
                     logger.warning('could not record pending Spoolman usage: %s', exc)
         _timing(job_path, 'upload_begin')
         uploaded = subprocess.run([str(MOONRAKERCTL), 'upload', str(upload_path), remote, upload_sha],
-                                  text=True, capture_output=True, timeout=300)
+                                  text=True, capture_output=True, timeout=300, env=_moonrakerctl_env(st))
         if uploaded.returncode:
             raise RuntimeError('The file could not be uploaded to the printer, so nothing started. '
                                'Check the printer is on and reachable, then try again.'
@@ -5464,7 +5478,8 @@ def print_now(target, wait_s=25, accept_default_z_offset=False, reprint=False, r
         _require_idle(st)  # again inside the lease: the first read may predate another job's start
         if job_path is not None: _consume_approval(job_path, job, g, reprint=reprint)
         _timing(job_path, 'upload_begin')
-        r=subprocess.run([str(MOONRAKERCTL),"upload",str(upload_path),remote,upload_sha],text=True,capture_output=True,timeout=300)
+        r=subprocess.run([str(MOONRAKERCTL),"upload",str(upload_path),remote,upload_sha],text=True,capture_output=True,timeout=300,
+                         env=_moonrakerctl_env(st))
         if r.returncode: raise SystemExit("The file could not be uploaded to the printer, so nothing started. "
                                           "Check the printer is on and reachable, then try again."
                                           + _detail_tail(r.stderr or r.stdout))

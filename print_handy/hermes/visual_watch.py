@@ -171,7 +171,7 @@ def _vision_answer(image, prompt, *, chat_url, model, api_key, context):
         return content
 
 
-def _local_verdict(image):
+def _local_verdict(image, streak=None):
     """The built-in local detector's verdict (#455), or None when it is not enabled.
 
     Consulted only when no endpoint route is configured — the endpoint
@@ -179,11 +179,16 @@ def _local_verdict(image):
     endpoint still degrades generically rather than falling through. The
     detector's own failures degrade exactly like a broken endpoint's:
     ("uncertain", ...) with the real error logged.
+
+    ``streak`` is the calling print watch's per-print
+    :class:`local_vision.FailureStreak` (temporal escalation); callers
+    that are not a print watch (idle plate checks) pass none and get
+    single-frame verdicts.
     """
     if not local_vision.enabled():
         return None
     try:
-        return local_vision.local_verdict(image)
+        return local_vision.local_verdict(image, streak=streak)
     except Exception as exc:
         logger.warning("vision check failed via local detector: %s: %s",
                        type(exc).__name__, exc)
@@ -204,7 +209,7 @@ def _chat_route_configured(api_key):
         return True
 
 
-def visual_verdict(image, prompt, *, chat_url, model, api_key, context):
+def visual_verdict(image, prompt, *, chat_url, model, api_key, context, local_streak=None):
     """Judge one frame. Returns (verdict, detail).
 
     Route order: PRINT_VISION_URL, then the chat endpoint
@@ -215,6 +220,9 @@ def visual_verdict(image, prompt, *, chat_url, model, api_key, context):
     degrades to ("uncertain", ...) — an uncertain frame alerts, it never
     silently passes. Label reads (``visual_extract``) never use the local
     detector: it detects failures, it cannot read.
+
+    ``local_streak`` is the calling print watch's per-print temporal
+    escalation state for the local route; the endpoint routes ignore it.
     """
     endpoint = os.environ.get("PRINT_VISION_URL")
     try:
@@ -223,7 +231,7 @@ def visual_verdict(image, prompt, *, chat_url, model, api_key, context):
         if not isinstance(parsed, dict):
             raise TypeError(f"vision answer is not a JSON object ({type(parsed).__name__})")
     except _VisionKeyMissing:
-        local = _local_verdict(image)
+        local = _local_verdict(image, local_streak)
         if local is not None:
             return local
         return "uncertain", "vision key is not configured"
@@ -233,7 +241,7 @@ def visual_verdict(image, prompt, *, chat_url, model, api_key, context):
         # is "no endpoint route configured", so the local detector stands
         # in. A configured endpoint that fails does NOT fall through.
         if not endpoint and not _chat_route_configured(api_key):
-            local = _local_verdict(image)
+            local = _local_verdict(image, local_streak)
             if local is not None:
                 return local
         # The returned detail stays generic on purpose (#467: raw error text

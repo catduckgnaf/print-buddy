@@ -36,6 +36,14 @@ verdict (which alerts) with the real error logged — never a crash, never
 a silent pass, never a blocked print. A failure is remembered for the
 life of the process so a broken setup logs once instead of retrying a
 202 MB download on every camera check.
+
+Temporal escalation (later stage): a single frame is weak evidence, so
+a print watch can feed its frames through a :class:`FailureStreak` —
+the sustained-streak pattern ``AutoLightPolicy`` uses — and a possible
+failure that keeps being seen across consecutive checks escalates to a
+failure verdict, the multi-frame escalation Obico's own serving applies
+and Stage 1 noted as missing. The single-frame bands below keep their
+meaning; the streak only judges persistence.
 """
 from __future__ import annotations
 
@@ -67,6 +75,17 @@ MODEL_FILENAME = "obico-failure-detector.onnx"
 POSITIVE_FLOOR = 0.08
 FAILURE_AT = 0.5
 NMS_IOU = 0.45  # Obico's OnnxNet.detect default
+
+# --- Temporal escalation (FailureStreak) --------------------------------------
+# Consecutive positive checks that confirm a weak (below FAILURE_AT)
+# detection as a failure. Watchdog checks are minutes apart (450–1800 s
+# by sensitivity), so two in a row means the detector kept seeing the
+# failure across a sustained span of the print, not one odd frame.
+ESCALATE_AFTER = 2
+# The streak counter is capped so the state stays bounded however long
+# a print runs; the cap is far above ESCALATE_AFTER, so the "confirmed
+# across N consecutive checks" wording stays truthful.
+STREAK_CAP = 100
 
 DOWNLOAD_TIMEOUT_S = 180
 
@@ -323,10 +342,9 @@ def detect(image: bytes, cfg=None):
         raise LocalVisionError(f"local detector outputs could not be read: {exc}") from exc
 
 
-def local_verdict(image: bytes, cfg=None) -> tuple[str, str]:
-    """The detector's verdict for one frame, in the watchdog's
-    vocabulary. Raises :class:`LocalVisionError` when it cannot judge."""
-    kept = detect(image, cfg)
+def _single_frame_verdict(kept) -> tuple[str, str]:
+    """One frame's verdict, Stage 1 semantics: the mapping the bands
+    above define, with no memory of earlier frames."""
     if kept:
         confidence = kept[0][0]
         if confidence >= FAILURE_AT:
@@ -338,6 +356,87 @@ def local_verdict(image: bytes, cfg=None) -> tuple[str, str]:
             f"local failure detector: possible failure at {confidence:.0%} "
             "confidence, below the single-frame failure threshold")
     return "ok", "local failure detector: no failure detected"
+
+
+class FailureStreak:
+    """Temporal escalation state for one printer's current print.
+
+    Pure policy, no I/O — the ``AutoLightPolicy`` shape: the print watch
+    that owns the printer creates one when a print starts, feeds it
+    every local-detector frame (via :func:`local_verdict`), and resets
+    it when the print ends. The state is a single capped counter, so it
+    stays bounded however long a print runs, and frames are counted in
+    checks — the watchdog's cadence (minutes apart) is what makes a run
+    of consecutive positives *sustained* evidence rather than a burst.
+
+    The single-frame bands keep their meaning; the streak only judges
+    persistence:
+
+    * no positive detection — the streak clears and the frame is
+      ``ok`` (the reason notes it when a streak was actually cleared);
+    * a strong frame (>= ``FAILURE_AT``) is ``spaghetti`` at once, as a
+      single frame always was; when it lands on an existing streak the
+      reason says the failure is streak-confirmed, naming the count;
+    * a weak frame (``POSITIVE_FLOOR``..``FAILURE_AT``) is ``uncertain``,
+      as a single frame always was — but the ``ESCALATE_AFTER``-th
+      consecutive positive check escalates to ``spaghetti``: a possible
+      failure seen again and again across checks is sustained evidence.
+
+    A detector failure never reaches this policy (``detect`` raises
+    first and the caller degrades to ``uncertain``), so a broken check
+    neither builds nor clears the streak.
+    """
+
+    def __init__(self):
+        self.reset()
+
+    def reset(self):
+        self.positives = 0
+
+    def note(self, kept) -> tuple[str, str]:
+        """Feed one frame's kept detections; returns its verdict."""
+        if not kept:
+            if self.positives:
+                self.positives = 0
+                return "ok", ("local failure detector: no failure detected; "
+                              "the earlier possible failure did not persist")
+            return "ok", "local failure detector: no failure detected"
+        confidence = kept[0][0]
+        self.positives = min(self.positives + 1, STREAK_CAP)
+        if confidence >= FAILURE_AT:
+            areas = len(kept)
+            reason = (f"local failure detector: print failure at {confidence:.0%} "
+                      f"confidence ({areas} area{'s' if areas != 1 else ''})")
+            if self.positives >= ESCALATE_AFTER:
+                reason += (f", confirmed across {self.positives} "
+                           "consecutive checks")
+            return "spaghetti", reason
+        if self.positives >= ESCALATE_AFTER:
+            return "spaghetti", (
+                f"local failure detector: possible failure at {confidence:.0%} "
+                "confidence, below the single-frame failure threshold, but "
+                f"now seen in {self.positives} consecutive checks — sustained "
+                "detections escalate to a failure verdict")
+        return "uncertain", (
+            f"local failure detector: possible failure at {confidence:.0%} "
+            "confidence, below the single-frame failure threshold "
+            "(first consecutive detection; it escalates to a failure "
+            "verdict if later checks keep seeing it)")
+
+
+def local_verdict(image: bytes, cfg=None, streak: FailureStreak | None = None) -> tuple[str, str]:
+    """The detector's verdict for one frame, in the watchdog's
+    vocabulary. Raises :class:`LocalVisionError` when it cannot judge.
+
+    Without ``streak`` the frame is judged on its own (Stage 1). With a
+    :class:`FailureStreak` — one per printer per print, owned by the
+    calling watch — the frame also feeds the streak, and a sustained
+    weak detection escalates as the streak's rules define. A detector
+    failure raises before the streak is fed, so it never disturbs it."""
+    kept = detect(image, cfg)
+    if streak is None:
+        return _single_frame_verdict(kept)
+    return streak.note(kept)
 
 
 # --- Status (bot check / vision_ready) -------------------------------------------

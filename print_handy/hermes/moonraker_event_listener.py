@@ -42,6 +42,7 @@ from . import timelapse_encode
 from . import print_control
 from . import light_control
 from . import visual_watch as _visual_watch
+from . import local_vision as _local_vision
 from . import print_markers
 from . import print_records
 from . import vertical_short
@@ -1839,11 +1840,17 @@ def _camera_snapshot_bytes():
 _VISION_CONTEXT = "Printer: Flashforge AD5X, enclosed, smooth PEI plate. Reply JSON verdict ok|air|spaghetti|detached|empty_idle|uncertain. "
 
 
-def _visual_verdict(image, prompt):
-    """The shared verdict call (visual_watch.visual_verdict) with this listener's values."""
+def _visual_verdict(image, prompt, streak=None):
+    """The shared verdict call (visual_watch.visual_verdict) with this listener's values.
+
+    ``streak`` is the print watch's per-print local-detector escalation
+    state (#455); only visual_check passes it — the auto light-off idle
+    checks judge single frames, so they leave it None.
+    """
     return _visual_watch.visual_verdict(
         image, prompt, chat_url=_vision_chat_url, model=_VISION_MODEL,
-        api_key=lambda: _profile_env_value("CLIPROXY_API_KEY"), context=_VISION_CONTEXT)
+        api_key=lambda: _profile_env_value("CLIPROXY_API_KEY"), context=_VISION_CONTEXT,
+        local_streak=streak)
 
 
 def _vision_ready():
@@ -2078,6 +2085,9 @@ class Listener:
         self.spoolman_watcher = SpoolmanNewSpoolWatcher()
         self.slot_tracker = MidPrintSlotTracker()
         self.visual_watch = VisualPrintWatch()
+        # #455: this printer's local-detector temporal escalation state;
+        # reset wherever visual_watch is (new file, fresh start, print end).
+        self.local_streak = _local_vision.FailureStreak()
         self.last_stats = {}
         self.last_visual_task = None
         self.visual_frames = {}
@@ -2314,7 +2324,7 @@ class Listener:
                 log(f"visual check file={self.filename!r} reason={reason} layer={layer} changed={changed} verdict=skipped")
                 return
             prompt = "Is there plastic on the bed under the nozzle, or is there spaghetti/detachment?"
-            verdict, detail = await asyncio.to_thread(_visual_verdict, image, prompt)
+            verdict, detail = await asyncio.to_thread(_visual_verdict, image, prompt, self.local_streak)
             suspicious = verdict in {"air", "spaghetti", "detached", "uncertain", "no", "unsafe"}
             if reason == "stalled_layers" and changed is False:
                 # Levels 1 and 2 trust a healthy vision verdict over the pixel diff.
@@ -2354,6 +2364,7 @@ class Listener:
             if filename and filename != self.filename:
                 self.filename = filename
                 self.visual_watch.reset()
+                self.local_streak.reset()
                 self.visual_frames.pop(filename, None)
         if "message" in print_stats:
             self.pause_message = print_stats.get("message") or ""
@@ -2398,6 +2409,7 @@ class Listener:
             else:
                 self.slot_tracker.reset()
                 self.visual_watch.reset()
+                self.local_streak.reset()
                 if start_claimed(self.filename):
                     log(f"start claimed by print-now; updating its message, no second start post: {self.filename!r}")
                     await asyncio.to_thread(announce_warmup_done, self.filename)
@@ -2442,6 +2454,7 @@ class Listener:
         await asyncio.to_thread(run_announcer, f"{old}->{new_state}")
         if new_state in ("complete", "cancelled", "error", "standby") and old in ("printing", "paused"):
             self.visual_watch.reset()
+            self.local_streak.reset()
             self.visual_frames.pop(self.filename, None)
             self._capture_end(new_state)
             # #516: the print is over; open the auto light-off idle window.

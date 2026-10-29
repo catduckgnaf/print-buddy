@@ -2441,8 +2441,8 @@ class Listener:
             # Completion, records, snapshot, and session reset stay in the announcer.
             # The announcer also owns the sole completion Discord post.
             if effective == "cancelled":
-                # Acknowledge promptly; collecting the full Klipper report may block.
-                await asyncio.to_thread(post, print_summary.format_event("cancelled", self.filename))
+                # One post: post_cancel_report leads with the cancelled summary and
+                # falls back to it alone, so a separate ack read as a duplicate.
                 task = asyncio.create_task(asyncio.to_thread(post_cancel_report, self.filename))
                 self.background_tasks.add(task)
                 task.add_done_callback(self.background_tasks.discard)

@@ -88,3 +88,44 @@ def test_listener_skips_auto_restart_for_bot_cancel(tmp_path):
                 await lst.screen_reboot_task
             return scr.call_count
         assert asyncio.run(run()) == 1
+
+
+# ZMod's cancel macro resets print_stats and parks the head before the report
+# runs: live counters read zero and Z is the park height (#59: 97 min, 9.4 m
+# filament, reported as 0m 00s / 0.00 m at Z=97.05).
+RESET = {"webhooks": {"state": "ready"},
+         "print_stats": {"filename": "", "state": "standby", "print_duration": 0.0,
+                         "total_duration": 0.0, "filament_used": 0.0, "info": {}},
+         "virtual_sdcard": {"progress": 0.0}, "gcode_move": {"gcode_position": [0, 0, 97.05, 0]}}
+JOB = {"job_id": "000052", "status": "cancelled", "filename": "f.gcode",
+       "print_duration": 2171.0, "total_duration": 5800.0, "filament_used": 9403.0,
+       "metadata": {"filament_total": 20000.0}}
+
+
+def test_report_uses_the_history_job_after_a_macro_reset():
+    out = kr.build("f.gcode", RESET, [], "", by_bot=False, now=NOW, job=JOB)
+    assert "Printed for 36m 11s (job open 1h 36m), 9.40 m filament used" in out
+    assert "Z=97.05" not in out and "0m 00s" not in out
+    assert "about 47% of the planned filament" in out
+
+
+def test_report_ignores_a_history_job_for_another_file_or_still_running():
+    for job in ({**JOB, "filename": "other.gcode"}, {**JOB, "status": "in_progress"}):
+        out = kr.build("f.gcode", STATUS, [], "", by_bot=False, now=NOW, job=job)
+        assert "51m" in out and "3.94 m filament" in out and "Z=8.40" in out
+
+
+def test_report_fetches_the_latest_history_job():
+    def fake_get(path, timeout=10):
+        if path.startswith("/printer/objects"):
+            return {"result": {"status": RESET}}
+        if path.startswith("/server/history/list"):
+            assert "limit=1" in path
+            return {"result": {"jobs": [JOB]}}
+        if path.startswith("/server/gcode_store"):
+            return {"result": {"gcode_store": []}}
+        raise AssertionError(path)
+    with patch.object(kr, "_get", side_effect=fake_get), patch.object(kr, "cancelled_by_bot", return_value=True), \
+            patch.object(kr.urllib.request, "urlopen", side_effect=OSError("no log")):
+        out = kr.report("f.gcode")
+    assert "9.40 m filament used" in out and "Z=97.05" not in out

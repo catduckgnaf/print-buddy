@@ -503,6 +503,15 @@ def backfill_slot_colors(*, client: Client = spoolman, mr: Client = moonraker,
     changes = filament_color.fill_missing_slot_hexes(
         state, spoolman_hexes=spoolman_hexes, printer_hexes=printer_hexes)
     for change in changes:
+        # The printer's own hex wins when it reports one (fill_missing_slot_hexes),
+        # so the screen already shows this code. Any other source leaves the
+        # screen label different from the record, and mapped launch would
+        # refuse the slot ("live RGB mapping mismatch"). This runs at listener
+        # startup, possibly mid-print, and is not a screen-sync point, so it
+        # sends nothing: it flags the slot for the existing screen sync
+        # (/spool sync, or the next bind), which defers while printing.
+        change["screen"] = "matches" if printer_hexes.get(change["slot"]) == change["hex"] else "needs_sync"
+    for change in changes:
         rec = slots.get(change["slot"]) or {}
         filament = filaments.get(rec.get("spoolman_id"))
         if (filament and filament.get("id") is not None and not first_hex_of(filament)

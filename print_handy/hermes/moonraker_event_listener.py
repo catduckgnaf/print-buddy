@@ -2955,7 +2955,9 @@ class Listener:
             mr = spool_sync.moonraker_for(instance_id) if instance_id else spool_sync.moonraker
             changes = await asyncio.to_thread(spool_sync.backfill_slot_colors, mr=mr, printer_id=instance_id)
             for change in changes:
-                log(f"slot {change['slot']} color code filled: #{change['hex']} from {change['source']}")
+                note = (" (printer screen differs; /spool sync updates it when the printer is idle)"
+                        if change.get("screen") == "needs_sync" else "")
+                log(f"slot {change['slot']} color code filled: #{change['hex']} from {change['source']}{note}")
         except Exception as exc:
             log(f"slot color backfill skipped: {exc!r}")
 

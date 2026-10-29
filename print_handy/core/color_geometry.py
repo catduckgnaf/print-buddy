@@ -878,7 +878,7 @@ def export_single_color_plate(source, target, decisions, part_keys, bed=BED_MM, 
     _validate_derived_plate(model_bytes, model_out, settings_out, selected)
     payload['3D/3dmodel.model'] = model_out
     payload['Metadata/model_settings.config'] = settings_out
-    colour = None
+    color = None
     if slot_colors:
         row = slot_colors.get(str(slot)) or slot_colors.get(slot) or {}
         if isinstance(row, dict) and row.get('physical_color_verified') is not True:
@@ -889,7 +889,7 @@ def export_single_color_plate(source, target, decisions, part_keys, bed=BED_MM, 
         if 'Metadata/project_settings.config' not in payload:
             raise RuntimeError('derived plate slot color requires project settings')
         payload['Metadata/project_settings.config'] = _recolor_filament_indexes(
-            payload['Metadata/project_settings.config'], {1}, colour)
+            payload['Metadata/project_settings.config'], {1}, color)
     with zipfile.ZipFile(target, 'w', zipfile.ZIP_DEFLATED) as out:
         for name, data in payload.items():
             out.writestr(name, data)
@@ -907,7 +907,7 @@ def export_single_color_plate(source, target, decisions, part_keys, bed=BED_MM, 
             **({'placement_mm': placement} if placement is not None else {}), 'merged_placement': item_shifts is not None, 'bounds_mm': boxes,
             'placed_bounds_mm': placed, 'bed_mm': bed, 'changed_entries': changed,
             'policy': 'production package copy; every object, mesh and relationship kept; unselected build items printable=0; all extruders logical 1; selected transforms kept unless the group must shift to fit',
-            **({'filament_colour': colour} if colour is not None else {})}
+            **({'filament_colour': color} if color is not None else {})}
 
 
 def _build_ids(model_bytes):

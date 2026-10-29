@@ -62,6 +62,13 @@ def test_resolve_follows_slot_spoolman_printer_name_default_order():
     assert fc.resolve({"hex": "", "color": "galaxy"}) == (fc.NEUTRAL_DEFAULT, "default")
 
 
+def test_resolve_prefer_printer_puts_the_screens_hex_ahead_of_spoolmans():
+    rec = {"hex": "", "color": "rose red blue green", "material": "Silk PLA"}
+    assert fc.resolve(rec, spoolman_hex="AAAAAA", printer_hex="BBBBBB", prefer_printer=True) == ("BBBBBB", "printer")
+    assert fc.resolve(rec, spoolman_hex="AAAAAA", printer_hex=None, prefer_printer=True) == ("AAAAAA", "spoolman")
+    assert fc.resolve({**rec, "hex": "123456"}, printer_hex="BBBBBB", prefer_printer=True) == ("123456", "slot")
+
+
 def test_printer_slot_hexes_reads_zmod_color():
     status = {"slots": [{"ID": 1, "HEX": "FFFFFF"}, {"ID": 2, "HEX": "#0c6283"}, {"ID": 3, "HEX": ""}]}
     assert fc.printer_slot_hexes(status) == {"1": "FFFFFF", "2": "0C6283"}
@@ -137,13 +144,15 @@ def test_load_state_backfills_in_memory(tmp_path):
     assert spool_sync.load_state(path)["ifs_slots"]["2"]["hex"] == "C2185B"
 
 
-def test_backfill_slot_colors_uses_spoolman_then_printer_and_persists(tmp_path):
+def test_backfill_slot_colors_prefers_the_printers_hex_then_spoolman_and_persists(tmp_path):
     path = tmp_path / "printer_hardware.json"
     path.write_text(json.dumps({"ifs_slots": {
         "1": _bound(slot=1, spoolman_id=16, color="matte white", name="Matte white PLA", material="PLA"),
         "2": _bound(),
-        "3": _bound(slot=3, spoolman_id=9, hex="111111", physical_color_verified=True)}}))
+        "3": _bound(slot=3, spoolman_id=9, hex="111111", physical_color_verified=True),
+        "4": _bound(slot=4, spoolman_id=16, color="matte white", name="Matte white PLA", material="PLA")}}))
     writes = []
+    printer_calls = []
 
     def client(method, path_, body=None):
         if method == "PATCH":
@@ -153,18 +162,61 @@ def test_backfill_slot_colors_uses_spoolman_then_printer_and_persists(tmp_path):
         return {"id": sid, "filament": {"id": 100 + sid, "color_hex": "FAFAFA" if sid == 16 else None}}
 
     def mr(method, path_, body=None):
+        printer_calls.append((method, path_))
         assert "zmod_color" in path_
         return {"result": {"status": {"zmod_color": {"slots": [
             {"ID": 1, "HEX": "EEEEEE"}, {"ID": 2, "HEX": "0C6283"}, {"ID": 3, "HEX": "222222"}]}}}}
 
     changes = spool_sync.backfill_slot_colors(client=client, mr=mr, state_path=path)
     saved = json.loads(path.read_text())["ifs_slots"]
-    assert saved["1"]["hex"] == "FAFAFA" and saved["1"]["hex_source"] == "spoolman"
+    # The printer already shows EEEEEE for slot 1: adopting it (not Spoolman's
+    # FAFAFA) means mapped launch cannot see a "live RGB mapping mismatch".
+    assert saved["1"]["hex"] == "EEEEEE" and saved["1"]["hex_source"] == "printer"
     assert saved["2"]["hex"] == "0C6283" and saved["2"]["hex_source"] == "printer"
     assert saved["3"]["hex"] == "111111"  # a valid hex is never overwritten
-    assert {c["slot"] for c in changes} == {"1", "2"}
+    assert saved["4"]["hex"] == "FAFAFA" and saved["4"]["hex_source"] == "spoolman"  # printer reports none
+    assert {c["slot"] for c in changes} == {"1", "2", "4"}
+    screens = {c["slot"]: c["screen"] for c in changes}
+    # Only the slot whose code differs from the screen is flagged for screen sync.
+    assert screens == {"1": "matches", "2": "matches", "4": "needs_sync"}
     # Spoolman's empty color for spool 17 is filled in; spool 16 already had one.
     assert writes == [("/api/v1/filament/117", {"color_hex": "0C6283"})]
+    # Backfill only reads the printer: no CHANGE_ZCOLOR (or any gcode) from here.
+    assert printer_calls == [("GET", "/printer/objects/query?zmod_color")]
+
+
+def test_backfill_adopts_the_printers_hex_over_an_earlier_name_guess():
+    state = {"ifs_slots": {"2": _bound(hex="C2185B", hex_source="name", physical_color_verified=True)}}
+    fc.fill_missing_slot_hexes(state, spoolman_hexes={17: "AAAAAA"}, printer_hexes={"2": "0C6283"})
+    assert (state["ifs_slots"]["2"]["hex"], state["ifs_slots"]["2"]["hex_source"]) == ("0C6283", "printer")
+
+
+def test_a_derived_code_reaches_the_screen_through_bind_slot_screen_sync(tmp_path, monkeypatch):
+    # bind_slot derives a code for a Spoolman filament with no color_hex and
+    # tells the screen the same code through push_screen (CHANGE_ZCOLOR; it
+    # defers while printing). The record and the screen label therefore agree.
+    from print_handy.printers.flashforge.zmod import screen
+
+    state = tmp_path / "hw.json"
+    state.write_text(json.dumps({"ifs_slots": {}}))
+    spool = {"id": 17, "location": "Shelf",
+             "filament": {"name": "Rose Red Blue Green Silk PLA", "material": "Silk PLA", "color_hex": None}}
+
+    def client(method, path_, body=None):
+        return spool if method == "GET" else {}
+
+    pushed = []
+
+    def spy(slot, material, hex_code, **kwargs):
+        pushed.append(screen.screen_command(slot, material, hex_code))
+        return "pushed"
+
+    monkeypatch.setattr(spool_sync, "push_screen", spy)
+    result = spool_sync.bind_slot(2, 17, client=client, mr=lambda *a, **k: {"result": {"spool_id": None}},
+                                  state_path=state)
+    assert result["record"]["hex"] == "C2185B" and result["record"]["hex_source"] == "name"
+    assert pushed == ["CHANGE_ZCOLOR SLOT=2 TYPE=SILK HEX=C2185B"]
+    assert result["screen"] == "pushed"
 
 
 def test_backfill_slot_colors_survives_spoolman_and_printer_being_down(tmp_path):

@@ -89,7 +89,12 @@ A bed-clear approval starts one print. Starting the same G-code again needs a ne
   only then neutral gray `#9E9E9E`, which chat says out loud before slicing. Existing slots with a
   blank hex are backfilled without user action — on read, and by the listener at startup and on
   each reconnect from Spoolman and the printer — and a valid hex is never overwritten (only a code
-  Print Handy guessed itself may be upgraded from Spoolman or the printer).
+  Print Handy guessed itself may be upgraded from Spoolman or the printer). The backfill takes the
+  printer's own reported hex ahead of Spoolman's, because mapped launch refuses a slot whose hex
+  differs from the printer's (`live RGB mapping mismatch`); it sends nothing to the printer, and a
+  slot filled from another source is logged as needing `/spool sync` (the screen sync, which
+  defers while printing). Binding through `/spool` sends the derived code to the screen; the IFS
+  insertion prompt stays inventory-only.
 * A slice refused for a deterministic reason says why in plain words (for example "Slot 1 (Matte
   white PLA) was never confirmed as loaded … Is Matte white PLA loaded in slot 1?") with
   `Reference: PB_SLICING_CONFIGURATION`, and offers the one safe fix as a button ("Yes, slot 1 has

@@ -17,7 +17,10 @@ This is the one place that knows how to get a color code:
   reports for the slot (ZMod ``zmod_color``), then the name, and only then
   :data:`NEUTRAL_DEFAULT` — which callers must say out loud;
 * :func:`fill_missing_slot_hexes` backfills hardware-record slots that have
-  no valid hex. It never overwrites a valid hex the operator or Spoolman
+  no valid hex, taking the hex the printer already reports for the slot ahead
+  of Spoolman's: mapped launch refuses a slot whose recorded hex differs from
+  the one on the printer screen, so adopting the screen's own value can never
+  create a mismatch. It never overwrites a valid hex the operator or Spoolman
   supplied; a hex this module derived itself (``hex_source`` ``name`` or
   ``default``) may be upgraded when a better source answers.
 """
@@ -163,23 +166,27 @@ def derive_hex(name: Any, material: Any = None) -> str | None:
 
 
 def resolve(record: Mapping[str, Any] | None = None, *, spoolman_hex: Any = None,
-            printer_hex: Any = None, name: Any = None, material: Any = None) -> tuple[str, str]:
+            printer_hex: Any = None, name: Any = None, material: Any = None,
+            prefer_printer: bool = False) -> tuple[str, str]:
     """The color code for one slot and where it came from. Never fails.
 
     Order: the record's own hex, Spoolman's ``color_hex`` (or the first of
     its ``multi_color_hexes``), the printer's reported slot hex, the color
     name, then :data:`NEUTRAL_DEFAULT` with source ``"default"``.
+    ``prefer_printer`` swaps the middle two, so a hex the printer already
+    holds for the slot wins over Spoolman's (the backfill's choice).
     """
     record = record or {}
     own = normalize_hex(record.get("hex"))
     if own:
         return own, "slot"
     spoolman = first_hex(spoolman_hex) if isinstance(spoolman_hex, str) else None
-    if spoolman:
-        return spoolman, "spoolman"
     printer = normalize_hex(printer_hex)
-    if printer:
-        return printer, "printer"
+    ranked = ((printer, "printer"), (spoolman, "spoolman")) if prefer_printer \
+        else ((spoolman, "spoolman"), (printer, "printer"))
+    for hx, source in ranked:
+        if hx:
+            return hx, source
     material = material if material is not None else record.get("material")
     for candidate in (name, record.get("color"), record.get("name")):
         guess = derive(candidate, material)
@@ -209,7 +216,12 @@ def fill_missing_slot_hexes(state: dict[str, Any], *,
     Only records with no valid hex are filled, plus records whose hex this
     module derived itself (``hex_source`` ``name``/``default``) when a better
     source (Spoolman or the printer) now answers. A valid hex the operator,
-    Spoolman or the printer supplied is never overwritten. ``spoolman_hexes``
+    Spoolman or the printer supplied is never overwritten. A hex the printer
+    already reports for the slot is used ahead of Spoolman's and of any name
+    guess (mapped launch compares the recorded hex with the printer's
+    ``zmod_color`` HEX). Nothing is sent to the printer from here: a slot
+    filled from another source is for the caller to report, so the screen
+    is synced through the existing screen-sync path. ``spoolman_hexes``
     is keyed by Spoolman spool id, ``printer_hexes`` by slot number.
 
     A record bound through ``/spool`` whose color was unverified only
@@ -249,7 +261,8 @@ def fill_missing_slot_hexes(state: dict[str, Any], *,
         if printer_hex is None:
             printer_hex = printer_hexes.get(key)
         probe = {k: v for k, v in record.items() if k != "hex"}
-        hx, source = resolve(probe, spoolman_hex=spoolman_hex, printer_hex=printer_hex)
+        hx, source = resolve(probe, spoolman_hex=spoolman_hex, printer_hex=printer_hex,
+                             prefer_printer=True)
         if derived_before:
             # Upgrade our own guess only to a better, authoritative source.
             if source not in ("spoolman", "printer") or hx == own:

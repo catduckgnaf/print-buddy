@@ -2,6 +2,7 @@
 import hashlib
 import json
 import zipfile
+import xml.etree.ElementTree as ET
 from pathlib import Path
 
 import pytest
@@ -52,6 +53,62 @@ def test_package_holds_the_gcode_byte_identical_with_its_metadata(tmp_path):
     ]
     assert plate["prediction"] == 3723
     assert plate["weight"] == 12.75
+
+
+def _zmod_plate(package, plate=1):
+    """The plate element ZMod reads: slice_info.config's <plate> whose index metadata is `plate`
+    (Klipper-side zmod.get_colors() and Moonraker's ThreeMFParser both select it this way)."""
+    with zipfile.ZipFile(package) as archive:
+        root = ET.fromstring(archive.read("Metadata/slice_info.config"))
+    for node in root.iter("plate"):
+        if any(md.get("key") == "index" and md.get("value") == str(plate) for md in node.findall("metadata")):
+            return node
+    raise AssertionError(f"no plate {plate} in slice_info.config")
+
+
+def _zmod_colors(plate):
+    """[(tool_idx, color, type)] the way zmod.get_colors() maps <filament id=..>: tool = id - 1."""
+    return sorted((int(f.get("id")) - 1, f.get("color"), f.get("type")) for f in plate.iter("filament"))
+
+
+def _metadata(plate):
+    return {md.get("key"): md.get("value") for md in plate.findall("metadata")}
+
+
+def test_slice_info_carries_what_zmod_reads(tmp_path):
+    """#564 Stage 0 layout B: filaments, time, weight and model in slice_info.config,
+    or ZMod's instant colour mapping has nothing to map (layout A printed colourless)."""
+    gcode = _gcode(tmp_path, GCODE.replace("; nozzle_diameter = 0.4",
+                                           "; nozzle_diameter = 0.4\n; printer_model = Flashforge AD5X"))
+    plate = _zmod_plate(gcode_3mf.package(gcode, tmp_path / "p.gcode.3mf", nozzle_mm=0.4))
+    assert _zmod_colors(plate) == [(0, "#FF0000", "PLA"), (1, "#00FF00", "PETG")]
+    assert [f.get("used_g") for f in plate.iter("filament")] == ["10.50", "2.25"]
+    meta = _metadata(plate)
+    assert meta["prediction"] == "3723" and meta["weight"] == "12.75"
+    assert meta["printer_model_id"] == "AD5X" and meta["nozzle_diameters"] == "0.4"
+
+
+def test_slice_info_keeps_slot_ids_and_skips_unused_filaments(tmp_path):
+    """An unused slot is left out like Orca's export, and the rest keep their slot ids,
+    so slot 3 still maps to tool 2 on the printer."""
+    text = (GCODE.replace("; filament_type = PLA;PETG", "; filament_type = PLA;PETG;PLA")
+            .replace("; filament_colour = #FF0000;#00FF00", "; filament_colour = #FF0000;#00FF00;#0000FF")
+            .replace("; filament used [g] = 10.5;2.25", "; filament used [g] = 10.5;0;1.0"))
+    plate = _zmod_plate(gcode_3mf.package(_gcode(tmp_path, text), tmp_path / "p.gcode.3mf"))
+    assert _zmod_colors(plate) == [(0, "#FF0000", "PLA"), (2, "#0000FF", "PLA")]
+
+
+def test_slice_info_without_usage_lists_every_filament_and_invents_nothing(tmp_path):
+    text = "; filament_type = PLA;PLA\n; filament_colour = #111111;#222222\nG1 X1\n"
+    plate = _zmod_plate(gcode_3mf.package(_gcode(tmp_path, text), tmp_path / "p.gcode.3mf", nozzle_mm=None))
+    assert _zmod_colors(plate) == [(0, "#111111", "PLA"), (1, "#222222", "PLA")]
+    assert set(_metadata(plate)) == {"index"}
+
+
+def test_slice_info_printer_model_override_and_escaping(tmp_path):
+    plate = _zmod_plate(gcode_3mf.package(_gcode(tmp_path), tmp_path / "p.gcode.3mf",
+                                          printer_model_id='Creator "5" & Pro'))
+    assert _metadata(plate)["printer_model_id"] == 'Creator "5" & Pro'
 
 
 def test_package_is_deterministic(tmp_path):

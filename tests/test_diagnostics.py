@@ -11,9 +11,9 @@ from print_handy.diagnostics import Category
 class MarkerTests(unittest.TestCase):
     def test_marker_shape_is_stable_and_greppable(self):
         self.assertEqual(diagnostics.marker("spoolman", Category.TRANSIENT),
-                         "PB_SPOOLMAN_TRANSIENT")
+                         "PH_SPOOLMAN_TRANSIENT")
         self.assertEqual(diagnostics.marker("Discord Startup", Category.CONFIGURATION),
-                         "PB_DISCORD_STARTUP_CONFIGURATION")
+                         "PH_DISCORD_STARTUP_CONFIGURATION")
 
     def test_legacy_marker_is_registered_and_never_renamed(self):
         self.assertIn("DISCORD_STARTUP_RETRY", diagnostics.LEGACY_MARKERS)
@@ -47,7 +47,7 @@ class OperatorMessageTests(unittest.TestCase):
         self.assertIn("Spool tracking was skipped", text)
         self.assertIn("Likely cause:", text)
         self.assertIn("What to do:", text)
-        self.assertIn("Reference: PB_SPOOLMAN_TRANSIENT", text)
+        self.assertIn("Reference: PH_SPOOLMAN_TRANSIENT", text)
 
     def test_no_bare_exception_text_and_secrets_are_redacted(self):
         secret = "hunter2-secret-value"

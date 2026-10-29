@@ -76,11 +76,116 @@ def marker(subsystem: str, category: Category) -> str:
     """The stable greppable marker for one subsystem/category pair.
 
     Example: ``marker("spoolman", Category.TRANSIENT)`` is
-    ``"PB_SPOOLMAN_TRANSIENT"``. Markers are append-only: once a marker
-    has shipped in a log line or a user-facing message it is never
-    renamed, so old support threads stay searchable.
+    ``"PH_SPOOLMAN_TRANSIENT"``. Markers are append-only within a
+    naming generation: once a marker has shipped in a log line or a
+    user-facing message it is not renamed again, so support threads
+    stay searchable. The one rename that has happened is #590: the
+    ``PB_`` prefix (Print Buddy, the old product name) became ``PH_``
+    (Print Handy); docs/DIAGNOSTICS.md carries the old -> new alias
+    table so old reports stay searchable too.
     """
-    return f"PB_{_token(subsystem)}_{Category(category).value.upper()}"
+    return f"PH_{_token(subsystem)}_{Category(category).value.upper()}"
+
+
+class KnownCause:
+    """A recognised, operator-fixable cause for one failure (#590).
+
+    ``cause`` says in plain words what went wrong and ``remedy`` says
+    what to do about it; both are written here, in this module, from
+    the recognised pattern — never copied out of raw exception text,
+    so nothing internal (paths beyond the named token files, secrets,
+    tracebacks) can ride along into chat.
+    """
+
+    __slots__ = ("category", "cause", "remedy")
+
+    def __init__(self, category: Category, cause: str, remedy: str):
+        self.category = Category(category)
+        self.cause = cause
+        self.remedy = remedy
+
+
+#: Model sites whose curated token/auth failures carry a specific,
+#: user-safe message (print_handy.core.model_job raises them): the
+#: site name, the credential the operator must set up, and the
+#: docs/PROJECT-REFERENCE.md section that explains it.
+_SITE_CREDENTIALS = (
+    ("MakerWorld", "MakerWorld account token", "MakerWorld account token"),
+    ("Thingiverse", "Thingiverse App Token", "Thingiverse App Token"),
+    ("MyMiniFactory", "MyMiniFactory API key", "MyMiniFactory API key"),
+    ("Cults3D", "Cults3D API key", "Cults3D API key"),
+)
+
+_CREDENTIAL_CUES = ("token", "api key", "app token", "credentials", "nickname")
+_CREDENTIAL_PROBLEMS = ("need", "missing", "empty", "refused", "401", "403",
+                        "must contain", "invalid", "expired", "no api key",
+                        "needs an api key first", "is wrong")
+
+#: Download gaps that are a property of the site, not of the install:
+#: the remedy is a browser download, never a retry.
+_SITE_DOWNLOAD_GAPS = (
+    ("MyMiniFactory",
+     "MyMiniFactory only lets a logged-in account download its files, and that "
+     "login route is not built in Print Handy, so the file cannot be fetched from here."),
+    ("Cults3D",
+     "Cults3D's API gives a listing's details but never its 3D files, so the "
+     "file cannot be fetched from here."),
+)
+
+
+def known_cause(exc: BaseException) -> KnownCause | None:
+    """The recognised operator-fixable cause of ``exc``, or None.
+
+    Recognition is an allowlist over the curated, operator-phrased
+    messages Print Handy itself raises at its model-site boundaries
+    (#590): a missing/expired/refused site credential, a site robot
+    check, or a site's built-in download gap. Anything else returns
+    None and keeps the conservative ``unknown`` treatment — an
+    unrecognised exception's text is never surfaced in chat.
+    """
+    text = str(exc or "")
+    low = text.lower()
+    for site, gap in _SITE_DOWNLOAD_GAPS:
+        if site.lower() in low and "cannot download" in low:
+            return KnownCause(
+                Category.CONFIGURATION,
+                gap,
+                "Download the .stl or .3mf file from the model page in a browser, "
+                "then upload or drop that file here instead.")
+    for site, credential, section in _SITE_CREDENTIALS:
+        if site.lower() not in low:
+            continue
+        challenged = "robot check" in low or "cloudflare" in low or "challenging" in low
+        if challenged and "refused" not in low and "401" not in low and "403" not in low:
+            return KnownCause(
+                Category.TRANSIENT,
+                f"{site} is challenging this connection with a robot check, so "
+                "Print Handy could not fetch the model.",
+                f"Open {site} in a browser and pass any check there, and check the "
+                f"{credential} (see \"{section}\" in docs/PROJECT-REFERENCE.md). "
+                "Print Handy does not try to bypass robot checks.")
+        if not any(cue in low for cue in _CREDENTIAL_CUES):
+            continue
+        if any(cue in low for cue in _CREDENTIAL_PROBLEMS):
+            return KnownCause(
+                Category.CONFIGURATION,
+                f"{site} links need your {credential}, and it is missing, empty "
+                "or was refused.",
+                f"Set up the {credential} — see \"{section}\" in "
+                "docs/PROJECT-REFERENCE.md. Until it is in place, "
+                f"{site} links cannot be fetched.")
+    if type(exc).__name__ == "SpoolmanUnavailable":
+        if "not configured" in low:
+            return KnownCause(
+                Category.CONFIGURATION,
+                "Spoolman is not configured: services.spoolman_url is empty.",
+                "Set services.spoolman_url to your Spoolman service, then try again.")
+        return KnownCause(
+            Category.TRANSIENT,
+            "Spoolman did not answer.",
+            "Check that the Spoolman service is running and that "
+            "services.spoolman_url points at it.")
+    return None
 
 
 def classify(exc: BaseException, *, category: Category | None = None) -> Category:
@@ -97,11 +202,56 @@ def classify(exc: BaseException, *, category: Category | None = None) -> Categor
     from . import settings  # lazy: settings is imported by nearly everything
     if isinstance(exc, settings.SettingsError):
         return Category.CONFIGURATION
+    known = known_cause(exc)
+    if known is not None:
+        return known.category
+    code = getattr(exc, "code", None)  # urllib HTTPError and friends
+    if isinstance(code, int):
+        if code in (401, 403):
+            return Category.CONFIGURATION
+        if code == 429 or code >= 500:
+            return Category.TRANSIENT
     if isinstance(exc, (TimeoutError, ConnectionError)):
         return Category.TRANSIENT
     if isinstance(exc, OSError):
         return Category.TRANSIENT if exc.errno in TRANSIENT_ERRNOS else Category.UNKNOWN
     return Category.UNKNOWN
+
+
+def next_step_for(exc: BaseException, *, transient: str, other: str) -> str:
+    """Pick a post's next step by whether retrying can actually help (#590).
+
+    ``transient`` (worded by the caller, e.g. "send it again") is only
+    honest for a transient failure; every other category gets
+    ``other`` — for a known cause that is the cause's own remedy, and
+    for an unknown failure the caller's non-retry step (typically the
+    diagnostics bundle hint).
+    """
+    known = known_cause(exc) if exc is not None else None
+    if known is not None:
+        return known.remedy
+    if exc is not None and classify(exc) == Category.TRANSIENT:
+        return transient
+    return other
+
+
+def known_post(first_line: str, *, not_happened: str | None = None,
+               subsystem: str, exc: BaseException) -> str | None:
+    """A plain post naming the recognised cause of ``exc``, or None (#590).
+
+    When :func:`known_cause` recognises the failure, the post leads
+    with ``first_line``, states the cause in plain words, and gives
+    the cause's remedy as the next step — no retry advice for a
+    failure retrying cannot fix. Returns None when the cause is not
+    recognised, so the caller falls back to its generic wording.
+    """
+    known = known_cause(exc)
+    if known is None:
+        return None
+    return plain_post(f"{first_line} {known.cause}",
+                      not_happened=not_happened,
+                      next_step=known.remedy,
+                      subsystem=subsystem, exc=exc)
 
 
 def plain_post(first_line: str, *, not_happened: str | None = None,
@@ -116,7 +266,7 @@ def plain_post(first_line: str, *, not_happened: str | None = None,
     did *not* happen where that matters ("Nothing was uploaded or
     started."), and ``next_step`` gives the one clear thing to do next.
     Technical detail is demoted, not deleted: when ``subsystem`` is named
-    the post ends with the stable greppable ``PB_*`` marker (classified
+    the post ends with the stable greppable ``PH_*`` marker (classified
     from ``exc`` when given, never its text), and the full detail stays in
     the log and the diagnostics bundle, where the caller already put it.
 

@@ -48,6 +48,7 @@ from pathlib import Path
 from .. import logs
 from . import _config
 from . import discord_print_summary as print_summary
+from . import local_vision
 from . import stock_watch, timelapse_capture
 from . import visual_watch as _vw
 
@@ -604,14 +605,21 @@ def _post_target_configured():
         return False
 
 
-def _default_verdict(adapter):
-    """The shared vision verdict call with this printer's context (visual_watch.visual_verdict)."""
+def _default_verdict(adapter, streak=None):
+    """The shared vision verdict call with this printer's context (visual_watch.visual_verdict).
+
+    ``streak`` is a print monitor's per-print local-detector escalation
+    state (#455), created fresh by start_monitor so it lives and dies
+    with the print; the auto light-off driver passes none — idle plate
+    checks judge single frames.
+    """
     from . import moonraker_event_listener as mel
 
     def verdict(image, prompt):
         return _vw.visual_verdict(
             image, prompt, chat_url=mel._vision_chat_url, model=mel._VISION_MODEL,
-            api_key=lambda: mel._profile_env_value("CLIPROXY_API_KEY"), context=vision_context(adapter))
+            api_key=lambda: mel._profile_env_value("CLIPROXY_API_KEY"), context=vision_context(adapter),
+            local_streak=streak)
 
     return verdict
 
@@ -631,7 +639,10 @@ def start_monitor(adapter, filename, *, post=None, camera_fn=None, status_fn=Non
         from . import moonraker_event_listener as mel
         if _config.cfg()["visual_watch"]["enabled"] and mel._vision_ready():
             watch = _vw.VisualPrintWatch()
-            verdict = _default_verdict(adapter)
+            # One escalation streak per monitored print (#455): a fresh
+            # FailureStreak here is the per-print reset — the monitor
+            # (and its streak) is discarded when the print ends.
+            verdict = _default_verdict(adapter, streak=local_vision.FailureStreak())
             alert = deliver_visual_alert
             dark_notice = deliver_dark_notice
         if camera_source_fn is None and hasattr(adapter, "camera_frame_source"):

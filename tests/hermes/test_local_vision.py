@@ -403,6 +403,129 @@ def test_visual_extract_never_uses_the_local_detector(monkeypatch, process_cfg):
     assert result is None and consulted == []
 
 
+# --------------------------------------------------------------- temporal escalation
+
+
+def _kept(conf):
+    return [(conf, [0.1, 0.1, 0.5, 0.5])]
+
+
+def test_streak_weak_positive_escalates_on_the_second_consecutive_check():
+    streak = lv.FailureStreak()
+    verdict, detail = streak.note(_kept(0.35))
+    assert verdict == "uncertain" and "first consecutive detection" in detail
+    verdict, detail = streak.note(_kept(0.35))
+    assert verdict == "spaghetti" and "2 consecutive checks" in detail
+
+
+def test_streak_clean_frame_clears_and_the_count_restarts():
+    streak = lv.FailureStreak()
+    streak.note(_kept(0.35))
+    verdict, detail = streak.note([])
+    assert verdict == "ok" and "did not persist" in detail
+    assert streak.positives == 0
+    verdict, _ = streak.note(_kept(0.35))
+    assert verdict == "uncertain"  # a fresh first detection, not an escalation
+
+
+def test_streak_clean_frame_without_a_streak_is_the_plain_ok():
+    streak = lv.FailureStreak()
+    verdict, detail = streak.note([])
+    assert (verdict, detail) == ("ok", "local failure detector: no failure detected")
+
+
+def test_streak_strong_frame_is_spaghetti_at_once_then_streak_confirmed():
+    streak = lv.FailureStreak()
+    verdict, detail = streak.note(_kept(0.9))
+    assert verdict == "spaghetti" and "consecutive" not in detail
+    verdict, detail = streak.note(_kept(0.9))
+    assert verdict == "spaghetti" and "confirmed across 2 consecutive checks" in detail
+
+
+def test_streak_weak_then_strong_is_streak_confirmed():
+    streak = lv.FailureStreak()
+    streak.note(_kept(0.35))
+    verdict, detail = streak.note(_kept(0.9))
+    assert verdict == "spaghetti" and "confirmed across 2 consecutive checks" in detail
+
+
+def test_streak_counter_is_bounded_and_reset_clears():
+    streak = lv.FailureStreak()
+    for _ in range(lv.STREAK_CAP + 50):
+        streak.note(_kept(0.35))
+    assert streak.positives == lv.STREAK_CAP
+    streak.reset()
+    assert streak.positives == 0
+    verdict, _ = streak.note(_kept(0.35))
+    assert verdict == "uncertain"
+
+
+def test_local_verdict_with_streak_escalates_across_frames():
+    streak = lv.FailureStreak()
+    verdict, _ = lv.local_verdict(frame(84), cfg_with(), streak=streak)
+    assert verdict == "uncertain"
+    verdict, detail = lv.local_verdict(frame(84), cfg_with(), streak=streak)
+    assert verdict == "spaghetti" and "consecutive checks" in detail
+    # Without a streak the same frames stay single-frame verdicts.
+    assert lv.local_verdict(frame(84), cfg_with())[0] == "uncertain"
+    assert lv.local_verdict(frame(84), cfg_with())[0] == "uncertain"
+
+
+def test_detector_failure_neither_builds_nor_clears_the_streak(monkeypatch):
+    streak = lv.FailureStreak()
+    verdict, _ = lv.local_verdict(frame(84), cfg_with(), streak=streak)
+    assert verdict == "uncertain" and streak.positives == 1
+    real_detect = lv.detect
+    calls = []
+
+    def exploding_detect(image, cfg=None):
+        calls.append(1)
+        raise lv.LocalVisionError("inference exploded")
+
+    monkeypatch.setattr(lv, "detect", exploding_detect)
+    with pytest.raises(lv.LocalVisionError):
+        lv.local_verdict(frame(84), cfg_with(), streak=streak)
+    assert streak.positives == 1  # the failed check left the streak untouched
+    monkeypatch.setattr(lv, "detect", real_detect)
+    verdict, _ = lv.local_verdict(frame(84), cfg_with(), streak=streak)
+    assert verdict == "spaghetti"  # the next real positive completes the streak
+
+
+def test_visual_verdict_threads_the_streak(process_cfg):
+    streak = lv.FailureStreak()
+    verdict, _ = _verdict(frame(84), local_streak=streak)
+    assert verdict == "uncertain"
+    verdict, detail = _verdict(frame(84), local_streak=streak)
+    assert verdict == "spaghetti" and "consecutive checks" in detail
+    # No streak passed: single-frame behaviour, however often it repeats.
+    assert _verdict(frame(84))[0] == "uncertain"
+    assert _verdict(frame(84))[0] == "uncertain"
+
+
+def test_listener_verdict_threads_its_streak(process_cfg):
+    from print_handy.hermes import moonraker_event_listener as mel
+    listener = mel.Listener()
+    assert isinstance(listener.local_streak, lv.FailureStreak)
+    verdict, _ = mel._visual_verdict(frame(84), "prompt", listener.local_streak)
+    assert verdict == "uncertain"
+    verdict, _ = mel._visual_verdict(frame(84), "prompt", listener.local_streak)
+    assert verdict == "spaghetti"
+    # The idle-check form (no streak) stays single-frame.
+    assert mel._visual_verdict(frame(84), "prompt")[0] == "uncertain"
+
+
+def test_bambu_monitor_verdict_threads_its_streak(process_cfg):
+    from print_handy.hermes import bambu_watch
+    adapter = SimpleNamespace(label="Test Bambu")
+    streak = lv.FailureStreak()
+    verdict = bambu_watch._default_verdict(adapter, streak=streak)
+    assert verdict(frame(84), "prompt")[0] == "uncertain"
+    assert verdict(frame(84), "prompt")[0] == "spaghetti"
+    single = bambu_watch._default_verdict(adapter)
+    assert single(frame(84), "prompt")[0] == "uncertain"
+    assert single(frame(84), "prompt")[0] == "uncertain"
+
+
 # --------------------------------------------------------------- vision_ready
 
 

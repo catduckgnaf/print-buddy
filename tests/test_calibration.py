@@ -16,6 +16,9 @@ on accept, on discard and on failure.
 import asyncio
 import importlib.util
 import json
+import socket
+import threading
+import urllib.error
 from pathlib import Path
 from types import SimpleNamespace as S
 from unittest import mock
@@ -26,6 +29,7 @@ from print_handy import calibration as cal
 from print_handy import printers, settings
 from print_handy.bot import commands as bot_commands
 from print_handy.bot import llm
+from print_handy.core import model_job
 from print_handy.hermes import spool_sync
 
 ROOT = Path(__file__).parents[1]
@@ -130,24 +134,38 @@ class FakeTransport:
 
     Routes by path. `store_appends` maps an exact script line to console
     messages that appear once that script is POSTed; `mesh_after` is the
-    bed_mesh object served once a mesh measurement script was sent.
+    bed_mesh object served once a mesh measurement script was sent. Like
+    Moonraker, the console store stamps each entry with an increasing time
+    and keeps only the newest `store_cap` entries. `send_error` is raised
+    by a gcode-script POST after it has been recorded (the printer got it).
     """
 
     def __init__(self, objects=ZMOD_OBJECTS, settings_map=ZMOD_SETTINGS,
                  variables=SCREENLESS_VARIABLES, states=("standby",),
                  store=(), store_appends=None, mesh_after=None,
-                 native_config=NATIVE_CONFIG, error=None):
+                 native_config=NATIVE_CONFIG, error=None, store_cap=1000,
+                 send_error=None):
         self.objects = objects
         self.settings_map = settings_map
         self.variables = variables
         self.states = list(states)
-        self.store = list(store)
+        self.store_cap = store_cap
+        self.clock = 1_793_000_000.0
+        self.store = []
+        self._append(store)
         self.store_appends = store_appends or {}
+        self.send_error = send_error
         self.mesh_after = mesh_after
         self.native_config = native_config
         self.error = error
         self.calls = []
         self.mesh_measured = False
+
+    def _append(self, messages):
+        for message in messages:
+            self.clock += 0.25
+            self.store.append((self.clock, message))
+        del self.store[:-self.store_cap]
 
     @property
     def posts(self):
@@ -164,9 +182,11 @@ class FakeTransport:
             raise self.error
         if path == cal.GCODE_SCRIPT_PATH:
             script = (body or {}).get("script", "")
-            self.store += self.store_appends.get(script, [])
+            self._append(self.store_appends.get(script, []))
             if script.startswith(("AUTO_FULL_BED_LEVEL", "BED_MESH_CALIBRATE")):
                 self.mesh_measured = True
+            if self.send_error is not None:
+                raise self.send_error
             return {"result": "ok"}
         if path == cal.OBJECTS_LIST_PATH:
             return {"result": {"objects": self.objects}}
@@ -186,8 +206,8 @@ class FakeTransport:
             return {"result": {"status": {"print_stats": {"state": state}}}}
         if path == cal.GCODE_STORE_PATH:
             return {"result": {"gcode_store": [
-                {"message": message, "type": "response", "time": 0.0}
-                for message in self.store]}}
+                {"message": message, "type": "response", "time": when}
+                for when, message in self.store]}}
         if path == cal.NATIVE_CONFIG_PATH:
             if self.native_config is None:
                 raise OSError("no native config")
@@ -343,6 +363,111 @@ def test_pid_timeout_is_an_honest_error_not_a_result():
     assert "did not report" in str(excinfo.value)
 
 
+# ------------------------------------------------------------------ long sends
+
+def test_long_calibration_send_survives_a_read_timeout_and_polls_for_the_result():
+    # Moonraker holds /printer/gcode/script until the gcode finishes; the
+    # transport's read timeout fires while the printer keeps running it.
+    transport = pid_transport(send_error=TimeoutError("timed out"))
+    prepared = cal.prepare_pid(transport, AD5X, "extruder", 240)
+    result = cal.execute_pid(transport, prepared, poll_interval_s=0, sleep=NO_SLEEP)
+    assert result.after.kp == pytest.approx(24.85)
+    assert transport.scripts == ["PID_CALIBRATE HEATER=extruder TARGET=240"]
+
+
+def test_long_mesh_send_survives_a_read_timeout():
+    transport = FakeTransport(send_error=TimeoutError("timed out"))
+    _t, facts = zmod_facts(transport)
+    prepared = cal.prepare_mesh(transport, AD5X, facts)
+    result = cal.execute_mesh(transport, prepared, poll_interval_s=0, sleep=NO_SLEEP)
+    assert result.after.range == pytest.approx(0.18)
+
+
+def test_long_send_refused_connection_is_still_a_failure():
+    refused = urllib.error.URLError(ConnectionRefusedError(111, "Connection refused"))
+    transport = pid_transport(send_error=refused)
+    prepared = cal.prepare_pid(transport, AD5X, "extruder", 240)
+    with pytest.raises(cal.CalibrationError) as excinfo:
+        cal.execute_pid(transport, prepared, poll_interval_s=0, sleep=NO_SLEEP)
+    assert "The send did not succeed" in str(excinfo.value)
+
+
+def test_short_send_timeout_stays_an_uncertain_failure():
+    transport = FakeTransport(send_error=TimeoutError("timed out"))
+    with pytest.raises(cal.CalibrationError) as excinfo:
+        cal._send_script(transport, "SAVE_CONFIG")
+    assert "The send did not succeed" in str(excinfo.value)
+
+
+def test_urllib_signals_sent_then_timed_out_differently_from_never_connected():
+    # The real transport (spool_sync._http) against a server that accepts
+    # the request and never answers, like Moonraker during a long gcode:
+    # a bare TimeoutError, which a long calibration send treats as sent.
+    server = socket.socket()
+    server.bind(("127.0.0.1", 0))
+    server.listen(1)
+    port = server.getsockname()[1]
+    received = []
+
+    def accept_and_hold():
+        conn, _addr = server.accept()
+        received.append(conn.recv(65536))
+        threading.Event().wait(2)
+        conn.close()
+
+    threading.Thread(target=accept_and_hold, daemon=True).start()
+
+    def held(method, path, body=None):
+        return spool_sync._http(f"http://127.0.0.1:{port}", method, path, body, timeout=0.3)
+
+    try:
+        cal._send_script(held, "AUTO_FULL_BED_LEVEL", long_running=True)
+        assert received and received[0].startswith(b"POST /printer/gcode/script")
+    finally:
+        server.close()
+
+    closed = socket.socket()
+    closed.bind(("127.0.0.1", 0))
+    closed_port = closed.getsockname()[1]
+    closed.close()
+
+    def refused(method, path, body=None):
+        return spool_sync._http(f"http://127.0.0.1:{closed_port}", method, path, body,
+                                timeout=0.3)
+
+    with pytest.raises(cal.CalibrationError):
+        cal._send_script(refused, "AUTO_FULL_BED_LEVEL", long_running=True)
+
+
+# ------------------------------------------------------------------ full console store
+
+FULL_STORE = [f"// earlier line {n}" for n in range(1000)]
+
+
+def test_pid_result_found_when_moonraker_console_store_is_full():
+    # Moonraker keeps the newest 1000 entries: the count stays at 1000
+    # after the send, so a count baseline would never see the report.
+    transport = pid_transport(store=FULL_STORE)
+    prepared = cal.prepare_pid(transport, AD5X, "extruder", 240)
+    result = cal.execute_pid(transport, prepared, poll_attempts=2, poll_interval_s=0,
+                             sleep=NO_SLEEP)
+    assert len(transport.store) == 1000
+    assert result.after.kp == pytest.approx(24.85)
+
+
+def test_shaper_and_belts_results_found_when_the_console_store_is_full():
+    transport = FakeTransport(store=FULL_STORE,
+                              store_appends={"ZSHAPER": SHAPER_REPORT_ZMOD,
+                                             "BELTS_SHAPER_CALIBRATION": BELTS_REPORT})
+    facts = cal.fetch_facts(transport)
+    shaper = cal.execute_shaper(transport, cal.prepare_shaper(transport, AD5X, facts),
+                                poll_attempts=2, poll_interval_s=0, sleep=NO_SLEEP)
+    assert shaper.after == cal.ShaperValues("zv", 53.2, "mzv", 54.2)
+    text = cal.execute_belts(transport, cal.prepare_belts(transport, AD5X, facts),
+                             poll_interval_s=0, sleep=NO_SLEEP, quiet_polls=2)
+    assert "62 Hz" in text and "earlier line" not in text
+
+
 # ------------------------------------------------------------------ mesh
 
 def test_mesh_flow_zmod_screenless_measures_without_saving_then_accepts_once():
@@ -358,8 +483,9 @@ def test_mesh_flow_zmod_screenless_measures_without_saving_then_accepts_once():
     # No save of any kind before the accept.
     assert transport.scripts == [prepared.script]
     message = cal.accept_mesh(transport, result)
-    assert transport.scripts == [prepared.script, "BED_MESH_PROFILE SAVE=print_handy",
-                                 "SAVE_CONFIG"]
+    assert transport.scripts == [prepared.script, "BED_MESH_PROFILE LOAD=print_handy",
+                                 "BED_MESH_PROFILE SAVE=auto",
+                                 "BED_MESH_PROFILE REMOVE=print_handy", "SAVE_CONFIG"]
     assert transport.scripts.count("SAVE_CONFIG") == 1
     assert "Saved" in message
 
@@ -371,6 +497,7 @@ def test_mesh_discard_reloads_the_previous_profile_and_never_saves():
     result = cal.execute_mesh(transport, prepared, poll_interval_s=0, sleep=NO_SLEEP)
     cal.discard_mesh(transport, result)
     assert transport.scripts[-1] == "BED_MESH_PROFILE LOAD=auto"
+    assert "BED_MESH_PROFILE REMOVE=print_handy" in transport.scripts
     assert "SAVE_CONFIG" not in transport.scripts
     assert not any(s.startswith("BED_MESH_PROFILE SAVE") for s in transport.scripts)
 
@@ -394,6 +521,67 @@ def test_mesh_generic_klipper_uses_bed_mesh_calibrate():
     assert prepared.script == "BED_MESH_CALIBRATE PROFILE=print_handy"
     result = cal.execute_mesh(transport, prepared, poll_interval_s=0, sleep=NO_SLEEP)
     assert result.after.range == pytest.approx(0.18)
+    cal.accept_mesh(transport, result)
+    assert "BED_MESH_PROFILE SAVE=default" in transport.scripts
+
+
+def test_mesh_zmod_saves_to_and_compares_against_the_profile_prints_load():
+    # ZMod START_PRINT loads MESH=auto; Print Handy's own saved-mesh
+    # readiness check uses the same name.
+    assert cal.MESH_PROFILES["zmod"] == model_job.MESH_PROFILE == "auto"
+    # Nothing active: the before value is the saved 'auto' profile (range
+    # 0.42), not the scratch print_handy profile (range 0.20).
+    transport = FakeTransport()
+    facts = cal.fetch_facts(FakeTransport(variables=SCREENLESS_VARIABLES))
+    facts = cal.PrinterFacts(objects=facts.objects, macros=facts.macros,
+                             settings=facts.settings, variables=facts.variables,
+                             bed_mesh=bed_mesh_status(matrix=[], profile_name=""))
+    prepared = cal.prepare_mesh(transport, AD5X, facts)
+    assert prepared.profile == "auto"
+    assert prepared.before.range == pytest.approx(0.42)
+    assert "profile 'auto'" in cal.mesh_result_text(
+        cal.MeshResult(prepared=prepared, after=prepared.before))
+
+
+def test_mesh_zmod_uses_the_screenless_contract_temperatures():
+    contract = json.loads((ROOT / "config/mesh-interface.json").read_text())
+    transport = FakeTransport()
+    _t, facts = zmod_facts(transport)
+    script = cal.prepare_mesh(transport, AD5X, facts).script
+    assert f"EXTRUDER_TEMP={contract['hotend_target']}" in script
+    assert f"BED_TEMP={contract['bed_target']}" in script
+    assert "SAVE=0" in script and "SAVE=0" in contract["probe"]
+
+
+# ------------------------------------------------------------------ accept/discard idle guard
+
+def test_pid_accept_and_discard_refuse_when_a_print_started_meanwhile():
+    for action in (cal.accept_pid, cal.discard_pid):
+        transport = pid_transport(states=("standby", "standby", "printing"))
+        prepared = cal.prepare_pid(transport, AD5X, "extruder", 240)
+        result = cal.execute_pid(transport, prepared, poll_interval_s=0, sleep=NO_SLEEP)
+        with pytest.raises(cal.CalibrationRefusal):
+            action(transport, result)
+        assert transport.scripts == ["PID_CALIBRATE HEATER=extruder TARGET=240"]
+
+
+def test_mesh_and_shaper_accept_refuse_when_a_print_started_meanwhile():
+    transport = FakeTransport(states=("standby", "standby", "printing"))
+    _t, facts = zmod_facts(transport)
+    prepared = cal.prepare_mesh(transport, AD5X, facts)
+    result = cal.execute_mesh(transport, prepared, poll_interval_s=0, sleep=NO_SLEEP)
+    for action in (cal.accept_mesh, cal.discard_mesh):
+        with pytest.raises(cal.CalibrationRefusal):
+            action(transport, result)
+    assert transport.scripts == [prepared.script]
+    transport = FakeTransport(states=("standby", "standby", "printing"),
+                              store_appends={"ZSHAPER": SHAPER_REPORT_ZMOD})
+    facts = cal.fetch_facts(transport)
+    result = cal.execute_shaper(transport, cal.prepare_shaper(transport, AD5X, facts),
+                                poll_interval_s=0, sleep=NO_SLEEP)
+    with pytest.raises(cal.CalibrationRefusal):
+        cal.accept_shaper(transport, result)
+    assert transport.scripts == ["ZSHAPER"]
 
 
 # ------------------------------------------------------------------ shaper
@@ -501,6 +689,16 @@ def test_zoffset_screenless_reports_the_saved_store_and_its_arming():
     # The other store is shown as a separate value with its difference.
     assert "-1.240" in report and "(-0.055 mm" in report
     assert transport.posts == []
+    # LOAD_ZOFFSET_NATIVE has no reverse direction.
+    assert "the other way" not in report
+    assert "START=0" in report and "START=1" in report
+
+
+def test_zoffset_guidance_never_offers_a_reverse_load_zoffset_native():
+    for variables in (SCREENLESS_VARIABLES, NATIVE_VARIABLES):
+        transport = FakeTransport(variables=variables)
+        report = cal.zoffset_report(transport, AD5X, cal.fetch_facts(transport))
+        assert "LOAD_ZOFFSET_NATIVE the other way" not in report
 
 
 def test_zoffset_native_reports_the_screen_store_as_the_owner():
@@ -694,6 +892,31 @@ def test_dispatch_pid_discard_flow_restarts_and_records_discarded(tmp_path):
     assert len(records) == 1 and records[0]["outcome"] == "discarded"
 
 
+def test_dispatch_unanswered_result_sends_nothing_and_says_so(tmp_path):
+    # A timed-out result prompt is not a Discard: a PID discard is
+    # FIRMWARE_RESTART, which would kill a print started meanwhile.
+    adapter = FakeAdapter()
+    transport = pid_transport()
+    answers = [cal.RUN_LABEL, None]
+
+    async def confirm(adapter_, source, metadata, prefix, question, choices, timeout,
+                      live_key=None):
+        return answers.pop(0)
+
+    with _configured("flashforge.ad5x", "moonraker"), \
+            mock.patch.object(spool_sync, "moonraker", transport), \
+            mock.patch.object(plugin, "_confirm", confirm), \
+            _records_in(tmp_path):
+        out = asyncio.run(plugin.calibration_dispatch(
+            _event("/print-calibration pid extruder 240"), _gateway(adapter)))
+    assert out == {"action": "skip", "reason": "print calibration result unanswered"}
+    assert transport.scripts == ["PID_CALIBRATE HEATER=extruder TARGET=240"]
+    assert adapter.sent[-1] == cal.UNANSWERED_TEXT
+    assert "until Klipper restarts" in cal.UNANSWERED_TEXT
+    records = cal.read_records(tmp_path / cal.RECORDS_NAME)
+    assert len(records) == 1 and records[0]["outcome"] == "unanswered"
+
+
 def test_dispatch_pid_failure_writes_a_failed_record(tmp_path):
     adapter = FakeAdapter()
     transport = pid_transport()
@@ -758,8 +981,9 @@ def test_dispatch_mesh_accept_flow(tmp_path):
             _event("/print-calibration mesh"), _gateway(adapter)))
     assert out == {"action": "skip", "reason": "print calibration handled"}
     assert transport.scripts == [
-        "AUTO_FULL_BED_LEVEL PROFILE=print_handy SAVE=0 EXTRUDER_TEMP=230 BED_TEMP=80",
-        "BED_MESH_PROFILE SAVE=print_handy", "SAVE_CONFIG"]
+        "AUTO_FULL_BED_LEVEL PROFILE=print_handy SAVE=0 EXTRUDER_TEMP=220 BED_TEMP=60",
+        "BED_MESH_PROFILE LOAD=print_handy", "BED_MESH_PROFILE SAVE=auto",
+        "BED_MESH_PROFILE REMOVE=print_handy", "SAVE_CONFIG"]
     records = cal.read_records(tmp_path / cal.RECORDS_NAME)
     assert records[0]["outcome"] == "accepted"
     assert records[0]["differences"]["range_mm"]["delta"] == pytest.approx(-0.24)

@@ -3082,8 +3082,16 @@ async def calibration_dispatch(event, gateway, **kwargs):
                                     timeout, live_key=live_key)
             if answer == calibration.ACCEPT_LABEL:
                 action, outcome = accept, 'accepted'
-            else:
+            elif answer == calibration.DISCARD_LABEL:
                 action, outcome = discard, 'discarded'
+            else:
+                # No answer is not a Discard: a discard can restart the
+                # firmware, and a print may have started in the meantime.
+                record(calibration=record_name, outcome='unanswered',
+                       before=before_of(result), after=after_of(result),
+                       differences=differences_of(result), detail=detail)
+                await send(calibration.UNANSWERED_TEXT)
+                return {'action': 'skip', 'reason': 'print calibration result unanswered'}
             try:
                 message = await asyncio.to_thread(action, result)
             except (calibration.CalibrationRefusal, calibration.CalibrationError) as exc:

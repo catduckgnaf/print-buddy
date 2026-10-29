@@ -32,9 +32,11 @@ Klipper docs and source, Moonraker). The load-bearing facts:
   in-memory values.
 - A bed mesh is measured without saving (``AUTO_FULL_BED_LEVEL SAVE=0``
   on screenless ZMod, ``BED_MESH_CALIBRATE`` on generic Klipper — both
-  leave the mesh in memory only). Accept is ``BED_MESH_PROFILE SAVE=``
-  plus ``SAVE_CONFIG``; Discard reloads the previously active profile
-  (or clears the mesh), and nothing is ever written.
+  leave the mesh in memory only), into a scratch profile. Accept copies
+  it with ``BED_MESH_PROFILE SAVE=`` into the profile prints load
+  (``auto`` on ZMod, ``default`` on Klipper) plus ``SAVE_CONFIG``;
+  Discard removes the scratch profile and reloads the previously active
+  profile (or clears the mesh), and nothing is ever written.
 - Input shaper calibration (``ZSHAPER`` on ZMod, ``SHAPER_CALIBRATE``
   on generic Klipper) only *recommends* values on the console; they
   persist solely through SAVE_CONFIG. Accept is SAVE_CONFIG; Discard
@@ -96,11 +98,24 @@ DISCARD_LABEL = "Discard — don't save"
 CANCEL_LABEL = "Cancel"
 MEASURE_AGAIN_LABEL = "I adjusted them — measure again"
 FINISH_LABEL = "Done — the bed is level"
+UNANSWERED_TEXT = ("No answer came in time, so Print Handy sent nothing and saved nothing. "
+                   "The new values stay in the printer's memory only until Klipper "
+                   "restarts (restarting the printer drops them) — avoid an unrelated "
+                   "SAVE_CONFIG before then, because it would save them too.")
 
 RECORDS_NAME = "calibration_records.json"
-MESH_PROFILE = "print_handy"
-ZMOD_MESH_EXTRUDER_TEMP = 230   # AUTO_FULL_BED_LEVEL's documented defaults
-ZMOD_MESH_BED_TEMP = 80
+# The measured mesh lands in this scratch profile first, so Discard can
+# reload the untouched saved profile; Accept copies it into the profile
+# the printer's prints actually load and removes the scratch one.
+MEASURE_PROFILE = "print_handy"
+# The profile prints load: ZMod's START_PRINT loads MESH=auto (the same
+# name as core/model_job.MESH_PROFILE and its saved-mesh readiness check);
+# vanilla Klipper loads "default" at startup.
+MESH_PROFILES = {"zmod": "auto", "klipper": "default"}
+# The screenless mesh contract (config/mesh-interface.json): EXTRUDER_TEMP=220
+# BED_TEMP=60, not the macro's own defaults.
+ZMOD_MESH_EXTRUDER_TEMP = 220
+ZMOD_MESH_BED_TEMP = 60
 # Offered PID targets, default first — the choice stays in the flow.
 EXTRUDER_PID_TARGETS = (240, 200, 255)
 BED_PID_TARGETS = (60, 80, 110)
@@ -214,10 +229,24 @@ def _require_idle_now(transport, *, recheck=False):
     _require_idle(state, recheck=recheck)
 
 
-def _send_script(transport, line):
-    """POST exactly one gcode script line; a failure is reported as uncertain."""
+def _send_script(transport, line, *, long_running=False):
+    """POST exactly one gcode script line; a failure is reported as uncertain.
+
+    Moonraker answers /printer/gcode/script only once the gcode finishes,
+    so a calibration that runs for minutes outlives the transport's read
+    timeout while the printer keeps running it. With `long_running`, a
+    read timeout after the request went out (a bare TimeoutError — urllib
+    wraps connect/send failures in URLError) counts as sent, and the
+    caller's completion polling collects the result. A failure before the
+    request was sent stays a failure.
+    """
     try:
         transport("POST", GCODE_SCRIPT_PATH, {"script": line})
+    except TimeoutError as exc:
+        if not long_running:
+            raise CalibrationError(f"The send did not succeed ({exc}). It is not known "
+                                   "whether the printer received or ran anything — "
+                                   "check the printer before trying again.") from exc
     except Exception as exc:
         raise CalibrationError(f"The send did not succeed ({exc}). It is not known whether "
                                "the printer received or ran anything — check the printer "
@@ -697,8 +726,8 @@ class ScrewReading:
 
 # --------------------------------------------------------------------- gcode_store polling
 
-def fetch_store_messages(transport) -> list:
-    """The console messages Moonraker has stored, oldest first (strings only)."""
+def _fetch_store_entries(transport) -> list:
+    """The console entries Moonraker has stored, oldest first, as (time, message)."""
     try:
         payload = transport("GET", GCODE_STORE_PATH)
     except Exception as exc:
@@ -709,22 +738,48 @@ def fetch_store_messages(transport) -> list:
         raise CalibrationError("Moonraker's console-history response had no gcode_store") from None
     if not isinstance(entries, list):
         raise CalibrationError("Moonraker's console-history response was not a list")
-    return [entry["message"] for entry in entries
+    return [(entry.get("time") if isinstance(entry.get("time"), (int, float)) else 0.0,
+             entry["message"]) for entry in entries
             if isinstance(entry, dict) and isinstance(entry.get("message"), str)]
 
 
-def _poll(transport, baseline_count, matches, *, attempts, interval_s, sleep):
+def fetch_store_messages(transport) -> list:
+    """The console messages Moonraker has stored, oldest first (strings only)."""
+    return [message for _when, message in _fetch_store_entries(transport)]
+
+
+def store_mark(transport) -> float:
+    """A position in the console history: the newest stored entry's time.
+
+    Moonraker keeps only the newest entries (1000 by default), so once
+    the store is full a message count stops moving; entry timestamps keep
+    increasing, so they anchor "what arrived after the send".
+    """
+    return max((when for when, _message in _fetch_store_entries(transport)),
+               default=float("-inf"))
+
+
+def _entries_since(transport, mark) -> list:
+    return [(when, message) for when, message in _fetch_store_entries(transport)
+            if when > mark]
+
+
+def messages_since(transport, mark) -> list:
+    """The console messages stored after `mark` (see store_mark), oldest first."""
+    return [message for _when, message in _entries_since(transport, mark)]
+
+
+def _poll(transport, mark, matches, *, attempts, interval_s, sleep):
     """Poll the console store until `matches` finds a result in the new messages.
 
-    `matches(messages_after_baseline)` returns a non-None result to stop,
+    `matches(messages_after_mark)` returns a non-None result to stop,
     or None to keep waiting. Returns the result, or None when the attempt
     budget ran out. Timing is injectable so tests run instantly.
     """
     for attempt in range(max(1, attempts)):
         if attempt:
             sleep(interval_s)
-        messages = fetch_store_messages(transport)
-        result = matches(messages[baseline_count:])
+        result = matches(messages_since(transport, mark))
         if result is not None:
             return result
     return None
@@ -841,9 +896,9 @@ def execute_pid(transport, prepared: PreparedPid, *, poll_attempts=120,
     caller once a result exists.
     """
     _require_idle_now(transport, recheck=True)
-    baseline = len(fetch_store_messages(transport))
-    _send_script(transport, prepared.script)
-    after = _poll(transport, baseline, parse_pid_report,
+    mark = store_mark(transport)
+    _send_script(transport, prepared.script, long_running=True)
+    after = _poll(transport, mark, parse_pid_report,
                   attempts=poll_attempts, interval_s=poll_interval_s, sleep=sleep)
     if after is None:
         raise CalibrationError(
@@ -875,6 +930,7 @@ def pid_result_text(result: PidResult) -> str:
 
 def accept_pid(transport, result: PidResult) -> str:
     """Accept: exactly one SAVE_CONFIG, which also restarts Klipper."""
+    _require_idle_now(transport, recheck=True)
     _send_script(transport, "SAVE_CONFIG")
     return (f"Saved the new {result.prepared.label.lower()} PID values "
             f"({result.after.text()}) with SAVE_CONFIG. Klipper is restarting; the "
@@ -884,6 +940,7 @@ def accept_pid(transport, result: PidResult) -> str:
 
 def discard_pid(transport, result: PidResult) -> str:
     """Discard: exactly one FIRMWARE_RESTART, which drops the in-memory values. Never a save."""
+    _require_idle_now(transport, recheck=True)
     _send_script(transport, "FIRMWARE_RESTART")
     return (f"Discarded the new {result.prepared.label.lower()} PID values and restarted "
             f"Klipper's firmware, so the saved values ({result.before.text()}) are back "
@@ -904,9 +961,9 @@ class PreparedMesh:
     @property
     def script(self):
         if self.family == "zmod":
-            return (f"AUTO_FULL_BED_LEVEL PROFILE={self.profile} SAVE=0 "
+            return (f"AUTO_FULL_BED_LEVEL PROFILE={MEASURE_PROFILE} SAVE=0 "
                     f"EXTRUDER_TEMP={ZMOD_MESH_EXTRUDER_TEMP} BED_TEMP={ZMOD_MESH_BED_TEMP}")
-        return f"BED_MESH_CALIBRATE PROFILE={self.profile}"
+        return f"BED_MESH_CALIBRATE PROFILE={MEASURE_PROFILE}"
 
 
 def _matrix_key(matrix):
@@ -955,12 +1012,13 @@ def prepare_mesh(transport, entry, facts=None) -> PreparedMesh:
                 "The printer's configuration has no bed mesh (no [bed_mesh] section), "
                 "so there is no mesh calibration to run. Nothing was sent.")
         family = "klipper"
-    before = (active_mesh_summary(facts.bed_mesh)
-              or profile_mesh_summary(facts.bed_mesh, MESH_PROFILE))
+    profile = MESH_PROFILES[family]
+    before = (profile_mesh_summary(facts.bed_mesh, profile)
+              or active_mesh_summary(facts.bed_mesh))
     previous = facts.bed_mesh.get("profile_name")
     _require_idle_now(transport)
     return PreparedMesh(
-        family=family, profile=MESH_PROFILE, before=before,
+        family=family, profile=profile, before=before,
         previous_profile=previous if isinstance(previous, str) and previous else None,
         before_matrix=tuple(tuple(row) for row in facts.bed_mesh.get("probed_matrix") or []
                             if isinstance(row, list)))
@@ -1024,7 +1082,7 @@ def execute_mesh(transport, prepared: PreparedMesh, *, poll_attempts=180,
     """
     _require_idle_now(transport, recheck=True)
     before_key = _matrix_key([list(row) for row in prepared.before_matrix])
-    _send_script(transport, prepared.script)
+    _send_script(transport, prepared.script, long_running=True)
     last_key = None
     for attempt in range(max(1, poll_attempts)):
         if attempt:
@@ -1066,16 +1124,25 @@ def mesh_result_text(result: MeshResult) -> str:
               "The measured mesh is loaded in memory only — nothing has been saved.",
               f"- **{ACCEPT_LABEL}**: stores it as profile '{result.prepared.profile}' "
               "with BED_MESH_PROFILE SAVE + SAVE_CONFIG (SAVE_CONFIG restarts Klipper). "
-              "The profile is used when your start code loads it (on ZMod screenless, "
-              "START_PRINT's MESH= name); it never replaces the native screen's mesh.",
+              "That is the profile your prints load (ZMod screenless START_PRINT "
+              "MESH=auto; Klipper's startup profile 'default'); it never replaces the "
+              "native screen's mesh.",
               f"- **{DISCARD_LABEL}**: puts back the mesh that was loaded before "
               "(or clears the mesh) and saves nothing."]
     return "\n".join(lines)
 
 
 def accept_mesh(transport, result: MeshResult) -> str:
-    """Accept: save the measured mesh under the flow's profile, then SAVE_CONFIG once."""
+    """Accept: copy the measured mesh into the profile prints load, then SAVE_CONFIG once.
+
+    The measurement sits in the scratch profile; it is loaded, saved under
+    the prints' profile, and the scratch profile is removed so it is not
+    persisted alongside.
+    """
+    _require_idle_now(transport, recheck=True)
+    _send_script(transport, f"BED_MESH_PROFILE LOAD={MEASURE_PROFILE}")
     _send_script(transport, f"BED_MESH_PROFILE SAVE={result.prepared.profile}")
+    _send_script(transport, f"BED_MESH_PROFILE REMOVE={MEASURE_PROFILE}")
     _send_script(transport, "SAVE_CONFIG")
     return (f"Saved the measured mesh as profile '{result.prepared.profile}' with "
             "SAVE_CONFIG. Klipper is restarting; the profile is stored in the "
@@ -1084,9 +1151,15 @@ def accept_mesh(transport, result: MeshResult) -> str:
 
 
 def discard_mesh(transport, result: MeshResult) -> str:
-    """Discard: restore the previously loaded mesh (or clear it). Never a save."""
+    """Discard: restore the previously loaded mesh (or clear it). Never a save.
+
+    The scratch profile is removed first, so a later unrelated SAVE_CONFIG
+    cannot persist the discarded measurement.
+    """
+    _require_idle_now(transport, recheck=True)
+    _send_script(transport, f"BED_MESH_PROFILE REMOVE={MEASURE_PROFILE}")
     previous = result.prepared.previous_profile
-    if previous and previous != result.prepared.profile:
+    if previous and previous != MEASURE_PROFILE:
         _send_script(transport, f"BED_MESH_PROFILE LOAD={previous}")
         restored = f"reloaded the mesh that was active before ('{previous}')"
     else:
@@ -1208,8 +1281,8 @@ def execute_shaper(transport, prepared: PreparedShaper, *, poll_attempts=120,
     recommendation at all is a CalibrationError.
     """
     _require_idle_now(transport, recheck=True)
-    baseline = len(fetch_store_messages(transport))
-    _send_script(transport, prepared.script)
+    mark = store_mark(transport)
+    _send_script(transport, prepared.script, long_running=True)
 
     def both_axes(messages):
         values = parse_shaper_recommendations(messages)
@@ -1217,11 +1290,10 @@ def execute_shaper(transport, prepared: PreparedShaper, *, poll_attempts=120,
             return values
         return None
 
-    after = _poll(transport, baseline, both_axes,
+    after = _poll(transport, mark, both_axes,
                   attempts=poll_attempts, interval_s=poll_interval_s, sleep=sleep)
     if after is None:
-        messages = fetch_store_messages(transport)
-        partial = parse_shaper_recommendations(messages[baseline:])
+        partial = parse_shaper_recommendations(messages_since(transport, mark))
         if partial.freq_x is None and partial.freq_y is None:
             raise CalibrationError(
                 "The input shaper calibration did not report any recommended values "
@@ -1253,6 +1325,7 @@ def shaper_result_text(result: ShaperResult) -> str:
 
 def accept_shaper(transport, result: ShaperResult) -> str:
     """Accept: exactly one SAVE_CONFIG, which also restarts Klipper."""
+    _require_idle_now(transport, recheck=True)
     _send_script(transport, "SAVE_CONFIG")
     return ("Saved the recommended input shaper values with SAVE_CONFIG "
             f"(X: {result.after.axis_text('x')}; Y: {result.after.axis_text('y')}). "
@@ -1356,14 +1429,14 @@ def measure_screws(transport, *, poll_attempts=60, poll_interval_s=2.0,
                    sleep=time.sleep) -> ScrewReading:
     """Send SCREWS_TILT_CALCULATE once and poll the console for its result set."""
     _require_idle_now(transport, recheck=True)
-    baseline = len(fetch_store_messages(transport))
-    _send_script(transport, "SCREWS_TILT_CALCULATE")
+    mark = store_mark(transport)
+    _send_script(transport, "SCREWS_TILT_CALCULATE", long_running=True)
 
     def complete(messages):
         reading = parse_screw_lines(messages)
         return reading if len(reading.screws) >= 2 else None
 
-    reading = _poll(transport, baseline, complete,
+    reading = _poll(transport, mark, complete,
                     attempts=poll_attempts, interval_s=poll_interval_s, sleep=sleep)
     if reading is None:
         raise CalibrationError(
@@ -1500,16 +1573,16 @@ def execute_belts(transport, prepared: PreparedBelts, *, poll_attempts=90,
     it could not observe.
     """
     _require_idle_now(transport, recheck=True)
-    baseline = len(fetch_store_messages(transport))
-    _send_script(transport, "BELTS_SHAPER_CALIBRATION")
+    mark = store_mark(transport)
+    _send_script(transport, "BELTS_SHAPER_CALIBRATION", long_running=True)
     seen, quiet = [], 0
     for attempt in range(max(1, poll_attempts)):
         if attempt:
             sleep(poll_interval_s)
-        messages = fetch_store_messages(transport)
-        new = messages[baseline + len(seen):]
-        if new:
-            seen += new
+        entries = _entries_since(transport, mark)
+        if entries:
+            mark = entries[-1][0]
+            seen += [message for _when, message in entries]
             quiet = 0
         elif seen:
             quiet += 1
@@ -1695,8 +1768,11 @@ def zoffset_report(transport, entry, facts=None) -> str:
                          f"{_fmt(native_value)} mm "
                          f"({_delta(value, native_value, 3, ' mm')} from the "
                          "screenless value) — if you switch back to the screen, "
-                         "that is the value it will use unless you run "
-                         "LOAD_ZOFFSET_NATIVE the other way.")
+                         "that is the value it will use. LOAD_ZOFFSET_NATIVE only "
+                         "copies toward screenless: with its default START=0 it "
+                         "copies the native screen's offset into screenless mode "
+                         "and saves it (START=1, used at boot, only reports); no "
+                         "command copies the screenless value back to the screen.")
         lines += ["", *_ZOFFSET_SCREENLESS_GUIDE, "", _ZOFFSET_SYNCED_NOTE]
     else:
         lines.append("- Print Handy could not tell which store owns the Z offset: "
@@ -1775,7 +1851,8 @@ def read_records(path, limit=10) -> list:
 
 
 _OUTCOME_WORDS = {"accepted": "accepted and saved", "discarded": "discarded",
-                  "failed": "failed", "reported": "report/guide only"}
+                  "failed": "failed", "reported": "report/guide only",
+                  "unanswered": "no answer — nothing sent"}
 
 
 def _record_summary(record) -> str:

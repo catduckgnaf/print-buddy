@@ -1,11 +1,13 @@
 """Thangs, Nexprint and MakerOnline providers plus the connect-account flow (#464).
 
-Each provider uses the JSON API its own web app calls. The anonymous legs
-(model detail and file list) and each download gate (refusing a tokenless
-or bogus-token request) were verified live on 2026-10-29; the fixtures below
-are trimmed from those live answers. The download success shapes come from
-each web client's own code, so they are tested here with fake transports
-and the PR body names them as unverified until the first operator download.
+Each provider uses the JSON API its own web app calls. Verified live on
+2026-10-29: the anonymous legs (model detail and file list) of all three;
+each download gate refusing a tokenless or bogus-token request; a real
+Nexprint download with an operator token (the presigned-URL answer below
+has that live shape); and MakerOnline refusing every download ("system
+busy") with a valid token but no browser fingerprint token, which is why
+MakerOnline is inventory-only. Thangs' download success shape comes from
+its web client's code and is unverified until the first operator download.
 """
 import asyncio
 import base64
@@ -184,13 +186,13 @@ def test_empty_token_refuses(home):
 
 
 def test_expired_jwt_is_named_before_any_request(home):
-    save_token('makeronline', jwt(time.time() - 60))
+    save_token('thangs', jwt(time.time() - 60))
     with pytest.raises(SiteLoginNeeded) as caught:
-        site_accounts.read_token('makeronline')
+        site_accounts.read_token('thangs')
     assert caught.value.reason == 'expired'
     live = jwt(time.time() + 3600)
-    save_token('makeronline', live)
-    assert site_accounts.read_token('makeronline') == live
+    save_token('thangs', live)
+    assert site_accounts.read_token('thangs') == live
 
 
 @pytest.mark.parametrize('pasted', [
@@ -335,8 +337,9 @@ def test_nexprint_download(home, monkeypatch, tmp_path):
     save_token('nexprint')
     calls = []
     monkeypatch.setattr(model_job, '_web_api', web_fake({'presigned-download-url': (200, {
-        'code': 0, 'data': {'fileInfoList': [{'fileId': '2564408',
-                                              'resultUrl': 'https://oss.example/a.3mf?sig=1'}]}})},
+        'code': 0, 'data': {'from': None, 'fileInfoList': [{
+            'fileId': '2564408', 'type': 5,
+            'resultUrl': 'https://nexprint.oss-eu-central-1.aliyuncs.com/models/1/a.3mf?X-Amz-Signature=1'}]}})},
         calls))
     seen = []
     fake_file_download(monkeypatch, seen=seen)
@@ -345,7 +348,7 @@ def test_nexprint_download(home, monkeypatch, tmp_path):
               'biz_id': '1972478188160307200'}
     dest = model_job.nexprint_download(job, source, tmp_path/'src')
     assert dest.name == 'articulated dragon.3mf'
-    assert seen == ['https://oss.example/a.3mf?sig=1']
+    assert seen == ['https://nexprint.oss-eu-central-1.aliyuncs.com/models/1/a.3mf?X-Amz-Signature=1']
     assert calls[0]['method'] == 'POST'
     assert calls[0]['body'] == {'fileInfoList': [
         {'fileId': '2564408', 'type': '5', 'bizId': '1972478188160307200'}]}
@@ -395,46 +398,34 @@ def test_makeronline_missing_model(monkeypatch):
         model_job.makeronline_inventory(MAKERONLINE_URL)
 
 
-def test_makeronline_download_sends_the_raw_token(home, monkeypatch, tmp_path):
-    save_token('makeronline')
-    calls = []
-    monkeypatch.setattr(model_job, '_web_api', web_fake({'/api/file/download': (200, {
-        'code': 0, 'data': 'https://acop-prod-private.s3.example/x.stl?X-Amz-Signature=1'})},
-        calls))
-    fake_file_download(monkeypatch)
-    job = {'site': 'makeronline', 'model_id': '1000'}
-    source = {'id': '8816dd006d34f1a02a6ac631dd95bb2d',
-              'name': 'Articulated Pixel Heart Keychain Frikarte3D.stl'}
-    dest = model_job.makeronline_download(job, source, tmp_path/'src')
-    assert dest.name == source['name']
-    assert calls[0]['body'] == {'key': source['id'], 'file_type': 1,
-                                'is_batch_down': 0, 'mold_id': 1000}
-    # MakerOnline's client sends the JWT itself, with no "Bearer" prefix.
-    assert calls[0]['headers']['Authorization'] == 'test-login-token'
-    assert 'Risk-Token' not in calls[0]['headers']
+def test_makeronline_is_inventory_only(monkeypatch, tmp_path):
+    monkeypatch.setattr(model_job, '_web_api',
+                        web_fake({'/api/mold/detail': (200, MAKERONLINE_MODEL)}))
+    job = model_job.makeronline_inventory(MAKERONLINE_URL)
+    assert job['download_gap'] == model_job.MAKERONLINE_DOWNLOAD_GAP
+    monkeypatch.setattr(model_job, '_web_api',
+                        mock.Mock(side_effect=AssertionError('network attempted')))
+    with pytest.raises(RuntimeError, match='cannot download files from MakerOnline'):
+        model_job.makeronline_download(job, job['sources'][0], tmp_path/'src')
 
 
-@pytest.mark.parametrize('answer,expected', [
-    ((401, {'code': -1, 'message': 'access token authentication failed', 'data': []}),
-     SiteLoginNeeded),
-    ((200, {'code': 1003, 'message': 'verify', 'data': {'captchaLevel': 1}}), 'never solves'),
-    ((200, {'code': 0, 'data': None}), 'could not find a file URL'),
-])
-def test_makeronline_download_refusals(home, monkeypatch, tmp_path, answer, expected):
-    save_token('makeronline')
-    monkeypatch.setattr(model_job, '_web_api', web_fake({'/api/file/download': answer}))
-    job = {'site': 'makeronline', 'model_id': '1000'}
-    source = {'id': 'k', 'name': 'a.stl'}
-    if expected is SiteLoginNeeded:
-        with pytest.raises(SiteLoginNeeded):
-            model_job.makeronline_download(job, source, tmp_path/'src')
-    else:
-        with pytest.raises(RuntimeError, match=expected):
-            model_job.makeronline_download(job, source, tmp_path/'src')
+def test_prepared_intake_makeronline_lists_files_then_names_the_gap(env, monkeypatch):
+    monkeypatch.setattr(model_job, '_web_api',
+                        web_fake({'/api/mold/detail': (200, MAKERONLINE_MODEL)}))
+    monkeypatch.setattr(model_job, 'download_for_site',
+                        mock.Mock(side_effect=AssertionError('download attempted')))
+    adapter = Adapter([])
+    asyncio.run(prepared_intake.prepare_link(
+        _event(MAKERONLINE_URL), adapter, state(), env.root, timeout=1))
+    assert adapter.questions == []  # no connect offer: no login can fix this
+    receipt = json.loads(next(env.root.glob('*.json')).read_text())
+    assert receipt['status'] == 'FAILED'
+    assert 'Articulated Pixel Heart Keychain Frikarte3D.stl' in receipt['error']
+    assert 'browser security check' in receipt['error']
+    assert 'Nothing was downloaded' in receipt['error']
 
 
-@pytest.mark.parametrize('download', [
-    model_job.thangs_download, model_job.nexprint_download, model_job.makeronline_download])
+@pytest.mark.parametrize('download', [model_job.thangs_download, model_job.nexprint_download])
 def test_downloads_without_token_never_network(home, monkeypatch, tmp_path, download):
     monkeypatch.setattr(model_job, '_web_api',
                         mock.Mock(side_effect=AssertionError('network attempted')))
@@ -455,9 +446,16 @@ def test_design_fetch_refuses_to_pick_among_several_files(monkeypatch):
 
 def test_design_fetch_keeps_the_token_wording(home, monkeypatch, tmp_path):
     from print_handy.core import design
-    monkeypatch.setattr(model_job, '_web_api',
-                        web_fake({'/api/mold/detail': (200, MAKERONLINE_MODEL)}))
-    with pytest.raises(design.DesignError, match='mo_access_token'):
+    one = json.loads(json.dumps(NEXPRINT_MODEL))
+    one['data']['modelFileList'] = one['data']['modelFileList'][:1]
+    monkeypatch.setattr(model_job, '_web_api', web_fake({'model-base-info/get': (200, one)}))
+    with pytest.raises(design.DesignError, match='auth_token'):
+        design.fetch_link_source(NEXPRINT_URL, tmp_path/'src')
+
+
+def test_design_fetch_makeronline_names_the_gap(tmp_path):
+    from print_handy.core import design
+    with pytest.raises(design.DesignError, match='browser security check'):
         design.fetch_link_source(MAKERONLINE_URL, tmp_path/'src')
 
 
@@ -469,9 +467,9 @@ def _event(url):
 
 
 def _single_source_job():
-    return {'site': 'makeronline', 'model_id': '1000', 'title': 'Pixel Heart',
-            'slug': 'pixel-heart', 'license': 'CC BY-NC-ND',
-            'sources': [{'id': 'k', 'name': 'heart.stl', 'kind': 'files'}]}
+    return {'site': 'nexprint', 'model_id': '2076455756517335040', 'title': 'Penguin keychain',
+            'slug': 'penguin-keychain', 'license': 'CC BY',
+            'sources': [{'id': 'k', 'name': 'Penguin+keychain.stl', 'kind': 'files'}]}
 
 
 def _quiet_preview(monkeypatch):
@@ -485,40 +483,40 @@ def test_connect_flow_retries_the_download_after_saved(env, home, monkeypatch):
     # asks for the token in chat), and after "Saved — try again" retries the
     # same download. The retry is stopped by a sentinel so this test covers
     # exactly the connect loop.
-    monkeypatch.setattr(model_job, 'makeronline_inventory', lambda url: _single_source_job())
+    monkeypatch.setattr(model_job, 'nexprint_inventory', lambda url: _single_source_job())
     _quiet_preview(monkeypatch)
     attempts = []
 
     def fake_download(job, chosen, dest):
         attempts.append(chosen['id'])
         if len(attempts) == 1:
-            site_accounts.read_token('makeronline')  # raises: no file yet
+            site_accounts.read_token('nexprint')  # raises: no file yet
         raise RuntimeError('sentinel: download retried')
     monkeypatch.setattr(model_job, 'download_for_site', fake_download)
     adapter = Adapter([0, 0])
     asyncio.run(prepared_intake.prepare_link(
-        _event(MAKERONLINE_URL), adapter, state(), env.root, timeout=1))
+        _event(NEXPRINT_URL), adapter, state(), env.root, timeout=1))
     assert attempts == ['k', 'k']
-    assert adapter.questions[0]['choices'][:2] == ['Connect MakerOnline account', 'Not now (cancel)']
-    assert 'no MakerOnline account is connected' in adapter.questions[0]['question']
-    walkthrough = next(text for text in adapter.sent if 'Connect your MakerOnline account' in text)
-    assert 'mo_access_token' in walkthrough and "Don't paste the token here" in walkthrough
+    assert adapter.questions[0]['choices'][:2] == ['Connect Nexprint account', 'Not now (cancel)']
+    assert 'no Nexprint account is connected' in adapter.questions[0]['question']
+    walkthrough = next(text for text in adapter.sent if 'Connect your Nexprint account' in text)
+    assert 'auth_token' in walkthrough and "Don't paste the token here" in walkthrough
     assert adapter.questions[1]['choices'][0] == 'Saved — try again'
     receipt = json.loads(next(env.root.glob('*.json')).read_text())
     assert 'sentinel' in receipt['error']
 
 
 def test_connect_flow_refused_token_is_offered_again(env, home, monkeypatch):
-    monkeypatch.setattr(model_job, 'makeronline_inventory', lambda url: _single_source_job())
+    monkeypatch.setattr(model_job, 'nexprint_inventory', lambda url: _single_source_job())
     _quiet_preview(monkeypatch)
 
     def refused(job, chosen, dest):
-        raise site_accounts.refused('makeronline')
+        raise site_accounts.refused('nexprint')
     monkeypatch.setattr(model_job, 'download_for_site', refused)
     adapter = Adapter([0, 0, 1])
     asyncio.run(prepared_intake.prepare_link(
-        _event(MAKERONLINE_URL), adapter, state(), env.root, timeout=1))
-    offers = [q for q in adapter.questions if q['choices'][0] == 'Connect MakerOnline account']
+        _event(NEXPRINT_URL), adapter, state(), env.root, timeout=1))
+    offers = [q for q in adapter.questions if q['choices'][0] == 'Connect Nexprint account']
     assert len(offers) == 2
     assert 'turned down the saved login' in offers[1]['question']
     receipt = json.loads(next(env.root.glob('*.json')).read_text())
@@ -526,32 +524,32 @@ def test_connect_flow_refused_token_is_offered_again(env, home, monkeypatch):
 
 
 def test_connect_flow_declined_reports_the_token_file(env, home, monkeypatch):
-    monkeypatch.setattr(model_job, 'makeronline_inventory', lambda url: _single_source_job())
+    monkeypatch.setattr(model_job, 'nexprint_inventory', lambda url: _single_source_job())
     _quiet_preview(monkeypatch)
     monkeypatch.setattr(model_job, 'download_for_site',
-                        lambda job, chosen, dest: site_accounts.read_token('makeronline'))
+                        lambda job, chosen, dest: site_accounts.read_token('nexprint'))
     adapter = Adapter([1])
     asyncio.run(prepared_intake.prepare_link(
-        _event(MAKERONLINE_URL), adapter, state(), env.root, timeout=1))
+        _event(NEXPRINT_URL), adapter, state(), env.root, timeout=1))
     assert len(adapter.questions) == 1
     final = adapter.sent[-1].replace('\\', '/')
     assert final.startswith('That model could not be downloaded:')
-    assert '.config/makeronline/token' in final
+    assert '.config/nexprint/token' in final
     assert 'Nothing was sliced, uploaded or started.' in final
 
 
 def test_connect_flow_gives_up_after_three_rounds(env, home, monkeypatch):
-    monkeypatch.setattr(model_job, 'makeronline_inventory', lambda url: _single_source_job())
+    monkeypatch.setattr(model_job, 'nexprint_inventory', lambda url: _single_source_job())
     _quiet_preview(monkeypatch)
     calls = []
 
     def refused(job, chosen, dest):
         calls.append(1)
-        raise site_accounts.refused('makeronline')
+        raise site_accounts.refused('nexprint')
     monkeypatch.setattr(model_job, 'download_for_site', refused)
     adapter = Adapter([0, 0] * prepared_intake.MAX_CONNECT_ROUNDS)
     asyncio.run(prepared_intake.prepare_link(
-        _event(MAKERONLINE_URL), adapter, state(), env.root, timeout=1))
+        _event(NEXPRINT_URL), adapter, state(), env.root, timeout=1))
     assert len(calls) == prepared_intake.MAX_CONNECT_ROUNDS + 1
     assert adapter.sent[-1].startswith('That model could not be downloaded:')
 

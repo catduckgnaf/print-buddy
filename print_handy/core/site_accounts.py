@@ -1,9 +1,9 @@
 """Login-token model sites (#464): where each token lives and how to connect it.
 
-Creality Cloud, Thangs, Nexprint and MakerOnline download through the web
+Creality Cloud, Thangs and Nexprint download through the web
 app's own API with the operator's login token — a value the signed-in
 browser keeps in a cookie or local storage. None of these sites can be
-logged in to from a script (their login pages put a captcha in front, and
+logged in to from a script (their login pages sit behind robot checks, and
 Print Handy never stores a password or solves a captcha), so "connecting an
 account" means the operator copies that value from their own browser into a
 token file. The token is never collected in chat: the chat flow (see
@@ -47,10 +47,6 @@ LOGIN_SITES = {
         "Cookies for https://www.nexprint.com, the cookie named `auth_token` "
         "(or Local Storage, `ACCOUNT_INFO`, its `access_token` value)",
         "Nexprint login token"),
-    "makeronline": LoginSite(
-        "makeronline", "MakerOnline", "makeronline", "https://makeronline.com",
-        "Cookies for https://makeronline.com, the cookie named `mo_access_token`",
-        "MakerOnline login token"),
 }
 
 

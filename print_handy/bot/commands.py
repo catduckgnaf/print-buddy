@@ -96,9 +96,9 @@ def as_text(name, values):
 
 def help_text(bot_name="Print Handy"):
     lines = [f"**{bot_name}** prints from this channel. Nothing starts without a button press.",
-             "- Post a MakerWorld, Printables, Thingiverse, Creality Cloud, Thangs, Nexprint or MakerOnline link or .3mf/.stl.",
+             "- Post a .3mf/.stl or a MakerWorld, Printables, Thingiverse, Creality, Thangs or Nexprint link.",
              '- "print it" after a link, or "print the last one again", reuses the last model.',
-             '- "print 57" (or "print #57") reprints print #57, exactly like "/print-again 57".',
+             '- "print 57" (or "print #57") reprints print #57, like "/print-again 57".',
              '- "add new filament" / "add a new spool" / "swap the filament" starts the guided /spool flow.']
     lines += [f"- `{c.usage}`: {c.description}"
               + (f" (also `/{c.aliases[0]}`)" if c.aliases else "")

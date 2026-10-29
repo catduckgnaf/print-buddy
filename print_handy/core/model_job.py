@@ -778,7 +778,8 @@ def crealitycloud_download(job, source, target):
     return _fetch_chosen(url, target, source.get("name"), "Creality Cloud", exact=True)
 
 # ---------------------------------------------------------------------------
-# Login-token web-API sites (#464): Thangs, Nexprint, MakerOnline.
+# Login-token web-API sites (#464): Thangs and Nexprint (MakerOnline's
+# inventory shares the transport but is inventory-only; see below).
 #
 # Like Creality Cloud above, each of these uses the JSON API its own web app
 # calls. Model detail and the file list answer anonymously; the download
@@ -1109,6 +1110,9 @@ def nexprint_download(job, source, target):
         return _reuse_cached(cached, target, "Nexprint")
     from .site_accounts import read_token
     token = read_token("nexprint")
+    # Verified live 2026-10-29 with an operator token: the answer is
+    # {code: 0, data: {fileInfoList: [{fileId, type, resultUrl}]}}, and
+    # resultUrl is a presigned object-storage URL for that one file.
     d = _nexprint_result(
         "POST", "/api/v1/model-library-server/common/presigned-download-url",
         {"fileInfoList": [{"fileId": str(source.get("id")),
@@ -1121,13 +1125,23 @@ def nexprint_download(job, source, target):
 
 
 MAKERONLINE = "https://makeronline.com"
-MAKERONLINE_ANSWER_GAP = _answer_gap("MakerOnline")
 MAKERONLINE_LICENSES = _CC_LICENSES + ["Standard Digital File License"]
-MAKERONLINE_CAPTCHA_GAP = (
-    "MakerOnline asked for a captcha before this download. Print Handy never solves or "
-    "skips a captcha, so nothing was downloaded. Open the model page on makeronline.com "
-    "in a browser, download the .stl/.3mf file there, then upload or drop the file here "
-    "instead.")
+
+# MakerOnline is inventory-only, like MyMiniFactory: the model lookup and
+# file list answer anonymously, but its download call (POST /api/file/download)
+# also wants a Risk-Token produced by NetEase Yidun's in-browser device
+# fingerprinting SDK. Tested live 2026-10-29 with a valid operator login token
+# and no Risk-Token: the token was accepted (no auth refusal), and every
+# download answered code 1 "The system is busy" on two different models. Faking
+# that fingerprint is a bot-check bypass, which Print Handy never does, so the
+# refusal below IS the download behavior and no credential changes it.
+MAKERONLINE_DOWNLOAD_GAP = (
+    "Print Handy cannot download files from MakerOnline. Its download service "
+    "requires a browser security check (a device-fingerprint token) on every "
+    "download, which Print Handy does not fake or get around; with a valid login "
+    "alone the site refuses every download. Workaround: open the model page on "
+    "makeronline.com in a browser, download the .stl/.3mf file there, then upload "
+    "or drop the file here instead.")
 
 
 def makeronline_id(url):
@@ -1138,52 +1152,34 @@ def makeronline_id(url):
     return m.group(1)
 
 
-def _makeronline_result(method, path, body=None, token=None):
-    """One MakerOnline API call; returns the envelope's data.
-
-    The web client sends the login token as the raw Authorization value
-    (a JWT, no "Bearer"). code 1003 is the captcha demand: a hard stop.
-    """
-    headers = {"lang": "en"}
-    if token: headers["Authorization"] = token
-    status, d = _web_api(method, f"{MAKERONLINE}{path}", body=body, headers=headers)
-    if not isinstance(d, dict) or "code" not in d:
-        if token and status in (401, 403):
-            from .site_accounts import refused
-            raise refused("makeronline")
-        raise RuntimeError(f"MakerOnline answered with an unexpected response (HTTP {status}), "
-                           "so the request was not followed")
-    code = d.get("code")
-    if code == 0: return d.get("data")
-    if code == -1 or status == 401:
-        from .site_accounts import refused
-        raise refused("makeronline")
-    if code == 1003: raise RuntimeError(MAKERONLINE_CAPTCHA_GAP)
-    if code == 1 and "not exist" in str(d.get("message") or ""):
-        raise RuntimeError("MakerOnline says this model does not exist — it may have been "
-                           "removed, or the link is wrong")
-    raise RuntimeError(f"MakerOnline refused the request (code {code})")
-
-
 def makeronline_inventory(url):
     mid = makeronline_id(url)
-    d = _makeronline_result("GET", f"/api/mold/detail?id={mid}")
-    if not isinstance(d, dict) or not d.get("id"):
+    status, d = _web_api("GET", f"{MAKERONLINE}/api/mold/detail?id={mid}", headers={"lang": "en"})
+    if not isinstance(d, dict) or "code" not in d:
+        raise RuntimeError(f"MakerOnline answered with an unexpected response (HTTP {status}), "
+                           "so the link was not followed")
+    if d.get("code") != 0:
+        if "not exist" in str(d.get("message") or ""):
+            raise RuntimeError("MakerOnline says this model does not exist — it may have been "
+                               "removed, or the link is wrong")
+        raise RuntimeError(f"MakerOnline refused the model lookup (code {d.get('code')})")
+    data = d.get("data")
+    if not isinstance(data, dict) or not data.get("id"):
         raise RuntimeError(f"MakerOnline model {mid} was not found — it may have been removed, "
                            "or the link is wrong")
     rows = []
-    for f in d.get("files") or []:
+    for f in data.get("files") or []:
         if not isinstance(f, dict) or not f.get("key"): continue
         name = str(f.get("file_name") or "").strip()
         if Path(name).suffix.lower() not in {".stl", ".3mf"}: continue
         rows.append({"id": f["key"], "name": name, "bytes": f.get("file_size"),
                      "kind": "files", "file_id": f.get("file_id")})
-    title = str(d.get("title") or "").strip() or f"makeronline-{mid}"
-    lic = d.get("license")
-    job = {"site": "makeronline", "model_id": str(d["id"]), "title": title,
+    title = str(data.get("title") or "").strip() or f"makeronline-{mid}"
+    lic = data.get("license")
+    job = {"site": "makeronline", "model_id": str(data["id"]), "title": title,
            "slug": _title_slug(title, mid),
            "license": MAKERONLINE_LICENSES[lic - 1] if isinstance(lic, int) and 1 <= lic <= len(MAKERONLINE_LICENSES) else None,
-           "sources": rows}
+           "sources": rows, "download_gap": MAKERONLINE_DOWNLOAD_GAP}
     if not rows:
         job["no_geometry_reason"] = (
             f"MakerOnline model \"{title}\" lists no STL/3MF model files, so there is no "
@@ -1193,20 +1189,8 @@ def makeronline_inventory(url):
 
 
 def makeronline_download(job, source, target):
-    cached = _cached_source("makeronline", "id", source.get("id"), job.get("model_id"))
-    if cached is not None and cached.name == Path(source.get("name") or "").name:
-        return _reuse_cached(cached, target, "MakerOnline")
-    from .site_accounts import read_token
-    token = read_token("makeronline")
-    mold_id = job["model_id"]
-    d = _makeronline_result(
-        "POST", "/api/file/download",
-        {"key": source.get("id"), "file_type": 1, "is_batch_down": 0,
-         "mold_id": int(mold_id) if str(mold_id).isdigit() else mold_id},
-        token=token)
-    url = _answer_url(d)
-    if not url: raise RuntimeError(MAKERONLINE_ANSWER_GAP)
-    return _fetch_chosen(url, target, source.get("name"), "MakerOnline", exact=True)
+    # Inventory-only: never touches the network (see MAKERONLINE_DOWNLOAD_GAP).
+    raise RuntimeError(MAKERONLINE_DOWNLOAD_GAP)
 
 
 # Per-site registry (#462): site -> function NAME, resolved through this module's globals

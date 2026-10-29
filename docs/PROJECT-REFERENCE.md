@@ -226,7 +226,7 @@ Live status: the model lookup and file list were verified against the live API o
 
 ### Connecting a login-token site from chat
 
-Creality Cloud, Thangs, Nexprint and MakerOnline all download with the operator's own login token: a value the signed-in browser keeps in a cookie, saved on the Print Handy machine as `~/.config/<site>/token` (Docker: `/data/.config/<site>/token`, from the mounted `dot-config` folder). Print Handy cannot sign in for you. Each site's login page sits behind a robot check, and Print Handy never stores a password or solves a captcha, so the token always comes from a browser you signed in with yourself.
+Creality Cloud, Thangs and Nexprint all download with the operator's own login token: a value the signed-in browser keeps in a cookie, saved on the Print Handy machine as `~/.config/<site>/token` (Docker: `/data/.config/<site>/token`, from the mounted `dot-config` folder). Print Handy cannot sign in for you. Each site's login page sits behind a robot check, and Print Handy never stores a password or solves a captcha, so the token always comes from a browser you signed in with yourself.
 
 You do not have to set these up in advance. When a download needs a token that is missing, empty, expired or refused, the bot does not just fail. It says which, and offers two buttons:
 
@@ -257,18 +257,11 @@ mkdir -p ~/.config/nexprint && chmod 700 ~/.config/nexprint
 
 Both the designer's own STL/3MF files and the model's print-setting 3MF projects are offered; a setting project is labeled with its setting name. Nexprint's download limits are named when reached. Only the `.com` site is supported, not `nexprint.cn`.
 
-### MakerOnline login token
+Live status: on 2026-10-29 the Thangs and Nexprint model lookups and file lists were verified against the live APIs, and both download endpoints were verified to refuse a request with no token or a made-up one. A Nexprint download with a real operator token was verified the same day (a binary STL, byte-for-byte the size the listing reported). The Thangs download has **not** been verified live yet; the first download with a token file in place verifies it, and if the answer carries no file URL Print Handy says so plainly instead of guessing.
 
-MakerOnline (Anycubic) links use the JSON API the MakerOnline web app itself uses (`makeronline.com/api/...`). Links look like `makeronline.com/en/model/<title>/<id>.html`. The model lookup and file list need no login. The download sends the token as the raw `Authorization` header value (MakerOnline's own client sends it with no `Bearer` prefix). The token is the value of the `mo_access_token` cookie on `https://makeronline.com`, saved as `~/.config/makeronline/token`:
+### MakerOnline (inventory only)
 
-```bash
-mkdir -p ~/.config/makeronline && chmod 700 ~/.config/makeronline
-(umask 077 && cat > ~/.config/makeronline/token)   # paste the mo_access_token cookie value, press Enter, then Ctrl-D
-```
-
-MakerOnline can ask for a captcha before a download. Print Handy never solves or skips a captcha (and never uses the site's app-only paths around it), so that answer is a plain stop: download the file from the model page in a browser and upload or drop it instead. Only the model's own STL/3MF files are offered; its printer-specific print profiles are not.
-
-Live status for all three: on 2026-10-29 the model lookup and file list were verified against each live API, and each download endpoint was verified to refuse a request with no token or a made-up one. The download itself has **not** been verified live yet, because that needs the operator's token. The first download with a token file in place is what verifies it; if the answer carries no file URL, Print Handy says so plainly instead of guessing.
+MakerOnline (Anycubic) links (`makeronline.com/en/model/<title>/<id>.html`) are recognized, and Print Handy looks up the model and lists its STL/3MF files through the JSON API the MakerOnline web app uses. No login is needed for that. **Downloads are not supported, and no token changes that.** MakerOnline's download service wants a device-fingerprint token from a browser security SDK (NetEase Yidun) on every download. Tested on 2026-10-29 with a valid operator login token: the token was accepted, and every download on two different models was refused with "The system is busy". Producing that fingerprint from a script would mean getting around a site's bot check, which Print Handy never does. So intake lists the files and stops with the gap named, and the workaround is to download the file from the model page in a browser and upload or drop it in the chat instead. There is no MakerOnline token file and no connect offer.
 
 ### All settings
 

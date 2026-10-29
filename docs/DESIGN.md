@@ -107,8 +107,8 @@ original is never modified: design works on a copy inside its session folder.
 - **A model link** — the file is fetched through the ordinary link machinery
   first (MakerWorld picks its default profile; Printables, Thingiverse and
   Creality Cloud must offer one STL/3MF file — a Creality Cloud link's print
-  profile names its file when it has one; Thangs, Nexprint and MakerOnline
-  must offer one STL/3MF file too; MyMiniFactory and Cults3D links
+  profile names its file when it has one; Thangs and Nexprint must offer
+  one STL/3MF file too; MyMiniFactory, MakerOnline and Cults3D links
   stop with their download gaps named), then edited like a dropped file.
 
 ## Saying it instead of the command

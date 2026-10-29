@@ -1321,10 +1321,22 @@ def apply_stock_presence(status, stock):
 def _validate_slot_selection(state, selection):
     """The selected IFS slot, not the globally active spool, owns a single-color job."""
     slot = state.get('ifs_slots', {}).get(str(selection['slot']), {})
+    mapping_matches = (slot.get('spoolman_id') and slot.get('spoolman_id') == selection['spoolman_id']
+                       and str(slot.get('material', '')).casefold() == selection['material'].casefold())
+    if mapping_matches and not slot.get('physical_color_verified'):
+        # Only the color confirmation is missing: say so plainly and offer
+        # the one-button fix instead of a retry that fails the same way.
+        from .slice_refusal import unconfirmed_slot_color
+        raise unconfirmed_slot_color(
+            selection['slot'], slot,
+            f"selected IFS slot {selection['slot']} is unverified or its material/spool mapping differs")
     if (not slot.get('physical_color_verified') or not slot.get('spoolman_id')
             or slot.get('spoolman_id') != selection['spoolman_id']
             or str(slot.get('material', '')).casefold() != selection['material'].casefold()):
-        raise RuntimeError(f"selected IFS slot {selection['slot']} is unverified or its material/spool mapping differs")
+        # A different spool or material is never waved through: plain reason, no one-tap fix.
+        from .slice_refusal import slot_mismatch
+        raise slot_mismatch(selection['slot'], slot, selection,
+                            f"selected IFS slot {selection['slot']} is unverified or its material/spool mapping differs")
     return slot
 
 
@@ -2500,6 +2512,93 @@ def _job_fit(job, brim_override):
     return fit, supports, brim_override
 
 
+def _rearranged_group_placement(src, manifest, group, bed):
+    """export_single_color_plate kwargs that place one rearranged slot plate at 100%."""
+    from . import plate_merge
+    from .orca_adapter import _yaw
+    keys = set(group['part_keys'])
+    object_ids = {str(part['object_id']) for part in manifest['parts'] if part['key'] in keys}
+    arranged = plate_merge.arrange_group(src, object_ids, bed)
+    if arranged is None:
+        raise RuntimeError(f"the slot {group['slot']} parts do not fit one {bed} mm plate at 100% even "
+                           'rearranged; choose split or shrink instead. Nothing sliced')
+    kwargs = {'item_shifts': arranged['shifts']}
+    if arranged['yaw_by_object']:
+        kwargs['fit_by_object'] = {oid: {'rotation': _yaw(deg)} for oid, deg in arranged['yaw_by_object'].items()}
+    return kwargs
+
+
+def _plates_for(source, manifest):
+    """Source plates, or the implicit single plate a plate-less 3MF holds (as slicing treats it)."""
+    try:
+        return plate_manifest(source)['plates']
+    except RuntimeError:
+        return [{'id': 1, 'name': 'Plate 1', 'status': 'planned',
+                 'object_ids': sorted({int(p['object_id']) for p in manifest['parts']})}]
+
+
+def full_size_one_plate(source, state, decisions=None):
+    """A 100%-scale, one-plate rearrangement the slicer will honor exactly, or None.
+
+    This is the cheap first fit check after the author's layout fails the bed:
+    no Orca probe runs. It answers with the planner the slice path uses, so an
+    arrangement it reports is one slicing realizes:
+
+    * per-part color decisions on a 3MF slice through the merge planner
+      (``plate_merge.plan``) with the rearrangement flag, which keeps the
+      merge spacing, bed-edge margin and prime-tower room for multi-slot jobs;
+    * a single-color or generic single-plate source slices through
+      ``geometry_layout.arrange_and_export``, so it is checked with
+      ``probe_single_plate_rearrange`` at the same defaults.
+
+    Multi-plate single-color sources and anything the planners cannot place
+    return None, and intake falls back to the full fit search.
+    """
+    from . import plate_merge
+    from .geometry_layout import probe_single_plate_rearrange
+    source = Path(source)
+    st = dict(state or {})
+    st.setdefault('bed_mm', [BED_MM, BED_MM])
+    st.setdefault('max_print_height_mm', MAX_HEIGHT_MM)
+    bed = (float(st['bed_mm'][0]), float(st['bed_mm'][1]), float(st['max_print_height_mm']))
+    mode = (decisions or {}).get('mode')
+    if mode == 'per_part':
+        if source.suffix.lower() != '.3mf':
+            return None
+        from .source_colors import inventory
+        manifest = inventory(source)
+        if len(manifest.get('parts') or []) < 2:
+            return None
+        view = _per_part_view(manifest, decisions)
+        slots = _part_slots(view, manifest)
+        flagged = {'full_size_rearrange_plan': {'rearrange_plate': True}}
+        verdict = plate_merge.plan(source, manifest, _plates_for(source, manifest), slots, st,
+                                   bed=int(bed[0]), job=flagged)
+        if verdict.get('mode') != 'merge':
+            return None
+        boxes = list((verdict.get('placed_bounds_mm') or {}).values())
+        span = ([round(max(b[0][1] for b in boxes) - min(b[0][0] for b in boxes), 2),
+                 round(max(b[1][1] for b in boxes) - min(b[1][0] for b in boxes), 2),
+                 round(max(b[2][1] for b in boxes), 2)] if boxes else None)
+        return {'id': 'rearrange_100', 'scale': 1.0, 'rearrange_plate': True, 'via': 'merge_planner',
+                'part_count': len(verdict.get('objects_out') or []),
+                'turned_parts': len(verdict.get('yaw_by_object') or {}),
+                'slots': verdict.get('slots') or [], **({'size_mm': span} if span else {})}
+    if source.suffix.lower() == '.3mf':
+        try:
+            if len(plate_manifest(source).get('plates') or []) > 1:
+                return None  # multi-plate sources slice through the merge planner, which needs decisions
+        except RuntimeError:
+            pass
+    from .geometry_layout import DEFAULT_MARGIN_MM as arrange_edge
+    # The same margin the slice will arrange with: layout.arrange_edge_mm plus any brim.
+    plan = probe_single_plate_rearrange(source, bed=bed,
+                                        margin=arrange_edge + float(st.get('brim_override') or 0))
+    if plan is None:
+        return None
+    return {**plan, 'via': 'arrange_and_export'}
+
+
 def per_part_fit_options(source, decisions, options, bed=BED_MM):
     """Keep only the fit options every per-part slot plate can honor.
 
@@ -3571,7 +3670,14 @@ def slice_job(job_path, brim_override=None, copies=None, scale=None, recipe_sha2
         artifacts = []
         for group in groups:
             plate = derived / f"slot{group['slot']}.3mf"
-            report = export_single_color_plate(src, plate, decisions, group['part_keys'], bed=int(st['bed_mm'][0]), slot_colors=st.get('ifs_slots') or {}, **({'fit': fit} if fit is not None else {}))
+            placement_kw = {'fit': fit} if fit is not None else {}
+            if fit is None and job.get('full_size_rearrange_plan'):
+                # A chosen 100% rearrangement that could not merge onto one
+                # multicolor bed: each slot plate is packed on its own bed
+                # (parts may turn 90 degrees) instead of keeping the
+                # author's layout, which is what overflowed the bed.
+                placement_kw = _rearranged_group_placement(src, manifest, group, int(st['bed_mm'][0]))
+            report = export_single_color_plate(src, plate, decisions, group['part_keys'], bed=int(st['bed_mm'][0]), slot_colors=st.get('ifs_slots') or {}, **placement_kw)
             slice_dir = work / 'sliced' / 'orca' / uuid.uuid4().hex
             out, provenance, configs = slice_model(plate, slice_dir, st, brim_override, preserve_layout=True, filament_slot=group['slot'], **({'supports': supports} if supports is not None else {}))
             # Keep the plate's physical IFS slot explicit. Orca may retain
@@ -3686,10 +3792,13 @@ def slice_job(job_path, brim_override=None, copies=None, scale=None, recipe_sha2
     if rearrange_plan:
         from .geometry_layout import arrange_and_export
         rearrange_dir = slice_dir / "rearranged_100pct"
+        from .geometry_layout import DEFAULT_MARGIN_MM as _arrange_edge
         layout_report = arrange_and_export(
             src,
             rearrange_dir,
             bed=(float(st["bed_mm"][0]), float(st["bed_mm"][1]), float(st["max_print_height_mm"])),
+            # layout.arrange_edge_mm plus the job's brim, so the whole brim stays on the bed.
+            margin=_arrange_edge + float(brim_override or 0),
             allow_geometry_only_strip=not bool(decisions and decisions.get("mode") in ("multicolor", "per_part")),
         )
         preserved = (layout_report.get("preserved_3mf_package") or {}).get("preserved_3mf")

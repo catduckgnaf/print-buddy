@@ -252,6 +252,12 @@ def _read_path(printer_id=None):
 def load(printer_id=None):
     with open(_read_path(printer_id)) as f:
         state = json.load(f)
+    # A loaded slot with no color code gets one derived from its name (or a
+    # neutral default it says out loud), never overwriting a valid hex. The
+    # next save persists it; the listener upgrades it from Spoolman or the
+    # printer's own report when those answer.
+    from .filament_color import fill_missing_slot_hexes
+    fill_missing_slot_hexes(state)
     return state
 
 
@@ -721,6 +727,10 @@ def main():
             print("  - " + p)
         for w in facts.get("warnings") or []:
             print("  - warning: " + w)
+        spacing = settings.spacing_summary(settings.current())
+        print(f"  part spacing: {spacing['label']} preset - "
+              + ", ".join(f"{name} {value:g}" for name, value in spacing["values"].items())
+              + (f" (set explicitly: {', '.join(spacing['overridden'])})" if spacing["overridden"] else ""))
         sys.exit(0 if ok else 2)
     # set
     if a.spool is not None:

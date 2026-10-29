@@ -123,6 +123,47 @@ def check_service(data, key):
     return url
 
 
+def _moonraker_transport(base_url):
+    """The firmware reader's transport shape over plain urllib, as check_service does it."""
+    def call(method, path, body=None):
+        payload = None if body is None else json.dumps(body).encode()
+        req = urllib.request.Request(base_url.rstrip("/") + path, data=payload, method=method,
+                                     headers={"Content-Type": "application/json"})
+        with urllib.request.urlopen(req, timeout=5) as resp:
+            return json.loads(resp.read().decode() or "{}")
+    return call
+
+
+def check_zmod_version(data):
+    """The installed ZMod version, read live from Moonraker (#562 Part 2, Gap 2).
+
+    Doctor is where Print Handy's live service checks already live, so the
+    version rides here — and into the diagnostics bundle, which embeds
+    doctor's output — instead of the bundle growing its own Moonraker
+    transport. Only a ZMod-family printer has a ZMod version: anything
+    else, and a ZMod printer with no Moonraker URL configured, skips. The
+    read goes through firmware_update's update-status reader and is
+    fail-soft: an unreachable Moonraker or an absent `zmod` component
+    reports the version as unknown, named as such — never a failure, and
+    never blocking the rest of the doctor.
+    """
+    from . import firmware_update
+    entry = firmware_update.printer_entry(data["printer"]["model"])
+    if entry is None or entry.firmware_family != "zmod":
+        return None
+    url = data.get("services", {}).get("moonraker_url")
+    if not url:
+        return None
+    try:
+        status = firmware_update.fetch_status(_moonraker_transport(url))
+    except Exception as exc:
+        return f"unknown (Moonraker's update status could not be read: {exc})"
+    zmod = status.component("zmod")
+    if zmod is not None and zmod.current:
+        return zmod.current
+    return "unknown (not reported by Moonraker)"
+
+
 def check_bot(data):
     """Which runtime talks to Discord, and for the standalone bot, where and for whom."""
     mode = data["bot"]["mode"]
@@ -298,6 +339,7 @@ def run(out=sys.stdout):
     report("orca cli", check_orca, data)
     for key in SERVICE_PATHS:
         report(key.replace("_url", ""), check_service, data, key)
+    report("zmod version", check_zmod_version, data)
     report("bot mode", check_bot, data)
     report("hermes discord platform", check_hermes_platform, data)
     report("logging", check_logging, data)

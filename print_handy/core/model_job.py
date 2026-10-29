@@ -540,7 +540,7 @@ def _timing(job_path, stage, **extra):
     """Launch latency instrumentation: append one line to <job>/TIMING.jsonl. Never raises."""
     try:
         line={"stage":stage,"t":round(time.time(),3),"pid":os.getpid(),**extra}
-        print("TIMING "+json.dumps(line), flush=True)
+        logger.debug("TIMING %s", json.dumps(line))  # stdout stays clean in production logs
         if job_path is not None:
             with (Path(job_path).parent/"TIMING.jsonl").open("a") as out: out.write(json.dumps(line)+"\n")
     except Exception:
@@ -949,13 +949,13 @@ def _build_position_labels(selections, noun):
     counts = {}
     for s in selections:
         c_title = format_color_title(s.get('color'))
-        mat = str(s.get('material', '')).strip()
+        mat = printer_state.display_material(s.get('material', ''))
         name = c_title if mat and c_title.casefold().endswith(mat.casefold()) else f'{c_title} {mat}'.strip()
         counts[name] = counts.get(name, 0) + 1
     labels = []
     for s in selections:
         c_title = format_color_title(s.get('color'))
-        mat = str(s.get('material', '')).strip()
+        mat = printer_state.display_material(s.get('material', ''))
         name = c_title if mat and c_title.casefold().endswith(mat.casefold()) else f'{c_title} {mat}'.strip()
         if counts[name] > 1:
             labels.append(f'{name} ({noun} {s["slot"]})')

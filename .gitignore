@@ -8,6 +8,9 @@ config/after-update.sh
 .slicer-work/
 .claude/worktrees/
 
+# OrcaSlicer writes 00000.log into its working directory at startup
+00000.log
+
 # Docker deployment state and secrets
 /.env
 /data/

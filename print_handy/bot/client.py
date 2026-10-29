@@ -101,11 +101,11 @@ def run_bot(cfg):
         except discord.LoginFailure as exc:
             print(f"Discord refused the bot token: {exc}. Check that the token in the environment "
                   "variable named by discord.token_env is the current bot token. "
-                  "Reference: PB_DISCORD_CONFIGURATION", file=sys.stderr)
+                  "Reference: PH_DISCORD_CONFIGURATION", file=sys.stderr)
             return 3
         except discord.PrivilegedIntentsRequired:
             print("Turn on the Message Content intent for this bot in the Discord developer portal "
-                  "(Bot > Privileged Gateway Intents). Reference: PB_DISCORD_CONFIGURATION",
+                  "(Bot > Privileged Gateway Intents). Reference: PH_DISCORD_CONFIGURATION",
                   file=sys.stderr)
             return 3
         except Exception as exc:

@@ -10,7 +10,16 @@ from pathlib import Path
 
 import pytest
 
-from print_handy import settings
+# The geometry fixtures across the suites were authored against the Standard part
+# gaps (merge spacing 10 mm, edge 8 mm, tower clearance 8/10 mm), which are now
+# the "medium" preset; the shipped default is "minimum". Pin the suites to
+# medium so those fixtures keep testing the algorithms they were written for.
+# The presets themselves are covered by tests/core/test_spacing_presets.py, the
+# minimum values by tests/slicer/test_spacing_minimums_real.py (real Orca), and
+# fit behavior at the minimum preset by tests/pipeline/test_fit_auto_rearrange.py.
+os.environ.setdefault("PRINT_HANDY__LAYOUT__SPACING", "medium")
+
+from print_handy import settings  # noqa: E402
 from print_handy.hermes import _config
 
 _tmp = Path(tempfile.mkdtemp(prefix="3dp-test-state-"))

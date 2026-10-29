@@ -162,6 +162,38 @@ def test_a_second_click_on_an_answered_question_changes_nothing(cfg):
     cancel.assert_not_called()
 
 
+def test_a_press_is_acknowledged_before_the_waiting_flow_wakes(cfg):
+    # Discord shows "This interaction failed" when a press is not acknowledged within 3 s.
+    # Resolving the prompt wakes the waiting flow (slice start, file reads), so the ack comes first.
+    discord, core = make(cfg)
+    order = []
+    real_defer, real_resolve = fake_discord._Response.defer, prompts.resolve_gateway_clarify
+
+    async def defer(response, **kwargs):
+        order.append("ack")
+        await real_defer(response, **kwargs)
+
+    def resolve(cid, answer):
+        order.append("resolve")
+        return real_resolve(cid, answer)
+
+    async def flow():
+        task = asyncio.create_task(core.handle_message(discord.message("/print-stop")))
+        clicked = await press(discord, print_stop.KEEP_LABEL)
+        await task
+        return clicked
+
+    with mock.patch.object(print_stop, "status", return_value=printing()), \
+            mock.patch.object(print_stop, "cancel") as cancel, \
+            mock.patch.object(fake_discord._Response, "defer", defer), \
+            mock.patch.object(prompts, "resolve_gateway_clarify", side_effect=resolve):
+        clicked = run(flow())
+    assert order[:2] == ["ack", "resolve"]
+    assert clicked.acks and clicked.replies == []  # no ephemeral error for a good press
+    assert f"chose **{print_stop.KEEP_LABEL}**" in clicked.message.content
+    cancel.assert_not_called()
+
+
 def test_slash_command_runs_as_its_typed_text(cfg):
     discord, core = make(cfg)
     interaction = fake_discord.FakeInteraction(discord, discord.operator, channel=discord.channel)

@@ -508,7 +508,39 @@ def intake_preview_text(predicted_id: Any, slot: Any) -> str:
             f"#{predicted_id} on the spool now. Nothing is created until you confirm at the end.")
 
 
+def intake_color(state: dict[str, Any]) -> tuple[str | None, str | None]:
+    """The color code the walkthrough will record: (hex, source).
+
+    A picked swatch (or label read) wins; otherwise the color name is read
+    against the named-color table. (None, None) means nothing could be
+    worked out and the swatch step must ask.
+    """
+    from ..core import filament_color
+    picked = filament_color.normalize_hex(state.get("hex"))
+    if picked:
+        return picked, "picked"
+    derived = filament_color.derive_hex(state.get("color"), state.get("material"))
+    return (derived, "name") if derived else (None, None)
+
+
+def _needs_swatch(state: dict[str, Any]) -> bool:
+    return bool(str(state.get("color") or "").strip()) and intake_color(state)[0] is None
+
+
 def intake_next_step(state: dict[str, Any]) -> str:
+    """The step after the next one, unless the color code is still unknown.
+
+    When a color name cannot be read (a typed "Galaxy"), the walkthrough
+    asks once with swatch buttons — never for a hex — before going on, so a
+    new spool always records a color code.
+    """
+    following = _intake_following_step(state)
+    if following in ("weight", "disposition", "confirm") and _needs_swatch(state):
+        return "swatch"
+    return following
+
+
+def _intake_following_step(state: dict[str, Any]) -> str:
     """The step after the one ``state['step']`` names as just completed.
 
     Brand is asked only when the walkthrough was started with
@@ -525,6 +557,12 @@ def intake_next_step(state: dict[str, Any]) -> str:
         return "color"
     if step == "color":
         return "weight"
+    if step == "swatch":
+        if state.get("grams") is None:
+            return "weight"
+        if state.get("origin") == "insertion" and state.get("old_spool_id"):
+            return "disposition" if not state.get("disposition") else "confirm"
+        return "confirm"
     if step == "weight":
         if state.get("origin") == "insertion" and state.get("old_spool_id"):
             return "disposition"
@@ -538,6 +576,9 @@ def _intake_spec_line(state: dict[str, Any]) -> str:
     head = " ".join(x for x in (str(state.get("brand") or "").strip(),
                                 str(state.get("material") or "").strip()) if x)
     color = str(state.get("color") or "").strip()
+    hx, _ = intake_color(state)
+    if color and hx:
+        color = f"{color} (#{hx})"
     return ", ".join(x for x in (head, color) if x)
 
 
@@ -552,6 +593,10 @@ def intake_step_text(state: dict[str, Any]) -> str:
         return "**Brand** — pick a known brand, type one, or skip. The spool works the same either way."
     if step == "color":
         return f"**Colour / finish** — {state.get('material')}: pick one, or Other to type it exactly as labelled."
+    if step == "swatch":
+        return (f"**Color code** — I could not tell the color of “{state.get('color')}” from its name. "
+                "Pick the closest color; it sets the preview color and the printer screen swatch, "
+                "not how the spool prints.")
     if step == "weight":
         return "**Starting weight** — how many grams is a full spool? Pick one, or Custom to type it."
     if step == "disposition":
@@ -710,6 +755,10 @@ def intake_step_components(aid: str, state: dict[str, Any]) -> list[dict[str, An
     if step == "color":
         return _select_components(aid, "Choose the colour / finish",
                                   intake_color_options(state.get("types"), state.get("material")))
+    if step == "swatch":
+        from ..core.filament_color import SWATCHES
+        return _select_components(aid, "Choose the closest color",
+                                  [{"label": f"{label} (#{hx})", "value": hx} for label, hx in SWATCHES])
     if step == "weight":
         return intake_weight_components(aid)
     if step == "disposition":
@@ -739,6 +788,10 @@ def create_and_bind_insertion(slot: int, values: dict[str, Any], spool_sync,
     """
     spec = spool_sync.parse_new(", ".join(str(values.get(key) or "").strip() for key in ("brand", "material", "color", "grams")))
     spec["lot"] = str(values.get("lot") or "").strip() or None
+    # The color code is always recorded: a picked swatch wins,
+    # else create_spool derives it from the color name.
+    if values.get("hex"):
+        spec["hex"] = values["hex"]
     # Label temperatures read from a spool photo (#514) ride along so
     # create_spool records them on a new filament; absent values stay absent.
     for key in ("nozzle_temp", "bed_temp"):

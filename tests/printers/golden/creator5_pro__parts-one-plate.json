@@ -738,16 +738,19 @@
       ]
     },
     "layout": {
+      "arrange_edge_mm": 1.0,
+      "arrange_gap_mm": 2.0,
       "max_merged_hours": 12.0,
-      "merge_edge_margin_mm": 8.0,
-      "merge_spacing_mm": 10.0,
+      "merge_edge_margin_mm": 1.0,
+      "merge_spacing_mm": 2.0,
       "multi_copy_edge_mm": 3.0,
-      "single_copy_edge_mm": 1.0
+      "single_copy_edge_mm": 1.0,
+      "spacing": "minimum"
     },
     "prime_tower": {
-      "edge_mm": 10.0,
-      "merge_slack_mm": 5.0,
-      "part_clearance_mm": 8.0,
+      "edge_mm": 4.0,
+      "merge_slack_mm": 1.0,
+      "part_clearance_mm": 3.5,
       "size_mm": 45.0
     },
     "printer": {

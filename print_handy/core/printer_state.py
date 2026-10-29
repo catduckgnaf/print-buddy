@@ -135,6 +135,24 @@ def material_family(material):
     return m
 
 
+_DISPLAY_ACRONYMS = frozenset({"PLA", "PETG", "PET", "PCTG", "ABS", "ASA", "TPU", "TPE", "PA", "PA6", "PA11",
+                               "PA12", "PC", "PVA", "BVOH", "HIPS", "PP", "PE", "PEEK", "PEI", "CF", "GF", "HT", "HF"})
+
+
+def display_material(material):
+    """A material label for chat: polymer names upper-case, other lower-case words capitalised.
+
+    'Pla' -> 'PLA', 'silk pla' -> 'Silk PLA', 'petg-cf' -> 'PETG-CF'. Display only: stored and
+    compared labels (Spoolman, job records, material_family) are never rewritten with this.
+    """
+    def word(match):
+        text = match.group(0)
+        if text.upper() in _DISPLAY_ACRONYMS:
+            return text.upper()
+        return text[:1].upper() + text[1:] if text.islower() else text
+    return re.sub(r"[A-Za-z0-9]+", word, str(material or "").strip())
+
+
 def same_material(a, b):
     """True when two material labels slice as the same family."""
     fa, fb = material_family(a), material_family(b)
@@ -234,6 +252,12 @@ def _read_path(printer_id=None):
 def load(printer_id=None):
     with open(_read_path(printer_id)) as f:
         state = json.load(f)
+    # A loaded slot with no color code gets one derived from its name (or a
+    # neutral default it says out loud), never overwriting a valid hex. The
+    # next save persists it; the listener upgrades it from Spoolman or the
+    # printer's own report when those answer.
+    from .filament_color import fill_missing_slot_hexes
+    fill_missing_slot_hexes(state)
     return state
 
 
@@ -703,6 +727,10 @@ def main():
             print("  - " + p)
         for w in facts.get("warnings") or []:
             print("  - warning: " + w)
+        spacing = settings.spacing_summary(settings.current())
+        print(f"  part spacing: {spacing['label']} preset - "
+              + ", ".join(f"{name} {value:g}" for name, value in spacing["values"].items())
+              + (f" (set explicitly: {', '.join(spacing['overridden'])})" if spacing["overridden"] else ""))
         sys.exit(0 if ok else 2)
     # set
     if a.spool is not None:

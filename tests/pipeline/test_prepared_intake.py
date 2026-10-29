@@ -656,7 +656,7 @@ def test_color_save_prompt_shows_spool_projection_and_estimate_before_print_choi
     asyncio.run(prepared_intake.prepare_link(event, adapter, st, env.root, timeout=1))
     saved = [q['question'] for q in adapter.questions if q['choices'] and q['choices'][0].startswith('Slice and print')]
     assert len(saved) == 1
-    assert saved[0].startswith('White PLA · ')
+    assert saved[0].startswith('Ready to slice · White PLA')
     assert 'Slot 1 white PLA: needs about 25 g; spool has 200 g, about 175 g left after.' in saved[0]
     assert 'AD5X' not in saved[0]
     assert env.starts == []
@@ -1538,3 +1538,57 @@ def test_preview_names_the_selected_printer_not_a_hard_coded_model(monkeypatch):
     assert 'The Bambu Lab A1 figure after slicing will differ somewhat.' in text
     assert 'AD5X' not in text
 
+
+
+def test_deterministic_slice_refusal_explains_and_offers_the_one_tap_fix(env, monkeypatch):
+    # Live 2026-10-29: an unconfirmed slot refused the slice, chat said only
+    # "did not work ... PB_SLICING_UNKNOWN" and the blind retry failed the same way.
+    from print_handy.core import slice_refusal
+    real_slice = model_job.slice_job
+    calls, fixes = [], []
+
+    def refuse_once(job_path, *args, **kwargs):
+        calls.append(str(job_path))
+        if len(calls) == 1:
+            raise slice_refusal.unconfirmed_slot_color(
+                1, {'spoolman_id': 16, 'material': 'PLA', 'name': 'Matte white PLA', 'hex': 'FFFFFF'},
+                'selected IFS slot 1 is unverified or its material/spool mapping differs')
+        return real_slice(job_path, *args, **kwargs)
+
+    monkeypatch.setattr(model_job, 'slice_job', refuse_once)
+    monkeypatch.setattr(slice_refusal, 'apply_fix', lambda fix, **kw: fixes.append(fix) or 'ok')
+    adapter, result, receipt = run_flow(env, [1, 0, 0, 0, 0], mid='refusal-fixed')
+    asked = [q for q in adapter.questions if 'never confirmed' in q['question']]
+    assert len(asked) == 1
+    question = asked[0]['question']
+    assert 'Slot 1 (Matte white PLA)' in question and 'Is Matte white PLA loaded in slot 1?' in question
+    assert 'PH_SLICING_CONFIGURATION' in question and 'UNKNOWN' not in question
+    assert asked[0]['choices'] == ['Yes, slot 1 has it: slice', 'No, cancel']
+    assert fixes == [{'kind': 'confirm_slot_color', 'slot': '1', 'hex': 'FFFFFF'}]
+    assert len(calls) == 2 and receipt['status'] == 'STARTED'
+
+
+def test_slice_refusal_without_a_safe_fix_says_why_and_offers_no_blind_retry(env, monkeypatch):
+    from print_handy.core import slice_refusal
+    calls = []
+
+    def refuse(job_path, *args, **kwargs):
+        calls.append(str(job_path))
+        raise slice_refusal.unconfirmed_slot_color(2, {'material': 'PLA'}, 'IFS slot color/material mapping is unverified')
+
+    monkeypatch.setattr(model_job, 'slice_job', refuse)
+    adapter, result, receipt = run_flow(env, [1, 0, 0], mid='refusal-plain')
+    assert len(calls) == 1
+    assert not [q for q in adapter.questions if q['choices'][0] == 'Retry slice once (no print)']
+    said = '\n'.join(adapter.sent)
+    assert 'Slot 2 (PLA) has no spool recorded' in said and 'PH_SLICING_CONFIGURATION' in said
+    assert result['action'] == 'skip' and env.starts == []
+
+
+def test_slice_refusal_crosses_the_worker_boundary_as_data():
+    from print_handy.core import slice_refusal
+    original = slice_refusal.unconfirmed_slot_color(
+        3, {'spoolman_id': 4, 'material': 'PETG', 'name': 'Galaxy PETG'}, 'technical')
+    back = slice_refusal.from_dict(json.loads(json.dumps(original.as_dict())))
+    assert str(back) == 'technical' and back.plain == original.plain and back.fix == original.fix
+    assert '#9E9E9E' in back.plain  # an unreadable name says the neutral default out loud

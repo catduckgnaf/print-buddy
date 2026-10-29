@@ -2,6 +2,14 @@
 
 # Unreleased
 
+**Needs a migration on the box:** the setup wizard's preset-answer environment variables are renamed `PB_<KEY>` → `PRINT_HANDY_WIZARD_<KEY>` (clean break, no alias; #590, following the #446/#504 pattern). Only operators who preset wizard answers in their shell environment are affected, and only at their next wizard run — a running install never reads these variables. Diagnostics reference codes in chat, logs and doctor rows are likewise renamed `PB_...` → `PH_...`; nothing to migrate there, and docs/DIAGNOSTICS.md lists the old → new codes.
+
+**What users can do now:**
+- See the real reason when a model link fails: when the cause is a known, operator-fixable one — a missing or expired MakerWorld, Thingiverse, MyMiniFactory or Cults3D token, a site robot check, a site whose files cannot be downloaded through Print Handy, or Spoolman not answering — the chat post now names the cause in plain words and says what to do (for a token: the site, the credential, and the docs section that explains it), instead of a generic "stopped before it was ready". Resending the link is only suggested when the failure is transient and a retry can help; a genuinely unknown failure keeps the `/print-handy bundle` hint. Issue: #590.
+
+**Fixes and reliability:**
+- Failures that carry a specific, user-safe cause are no longer reported as `*_UNKNOWN`: the intake path and the other diagnostics surfaces classify them into a real category (for example a missing MakerWorld token is now `PH_INTAKE_CONFIGURATION`, not `PB_INTAKE_UNKNOWN`), and the reference codes themselves say `PH_` (Print Handy) instead of `PB_` (the old Print Buddy name) everywhere users see them. Issue: #590.
+
 # Version 2.1.9
 
 **Release Date:** 2026-10-29

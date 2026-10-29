@@ -25,6 +25,13 @@ systemctl --user restart hermes-3dprinting-moonraker-listener.service
 
 The chat-facing bot name defaults to `Print Handy` now. To keep a different name, set `[discord] bot_name` in your local config (that setting was never renamed).
 
+## Later leftovers renamed (#590)
+
+Two `PB_` spellings survived the main rename and were cleaned up later, again as a clean break with no aliases:
+
+- **Reference codes:** diagnostics markers in chat posts, log lines and doctor rows were `PB_<SUBSYSTEM>_<CATEGORY>` (for example `PB_INTAKE_UNKNOWN`) and are now `PH_...`. Nothing to migrate — old codes appear only in old posts, logs and support notes, and [docs/DIAGNOSTICS.md](DIAGNOSTICS.md#reference-codes) carries an old → new alias table so they stay searchable.
+- **Setup wizard answer presets:** the setup wizard (`python3 -m print_handy.setup_wizard`) could pre-fill its answers from environment variables named `PB_<KEY>` (for example `PB_DISCORD_CHAT_ID`). It now reads `PRINT_HANDY_WIZARD_<KEY>` (for example `PRINT_HANDY_WIZARD_DISCORD_CHAT_ID`), and the old names are not read. **What an existing install needs to do:** nothing for a running install — these variables are only read while the wizard runs, never at runtime. If you keep wizard presets in your shell environment or a wrapper script, rename them `PB_<KEY>` → `PRINT_HANDY_WIZARD_<KEY>` before your next wizard run; an unrenamed preset is simply not picked up and the wizard asks the question instead. `scripts/migrate-names.sh` does not rewrite these: they live in your shell environment, not in the config files that script edits.
+
 ## Docker and Unraid
 
 - **Image:** pull `ghcr.io/catduckgnaf/print-handy`. The old `ghcr.io/catduckgnaf/print-buddy` package stays frozen at the last Print Buddy release — there is no pointer release on it.

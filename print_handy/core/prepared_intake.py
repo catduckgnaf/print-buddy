@@ -1207,10 +1207,17 @@ async def prepare_link(event, adapter, state, root, timeout=None, reuse=None, pr
             receipt['fit_error'] = str(exc)
             receipt_path.write_text(json.dumps(receipt, indent=2) + '\n')
             await adapter.send(chat_id=source.chat_id,
-                               content=diagnostics.plain_post(
+                               content=diagnostics.known_post(
                                    "I could not finish checking whether this model fits the bed, so the check is unverified.",
                                    not_happened="No slice or print was started.",
-                                   next_step="Send the link or file again to resume the check.",
+                                   subsystem='intake', exc=exc)
+                               or diagnostics.plain_post(
+                                   "I could not finish checking whether this model fits the bed, so the check is unverified.",
+                                   not_happened="No slice or print was started.",
+                                   next_step=diagnostics.next_step_for(
+                                       exc,
+                                       transient="Send the link or file again to resume the check.",
+                                       other="Run `/print-handy bundle` and share the bundle so it can be looked into."),
                                    subsystem='intake', exc=exc),
                                metadata=metadata)
             return {'action': 'skip', 'reason': 'fit unknown; resumable'}
@@ -1271,10 +1278,17 @@ async def prepare_link(event, adapter, state, root, timeout=None, reuse=None, pr
                 receipt['fit_error'] = str(exc)
                 receipt_path.write_text(json.dumps(receipt, indent=2) + '\n')
                 await adapter.send(chat_id=source.chat_id,
-                                   content=diagnostics.plain_post(
+                                   content=diagnostics.known_post(
                                    "I could not finish checking the resize options, so they are unverified.",
                                    not_happened="No slice or print was started.",
-                                   next_step="Send the link or file again to resume the check.",
+                                   subsystem='intake', exc=exc)
+                                   or diagnostics.plain_post(
+                                   "I could not finish checking the resize options, so they are unverified.",
+                                   not_happened="No slice or print was started.",
+                                   next_step=diagnostics.next_step_for(
+                                       exc,
+                                       transient="Send the link or file again to resume the check.",
+                                       other="Run `/print-handy bundle` and share the bundle so it can be looked into."),
                                    subsystem='intake', exc=exc),
                                    metadata=metadata)
                 return {'action': 'skip', 'reason': 'fit unknown; resumable'}
@@ -1889,10 +1903,22 @@ async def prepare_link(event, adapter, state, root, timeout=None, reuse=None, pr
             # so keep it — the generic wording would hide the remedy.
             content = (f'That model could not be prepared: this printer {exc}. '
                        'Nothing was sliced, uploaded or started.')
+        elif diagnostics.known_cause(exc) is not None:
+            # #590: the failure carries a specific, user-safe cause (a
+            # missing site token, a site download gap, ...): name it and
+            # its remedy instead of the generic wording, its UNKNOWN
+            # marker and a resend that cannot help.
+            content = diagnostics.known_post(
+                'Preparing that model stopped before it was ready.',
+                not_happened='Nothing was sliced, uploaded or started.',
+                subsystem='intake', exc=exc)
         else:
             content = diagnostics.plain_post('Preparing that model stopped before it was ready.',
                                                not_happened='Nothing was sliced, uploaded or started.',
-                                               next_step='Send the link or file again; if it stops again, run `/print-handy bundle` and share the bundle so it can be looked into.',
+                                               next_step=diagnostics.next_step_for(
+                                                   exc,
+                                                   transient='Send the link or file again; if it stops again, run `/print-handy bundle` and share the bundle so it can be looked into.',
+                                                   other='Run `/print-handy bundle` and share the bundle so it can be looked into.'),
                                                subsystem='intake', exc=exc)
         await adapter.send(chat_id=source.chat_id, content=content, metadata=metadata)
         return {'action': 'skip', 'reason': 'source-first intake failed closed'}

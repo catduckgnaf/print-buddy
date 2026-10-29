@@ -94,7 +94,7 @@ def test_transient_failure_on_every_attempt_reraises_after_the_bounded_count(mon
 
 
 def test_exhausted_retry_line_carries_the_taxonomy_marker(monkeypatch, caplog, cfg):
-    """#390 Stage 2: the final startup failure is findable by its PB_ marker."""
+    """#390 Stage 2: the final startup failure is findable by its PH_ marker."""
     _bot_factory(monkeypatch, [
         socket.gaierror(socket.EAI_AGAIN, "Temporary failure in name resolution")
         for _ in range(client.STARTUP_ATTEMPTS)
@@ -105,7 +105,7 @@ def test_exhausted_retry_line_carries_the_taxonomy_marker(monkeypatch, caplog, c
         with pytest.raises(socket.gaierror):
             client.run_bot(cfg)
 
-    assert "PB_DISCORD_TRANSIENT" in _retry_lines(caplog)[-1]
+    assert "PH_DISCORD_TRANSIENT" in _retry_lines(caplog)[-1]
 
 
 def test_login_failure_exits_3_immediately_without_retry(monkeypatch, cfg):

@@ -17,7 +17,7 @@ class LoggingRowTests(unittest.TestCase):
             with self.assertRaises(RuntimeError) as ctx:
                 doctor.check_logging(data)
         self.assertIn("does not exist", str(ctx.exception))
-        self.assertIn("PB_LOGGING_CONFIGURATION", str(ctx.exception))
+        self.assertIn("PH_LOGGING_CONFIGURATION", str(ctx.exception))
 
     def test_writable_log_file_passes_and_counts_overrides(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -40,7 +40,7 @@ class ListenerHeartbeatRowTests(unittest.TestCase):
             warning = doctor.check_listener_heartbeats({})
         self.assertIn("ad5x", warning)
         self.assertIn("stale", warning)
-        self.assertIn("PB_LISTENER_TRANSIENT", warning)
+        self.assertIn("PH_LISTENER_TRANSIENT", warning)
 
     def test_healthy_required_listener_is_no_warning(self):
         with mock.patch("print_handy.healthcheck.listener_statuses",

@@ -800,6 +800,15 @@ def slice_model(source, folder, state, brim=None, first_layer=False, color_decis
     source, folder = Path(source), Path(folder)
     # An explicit adapter (a job prepared for another model) brings its own templates; the default keeps TEMPLATES.
     printer = adapter or printers.current()
+    # #564 stage 1: [delivery] format gcode_3mf on a Flashforge/ZMod printer asks this slice for
+    # Orca's sliced .gcode.3mf export as well as the plain .gcode. Both pinned channels ship
+    # OrcaSlicer v2.5.0-alpha, whose CLI writes the full sliced package (inner G-code, its MD5,
+    # slice_info filaments, plate JSON, thumbnails) when --slice and --export-3mf run together;
+    # --slice alone writes only plate_1.gcode, and the machine template's use_3mf key does not
+    # change that (proven against the pinned build and ZMod's own 3MF readers in #564 stage 0/1).
+    want_3mf = (printer.model.vendor is not None and printer.model.vendor.key == 'flashforge'
+                and str((printer.config.get('delivery') or {}).get('format') or 'gcode') == 'gcode_3mf')
+    export_path = folder / 'plate_1.gcode.3mf' if want_3mf else None
     templates = printer.templates_dir() if adapter is not None else TEMPLATES
     if scale is not None:
         scale = float(scale)
@@ -1187,6 +1196,8 @@ def slice_model(source, folder, state, brim=None, first_layer=False, color_decis
             slot_count=len(filament_paths) if mapped_profile else 1, filament_template=filament_template))
     # Never accept stale output if a failed slicer leaves the preceding artifact behind.
     output.unlink(missing_ok=True)
+    if export_path is not None:
+        export_path.unlink(missing_ok=True)
     primary = slicer_choice(printer)
     flash_studio_command = _flash_studio_command(printer)
     if flash_studio_command is not None:
@@ -1210,6 +1221,13 @@ def slice_model(source, folder, state, brim=None, first_layer=False, color_decis
             raise RuntimeError(f'Flash Studio slicing failed ({result.returncode}) or produced no G-code; '
                                f'see {_keep_failure_logs(folder) / "flash-studio.log"}')
     else:
+        if export_path is not None:
+            # Only the Orca command gains the export: the Flash Studio replacement above and
+            # the Bambu fallback command below keep their own argument sets, and a slice they
+            # produce is refused by the 3MF check at the end (the package must be Orca's).
+            # A bare name, not a path: Orca joins it onto --outputdir (an absolute path makes
+            # the export fail with return -13, verified against the pinned build).
+            command[-1:-1] = ['--export-3mf', export_path.name]
         result = _run_slicer(command, 'OrcaSlicer', folder)
         (folder / 'orca.log').write_text(result.stdout + result.stderr)
         if result.returncode:
@@ -1397,8 +1415,28 @@ def slice_model(source, folder, state, brim=None, first_layer=False, color_decis
         post_gate.warn(*baseline_gate.warnings)
     if post_gate.status == 'blocked':
         raise RuntimeError('Post-slice guard blocked: ' + '; '.join(post_gate.blocked))
+    delivery_note = {}
+    if export_path is not None:
+        # The guards above passed on the finalized plate_1.gcode. The export Orca wrote during
+        # the slice still holds the pre-finalize inner G-code, so bind the package to the exact
+        # guarded bytes (and refresh the MD5 ZMod verifies) before the job may record it; a
+        # package produced by anything but this Orca run (a fallback slicer, a missing export)
+        # is refused, never silently replaced by the .gcode.
+        from . import delivery as _delivery
+        if slicer != 'OrcaSlicer' or not export_path.is_file() or export_path.stat().st_size == 0:
+            raise RuntimeError(f'[delivery] format is gcode_3mf but this slice was produced by {slicer} '
+                               'and no Orca sliced .gcode.3mf export exists; the 3MF package must be '
+                               'OrcaSlicer\'s export. Slice with OrcaSlicer or set [delivery] format '
+                               'back to gcode.')
+        _delivery.repack_zmod_package(export_path, output,
+                                      printer_model_id=printer.model.printer_key.upper())
+        problems = _delivery.zmod_package_problems(export_path, printer.model, printer)
+        if problems:
+            raise RuntimeError('sliced .gcode.3mf package failed validation: ' + '; '.join(problems))
+        delivery_note = {'delivery_format': 'gcode_3mf', 'delivery_file': str(export_path)}
     warnings = gate.warnings + post_gate.warnings + baseline_gate.warnings
     return output, {'tool_mapping': mapping, 'source_sha256': digest(source), 'gcode_sha256': digest(output),
+                    **delivery_note,
                     'config_sha256': {str(p): digest(p) for p in configs}, 'geometry': geometry,
                     'slice_guard': {'status': 'warnings' if warnings else 'ok', 'warnings': warnings,
                                     'effective_settings': post_gate.effective_settings},

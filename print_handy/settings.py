@@ -100,6 +100,7 @@ OPTIONAL_KEYS = {("printer", "nozzle_type"): str, ("printer", "tool_count"): int
                  ("bambu", "lan_access_code_env"): str,
                  ("bambu", "start_confirm_s"): int,
                  ("slicer", "flash_studio_path"): str,
+                 ("delivery", "format"): str,
                  ("webui", "enabled"): bool, ("webui", "host"): str,
                  ("webui", "port"): int, ("webui", "access_token_env"): str,
                  ("design", "enabled"): bool, ("design", "chat_url"): str,
@@ -336,6 +337,26 @@ def _validate_vendor_choices(data, model):
                             f"(available: {', '.join(vendor.delivery)})")
     # Vendor order, no repeats: the post-slice buttons follow it.
     data["delivery"]["methods"] = [m for m in vendor.delivery if m in methods]
+
+
+# [delivery] format (#564 stage 1): the file format a sliced job is delivered in. "gcode" is
+# today's plain .gcode everywhere. "gcode_3mf" is the sliced .gcode.3mf package for the
+# Flashforge/ZMod vendor (ZMod 1.7.5+ reads it natively; older ZMod cannot print it at all),
+# so the value is refused for any other vendor instead of being silently ignored there.
+DELIVERY_FORMATS = ("gcode", "gcode_3mf")
+
+
+def _validate_delivery_format(data, model):
+    delivery = data.setdefault("delivery", {})
+    raw = delivery.setdefault("format", "gcode")
+    fmt = str(raw or "gcode").strip().lower()
+    if fmt not in DELIVERY_FORMATS:
+        raise SettingsError(f"[delivery] format must be one of {', '.join(DELIVERY_FORMATS)}, got {raw!r}")
+    if fmt == "gcode_3mf" and model.vendor.key != "flashforge":
+        raise SettingsError("[delivery] format gcode_3mf only applies to Flashforge printers running "
+                            "ZMod (the .gcode.3mf delivery package is a ZMod format); other vendors "
+                            "deliver .gcode")
+    delivery["format"] = fmt
 
 
 def _validate_bambu_lan(data, model):
@@ -1289,6 +1310,7 @@ def validate(data):
         if data["printer"]["tool_count"] != 1 and not model.adapter.multi_tool:
             raise SettingsError(f"[printer] tool_count must be 1 for model {key!r} (single tool)")
     _validate_vendor_choices(data, model)
+    _validate_delivery_format(data, model)
     for key, default in (("start_macro", "PRINT_START"), ("end_macro", "PRINT_END")):
         macro = data["printer"].setdefault(key, default)
         if not isinstance(macro, str) or not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", macro):

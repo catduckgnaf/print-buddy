@@ -3404,6 +3404,71 @@ def _slice_full_size_split(job, job_path, src, manifest, decisions, st):
 
 
 def slice_job(job_path, brim_override=None, copies=None, scale=None, recipe_sha256=None):
+    """Slice a job, then record its delivery artifact (#564 stage 1).
+
+    With [delivery] format gcode_3mf on a Flashforge/ZMod printer, every G-code the slice
+    produced has a sibling Orca sliced export that orca_adapter already bound to the
+    finalized, guarded bytes; _record_delivery_format validates each package and notes it
+    on the job. With the default gcode format (or any other vendor) the record step is a
+    no-op and the job is exactly what the slice wrote.
+    """
+    result = _slice_job_impl(job_path, brim_override=brim_override, copies=copies,
+                             scale=scale, recipe_sha256=recipe_sha256)
+    _record_delivery_format(job_path)
+    return result
+
+
+def _record_delivery_format(job_path):
+    """Note the .gcode.3mf delivery artifact on a sliced job, or refuse the slice.
+
+    Runs only when the job's printer is a Flashforge/ZMod model and its [delivery] format
+    is gcode_3mf. Each artifact's package must exist (orca_adapter produced it during the
+    slice), pass delivery.zmod_package_problems, and its extracted inner G-code must pass
+    the same verify_gcode_offline the plain .gcode passes — the archive is treated as the
+    job's delivery file only after its exact inner bytes clear every check the .gcode
+    clears. A failure raises, so a job never records a package that was not validated.
+    """
+    from . import delivery as _delivery
+    job_path = Path(job_path)
+    job = json.loads(job_path.read_text())
+    adapter = _job_adapter(job)
+    if adapter.model.vendor is None or adapter.model.vendor.key != "flashforge":
+        return
+    if _delivery.delivery_format(adapter.config) != _delivery.GCODE_3MF:
+        return
+    st = printer_state.load()
+    rows = [(job, None)] + [(row, row) for row in job.get("derived_plates") or [] if isinstance(row, dict)]
+    targets = []
+    for owner, row in rows:
+        gcode = (row or job).get("gcode")
+        if gcode:
+            targets.append((owner, gcode))
+    if not targets:
+        return
+    for owner, gcode in targets:
+        package = _delivery.zmod_package_target(gcode)
+        if not package.is_file():
+            raise RuntimeError(f"[delivery] format is gcode_3mf but no sliced package was produced "
+                               f"for {Path(gcode).name} (expected {package}); nothing was recorded. "
+                               "Slice with OrcaSlicer or set [delivery] format back to gcode.")
+        problems = _delivery.zmod_package_problems(package, adapter.model, adapter)
+        if problems:
+            raise RuntimeError(f"sliced package {package.name} failed validation: " + "; ".join(problems))
+        inner = package.parent / (package.name + ".inner.gcode")
+        try:
+            inner.write_bytes(_delivery.extract_zmod_plate_gcode(package))
+            verify_gcode_offline(inner, st)
+        finally:
+            inner.unlink(missing_ok=True)
+        owner["delivery_file"] = str(package)
+        owner["delivery_file_sha256"] = _delivery.sha256(package)
+    job["delivery_format"] = _delivery.GCODE_3MF
+    write_job(job_path.parent, job)
+    print(f"DELIVERY FORMAT gcode_3mf recorded for {len(targets)} artifact(s); "
+          f"primary package: {job.get('delivery_file')}")
+
+
+def _slice_job_impl(job_path, brim_override=None, copies=None, scale=None, recipe_sha256=None):
     # Disk only. Launch still runs printer_state.check inside print_now and
     # verify_gcode. A file that never leaves disk does not need Moonraker or Spoolman.
     job = json.loads(Path(job_path).read_text()); st = printer_state.load()

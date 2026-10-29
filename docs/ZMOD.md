@@ -65,6 +65,45 @@ The filament system is where they part:
   Creator 5; the print geometry and tool model are identical, and its template
   records the chamber and filtration support.
 
+## Delivery format: .gcode or sliced .gcode.3mf (#564)
+
+Print Handy delivers a sliced job as plain `.gcode` by default. On ZMod
+printers an operator can opt into the sliced **`.gcode.3mf`** package instead:
+
+```ini
+[delivery]
+format = gcode_3mf
+```
+
+(or `PRINT_HANDY__DELIVERY__FORMAT=gcode_3mf`). With it on, the Orca step
+produces OrcaSlicer's sliced export alongside the `.gcode` — one plate's
+G-code inside a 3MF archive with its MD5, the plate's filament types and
+colours in `slice_info.config`, the plate bounding box for fast KAMP, and
+thumbnails — Print Handy binds the package to the exact finalized G-code
+that passed its post-slice guards, validates the package (single plate,
+MD5 matches the inner G-code, filaments present), runs the same offline
+verification on the extracted inner G-code as on a plain `.gcode`, and
+records the package on the job (`delivery_format` / `delivery_file`). The
+`.gcode` stays on disk next to it and remains the fallback for everything
+that does not take the package.
+
+Why 3MF on ZMod: colour mapping is instant (the printer reads the file's
+filaments from the archive instead of scanning the G-code or relying on
+the MD5 preprocessor), fast KAMP reads the plate's bounding box directly,
+and the native screen can remap filament channels on a 3MF file — it
+cannot on a G-code file.
+
+**Version floor — read this before enabling it.** 3MF printing needs
+**ZMod 1.7.5 or newer** on the printer. Older ZMod has no 3MF support at
+all: a `.gcode.3mf` handed to it is not printable, and there is no
+printer-side fallback. Print Handy does not yet read the printer's ZMod
+version (that is #562's version knowledge, and per-model defaults plus
+version-aware selection are #564 stage 3), so until then **choosing
+`gcode_3mf` is the operator's responsibility**: enable it only on printers
+you know run ZMod 1.7.5+, and leave the default `gcode` everywhere else.
+Upload/start integration for the recorded package follows in #564 stage 2;
+stage 1 produces and records the validated package at slice time.
+
 ## Bundled Spoolman from printer Moonraker (#443)
 
 Print Handy's bundled Spoolman normally lives on loopback inside the

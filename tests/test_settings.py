@@ -226,7 +226,7 @@ class OverrideTests(unittest.TestCase):
             "live_stream": {"enabled", "voice_channel_id", "auto_start_on_print", "max_height", "fps",
                             "max_bitrate_kbps", "encoder", "empty_timeout_s", "activity_origin", "port"},
             "maintenance": {"quick_hours", "full_hours", "full_days"},
-            "delivery": {"methods"},
+            "delivery": {"methods", "format"},
             "nozzle_temp_offsets": {"brass", "hardened_steel", "stainless_steel", "ruby", "tungsten_carbide", "diamond"},
             "material_temps": {"PLA", "PETG", "ABS", "ASA", "TPU", "PA", "PC"},
         }

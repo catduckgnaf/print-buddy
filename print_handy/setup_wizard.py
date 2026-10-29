@@ -91,8 +91,18 @@ def parse_answers(path):
     return values
 
 
+#: Environment prefix for preset wizard answers (#590): a question's
+#: preset is read from PRINT_HANDY_WIZARD_<KEY>. This is a clean break
+#: from the old PB_<KEY> spelling (the #446/#504 rename pattern, no
+#: alias): the variables are setup-time answer presets only — nothing
+#: in a running install reads them — so an unmigrated preset simply
+#: means the wizard asks the question again instead of pre-filling it.
+#: See docs/RENAME-MIGRATION.md.
+ENV_PREFIX = "PRINT_HANDY_WIZARD_"
+
+
 class Wizard:
-    """Question helper: answers file, then PB_<KEY> environment, then the terminal."""
+    """Question helper: answers file, then PRINT_HANDY_WIZARD_<KEY> environment, then the terminal."""
 
     def __init__(self, answers=None, input_stream=None, output=None, yes=False, environ=None):
         self.answers = dict(answers or {})
@@ -108,7 +118,7 @@ class Wizard:
     def _preset(self, key):
         if key in self.answers:
             return str(self.answers[key])
-        return self.environ.get("PB_" + key.upper())
+        return self.environ.get(ENV_PREFIX + key.upper())
 
     def _read(self):
         line = self.input.readline()

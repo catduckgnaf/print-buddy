@@ -16,6 +16,7 @@ Unknown local keys and values with mismatched types fail loudly.
 from __future__ import annotations
 
 import copy
+import math
 import os
 import re
 import tomllib
@@ -300,6 +301,70 @@ def _from_env(home, environ, declared=None):
             raise _unknown(f"${name}", section, key)
         out.setdefault(section, {})[key] = _coerce(home[section][key], raw, name)
     return out
+
+
+# Part gaps and margins as one choice (layout.spacing). "minimum" is the smallest
+# set measured safe with the real Orca CLI (tests/slicer/test_spacing_minimums_real.py):
+#   arrange_gap_mm / merge_spacing_mm 2.0  Orca accepts 0.5 mm gaps (brims merge); 2 mm
+#                                          keeps first-layer squish from bridging parts.
+#   arrange_edge_mm / merge_edge_margin_mm 1.0  a part 0.5 mm from the edge slices and
+#                                          passes the bed-bounds guard; Orca clips a brim at
+#                                          the bed edge, and any brim policy adds its own
+#                                          width on top (orca_adapter.required_feature_edge).
+#   prime_tower.part_clearance_mm 3.5      Orca reports G-code conflicts at 2.5 mm, accepts 3.
+#   prime_tower.edge_mm 4.0                the tower's brim/wipe passes the bed edge at 3 mm,
+#                                          fits at 3.5.
+#   prime_tower.merge_slack_mm 1.0         the reserved tower strip is a fast path; every tower
+#                                          spot is still proved by the tower search.
+# "medium" (Standard) is the pre-2.2 fixed set. "low" is halfway between minimum and
+# medium and "high" is 1.5 x medium, rounded to 0.5 mm, for big brims or warping materials.
+SPACING_KEYS = (("layout", "arrange_gap_mm"), ("layout", "arrange_edge_mm"),
+                ("layout", "merge_spacing_mm"), ("layout", "merge_edge_margin_mm"),
+                ("prime_tower", "part_clearance_mm"), ("prime_tower", "edge_mm"),
+                ("prime_tower", "merge_slack_mm"))
+_SPACING_MINIMUM = (2.0, 1.0, 2.0, 1.0, 3.5, 4.0, 1.0)
+_SPACING_STANDARD = (5.0, 5.0, 10.0, 8.0, 8.0, 10.0, 5.0)
+
+
+def _half_mm(value):
+    return math.floor(value * 2 + 0.5) / 2
+
+
+SPACING_PRESETS = {
+    "minimum": dict(zip(SPACING_KEYS, _SPACING_MINIMUM)),
+    "low": dict(zip(SPACING_KEYS, (_half_mm((a + b) / 2) for a, b in zip(_SPACING_MINIMUM, _SPACING_STANDARD)))),
+    "medium": dict(zip(SPACING_KEYS, _SPACING_STANDARD)),
+    "high": dict(zip(SPACING_KEYS, (_half_mm(b * 1.5) for b in _SPACING_STANDARD))),
+}
+SPACING_LABELS = {"minimum": "Minimum", "low": "Low", "medium": "Medium (Standard)", "high": "High"}
+
+
+def _explicit_keys(*layers):
+    """(section, key) pairs the operator set in any of the given layers."""
+    return {(section, key) for layer in layers for section, values in (layer or {}).items()
+            if isinstance(values, dict) for key in values}
+
+
+def apply_spacing_preset(data, explicit=()):
+    """Fill every spacing key from layout.spacing unless the operator set it explicitly."""
+    preset = data.get("layout", {}).get("spacing", "minimum")
+    if preset not in SPACING_PRESETS:
+        raise SettingsError(f"[layout] spacing must be one of {', '.join(SPACING_PRESETS)}, got {preset!r}")
+    for (section, key), value in SPACING_PRESETS[preset].items():
+        if (section, key) not in explicit:
+            data.setdefault(section, {})[key] = value
+    return data
+
+
+def spacing_summary(data):
+    """The active preset and every resolved spacing value, for status output."""
+    layout = data.get("layout", {})
+    preset = layout.get("spacing", "minimum")
+    values = {f"{section}.{key}": data.get(section, {}).get(key) for section, key in SPACING_KEYS}
+    overridden = sorted(name for name, value in values.items()
+                        if value != SPACING_PRESETS.get(preset, {}).get(tuple(name.split(".", 1))))
+    return {"preset": preset, "label": SPACING_LABELS.get(preset, preset), "values": values,
+            "overridden": overridden}
 
 
 def _positive(data, section, key, kind=float):
@@ -1312,7 +1377,11 @@ def validate(data):
         macro = data["printer"].setdefault(key, default)
         if not isinstance(macro, str) or not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", macro):
             raise SettingsError(f"[printer] {key} must be a Klipper macro name, got {macro!r}")
-    for key in ("single_copy_edge_mm", "multi_copy_edge_mm", "merge_edge_margin_mm", "merge_spacing_mm"):
+    if data["layout"].get("spacing", "minimum") not in SPACING_PRESETS:
+        raise SettingsError(f"[layout] spacing must be one of {', '.join(SPACING_PRESETS)}, "
+                            f"got {data['layout'].get('spacing')!r}")
+    for key in ("single_copy_edge_mm", "multi_copy_edge_mm", "merge_edge_margin_mm", "merge_spacing_mm",
+                "arrange_gap_mm", "arrange_edge_mm"):
         data["layout"][key] = _positive(data, "layout", key)
     data["layout"]["max_merged_hours"] = _positive(data, "layout", "max_merged_hours")
     for key in ("size_mm", "part_clearance_mm", "edge_mm", "merge_slack_mm"):
@@ -1417,7 +1486,10 @@ def load(home=None, local=None, environ=None):
     if local:
         _check_keys(base, extra, local)
         data = _merge(data, extra)
-    data = _merge(data, _from_env(base, environ, declared))
+    env_layer = _from_env(base, environ, declared)
+    data = _merge(data, env_layer)
+    # layout.spacing fills the gap/margin keys; a key the operator set anywhere wins.
+    apply_spacing_preset(data, _explicit_keys(home_data, extra, env_layer))
     return validate(data)
 
 

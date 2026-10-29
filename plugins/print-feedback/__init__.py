@@ -2098,11 +2098,11 @@ def _answer_spool_question(listener, spool_sync, context, choice):
     if choice['status'] == 'new':
         state = spool_sync.load_state()
         previous_slot = (state.get('ifs_slots') or {}).get(str(slot)) or {}
-        # The colour code: a picked swatch, else the colour name read against
-        # the named-colour table, else (only then) the slot's previous swatch.
-        from print_handy.core import filament_colour
+        # The color code: a picked swatch, else the color name read against
+        # the named-color table, else (only then) the slot's previous swatch.
+        from print_handy.core import filament_color
         existing_hex = (spool_sync.screen_hex(choice.get('hex'))
-                        or filament_colour.derive_hex(choice.get('color'), choice.get('material'))
+                        or filament_color.derive_hex(choice.get('color'), choice.get('material'))
                         or spool_sync.screen_hex(previous_slot.get('hex')))
         made = spool_sync.create_spool({'brand': choice.get('brand'), 'material': choice['material'],
                                         'color': choice['color'], 'grams': choice['grams'], 'hex': existing_hex,
@@ -4612,10 +4612,10 @@ def alert_button_handlers(bot, adapter):
         if state.get('step') == 'brand':
             state['brand'] = None if value == pab.INTAKE_SKIP else value
         elif state.get('step') == 'swatch':
-            state['hex'] = value  # the closest colour, picked on a button; never typed hex
+            state['hex'] = value  # the closest color, picked on a button; never typed hex
         else:
             state['color'] = value
-            state['hex'] = None  # a new colour name is read afresh
+            state['hex'] = None  # a new color name is read afresh
         await intake_advance(interaction, state)
 
     async def spool_question_select(interaction, alert):

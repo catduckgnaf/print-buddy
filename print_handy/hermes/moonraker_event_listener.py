@@ -2940,12 +2940,12 @@ class Listener:
                 pass
             await asyncio.sleep(healthcheck.HEARTBEAT_S)
 
-    async def backfill_slot_colours(self):
-        """Give every loaded slot a colour code before the session starts.
+    async def backfill_slot_colors(self):
+        """Give every loaded slot a color code before the session starts.
 
         Best effort and side-effect free on the printer: reads Spoolman and
         the printer's zmod_color report, fills only blank (or previously
-        guessed) colour codes in this printer's hardware record, never
+        guessed) color codes in this printer's hardware record, never
         overwrites a valid one. Runs at startup and on each reconnect.
         """
         try:
@@ -2953,11 +2953,11 @@ class Listener:
             from .. import listeners as _listeners
             instance_id = _listeners.instance_printer_id()
             mr = spool_sync.moonraker_for(instance_id) if instance_id else spool_sync.moonraker
-            changes = await asyncio.to_thread(spool_sync.backfill_slot_colours, mr=mr, printer_id=instance_id)
+            changes = await asyncio.to_thread(spool_sync.backfill_slot_colors, mr=mr, printer_id=instance_id)
             for change in changes:
-                log(f"slot {change['slot']} colour code filled: #{change['hex']} from {change['source']}")
+                log(f"slot {change['slot']} color code filled: #{change['hex']} from {change['source']}")
         except Exception as exc:
-            log(f"slot colour backfill skipped: {exc!r}")
+            log(f"slot color backfill skipped: {exc!r}")
 
     async def forever(self):
         delay = 5
@@ -2965,7 +2965,7 @@ class Listener:
         beating = asyncio.create_task(self.heartbeat())
         try:
             while True:
-                await self.backfill_slot_colours()
+                await self.backfill_slot_colors()
                 try:
                     await self.session()
                 except Exception as exc:

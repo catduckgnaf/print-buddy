@@ -1,9 +1,9 @@
-"""Filament colour codes are always recorded, resolved and never overwritten.
+"""Filament color codes are always recorded, resolved and never overwritten.
 
 Live 2026-10-29: two spools created through the conversational intake were
-saved with a colour name but no hex, and an AD5X multicolour slice died on
+saved with a color name but no hex, and an AD5X multicolor slice died on
 "filament color must be an explicit six-digit RGB value" (PB_SLICING_UNKNOWN).
-A one-colour job on a slot bound through the insertion prompt was refused as
+A one-color job on a slot bound through the insertion prompt was refused as
 "unverified" the same way. These tests pin the fix: derivation from names,
 the slicing fallback chain, never-overwrite, and the plain refusal path.
 """
@@ -12,7 +12,7 @@ import json
 import pytest
 
 from print_handy import diagnostics
-from print_handy.core import filament_colour as fc
+from print_handy.core import filament_color as fc
 from print_handy.core import slice_refusal
 from print_handy.hermes import print_alert_buttons as pab
 from print_handy.hermes import spool_sync
@@ -29,13 +29,13 @@ from print_handy.hermes import spool_sync
     ("Sky Blue", "PETG", "64B5F6"),
     ("Glossy Grey", None, "8E8E8E"),
 ])
-def test_colour_names_derive_a_code(name, material, expected):
+def test_color_names_derive_a_code(name, material, expected):
     assert fc.derive_hex(name, material) == expected
 
 
-def test_multicolour_silk_name_records_a_representative_and_every_colour():
+def test_multicolor_silk_name_records_a_representative_and_every_color():
     guess = fc.derive("rose red blue green", "Silk PLA")
-    assert guess.hex == "C2185B"  # "rose red" is one colour, not rose + red
+    assert guess.hex == "C2185B"  # "rose red" is one color, not rose + red
     assert guess.multi and guess.multi_hexes == ("C2185B", "1E88E5", "388E3C")
 
 
@@ -44,7 +44,7 @@ def test_unreadable_names_derive_nothing(name):
     assert fc.derive(name, "Silk PLA") is None
 
 
-def test_hex_normalisation():
+def test_hex_normalization():
     assert fc.normalize_hex("#0c6283") == "0C6283"
     assert fc.normalize_hex("FF0000,00FF00") is None
     assert fc.first_hex("FF0000,00FF00") == "FF0000"
@@ -73,8 +73,8 @@ def test_slot_hex_never_raises_and_says_when_it_guessed(capsys):
     assert fc.slot_hex(3, {"hex": None, "name": "Galaxy PLA"}) == "#" + fc.NEUTRAL_DEFAULT
     assert fc.slot_hex(4, "") == "#" + fc.NEUTRAL_DEFAULT
     out = capsys.readouterr().out
-    assert "Slot 2 (Rose Red Blue Green Silk PLA) has no colour code recorded" in out
-    assert "Slot 3 (Galaxy PLA) has no colour code and none could be worked out" in out
+    assert "Slot 2 (Rose Red Blue Green Silk PLA) has no color code recorded" in out
+    assert "Slot 3 (Galaxy PLA) has no color code and none could be worked out" in out
 
 
 # ------------------------------------------------------------- backfill
@@ -113,9 +113,9 @@ def test_backfill_upgrades_only_its_own_guess_to_an_authoritative_source():
     assert state["ifs_slots"]["2"]["hex_source"] == "printer"
 
 
-def test_insertion_bound_slot_with_hex_but_unverified_colour_is_confirmed():
+def test_insertion_bound_slot_with_hex_but_unverified_color_is_confirmed():
     # Live 2026-10-29: Matte white PLA, spool 16, "Created and bound from
-    # Discord IFS insertion": loading verified, colour not. Picking the
+    # Discord IFS insertion": loading verified, color not. Picking the
     # spool by name for the slot is the confirmation.
     state = {"ifs_slots": {"1": _bound(slot=1, material="PLA", color="matte white", hex="FFFFFF",
                                        spoolman_id=16, name="Matte white PLA")}}
@@ -137,7 +137,7 @@ def test_load_state_backfills_in_memory(tmp_path):
     assert spool_sync.load_state(path)["ifs_slots"]["2"]["hex"] == "C2185B"
 
 
-def test_backfill_slot_colours_uses_spoolman_then_printer_and_persists(tmp_path):
+def test_backfill_slot_colors_uses_spoolman_then_printer_and_persists(tmp_path):
     path = tmp_path / "printer_hardware.json"
     path.write_text(json.dumps({"ifs_slots": {
         "1": _bound(slot=1, spoolman_id=16, color="matte white", name="Matte white PLA", material="PLA"),
@@ -157,24 +157,24 @@ def test_backfill_slot_colours_uses_spoolman_then_printer_and_persists(tmp_path)
         return {"result": {"status": {"zmod_color": {"slots": [
             {"ID": 1, "HEX": "EEEEEE"}, {"ID": 2, "HEX": "0C6283"}, {"ID": 3, "HEX": "222222"}]}}}}
 
-    changes = spool_sync.backfill_slot_colours(client=client, mr=mr, state_path=path)
+    changes = spool_sync.backfill_slot_colors(client=client, mr=mr, state_path=path)
     saved = json.loads(path.read_text())["ifs_slots"]
     assert saved["1"]["hex"] == "FAFAFA" and saved["1"]["hex_source"] == "spoolman"
     assert saved["2"]["hex"] == "0C6283" and saved["2"]["hex_source"] == "printer"
     assert saved["3"]["hex"] == "111111"  # a valid hex is never overwritten
     assert {c["slot"] for c in changes} == {"1", "2"}
-    # Spoolman's empty colour for spool 17 is filled in; spool 16 already had one.
+    # Spoolman's empty color for spool 17 is filled in; spool 16 already had one.
     assert writes == [("/api/v1/filament/117", {"color_hex": "0C6283"})]
 
 
-def test_backfill_slot_colours_survives_spoolman_and_printer_being_down(tmp_path):
+def test_backfill_slot_colors_survives_spoolman_and_printer_being_down(tmp_path):
     path = tmp_path / "printer_hardware.json"
     path.write_text(json.dumps({"ifs_slots": {"2": _bound()}}))
 
     def down(*args, **kwargs):
         raise OSError("down")
 
-    spool_sync.backfill_slot_colours(client=down, mr=down, state_path=path)
+    spool_sync.backfill_slot_colors(client=down, mr=down, state_path=path)
     assert json.loads(path.read_text())["ifs_slots"]["2"]["hex"] == "C2185B"
 
 
@@ -204,7 +204,7 @@ def test_create_spool_derives_the_code_from_the_name():
     assert made["hex"] == "FFFFFF" and made["hex_source"] == "name"
 
 
-def test_create_spool_records_multi_colour_hexes_for_a_silk_blend():
+def test_create_spool_records_multi_color_hexes_for_a_silk_blend():
     captured = []
     spool_sync.create_spool({"brand": None, "material": "Silk PLA", "color": "Rose Red Blue Green",
                              "grams": 1000.0}, client=_client([], captured))
@@ -214,20 +214,20 @@ def test_create_spool_records_multi_colour_hexes_for_a_silk_blend():
     assert patch["multi_color_hexes"] == "C2185B,1E88E5,388E3C"
 
 
-def test_create_spool_fills_but_never_replaces_a_reused_filament_colour():
+def test_create_spool_fills_but_never_replaces_a_reused_filament_color():
     captured = []
     blank = [{"id": 4, "name": "Matte White", "material": "PLA", "vendor": None, "color_hex": None}]
     spool_sync.create_spool({"brand": None, "material": "PLA", "color": "Matte White", "grams": 500.0},
                             client=_client(blank, captured))
     assert ("PATCH", "/api/v1/filament/4", {"color_hex": "FFFFFF"}) in captured
     captured.clear()
-    coloured = [{**blank[0], "color_hex": "F0F0F0"}]
+    colored = [{**blank[0], "color_hex": "F0F0F0"}]
     spool_sync.create_spool({"brand": None, "material": "PLA", "color": "Matte White", "grams": 500.0},
-                            client=_client(coloured, captured))
+                            client=_client(colored, captured))
     assert not any(m == "PATCH" for m, _, _ in captured)
 
 
-def test_create_spool_with_an_unreadable_name_leaves_spoolman_colour_empty():
+def test_create_spool_with_an_unreadable_name_leaves_spoolman_color_empty():
     captured = []
     made = spool_sync.create_spool({"brand": None, "material": "PLA", "color": "Galaxy", "grams": 1000.0},
                                    client=_client([], captured))
@@ -242,7 +242,7 @@ def test_slot_record_always_has_a_code_and_is_confirmed():
     assert rec["physical_color_verified"] is True
     galaxy = spool_sync._slot_record(1, {"id": 5, "filament": {"name": "Galaxy", "material": "PLA"}}, None, "t")
     assert galaxy["hex"] == fc.NEUTRAL_DEFAULT and galaxy["hex_source"] == "default"
-    assert fc.chat_notes({"ifs_slots": {"1": galaxy}}, [1])[0].startswith("Slot 1 (Galaxy PLA) has no colour")
+    assert fc.chat_notes({"ifs_slots": {"1": galaxy}}, [1])[0].startswith("Slot 1 (Galaxy PLA) has no color")
 
 
 def test_walkthrough_asks_swatch_buttons_only_when_the_name_is_unreadable():
@@ -260,7 +260,7 @@ def test_walkthrough_asks_swatch_buttons_only_when_the_name_is_unreadable():
     assert "Galaxy (#1E88E5)" in pab.intake_step_text(confirm)
 
 
-def test_photo_prefill_with_unreadable_colour_still_asks_the_swatch():
+def test_photo_prefill_with_unreadable_color_still_asks_the_swatch():
     filled = {"step": "weight", "origin": "insertion", "old_spool_id": 13, "material": "PLA",
               "color": "Nebula", "grams": 1000}
     assert pab.intake_next_step(filled) == "swatch"
@@ -291,12 +291,12 @@ def test_create_and_bind_passes_the_picked_swatch():
 # ------------------------------------------------------------- refusal
 
 def test_unconfirmed_slot_refusal_is_plain_classified_and_fixable():
-    exc = slice_refusal.unconfirmed_slot_colour(
+    exc = slice_refusal.unconfirmed_slot_color(
         2, _bound(hex="C2185B", hex_source="name"), "IFS slot color/material mapping is unverified")
     assert isinstance(exc, RuntimeError) and str(exc) == "IFS slot color/material mapping is unverified"
     assert exc.plain.startswith("Slot 2 (Rose Red Blue Green Silk PLA) was never confirmed as loaded")
     assert exc.next_step == "Is Rose Red Blue Green Silk PLA loaded in slot 2?"
-    assert exc.fix == {"kind": "confirm_slot_colour", "slot": "2", "hex": "C2185B"}
+    assert exc.fix == {"kind": "confirm_slot_color", "slot": "2", "hex": "C2185B"}
     assert diagnostics.marker("slicing", diagnostics.classify(exc)) == "PB_SLICING_CONFIGURATION"
 
 
@@ -307,10 +307,10 @@ def test_apply_fix_confirms_the_slot_and_never_overwrites_a_valid_hex(monkeypatc
     saved = []
     monkeypatch.setattr(printer_state, "load", lambda *a: json.loads(json.dumps(store)))
     monkeypatch.setattr(printer_state, "save", lambda st, *a: saved.append(st))
-    line = slice_refusal.apply_fix({"kind": "confirm_slot_colour", "slot": "1", "hex": "FFFFFF"})
+    line = slice_refusal.apply_fix({"kind": "confirm_slot_color", "slot": "1", "hex": "FFFFFF"})
     assert saved[0]["ifs_slots"]["1"]["hex"] == "F0F0F0"
     assert saved[0]["ifs_slots"]["1"]["physical_color_verified"] is True
-    assert line == "Slot 1 colour confirmed as #F0F0F0."
+    assert line == "Slot 1 color confirmed as #F0F0F0."
 
 
 def test_validate_slot_selection_material_mismatch_is_never_waved_through():

@@ -1,7 +1,7 @@
 """Deterministic slice refusals that chat can explain and, where safe, fix.
 
 A slice refused for a reason that will not change on its own (a slot whose
-colour was never confirmed, a slot with no spool recorded) used to surface
+color was never confirmed, a slot with no spool recorded) used to surface
 as "Slicing this model did not work ... PB_SLICING_UNKNOWN" plus a blind
 "Retry slice once" that failed identically. A :class:`SliceRefusal` carries
 the plain-language reason with it, is classified ``configuration`` (so its
@@ -10,15 +10,15 @@ safe fix the operator can apply with a button before the retry.
 
 The exception crosses the heavy-worker process boundary as data
 (:meth:`SliceRefusal.as_dict` / :func:`from_dict`), so the fix is data too:
-``{"kind": "confirm_slot_colour", "slot": "2", "hex": "C2185B"}`` and
-:func:`apply_fix` performs it. The only fix today confirms a slot's colour
-code, which affects preview colours and 3MF labels, never toolpaths.
+``{"kind": "confirm_slot_color", "slot": "2", "hex": "C2185B"}`` and
+:func:`apply_fix` performs it. The only fix today confirms a slot's color
+code, which affects preview colors and 3MF labels, never toolpaths.
 """
 from __future__ import annotations
 
 from typing import Any
 
-from . import filament_colour
+from . import filament_color
 
 
 class SliceRefusal(RuntimeError):
@@ -50,33 +50,33 @@ def from_dict(data: dict[str, Any]) -> SliceRefusal:
                         fix_label=data.get("fix_label"))
 
 
-def unconfirmed_slot_colour(slot: Any, record: dict[str, Any] | None, message: str) -> SliceRefusal:
-    """A slot whose colour was never confirmed (or never recorded).
+def unconfirmed_slot_color(slot: Any, record: dict[str, Any] | None, message: str) -> SliceRefusal:
+    """A slot whose color was never confirmed (or never recorded).
 
     Asks one question — "Is Matte white PLA loaded in slot 1?" — whose Yes
-    confirms the slot with the best colour code available from the record
+    confirms the slot with the best color code available from the record
     (its hex, else its name, else the neutral default) and slices again.
     A slot with no spool recorded has no safe one-tap fix and only explains.
     A material mismatch never reaches here: callers refuse that separately.
     """
     record = record or {}
-    label = filament_colour.slot_label(slot, record)
+    label = filament_color.slot_label(slot, record)
     if not record.get("spoolman_id") or not record.get("material"):
         return SliceRefusal(message, plain=f"{label} has no spool recorded, so I stopped before slicing.",
                             next_step="Use `/spool` to record which spool is loaded there, then ask again.")
-    hx, source = filament_colour.resolve(record)
-    if record.get("hex_source") in filament_colour.DERIVED_SOURCES:
+    hx, source = filament_color.resolve(record)
+    if record.get("hex_source") in filament_color.DERIVED_SOURCES:
         source = record["hex_source"]  # filled on load from the name or the default
     loaded = label.split("(", 1)[1].rstrip(")") if "(" in label else "this spool"
     plain = (f"{label} was never confirmed as loaded, so I have not sliced yet. "
-             "The confirmation only sets the slot's colour code (the preview colour and the "
-             "file's colour label); it does not change how the part prints.")
+             "The confirmation only sets the slot's color code (the preview color and the "
+             "file's color label); it does not change how the part prints.")
     if source == "default":
-        plain += (f" I could not work out its colour from the name, so it will use neutral grey "
-                  f"(#{hx}) until you set the colour with `/spool`.")
+        plain += (f" I could not work out its color from the name, so it will use neutral gray "
+                  f"(#{hx}) until you set the color with `/spool`.")
     return SliceRefusal(message, plain=plain,
                         next_step=f"Is {loaded} loaded in slot {slot}?",
-                        fix={"kind": "confirm_slot_colour", "slot": str(slot), "hex": hx},
+                        fix={"kind": "confirm_slot_color", "slot": str(slot), "hex": hx},
                         fix_label=f"Yes, slot {slot} has it: slice")
 
 
@@ -90,7 +90,7 @@ def slot_mismatch(slot: Any, record: dict[str, Any] | None, wanted: dict[str, An
     """
     record = record or {}
     wanted = wanted or {}
-    label = filament_colour.slot_label(slot, record)
+    label = filament_color.slot_label(slot, record)
     want = (str(wanted.get("name") or "").strip()
             or " ".join(str(wanted.get(k) or "").strip() for k in ("color", "material")).strip()
             or "the chosen spool")
@@ -103,11 +103,11 @@ def slot_mismatch(slot: Any, record: dict[str, Any] | None, wanted: dict[str, An
 def apply_fix(fix: dict[str, Any] | None, *, printer_id: str | None = None) -> str:
     """Apply one refusal's fix. Returns a plain line saying what changed.
 
-    ``confirm_slot_colour`` sets the slot's colour code only when it has
-    none (a valid hex is never overwritten) and marks the slot's colour
+    ``confirm_slot_color`` sets the slot's color code only when it has
+    none (a valid hex is never overwritten) and marks the slot's color
     confirmed: the operator just approved it on a button.
     """
-    if not fix or fix.get("kind") != "confirm_slot_colour":
+    if not fix or fix.get("kind") != "confirm_slot_color":
         raise ValueError("no fix to apply")
     from . import printer_state
     state = printer_state.load(printer_id) if printer_id else printer_state.load()
@@ -115,9 +115,9 @@ def apply_fix(fix: dict[str, Any] | None, *, printer_id: str | None = None) -> s
     record = (state.get("ifs_slots") or {}).get(slot)
     if not isinstance(record, dict):
         raise ValueError(f"slot {slot} is not in the hardware record")
-    hx = filament_colour.normalize_hex(fix.get("hex")) or filament_colour.NEUTRAL_DEFAULT
-    if (not filament_colour.normalize_hex(record.get("hex"))
-            or record.get("hex_source") in filament_colour.DERIVED_SOURCES):
+    hx = filament_color.normalize_hex(fix.get("hex")) or filament_color.NEUTRAL_DEFAULT
+    if (not filament_color.normalize_hex(record.get("hex"))
+            or record.get("hex_source") in filament_color.DERIVED_SOURCES):
         # Only an empty code or this module's own guess is replaced; a hex
         # the operator, Spoolman or the printer supplied stays.
         record["hex"] = hx
@@ -127,7 +127,7 @@ def apply_fix(fix: dict[str, Any] | None, *, printer_id: str | None = None) -> s
         printer_state.save(state, printer_id)
     else:
         printer_state.save(state)
-    return f"Slot {slot} colour confirmed as #{record['hex'].lstrip('#').upper()}."
+    return f"Slot {slot} color confirmed as #{record['hex'].lstrip('#').upper()}."
 
 
 def explain(exc: BaseException) -> SliceRefusal | None:

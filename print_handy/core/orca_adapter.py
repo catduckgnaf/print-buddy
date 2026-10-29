@@ -972,8 +972,8 @@ def slice_model(source, folder, state, brim=None, first_layer=False, color_decis
         if not isinstance(slot, dict):
             raise RuntimeError(f'derived plate slot {filament_slot} is not in the saved IFS map')
         if not slot.get('spoolman_id') or not slot.get('material') or not slot.get('physical_color_verified'):
-            from .slice_refusal import unconfirmed_slot_colour
-            raise unconfirmed_slot_colour(filament_slot, slot, 'IFS slot color/material mapping is unverified')
+            from .slice_refusal import unconfirmed_slot_color
+            raise unconfirmed_slot_color(filament_slot, slot, 'IFS slot color/material mapping is unverified')
         if slot.get('spoolman_id') != state['spool'].get('spoolman_id'):
             # The selected slot, not whichever spool happened to be active last,
             # defines this job's material; launch syncs the active spool to it.
@@ -1007,7 +1007,7 @@ def slice_model(source, folder, state, brim=None, first_layer=False, color_decis
                                            'name': state['spool'].get('name'),
                                            'material': state['spool'].get('material')}
         if state['spool'].get('color_code') is None:
-            color_row = None  # no recorded colour and no slots: the profile's own colour stays
+            color_row = None  # no recorded color and no slots: the profile's own color stays
         if slots:
             if len(matching) != 1:
                 raise RuntimeError('selected spool must resolve to exactly one IFS slot')
@@ -1017,13 +1017,13 @@ def slice_model(source, folder, state, brim=None, first_layer=False, color_decis
                 from .slice_refusal import slot_mismatch
                 raise slot_mismatch(color_slot, slot, state['spool'], 'IFS slot color/material mapping is unverified')
             if not slot.get('physical_color_verified'):
-                from .slice_refusal import unconfirmed_slot_colour
-                raise unconfirmed_slot_colour(color_slot, slot, 'IFS slot color/material mapping is unverified')
+                from .slice_refusal import unconfirmed_slot_color
+                raise unconfirmed_slot_color(color_slot, slot, 'IFS slot color/material mapping is unverified')
             color_row = slot
-    # The colour code only colours the preview and the 3MF filament label.
+    # The color code only colors the preview and the 3MF filament label.
     # A slot without one gets the next source in line (its name, else the
     # neutral default, with a WARNING) instead of killing the slice.
-    from .filament_colour import slot_hex
+    from .filament_color import slot_hex
     color = slot_hex(color_slot, color_row) if color_row is not None else None
     from .printer_state import _material_temperature_contract
     _material_temperature_contract(state)
@@ -1086,7 +1086,7 @@ def slice_model(source, folder, state, brim=None, first_layer=False, color_decis
                 if active_material is not None and not same_material(record['material'], active_material):
                     raise RuntimeError('mixed material requires independently calibrated per-toolhead temperatures/density')
                 materials.append(record['material'])
-                from .filament_colour import slot_hex
+                from .filament_color import slot_hex
                 data.update({'name': f"Hermes toolhead {position} {record['material']}",
                              'filament_settings_id': [f"Hermes toolhead {position} {record['material']}"],
                              'filament_colour': [slot_hex(position, record)] if record.get('hex')
@@ -1114,7 +1114,7 @@ def slice_model(source, folder, state, brim=None, first_layer=False, color_decis
         configs[0].write_text(json.dumps(machine, indent=2) + '\n')
         configs[1].write_text(json.dumps(process, indent=2) + '\n')
         filament_paths = []
-        from .filament_colour import slot_hex
+        from .filament_color import slot_hex
         for tool, physical_slot in mapping.items():
             slot = state['ifs_slots'][str(physical_slot)]
             from .printer_state import same_material

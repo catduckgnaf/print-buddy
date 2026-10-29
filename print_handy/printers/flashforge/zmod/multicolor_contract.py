@@ -165,8 +165,8 @@ def finalize(path, colors, state=None, mapping=None):
         for tool in sorted(map(int, mapping)):
             slot = state['ifs_slots'][str(mapping[str(tool)])]
             # Same fallback as slicing: a slot without a code gets its name's
-            # colour or the neutral default (WARNING logged), never a refusal.
-            from print_handy.core.filament_colour import slot_hex
+            # color or the neutral default (WARNING logged), never a refusal.
+            from print_handy.core.filament_color import slot_hex
             color = slot_hex(mapping[str(tool)], slot)
             metadata.append(f'; zmod_color_data = {tool}|{color}|{slot["material"]}\n')
     else:

@@ -685,10 +685,10 @@ async def _spool_projection_text(mj, job, manifest, state, copies):
         return ''
 
 
-def _colour_guess_text(mj, job, decisions):
-    """Display only: say so when a slot this job uses has no real colour code.
+def _color_guess_text(mj, job, decisions):
+    """Display only: say so when a slot this job uses has no real color code.
 
-    A slot whose colour could not be worked out previews in neutral grey;
+    A slot whose color could not be worked out previews in neutral gray;
     the operator hears that before slicing rather than discovering it.
     """
     try:
@@ -697,7 +697,7 @@ def _colour_guess_text(mj, job, decisions):
         selection = (job or {}).get('filament_selection') or {}
         if isinstance(selection, dict) and selection.get('slot') is not None:
             slots.add(selection['slot'])
-        from .filament_colour import chat_notes
+        from .filament_color import chat_notes
         if not slots:
             return ''
         return '\n'.join(chat_notes(mj.printer_state.load(), slots))
@@ -1564,9 +1564,9 @@ async def prepare_link(event, adapter, state, root, timeout=None, reuse=None, pr
         caveat = (' Parts go on one multicolor bed when they fit; if they must split I will say why and '
                   'let you choose which plate prints first.' if multi and decisions['mode'] == 'per_part' else '')
         spool_text = await _spool_projection_text(mj, latest, manifest, state, chosen_quantity)
-        colour_text = _colour_guess_text(mj, latest, decisions)
-        if colour_text:
-            spool_text = (spool_text + '\n' + colour_text) if spool_text else colour_text
+        color_text = _color_guess_text(mj, latest, decisions)
+        if color_text:
+            spool_text = (spool_text + '\n' + color_text) if spool_text else color_text
         source_estimate = _preview_estimate(latest.get('selected_source'))
         estimate_s = source_estimate[0] * chosen_quantity if source_estimate else None
         estimate_text = ('time after slicing' if estimate_s is None else

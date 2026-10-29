@@ -1316,10 +1316,10 @@ def _validate_slot_selection(state, selection):
     mapping_matches = (slot.get('spoolman_id') and slot.get('spoolman_id') == selection['spoolman_id']
                        and str(slot.get('material', '')).casefold() == selection['material'].casefold())
     if mapping_matches and not slot.get('physical_color_verified'):
-        # Only the colour confirmation is missing: say so plainly and offer
+        # Only the color confirmation is missing: say so plainly and offer
         # the one-button fix instead of a retry that fails the same way.
-        from .slice_refusal import unconfirmed_slot_colour
-        raise unconfirmed_slot_colour(
+        from .slice_refusal import unconfirmed_slot_color
+        raise unconfirmed_slot_color(
             selection['slot'], slot,
             f"selected IFS slot {selection['slot']} is unverified or its material/spool mapping differs")
     if (not slot.get('physical_color_verified') or not slot.get('spoolman_id')

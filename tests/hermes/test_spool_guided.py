@@ -273,7 +273,7 @@ def test_guided_new_new_type_never_asks_hex():
     assert not any("hex" in q.lower() for q in questions)
     assert not any("brand" in q.lower() for q in questions)
     filament_posts = [b for m, p, b in fake.writes if m == "POST" and p == "/api/v1/filament"]
-    # The colour code is derived from the name, never asked for.
+    # The color code is derived from the name, never asked for.
     assert filament_posts and filament_posts[0]["color_hex"] == "64B5F6"
     assert filament_posts[0]["name"] == "Sky Blue" and filament_posts[0]["material"] == "PETG"
     assert "Created spool #20" in adapter.sent[-1]

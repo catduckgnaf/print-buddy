@@ -95,7 +95,7 @@ def test_split_count_copies():
 def test_slot_record_missing_color_never_reuses_cached_screen_color():
     record = spool_sync._slot_record(2, {"id": 7, "filament": {"name": "Coffee PLA+", "material": "PLA+", "color_hex": None}}, {"hex": "F95D73"}, "test")
     assert record["spoolman_id"] == 7
-    # Never the cached screen colour: the code comes from this spool's own name.
+    # Never the cached screen color: the code comes from this spool's own name.
     assert record["hex"] == "6F4E37" and record["hex_source"] == "name"
 
 

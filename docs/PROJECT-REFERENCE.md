@@ -77,16 +77,16 @@ A bed-clear approval starts one print. Starting the same G-code again needs a ne
   route that read them (Edit details walks the normal steps; an unusable photo refuses with the
   reason and falls back to them). Label temperatures are recorded on the Spoolman filament, so
   the usual precedence holds for every material, and the photo itself is never stored.
-* Every spool records a colour code, and nobody types hex. The code is derived from the colour
-  name and finish against a named-colour table ("matte white" → `FFFFFF`; a blend such as
-  "rose red blue green" records its first colour as the swatch plus every colour as Spoolman
+* Every spool records a color code, and nobody types hex. The code is derived from the color
+  name and finish against a named-color table ("matte white" → `FFFFFF`; a blend such as
+  "rose red blue green" records its first color as the swatch plus every color as Spoolman
   `multi_color_hexes`); a picked swatch or label read wins over the name. Only when the name
-  cannot be read ("Galaxy") does the walkthrough ask once, with swatch buttons of likely colours.
-  Picking a spool for a slot (insertion prompt, walkthrough, `/spool`) confirms that slot's colour.
-  The colour code only sets the preview colour, the 3MF colour labels and the screen swatch —
+  cannot be read ("Galaxy") does the walkthrough ask once, with swatch buttons of likely colors.
+  Picking a spool for a slot (insertion prompt, walkthrough, `/spool`) confirms that slot's color.
+  The color code only sets the preview color, the 3MF color labels and the screen swatch —
   never a toolpath — so slicing never dies on a missing one: it uses the slot record's hex, then
   Spoolman's `color_hex`, then the printer's reported slot hex (`zmod_color`), then the name, and
-  only then neutral grey `#9E9E9E`, which chat says out loud before slicing. Existing slots with a
+  only then neutral gray `#9E9E9E`, which chat says out loud before slicing. Existing slots with a
   blank hex are backfilled without user action — on read, and by the listener at startup and on
   each reconnect from Spoolman and the printer — and a valid hex is never overwritten (only a code
   Print Handy guessed itself may be upgraded from Spoolman or the printer).

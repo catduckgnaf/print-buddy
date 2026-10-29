@@ -1550,7 +1550,7 @@ def test_deterministic_slice_refusal_explains_and_offers_the_one_tap_fix(env, mo
     def refuse_once(job_path, *args, **kwargs):
         calls.append(str(job_path))
         if len(calls) == 1:
-            raise slice_refusal.unconfirmed_slot_colour(
+            raise slice_refusal.unconfirmed_slot_color(
                 1, {'spoolman_id': 16, 'material': 'PLA', 'name': 'Matte white PLA', 'hex': 'FFFFFF'},
                 'selected IFS slot 1 is unverified or its material/spool mapping differs')
         return real_slice(job_path, *args, **kwargs)
@@ -1564,7 +1564,7 @@ def test_deterministic_slice_refusal_explains_and_offers_the_one_tap_fix(env, mo
     assert 'Slot 1 (Matte white PLA)' in question and 'Is Matte white PLA loaded in slot 1?' in question
     assert 'PB_SLICING_CONFIGURATION' in question and 'UNKNOWN' not in question
     assert asked[0]['choices'] == ['Yes, slot 1 has it: slice', 'No, cancel']
-    assert fixes == [{'kind': 'confirm_slot_colour', 'slot': '1', 'hex': 'FFFFFF'}]
+    assert fixes == [{'kind': 'confirm_slot_color', 'slot': '1', 'hex': 'FFFFFF'}]
     assert len(calls) == 2 and receipt['status'] == 'STARTED'
 
 
@@ -1574,7 +1574,7 @@ def test_slice_refusal_without_a_safe_fix_says_why_and_offers_no_blind_retry(env
 
     def refuse(job_path, *args, **kwargs):
         calls.append(str(job_path))
-        raise slice_refusal.unconfirmed_slot_colour(2, {'material': 'PLA'}, 'IFS slot color/material mapping is unverified')
+        raise slice_refusal.unconfirmed_slot_color(2, {'material': 'PLA'}, 'IFS slot color/material mapping is unverified')
 
     monkeypatch.setattr(model_job, 'slice_job', refuse)
     adapter, result, receipt = run_flow(env, [1, 0, 0], mid='refusal-plain')
@@ -1587,7 +1587,7 @@ def test_slice_refusal_without_a_safe_fix_says_why_and_offers_no_blind_retry(env
 
 def test_slice_refusal_crosses_the_worker_boundary_as_data():
     from print_handy.core import slice_refusal
-    original = slice_refusal.unconfirmed_slot_colour(
+    original = slice_refusal.unconfirmed_slot_color(
         3, {'spoolman_id': 4, 'material': 'PETG', 'name': 'Galaxy PETG'}, 'technical')
     back = slice_refusal.from_dict(json.loads(json.dumps(original.as_dict())))
     assert str(back) == 'technical' and back.plain == original.plain and back.fix == original.fix

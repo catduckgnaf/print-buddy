@@ -30,8 +30,8 @@ def test_partial_stock_detail_is_rejected(monkeypatch):
         stock.read_stock_ifs_slots_from_detail(detail)
 
 
-def test_multicolor_spool_records_its_first_colour_as_a_representative_swatch():
-    # A multi-colour spool used to get no hex at all, and slicing died on it.
+def test_multicolor_spool_records_its_first_color_as_a_representative_swatch():
+    # A multi-color spool used to get no hex at all, and slicing died on it.
     rec = spool_sync._slot_record(1, {"id": 7, "filament": {"name": "Rainbow PLA", "material": "PLA", "multi_color_hexes": "FF0000,00FF00"}}, None, "test")
     assert rec.get("multi_color") is True
     assert rec["representative_swatch"] is True

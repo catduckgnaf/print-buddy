@@ -20,7 +20,7 @@ from pathlib import Path
 from typing import Any, Callable
 
 from .. import printers
-from ..core import filament_colour, spoolman_client
+from ..core import filament_color, spoolman_client
 from . import _config
 
 HARDWARE_STATE = _config.state_file("PRINTER_HARDWARE_STATE", "printer_hardware.json")
@@ -122,9 +122,9 @@ def _hardware_read_path(path: Path | None = None, printer_id: str | None = None)
 
 def load_state(path: Path | None = None, *, printer_id: str | None = None) -> dict[str, Any]:
     state = json.loads(_hardware_read_path(path, printer_id).read_text())
-    # Same backfill as printer_state.load: a slot with no colour code gets
+    # Same backfill as printer_state.load: a slot with no color code gets
     # one from its name; a valid hex is never touched.
-    filament_colour.fill_missing_slot_hexes(state)
+    filament_color.fill_missing_slot_hexes(state)
     return state
 
 
@@ -321,13 +321,13 @@ def _slot_record(slot: int, spool: dict[str, Any], old: dict[str, Any] | None, n
     stored_color = color.lower() if color else ((old or {}).get("color") if same_spool else "") or ""
     # A null/invalid Spoolman color is not permission to reuse cached color: that
     # can silently assign another spool's swatch to the physical slot. The
-    # colour code comes from this spool alone: Spoolman's color_hex, else the
-    # first of its multi_color_hexes (a multi-colour spool's representative
-    # swatch), else its colour name, else the neutral default — which
+    # color code comes from this spool alone: Spoolman's color_hex, else the
+    # first of its multi_color_hexes (a multi-color spool's representative
+    # swatch), else its color name, else the neutral default — which
     # hex_source records and chat says out loud. A slot is never left without
     # a code: slicing used to die on exactly that.
     spoolman_hex = filament.get("color_hex") or (raw_multi if isinstance(raw_multi, str) else None)
-    hex_code, hex_source = filament_colour.resolve(
+    hex_code, hex_source = filament_color.resolve(
         None, spoolman_hex=spoolman_hex, name=raw_name, material=material)
     return {
         "slot": slot,
@@ -454,17 +454,17 @@ def bind_slot(slot: int, spool_id: int, *, client: Client = spoolman, mr: Client
             "screen": screen, "usage": usage, "prior_disposition": prior_disposition}
 
 
-def backfill_slot_colours(*, client: Client = spoolman, mr: Client = moonraker,
+def backfill_slot_colors(*, client: Client = spoolman, mr: Client = moonraker,
                           state_path: Path | None = None,
                           printer_id: str | None = None) -> list[dict[str, Any]]:
-    """Give every loaded slot a colour code from the best source that answers.
+    """Give every loaded slot a color code from the best source that answers.
 
     Run at listener startup and on each reconnect, without user action.
     Fallback order: the slot's own valid hex (never overwritten), Spoolman's
     ``color_hex``, the hex the printer reports for the slot (ZMod
-    ``zmod_color``), the colour name, then the neutral default. A code this
+    ``zmod_color``), the color name, then the neutral default. A code this
     module derived earlier (``hex_source`` name/default) is upgraded when
-    Spoolman or the printer now answers. A Spoolman filament with no colour
+    Spoolman or the printer now answers. A Spoolman filament with no color
     gets the slot's code filled in (never replaced). Spoolman and the
     printer are each best effort: one being down only narrows the sources.
     Returns the changes made (slot, hex, source, previous); saves only then.
@@ -477,8 +477,8 @@ def backfill_slot_colours(*, client: Client = spoolman, mr: Client = moonraker,
     state = json.loads(json.dumps(raw))
     slots = state.get("ifs_slots") or {}
     pending = {str(key): rec for key, rec in slots.items() if isinstance(rec, dict) and rec.get("spoolman_id")
-               and (not filament_colour.normalize_hex(rec.get("hex"))
-                    or rec.get("hex_source") in filament_colour.DERIVED_SOURCES)}
+               and (not filament_color.normalize_hex(rec.get("hex"))
+                    or rec.get("hex_source") in filament_color.DERIVED_SOURCES)}
     if not pending:
         return []
     spoolman_hexes: dict[Any, str] = {}
@@ -496,11 +496,11 @@ def backfill_slot_colours(*, client: Client = spoolman, mr: Client = moonraker,
     printer_hexes: dict[str, str] = {}
     try:
         reply = mr("GET", "/printer/objects/query?zmod_color", None) or {}
-        printer_hexes = filament_colour.printer_slot_hexes(
+        printer_hexes = filament_color.printer_slot_hexes(
             ((reply.get("result") or {}).get("status") or {}).get("zmod_color"))
     except Exception:
         pass
-    changes = filament_colour.fill_missing_slot_hexes(
+    changes = filament_color.fill_missing_slot_hexes(
         state, spoolman_hexes=spoolman_hexes, printer_hexes=printer_hexes)
     for change in changes:
         rec = slots.get(change["slot"]) or {}
@@ -663,21 +663,21 @@ def parse_new(text: str) -> dict[str, Any]:
     return {"brand": brand or None, "material": material, "color": color, "grams": round(g, 1), "hex": hx}
 
 
-def spec_colour(spec: dict[str, Any]) -> tuple[str | None, tuple[str, ...], str | None]:
-    """The colour code a new spool records: (hex, multi hexes, source).
+def spec_color(spec: dict[str, Any]) -> tuple[str | None, tuple[str, ...], str | None]:
+    """The color code a new spool records: (hex, multi hexes, source).
 
     An explicit hex (typed, a picked swatch, a label read) wins; otherwise
-    it is derived from the colour name (the operator never
-    types hex). A name that lists several colours ("rose red blue green")
-    records its first colour as the swatch plus every colour as the
-    multi-colour list. Nothing derivable returns (None, (), None): the
+    it is derived from the color name (the operator never
+    types hex). A name that lists several colors ("rose red blue green")
+    records its first color as the swatch plus every color as the
+    multi-color list. Nothing derivable returns (None, (), None): the
     walkthrough asks with swatch buttons before it gets here, and a one-shot
-    command leaves Spoolman's colour empty rather than inventing one.
+    command leaves Spoolman's color empty rather than inventing one.
     """
     given = screen_hex(spec.get("hex"))
     if given:
         return given, (), "given"
-    guess = filament_colour.derive(spec.get("color"), spec.get("material"))
+    guess = filament_color.derive(spec.get("color"), spec.get("material"))
     if guess is None:
         return None, (), None
     return guess.hex, guess.multi_hexes, "name"
@@ -686,13 +686,13 @@ def spec_colour(spec: dict[str, Any]) -> tuple[str | None, tuple[str, ...], str 
 def create_spool(spec: dict[str, Any], *, client: Client = spoolman) -> dict[str, Any]:
     """Create a spool on the shelf, reusing a matching filament type when one exists.
 
-    The new spool always gets a colour code when one can be worked out
-    (spec_colour); a reused filament type that has none gets it filled in,
+    The new spool always gets a color code when one can be worked out
+    (spec_color); a reused filament type that has none gets it filled in,
     never replaced.
     """
-    colour_hex, multi_hexes, colour_source = spec_colour(spec)
-    if colour_hex:
-        spec = {**spec, "hex": colour_hex}
+    color_hex, multi_hexes, color_source = spec_color(spec)
+    if color_hex:
+        spec = {**spec, "hex": color_hex}
     filaments = client("GET", "/api/v1/filament", None) or []
     match = None
     reused = True
@@ -725,15 +725,15 @@ def create_spool(spec: dict[str, Any], *, client: Client = spoolman) -> dict[str
                 vendor = client("POST", "/api/v1/vendor", {"name": spec["brand"]})
             body["vendor_id"] = vendor["id"]
         match = client("POST", "/api/v1/filament", body)
-    if reused and colour_hex and not first_hex_of(match):
-        # A filament type created before colour codes were always recorded:
+    if reused and color_hex and not first_hex_of(match):
+        # A filament type created before color codes were always recorded:
         # fill the gap, best effort. A valid hex already there is left alone.
         try:
-            client("PATCH", f"/api/v1/filament/{match['id']}", {"color_hex": colour_hex})
+            client("PATCH", f"/api/v1/filament/{match['id']}", {"color_hex": color_hex})
         except Exception:
             pass
     if not reused and len(multi_hexes) > 1:
-        # A multi-colour name also records every colour, best effort: the
+        # A multi-color name also records every color, best effort: the
         # representative swatch above is what slicing and the screen use.
         try:
             client("PATCH", f"/api/v1/filament/{match['id']}",
@@ -745,11 +745,11 @@ def create_spool(spec: dict[str, Any], *, client: Client = spoolman) -> dict[str
         "location": SHELF, "lot_nr": spec.get("lot"), "comment": CREATED_SPOOL_COMMENT,
     })
     return {"spool_id": created["id"], "filament_id": match["id"], "reused_filament": reused,
-            "hex": colour_hex, "hex_source": colour_source}
+            "hex": color_hex, "hex_source": color_source}
 
 
 def first_hex_of(filament: dict[str, Any] | None) -> str | None:
-    """A filament's single colour code: color_hex, else its first multi colour."""
+    """A filament's single color code: color_hex, else its first multi color."""
     filament = filament or {}
-    return (filament_colour.normalize_hex(filament.get("color_hex"))
-            or filament_colour.first_hex(filament.get("multi_color_hexes")))
+    return (filament_color.normalize_hex(filament.get("color_hex"))
+            or filament_color.first_hex(filament.get("multi_color_hexes")))

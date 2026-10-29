@@ -214,6 +214,8 @@ def post_plate_picker(plan_id):
         parts = remaining_plate_choices(plan)
         if not parts:
             return False
+        from . import next_plate_offer
+        next_plate_offer.remember(plan_id)
         options = [{"label": print_next.plate_choice_label(part), "value": str(part["id"])} for part in parts]
         if pab.post_plate_picker(_bot_token(), announcer.DISCORD_CHAT_ID,
                                  "Which plate is next? Clear the bed, then choose a plate.", plan_id, options):
@@ -223,6 +225,30 @@ def post_plate_picker(plan_id):
     except Exception as exc:
         log(f"plate picker post error plan={plan_id}: {exc!r}")
     return post(f"To start the next plate, type `/print-next {plan_id}`.")
+
+
+def post_bed_clear_offer(choice):
+    """Post the empty-bed offer with the existing confirm button. Starts nothing.
+
+    Buttonless platforms return False so the caller posts the text, which
+    names `/print-next` and does not start a plate.
+    """
+    if _buttonless_standalone():
+        return False
+    plan_id = str((choice or {}).get("plan_id") or "")
+    part_id = str((choice or {}).get("part_id") or "")
+    text = str((choice or {}).get("text") or "")
+    if not plan_id or not part_id or not text:
+        return False
+    try:
+        from . import print_alert_buttons as pab
+        if pab.post_plate_confirm(_bot_token(), announcer.DISCORD_CHAT_ID, text, plan_id, part_id):
+            log(f"post next-plate offer plan={plan_id} part={part_id}")
+            return True
+        log(f"next-plate offer button post failed plan={plan_id}; falling back to text")
+    except Exception as exc:
+        log(f"next-plate offer button post error plan={plan_id}: {exc!r}")
+    return False
 
 
 def post_insertion_confirmation(slot):
@@ -2798,6 +2824,34 @@ class Listener:
             with contextlib.suppress(Exception):
                 self._auto_light_policy().note_check(time.time())
 
+    async def offer_next_plate_if_clear(self):
+        """One empty-bed look for a queued plate. Posts an offer. Starts nothing.
+
+        Uses the same snapshot and verdict words as the auto-light check (#516).
+        No camera, a dark frame, or no queued plate: no offer and no invented bed.
+        """
+        from . import next_plate_offer
+        if not next_plate_offer.due():
+            return
+        if not _vision_ready():
+            next_plate_offer.observe(None)
+            return
+        image = await asyncio.to_thread(_camera_snapshot_bytes)
+        if not image or await asyncio.to_thread(_visual_watch.frame_dark, image):
+            next_plate_offer.observe(None)
+            return
+        verdict, detail = await asyncio.to_thread(_visual_verdict, image, _AUTO_LIGHT_PROMPT)
+        log(f"next plate bed check verdict={verdict} detail={detail!r}")
+        choice = next_plate_offer.observe(verdict)
+        if not isinstance(choice, dict):
+            return
+        if choice.get("action") == "offer" and await asyncio.to_thread(post_bed_clear_offer, choice):
+            return
+        text = choice.get("text") or ""
+        if text:
+            await asyncio.to_thread(post, text)
+
+
     # -- #246 stage 2: in-container timelapse capture ---------------------
     # Capture is a side feature: every hook fails soft and, with
     # timelapse.capture_enabled off (the default), begin() returns None
@@ -2906,6 +2960,10 @@ class Listener:
                         await self.light_idle_tick()
                     except Exception as exc:
                         log(f"auto light idle tick failed: {exc!r}")
+                    try:
+                        await self.offer_next_plate_if_clear()
+                    except Exception as exc:
+                        log(f"next plate offer failed: {exc!r}")
                 if time.monotonic() - self.maintenance_last_check >= 3600:
                     self.maintenance_last_check = time.monotonic()
                     await maintenance_reminder_tick(self)

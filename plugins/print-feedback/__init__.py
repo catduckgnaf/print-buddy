@@ -4928,6 +4928,14 @@ def alert_button_handlers(bot, adapter):
                                         custom_id=f'{pab.PLATE_PREFIX}:go:{confirm_aid}'))
         await interaction.response.edit_message(content=print_next.question_text(target), view=view)
 
+    async def handle_plate_drop(interaction, aid):
+        """Dismiss an empty-bed offer. Does not start a plate."""
+        alert = await asyncio.to_thread(pab.take, aid)
+        if not alert:
+            await interaction.response.send_message('That offer is old or was already used. Nothing started.', ephemeral=True)
+            return
+        await interaction.response.edit_message(content='Left the queue alone. Nothing started.', view=None)
+
     async def handle_plate_go(interaction, aid):
         """The one Confirm tap. The alert is single use and print_next.start re-checks the printer and claim."""
         from print_handy.hermes import print_next
@@ -5075,7 +5083,7 @@ def alert_button_handlers(bot, adapter):
                 await reject(interaction)
                 return
             await {'pick': handle_plate_pick, 'go': handle_plate_go,
-                   'spool': handle_plate_spool}[plate[0]](interaction, plate[1])
+                   'spool': handle_plate_spool, 'drop': handle_plate_drop}[plate[0]](interaction, plate[1])
             return
         parsed = pab.parse_custom_id(custom_id)
         insertion = pab.parse_insertion_custom_id(custom_id)

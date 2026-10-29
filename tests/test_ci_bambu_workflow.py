@@ -16,7 +16,7 @@ import yaml
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 WORKFLOW_PATH = ROOT / ".github" / "workflows" / "ci.yml"
-ORCA_BUNDLE_SHA256 = "2caa907e75ca1cd499568d7940d1fe787b795b3deff1d5dcf4cda31f1a4b6d32"
+ORCA_BUNDLE_SHA256 = "2d2f6979a3379d5fe77c62bbdff0ea36ec415ef43c9557e118ed45b95d39de03"
 
 
 def load_workflow():
@@ -58,7 +58,7 @@ class RealSlicerBambuWorkflowContract(unittest.TestCase):
     def test_templates_come_from_the_pinned_orca_bundle(self):
         runs = job_runs(bambu_job())
         self.assertIn(ORCA_BUNDLE_SHA256, runs)
-        self.assertIn("OrcaSlicer-Linux-flatpak_V2.5.0-alpha_x86_64.flatpak", runs)
+        self.assertIn("OrcaSlicer-Linux-flatpak_V2.5.0-beta_x86_64.flatpak", runs)
         self.assertIn("org.gnome.Platform//50", runs)
 
     def test_leg_does_not_change_what_ships(self):

@@ -2,6 +2,8 @@
 
 # Unreleased
 
+- Bundled OrcaSlicer bumped from v2.5.0-alpha to v2.5.0-beta (upstream prerelease, published 2026-10-27, tag commit `345efec64c7b95a05ce5cf96df0dde66a158835c`): both channels in `docker/orca-prebuilt.sh` pin the beta AppImages (amd64 `15b0e9f9…`, aarch64 `941ea21d…`), the real-slicer CI legs download the beta flatpak (`2d2f6979…`), and every generated-template vendor pack gains checked 2.5.0-beta identities (tree + packed cache, computed from the beta source tree and the SHA-verified beta AppImage with the shared flatten pipeline; BBL `02.08.00.16`, Anycubic `02.04.00.10`, Elegoo `02.04.00.13`, QIDI `02.04.00.19`, Prusa and Creality kept their alpha vendor versions). The alpha channel keeps its name — it is the prerelease channel; it pins the same beta build until upstream publishes a newer prerelease. Alpha and 2.4.2 identities are retained, so folders generated from them keep verifying. Not verified on live hardware.
+
 **Fixes:**
 - Cleaner chat text during model intake: a long model summary is cut at a word with an ellipsis (no more "so I extended the."); colour questions for identical parts name the part once ("Choose one color/material for the 4 chains (15 x 87.7 x 6 mm, author made them Pink)") instead of repeating it four times; the summary before slicing groups identical parts ("2× frameLeg: Matte white PLA"), starts with "Ready to slice" and no longer ends with a stray "time after slicing"; and material names display normalised (Pla shows as PLA, silk pla as Silk PLA) in that summary and on slot buttons. Spoolman and job records are not changed.
 - Container logs no longer carry `TIMING {...}` lines on stdout: launch timing goes to the debug log (and still to each job's `TIMING.jsonl`).

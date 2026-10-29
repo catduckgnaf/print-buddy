@@ -21,7 +21,9 @@ this file when a suite is added, moved, or starts/stops pinning an area.
 | Timelapse: capture, encode, sizing, plan clips, vertical short | `tests/hermes/test_timelapse_capture.py`, `test_timelapse_encode.py`, `test_platform_media_sizing.py`, `test_plan_timelapse.py`, `test_vertical_short.py`, `test_timelapse_cli_transport.py` |
 | Roast (one per print, #374) + roast generator fail-soft | `tests/hermes/test_print_messages.py`, `tests/pipeline/test_prepared_intake.py` |
 | Intake / slicing pipeline / model job | `tests/pipeline/`, `tests/core/`, `tests/slicer/`, `tests/corpus/` |
-| Model sites via API (#462): Thingiverse inventory/download; MyMiniFactory inventory-only with the named download gap and the pre-choice intake refusal | `tests/pipeline/test_thingiverse_sites.py`, `tests/pipeline/test_myminifactory_sites.py` |
+| Model sites via API (#462): Thingiverse inventory/download; MyMiniFactory inventory plus the OAuth sign-in download (#464), the Cloudflare-challenge stop and the token never following a redirect to another host | `tests/pipeline/test_thingiverse_sites.py`, `tests/pipeline/test_myminifactory_sites.py` |
+| Creality Cloud intake (#604): inventory plus token-gated download, with the named token gap at the point of use | `tests/pipeline/test_crealitycloud_sites.py` |
+| Thangs and Nexprint intake (#464): inventory plus token-gated download, MakerOnline inventory-only, and the chat connect-account flow that retries the download once the token file is saved | `tests/pipeline/test_login_token_sites.py` |
 | Real Bambu Studio slicing (CI `Slicer test (bambu)` leg) | `tests/slicer/test_bambu_real_a1.py`; job contract in `tests/test_ci_bambu_workflow.py` |
 | Spoolman best-effort contract (#387, #235) | `tests/core/test_spoolman_client.py`, `tests/pipeline/test_spoolman_best_effort.py`, `test_spoolman_wrapper_contract.py`, `test_spoolman_warning*.py` |
 | Printers: roster, per-printer state, leases (#333–#337) | `tests/test_printers_roster.py`, `tests/test_per_printer_state.py`, `tests/test_multi_printer_walkthrough.py`, `tests/printers/` |

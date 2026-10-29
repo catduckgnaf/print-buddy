@@ -30,10 +30,10 @@ SITE_TOKEN_ERRORS = [
      "Thingiverse", "Thingiverse App Token"),
     (RuntimeError("MyMiniFactory links need an API key in /home/x/.config/myminifactory/token; "
                   "create an API key in your MyMiniFactory account"),
-     "MyMiniFactory", "MyMiniFactory API key"),
+     "MyMiniFactory", "MyMiniFactory sign-in"),
     (RuntimeError("MyMiniFactory refused the request (401/403), which usually means "
                   "the API key is missing, invalid or expired"),
-     "MyMiniFactory", "MyMiniFactory API key"),
+     "MyMiniFactory", "MyMiniFactory sign-in"),
     (RuntimeError("Cults3D needs an API key first. Create one at "
                   "https://cults3d.com/en/api/keys and save it as the only content "
                   "of /home/x/.config/cults3d/token in the form nickname:key"),
@@ -41,7 +41,24 @@ SITE_TOKEN_ERRORS = [
     (RuntimeError("Cults3D refused the request (401), which usually means the "
                   "nickname or API key in ~/.config/cults3d/token is wrong"),
      "Cults3D", "Cults3D API key"),
+    # #464: the login-token sites' curated messages.
+    (RuntimeError("Creality Cloud refused the login token (the site answered \"Invalid "
+                  "Token\"), which usually means the token in ~/.config/crealitycloud/token "
+                  "is missing, invalid or expired"),
+     "Creality Cloud", "Creality Cloud login"),
+    (RuntimeError("Thangs downloads need a login token in /home/x/.config/thangs/token (or "
+                  "the THANGS_TOKEN environment variable)"),
+     "Thangs", "Thangs login token"),
+    (RuntimeError("The Nexprint login token in /home/x/.config/nexprint/token has expired."),
+     "Nexprint", "Nexprint login token"),
 ]
+
+
+def test_makeronline_gap_is_a_known_site_gap():
+    from print_handy.core import model_job
+    known = diagnostics.known_cause(RuntimeError(model_job.MAKERONLINE_DOWNLOAD_GAP))
+    assert known is not None and known.category is Category.CONFIGURATION
+    assert "MakerOnline" in known.cause and "browser" in known.remedy
 
 
 # ---------------------------------------------------------------- markers
@@ -83,7 +100,7 @@ def test_robot_check_is_a_transient_known_cause():
 
 def test_site_download_gaps_are_known_causes_with_a_browser_remedy():
     from print_handy.core import model_job
-    for gap in (model_job.MYMINIFACTORY_DOWNLOAD_GAP, model_job.CULTS_DOWNLOAD_GAP):
+    for gap in (model_job.MAKERONLINE_DOWNLOAD_GAP, model_job.CULTS_DOWNLOAD_GAP):
         known = diagnostics.known_cause(RuntimeError(gap))
         assert known is not None and known.category is Category.CONFIGURATION
         assert "browser" in known.remedy and "upload or drop" in known.remedy

@@ -24,7 +24,11 @@ is the product, and it is the same for every driven calibration:
    keeps the newest 1000 lines) does not hide them.
 5. **Accept / Discard.** Nothing is saved before this step. Accept sends
    exactly the documented save, once (and warns first when the save
-   restarts Klipper). Discard sends the documented revert, or nothing
+   restarts Klipper). SAVE_CONFIG restarts Klipper mid-request, so
+   Moonraker usually answers 503 or drops the connection; that is the
+   expected restart, never resent. Accept reports success once Klipper
+   is ready again, and says the save is unconfirmed if it does not come
+   back. Discard sends the documented revert, or nothing
    when nothing was applied — and never a save. Both re-check that the
    printer is still idle first. No answer before the prompt times out is
    not a Discard: nothing is sent, and the reply says the new values

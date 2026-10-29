@@ -82,6 +82,7 @@ from pathlib import Path
 
 OBJECTS_LIST_PATH = "/printer/objects/list"
 GCODE_SCRIPT_PATH = "/printer/gcode/script"
+PRINTER_INFO_PATH = "/printer/info"
 GCODE_STORE_PATH = "/server/gcode_store"
 PRINT_STATE_PATH = "/printer/objects/query?print_stats=state"
 SETTINGS_PATH = "/printer/objects/query?configfile=settings"
@@ -251,6 +252,52 @@ def _send_script(transport, line, *, long_running=False):
         raise CalibrationError(f"The send did not succeed ({exc}). It is not known whether "
                                "the printer received or ran anything — check the printer "
                                "before trying again.") from exc
+
+
+def _is_restart_disconnect(exc) -> bool:
+    """Whether a send failure is the connection dropping as Klipper restarts.
+
+    SAVE_CONFIG restarts Klipper while Moonraker still holds the request:
+    Moonraker answers 503 "Klippy Disconnected", or the connection is cut.
+    """
+    if getattr(exc, "code", None) == 503:
+        return True
+    reason = getattr(exc, "reason", None)
+    return isinstance(exc, (ConnectionError, TimeoutError)) or isinstance(
+        reason, (ConnectionError, TimeoutError))
+
+
+def _save_config(transport, *, attempts=45, interval_s=2.0, sleep=time.sleep):
+    """Send SAVE_CONFIG once, then wait for Klipper to come back ready.
+
+    SAVE_CONFIG writes printer.cfg and restarts Klipper, so the HTTP call
+    usually fails with 503 or a dropped connection even though the save
+    went through (seen live on an AD5X, 2026-10-29). That is expected and
+    is never resent. Any other failure is uncertain, like any other send.
+    Success is Klipper reporting ready again; if it does not within the
+    wait, the save is reported as unconfirmed rather than either outcome.
+    """
+    try:
+        transport("POST", GCODE_SCRIPT_PATH, {"script": "SAVE_CONFIG"})
+    except Exception as exc:
+        if not _is_restart_disconnect(exc):
+            raise CalibrationError(f"The send did not succeed ({exc}). It is not known "
+                                   "whether the printer received or ran anything — "
+                                   "check the printer before trying again.") from exc
+    for attempt in range(max(1, attempts)):
+        if attempt:
+            sleep(interval_s)
+        try:
+            state = transport("GET", PRINTER_INFO_PATH)["result"]["state"]
+        except Exception:
+            continue
+        if state == "ready":
+            return
+    raise CalibrationError(
+        "SAVE_CONFIG was sent and Klipper restarted, but it did not report ready again "
+        "in the time Print Handy waited, so the save is not confirmed. Check the "
+        "printer (Fluidd/Mainsail or the screen) before printing; do not send "
+        "SAVE_CONFIG again.")
 
 
 # --------------------------------------------------------------------- discovery
@@ -928,13 +975,13 @@ def pid_result_text(result: PidResult) -> str:
         "unavailable for about a minute while it restarts."])
 
 
-def accept_pid(transport, result: PidResult) -> str:
+def accept_pid(transport, result: PidResult, *, sleep=time.sleep) -> str:
     """Accept: exactly one SAVE_CONFIG, which also restarts Klipper."""
     _require_idle_now(transport, recheck=True)
-    _send_script(transport, "SAVE_CONFIG")
+    _save_config(transport, sleep=sleep)
     return (f"Saved the new {result.prepared.label.lower()} PID values "
-            f"({result.after.text()}) with SAVE_CONFIG. Klipper is restarting; the "
-            "values apply from the restart and are now the saved configuration. "
+            f"({result.after.text()}) with SAVE_CONFIG. Klipper restarted and is "
+            "ready; the values are now the saved configuration. "
             "A calibration record was written — `/print-calibration records` lists it.")
 
 
@@ -1132,7 +1179,7 @@ def mesh_result_text(result: MeshResult) -> str:
     return "\n".join(lines)
 
 
-def accept_mesh(transport, result: MeshResult) -> str:
+def accept_mesh(transport, result: MeshResult, *, sleep=time.sleep) -> str:
     """Accept: copy the measured mesh into the profile prints load, then SAVE_CONFIG once.
 
     The measurement sits in the scratch profile; it is loaded, saved under
@@ -1143,10 +1190,10 @@ def accept_mesh(transport, result: MeshResult) -> str:
     _send_script(transport, f"BED_MESH_PROFILE LOAD={MEASURE_PROFILE}")
     _send_script(transport, f"BED_MESH_PROFILE SAVE={result.prepared.profile}")
     _send_script(transport, f"BED_MESH_PROFILE REMOVE={MEASURE_PROFILE}")
-    _send_script(transport, "SAVE_CONFIG")
+    _save_config(transport, sleep=sleep)
     return (f"Saved the measured mesh as profile '{result.prepared.profile}' with "
-            "SAVE_CONFIG. Klipper is restarting; the profile is stored in the "
-            "configuration from the restart. A calibration record was written — "
+            "SAVE_CONFIG. Klipper restarted and is ready; the profile is stored in "
+            "the configuration. A calibration record was written — "
             "`/print-calibration records` lists it.")
 
 
@@ -1323,13 +1370,13 @@ def shaper_result_text(result: ShaperResult) -> str:
     return "\n".join(lines)
 
 
-def accept_shaper(transport, result: ShaperResult) -> str:
+def accept_shaper(transport, result: ShaperResult, *, sleep=time.sleep) -> str:
     """Accept: exactly one SAVE_CONFIG, which also restarts Klipper."""
     _require_idle_now(transport, recheck=True)
-    _send_script(transport, "SAVE_CONFIG")
+    _save_config(transport, sleep=sleep)
     return ("Saved the recommended input shaper values with SAVE_CONFIG "
             f"(X: {result.after.axis_text('x')}; Y: {result.after.axis_text('y')}). "
-            "Klipper is restarting; the values apply from the restart. Print a "
+            "Klipper restarted and is ready with them. Print a "
             "ringing test to confirm the improvement before trusting them. "
             "A calibration record was written — `/print-calibration records` lists it.")
 

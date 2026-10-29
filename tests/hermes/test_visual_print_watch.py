@@ -66,7 +66,7 @@ def test_visual_alert_plain_fallback_has_no_fake_buttons(monkeypatch, tmp_path):
 def test_layer_two_empty_bed_requests_check_and_alert_on_air(monkeypatch):
     watch = mel.VisualPrintWatch()
     calls = []
-    monkeypatch.setattr(mel, "_visual_verdict", lambda image, prompt: ("air", "empty bed"))
+    monkeypatch.setattr(mel, "_visual_verdict", lambda image, prompt, streak=None: ("air", "empty bed"))
     monkeypatch.setattr(mel, "_visual_alert", lambda filename, image, reason, identity=None: calls.append(reason))
     assert watch.due(1, 10) is None
     assert watch.due(2, 11) == "layer2"
@@ -130,7 +130,7 @@ def test_visual_check_alerts_on_air_uncertain_and_endpoint_error(monkeypatch):
     monkeypatch.setattr(mel, "_visual_alert", lambda filename, image, reason, identity=None: alerts.append(reason) or reason)
 
     async def run(verdict):
-        monkeypatch.setattr(mel, "_visual_verdict", lambda image, prompt: verdict)
+        monkeypatch.setattr(mel, "_visual_verdict", lambda image, prompt, streak=None: verdict)
         listener = mel.Listener()
         listener.filename = "bin.gcode"
         await listener.visual_check("layer2", 2)
@@ -138,7 +138,7 @@ def test_visual_check_alerts_on_air_uncertain_and_endpoint_error(monkeypatch):
     asyncio.run(run(("air", "empty bed")))
     asyncio.run(run(("uncertain", "model unsure")))
 
-    def boom(image, prompt):
+    def boom(image, prompt, streak=None):
         raise OSError("endpoint down")
 
     async def run_boom():
@@ -166,7 +166,7 @@ def test_visual_check_promotes_unchanged_layers_and_ignores_motion(monkeypatch):
 
     monkeypatch.setattr(mel, "_camera_snapshot_bytes", snapshot)
     monkeypatch.setattr(mel, "_visual_alert", lambda filename, image, reason, identity=None: alerts.append(reason))
-    monkeypatch.setattr(mel, "_visual_verdict", lambda image, prompt: ("safe", "plastic present"))
+    monkeypatch.setattr(mel, "_visual_verdict", lambda image, prompt, streak=None: ("safe", "plastic present"))
 
     async def unchanged():
         listener = mel.Listener()
@@ -257,11 +257,11 @@ def _stall_alerts(monkeypatch, level, verdict):
     monkeypatch.setattr(mel, "_visual_alert", lambda filename, image, reason, identity=None: alerts.append(reason))
     monkeypatch.setattr(mel, "_frame_changed", lambda before, after: False)
     if isinstance(verdict, Exception):
-        def failing(image, prompt):
+        def failing(image, prompt, streak=None):
             raise verdict
         monkeypatch.setattr(mel, "_visual_verdict", failing)
     else:
-        monkeypatch.setattr(mel, "_visual_verdict", lambda image, prompt: verdict)
+        monkeypatch.setattr(mel, "_visual_verdict", lambda image, prompt, streak=None: verdict)
 
     async def run():
         listener = mel.Listener()
@@ -435,7 +435,7 @@ def test_dark_frame_check_posts_one_notice_and_never_alerts_or_calls_vision(monk
     alerts, notices = [], []
     monkeypatch.setattr(mel, "_camera_snapshot_bytes", lambda: _dark_jpeg())
     monkeypatch.setattr(mel, "_visual_verdict",
-                        lambda image, prompt: (_ for _ in ()).throw(AssertionError("vision called for a dark frame")))
+                        lambda image, prompt, streak=None: (_ for _ in ()).throw(AssertionError("vision called for a dark frame")))
     monkeypatch.setattr(mel, "_visual_alert",
                         lambda filename, image, reason, identity=None: alerts.append(reason))
     monkeypatch.setattr(mel, "_visual_dark_notice",
@@ -481,7 +481,7 @@ def test_muted_print_posts_no_visual_alert(monkeypatch, tmp_path):
 
     alerts = []
     monkeypatch.setattr(mel, "_camera_snapshot_bytes", lambda: _jpeg())
-    monkeypatch.setattr(mel, "_visual_verdict", lambda image, prompt: ("air", "empty bed"))
+    monkeypatch.setattr(mel, "_visual_verdict", lambda image, prompt, streak=None: ("air", "empty bed"))
     monkeypatch.setattr(mel, "_visual_alert",
                         lambda filename, image, reason, identity=None: alerts.append(reason))
 

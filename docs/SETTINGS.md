@@ -207,7 +207,7 @@ Things to know:
   knows. With any other server, set them to that server's model names, and
   pick a vision-capable model for `vision.model`.
 - **The URL is the full chat completions path**, for example
-  `http://192.168.1.20:11434/v1/chat/completions` for Ollama or
+  `http://ollama:11434/v1/chat/completions` for an Ollama container or
   `https://api.openai.com/v1/chat/completions`.
 - Running all of this on Cloudflare's free tier is covered in
   [Cloudflare](CLOUDFLARE.md).

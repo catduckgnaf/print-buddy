@@ -171,6 +171,7 @@ class PrintHandyBot(ext_commands.Bot):
         self.cfg = cfg
         self.core = None
         self._background = []
+        self._interrupted_checked = False
         self.connected = False  # gateway session up: set on ready/resume, cleared on disconnect
 
     async def setup_hook(self):
@@ -229,6 +230,15 @@ class PrintHandyBot(ext_commands.Bot):
                     self.user, self.core.chat_id, self.core.adapter.access_description(),
                     ", ".join(self.core.router.handler_names()))
         health.write(self.core.status(True))
+        if not self._interrupted_checked:
+            self._interrupted_checked = True  # once per process; READY can arrive again on a reconnect
+            try:
+                from ..core import prepared_intake
+                from ..hermes import _config
+                await prepared_intake.announce_interrupted(_config.state_dir() / "model-link-intakes",
+                                                           self.core.adapter)
+            except Exception:
+                logger.exception("could not announce interrupted intakes")
 
     async def on_message(self, message):
         try:

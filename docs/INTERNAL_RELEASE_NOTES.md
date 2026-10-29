@@ -3,6 +3,7 @@
 # Unreleased
 
 - Fix: fit probes and slices hung for the full Orca timeout when the container sat at its PID limit. A `--cpus` quota does not shrink the CPU count that OrcaSlicer (TBB), numpy, onnxruntime and Python executors see, so on a large host they each started dozens of threads. Pools are now sized to the cgroup CPU quota (or `PRINT_HANDY_THREADS`) and left at their defaults when there is no quota. The shipped Unraid template and Compose file no longer set `--pids-limit`, `--memory` or `--cpus`, and the template gains the optional Account tokens (`/data/.config`) mapping. A refused process start now reports the container PID limit instead of timing out, and the doctor shows process usage against any limit.
+- Fix: a restart in the middle of an intake (for example during the fit check) left the chat on "Still checking the fit" forever. On startup the Discord bot now finds intake receipts that another process left in progress (within 24 hours, written by this version), posts one line saying the preparation stopped and nothing was uploaded or started, asks for the link again, and marks the receipt `INTERRUPTED` so it is said once. Nothing is resumed.
 
 # Version 2.2.0
 

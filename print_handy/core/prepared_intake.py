@@ -2092,6 +2092,10 @@ async def prepare_link(event, adapter, state, root, timeout=None, reuse=None, pr
                 question = breakdown + '\n' + question
             if slot_lines:
                 question = slot_lines + '\n' + question
+            from .spool_remap import confirm_note
+            remap = confirm_note(job_adapter, sliced)
+            if remap:
+                question += '\n' + remap
             if delivery.only_printer(enabled):
                 go = await _ask(adapter, source, key, question, [print_next.START_LABEL, print_next.CANCEL_LABEL], timeout)
             else:

@@ -109,14 +109,17 @@ def test_nopoop_purges_into_the_prime_tower(monkeypatch):
     assert process['flush_volumes_matrix'] == ['0', '424', '424', '424', '0', '424', '424', '424', '0']
 
 
-@pytest.mark.parametrize('value, message', [
-    (2, 'USE_TRASH_ON_PRINT=2'), (UNREADABLE, 'could not be read'), (None, 'could not be read'),
-    (7, 'could not be read'),
-])
-def test_slicer_poop_and_unknown_modes_refuse(monkeypatch, value, message):
-    fake_moonraker(monkeypatch, value)
-    with pytest.raises(RuntimeError, match=message):
+def test_slicer_controlled_poop_refuses(monkeypatch):
+    fake_moonraker(monkeypatch, 2)
+    with pytest.raises(RuntimeError, match='USE_TRASH_ON_PRINT=2'):
         orca_adapter.ifs_purge_settings(ad5x(), {'moonraker_url': 'http://p.test'}, 2)
+
+
+@pytest.mark.parametrize('value', [UNREADABLE, None, 7, '0'])
+def test_unknown_mode_assumes_trash_chute(monkeypatch, value):
+    fake_moonraker(monkeypatch, value)
+    assert orca_adapter.ifs_purge_settings(ad5x(), {'moonraker_url': 'http://p.test'}, 2) == (
+        'unknown', {}, {'purge_in_prime_tower': '0'})
 
 
 def test_printer_without_zmod_purge_mode_never_asks(monkeypatch):
@@ -156,12 +159,22 @@ def test_slice_nopoop_purges_into_the_tower(tmp_path, monkeypatch):
     assert 'nopoop' in provenance['geometry']['ifs_purge_mode']
 
 
-@pytest.mark.parametrize('value', [2, UNREADABLE])
-def test_slice_refuses_before_running_orca(tmp_path, monkeypatch, value):
-    fake_moonraker(monkeypatch, value)
+def test_slice_refuses_slicer_poop_before_running_orca(tmp_path, monkeypatch):
+    fake_moonraker(monkeypatch, 2)
     with pytest.raises(RuntimeError, match='Nothing was sliced'):
         slice_ad5x(tmp_path, monkeypatch, [1, 2, 1, 2])
     assert not (tmp_path / 'slice' / 'plate_1.gcode').exists()
+
+
+@pytest.mark.parametrize('value', [UNREADABLE, None])
+def test_slice_unknown_mode_keeps_trash_profile_and_notes_it(tmp_path, monkeypatch, value):
+    fake_moonraker(monkeypatch, 1)
+    trash_machine, trash_process, _, _ = slice_ad5x(tmp_path / 'trash', monkeypatch, [1, 2, 1, 2])
+    fake_moonraker(monkeypatch, value)
+    machine, process, provenance, calls = slice_ad5x(tmp_path / 'unknown', monkeypatch, [1, 2, 1, 2])
+    assert machine == trash_machine and process == trash_process
+    assert provenance['geometry']['ifs_purge_mode'].startswith('purge mode unknown, assuming trash chute')
+    assert len(calls) == 1
 
 
 def test_nopoop_refuses_a_non_orca_slicer(tmp_path, monkeypatch):

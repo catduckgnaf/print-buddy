@@ -633,7 +633,7 @@ def check(st=None, printer_id=None, adapter=None):
         probs.extend(calibration_problems)
         facts["calibration_valid"] = not calibration_problems
         facts["calibration_owner"] = "native" if variables.get("display_off") == 0 else "screenless" if variables.get("display_off") == 1 else "unknown"
-        facts["purge_mode"] = PURGE_MODES.get(purge_mode(variables), f"unknown (use_trash_on_print={variables.get('use_trash_on_print')!r})")
+        facts["purge_mode"] = PURGE_MODES.get(purge_mode(variables), f"purge mode unknown, assuming trash chute (use_trash_on_print={variables.get('use_trash_on_print')!r})")
     except Exception as e:
         probs.append("the printer's saved calibration could not be read — check the printer screen, then try again")
     return (not probs), probs, facts

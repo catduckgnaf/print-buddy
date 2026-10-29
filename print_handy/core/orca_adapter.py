@@ -810,12 +810,12 @@ def ifs_purge_settings(printer, state, tools):
     """Match an IFS multicolour slice to the printer's ZMod colour-change purge.
 
     Returns (mode, machine_updates, process_updates). mode is ZMod's live
-    use_trash_on_print, or None for a printer without one. 1 (and any
-    non-ZMod IFS printer) keeps the long-standing profile: ZMod purges into
-    the trash chute, the tower only primes. 0 (Nopoop) turns on purging into
-    the prime tower with explicit flush volumes. 2 and an unreadable value
-    are refused: Print Handy has no slicer-controlled-poop profile, and
-    guessing wrong either double-purges or contaminates colours.
+    use_trash_on_print, 'unknown' when it is missing, unknown or unreadable,
+    or None for a printer without one. 1, 'unknown' (assumed to be ZMod's
+    default 1) and any non-ZMod IFS printer keep the long-standing profile:
+    ZMod purges into the trash chute, the tower only primes. 0 (Nopoop)
+    turns on purging into the prime tower with explicit flush volumes. 2 is
+    refused: Print Handy has no slicer-controlled-poop profile.
     """
     from .printer_state import PURGE_MODES, read_purge_mode
     if not getattr(printer, 'has_native_screen', False):
@@ -835,10 +835,9 @@ def ifs_purge_settings(printer, state, tools):
                            'change-filament G-code, which Print Handy does not slice with. Set '
                            'SAVE_ZMOD_DATA USE_TRASH_ON_PRINT=0 (Nopoop) or 1 (trash chute), then slice again. '
                            'Nothing was sliced.')
-    raise RuntimeError('ZMod use_trash_on_print could not be read from Moonraker, so Print Handy cannot tell '
-                       'whether colour changes purge into the trash chute or the prime tower. Check the printer '
-                       'is on and reachable (SAVE_ZMOD_DATA USE_TRASH_ON_PRINT=0 or 1 sets it), then slice again. '
-                       'Nothing was sliced.')
+    # Missing, unknown or unreadable: ZMod's default is 1, and this is the
+    # profile every AD5X multicolour slice used before the mode was read.
+    return 'unknown', {}, {'purge_in_prime_tower': '0'}
 
 
 def slice_model(source, folder, state, brim=None, first_layer=False, color_decisions=None, preserve_layout=False, filament_slot=None, item_shifts=None, fit_by_object=None, copies=None, scale=None, rotation=None, supports=None, object_ids=None, adapter=None, brim_policy=None):
@@ -1099,6 +1098,8 @@ def slice_model(source, folder, state, brim=None, first_layer=False, color_decis
                         'wipe_tower_x': str(tower_x), 'wipe_tower_y': str(tower_y), **purge_process})
         if purge_mode == 0:
             geometry['ifs_purge_mode'] = 'nopoop: purge into prime tower (ZMod use_trash_on_print=0)'
+        elif purge_mode == 'unknown':
+            geometry['ifs_purge_mode'] = 'purge mode unknown, assuming trash chute (ZMod use_trash_on_print unreadable)'
         configs[0].write_text(json.dumps(machine, indent=2) + '\n')
         configs[1].write_text(json.dumps(process, indent=2) + '\n')
         filament_paths = []

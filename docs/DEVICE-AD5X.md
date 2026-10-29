@@ -52,12 +52,12 @@ Print Handy can read. Check it after any ZMod update.
 
 On the AD5X, Moonraker's update manager lists the ZMod components (`Z-Mod`,
 `klippy`, `moon`) as git repositories with version `?`, because the
-printer's install carries no git metadata. The real version is in
-Moonraker's `/machine/system_info`, in the distribution entry (for example
-`zmod 1.7.5 -> 1.7.5-2`, version `1.7.5`). If the doctor row says
-`unknown`, your Print Handy build reads only the update manager and cannot
-see the version. Everything version-gated then takes the conservative path
-(see [3MF delivery](#3mf-delivery)).
+printer's install carries no git metadata. When that happens, Print Handy
+reads the version from Moonraker's `/machine/system_info` distribution entry
+instead (for example `zmod 1.7.5 -> 1.7.5-2`). How the version is read and
+reported is in [ZMod printers](ZMOD.md#audited-zmod-version). If the doctor
+row still says `unknown`, everything version-gated takes the conservative
+path (see [3MF delivery](#3mf-delivery)).
 
 ZMod's saved variable `klipper13` can read `0` while the host runs Klipper
 13. In that state ZMod's MCU/host mismatch warning is off. Confirm with ZMod
@@ -183,7 +183,8 @@ and the [Settings reference](SETTINGS.md).
 
 Recommendation: leave it on `auto`. If Print Handy cannot read the version
 (see [ZMod version](#zmod-version)), `auto` sends plain `.gcode`, which is
-the long-standing path. Do not force `3mf` until the live checks on issue
+the long-standing path. With the version readable as 1.7.5 or newer, `auto`
+sends `.gcode.3mf`. Do not force `3mf` until the live checks on issue
 #564 (starting a packaged print, colour mapping on the printer, web UI
 metadata, timelapse markers) have passed on your printer.
 

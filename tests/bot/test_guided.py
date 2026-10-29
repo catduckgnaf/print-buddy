@@ -3,6 +3,7 @@ import asyncio
 import json
 import os
 from pathlib import Path
+from types import SimpleNamespace
 from unittest import mock
 
 import pytest
@@ -312,3 +313,19 @@ def test_bot_slash_print_handy_runs_as_typed_text(cfg, monkeypatch):
     asyncio.run(core.run_slash(interaction, "print-handy", {"action": "debugging"}))
     assert interaction.replies[0] == {"content": "`/print-handy debugging`", "ephemeral": False}
     assert discord.sent and "Print Handy debugging" in discord.sent[-1]
+
+
+def test_default_version_runner_runs_the_slicer_from_a_writable_scratch_dir(monkeypatch):
+    # OrcaSlicer writes 00000.log into its cwd and aborts when that is not writable (Docker /app).
+    seen = []
+
+    def fake_run(command, **kwargs):
+        cwd = kwargs.get("cwd")
+        seen.append((command[-1], cwd, bool(cwd) and os.path.isdir(cwd) and os.access(cwd, os.W_OK)))
+        return SimpleNamespace(returncode=0, stdout="" if command[-1] == "--version" else "OrcaSlicer 2.3\n", stderr="")
+
+    monkeypatch.setattr(guided.subprocess, "run", fake_run)
+    assert guided._default_version_runner(["orca-slicer"]) == "OrcaSlicer 2.3"
+    assert [flag for flag, _, _ in seen] == ["--version", "--help"]
+    assert all(writable for _, _, writable in seen)
+    assert all(os.path.abspath(cwd) != os.path.abspath(os.getcwd()) for _, cwd, _ in seen)

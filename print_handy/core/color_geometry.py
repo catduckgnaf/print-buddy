@@ -924,6 +924,8 @@ def export_single_color_plate(source, target, decisions, part_keys, bed=BED_MM, 
             raise RuntimeError('derived plate slot color requires project settings')
         payload['Metadata/project_settings.config'] = _recolor_filament_indexes(
             payload['Metadata/project_settings.config'], {1}, color)
+    if 'Metadata/project_settings.config' in payload:
+        payload['Metadata/project_settings.config'] = _declare_one_filament(payload['Metadata/project_settings.config'])
     with zipfile.ZipFile(target, 'w', zipfile.ZIP_DEFLATED) as out:
         for name, data in payload.items():
             out.writestr(name, data)
@@ -1069,6 +1071,51 @@ def _recolor_filament_indexes(project, indexes, color):
             raise RuntimeError('filament colour entry was not found verbatim')
         lines[target_line] = lines[target_line].replace(old, b'"' + color.encode() + b'"', 1)
     return b'\n'.join(lines)
+
+
+# Project keys Orca keeps once per filament that do not carry the filament_ prefix.
+_PER_FILAMENT_KEYS = re.compile(
+    r'(?:filament_.*|default_filament_colour|(?:cool|eng|hot|textured|textured_cool|supertack)_plate_temp(?:_initial_layer)?'
+    r'|nozzle_temperature(?:_initial_layer|_range_low|_range_high)?|chamber_temperature|idle_temperature'
+    r'|fan_(?:min|max)_speed|fan_cooling_layer_time|full_fan_speed_layer|close_fan_the_first_x_layers'
+    r'|overhang_fan_(?:speed|threshold)|reduce_fan_stop_start_freq|slow_down_(?:layer_time|min_speed)'
+    r'|enable_pressure_advance|pressure_advance|adaptive_pressure_advance(?:_model|_overhangs|_bridges)?'
+    r'|additional_cooling_fan_speed|activate_air_filtration|during_print_exhaust_fan_speed'
+    r'|complete_print_exhaust_fan_speed|required_nozzle_HRC|temperature_vitrification|dont_slow_down_outer_wall'
+    r'|support_material_interface_fan_speed|bed_temperature_difference|enable_overhang_bridge_fan'
+    r'|overhang_threshold_participating_cooling|volumetric_speed_coefficients)')
+
+
+def _declare_one_filament(project):
+    """Cut every per-filament array of the project settings to the one filament a derived plate runs.
+
+    A derived plate points every object at logical filament 1 (T0), but it keeps
+    the source project settings, whose per-filament arrays still list every
+    filament of the source. OrcaSlicer 2.5.0-beta rejects that (exit -5,
+    "filament_is_support's count 1 not equal to filament_colour's size 2") once
+    the loaded filament profile contributes one entry; 2.4.2 never checked.
+    Entry 1 is the filament the plate uses, so each array keeps its first entry.
+    Scalar and machine-level keys stay as authored. Sources that already declare
+    one filament are returned unchanged.
+    """
+    settings = json.loads(project)
+    colours = settings.get('filament_colour')
+    if not isinstance(colours, list) or len(colours) < 2:
+        return project
+    count = len(colours)
+    for key, value in settings.items():
+        if not isinstance(value, list) or not value:
+            continue
+        if key == 'flush_volumes_vector':
+            settings[key] = value[:2]
+        elif key == 'different_settings_to_system' and len(value) == count + 2:
+            settings[key] = [value[0], value[1], value[-1]]
+        elif _PER_FILAMENT_KEYS.fullmatch(key):
+            # flush_volumes_matrix is count x count; its first entry is the 1 x 1 diagonal.
+            settings[key] = value[:1]
+    if isinstance(settings.get('flush_volumes_matrix'), list) and settings['flush_volumes_matrix']:
+        settings['flush_volumes_matrix'] = settings['flush_volumes_matrix'][:1]
+    return json.dumps(settings, indent=4).encode()
 
 
 def _translate_selected_items(model_bytes, selected, shift):

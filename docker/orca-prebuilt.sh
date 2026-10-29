@@ -6,7 +6,7 @@
 # TARGETARCH spells them amd64 and arm64, so arm64 selects the aarch64 asset.
 # Any other architecture (for example arm/v7, for which upstream ships no Linux
 # build) fails closed.
-#   orca-prebuilt.sh stable|alpha amd64|arm64
+#   orca-prebuilt.sh stable|preview amd64|arm64
 set -eu
 channel=${1:-}
 arch=${2:-}
@@ -17,11 +17,13 @@ esac
 case "$channel" in
     stable)
         # Print Handy ships OrcaSlicer v2.5.0-beta: the 2.5 line is the first whose
-        # BBL vendor profiles cover the H2C and A2L (#356, on the alpha), and the
-        # profiles pipeline reads its packed preset caches (profiles/<Vendor>.opc)
-        # directly. Upstream published the beta on 2026-10-27, after the alpha, so
-        # the alpha channel below currently pins the same build; the channels
-        # diverge again when upstream publishes a newer prerelease.
+        # BBL vendor profiles cover the H2C and A2L (#356), and the profiles
+        # pipeline reads its packed preset caches (profiles/<Vendor>.opc)
+        # directly. Upstream published the beta on 2026-10-27, after v2.5.0-alpha,
+        # so the preview channel below currently pins the same build; the channels
+        # diverge again when upstream publishes a newer prerelease. Channel names
+        # describe the role, not the upstream stage (#600): the exact build each
+        # channel pins is recorded in this file and in the build-info file only.
         version=2.5.0-beta
         revision=345efec64c7b95a05ce5cf96df0dde66a158835c
         sha256_amd64=15b0e9f9d577bc7a84cfef4f1ecc6e16ef75bc253e500d772fcaa66f4c25b97e
@@ -29,7 +31,7 @@ case "$channel" in
         asset_amd64=OrcaSlicer_Linux_AppImage_Ubuntu2404_V2.5.0-beta.AppImage
         asset_arm64=OrcaSlicer_Linux_AppImage_Ubuntu2404_aarch64_V2.5.0-beta.AppImage
         ;;
-    alpha)
+    preview)
         version=2.5.0-beta
         revision=345efec64c7b95a05ce5cf96df0dde66a158835c
         sha256_amd64=15b0e9f9d577bc7a84cfef4f1ecc6e16ef75bc253e500d772fcaa66f4c25b97e
@@ -37,7 +39,7 @@ case "$channel" in
         asset_amd64=OrcaSlicer_Linux_AppImage_Ubuntu2404_V2.5.0-beta.AppImage
         asset_arm64=OrcaSlicer_Linux_AppImage_Ubuntu2404_aarch64_V2.5.0-beta.AppImage
         ;;
-    *) echo 'usage: orca-prebuilt.sh stable|alpha amd64|arm64' >&2; exit 2 ;;
+    *) echo 'usage: orca-prebuilt.sh stable|preview amd64|arm64' >&2; exit 2 ;;
 esac
 # The source revision is per channel, shared by both architectures; the asset
 # name and SHA256 are per architecture.

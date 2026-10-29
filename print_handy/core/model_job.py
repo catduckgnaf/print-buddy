@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
-"""Fetch, inspect, and (only with --approved) slice Printables, MakerWorld or Thingiverse jobs.
+"""Fetch, inspect, and (only with --approved) slice Printables, MakerWorld or Thingiverse jobs,
+plus direct file links to a .stl/.3mf on any public host (#607).
 
 Normal path, one command:
   python3 -m print_handy.core.model_job fetch URL
@@ -15,7 +16,7 @@ print stay separate unless --print-now is given, which means the operator clicke
 "bed clear" for exactly this job. `python3 -m print_handy.core.model_job print-now FILE|JOB.json` starts an
 already sliced job the same way.
 """
-import argparse, base64, hashlib, html, http.client, json, logging, math, os, re, shutil, subprocess, sys, time, urllib.parse, urllib.request, zipfile
+import argparse, base64, hashlib, html, http.client, ipaddress, json, logging, math, os, re, shutil, socket, subprocess, sys, time, urllib.parse, urllib.request, zipfile
 import xml.etree.ElementTree as ET
 from pathlib import Path
 from typing import Any, NamedTuple
@@ -1337,6 +1338,267 @@ def makeronline_download(job, source, target):
     raise RuntimeError(MAKERONLINE_DOWNLOAD_GAP)
 
 
+
+# ---------------------------------------------------------------------------
+# Direct file links (#607): a public link straight at a print file, on any
+# host — the case the known-site providers cannot cover, e.g. a file too big
+# for Discord shared as a Dropbox link. This is the first arbitrary-URL fetch
+# in intake, so the fetch is guarded: the destination is checked to be a
+# public address before connecting and again after every redirect (redirects
+# are followed manually so no hop skips the check), the download streams
+# under the same intake size limit as site downloads (intake_resources.
+# save_download), and the saved bytes are sniffed before the usual
+# check_source/audit path parses them — the extension is never trusted.
+DIRECT_FILE_EXTS = {".stl", ".3mf"}  # mirrors prepared_intake.MODEL_FILE_EXTS and the site inventory filters
+DIRECT_MAX_REDIRECTS = 5
+SUPPORTED_LINKS_MESSAGE = (
+    "supported links: MakerWorld, Printables, Thingiverse, MyMiniFactory, Cults3D, Creality Cloud, Thangs, Nexprint, MakerOnline "
+    "model pages, or a direct link to a .stl/.3mf file (a Dropbox share link works too)")
+
+
+class DirectLinkError(RuntimeError):
+    """Curated, operator-facing refusal for a direct file link.
+
+    Like the other providers' plain RuntimeErrors, the text names the cause
+    and the remedy; prepared intake posts it as the failure reason instead of
+    the generic intake wording, so chat hears what actually went wrong."""
+
+
+def _direct_name_from_path(path):
+    """The file name when a URL path ends in an accepted geometry extension, else None."""
+    name = Path(urllib.parse.unquote(str(path or ""))).name
+    return name if Path(name).suffix.lower() in DIRECT_FILE_EXTS else None
+
+
+def dropbox_fetch_url(url):
+    """The download form of a Dropbox share link, or None when url is not one.
+
+    A /s/ or /scl/ share link serves an HTML preview page; asking for dl=1
+    (or using a dl.dropboxusercontent.com link as-is) serves the file itself.
+    """
+    parts = urllib.parse.urlsplit(str(url))
+    host = (parts.hostname or "").lower()
+    if host == "dl.dropboxusercontent.com":
+        return str(url)
+    if host not in {"www.dropbox.com", "dropbox.com"}:
+        return None
+    if not (parts.path.startswith("/s/") or parts.path.startswith("/scl/")):
+        return None
+    query = dict(urllib.parse.parse_qsl(parts.query, keep_blank_values=True))
+    query["dl"] = "1"
+    return urllib.parse.urlunsplit(parts._replace(query=urllib.parse.urlencode(query)))
+
+
+def direct_link_target(url):
+    """(fetch_url, name_hint_or_None) when url is a candidate direct file link, else None."""
+    parts = urllib.parse.urlsplit(str(url))
+    if parts.scheme not in ("http", "https") or not parts.hostname:
+        return None
+    fetch = dropbox_fetch_url(url)
+    if fetch is not None:
+        return fetch, _direct_name_from_path(parts.path)
+    name = _direct_name_from_path(parts.path)
+    if name is None:
+        return None
+    return str(url), name
+
+
+def _resolve_host_ips(host):
+    """Every address a hostname resolves to (module-level so tests can fake DNS)."""
+    return {info[4][0] for info in socket.getaddrinfo(host, None)}
+
+
+def _refuse_non_public(host):
+    raise DirectLinkError(
+        f"That link points at {host}, which is not a public address, so Print Handy "
+        "will not fetch it. Direct file links must be public links anyone on the "
+        "internet can open. Nothing was downloaded.")
+
+
+def assert_public_url(url):
+    """Refuse a fetch URL whose destination is not a public address.
+
+    Runs before the first connection and again on every redirect target:
+    a redirect to localhost or a private address is the standard way to
+    smuggle one past a check on the original URL."""
+    parts = urllib.parse.urlsplit(str(url))
+    if parts.scheme not in ("http", "https"):
+        raise DirectLinkError(
+            "Direct file links must start with http:// or https://. Nothing was downloaded.")
+    if parts.username or parts.password:
+        raise DirectLinkError(
+            "That link has a user name or password in it, so Print Handy will not fetch "
+            "it. Share the file with a public link instead. Nothing was downloaded.")
+    host = parts.hostname
+    if not host:
+        raise DirectLinkError(
+            "That link has no host name, so it cannot be fetched. Nothing was downloaded.")
+    if host.lower() == "localhost":
+        _refuse_non_public(host)
+    try:
+        ips = [ipaddress.ip_address(host)]
+    except ValueError:
+        try:
+            ips = [ipaddress.ip_address(ip) for ip in _resolve_host_ips(host)]
+        except (OSError, UnicodeError):
+            ips = []
+        if not ips:
+            raise DirectLinkError(
+                f"Print Handy could not look up the host {host}, so the file was not "
+                "downloaded. Check the link, or check the network connection, then "
+                "send the link again.") from None
+    if any(not ip.is_global for ip in ips):
+        _refuse_non_public(host)
+
+
+class _NoRedirectHandler(urllib.request.HTTPRedirectHandler):
+    """Redirects are followed manually so every hop re-runs assert_public_url."""
+
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        return None
+
+
+def _open_once(url):
+    """One GET with no redirect following (module-level so tests can fake the transport)."""
+    req = urllib.request.Request(url, headers={"User-Agent": UA})
+    return urllib.request.build_opener(_NoRedirectHandler()).open(req, timeout=90)
+
+
+_REDIRECT_CODES = (301, 302, 303, 307, 308)
+
+
+def _fetch_direct_response(url):
+    """(response, final_url) for a direct file link, following redirects manually.
+
+    Every hop — the original URL and each redirect target — passes
+    assert_public_url before anything connects to it."""
+    current = str(url)
+    for hop in range(DIRECT_MAX_REDIRECTS + 1):
+        assert_public_url(current)
+        try:
+            response = _open_once(current)
+        except urllib.error.HTTPError as exc:
+            location = exc.headers.get("Location") if exc.headers else None
+            code = exc.code
+            exc.close()
+            if code in _REDIRECT_CODES and location:
+                if hop >= DIRECT_MAX_REDIRECTS:
+                    raise DirectLinkError(
+                        "That link redirected too many times, so the file was not "
+                        "downloaded. Send a link that points at the file more "
+                        "directly. Nothing was downloaded.") from None
+                current = urllib.parse.urljoin(current, location)
+                continue
+            raise DirectLinkError(
+                f"The host for that link answered with HTTP {code}, so the file was "
+                "not downloaded. Check the link is public and the file is still "
+                "there, then send it again.") from None
+        except (urllib.error.URLError, OSError):
+            raise DirectLinkError(
+                "Print Handy could not reach the host for that link, so the file "
+                "was not downloaded. Check the link, or check the network "
+                "connection, then send the link again.") from None
+        status = getattr(response, "status", None) or getattr(response, "code", 200)
+        if status in _REDIRECT_CODES:
+            location = response.headers.get("Location") if getattr(response, "headers", None) else None
+            response.close()
+            if location and hop < DIRECT_MAX_REDIRECTS:
+                current = urllib.parse.urljoin(current, location)
+                continue
+            raise DirectLinkError(
+                "That link redirected too many times, so the file was not downloaded. "
+                "Send a link that points at the file more directly. Nothing was downloaded.")
+        return response, current
+    raise DirectLinkError(  # pragma: no cover - the loop always returns or raises
+        "That link redirected too many times, so the file was not downloaded.")
+
+
+def _content_disposition_name(headers):
+    """The file name a response offers via Content-Disposition, else None."""
+    if headers is None:
+        return None
+    raw = headers.get("Content-Disposition")
+    if not raw:
+        return None
+    match = re.search(r"filename\*\s*=\s*[^']*'[^']*'([^;]+)", str(raw))
+    if match:
+        name = urllib.parse.unquote(match.group(1).strip().strip('"'))
+    else:
+        match = re.search(r'filename\s*=\s*(?:"([^"]+)"|([^;]+))', str(raw))
+        if not match:
+            return None
+        name = (match.group(1) or match.group(2)).strip()
+    return Path(name).name or None
+
+
+def _sniff_direct_file(path):
+    """Refuse bytes that are plainly not the claimed geometry, before audit parses them.
+
+    An HTML body means the link served a share/consent page, not the file; a
+    3MF is a zip archive, so anything else under that name is not one. The
+    file is removed either way: nothing is left behind as a model."""
+    with Path(path).open("rb") as f:
+        head = f.read(512)
+    if head.lstrip().startswith(b"<"):
+        Path(path).unlink(missing_ok=True)
+        raise DirectLinkError(
+            "That link returned a web page instead of a print file, so nothing was "
+            "saved as a model. The link has to end at the file itself: for a file "
+            "host, use its direct download link; a Dropbox share link works as-is.")
+    if Path(path).suffix.lower() == ".3mf" and not head.startswith(b"PK\x03\x04"):
+        Path(path).unlink(missing_ok=True)
+        raise DirectLinkError(
+            "That link's file is not a 3MF file (a 3MF is a zip archive), so it was "
+            "not saved. Check the link points at the model's .3mf file itself.")
+
+
+def direct_inventory(url):
+    target = direct_link_target(url)
+    if target is None:
+        raise ValueError(SUPPORTED_LINKS_MESSAGE)
+    fetch_url, name = target
+    host = (urllib.parse.urlsplit(str(url)).hostname or "").lower()
+    stem = Path(name).stem if name else "shared-file"
+    slug = safe_slug(stem) or "direct-file"
+    source = {"n": 1, "name": name or slug, "title": stem, "kind": "direct",
+              "download_url": fetch_url, "source_url": str(url), "host": host}
+    return {"site": "direct", "model_id": slug, "title": stem, "slug": slug,
+            "license": None, "summary": "", "sources": [source]}
+
+
+def direct_download(job, source, target):
+    target = Path(target)
+    target.mkdir(parents=True, exist_ok=True)
+    fetch_url = (source or {}).get("download_url") or (job or {}).get("url")
+    if not fetch_url:
+        raise DirectLinkError("That direct link has no address to fetch. Send the link again.")
+    response, final_url = _fetch_direct_response(fetch_url)
+    with response:
+        headers = getattr(response, "headers", None)
+        content_type = str(headers.get("Content-Type") or "") if headers else ""
+        if "text/html" in content_type.lower():
+            raise DirectLinkError(
+                "That link returned a web page instead of a print file, so nothing "
+                "was saved as a model. The link has to end at the file itself: for "
+                "a file host, use its direct download link; a Dropbox share link "
+                "works as-is.")
+        name = (_content_disposition_name(headers)
+                or _direct_name_from_path(urllib.parse.urlsplit(final_url).path)
+                or (source or {}).get("name"))
+        if not name or Path(str(name)).suffix.lower() not in DIRECT_FILE_EXTS:
+            raise DirectLinkError(
+                f"That link gave back {name or 'an unnamed file'}, which is not a "
+                "print file Print Handy can use. Direct links must serve a .stl or "
+                ".3mf file. Nothing was saved.")
+        dest = target / Path(str(name)).name
+        from .intake_resources import save_download
+        save_download(response, dest)  # streams under the shared intake size limit
+    if dest.stat().st_size == 0:
+        dest.unlink(missing_ok=True)
+        raise DirectLinkError("That link downloaded as an empty file, so nothing was saved.")
+    _sniff_direct_file(dest)
+    return dest
+
 # Per-site registry (#462): site -> function NAME, resolved through this module's globals
 # at call time so existing tests that monkeypatch maker_*/printables_*/thingiverse_*/
 # myminifactory_* by name keep working exactly as before.
@@ -1346,14 +1608,16 @@ SITE_INVENTORY_FUNCS={"makerworld":"maker_inventory","printables":"printables_in
                       "cults3d":"cults_inventory",
                       "crealitycloud":"crealitycloud_inventory",
                       "thangs":"thangs_inventory","nexprint":"nexprint_inventory",
-                      "makeronline":"makeronline_inventory"}
+                      "makeronline":"makeronline_inventory",
+                      "direct":"direct_inventory"}
 SITE_DOWNLOAD_FUNCS={"makerworld":"maker_download","printables":"printables_download",
                      "thingiverse":"thingiverse_download",
                      "myminifactory":"myminifactory_download",
                      "cults3d":"cults_download",
                      "crealitycloud":"crealitycloud_download",
                      "thangs":"thangs_download","nexprint":"nexprint_download",
-                     "makeronline":"makeronline_download"}
+                     "makeronline":"makeronline_download",
+                     "direct":"direct_download"}
 SITE_HOSTS={"makerworld.com":"makerworld","www.makerworld.com":"makerworld",
             "printables.com":"printables","www.printables.com":"printables",
             "thingiverse.com":"thingiverse","www.thingiverse.com":"thingiverse",
@@ -1365,11 +1629,13 @@ SITE_HOSTS={"makerworld.com":"makerworld","www.makerworld.com":"makerworld",
             "makeronline.com":"makeronline","www.makeronline.com":"makeronline"}
 def inventory_for_url(url):
     site=SITE_HOSTS.get((urllib.parse.urlparse(url).hostname or "").lower())
-    if site is None: raise ValueError("supported sites: MakerWorld, Printables, Thingiverse, MyMiniFactory, Cults3D, Creality Cloud, Thangs, Nexprint, MakerOnline")
+    if site is None:
+        if direct_link_target(url) is not None: return direct_inventory(url)
+        raise ValueError(SUPPORTED_LINKS_MESSAGE)
     return globals()[SITE_INVENTORY_FUNCS[site]](url)
 def download_for_site(job, source, target):
     name=SITE_DOWNLOAD_FUNCS.get((job or {}).get("site"))
-    if name is None: raise ValueError("supported sites: MakerWorld, Printables, Thingiverse, MyMiniFactory, Cults3D, Creality Cloud, Thangs, Nexprint, MakerOnline")
+    if name is None: raise ValueError(SUPPORTED_LINKS_MESSAGE)
     return globals()[name](job, source, target)
 
 

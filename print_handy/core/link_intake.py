@@ -43,7 +43,25 @@ def model_link(text):
         return text
     if host in {'makeronline.com', 'www.makeronline.com'} and re.fullmatch(r'/(?:[a-z]{2}(?:-[a-z]{2})?/)?model/(?:[^/]+/)?\d+\.html', path, re.I):
         return text
+    if _direct_file_link(text, host, path):
+        return text
     return None
+
+
+# Direct file links (#607): a public link straight at a print file, on any
+# host. Recognition is by the URL alone — the guarded fetch in model_job
+# verifies the destination is public and the bytes are real geometry, so a
+# link that merely claims to be a file is refused there, never trusted here.
+DIRECT_FILE_EXTS = {'.stl', '.3mf'}
+
+
+def _direct_file_link(url, host, path):
+    if host in {'www.dropbox.com', 'dropbox.com'}:
+        # Share links: model_job rewrites these to the download form.
+        return path.startswith('/s/') or path.startswith('/scl/')
+    if host == 'dl.dropboxusercontent.com':
+        return path.startswith('/s/') or Path(path).suffix.lower() in DIRECT_FILE_EXTS
+    return Path(path).suffix.lower() in DIRECT_FILE_EXTS
 
 
 def has_duration_question(text: str) -> bool:

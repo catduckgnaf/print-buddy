@@ -334,6 +334,16 @@ def report_text(status, entry, *, pairing="unknown", os_version=None,
     label = entry.label if entry is not None else "your printer"
     lines = [f"**Firmware on {label}** (read live from Moonraker's Update Manager):"]
     lines += [_component_line(c, eligible=eligible) for c in status.components]
+    if entry is not None and entry.firmware_family == "zmod":
+        # #562: the installed ZMod version is always stated for a ZMod
+        # printer — as unknown when Moonraker does not report the `zmod`
+        # component (or reports it without a current version), never
+        # silently omitted and never guessed.
+        zmod = status.component("zmod")
+        if zmod is not None and zmod.current:
+            lines.append(f"ZMod version: {zmod.current}")
+        else:
+            lines.append("ZMod version: unknown (not reported by Moonraker)")
     if not status.updates_available:
         lines.append("\nEverything Print Handy can check here is up to date.")
     if entry is not None and entry.vendor in FORK_VENDORS:
@@ -377,7 +387,10 @@ def firmware_report(transport, entry, *, refresh=False) -> str:
 
     The status read is the only required one: its failure raises
     FirmwareError. The pairing and MCU reads are best-effort and
-    unknown-tolerant — absent data is simply not reported.
+    unknown-tolerant — absent data is simply not reported. The ZMod
+    version is the exception (#562): for a ZMod-family printer the
+    report always states it, as unknown when Moonraker does not report
+    the `zmod` component.
     """
     status = fetch_status(transport, refresh=refresh)
     pairing, os_version = "unknown", None

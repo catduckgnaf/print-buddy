@@ -347,3 +347,38 @@ jobs:
         env:
           PRINT_HANDY_SPOOLMAN_TEST_URL: http://localhost:7912
         run: python -m pytest -v -rs tests/services
+
+  spelling:
+    # US-spelling watch for prose (catduck, 2026-10-29): scans only the lines
+    # a change adds to Markdown files, plus the PR description, for the
+    # British color/honor family and the -ise verbs (see
+    # scripts/check_us_spelling.py for the word list and the allow marker).
+    # Existing British spellings elsewhere stay untouched, and this job is
+    # intentionally NOT a required status check.
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+      - name: Save the PR description for the spelling scan
+        if: github.event_name == 'pull_request'
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
+        with:
+          script: |
+            const fs = require('fs');
+            fs.writeFileSync(process.env.RUNNER_TEMP + '/pr-body.txt', context.payload.pull_request.body || '');
+      - name: Check added prose for British spellings
+        env:
+          PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          PUSH_BEFORE: ${{ github.event.before }}
+        run: |
+          base="$PR_BASE_SHA"
+          if [ -z "$base" ] || [ "$base" = "0000000000000000000000000000000000000000" ]; then base="$PUSH_BEFORE"; fi
+          if [ -z "$base" ] || [ "$base" = "0000000000000000000000000000000000000000" ]; then base="HEAD~1"; fi
+          args=(--base "$base")
+          if [ -f "$RUNNER_TEMP/pr-body.txt" ]; then args+=(--body-file "$RUNNER_TEMP/pr-body.txt"); fi
+          python scripts/check_us_spelling.py "${args[@]}"

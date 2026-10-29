@@ -38,6 +38,7 @@ import re
 import shutil
 import subprocess
 import sys
+import tempfile
 import time
 import urllib.request
 from dataclasses import dataclass, field
@@ -1467,11 +1468,14 @@ def _default_login_probe(token):
 
 
 def _default_version_runner(command):
-    run = subprocess.run([*command, "--version"], capture_output=True, text=True, timeout=15)
-    out = (run.stdout or run.stderr or "").strip()
-    if run.returncode != 0 or not out:
-        run = subprocess.run([*command, "--help"], capture_output=True, text=True, timeout=15)
+    # Run from a scratch dir: OrcaSlicer writes 00000.log into its cwd and aborts if that is
+    # not writable (the Docker image's /app is not writable by the container user).
+    with tempfile.TemporaryDirectory(prefix="print-handy-version-") as scratch:
+        run = subprocess.run([*command, "--version"], capture_output=True, text=True, timeout=15, cwd=scratch)
         out = (run.stdout or run.stderr or "").strip()
+        if run.returncode != 0 or not out:
+            run = subprocess.run([*command, "--help"], capture_output=True, text=True, timeout=15, cwd=scratch)
+            out = (run.stdout or run.stderr or "").strip()
     return out.splitlines()[0] if out else ""
 
 

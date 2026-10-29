@@ -45,7 +45,7 @@ def test_debug_on_status_off_delivers_the_export_in_chat(core):
     discord, bot, cfg = core
     out, sent = send(discord, bot, "/print-handy debug on")
     assert out == {"action": "skip", "reason": "guided setup/debugging handled"}
-    assert "Debug mode ON" in sent[-1] and "PB_DEBUG_CONFIGURATION" in sent[-1]
+    assert "Debug mode ON" in sent[-1] and "PH_DEBUG_CONFIGURATION" in sent[-1]
     assert debug_mode.status(cfg) is not None
 
     _, sent = send(discord, bot, "/print-handy debug status")
@@ -83,7 +83,7 @@ def test_failed_export_posts_a_pb_marker_and_keeps_the_mode_on(core, monkeypatch
     monkeypatch.setattr(debug_mode, "off_and_export", boom)
     _, sent = send(discord, bot, "/print-handy debug off")
     assert "export failed" in sent[-1]
-    assert "PB_DEBUG_UNKNOWN" in sent[-1]  # the operator-message marker
+    assert "PH_DEBUG_UNKNOWN" in sent[-1]  # the operator-message marker
     assert "192.168.1.9" not in sent[-1]  # the reply itself is redacted
     assert debug_mode.status(cfg) is not None  # retry stays possible
 

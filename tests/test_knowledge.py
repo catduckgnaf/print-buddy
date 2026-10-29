@@ -383,3 +383,20 @@ def test_lookup_fuzzy_does_not_regrade_exact_matches(registry):
     hit = top(registry, "first layer not sticking")
     assert hit.kind == "symptom" and hit.item.id == "first-layer-not-sticking"
     assert hit.score == 100
+
+
+def test_print_source_is_registered_read_only_and_answers_without_a_site(tmp_path, monkeypatch):
+    # /print-source (#464): a read-only report of which model sites are
+    # connected. It checks saved credentials only, never contacts a site.
+    from print_handy.core import site_accounts
+    assert bot_commands.by_name("print-source") is not None
+    assert "/print-source" in bot_commands.help_text()
+    assert llm.allowed_command("/print-source") == "/print-source"
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setattr(site_accounts, "_jwt_expiry", lambda token: None)
+    adapter = FakeAdapter()
+    out = asyncio.run(plugin.source_dispatch(_event("/print-source"), _gateway(adapter)))
+    assert out == {"action": "skip", "reason": "print source handled"}
+    assert adapter.sent[-1].startswith("**Model sources**")
+    assert "Printables" in adapter.sent[-1] and "GrabCAD" in adapter.sent[-1]
+    assert asyncio.run(plugin.source_dispatch(_event("/print-sourcex"), _gateway(FakeAdapter()))) is None

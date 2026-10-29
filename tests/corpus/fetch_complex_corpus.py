@@ -69,13 +69,16 @@ CASE_CLICKS = {
     # frameLeg, 95.4 x ...") wording.
     "duplo-swing-two-seats": [
         {"question": "one color for everything?", "button": "Choose colors"},
-        {"question": "frameLeg, ", "button": "White"},
-        {"question": "double-frame, ", "button": "Dark green"},
-        {"question": "seat-brick, ", "button": "White"},
-        {"question": "chain, ", "button": "White"},
+        # Match on the group names, not the full question text: the questions
+        # are worded "for both framelegs (95.4 x ...)", "for all 4 chains (...)".
+        {"question": "framelegs", "button": "White"},
+        {"question": "double-frame", "button": "Dark green"},
+        {"question": "seat-bricks", "button": "White"},
+        {"question": "chains", "button": "White"},
+        # Since #601 the one-plate rearrangement is applied without asking;
+        # this rule only answers if the fit question comes back.
         {"question": "bed full size", "button": "rearrange 1 plate"},
-        # On a failed slice, stop rather than retry: the receipt keeps the
-        # slice error, which the runner reports (and matches expected_failure).
+        # On a failed slice, stop rather than retry so the receipt keeps the error.
         {"question": "Slicing this model did not work", "button": "Cancel"},
     ],
 }
@@ -87,9 +90,8 @@ CASE_EXPECT = {
     "gyroid-surface": {"status": "FAILED"},  # STL 45,001,084 B > 32 MiB intake cap
     "chinese-dragon": {"status": "FAILED"},  # 3MF model XML > 400 MiB intake cap
     # What a working flow must do for the live 2026-10-29 failure: start one
-    # full-size print with the chosen per-part colours on one rearranged plate.
-    # Expected to fail on 2.1.9 until the rearrange-with-per-part-colours fix
-    # lands (complex_cases.toml records expected_failure for the runner).
+    # full-size print with the chosen per-part colors on one rearranged plate.
+    # Failed on 2.1.9; fixed by #601 (passes on main since).
     "duplo-swing-two-seats": {
         "status": "STARTED", "scale": 1.0, "gcodes": 1,
         "colors": {"frameLeg": "white", "double-frame": "dark green",

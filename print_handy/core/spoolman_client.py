@@ -43,7 +43,7 @@ HEALTH_PATH = "/api/v1/health"
 UNAVAILABLE_NOTICE = ("Spoolman unavailable; spool tracking skipped for this job and the print "
                       "continues. Check that the Spoolman service is running and that "
                       "services.spoolman_url points at it; the WARNING log line for this failure "
-                      "carries the PB_SPOOLMAN_* reference marker.")
+                      "carries the PH_SPOOLMAN_* reference marker.")
 
 _notice_lock = threading.Lock()
 _notice_shown = False

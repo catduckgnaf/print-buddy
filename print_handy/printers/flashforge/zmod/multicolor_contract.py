@@ -164,10 +164,11 @@ def finalize(path, colors, state=None, mapping=None):
         metadata.append(MAP_PREFIX + json.dumps(recorded, sort_keys=True, separators=(',', ':')) + '\n')
         for tool in sorted(map(int, mapping)):
             slot = state['ifs_slots'][str(mapping[str(tool)])]
-            color = slot.get('hex')
-            if not isinstance(color, str) or not re.fullmatch(r'#?[0-9a-fA-F]{6}', color):
-                raise RuntimeError('mapped slot needs explicit RGB color')
-            metadata.append(f'; zmod_color_data = {tool}|#{color.lstrip("#").upper()}|{slot["material"]}\n')
+            # Same fallback as slicing: a slot without a code gets its name's
+            # color or the neutral default (WARNING logged), never a refusal.
+            from print_handy.core.filament_color import slot_hex
+            color = slot_hex(mapping[str(tool)], slot)
+            metadata.append(f'; zmod_color_data = {tool}|{color}|{slot["material"]}\n')
     else:
         color, material = colors
         metadata.append(f'; zmod_color_data = 0|{color}|{material}\r\n')

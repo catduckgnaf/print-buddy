@@ -59,6 +59,8 @@ def without_added(data):
     for key in ADDED_PRINTER_KEYS:
         data.get("printer", {}).pop(key, None)
     data.get("printer", {}).pop("zmod_delivery_format", None)  # added by #564, after capture
+    for key in ("spacing", "arrange_gap_mm", "arrange_edge_mm"):  # layout.spacing presets, after capture
+        data.get("layout", {}).pop(key, None)
     return data
 
 

@@ -34,6 +34,15 @@ def model_link(text):
         return text
     if host in {'cults3d.com', 'www.cults3d.com'} and re.match(r'/(?:[a-z]{2}/)?3d-model/(?:[^/]+/)?[^/]+/?$', path):
         return text
+    if host in {'crealitycloud.com', 'www.crealitycloud.com'} and re.match(r'/(?:[a-z]{2}(?:-[a-z]{2})?/)?model-detail/[^/]+/?$', path, re.I):
+        return text
+    if host in {'thangs.com', 'www.thangs.com'} and (
+            re.fullmatch(r'/m/\d+/?', path) or re.search(r'/3d-model/[^/]*-\d+/?$', path)):
+        return text
+    if host in {'nexprint.com', 'www.nexprint.com'} and re.fullmatch(r'/(?:[a-z]{2}(?:-[a-z]{2})?/)?models/[A-Za-z0-9]+/?', path, re.I):
+        return text
+    if host in {'makeronline.com', 'www.makeronline.com'} and re.fullmatch(r'/(?:[a-z]{2}(?:-[a-z]{2})?/)?model/(?:[^/]+/)?\d+\.html', path, re.I):
+        return text
     if _direct_file_link(text, host, path):
         return text
     return None
@@ -294,10 +303,17 @@ async def collect_link(event, adapter, state, root, timeout=300):
         logger.exception('new model color selection failed')
         from .. import diagnostics
         await adapter.send(chat_id=source.chat_id,
-            content=diagnostics.plain_post(
+            content=diagnostics.known_post(
                 'Choosing the colours for that model stopped before a choice was saved.',
                 not_happened='No slicing, upload or print started.',
-                next_step='Send the link or file again to pick the colours again.',
+                subsystem='intake', exc=exc)
+            or diagnostics.plain_post(
+                'Choosing the colours for that model stopped before a choice was saved.',
+                not_happened='No slicing, upload or print started.',
+                next_step=diagnostics.next_step_for(
+                    exc,
+                    transient='Send the link or file again to pick the colours again.',
+                    other='Run `/print-handy bundle` and share the bundle so it can be looked into.'),
                 subsystem='intake', exc=exc),
             metadata={'thread_id': source.thread_id} if source.thread_id else None)
         return {'action': 'skip', 'reason': 'new model color confirmation failed'}

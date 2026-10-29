@@ -37,7 +37,7 @@ _OFFLOAD = {('model_job', 'audit'), ('model_job', 'slice_job'), ('source_colors'
             ('orca_adapter', 'orca_plate_capacity'), ('orca_adapter', 'fit_options'),
             ('model_job', 'per_part_fit_options'), ('plate_merge', 'full_size_split_possible'),
             ('geometry_layout', 'inspect_geometry'), ('geometry_layout', 'arrange_and_export'),
-            ('geometry_layout', 'probe_single_plate_rearrange'),
+            ('geometry_layout', 'probe_single_plate_rearrange'), ('model_job', 'full_size_one_plate'),
             ('cad_split', 'check_source_against_split_plan'), ('cad_split', 'prepare_cad_split')}
 # Steps that run the slicer share one lane; the geometry-only steps share a small general lane.
 _SLICER_STEPS = {('model_job', 'slice_job'), ('orca_adapter', 'orca_plate_capacity'), ('orca_adapter', 'fit_options')}
@@ -189,6 +189,118 @@ async def _with_stop(adapter, source, key, metadata, text, work, *, allow_stop=F
     return result
 
 
+# Fit-check progress: one status line, refreshed while a check runs. When the
+# chat adapter can edit messages (Discord, Matrix, Telegram) the same message is
+# updated; otherwise a new line is posted only when the phase changes or, for a
+# long phase, at most once per FIT_FALLBACK_HEARTBEAT_S.
+FIT_HEARTBEAT_S = 15.0
+FIT_FALLBACK_HEARTBEAT_S = 60.0
+
+
+def _elapsed_text(seconds):
+    seconds = max(0, int(round(seconds)))
+    if seconds < 60:
+        return f'{seconds} s'
+    minutes, rest = divmod(seconds, 60)
+    return f'{minutes} min {rest} s' if rest else f'{minutes} min'
+
+
+class FitStatus:
+    """A single, informative status message for the bed-fit checks.
+
+    ``run(phase, work)`` shows what is being tried and how long the fit check
+    has taken so far, refreshes that every FIT_HEARTBEAT_S while the work
+    runs, and never repeats identical text. Delivery failures never block
+    the check.
+    """
+
+    def __init__(self, adapter, source, metadata, clock=time.monotonic):
+        self.adapter, self.source, self.metadata, self.clock = adapter, source, metadata, clock
+        self.started = clock()
+        self.message_id = None
+        self.last_text = None
+        self.last_post = None
+        adapter_state = getattr(adapter, '__dict__', {})
+        # Scripted test adapters (picks/clicks) record questions only, as _with_stop does.
+        self.silent = 'picks' in adapter_state or 'clicks' in adapter_state
+        self.can_edit = callable(getattr(adapter, 'edit_message', None))
+
+    def elapsed(self):
+        return _elapsed_text(self.clock() - self.started)
+
+    def _target(self):
+        thread = (self.metadata or {}).get('thread_id') or getattr(self.source, 'thread_id', None)
+        return str(thread or self.source.chat_id)
+
+    async def show(self, text, heartbeat=False):
+        if self.silent or not text or text == self.last_text:
+            return
+        if self.message_id is not None and self.can_edit:
+            try:
+                result = await self.adapter.edit_message(chat_id=self._target(), message_id=self.message_id,
+                                                         content=text)
+            except Exception:
+                result = None
+            if result is not None and getattr(result, 'success', False):
+                self.last_text = text
+                return
+            self.can_edit = False  # this adapter or message cannot be edited: post instead
+        if heartbeat and self.last_post is not None and self.clock() - self.last_post < FIT_FALLBACK_HEARTBEAT_S:
+            return
+        try:
+            sent = await self.adapter.send(chat_id=str(self.source.chat_id), content=text, metadata=self.metadata)
+        except Exception:
+            return  # progress delivery must not block offline work
+        self.last_text, self.last_post = text, self.clock()
+        message_id = getattr(sent, 'message_id', None)
+        if message_id:
+            self.message_id = str(message_id)
+
+    async def run(self, phase, work, first_text=None):
+        """Await ``work`` while the status names ``phase`` and the time spent so far."""
+        await self.show(first_text or f'Checking the fit: {phase} ({self.elapsed()}).')
+        task = asyncio.ensure_future(work)
+        try:
+            while True:
+                done, _ = await asyncio.wait({task}, timeout=FIT_HEARTBEAT_S)
+                if done:
+                    return task.result()
+                await self.show(f'Still checking the fit: {phase} ({self.elapsed()}).', heartbeat=True)
+        finally:
+            if not task.done():
+                task.cancel()
+                with contextlib.suppress(asyncio.CancelledError, Exception):
+                    await task
+
+    async def finish(self, outcome):
+        """Close the status line with the result and total time, only if one was shown."""
+        if self.last_text is not None:
+            await self.show(f'Fit check done in {self.elapsed()}: {outcome}')
+
+
+def _auto_rearrange_eligible(job, latest):
+    """A 100% one-plate rearrangement may be applied without asking.
+
+    Not when the operator already fixed a size or orientation for this job, and
+    not for an inch-confirmed STL (its capacity was probed at authored size).
+    """
+    if (job.get('unit_decision') or {}).get('units') == 'inch':
+        return False
+    scale = latest.get('scale')
+    if scale is not None and abs(float(scale) - 1.0) > 1e-9:
+        return False
+    return not (latest.get('orientation') or latest.get('full_size_split_plan'))
+
+
+def auto_rearrange_notice(title, plan, printer=None):
+    """One line saying what was done, distinguishing the author's layout from ours."""
+    count = int(plan.get('part_count') or 0)
+    parts = f'the {count} parts' if count > 1 else 'the parts'
+    verb = 'rotated and rearranged' if int(plan.get('turned_parts') or 0) else 'rearranged'
+    return (f"{title} does not fit the {printer or _printer_name()} bed as the author laid it out, "
+            f"so I {verb} {parts} onto one plate at 100%.")
+
+
 LARGE_MESH_MB = 20
 
 
@@ -241,6 +353,9 @@ async def _heavy(func, *args, **kwargs):
         detail = err.decode(errors="replace")[-400:].strip() or 'it stopped without reporting why (killed or crashed)'
         raise RuntimeError(f'{name} worker failed: {detail}') from None
     if not reply.get('ok'):
+        if isinstance(reply.get('refusal'), dict):
+            from .slice_refusal import from_dict
+            raise from_dict(reply['refusal'])
         exc = {'ValueError': ValueError, 'FileNotFoundError': FileNotFoundError}.get(reply.get('type'), RuntimeError)
         raise exc(reply.get('error'))
     return Path(reply['result']) if reply.get('path') else reply['result']
@@ -299,8 +414,56 @@ def _preview_description(text):
     text = ' '.join(words).strip()
     first = re.split(r'(?<=[.!?])\s', text, maxsplit=1)[0].strip().rstrip('.!?:;,- ')
     if len(first) > 120:
-        first = first[:120].rsplit(' ', 1)[0].rstrip('.,;:- ')
+        # Cut at a word boundary, drop dangling short words ('so I extended the') and mark the cut.
+        words = first[:121].rsplit(' ', 1)[0].split()
+        while len(words) > 1 and words[-1].lower().strip('.,;:-') in _DANGLING_WORDS:
+            words.pop()
+        first = ' '.join(words).rstrip('.,;:- ') + '…'
     return first
+
+
+_DANGLING_WORDS = frozenset(
+    'a an the and or but so to of for in on at by with from as that which who my your his her its our their '
+    'i we you he she it they is are was were be this these those'.split())
+
+
+def _end_sentence(text):
+    """Close a sentence with a full stop unless it already ends with the truncation ellipsis."""
+    return text if text.endswith('…') else text + '.'
+
+
+_QUESTION_PREFIX = re.compile(r'^Choose (?:the |one )?(?:loaded )?(?:slot/)?color/material for ')
+
+
+def _choice_summary(manifest, questions, choices, color_of):
+    """Pre-slice summary of per-part choices, identical parts grouped.
+
+    '2× frameLeg: Matte white PLA · seat-brick: Pink PLA'. A size is added only where two groups
+    would otherwise show the same part name.
+    """
+    from .source_colors import short_part_name
+    from .part_translator import size_hint
+    parts = {'part:' + p['key']: p for p in manifest.get('parts', [])}
+    questions_by_key = {row['key']: row.get('question', '') for row in questions}
+    groups = {}
+    for key, selection in choices.items():
+        part = parts.get(key)
+        if part is not None:
+            # 'Tall post ("Part 1")' -> 'Tall post': the CAD name was for the question; the size
+            # below tells same-named groups apart.
+            name, hint = re.sub(r'\s*\("[^"]*"\)$', '', short_part_name(part)), size_hint(part)
+        else:  # painted region rows and anything unexpected: the question's subject
+            name, hint = _QUESTION_PREFIX.sub('', questions_by_key.get(key, '')).split(' (')[0] or key, ''
+        group = (name, hint, color_of(selection))
+        groups[group] = groups.get(group, 0) + 1
+    hints_per_name = {}
+    for name, hint, _ in groups:
+        hints_per_name.setdefault(name, set()).add(hint)
+    out = []
+    for (name, hint, color), count in groups.items():
+        label = f'{name} ({hint})' if hint and len(hints_per_name[name]) > 1 else name
+        out.append(f"{f'{count}× ' if count > 1 else ''}{label}: {color}")
+    return ' · '.join(out)
 
 
 def _preview_estimate(row):
@@ -370,9 +533,9 @@ def preview_sentence(job, row, filament_note=None):
     named_profile = bool(profile and str((row or {}).get('title') or '').strip())
     if not desc and not est and not named_profile and not filament_note:
         return None  # a bare title or filename echo adds nothing; a named profile does
-    text = f'That looks like {title}' + (f', {desc}' if desc else '') + '.'
+    text = _end_sentence(f'That looks like {title}' + (f', {desc}' if desc else ''))
     if profile and profile.casefold() != title.casefold():
-        text += f' I will use the selected profile: {profile}.'
+        text += _end_sentence(f' I will use the selected profile: {profile}')
     if filament_note:
         text += f' Filament: {filament_note}.'
     if est:
@@ -502,7 +665,12 @@ def fit_question(title, options):
     extent_text = ' × '.join(f'{v:g}' for v in extent[:3]) + ' mm' if extent else 'measured dimensions unavailable'
     checked = options.get('orientations_checked') or (parts[0].get('orientations_checked') if parts else None)
     orientations = ', '.join(checked or ['authored XY', 'verified rotations'])
-    lines = [f'{part_name} ({extent_text}) does not fit the bed full size.']
+    lines = [f'{part_name} ({extent_text}) does not fit the bed full size as the author laid it out.']
+    rearrange = options.get('rearrange_100')
+    if rearrange:
+        count = rearrange.get('part_count')
+        lines.append(f"Rearranged: {'all ' + str(count) + ' parts' if count else 'the parts'} "
+                     'fit one plate at full size.')
     blocking = options.get('blocking_part') or next(
         (part for part in parts if part.get('fits_full_size') is False), None)
     if blocking:
@@ -658,6 +826,7 @@ _LIVE_KEY = contextvars.ContextVar('prepared_intake_live_key', default=None)
 
 from .link_intake import PromptCancelled as IntakeCancelled  # noqa: E402  typed Cancel/Stop at any prompt
 from .link_intake import PromptExpired as IntakeExpired  # noqa: E402  button question reached its timeout
+from .site_accounts import SiteLoginNeeded  # noqa: E402  a download needs the operator's site login (#464)
 
 
 async def _spool_projection_text(mj, job, manifest, state, copies):
@@ -678,6 +847,94 @@ async def _spool_projection_text(mj, job, manifest, state, copies):
         rows = mj.intake_spool_projection(job, weights, manifest, copies=copies)
         return mj.format_spool_projection(
             rows, position_noun='Toolhead' if mj._job_adapter(job).multi_tool else 'Slot')
+    except Exception:
+        return ''
+
+
+MAX_CONNECT_ROUNDS = 3
+
+
+SAVED_LABEL = 'Saved — try again'
+
+
+def _saved_reply(text):
+    """Typed `saved`/`stored`/`done` answers the connect prompt like its button.
+
+    Returns the button's own label: link_intake.typed_reply resolves the
+    prompt with this value and ask() then matches it as that button, the
+    same path a press takes.
+    """
+    value = str(text or '').strip()
+    if value == SAVED_LABEL or value.casefold().rstrip('.!') in {'saved', 'stored', 'done', 'try again'}:
+        return SAVED_LABEL
+    raise ValueError('reply `saved` once the token file is in place, or `cancel`')
+
+
+async def _with_connect(adapter, source, key, metadata, timeout, attempt):
+    """Run ``attempt()`` (a coroutine factory); on SiteLoginNeeded offer the connect flow and retry.
+
+    Covers both places a site credential is needed (#462, #464): the model
+    lookup (MakerWorld, Thingiverse, Cults3D, MyMiniFactory without a key)
+    and the download (every login site). Never a dead end, and the
+    credential itself is never collected in chat.
+    """
+    for connect_round in range(MAX_CONNECT_ROUNDS + 1):
+        try:
+            return await attempt()
+        except SiteLoginNeeded as exc:
+            if connect_round == MAX_CONNECT_ROUNDS or not await _connect_account(
+                    adapter, source, key, metadata, exc, timeout):
+                raise
+
+
+async def _connect_account(adapter, source, key, metadata, exc, timeout):
+    """Offer to connect (or renew) the site behind ``exc``; True when the operator saved it.
+
+    The walkthrough (site_accounts.connect_steps) says where the credential
+    lives, how to get it from the operator's own account or signed-in
+    browser, and links the docs section; it is saved on the Print Handy
+    machine, never pasted into chat. An expired or refused login is offered
+    as a renewal. False means the operator declined, and the caller reports
+    the original refusal.
+    """
+    from .site_accounts import LOGIN_SITES, connect_steps
+    label = LOGIN_SITES[exc.site].label
+    renew = exc.reason in ('expired', 'refused')
+    lead = {
+        'missing': f'{label} needs you to be signed in for this model, and no {label} account is connected yet.',
+        'empty': f'{label} needs you to be signed in for this model, and the saved {label} login is empty or incomplete.',
+        'expired': f'Your saved {label} login has expired.',
+        'refused': f'{label} turned down the saved login (it has most likely expired).',
+    }.get(exc.reason, f'{label} needs you to be signed in for this model.')
+    offer = f'Renew {label} login' if renew else f'Connect {label} account'
+    pick = await _ask(adapter, source, key, f'{lead} Nothing was downloaded.',
+                      [offer, 'Not now (cancel)'], timeout)
+    if pick != 0:
+        return False
+    await adapter.send(chat_id=source.chat_id, content=connect_steps(exc.site, renew=renew),
+                       metadata=metadata)
+    saved = await _ask(adapter, source, key,
+                       f'Press Saved once the {label} token file is in place.',
+                       [SAVED_LABEL, 'Cancel'], timeout, parser=_saved_reply)
+    return saved in (0, SAVED_LABEL)
+
+
+def _color_guess_text(mj, job, decisions):
+    """Display only: say so when a slot this job uses has no real color code.
+
+    A slot whose color could not be worked out previews in neutral gray;
+    the operator hears that before slicing rather than discovering it.
+    """
+    try:
+        slots = {row.get('slot') for row in ((decisions or {}).get('choices') or {}).values()
+                 if isinstance(row, dict) and row.get('slot') is not None}
+        selection = (job or {}).get('filament_selection') or {}
+        if isinstance(selection, dict) and selection.get('slot') is not None:
+            slots.add(selection['slot'])
+        from .filament_color import chat_notes
+        if not slots:
+            return ''
+        return '\n'.join(chat_notes(mj.printer_state.load(), slots))
     except Exception:
         return ''
 
@@ -982,22 +1239,24 @@ async def prepare_link(event, adapter, state, root, timeout=None, reuse=None, pr
         elif upload:
             job = upload_job(upload)
         else:
-            job = await asyncio.to_thread(mj.inventory_for_url, url)
+            job = await _with_connect(adapter, source, key, metadata, timeout,
+                                      lambda: asyncio.to_thread(mj.inventory_for_url, url))
         rows = job.get('sources', [])
-        if job['site'] in ('printables', 'thingiverse', 'myminifactory', 'cults3d', 'direct'):
+        if job['site'] in ('printables', 'thingiverse', 'myminifactory', 'cults3d', 'crealitycloud',
+                           'thangs', 'nexprint', 'makeronline', 'direct'):
             rows = [r for r in rows if Path(r.get('name', '')).suffix.lower() in {'.3mf', '.stl'}]
         if not rows:
             raise ValueError(job.get('no_geometry_reason') or 'source inventory contains no selectable geometry')
-        if job['site'] == 'myminifactory':
-            # Inventory-only (#462 Stage 2): the listing is real, but MyMiniFactory
-            # downloads need a login this build does not have, so refuse here —
-            # before any profile choice, preview, download or slicing — with the
-            # named gap and the browser-download workaround.
+        if job['site'] == 'makeronline':
+            # Inventory-only (#464): the listing is real, but MakerOnline
+            # downloads need a browser fingerprint check, so refuse here —
+            # before any profile choice, preview, download or slicing — with
+            # the named gap and the browser-download workaround.
             names = ', '.join(str(r.get('name') or 'unnamed file') for r in rows[:5])
             raise ValueError(
-                f"MyMiniFactory model \"{job.get('title') or 'untitled'}\": the inventory found "
+                f"MakerOnline model \"{job.get('title') or 'untitled'}\": the inventory found "
                 f"{len(rows)} printable file(s): {names}. "
-                + (job.get('download_gap') or mj.MYMINIFACTORY_DOWNLOAD_GAP)
+                + (job.get('download_gap') or mj.MAKERONLINE_DOWNLOAD_GAP)
                 + " Nothing was downloaded or sliced.")
         hint = re.fullmatch(r'profileId-(\d+)', urlsplit(url or '').fragment or '')
         suggested = [r for r in rows if hint and str(r.get('instance_id')) == hint[1]]
@@ -1054,9 +1313,10 @@ async def prepare_link(event, adapter, state, root, timeout=None, reuse=None, pr
         job.update(url=url, intake_id=iid, hardware=state, selected_source=chosen)
         fetch = copy_upload if (reuse or job['site'] == 'upload') else (
             lambda j, chosen, dest: mj.download_for_site(j, chosen, dest))
-        path = await _with_stop(
-            adapter, source, key, metadata, None,
-            asyncio.to_thread(fetch, job, chosen, folder / 'source'))
+        path = await _with_connect(
+            adapter, source, key, metadata, timeout,
+            lambda: _with_stop(adapter, source, key, metadata, None,
+                               asyncio.to_thread(fetch, job, chosen, folder / 'source')))
         job['downloaded_file'] = str(path)
         from .intake_resources import check_source
         await asyncio.to_thread(check_source, path)
@@ -1140,7 +1400,8 @@ async def prepare_link(event, adapter, state, root, timeout=None, reuse=None, pr
             options = ['Keep distinct source regions' if manifest['painted'] else 'Choose colors for these parts',
                        'One color for everything']
             if families:
-                together = '; '.join(row['question'].split(' for ', 1)[1].split(' (', 1)[0] for row in families)
+                together = '; '.join(row.get('label') or row['question'].split(' for ', 1)[1].split(' (', 1)[0]
+                                     for row in families)
                 options[0] = f'Choose colors ({together} share one color)'[:80]
                 options.append('Choose every part individually')
             count = len(manifest['parts'])
@@ -1198,19 +1459,28 @@ async def prepare_link(event, adapter, state, root, timeout=None, reuse=None, pr
         if decisions['mode'] == 'single_color':
             latest['filament_selection'] = validated['selection']
         from . import orca_adapter
+        fit_status = FitStatus(adapter, source, metadata)
         try:
-            capacity = await _with_stop(adapter, source, key, metadata, "Checking whether it fits the bed. Press Stop to cancel.",
-                                        _heavy(orca_adapter.orca_plate_capacity, path, state))
+            capacity = await fit_status.run('checking the layout as the author laid it out',
+                                            _heavy(orca_adapter.orca_plate_capacity, path, state),
+                                            first_text='Checking whether it fits the bed.')
         except Exception as exc:
             logger.exception('fit check failed; intake is resumable')
             receipt['status'] = 'FIT_UNKNOWN'
             receipt['fit_error'] = str(exc)
             receipt_path.write_text(json.dumps(receipt, indent=2) + '\n')
             await adapter.send(chat_id=source.chat_id,
-                               content=diagnostics.plain_post(
+                               content=diagnostics.known_post(
                                    "I could not finish checking whether this model fits the bed, so the check is unverified.",
                                    not_happened="No slice or print was started.",
-                                   next_step="Send the link or file again to resume the check.",
+                                   subsystem='intake', exc=exc)
+                               or diagnostics.plain_post(
+                                   "I could not finish checking whether this model fits the bed, so the check is unverified.",
+                                   not_happened="No slice or print was started.",
+                                   next_step=diagnostics.next_step_for(
+                                       exc,
+                                       transient="Send the link or file again to resume the check.",
+                                       other="Run `/print-handy bundle` and share the bundle so it can be looked into."),
                                    subsystem='intake', exc=exc),
                                metadata=metadata)
             return {'action': 'skip', 'reason': 'fit unknown; resumable'}
@@ -1262,19 +1532,56 @@ async def prepare_link(event, adapter, state, root, timeout=None, reuse=None, pr
             receipt_path.write_text(json.dumps(receipt, indent=2) + '\n')
             mj.write_job(folder, latest)
             capacity = 1
+        rearrange_checked = False
+        if capacity < 1 and _auto_rearrange_eligible(job, latest):
+            # Cheapest full-size answer first, before any Orca option search:
+            # if every part fits one plate at 100% just by moving/turning
+            # parts, do it and say so instead of asking. The check uses the
+            # planner the slice path uses, so the plan is one it honors.
+            try:
+                one_plate = await fit_status.run('trying the parts rearranged on one plate at 100%',
+                                                 _heavy(mj.full_size_one_plate, path, state,
+                                                        latest.get('color_decisions')))
+                rearrange_checked = True
+            except Exception:
+                logger.exception('one-plate rearrangement check failed; falling back to the full fit search')
+                one_plate = None
+            if one_plate:
+                title = latest.get('title') or 'This model'
+                latest['scale'] = 1.0
+                latest['full_size_rearrange_plan'] = one_plate
+                latest.pop('orientation', None)
+                latest.pop('full_size_split_plan', None)
+                receipt.update(full_size_rearrange=True, fit_auto_rearranged=True, scale=1.0,
+                               fit_options={'rearrange_100': one_plate})
+                receipt_path.write_text(json.dumps(receipt, indent=2) + '\n')
+                mj.write_job(folder, latest)
+                await fit_status.finish('fits one plate at 100% rearranged.')
+                await adapter.send(chat_id=source.chat_id, content=auto_rearrange_notice(title, one_plate),
+                                   metadata=metadata)
+                capacity = 1
         if capacity < 1:
             try:
-                options = await _with_stop(adapter, source, key, metadata, "Checking resize options. Press Stop to cancel.",
-                                           _heavy(orca_adapter.fit_options, path, state))
+                options = await fit_status.run('trying rotations and smaller sizes',
+                                               _heavy(orca_adapter.fit_options, path,
+                                                      {**state, 'fit_rearrange_checked': True}
+                                                      if rearrange_checked else state))
             except Exception as exc:
                 receipt['status'] = 'FIT_UNKNOWN'
                 receipt['fit_error'] = str(exc)
                 receipt_path.write_text(json.dumps(receipt, indent=2) + '\n')
                 await adapter.send(chat_id=source.chat_id,
-                                   content=diagnostics.plain_post(
+                                   content=diagnostics.known_post(
                                    "I could not finish checking the resize options, so they are unverified.",
                                    not_happened="No slice or print was started.",
-                                   next_step="Send the link or file again to resume the check.",
+                                   subsystem='intake', exc=exc)
+                                   or diagnostics.plain_post(
+                                   "I could not finish checking the resize options, so they are unverified.",
+                                   not_happened="No slice or print was started.",
+                                   next_step=diagnostics.next_step_for(
+                                       exc,
+                                       transient="Send the link or file again to resume the check.",
+                                       other="Run `/print-handy bundle` and share the bundle so it can be looked into."),
                                    subsystem='intake', exc=exc),
                                    metadata=metadata)
                 return {'action': 'skip', 'reason': 'fit unknown; resumable'}
@@ -1284,9 +1591,14 @@ async def prepare_link(event, adapter, state, root, timeout=None, reuse=None, pr
             # Per-part slicing applies the chosen fit to every slot plate. Offer
             # only the options every slot plate was verified to honor.
             if (latest.get('color_decisions') or {}).get('mode') == 'per_part':
-                options = await _with_stop(adapter, source, key, metadata, "Checking resize options. Press Stop to cancel.",
-                                           _heavy(mj.per_part_fit_options, path, latest['color_decisions'], options,
-                                                  int((state.get('bed_mm') or BED)[0])))
+                # The geometry-only rearrange probe does not know the
+                # multicolor merge rules (spacing, prime tower), so per-part
+                # jobs offer a one-plate rearrangement only when
+                # full_size_one_plate proved it above.
+                options.pop('rearrange_100', None)
+                options = await fit_status.run('checking each color plate',
+                                               _heavy(mj.per_part_fit_options, path, latest['color_decisions'], options,
+                                                      int((state.get('bed_mm') or BED)[0])))
             if options.get('parts'):
                 # Prefer the per-part fit evaluation (#76): a part blocks only
                 # when it fits no plate alone at any checked yaw or exceeds the
@@ -1302,25 +1614,30 @@ async def prepare_link(event, adapter, state, root, timeout=None, reuse=None, pr
                     options['blocking_part'] = failing[0]
                     options['orientations_checked'] = ['authored XY (measured)'] + [r.get('label', 'rotation') for r in options.get('rotations') or []]
             full_size_split = False
-            rotate_100 = any(float(r.get('scale') or 0) >= 0.995 and not r.get('supports')
-                             for r in options.get('rotations') or [])
+            # A full-size single-plate answer (a plain rotation, or every part
+            # rearranged onto one plate) ends the search: no split checks.
+            rotate_100 = (any(float(r.get('scale') or 0) >= 0.995 and not r.get('supports')
+                              for r in options.get('rotations') or [])
+                          or bool(options.get('rearrange_100')))
             try:
                 if rotate_100:
-                    raise LookupError('a plain 100% rotation fits; skip the split checks')
-                full_size_split = await _with_stop(adapter, source, key, metadata, "Checking whether it splits at full size. Press Stop to cancel.",
-                                                   _heavy(plate_merge.full_size_split_possible, path, manifest,
-                                                          int((state.get('bed_mm') or BED)[0])))
-            except Exception:
-                full_size_split = False
-            try:
-                if rotate_100:
-                    raise LookupError('a plain 100% rotation fits; skip the split checks')
-                split_plan = await _with_stop(adapter, source, key, metadata, "Checking whether it splits at full size. Press Stop to cancel.",
-                                             _heavy(split_fit.split_plan_100, path,
-                                                    int((state.get('bed_mm') or BED)[0]),
-                                                    brim_policy=options.get('brim_policy'), state=state))
+                    raise LookupError('a 100% one-plate fit exists; skip the split checks')
+                split_plan = await fit_status.run('trying a split onto separate plates at 100%',
+                                                  _heavy(split_fit.split_plan_100, path,
+                                                         int((state.get('bed_mm') or BED)[0]),
+                                                         brim_policy=options.get('brim_policy'), state=state))
             except Exception:
                 split_plan = None
+            try:
+                if rotate_100 or split_plan:
+                    # A concrete split plan supersedes the generic "parts can be
+                    # separated" offer, so that check is only needed without one.
+                    raise LookupError('a split plan or a 100% one-plate fit already answers this')
+                full_size_split = await fit_status.run('trying a split onto separate plates at 100%',
+                                                       _heavy(plate_merge.full_size_split_possible, path, manifest,
+                                                              int((state.get('bed_mm') or BED)[0])))
+            except Exception:
+                full_size_split = False
             if split_plan:
                 options['split_plan'] = split_plan
             elif full_size_split:
@@ -1397,14 +1714,21 @@ async def prepare_link(event, adapter, state, root, timeout=None, reuse=None, pr
                             label += ')'
                         labels.append(label)
                     distribution.append(f"{', '.join(labels)} on plate {index}")
-                prompt = (f"{title} does not fit the {_printer_name()} bed full size as one plate. "
-                          f"Full size works as {len(split_plan['plates'])} plates: " + '; '.join(distribution) +
+                if options.get('rearrange_100'):
+                    lead = (f"{title} does not fit the {_printer_name()} bed as the author laid it out. "
+                            'Rearranged, it fits one plate at full size. '
+                            f"It also works full size as {len(split_plan['plates'])} plates: ")
+                else:
+                    lead = (f"{title} does not fit the {_printer_name()} bed full size as one plate, even rearranged. "
+                            f"Full size works as {len(split_plan['plates'])} plates: ")
+                prompt = (lead + '; '.join(distribution) +
                           '. Choose a fit option, or type split / 100% / shrink / cancel.')
             else:
                 prompt = fit_question(title, options)
             # Fits at 100% by rotation alone (no supports): just do it, no question, no announcement.
             silent = next((r for r in picked if r['kind'] == 'rotate' and r['scale'] >= 0.995
                            and not r.get('supports')), None)
+            await fit_status.finish('turned to fit at 100%.' if silent is not None else 'choose how to print it.')
             while silent is None:
                 scale_pick = await _ask(adapter, source, key, prompt,
                                         [row['label'] for row in picked], timeout,
@@ -1468,7 +1792,8 @@ async def prepare_link(event, adapter, state, root, timeout=None, reuse=None, pr
                 # plate at exactly the yaw recorded in its split plan).
                 capacity = 1
             else:
-                capacity = await _with_stop(adapter, source, key, metadata, "Checking whether it fits the bed. Press Stop to cancel.",
+                capacity = await FitStatus(adapter, source, metadata).run(
+                                            'confirming the chosen size on the bed',
                                             _heavy(orca_adapter.orca_plate_capacity, path, state,
                                                    scale=selected_scale,
                                                    **({'rotation': rotation, 'supports': bool(row.get('supports'))}
@@ -1528,25 +1853,28 @@ async def prepare_link(event, adapter, state, root, timeout=None, reuse=None, pr
             sel = sel or {}
             color = str(sel.get('color') or '').strip()
             noun = 'Toolhead' if mj._job_adapter(latest).multi_tool else 'Slot'
-            return ' '.join(v for v in (color[:1].upper() + color[1:], str(sel.get('material') or '')) if v) or f"{noun} {sel.get('slot')}"
+            from .printer_state import display_material
+            material = display_material(sel.get('material'))
+            return ' '.join(v for v in (color[:1].upper() + color[1:], material) if v) or f"{noun} {sel.get('slot')}"
         if validated.get('mode') == 'single_color':
             names = _color_of(validated.get('selection'))
         else:
-            labels = {row['key']: re.sub(r'^Choose the color/material for ', '', row.get('question', ''))
-                      .split(' (')[0] for row in questions}
-            names = ' · '.join(f"{labels.get(k, k)}: {_color_of(v)}" for k, v in validated.get('choices', {}).items())
+            names = _choice_summary(manifest, questions, validated.get('choices', {}), _color_of)
         # Never promise "together" before slicing: the planner may still split with a stated reason.
         print_label = 'Slice and print now (bed is clear)'
         cancel_label = 'Cancel print request'
         caveat = (' Parts go on one multicolor bed when they fit; if they must split I will say why and '
                   'let you choose which plate prints first.' if multi and decisions['mode'] == 'per_part' else '')
         spool_text = await _spool_projection_text(mj, latest, manifest, state, chosen_quantity)
+        color_text = _color_guess_text(mj, latest, decisions)
+        if color_text:
+            spool_text = (spool_text + '\n' + color_text) if spool_text else color_text
         source_estimate = _preview_estimate(latest.get('selected_source'))
         estimate_s = source_estimate[0] * chosen_quantity if source_estimate else None
-        estimate_text = ('time after slicing' if estimate_s is None else
-                         f"~{mj.human_dur(estimate_s + 300)}")
+        # No source estimate: there is no time to show yet (the post-slice message gives it).
+        estimate_text = '' if estimate_s is None else f"~{mj.human_dur(estimate_s + 300)}"
         if chosen_quantity and chosen_quantity != 1:
-            estimate_text = f"{chosen_quantity} copies · " + estimate_text
+            estimate_text = ' · '.join(x for x in (f"{chosen_quantity} copies", estimate_text) if x)
         # Post-slice choices come from the printer's vendor profile ([delivery] methods). Printing is
         # offered only where the vendor offers it AND the operator enabled it in [delivery] methods
         # (for Bambu Lab that means the LAN print opt-in; it is never a default there).
@@ -1554,7 +1882,7 @@ async def prepare_link(event, adapter, state, root, timeout=None, reuse=None, pr
         can_print = delivery.PRINTER in enabled
         first_labels = [print_label, 'Slice only', 'Stop with colors saved', cancel_label][0 if can_print else 1:]
         choice = await _ask(adapter, source, key,
-            f'{names} · {estimate_text}'
+            ' · '.join(x for x in ('Ready to slice', names, estimate_text) if x)
             + ('\n' + spool_text if spool_text else '') + caveat,
             first_labels, timeout,
             on_shown=early.release.set)
@@ -1604,12 +1932,35 @@ async def prepare_link(event, adapter, state, root, timeout=None, reuse=None, pr
             for stale in ('slice_approval', 'bed_clear_approval', 'gcodes'):
                 receipt.pop(stale, None)
             receipt_path.write_text(json.dumps(receipt, indent=2) + '\n')
-            retry = await _ask(adapter, source, key,
-                diagnostics.plain_post('Slicing this model did not work.',
-                                       not_happened='No G-code was kept, and nothing was uploaded or started.',
-                                       next_step='Retry once from the saved model?',
-                                       subsystem='slicing', exc=slice_error),
-                ['Retry slice once (no print)', 'Cancel'], timeout)
+            # A deterministic refusal says why in plain words and offers its
+            # one safe fix instead of a blind retry that would fail the same way.
+            from . import slice_refusal
+            refusal = slice_refusal.explain(slice_error)
+            if refusal is not None and not refusal.fix:
+                await adapter.send(chat_id=source.chat_id, metadata=metadata, content=diagnostics.plain_post(
+                    refusal.plain, not_happened='Nothing was sliced, uploaded or started.',
+                    next_step=refusal.next_step, subsystem='slicing', exc=slice_error))
+                return {'action': 'skip', 'reason': 'slice refused: ' + str(slice_error)}
+            if refusal is not None:
+                prompt = diagnostics.plain_post(refusal.plain, next_step=refusal.next_step,
+                                                subsystem='slicing', exc=slice_error)
+                labels = [refusal.fix_label, 'No, cancel']
+            else:
+                prompt = diagnostics.plain_post('Slicing this model did not work.',
+                                                not_happened='No G-code was kept, and nothing was uploaded or started.',
+                                                next_step='Retry once from the saved model?',
+                                                subsystem='slicing', exc=slice_error)
+                labels = ['Retry slice once (no print)', 'Cancel']
+            retry = await _ask(adapter, source, key, prompt, labels, timeout)
+            if retry == 0 and refusal is not None:
+                try:
+                    await owned_worker.in_thread(slice_refusal.apply_fix, refusal.fix)
+                except Exception:
+                    logger.exception('slice refusal fix failed')
+                    await adapter.send(chat_id=source.chat_id, metadata=metadata,
+                                       content='That confirmation could not be saved, so nothing was sliced, '
+                                               'uploaded or started. Set the spool with `/spool`, then ask again.')
+                    return {'action': 'skip', 'reason': 'slice refusal fix failed'}
             if retry != 0:
                 receipt.update(status='CANCELLED', sliced=False, uploaded=False, started=False)
                 receipt_path.write_text(json.dumps(receipt, indent=2) + '\n')
@@ -1645,8 +1996,13 @@ async def prepare_link(event, adapter, state, root, timeout=None, reuse=None, pr
                                slice_error=str(retry_error))
                 receipt.pop('slice_approval', None)
                 receipt_path.write_text(json.dumps(receipt, indent=2) + '\n')
+                again = slice_refusal.explain(retry_error)
                 await adapter.send(chat_id=source.chat_id,
-                    content='The one retry also failed. No G-code was retained; nothing was uploaded or started.',
+                    content=(diagnostics.plain_post(again.plain,
+                                                    not_happened='Nothing was sliced, uploaded or started.',
+                                                    next_step=again.next_step, subsystem='slicing',
+                                                    exc=retry_error) if again is not None else
+                             'The one retry also failed. No G-code was retained; nothing was uploaded or started.'),
                     metadata=metadata)
                 return {'action': 'skip', 'reason': 'slice retry failed'}
         mj._timing(jp, 'intake_slice_returned')
@@ -1883,6 +2239,12 @@ async def prepare_link(event, adapter, state, root, timeout=None, reuse=None, pr
             # the remedy): keep its reason, lead plainly, drop its prefix.
             reason = str(exc).removeprefix('Model intake refused: ')
             content = (f'That model could not be prepared. {reason}')
+        elif isinstance(exc, SiteLoginNeeded):
+            # Curated and user-phrased by site_accounts: the text names the
+            # token file and how to fill it, so keep it — the generic wording
+            # would hide the remedy.
+            content = (f'That model could not be downloaded: {exc} '
+                       'Nothing was sliced, uploaded or started.')
         elif isinstance(exc, mj.DirectLinkError):
             # Also curated and user-phrased (#607): a direct file link that
             # returned a web page, pointed at a non-public address, or could
@@ -1895,10 +2257,22 @@ async def prepare_link(event, adapter, state, root, timeout=None, reuse=None, pr
             # so keep it — the generic wording would hide the remedy.
             content = (f'That model could not be prepared: this printer {exc}. '
                        'Nothing was sliced, uploaded or started.')
+        elif diagnostics.known_cause(exc) is not None:
+            # #590: the failure carries a specific, user-safe cause (a
+            # missing site token, a site download gap, ...): name it and
+            # its remedy instead of the generic wording, its UNKNOWN
+            # marker and a resend that cannot help.
+            content = diagnostics.known_post(
+                'Preparing that model stopped before it was ready.',
+                not_happened='Nothing was sliced, uploaded or started.',
+                subsystem='intake', exc=exc)
         else:
             content = diagnostics.plain_post('Preparing that model stopped before it was ready.',
                                                not_happened='Nothing was sliced, uploaded or started.',
-                                               next_step='Send the link or file again; if it stops again, run `/print-handy bundle` and share the bundle so it can be looked into.',
+                                               next_step=diagnostics.next_step_for(
+                                                   exc,
+                                                   transient='Send the link or file again; if it stops again, run `/print-handy bundle` and share the bundle so it can be looked into.',
+                                                   other='Run `/print-handy bundle` and share the bundle so it can be looked into.'),
                                                subsystem='intake', exc=exc)
         await adapter.send(chat_id=source.chat_id, content=content, metadata=metadata)
         return {'action': 'skip', 'reason': 'source-first intake failed closed'}

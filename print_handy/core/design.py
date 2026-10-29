@@ -245,9 +245,12 @@ def fetch_link_source(url, target_dir) -> Path:
 
     The minimal existing fetch-to-file path (the same inventory + download
     pair prepared intake drives): MakerWorld picks its profile with
-    makerworld_profiles.choose (the URL's profileId when present), Printables
-    must offer exactly one STL/3MF file. Ambiguity is a plain refusal, never
-    a silent pick.
+    makerworld_profiles.choose (the URL's profileId when present);
+    Printables, Thingiverse and Creality Cloud must offer exactly one
+    STL/3MF file, except that a Creality Cloud link's print profile names
+    its file when it has one; Thangs, Nexprint and MyMiniFactory must
+    offer exactly one too; Cults3D and MakerOnline stop with their named
+    download gaps. Ambiguity is a plain refusal, never a silent pick.
     """
     from . import model_job as mj
     target_dir = Path(target_dir)
@@ -284,16 +287,46 @@ def fetch_link_source(url, target_dir) -> Path:
                     f"that Thingiverse link has {len(rows)} model files, so design cannot pick "
                     "one; drop the file you want edited")
             return Path(mj.thingiverse_download(job, rows[0], target_dir))
-        if "myminifactory.com" in host:
-            # Inventory-only (#462 Stage 2): there is no file design could fetch —
-            # MyMiniFactory downloads need a login this build does not have — so
-            # name the gap instead of falling through to the Printables lookup,
-            # which would fail with a misleading "check the link" error.
-            raise DesignError(
-                "Print Handy cannot download files from MyMiniFactory: its API only "
-                "allows downloads when the person downloading is logged in to their "
-                "MyMiniFactory account, and that login route is not built yet. "
-                "Download the file from the model page in a browser and drop the file here instead.")
+        if "crealitycloud.com" in host:
+            job = mj.crealitycloud_inventory(str(url))
+            rows = [row for row in job["sources"]
+                    if Path(str(row.get("name") or "")).suffix.lower() in (".3mf", ".stl")]
+            if not rows:
+                raise DesignError("that Creality Cloud link has no STL or 3MF file to edit")
+            chosen = next((row for row in rows if row.get("suggested_by_link")), None)
+            if chosen is None and len(rows) == 1:
+                chosen = rows[0]
+            if chosen is None:
+                raise DesignError(
+                    f"that Creality Cloud link has {len(rows)} model files, so design cannot pick "
+                    "one; drop the file you want edited")
+            try:
+                return Path(mj.crealitycloud_download(job, chosen, target_dir))
+            except RuntimeError as exc:
+                # The download's own wording names the cause and remedy
+                # (the login-token file, a refused token), so keep it.
+                raise DesignError(str(exc)) from None
+        login_site = mj.SITE_HOSTS.get(host.lower()) if host else None
+        if login_site == "makeronline":
+            raise DesignError(mj.MAKERONLINE_DOWNLOAD_GAP)
+        if login_site in ("thangs", "nexprint", "myminifactory"):
+            label = {"thangs": "Thangs", "nexprint": "Nexprint",
+                     "myminifactory": "MyMiniFactory"}[login_site]
+            job = mj.inventory_for_url(str(url))
+            rows = [row for row in job["sources"]
+                    if Path(str(row.get("name") or "")).suffix.lower() in (".3mf", ".stl")]
+            if not rows:
+                raise DesignError(f"that {label} link has no STL or 3MF file to edit")
+            if len(rows) != 1:
+                raise DesignError(
+                    f"that {label} link has {len(rows)} model files, so design cannot pick "
+                    "one; drop the file you want edited")
+            try:
+                return Path(mj.download_for_site(job, rows[0], target_dir))
+            except RuntimeError as exc:
+                # The download's own wording names the cause and remedy
+                # (the login-token file, a refused token).
+                raise DesignError(str(exc)) from None
         job = mj.printables_inventory(str(url))
         rows = [row for row in job["sources"]
                 if Path(str(row.get("name") or "")).suffix.lower() in (".3mf", ".stl")]

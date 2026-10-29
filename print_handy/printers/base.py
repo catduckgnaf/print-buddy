@@ -132,22 +132,30 @@ DELIVERY_METHODS = ("printer", "discord", "bambu_handoff")
 
 # Margins, prime tower and cold pull every current vendor shares. A vendor or printer overrides any key.
 SHARED_SETTINGS = {
+    # The part gaps and margins below (arrange_*, merge_*, prime_tower clearances) are
+    # resolved from the layout.spacing preset (settings.SPACING_PRESETS) unless the
+    # operator sets one explicitly; the values here are the "minimum" preset.
     "layout": {
+        # Gap preset: minimum | low | medium | high (see docs/SETTINGS.md).
+        "spacing": "minimum",
         # Distance from the bed edge for a lone copy and for multi copy plates.
         "single_copy_edge_mm": 1.0,
         "multi_copy_edge_mm": 3.0,
+        # Part-to-part gap and bed-edge margin when parts are rearranged onto one plate.
+        "arrange_gap_mm": 2.0,
+        "arrange_edge_mm": 1.0,
         # Gaps when several source plates are merged onto one bed.
-        "merge_edge_margin_mm": 8.0,
-        "merge_spacing_mm": 10.0,
+        "merge_edge_margin_mm": 1.0,
+        "merge_spacing_mm": 2.0,
     },
     "prime_tower": {
         "size_mm": 45.0,
         # Clearance between the tower and any part.
-        "part_clearance_mm": 8.0,
+        "part_clearance_mm": 3.5,
         # Closest the tower may sit to the bed edge.
-        "edge_mm": 10.0,
+        "edge_mm": 4.0,
         # Extra room reserved for the tower when merging plates.
-        "merge_slack_mm": 5.0,
+        "merge_slack_mm": 1.0,
     },
     # Profile name = [hot C, cold C]
     "cold_pull": {"pla_trial": [220, 90], "petg": [245, 100]},

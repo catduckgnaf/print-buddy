@@ -1562,7 +1562,7 @@ def test_deterministic_slice_refusal_explains_and_offers_the_one_tap_fix(env, mo
     assert len(asked) == 1
     question = asked[0]['question']
     assert 'Slot 1 (Matte white PLA)' in question and 'Is Matte white PLA loaded in slot 1?' in question
-    assert 'PB_SLICING_CONFIGURATION' in question and 'UNKNOWN' not in question
+    assert 'PH_SLICING_CONFIGURATION' in question and 'UNKNOWN' not in question
     assert asked[0]['choices'] == ['Yes, slot 1 has it: slice', 'No, cancel']
     assert fixes == [{'kind': 'confirm_slot_color', 'slot': '1', 'hex': 'FFFFFF'}]
     assert len(calls) == 2 and receipt['status'] == 'STARTED'
@@ -1581,7 +1581,7 @@ def test_slice_refusal_without_a_safe_fix_says_why_and_offers_no_blind_retry(env
     assert len(calls) == 1
     assert not [q for q in adapter.questions if q['choices'][0] == 'Retry slice once (no print)']
     said = '\n'.join(adapter.sent)
-    assert 'Slot 2 (PLA) has no spool recorded' in said and 'PB_SLICING_CONFIGURATION' in said
+    assert 'Slot 2 (PLA) has no spool recorded' in said and 'PH_SLICING_CONFIGURATION' in said
     assert result['action'] == 'skip' and env.starts == []
 
 

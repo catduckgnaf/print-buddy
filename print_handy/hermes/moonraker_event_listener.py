@@ -1525,6 +1525,11 @@ def new_spool_plain_text(spool):
 
 def post_new_spool_prompt(spool):
     """Post the one-time new-spool prompt; fall back to plain text if Discord refuses buttons."""
+    try:
+        from ..notify import emit
+        emit("spool_added", new_spool_plain_text(spool).splitlines()[0])
+    except Exception:
+        pass
     if _buttonless_standalone():
         return post(new_spool_plain_text(spool))
     try:
@@ -1966,6 +1971,11 @@ def _with_printer_name(text):
 def _visual_alert(filename, image, reason, identity=None):
     # #317: a watchdog alert is blooper material; record() never raises.
     print_markers.record(filename, print_markers.WATCHDOG_ALERT, detail=reason)
+    try:
+        from ..notify import emit
+        emit("watchdog_offer", reason)
+    except Exception:
+        pass
     target = Path(os.environ.get("PRINT_WATCH_FRAME_DIR") or _config.cache_dir() / "print-watch")
     target.mkdir(parents=True, exist_ok=True)
     path = target / f"{int(time.time())}-{Path(filename or 'print').stem}.jpg"

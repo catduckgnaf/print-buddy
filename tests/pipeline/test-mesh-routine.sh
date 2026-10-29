@@ -73,6 +73,7 @@ run_case() (
       *G28*) filter='.toolhead.homed_axes="xyz"' ;;
       *AUTO_FULL_BED_LEVEL*)
         [[ "$1" == *'SAVE=0'* ]] || return 2
+        printf '%s\n' "$GCODE_TIMEOUT" >"$d/probe-timeout"
         if [[ "$case_name" != screenless_ack ]]; then
           filter='.toolhead.homed_axes="xyz"|.extruder.target=0|.heater_bed.target=0|.bed_mesh.profile_name="auto"|.bed_mesh.probed_matrix=[[2,2,2,2,2],[2,2,2,2,2],[2,2,2,2,2],[2,2,2,2,2],[2,2,2,2,2]]|.bed_mesh.profiles.auto.points=.bed_mesh.probed_matrix'
         fi ;;
@@ -105,6 +106,8 @@ run_case() (
     mesh_run --state-dir "$d/run" >"$d/replay"
     after="$(sha256sum "$d/events")"
     [[ "$before" == "$after" ]]
+    # The probe call gets the remaining routine deadline, not a 300 s client cap.
+    if [[ -f "$d/probe-timeout" ]]; then (( $(<"$d/probe-timeout") > 300 )); fi
   else
     [[ "$rc" != 0 ]]
     if [[ -f "$d/events" ]]; then

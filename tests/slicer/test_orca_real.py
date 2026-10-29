@@ -1,6 +1,6 @@
 """Slice with the real Orca CLI and the home templates, then run the guards on what it produced.
 
-Skipped unless PRINT_HANDY_REAL_SLICER=1. CI runs these in the real-slicer job with the same Flathub
+Skipped unless PRINT_HANDY_REAL_SLICER=1. CI runs these in the Slicer test (stable) job with the same Flathub
 Orca the home box uses. Locally: PRINT_HANDY_REAL_SLICER=1 python3 -m unittest tests.slicer -v
 """
 import os

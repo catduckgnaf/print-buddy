@@ -23,7 +23,7 @@ this file when a suite is added, moved, or starts/stops pinning an area.
 | Intake / slicing pipeline / model job | `tests/pipeline/`, `tests/core/`, `tests/slicer/`, `tests/corpus/` |
 | Model sites via API (#462): Thingiverse inventory/download; MyMiniFactory inventory-only with the named download gap and the pre-choice intake refusal | `tests/pipeline/test_thingiverse_sites.py`, `tests/pipeline/test_myminifactory_sites.py` |
 | Creality Cloud intake (#604): inventory plus token-gated download, with the named token gap at the point of use | `tests/pipeline/test_crealitycloud_sites.py` |
-| Real Bambu Studio slicing (CI `real-slicer-bambu` leg) | `tests/slicer/test_bambu_real_a1.py`; job contract in `tests/test_ci_bambu_workflow.py` |
+| Real Bambu Studio slicing (CI `Slicer test (bambu)` leg) | `tests/slicer/test_bambu_real_a1.py`; job contract in `tests/test_ci_bambu_workflow.py` |
 | Spoolman best-effort contract (#387, #235) | `tests/core/test_spoolman_client.py`, `tests/pipeline/test_spoolman_best_effort.py`, `test_spoolman_wrapper_contract.py`, `test_spoolman_warning*.py` |
 | Printers: roster, per-printer state, leases (#333–#337) | `tests/test_printers_roster.py`, `tests/test_per_printer_state.py`, `tests/test_multi_printer_walkthrough.py`, `tests/printers/` |
 | Fail-soft state files (corrupt / partial) | `tests/test_state_file_failure_paths.py`, `tests/test_state_files.py`, `tests/test_live_gate.py` |
@@ -131,7 +131,7 @@ remainder), and the Matrix message-ordering flake root cause (scope 4).
   waiting flow stays blocked until the note has posted; it fails
   deterministically against the pre-fix adapter.
 
-## Real Bambu Studio leg (`real-slicer-bambu`, 2026-10-27)
+## Real Bambu Studio leg (`Slicer test (bambu)`, 2026-10-27)
 
 - New CI job runs `tests/slicer/test_bambu_real_a1.py` against the real
   Flathub Bambu Studio (2.8.2.61, ostree commit pinned in ci.yml and

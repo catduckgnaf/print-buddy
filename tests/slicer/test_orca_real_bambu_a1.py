@@ -2,7 +2,7 @@
 the A1 guards on real output, the baseline proposal.
 
 Skipped unless PRINT_HANDY_REAL_SLICER=1; CI's real-slicer jobs run tests/slicer with the pinned
-OrcaSlicer v2.5.0-alpha bundle (#356: the shipped slicer). The A1 templates are generated
+OrcaSlicer v2.5.0-beta bundle (#356: the shipped slicer line). The A1 templates are generated
 (profiles.install, production identities only) from that OrcaSlicer's own resources folder:
 PRINT_HANDY_ORCA_RESOURCES, else the Flatpak's install location. OrcaSlicer 2.5 packs its vendor profiles
 into a preset cache (BBL.opc); print_handy reads the cache directly (preset_cache), which

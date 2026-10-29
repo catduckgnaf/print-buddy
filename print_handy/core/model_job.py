@@ -15,7 +15,7 @@ print stay separate unless --print-now is given, which means the operator clicke
 "bed clear" for exactly this job. `python3 -m print_handy.core.model_job print-now FILE|JOB.json` starts an
 already sliced job the same way.
 """
-import argparse, base64, hashlib, html, json, logging, math, os, re, shutil, subprocess, sys, time, urllib.parse, urllib.request, zipfile
+import argparse, base64, hashlib, html, http.client, json, logging, math, os, re, shutil, subprocess, sys, time, urllib.parse, urllib.request, zipfile
 import xml.etree.ElementTree as ET
 from pathlib import Path
 from typing import Any, NamedTuple
@@ -23,6 +23,7 @@ from typing import Any, NamedTuple
 from .. import firmware_update, printers, settings
 from ..printers.base import MultiColorUnsupported
 from . import _external, gcode_3mf, launch_state, printer_state, spoolman_client
+from .site_accounts import SiteLoginNeeded
 
 logger = logging.getLogger(__name__)
 
@@ -68,24 +69,41 @@ def request_json(url, *, data=None, headers=None, timeout=25):
     with urllib.request.urlopen(req, timeout=timeout) as r: return json.load(r)
 
 
+class _DropAuthOnHostChange(urllib.request.HTTPRedirectHandler):
+    """Follow redirects, but never carry an Authorization header to another host.
+
+    A site's signed-in download often redirects to signed object storage
+    (MyMiniFactory to dl4.myminifactory.com, verified 2026-10-29): that host
+    must not receive the operator's token, and it rejects a signed URL that
+    also carries an Authorization header (HTTP 400 InvalidArgument).
+    """
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        new = super().redirect_request(req, fp, code, msg, headers, newurl)
+        if new is not None and urllib.parse.urlsplit(newurl).hostname != urllib.parse.urlsplit(req.full_url).hostname:
+            new.remove_header("Authorization")
+        return new
+
+
 def download(url, target, headers=None):
     target.parent.mkdir(parents=True, exist_ok=True)
     h={"User-Agent":UA}; h.update(headers or {})
     req=urllib.request.Request(url, headers=h)
     from .intake_resources import save_download
-    with urllib.request.urlopen(req, timeout=90) as r:
+    opener=urllib.request.build_opener(_DropAuthOnHostChange) if "Authorization" in h else None
+    with (opener.open(req, timeout=90) if opener else urllib.request.urlopen(req, timeout=90)) as r:
         save_download(r, target)
     if target.stat().st_size == 0: raise RuntimeError("downloaded an empty file")
 
 
 def maker_headers():
+    # The token file, else MAKERWORLD_TOKEN (site_accounts.stored).
+    from .site_accounts import stored
     path=Path.home()/".config/bambu/token"
-    try:
-        token=path.read_text().strip()
-    except FileNotFoundError:
-        raise RuntimeError(f"MakerWorld links need an account token in {path}; "
-                           "see docs/PROJECT-REFERENCE.md (MakerWorld account token)") from None
-    if not token: raise RuntimeError("MakerWorld token empty")
+    token, _=stored("makerworld")
+    if token is None:
+        raise SiteLoginNeeded("makerworld", "missing", f"MakerWorld links need an account token in {path}; "
+                              "see docs/PROJECT-REFERENCE.md (MakerWorld account token)")
+    if not token: raise SiteLoginNeeded("makerworld", "empty", "MakerWorld token empty")
     return {"Authorization":f"Bearer {token}", "Origin":"https://makerworld.com",
             "Referer":"https://makerworld.com/", "x-bbl-app-source":"makerworld"}
 
@@ -235,15 +253,16 @@ def printables_download(job, source, target):
 
 THINGIVERSE="https://api.thingiverse.com"
 def thingiverse_headers():
+    # The token file, else THINGIVERSE_TOKEN (site_accounts.stored).
+    from .site_accounts import stored
     path=Path.home()/".config/thingiverse/token"
-    try:
-        token=path.read_text().strip()
-    except FileNotFoundError:
-        raise RuntimeError(f"Thingiverse links need a free Thingiverse App Token in {path}; "
-                           "create an app/token at https://www.thingiverse.com/developers "
-                           "(under your Thingiverse account) and store the App Token as the only "
-                           "content of that file; see docs/PROJECT-REFERENCE.md (Thingiverse App Token)") from None
-    if not token: raise RuntimeError("Thingiverse token empty")
+    token, _=stored("thingiverse")
+    if token is None:
+        raise SiteLoginNeeded("thingiverse", "missing", f"Thingiverse links need a free Thingiverse App Token in {path}; "
+                              "create an app/token at https://www.thingiverse.com/developers "
+                              "(under your Thingiverse account) and store the App Token as the only "
+                              "content of that file; see docs/PROJECT-REFERENCE.md (Thingiverse App Token)")
+    if not token: raise SiteLoginNeeded("thingiverse", "empty", "Thingiverse token empty")
     return {"Authorization":f"Bearer {token}"}
 def _thingiverse_blocked(exc):
     """Plain RuntimeError for a Thingiverse 401/403/challenge, else None. Never bypass a challenge."""
@@ -253,7 +272,10 @@ def _thingiverse_blocked(exc):
     except Exception: challenged=False
     cause=("Thingiverse answered with a Cloudflare robot check (challenge)" if challenged
            else "Thingiverse refused the request (401/403), which usually means the App Token is missing, invalid or expired, or the site is challenging this connection")
-    return RuntimeError(f"{cause}. Open thingiverse.com in a browser and pass any check there, "
+    # A plain 401 is the token itself: offer the connect flow (renew).
+    kind=(lambda message: SiteLoginNeeded("thingiverse", "refused", message)) \
+        if getattr(exc, "code", None) == 401 and not challenged else RuntimeError
+    return kind(f"{cause}. Open thingiverse.com in a browser and pass any check there, "
                         "check the token file (see docs/PROJECT-REFERENCE.md, Thingiverse App Token), "
                         "then send the link again. Print Handy does not try to bypass robot checks.")
 def _thingiverse_json(url):
@@ -271,8 +293,10 @@ def thingiverse_inventory(url):
     # Verified against the official API shape documented by open-source SDKs
     # (e.g. the Go thingiverse client): GET /things/{id} -> {id, name, license (string),
     # public_url, ...}; GET /things/{id}/files -> [{id, name, size, download_url, ...}].
-    # The per-file download_url is the download route; no live token was available to
-    # re-verify it end to end, which the #462 PR body names explicitly.
+    # The per-file download_url is the download route. Verified end to end live on
+    # 2026-10-29 with an operator App Token (thing 763622: lookup, file list and a real
+    # STL download); the token also passes the Cloudflare check that answers
+    # anonymous requests.
     mid=thingiverse_id(url)
     d=_thingiverse_json(f"{THINGIVERSE}/things/{mid}")
     if not isinstance(d, dict) or not d: raise RuntimeError("Thingiverse thing not found")
@@ -306,17 +330,26 @@ def thingiverse_download(job, source, target):
     return dest
 
 MYMINIFACTORY="https://www.myminifactory.com/api/v2"
-# #462 Stage 2 (catduck's decision, 2026-10-27): MyMiniFactory is INVENTORY-ONLY.
-# Per MyMiniFactory's own API guidelines
+# MyMiniFactory downloads (#464): per MyMiniFactory's own API guidelines
 # (https://www.myminifactory.com/pages/api-guidelines), browsing needs no user
 # login, but downloading an object inside an app requires the downloader to be
-# logged in to their MyMiniFactory account (OAuth). That login route is not
-# built, so downloads refuse with this named gap instead of failing obscurely
-# or pretending the link is printable.
+# signed in to their MyMiniFactory account (OAuth). The operator signs in once
+# through MyMiniFactory's own OAuth page (site_accounts, "myminifactory") and
+# the access token is the saved login. Verified live end to end 2026-10-29:
+# with that token the API returns each file's download_url (an API key alone
+# returns none); the download URL answers the signed-in request with a 302 to
+# signed storage on dl4.myminifactory.com, and the file arrives intact. The
+# token must not follow that redirect (see _DropAuthOnHostChange). Cloudflare
+# fronts www.myminifactory.com and has challenged other clients there; a
+# challenge is a plain stop with the browser workaround — Print Handy never
+# tries to get past it.
+MYMINIFACTORY_CHALLENGE_GAP=(
+    "MyMiniFactory's download page answered with a Cloudflare robot check, so nothing "
+    "was downloaded. Print Handy never tries to get past a robot check. This depends "
+    "on the network Print Handy runs from. Workaround: open the model page in a browser, "
+    "download the .stl/.3mf file there, then upload or drop the file here instead.")
 MYMINIFACTORY_DOWNLOAD_GAP=(
-    "Print Handy cannot download files from MyMiniFactory. MyMiniFactory's API only "
-    "allows downloads when the person downloading is logged in to their MyMiniFactory "
-    "account (OAuth login), and that login route is not built yet, so nothing was "
+    "MyMiniFactory did not give a download link for this file, so nothing was "
     "downloaded. Workaround: open the model page in a browser, download the .stl/.3mf "
     "file there, then upload or drop the file here instead.")
 def myminifactory_api_key():
@@ -337,10 +370,31 @@ def _mmf_blocked(exc):
                         "Check the API key file (see docs/PROJECT-REFERENCE.md, MyMiniFactory API key), "
                         "then send the link again. Print Handy does not try to bypass robot checks.")
 def _mmf_json(path):
+    """GET an API v2 path with the API key, or with the OAuth sign-in when there is no key file."""
     sep="&" if "?" in path else "?"
     try:
-        return request_json(f"{MYMINIFACTORY}{path}{sep}key={myminifactory_api_key()}")
+        key=myminifactory_api_key()
+    except RuntimeError as missing:
+        from .site_accounts import read_token
+        try:
+            token=read_token("myminifactory")
+        except SiteLoginNeeded as no_sign_in:
+            # Neither credential: the sign-in covers listing AND download,
+            # so the connect flow offers that; the key-file remedy stays named.
+            raise SiteLoginNeeded("myminifactory", no_sign_in.reason,
+                                  f"{missing} Or connect the MyMiniFactory sign-in, which also "
+                                  "downloads: see docs/PROJECT-REFERENCE.md (MyMiniFactory sign-in).") from None
+        url, headers=f"{MYMINIFACTORY}{path}", {"Authorization":f"Bearer {token}"}
+    else:
+        url, headers=f"{MYMINIFACTORY}{path}{sep}key={key}", None
+    try:
+        return request_json(url, headers=headers)
     except urllib.error.HTTPError as exc:
+        if headers and exc.code == 401:
+            # The OAuth sign-in itself was refused (revoked or expired):
+            # offer the renew flow, not the API-key remedy.
+            from .site_accounts import refused
+            raise refused("myminifactory") from None
         blocked=_mmf_blocked(exc)
         if blocked is not None: raise blocked from None
         raise
@@ -373,17 +427,33 @@ def myminifactory_inventory(url):
     license_value=d.get("license")
     if isinstance(license_value, dict): license_value=license_value.get("name")
     job={"site":"myminifactory","model_id":mid,"title":title,"slug":slug,
-         "license":license_value,"sources":rows,
-         "download_gap":MYMINIFACTORY_DOWNLOAD_GAP}
+         "license":license_value,"sources":rows}
     if not rows:
         job["no_geometry_reason"]=(
             f"MyMiniFactory listing for object {mid} exposes no STL/3MF in its file "
             "list, so there is no selectable geometry to reslice")
     return job
 def myminifactory_download(job, source, target):
-    # Inventory-only (#462 Stage 2): never touches the network. The registry
-    # routes here so any download attempt refuses with the named gap.
-    raise RuntimeError(MYMINIFACTORY_DOWNLOAD_GAP)
+    cached=_cached_source("myminifactory", "id", source.get("id"), job.get("model_id"))
+    if cached is not None and cached.name == Path(source.get("name") or "").name:
+        return _reuse_cached(cached, target, "MyMiniFactory")
+    from .site_accounts import read_token, refused
+    token=read_token("myminifactory")
+    auth={"Authorization":f"Bearer {token}"}
+    # GET /files/{id} is "information of a file including the download link";
+    # download_url is filled in only for an OAuth-signed-in user.
+    status, d=_web_api("GET", f"{MYMINIFACTORY}/files/{source.get('id')}", headers=auth)
+    if status == 401: raise refused("myminifactory")
+    if status == 403: raise RuntimeError(MYMINIFACTORY_CHALLENGE_GAP)
+    url=d.get("download_url") if isinstance(d, dict) else None
+    if not url: raise RuntimeError(MYMINIFACTORY_DOWNLOAD_GAP)
+    try:
+        return _fetch_chosen(url, target, source.get("name"), "MyMiniFactory", exact=True, headers=auth)
+    except urllib.error.HTTPError as exc:
+        if exc.code == 403 and (exc.headers or {}).get("cf-mitigated"):
+            raise RuntimeError(MYMINIFACTORY_CHALLENGE_GAP) from None
+        if exc.code in (401, 403): raise refused("myminifactory", f" ({exc.code})") from None
+        raise
 
 
 CULTS3D = "https://cults3d.com/graphql"
@@ -415,17 +485,18 @@ def cults_credentials():
     match the Cults profile exactly, capitals included. The key is never
     logged, and no error message includes it.
     """
+    from .site_accounts import stored
     path = Path.home()/".config"/"cults3d"/"token"
-    if not path.exists():
-        raise RuntimeError(
+    raw, _ = stored("cults3d")  # the token file, else CULTS3D_TOKEN
+    if raw is None:
+        raise SiteLoginNeeded("cults3d", "missing",
             f"Cults3D needs an API key first. Create one at https://cults3d.com/en/api/keys "
             f"and save it as the only content of {path} in the form nickname:key (your Cults "
             "nickname, a colon, then the API key), readable only by the account that runs "
             "Print Handy. See docs/PROJECT-REFERENCE.md (Cults3D API key).")
-    raw = path.read_text(encoding="utf-8").strip()
     nickname, sep, key = raw.partition(":")
     if not sep or not nickname.strip() or not key.strip():
-        raise RuntimeError(
+        raise SiteLoginNeeded("cults3d", "empty",
             f"The Cults3D token file at {path} must contain exactly nickname:key — your "
             "Cults nickname, a colon, then the API key from "
             "https://cults3d.com/en/api/keys — as its only content.")
@@ -436,7 +507,7 @@ def cults_credentials():
 def _cults_blocked(exc):
     code = getattr(exc, "code", None)
     if code == 401:
-        return RuntimeError(
+        return SiteLoginNeeded("cults3d", "refused",
             "Cults3D refused the request (401), which usually means the nickname or API "
             "key in ~/.config/cults3d/token is wrong — the nickname must match your Cults "
             "profile exactly, capitals included. Check the file, then send the link again.")
@@ -469,24 +540,22 @@ def cults_id(url):
 def cults_inventory(url):
     """Listing metadata for a Cults URL, via Cults' documented GraphQL API.
 
-    The lookup follows Cults' documented GraphQL surface (endpoint
-    https://cults3d.com/graphql, HTTP Basic nickname:api_key) and resolves the
-    creation through its Relay-style global id — base64 of "Creation/<slug>",
-    the format Cults publisher tooling documents. It is NOT verified live: no
-    Cults API key exists on the build machine, so parsing is defensive, and
-    the returned node's id is checked against the requested slug because the
-    API is known to answer with an unfiltered result for an id it does not
-    recognise. The API exposes no file list at all, so `sources` is always
-    empty and the job carries the download gap plus a no-geometry reason that
-    names the listing it did find.
+    Endpoint https://cults3d.com/graphql, HTTP Basic nickname:api_key, and
+    the creation is looked up by its slug: `creation(slug:)`. Verified live
+    2026-10-29 with an operator key: a real slug answers {id, name, url,
+    license{name}} and an unknown slug answers creation: null. (The first
+    build guessed a Relay `node(id:)` lookup with a padded base64 id, which
+    never matched: Cults' ids are unpadded.) The returned id is still checked
+    against the requested slug. The API exposes no file list at all, so
+    `sources` is always empty and the job carries the download gap plus a
+    no-geometry reason that names the listing it did find.
     """
     slug = cults_id(url)
-    global_id = base64.b64encode(f"Creation/{slug}".encode()).decode()
     resp = _cults_graphql(
-        "query($id: ID!) { node(id: $id) { ... on Creation { id name } } }",
-        {"id": global_id})
+        "query($slug: String!) { creation(slug: $slug) { id name url license { name } } }",
+        {"slug": slug})
     data = resp.get("data") if isinstance(resp, dict) else None
-    node = (data or {}).get("node") or (data or {}).get("creation")
+    node = (data or {}).get("creation") or (data or {}).get("node")
     errors = resp.get("errors") if isinstance(resp, dict) else None
     if not isinstance(node, dict) or (errors and not node):
         raise RuntimeError(
@@ -494,7 +563,7 @@ def cults_inventory(url):
             "creation may have been removed, or Cults may have changed its API.")
     returned = str(node.get("id") or "")
     try:
-        decoded = base64.b64decode(returned).decode()
+        decoded = base64.b64decode(returned + "=" * (-len(returned) % 4)).decode()
     except Exception:
         decoded = ""
     if decoded != f"Creation/{slug}":
@@ -509,8 +578,9 @@ def cults_inventory(url):
         "selectable geometry to reslice. Workaround: open the model page in a "
         "browser, download the .stl/.3mf file there, then upload or drop the file "
         "here instead.")
+    license_value = (node.get("license") or {}).get("name") if isinstance(node.get("license"), dict) else None
     return {"site": "cults3d", "model_id": slug, "title": title,
-            "slug": slug, "license": None, "sources": [],
+            "slug": slug, "license": license_value, "sources": [],
             "download_gap": CULTS_DOWNLOAD_GAP, "no_geometry_reason": reason}
 
 
@@ -518,29 +588,765 @@ def cults_download(job, source, target):
     """Refuse plainly: Cults' API exposes no files (see CULTS_DOWNLOAD_GAP)."""
     raise RuntimeError(CULTS_DOWNLOAD_GAP)
 
+
+CREALITYCLOUD = "https://www.crealitycloud.com"
+
+# Creality Cloud (#604, reopening the #464 classification): the web app's own
+# JSON API. The app proxies /api/* to its configured API base
+# (admin.crealitycloud.com) and answers with {code, msg, result} envelopes;
+# code 0 is success and code 4 is the token refusal (ERR_TOKEN in the web
+# client's own error table). Model detail and the source-file inventory are
+# served anonymously; downloads go through memberDownload, which requires
+# the account login token the web client keeps in its model_token cookie.
+# Following the token-file pattern of the other model sites, the operator
+# copies that cookie value into ~/.config/crealitycloud/token. No password
+# is ever stored, and no site check is bypassed. Verified live 2026-10-29
+# against the acceptance model (bag-clip-30mm): detail and file list
+# answered anonymously with code 0, and memberDownload answered
+# {"code": 4, "msg": "Invalid Token"} without a token — so the success
+# shape of its result was NOT verifiable from here and is parsed
+# defensively in _crealitycloud_download_url; an answer with no findable
+# file URL refuses with a named gap instead of guessing.
+CREALITYCLOUD_ANSWER_GAP = (
+    "Creality Cloud answered the download request, but Print Handy could not "
+    "find a file URL in the answer, so nothing was downloaded (the site may "
+    "have changed its answer). Workaround: open "
+    "the model page in a browser, download the .stl/.3mf file there, then "
+    "upload or drop the file here instead.")
+
+
+def crealitycloud_headers(token=None):
+    """The __CXY_* headers the Creality Cloud web client itself sends.
+
+    __CXY_TIMEZONE_ is not optional decoration: without it the API
+    refuses every call with code 1 (Invalid Parameter), verified live
+    2026-10-29. Its value is the local UTC offset in seconds, the web
+    client's own formula.
+
+    ``token`` is the saved login, ``model_user_id:model_token``: the web
+    client sends the user id (its model_user_id cookie) as __CXY_UID_
+    beside the token, and the API answers "Invalid Token" to a valid
+    token sent without it (verified live 2026-10-29).
+    """
+    import datetime
+    uid, _, token = (token or "").rpartition(":")
+    offset = datetime.datetime.now().astimezone().utcoffset()
+    return {"Content-Type": "application/json",
+            "__CXY_APP_ID_": "cxy-gen2", "__CXY_APP_VER_": "7.3.28",
+            "__CXY_PLATFORM_": "2", "__CXY_BRAND_": "creality",
+            "__CXY_APP_CH_": "not set", "__CXY_OS_VER_": "not set",
+            "__CXY_DUID_": "not set", "__CXY_OS_LANG_": "0",
+            "__CXY_TOKEN_": token, "__CXY_UID_": uid,
+            "__CXY_TIMEZONE_": str(int(offset.total_seconds())) if offset else "0",
+            "__CXY_REQUESTID_": os.urandom(16).hex()}
+
+
+def crealitycloud_token():
+    """The saved login, ``model_user_id:model_token``.
+
+    From the token file, else CREALITYCLOUD_TOKEN (site_accounts.read_token).
+    A value without the user id cannot work — the API refuses the token
+    alone — so it is named here, before any request.
+    """
+    from .site_accounts import read_token
+    token = read_token("crealitycloud")
+    uid, sep, rest = token.partition(":")
+    if not sep or not uid.strip().isdigit() or not rest.strip():
+        raise SiteLoginNeeded("crealitycloud", "missing", (
+            "The saved Creality Cloud login needs both cookie values, written as "
+            "model_user_id:model_token (the number from the model_user_id cookie, a "
+            "colon, then the model_token cookie value). Only one value is saved now. "
+            "See docs/PROJECT-REFERENCE.md (Creality Cloud login token)."))
+    return f"{uid.strip()}:{rest.strip()}"
+
+
+def _crealitycloud_token_refused():
+    return SiteLoginNeeded("crealitycloud", "refused", 
+        "Creality Cloud refused the login token (the site answered \"Invalid "
+        "Token\"), which usually means the token in "
+        "~/.config/crealitycloud/token is missing, invalid or expired. Sign "
+        "in at https://www.crealitycloud.com, copy the model_user_id and "
+        "model_token cookie values into that file as model_user_id:model_token "
+        "(see docs/PROJECT-REFERENCE.md, Creality Cloud login token), then "
+        "send the link again.")
+
+
+def _crealitycloud_blocked(exc):
+    """Plain RuntimeError for a Creality Cloud 401/403, else None."""
+    if getattr(exc, "code", None) not in (401, 403): return None
+    return RuntimeError(
+        "Creality Cloud refused the request (401/403), which usually means "
+        "the login token is missing, invalid or expired, or the site is "
+        "challenging this connection. Check the token file (see "
+        "docs/PROJECT-REFERENCE.md, Creality Cloud login token), then send "
+        "the link again. Print Handy does not try to bypass site checks.")
+
+
+def _crealitycloud_request(path, body, token=None):
+    """One POST to the Creality Cloud web API; returns the parsed envelope.
+
+    A local transport rather than the shared request_json, for one
+    live-verified reason: this API's edge truncates uncompressed chunked
+    reads often enough to fail most calls (IncompleteRead), while the
+    same calls with gzip encoding succeed almost every time (observed
+    2026-10-29). Retries live in _crealitycloud_result.
+    """
+    import gzip
+    headers = crealitycloud_headers(token)
+    headers["Accept-Encoding"] = "gzip"
+    headers["User-Agent"] = UA
+    headers["Accept"] = "application/json"
+    req = urllib.request.Request(f"{CREALITYCLOUD}{path}",
+                                 data=json.dumps(body).encode(), headers=headers)
+    with urllib.request.urlopen(req, timeout=25) as r:
+        raw = r.read()
+        if r.headers.get("Content-Encoding") == "gzip":
+            raw = gzip.decompress(raw)
+    return json.loads(raw.decode("utf-8"))
+
+
+def _crealitycloud_result(path, body, token=None):
+    """One Creality Cloud API call; returns the envelope's result.
+
+    HTTP stays 200 for API refusals — the envelope code decides. Known
+    codes are named with their remedy; an unknown code is reported by
+    number only, never by copying the site's message text into chat.
+    Transport-level dropped reads are retried (see _crealitycloud_request):
+    every call made here is an idempotent read or a download request, and
+    envelope refusals are never retried.
+    """
+    resp = None
+    for attempt in range(4):
+        try:
+            resp = _crealitycloud_request(path, body, token)
+            break
+        except urllib.error.HTTPError as exc:
+            blocked = _crealitycloud_blocked(exc)
+            if blocked is not None: raise blocked from None
+            raise
+        except (http.client.HTTPException, ConnectionError, TimeoutError,
+                urllib.error.URLError, ValueError):
+            if attempt == 3: raise
+            time.sleep(0.5 * (attempt + 1))
+    if not isinstance(resp, dict) or "code" not in resp:
+        raise RuntimeError("Creality Cloud answered with an unexpected "
+                           "response, so the request was not followed")
+    code = resp.get("code")
+    if code == 0: return resp.get("result")
+    if code == 4: raise _crealitycloud_token_refused()
+    if code in (512, 517):
+        raise RuntimeError("Creality Cloud says this model does not exist — "
+                           "it may have been removed, or the link is wrong")
+    raise RuntimeError(f"Creality Cloud refused the request (code {code})")
+
+
+def crealitycloud_slug(url):
+    """The model slug from a Creality Cloud URL (/model-detail/<slug>)."""
+    path = urllib.parse.urlparse(str(url)).path
+    m = re.search(r"/model-detail/([^/]+)/?$", path)
+    if not m: raise ValueError(f"Creality Cloud URL needs /model-detail/<slug>: {url}")
+    return m.group(1)
+
+
+def crealitycloud_profile_id(url):
+    """The ?profileId= print-profile id from a Creality Cloud URL, or None."""
+    query = urllib.parse.parse_qs(urllib.parse.urlparse(str(url)).query)
+    values = query.get("profileId") or []
+    return values[0] if values else None
+
+
+def _crealitycloud_profile_file(group_id, profile_id):
+    """Source file name inside one 3MF print profile, or None (best effort).
+
+    A profile is a Creality Print 3MF holding one source file; the detail
+    the API pre-parses from it names that file. A failed lookup returns
+    None — the profile hint never blocks the inventory.
+    """
+    try:
+        listing = _crealitycloud_result(
+            "/api/cxy/v3/model/3mfList",
+            {"modelGroupId": group_id, "page": 1, "pageSize": 100})
+    except Exception:
+        return None
+    for profile in (listing or {}).get("list") or []:
+        if not isinstance(profile, dict): continue
+        if str(profile.get("id")) != str(profile_id): continue
+        infos = ((profile.get("preParse3mfResult") or {}).get("allObjectInfos")) or []
+        for info in infos:
+            name = str((info or {}).get("object_name") or "").strip()
+            if name: return name
+    return None
+
+
+def crealitycloud_inventory(url):
+    slug = crealitycloud_slug(url)
+    detail = _crealitycloud_result("/api/cxy/v3/model/modelGroupDetail", {"id": slug})
+    group = (detail or {}).get("groupItem") if isinstance(detail, dict) else None
+    if not isinstance(group, dict) or not group.get("id"):
+        raise RuntimeError(f"Creality Cloud model not found for {url} — the link "
+                           "may be wrong, or the model may have been removed")
+    group_id = str(group["id"])
+    listing = _crealitycloud_result("/api/cxy/v3/model/fileListPage",
+                                    {"modelId": group_id, "page": 1, "pageSize": 100})
+    rows = []
+    for f in (listing or {}).get("list") or []:
+        if not isinstance(f, dict): continue
+        fmt = str(f.get("fileFormat") or "").lower()
+        if fmt not in {".stl", ".3mf"}: continue
+        name = str(f.get("fileName") or "").strip()
+        if not name: continue
+        if not name.lower().endswith(fmt): name += fmt
+        rows.append({"id": f.get("id"), "name": name, "bytes": f.get("fileSize"),
+                     "kind": "files", "file_key": f.get("fileKey")})
+    title = str(group.get("groupName") or "").strip() or f"crealitycloud-{slug}"
+    job = {"site": "crealitycloud", "model_id": group_id, "title": title,
+           "slug": str(group.get("urlAlias") or slug),
+           "license": group.get("license"), "sources": rows}
+    if group.get("isPay"): job["paid"] = True
+    # The link's profileId names one print profile; the source file inside
+    # it is the file the link points at, so offer that file first.
+    profile_id = crealitycloud_profile_id(url)
+    if profile_id and len(rows) > 1:
+        pointed = _crealitycloud_profile_file(group_id, profile_id)
+        for row in rows:
+            if pointed and row["name"].casefold() == pointed.casefold():
+                row["suggested_by_link"] = True
+                rows.remove(row)
+                rows.insert(0, row)
+                break
+    if not rows:
+        job["no_geometry_reason"] = (
+            f"Creality Cloud listing \"{title}\" exposes no STL/3MF source "
+            "files in its file list, so there is no selectable geometry to "
+            "reslice — Print Handy never uses a site's pre-sliced G-code or "
+            "its printer-specific print profiles. If the model page offers "
+            "source files the API does not list, download the .stl/.3mf "
+            "file there in a browser, then upload or drop the file here "
+            "instead.")
+    return job
+
+
+def _crealitycloud_download_url(result, file_id=None):
+    """The file URL in a memberDownload answer, or None.
+
+    Verified live 2026-10-29: the answer is {downloadUrls: [{fileName,
+    url, fileId, expire}]}, and the entry for the requested ``file_id``
+    is taken. Other shapes this API family uses are still accepted: a
+    bare URL string, a dict carrying one under a URL key, or a list.
+    """
+    if isinstance(result, dict) and isinstance(result.get("downloadUrls"), list):
+        rows = [r for r in result["downloadUrls"] if isinstance(r, dict) and r.get("url")]
+        match = next((r for r in rows if file_id is not None and str(r.get("fileId")) == str(file_id)), None)
+        if match is None and len(rows) == 1: match = rows[0]
+        if match is not None: return match["url"]
+    if isinstance(result, str): return result or None
+    if isinstance(result, list):
+        for item in result:
+            found = _crealitycloud_download_url(item)
+            if found: return found
+        return None
+    if isinstance(result, dict):
+        for key in ("url", "downloadUrl", "downloadZip", "zipUrl", "fileUrl", "link"):
+            value = result.get(key)
+            if isinstance(value, str) and value: return value
+        for key in ("list", "files", "urls"):
+            found = _crealitycloud_download_url(result.get(key))
+            if found: return found
+    return None
+
+
+def crealitycloud_download(job, source, target):
+    cached = _cached_source("crealitycloud", "id", source.get("id"), job.get("model_id"))
+    if cached is not None and cached.name == Path(source.get("name") or "").name:
+        return _reuse_cached(cached, target, "Creality Cloud")
+    token = crealitycloud_token()
+    result = _crealitycloud_result(
+        "/api/cxy/v3/model/memberDownload",
+        {"modelId": job["model_id"], "trailType": 0,
+         "fileIds": [source.get("id")]}, token=token)
+    url = _crealitycloud_download_url(result, source.get("id"))
+    if not url: raise RuntimeError(CREALITYCLOUD_ANSWER_GAP)
+    # memberDownload names one file; a multi-file answer arrives as one zip
+    # and keeps only the chosen file (_fetch_chosen, which also knows a 3MF
+    # is itself a zip and must not be unpacked).
+    return _fetch_chosen(url, target, source.get("name"), "Creality Cloud", exact=True)
+
+# ---------------------------------------------------------------------------
+# Login-token web-API sites (#464): Thangs and Nexprint (MakerOnline's
+# inventory shares the transport but is inventory-only; see below).
+#
+# Like Creality Cloud above, each of these uses the JSON API its own web app
+# calls. Model detail and the file list answer anonymously; the download
+# needs the operator's login token (see site_accounts), which the operator
+# copies from their signed-in browser into ~/.config/<site>/token. No
+# password is stored, no captcha is solved, and no site check is bypassed:
+# a robot check or captcha answer is a plain stop. Verified live 2026-10-29
+# end to end for Thangs and Nexprint with operator tokens (inventory, the
+# tokenless refusal, and a real download); answers are still parsed
+# defensively, refusing with a named gap instead of guessing.
+# ---------------------------------------------------------------------------
+
+def _web_api(method, url, *, body=None, headers=None, timeout=25):
+    """One JSON request; returns (HTTP status, parsed body or text). Never raises on 4xx/5xx.
+
+    The sites below answer refusals with JSON bodies on 4xx statuses (and
+    sometimes on 200), so the caller decides from both. gzip is requested
+    (smaller and, on Creality's edge, more reliable); dropped reads are
+    retried — every call here is an idempotent read or a download-link request.
+    """
+    import gzip
+    h = {"User-Agent": UA, "Accept": "application/json", "Accept-Encoding": "gzip"}
+    h.update(headers or {})
+    data = None
+    if body is not None:
+        data = json.dumps(body).encode()
+        h["Content-Type"] = "application/json"
+    for attempt in range(3):
+        req = urllib.request.Request(url, data=data, headers=h, method=method)
+        try:
+            with urllib.request.urlopen(req, timeout=timeout) as r:
+                status, raw, enc = r.status, r.read(), r.headers.get("Content-Encoding")
+        except urllib.error.HTTPError as exc:
+            status, enc = exc.code, (exc.headers.get("Content-Encoding") if exc.headers else None)
+            raw = exc.read() or b""
+        except (http.client.HTTPException, ConnectionError, TimeoutError, urllib.error.URLError):
+            if attempt == 2: raise
+            time.sleep(0.5 * (attempt + 1))
+            continue
+        break
+    if enc == "gzip" and raw:
+        raw = gzip.decompress(raw)
+    text = raw.decode("utf-8", "replace")
+    try:
+        return status, json.loads(text)
+    except ValueError:
+        return status, text
+
+
+def _answer_url(result):
+    """The file URL in a download-link answer (string, dict or list), or None."""
+    if isinstance(result, str): return result if result.startswith("http") else None
+    if isinstance(result, list):
+        for item in result:
+            found = _answer_url(item)
+            if found: return found
+        return None
+    if isinstance(result, dict):
+        for key in ("signedUrl", "resultUrl", "url", "downloadUrl", "file_url", "fileUrl",
+                    "downloadZip", "zipUrl", "link"):
+            value = result.get(key)
+            if isinstance(value, str) and value.startswith("http"): return value
+        for key in ("fileInfoList", "list", "files", "urls", "data"):
+            found = _answer_url(result.get(key))
+            if found: return found
+    return None
+
+
+def _is_3mf_package(archive):
+    names = set(archive.namelist())
+    return "[Content_Types].xml" in names or "3D/3dmodel.model" in names
+
+
+def _fetch_chosen(url, target, name, label, *, exact, headers=None):
+    """Download ``url`` into ``target`` and keep only the chosen file ``name``.
+
+    A zip answer (a whole-model download) is unpacked to the entry named
+    ``name``, or to its only geometry file. A 3MF is itself a zip, so a zip
+    that IS a 3MF package is the file, not an archive of files. A plain file
+    answer is the chosen file when ``exact`` (the request named one file);
+    otherwise its name must match, or nothing is kept.
+    """
+    name = Path(name or "model.stl").name
+    target = Path(target)
+    target.mkdir(parents=True, exist_ok=True)
+    dest = target/name
+    staged = target/(name + ".download")
+    download(url, staged, headers)
+    with staged.open("rb") as head:
+        start = head.read(512).lstrip().lower()
+    if start.startswith((b"<!doctype html", b"<html")):
+        # A sign-in or robot-check page saved as if it were the model.
+        staged.unlink(missing_ok=True)
+        raise RuntimeError(f"{label} sent a web page instead of the file (usually a sign-in or "
+                           "robot-check page), so nothing was kept. Download the file from the "
+                           "model page in a browser and upload or drop it here instead.")
+    archive = None
+    if zipfile.is_zipfile(staged):
+        archive = zipfile.ZipFile(staged)
+        if _is_3mf_package(archive):
+            archive.close()
+            archive = None
+    if archive is not None:
+        with archive:
+            entries = [n for n in archive.namelist() if not n.endswith("/")
+                       and Path(n).suffix.lower() in {".stl", ".3mf"}]
+            pick = next((n for n in entries if Path(n).name.casefold() == name.casefold()), None)
+            if pick is None and len(entries) == 1: pick = entries[0]
+            if pick is None:
+                staged.unlink(missing_ok=True)
+                raise RuntimeError(
+                    f"{label} sent a zip with {len(entries)} model files and none is named "
+                    f"{name}, so Print Handy cannot tell which one was chosen; nothing was kept")
+            # The download cap counted the compressed bytes; the chosen member
+            # is held to the same cap as it expands, counted as it is written
+            # (the header's declared size is not trusted), so a small archive
+            # cannot fill the disk before the intake limits see the file.
+            from .intake_resources import CHUNK, MAX_DOWNLOAD_BYTES, MIB, _refuse
+            try:
+                if archive.getinfo(pick).file_size > MAX_DOWNLOAD_BYTES:
+                    _refuse(f"file exceeds {MAX_DOWNLOAD_BYTES // MIB} MiB limit")
+                with archive.open(pick) as src, dest.open("wb") as out:
+                    total = 0
+                    while chunk := src.read(CHUNK):
+                        total += len(chunk)
+                        if total > MAX_DOWNLOAD_BYTES:
+                            _refuse(f"file exceeds {MAX_DOWNLOAD_BYTES // MIB} MiB limit")
+                        out.write(chunk)
+            except BaseException:
+                dest.unlink(missing_ok=True)
+                staged.unlink(missing_ok=True)
+                raise
+        staged.unlink(missing_ok=True)
+    else:
+        sent = urllib.parse.unquote(Path(urllib.parse.urlparse(url).path).name)
+        if not exact and sent.casefold() != name.casefold():
+            staged.unlink(missing_ok=True)
+            raise RuntimeError(
+                f"{label} sent a single file ({sent or 'unnamed'}) that is not the chosen "
+                f"{name}, so nothing was kept. Download the file from the model page in a "
+                "browser and upload or drop it here instead.")
+        staged.replace(dest)
+    if dest.stat().st_size == 0:
+        raise RuntimeError(f"{label} download was empty")
+    return dest
+
+
+def _answer_gap(label):
+    return (f"{label} answered the download request, but Print Handy could not find a "
+            "file URL in the answer, so nothing was downloaded. This download path has "
+            "not been verified with a live login token yet. Workaround: open the model "
+            "page in a browser, download the .stl/.3mf file there, then upload or drop "
+            "the file here instead.")
+
+
+def _title_slug(title, fallback):
+    return re.sub(r'[^a-z0-9]+', '-', str(title).lower()).strip('-') or fallback
+
+
+# Creative Commons codes in the order both Anycubic's and Elegoo's web
+# clients enumerate them; each site's own trailing value is its house license.
+_CC_LICENSES = ["CC BY", "CC BY-SA", "CC BY-NC", "CC BY-NC-SA", "CC BY-ND", "CC BY-NC-ND", "CC0"]
+
+
+THANGS = "https://thangs.com"
+THANGS_ANSWER_GAP = _answer_gap("Thangs")
+
+
+def thangs_id(url):
+    """The model id from a Thangs URL: /designer/<user>/3d-model/<title>-<id> or /m/<id>."""
+    path = urllib.parse.unquote(urllib.parse.urlparse(str(url)).path)
+    m = re.fullmatch(r"/m/(\d+)/?", path) or re.search(r"/3d-model/.*-(\d+)/?$", path)
+    if not m: raise ValueError(f"Thangs URL needs /3d-model/<title>-<number> or /m/<number>: {url}")
+    return m.group(1)
+
+
+def thangs_inventory(url):
+    # GET /api/models/v2/<id> is the call the model page itself makes (its
+    # answer is embedded in the page's __NEXT_DATA__). A model that does not
+    # exist, or is not public, answers 403 Forbidden rather than 404.
+    mid = thangs_id(url)
+    status, d = _web_api("GET", f"{THANGS}/api/models/v2/{mid}?likes=false")
+    if status in (403, 404):
+        raise RuntimeError(f"Thangs model {mid} was not found — it may have been removed or "
+                           "made private, or the link is wrong")
+    if status != 200 or not isinstance(d, dict) or not d.get("id"):
+        raise RuntimeError(f"Thangs answered the model lookup with HTTP {status}, so the "
+                           "link was not followed")
+    rows = []
+    for part in d.get("parts") or []:
+        if not isinstance(part, dict): continue
+        # name can be a display name without an extension; the stored file
+        # name carries the real format.
+        name = str(part.get("originalFileName") or "").strip() \
+            or Path(str(part.get("filename") or "")).name
+        if Path(name).suffix.lower() not in {".stl", ".3mf"}: continue
+        rows.append({"id": part.get("partIdentifier"), "name": name, "bytes": part.get("size"),
+                     "kind": "files"})
+    title = str(d.get("name") or "").strip() or f"thangs-{mid}"
+    license_file = d.get("license")
+    # Thangs keeps the license as an uploaded file; its name is the best
+    # summary the API gives ("Creative Commons - Attribution 4.0 ...pdf"),
+    # unless it is just a generic LICENSE file.
+    license_value = Path(str(license_file)).stem if license_file else None
+    if license_value and license_value.casefold() in {"license", "licence"}:
+        license_value = "license file on the model page"
+    job = {"site": "thangs", "model_id": str(d["id"]), "title": title,
+           "slug": _title_slug(title, mid), "license": license_value, "sources": rows}
+    if d.get("visibility") == "paid" or d.get("plans") or d.get("marketplaceInfo"):
+        job["paid"] = True
+    if not rows:
+        job["no_geometry_reason"] = (
+            f"Thangs model \"{title}\" lists no STL/3MF files, so there is no selectable "
+            "geometry to reslice")
+    return job
+
+
+def thangs_download(job, source, target):
+    cached = _cached_source("thangs", "id", source.get("id"), job.get("model_id"))
+    if cached is not None and cached.name == Path(source.get("name") or "").name:
+        return _reuse_cached(cached, target, "Thangs")
+    from .site_accounts import read_token, refused
+    token = read_token("thangs")
+    # Thangs downloads a whole model, never one part: the web client asks
+    # for this signed URL and loads it. Verified live 2026-10-29 with an
+    # operator token: the answer is {fileName, signedUrl, modelSource,
+    # downloadId}, and signedUrl is a signed zip of the whole model, which
+    # _fetch_chosen unpacks to the chosen part.
+    status, d = _web_api("GET", f"{THANGS}/api/v2/models/{job['model_id']}/download-url",
+                         headers={"Authorization": f"Bearer {token}"})
+    if status == 401:
+        raise refused("thangs")
+    if status == 403:
+        if job.get("paid"):
+            raise RuntimeError(
+                "Thangs refused the download: this model needs a Thangs membership or a "
+                "purchase that the signed-in account does not have. Print Handy never buys "
+                "or unlocks models; nothing was downloaded.")
+        raise refused("thangs", " (403)")
+    if status == 429:
+        raise RuntimeError("Thangs is rate-limiting downloads right now; wait a few minutes, "
+                           "then send the link again")
+    if status != 200 or not isinstance(d, dict):
+        raise RuntimeError(f"Thangs answered the download request with HTTP {status}; "
+                           "nothing was downloaded")
+    if (d.get("userDownloadData") or {}).get("downloadLimitReached"):
+        raise RuntimeError("Thangs says this account reached its daily download limit; "
+                           "try again tomorrow. Nothing was downloaded.")
+    if d.get("fileName") == "Error":
+        raise RuntimeError("Thangs says this model's download is not ready yet; try again "
+                           "later. Nothing was downloaded.")
+    url = _answer_url(d)
+    if not url: raise RuntimeError(THANGS_ANSWER_GAP)
+    single = len(job.get("sources") or []) <= 1
+    return _fetch_chosen(url, target, source.get("name"), "Thangs", exact=single)
+
+
+NEXPRINT = "https://www.nexprint.com/gateway"
+NEXPRINT_ANSWER_GAP = _answer_gap("Nexprint")
+NEXPRINT_LICENSES = _CC_LICENSES + ["Nexprint Standard License"]
+
+
+def nexprint_id(url):
+    """The model id from a Nexprint URL: /[<lang>/]models/<id>."""
+    path = urllib.parse.urlparse(str(url)).path
+    m = re.search(r"/models/([A-Za-z0-9]+)/?$", path)
+    if not m: raise ValueError(f"Nexprint URL needs /models/<id>: {url}")
+    return m.group(1)
+
+
+def _nexprint_result(method, path, body=None, token=None):
+    """One Nexprint gateway call; returns the envelope's data.
+
+    The gateway keeps HTTP 200 for refusals and puts the cause in the
+    envelope's code (401 = not signed in). Known codes are named with their
+    remedy; an unknown one is reported by number, never by the site's text.
+    """
+    headers = {"User-Lang": "en"}
+    if token: headers["Authorization"] = f"Bearer {token}"
+    status, d = _web_api(method, f"{NEXPRINT}{path}", body=body, headers=headers)
+    if not isinstance(d, dict) or "code" not in d:
+        if token and status in (401, 403):
+            from .site_accounts import refused
+            raise refused("nexprint")
+        raise RuntimeError(f"Nexprint answered with an unexpected response (HTTP {status}), "
+                           "so the request was not followed")
+    code = d.get("code")
+    if code in (0, 200): return d.get("data")
+    if code in (401, 902):
+        from .site_accounts import refused
+        raise refused("nexprint")
+    if code in (1003002049, 1003002050, 1003002051):
+        raise RuntimeError("Nexprint says this account reached its download limit; try again "
+                           "later. Nothing was downloaded.")
+    if code == 403:
+        raise RuntimeError("Nexprint refused the request as unusual activity. Open the model "
+                           "on nexprint.com in a browser, then send the link again later. "
+                           "Print Handy does not try to bypass site checks.")
+    raise RuntimeError(f"Nexprint refused the request (code {code})")
+
+
+def nexprint_inventory(url):
+    mid = nexprint_id(url)
+    d = _nexprint_result("GET", "/api/v1/model-library-server/model-base-info/get?id="
+                         + urllib.parse.quote(mid))
+    # An unknown id still answers code 0, with every field null.
+    if not isinstance(d, dict) or not d.get("id"):
+        raise RuntimeError(f"Nexprint model {mid} was not found — it may have been removed, "
+                           "or the link is wrong")
+    model_id = str(d["id"])
+    # Print settings ship as 3MF files that also appear in modelFileList;
+    # downloading one is a type 5 request against the setting's id.
+    settings_by_file = {}
+    for setting in d.get("settingInfoList") or []:
+        f = (setting or {}).get("settingFile") or {}
+        if f.get("fileId") is not None:
+            settings_by_file[str(f["fileId"])] = setting
+    rows, seen = [], set()
+    for f in d.get("modelFileList") or []:
+        if not isinstance(f, dict) or f.get("fileId") is None: continue
+        fid = str(f["fileId"])
+        if fid in seen: continue
+        seen.add(fid)
+        name = str(f.get("fileName") or "").strip()
+        if Path(name).suffix.lower() not in {".stl", ".3mf"}: continue
+        setting = settings_by_file.get(fid)
+        size = f.get("fileSize")
+        row = {"id": fid, "name": name, "bytes": int(size) if isinstance(size, (int, float)) else None,
+               "kind": "files", "file_type": "5" if setting else "2",
+               "biz_id": str(setting["id"]) if setting else model_id}
+        if setting and setting.get("settingName"):
+            # Setting projects often share the designer file's name; the
+            # picker shows the setting's name so the rows stay distinct.
+            row["profile"] = str(setting["settingName"])
+            row["title"] = f"{name} (print setting: {row['profile']})"
+        rows.append(row)
+    # The designer's own files first, then print-setting projects.
+    rows.sort(key=lambda r: r["file_type"] != "2")
+    title = str(d.get("modelName") or "").strip() or f"nexprint-{mid}"
+    lic = d.get("licenseType")
+    job = {"site": "nexprint", "model_id": model_id, "title": title,
+           "slug": _title_slug(title, mid),
+           "license": NEXPRINT_LICENSES[lic] if isinstance(lic, int) and 0 <= lic < len(NEXPRINT_LICENSES) else None,
+           "sources": rows}
+    if not rows:
+        job["no_geometry_reason"] = (
+            f"Nexprint model \"{title}\" lists no STL/3MF files, so there is no selectable "
+            "geometry to reslice")
+    return job
+
+
+def nexprint_download(job, source, target):
+    cached = _cached_source("nexprint", "id", source.get("id"), job.get("model_id"))
+    if cached is not None and cached.name == Path(source.get("name") or "").name:
+        return _reuse_cached(cached, target, "Nexprint")
+    from .site_accounts import read_token
+    token = read_token("nexprint")
+    # Verified live 2026-10-29 with an operator token: the answer is
+    # {code: 0, data: {fileInfoList: [{fileId, type, resultUrl}]}}, and
+    # resultUrl is a presigned object-storage URL for that one file.
+    d = _nexprint_result(
+        "POST", "/api/v1/model-library-server/common/presigned-download-url",
+        {"fileInfoList": [{"fileId": str(source.get("id")),
+                           "type": source.get("file_type") or "2",
+                           "bizId": source.get("biz_id") or job["model_id"]}]},
+        token=token)
+    url = _answer_url(d)
+    if not url: raise RuntimeError(NEXPRINT_ANSWER_GAP)
+    return _fetch_chosen(url, target, source.get("name"), "Nexprint", exact=True)
+
+
+MAKERONLINE = "https://makeronline.com"
+MAKERONLINE_LICENSES = _CC_LICENSES + ["Standard Digital File License"]
+
+# MakerOnline is inventory-only, like MyMiniFactory: the model lookup and
+# file list answer anonymously, but its download call (POST /api/file/download)
+# also wants a Risk-Token produced by NetEase Yidun's in-browser device
+# fingerprinting SDK. Tested live 2026-10-29 with a valid operator login token
+# and no Risk-Token: the token was accepted (no auth refusal), and every
+# download answered code 1 "The system is busy" on two different models. Faking
+# that fingerprint is a bot-check bypass, which Print Handy never does, so the
+# refusal below IS the download behavior and no credential changes it.
+MAKERONLINE_DOWNLOAD_GAP = (
+    "Print Handy cannot download files from MakerOnline. Its download service "
+    "requires a browser security check (a device-fingerprint token) on every "
+    "download, which Print Handy does not fake or get around; with a valid login "
+    "alone the site refuses every download. Workaround: open the model page on "
+    "makeronline.com in a browser, download the .stl/.3mf file there, then upload "
+    "or drop the file here instead.")
+
+
+def makeronline_id(url):
+    """The model id from a MakerOnline URL: /[<lang>/]model/<title>/<id>.html."""
+    path = urllib.parse.unquote(urllib.parse.urlparse(str(url)).path)
+    m = re.search(r"/model/(?:.*/)?(\d+)\.html$", path)
+    if not m: raise ValueError(f"MakerOnline URL needs /model/<title>/<number>.html: {url}")
+    return m.group(1)
+
+
+def makeronline_inventory(url):
+    mid = makeronline_id(url)
+    status, d = _web_api("GET", f"{MAKERONLINE}/api/mold/detail?id={mid}", headers={"lang": "en"})
+    if not isinstance(d, dict) or "code" not in d:
+        raise RuntimeError(f"MakerOnline answered with an unexpected response (HTTP {status}), "
+                           "so the link was not followed")
+    if d.get("code") != 0:
+        if "not exist" in str(d.get("message") or ""):
+            raise RuntimeError("MakerOnline says this model does not exist — it may have been "
+                               "removed, or the link is wrong")
+        raise RuntimeError(f"MakerOnline refused the model lookup (code {d.get('code')})")
+    data = d.get("data")
+    if not isinstance(data, dict) or not data.get("id"):
+        raise RuntimeError(f"MakerOnline model {mid} was not found — it may have been removed, "
+                           "or the link is wrong")
+    rows = []
+    for f in data.get("files") or []:
+        if not isinstance(f, dict) or not f.get("key"): continue
+        name = str(f.get("file_name") or "").strip()
+        if Path(name).suffix.lower() not in {".stl", ".3mf"}: continue
+        rows.append({"id": f["key"], "name": name, "bytes": f.get("file_size"),
+                     "kind": "files", "file_id": f.get("file_id")})
+    title = str(data.get("title") or "").strip() or f"makeronline-{mid}"
+    lic = data.get("license")
+    job = {"site": "makeronline", "model_id": str(data["id"]), "title": title,
+           "slug": _title_slug(title, mid),
+           "license": MAKERONLINE_LICENSES[lic - 1] if isinstance(lic, int) and 1 <= lic <= len(MAKERONLINE_LICENSES) else None,
+           "sources": rows, "download_gap": MAKERONLINE_DOWNLOAD_GAP}
+    if not rows:
+        job["no_geometry_reason"] = (
+            f"MakerOnline model \"{title}\" lists no STL/3MF model files, so there is no "
+            "selectable geometry to reslice — Print Handy never uses a site's printer-specific "
+            "print profiles or pre-sliced G-code")
+    return job
+
+
+def makeronline_download(job, source, target):
+    # Inventory-only: never touches the network (see MAKERONLINE_DOWNLOAD_GAP).
+    raise RuntimeError(MAKERONLINE_DOWNLOAD_GAP)
+
+
 # Per-site registry (#462): site -> function NAME, resolved through this module's globals
 # at call time so existing tests that monkeypatch maker_*/printables_*/thingiverse_*/
 # myminifactory_* by name keep working exactly as before.
 SITE_INVENTORY_FUNCS={"makerworld":"maker_inventory","printables":"printables_inventory",
                       "thingiverse":"thingiverse_inventory",
                       "myminifactory":"myminifactory_inventory",
-                      "cults3d":"cults_inventory"}
+                      "cults3d":"cults_inventory",
+                      "crealitycloud":"crealitycloud_inventory",
+                      "thangs":"thangs_inventory","nexprint":"nexprint_inventory",
+                      "makeronline":"makeronline_inventory"}
 SITE_DOWNLOAD_FUNCS={"makerworld":"maker_download","printables":"printables_download",
                      "thingiverse":"thingiverse_download",
                      "myminifactory":"myminifactory_download",
-                     "cults3d":"cults_download"}
+                     "cults3d":"cults_download",
+                     "crealitycloud":"crealitycloud_download",
+                     "thangs":"thangs_download","nexprint":"nexprint_download",
+                     "makeronline":"makeronline_download"}
 SITE_HOSTS={"makerworld.com":"makerworld","www.makerworld.com":"makerworld",
             "printables.com":"printables","www.printables.com":"printables",
             "thingiverse.com":"thingiverse","www.thingiverse.com":"thingiverse",
             "myminifactory.com":"myminifactory","www.myminifactory.com":"myminifactory",
-            "cults3d.com":"cults3d","www.cults3d.com":"cults3d"}
+            "cults3d.com":"cults3d","www.cults3d.com":"cults3d",
+            "crealitycloud.com":"crealitycloud","www.crealitycloud.com":"crealitycloud",
+            "thangs.com":"thangs","www.thangs.com":"thangs",
+            "nexprint.com":"nexprint","www.nexprint.com":"nexprint",
+            "makeronline.com":"makeronline","www.makeronline.com":"makeronline"}
 def inventory_for_url(url):
     site=SITE_HOSTS.get((urllib.parse.urlparse(url).hostname or "").lower())
-    if site is None: raise ValueError("supported sites: MakerWorld, Printables, Thingiverse, MyMiniFactory, Cults3D")
+    if site is None: raise ValueError("supported sites: MakerWorld, Printables, Thingiverse, MyMiniFactory, Cults3D, Creality Cloud, Thangs, Nexprint, MakerOnline")
     return globals()[SITE_INVENTORY_FUNCS[site]](url)
 def download_for_site(job, source, target):
     name=SITE_DOWNLOAD_FUNCS.get((job or {}).get("site"))
-    if name is None: raise ValueError("supported sites: MakerWorld, Printables, Thingiverse, MyMiniFactory, Cults3D")
+    if name is None: raise ValueError("supported sites: MakerWorld, Printables, Thingiverse, MyMiniFactory, Cults3D, Creality Cloud, Thangs, Nexprint, MakerOnline")
     return globals()[name](job, source, target)
 
 

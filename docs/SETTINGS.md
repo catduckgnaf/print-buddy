@@ -356,11 +356,20 @@ Secrets come from the environment only (Docker: `.env`, never committed or share
 | `BAMBU_LAN_PASSWORD` | Bambu Lab printers: the LAN access code for read-only status. The variable name is `bambu.lan_access_code_env` |
 | `MOONRAKER_API_KEY` | Moonraker API key, only when Moonraker requires one |
 | `CLIPROXY_API_KEY` | Key for `services.vision_chat_url` |
+| `MAKERWORLD_TOKEN` | MakerWorld links: the account token, used when `~/.config/bambu/token` does not exist (a saved file wins) |
+| `THINGIVERSE_TOKEN` | Thingiverse links: the App Token, used when `~/.config/thingiverse/token` does not exist (a saved file wins) |
+| `CULTS3D_TOKEN` | Cults3D links: `nickname:key`, used when `~/.config/cults3d/token` does not exist (a saved file wins) |
+| `CREALITYCLOUD_TOKEN` | Creality Cloud downloads: the login, written `model_user_id:model_token`, used when `~/.config/crealitycloud/token` does not exist (a saved file wins). See [Connecting a login-token site from chat](PROJECT-REFERENCE.md#connecting-a-login-token-site-from-chat) |
+| `THANGS_TOKEN` | Thangs downloads: the login token, used when `~/.config/thangs/token` does not exist (a saved file wins) |
+| `NEXPRINT_TOKEN` | Nexprint downloads: the login token, used when `~/.config/nexprint/token` does not exist (a saved file wins) |
+| `MYMINIFACTORY_OAUTH_TOKEN` | MyMiniFactory downloads: the OAuth sign-in's access token, used when `~/.config/myminifactory/oauth_token` does not exist (a saved file wins) |
 | `OPENVIKING_API_KEY` | Key for `services.openviking_url` |
 | `AD5X_SERIAL` | Stock Flashforge printers: the printer serial number for the stock LAN API. Never a setting; set it together with `flashforge_stock.host` |
 | `AD5X_CHECK_CODE` | Stock Flashforge printers: the printer check code for the stock LAN API. Never a setting |
 
 The MakerWorld account token is not an environment variable. It is the file `~/.config/bambu/token` (Docker: `/data/.config/bambu/token`), needed only for MakerWorld links; see [MakerWorld account token](PROJECT-REFERENCE.md#makerworld-account-token).
+
+The Creality Cloud download token is likewise a file, not an environment variable: `~/.config/crealitycloud/token` (Docker: `/data/.config/crealitycloud/token`), needed only for Creality Cloud downloads; see [Creality Cloud login token](PROJECT-REFERENCE.md#creality-cloud-login-token). Thangs and Nexprint work the same way, with `~/.config/thangs/token` and `~/.config/nexprint/token` (Docker: under `/data/.config/`); see [Connecting a login-token site from chat](PROJECT-REFERENCE.md#connecting-a-login-token-site-from-chat).
 
 ## Legacy environment names
 

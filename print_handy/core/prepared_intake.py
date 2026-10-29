@@ -826,6 +826,7 @@ _LIVE_KEY = contextvars.ContextVar('prepared_intake_live_key', default=None)
 
 from .link_intake import PromptCancelled as IntakeCancelled  # noqa: E402  typed Cancel/Stop at any prompt
 from .link_intake import PromptExpired as IntakeExpired  # noqa: E402  button question reached its timeout
+from .site_accounts import SiteLoginNeeded  # noqa: E402  a download needs the operator's site login (#464)
 
 
 async def _spool_projection_text(mj, job, manifest, state, copies):
@@ -848,6 +849,74 @@ async def _spool_projection_text(mj, job, manifest, state, copies):
             rows, position_noun='Toolhead' if mj._job_adapter(job).multi_tool else 'Slot')
     except Exception:
         return ''
+
+
+MAX_CONNECT_ROUNDS = 3
+
+
+SAVED_LABEL = 'Saved — try again'
+
+
+def _saved_reply(text):
+    """Typed `saved`/`stored`/`done` answers the connect prompt like its button.
+
+    Returns the button's own label: link_intake.typed_reply resolves the
+    prompt with this value and ask() then matches it as that button, the
+    same path a press takes.
+    """
+    value = str(text or '').strip()
+    if value == SAVED_LABEL or value.casefold().rstrip('.!') in {'saved', 'stored', 'done', 'try again'}:
+        return SAVED_LABEL
+    raise ValueError('reply `saved` once the token file is in place, or `cancel`')
+
+
+async def _with_connect(adapter, source, key, metadata, timeout, attempt):
+    """Run ``attempt()`` (a coroutine factory); on SiteLoginNeeded offer the connect flow and retry.
+
+    Covers both places a site credential is needed (#462, #464): the model
+    lookup (MakerWorld, Thingiverse, Cults3D, MyMiniFactory without a key)
+    and the download (every login site). Never a dead end, and the
+    credential itself is never collected in chat.
+    """
+    for connect_round in range(MAX_CONNECT_ROUNDS + 1):
+        try:
+            return await attempt()
+        except SiteLoginNeeded as exc:
+            if connect_round == MAX_CONNECT_ROUNDS or not await _connect_account(
+                    adapter, source, key, metadata, exc, timeout):
+                raise
+
+
+async def _connect_account(adapter, source, key, metadata, exc, timeout):
+    """Offer to connect (or renew) the site behind ``exc``; True when the operator saved it.
+
+    The walkthrough (site_accounts.connect_steps) says where the credential
+    lives, how to get it from the operator's own account or signed-in
+    browser, and links the docs section; it is saved on the Print Handy
+    machine, never pasted into chat. An expired or refused login is offered
+    as a renewal. False means the operator declined, and the caller reports
+    the original refusal.
+    """
+    from .site_accounts import LOGIN_SITES, connect_steps
+    label = LOGIN_SITES[exc.site].label
+    renew = exc.reason in ('expired', 'refused')
+    lead = {
+        'missing': f'{label} needs you to be signed in for this model, and no {label} account is connected yet.',
+        'empty': f'{label} needs you to be signed in for this model, and the saved {label} login is empty or incomplete.',
+        'expired': f'Your saved {label} login has expired.',
+        'refused': f'{label} turned down the saved login (it has most likely expired).',
+    }.get(exc.reason, f'{label} needs you to be signed in for this model.')
+    offer = f'Renew {label} login' if renew else f'Connect {label} account'
+    pick = await _ask(adapter, source, key, f'{lead} Nothing was downloaded.',
+                      [offer, 'Not now (cancel)'], timeout)
+    if pick != 0:
+        return False
+    await adapter.send(chat_id=source.chat_id, content=connect_steps(exc.site, renew=renew),
+                       metadata=metadata)
+    saved = await _ask(adapter, source, key,
+                       f'Press Saved once the {label} token file is in place.',
+                       [SAVED_LABEL, 'Cancel'], timeout, parser=_saved_reply)
+    return saved in (0, SAVED_LABEL)
 
 
 def _color_guess_text(mj, job, decisions):
@@ -1170,22 +1239,24 @@ async def prepare_link(event, adapter, state, root, timeout=None, reuse=None, pr
         elif upload:
             job = upload_job(upload)
         else:
-            job = await asyncio.to_thread(mj.inventory_for_url, url)
+            job = await _with_connect(adapter, source, key, metadata, timeout,
+                                      lambda: asyncio.to_thread(mj.inventory_for_url, url))
         rows = job.get('sources', [])
-        if job['site'] in ('printables', 'thingiverse', 'myminifactory', 'cults3d'):
+        if job['site'] in ('printables', 'thingiverse', 'myminifactory', 'cults3d', 'crealitycloud',
+                           'thangs', 'nexprint', 'makeronline'):
             rows = [r for r in rows if Path(r.get('name', '')).suffix.lower() in {'.3mf', '.stl'}]
         if not rows:
             raise ValueError(job.get('no_geometry_reason') or 'source inventory contains no selectable geometry')
-        if job['site'] == 'myminifactory':
-            # Inventory-only (#462 Stage 2): the listing is real, but MyMiniFactory
-            # downloads need a login this build does not have, so refuse here —
-            # before any profile choice, preview, download or slicing — with the
-            # named gap and the browser-download workaround.
+        if job['site'] == 'makeronline':
+            # Inventory-only (#464): the listing is real, but MakerOnline
+            # downloads need a browser fingerprint check, so refuse here —
+            # before any profile choice, preview, download or slicing — with
+            # the named gap and the browser-download workaround.
             names = ', '.join(str(r.get('name') or 'unnamed file') for r in rows[:5])
             raise ValueError(
-                f"MyMiniFactory model \"{job.get('title') or 'untitled'}\": the inventory found "
+                f"MakerOnline model \"{job.get('title') or 'untitled'}\": the inventory found "
                 f"{len(rows)} printable file(s): {names}. "
-                + (job.get('download_gap') or mj.MYMINIFACTORY_DOWNLOAD_GAP)
+                + (job.get('download_gap') or mj.MAKERONLINE_DOWNLOAD_GAP)
                 + " Nothing was downloaded or sliced.")
         hint = re.fullmatch(r'profileId-(\d+)', urlsplit(url or '').fragment or '')
         suggested = [r for r in rows if hint and str(r.get('instance_id')) == hint[1]]
@@ -1242,9 +1313,10 @@ async def prepare_link(event, adapter, state, root, timeout=None, reuse=None, pr
         job.update(url=url, intake_id=iid, hardware=state, selected_source=chosen)
         fetch = copy_upload if (reuse or job['site'] == 'upload') else (
             lambda j, chosen, dest: mj.download_for_site(j, chosen, dest))
-        path = await _with_stop(
-            adapter, source, key, metadata, None,
-            asyncio.to_thread(fetch, job, chosen, folder / 'source'))
+        path = await _with_connect(
+            adapter, source, key, metadata, timeout,
+            lambda: _with_stop(adapter, source, key, metadata, None,
+                               asyncio.to_thread(fetch, job, chosen, folder / 'source')))
         job['downloaded_file'] = str(path)
         from .intake_resources import check_source
         await asyncio.to_thread(check_source, path)
@@ -2167,6 +2239,12 @@ async def prepare_link(event, adapter, state, root, timeout=None, reuse=None, pr
             # the remedy): keep its reason, lead plainly, drop its prefix.
             reason = str(exc).removeprefix('Model intake refused: ')
             content = (f'That model could not be prepared. {reason}')
+        elif isinstance(exc, SiteLoginNeeded):
+            # Curated and user-phrased by site_accounts: the text names the
+            # token file and how to fill it, so keep it — the generic wording
+            # would hide the remedy.
+            content = (f'That model could not be downloaded: {exc} '
+                       'Nothing was sliced, uploaded or started.')
         elif isinstance(exc, ValueError) and str(exc).startswith('requires one to four distinct configured'):
             # Also curated and user-phrased: a multi-slot/toolhead printer
             # with nothing configured. The text names the exact setup gap,

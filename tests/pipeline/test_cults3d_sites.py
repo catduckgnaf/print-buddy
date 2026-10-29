@@ -1,9 +1,11 @@
 """Cults3D provider (#462 Stage 3): metadata-only inventory + named gap.
 
-Built dark and tested fully offline with fake transports — no Cults API key
-exists on the build machine, so nothing here (or in the provider) claims a
-live verification. The credential is a token file holding `nickname:key`,
-mirroring the other model sites' token files.
+Verified live 2026-10-29 with an operator key: `creation(slug:)` answers
+{id, name, url, license{name}} for a real slug (id is UNPADDED base64 of
+"Creation/<slug>") and creation: null for an unknown one. The fixtures
+below use that live shape. The first build's guessed node(id:) lookup with
+a padded id never matched; this file pins the working query. The
+credential is a token file holding `nickname:key`.
 """
 import asyncio
 import base64
@@ -21,7 +23,8 @@ from .test_prepared_intake import Adapter, env  # noqa: F401  (env is the shared
 
 CULTS_URL = 'https://cults3d.com/en/3d-model/home/benchy-boat'
 SLUG = 'benchy-boat'
-GLOBAL_ID = base64.b64encode(f'Creation/{SLUG}'.encode()).decode()
+# Cults' own ids are unpadded base64 (as recorded live).
+GLOBAL_ID = base64.b64encode(f'Creation/{SLUG}'.encode()).decode().rstrip('=')
 NICKNAME, KEY = 'CatDuck', 's3cret-key'
 EXPECTED_AUTH = 'Basic ' + base64.b64encode(f'{NICKNAME}:{KEY}'.encode()).decode()
 
@@ -44,7 +47,8 @@ def key_home(tmp_path, monkeypatch):
 
 
 def graphql_ok(url, *, data=None, headers=None, timeout=25):
-    return {'data': {'node': {'id': GLOBAL_ID, 'name': 'Benchy Boat'}}}
+    return {'data': {'creation': {'id': GLOBAL_ID, 'name': 'Benchy Boat', 'url': CULTS_URL,
+                                  'license': {'name': 'CC BY - Attribution'}}}}
 
 
 @pytest.mark.parametrize('text', [
@@ -119,11 +123,12 @@ def test_cults_inventory_happy_path(key_home, monkeypatch):
     job = model_job.cults_inventory(CULTS_URL)
     assert seen['url'] == 'https://cults3d.com/graphql'
     assert seen['headers']['Authorization'] == EXPECTED_AUTH
-    assert seen['data']['variables'] == {'id': GLOBAL_ID}
-    assert 'node(id: $id)' in seen['data']['query']
+    assert seen['data']['variables'] == {'slug': SLUG}
+    assert 'creation(slug: $slug)' in seen['data']['query']
     assert job['site'] == 'cults3d'
     assert job['model_id'] == SLUG
     assert job['title'] == 'Benchy Boat'
+    assert job['license'] == 'CC BY - Attribution'
     assert job['sources'] == []
     assert 'cannot download files from Cults3D' in job['download_gap']
     assert 'Benchy Boat' in job['no_geometry_reason']
@@ -145,15 +150,14 @@ def test_cults_inventory_rejects_a_different_creation(key_home, monkeypatch):
     # whose decoded id is not the requested creation must not be followed.
     other = base64.b64encode(b'Creation/someone-elses-model').decode()
     monkeypatch.setattr(model_job, 'request_json',
-                        lambda *a, **k: {'data': {'node': {'id': other, 'name': 'Nope'}}})
+                        lambda *a, **k: {'data': {'creation': {'id': other, 'name': 'Nope'}}})
     with pytest.raises(RuntimeError, match='different creation'):
         model_job.cults_inventory(CULTS_URL)
 
 
 def test_cults_inventory_not_found(key_home, monkeypatch):
     monkeypatch.setattr(model_job, 'request_json',
-                        lambda *a, **k: {'data': {'node': None},
-                                         'errors': [{'message': 'not found'}]})
+                        lambda *a, **k: {'data': {'creation': None}})  # the live answer
     with pytest.raises(RuntimeError, match='creation not found'):
         model_job.cults_inventory(CULTS_URL)
 

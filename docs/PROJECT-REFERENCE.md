@@ -130,6 +130,7 @@ Live camera streaming (#311) starts with a delivery-agnostic core in `print_hand
 * `/print-maintenance` guided checklist and reminders by print hours and days.
 * `/print-coldpull` runs an operator confirmed cold pull at configured temperatures.
 * `/nozzle change` (#513) walks a physical nozzle change: pick the diameter (0.2/0.4/0.6/0.8 mm) and material (brass, hardened steel, stainless steel, tungsten carbide, diamond), confirm heating in person, and — on Moonraker/Klipper printers only — it heats to 250 °C for the hot loosen, waits for the *Old Nozzle Removed & New Nozzle Threaded* and hot-torque confirmations, turns the heater off and waits for a live readback below 50 °C. Other connections get manual-heat instructions and the same step confirmations; nothing is sent to them. Completing the walk records the new nozzle in `printer_hardware.json` with the previous calibration marked historical only, then offers Z-offset (`--sync-z`), bed mesh leveling and a pressure advance / flow check. Cancelling after heating turns the heater off and records nothing.
+* `/print-source` lists every model site and whether it is ready: connected (and from the token file or a variable), not connected, login expired, listing only, or not supported. It checks the saved credentials only, never contacts a site, and never shows a value. See [Connecting a login-token site from chat](#connecting-a-login-token-site-from-chat).
 * `/print-lookup` searches the root [knowledge, firmware and printer registries](TROUBLESHOOTING.md) for commands, macros, errors, symptoms and printer facts. Read-only; it sends nothing.
 * `/print-macros` lists the macros the configured Moonraker printer actually defines, read live from `/printer/objects/list` and classified against the registry (see [printer macros](MACROS.md)). The listing is read-only. `/print-macros run <name> [KEY=VALUE ...]` runs one live-discovered macro behind a confirmation that shows the exact script line, refusing internal (`_`-prefixed) names, unknown names, and any run while a print is running or paused. Non-Moonraker printers get a plain explanation.
 * `/print-firmware` reports the configured printer's firmware update state (see [firmware updates](FIRMWARE-UPDATE.md)). On Moonraker printers the report is read live from `/machine/update/status`; on ZMod printers it adds the OS↔`zmod` pairing check and Klipper 13 MCU currency when the data exposes them. `/print-firmware update <component>` applies one live-listed component behind a confirmation showing the exact version change — ZMod and vanilla Klipper profiles only, vendor Klipper forks and non-Moonraker printers refused by profile — refusing while a print is running or paused, and verifies the result by re-reading the status. `/print-firmware guide zmod` and `/print-firmware guide stock` walk through the manual AD5X base and stock firmware updates; every other family gets its manual update guidance.
@@ -204,6 +205,8 @@ chmod 600 ~/.config/thingiverse/token
 
 Without the file, Thingiverse intake stops before the model summary with a message naming the file and where to create the token; an empty file stops it too. Only `.stl` and `.3mf` files from a thing are selectable sources — a "download all" zip and other file types are not — and, as with the other sites, the chosen geometry is resliced locally; baked site G-code is never used. If Thingiverse answers with a 401/403 or a Cloudflare robot check (challenge), intake reports that plainly and stops; Print Handy never tries to solve or bypass a robot check. Open thingiverse.com in a browser and pass any check there, or check/replace the token, then send the link again.
 
+Live status: verified end to end on 2026-10-29 with an operator App Token (thing 763622, the model lookup, its file list and a real STL download). Requests with the App Token passed Thingiverse's Cloudflare check, which answers anonymous requests with a challenge.
+
 ### MyMiniFactory API key
 
 MyMiniFactory links use MyMiniFactory's official API v2 (`www.myminifactory.com/api/v2`) and need an API key from the operator's MyMiniFactory account. It is a file, not a setting or environment variable: Print Handy reads `~/.config/myminifactory/token` in the home directory of the account that runs it (in Docker, `/data/.config/myminifactory/token`; see [Docker](DOCKER.md#makerworld-account-token) — the same bind-mounted `dot-config` directory holds all the token files) and sends it as the `key` query parameter when it looks up an object. The key is read on each request and is never logged.
@@ -214,7 +217,27 @@ mkdir -p ~/.config/myminifactory && chmod 700 ~/.config/myminifactory
 chmod 600 ~/.config/myminifactory/token
 ```
 
-**MyMiniFactory support is inventory-only.** With the key, pasting a MyMiniFactory object link lists the model's `.stl`/`.3mf` files — and then intake stops. Print Handy cannot download files from MyMiniFactory: under [MyMiniFactory's own API guidelines](https://www.myminifactory.com/pages/api-guidelines), downloading an object inside an app requires the person downloading to be logged in to their MyMiniFactory account (OAuth), and that login route is not built yet. The refusal names this gap, lists the files the inventory found, and states that nothing was downloaded or sliced. The workaround is to open the model page in a browser, download the file there, and upload or drop the file in the chat instead. Without the key file, MyMiniFactory intake stops with a message naming the file; an empty file stops it too. If MyMiniFactory answers with a 401/403, intake reports that plainly (key missing, invalid or expired, or the site challenging the connection) and stops; Print Handy never tries to solve or bypass a robot check.
+Without the key file, intake can also look a model up through the download sign-in below.
+
+### MyMiniFactory sign-in
+
+Downloading from MyMiniFactory uses its documented OAuth sign-in: [MyMiniFactory's API guidelines](https://www.myminifactory.com/pages/api-guidelines) allow in-app downloads only when the person downloading is signed in to their MyMiniFactory account, and an API key alone never gets a download link. The sign-in is saved as `~/.config/myminifactory/oauth_token` (Docker: `/data/.config/myminifactory/oauth_token`), or the `MYMINIFACTORY_OAUTH_TOKEN` variable when that file does not exist. When a download needs it, the bot's **Connect MyMiniFactory account** button walks through these steps:
+
+1. **Register an app, once.** Sign in at <https://www.myminifactory.com>, open Account Settings, then **Developers**, and fill in the form: **Name** `Print Handy`; **Client key** any unique slug, for example `print_handy` (this is your client key); **Url** and **Redirect uri** any page you control, for example `https://github.com/catduckgnaf/print-handy`; **Email** as shown. Tick the robot check and Save. (Developers also shows an **API key** for the app; that key is what the [MyMiniFactory API key](#myminifactory-api-key) file above holds.)
+2. **Sign in.** Open `https://auth.myminifactory.com/web/authorize?client_id=<client key>&redirect_uri=<redirect uri, URL-encoded>&response_type=token&state=print-handy` in the same browser and approve.
+3. **Copy the address.** The browser lands on your redirect page with `#access_token=...&expires_in=604800...` in the address bar. The part after `#` never reaches that page's server.
+4. **Save it** as the only content of the file. The whole address is fine; Print Handy picks the `access_token` out of it:
+
+```bash
+mkdir -p ~/.config/myminifactory && chmod 700 ~/.config/myminifactory
+(umask 077 && cat > ~/.config/myminifactory/oauth_token)   # paste the address, press Enter, then Ctrl-D
+```
+
+The sign-in lasts 7 days (`expires_in=604800`). When it runs out, the bot offers the connect flow again and only steps 2 to 4 are needed. Never paste the address into chat.
+
+How a download works: the API's file lookup returns the file's download link for a signed-in user; that link answers with a redirect to MyMiniFactory's signed file storage (`dl4.myminifactory.com`), and Print Handy follows it **without** carrying the sign-in token to the storage host. MyMiniFactory's website sits behind Cloudflare; if a download ever answers with a Cloudflare robot check, intake stops and says so, with the browser workaround. Print Handy never tries to get past a robot check.
+
+Live status: verified end to end on 2026-10-29 with an operator sign-in (model 111400, `flying-benchy.stl`): the lookup, the file list, the download link and the download itself, a valid STL byte-for-byte the size the listing reported.
 
 ### Cults3D API key
 
@@ -230,7 +253,66 @@ Create the key at <https://cults3d.com/en/api/keys> while signed in to your Cult
 
 **Cults3D support is metadata-only, by the API's own design.** [Cults' API page](https://cults3d.com/en/api) states the API gives access to a listing's details (photos, titles, descriptions, tags) but "will not give you access to the 3D files… The files remain hosted on Cults", downloaded only through the signed-in website. So with the key, pasting a Cults3D model link confirms the listing through the API — and then intake stops with that gap named: no operator credential can change it, because the API exposes no files to anyone. The workaround is to open the model page in a browser, download the file there, and upload or drop the file in the chat instead. Without the token file, Cults3D intake stops before any request with a message naming the file and where to create the key; a malformed file (no `nickname:key` pair) stops it too. If Cults answers with a 401, intake says the nickname or key is likely wrong; a 403 is reported as the site challenging automated access — Print Handy never tries to solve or bypass a site's checks.
 
-This support was built and tested offline against the documented API shape; it has not been verified against the live Cults API yet, because that needs the operator's key. Activation is exactly the token file above — no other setup — and the first live use is what verifies it.
+Live status: verified on 2026-10-29 with an operator key. A Cults model link is looked up by its slug (`creation(slug:)`), and Print Handy reports the listing's title and license; an unknown link is refused as not found. The first build of this lookup, which had only been tested offline, never matched a real creation; that was found and fixed by this live check. Activation is exactly the token file above, no other setup.
+
+### Creality Cloud login token
+
+Creality Cloud links use the JSON API the Creality Cloud web app itself uses (`www.crealitycloud.com/api/cxy/...`). Looking up a model and listing its source files needs no login. Downloading a file goes through the API's `memberDownload` call, which needs the account login the web client keeps in two cookies: `model_user_id` (your numeric user id) and `model_token`. The API refuses the token without the user id ("Invalid Token"), so both are saved, together, as `model_user_id:model_token`. It is a file, not a setting or environment variable: Print Handy reads `~/.config/crealitycloud/token` in the home directory of the account that runs it (in Docker, `/data/.config/crealitycloud/token`; see [Docker](DOCKER.md#makerworld-account-token) — the same bind-mounted `dot-config` directory holds all the token files) and sends it as the `__CXY_TOKEN_` header on the download request. The token is read on each request and is never logged. Print Handy never stores a Creality Cloud password.
+
+To get it, sign in at <https://www.crealitycloud.com> in a browser, open the browser's developer tools (Application, then Cookies, then `https://www.crealitycloud.com`), and copy the values of the `model_user_id` and `model_token` cookies. Store them as the only content of the file, as `model_user_id:model_token` (for example `1234567890:4f2a…`), readable only by that account, and never commit or share it:
+
+```bash
+mkdir -p ~/.config/crealitycloud && chmod 700 ~/.config/crealitycloud
+(umask 077 && cat > ~/.config/crealitycloud/token)   # type model_user_id:model_token, press Enter, then Ctrl-D
+chmod 600 ~/.config/crealitycloud/token
+```
+
+Without the file, a Creality Cloud link still produces the model summary and file list; the download then stops with a message naming the file. An empty file stops it too. Login tokens expire: when the site answers a download with "Invalid Token", sign in again and replace the file — intake names that as a token problem, not a generic failure. Only `.stl` and `.3mf` source files from a model's file list are selectable sources; the site's print profiles (printer-specific Creality Print 3MF projects) and pre-sliced G-code are never used — the chosen geometry is resliced locally, as with the other sites. A model whose file list has no source files (only print profiles) stops with that reason named.
+
+Live status: verified end to end on 2026-10-29 with an operator login (acceptance model `bag-clip-30mm`): the model lookup and file list answered without a login, the download refused a missing or token-only login, and with `model_user_id:model_token` the chosen STL downloaded intact, byte-for-byte the size the listing reported.
+
+### Connecting a login-token site from chat
+
+Every model site that needs a credential connects the same way from chat: MakerWorld, Thingiverse and Cults3D with a token or key you create on the site, Creality Cloud, Thangs and Nexprint with the login token your signed-in browser holds, and MyMiniFactory with its OAuth sign-in ([MyMiniFactory sign-in](#myminifactory-sign-in)). Creality Cloud, Thangs and Nexprint download with the operator's own login token: a value the signed-in browser keeps in a cookie, saved on the Print Handy machine as `~/.config/<site>/token` (Docker: `/data/.config/<site>/token`, from the mounted `dot-config` folder). Print Handy cannot sign in for you. Each site's login page sits behind a robot check, and Print Handy never stores a password or solves a captcha, so the token always comes from a browser you signed in with yourself.
+
+You do not have to set these up in advance. When a download needs a token that is missing, empty, expired or refused, the bot does not just fail. It says which, and offers two buttons:
+
+1. **Connect <site> account** (or **Renew <site> login** when a saved one expired or was refused) posts that site's walkthrough with a link to its section of this document. For the cookie sites it is: sign in at the site, open the browser's developer tools, copy the named cookie, and the exact command that saves it to the right path on the Print Handy machine (with the Docker variant). **The token is never pasted into chat.** Chat messages pass through the chat provider's servers and stay in the channel history, so the walkthrough says so and Print Handy never asks for it there. This follows the same rule as the setup flows: secrets are never collected in chat.
+2. When the file is saved, press **Saved, try again** (or type `saved`). The bot retries the same download, and the intake continues from there with no need to post the link again. If the site still refuses the token, the offer comes back, up to three times.
+
+The offer comes wherever the credential is first needed: at the model lookup for MakerWorld, Thingiverse and Cults3D (their APIs need it to look a model up at all), and at the download for the rest. `/print-source` shows at any time which sites are connected.
+
+**Saving it as a variable instead.** Each site also reads an environment variable when its token file does not exist: `MAKERWORLD_TOKEN`, `THINGIVERSE_TOKEN`, `CULTS3D_TOKEN` (as `nickname:key`), `CREALITYCLOUD_TOKEN` (as `model_user_id:model_token`), `THANGS_TOKEN`, `NEXPRINT_TOKEN`, `MYMINIFACTORY_OAUTH_TOKEN`. Put it in your `.env` (Docker Compose passes the whole `.env` through; the Unraid template has masked fields for each under advanced settings) and restart Print Handy, since variables are read at start. A saved token file always wins over the variable, so the chat flow's freshly saved token takes effect even when an older variable is still set. When a variable's token expires, the bot's connect flow walks you through saving a file, which then takes over.
+
+**Not now (cancel)** stops the intake with the token file and its path named, and nothing is sliced, uploaded or started. Login tokens expire; when one does, the next download offers the connect flow again. A token that is a JWT with an `exp` claim is checked locally first, so an expired one is named as expired before any request is sent.
+
+### Thangs login token
+
+Thangs links use the JSON API the Thangs web app itself uses (`thangs.com/api/...`). Links look like `thangs.com/designer/<user>/3d-model/<title>-<id>` or the short `thangs.com/m/<id>`. Looking up the model and listing its parts needs no login. The download asks the API for the model's signed download URL with the token sent as an `Authorization: Bearer` header. The token is the value of the `accessToken` cookie on `https://thangs.com` (the same value is in Local Storage under `accessToken`), saved as `~/.config/thangs/token`:
+
+```bash
+mkdir -p ~/.config/thangs && chmod 700 ~/.config/thangs
+(umask 077 && cat > ~/.config/thangs/token)   # paste the accessToken cookie value, press Enter, then Ctrl-D
+```
+
+Thangs downloads a whole model, never a single part. When the answer is a zip, Print Handy keeps only the part you chose. Membership models and store items are marked in the model lookup. Downloading one needs a matching Thangs membership or purchase on the signed-in account; Print Handy never buys or unlocks a model, and a refusal says so. Free Thangs accounts have a daily download limit, which is named plainly when reached. Thangs login tokens last 7 days (observed 2026-10-29: the token's own `exp` claim is 7 days after it was issued), and Print Handy does not perform the site's refresh step, so expect the bot to offer the connect flow about once a week. The expiry is checked locally, so an expired token is named as expired before any request is sent.
+
+### Nexprint login token
+
+Nexprint (Elegoo) links use the gateway API the Nexprint web app itself uses (`www.nexprint.com/gateway/...`). Links look like `www.nexprint.com/en/models/<id>`. The model lookup and file list need no login. Each file is downloaded through a presigned-URL request with the token sent as an `Authorization: Bearer` header. The token is the value of the `auth_token` cookie on `https://www.nexprint.com` (or `access_token` inside Local Storage `ACCOUNT_INFO`), saved as `~/.config/nexprint/token`:
+
+```bash
+mkdir -p ~/.config/nexprint && chmod 700 ~/.config/nexprint
+(umask 077 && cat > ~/.config/nexprint/token)   # paste the auth_token cookie value, press Enter, then Ctrl-D
+```
+
+Both the designer's own STL/3MF files and the model's print-setting 3MF projects are offered; a setting project is labeled with its setting name. Nexprint's download limits are named when reached. Only the `.com` site is supported, not `nexprint.cn`.
+
+Live status: verified end to end on 2026-10-29 with operator tokens. For both sites the model lookup and file list answered without a login, the download endpoint refused a request with no token or a made-up one, and a real download succeeded: Nexprint returned the chosen STL directly (byte-for-byte the size the listing reported), and Thangs returned a zip of the whole model that Print Handy unpacked to the chosen part. Both files were valid STLs.
+
+### MakerOnline (inventory only)
+
+MakerOnline (Anycubic) links (`makeronline.com/en/model/<title>/<id>.html`) are recognized, and Print Handy looks up the model and lists its STL/3MF files through the JSON API the MakerOnline web app uses. No login is needed for that. **Downloads are not supported, and no token changes that.** MakerOnline's download service wants a device-fingerprint token from a browser security SDK (NetEase Yidun) on every download. Tested on 2026-10-29 with a valid operator login token: the token was accepted, and every download on two different models was refused with "The system is busy". Producing that fingerprint from a script would mean getting around a site's bot check, which Print Handy never does. So intake lists the files and stops with the gap named, and the workaround is to download the file from the model page in a browser and upload or drop it in the chat instead. There is no MakerOnline token file and no connect offer.
 
 ### All settings
 

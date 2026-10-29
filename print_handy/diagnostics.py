@@ -112,8 +112,11 @@ class KnownCause:
 _SITE_CREDENTIALS = (
     ("MakerWorld", "MakerWorld account token", "MakerWorld account token"),
     ("Thingiverse", "Thingiverse App Token", "Thingiverse App Token"),
-    ("MyMiniFactory", "MyMiniFactory API key", "MyMiniFactory API key"),
+    ("MyMiniFactory", "MyMiniFactory sign-in", "MyMiniFactory sign-in"),
     ("Cults3D", "Cults3D API key", "Cults3D API key"),
+    ("Creality Cloud", "Creality Cloud login", "Creality Cloud login token"),
+    ("Thangs", "Thangs login token", "Thangs login token"),
+    ("Nexprint", "Nexprint login token", "Nexprint login token"),
 )
 
 _CREDENTIAL_CUES = ("token", "api key", "app token", "credentials", "nickname")
@@ -124,9 +127,9 @@ _CREDENTIAL_PROBLEMS = ("need", "missing", "empty", "refused", "401", "403",
 #: Download gaps that are a property of the site, not of the install:
 #: the remedy is a browser download, never a retry.
 _SITE_DOWNLOAD_GAPS = (
-    ("MyMiniFactory",
-     "MyMiniFactory only lets a logged-in account download its files, and that "
-     "login route is not built in Print Handy, so the file cannot be fetched from here."),
+    ("MakerOnline",
+     "MakerOnline's downloads need a browser security check that Print Handy "
+     "does not fake, so the file cannot be fetched from here."),
     ("Cults3D",
      "Cults3D's API gives a listing's details but never its 3D files, so the "
      "file cannot be fetched from here."),

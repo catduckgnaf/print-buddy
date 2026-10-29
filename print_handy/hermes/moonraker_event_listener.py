@@ -1432,6 +1432,8 @@ NATIVE_POLL_SECONDS = float(_LISTENER["ifs_presence_poll_s"])
 IFS_EDGE_STATE = _config.state_file("IFS_EDGE_STATE", "ifs_presence_edges.json")
 IFS_PENDING_STATE = _config.state_file("IFS_PENDING_STATE", "ifs_pending_prompts.json")
 RUNOUT_PAUSE_STATE = _config.state_file("RUNOUT_PAUSE_STATE", "runout_pause.json")
+# The last stock-screen error alerted, so a listener restart does not post the same error again.
+NATIVE_ERROR_STATE = _config.state_file("NATIVE_ERROR_STATE", "native_error_alerted.json")
 SPOOLMAN_KNOWN_STATE = _config.state_file("SPOOLMAN_KNOWN_STATE", "spoolman_known_spools.json")
 RUNOUT_SPOOL_COMMENT = "runout replacement; starting weight supplied by operator"
 # An undelivered new-spool prompt is retried this often, and given up after a day.
@@ -1667,6 +1669,18 @@ class FilamentInsertionMonitor:
         if stable:
             atomic_write_json(self.pending_path, pending)
         return stable
+
+    def prune_pending(self, slots, open_prompt_slots):
+        """Drop pending prompts that were answered or expired, or whose slot no longer reads loaded."""
+        pending = read_json_object(self.pending_path)
+        present = _slot_bools(slots)
+        kept = {}
+        for slot, entry in pending.items():
+            sid = int(slot) if str(slot).isdigit() else None
+            if sid in open_prompt_slots and present.get(sid) is not False:
+                kept[slot] = entry
+        if kept != pending:
+            atomic_write_json(self.pending_path, kept)
 
 
 def start_claim_time(filename, now=None):
@@ -1983,10 +1997,19 @@ class MidPrintSlotTracker:
         self.candidate = {}
         self.counts = {}
         self.emptied = set()
+        self.seen_loaded = set()
+        self.runout_asked = set()
+
+    def runout_question(self, slot):
+        """A runout question covers this slot: refilling it answers that question, it is not a swap."""
+        if slot:
+            self.runout_asked.add(slot)
 
     def observe(self, slots):
         events = []
         for slot, present in _slot_bools(slots).items():
+            if present:
+                self.seen_loaded.add(slot)
             if self.candidate.get(slot) == present:
                 self.counts[slot] = self.counts.get(slot, 0) + 1
             else:
@@ -2000,11 +2023,14 @@ class MidPrintSlotTracker:
                 events.append(("emptied", slot))
             elif before is False and present is True and slot in self.emptied:
                 self.emptied.discard(slot)
-                events.append(("refilled", slot))
+                events.append(("reloaded" if slot in self.runout_asked else "refilled", slot))
+                self.runout_asked.discard(slot)
         return events
 
     def empty_slots(self, slots=None):
-        live = {s for s, p in _slot_bools(slots).items() if p is False and self.confirmed.get(s) is not False}
+        # Only a slot seen loaded this print can have just run out; a never-loaded slot is not a runout.
+        live = {s for s, p in _slot_bools(slots).items()
+                if p is False and s in self.seen_loaded and self.confirmed.get(s) is not False}
         return sorted(self.emptied | live)
 
 
@@ -2076,6 +2102,46 @@ def native_error_text(filename, key):
               "retry on the touchscreen." + (f"\n{link}" if link else ""))
 
 
+def load_native_error_alerted():
+    """The stock-screen error last alerted, persisted so a restart does not post it again."""
+    key = read_json_object(NATIVE_ERROR_STATE).get("key")
+    return tuple(key) if isinstance(key, list) and len(key) == 2 else None
+
+
+def save_native_error_alerted(key):
+    try:
+        atomic_write_json(NATIVE_ERROR_STATE, {"key": list(key) if key else None})
+    except OSError as exc:
+        log(f"native error state not saved: {exc!r}")
+
+
+def zmod_display_off(status):
+    """ZMod save_variables display_off (0 stock screen, 1 screenless), or None when unknown."""
+    variables = ((status or {}).get("save_variables") or {}).get("variables")
+    mode = variables.get("display_off") if isinstance(variables, dict) else None
+    return mode if type(mode) is int and mode in (0, 1) else None
+
+
+def zmod_slot_presence(status):
+    """{slot: bool | None} from Klipper's zmod_color, the shape read_stock_ifs_slots_from_detail returns.
+
+    In screenless mode (display_off=1) the stock firmware is not running, so its /detail API refuses
+    and ZMod's zmod_color.slots[].hasFilament (1-based IDs) is the live presence.
+    """
+    slots = ((status or {}).get("zmod_color") or {}).get("slots")
+    if not isinstance(slots, list) or not slots:
+        raise RuntimeError("zmod_color slot list unavailable")
+    result = {}
+    for item in slots:
+        raw = item.get("ID") if isinstance(item, dict) else None
+        sid = int(raw) if isinstance(raw, (int, str)) and str(raw).isdigit() else None
+        if sid is None or not 1 <= sid <= 4 or sid in result:
+            raise RuntimeError("zmod_color slot list malformed")
+        present = item.get("hasFilament")
+        result[sid] = present if isinstance(present, bool) else None
+    return result
+
+
 class Listener:
     def __init__(self):
         self.state = None
@@ -2100,7 +2166,9 @@ class Listener:
         self.maintenance_last_check = 0.0
         self.last_pause_was_runout = False
         self.pause_context = None
-        self.native_error_alerted = None
+        self.native_error_alerted = load_native_error_alerted()
+        self.display_off = None  # live ZMod display mode from the last presence poll; None until read
+        self.presence_failure = None  # last presence poll failure, logged once until it changes
         self.capture_session = None  # #246 stage 2: active timelapse_capture session, if any
         self._auto_light = None  # #516: AutoLightPolicy, built lazily from [vision]
         self.light_target = None  # #516: resolved Moonraker light object, cached
@@ -2108,8 +2176,14 @@ class Listener:
         self.light_unresolved_logged = False
 
     async def read_slots(self):
+        """(stock /detail or None, {slot: present}). Screenless ZMod has no stock API; Klipper has the slots."""
         from print_handy.core import printer_state
         from print_handy.core import model_job
+        reply = await asyncio.to_thread(print_control._call, "/printer/objects/query?zmod_color&save_variables")
+        status = (reply.get("result") or {}).get("status") or {}
+        self.display_off = zmod_display_off(status)
+        if self.display_off == 1:
+            return None, zmod_slot_presence(status)
         detail = await asyncio.to_thread(model_job.read_stock_detail, printer_state.load())
         return detail, model_job.read_stock_ifs_slots_from_detail(detail)
 
@@ -2127,6 +2201,8 @@ class Listener:
         record = open_spool_question(self.filename, slot, _mapped_spool(slot) if slot else None,
                                      cause, suspended)
         log(f"spool question opened: cause={cause} slot={slot} suspended_spool={suspended}")
+        if cause == "runout":
+            self.slot_tracker.runout_question(slot)
         await asyncio.to_thread(post_spool_question, record)
         return record
 
@@ -2163,10 +2239,13 @@ class Listener:
         if self.native_poll_inflight:
             return
         self.native_poll_inflight = True
+        failure = None
         try:
             detail, slots = await self.read_slots()
             self.last_slots = slots
-            native = detail.get("status")
+            # Screenless ZMod (detail None): the stock firmware is not running, so there is no
+            # stock status to watch for screen cancels or screen errors; slot presence still is.
+            native = detail.get("status") if detail is not None else None
             if native_screen_cancel(self.prev_native, native):
                 # Klipper shut down mid print, so Moonraker never sees the screen cancel. The stock firmware does.
                 if (await asyncio.to_thread(print_control.status)).get("klippy") == "shutdown":
@@ -2174,17 +2253,20 @@ class Listener:
                     self.start_screen_cancel_reboot(f"native {self.prev_native}->{native} during emergency stop")
             self.prev_native = native
             if self.state in ("printing", "paused"):
-                key = native_error_key(detail)
+                key = native_error_key(detail) if detail is not None else None
                 if key and key != self.native_error_alerted:
                     self.native_error_alerted = key
+                    save_native_error_alerted(key)
                     log(f"native screen error {key} file={self.filename!r}")
                     await asyncio.to_thread(post, native_error_text(self.filename, key))
-                elif not key:
+                elif not key and detail is not None and self.native_error_alerted is not None:
                     self.native_error_alerted = None
+                    save_native_error_alerted(None)
                 for event, slot in self.slot_tracker.observe(slots):
                     log(f"mid-print slot {slot} {event}")
                     if event == "refilled":
-                        # Unloaded and reloaded mid print: unknown spool. Runout already asked.
+                        # Unloaded and reloaded mid print: unknown spool. A slot whose runout
+                        # question was asked reports "reloaded" instead: that question covers it.
                         await self.open_question(slot, "swap")
                     elif (event == "emptied" and self.state == "paused"
                             and not self.last_pause_was_runout):
@@ -2193,16 +2275,26 @@ class Listener:
                         # dropping the event at a log line (#442).
                         await self.upgrade_paused_runout(slot)
             # Only exact idle state qualifies. Unknown/preparing/printing all suppress prompts.
-            idle = detail.get("status") == "ready" and self.state == "standby"
+            # Screenless, Klipper's standby is the only idle signal there is.
+            idle = (detail is None or detail.get("status") == "ready") and self.state == "standby"
             found = self.ifs_monitor.observe(slots, idle=idle, connected=True)
             for slot in found:
                 await asyncio.to_thread(post_insertion_confirmation, slot)
                 log(f"native filament presence transition prompted for slot {slot}")
+            from . import print_alert_buttons as pab
+            self.ifs_monitor.prune_pending(slots, await asyncio.to_thread(pab.open_insertion_slots))
         except Exception as exc:
-            log(f"native filament presence poll failed: {exc!r}")
+            failure = f"{exc!r}"
             self.ifs_monitor.observe({}, idle=False, connected=False)
         finally:
             self.native_poll_inflight = False
+        # One line per distinct failure (and one on recovery), logged outside the handler so no
+        # traceback rides along: this poll runs every NATIVE_POLL_SECONDS.
+        if failure and failure != self.presence_failure:
+            log(f"native filament presence poll failed: {failure}")
+        elif not failure and self.presence_failure:
+            log("native filament presence poll recovered")
+        self.presence_failure = failure
 
     async def classify_runout(self):
         """Pause cause from the alert text, the head sensor, and a fresh slot read.
@@ -2493,8 +2585,10 @@ class Listener:
     def start_screen_cancel_reboot(self, why):
         """Fire once per cancel, in the background, and only when the bot did not cancel it."""
         from . import klipper_report
-        if not printers.current().has_native_screen:
-            return False  # the screen-cancel firmware restart is a stock-screen workaround
+        if not printers.current().has_native_screen or self.display_off == 1:
+            # The screen-cancel firmware restart is a stock-screen workaround; screenless ZMod
+            # (display_off=1) has no stock firmware running, and its cancels are plain Klipper ones.
+            return False
         if klipper_report.cancelled_by_bot():
             log(f"cancel was the bot's ({why}); no auto restart")
             return False

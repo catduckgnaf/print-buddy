@@ -134,6 +134,14 @@ def peek(aid: str) -> dict[str, Any] | None:
     return None
 
 
+def open_insertion_slots(now: float | None = None) -> set[int]:
+    """IFS slots whose insertion prompt is still unanswered and inside the TTL."""
+    now = time.time() if now is None else now
+    return {int(row["slot"]) for row in _load().values()
+            if _fresh(row, now) and row.get("kind") in ("insertion", "insertion-select")
+            and str(row.get("slot")).isdigit()}
+
+
 def take(aid: str) -> dict[str, Any] | None:
     """Claim an alert once. A second click on the same alert gets None."""
     with _LOCK:

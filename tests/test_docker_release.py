@@ -362,6 +362,47 @@ class RuntimeImageTests(unittest.TestCase):
         self.assertNotIn("ubuntu", DOCKERFILE)
 
 
+class ContainerTimezoneTests(unittest.TestCase):
+    """TZ: the image carries a default container timezone (America/New_York)
+    that Compose, .env.example, the Unraid template and the docs all expose,
+    and the entrypoint keeps a valid override while falling back on an
+    unknown name."""
+
+    def test_image_installs_the_tz_database_and_defaults_tz(self):
+        runtime = DOCKERFILE.split("FROM debian:13-slim AS runtime", 1)[1]
+        self.assertIn("tzdata", runtime)
+        self.assertIn("TZ=America/New_York", runtime)
+        self.assertIn('ln -snf "/usr/share/zoneinfo/$TZ" /etc/localtime', runtime)
+
+    def test_compose_passes_tz_with_the_default(self):
+        env = COMPOSE["services"]["combined"]["environment"]
+        self.assertEqual(env["TZ"], "${TZ:-America/New_York}")
+
+    def test_env_example_and_settings_carry_the_default(self):
+        self.assertRegex(ENV_EXAMPLE, r"(?m)^TZ=America/New_York$")
+        self.assertEqual(table("Compose variables")["TZ"].strip(), "`America/New_York`")
+
+    def test_unraid_template_defaults_tz(self):
+        variables = {c.get("Target"): c for c in UNRAID.findall("Config") if c.get("Type") == "Variable"}
+        self.assertEqual(variables["TZ"].get("Default"), "America/New_York")
+        self.assertEqual(variables["TZ"].text, "America/New_York")
+
+    def test_entrypoint_keeps_a_valid_tz_and_falls_back_on_an_unknown_one(self):
+        script = ROOT / "docker" / "entrypoint.sh"
+        with tempfile.TemporaryDirectory(dir=ROOT / ".") as data:
+            command = ["sh", "-c", "printf \"%s\\n\" \"$TZ\""]
+            base = {"PATH": os.environ["PATH"], "HOME": data}
+            valid = subprocess.run(["bash", str(script), *command], cwd=data,
+                                   env={**base, "TZ": "Europe/London"},
+                                   text=True, capture_output=True, check=True)
+            self.assertEqual(valid.stdout.strip(), "Europe/London")
+            invalid = subprocess.run(["bash", str(script), *command], cwd=data,
+                                     env={**base, "TZ": "Not/AZone"},
+                                     text=True, capture_output=True, check=True)
+            self.assertEqual(invalid.stdout.strip(), "America/New_York")
+            self.assertIn("not a known IANA timezone", invalid.stderr)
+
+
 class UnraidTemplateTests(unittest.TestCase):
     def configs(self, root, kind):
         return {c.get("Target"): c for c in root.findall("Config") if c.get("Type") == kind}

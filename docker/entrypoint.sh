@@ -1,6 +1,17 @@
 #!/bin/bash
 set -euo pipefail
 mkdir -p "${HOME:-/data}/hermes/state" "${HOME:-/data}/archive" "${HOME:-/data}/records" "${HOME:-/data}/cache"
+# Container timezone: TZ names an IANA zone (image default America/New_York).
+# Consumers read TZ directly, so there is nothing to relink here — the
+# entrypoint runs unprivileged and cannot rewrite /etc/localtime, which the
+# image already points at the default zone. An unknown name falls back to the
+# default with a log line instead of silently keeping whatever it resolved to.
+tz="${TZ:-America/New_York}"
+if [[ "$tz" == *[!A-Za-z0-9._+/-]* || "$tz" == */../* || "$tz" == ../* || ! -f "/usr/share/zoneinfo/$tz" ]]; then
+    echo "TZ '$tz' is not a known IANA timezone; using America/New_York instead" >&2
+    tz="America/New_York"
+fi
+export TZ="$tz"
 channel="${PRINT_HANDY_ORCA_CHANNEL:-stable}"
 case "$channel" in
     stable)

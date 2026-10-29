@@ -108,7 +108,7 @@ ARG WITH_GO2RTC=true
 ARG TARGETARCH
 ENV DEBIAN_FRONTEND=noninteractive PYTHONUNBUFFERED=1 PATH=/opt/venv/bin:$PATH
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    python3 python3-venv ca-certificates curl jq ffmpeg xvfb xauth tini openscad tesseract-ocr \
+    python3 python3-venv ca-certificates curl jq ffmpeg xvfb xauth tini tzdata openscad tesseract-ocr \
     libwebkit2gtk-4.1-0 libgstreamer1.0-0 libgstreamer-plugins-base1.0-0 \
     libgtk-3-0t64 libglew2.2 libsecret-1-0 libspnav0 libgstreamerd-3-0 \
     libosmesa6 libunwind8 libx264-164 libopengl0 libglu1-mesa libgl1 libegl1 \
@@ -154,11 +154,15 @@ WORKDIR /app
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 COPY . .
-ENV PRINT_HANDY_CONFIG=/app/config/docker.yaml HOME=/data PRINT_HANDY__BOT__MODE=standalone \
+ENV TZ=America/New_York PRINT_HANDY_CONFIG=/app/config/docker.yaml HOME=/data PRINT_HANDY__BOT__MODE=standalone \
     PRINT_HANDY_ORCA_CHANNEL=stable PRINT_HANDY__SERVICES__SPOOLMAN_URL=http://127.0.0.1:8000 \
     SPOOLMAN_DIR_DATA=/data/spoolman SPOOLMAN_DIR_CONFIG=/data/spoolman/config \
     SPOOLMAN_DIR_LOGS=/data/spoolman/logs SPOOLMAN_DIR_BACKUPS=/data/spoolman/backups \
     SPOOLMAN_HOST=127.0.0.1 SPOOLMAN_PORT=8000
+# /etc/localtime matches the default zone for consumers that ignore the TZ
+# variable; glibc, Python and Go consumers honor a runtime TZ override
+# directly, and the entrypoint validates the name against this database.
+RUN ln -snf "/usr/share/zoneinfo/$TZ" /etc/localtime && printf '%s\n' "$TZ" > /etc/timezone
 VOLUME ["/data/hermes", "/data/archive", "/data/records", "/data/cache", "/data/spoolman"]
 EXPOSE 8000
 COPY docker/supervise.sh /usr/local/bin/print-handy-supervise

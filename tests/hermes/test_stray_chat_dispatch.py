@@ -80,7 +80,12 @@ def cfg_for(chat=True, agent_url="", llm_url=""):
 
 
 def run_hook(event, gateway, cfg):
-    with mock.patch.object(plugin, "_config", S(cfg=lambda: cfg)):
+    # The stand-in carries the real hosting_profile (#574): under the test
+    # settings it derives nothing, so the gates expect the events' stamped
+    # '3dprinting' identity exactly as the literal comparison did.
+    from print_handy.hermes import _config as real_config
+    stand_in = S(cfg=lambda: cfg, hosting_profile=real_config.hosting_profile)
+    with mock.patch.object(plugin, "_config", stand_in):
         return asyncio.run(plugin.stray_chat_dispatch(event, gateway))
 
 

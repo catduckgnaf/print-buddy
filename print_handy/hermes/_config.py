@@ -84,6 +84,52 @@ def pinned_hermes_home() -> Path:
     return Path(_pinned["paths"]["hermes_home"])
 
 
+# The shipped default profile name, and the standalone bot's identity label
+# (print_handy.bot.runtime.PROFILE stamps it on the bot's own sources). It is
+# the fallback identity when no hosting profile can be derived — standalone
+# runtimes, which have no Hermes profile at all (#574).
+DEFAULT_PROFILE = "3dprinting"
+
+
+def hosting_profile(plugin_file=None, home=None) -> tuple[str, bool]:
+    """(name, derived): the Hermes profile identity this install answers for (#574).
+
+    Hermes mode requires a dedicated profile (#566), but its name is the
+    operator's choice, so the identity the print-feedback plugin gates on is
+    derived from the install itself, never from a setting of its own:
+
+    * ``paths.hermes_home`` inside a Hermes profiles layout
+      (``~/.hermes/profiles/<name>``) — the path the installer targets; its
+      basename is the profile name. A hermes_home outside that layout
+      (Docker's ``/data/hermes``) names a data root, not a profile, and is
+      skipped; ``$HERMES_HOME`` is never consulted either, for the
+      pinned_hermes_home reason (a cron job's names the launching profile).
+    * the plugin's own install location, when ``plugin_file``'s folder is
+      the symlink scripts/install-hermes.sh creates at
+      ``<profile>/plugins/print-feedback``.
+
+    When neither derives a profile, returns (DEFAULT_PROFILE, False): the
+    standalone bot's stamped identity, which is the only event identity a
+    standalone runtime ever presents.
+    """
+    if home is None:
+        try:
+            home = hermes_home()
+        except Exception:
+            home = None
+    if home is not None:
+        home = Path(home)
+        if home.name and home.parent.name == "profiles":
+            return home.name, True
+    if plugin_file is not None:
+        folder = Path(plugin_file).parent
+        if folder.parent.name == "plugins" and folder.is_symlink():
+            name = folder.parent.parent.name
+            if name:
+                return name, True
+    return DEFAULT_PROFILE, False
+
+
 def bot_name() -> str:
     """The name the bot uses for itself: [discord] bot_name."""
     return str(cfg()["discord"]["bot_name"]).strip() or "Print Handy"

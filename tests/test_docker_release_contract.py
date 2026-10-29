@@ -169,7 +169,7 @@ class DockerReleaseContract(unittest.TestCase):
         # The old opt-in override file is gone: Spoolman lives in the base file (#214).
         self.assertFalse((ROOT / "docker-compose.spoolman.yml").exists())
 
-    def test_entrypoint_selects_stable_by_default_and_alpha_on_request(self):
+    def test_entrypoint_selects_stable_by_default_and_preview_on_request(self):
         script = ROOT / "docker" / "entrypoint.sh"
         with tempfile.TemporaryDirectory(dir=ROOT / ".") as data:
             Path(data, "hermes/state").mkdir(parents=True)
@@ -177,10 +177,19 @@ class DockerReleaseContract(unittest.TestCase):
             Path(data, "records").mkdir()
             Path(data, "cache").mkdir()
             command = ["sh", "-c", "printf \"%s\\n\" \"$PRINT_HANDY_ORCA_CMD\""]
-            env = {"PATH": os.environ["PATH"], "HOME": data, "PRINT_HANDY_ORCA_CHANNEL": "alpha"}
-            alpha = subprocess.run(["bash", str(script), *command], cwd=data, env=env,
-                                   text=True, capture_output=True, check=True)
-            self.assertEqual(alpha.stdout.strip(), "/usr/local/bin/orca-slicer-alpha")
+            env = {"PATH": os.environ["PATH"], "HOME": data, "PRINT_HANDY_ORCA_CHANNEL": "preview"}
+            preview = subprocess.run(["bash", str(script), *command], cwd=data, env=env,
+                                     text=True, capture_output=True, check=True)
+            self.assertEqual(preview.stdout.strip(), "/usr/local/bin/orca-slicer-preview")
+            # #600: 'alpha' is the preview channel's old name, kept as an
+            # alias for at least one release: it resolves to the preview
+            # wrapper and prints a startup notice naming the rename.
+            env["PRINT_HANDY_ORCA_CHANNEL"] = "alpha"
+            legacy = subprocess.run(["bash", str(script), *command], cwd=data, env=env,
+                                    text=True, capture_output=True, check=True)
+            self.assertEqual(legacy.stdout.strip(), "/usr/local/bin/orca-slicer-preview")
+            self.assertIn("old name for the 'preview' channel", legacy.stderr)
+            self.assertIn("PRINT_HANDY_ORCA_CHANNEL=preview instead", legacy.stderr)
             env.pop("PRINT_HANDY_ORCA_CHANNEL")
             stable = subprocess.run(["bash", str(script), *command], cwd=data, env=env,
                                     text=True, capture_output=True, check=True)
@@ -189,7 +198,7 @@ class DockerReleaseContract(unittest.TestCase):
             invalid = subprocess.run(["bash", str(script), *command], cwd=data, env=env,
                                      text=True, capture_output=True)
             self.assertNotEqual(invalid.returncode, 0)
-            self.assertIn("must be 'stable' or 'alpha'", invalid.stderr)
+            self.assertIn("must be 'stable' or 'preview'", invalid.stderr)
 
     def test_orca_is_optional_and_prebuilt_only(self):
         dockerfile = (ROOT / "Dockerfile").read_text()
@@ -203,7 +212,7 @@ class DockerReleaseContract(unittest.TestCase):
         entrypoint = (ROOT / "docker" / "entrypoint.sh").read_text()
         self.assertIn("PRINT_HANDY_ORCA_CHANNEL:-stable", entrypoint)
         self.assertIn("export PRINT_HANDY_ORCA_CMD=\"$selected\"", entrypoint)
-        self.assertIn("must be 'stable' or 'alpha'", entrypoint)
+        self.assertIn("must be 'stable' or 'preview'", entrypoint)
         runtime = dockerfile.split("AS runtime", 1)[1]
         self.assertIn("openscad", runtime)
         self.assertIn("--no-install-recommends", runtime)
@@ -255,7 +264,7 @@ class DockerReleaseContract(unittest.TestCase):
         self.assertNotIn("ORCA_ALPHA_REF", workflow)
         self.assertNotIn("ORCA_SOURCE", workflow)
         self.assertIn("docker/orca-prebuilt.sh", workflow)
-        self.assertIn("for channel in stable alpha", workflow)
+        self.assertIn("for channel in stable preview", workflow)
         self.assertIn("AS orca-prebuilt", dockerfile)
         # The pin counts match the per-arch pin structure: revisions are per
         # channel (2); SHA256 digests and asset names are per arch (4 each).
@@ -329,7 +338,7 @@ class DockerReleaseContract(unittest.TestCase):
         smoke = next(step for step in steps if step.get("name") == "Headless slice with each bundled Orca channel")
         # The published image always bundles Orca, so the smoke is unconditional.
         self.assertNotIn("if", smoke)
-        self.assertIn('channels="stable alpha"', smoke["run"])
+        self.assertIn('channels="stable preview"', smoke["run"])
         self.assertNotIn("ORCA_SOURCE", smoke["run"])
         self.assertIn("--network none", smoke["run"])
         for job in workflow["jobs"].values():

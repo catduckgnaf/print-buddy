@@ -101,8 +101,10 @@ mesh_run() (
   remaining() {
     now="$(date +%s)"
     ((now<deadline)) || return 1
+    # The whole-routine deadline is the only cap. AD5X AUTO_FULL_BED_LEVEL is one
+    # synchronous call that runs past 300 s; a shorter client cap abandoned a probe
+    # Klipper was still executing and left the mesh unsaved.
     GCODE_TIMEOUT=$((deadline-now))
-    ((GCODE_TIMEOUT>300)) && GCODE_TIMEOUT=300
     return 0
   }
   wait_idle() {

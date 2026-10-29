@@ -104,7 +104,7 @@ def test_application_and_slicer_channels_are_independent_build_arguments():
     assert 'case "$APP_CHANNEL" in stable|development)' in text
     assert 'ARG ORCA_CHANNEL=' not in text
     assert "AS orca-prebuilt" in text
-    assert "AS orca-stable" not in text and "AS orca-alpha" not in text
+    assert "AS orca-stable" not in text and "AS orca-alpha" not in text and "AS orca-preview" not in text
     assert 'COPY --from=orca-prebuilt /out/ /' in text
     assert 'openscad' in text.split('AS runtime', 1)[1]
     assert 'PRINT_HANDY_ORCA_CHANNEL:-stable' in entrypoint

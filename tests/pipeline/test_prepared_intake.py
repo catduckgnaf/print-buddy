@@ -688,13 +688,13 @@ def test_preview_omits_estimate_when_incomplete_but_keeps_description(env, monke
     tail = ('Model page estimate: about 1h 30m and 20 g of filament over 2 plates. '
             'The Flashforge AD5X figure after slicing will differ somewhat.' if extra.get('site_printer')
             else 'The model page gives no time or filament estimate; I will report both after slicing.')
-    assert log[0] == ('send', 'That looks like Ghost Stand, A sturdy stand. I will use the selected profile: ghost. ' + tail)
+    assert log[0] == ('send', 'That looks like Ghost Stand, A sturdy stand. I will use the selected file: ghost. ' + tail)
 
 
 def test_preview_names_a_selected_profile_without_a_description(env, monkeypatch):
     row = {'name': 'ghost.3mf', 'title': 'Fine 0.16 mm profile', 'instance_id': 1}
     log, _ = run_preview(env, monkeypatch, '', row)
-    assert log[0] == ('send', 'That looks like Ghost Stand. I will use the selected profile: Fine 0.16 mm profile. The model page gives no time or filament estimate; I will report both after slicing.')
+    assert log[0] == ('send', 'That looks like Ghost Stand. I will use the selected file: Fine 0.16 mm profile. The model page gives no time or filament estimate; I will report both after slicing.')
 
 
 def test_preview_hides_an_opaque_download_filename(env, monkeypatch):
@@ -1592,3 +1592,108 @@ def test_slice_refusal_crosses_the_worker_boundary_as_data():
     back = slice_refusal.from_dict(json.loads(json.dumps(original.as_dict())))
     assert str(back) == 'technical' and back.plain == original.plain and back.fix == original.fix
     assert '#9E9E9E' in back.plain  # an unreadable name says the neutral default out loud
+
+
+# --- multi-file models: file-list site files are parts of one model, printed together ---
+
+UNO_FILES = ['UNO - cap-sign-1.stl', 'UNO - container-1.stl', 'UNO - uno-latch-1.stl', 'UNO - cap-nosign-1.stl']
+
+
+def _parts_model(env, monkeypatch, names, answers, typed=None):
+    """A Printables model whose files are tiny STL boxes (or a 3MF); returns adapter, downloads, JOB.json."""
+    from .test_model_parts import cube_stl
+    monkeypatch.setattr(model_job, 'printables_inventory', lambda url: {
+        'site': 'printables', 'slug': 'uno-box', 'title': 'Rugged box for UNO game cards', 'model_id': 1875711,
+        'sources': [{'id': 100 + i, 'name': n, 'kind': 'stls'} for i, n in enumerate(names)]})
+    downloads = []
+
+    def download(job, chosen, dest):
+        downloads.append(chosen['name'])
+        if chosen['name'].endswith('.3mf'):
+            return _copy(env.tmp / 'source.3mf', dest)
+        return cube_stl(Path(dest) / chosen['name'], (30 + 5 * len(downloads), 20, 10))
+    monkeypatch.setattr(model_job, 'printables_download', download)
+
+    class Typed(Adapter):
+        async def send_clarify(self, **kw):
+            self.questions.append(kw)
+            import tools.clarify_gateway as cm
+            if typed and kw['question'].startswith('Which files should I print?'):
+                cm.resolve_gateway_clarify(kw['clarify_id'], typed)
+            else:
+                cm.resolve_gateway_clarify(kw['clarify_id'], kw['choices'][next(self.picks)])
+            return S(success=True)
+    adapter = Typed(answers)
+    event = S(source=S(profile='3dprinting', chat_id='c1', thread_id=None, user_id='u'), message_id='uno',
+              text='https://www.printables.com/model/1875711-rugged-box-for-uno-game-cards')
+    asyncio.run(prepared_intake.prepare_link(event, adapter, state(), env.root, timeout=1))
+    jobs = list((env.tmp / 'archive').glob('*/JOB.json'))
+    return adapter, downloads, (json.loads(jobs[0].read_text()) if jobs else None)
+
+
+def test_uno_link_prints_all_parts_and_asks_only_which_cap(env, monkeypatch):
+    # no sign, then one color for everything, slot 1, then stop at the final question.
+    adapter, downloads, job = _parts_model(env, monkeypatch, UNO_FILES, [1, 1, 0, 2])
+    first = adapter.questions[0]
+    assert first['question'] == ('This model has 4 files that print together: container, latch and a cap in 2 '
+                                 "versions. I'll put them on one job, one of each. Which cap?")
+    assert first['choices'][:3] == ['sign', 'no sign', 'Choose files']
+    assert not any('profile' in q['question'] for q in adapter.questions)
+    assert sorted(downloads) == ['UNO - cap-nosign-1.stl', 'UNO - container-1.stl', 'UNO - uno-latch-1.stl']
+    assert [r['name'] for r in job['selected_sources']] == ['UNO - container-1.stl', 'UNO - uno-latch-1.stl',
+                                                           'UNO - cap-nosign-1.stl']
+    assert all(Path(r['downloaded_file']).is_file() for r in job['selected_sources'])
+    assert job['selected_source']['kind'] == 'parts'
+    assert job['downloaded_file'].endswith('uno-box-parts.3mf') and Path(job['downloaded_file']).is_file()
+    assert sorted(job['combined_objects']) == ['UNO - cap-nosign-1', 'UNO - container-1', 'UNO - uno-latch-1']
+    assert len(job['color_manifest']['parts']) == 3
+    assert any('Inspected 3 parts' in q['question'] for q in adapter.questions)
+    assert any('I will print these files together: UNO - container-1, UNO - uno-latch-1 and UNO - cap-nosign-1.' in t
+               for t in adapter.sent)
+
+
+def test_parts_without_versions_offer_all_or_choose_files(env, monkeypatch):
+    adapter, downloads, job = _parts_model(env, monkeypatch, ['arm_left.stl', 'arm_right.stl', 'base.stl'],
+                                           [0, 1, 0, 2])
+    assert adapter.questions[0]['choices'][:2] == ['Print all 3', 'Choose files']
+    assert 'arm left, arm right and base' in adapter.questions[0]['question']
+    assert downloads == ['arm_left.stl', 'arm_right.stl', 'base.stl']
+    assert len(job['selected_sources']) == 3
+
+
+def test_choose_files_takes_typed_numbers(env, monkeypatch):
+    adapter, downloads, job = _parts_model(env, monkeypatch, UNO_FILES, [2, 1, 0, 2], typed='2 3')
+    assert adapter.questions[1]['question'].startswith('Which files should I print?')
+    assert '4. UNO - cap-nosign-1.stl' in adapter.questions[1]['question']
+    assert downloads == ['UNO - container-1.stl', 'UNO - uno-latch-1.stl']
+    assert [r['name'] for r in job['selected_sources']] == ['UNO - container-1.stl', 'UNO - uno-latch-1.stl']
+
+
+def test_choose_files_one_button_is_the_old_single_file_path(env, monkeypatch):
+    # Choose files, then the "2: UNO - container-1.stl" button: one download, no combined project.
+    adapter, downloads, job = _parts_model(env, monkeypatch, UNO_FILES, [2, 1, 0, 2])
+    assert downloads == ['UNO - container-1.stl']
+    assert 'selected_sources' not in job
+    assert job['selected_source']['name'] == 'UNO - container-1.stl'
+    assert job['downloaded_file'].endswith('UNO - container-1.stl')
+
+
+def test_one_3mf_among_stls_is_preferred(env, monkeypatch):
+    adapter, downloads, job = _parts_model(env, monkeypatch, ['uno box.3mf', 'container.stl', 'lid.stl'], [0, 1, 0, 2])
+    first = adapter.questions[0]
+    assert first['question'].startswith('This model has a 3MF project, uno box.3mf, and 2 STL files.')
+    assert first['choices'][:3] == ['Use uno box.3mf', 'Print the STL files', 'Choose files']
+    assert downloads == ['uno box.3mf']
+    assert 'selected_sources' not in job
+
+
+def test_a_file_already_downloaded_for_an_earlier_parts_job_is_reused(tmp_path, monkeypatch):
+    from .test_model_parts import cube_stl
+    monkeypatch.setattr(model_job, 'ARCHIVE', tmp_path)
+    part = cube_stl(tmp_path / 'old' / 'source' / 'parts' / '2' / 'lid.stl')
+    (tmp_path / 'old' / 'JOB.json').write_text(json.dumps({
+        'site': 'printables', 'model_id': 7, 'selected_source': {'kind': 'parts', 'name': 'x-parts.3mf'},
+        'downloaded_file': str(tmp_path / 'old' / 'source' / 'x-parts.3mf'),
+        'selected_sources': [{'id': 5, 'name': 'lid.stl', 'downloaded_file': str(part)}]}))
+    assert model_job._cached_source('printables', 'id', 5, 7) == part
+    assert model_job._cached_source('printables', 'id', 6, 7) is None

@@ -142,7 +142,7 @@ Upgrading from `[printer] family`: replace it in `config/local.toml` with `model
 
 `visual_watch.enabled` independently enables camera monitoring; it defaults to `true`, preserving the historical behavior for existing TOML users. `visual_watch.sensitivity` sets how readily the camera watchdog posts a "stalled layers" alert, from 1 (quietest) to 5 (most alerts). Default sensitivity is 3.
 
-| Level | Frame counts as unchanged if diff below | Stall alert after | Periodic camera check | Vision "ok" cancels a stall |
+| Level | Frame counts as unchanged if diff below | Stall alert after | Periodic camera check | Vision "ok" cancels a stall (Bambu monitor) |
 |---|---|---|---|---|
 | 1 | 1.5 | 8 layers | 30 min | yes |
 | 2 | 2.0 | 5 layers | 20 min | yes |
@@ -150,7 +150,7 @@ Upgrading from `[printer] family`: replace it in `config/local.toml` with `model
 | 4 | 4.0 | 3 layers | 10 min | no |
 | 5 | 5.0 | 2 layers | 7.5 min | no |
 
-Empty bed, spaghetti, detached part, uncertain, and vision failure alerts fire at every level.
+Empty bed, spaghetti, detached part, uncertain, and vision failure alerts fire at every level. On the Moonraker (Klipper) watchdog a vision "ok" or "safe" verdict cancels a stall at every level, and an "uncertain" verdict that says the camera feed is dark posts the once-per-print dark-camera notice instead of an alert.
 
 ### MakerWorld account token
 

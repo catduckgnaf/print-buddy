@@ -97,7 +97,7 @@ A bed-clear approval starts one print. Starting the same G-code again needs a ne
   insertion prompt stays inventory-only.
 * A slice refused for a deterministic reason says why in plain words (for example "Slot 1 (Matte
   white PLA) was never confirmed as loaded … Is Matte white PLA loaded in slot 1?") with
-  `Reference: PB_SLICING_CONFIGURATION`, and offers the one safe fix as a button ("Yes, slot 1 has
+  `Reference: PH_SLICING_CONFIGURATION`, and offers the one safe fix as a button ("Yes, slot 1 has
   it: slice") that records the confirmation and slices again. A refusal with no safe fix (no spool
   recorded, a material that differs from the chosen spool) explains itself and offers no blind retry.
 * `/print-colors <JOB.json>` opens the color selection flow for an archived job. Preparation only: it slices nothing, uploads nothing and starts nothing, and the path must be an archived `JOB.json`.

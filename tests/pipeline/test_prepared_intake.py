@@ -656,7 +656,7 @@ def test_color_save_prompt_shows_spool_projection_and_estimate_before_print_choi
     asyncio.run(prepared_intake.prepare_link(event, adapter, st, env.root, timeout=1))
     saved = [q['question'] for q in adapter.questions if q['choices'] and q['choices'][0].startswith('Slice and print')]
     assert len(saved) == 1
-    assert saved[0].startswith('White PLA · ')
+    assert saved[0].startswith('Ready to slice · White PLA')
     assert 'Slot 1 white PLA: needs about 25 g; spool has 200 g, about 175 g left after.' in saved[0]
     assert 'AD5X' not in saved[0]
     assert env.starts == []

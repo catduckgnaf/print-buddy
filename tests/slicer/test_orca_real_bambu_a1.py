@@ -4,7 +4,7 @@ the A1 guards on real output, the baseline proposal.
 Skipped unless PRINT_HANDY_REAL_SLICER=1; CI's Slicer test jobs run tests/slicer with the pinned
 OrcaSlicer v2.5.0-beta bundle (#356: the shipped slicer line). The A1 templates are generated
 (profiles.install, production identities only) from that OrcaSlicer's own resources folder:
-PB_ORCA_RESOURCES, else the Flatpak's install location. OrcaSlicer 2.5 packs its vendor profiles
+PRINT_HANDY_ORCA_RESOURCES, else the Flatpak's install location. OrcaSlicer 2.5 packs its vendor profiles
 into a preset cache (BBL.opc); print_handy reads the cache directly (preset_cache), which
 test_generation_from_the_installed_tree records. Locally: PRINT_HANDY_REAL_SLICER=1 python3 -m
 pytest -s tests/slicer/test_orca_real_bambu_a1.py with a supported OrcaSlicer as the configured
@@ -35,9 +35,9 @@ PROPOSAL = ROOT / "config" / "protected-settings-baseline.bambulab.a1.proposed.j
 
 
 def installed_resources():
-    """The OrcaSlicer resources folder of the slicer under test: PB_ORCA_RESOURCES, else the Flatpak's."""
-    if os.environ.get("PB_ORCA_RESOURCES"):
-        return Path(os.environ["PB_ORCA_RESOURCES"])
+    """The OrcaSlicer resources folder of the slicer under test: PRINT_HANDY_ORCA_RESOURCES, else the Flatpak's."""
+    if os.environ.get("PRINT_HANDY_ORCA_RESOURCES"):
+        return Path(os.environ["PRINT_HANDY_ORCA_RESOURCES"])
     for scope in ("--user", "--system"):
         if not shutil.which("flatpak"):
             break
@@ -51,7 +51,7 @@ def installed_resources():
                     return hit.parent.parent
             listing = sorted(str(p.relative_to(files)) for p in files.glob("share/*/*"))[:40]
             raise AssertionError(f"no profiles/BBL.json or BBL.opc under {files}; share/*/*: {listing}")
-    raise AssertionError("no OrcaSlicer resources folder: set PB_ORCA_RESOURCES or install the Flatpak")
+    raise AssertionError("no OrcaSlicer resources folder: set PRINT_HANDY_ORCA_RESOURCES or install the Flatpak")
 
 
 def packed():

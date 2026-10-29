@@ -5,7 +5,7 @@ color was never confirmed, a slot with no spool recorded) used to surface
 as "Slicing this model did not work ... PB_SLICING_UNKNOWN" plus a blind
 "Retry slice once" that failed identically. A :class:`SliceRefusal` carries
 the plain-language reason with it, is classified ``configuration`` (so its
-marker is ``PB_SLICING_CONFIGURATION``, not ``*_UNKNOWN``), and may name one
+marker is ``PH_SLICING_CONFIGURATION``, not ``*_UNKNOWN``), and may name one
 safe fix the operator can apply with a button before the retry.
 
 The exception crosses the heavy-worker process boundary as data

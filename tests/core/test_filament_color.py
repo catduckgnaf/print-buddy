@@ -349,7 +349,7 @@ def test_unconfirmed_slot_refusal_is_plain_classified_and_fixable():
     assert exc.plain.startswith("Slot 2 (Rose Red Blue Green Silk PLA) was never confirmed as loaded")
     assert exc.next_step == "Is Rose Red Blue Green Silk PLA loaded in slot 2?"
     assert exc.fix == {"kind": "confirm_slot_color", "slot": "2", "hex": "C2185B"}
-    assert diagnostics.marker("slicing", diagnostics.classify(exc)) == "PB_SLICING_CONFIGURATION"
+    assert diagnostics.marker("slicing", diagnostics.classify(exc)) == "PH_SLICING_CONFIGURATION"
 
 
 def test_apply_fix_confirms_the_slot_and_never_overwrites_a_valid_hex(monkeypatch):

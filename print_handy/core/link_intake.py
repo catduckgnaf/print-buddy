@@ -276,10 +276,17 @@ async def collect_link(event, adapter, state, root, timeout=300):
         logger.exception('new model color selection failed')
         from .. import diagnostics
         await adapter.send(chat_id=source.chat_id,
-            content=diagnostics.plain_post(
+            content=diagnostics.known_post(
                 'Choosing the colours for that model stopped before a choice was saved.',
                 not_happened='No slicing, upload or print started.',
-                next_step='Send the link or file again to pick the colours again.',
+                subsystem='intake', exc=exc)
+            or diagnostics.plain_post(
+                'Choosing the colours for that model stopped before a choice was saved.',
+                not_happened='No slicing, upload or print started.',
+                next_step=diagnostics.next_step_for(
+                    exc,
+                    transient='Send the link or file again to pick the colours again.',
+                    other='Run `/print-handy bundle` and share the bundle so it can be looked into.'),
                 subsystem='intake', exc=exc),
             metadata={'thread_id': source.thread_id} if source.thread_id else None)
         return {'action': 'skip', 'reason': 'new model color confirmation failed'}

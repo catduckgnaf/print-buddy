@@ -11,6 +11,7 @@ import json
 import shutil
 import subprocess
 import sys
+import tempfile
 import urllib.request
 from pathlib import Path
 
@@ -101,7 +102,10 @@ def check_orca(data):
     command = data["orca"]["command"]
     if not shutil.which(command[0]):
         raise RuntimeError(f"{command[0]} is not on PATH")
-    run = subprocess.run([*command, "--help"], capture_output=True, text=True, timeout=120)
+    # OrcaSlicer writes 00000.log into its working directory and aborts when it cannot; in Docker
+    # the default cwd (/app) is not writable by the container user, so probe from a scratch dir.
+    with tempfile.TemporaryDirectory(prefix="print-handy-doctor-") as scratch:
+        run = subprocess.run([*command, "--help"], capture_output=True, text=True, timeout=120, cwd=scratch)
     if run.returncode != 0:
         raise RuntimeError(f"{' '.join(command)} --help exited {run.returncode}")
     return " ".join(command)
@@ -233,7 +237,7 @@ def check_logging(data):
     if not target.parent.is_dir():
         raise RuntimeError(
             f"log file folder {target.parent} does not exist; create it or fix [logging] file "
-            f"[PB_LOGGING_CONFIGURATION]")
+            f"[PH_LOGGING_CONFIGURATION]")
     probe = target.parent / ".doctor-write-test"
     try:
         probe.write_text("")
@@ -241,7 +245,7 @@ def check_logging(data):
     except OSError as exc:
         raise RuntimeError(
             f"log file folder {target.parent} is not writable ({exc}); fix its permissions "
-            f"or change [logging] file [PB_LOGGING_CONFIGURATION]") from exc
+            f"or change [logging] file [PH_LOGGING_CONFIGURATION]") from exc
     return f"file {target}{suffix}"
 
 
@@ -263,7 +267,7 @@ def check_listener_heartbeats(data):
         return None
     return (f"listener heartbeat not healthy for {', '.join(down)}; check that printer's "
             f"listener is running (in the container it restarts on its own; see "
-            f"docs/DIAGNOSTICS.md) [PB_LISTENER_TRANSIENT]")
+            f"docs/DIAGNOSTICS.md) [PH_LISTENER_TRANSIENT]")
 
 
 def check_debug_mode(data):

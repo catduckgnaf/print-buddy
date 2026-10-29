@@ -796,6 +796,51 @@ def _run_slicer(command, name, folder):
     return result
 
 
+# ZMod Nopoop (use_trash_on_print=0): the prime tower is the only purge, so a
+# colour change must flush enough there. Per change: Orca's own default flush
+# volume (280 mm^3) plus ZMod's AD5X profile nozzle volume (144 mm^3), at
+# multiplier 1 (Orca 2.4 defaults flush_multiplier to 0.3). ZMod's profiles
+# (ghzserg/zmod_preprocess profiles/orcaslicer "AD5X Nopoop") also need wipe
+# tower Type 2, purge in prime tower, by-layer sequence and no ramming.
+NOPOOP_NOZZLE_VOLUME_MM3 = 144
+NOPOOP_FLUSH_MM3 = 280 + NOPOOP_NOZZLE_VOLUME_MM3
+
+
+def ifs_purge_settings(printer, state, tools):
+    """Match an IFS multicolour slice to the printer's ZMod colour-change purge.
+
+    Returns (mode, machine_updates, process_updates). mode is ZMod's live
+    use_trash_on_print, or None for a printer without one. 1 (and any
+    non-ZMod IFS printer) keeps the long-standing profile: ZMod purges into
+    the trash chute, the tower only primes. 0 (Nopoop) turns on purging into
+    the prime tower with explicit flush volumes. 2 and an unreadable value
+    are refused: Print Handy has no slicer-controlled-poop profile, and
+    guessing wrong either double-purges or contaminates colours.
+    """
+    from .printer_state import PURGE_MODES, read_purge_mode
+    if not getattr(printer, 'has_native_screen', False):
+        return None, {}, {'purge_in_prime_tower': '0'}
+    mode = read_purge_mode(state)
+    if mode == 1:
+        return mode, {}, {'purge_in_prime_tower': '0'}
+    if mode == 0:
+        flush = [('0' if src == dst else str(NOPOOP_FLUSH_MM3)) for src in range(tools) for dst in range(tools)]
+        machine = {'purge_in_prime_tower': '1', 'wipe_tower_type': 'type2', 'enable_filament_ramming': '0',
+                   'nozzle_volume': [str(NOPOOP_NOZZLE_VOLUME_MM3)]}
+        process = {'purge_in_prime_tower': '1', 'print_sequence': 'by layer',
+                   'flush_multiplier': ['1'], 'flush_volumes_matrix': flush}
+        return mode, machine, process
+    if mode == 2:
+        raise RuntimeError(f'ZMod USE_TRASH_ON_PRINT=2 ({PURGE_MODES[2]}) needs ZMod\'s own Orca profile '
+                           'change-filament G-code, which Print Handy does not slice with. Set '
+                           'SAVE_ZMOD_DATA USE_TRASH_ON_PRINT=0 (Nopoop) or 1 (trash chute), then slice again. '
+                           'Nothing was sliced.')
+    raise RuntimeError('ZMod use_trash_on_print could not be read from Moonraker, so Print Handy cannot tell '
+                       'whether colour changes purge into the trash chute or the prime tower. Check the printer '
+                       'is on and reachable (SAVE_ZMOD_DATA USE_TRASH_ON_PRINT=0 or 1 sets it), then slice again. '
+                       'Nothing was sliced.')
+
+
 def slice_model(source, folder, state, brim=None, first_layer=False, color_decisions=None, preserve_layout=False, filament_slot=None, item_shifts=None, fit_by_object=None, copies=None, scale=None, rotation=None, supports=None, object_ids=None, adapter=None, brim_policy=None):
     source, folder = Path(source), Path(folder)
     # An explicit adapter (a job prepared for another model) brings its own templates; the default keeps TEMPLATES.
@@ -828,6 +873,7 @@ def slice_model(source, folder, state, brim=None, first_layer=False, color_decis
                        if color_decisions else None)
     mapping = None
     mapped_profile = False
+    purge_mode = None
     # A multi_tool printer slices per-part colours as true multi-extruder
     # output: tools are toolheads (identity mapping), the model's templates
     # already describe every extruder, and no native IFS finalize applies (#346).
@@ -1045,12 +1091,14 @@ def slice_model(source, folder, state, brim=None, first_layer=False, color_decis
         mapped_profile = True
     elif mapping:
         import copy
-        machine.update({'single_extruder_multi_material': '1', 'change_filament_gcode': ''})
+        purge_mode, purge_machine, purge_process = ifs_purge_settings(printer, state, len(mapping))
+        machine.update({'single_extruder_multi_material': '1', 'change_filament_gcode': '', **purge_machine})
         tower_x, tower_y = geometry['prime_tower_xy_mm']
         tower_width = str(tuned_profile.prime_tower_width if tuned_profile else 45)
         process.update({'enable_prime_tower': '1', 'prime_tower_width': tower_width,
-                        'wipe_tower_x': str(tower_x), 'wipe_tower_y': str(tower_y),
-                        'purge_in_prime_tower': '0'})
+                        'wipe_tower_x': str(tower_x), 'wipe_tower_y': str(tower_y), **purge_process})
+        if purge_mode == 0:
+            geometry['ifs_purge_mode'] = 'nopoop: purge into prime tower (ZMod use_trash_on_print=0)'
         configs[0].write_text(json.dumps(machine, indent=2) + '\n')
         configs[1].write_text(json.dumps(process, indent=2) + '\n')
         filament_paths = []
@@ -1198,6 +1246,10 @@ def slice_model(source, folder, state, brim=None, first_layer=False, color_decis
     if verified is not None and primary not in verified:
         raise RuntimeError(f'{printer.label}: {primary} output is not verified for this printer; '
                            f'set [printer] slicer to one of {", ".join(verified)}. Nothing was sliced.')
+    if purge_mode == 0 and primary != 'orca':
+        # ZMod documents Nopoop for OrcaSlicer only; another slicer's tower purge is unproven here.
+        raise RuntimeError(f'ZMod Nopoop (USE_TRASH_ON_PRINT=0) multicolour needs OrcaSlicer; the configured '
+                           f'slicer is {primary}. Nothing was sliced.')
     if primary == 'bambu_studio':
         # Opt-in Bambu Studio as the primary slicer (vendor profile allows it, [printer] slicer picks it):
         # Orca never runs, so there is no Orca failure and no fallback.
@@ -1252,7 +1304,7 @@ def slice_model(source, folder, state, brim=None, first_layer=False, color_decis
     slicer = {'flash_studio': 'Flash Studio', 'bambu_studio': 'Bambu Studio'}.get(primary, 'OrcaSlicer')
     fallback = None
     vendor = printer.model.vendor
-    bambu_allowed = (primary == 'orca'
+    bambu_allowed = (primary == 'orca' and purge_mode != 0
                      and (vendor is None or vendor.fallback_slicer == 'bambu_studio')
                      and (verified is None or 'bambu_studio' in verified))
     orca_failed = primary == 'orca' and (result.returncode or not output.is_file()

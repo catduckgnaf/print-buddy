@@ -53,6 +53,40 @@ def test_moonraker_probe_ok_reports_what_answered():
     assert result.ok and result.category == ""
     assert "ad5x" in result.summary and "v2.3" in result.summary
     assert seen[0][0] == "http://ad5x.local:7125/printer/info"
+    # The geometry read is a second request. This opener has no config, so the
+    # probe stays ok and names the miss instead of inventing numbers.
+    assert result.detail.get("geometry_error")
+    assert "geometry" not in result.detail
+
+
+def test_moonraker_geometry_is_read_after_info_and_a_failed_read_stays_ok():
+    seen = []
+
+    def opener(req, timeout=None):
+        seen.append(req.full_url)
+        if req.full_url.endswith("/printer/info"):
+            return _Response({"result": {"hostname": "ad5x", "software_version": "v2"}})
+        return _Response({"result": {"status": {"configfile": {"config": {
+            "extruder": {"nozzle_diameter": 0.4},
+            "stepper_x": {"position_max": 220},
+            "stepper_y": {"position_max": 220},
+            "stepper_z": {"position_max": 250},
+        }}}}})
+
+    result = probe("moonraker", {"moonraker_url": "http://ad5x.local:7125"}, opener=opener)
+    assert result.ok
+    assert seen[0].endswith("/printer/info")
+    assert "configfile" in seen[1]
+    assert result.detail["geometry"] == {"nozzle_mm": 0.4, "bed_mm": [220.0, 220.0], "max_z_mm": 250.0}
+
+    def failing(req, timeout=None):
+        if req.full_url.endswith("/printer/info"):
+            return _Response({"result": {"hostname": "ad5x"}})
+        raise urllib.error.URLError("config unavailable")
+
+    missed = probe("moonraker", {"moonraker_url": "http://ad5x.local:7125"}, opener=failing)
+    assert missed.ok and missed.detail.get("geometry_error")
+    assert "geometry" not in missed.detail
 
 
 def test_moonraker_probe_sends_api_key_only_when_stored():

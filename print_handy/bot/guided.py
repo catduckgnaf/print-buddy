@@ -186,10 +186,15 @@ class Step:
 @dataclass(frozen=True)
 class ProbeOutcome:
     """The result of one probe-step run: what to tell the person, and — on
-    failure — which earlier step `back` returns to (the field that failed)."""
+    failure — which earlier step `back` returns to (the field that failed).
+
+    ``extra`` carries read-only facts the review step shows (Moonraker
+    nozzle, bed, and Z). It is never written into the roster by itself.
+    """
     ok: bool
     text: str
     back_key: str | None = None
+    extra: dict | None = None
 
 
 @dataclass(frozen=True)
@@ -701,7 +706,9 @@ def _default_onboard_probe(answers):
         secrets["check_code"] = _config.profile_env_value("AD5X_CHECK_CODE")
     result = connection_probe.probe(conn, _onboard_entry(answers), secrets)
     if result.ok:
-        return ProbeOutcome(True, result.summary)
+        extra = {key: result.detail[key] for key in ("geometry", "geometry_error")
+                 if result.detail.get(key)}
+        return ProbeOutcome(True, result.summary, extra=extra or None)
     secret_step = {"bambulab_lan": "lan_secret", "prusalink": "prusa_secret",
                    "octoprint": "octo_secret",
                    "flashforge_stock": "stock_secrets"}.get(conn)
@@ -764,6 +771,41 @@ def _onboard_secret_line(answers):
     return None
 
 
+def _onboard_geometry_lines(answers, model):
+    """Review lines for a Moonraker geometry read (#623).
+
+    A failed read is named. A mismatch warns and offers the generic Klipper
+    profile. Neither line changes the model the operator picked, and nothing
+    here is written — apply is still a separate reply.
+    """
+    probe = answers.get("probe") or {}
+    if not probe.get("ok"):
+        return []
+    geometry = probe.get("geometry")
+    error = probe.get("geometry_error")
+    if not geometry and not error:
+        return []
+    from ..core.printer_geometry import warning_for
+    if error or not isinstance(geometry, dict):
+        detail = error or "the printer config did not include nozzle, bed, or Z"
+        return ["- Printer reported: could not read nozzle, bed, or Z "
+                f"({detail}). Adding the printer continues."]
+    bits = []
+    if geometry.get("nozzle_mm") is not None:
+        bits.append(f"nozzle {float(geometry['nozzle_mm']):g} mm")
+    bed = geometry.get("bed_mm")
+    if isinstance(bed, (list, tuple)) and len(bed) == 2:
+        bits.append(f"bed {float(bed[0]):g} x {float(bed[1]):g} mm")
+    if geometry.get("max_z_mm") is not None:
+        bits.append(f"max Z {float(geometry['max_z_mm']):g} mm")
+    lines = ["- Printer reported: " + ", ".join(bits)
+             + ". These numbers are what the printer reported, not a tuned profile."]
+    warning = warning_for(model, geometry)
+    if warning:
+        lines.append(f"- Geometry: {warning}")
+    return lines
+
+
 def _onboard_review_text(session, note=""):
     answers = session["ob_answers"]
     model = printers.MODELS[answers["model"]]
@@ -793,6 +835,7 @@ def _onboard_review_text(session, note=""):
     elif target:
         lines.append("- Live test: not run — the entry is saved unverified "
                      "(its secret step was skipped).")
+    lines.extend(_onboard_geometry_lines(answers, model))
     lines += ["",
               _onboard_checklist_text(session),
               "",
@@ -873,7 +916,13 @@ def _onboard_probe_answer(session, raw, step, *, store, now):
         outcome = step.run(answers)
         session["updated_at"] = now
         if outcome.ok:
-            answers["probe"] = {"ok": True, "summary": outcome.text}
+            recorded = {"ok": True, "summary": outcome.text}
+            extra = outcome.extra or {}
+            if extra.get("geometry"):
+                recorded["geometry"] = extra["geometry"]
+            if extra.get("geometry_error"):
+                recorded["geometry_error"] = extra["geometry_error"]
+            answers["probe"] = recorded
             session.pop("ob_probe_error", None)
             session.pop("ob_back_key", None)
             _onboard_advance(session)

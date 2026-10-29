@@ -2219,6 +2219,8 @@ def fit_options(source: Path, state: dict, brim_override=None) -> dict:
     ``scales``: verified authored-orientation ladder (may be empty).
     ``rotations``: Orca-verified rotated orientations that print larger than the
     best authored scale (stood upright etc.), each with supports/brim warnings.
+    ``state['fit_rearrange_checked']`` skips the one-plate rearrangement probe
+    when the caller already ran its own (intake's ``model_job.full_size_one_plate``).
     """
     source = Path(source)
     # Tight fits must not inherit auto_brim: choose a fitting explicit policy.
@@ -2245,6 +2247,8 @@ def fit_options(source: Path, state: dict, brim_override=None) -> dict:
               'brim_policy': policy if scales and scales[0] < 0.97 else None,
               'fit_search_deferred': bool(source.suffix.lower() == '.3mf' and _source_plate_count(source) > 1)}
     try:
+        if state.get('fit_rearrange_checked'):
+            raise LookupError('the caller already checked a one-plate rearrangement')
         from .geometry_layout import probe_single_plate_rearrange
         bed = tuple(state.get('bed_mm') or BED)
         max_h = float(state.get('max_print_height_mm', MAX_HEIGHT_MM))

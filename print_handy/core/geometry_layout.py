@@ -1158,6 +1158,7 @@ def probe_single_plate_rearrange(
         'scale': 1.0,
         'rearrange_plate': True,
         'part_count': len(parts),
+        'turned_parts': sum(1 for p in placed if abs(float(p.get('angle') or 0.0)) > 1e-6),
         'size_mm': span,
         'label': f'100% · rearrange 1 plate ({len(parts)} parts, {span[0]:.0f}×{span[1]:.0f}×{span[2]:.0f} mm)',
         'search_nodes': nodes,

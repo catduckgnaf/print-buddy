@@ -595,6 +595,46 @@ def _matrix(node):
     return values
 
 
+# Parsed 3MF model parts, keyed by archive path + member CRC/size. The fit
+# planners (split_fit, plate_merge) ask for one object's world points dozens
+# of times per intake; re-parsing the whole model XML on every call was the
+# bulk of a ~2 minute fit check on dense multi-part models. Entries are
+# immutable once built and the key changes whenever the member's bytes do.
+_MODEL_CACHE = {}
+_MODEL_CACHE_MAX = 8
+
+
+def _cached_model(archive, member, build):
+    filename = getattr(archive, 'filename', None)
+    if not filename:
+        return build(ET.fromstring(archive.read(member)))
+    info = archive.getinfo(member)
+    key = (build.__name__, str(Path(filename).resolve()), member, info.CRC, info.file_size, info.compress_size)
+    hit = _MODEL_CACHE.get(key)
+    if hit is None:
+        hit = build(ET.fromstring(archive.read(member)))
+        while len(_MODEL_CACHE) >= _MODEL_CACHE_MAX:
+            _MODEL_CACHE.pop(next(iter(_MODEL_CACHE)))
+        _MODEL_CACHE[key] = hit
+    return hit
+
+
+def _model_index(root):
+    """Build tree view of a model: (objects by id, build items) for the item walk."""
+    objects = {node.get('id'): node for node in root.iter() if node.tag.split('}')[-1] == 'object'}
+    items = [node for node in root.iter() if node.tag.split('}')[-1] == 'item']
+    return objects, items
+
+
+def _model_vertices(root):
+    """Vertex list per object id of one model part."""
+    return {
+        o.get('id'): [(float(v.get('x')), float(v.get('y')), float(v.get('z')))
+                      for v in o.iter() if v.tag.split('}')[-1] == 'vertex']
+        for o in root.iter() if o.tag.split('}')[-1] == 'object'
+    }
+
+
 def _world_item_points(archive, object_ids, fit=None):
     """World-space mesh vertices per selected build item, through the component chain.
 
@@ -602,11 +642,10 @@ def _world_item_points(archive, object_ids, fit=None):
     points are those of the scaled/rotated group. Original transforms stay in
     the archive; callers use the points to measure or place the derived plate.
     """
-    root = ET.fromstring(archive.read('3D/3dmodel.model'))
-    objects = {node.get('id'): node for node in root.iter() if node.tag.split('}')[-1] == 'object'}
+    objects, build_items = _cached_model(archive, '3D/3dmodel.model', _model_index)
     model_object_points = {}
     items = []
-    for item in (node for node in root.iter() if node.tag.split('}')[-1] == 'item'):
+    for item in build_items:
         if item.get('objectid') not in object_ids:
             continue
         if item.get('printable', '1') != '1':
@@ -622,12 +661,7 @@ def _world_item_points(archive, object_ids, fit=None):
             # Same-file components (BambuStudio painted projects) carry no path.
             path = path_attr.lstrip('/') if path_attr else '3D/3dmodel.model'
             if path not in model_object_points:
-                m_root = ET.fromstring(archive.read(path))
-                model_object_points[path] = {
-                    o.get('id'): [(float(v.get('x')), float(v.get('y')), float(v.get('z')))
-                                  for v in o.iter() if v.tag.split('}')[-1] == 'vertex']
-                    for o in m_root.iter() if o.tag.split('}')[-1] == 'object'
-                }
+                model_object_points[path] = _cached_model(archive, path, _model_vertices)
             comp_obj_id = component.get('objectid')
             points = model_object_points[path].get(comp_obj_id, [])
             if points:

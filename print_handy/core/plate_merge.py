@@ -445,6 +445,151 @@ def _yawed_merge_attempt(source, object_ids, extents, bed, spacing, reserve):
     return None
 
 
+# Node budget for one turned-rectangle search. Exhaustion is a "no" (split
+# stays the verdict), never a stall.
+TURNED_MAX_NODES = 20000
+
+
+def rearrange_requested(job):
+    """True when the operator (or intake's auto-apply) chose a 100% rearrangement."""
+    return bool(isinstance(job, dict) and job.get('full_size_rearrange_plan'))
+
+
+def pack_turned(footprints, width, depth, spacing=SPACING_MM, edge=EDGE_MARGIN_MM,
+                max_nodes=TURNED_MAX_NODES):
+    """Pack (w, d) rectangles with each one either as authored or turned 90 degrees.
+
+    ``footprints`` maps key -> (w, d). The usable area is
+    ``width - 2 * edge`` by ``depth - 2 * edge`` starting at (edge, edge);
+    rectangles keep ``spacing`` between each other. Returns
+    {key: (x, y, turned)} lower-left corners, or None when no placement is
+    found within the search budget. Deterministic: largest first, authored
+    orientation before the turn, bottom-left candidate corners.
+    """
+    if not footprints:
+        return {}
+    keys = sorted(footprints, key=lambda k: (-(footprints[k][0] * footprints[k][1]), str(k)))
+    hi_x, hi_y = width - edge, depth - edge
+    options = {}
+    for key in keys:
+        w, d = (float(v) for v in footprints[key])
+        variants = [(w, d, False)] + ([(d, w, True)] if abs(w - d) > 1e-6 else [])
+        variants = [v for v in variants if edge + v[0] <= hi_x + 1e-7 and edge + v[1] <= hi_y + 1e-7]
+        if not variants:
+            return None
+        options[key] = variants
+    placed, nodes = [], 0
+
+    def clash(x, y, w, d):
+        for _k, px, py, pw, pd, _t in placed:
+            if not (x + w + spacing <= px + 1e-7 or px + pw + spacing <= x + 1e-7
+                    or y + d + spacing <= py + 1e-7 or py + pd + spacing <= y + 1e-7):
+                return True
+        return False
+
+    def search(i):
+        nonlocal nodes
+        nodes += 1
+        if nodes > max_nodes:
+            return False
+        if i == len(keys):
+            return True
+        xs = sorted({edge} | {p[1] + p[3] + spacing for p in placed})
+        ys = sorted({edge} | {p[2] + p[4] + spacing for p in placed})
+        for w, d, turned in options[keys[i]]:
+            for y in ys:
+                for x in xs:
+                    if x + w > hi_x + 1e-7 or y + d > hi_y + 1e-7 or clash(x, y, w, d):
+                        continue
+                    placed.append((keys[i], x, y, w, d, turned))
+                    if search(i + 1):
+                        return True
+                    placed.pop()
+        return False
+
+    if not search(0):
+        return None
+    return {key: (x, y, turned) for key, x, y, _w, _d, turned in placed}
+
+
+def _turned_attempt(hulls, bed, spacing, reserve):
+    """One-bed placement where any object may turn 90 degrees, or None.
+
+    Returns (corners, tower_xy, yaw_by_object, trial_hulls) in the
+    :func:`_yawed_merge_attempt` shape. Footprints are the hulls' bounding
+    rectangles (a conservative superset of each hull). The reserved tower
+    strip is tried first; a placement that needs the whole bed must also
+    leave a ``prime_tower_xy`` spot clear of every placed rectangle.
+    """
+    from . import color_geometry
+    from .split_fit import _rotate_hull_xy
+    footprints = {oid: (max(p[0] for p in h) - min(p[0] for p in h), max(p[1] for p in h) - min(p[1] for p in h))
+                  for oid, h in hulls.items()}
+    attempts = ((bed - reserve, False), (bed, True)) if reserve else ((bed, False),)
+    for depth, needs_tower in attempts:
+        placed = pack_turned(footprints, bed, depth, spacing)
+        if placed is None:
+            continue
+        tower_xy = None
+        if needs_tower:
+            bounds = []
+            for oid, (x, y, turned) in placed.items():
+                w, d = footprints[oid][::-1] if turned else footprints[oid]
+                bounds.append(((x, x + w), (y, y + d), (0.0, 0.0)))
+            try:
+                tower_xy = color_geometry.prime_tower_xy(bounds, bed=bed)
+            except RuntimeError:
+                continue
+        yaw_by_object = {oid: 90.0 for oid, (_x, _y, turned) in placed.items() if turned}
+        trial = {oid: (_rotate_hull_xy(hulls[oid], 90.0) if oid in yaw_by_object else hulls[oid]) for oid in hulls}
+        corners = {oid: (x, y) for oid, (x, y, _t) in placed.items()}
+        return corners, tower_xy, yaw_by_object, trial
+    return None
+
+
+def _shifts(placed, boxes, extents, yaw_by_object, yaw_hulls):
+    """Per-object shifts and placed bounds from packed lower-left corners."""
+    shifts, bounds = {}, {}
+    for oid, (px, py) in placed.items():
+        box = boxes[oid]
+        if oid in yaw_by_object:
+            hull = yaw_hulls[oid]
+            base = (min(p[0] for p in hull), min(p[1] for p in hull))
+            extent = (max(p[0] for p in hull) - base[0], max(p[1] for p in hull) - base[1])
+        else:
+            base = (box[0][0], box[1][0])
+            extent = extents[oid]
+        shifts[oid] = [px - base[0], py - base[1], -box[2][0]]
+        bounds[oid] = [(px, px + extent[0]), (py, py + extent[1]),
+                       (0.0, box[2][1] - box[2][0])]
+    return shifts, bounds
+
+
+def arrange_group(source, object_ids, bed, spacing=SPACING_MM):
+    """Full-size placement of one single-colour plate's objects, turning any by 90 degrees.
+
+    Used when a rearranged per-part job splits by slot: each slot plate is
+    packed on its own bed instead of keeping the author's layout (which is
+    what overflowed the bed in the first place). Returns
+    {'shifts', 'yaw_by_object', 'placed_bounds_mm'} or None when the group
+    does not fit one bed at 100%.
+    """
+    from . import color_geometry
+    object_ids = sorted({str(o) for o in object_ids}, key=lambda o: (len(o), o))
+    hulls = _object_hulls_all(source, object_ids)
+    if hulls is None:
+        return None
+    with zipfile.ZipFile(source) as archive:
+        boxes = {oid: color_geometry._world_bounds(archive, {oid})[0] for oid in object_ids}
+    extents = {oid: (box[0][1] - box[0][0], box[1][1] - box[1][0]) for oid, box in boxes.items()}
+    attempt = _turned_attempt(hulls, float(bed), spacing, 0.0)
+    if attempt is None:
+        return None
+    placed, _tower, yaw_by_object, trial = attempt
+    shifts, bounds = _shifts(placed, boxes, extents, yaw_by_object, trial)
+    return {'shifts': shifts, 'yaw_by_object': yaw_by_object, 'placed_bounds_mm': bounds}
+
+
 def full_size_split_possible(source, manifest, bed=None, edge=EDGE_MARGIN_MM):
     """Whether source-assigned plate groups fit individually at authored size.
 
@@ -571,23 +716,22 @@ def plan(source, manifest, plates, slots, state, bed=None, spacing=SPACING_MM, j
         if attempt is not None:
             placed, tower_xy, yaw_by_object, yaw_hulls = attempt
             packing = 'polygon'
+    if placed is None and rearrange_requested(job):
+        # A chosen 100% rearrangement: any object may turn 90 degrees in the
+        # bed plane, not only the ones that need a turn to fit alone. Same
+        # spacing, edge and tower rules; the turns flow into the same
+        # yaw_by_object + shifts channel as R2b, so slicing re-proves them.
+        hulls_all = _object_hulls_all(source, object_ids)
+        attempt = _turned_attempt(hulls_all, float(bed), spacing, reserve) if hulls_all else None
+        if attempt is not None:
+            placed, tower_xy, yaw_by_object, yaw_hulls = attempt
+            packing = 'turned'
     if placed is None:
         out['reason'] = (f'{len(extents)} parts do not fit one {bed}x{bed} mm bed with {spacing:g} mm spacing'
-                         + (' and a prime tower' if reserve else ''))
+                         + (' and a prime tower' if reserve else '')
+                         + (', even rearranged' if rearrange_requested(job) else ''))
         return out
-    shifts, bounds = {}, {}
-    for oid, (px, py) in placed.items():
-        box = boxes[oid]
-        if oid in yaw_by_object:
-            hull = yaw_hulls[oid]
-            base = (min(p[0] for p in hull), min(p[1] for p in hull))
-            extent = (max(p[0] for p in hull) - base[0], max(p[1] for p in hull) - base[1])
-        else:
-            base = (box[0][0], box[1][0])
-            extent = extents[oid]
-        shifts[oid] = [px - base[0], py - base[1], -box[2][0]]
-        bounds[oid] = [(px, px + extent[0]), (py, py + extent[1]),
-                       (0.0, box[2][1] - box[2][0])]
+    shifts, bounds = _shifts(placed, boxes, extents, yaw_by_object, yaw_hulls)
     out.update({'mode': 'merge', 'shifts': shifts, 'placed_bounds_mm': bounds, 'slots': used,
                 'packing': packing, 'objects_out': sorted(shifts, key=str)})
     if yaw_by_object:

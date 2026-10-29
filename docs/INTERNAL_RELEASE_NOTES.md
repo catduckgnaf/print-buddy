@@ -2,6 +2,15 @@
 
 # Unreleased
 
+**What users can do now:**
+- Oversized multi-part models that fit one plate once rearranged just print: when the author's layout doesn't fit the bed but every part fits one plate at 100% after moving or turning parts, Print Handy does it and says so in one line ("… does not fit the bed as the author laid it out, so I rotated and rearranged the 9 parts onto one plate at 100%.") instead of asking. It still asks when no full-size one-plate arrangement exists, and never overrides a size or orientation you already chose. The fit check's progress is one status message that names what is being tried and the time so far ("Still checking the fit: trying rotations and smaller sizes (40 s)."), edited in place on Discord, Matrix and Telegram.
+
+**Fixes and reliability:**
+- Per-part colour jobs with "100% · rearrange 1 plate" no longer fail to slice with "part group does not fit the target bed without cropping" (seen live on the AD5X with a 9-part Duplo swing): slicing now applies the rearrangement — one multicolour plate when the parts and the prime tower fit, otherwise one packed plate per colour — and a per-part job is only offered a one-plate rearrangement the slicer can honour.
+- The fit question no longer contradicts itself ("does not fit … as one plate" next to a "rearrange 1 plate" button): it says whether the author's layout or a rearranged one is meant.
+- The fit check is much faster on dense multi-part models: the split planner no longer re-parses the whole 3MF for every part (a 9-part, ~200k-triangle model went from 89 s to 6 s for that step), the split checks stop once a full-size one-plate fit is known, and the generic split check is skipped when a concrete split plan exists.
+
+**Technical:**
 - Bundled OrcaSlicer bumped from v2.5.0-alpha to v2.5.0-beta (upstream prerelease, published 2026-10-27, tag commit `345efec64c7b95a05ce5cf96df0dde66a158835c`): both channels in `docker/orca-prebuilt.sh` pin the beta AppImages (amd64 `15b0e9f9…`, aarch64 `941ea21d…`), the real-slicer CI legs download the beta flatpak (`2d2f6979…`), and every generated-template vendor pack gains checked 2.5.0-beta identities (tree + packed cache, computed from the beta source tree and the SHA-verified beta AppImage with the shared flatten pipeline; BBL `02.08.00.16`, Anycubic `02.04.00.10`, Elegoo `02.04.00.13`, QIDI `02.04.00.19`, Prusa and Creality kept their alpha vendor versions). The alpha channel keeps its name — it is the prerelease channel; it pins the same beta build until upstream publishes a newer prerelease. Alpha and 2.4.2 identities are retained, so folders generated from them keep verifying. Not verified on live hardware.
 
 # Version 2.1.9

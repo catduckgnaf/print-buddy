@@ -515,24 +515,22 @@ def cults_id(url):
 def cults_inventory(url):
     """Listing metadata for a Cults URL, via Cults' documented GraphQL API.
 
-    The lookup follows Cults' documented GraphQL surface (endpoint
-    https://cults3d.com/graphql, HTTP Basic nickname:api_key) and resolves the
-    creation through its Relay-style global id — base64 of "Creation/<slug>",
-    the format Cults publisher tooling documents. It is NOT verified live: no
-    Cults API key exists on the build machine, so parsing is defensive, and
-    the returned node's id is checked against the requested slug because the
-    API is known to answer with an unfiltered result for an id it does not
-    recognise. The API exposes no file list at all, so `sources` is always
-    empty and the job carries the download gap plus a no-geometry reason that
-    names the listing it did find.
+    Endpoint https://cults3d.com/graphql, HTTP Basic nickname:api_key, and
+    the creation is looked up by its slug: `creation(slug:)`. Verified live
+    2026-10-29 with an operator key: a real slug answers {id, name, url,
+    license{name}} and an unknown slug answers creation: null. (The first
+    build guessed a Relay `node(id:)` lookup with a padded base64 id, which
+    never matched: Cults' ids are unpadded.) The returned id is still checked
+    against the requested slug. The API exposes no file list at all, so
+    `sources` is always empty and the job carries the download gap plus a
+    no-geometry reason that names the listing it did find.
     """
     slug = cults_id(url)
-    global_id = base64.b64encode(f"Creation/{slug}".encode()).decode()
     resp = _cults_graphql(
-        "query($id: ID!) { node(id: $id) { ... on Creation { id name } } }",
-        {"id": global_id})
+        "query($slug: String!) { creation(slug: $slug) { id name url license { name } } }",
+        {"slug": slug})
     data = resp.get("data") if isinstance(resp, dict) else None
-    node = (data or {}).get("node") or (data or {}).get("creation")
+    node = (data or {}).get("creation") or (data or {}).get("node")
     errors = resp.get("errors") if isinstance(resp, dict) else None
     if not isinstance(node, dict) or (errors and not node):
         raise RuntimeError(
@@ -540,7 +538,7 @@ def cults_inventory(url):
             "creation may have been removed, or Cults may have changed its API.")
     returned = str(node.get("id") or "")
     try:
-        decoded = base64.b64decode(returned).decode()
+        decoded = base64.b64decode(returned + "=" * (-len(returned) % 4)).decode()
     except Exception:
         decoded = ""
     if decoded != f"Creation/{slug}":
@@ -555,8 +553,9 @@ def cults_inventory(url):
         "selectable geometry to reslice. Workaround: open the model page in a "
         "browser, download the .stl/.3mf file there, then upload or drop the file "
         "here instead.")
+    license_value = (node.get("license") or {}).get("name") if isinstance(node.get("license"), dict) else None
     return {"site": "cults3d", "model_id": slug, "title": title,
-            "slug": slug, "license": None, "sources": [],
+            "slug": slug, "license": license_value, "sources": [],
             "download_gap": CULTS_DOWNLOAD_GAP, "no_geometry_reason": reason}
 
 

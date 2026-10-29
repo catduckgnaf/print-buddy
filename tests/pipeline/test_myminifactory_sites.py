@@ -320,3 +320,17 @@ def test_download_never_carries_the_token_to_another_host():
     same = handler.redirect_request(req, None, 302, 'Found', {},
                                     'https://www.myminifactory.com/download/2')
     assert same.get_header('Authorization') == 'Bearer t'
+
+
+def test_myminifactory_refused_sign_in_at_the_lookup_offers_renew(tmp_path, monkeypatch):
+    # Inventory through the OAuth sign-in (no API key file): a 401 is the
+    # sign-in itself, so it must reach the renew flow, not the API-key remedy.
+    from print_handy.core.site_accounts import SiteLoginNeeded
+    _oauth_home(tmp_path, monkeypatch)
+
+    def refuse(url, headers=None, **kw):
+        raise urllib.error.HTTPError(url, 401, 'Unauthorized', {}, None)
+    monkeypatch.setattr(model_job, 'request_json', refuse)
+    with pytest.raises(SiteLoginNeeded) as caught:
+        model_job.myminifactory_inventory(MMF_URL)
+    assert caught.value.reason == 'refused' and caught.value.site == 'myminifactory'

@@ -644,3 +644,22 @@ def test_connect_flow_at_the_lookup_for_a_key_site(env, home, monkeypatch):
     assert 'Create an App' in steps and '#thingiverse-app-token' in steps
     receipt = json.loads(next(env.root.glob('*.json')).read_text())
     assert 'sentinel' in receipt['error']
+
+
+def test_archive_member_is_capped_as_it_expands(home, monkeypatch, tmp_path):
+    # A small, highly compressed zip must not expand past the intake download
+    # cap: the cap counts the compressed bytes, so the member is counted too.
+    from print_handy.core import intake_resources
+    monkeypatch.setattr(intake_resources, 'MAX_DOWNLOAD_BYTES', 64 * 1024)
+    buffer = io.BytesIO()
+    with zipfile.ZipFile(buffer, 'w', zipfile.ZIP_DEFLATED) as archive:
+        archive.writestr('a.stl', b'\0' * (1024 * 1024))   # 1 MiB, compresses to ~1 KiB
+    save_token('thangs')
+    monkeypatch.setattr(model_job, '_web_api', web_fake({'/download-url': (200, {
+        'signedUrl': 'https://storage.example/model.zip'})}))
+    fake_file_download(monkeypatch, buffer.getvalue())
+    job = {'site': 'thangs', 'model_id': '1', 'sources': [{'id': 'a', 'name': 'a.stl'}]}
+    assert len(buffer.getvalue()) < 64 * 1024
+    with pytest.raises(intake_resources.IntakeLimitExceeded, match='MiB limit'):
+        model_job.thangs_download(job, job['sources'][0], tmp_path/'src')
+    assert not list((tmp_path/'src').glob('*'))  # nothing partial left behind

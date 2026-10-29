@@ -390,6 +390,11 @@ def _mmf_json(path):
     try:
         return request_json(url, headers=headers)
     except urllib.error.HTTPError as exc:
+        if headers and exc.code == 401:
+            # The OAuth sign-in itself was refused (revoked or expired):
+            # offer the renew flow, not the API-key remedy.
+            from .site_accounts import refused
+            raise refused("myminifactory") from None
         blocked=_mmf_blocked(exc)
         if blocked is not None: raise blocked from None
         raise
@@ -982,8 +987,25 @@ def _fetch_chosen(url, target, name, label, *, exact, headers=None):
                 raise RuntimeError(
                     f"{label} sent a zip with {len(entries)} model files and none is named "
                     f"{name}, so Print Handy cannot tell which one was chosen; nothing was kept")
-            with archive.open(pick) as src, dest.open("wb") as out:
-                shutil.copyfileobj(src, out)
+            # The download cap counted the compressed bytes; the chosen member
+            # is held to the same cap as it expands, counted as it is written
+            # (the header's declared size is not trusted), so a small archive
+            # cannot fill the disk before the intake limits see the file.
+            from .intake_resources import CHUNK, MAX_DOWNLOAD_BYTES, MIB, _refuse
+            try:
+                if archive.getinfo(pick).file_size > MAX_DOWNLOAD_BYTES:
+                    _refuse(f"file exceeds {MAX_DOWNLOAD_BYTES // MIB} MiB limit")
+                with archive.open(pick) as src, dest.open("wb") as out:
+                    total = 0
+                    while chunk := src.read(CHUNK):
+                        total += len(chunk)
+                        if total > MAX_DOWNLOAD_BYTES:
+                            _refuse(f"file exceeds {MAX_DOWNLOAD_BYTES // MIB} MiB limit")
+                        out.write(chunk)
+            except BaseException:
+                dest.unlink(missing_ok=True)
+                staged.unlink(missing_ok=True)
+                raise
         staged.unlink(missing_ok=True)
     else:
         sent = urllib.parse.unquote(Path(urllib.parse.urlparse(url).path).name)

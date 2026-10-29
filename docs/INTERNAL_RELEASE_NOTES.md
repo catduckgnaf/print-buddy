@@ -2,7 +2,7 @@
 
 # Unreleased
 
-Nothing yet.
+- Docs-sync source fix: `docs/PROJECT-REFERENCE.md` now backticks the `<site>` placeholders in the connect-flow steps. The bare placeholders broke the docs site's Vue build during the 2.2.0 sync and were hand-fixed in the site copy only (print-handy-docs PR #9); the paired sidebar-escaping fix lives in print-handy-docs (`scripts/sync-docs.py`).
 
 # Version 2.2.0
 

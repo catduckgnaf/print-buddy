@@ -16,7 +16,11 @@ def test_auto_needs_a_known_new_enough_version():
     assert note_for("auto", (1, 7, 5)) == NOTE
 
 
-def test_confirm_note_follows_the_recorded_format_or_the_setting():
+def test_a_missing_map_does_not_raise_or_invent_a_sentence():
+    bare = SimpleNamespace(model=None, config=None)
+    assert confirm_note(bare, None) == ""
+    assert confirm_note(bare, {"delivery_format": None}) == ""
+    assert confirm_note(bare, "not a job") == ""
     adapter = SimpleNamespace(
         model=SimpleNamespace(vendor_key="flashforge"),
         config={"printer": {"zmod_delivery_format": "gcode"}},

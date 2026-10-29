@@ -397,6 +397,14 @@ def generate_roast(title, summary=""):
 def start_message_with_roast(filename, archive=None, context_path=None):
     """Format the canonical start message and append a best-effort model roast."""
     message = print_summary.format_event("started", filename, archive=archive, context_path=context_path)
+    try:
+        from ..core.exclude_object import objects_line_for_path
+        _job, plate = print_summary.find_job(filename, archive=archive, context_path=context_path)
+        line = objects_line_for_path((plate or {}).get("gcode"))
+        if line:
+            message += "\n" + line
+    except Exception:
+        pass
     job, _plate = print_summary.find_job(filename, archive=archive)
     title = (job or {}).get("title") or Path(str(filename or "")).stem
     roast = generate_roast(title)

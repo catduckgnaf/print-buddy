@@ -2,6 +2,10 @@
 
 # Unreleased
 
+**Fixes:**
+- Cleaner chat text during model intake: a long model summary is cut at a word with an ellipsis (no more "so I extended the."); colour questions for identical parts name the part once ("Choose one color/material for the 4 chains (15 x 87.7 x 6 mm, author made them Pink)") instead of repeating it four times; the summary before slicing groups identical parts ("2× frameLeg: Matte white PLA"), starts with "Ready to slice" and no longer ends with a stray "time after slicing"; and material names display normalised (Pla shows as PLA, silk pla as Silk PLA) in that summary and on slot buttons. Spoolman and job records are not changed.
+- Container logs no longer carry `TIMING {...}` lines on stdout: launch timing goes to the debug log (and still to each job's `TIMING.jsonl`).
+
 # Version 2.1.9
 
 **Release Date:** 2026-10-29

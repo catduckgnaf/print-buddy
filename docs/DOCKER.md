@@ -6,7 +6,7 @@ The 2.1.2 candidate replaces separate bot, listener and Spoolman services with O
 
 Tini owns orphan reaping and process-group signals. The supervisor waits for the bundled API before starting the Moonraker listener and Discord bot. Any required child exit ends the container nonzero, including an unexpected clean exit. SIGTERM stops children with a bounded grace period. Docker restart reacts to process exit, not healthcheck failures alone.
 
-An empty `DISCORD_BOT_TOKEN` disables only the Discord consumer for staging. Never run duplicate consumers/listeners against the same state. HEALTHCHECK verifies listener heartbeat, enabled bot readiness and Spoolman `/api/v1/health`. An offline printer does not make a reconnecting listener unhealthy. Dummy credentials do not prove Discord login.
+The container starts the chat bot for the configured `[bot] platform` (Discord, Telegram or Matrix) when that platform's own token variable is set (`DISCORD_BOT_TOKEN`, `TELEGRAM_BOT_TOKEN` or `MATRIX_ACCESS_TOKEN` by default); an empty token disables only the bot, for staging. Never run duplicate consumers/listeners against the same state. HEALTHCHECK verifies listener heartbeat, enabled bot readiness and Spoolman `/api/v1/health`. An offline printer does not make a reconnecting listener unhealthy. Dummy credentials do not prove Discord login.
 
 ## Which processes run
 

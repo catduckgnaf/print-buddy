@@ -506,3 +506,25 @@ def test_duplo_shape_at_the_standard_preset_is_not_offered_as_one_plate(tmp_path
     st = json.loads(STATE.read_text())
     decisions = _slots_by_name(source_colors.inventory(source), rule)
     assert model_job.full_size_one_plate(source, st, decisions) is None
+
+
+def test_merge_and_rearrange_packing_keep_the_brim_on_the_bed():
+    # With layout.spacing minimum the merge edge margin is 1 mm; a 5 mm brim
+    # on a part packed there crosses the bed edge. The merge planner and the
+    # per-slot rearranger now pack with the edge margin plus the brim, like
+    # the single-plate arranger already did.
+    from print_handy.core import model_job, plate_merge
+    assert model_job._merge_edge(None) == plate_merge.EDGE_MARGIN_MM
+    assert model_job._merge_edge(5) == plate_merge.EDGE_MARGIN_MM + 5
+    edge = plate_merge.EDGE_MARGIN_MM + 5
+    placed = plate_merge.pack({'a': (100.0, 100.0), 'b': (60.0, 60.0)}, 220, 2.0, edge=edge)
+    assert placed is not None
+    for key, (x, y) in placed.items():
+        w = {'a': 100.0, 'b': 60.0}[key]
+        assert x >= edge and y >= edge and x + w <= 220 - edge and y + w <= 220 - edge
+    import inspect
+    body = inspect.getsource(plate_merge.plan)
+    # Every packer the planner tries receives the edge.
+    for call in ('pack(extents, bed, spacing, edge=edge', '_turned_attempt(hulls_all, float(bed), spacing, reserve, edge=edge)',
+                 'pack_polygon(hulls, bed, spacing, edge=edge', '_yawed_merge_attempt(source, object_ids, extents, bed, spacing, reserve, edge=edge)'):
+        assert call in body, call

@@ -2137,23 +2137,10 @@ def zmod_display_off(status):
 
 
 def zmod_slot_presence(status):
-    """{slot: bool | None} from Klipper's zmod_color, the shape read_stock_ifs_slots_from_detail returns.
-
-    In screenless mode (display_off=1) the stock firmware is not running, so its /detail API refuses
-    and ZMod's zmod_color.slots[].hasFilament (1-based IDs) is the live presence.
-    """
-    slots = ((status or {}).get("zmod_color") or {}).get("slots")
-    if not isinstance(slots, list) or not slots:
-        raise RuntimeError("zmod_color slot list unavailable")
-    result = {}
-    for item in slots:
-        raw = item.get("ID") if isinstance(item, dict) else None
-        sid = int(raw) if isinstance(raw, (int, str)) and str(raw).isdigit() else None
-        if sid is None or not 1 <= sid <= 4 or sid in result:
-            raise RuntimeError("zmod_color slot list malformed")
-        present = item.get("hasFilament")
-        result[sid] = present if isinstance(present, bool) else None
-    return result
+    """{slot: bool | None} from Klipper's zmod_color (screenless presence); see
+    printers.flashforge.zmod.stock.read_zmod_color_slots, which mapped launch shares."""
+    from ..printers.flashforge.zmod.stock import read_zmod_color_slots
+    return read_zmod_color_slots(status)
 
 
 class Listener:

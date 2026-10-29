@@ -25,13 +25,15 @@ and in what order.
 Recommendation: run ZMod screenless (`display_off=1`) and use HelixScreen,
 Fluidd or Mainsail as the local interface.
 
-> **Known gap in 2.2.0: screenless prints cannot be started from chat yet.**
-> Every AD5X job Print Handy slices is bound to an IFS slot, and the route
-> that starts a slot-bound print (`SET_ZCOLOR`) still needs the stock
-> firmware's API, which only answers with the native screen on. Screenless,
-> Print Handy refuses the start with a plain message and uploads nothing.
-> Calibration, Z offset, IFS presence and monitoring all work screenless.
-> To print from chat today, switch the native screen on (`display_off=0`).
+> **Printing from chat screenless (2.2.0).** HelixScreen setups are
+> screenless too: HelixScreen runs on screenless ZMod. Print Handy starts a
+> screenless print the same way ZMod's own print-file macro does on the AD5X,
+> with one `SET_ZCOLOR` call, and checks it from Klipper alone: idle state and
+> heater targets from Moonraker, slot material and color from `zmod_color`,
+> and slot presence from `zmod_color`'s `hasFilament` (the stock firmware's
+> API does not answer screenless). This route is offline-tested only; the
+> first screenless print from chat is its live check. Report what you see on
+> the issue tracker.
 
 Why it works better with Print Handy:
 
@@ -232,5 +234,5 @@ lasts for the print.
 | Nopoop multicolour print sliced by Print Handy | Not verified |
 | QuickSwap with Print Handy | Not verified |
 | `.gcode.3mf` live print on ZMod 1.7.5 | Not verified |
-| Starting a slot-bound print screenless (`display_off=1`) | Not supported yet: refused before upload |
+| Starting a slot-bound print screenless (`display_off=1`) from chat | Not verified (offline-tested only, 2.2.0) |
 | `/print-calibration mesh` from chat (the table's mesh row used the `mesh-run` script path) | Not verified |

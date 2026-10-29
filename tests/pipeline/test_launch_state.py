@@ -358,13 +358,21 @@ def test_octoprint_unconfirmed_start_is_uncertain_until_the_printer_reports_it(o
 
 # Native mapped route (SET_ZCOLOR): the idle guard runs again inside the lease.
 
+from print_handy.printers.flashforge.zmod import native_idle  # noqa: E402
+
+mapped_presence = [True]  # zmod_color hasFilament for slot 1 in the mapped fixture
+
 @pytest.fixture
 def mapped(tmp_path):
     native = mock.Mock()
     native.normalize_mapping.side_effect = lambda m, st: {"0": 1}
     native.require_idle_settled.return_value = True
+    native.require_idle_screenless.side_effect = native_idle.require_idle_screenless
+    native.read_zmod_color_slots.side_effect = lambda status: {
+        int(item["ID"]): item.get("hasFilament") for item in status["zmod_color"]["slots"]}
     adapter = mock.Mock(native=native)
     scripts = []
+    mapped_presence[0] = True
 
     def fake_mr(st, path, data=None, timeout=30):
         if path == "/printer/gcode/script":
@@ -372,8 +380,9 @@ def mapped(tmp_path):
             return {"result": "ok"}
         return {"result": {"status": {
             "webhooks": {"state": "ready"}, "print_stats": {"state": "standby", "filename": ""},
-            "extruder": {}, "heater_bed": {},
-            "zmod_color": {"slots": [{"ID": 1, "Material": "PLA", "HEX": "000000"}]},
+            "extruder": {"target": 0}, "heater_bed": {"target": 0},
+            "zmod_color": {"slots": [{"ID": 1, "Material": "PLA", "HEX": "000000",
+                                      "hasFilament": mapped_presence[0]}]},
             "filament_switch_sensor head_switch_sensor": {"enabled": True}}}}
 
     st = {"moonraker_url": PRINTER, "ifs_slots": {"1": {"material": "PLA", "hex": "#000000"}}}
@@ -409,14 +418,57 @@ def test_mapped_launch_rechecks_idle_inside_the_lease(mapped):
     assert "approvals" not in json.loads(jp.read_text())
 
 
-def test_mapped_launch_refuses_cleanly_when_zmod_is_screenless(mapped):
-    """Screenless ZMod (display_off=1) has no mapped route yet: a plain REFUSED
-    line before any upload or script, never a traceback that holds the plate."""
+def test_mapped_launch_screenless_starts_from_klipper_state_alone(mapped):
+    """Screenless ZMod (display_off=1, HelixScreen or no screen): the stock /detail API is
+    down, so idle and slot presence come from Moonraker and zmod_color, and the print
+    starts with exactly one SET_ZCOLOR, as ZMod's own print-file macro does."""
     jp, g = make_job(mapped.root, "a")
     job = json.loads(jp.read_text())
-    with pytest.raises(SystemExit, match="REFUSED: .*screenless.*Nothing uploaded or started"):
+    with mock.patch.object(model_job, "read_stock_detail",
+                           side_effect=AssertionError("stock /detail read in screenless mode")):
+        out = model_job.print_mapped_native(g, mapped.st, {"display_off": 1}, {"0": 1}, job, jp, 0, False)
+    assert len(uploads(mapped.run)) == 1
+    assert len(mapped.scripts) == 1 and mapped.scripts[0].startswith("SET_ZCOLOR FILENAME=")
+    assert out["submission_count"] == 1
+    mapped.native.require_idle_settled.assert_not_called()
+    assert mapped.native.require_idle_screenless.call_count == 2  # before upload and inside the lease
+
+
+def test_mapped_launch_screenless_refuses_an_empty_slot_before_upload(mapped):
+    mapped_presence[0] = False
+    jp, g = make_job(mapped.root, "a")
+    job = json.loads(jp.read_text())
+    with mock.patch.object(model_job, "read_stock_detail", side_effect=AssertionError("stock read")), \
+            pytest.raises(RuntimeError, match="occupancy is unknown or unconfirmed"):
         model_job.print_mapped_native(g, mapped.st, {"display_off": 1}, {"0": 1}, job, jp, 0, False)
     assert uploads(mapped.run) == [] and mapped.scripts == [] and leases() == []
+
+
+def test_mapped_launch_refuses_an_unknown_screen_mode(mapped):
+    jp, g = make_job(mapped.root, "a")
+    job = json.loads(jp.read_text())
+    with pytest.raises(SystemExit, match="REFUSED: ZMod reports an unknown screen mode.*Nothing uploaded"):
+        model_job.print_mapped_native(g, mapped.st, {"display_off": None}, {"0": 1}, job, jp, 0, False)
+    assert uploads(mapped.run) == [] and mapped.scripts == [] and leases() == []
+
+
+@pytest.mark.parametrize("moonraker, reason", [
+    ({"state": "ready", "print": {"state": "standby"}, "extruder": {"target": 0}, "bed": {"target": 0}}, None),
+    ({"state": "ready", "print": {"state": "printing"}, "extruder": {"target": 0}, "bed": {"target": 0}},
+     "print.state"),
+    ({"state": "ready", "print": {"state": "standby"}, "extruder": {"target": 220}, "bed": {"target": 0}},
+     "extruder.target"),
+    ({"state": "ready", "print": {"state": "standby"}, "extruder": {"target": 0}, "bed": {}},
+     "bed.target"),
+    ({"state": "startup", "print": {"state": "standby"}, "extruder": {"target": 0}, "bed": {"target": 0}},
+     "webhooks.state"),
+])
+def test_screenless_idle_guard_needs_every_moonraker_predicate(moonraker, reason):
+    if reason is None:
+        assert native_idle.require_idle_screenless(lambda: moonraker) is True
+    else:
+        with pytest.raises(RuntimeError, match=f"REFUSED: idle guard failed: .*{reason}"):
+            native_idle.require_idle_screenless(lambda: moonraker)
 
 
 def test_mapped_unresolved_start_is_uncertain_and_blocks_the_next_job(mapped):

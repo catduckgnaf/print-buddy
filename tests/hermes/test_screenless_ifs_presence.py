@@ -218,3 +218,27 @@ class NativeErrorPersistenceTests(ListenerCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class SharedPresenceReaderTests(unittest.TestCase):
+    """The one zmod_color presence reader, shared by the listener and mapped launch."""
+
+    def setUp(self):
+        from print_handy.printers.flashforge.zmod import stock
+        self.read = stock.read_zmod_color_slots
+        patch = mock.patch.object(stock, "_slots", return_value=4)
+        patch.start()
+        self.addCleanup(patch.stop)
+
+    def test_presence_per_slot_and_unknown_when_not_boolean(self):
+        status = zmod_status(1, (True, False, True, True))["result"]["status"]
+        status["zmod_color"]["slots"][3]["hasFilament"] = None
+        self.assertEqual(self.read(status), {1: True, 2: False, 3: True, 4: None})
+        self.assertEqual(mel.zmod_slot_presence(status), self.read(status))
+
+    def test_missing_or_malformed_slot_lists_raise(self):
+        for status in ({}, {"zmod_color": {"slots": []}},
+                       {"zmod_color": {"slots": [{"ID": "9", "hasFilament": True}]}},
+                       {"zmod_color": {"slots": [{"ID": "1"}, {"ID": "1"}]}}):
+            with self.assertRaises(RuntimeError):
+                self.read(status)

@@ -91,7 +91,7 @@ def pinned_hermes_home() -> Path:
 DEFAULT_PROFILE = "3dprinting"
 
 
-def hosting_profile(plugin_file=None, home=None) -> tuple[str, bool]:
+def hosting_profile(plugin_file=None, home=None, mode=None) -> tuple[str, bool]:
     """(name, derived): the Hermes profile identity this install answers for (#574).
 
     Hermes mode requires a dedicated profile (#566), but its name is the
@@ -111,7 +111,19 @@ def hosting_profile(plugin_file=None, home=None) -> tuple[str, bool]:
     When neither derives a profile, returns (DEFAULT_PROFILE, False): the
     standalone bot's stamped identity, which is the only event identity a
     standalone runtime ever presents.
+
+    Derivation applies only in Hermes mode (``mode``, default ``[bot] mode``).
+    A standalone runtime stamps every event DEFAULT_PROFILE, so deriving
+    "printshop" from a standalone install whose hermes_home happens to sit
+    in a profiles layout made the gates refuse every command.
     """
+    if mode is None:
+        try:
+            mode = str((cfg().get("bot") or {}).get("mode") or "")
+        except Exception:
+            mode = ""
+    if mode != "hermes":
+        return DEFAULT_PROFILE, False
     if home is None:
         try:
             home = hermes_home()

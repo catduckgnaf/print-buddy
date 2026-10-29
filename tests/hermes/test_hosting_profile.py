@@ -42,6 +42,7 @@ def hosting(tmp_path):
     data = copy.deepcopy(previous)
     home = tmp_path / "profiles" / "printshop"
     data["paths"]["hermes_home"] = home
+    data["bot"]["mode"] = "hermes"
     _config.set_override(data)
     yield home
     _config.set_override(previous)
@@ -62,15 +63,15 @@ GATEWAY = S(_is_user_authorized_for_source=lambda _s: True,
 
 def test_derives_the_profile_name_from_a_profiles_layout_home(tmp_path):
     home = tmp_path / "profiles" / "printshop"
-    assert _config.hosting_profile(home=home) == ("printshop", True)
+    assert _config.hosting_profile(home=home, mode="hermes") == ("printshop", True)
     default = tmp_path / ".hermes" / "profiles" / "3dprinting"
-    assert _config.hosting_profile(home=default) == ("3dprinting", True)
+    assert _config.hosting_profile(home=default, mode="hermes") == ("3dprinting", True)
 
 
 def test_a_data_root_home_derives_nothing(tmp_path):
     # Docker's /data/hermes shape: a data root, not a profile directory.
-    assert _config.hosting_profile(home=tmp_path / "hermes") == (_config.DEFAULT_PROFILE, False)
-    assert _config.hosting_profile(home=tmp_path / "profiles") == (_config.DEFAULT_PROFILE, False)
+    assert _config.hosting_profile(home=tmp_path / "hermes", mode="hermes") == (_config.DEFAULT_PROFILE, False)
+    assert _config.hosting_profile(home=tmp_path / "profiles", mode="hermes") == (_config.DEFAULT_PROFILE, False)
 
 
 def test_derives_from_the_plugin_install_symlink(tmp_path):
@@ -82,7 +83,7 @@ def test_derives_from_the_plugin_install_symlink(tmp_path):
     link.parent.mkdir(parents=True)
     link.symlink_to(real, target_is_directory=True)
     name, derived = _config.hosting_profile(
-        plugin_file=link / "__init__.py", home=tmp_path / "hermes")
+        plugin_file=link / "__init__.py", home=tmp_path / "hermes", mode="hermes")
     assert (name, derived) == ("workshop", True)
 
 
@@ -91,7 +92,7 @@ def test_a_real_plugin_folder_is_not_an_install_location(tmp_path):
     folder.mkdir(parents=True)
     (folder / "__init__.py").write_text("")
     assert _config.hosting_profile(
-        plugin_file=folder / "__init__.py", home=tmp_path / "hermes") == (_config.DEFAULT_PROFILE, False)
+        plugin_file=folder / "__init__.py", home=tmp_path / "hermes", mode="hermes") == (_config.DEFAULT_PROFILE, False)
 
 
 def test_settings_home_wins_over_the_plugin_location(tmp_path):
@@ -104,7 +105,28 @@ def test_settings_home_wins_over_the_plugin_location(tmp_path):
     link.symlink_to(real, target_is_directory=True)
     assert _config.hosting_profile(
         plugin_file=link / "__init__.py",
-        home=tmp_path / "profiles" / "printshop") == ("printshop", True)
+        home=tmp_path / "profiles" / "printshop", mode="hermes") == ("printshop", True)
+
+
+def test_standalone_mode_never_derives(tmp_path):
+    # A standalone runtime stamps every event DEFAULT_PROFILE (bot.runtime.PROFILE);
+    # deriving "printshop" from its hermes_home made every command unmatched.
+    home = tmp_path / "profiles" / "printshop"
+    assert _config.hosting_profile(home=home, mode="standalone") == (_config.DEFAULT_PROFILE, False)
+
+
+def test_standalone_install_in_a_profiles_layout_answers_the_runtime_stamp(tmp_path):
+    from print_handy.bot import runtime
+    previous = copy.deepcopy(_config.cfg())
+    data = copy.deepcopy(previous)
+    data["paths"]["hermes_home"] = tmp_path / "profiles" / "printshop"
+    data["bot"]["mode"] = "standalone"
+    _config.set_override(data)
+    try:
+        assert plugin._hosting_profile() == runtime.PROFILE
+        assert plugin._is_print_discord_event(event_for(runtime.PROFILE)) is True
+    finally:
+        _config.set_override(previous)
 
 
 # ------------------------------------------------- identical for '3dprinting'

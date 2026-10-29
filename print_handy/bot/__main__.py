@@ -34,7 +34,7 @@ def checks(cfg):
         # will use, and fail the row when it cannot be derived: the
         # fallback answers only the default profile's events, which on a
         # renamed install means the bot silently ignores its channel.
-        profile_name, derived = _config.hosting_profile(home=Path(cfg["paths"]["hermes_home"]))
+        profile_name, derived = _config.hosting_profile(home=Path(cfg["paths"]["hermes_home"]), mode=mode)
         if derived:
             add("hosting profile", True,
                 f"{profile_name} (derived from paths.hermes_home {cfg['paths']['hermes_home']})")

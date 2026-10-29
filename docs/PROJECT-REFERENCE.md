@@ -210,19 +210,19 @@ This support was built and tested offline against the documented API shape; it h
 
 ### Creality Cloud login token
 
-Creality Cloud links use the JSON API the Creality Cloud web app itself uses (`www.crealitycloud.com/api/cxy/...`). Looking up a model and listing its source files needs no login. Downloading a file goes through the API's `memberDownload` call, which needs the account login token the web client keeps in its `model_token` cookie. It is a file, not a setting or environment variable: Print Handy reads `~/.config/crealitycloud/token` in the home directory of the account that runs it (in Docker, `/data/.config/crealitycloud/token`; see [Docker](DOCKER.md#makerworld-account-token) — the same bind-mounted `dot-config` directory holds all the token files) and sends it as the `__CXY_TOKEN_` header on the download request. The token is read on each request and is never logged. Print Handy never stores a Creality Cloud password.
+Creality Cloud links use the JSON API the Creality Cloud web app itself uses (`www.crealitycloud.com/api/cxy/...`). Looking up a model and listing its source files needs no login. Downloading a file goes through the API's `memberDownload` call, which needs the account login the web client keeps in two cookies: `model_user_id` (your numeric user id) and `model_token`. The API refuses the token without the user id ("Invalid Token"), so both are saved, together, as `model_user_id:model_token`. It is a file, not a setting or environment variable: Print Handy reads `~/.config/crealitycloud/token` in the home directory of the account that runs it (in Docker, `/data/.config/crealitycloud/token`; see [Docker](DOCKER.md#makerworld-account-token) — the same bind-mounted `dot-config` directory holds all the token files) and sends it as the `__CXY_TOKEN_` header on the download request. The token is read on each request and is never logged. Print Handy never stores a Creality Cloud password.
 
-To get the token, sign in at <https://www.crealitycloud.com> in a browser, open the browser's developer tools (storage/cookies for `www.crealitycloud.com`), and copy the value of the cookie named `model_token`. Store it as the only content of the file, readable only by that account, and never commit or share it:
+To get it, sign in at <https://www.crealitycloud.com> in a browser, open the browser's developer tools (Application, then Cookies, then `https://www.crealitycloud.com`), and copy the values of the `model_user_id` and `model_token` cookies. Store them as the only content of the file, as `model_user_id:model_token` (for example `1234567890:4f2a…`), readable only by that account, and never commit or share it:
 
 ```bash
 mkdir -p ~/.config/crealitycloud && chmod 700 ~/.config/crealitycloud
-(umask 077 && cat > ~/.config/crealitycloud/token)   # paste the model_token cookie value, press Enter, then Ctrl-D
+(umask 077 && cat > ~/.config/crealitycloud/token)   # type model_user_id:model_token, press Enter, then Ctrl-D
 chmod 600 ~/.config/crealitycloud/token
 ```
 
 Without the file, a Creality Cloud link still produces the model summary and file list; the download then stops with a message naming the file. An empty file stops it too. Login tokens expire: when the site answers a download with "Invalid Token", sign in again and replace the file — intake names that as a token problem, not a generic failure. Only `.stl` and `.3mf` source files from a model's file list are selectable sources; the site's print profiles (printer-specific Creality Print 3MF projects) and pre-sliced G-code are never used — the chosen geometry is resliced locally, as with the other sites. A model whose file list has no source files (only print profiles) stops with that reason named.
 
-Live status: the model lookup and file list were verified against the live API on 2026-10-29 (acceptance model `bag-clip-30mm`), and the download gate was verified to refuse tokenless requests. The download itself has **not** been verified live yet, because that needs the operator's token; the first download with the token file in place is what verifies it, and if the site's answer carries no file URL Print Handy says so plainly instead of guessing.
+Live status: verified end to end on 2026-10-29 with an operator login (acceptance model `bag-clip-30mm`): the model lookup and file list answered without a login, the download refused a missing or token-only login, and with `model_user_id:model_token` the chosen STL downloaded intact, byte-for-byte the size the listing reported.
 
 ### Connecting a login-token site from chat
 

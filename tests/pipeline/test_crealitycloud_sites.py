@@ -33,7 +33,8 @@ PLAIN_URL = 'https://www.crealitycloud.com/model-detail/bag-clip-30mm'
 SLUG = 'bag-clip-30mm'
 GROUP_ID = '6aa15cfc305edea496978f0f'
 PROFILE_ID = '6aa15cfc305edea496978f1d'
-TOKEN = 'test-login-token'
+UID = '1234567890'
+TOKEN = f'{UID}:test-login-token'  # model_user_id:model_token
 
 DETAIL = {'code': 0, 'msg': 'ok', 'result': {'groupItem': {
     'id': GROUP_ID, 'groupName': 'Bag Closure Clips', 'license': 'CXY-SL',
@@ -217,7 +218,10 @@ def test_crealitycloud_code4_is_a_token_refusal(monkeypatch):
 
 def test_crealitycloud_headers_carry_the_required_fields():
     headers = model_job.crealitycloud_headers(TOKEN)
-    assert headers['__CXY_TOKEN_'] == TOKEN
+    # The saved login splits into the two headers the web client sends;
+    # the token alone is refused as "Invalid Token" (verified live).
+    assert headers['__CXY_TOKEN_'] == 'test-login-token'
+    assert headers['__CXY_UID_'] == UID
     assert headers['__CXY_APP_ID_'] == 'cxy-gen2'
     # Without __CXY_TIMEZONE_ the live API refuses with code 1.
     assert headers['__CXY_TIMEZONE_'].lstrip('-').isdigit()
@@ -245,7 +249,8 @@ def test_crealitycloud_request_sends_token_and_reads_gzip(monkeypatch):
     assert out == DETAIL
     assert seen['url'].endswith('/api/cxy/v3/model/modelGroupDetail')
     assert seen['body'] == {'id': SLUG}
-    assert seen['headers']['__cxy_token_'] == TOKEN
+    assert seen['headers']['__cxy_token_'] == 'test-login-token'
+    assert seen['headers']['__cxy_uid_'] == UID
     assert seen['headers']['__cxy_app_id_'] == 'cxy-gen2'
     assert seen['headers']['accept-encoding'] == 'gzip'
     assert seen['headers']['__cxy_timezone_'].lstrip('-').isdigit()
@@ -435,3 +440,27 @@ def test_crealitycloud_download_3mf_is_not_unpacked(token_home, monkeypatch, tmp
         job, {'id': 'f3', 'name': 'bag clip.3mf'}, tmp_path/'src')
     assert dest.name == 'bag clip.3mf'
     assert dest.read_bytes() == buffer.getvalue()
+
+
+def test_crealitycloud_token_without_user_id_is_named(token_home):
+    (token_home/'.config'/'crealitycloud'/'token').write_text('only-the-model-token\n')
+    with pytest.raises(RuntimeError) as caught:
+        model_job.crealitycloud_token()
+    assert 'model_user_id:model_token' in str(caught.value)
+    assert caught.value.reason == 'missing'
+
+
+def test_crealitycloud_download_live_answer_shape(token_home, monkeypatch, tmp_path):
+    # memberDownload's success answer as recorded live on 2026-10-29 (URL
+    # trimmed): downloadUrls lists one entry per requested file id.
+    result = {'code': 0, 'msg': 'ok', 'result': {'downloadUrls': [
+        {'fileName': 'bag clip 70mm', 'fileId': '6aa15cfc305edea496978f12',
+         'url': 'https://oss.example/model%2Fother.stl?Signature=1', 'expire': 1793378685},
+        {'fileName': 'bag clip 30mm', 'fileId': '6aa15cfc305edea496978f13',
+         'url': 'https://oss.example/model%2F743d4cb8.stl?Signature=1', 'expire': 1793378685}]}}
+    seen = []
+    job, source, _ = _download_setup(monkeypatch, tmp_path, result,
+                                     payload=lambda url: seen.append(url) or b'solid fake\n')
+    dest = model_job.crealitycloud_download(job, source, tmp_path/'src')
+    assert dest.name == 'bag clip 30mm.stl'
+    assert seen == ['https://oss.example/model%2F743d4cb8.stl?Signature=1']

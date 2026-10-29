@@ -196,8 +196,8 @@ def test_missing_token_names_the_variable_too(home, monkeypatch):
 
 
 def test_crealitycloud_reads_its_variable(home, monkeypatch):
-    monkeypatch.setenv('CREALITYCLOUD_TOKEN', 'cc-env')
-    assert model_job.crealitycloud_token() == 'cc-env'
+    monkeypatch.setenv('CREALITYCLOUD_TOKEN', '1234567890:cc-env')
+    assert model_job.crealitycloud_token() == '1234567890:cc-env'
 
 
 def test_empty_token_refuses(home):

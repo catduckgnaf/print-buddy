@@ -42,7 +42,9 @@ class LoginSite:
 LOGIN_SITES = {
     "crealitycloud": LoginSite(
         "crealitycloud", "Creality Cloud", "crealitycloud", "https://www.crealitycloud.com",
-        "Cookies for https://www.crealitycloud.com, the cookie named `model_token`",
+        "Cookies for https://www.crealitycloud.com, TWO cookies: `model_user_id` (a number) and "
+        "`model_token`. Save them together as `model_user_id:model_token`, for example "
+        "`1234567890:4f2a…`",
         "Creality Cloud login token"),
     "thangs": LoginSite(
         "thangs", "Thangs", "thangs", "https://thangs.com",

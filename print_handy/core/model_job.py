@@ -532,8 +532,8 @@ CREALITYCLOUD = "https://www.crealitycloud.com"
 # file URL refuses with a named gap instead of guessing.
 CREALITYCLOUD_ANSWER_GAP = (
     "Creality Cloud answered the download request, but Print Handy could not "
-    "find a file URL in the answer, so nothing was downloaded. This download "
-    "path has not been verified with a live login token yet. Workaround: open "
+    "find a file URL in the answer, so nothing was downloaded (the site may "
+    "have changed its answer). Workaround: open "
     "the model page in a browser, download the .stl/.3mf file there, then "
     "upload or drop the file here instead.")
 
@@ -545,23 +545,42 @@ def crealitycloud_headers(token=None):
     refuses every call with code 1 (Invalid Parameter), verified live
     2026-10-29. Its value is the local UTC offset in seconds, the web
     client's own formula.
+
+    ``token`` is the saved login, ``model_user_id:model_token``: the web
+    client sends the user id (its model_user_id cookie) as __CXY_UID_
+    beside the token, and the API answers "Invalid Token" to a valid
+    token sent without it (verified live 2026-10-29).
     """
     import datetime
+    uid, _, token = (token or "").rpartition(":")
     offset = datetime.datetime.now().astimezone().utcoffset()
     return {"Content-Type": "application/json",
             "__CXY_APP_ID_": "cxy-gen2", "__CXY_APP_VER_": "7.3.28",
             "__CXY_PLATFORM_": "2", "__CXY_BRAND_": "creality",
             "__CXY_APP_CH_": "not set", "__CXY_OS_VER_": "not set",
             "__CXY_DUID_": "not set", "__CXY_OS_LANG_": "0",
-            "__CXY_TOKEN_": token or "", "__CXY_UID_": "",
+            "__CXY_TOKEN_": token, "__CXY_UID_": uid,
             "__CXY_TIMEZONE_": str(int(offset.total_seconds())) if offset else "0",
             "__CXY_REQUESTID_": os.urandom(16).hex()}
 
 
 def crealitycloud_token():
-    # The token file, else CREALITYCLOUD_TOKEN (see site_accounts.read_token).
+    """The saved login, ``model_user_id:model_token``.
+
+    From the token file, else CREALITYCLOUD_TOKEN (site_accounts.read_token).
+    A value without the user id cannot work — the API refuses the token
+    alone — so it is named here, before any request.
+    """
     from .site_accounts import read_token
-    return read_token("crealitycloud")
+    token = read_token("crealitycloud")
+    uid, sep, rest = token.partition(":")
+    if not sep or not uid.strip().isdigit() or not rest.strip():
+        raise SiteLoginNeeded("crealitycloud", "missing", (
+            "The saved Creality Cloud login needs both cookie values, written as "
+            "model_user_id:model_token (the number from the model_user_id cookie, a "
+            "colon, then the model_token cookie value). Only one value is saved now. "
+            "See docs/PROJECT-REFERENCE.md (Creality Cloud login token)."))
+    return f"{uid.strip()}:{rest.strip()}"
 
 
 def _crealitycloud_token_refused():
@@ -569,9 +588,10 @@ def _crealitycloud_token_refused():
         "Creality Cloud refused the login token (the site answered \"Invalid "
         "Token\"), which usually means the token in "
         "~/.config/crealitycloud/token is missing, invalid or expired. Sign "
-        "in at https://www.crealitycloud.com, copy the value of the "
-        "model_token cookie into that file (see docs/PROJECT-REFERENCE.md, "
-        "Creality Cloud login token), then send the link again.")
+        "in at https://www.crealitycloud.com, copy the model_user_id and "
+        "model_token cookie values into that file as model_user_id:model_token "
+        "(see docs/PROJECT-REFERENCE.md, Creality Cloud login token), then "
+        "send the link again.")
 
 
 def _crealitycloud_blocked(exc):
@@ -729,13 +749,19 @@ def crealitycloud_inventory(url):
     return job
 
 
-def _crealitycloud_download_url(result):
+def _crealitycloud_download_url(result, file_id=None):
     """The file URL in a memberDownload answer, or None.
 
-    The success shape was not verifiable without a live token (see the
-    section comment), so accept the shapes this API family uses: a bare
-    URL string, a dict carrying one under a URL key, or a list of either.
+    Verified live 2026-10-29: the answer is {downloadUrls: [{fileName,
+    url, fileId, expire}]}, and the entry for the requested ``file_id``
+    is taken. Other shapes this API family uses are still accepted: a
+    bare URL string, a dict carrying one under a URL key, or a list.
     """
+    if isinstance(result, dict) and isinstance(result.get("downloadUrls"), list):
+        rows = [r for r in result["downloadUrls"] if isinstance(r, dict) and r.get("url")]
+        match = next((r for r in rows if file_id is not None and str(r.get("fileId")) == str(file_id)), None)
+        if match is None and len(rows) == 1: match = rows[0]
+        if match is not None: return match["url"]
     if isinstance(result, str): return result or None
     if isinstance(result, list):
         for item in result:
@@ -761,7 +787,7 @@ def crealitycloud_download(job, source, target):
         "/api/cxy/v3/model/memberDownload",
         {"modelId": job["model_id"], "trailType": 0,
          "fileIds": [source.get("id")]}, token=token)
-    url = _crealitycloud_download_url(result)
+    url = _crealitycloud_download_url(result, source.get("id"))
     if not url: raise RuntimeError(CREALITYCLOUD_ANSWER_GAP)
     # memberDownload names one file; a multi-file answer arrives as one zip
     # and keeps only the chosen file (_fetch_chosen, which also knows a 3MF

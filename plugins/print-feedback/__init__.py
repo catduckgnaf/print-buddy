@@ -43,6 +43,80 @@ def _state_dir():
     return _config.state_dir()
 
 
+# ---------------------------------------------------------------------------
+# Hosting profile identity (#574)
+#
+# Hermes mode requires a dedicated profile (#566): unmatched and
+# natural-language messages reach the hosting profile's agent by design,
+# and the profile is what bounds that agent. But the profile's NAME is
+# the operator's choice, so the gates below never compare against a
+# literal name: the expected identity is derived from the install itself
+# by _config.hosting_profile. An existing '3dprinting' install derives
+# the identical identity; standalone runtimes derive nothing and fall
+# back to the standalone bot's own stamped label, so their sources pass
+# exactly as before.
+_identity_warnings = set()
+
+
+def _warn_identity_once(key, message, *args):
+    """Log an identity problem once per process: named, never silent (#566)."""
+    if key in _identity_warnings:
+        return
+    _identity_warnings.add(key)
+    logger.warning(message, *args)
+
+
+def _hosting_profile():
+    """The profile identity this plugin answers for, derived per #574."""
+    name, derived = _config.hosting_profile(Path(__file__))
+    if not derived:
+        try:
+            mode = str(_config.cfg().get('bot', {}).get('mode', ''))
+        except Exception:
+            mode = ''
+        if mode == 'hermes':
+            _warn_identity_once(
+                'hosting-profile-fallback',
+                'print-feedback: could not derive the hosting Hermes profile from '
+                'paths.hermes_home (%s) or the plugin install location; answering '
+                'only %r events. Point paths.hermes_home at the dedicated profile '
+                'directory (~/.hermes/profiles/<name>) so the plugin answers this '
+                "install's profile.",
+                _config.hermes_home(), name)
+    return name
+
+
+def _is_hosting_profile(value):
+    """True when an event's profile value is the hosting profile's."""
+    return bool(value) and value == _hosting_profile()
+
+
+def _profile_matches(profile, hook):
+    """True when a tool session's profile is the hosting profile (#574).
+
+    The pre_tool_call guards supervise only their own profile's agent.
+    Standing down for another profile is by design, but never silent
+    (#566): the first stand-down per hook names both profiles in the
+    log, so a mis-derived identity is visible instead of the guards
+    quietly doing nothing.
+    """
+    expected = _hosting_profile()
+    if profile and profile == expected:
+        return True
+    if profile:
+        _warn_identity_once(
+            ('other-profile', hook, profile),
+            'print-feedback: %s standing down: session profile %r is not the '
+            "hosting profile %r; the print guards supervise only their own "
+            "profile's agent.", hook, profile, expected)
+    else:
+        _warn_identity_once(
+            ('no-profile', hook),
+            'print-feedback: %s standing down: the session names no profile, so '
+            'it cannot be matched to the hosting profile %r.', hook, expected)
+    return False
+
+
 _seen = OrderedDict()
 ACK_TIMEOUT = 1.5
 SEEN_TTL = 3600
@@ -93,7 +167,7 @@ def _is_print_discord_event(event):
     source = getattr(event, 'source', None)
     return (source is not None
             and _is_bot_platform(source)
-            and getattr(source, 'profile', None) == '3dprinting'
+            and _is_hosting_profile(getattr(source, 'profile', None))
             and not getattr(event, 'internal', False)
             and not getattr(source, 'is_bot', False)
             and not getattr(source, 'profile_route_rejected', False))
@@ -925,7 +999,7 @@ async def receive_ack(event, gateway, **kwargs):
     if source is None:
         return None
     platform = getattr(getattr(source, 'platform', None), 'value', None)
-    if (platform not in BOT_PLATFORMS or getattr(source, 'profile', None) != '3dprinting'
+    if (platform not in BOT_PLATFORMS or not _is_hosting_profile(getattr(source, 'profile', None))
             or getattr(event, 'internal', False) or getattr(source, 'is_bot', False)
             or getattr(source, 'profile_route_rejected', False)):
         return None
@@ -1180,9 +1254,11 @@ def workflow_receipt(result):
 
 
 def cap_discord_clarifications(tool_name=None, args=None, **kwargs):
-    """Keep 3dprinting Discord clarify cards actionable without truncating silently."""
+    """Keep the hosting profile's Discord clarify cards actionable without truncating silently."""
     if (tool_name != 'clarify' or _session('HERMES_SESSION_PLATFORM') != 'discord'
-            or _session('HERMES_SESSION_PROFILE') != '3dprinting' or not isinstance(args, dict)):
+            or not isinstance(args, dict)):
+        return None
+    if not _profile_matches(_session('HERMES_SESSION_PROFILE'), 'cap_discord_clarifications'):
         return None
     questions = args.get('questions')
     if not isinstance(questions, list):
@@ -1206,7 +1282,9 @@ def clarify_ack(tool_name=None, result=None, tool_call_id=None, **kwargs):
     """post_tool_call: deterministic choices and factual completed milestones."""
     if tool_name not in {'clarify', 'terminal'}:
         return None
-    if _session('HERMES_SESSION_PLATFORM') != 'discord' or _session('HERMES_SESSION_PROFILE') != '3dprinting':
+    if _session('HERMES_SESSION_PLATFORM') != 'discord':
+        return None
+    if not _profile_matches(_session('HERMES_SESSION_PROFILE'), 'clarify_ack'):
         return None
     if tool_name == 'terminal':
         command = (kwargs.get('args') or {}).get('command', '')
@@ -1248,7 +1326,7 @@ def guard_terminal_loop(tool_name=None, args=None, session_id=None, turn_id=None
     profile = _session('HERMES_SESSION_PROFILE')
     if not profile:
         profile = Path(os.getenv('HERMES_HOME', '')).name
-    if profile != '3dprinting':
+    if not _profile_matches(profile, 'guard_terminal_loop'):
         return None
     values = args or {}
     # Printer ownership includes diagnosis and implementation maintenance.
@@ -1288,7 +1366,7 @@ async def color_selection_dispatch(event, gateway, **kwargs):
     if not text.startswith('/print-colors '):
         return None
     if (source is None or not _is_bot_platform(source)
-            or getattr(source, 'profile', None) != '3dprinting'
+            or not _is_hosting_profile(getattr(source, 'profile', None))
             or getattr(event, 'internal', False) or getattr(source, 'is_bot', False)
             or getattr(source, 'profile_route_rejected', False)):
         return None
@@ -1390,7 +1468,7 @@ async def print_next_dispatch(event, gateway, **kwargs):
     if not (text == '/print-next' or text.startswith('/print-next ')):
         return None
     if (source is None or not _is_bot_platform(source)
-            or getattr(source, 'profile', None) != '3dprinting'
+            or not _is_hosting_profile(getattr(source, 'profile', None))
             or getattr(event, 'internal', False) or getattr(source, 'is_bot', False)
             or getattr(source, 'profile_route_rejected', False)):
         return None
@@ -1500,7 +1578,7 @@ def _discord_operator(event, gateway):
     """True for an authorized human Discord message in this profile."""
     source = getattr(event, 'source', None)
     if (source is None or not _is_bot_platform(source)
-            or getattr(source, 'profile', None) != '3dprinting'
+            or not _is_hosting_profile(getattr(source, 'profile', None))
             or getattr(event, 'internal', False) or getattr(source, 'is_bot', False)
             or getattr(source, 'profile_route_rejected', False)):
         return None
@@ -3435,7 +3513,7 @@ async def print_stop_dispatch(event, gateway, **kwargs):
     if text != '/print-stop':
         return None
     if (source is None or not _is_bot_platform(source)
-            or getattr(source, 'profile', None) != '3dprinting'
+            or not _is_hosting_profile(getattr(source, 'profile', None))
             or getattr(event, 'internal', False) or getattr(source, 'is_bot', False)
             or getattr(source, 'profile_route_rejected', False)):
         return None
@@ -3544,7 +3622,7 @@ def _control_gate(event, gateway):
     whose text form is not the command itself (the plain 'print 57' form)."""
     source = getattr(event, 'source', None)
     if (source is None or not _is_bot_platform(source)
-            or getattr(source, 'profile', None) != '3dprinting'
+            or not _is_hosting_profile(getattr(source, 'profile', None))
             or getattr(event, 'internal', False) or getattr(source, 'is_bot', False)
             or getattr(source, 'profile_route_rejected', False)):
         return None, None
@@ -3979,7 +4057,7 @@ def _is_affirmative_followup(text: str) -> bool:
 async def model_link_dispatch(event, gateway, **kwargs):
     source = getattr(event, 'source', None)
     if (source is None or not _is_bot_platform(source)
-            or getattr(source, 'profile', None) != '3dprinting'
+            or not _is_hosting_profile(getattr(source, 'profile', None))
             or getattr(event, 'internal', False) or getattr(source, 'is_bot', False)
             or getattr(source, 'profile_route_rejected', False)):
         return None

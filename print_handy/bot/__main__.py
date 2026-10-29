@@ -27,6 +27,23 @@ def checks(cfg):
     mode = cfg["bot"]["mode"]
     add("mode", mode == "standalone", mode if mode == "standalone" else
         f"{mode}; set PRINT_HANDY__BOT__MODE=standalone (or [bot] mode) to run without Hermes")
+    if mode == "hermes":
+        # #574: in Hermes mode the plugin answers events of the dedicated
+        # profile it is installed in (#566); the name is derived from
+        # paths.hermes_home, never configured. Name the identity the gates
+        # will use, and fail the row when it cannot be derived: the
+        # fallback answers only the default profile's events, which on a
+        # renamed install means the bot silently ignores its channel.
+        profile_name, derived = _config.hosting_profile(home=Path(cfg["paths"]["hermes_home"]))
+        if derived:
+            add("hosting profile", True,
+                f"{profile_name} (derived from paths.hermes_home {cfg['paths']['hermes_home']})")
+        else:
+            add("hosting profile", False,
+                f"cannot derive the hosting profile from paths.hermes_home "
+                f"({cfg['paths']['hermes_home']}); the plugin will answer only "
+                f"'{profile_name}' events — point paths.hermes_home at the dedicated "
+                "profile directory (~/.hermes/profiles/<name>)")
     name = str(cfg["bot"].get("platform") or "discord")
     implemented = platform.platform_module(name) is not None
     add("platform", implemented, name if implemented else

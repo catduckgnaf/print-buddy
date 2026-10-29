@@ -6,6 +6,40 @@
 > profile. This page remains the install path for that explicit choice — `bot.mode: hermes` is still
 > supported — and the migration notes at the bottom are for installs moving off it.
 
+## Why Hermes mode needs a dedicated profile (any name)
+
+Hermes mode is two things sharing one Discord connection: the bot, and the hosting profile's
+AI agent. The bot claims what it claims — commands, model links, files, button flows — and
+everything it claims is covered by the bot's own rules (the print channel is the access
+boundary, with the user lists as opt-in refinement).
+
+What the bot does *not* claim reaches the agent, by design. A plain-English request, an
+unmatched message, a photo with no caption: those fall through to the hosting profile's
+agent, and the agent is what carries them out. That fall-through is a feature of the mode —
+it is how natural-language requests get executed — and it means the hosting profile is the
+agent's fence. The profile carries the print-only doctrine (`SOUL.md` / `AGENTS.md`), the
+bounded toolsets, the scoping to the one print channel and the approvals posture, and the
+plugin's own tool guards supervise the agent's calls under the same identity.
+
+So the profile must be **dedicated**: a profile that exists to host the printer bot. Hosting
+the bot inside your general profile is not supported — print-channel messages would land in
+front of your general assistant with its full tools and no print doctrine, and none of the
+bounds above would apply.
+
+The name is up to you. `3dprinting` is only the shipped default: create the profile under
+any name, point `paths.hermes_home` at its directory (`~/.hermes/profiles/<name>`), and
+install with `scripts/install-hermes.sh --hermes-home ~/.hermes/profiles/<name>`. The plugin
+derives which profile it is running in from the install itself — there is no profile-name
+setting. `python3 -m print_handy.bot check` shows the derived name on its hosting profile
+row and fails that row when it cannot be derived.
+
+The profile is *not* needed for the bot's channel/user access rules (the bot's own, above),
+for where state lives (`paths.hermes_home` is just a path — standalone installs keep their
+state in the same place with no profile at all), or for session resets (the profile
+template's daily reset is the host's own behaviour). Standalone mode needs no profile for
+the reason given in [docs/STANDALONE.md](STANDALONE.md): there is no agent behind the bot,
+so an unclaimed message simply ends.
+
 ## 1. Clone
 
 ```sh

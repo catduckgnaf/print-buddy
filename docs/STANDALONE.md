@@ -271,6 +271,13 @@ switch if you want no model calls at all.
 | Tool-call hooks (`pre_tool_call`, `post_tool_call`) | Not needed: they only guard an agent's tool calls. Kept registered for Hermes |
 | Hermes home, install script, systemd units, restart drop-in | `paths.hermes_home` is just the data folder; `scripts/install-standalone.sh` and `systemd/*.service.template` with no gateway coupling |
 
+Standalone needs no Hermes profile at all — not a dedicated one, not any other kind. That is
+not because the bot's restrictions are stronger here: it is because there is no agent behind
+the bot, so a message no handler claims simply ends instead of falling through to an
+assistant. Hermes mode keeps that fall-through on purpose, which is why it requires a
+dedicated profile — see
+[docs/INSTALL.md](INSTALL.md#why-hermes-mode-needs-a-dedicated-profile-any-name).
+
 ## Moving from Hermes
 
 1. Stop the gateway for this bot: `systemctl --user disable --now hermes-gateway` (or remove the Discord token from

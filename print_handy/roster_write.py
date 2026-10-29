@@ -160,6 +160,48 @@ def _validate_candidate(candidate, target, *, home, environ):
             os.unlink(tmp)
 
 
+# The settings file baked into the Docker image (Dockerfile: PRINT_HANDY_CONFIG=
+# /app/config/docker.yaml). It is root-owned and lives in the image, not on a
+# volume, so a write fails for the container user and would not survive a
+# container recreate even if it succeeded.
+_IMAGE_SETTINGS = Path(__file__).resolve().parent.parent / "config" / "docker.yaml"
+
+
+def _unwritable_reason(target):
+    """Why ``target`` cannot take a durable roster write, or None."""
+    try:
+        baked = target.resolve() == _IMAGE_SETTINGS
+    except OSError:
+        baked = False
+    if baked:
+        return f"{target} is the settings file baked into the Docker image"
+    if not os.access(target, os.W_OK) or not os.access(target.parent, os.W_OK):
+        return f"{target} (or its folder) is not writable by this process"
+    return None
+
+
+def write_refusal(environ=None):
+    """The refusal text when the settings file can't take a roster write, else None.
+
+    For callers that should refuse before walking anyone through a flow
+    (``/print-handy add-printer``). A missing file is not refused here:
+    ``add_printer`` names that case itself (run setup first).
+    """
+    target = settings_file_path(os.environ if environ is None else environ)
+    if target.suffix.lower() == ".toml" or not target.exists():
+        return None
+    reason = _unwritable_reason(target)
+    return str(_refusal(reason)) if reason else None
+
+
+def _refusal(reason):
+    return RosterWriteError(
+        f"{reason}, so the printer can't be added from chat. On Docker, copy the "
+        "settings file onto a mounted volume (for example /data/hermes/local.yaml), "
+        "set PRINT_HANDY_CONFIG to that path, recreate the container, then try "
+        "again, or reply `manual` for the YAML to add by hand. Nothing was changed.")
+
+
 def add_printer(new_entry, *, config_path=None, home=None, environ=None, timestamp=None):
     """Append ``new_entry`` (a roster entry dict) to the settings file's roster.
 
@@ -180,6 +222,9 @@ def add_printer(new_entry, *, config_path=None, home=None, environ=None, timesta
         raise RosterWriteError(
             f"there is no settings file at {target} yet — run `/print-handy setup` "
             "for the first printer before adding another.")
+    reason = _unwritable_reason(target)
+    if reason:
+        raise _refusal(reason)
     parsed = setup_wizard._load_for_rewrite(target.read_text(encoding="utf-8"))
     if parsed is None:
         raise RosterWriteError(
@@ -209,12 +254,18 @@ def add_printer(new_entry, *, config_path=None, home=None, environ=None, timesta
         candidate["printers"] = [_converted_first_entry(existing[0]), _file_entry(new_entry)]
         _strip_legacy(candidate)
         converted = True
-    resolved = _validate_candidate(candidate, target, home=home, environ=environ)
+    try:
+        resolved = _validate_candidate(candidate, target, home=home, environ=environ)
+    except OSError as exc:  # the temp candidate could not be created next to the file
+        raise _refusal(f"{target} could not be written ({exc.strerror or exc})") from None
     ids = [entry["id"] for entry in resolved["printers"]]
     if new_id not in ids:  # the loader resolved a different roster than was written
         raise RosterWriteError("the updated settings resolved without the new printer, "
                                "so nothing was written")
     stamp = timestamp or datetime.now().strftime("%Y%m%d-%H%M%S")
-    backup = _backup(target, stamp)
-    setup_wizard._atomic_write(target, _HEADER + setup_wizard._dump(candidate), 0o644)
+    try:
+        backup = _backup(target, stamp)
+        setup_wizard._atomic_write(target, _HEADER + setup_wizard._dump(candidate), 0o644)
+    except OSError as exc:
+        raise _refusal(f"{target} could not be written ({exc.strerror or exc})") from None
     return {"path": target, "backup": backup, "converted": converted, "printer_ids": ids}

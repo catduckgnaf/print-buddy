@@ -388,6 +388,7 @@ Secrets come from the environment only (Docker: `.env`, never committed or share
 | `DISCORD_BOT_TOKEN` | Standalone bot token. The variable name is `discord.token_env` |
 | `TELEGRAM_BOT_TOKEN` | Telegram standalone bot token. The variable name is `telegram.token_env` |
 | `MATRIX_ACCESS_TOKEN` | Matrix standalone bot access token. The variable name is `matrix.access_token_env` |
+| `MQTT_PASSWORD` | MQTT notify (#622). Never a setting. Used when `notify.mqtt_username` is set. A diagnostics bundle does not include it |
 | `WEBUI_ACCESS_TOKEN` | Optional Web UI (#286) access token, required when it binds beyond loopback. The variable name is `webui.access_token_env` |
 | `DISCORD_CLIENT_SECRET` | Live camera in Discord (#311): the Discord application's client secret, used server-side for the Activity OAuth exchange. Never a setting |
 | `LIVE_STREAM_SESSION_SECRET` | Live camera in Discord (#311): signs the Activity session markers. Never a setting |
@@ -414,6 +415,10 @@ The MakerWorld account token is not an environment variable. It is the file `~/.
 The Creality Cloud download token is likewise a file, not an environment variable: `~/.config/crealitycloud/token` (Docker: `/data/.config/crealitycloud/token`), needed only for Creality Cloud downloads; see [Creality Cloud login token](PROJECT-REFERENCE.md#creality-cloud-login-token). Thangs and Nexprint work the same way, with `~/.config/thangs/token` and `~/.config/nexprint/token` (Docker: under `/data/.config/`); see [Connecting a login-token site from chat](PROJECT-REFERENCE.md#connecting-a-login-token-site-from-chat).
 
 Direct file links — a public link straight at a `.stl` or `.3mf` file on any host, including a Dropbox share link — need no token and no setting; the fetch is guarded (public addresses only, the shared 200 MiB intake size limit) as described in [Direct file links](PROJECT-REFERENCE.md#direct-file-links).
+
+## MQTT topics (#622)
+
+Off unless `notify.mqtt_enabled` is true and `notify.mqtt_host` is set. Each event is one MQTT 3.1.1 QoS 0 publish to `<notify.mqtt_topic>/<event>`. The default root is `print-handy`, so a pause is `print-handy/paused`. The payload is one line: the printer id, when the post has one, then the same summary chat posted. Events: `print_started`, `paused`, `runout`, `watchdog_offer`, `complete`, `failed`, `spool_added`. There is no Home Assistant integration to install. A dashboard subscribes to those topics. The password is `MQTT_PASSWORD` in the environment, never in YAML and never in chat. A refused publish is logged and does not block the chat post or the print. Notifications are not printer actions. The watchdog still only notifies.
 
 ## Legacy environment names
 

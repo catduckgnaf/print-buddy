@@ -1499,6 +1499,11 @@ def new_spool_plain_text(spool):
 
 def post_new_spool_prompt(spool):
     """Post the one-time new-spool prompt; fall back to plain text if Discord refuses buttons."""
+    try:
+        from ..notify import emit
+        emit("spool_added", new_spool_plain_text(spool).splitlines()[0])
+    except Exception:
+        pass
     if _buttonless_standalone():
         return post(new_spool_plain_text(spool))
     try:

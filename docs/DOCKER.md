@@ -258,6 +258,8 @@ Use `docker/unraid/print-handy.xml`, replacing the prior three templates. One en
 
 The runtime selector `PRINT_HANDY_ORCA_CHANNEL` (Compose, `.env.example` and the template) defaults to `stable` and accepts `preview`; the pre-#600 name `alpha` is still accepted as an alias for `preview` with a startup notice, and any other value stops container startup.
 
+The container timezone `TZ` (Compose, `.env.example` and the template) defaults to `America/New_York` and takes any IANA name, for example `Europe/London`. It sets the container's local time: log timestamps, scheduled and timed features, and the bundled Spoolman's timestamps. The image ships the timezone database and points `/etc/localtime` at the default zone; a `TZ` set at runtime overrides it for every process, and an unknown name is logged at startup while the default is used instead. Print Handy's chat display times keep following `discord.timezone`, a separate setting.
+
 The template and the Compose environment also carry the feature-enabling variables (#252) — the ones that turn a feature on, as opposed to tuning settings, which stay in a mounted YAML pointed to by `PRINT_HANDY_CONFIG`:
 
 - **Camera watch:** `PRINT_HANDY__SERVICES__VISION_CHAT_URL`, `PRINT_HANDY__SERVICES__CAMERA_SNAPSHOT_URL`, `PRINT_HANDY__VISION__MODEL` and the `CLIPROXY_API_KEY` secret; see [Camera watch](#camera-watch-visual_watch).

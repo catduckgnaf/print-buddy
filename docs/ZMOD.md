@@ -99,7 +99,11 @@ downloaded print file is never sent as-is; everything is resliced locally first.
   override for printers whose ZMod was updated out of band).
 
 The package wraps the finalized `.gcode` byte-for-byte (`Metadata/plate_1.gcode`
-inside the zip, with the plate metadata and an MD5 sidecar); every check Print
+inside the zip, with the plate metadata and an MD5 sidecar). Its
+`Metadata/slice_info.config` names each used filament with its slot id, type
+and colour, plus the print time, weight and printer model, in the shape
+OrcaSlicer's own sliced export uses: that file is where ZMod reads the colours
+it maps to the IFS slots and the details Fluidd/Mainsail show. Every check Print
 Handy runs — verification, colour mapping, mesh and readiness guards — still
 runs on that `.gcode` before packaging, and the `.gcode` stays the artifact of
 record for reprints, slot remaps and print records. The job and print records

@@ -14,7 +14,12 @@ The package layout mirrors Orca's own sliced export: the finalized G-code,
 byte-identical to what the .gcode path sends, at ``Metadata/plate_1.gcode``
 with its MD5 sidecar, a ``Metadata/plate_1.json`` written from the G-code's
 own header comments, ``Metadata/slice_info.config``, and the plate previews
-when they can be produced. Same G-code in, same bytes out: the zip uses a
+when they can be produced. slice_info.config is the file ZMod actually reads:
+Klipper-side ``zmod.get_colors()`` maps each ``<filament id= type= color=>``
+of the plate to tool ``id - 1``, and ZMod's Moonraker ``ThreeMFParser`` takes
+time, weight, printer model and filament types/colours from the plate's
+metadata and filaments. A slice_info.config without them still prints, but the
+printer has no colours to map (#564 Stage 0, Q8 probe, layout A vs B). Same G-code in, same bytes out: the zip uses a
 fixed timestamp, so one slice always packs to one package.
 
 Format selection is version-aware. 3MF support is a ZMod 1.7.5 feature
@@ -159,22 +164,60 @@ def plate_metadata(text, plate=1) -> dict:
     return meta
 
 
-def _slice_info(plate, nozzle_mm):
-    nozzle = f'  <metadata key="nozzle_diameters" value="{float(nozzle_mm):g}"/>\n' if nozzle_mm else ""
+def _xml_attr(value) -> str:
+    return (str(value).replace("&", "&amp;").replace('"', "&quot;")
+            .replace("<", "&lt;").replace(">", "&gt;"))
+
+
+def _printer_model_id(text):
+    """The model id Orca's own exports carry (`AD5X`), from `; printer_model = Flashforge AD5X`."""
+    match = re.search(r"^; printer_model = (.+)$", text, re.M)
+    if not match:
+        return None
+    return re.sub(r"^flashforge\s+", "", match.group(1).strip(), flags=re.I) or None
+
+
+def _slice_info(plate, nozzle_mm, meta=None, printer_model_id=None):
+    """slice_info.config in the shape Orca's sliced export writes for one plate.
+
+    Filaments carry their 1-based slot id, so ZMod maps each to tool id - 1.
+    Like Orca, a filament the header shows as unused (0 g) is left out; when
+    the header names no usage, every filament is listed.
+    """
+    meta = meta or {}
+    rows = [f'  <metadata key="index" value="{int(plate)}"/>\n']
+    if printer_model_id:
+        rows.append(f'  <metadata key="printer_model_id" value="{_xml_attr(printer_model_id)}"/>\n')
+    if nozzle_mm:
+        rows.append(f'  <metadata key="nozzle_diameters" value="{float(nozzle_mm):g}"/>\n')
+    if meta.get("prediction") is not None:
+        rows.append(f'  <metadata key="prediction" value="{int(meta["prediction"])}"/>\n')
+    if meta.get("weight") is not None:
+        rows.append(f'  <metadata key="weight" value="{float(meta["weight"]):.2f}"/>\n')
+    for row in meta.get("filaments", []):
+        if not row.get("type") and not row.get("color"):
+            continue
+        if row.get("used_g") is not None and row["used_g"] <= 0:
+            continue
+        attrs = (f'id="{int(row["id"])}" type="{_xml_attr(row.get("type", ""))}" '
+                 f'color="{_xml_attr(row.get("color", ""))}"')
+        if row.get("used_g") is not None:
+            attrs += f' used_g="{float(row["used_g"]):.2f}"'
+        rows.append(f"  <filament {attrs}/>\n")
     return ('<?xml version="1.0" encoding="UTF-8"?>\n<config>\n <header>\n'
             '  <header_item key="X-BBL-Client-Type" value="slicer"/>\n'
             '  <header_item key="X-Print-Handy" value="zmod 3mf delivery"/>\n </header>\n <plate>\n'
-            f'  <metadata key="index" value="{int(plate)}"/>\n'
-            f'{nozzle} </plate>\n</config>\n')
+            + "".join(rows) + ' </plate>\n</config>\n')
 
 
-def package(gcode, target, plate=1, nozzle_mm=0.4, thumbnails=None) -> Path:
+def package(gcode, target, plate=1, nozzle_mm=0.4, thumbnails=None, printer_model_id=None) -> Path:
     """Write the .gcode.3mf for one validated, finalized G-code. Deterministic bytes.
 
     The inner G-code is stored byte-identical — every host-side check that ran
     on the .gcode (verification, mapping, MD5) reads the same bytes back out.
     `thumbnails` is a plate_thumbnail.Thumbnails or its images dict, as for
     delivery.bambu_package; previews are cosmetic and never required.
+    `printer_model_id` defaults to the model the G-code's own header names.
     """
     gcode = Path(gcode)
     raw = gcode.read_bytes()
@@ -182,6 +225,8 @@ def package(gcode, target, plate=1, nozzle_mm=0.4, thumbnails=None) -> Path:
     target = Path(target)
     target.parent.mkdir(parents=True, exist_ok=True)
     images = getattr(thumbnails, "images", thumbnails) or {}
+    meta = plate_metadata(text, plate)
+    model_id = printer_model_id or _printer_model_id(text)
     entries = [
         ("[Content_Types].xml", _CONTENT_TYPES.encode()),
         ("_rels/.rels", _RELS.encode()),
@@ -189,8 +234,8 @@ def package(gcode, target, plate=1, nozzle_mm=0.4, thumbnails=None) -> Path:
         (inner_name(plate), raw),
         (inner_name(plate) + ".md5", hashlib.md5(raw).hexdigest().upper().encode()),
         (f"Metadata/plate_{int(plate)}.json",
-         (json.dumps(plate_metadata(text, plate), indent=1) + "\n").encode()),
-        ("Metadata/slice_info.config", _slice_info(plate, nozzle_mm).encode()),
+         (json.dumps(meta, indent=1) + "\n").encode()),
+        ("Metadata/slice_info.config", _slice_info(plate, nozzle_mm, meta, model_id).encode()),
     ] + [(name.format(n=int(plate)), images[role])
          for role, name in _THUMBNAIL_NAMES.items() if images.get(role)]
     tmp = target.with_name(target.name + ".part")

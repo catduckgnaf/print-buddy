@@ -1156,15 +1156,22 @@ def _tower_friendly_delta(bounds, centered, bed=BED_MM):
     return centered
 
 
-def prime_tower_candidates(part_bounds, bed=BED_MM, tower=TOWER_MM, margin=TOWER_MARGIN_MM,
+def prime_tower_candidates(part_bounds, bed=None, tower=None, margin=None,
                            limit=4, spread=20):
     """Tower origins that clear every part by margin, best first.
+
+    bed, tower and margin default to the configured values at call time
+    (``printer.bed_mm``, ``prime_tower.size_mm``, ``prime_tower.part_clearance_mm``).
 
     Mesh bounds are not the whole story: Orca's tree supports flare past the
     part footprint, so the best-scoring spot can still fail Orca's G-code
     conflict check. Callers retry the next candidate; candidates are kept at
     least `spread` mm apart so a retry actually moves the tower.
     """
+    bed = BED_MM if bed is None else bed
+    tower = TOWER_MM if tower is None else tower
+    margin = TOWER_MARGIN_MM if margin is None else margin
+
     def overlaps(x, y):
         for (x0, x1), (y0, y1), _z in part_bounds:
             if x < x1 + margin and x + tower > x0 - margin and y < y1 + margin and y + tower > y0 - margin:
@@ -1183,7 +1190,7 @@ def prime_tower_candidates(part_bounds, bed=BED_MM, tower=TOWER_MM, margin=TOWER
     step = 5
     # Orca grows the tower past its nominal width (brim plus purge depth); a
     # tower flush with the bed edge slices to G-code in the unprintable area.
-    edge = int(TOWER_EDGE_MM)
+    edge = math.ceil(TOWER_EDGE_MM)
     top = bed - tower - edge
     scored = sorted(((clearance(x, y), x, y)
                      for y in range(edge, int(top) + 1, step)
@@ -1200,7 +1207,7 @@ def prime_tower_candidates(part_bounds, bed=BED_MM, tower=TOWER_MM, margin=TOWER
     return picked
 
 
-def prime_tower_xy(part_bounds, bed=BED_MM, tower=TOWER_MM, margin=TOWER_MARGIN_MM):
+def prime_tower_xy(part_bounds, bed=None, tower=None, margin=None):
     """Best axis-aligned tower origin (the old fixed (15, 150) landed inside a stencil)."""
     return prime_tower_candidates(part_bounds, bed=bed, tower=tower, margin=margin, limit=1)[0]
 

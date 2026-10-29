@@ -2518,20 +2518,20 @@ def _plates_for(source, manifest):
 
 
 def full_size_one_plate(source, state, decisions=None):
-    """A 100%-scale, one-plate rearrangement the slicer will honour exactly, or None.
+    """A 100%-scale, one-plate rearrangement the slicer will honor exactly, or None.
 
     This is the cheap first fit check after the author's layout fails the bed:
     no Orca probe runs. It answers with the planner the slice path uses, so an
     arrangement it reports is one slicing realizes:
 
-    * per-part colour decisions on a 3MF slice through the merge planner
+    * per-part color decisions on a 3MF slice through the merge planner
       (``plate_merge.plan``) with the rearrangement flag, which keeps the
       merge spacing, bed-edge margin and prime-tower room for multi-slot jobs;
-    * a single-colour or generic single-plate source slices through
+    * a single-color or generic single-plate source slices through
       ``geometry_layout.arrange_and_export``, so it is checked with
       ``probe_single_plate_rearrange`` at the same defaults.
 
-    Multi-plate single-colour sources and anything the planners cannot place
+    Multi-plate single-color sources and anything the planners cannot place
     return None, and intake falls back to the full fit search.
     """
     from . import plate_merge
@@ -2570,7 +2570,10 @@ def full_size_one_plate(source, state, decisions=None):
                 return None  # multi-plate sources slice through the merge planner, which needs decisions
         except RuntimeError:
             pass
-    plan = probe_single_plate_rearrange(source, bed=bed)
+    from .geometry_layout import DEFAULT_MARGIN_MM as arrange_edge
+    # The same margin the slice will arrange with: layout.arrange_edge_mm plus any brim.
+    plan = probe_single_plate_rearrange(source, bed=bed,
+                                        margin=arrange_edge + float(st.get('brim_override') or 0))
     if plan is None:
         return None
     return {**plan, 'via': 'arrange_and_export'}
@@ -3650,7 +3653,7 @@ def slice_job(job_path, brim_override=None, copies=None, scale=None, recipe_sha2
             placement_kw = {'fit': fit} if fit is not None else {}
             if fit is None and job.get('full_size_rearrange_plan'):
                 # A chosen 100% rearrangement that could not merge onto one
-                # multicolour bed: each slot plate is packed on its own bed
+                # multicolor bed: each slot plate is packed on its own bed
                 # (parts may turn 90 degrees) instead of keeping the
                 # author's layout, which is what overflowed the bed.
                 placement_kw = _rearranged_group_placement(src, manifest, group, int(st['bed_mm'][0]))
@@ -3769,10 +3772,13 @@ def slice_job(job_path, brim_override=None, copies=None, scale=None, recipe_sha2
     if rearrange_plan:
         from .geometry_layout import arrange_and_export
         rearrange_dir = slice_dir / "rearranged_100pct"
+        from .geometry_layout import DEFAULT_MARGIN_MM as _arrange_edge
         layout_report = arrange_and_export(
             src,
             rearrange_dir,
             bed=(float(st["bed_mm"][0]), float(st["bed_mm"][1]), float(st["max_print_height_mm"])),
+            # layout.arrange_edge_mm plus the job's brim, so the whole brim stays on the bed.
+            margin=_arrange_edge + float(brim_override or 0),
             allow_geometry_only_strip=not bool(decisions and decisions.get("mode") in ("multicolor", "per_part")),
         )
         preserved = (layout_report.get("preserved_3mf_package") or {}).get("preserved_3mf")

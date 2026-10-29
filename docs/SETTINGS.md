@@ -13,13 +13,16 @@ Schema, validation limits and TOML migration: [CONFIGURATION-YAML.md](CONFIGURAT
 |---|---|---|---|
 | `layout.single_copy_edge_mm` | `PRINT_HANDY__LAYOUT__SINGLE_COPY_EDGE_MM` | `1.0` *model* | Bed-edge clearance for one copy |
 | `layout.multi_copy_edge_mm` | `PRINT_HANDY__LAYOUT__MULTI_COPY_EDGE_MM` | `3.0` *model* | Bed-edge clearance for several copies |
-| `layout.merge_edge_margin_mm` | `PRINT_HANDY__LAYOUT__MERGE_EDGE_MARGIN_MM` | `8.0` *model* | Edge margin when merging plates |
-| `layout.merge_spacing_mm` | `PRINT_HANDY__LAYOUT__MERGE_SPACING_MM` | `10.0` *model* | Gap between merged plates' parts |
+| `layout.spacing` | `PRINT_HANDY__LAYOUT__SPACING` | `minimum` | Part gap and margin preset: `minimum`, `low`, `medium` (Standard) or `high`; fills the seven gap keys below (see [Part spacing presets](#part-spacing-presets)) |
+| `layout.arrange_gap_mm` | `PRINT_HANDY__LAYOUT__ARRANGE_GAP_MM` | `2.0` *preset* | Gap between parts rearranged onto one plate |
+| `layout.arrange_edge_mm` | `PRINT_HANDY__LAYOUT__ARRANGE_EDGE_MM` | `1.0` *preset* | Bed-edge margin for parts rearranged onto one plate (a job's brim is added on top) |
+| `layout.merge_edge_margin_mm` | `PRINT_HANDY__LAYOUT__MERGE_EDGE_MARGIN_MM` | `1.0` *preset* | Edge margin when merging plates |
+| `layout.merge_spacing_mm` | `PRINT_HANDY__LAYOUT__MERGE_SPACING_MM` | `2.0` *preset* | Gap between merged plates' parts |
 | `layout.max_merged_hours` | `PRINT_HANDY__LAYOUT__MAX_MERGED_HOURS` | `12` | Merged plates longer than this stay separate |
 | `prime_tower.size_mm` | `PRINT_HANDY__PRIME_TOWER__SIZE_MM` | `45.0` *model* | Prime tower size |
-| `prime_tower.part_clearance_mm` | `PRINT_HANDY__PRIME_TOWER__PART_CLEARANCE_MM` | `8.0` *model* | Prime tower to part clearance |
-| `prime_tower.edge_mm` | `PRINT_HANDY__PRIME_TOWER__EDGE_MM` | `10.0` *model* | Prime tower to bed edge clearance |
-| `prime_tower.merge_slack_mm` | `PRINT_HANDY__PRIME_TOWER__MERGE_SLACK_MM` | `5.0` *model* | Extra room kept for the tower when merging |
+| `prime_tower.part_clearance_mm` | `PRINT_HANDY__PRIME_TOWER__PART_CLEARANCE_MM` | `3.5` *preset* | Prime tower to part clearance |
+| `prime_tower.edge_mm` | `PRINT_HANDY__PRIME_TOWER__EDGE_MM` | `4.0` *preset* | Prime tower to bed edge clearance |
+| `prime_tower.merge_slack_mm` | `PRINT_HANDY__PRIME_TOWER__MERGE_SLACK_MM` | `1.0` *preset* | Extra room kept for the tower when merging |
 | `printer.firmware` | `PRINT_HANDY__PRINTER__FIRMWARE` | `ZMod Klipper` *model* | Firmware label shown in job summaries |
 | `printer.start_macro` | `PRINT_HANDY__PRINTER__START_MACRO` | `START_PRINT` *model* | Klipper start macro for stock Klipper models |
 | `printer.end_macro` | `PRINT_HANDY__PRINTER__END_MACRO` | `END_PRINT` *model* | Klipper end macro for stock Klipper models |
@@ -173,6 +176,32 @@ Schema, validation limits and TOML migration: [CONFIGURATION-YAML.md](CONFIGURAT
 
 **Photo label intake (#514).** When any label-reading route is available, the new-spool walkthrough's first step also offers **Use a photo of the label**. The operator sends one photo of the spool's box or sticker as the next message in the channel, and the routes are tried in a fixed order: (1) the label's own **barcode/QR code**, decoded locally with the zxing-cpp library (a runtime dependency) — deterministic data the manufacturer printed; (2) the **vision endpoint** — the same availability rule the camera watchdog uses: `PRINT_VISION_URL` set, or `services.vision_chat_url` with its key; (3) **local OCR** with the tesseract binary (installed in the shipped container image; elsewhere, install `tesseract-ocr` to enable it), matched against the known filament types and the material/colour/brand vocabulary labels are printed from. The first route that reads a complete spec wins; partial results are never merged across routes. Every route extracts the same fields — brand, material (with sub-type), colour/blend, net weight and, when printed, the recommended nozzle/bed temperatures — and the values pre-fill the walkthrough at its confirmation step, which names the route that read them. Nothing is created from a photo without that confirmation, and Edit details walks the normal steps instead. A photo no route can use refuses with the reason and falls back to the manual steps. Label temperatures are recorded on the Spoolman filament the spool is created with, so they win over material defaults exactly like temperatures entered in Spoolman itself, for every material; a filament type that already exists keeps the temperatures it already has. The photo itself is never stored or recorded: it goes only to the one route that reads it (a local decoder, a local binary, or the configured vision endpoint). With no route available the button is not offered and the walkthrough is unchanged. The guided `/spool` flow does not offer the photo step: its gateway prompts answer with buttons or text and cannot carry an attachment.
 | `cold_pull.<profile>` | file only | from the vendor profile *model* | Hot and cold cold-pull temperatures; profile names are yours |
+
+## Part spacing presets
+
+`layout.spacing` picks every part gap and margin at once. Every fit check, the automatic one-plate rearrangement, the multicolor merge (with its prime tower) and slicing use the same resolved values, so Print Handy only offers a layout the slicer will produce. A key set explicitly (in the YAML file or as its environment variable) wins over the preset; the others follow the preset.
+
+| Key | `minimum` (default) | `low` | `medium` (Standard) | `high` |
+|---|---|---|---|---|
+| `layout.arrange_gap_mm` | 2.0 | 3.5 | 5.0 | 7.5 |
+| `layout.arrange_edge_mm` | 1.0 | 3.0 | 5.0 | 7.5 |
+| `layout.merge_spacing_mm` | 2.0 | 6.0 | 10.0 | 15.0 |
+| `layout.merge_edge_margin_mm` | 1.0 | 4.5 | 8.0 | 12.0 |
+| `prime_tower.part_clearance_mm` | 3.5 | 6.0 | 8.0 | 12.0 |
+| `prime_tower.edge_mm` | 4.0 | 7.0 | 10.0 | 15.0 |
+| `prime_tower.merge_slack_mm` | 1.0 | 3.0 | 5.0 | 7.5 |
+
+`medium` is the fixed set Print Handy used before presets existed. `low` is halfway between `minimum` and `medium`, and `high` is 1.5 × `medium`, both rounded to 0.5 mm; use `high` for wide brims or warping materials.
+
+How `minimum` was measured: real Orca slices through Print Handy's own slice path, each checked by the offline G-code guard (`tests/slicer/test_spacing_minimums_real.py` re-checks them on every slicer CI run).
+
+- **Part gaps (2 mm):** Orca slices parts 0.5 mm apart, even with brims, which it merges. 2 mm keeps the first-layer squish from bridging neighboring parts.
+- **Bed edge (1 mm):** a part 0.5 mm from the edge slices and stays on the bed. Orca clips a brim at the bed edge instead of refusing the plate. When a job has a brim, its width is added to the margin so the whole brim stays on the bed.
+- **Prime tower to part (3.5 mm):** Orca reports a G-code conflict at 2.5 mm and accepts 3 mm.
+- **Prime tower to bed edge (4 mm):** the tower's brim and wipe moves leave the bed at 3 mm and fit at 3.5 mm.
+- **Tower slack (1 mm):** the reserved strip only speeds up packing; every tower position is still searched and proved.
+
+Skirts are off in the shipped profiles. If you enable one, raise the edge keys by the skirt distance plus its loops.
 
 ## Custom vision endpoint (PRINT_VISION_URL)
 

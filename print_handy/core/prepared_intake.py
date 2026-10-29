@@ -1386,7 +1386,7 @@ async def prepare_link(event, adapter, state, root, timeout=None, reuse=None, pr
             # Cheapest full-size answer first, before any Orca option search:
             # if every part fits one plate at 100% just by moving/turning
             # parts, do it and say so instead of asking. The check uses the
-            # planner the slice path uses, so the plan is one it honours.
+            # planner the slice path uses, so the plan is one it honors.
             try:
                 one_plate = await fit_status.run('trying the parts rearranged on one plate at 100%',
                                                  _heavy(mj.full_size_one_plate, path, state,
@@ -1434,11 +1434,11 @@ async def prepare_link(event, adapter, state, root, timeout=None, reuse=None, pr
             # only the options every slot plate was verified to honor.
             if (latest.get('color_decisions') or {}).get('mode') == 'per_part':
                 # The geometry-only rearrange probe does not know the
-                # multicolour merge rules (spacing, prime tower), so per-part
+                # multicolor merge rules (spacing, prime tower), so per-part
                 # jobs offer a one-plate rearrangement only when
                 # full_size_one_plate proved it above.
                 options.pop('rearrange_100', None)
-                options = await fit_status.run('checking each colour plate',
+                options = await fit_status.run('checking each color plate',
                                                _heavy(mj.per_part_fit_options, path, latest['color_decisions'], options,
                                                       int((state.get('bed_mm') or BED)[0])))
             if options.get('parts'):

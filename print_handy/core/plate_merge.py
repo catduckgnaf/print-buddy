@@ -73,13 +73,15 @@ def separate_hint(source, job=None):
     return match.group(0) if match else None
 
 
-def pack(extents, bed, spacing=SPACING_MM, edge=EDGE_MARGIN_MM, reserve_y=0.0):
+def pack(extents, bed, spacing=None, edge=None, reserve_y=0.0):
     """Shelf packing of axis-aligned (w, d) footprints. Orientation is kept.
 
     Returns {key: (x, y)} lower-left corners, or None when it does not fit.
     Both row directions are tried; the first that fits wins. reserve_y keeps a
     strip along the high Y edge free (prime tower).
     """
+    spacing = SPACING_MM if spacing is None else spacing
+    edge = EDGE_MARGIN_MM if edge is None else edge
     width = bed - 2 * edge
     depth = bed - 2 * edge - reserve_y
     if not extents:
@@ -189,12 +191,92 @@ def hull_distance(a, b):
                for i in range(len(a)) for j in range(len(b)))
 
 
+# Dense mesh hulls (hundreds of vertices) made the polygon packer's exact
+# distance checks O(n*m) per pair and took minutes (a 9-part toy model: 400 s).
+# Above this many vertices a hull is packed by an outer K-DOP: the
+# intersection of its supporting half-planes at OUTER_DOP_K evenly spaced
+# directions. It contains the hull (so any clearance it proves holds for the
+# hull too), keeps the hull's exact AABB (axis directions are included, so
+# corners and shifts are unchanged), and is at most 1/cos(pi/K) - 1 (0.5% for
+# K = 32) larger across any width.
+OUTER_DOP_VERTICES = 48
+OUTER_DOP_K = 32
+
+
+def _outer_polygon(points, k=OUTER_DOP_K):
+    """Convex polygon containing ``points``, bounded by k supporting lines."""
+    dirs = [(math.cos(2 * math.pi * i / k), math.sin(2 * math.pi * i / k)) for i in range(k)]
+    support = [max(x * ux + y * uy for x, y in points) for ux, uy in dirs]
+    out = []
+    for i in range(k):
+        (ax, ay), ha = dirs[i], support[i]
+        (bx, by), hb = dirs[(i + 1) % k], support[(i + 1) % k]
+        det = ax * by - ay * bx
+        out.append(((ha * by - hb * ay) / det, (ax * hb - bx * ha) / det))
+    # Snap the axis-aligned extremes exactly onto the points' AABB.
+    xs = [p[0] for p in points]
+    ys = [p[1] for p in points]
+    lo_x, hi_x, lo_y, hi_y = min(xs), max(xs), min(ys), max(ys)
+    return [(min(max(x, lo_x), hi_x), min(max(y, lo_y), hi_y)) for x, y in out]
+
+
+def _aabb_gap(a, b):
+    """Euclidean gap between two point sets' AABBs: a lower bound on their distance."""
+    ax0, ax1 = min(p[0] for p in a), max(p[0] for p in a)
+    ay0, ay1 = min(p[1] for p in a), max(p[1] for p in a)
+    bx0, bx1 = min(p[0] for p in b), max(p[0] for p in b)
+    by0, by1 = min(p[1] for p in b), max(p[1] for p in b)
+    dx = max(0.0, bx0 - ax1, ax0 - bx1)
+    dy = max(0.0, by0 - ay1, ay0 - by1)
+    return math.hypot(dx, dy)
+
+
+def _closer_than(a, b, limit):
+    """True when convex polygons ``a`` and ``b`` touch, overlap or are nearer than ``limit``.
+
+    Same verdict as ``hull_distance(a, b) < limit`` (limit > 0), computed
+    with pruning: separated convex polygons are nearest at a vertex of one
+    and an edge of the other, and only vertices inside the other polygon's
+    AABB grown by ``limit`` (against edges whose grown AABB holds them) can
+    be nearer than ``limit``.
+    """
+    def box(poly):
+        return (min(p[0] for p in poly), max(p[0] for p in poly),
+                min(p[1] for p in poly), max(p[1] for p in poly))
+
+    ba, bb = box(a), box(b)
+    boxes_touch = not (ba[1] < bb[0] or bb[1] < ba[0] or ba[3] < bb[2] or bb[3] < ba[2])
+    if boxes_touch and _polygons_intersect(a, b):
+        return True
+
+    def near(points, poly, pbox):
+        x0, x1, y0, y1 = pbox[0] - limit, pbox[1] + limit, pbox[2] - limit, pbox[3] + limit
+        edges = None
+        for px, py in points:
+            if not (x0 <= px <= x1 and y0 <= py <= y1):
+                continue
+            if edges is None:
+                edges = [(poly[i], poly[(i + 1) % len(poly)]) for i in range(len(poly))]
+            for (ax, ay), (bx, by) in edges:
+                if (px < min(ax, bx) - limit or px > max(ax, bx) + limit
+                        or py < min(ay, by) - limit or py > max(ay, by) + limit):
+                    continue
+                vx, vy = bx - ax, by - ay
+                denom = vx * vx + vy * vy
+                t = 0.0 if denom == 0 else max(0.0, min(1.0, ((px - ax) * vx + (py - ay) * vy) / denom))
+                if math.hypot(px - (ax + t * vx), py - (ay + t * vy)) < limit:
+                    return True
+        return False
+
+    return near(a, b, bb) or near(b, a, ba)
+
+
 def _rect_polygon(rect):
     x0, y0, x1, y1 = rect
     return [(x0, y0), (x1, y0), (x1, y1), (x0, y1)]
 
 
-def pack_polygon(hulls, bed, spacing=SPACING_MM, edge=EDGE_MARGIN_MM, reserve_y=0.0,
+def pack_polygon(hulls, bed, spacing=None, edge=None, reserve_y=0.0,
                  exclusions=(), feature=0.0, max_nodes=POLYGON_MAX_NODES):
     """Pack convex hulls onto one bed by translation only, at authored yaw.
 
@@ -217,6 +299,8 @@ def pack_polygon(hulls, bed, spacing=SPACING_MM, edge=EDGE_MARGIN_MM, reserve_y=
     invalid placement. Degenerate hulls (< 3 points) are packed by their
     AABB rectangle.
     """
+    spacing = SPACING_MM if spacing is None else spacing
+    edge = EDGE_MARGIN_MM if edge is None else edge
     if not hulls:
         return {}
     feature = float(feature)
@@ -231,6 +315,8 @@ def pack_polygon(hulls, bed, spacing=SPACING_MM, edge=EDGE_MARGIN_MM, reserve_y=
             xs = [p[0] for p in pts] or [0.0]
             ys = [p[1] for p in pts] or [0.0]
             pts = _rect_polygon((min(xs), min(ys), max(xs), max(ys)))
+        elif len(pts) > OUTER_DOP_VERTICES:
+            pts = _outer_polygon(pts)
         min_x, min_y = min(p[0] for p in pts), min(p[1] for p in pts)
         local = [(x - min_x, y - min_y) for x, y in pts]
         shapes[key] = {'local': local,
@@ -299,8 +385,13 @@ def pack_polygon(hulls, bed, spacing=SPACING_MM, edge=EDGE_MARGIN_MM, reserve_y=
             poly = valid(shape['local'], corner)
             if poly is None:
                 continue
-            if any(_polygons_overlap(poly, other)
-                   or hull_distance(poly, other) < clearance - 1e-9 for other, _c in placed):
+            # The AABB gap is a lower bound on the hull distance: a pair whose
+            # boxes already clear needs no exact check (same verdict, faster).
+            if any(_aabb_gap(poly, other) < clearance - 1e-9
+                   and (_polygons_overlap(poly, other)
+                        or (_closer_than(poly, other, clearance - 1e-9) if clearance > 1e-9
+                            else hull_distance(poly, other) < clearance - 1e-9))
+                   for other, _c in placed):
                 continue
             if any(_polygons_overlap(poly, rect)
                    or hull_distance(poly, rect) < feature - 1e-9 for rect in exclusion_polys):
@@ -455,7 +546,7 @@ def rearrange_requested(job):
     return bool(isinstance(job, dict) and job.get('full_size_rearrange_plan'))
 
 
-def pack_turned(footprints, width, depth, spacing=SPACING_MM, edge=EDGE_MARGIN_MM,
+def pack_turned(footprints, width, depth, spacing=None, edge=None,
                 max_nodes=TURNED_MAX_NODES):
     """Pack (w, d) rectangles with each one either as authored or turned 90 degrees.
 
@@ -466,6 +557,8 @@ def pack_turned(footprints, width, depth, spacing=SPACING_MM, edge=EDGE_MARGIN_M
     found within the search budget. Deterministic: largest first, authored
     orientation before the turn, bottom-left candidate corners.
     """
+    spacing = SPACING_MM if spacing is None else spacing
+    edge = EDGE_MARGIN_MM if edge is None else edge
     if not footprints:
         return {}
     keys = sorted(footprints, key=lambda k: (-(footprints[k][0] * footprints[k][1]), str(k)))
@@ -525,11 +618,22 @@ def _turned_attempt(hulls, bed, spacing, reserve):
     from .split_fit import _rotate_hull_xy
     footprints = {oid: (max(p[0] for p in h) - min(p[0] for p in h), max(p[1] for p in h) - min(p[1] for p in h))
                   for oid, h in hulls.items()}
-    attempts = ((bed - reserve, False), (bed, True)) if reserve else ((bed, False),)
-    for depth, needs_tower in attempts:
-        placed = pack_turned(footprints, bed, depth, spacing)
+    tower_key = object()
+    # The tower packed as one more rectangle, grown so any spot the packer
+    # gives it still clears parts by the tower clearance and the bed edge by
+    # the tower edge margin, plus one 5 mm step of the tower search grid.
+    grow = max(0.0, TOWER_CLEARANCE_MM - spacing, float(color_geometry.TOWER_EDGE_MM) - EDGE_MARGIN_MM)
+    tower_side = TOWER_MM + 2 * grow + 5.0
+    # Reserved strip first (the planner's usual fast path), then the tower as
+    # a packed item, then the whole bed with a tower spot searched afterwards.
+    attempts = (((bed - reserve, False, False), (bed, True, True), (bed, True, False)) if reserve
+                else ((bed, False, False),))
+    for depth, needs_tower, tower_item in attempts:
+        items = {**footprints, tower_key: (tower_side, tower_side)} if tower_item else footprints
+        placed = pack_turned(items, bed, depth, spacing)
         if placed is None:
             continue
+        placed.pop(tower_key, None)
         tower_xy = None
         if needs_tower:
             bounds = []
@@ -565,8 +669,8 @@ def _shifts(placed, boxes, extents, yaw_by_object, yaw_hulls):
     return shifts, bounds
 
 
-def arrange_group(source, object_ids, bed, spacing=SPACING_MM):
-    """Full-size placement of one single-colour plate's objects, turning any by 90 degrees.
+def arrange_group(source, object_ids, bed, spacing=None):
+    """Full-size placement of one single-color plate's objects, turning any by 90 degrees.
 
     Used when a rearranged per-part job splits by slot: each slot plate is
     packed on its own bed instead of keeping the author's layout (which is
@@ -574,6 +678,7 @@ def arrange_group(source, object_ids, bed, spacing=SPACING_MM):
     {'shifts', 'yaw_by_object', 'placed_bounds_mm'} or None when the group
     does not fit one bed at 100%.
     """
+    spacing = SPACING_MM if spacing is None else spacing
     from . import color_geometry
     object_ids = sorted({str(o) for o in object_ids}, key=lambda o: (len(o), o))
     hulls = _object_hulls_all(source, object_ids)
@@ -590,13 +695,14 @@ def arrange_group(source, object_ids, bed, spacing=SPACING_MM):
     return {'shifts': shifts, 'yaw_by_object': yaw_by_object, 'placed_bounds_mm': bounds}
 
 
-def full_size_split_possible(source, manifest, bed=None, edge=EDGE_MARGIN_MM):
+def full_size_split_possible(source, manifest, bed=None, edge=None):
     """Whether source-assigned plate groups fit individually at authored size.
 
     This is an offline geometry check for the explicit full-size split option.
     It does not imply Orca acceptance; every derived plate is still sliced and
     validated by the normal offline G-code gates.
     """
+    edge = EDGE_MARGIN_MM if edge is None else edge
     from . import color_geometry
     bed = min(_S['printer']['bed_mm']) if bed is None else bed
     try:
@@ -624,13 +730,14 @@ def full_size_split_possible(source, manifest, bed=None, edge=EDGE_MARGIN_MM):
     return True
 
 
-def plan(source, manifest, plates, slots, state, bed=None, spacing=SPACING_MM, job=None):
+def plan(source, manifest, plates, slots, state, bed=None, spacing=None, job=None):
     """Return a merge plan or a split decision with a human reason.
 
     manifest: source_colors.inventory(source); plates: model_job.plate_manifest(source)['plates'];
     slots: {part_key: slot}. Result keys: mode ('merge'|'split'), reason, shifts, ...;
     a merge proved only with turned objects also carries yaw_by_object (#221 R2b).
     """
+    spacing = SPACING_MM if spacing is None else spacing
     from . import color_geometry
     bed = int(bed or state['bed_mm'][0])
     out = {'mode': 'split', 'reason': None, 'plates_in': len(plates),
@@ -681,6 +788,18 @@ def plan(source, manifest, plates, slots, state, bed=None, spacing=SPACING_MM, j
                 tower_xy = None
             else:
                 placed = loose
+    yaw_by_object, yaw_hulls = {}, None
+    if placed is None and rearrange_requested(job):
+        # A chosen 100% rearrangement, tried before the (much slower) hull
+        # searches below: any object may turn 90 degrees in the bed plane,
+        # not only the ones that need a turn to fit alone. Same
+        # spacing, edge and tower rules; the turns flow into the same
+        # yaw_by_object + shifts channel as R2b, so slicing re-proves them.
+        hulls_all = _object_hulls_all(source, object_ids)
+        attempt = _turned_attempt(hulls_all, float(bed), spacing, reserve) if hulls_all else None
+        if attempt is not None:
+            placed, tower_xy, yaw_by_object, yaw_hulls = attempt
+            packing = 'turned'
     if placed is None:
         # Polygon fallback (#221 P1): rectangle packing failed and at least
         # one object is genuinely non-rectangular, so judge the actual hulls.
@@ -705,7 +824,6 @@ def plan(source, manifest, plates, slots, state, bed=None, spacing=SPACING_MM, j
                         tower_xy = None
                     else:
                         placed, packing = loose, 'polygon'
-    yaw_by_object, yaw_hulls = {}, None
     if placed is None:
         # Yawed merge fallback (#221 R2b): rectangle and authored hull
         # packing both failed. Pack the hulls with each solo-needing
@@ -716,16 +834,6 @@ def plan(source, manifest, plates, slots, state, bed=None, spacing=SPACING_MM, j
         if attempt is not None:
             placed, tower_xy, yaw_by_object, yaw_hulls = attempt
             packing = 'polygon'
-    if placed is None and rearrange_requested(job):
-        # A chosen 100% rearrangement: any object may turn 90 degrees in the
-        # bed plane, not only the ones that need a turn to fit alone. Same
-        # spacing, edge and tower rules; the turns flow into the same
-        # yaw_by_object + shifts channel as R2b, so slicing re-proves them.
-        hulls_all = _object_hulls_all(source, object_ids)
-        attempt = _turned_attempt(hulls_all, float(bed), spacing, reserve) if hulls_all else None
-        if attempt is not None:
-            placed, tower_xy, yaw_by_object, yaw_hulls = attempt
-            packing = 'turned'
     if placed is None:
         out['reason'] = (f'{len(extents)} parts do not fit one {bed}x{bed} mm bed with {spacing:g} mm spacing'
                          + (' and a prime tower' if reserve else '')

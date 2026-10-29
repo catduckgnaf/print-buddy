@@ -76,8 +76,19 @@ STATUS_LADDER_STAGES = (
 )
 
 DEFAULT_BED_MM = (220.0, 220.0, 220.0)
-DEFAULT_MARGIN_MM = 5.0
-DEFAULT_GAP_MM = 5.0
+
+
+def _configured_spacing():
+    """layout.arrange_edge_mm / layout.arrange_gap_mm (resolved from layout.spacing)."""
+    try:
+        from .. import settings
+        layout = settings.current()['layout']
+        return float(layout['arrange_edge_mm']), float(layout['arrange_gap_mm'])
+    except Exception:  # standalone use without a settings tree keeps the Standard values
+        return 5.0, 5.0
+
+
+DEFAULT_MARGIN_MM, DEFAULT_GAP_MM = _configured_spacing()
 DEFAULT_MAX_SEARCH_NODES = 40000
 
 

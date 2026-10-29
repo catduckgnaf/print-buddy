@@ -4,8 +4,8 @@ Live report (2026-10-29, AD5X, a 9-part Duplo swing): the author's layout did
 not fit the 220 mm bed, the fit check spent ~2.5 minutes before asking, the
 question said "does not fit ... as one plate" while offering "100% · rearrange
 1 plate", and the chosen rearrangement then failed to slice with per-part
-colours ("part group does not fit the target bed without cropping") because
-the multicolour slice path ignored the recorded plan.
+colors ("part group does not fit the target bed without cropping") because
+the multicolor slice path ignored the recorded plan.
 """
 import asyncio
 import json
@@ -103,8 +103,8 @@ def _per_part_job(tmp_path, source):
     return job_path, manifest
 
 
-def test_per_part_rearranged_job_slices_one_multicolour_plate(tmp_path, monkeypatch):
-    # The live failure: per-part colours + "100% · rearrange 1 plate" must
+def test_per_part_rearranged_job_slices_one_multicolor_plate(tmp_path, monkeypatch):
+    # The live failure: per-part colors + "100% · rearrange 1 plate" must
     # slice the rearranged plate, not the author's overflowing layout.
     source = tmp_path / 'turns.3mf'
     _turn_needed_source(source)
@@ -140,8 +140,8 @@ def test_per_part_rearranged_job_slices_one_multicolour_plate(tmp_path, monkeypa
         assert 0 <= x0 and x1 <= 220 and 0 <= y0 and y1 <= 220
 
 
-def test_per_part_rearrangement_that_cannot_share_a_plate_packs_each_colour_plate(tmp_path, monkeypatch):
-    # Six 200 mm bars in a row: two colours cannot share one bed with a prime
+def test_per_part_rearrangement_that_cannot_share_a_plate_packs_each_color_plate(tmp_path, monkeypatch):
+    # Six 200 mm bars in a row: two colors cannot share one bed with a prime
     # tower, so slicing splits by slot. Each slot plate must be packed at 100%
     # instead of keeping the author's 1.2 m layout (the live crop failure).
     source = tmp_path / 'bars.3mf'
@@ -165,7 +165,7 @@ def test_per_part_rearrangement_that_cannot_share_a_plate_packs_each_colour_plat
                 assert 0 <= x0 and x1 <= 220 and 0 <= y0 and y1 <= 220
 
 
-def test_without_a_rearrangement_the_per_slot_split_keeps_its_old_behaviour(tmp_path, monkeypatch):
+def test_without_a_rearrangement_the_per_slot_split_keeps_its_old_behavior(tmp_path, monkeypatch):
     source = tmp_path / 'bars.3mf'
     _prism_source(source, {str(i): (_rect(200, 28), 10, (i * 210, 0)) for i in range(1, 7)},
                   [[str(i) for i in range(1, 7)]])
@@ -334,10 +334,10 @@ def test_progress_falls_back_to_posting_when_an_edit_fails(monkeypatch):
 
 
 def test_duplo_shaped_per_part_job_is_rearranged_without_asking_and_slices(env, monkeypatch):
-    # End to end for the live case: per-part colours over two slots, the
+    # End to end for the live case: per-part colors over two slots, the
     # author's layout overflows the bed, every part fits one plate at 100%
     # once some are turned. No fit question, one notice line, and the real
-    # slice path (only Orca faked) exports one multicolour plate in the bed.
+    # slice path (only Orca faked) exports one multicolor plate in the bed.
     from print_handy.core import orca_adapter
     source = env.tmp / 'turns.3mf'
     _turn_needed_source(source)
@@ -372,12 +372,12 @@ def test_duplo_shaped_per_part_job_is_rearranged_without_asking_and_slices(env, 
             source_arg, folder / 'geometry.3mf', color_decisions, item_shifts=item_shifts,
             fit_by_object=fit_by_object)
         exported.append({'fit_by_object': fit_by_object, 'geometry': geometry})
-        raise RuntimeError('stop after the multicolour export')
+        raise RuntimeError('stop after the multicolor export')
     monkeypatch.setattr('print_handy.core.orca_adapter.slice_model', fake_slice_model)
     data = json.loads(job_path.read_text())
     data.pop('derived_plates', None)
     job_path.write_text(json.dumps(data))
-    with pytest.raises(RuntimeError, match='stop after the multicolour export'):
+    with pytest.raises(RuntimeError, match='stop after the multicolor export'):
         _real_slice_job(job_path)
     assert len(exported) == 1 and exported[0]['fit_by_object']
     for row in exported[0]['geometry']['parts']:
@@ -394,3 +394,115 @@ def _copy_to(src, dest):
     out = dest / 'ghost.3mf'
     out.write_bytes(Path(src).read_bytes())
     return out
+
+
+def test_pruned_hull_checks_match_the_exact_distance():
+    # The polygon packer's fast checks must give the exact verdicts.
+    import math
+    import random
+    from print_handy.core.orca_adapter import _hull
+    rng = random.Random(7)
+    for _ in range(300):
+        a = _hull([(rng.uniform(0, 60), rng.uniform(0, 60)) for _ in range(rng.randint(3, 80))])
+        dx, dy = rng.uniform(-40, 90), rng.uniform(-40, 90)
+        b = _hull([(rng.uniform(0, 50) + dx, rng.uniform(0, 50) + dy) for _ in range(rng.randint(3, 80))])
+        exact = plate_merge.hull_distance(a, b)
+        for limit in (0.5, 3.0, 10.0):
+            assert plate_merge._closer_than(a, b, limit) == (exact < limit)
+        assert plate_merge._aabb_gap(a, b) <= exact + 1e-9
+    # The outer K-DOP contains the hull and keeps its exact AABB.
+    pts = [(50 + 40 * math.cos(t / 100), 30 + 20 * math.sin(t / 100)) for t in range(628)]
+    hull = _hull(pts)
+    dop = plate_merge._outer_polygon(hull)
+    assert len(dop) == plate_merge.OUTER_DOP_K
+    for axis in (0, 1):
+        assert min(p[axis] for p in dop) == pytest.approx(min(p[axis] for p in hull))
+        assert max(p[axis] for p in dop) == pytest.approx(max(p[axis] for p in hull))
+    assert plate_merge._polygon_area(dop) >= plate_merge._polygon_area(hull)
+    assert plate_merge._polygon_area(dop) <= plate_merge._polygon_area(hull) * 1.02
+    assert all(plate_merge._polygons_intersect([p, p, p], dop) for p in hull)
+
+
+# The shipped default is the "minimum" spacing preset (the suites pin "medium"
+# for their older fixtures, see tests/conftest.py). These tests apply the
+# minimum values the way settings resolution does.
+
+def _use_spacing(monkeypatch, preset):
+    from print_handy import settings
+    values = settings.SPACING_PRESETS[preset]
+    monkeypatch.setattr(plate_merge, 'SPACING_MM', values[('layout', 'merge_spacing_mm')])
+    monkeypatch.setattr(plate_merge, 'EDGE_MARGIN_MM', values[('layout', 'merge_edge_margin_mm')])
+    monkeypatch.setattr(plate_merge, 'TOWER_CLEARANCE_MM', values[('prime_tower', 'part_clearance_mm')])
+    monkeypatch.setattr(plate_merge, 'TOWER_SLACK_MM', values[('prime_tower', 'merge_slack_mm')])
+    monkeypatch.setattr(color_geometry, 'TOWER_MARGIN_MM', values[('prime_tower', 'part_clearance_mm')])
+    monkeypatch.setattr(color_geometry, 'TOWER_EDGE_MM', values[('prime_tower', 'edge_mm')])
+
+
+# Footprints measured from the live model (MakerWorld "Duplo swing - Two seats"),
+# as rectangles; laid out by the author in one ~1.2 m row here.
+DUPLO_PARTS = [('frameLeg', 95.4, 103.6), ('frameLeg', 95.4, 103.6), ('seat-brick', 61.8, 31.8),
+               ('chain', 15.0, 87.73), ('chain', 15.0, 87.73), ('chain', 15.0, 87.73), ('chain', 15.0, 87.73),
+               ('seat-brick', 61.8, 31.8), ('double-frame', 162.0, 12.15)]
+
+
+def _duplo_source(path):
+    x, shapes = 0.0, {}
+    for i, (_name, w, d) in enumerate(DUPLO_PARTS, 1):
+        shapes[str(i)] = (_rect(w, d), 16.6, (x, 0))
+        x += w + 10
+    _prism_source(path, shapes, [[str(i) for i in range(1, len(DUPLO_PARTS) + 1)]])
+    return path
+
+
+def _slots_by_name(manifest, rule):
+    st = json.loads(STATE.read_text())
+    sel = {s: model_job.resolve_filament_selection(st, dict(st['ifs_slots'][str(s)], slot=s)) for s in (1, 2, 4)}
+    name_of = {str(i): name for i, (name, _w, _d) in enumerate(DUPLO_PARTS, 1)}
+    choices = {}
+    for part in manifest['parts']:
+        choices['part:' + part['key']] = sel[rule(name_of[str(part['object_id'])])]
+    for row in source_colors.canonical_prompts(manifest):
+        choices.setdefault(row['key'], choices.get(row['key']) or sel[1])
+    return {'schema': 'part_slots_v1', 'mode': 'per_part', 'source_sha256': manifest['source_sha256'],
+            'choices': choices}
+
+
+TWO_COLORS = lambda name: 4 if name == 'double-frame' else 1  # the live attempt
+THREE_COLORS = lambda name: 4 if name.startswith('seat') else 2 if name == 'chain' else 1
+
+
+@pytest.mark.parametrize('rule', [TWO_COLORS, THREE_COLORS], ids=['two-colors', 'three-colors'])
+def test_duplo_shape_is_one_multicolor_plate_at_the_minimum_preset(tmp_path, monkeypatch, rule):
+    # Both live forms: white + one green part (the cropping error) and three
+    # color groups (silently three per-slot plates). At the minimum preset the
+    # nine parts and a prime tower fit one bed, so the per-part job is offered,
+    # and slices, as one merged multicolor plate.
+    _use_spacing(monkeypatch, 'minimum')
+    source = _duplo_source(tmp_path / 'duplo.3mf')
+    st = json.loads(STATE.read_text())
+    decisions = _slots_by_name(source_colors.inventory(source), rule)
+    plan = model_job.full_size_one_plate(source, st, decisions)
+    assert plan and plan['via'] == 'merge_planner' and plan['part_count'] == 9
+    manifest = source_colors.inventory(source)
+    view = model_job._per_part_view(manifest, decisions)
+    verdict = plate_merge.plan(source, manifest, model_job.plate_manifest(source)['plates'],
+                               model_job._part_slots(view, manifest), st, job=FLAG)
+    assert verdict['mode'] == 'merge'
+    tower = verdict.get('prime_tower_xy_mm')
+    bounds = list(verdict['placed_bounds_mm'].values())
+    if tower:
+        size = plate_merge.TOWER_MM
+        clear = plate_merge.TOWER_CLEARANCE_MM
+        for (x0, x1), (y0, y1), _z in bounds:
+            assert (tower[0] >= x1 + clear - 1e-6 or tower[0] + size <= x0 - clear + 1e-6
+                    or tower[1] >= y1 + clear - 1e-6 or tower[1] + size <= y0 - clear + 1e-6)
+
+
+@pytest.mark.parametrize('rule', [TWO_COLORS, THREE_COLORS], ids=['two-colors', 'three-colors'])
+def test_duplo_shape_at_the_standard_preset_is_not_offered_as_one_plate(tmp_path, rule):
+    # The suites run at "medium" (Standard): 10 mm gaps, 8 mm edges and the
+    # tower clearances leave no room, so no one-plate multicolor offer exists.
+    source = _duplo_source(tmp_path / 'duplo.3mf')
+    st = json.loads(STATE.read_text())
+    decisions = _slots_by_name(source_colors.inventory(source), rule)
+    assert model_job.full_size_one_plate(source, st, decisions) is None

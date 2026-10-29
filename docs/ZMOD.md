@@ -85,6 +85,48 @@ The filament system is where they part:
   Creator 5; the print geometry and tool model are identical, and its template
   records the chamber and filtration support.
 
+## Print file format: `.gcode` or `.gcode.3mf` (#564)
+
+What reaches the printer is Print Handy's own sliced output either way — a
+downloaded print file is never sent as-is; everything is resliced locally first.
+`[printer] zmod_delivery_format` chooses the container it travels in:
+
+- **`auto` (the default)**: the sliced job is packaged as a `.gcode.3mf` when the
+  printer reports **ZMod 1.7.5 or newer**, and sent as plain `.gcode` when the
+  version is older or cannot be read.
+- **`gcode`**: always plain `.gcode`, exactly as before this setting existed.
+- **`3mf`**: always the package, even below the version floor (an operator
+  override for printers whose ZMod was updated out of band).
+
+The package wraps the finalized `.gcode` byte-for-byte (`Metadata/plate_1.gcode`
+inside the zip, with the plate metadata and an MD5 sidecar); every check Print
+Handy runs — verification, colour mapping, mesh and readiness guards — still
+runs on that `.gcode` before packaging, and the `.gcode` stays the artifact of
+record for reprints, slot remaps and print records. The job and print records
+note which format a print used.
+
+Why 3MF at all: per ZMod's own documentation for 1.7.5+, a `.gcode.3mf` makes
+colour scanning and mapping instant (the `.gcode` path's preprocessor step does
+not run), `FORCE_MD5` "only applies when sending G-code" so no MD5 pass is
+needed, and KAMP data is available instantly instead of after a scan. The floor
+is 1.7.5 because that is the release whose changelog adds 3MF colour mapping;
+below it, the same package would buy nothing and risk the older firmware
+misreading it, so `auto` stays on `.gcode` there.
+
+Two boundaries to know:
+
+- **Slot remaps happen before packaging.** Print Handy's `/print-again`
+  slot remap rewrites the `.gcode` (mapping metadata and checksum) and the
+  result is then packaged like any other job. A file already on the printer
+  can still be remapped from the printer's own screen — that is ZMod's
+  domain and works the same for both formats.
+- **Nothing here is live-hardware verified yet.** The format behaviour above
+  is pinned by offline tests and ZMod's published documentation; the
+  on-printer checks (starting a packaged print on 1.7.5, Fluidd/Mainsail
+  listing metadata, the native screen's display of a packaged print, and
+  timelapse markers inside one) are listed on issue #564 for the first
+  operator who runs them.
+
 ## Bundled Spoolman from printer Moonraker (#443)
 
 Print Handy's bundled Spoolman normally lives on loopback inside the

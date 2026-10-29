@@ -334,7 +334,9 @@ def _choice_summary(manifest, questions, choices, color_of):
     for key, selection in choices.items():
         part = parts.get(key)
         if part is not None:
-            name, hint = short_part_name(part), size_hint(part)
+            # 'Tall post ("Part 1")' -> 'Tall post': the CAD name was for the question; the size
+            # below tells same-named groups apart.
+            name, hint = re.sub(r'\s*\("[^"]*"\)$', '', short_part_name(part)), size_hint(part)
         else:  # painted region rows and anything unexpected: the question's subject
             name, hint = _QUESTION_PREFIX.sub('', questions_by_key.get(key, '')).split(' (')[0] or key, ''
         group = (name, hint, color_of(selection))

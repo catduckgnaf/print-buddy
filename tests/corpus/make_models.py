@@ -243,7 +243,7 @@ def build():
     write_3mf(cases / "needs-supports/model.3mf",
               [("T bracket", 1, t_shape(60, 12, 40, 6, 30), (80, 90))],
               [("Plate 1", [0])], [("#FFFFFF", "PLA")], support=True)
-    write_3mf(cases / "must-shrink/model.3mf", [("Big plate", 1, box(260, 260, 8), (0, 0))],
+    write_3mf(cases / "must-shrink/model.3mf", [("Big plate", 1, box(260, 260, 230), (0, 0))],
               [("Plate 1", [0])], [("#FFFFFF", "PLA")])
     write_3mf(cases / "split-plan/model.3mf",
               [("Left half", 1, box(150, 150, 10), (0, 0)), ("Right half", 1, box(150, 150, 10), (160, 0))],
@@ -265,7 +265,7 @@ def build():
     write_3mf(cases / "rotation-fit/model.3mf", [("Rotatable plate", 1, box(223, 100, 8), (0, 0))],
               [("Plate 1", [0])], [palette[0]])
     write_stl(cases / "stl-single-part/model.stl", box(30, 30, 20))
-    write_stl(cases / "stl-must-shrink/model.stl", box(260, 260, 8))
+    write_stl(cases / "stl-must-shrink/model.stl", box(260, 260, 230))
     write_stl(cases / "stl-needs-supports/model.stl", t_shape(60, 12, 40, 6, 30))
     write_stl(cases / "stl-thin-footprint/model.stl", box(8, 8, 180))
     write_stl(cases / "stl-ascii/model.stl", box(24, 18, 8), binary=False)

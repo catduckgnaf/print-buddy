@@ -2,7 +2,7 @@
 
 # Unreleased
 
-Nothing yet.
+- Fit options below 100% (live report, AD5X, a 231 x 157 x 135 mm single-body STL): the question described a turned size that fits at 96.3% but offered only "Shrink to 91.6%" and Cancel. The largest sizes that really fit are now buttons, best first (a turn or rotation, a rotation that needs supports only when it is larger than the no-support ones, and a plain shrink only when no turn beats it), and typed "shrink" or a percent resolve to them. The "type ..." hint lists only the actions offered, so it no longer says "split" when there is nothing to split, and the question shows the measured size instead of "measured dimensions unavailable". The tight-fit brim is now chosen only when the part stands on a small contact patch: a wide flat base gets no brim (it used to reserve 3 mm per side), a turned option is sized and sliced with its own brim rule rather than the authored layout's, and the 5 mm small-contact brim is budgeted into that option's size. A rotated single copy is now checked the way it is sliced (bed-centered, no re-arrange), which removes about 1 mm per side of false slack from the check. A single-body model skips the rearrange and split searches, and the convex-hull and vertex passes behind the size search are cheaper, so the check on that model drops from about 49 s to about 15 s. Cutting one oversized body into glued pieces is not built. Offline-tested; the timing and sizes above were measured with the real Orca on a development machine, not on the live bot.
 
 # Version 2.2.0
 

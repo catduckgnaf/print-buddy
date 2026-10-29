@@ -821,6 +821,54 @@ def interrupted_note(saved):
             'Print Handy stopped. That run is not reused; every choice and confirmation is asked again.')
 
 
+# Receipt statuses where Print Handy itself is working or waiting on a button it posted. A restart
+# kills the work and the buttons, so a receipt left in one of these by another process is stranded.
+IN_PROGRESS_STATUSES = frozenset({'INSPECTING_SOURCE', 'AWAITING_COLOR', 'COLORS_SAVED', 'SLICE_APPROVED'})
+INTERRUPTED_MAX_AGE_S = 24 * 3600  # older receipts are history, not a conversation someone is waiting in
+
+
+async def announce_interrupted(root, adapter, now=None):
+    """Tell each chat whose intake a restart stranded, once. Returns the intake ids announced.
+
+    Only receipts this version wrote (they carry chat_id and owner), written by another Print Handy
+    process, still in an in-progress status and recent. The receipt is marked INTERRUPTED before the post,
+    so a failing post or another restart never repeats it. Nothing is resumed: no approval survives.
+    """
+    root = Path(root)
+    now = time.time() if now is None else now
+    announced = []
+    try:
+        paths = sorted(root.glob('*.json'))
+    except OSError:
+        return announced
+    for path in paths:
+        try:
+            receipt = json.loads(path.read_text())
+            age = now - path.stat().st_mtime
+        except (OSError, ValueError):
+            continue
+        if (not isinstance(receipt, dict) or receipt.get('status') not in IN_PROGRESS_STATUSES
+                or not receipt.get('chat_id') or receipt.get('owner') in (None, owned_worker._OWNER)
+                or receipt.get('interrupted_notified') or age > INTERRUPTED_MAX_AGE_S):
+            continue
+        receipt.update(status='INTERRUPTED', interrupted_notified=True, interrupted_from=receipt['status'])
+        try:
+            path.write_text(json.dumps(receipt, indent=2) + '\n')
+        except OSError:
+            continue
+        thread = receipt.get('thread_id')
+        try:
+            await adapter.send(
+                chat_id=str(receipt['chat_id']), metadata={'thread_id': thread} if thread else None,
+                content='Print Handy restarted while it was preparing that model, so the preparation '
+                        'stopped. No slice was finished, and nothing was uploaded or started. '
+                        'Send the link or file again to start over.')
+        except Exception:
+            logger.warning('could not post the interrupted-intake note', exc_info=True)
+        announced.append(receipt.get('intake_id') or path.stem)
+    return announced
+
+
 _LIVE_KEY = contextvars.ContextVar('prepared_intake_live_key', default=None)
 
 
@@ -1200,7 +1248,9 @@ async def prepare_link(event, adapter, state, root, timeout=None, reuse=None, pr
     origin = (url or (f'reprint:{reuse.get("intake_id")}' if reuse else None)
               or f'upload:{upload_job(upload)["sources"][0]["name"]}')
     receipt = {'intake_id': iid, 'url': origin, 'status': 'INSPECTING_SOURCE',
-               'sliced': False, 'uploaded': False, 'started': False}
+               'sliced': False, 'uploaded': False, 'started': False,
+               'chat_id': str(source.chat_id), 'thread_id': str(source.thread_id) if source.thread_id else None,
+               'owner': owned_worker._OWNER}
     try:
         with receipt_path.open('x') as f:
             json.dump(receipt, f)

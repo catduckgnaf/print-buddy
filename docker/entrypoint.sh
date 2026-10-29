@@ -34,6 +34,10 @@ case "$channel" in
         ;;
 esac
 export PRINT_HANDY_ORCA_CMD="$selected"
+# Thread pools follow a cgroup CPU quota (or PRINT_HANDY_THREADS) when one exists; with neither,
+# nothing is exported and pools keep their defaults. A quota does not shrink the CPU count that
+# BLAS and OpenMP see, so without this they size to every host CPU.
+if limits="$(python3 /app/print_handy/core/resources.py --exports 2>/dev/null)"; then eval "$limits"; fi
 # xvfb-run owns its display and cleanup; no fixed display or procps dependency.
 if [[ ( -x "$selected" || -x /usr/bin/bambu-studio ) && -z "${DISPLAY:-}" ]]; then
     exec xvfb-run -a -s '-screen 0 1024x768x24' "$@"

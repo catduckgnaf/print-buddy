@@ -34,6 +34,8 @@ def _plain(value):
 def main():
     # Works as `python3 -m print_handy.core.heavy_worker` or as a plain script path.
     sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+    from print_handy.core import resources
+    resources.apply_to_environment()  # before numpy loads: BLAS/OpenMP pools follow the CPU quota
     request = json.loads(sys.stdin.read())
     key = (request['module'], request['func'])
     if key not in ALLOWED:

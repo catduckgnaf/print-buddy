@@ -119,6 +119,8 @@ _SITE_CREDENTIALS = (
     ("Nexprint", "Nexprint login token", "Nexprint login token"),
 )
 
+_PID_LIMIT_PHRASE = "container is at its process limit"
+
 _CREDENTIAL_CUES = ("token", "api key", "app token", "credentials", "nickname")
 _CREDENTIAL_PROBLEMS = ("need", "missing", "empty", "refused", "401", "403",
                         "must contain", "invalid", "expired", "no api key",
@@ -148,6 +150,16 @@ def known_cause(exc: BaseException) -> KnownCause | None:
     """
     text = str(exc or "")
     low = text.lower()
+    # The container's PID limit (print_handy.core.resources). Matched on the stable phrase as well as
+    # the type, because a worker process reports its failure to the parent as message text only.
+    if type(exc).__name__ == "ResourceLimitError" or _PID_LIMIT_PHRASE in low:
+        return KnownCause(
+            Category.CONFIGURATION,
+            "The container hit its process limit (PID limit), so the slicer or a worker "
+            "could not start.",
+            "Remove the PID limit from the container (--pids-limit in the Unraid Extra "
+            "Parameters, pids_limit in Compose) or raise it to 4096 or more, restart the "
+            "container, then try again. `python3 -m print_handy.doctor` shows the current usage.")
     for site, gap in _SITE_DOWNLOAD_GAPS:
         if site.lower() in low and "cannot download" in low:
             return KnownCause(

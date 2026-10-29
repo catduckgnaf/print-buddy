@@ -18,6 +18,8 @@ import uuid
 import weakref
 from pathlib import Path
 
+from . import resources
+
 DEADLINE_S = 60 * 60      # upper bound for one heavy step; slice_job may run Orca (600 s limit) per plate
 GRACE_S = 10.0            # between SIGTERM and SIGKILL
 REAP_S = 10.0             # after SIGKILL, before the stop is reported unconfirmed
@@ -178,9 +180,16 @@ def _write_record(path, data):
 async def run(argv, payload, *, label, lane, cwd=None, record=None):
     """Run argv with payload on stdin; return (stdout, stderr). Raises WorkerError when stopped early."""
     async with lane.slot():
-        proc = await asyncio.create_subprocess_exec(
-            *argv, cwd=cwd, start_new_session=True,
-            stdin=asyncio.subprocess.PIPE, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
+        try:
+            proc = await asyncio.create_subprocess_exec(
+                *argv, cwd=cwd, start_new_session=True, env=resources.child_env(),
+                stdin=asyncio.subprocess.PIPE, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
+        except OSError as exc:
+            # EAGAIN here is the container's PID limit, not a transient hiccup: name it.
+            limit = resources.explain_spawn_failure(exc)
+            if limit is not None:
+                raise WorkerError(f'{label} could not start: {limit}') from exc
+            raise
         _LIVE[proc.pid] = proc
         how, started = None, time.time()
         try:

@@ -48,6 +48,16 @@ Real slicer checks require a compatible OrcaSlicer installation and are enabled 
 
 Report which checks you actually ran and their result in the pull request. Clearly identify checks not run and why. Do not describe a pending CI job as passing.
 
+### US spelling in prose
+
+Prose in this repository uses American spellings for the color/honor family: color, honor, behavior, not the British forms. The `spelling` CI job runs `scripts/check_us_spelling.py`, which scans only the lines a pull request adds to Markdown files, plus the PR description, and fails with the American replacement for each British form it finds. Text a change does not touch is never scanned, and code identifiers are not prose. The word list lives in one place, `BRITISH_TO_US` in the script. Run it locally before pushing:
+
+```bash
+python3 scripts/check_us_spelling.py --base origin/main
+```
+
+A line that must keep a British spelling (quoted upstream text, an exact identifier) carries an HTML comment naming the allowed word: `<!-- us-spelling: allow colour -->` allows that word on that line, and a bare `<!-- us-spelling: allow -->` allows every listed word on the line. <!-- us-spelling: allow -->
+
 ## Open a pull request
 
 - Open a pull request against `main` and use the repository pull request template.

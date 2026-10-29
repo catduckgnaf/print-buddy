@@ -160,7 +160,15 @@ def _cached_maker_source(instance_id):
 def _reuse_cached(cached, target, site):
     target.mkdir(parents=True, exist_ok=True)
     dest=target/cached.name
-    if dest.resolve()!=cached.resolve(): shutil.copy2(cached, dest)
+    if not (dest.exists() and os.path.samefile(dest, cached)):
+        # A hard link, not a copy: every resend of the same model used to add a full copy to the
+        # archive. The source is never edited in place (its SHA-256 binds every later step). An
+        # existing dest is removed first, never written through, so a linked file is never truncated.
+        dest.unlink(missing_ok=True)
+        try:
+            os.link(cached, dest)
+        except OSError:  # another filesystem, or links unsupported
+            shutil.copy2(cached, dest)
     print(f"SOURCE REUSED: {cached} (already downloaded; {site} not contacted)")
     return dest
 
@@ -540,7 +548,7 @@ def _timing(job_path, stage, **extra):
     """Launch latency instrumentation: append one line to <job>/TIMING.jsonl. Never raises."""
     try:
         line={"stage":stage,"t":round(time.time(),3),"pid":os.getpid(),**extra}
-        print("TIMING "+json.dumps(line), flush=True)
+        logger.debug("TIMING %s", json.dumps(line))  # stdout stays clean in production logs
         if job_path is not None:
             with (Path(job_path).parent/"TIMING.jsonl").open("a") as out: out.write(json.dumps(line)+"\n")
     except Exception:
@@ -949,13 +957,13 @@ def _build_position_labels(selections, noun):
     counts = {}
     for s in selections:
         c_title = format_color_title(s.get('color'))
-        mat = str(s.get('material', '')).strip()
+        mat = printer_state.display_material(s.get('material', ''))
         name = c_title if mat and c_title.casefold().endswith(mat.casefold()) else f'{c_title} {mat}'.strip()
         counts[name] = counts.get(name, 0) + 1
     labels = []
     for s in selections:
         c_title = format_color_title(s.get('color'))
-        mat = str(s.get('material', '')).strip()
+        mat = printer_state.display_material(s.get('material', ''))
         name = c_title if mat and c_title.casefold().endswith(mat.casefold()) else f'{c_title} {mat}'.strip()
         if counts[name] > 1:
             labels.append(f'{name} ({noun} {s["slot"]})')

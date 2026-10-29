@@ -251,7 +251,7 @@ Each printer's runtime state lives in its own folder, `state/printers/<id>/` und
 | `printers.id` | file only | — | Required. The printer's stable identity: a slug of `a-z`, `0-9`, `-` and `_` starting with a letter or digit, unique in the list. Renaming an `id` makes it a different printer as far as its state is concerned |
 | `printers.model` | file only | — | Required. A registry model key, spelled exactly as `printer.model` |
 | `printers.name` | `PRINT_HANDY__PRINTERS__<ID>__NAME` | — | Display name for this printer; defaults to the name the model's own defaults give `printer.name` |
-| `printers.chat_id` | `PRINT_HANDY__PRINTERS__<ID>__CHAT_ID` | — | This printer's channel on the platform the bot runs (Discord channel ID, Telegram chat ID, or Matrix room ID); empty falls back to that platform's global chat. Two entries may not claim the same channel |
+| `printers.chat_id` | `PRINT_HANDY__PRINTERS__<ID>__CHAT_ID` | — | This printer's channel on the platform the bot runs (Discord channel ID, Telegram chat ID, or Matrix room ID); empty falls back to that platform's global chat. Two or more entries claiming the same channel make it a shared channel that asks which printer (see **Shared channels (#536)** above) |
 | `printers.moonraker_url` | `PRINT_HANDY__PRINTERS__<ID>__MOONRAKER_URL` | — | This entry's `services.moonraker_url`; must be empty for offline, Bambu LAN, stock Flashforge, PrusaLink and SDCP models |
 | `printers.moonraker_ws_url` | `PRINT_HANDY__PRINTERS__<ID>__MOONRAKER_WS_URL` | — | This entry's `services.moonraker_ws_url`; derived from `moonraker_url` when empty |
 | `printers.octoprint_url` | `PRINT_HANDY__PRINTERS__<ID>__OCTOPRINT_URL` | — | This entry's `services.octoprint_url`, for OctoPrint models |

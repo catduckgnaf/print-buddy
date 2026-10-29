@@ -3,11 +3,10 @@
 Each provider uses the JSON API its own web app calls. Verified live on
 2026-10-29: the anonymous legs (model detail and file list) of all three;
 each download gate refusing a tokenless or bogus-token request; a real
-Nexprint download with an operator token (the presigned-URL answer below
-has that live shape); and MakerOnline refusing every download ("system
-busy") with a valid token but no browser fingerprint token, which is why
-MakerOnline is inventory-only. Thangs' download success shape comes from
-its web client's code and is unverified until the first operator download.
+Nexprint and a real Thangs download with operator tokens (the success
+answers below have those live shapes); and MakerOnline refusing every
+download ("system busy") with a valid token but no browser fingerprint
+token, which is why MakerOnline is inventory-only.
 """
 import asyncio
 import base64
@@ -255,8 +254,9 @@ def test_thangs_download_unpacks_the_chosen_part(home, monkeypatch, tmp_path):
         archive.writestr('Nimitz Benchy/Nimitz_Class_Benchy_V1.3.stl', b'solid b\n')
     calls = []
     monkeypatch.setattr(model_job, '_web_api', web_fake({'/download-url': (200, {
-        'signedUrl': 'https://storage.example/model.zip', 'fileName': 'model.zip',
-        'userDownloadData': {'downloadLimitReached': False}})}, calls))
+        'fileName': 'Nimitz Benchy', 'modelSource': '0', 'downloadId': '27975304',
+        'signedUrl': 'https://storage.googleapis.com/thangs-thumbnails/production/'
+                     'f543a901/Nimitz_Benchy.zip?X-Goog-Signature=1'})}, calls))
     fake_file_download(monkeypatch, buffer.getvalue())
     job = _thangs_job()
     dest = model_job.thangs_download(job, job['sources'][1], tmp_path/'src')

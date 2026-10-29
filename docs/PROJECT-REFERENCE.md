@@ -244,7 +244,7 @@ mkdir -p ~/.config/thangs && chmod 700 ~/.config/thangs
 (umask 077 && cat > ~/.config/thangs/token)   # paste the accessToken cookie value, press Enter, then Ctrl-D
 ```
 
-Thangs downloads a whole model, never a single part. When the answer is a zip, Print Handy keeps only the part you chose. Membership models and store items are marked in the model lookup. Downloading one needs a matching Thangs membership or purchase on the signed-in account; Print Handy never buys or unlocks a model, and a refusal says so. Free Thangs accounts have a daily download limit, which is named plainly when reached. Thangs uses short-lived login tokens with a refresh step that Print Handy does not perform, so expect to reconnect from time to time.
+Thangs downloads a whole model, never a single part. When the answer is a zip, Print Handy keeps only the part you chose. Membership models and store items are marked in the model lookup. Downloading one needs a matching Thangs membership or purchase on the signed-in account; Print Handy never buys or unlocks a model, and a refusal says so. Free Thangs accounts have a daily download limit, which is named plainly when reached. Thangs login tokens last 7 days (observed 2026-10-29: the token's own `exp` claim is 7 days after it was issued), and Print Handy does not perform the site's refresh step, so expect the bot to offer the connect flow about once a week. The expiry is checked locally, so an expired token is named as expired before any request is sent.
 
 ### Nexprint login token
 
@@ -257,7 +257,7 @@ mkdir -p ~/.config/nexprint && chmod 700 ~/.config/nexprint
 
 Both the designer's own STL/3MF files and the model's print-setting 3MF projects are offered; a setting project is labeled with its setting name. Nexprint's download limits are named when reached. Only the `.com` site is supported, not `nexprint.cn`.
 
-Live status: on 2026-10-29 the Thangs and Nexprint model lookups and file lists were verified against the live APIs, and both download endpoints were verified to refuse a request with no token or a made-up one. A Nexprint download with a real operator token was verified the same day (a binary STL, byte-for-byte the size the listing reported). The Thangs download has **not** been verified live yet; the first download with a token file in place verifies it, and if the answer carries no file URL Print Handy says so plainly instead of guessing.
+Live status: verified end to end on 2026-10-29 with operator tokens. For both sites the model lookup and file list answered without a login, the download endpoint refused a request with no token or a made-up one, and a real download succeeded: Nexprint returned the chosen STL directly (byte-for-byte the size the listing reported), and Thangs returned a zip of the whole model that Print Handy unpacked to the chosen part. Both files were valid STLs.
 
 ### MakerOnline (inventory only)
 

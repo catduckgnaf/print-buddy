@@ -787,9 +787,9 @@ def crealitycloud_download(job, source, target):
 # copies from their signed-in browser into ~/.config/<site>/token. No
 # password is stored, no captcha is solved, and no site check is bypassed:
 # a robot check or captcha answer is a plain stop. Verified live 2026-10-29
-# for the anonymous legs and for each download gate refusing a tokenless
-# request; the download success shapes come from each web client's own code
-# and are parsed defensively, refusing with a named gap instead of guessing.
+# end to end for Thangs and Nexprint with operator tokens (inventory, the
+# tokenless refusal, and a real download); answers are still parsed
+# defensively, refusing with a named gap instead of guessing.
 # ---------------------------------------------------------------------------
 
 def _web_api(method, url, *, body=None, headers=None, timeout=25):
@@ -979,7 +979,9 @@ def thangs_download(job, source, target):
     from .site_accounts import read_token, refused
     token = read_token("thangs")
     # Thangs downloads a whole model, never one part: the web client asks
-    # for this signed URL and loads it. A multi-part answer is a zip that
+    # for this signed URL and loads it. Verified live 2026-10-29 with an
+    # operator token: the answer is {fileName, signedUrl, modelSource,
+    # downloadId}, and signedUrl is a signed zip of the whole model, which
     # _fetch_chosen unpacks to the chosen part.
     status, d = _web_api("GET", f"{THANGS}/api/v2/models/{job['model_id']}/download-url",
                          headers={"Authorization": f"Bearer {token}"})

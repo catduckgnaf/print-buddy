@@ -33,6 +33,55 @@ def ok_probe(answers):
     return guided.ProbeOutcome(True, "the printer answered")
 
 
+def _review_session(probe):
+    return {
+        "status": "onboard_review",
+        "ob_step": 0,
+        "ob_keys": ["model", "name"],
+        "ob_answers": {
+            "name": "Bench",
+            "printer_id": "bench",
+            "model": "flashforge.ad5x",
+            "moonraker_url": "http://printer.local:7125",
+            "probe": probe,
+        },
+    }
+
+
+def test_review_shows_moonraker_geometry_without_rewriting_or_writing():
+    shown = _review_session({
+        "ok": True, "summary": "Moonraker answered",
+        "geometry": {"nozzle_mm": 0.4, "bed_mm": [220, 220], "max_z_mm": 220},
+    })
+    text = guided._onboard_review_text(shown)
+    assert "nozzle 0.4 mm" in text and "bed 220 x 220 mm" in text and "max Z 220 mm" in text
+    assert "not a tuned profile" in text
+    assert "Geometry:" not in text
+    assert "Nothing has been written yet" in text
+    assert shown["ob_answers"]["model"] == "flashforge.ad5x"
+
+    mismatch = _review_session({
+        "ok": True, "summary": "Moonraker answered",
+        "geometry": {"nozzle_mm": 1.2, "bed_mm": [100, 100], "max_z_mm": 80},
+    })
+    warned = guided._onboard_review_text(mismatch)
+    assert "nozzle 1.2" in warned and "generic Klipper" in warned and "Apply still uses" in warned
+    assert mismatch["ob_answers"]["model"] == "flashforge.ad5x"
+    entry = guided._onboard_entry(mismatch["ob_answers"])
+    assert entry["model"] == "flashforge.ad5x"
+    assert "nozzle_mm" not in entry
+
+    failed = _review_session({
+        "ok": True, "summary": "Moonraker answered",
+        "geometry_error": "the printer config did not include nozzle, bed, or Z",
+    })
+    named = guided._onboard_review_text(failed)
+    assert "could not read nozzle, bed, or Z" in named
+    assert "Nothing has been written yet" in named
+    assert "Geometry:" not in named
+
+
+
 def start(store_obj, **kwargs):
     kwargs.setdefault("config_loader", loader)
     return say(store_obj, "/print-handy add-printer", **kwargs)

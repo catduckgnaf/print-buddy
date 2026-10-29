@@ -98,6 +98,11 @@ until `apply` at the review step.
 5. **Live connection test** — before anything is saved, the flow tests the real connection
    with the lightest proof the printer's kind offers (a Moonraker info read, a Bambu state
    snapshot, the SDCP status read that also discovers the printer's board id, and so on).
+   A Moonraker test also reads nozzle diameter, bed size, and maximum Z from the printer
+   config. A failed geometry read is named on the review and does not fail the connection.
+   When those numbers disagree with the model you picked, the review warns and names the
+   generic Klipper profile as an alternative. It does not change the model. Apply still
+   uses the model you picked.
    A failure says why and offers `retry`, `back` to the step that failed, or `offline` to
    save the printer unverified instead.
 6. **Review and `apply`** — the review names the printer, its id, its connection and whether

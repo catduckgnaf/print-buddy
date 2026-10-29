@@ -72,6 +72,21 @@ def _http_get_json(url, *, headers=None, timeout_s, opener):
     return getattr(resp, "status", 200), json.loads(body.decode("utf-8", "replace"))
 
 
+def _moonraker_geometry(url, headers, timeout_s, opener):
+    """Best-effort nozzle, bed, and max Z. A failed read never fails the probe."""
+    from .printer_geometry import from_configfile
+    try:
+        _status, payload = _http_get_json(
+            url + "/printer/objects/query?configfile",
+            headers=headers, timeout_s=timeout_s, opener=opener)
+    except Exception:
+        return None, "the printer config did not include nozzle, bed, or Z"
+    found = from_configfile(payload)
+    if found.get("error"):
+        return None, found["error"]
+    return found, ""
+
+
 def _probe_moonraker(fields, secrets, timeout_s, opener):
     url = str(fields.get("moonraker_url") or "").strip().rstrip("/")
     if not url:
@@ -96,6 +111,11 @@ def _probe_moonraker(fields, secrets, timeout_s, opener):
     if not isinstance(result, dict):
         return _fail("protocol", f"the answer from {url}/printer/info carried no printer info")
     detail = {k: result[k] for k in ("hostname", "software_version") if result.get(k)}
+    geometry, geometry_error = _moonraker_geometry(url, headers, timeout_s, opener)
+    if geometry:
+        detail["geometry"] = geometry
+    if geometry_error:
+        detail["geometry_error"] = geometry_error
     bits = [str(detail[k]) for k in ("hostname", "software_version") if k in detail]
     summary = f"Moonraker at {url} answered /printer/info" + (f" — {', '.join(bits)}" if bits else "")
     return ProbeResult(ok=True, summary=summary, detail=detail)

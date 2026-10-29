@@ -15,6 +15,9 @@ step) serving:
   AI design sessions (#388, stage 3;
   :mod:`print_handy.webui.designs`), with per-session file downloads
   under ``GET /designs/<id>/<scad|stl|preview>``.
+- ``GET /layers`` and ``GET /layers/<job>/<file>`` — a read-only view of
+  one sliced plate (#624; :mod:`print_handy.webui.layers`). No print,
+  pause, or exclude control, and nothing here changes chat confirm.
 
 Unknown GET paths are 404. Writes happen only through the config page's
 two POSTs (``POST /config/preview`` renders the diff and writes nothing;
@@ -73,6 +76,7 @@ from .. import settings
 from ..bot import health as bot_health
 from . import config as config_api
 from . import designs as designs_module
+from . import layers as layers_module
 from . import pages
 from . import status as status_module
 
@@ -219,7 +223,8 @@ def render_status_html(snap, form_token=""):
             f"<p>Overall: {'ok' if snap['ok'] else 'attention needed'} (read-only page; "
             "settings are changed on the <a href=\"/config\">configuration page</a>, "
             "which writes the YAML settings file; AI designs are listed on the "
-            "<a href=\"/designs\">designs page</a>)</p>"
+            "<a href=\"/designs\">designs page</a>; sliced plates are on the "
+            "<a href=\"/layers\">layers page</a>)</p>"
             f"<table>{main_rows}</table>"
             + roster_table
             + (f"<h2>Services</h2><table>{services}</table>" if services else "")
@@ -386,10 +391,19 @@ class _Handler(BaseHTTPRequestHandler):
                            "text/html; charset=utf-8")
             elif path.startswith("/designs/"):
                 self._design_route(path[len("/designs/"):])
+            elif path == "/layers" or path.startswith("/layers/"):
+                archive = layers_module.archive_root(self.server.settings_data)
+                rest = path[len("/layers/"):] if path.startswith("/layers/") else ""
+                layer = (parse_qs(urlparse(self.path).query).get("layer") or ["0"])[0]
+                code, content_type, body = layers_module.respond(archive, rest, layer)
+                if content_type.startswith("text/html"):
+                    self._send(code, body, content_type)
+                else:
+                    self._json(code, body)
             else:
                 self._json(404, {"ok": False,
                                  "reason": "try /, /api/status, /healthz, /config, "
-                                           "/designs or /login"})
+                                           "/designs, /layers or /login"})
         except Exception as exc:  # a broken snapshot is a 500, never a dropped connection
             self._json(500, {"ok": False, "reason": f"{type(exc).__name__}: {exc}"})
 

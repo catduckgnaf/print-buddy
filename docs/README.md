@@ -18,7 +18,7 @@ Do not run both Discord modes with the same token. Installing, enabling services
 
 - [YAML configuration and TOML migration](CONFIGURATION-YAML.md): schema, precedence and safety limits.
 - [Guided setup and debugging in Discord](GUIDED-SETUP-DEBUGGING.md): the `/print-handy setup` checklist (resumable, consent-gated, never collects the token) and the read-only, redacted `/print-handy debugging` checks.
-- [Web UI](WEBUI.md): the optional, off-by-default status page and picker configuration page that writes the same YAML settings file.
+- [Web UI](WEBUI.md): the optional, off-by-default local page — status and doctor checks, the picker that writes the same YAML settings file, the read-only designs catalog, and a read-only sliced-layer view. It does not start a job.
 - [Live camera in Discord](DISCORD-BOT-SETUP.md#7-live-camera-activity-optional-311): the optional Discord Activity live view (#311) — Developer Portal and named-tunnel setup, allowlist, privacy notes, and the honest verification status (the live spike has not run).
 - [Settings reference](SETTINGS.md): every setting with its YAML key, environment variable and Docker value, plus Docker build arguments and secrets.
 - [Detailed project reference](PROJECT-REFERENCE.md): workflow examples, commands, printer models, spool identity rules, monitoring and updates.

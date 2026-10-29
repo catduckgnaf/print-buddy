@@ -20,9 +20,9 @@ import xml.etree.ElementTree as ET
 from pathlib import Path
 from typing import Any, NamedTuple
 
-from .. import printers, settings
+from .. import firmware_update, printers, settings
 from ..printers.base import MultiColorUnsupported
-from . import _external, launch_state, printer_state, spoolman_client
+from . import _external, gcode_3mf, launch_state, printer_state, spoolman_client
 
 logger = logging.getLogger(__name__)
 
@@ -1734,6 +1734,8 @@ def record_start(gcode_path, moonraker_name=None, started_at=None):
         ctx['slicer_settings']['mapped_materials'] = {
             tool: st['ifs_slots'][str(slot)] for tool, slot in mapped.items()}
         ctx['printer_profile'] = 'Reviewed Orca AD5X native multicolor'
+    if (job or {}).get('delivery_format'):
+        ctx['delivery_format'] = job['delivery_format']
     ctx["record_path"]=print_records.write_start_record(ctx)
     record_path=ctx["record_path"]
     try: side=json.loads(CONTEXT.read_text())
@@ -3830,6 +3832,62 @@ def remote_name(gcode, sha, job=None):
     return f"{stem}_{sha}{g.suffix}"
 
 
+def _zmod_version(st):
+    """Installed ZMod version tuple from Moonraker's update status, or None (#564).
+
+    Fail-soft by design: any transport or parse problem is "unknown", never an
+    error — auto format resolution treats unknown as plain .gcode.
+    """
+    try:
+        status = firmware_update.fetch_status(lambda _method, path: _mr(st, path))
+    except Exception:
+        return None
+    return gcode_3mf.version_from_status(status)
+
+
+def _note_delivery_format(job, job_path, note):
+    """Persist the resolved delivery format on the job so record_start lifts it
+    into the print record (#564). Best effort: a failed note never blocks a print."""
+    if not isinstance(job, dict) or not job_path:
+        return
+    try:
+        job["delivery_format"] = note
+        write_job(Path(job_path).parent, job)
+    except Exception as exc:
+        logger.warning("could not record delivery format: %s", exc)
+
+
+def _zmod_upload_artifact(adapter, st, g, sha, remote):
+    """Resolve the Moonraker upload artifact for a Flashforge/ZMod print (#564).
+
+    Returns (upload_path, upload_sha256, remote, note). The default — and every
+    fallback — is the plain finalized .gcode exactly as before. When the
+    printer's zmod_delivery_format resolves to 3mf, the finalized G-code is
+    packaged as .gcode.3mf next to itself: the upload checksum becomes the
+    PACKAGE's sha256 (Moonraker verifies it against the uploaded bytes), while
+    the remote name keeps the G-code's stem+sha with a .3mf suffix so
+    find_job/record binding is unchanged. All verification has already run on
+    the .gcode by the time this is called; nothing here re-checks or alters it.
+    Callers note the returned note on the job once the upload verifies.
+    """
+    setting = str(adapter.config.get("printer", {}).get("zmod_delivery_format") or "gcode").strip().casefold()
+    if getattr(getattr(adapter, "model", None), "vendor_key", None) != "flashforge":
+        return g, sha, remote, None
+    version = _zmod_version(st) if setting == "auto" else None
+    fmt, reason = gcode_3mf.resolve_format(setting, version)
+    if fmt != "3mf":
+        return g, sha, remote, None
+    nozzle = (st.get("nozzle") or {}).get("diameter_mm")
+    package = gcode_3mf.package(g, gcode_3mf.package_path_for(g),
+                                nozzle_mm=float(nozzle) if isinstance(nozzle, (int, float)) else None)
+    note = {"format": "3mf", "setting": setting, "reason": reason,
+            "zmod_version": ".".join(map(str, version)) if version else None,
+            "package_sha256": file_sha256(package)}
+    packaged_remote = remote[:-len(".gcode")] + ".gcode.3mf" if remote.endswith(".gcode") else remote + ".3mf"
+    print(f"DELIVERY FORMAT: .gcode.3mf ({reason})", flush=True)
+    return package, note["package_sha256"], packaged_remote, note
+
+
 def _announce_print_name(st, job, slots=None, gcode=None):
     """Best effort: publish "<title> (<colors>)" as Klipper display_status.message.
 
@@ -4446,6 +4504,7 @@ def print_mapped_native(g, st, mesh, mapping, job, job_path, wait_s, reprint):
                 raise RuntimeError(f'T{tool} slot {slot} occupancy is unknown or unconfirmed')
     sha = file_sha256(g)
     remote = remote_name(g, sha, job)
+    upload_path, upload_sha, remote, delivery = _zmod_upload_artifact(adapter, st, g, sha, remote)
     lease = launch_state.acquire(_printer_key(st, job), job_json=job_path, gcode_sha256=sha, remote=remote,
                                  observed_file=(status.get('print_stats') or {}).get('filename'))
     try:
@@ -4471,7 +4530,7 @@ def print_mapped_native(g, st, mesh, mapping, job, job_path, wait_s, reprint):
                 except Exception as exc:
                     logger.warning('could not record pending Spoolman usage: %s', exc)
         _timing(job_path, 'upload_begin')
-        uploaded = subprocess.run([str(MOONRAKERCTL), 'upload', str(g), remote, sha],
+        uploaded = subprocess.run([str(MOONRAKERCTL), 'upload', str(upload_path), remote, upload_sha],
                                   text=True, capture_output=True, timeout=300)
         if uploaded.returncode:
             raise RuntimeError('The file could not be uploaded to the printer, so nothing started. '
@@ -4486,6 +4545,7 @@ def print_mapped_native(g, st, mesh, mapping, job, job_path, wait_s, reprint):
         # Integrity: Moonraker checked the SHA256 we sent and refuses the upload (HTTP 400) on mismatch,
         # so the file is never downloaded back to hash it.
         _timing(job_path, 'upload_verified')
+        if delivery: _note_delivery_format(job, job_path, delivery)
         command = (f'SET_ZCOLOR FILENAME={remote} SILENT=1 AUTO_ASSIGN=0 LEVELING=0 ' +
                    ' '.join(f'T{tool}={slot}' for tool, slot in sorted(mapping.items())))
         checkpoint = g.with_suffix('.launch.json')
@@ -4515,6 +4575,8 @@ def print_mapped_native(g, st, mesh, mapping, job, job_path, wait_s, reprint):
     out = {'accepted': False, 'started': False, 'phase': 'submitted_unconfirmed',
            'file': remote, 'artifact': str(g), 'sha256': sha, 'mapping': mapping,
            'command': command, 'receipt': receipt, 'submission_count': 1, 'print_number': print_no}
+    if delivery:
+        out['delivery_format'] = delivery
     checkpoint = g.with_suffix('.launch.json')
     checkpoint.write_text(json.dumps(out, indent=2) + '\n')
     print('MAPPED START SUBMITTED ' + json.dumps(out), flush=True)
@@ -5396,12 +5458,13 @@ def print_now(target, wait_s=25, accept_default_z_offset=False, reprint=False, r
             validate_native_start(read_stock_detail(st), selection)
         except Exception as exc:
             raise SystemExit(f'REFUSED: native preflight: {exc}. Nothing uploaded or started.') from exc
+    upload_path, upload_sha, remote, delivery = _zmod_upload_artifact(adapter, st, g, sha, remote)
     lease=launch_state.acquire(_printer_key(st, job), job_json=job_path, gcode_sha256=sha, remote=remote, observed_file=fn)
     try:
         _require_idle(st)  # again inside the lease: the first read may predate another job's start
         if job_path is not None: _consume_approval(job_path, job, g, reprint=reprint)
         _timing(job_path, 'upload_begin')
-        r=subprocess.run([str(MOONRAKERCTL),"upload",str(g),remote,sha],text=True,capture_output=True,timeout=300)
+        r=subprocess.run([str(MOONRAKERCTL),"upload",str(upload_path),remote,upload_sha],text=True,capture_output=True,timeout=300)
         if r.returncode: raise SystemExit("The file could not be uploaded to the printer, so nothing started. "
                                           "Check the printer is on and reachable, then try again."
                                           + _detail_tail(r.stderr or r.stdout))
@@ -5419,6 +5482,7 @@ def print_now(target, wait_s=25, accept_default_z_offset=False, reprint=False, r
                              + _detail_tail(json.dumps(up_json)[:300]))
         # Moonraker verified the SHA256 sent with the upload (mismatch = HTTP 400 = the upload failure above).
         _timing(job_path, 'upload_verified')
+        if delivery: _note_delivery_format(job, job_path, delivery)
         try: claim_start_announcement(remote)
         except OSError as e: print(f"WARNING: start announcement claim failed, listener may also post: {e}")
         _announce_print_name(st, job, gcode=g)
@@ -5490,6 +5554,7 @@ def print_now(target, wait_s=25, accept_default_z_offset=False, reprint=False, r
          "extrusion_confirmed":bool(readback and (readback.evidence or {}).get("extrusion_confirmed")),
          "print_time":human_dur(est) if est else None,"filament_g":round(fg) if fg is not None else None,
          "finish_et":(now+timedelta(seconds=(est or 0)+warm)).strftime("%-I:%M %p %a") if est else None}
+    if delivery: out["delivery_format"]=delivery
     settings=start_print_settings(text); z_notice=z_offset_notice(text)
     try: hardware=st.get("printer","Klipper")+", "+printer_state.summary(st)
     except (KeyError, TypeError): hardware=None

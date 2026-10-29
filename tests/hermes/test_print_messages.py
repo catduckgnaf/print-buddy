@@ -103,6 +103,14 @@ def test_find_job_accepts_title_prefixed_moonraker_name(job):
     assert summary.find_job("My-Stand_" + job.hashed.replace(job.hashed[9], "f" if job.hashed[9] != "f" else "e", 1))[0] is None
 
 
+def test_find_job_accepts_3mf_package_name(job):
+    """#564: a .gcode.3mf upload reports the package name; the embedded digest is the
+    inner G-code's, so it binds to the same job and plate as the plain name."""
+    packaged = "My-Stand_" + job.hashed[:-len(".gcode")] + ".gcode.3mf"
+    job_row, plate = summary.find_job(packaged)
+    assert job_row["title"] == TITLE and plate["gcode"] == job.rows[0]["gcode"]
+
+
 def test_find_job_uses_exact_local_gcode_not_another_jobs_same_plate_name(tmp_path, monkeypatch):
     archive = tmp_path / "archive"
     stale = archive / "a-stale" / "sliced" / "orca" / "run"

@@ -62,6 +62,21 @@ _SETTLEABLE = ("native status is ready/cancel/cancelled", "native printProgress 
                "native printDuration == 0")
 
 
+def require_idle_screenless(read_moonraker):
+    """Idle gate for screenless ZMod (display_off=1), where the stock firmware is not running.
+
+    The native predicates have no source there (its /detail API refuses), so
+    every Moonraker predicate must pass: webhooks ready, print standby, both
+    heater targets 0. Nothing is waited out: a screenless cancel leaves no
+    native job residue to settle.
+    """
+    moonraker = read_moonraker()
+    failures = [f for f in _idle_failures(moonraker, {}) if f.startswith("Moonraker")]
+    if failures:
+        raise RuntimeError("REFUSED: idle guard failed: " + "; ".join(failures))
+    return True
+
+
 def require_idle_settled(read_moonraker, read_native, timeout_s=90, interval_s=5,
                          sleep=None, clock=None):
     """Wait briefly for native firmware to settle after cancel; all predicates remain mandatory."""

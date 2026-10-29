@@ -5742,16 +5742,17 @@ def _require_idle_before_mapped_launch(require_idle_settled, read_moonraker, rea
 def print_mapped_native(g, st, mesh, mapping, job, job_path, wait_s, reprint):
     """Native explicit mapping route; exactly one SET_ZCOLOR submission, no fallback."""
     adapter = _job_adapter(job)
-    require_idle_settled = adapter.native.require_idle_settled
     require_current_artifact(job, g)
-    if mesh.get('display_off') != 0:
-        # Screenless ZMod (display_off=1) has no mapped SET_ZCOLOR route yet: the
-        # stock /detail check below needs the native screen. Refuse cleanly so the
-        # plate claim is released, instead of a traceback.
-        raise SystemExit("REFUSED: this print is bound to an IFS slot, and Print Handy can only "
-                         "start slot-bound prints with ZMod's native screen on (display_off=0). "
-                         "ZMod is running screenless (HelixScreen or no screen). To print from "
-                         "chat, switch the native screen on. Nothing uploaded or started.")
+    display_off = mesh.get('display_off')
+    if display_off not in (0, 1):
+        raise SystemExit(f"REFUSED: ZMod reports an unknown screen mode (display_off={display_off!r}), "
+                         "so Print Handy cannot tell where slot and idle state come from. "
+                         "Nothing uploaded or started.")
+    # Screenless (display_off=1: HelixScreen or no screen) the stock firmware is not
+    # running and its /detail API refuses, so idle and slot presence come from Klipper
+    # alone. ZMod's own print-file macro starts AD5X prints with SET_ZCOLOR in both
+    # modes; [zmod_color] runs with display: False when screenless.
+    screenless = display_off == 1
     text = g.read_text()
     _embedded = adapter.native.embedded_mapping
     _embedded(text, st)  # refuses a spool swapped since slicing, before any printer I/O
@@ -5762,10 +5763,18 @@ def print_mapped_native(g, st, mesh, mapping, job, job_path, wait_s, reprint):
         current = _mr(st, '/printer/objects/query?webhooks&print_stats&extruder&heater_bed&zmod_color&filament_switch_sensor%20head_switch_sensor')['result']['status']
         return {'state': current['webhooks']['state'], 'print': current['print_stats'],
                 'extruder': current['extruder'], 'bed': current['heater_bed']}
-    def read_native():
-        return read_stock_detail(st)
-    _require_idle_before_mapped_launch(require_idle_settled, read_moonraker, read_native)
-    detail = read_native()
+    if screenless:
+        require_idle_screenless = adapter.native.require_idle_screenless
+        def require_idle():
+            _require_idle_before_mapped_launch(lambda *_: require_idle_screenless(read_moonraker),
+                                               read_moonraker, None)
+    else:
+        require_idle_settled = adapter.native.require_idle_settled
+        def read_native():
+            return read_stock_detail(st)
+        def require_idle():
+            _require_idle_before_mapped_launch(require_idle_settled, read_moonraker, read_native)
+    require_idle()
     status = response['result']['status']
     sensor = status.get('filament_switch_sensor head_switch_sensor', {})
     if sensor.get('enabled') is not True:
@@ -5773,7 +5782,10 @@ def print_mapped_native(g, st, mesh, mapping, job, job_path, wait_s, reprint):
     # Idle nozzle engagement is not feeder occupancy. Genuine native errors and
     # installed runout/jam protections stay intact; do not actuate sensor overrides.
     configured = status.get('zmod_color', {}).get('slots', [])
-    occupancy = read_stock_ifs_slots_from_detail(detail)
+    if screenless:
+        occupancy = adapter.native.read_zmod_color_slots(status)
+    else:
+        occupancy = read_stock_ifs_slots_from_detail(read_native())
     normalize_mapping = adapter.native.normalize_mapping
     mapped = normalize_mapping(mapping, st)
     for tool, slot in mapped.items():
@@ -5797,7 +5809,7 @@ def print_mapped_native(g, st, mesh, mapping, job, job_path, wait_s, reprint):
                                  observed_file=(status.get('print_stats') or {}).get('filename'))
     try:
         # Again inside the lease: the first read may predate another job's start.
-        _require_idle_before_mapped_launch(require_idle_settled, read_moonraker, read_native)
+        require_idle()
         if job_path is not None:
             _consume_approval(job_path, job, g, reprint=reprint)
         slots_used = sorted(set(mapped.values()))

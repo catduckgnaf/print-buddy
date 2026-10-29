@@ -6,8 +6,9 @@ recorded identities are the real OrcaSlicer hashes (computed with profiles.flatt
 the pinned releases; the pipeline reproduces A1/P1S exactly), while profile install
 and the guard are exercised against invented fixture resources, as for the P1S.
 
-The #356 section at the bottom covers the H2C and A2L, which exist only in OrcaSlicer
-v2.5.0-alpha and so record only that release's two packaging identities.
+The #356 section at the bottom covers the H2C and A2L, which exist only in the
+OrcaSlicer 2.5 line (2.5.0-alpha, then 2.5.0-beta) and so record only those
+releases' packaging identities.
 """
 import json
 import re
@@ -79,8 +80,8 @@ def test_recorded_identity_is_a_real_pin(key):
     f = model_facts(key)
     entries = f["orca_identity"].value
     # One pin per checked packaging (#356): OrcaSlicer 2.4.2's JSON tree, then
-    # 2.5.0-alpha's tree and its packed preset cache, which flatten differently.
-    assert [known["vendor_version"] for known in entries] == ["02.01.00.19", "02.08.00.15", "02.08.00.15"]
+    # 2.5.0-alpha's and 2.5.0-beta's tree and packed preset cache, which flatten differently.
+    assert [known["vendor_version"] for known in entries] == ["02.01.00.19", "02.08.00.15", "02.08.00.15", "02.08.00.16", "02.08.00.16"]
     assert "packed cache" in entries[2]["label"] and "packed" not in entries[1]["label"]
     for known in entries:
         assert set(known["sha256"]) == {"machine", "process", "filament"}
@@ -139,7 +140,7 @@ def test_model_set_is_stage1_plus_the_registered_dual_nozzle_models():
                                                                      "bambulab.x2d"} | set(MODELS_356)
 
 
-# --- #356: H2C and A2L (OrcaSlicer v2.5.0-alpha only) ---------------------------------------------
+# --- #356: H2C and A2L (OrcaSlicer 2.5 line only) -------------------------------------------
 
 MODELS_356 = {
     "bambulab.h2c": ("H2C", "bambulab_h2c"),
@@ -168,8 +169,8 @@ def test_356_model_registration_and_defaults(key):
 def test_356_recorded_identity_is_a_real_pin(key):
     f = facts_356(key)
     entries = f["orca_identity"].value
-    # No 2.4.2 identity exists for these models: v2.5.0-alpha's tree and packed cache only.
-    assert [known["vendor_version"] for known in entries] == ["02.08.00.15", "02.08.00.15"]
+    # No 2.4.2 identity exists for these models: the 2.5 line's tree and packed cache only (alpha, then beta).
+    assert [known["vendor_version"] for known in entries] == ["02.08.00.15", "02.08.00.15", "02.08.00.16", "02.08.00.16"]
     assert "packed cache" in entries[1]["label"] and "packed" not in entries[0]["label"]
     for known in entries:
         assert set(known["sha256"]) == {"machine", "process", "filament"}

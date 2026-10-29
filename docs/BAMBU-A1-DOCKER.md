@@ -81,7 +81,7 @@ Paths below assume the checked-out `docker-compose.yml`, a private `.env` beside
    PRINT_HANDY_CONFIG=/data/config/print-handy.yaml
    ```
 
-   Bambu Lab printers default to Bambu Studio as the slicer, but the published image is built with `WITH_BAMBU=false` and has no `/usr/bin/bambu-studio`, so slicing would fail closed. `orca` selects the bundled OrcaSlicer v2.5.0-alpha (`PRINT_HANDY_ORCA_CHANNEL=stable`, the default). `PRINT_HANDY_CONFIG` is read by Compose for variable substitution and names the file from step 6. Leave `PRINT_HANDY__SERVICES__MOONRAKER_URL` empty: settings refuse to load for a Bambu model when it is set.
+   Bambu Lab printers default to Bambu Studio as the slicer, but the published image is built with `WITH_BAMBU=false` and has no `/usr/bin/bambu-studio`, so slicing would fail closed. `orca` selects the bundled OrcaSlicer v2.5.0-beta (`PRINT_HANDY_ORCA_CHANNEL=stable`, the default). `PRINT_HANDY_CONFIG` is read by Compose for variable substitution and names the file from step 6. Leave `PRINT_HANDY__SERVICES__MOONRAKER_URL` empty: settings refuse to load for a Bambu model when it is set.
 
 With `.env` complete (steps 4, 5 and 6 add the rest), start the container with `docker compose up -d` and watch `docker compose logs -f combined`. Nothing contacts the printer yet.
 
@@ -89,14 +89,14 @@ With `.env` complete (steps 4, 5 and 6 add the rest), start the container with `
 
 **Why:** the A1 slicer profiles are OrcaSlicer's and Bambu Lab's (AGPL-3.0) and are not shipped; Print Handy builds its templates from an installed OrcaSlicer and refuses to slice until it has them (see [Set up the A1 profiles](BAMBU-LAB.md#set-up-the-a1-profiles)).
 
-The image extracts the pinned OrcaSlicer v2.5.0-alpha AppImage to `/opt/orca-stable` (`docker/orca-prebuilt.sh`), so its resources folder is `/opt/orca-stable/resources`. It holds the vendor profiles as a JSON tree (`profiles/BBL.json`, `profiles/BBL/`) and as the packed preset cache (`profiles/BBL.opc`); the generator reads either. Run the generator in the running container:
+The image extracts the pinned OrcaSlicer v2.5.0-beta AppImage to `/opt/orca-stable` (`docker/orca-prebuilt.sh`), so its resources folder is `/opt/orca-stable/resources`. It holds the vendor profiles as a JSON tree (`profiles/BBL.json`, `profiles/BBL/`) and as the packed preset cache (`profiles/BBL.opc`); the generator reads either. Run the generator in the running container:
 
 ```bash
 docker compose exec combined python3 scripts/bambu-templates.py --printer a1 --resources /opt/orca-stable/resources
 docker compose exec combined python3 scripts/bambu-templates.py --printer a1 --resources /opt/orca-stable/resources --check
 ```
 
-The first command reports `wrote Bambu Lab A1 Orca templates from OrcaSlicer 2.5.0-alpha (BBL vendor profiles 02.08.00.15) to /data/hermes/state/orca-profiles/bambulab_a1`; `--check` writes nothing and should end with `matches; generated folder is current`. The templates live in the `hermes` volume, so they survive a recreate. Nothing is downloaded. `PRINT_HANDY_ORCA_CHANNEL=alpha` currently installs the same v2.5.0-alpha release as `stable` (#356); the channels diverge again when upstream publishes a newer alpha.
+The first command reports `wrote Bambu Lab A1 Orca templates from OrcaSlicer 2.5.0-beta (BBL vendor profiles 02.08.00.16) to /data/hermes/state/orca-profiles/bambulab_a1`; `--check` writes nothing and should end with `matches; generated folder is current`. The templates live in the `hermes` volume, so they survive a recreate. Nothing is downloaded. `PRINT_HANDY_ORCA_CHANNEL=alpha` currently installs the same v2.5.0-beta release as `stable` (both channels moved from the #356 alpha to the beta); the channels diverge again when upstream publishes a newer prerelease.
 
 ## 3. Write the hardware record by hand
 

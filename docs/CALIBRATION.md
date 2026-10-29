@@ -41,8 +41,11 @@ The primitives and save semantics come from the Stage 0 evidence on
 issue #565 (ZMod wiki, Klipper documentation and source, Moonraker),
 recorded as a comment on the issue before the code was written. This
 page matches `print_handy/calibration.py`; if the two ever disagree,
-one of them is a bug. Nothing here is live-hardware verified yet —
-Stage 2 of #565 is a live session on a real AD5X.
+one of them is a bug. The chat commands on this page are not live-hardware
+verified yet; Stage 2 of #565 is a live session on a real AD5X. (A full
+mesh run on an AD5X was verified on 2026-10-28 through the `mesh-run`
+script path, not through `/print-calibration`; see
+[DEVICE-AD5X.md](DEVICE-AD5X.md#verified-on-hardware).)
 
 ## The commands
 
@@ -100,6 +103,11 @@ mesh menu entry.
 - **Generic Klipper:** `BED_MESH_CALIBRATE PROFILE=print_handy`, same
   accept/discard shape; Accept saves it as `default`, the profile
   Klipper loads at startup.
+
+Right after the new mesh reads back, Print Handy sends `TURN_OFF_HEATERS`
+and checks that both heater targets read 0, so the printer does not sit
+hot while the Accept/Discard question waits. The result says whether that
+was confirmed; if it was not, it tells you to turn the heaters off yourself.
 
 The result presentation is the mesh range (lowest → highest probed
 point) before and after, with the signed range difference.

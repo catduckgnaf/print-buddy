@@ -144,7 +144,8 @@ class FakeTransport:
                  variables=SCREENLESS_VARIABLES, states=("standby",),
                  store=(), store_appends=None, mesh_after=None,
                  native_config=NATIVE_CONFIG, error=None, store_cap=1000,
-                 send_error=None):
+                 send_error=None, heaters_stuck=False):
+        self.heaters_stuck = heaters_stuck
         self.objects = objects
         self.settings_map = settings_map
         self.variables = variables
@@ -208,6 +209,10 @@ class FakeTransport:
             return {"result": {"gcode_store": [
                 {"message": message, "type": "response", "time": when}
                 for when, message in self.store]}}
+        if path == cal.HEATER_TARGETS_PATH:
+            off = "TURN_OFF_HEATERS" in self.scripts and not self.heaters_stuck
+            return {"result": {"status": {"extruder": {"target": 0.0 if off else 220.0},
+                                          "heater_bed": {"target": 0.0 if off else 60.0}}}}
         if path == cal.PRINTER_INFO_PATH:
             return {"result": {"state": "ready"}}
         if path == cal.NATIVE_CONFIG_PATH:
@@ -482,14 +487,25 @@ def test_mesh_flow_zmod_screenless_measures_without_saving_then_accepts_once():
     result = cal.execute_mesh(transport, prepared, poll_interval_s=0, sleep=NO_SLEEP)
     text = cal.mesh_result_text(result)
     assert "0.420 mm → 0.180 mm (-0.240 mm)" in text
-    # No save of any kind before the accept.
-    assert transport.scripts == [prepared.script]
+    # No save of any kind before the accept; the heaters go off right after measuring.
+    assert transport.scripts == [prepared.script, "TURN_OFF_HEATERS"]
+    assert result.cooled and "Heaters turned off after measuring (checked)." in text
     message = cal.accept_mesh(transport, result)
-    assert transport.scripts == [prepared.script, "BED_MESH_PROFILE LOAD=print_handy",
+    assert transport.scripts == [prepared.script, "TURN_OFF_HEATERS",
+                                 "BED_MESH_PROFILE LOAD=print_handy",
                                  "BED_MESH_PROFILE SAVE=auto",
                                  "BED_MESH_PROFILE REMOVE=print_handy", "SAVE_CONFIG"]
     assert transport.scripts.count("SAVE_CONFIG") == 1
     assert "Saved" in message
+
+
+def test_mesh_result_warns_when_the_heaters_cannot_be_confirmed_off():
+    transport = FakeTransport(heaters_stuck=True)
+    _t, facts = zmod_facts(transport)
+    prepared = cal.prepare_mesh(transport, AD5X, facts)
+    result = cal.execute_mesh(transport, prepared, poll_interval_s=0, sleep=NO_SLEEP)
+    assert result.cooled is False and result.after.range == pytest.approx(0.18)
+    assert "could not confirm the heaters turned off" in cal.mesh_result_text(result)
 
 
 def test_mesh_discard_reloads_the_previous_profile_and_never_saves():
@@ -575,7 +591,7 @@ def test_mesh_and_shaper_accept_refuse_when_a_print_started_meanwhile():
     for action in (cal.accept_mesh, cal.discard_mesh):
         with pytest.raises(cal.CalibrationRefusal):
             action(transport, result)
-    assert transport.scripts == [prepared.script]
+    assert transport.scripts == [prepared.script, "TURN_OFF_HEATERS"]
     transport = FakeTransport(states=("standby", "standby", "printing"),
                               store_appends={"ZSHAPER": SHAPER_REPORT_ZMOD})
     facts = cal.fetch_facts(transport)
@@ -984,6 +1000,7 @@ def test_dispatch_mesh_accept_flow(tmp_path):
     assert out == {"action": "skip", "reason": "print calibration handled"}
     assert transport.scripts == [
         "AUTO_FULL_BED_LEVEL PROFILE=print_handy SAVE=0 EXTRUDER_TEMP=220 BED_TEMP=60",
+        "TURN_OFF_HEATERS",
         "BED_MESH_PROFILE LOAD=print_handy", "BED_MESH_PROFILE SAVE=auto",
         "BED_MESH_PROFILE REMOVE=print_handy", "SAVE_CONFIG"]
     records = cal.read_records(tmp_path / cal.RECORDS_NAME)

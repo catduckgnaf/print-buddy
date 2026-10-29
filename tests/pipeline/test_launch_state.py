@@ -409,6 +409,16 @@ def test_mapped_launch_rechecks_idle_inside_the_lease(mapped):
     assert "approvals" not in json.loads(jp.read_text())
 
 
+def test_mapped_launch_refuses_cleanly_when_zmod_is_screenless(mapped):
+    """Screenless ZMod (display_off=1) has no mapped route yet: a plain REFUSED
+    line before any upload or script, never a traceback that holds the plate."""
+    jp, g = make_job(mapped.root, "a")
+    job = json.loads(jp.read_text())
+    with pytest.raises(SystemExit, match="REFUSED: .*screenless.*Nothing uploaded or started"):
+        model_job.print_mapped_native(g, mapped.st, {"display_off": 1}, {"0": 1}, job, jp, 0, False)
+    assert uploads(mapped.run) == [] and mapped.scripts == [] and leases() == []
+
+
 def test_mapped_unresolved_start_is_uncertain_and_blocks_the_next_job(mapped):
     _, launch_a = launch_mapped(mapped, "a")
     out = launch_a()

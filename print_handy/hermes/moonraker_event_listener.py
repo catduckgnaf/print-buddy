@@ -360,18 +360,21 @@ def generate_roast(title, summary=""):
         log("roast skipped: vision.roast_enabled is false")
         return ""
     key = _profile_env_value("CLIPROXY_API_KEY")
-    if not key:
-        return ""
     chat_url = _config.service_url("vision_chat_url")
     if not chat_url:
         log("roast skipped: services.vision_chat_url is not configured")
         return ""
+    if not key and not _visual_watch.keyless_ok(chat_url):
+        return ""
     prompt = f"Model: {title}"
     if summary:
         prompt += f" ({summary})"
+    headers = {"Content-Type": "application/json"}
+    if key:
+        headers["Authorization"] = f"Bearer {key}"
     req = urllib.request.Request(
         chat_url,
-        headers={"Authorization": f"Bearer {key}", "Content-Type": "application/json"},
+        headers=headers,
         data=json.dumps({
             "model": str(_config.cfg()["vision"]["roast_model"]),
             "messages": [

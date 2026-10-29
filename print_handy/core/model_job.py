@@ -5438,7 +5438,13 @@ def print_mapped_native(g, st, mesh, mapping, job, job_path, wait_s, reprint):
     require_idle_settled = adapter.native.require_idle_settled
     require_current_artifact(job, g)
     if mesh.get('display_off') != 0:
-        raise RuntimeError('explicit mapped launch currently requires native screen mode')
+        # Screenless ZMod (display_off=1) has no mapped SET_ZCOLOR route yet: the
+        # stock /detail check below needs the native screen. Refuse cleanly so the
+        # plate claim is released, instead of a traceback.
+        raise SystemExit("REFUSED: this print is bound to an IFS slot, and Print Handy can only "
+                         "start slot-bound prints with ZMod's native screen on (display_off=0). "
+                         "ZMod is running screenless. Switch the native screen on, or start the "
+                         "file from HelixScreen, Fluidd or Mainsail. Nothing uploaded or started.")
     text = g.read_text()
     _embedded = adapter.native.embedded_mapping
     _embedded(text, st)  # refuses a spool swapped since slicing, before any printer I/O

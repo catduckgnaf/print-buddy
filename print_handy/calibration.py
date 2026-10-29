@@ -1102,6 +1102,9 @@ def mesh_prompt_text(prepared: PreparedMesh) -> str:
 class MeshResult:
     prepared: PreparedMesh
     after: MeshSummary
+    # True when the heaters were turned off after measuring and the readback
+    # showed both targets at 0; False when that could not be confirmed.
+    cooled: bool = True
 
     @property
     def before(self):
@@ -1117,6 +1120,26 @@ def _fetch_bed_mesh(transport):
     if not isinstance(status, dict):
         raise CalibrationError("Moonraker's bed-mesh response had no bed_mesh object")
     return status
+
+
+HEATER_TARGETS_PATH = "/printer/objects/query?extruder=target&heater_bed=target"
+
+
+def _cool_down(transport) -> bool:
+    """Turn both heaters off after a measurement and confirm it by readback.
+
+    The leveling macros heat the bed and nozzle; the Accept/Discard prompt
+    can wait a long time, so the heaters must not sit at temperature while
+    it does. Returns False (never raises) when the off command or the
+    readback fails, so the measured mesh is still presented.
+    """
+    try:
+        _send_script(transport, "TURN_OFF_HEATERS")
+        status = transport("GET", HEATER_TARGETS_PATH)["result"]["status"]
+        return all(float((status.get(name) or {}).get("target", 1)) == 0
+                   for name in ("extruder", "heater_bed"))
+    except Exception:
+        return False
 
 
 def execute_mesh(transport, prepared: PreparedMesh, *, poll_attempts=180,
@@ -1143,7 +1166,7 @@ def execute_mesh(transport, prepared: PreparedMesh, *, poll_attempts=180,
             last_key = None
             continue
         if key == last_key:
-            return MeshResult(prepared=prepared, after=summary)
+            return MeshResult(prepared=prepared, after=summary, cooled=_cool_down(transport))
         last_key = key
     raise CalibrationError(
         "The mesh measurement did not produce a new mesh Print Handy could read back "
@@ -1167,6 +1190,9 @@ def mesh_result_text(result: MeshResult) -> str:
     else:
         lines.append(f"- Measured — {after.text()} (no earlier mesh was readable "
                      "to compare against).")
+    lines += ["", "Heaters turned off after measuring (checked)." if result.cooled else
+              "**Print Handy could not confirm the heaters turned off after measuring. "
+              "Check the printer and turn them off yourself.**"]
     lines += ["",
               "The measured mesh is loaded in memory only — nothing has been saved.",
               f"- **{ACCEPT_LABEL}**: stores it as profile '{result.prepared.profile}' "

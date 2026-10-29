@@ -13,8 +13,10 @@ models; Print Handy has first-class profiles for all five
 | Flashforge Creator 5 | `flashforge.creator5` | 256 × 256 × 256 mm | 4 independent toolheads | Supported |
 | Flashforge Creator 5 Pro | `flashforge.creator5_pro` | 256 × 256 × 256 mm | 4 independent toolheads | Supported |
 
-Nothing in this table is live-hardware tested: every profile is offline-verified,
-the same treatment the AD5X support has.
+Every profile in this table is offline-verified. The only live checks so far
+are on one AD5X (ZMod 1.7.5-2, screenless): Z offset sync, a full mesh run
+and IFS slot presence, listed in [DEVICE-AD5X.md](DEVICE-AD5X.md#verified-on-hardware).
+No print started by Print Handy has been verified on ZMod hardware.
 
 ## Audited ZMod version
 
@@ -22,9 +24,11 @@ Print Handy's ZMod contracts were last audited against **ZMod 1.7.5**
 (released 2026-10-27; the feature-by-feature audit is
 [#562](https://github.com/catduckgnaf/print-handy/issues/562)). The audit
 found no change to the contracts Print Handy relies on for the .gcode files
-it delivers — 1.7.5's headline features (3MF support, instant colour
+it delivers. 1.7.5's headline features (3MF support, instant color
 mapping without the `FORCE_MD5` preprocessor, fast KAMP data) apply to the
-3MF path, not the .gcode + MD5 path Print Handy uses, and no `START_PRINT`
+3MF path. Since #564, Print Handy delivers that `.gcode.3mf` package by
+default on ZMod 1.7.5 or newer (`[printer] zmod_delivery_format`, see
+[DEVICE-AD5X.md](DEVICE-AD5X.md)); that path is not yet live-verified. No `START_PRINT`
 signature, `SAVE_ZMOD_DATA` variable, timelapse, camera or `notify` change
 is recorded upstream. The next ZMod release diffs against this 1.7.5
 baseline.

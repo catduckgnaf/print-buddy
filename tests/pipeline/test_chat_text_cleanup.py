@@ -103,3 +103,15 @@ def test_timing_goes_to_debug_logging_not_stdout(tmp_path, caplog):
     assert out.getvalue() == ''
     assert any(r.levelno == logging.DEBUG and r.getMessage().startswith('TIMING {') for r in caplog.records)
     assert '"stage": "print_now"' in (tmp_path / 'TIMING.jsonl').read_text()
+
+
+def test_reused_source_is_linked_not_copied(tmp_path):
+    import os
+    first = tmp_path / 'job1' / 'model.3mf'
+    first.parent.mkdir()
+    first.write_bytes(b'3mf bytes')
+    out = model_job._reuse_cached(first, tmp_path / 'job2', 'MakerWorld')
+    assert out.read_bytes() == b'3mf bytes'
+    assert os.path.samefile(out, first) or os.name == 'nt'  # copy fallback where links are unsupported
+    again = model_job._reuse_cached(first, tmp_path / 'job2', 'MakerWorld')  # re-run onto itself
+    assert again.read_bytes() == b'3mf bytes' and first.read_bytes() == b'3mf bytes'

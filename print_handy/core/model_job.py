@@ -160,7 +160,15 @@ def _cached_maker_source(instance_id):
 def _reuse_cached(cached, target, site):
     target.mkdir(parents=True, exist_ok=True)
     dest=target/cached.name
-    if dest.resolve()!=cached.resolve(): shutil.copy2(cached, dest)
+    if not (dest.exists() and os.path.samefile(dest, cached)):
+        # A hard link, not a copy: every resend of the same model used to add a full copy to the
+        # archive. The source is never edited in place (its SHA-256 binds every later step). An
+        # existing dest is removed first, never written through, so a linked file is never truncated.
+        dest.unlink(missing_ok=True)
+        try:
+            os.link(cached, dest)
+        except OSError:  # another filesystem, or links unsupported
+            shutil.copy2(cached, dest)
     print(f"SOURCE REUSED: {cached} (already downloaded; {site} not contacted)")
     return dest
 

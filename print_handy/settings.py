@@ -88,6 +88,7 @@ LEGACY_ENV = {
 OPEN_SECTIONS = {"cold_pull", "nozzle_temp_offsets", "material_temps"}
 # Keys that can be optionally specified even if absent from base home.toml.
 OPTIONAL_KEYS = {("printer", "nozzle_type"): str, ("printer", "tool_count"): int,
+                 ("printer", "zmod_delivery_format"): str,
                  ("visual_watch", "enabled"): bool,
                  ("vision", "roast_enabled"): bool,
                  ("vision", "local_detector_enabled"): bool,
@@ -336,6 +337,24 @@ def _validate_vendor_choices(data, model):
                             f"(available: {', '.join(vendor.delivery)})")
     # Vendor order, no repeats: the post-slice buttons follow it.
     data["delivery"]["methods"] = [m for m in vendor.delivery if m in methods]
+
+
+def _validate_zmod_delivery_format(data, model):
+    """[printer] zmod_delivery_format (#564): the ZMod family's print-file format choice.
+
+    "gcode" is today's plain .gcode delivery, "3mf" always delivers the sliced
+    .gcode.3mf package, and "auto" (the Flashforge vendor default) delivers
+    3MF only when the printer reports ZMod 1.7.5+ at print time. The key is
+    meaningless on other vendors — their formats are their own profiles' —
+    so, like the [bambu] LAN keys, setting it there is refused, not ignored.
+    """
+    value = data["printer"].get("zmod_delivery_format")
+    if value is None:
+        return
+    if model.vendor.key != "flashforge":
+        raise SettingsError("[printer] zmod_delivery_format only applies to Flashforge/ZMod printers")
+    if value not in ("gcode", "3mf", "auto"):
+        raise SettingsError(f"[printer] zmod_delivery_format must be \"gcode\", \"3mf\" or \"auto\", got {value!r}")
 
 
 def _validate_bambu_lan(data, model):
@@ -1306,6 +1325,7 @@ def validate(data):
     _check_service_urls(services)
     _check_connection_urls(services, model)
     _validate_bambu_lan(data, model)
+    _validate_zmod_delivery_format(data, model)
     _validate_stock_lan(data, model)
     _validate_prusa_link(data, model)
     _validate_elegoo_sdcp(data, model)

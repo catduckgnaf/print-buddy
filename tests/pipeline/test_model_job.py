@@ -878,6 +878,7 @@ class EnglishAndPrintNowTests(unittest.TestCase):
              mock.patch.object(model_job, "_printer_phase", return_value=("standby", "x.gcode", "Ready")), \
              mock.patch.object(model_job, "verify_gcode"), \
              mock.patch.object(model_job, "_verify_filament_readiness"), \
+             mock.patch.object(model_job, "_zmod_version", return_value=None), \
              mock.patch.object(model_job.subprocess, "run", side_effect=mock_upload_run), \
              mock.patch.object(model_job, "_mr") as mr, \
              mock.patch.object(model_job, "_wait_printing", return_value="standby"), \
@@ -885,6 +886,7 @@ class EnglishAndPrintNowTests(unittest.TestCase):
             with self.assertRaisesRegex(SystemExit, "The printer did not start the print, and it was not retried"):
                 model_job.print_now(self._gcode(d))
         # One start POST, then the #84 status readback. Not a second start.
+        # (_zmod_version pinned unknown: this choreography is the plain .gcode path's.)
         self.assertEqual(mr.call_count, 2)
         self.assertEqual(mr.call_args_list[0].args[1], "/printer/print/start")
         self.assertIn("/printer/objects/query", mr.call_args_list[1].args[1])
@@ -912,8 +914,9 @@ class EnglishAndPrintNowTests(unittest.TestCase):
                 mock.patch.object(model_job, "_mr"),
                 mock.patch.object(model_job, "_wait_printing", return_value="standby"),
                 mock.patch.object(model_job, "START_CLAIMS", Path(d) / "claims.json"),
+                mock.patch.object(model_job, "_zmod_version", return_value=None),
             ]
-            with patches[0], patches[1], patches[2], patches[3], patches[4], patches[5] as mr, patches[6], patches[7]:
+            with patches[0], patches[1], patches[2], patches[3], patches[4], patches[5] as mr, patches[6], patches[7], patches[8]:
                 out = model_job.print_now(self._gcode(d))
                 self.assertEqual(out['phase'], 'awaiting_confirmation')
                 self.assertEqual(out['message'], 'submitted, awaiting confirmation')
@@ -1059,6 +1062,7 @@ class EnglishAndPrintNowTests(unittest.TestCase):
              mock.patch.object(model_job, "_printer_phase", return_value=("standby", "x.gcode", "Ready")), \
              mock.patch.object(model_job, "verify_gcode"), \
              mock.patch.object(model_job, "_verify_filament_readiness"), \
+             mock.patch.object(model_job, "_zmod_version", return_value=None), \
              mock.patch.object(model_job, "_mr") as mock_mr:
             g = self._gcode(d)
             upload_stdout = json.dumps({"result": {"item": {"root": "gcodes", "path": "different_file.gcode"}}})
@@ -1074,6 +1078,7 @@ class EnglishAndPrintNowTests(unittest.TestCase):
              mock.patch.object(model_job, "_printer_phase", return_value=("standby", "x.gcode", "Ready")), \
              mock.patch.object(model_job, "verify_gcode"), \
              mock.patch.object(model_job, "_verify_filament_readiness"), \
+             mock.patch.object(model_job, "_zmod_version", return_value=None), \
              mock.patch.object(model_job, "_mr") as mock_mr:
             g = self._gcode(d)
             sha = model_job.file_sha256(g)
@@ -1377,12 +1382,14 @@ class EnglishAndPrintNowTests(unittest.TestCase):
              mock.patch.object(model_job, "_printer_phase", return_value=("standby", "x.gcode", "Ready")), \
              mock.patch.object(model_job, "verify_gcode"), \
              mock.patch.object(model_job, "_verify_filament_readiness"), \
+             mock.patch.object(model_job, "_zmod_version", return_value=None), \
              mock.patch.object(model_job.subprocess, "run", side_effect=mock_upload_run), \
              mock.patch.object(model_job, "_mr") as mr, \
              mock.patch.object(model_job, "_wait_printing", return_value="standby"):
             with self.assertRaisesRegex(SystemExit, "The printer did not start the print"):
                 model_job.print_now(self._gcode(d))
         # One start POST, then the #84 status readback. Not a second start.
+        # (_zmod_version pinned unknown: this choreography is the plain .gcode path's.)
         self.assertEqual(mr.call_count, 2)
         self.assertEqual(mr.call_args_list[0].args[1], "/printer/print/start")
         self.assertIn("/printer/objects/query", mr.call_args_list[1].args[1])
@@ -1553,6 +1560,83 @@ class EnglishAndPrintNowTests(unittest.TestCase):
             called_cmd = run.call_args[0][0]
             self.assertTrue(Path(called_cmd[0]).is_absolute())
             self.assertEqual(called_cmd[0], str(CTL))
+
+
+class ZmodDeliveryFormatTests(unittest.TestCase):
+    """#564: print_now's Moonraker upload swaps to a .gcode.3mf package only when the
+    printer's zmod_delivery_format resolves to it; every fallback is today's .gcode."""
+
+    def setUp(self):
+        p = mock.patch.object(model_job, "live_snapshot", return_value={"nozzle_c": None, "bed_c": None, "slots": "unknown"})
+        p.start(); self.addCleanup(p.stop)
+        for p in (mock.patch.object(model_job, "mesh_readiness", return_value={"profile": "auto", "saved_at": None, "print_leveling": 0, "problem": None, "stale": None, "z_offset_mm": -0.005, "offset_source": "saved gcode offset"}),
+                  mock.patch.object(model_job, "screen_z_offset", return_value=0.025)):
+            p.start(); self.addCleanup(p.stop)
+
+    def _gcode(self, d):
+        g = Path(d) / "x.gcode"
+        g.write_text("; estimated printing time (normal mode) = 1h 2m 0s\n; total filament used [g] = 12.3\n"
+                     "START_PRINT EXTRUDER_TEMP=220 BED_TEMP=60\n")
+        return g
+
+    def _print(self, d, version):
+        g = self._gcode(d)
+        with mock.patch.object(model_job, "START_CLAIMS", Path(d) / "claims.json"), \
+             mock.patch.object(model_job.printer_state, "load", return_value={"moonraker_url": "http://m"}), \
+             mock.patch.object(model_job, "_printer_phase", return_value=("standby", "x.gcode", "Ready")), \
+             mock.patch.object(model_job, "verify_gcode"), \
+             mock.patch.object(model_job, "_verify_filament_readiness"), \
+             mock.patch.object(model_job, "_zmod_version", return_value=version), \
+             mock.patch.object(model_job.subprocess, "run", side_effect=mock_upload_run) as run, \
+             mock.patch.object(model_job, "_mr"), \
+             mock.patch.object(model_job, "_wait_printing", return_value="printing"), \
+             mock.patch.object(model_job, "record_start", return_value="/vault/x.md"):
+            out = model_job.print_now(g, accept_default_z_offset=True)
+        return g, run.call_args[0][0], out
+
+    def test_auto_with_zmod_175_uploads_the_3mf_package(self):
+        from print_handy.core import gcode_3mf
+        with tempfile.TemporaryDirectory() as d:
+            g, cmd, out = self._print(d, (1, 7, 5))
+            sha = model_job.file_sha256(g)
+            self.assertEqual(cmd[1], "upload")
+            self.assertTrue(cmd[2].endswith(".gcode.3mf"), cmd)
+            package = Path(cmd[2])
+            self.assertTrue(package.is_file())
+            self.assertEqual(gcode_3mf.read_gcode_text(package), g.read_text())
+            # The remote name keeps the G-code's stem+sha (find_job binding) with the package suffix,
+            # and the upload checksum is the package's, not the G-code's.
+            self.assertEqual(cmd[3], f"x_{sha}.gcode.3mf")
+            self.assertEqual(cmd[4], model_job.file_sha256(package))
+            self.assertNotEqual(cmd[4], sha)
+            self.assertEqual(out["file"], cmd[3])
+            self.assertEqual(out["delivery_format"]["format"], "3mf")
+            self.assertEqual(out["delivery_format"]["zmod_version"], "1.7.5")
+
+    def test_auto_with_unknown_version_uploads_plain_gcode(self):
+        with tempfile.TemporaryDirectory() as d:
+            g, cmd, out = self._print(d, None)
+            sha = model_job.file_sha256(g)
+            self.assertEqual(cmd[2], str(g))
+            self.assertEqual(cmd[3], f"x_{sha}.gcode")
+            self.assertEqual(cmd[4], sha)
+            self.assertNotIn("delivery_format", out)
+            self.assertFalse(Path(str(g) + ".3mf").exists())
+
+    def test_auto_with_zmod_below_the_floor_uploads_plain_gcode(self):
+        with tempfile.TemporaryDirectory() as d:
+            g, cmd, out = self._print(d, (1, 7, 4))
+            sha = model_job.file_sha256(g)
+            self.assertEqual(cmd[2], str(g))
+            self.assertEqual(cmd[3], f"x_{sha}.gcode")
+            self.assertEqual(cmd[4], sha)
+            self.assertNotIn("delivery_format", out)
+
+    def test_note_delivery_format_persists_on_the_job(self):
+        with tempfile.TemporaryDirectory() as d:
+            job = {"title": "X"}
+            model_job._note_delivery_format(job, Path(d) / "JOB.json", {"format": "3mf", "setting": "auto"})
+            self.assertEqual(json.loads((Path(d) / "JOB.json").read_text())["delivery_format"]["format"], "3mf")
 
 
 class StockIfsPresenceTests(unittest.TestCase):

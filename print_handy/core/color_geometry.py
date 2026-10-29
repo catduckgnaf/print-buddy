@@ -495,10 +495,11 @@ def export_production_plate(source, target, decisions, slot_colors):
     if len(chosen) != 1:
         raise RuntimeError('production plate uses one filament index; mixed slots need per-object extruders')
     slot = chosen.pop()
-    color = slot_colors.get(str(slot)) or slot_colors.get(slot)
-    if not isinstance(color, str) or not re.fullmatch(r'#?[0-9A-Fa-f]{6}', color):
-        raise RuntimeError('filament color must be an explicit six-digit RGB value')
-    color = '#' + color.lstrip('#').upper()
+    # The color only recolors the plate's filament label and preview. A
+    # slot without a code gets its name's color or the neutral default
+    # (with a WARNING) rather than a refused slice.
+    from .filament_color import slot_hex
+    color = slot_hex(slot, slot_colors.get(str(slot)) or slot_colors.get(slot))
     with zipfile.ZipFile(source) as archive:
         names = [name for name in archive.namelist() if not name.startswith('Auxiliaries/')]
         if 'Metadata/project_settings.config' not in names or 'Metadata/model_settings.config' not in names:
@@ -595,6 +596,46 @@ def _matrix(node):
     return values
 
 
+# Parsed 3MF model parts, keyed by archive path + member CRC/size. The fit
+# planners (split_fit, plate_merge) ask for one object's world points dozens
+# of times per intake; re-parsing the whole model XML on every call was the
+# bulk of a ~2 minute fit check on dense multi-part models. Entries are
+# immutable once built and the key changes whenever the member's bytes do.
+_MODEL_CACHE = {}
+_MODEL_CACHE_MAX = 8
+
+
+def _cached_model(archive, member, build):
+    filename = getattr(archive, 'filename', None)
+    if not filename:
+        return build(ET.fromstring(archive.read(member)))
+    info = archive.getinfo(member)
+    key = (build.__name__, str(Path(filename).resolve()), member, info.CRC, info.file_size, info.compress_size)
+    hit = _MODEL_CACHE.get(key)
+    if hit is None:
+        hit = build(ET.fromstring(archive.read(member)))
+        while len(_MODEL_CACHE) >= _MODEL_CACHE_MAX:
+            _MODEL_CACHE.pop(next(iter(_MODEL_CACHE)))
+        _MODEL_CACHE[key] = hit
+    return hit
+
+
+def _model_index(root):
+    """Build tree view of a model: (objects by id, build items) for the item walk."""
+    objects = {node.get('id'): node for node in root.iter() if node.tag.split('}')[-1] == 'object'}
+    items = [node for node in root.iter() if node.tag.split('}')[-1] == 'item']
+    return objects, items
+
+
+def _model_vertices(root):
+    """Vertex list per object id of one model part."""
+    return {
+        o.get('id'): [(float(v.get('x')), float(v.get('y')), float(v.get('z')))
+                      for v in o.iter() if v.tag.split('}')[-1] == 'vertex']
+        for o in root.iter() if o.tag.split('}')[-1] == 'object'
+    }
+
+
 def _world_item_points(archive, object_ids, fit=None):
     """World-space mesh vertices per selected build item, through the component chain.
 
@@ -602,11 +643,10 @@ def _world_item_points(archive, object_ids, fit=None):
     points are those of the scaled/rotated group. Original transforms stay in
     the archive; callers use the points to measure or place the derived plate.
     """
-    root = ET.fromstring(archive.read('3D/3dmodel.model'))
-    objects = {node.get('id'): node for node in root.iter() if node.tag.split('}')[-1] == 'object'}
+    objects, build_items = _cached_model(archive, '3D/3dmodel.model', _model_index)
     model_object_points = {}
     items = []
-    for item in (node for node in root.iter() if node.tag.split('}')[-1] == 'item'):
+    for item in build_items:
         if item.get('objectid') not in object_ids:
             continue
         if item.get('printable', '1') != '1':
@@ -622,12 +662,7 @@ def _world_item_points(archive, object_ids, fit=None):
             # Same-file components (BambuStudio painted projects) carry no path.
             path = path_attr.lstrip('/') if path_attr else '3D/3dmodel.model'
             if path not in model_object_points:
-                m_root = ET.fromstring(archive.read(path))
-                model_object_points[path] = {
-                    o.get('id'): [(float(v.get('x')), float(v.get('y')), float(v.get('z')))
-                                  for v in o.iter() if v.tag.split('}')[-1] == 'vertex']
-                    for o in m_root.iter() if o.tag.split('}')[-1] == 'object'
-                }
+                model_object_points[path] = _cached_model(archive, path, _model_vertices)
             comp_obj_id = component.get('objectid')
             points = model_object_points[path].get(comp_obj_id, [])
             if points:
@@ -877,19 +912,18 @@ def export_single_color_plate(source, target, decisions, part_keys, bed=BED_MM, 
     _validate_derived_plate(model_bytes, model_out, settings_out, selected)
     payload['3D/3dmodel.model'] = model_out
     payload['Metadata/model_settings.config'] = settings_out
-    colour = None
+    color = None
     if slot_colors:
         row = slot_colors.get(str(slot)) or slot_colors.get(slot) or {}
-        colour = row.get('hex') if isinstance(row, dict) else row
-        if not isinstance(colour, str) or not re.fullmatch(r'#?[0-9A-Fa-f]{6}', colour):
-            raise RuntimeError('filament color must be an explicit six-digit RGB value')
         if isinstance(row, dict) and row.get('physical_color_verified') is not True:
-            raise RuntimeError('derived plate slot color is not physically verified')
-        colour = '#' + colour.lstrip('#').upper()
+            from .slice_refusal import unconfirmed_slot_color
+            raise unconfirmed_slot_color(slot, row, 'derived plate slot color is not physically verified')
+        from .filament_color import slot_hex
+        color = slot_hex(slot, row)
         if 'Metadata/project_settings.config' not in payload:
             raise RuntimeError('derived plate slot color requires project settings')
         payload['Metadata/project_settings.config'] = _recolor_filament_indexes(
-            payload['Metadata/project_settings.config'], {1}, colour)
+            payload['Metadata/project_settings.config'], {1}, color)
     with zipfile.ZipFile(target, 'w', zipfile.ZIP_DEFLATED) as out:
         for name, data in payload.items():
             out.writestr(name, data)
@@ -907,7 +941,7 @@ def export_single_color_plate(source, target, decisions, part_keys, bed=BED_MM, 
             **({'placement_mm': placement} if placement is not None else {}), 'merged_placement': item_shifts is not None, 'bounds_mm': boxes,
             'placed_bounds_mm': placed, 'bed_mm': bed, 'changed_entries': changed,
             'policy': 'production package copy; every object, mesh and relationship kept; unselected build items printable=0; all extruders logical 1; selected transforms kept unless the group must shift to fit',
-            **({'filament_colour': colour} if colour is not None else {})}
+            **({'filament_colour': color} if color is not None else {})}
 
 
 def _build_ids(model_bytes):
@@ -1122,15 +1156,22 @@ def _tower_friendly_delta(bounds, centered, bed=BED_MM):
     return centered
 
 
-def prime_tower_candidates(part_bounds, bed=BED_MM, tower=TOWER_MM, margin=TOWER_MARGIN_MM,
+def prime_tower_candidates(part_bounds, bed=None, tower=None, margin=None,
                            limit=4, spread=20):
     """Tower origins that clear every part by margin, best first.
+
+    bed, tower and margin default to the configured values at call time
+    (``printer.bed_mm``, ``prime_tower.size_mm``, ``prime_tower.part_clearance_mm``).
 
     Mesh bounds are not the whole story: Orca's tree supports flare past the
     part footprint, so the best-scoring spot can still fail Orca's G-code
     conflict check. Callers retry the next candidate; candidates are kept at
     least `spread` mm apart so a retry actually moves the tower.
     """
+    bed = BED_MM if bed is None else bed
+    tower = TOWER_MM if tower is None else tower
+    margin = TOWER_MARGIN_MM if margin is None else margin
+
     def overlaps(x, y):
         for (x0, x1), (y0, y1), _z in part_bounds:
             if x < x1 + margin and x + tower > x0 - margin and y < y1 + margin and y + tower > y0 - margin:
@@ -1149,7 +1190,7 @@ def prime_tower_candidates(part_bounds, bed=BED_MM, tower=TOWER_MM, margin=TOWER
     step = 5
     # Orca grows the tower past its nominal width (brim plus purge depth); a
     # tower flush with the bed edge slices to G-code in the unprintable area.
-    edge = int(TOWER_EDGE_MM)
+    edge = math.ceil(TOWER_EDGE_MM)
     top = bed - tower - edge
     scored = sorted(((clearance(x, y), x, y)
                      for y in range(edge, int(top) + 1, step)
@@ -1166,7 +1207,7 @@ def prime_tower_candidates(part_bounds, bed=BED_MM, tower=TOWER_MM, margin=TOWER
     return picked
 
 
-def prime_tower_xy(part_bounds, bed=BED_MM, tower=TOWER_MM, margin=TOWER_MARGIN_MM):
+def prime_tower_xy(part_bounds, bed=None, tower=None, margin=None):
     """Best axis-aligned tower origin (the old fixed (15, 150) landed inside a stencil)."""
     return prime_tower_candidates(part_bounds, bed=bed, tower=tower, margin=margin, limit=1)[0]
 

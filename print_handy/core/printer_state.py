@@ -288,6 +288,37 @@ def _get(url, data=None, method=None, timeout=6):
         return json.load(r)
 
 
+# ZMod's AD5X colour-change purge, the saved variable use_trash_on_print
+# (SAVE_ZMOD_DATA USE_TRASH_ON_PRINT=n; https://wiki.zmod.link/Global/ and
+# https://wiki.zmod.link/AD5X/):
+#   0 "Nopoop": ZMod does not purge into the trash chute; the slicer must purge
+#     into the prime tower (Orca "Purge in prime tower", flush volumes).
+#   1 default: ZMod purges into the trash chute on every colour change.
+#   2 slicer-controlled poop: ZMod parks at the chute and the slicer's own
+#     change-filament G-code purges there (ZMod's Orca profiles only).
+PURGE_MODES = {0: "nopoop (slicer purges into the prime tower)",
+               1: "trash chute (ZMod purges on colour change)",
+               2: "slicer-controlled poop (ZMod profile G-code purges)"}
+
+
+def purge_mode(variables):
+    """use_trash_on_print from a save_variables dict: 0, 1 or 2, else None (missing or unknown)."""
+    value = variables.get("use_trash_on_print") if isinstance(variables, dict) else None
+    return value if type(value) is int and value in PURGE_MODES else None
+
+
+def read_purge_mode(st):
+    """The live ZMod purge mode for st's printer, or None when Moonraker cannot say."""
+    url = (st or {}).get("moonraker_url")
+    if not url:
+        return None
+    try:
+        status = _get(f"{url}/printer/objects/query?save_variables")["result"]["status"]
+        return purge_mode((status.get("save_variables") or {}).get("variables"))
+    except Exception:
+        return None
+
+
 def sync_klipper_nozzle(moonraker_url, nozzle_diameter):
     """Update nozzle_diameter in printer.cfg via Moonraker upload API and restart Klipper."""
     cfg_url = f"{moonraker_url}/server/files/config/printer.cfg"
@@ -602,6 +633,7 @@ def check(st=None, printer_id=None, adapter=None):
         probs.extend(calibration_problems)
         facts["calibration_valid"] = not calibration_problems
         facts["calibration_owner"] = "native" if variables.get("display_off") == 0 else "screenless" if variables.get("display_off") == 1 else "unknown"
+        facts["purge_mode"] = PURGE_MODES.get(purge_mode(variables), f"purge mode unknown, assuming trash chute (use_trash_on_print={variables.get('use_trash_on_print')!r})")
     except Exception as e:
         probs.append("the printer's saved calibration could not be read — check the printer screen, then try again")
     return (not probs), probs, facts
@@ -665,7 +697,8 @@ def main():
     if a.cmd == "check":
         ok, probs, facts = check(st)
         print(("HW OK: " if ok else "HW MISMATCH: ") + summary(st, facts.get("calibration_owner", "unknown"), facts.get("calibration_valid")) +
-              (f", {facts.get('spool_remaining_g')} g left" if "spool_remaining_g" in facts else ""))
+              (f", {facts.get('spool_remaining_g')} g left" if "spool_remaining_g" in facts else "") +
+              (f", IFS purge: {facts['purge_mode']}" if "purge_mode" in facts else ""))
         for p in probs:
             print("  - " + p)
         for w in facts.get("warnings") or []:

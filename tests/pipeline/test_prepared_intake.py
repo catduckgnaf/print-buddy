@@ -16,7 +16,7 @@ import pytest
 from print_handy.core import model_job  # noqa: E402
 from print_handy.core import prepared_intake  # noqa: E402
 from print_handy.core.background_slice import slice_binding  # noqa: E402
-from print_handy.core.slice_recipe import binding_sha256  # noqa: E402
+from print_handy.core.slice_recipe import RECIPE_VERSION, binding_sha256  # noqa: E402
 from .helpers import external  # noqa: E402
 print_next = external("print_next")
 from .test_color_intake import source, state  # noqa: E402
@@ -213,7 +213,7 @@ def test_one_click_slice_and_print_needs_no_typed_approval(env):
     job = json.loads(Path(approval['job_json']).read_text())
     current = binding_sha256(slice_binding(job, model_job.file_sha256(job['downloaded_file'])))
     assert env.recipes == [current]
-    assert receipt['slice_approval']['recipe_version'] == 1
+    assert receipt['slice_approval']['recipe_version'] == RECIPE_VERSION
     assert receipt['slice_approval']['recipe_sha256'] == current
 
 

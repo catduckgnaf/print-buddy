@@ -49,7 +49,9 @@ class CombinedSupervisorTests(unittest.TestCase):
         # #336) and the Web UI gate (#286) before starting children; the
         # fake answers them from PRINT_HANDY_TEST_LISTENER_GATE (default 0
         # = listener required) and PRINT_HANDY_TEST_WEBUI_GATE (default 3
-        # = Web UI disabled). The gate's --roster form prints
+        # = Web UI disabled). The bot gate (print_handy.bot_gate) starts
+        # the bot when this test's DISCORD_BOT_TOKEN is set (the default
+        # platform). The gate's --roster form prints
         # PRINT_HANDY_TEST_ROSTER (default: one printer) and fails only
         # when the gate code is 2 (unresolved configuration). Listener
         # invocations (print_handy.listeners --printer <id>) run the
@@ -62,6 +64,8 @@ class CombinedSupervisorTests(unittest.TestCase):
                 'printf "%s\\n" "${PRINT_HANDY_TEST_ROSTER:-printer1}"; exit 0;; '
                 '*print_handy.listener_gate*) '
                 'exit "${PRINT_HANDY_TEST_LISTENER_GATE:-0}";; '
+                '*print_handy.bot_gate*) '
+                'if [ -n "${DISCORD_BOT_TOKEN:-}" ]; then exit 0; fi; exit 3;; '
                 '*print_handy.webui_gate*) '
                 'exit "${PRINT_HANDY_TEST_WEBUI_GATE:-3}";; '
                 '*print_handy.live_gate*) '

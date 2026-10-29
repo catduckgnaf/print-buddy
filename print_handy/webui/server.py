@@ -236,6 +236,35 @@ class _Handler(BaseHTTPRequestHandler):
     def log_message(self, *args):  # keep stdout clean; errors still surface as 500s
         pass
 
+    def _host_refused(self, *, post=False):
+        """True (and a 403 sent) for a DNS-rebinding request.
+
+        On a loopback bind without an access token the form token is the
+        only guard on a write, and the page that carries it is served to
+        anyone who can reach the port. A hostile site that rebinds its own
+        hostname to 127.0.0.1 is "same origin" with this server, so it
+        could read the token and post settings changes. Such a request
+        still names the attacker's hostname in Host (and Origin), so only
+        the loopback names and the bind address are accepted.
+        """
+        allowed = self.server.allowed_hosts
+        if allowed is None:
+            return False
+        def hostname(value):
+            value = str(value or "").strip().lower()
+            if value.startswith("["):
+                return value[1:].split("]", 1)[0]
+            return value.rsplit(":", 1)[0] if value.count(":") == 1 else value
+        names = [hostname(self.headers.get("Host"))]
+        origin = self.headers.get("Origin")
+        if post and origin and origin != "null":
+            names.append(hostname(urlparse(origin).netloc))
+        if all(name in allowed for name in names):
+            return False
+        self._send(403, "Forbidden: this Web UI answers only to its own loopback address.",
+                   "text/plain; charset=utf-8")
+        return True
+
     def _send(self, code, body, content_type, headers=()):
         data = body.encode() if isinstance(body, str) else body
         self.send_response(code)
@@ -319,6 +348,8 @@ class _Handler(BaseHTTPRequestHandler):
     def do_GET(self):
         try:
             path = urlparse(self.path).path
+            if path != "/healthz" and self._host_refused():
+                return
             if path == "/healthz":
                 # Unauthenticated by design: the container healthcheck
                 # probes this route (it sends the header when it has the
@@ -487,6 +518,8 @@ class _Handler(BaseHTTPRequestHandler):
     def do_POST(self):
         try:
             path = urlparse(self.path).path
+            if self._host_refused(post=True):
+                return
             if path == "/login":
                 self._login_submit()
             elif path == "/logout":
@@ -635,6 +668,10 @@ def make_server(data=None, *, environ=None, host=None, port=None, snapshot_func=
     server = ThreadingHTTPServer((bind_host, bind_port), _Handler)
     server.settings_data = data
     server.webui_token = token
+    # DNS-rebinding guard (see _Handler._host_refused): only a tokenless
+    # loopback bind relies on the form token alone, so only it checks Host.
+    server.allowed_hosts = ({"localhost", "127.0.0.1", "::1", str(bind_host).lower()}
+                            if is_loopback(bind_host) and not token else None)
     # The config page reads and writes through the same environment the
     # settings were loaded with (PRINT_HANDY_CONFIG resolution included).
     server.webui_environ = environ

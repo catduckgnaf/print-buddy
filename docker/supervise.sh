@@ -167,11 +167,19 @@ if [ -n "$roster_ids" ]; then
         fi
     done <<< "$roster_ids"
 fi
-if [ -n "${DISCORD_BOT_TOKEN:-}" ]; then
+# The bot runs when the configured [bot] platform (discord, telegram or
+# matrix) has its own token: the gate resolves the configuration, never
+# DISCORD_BOT_TOKEN alone (which left Telegram/Matrix containers with no
+# bot). Gate status: 0 = start, 3 = that platform's token is empty (start
+# nothing), anything else = configuration unresolved; stop, never guess.
+bot_gate=0
+python3 -m print_handy.bot_gate || bot_gate=$?
+if [ "$bot_gate" -eq 0 ]; then
     python3 -m print_handy.bot &
     children+=("$!"); children_names+=("bot")
-else
-    echo 'DISCORD_BOT_TOKEN is empty; bot disabled.'
+elif [ "$bot_gate" -ne 3 ]; then
+    echo "Bot gate failed (status $bot_gate); configuration unresolved, stopping container." >&2
+    exit "$bot_gate"
 fi
 # The optional Web UI (#286) runs only when [webui] enabled is true and a
 # port is chosen: the gate resolves the effective configuration, never an

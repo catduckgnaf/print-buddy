@@ -13,6 +13,10 @@ services:
       # "Runtime environment"); stable is the default, preview is the other channel
       # (alpha, its old name, is still accepted for now).
       PRINT_HANDY_ORCA_CHANNEL: ${PRINT_HANDY_ORCA_CHANNEL:-stable}
+      # Container timezone (docs/SETTINGS.md "Compose variables"): IANA name for
+      # the container's local time — log timestamps, scheduled and timed
+      # features and the bundled services' timestamps.
+      TZ: ${TZ:-America/New_York}
       PRINT_HANDY__SERVICES__SPOOLMAN_URL: ${PRINT_HANDY__SERVICES__SPOOLMAN_URL:-http://127.0.0.1:8000}
       # Camera watchdog (docs/DOCKER.md "Camera watch"): alert-only spaghetti, detached,
       # empty-bed and stall checks. Sensitivity 1 (quietest) to 5 (most alerts).

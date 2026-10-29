@@ -11,6 +11,7 @@ import pytest
 
 from print_handy.core import model_job as mj
 from print_handy.core import orca_adapter, printer_state
+from print_handy.core import slice_recipe as recipe_module
 from print_handy.core.background_slice import slice_binding
 
 from .test_artifact_binding import setup_job
@@ -65,7 +66,7 @@ def test_binding_is_a_versioned_recipe_and_ignores_dict_order():
     base = _job()
     binding = slice_binding(base, 'source-a')
     recipe = json.loads(binding)
-    assert recipe['recipe_version'] == 1
+    assert recipe['recipe_version'] == recipe_module.RECIPE_VERSION == 2
     assert recipe['source_sha256'] == 'source-a'
     assert slice_binding(dict(reversed(list(base.items()))), 'source-a') == binding
 
@@ -117,8 +118,8 @@ def test_slice_records_versioned_recipe_hash_in_the_artifact(tmp_path, monkeypat
     jp, _st, _gcode = setup_job(tmp_path, monkeypatch)
     job = json.loads(jp.read_text())
     record = job['slice_recipe']
-    assert record['version'] == 1
-    assert job['artifact_binding']['recipe_version'] == 1
+    assert record['version'] == recipe_module.RECIPE_VERSION
+    assert job['artifact_binding']['recipe_version'] == recipe_module.RECIPE_VERSION
     assert job['artifact_binding']['recipe_sha256'] == record['sha256']
     from print_handy.core import slice_recipe
     expected = slice_binding(job, mj.file_sha256(job['downloaded_file']))
@@ -202,3 +203,20 @@ def test_worker_accepts_the_recipe_intake_bound_before_the_first_slice(tmp_path,
     mj.slice_job(str(jp), copies=2, recipe_sha256=requested)
     sliced = json.loads(jp.read_text())
     assert sliced['printer_model'] and sliced['artifact_binding']['recipe_sha256'] == requested
+
+
+def test_spacing_and_prime_tower_settings_are_recipe_inputs(monkeypatch):
+    # They decide where parts and the tower land, so changing them must
+    # change the recipe: an old slice is never reused under new spacing.
+    from print_handy import settings
+    job = {'title': 't'}
+    state = {'nozzle': {'diameter_mm': 0.4}, 'ifs_slots': {}}
+    before = recipe_module.slice_recipe(job, 'a' * 64, state)
+    assert before['layout']['spacing']['layout.merge_edge_margin_mm'] is not None
+    assert 'size_mm' in before['layout']['prime_tower']
+    changed = dict(settings.current())
+    changed['layout'] = {**changed['layout'],
+                         'merge_edge_margin_mm': changed['layout']['merge_edge_margin_mm'] + 3.0}
+    monkeypatch.setattr(settings, 'current', lambda: changed)
+    after = recipe_module.slice_recipe(job, 'a' * 64, state)
+    assert recipe_module.recipe_sha256(after) != recipe_module.recipe_sha256(before)

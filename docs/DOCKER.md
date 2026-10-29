@@ -6,7 +6,7 @@ The 2.1.2 candidate replaces separate bot, listener and Spoolman services with O
 
 Tini owns orphan reaping and process-group signals. The supervisor waits for the bundled API before starting the Moonraker listener and Discord bot. Any required child exit ends the container nonzero, including an unexpected clean exit. SIGTERM stops children with a bounded grace period. Docker restart reacts to process exit, not healthcheck failures alone.
 
-An empty `DISCORD_BOT_TOKEN` disables only the Discord consumer for staging. Never run duplicate consumers/listeners against the same state. HEALTHCHECK verifies listener heartbeat, enabled bot readiness and Spoolman `/api/v1/health`. An offline printer does not make a reconnecting listener unhealthy. Dummy credentials do not prove Discord login.
+The container starts the chat bot for the configured `[bot] platform` (Discord, Telegram or Matrix) when that platform's own token variable is set (`DISCORD_BOT_TOKEN`, `TELEGRAM_BOT_TOKEN` or `MATRIX_ACCESS_TOKEN` by default); an empty token disables only the bot, for staging. Never run duplicate consumers/listeners against the same state. HEALTHCHECK verifies listener heartbeat, enabled bot readiness and Spoolman `/api/v1/health`. An offline printer does not make a reconnecting listener unhealthy. Dummy credentials do not prove Discord login.
 
 ## Which processes run
 
@@ -257,6 +257,8 @@ On the host, put only the token in `dot-config/bambu/token` under `PRINT_HANDY_D
 Use `docker/unraid/print-handy.xml`, replacing the prior three templates. One entry runs all required processes; leave PostArgs empty. The template specifies UID/GID 1000:1000 and five persistent paths under `/mnt/user/appdata/print-handy`. Set Repository to the tested immutable digest before deployment. It publishes no port; add an approved API mapping only as described under Included Spoolman. Image HEALTHCHECK covers the combined runtime.
 
 The runtime selector `PRINT_HANDY_ORCA_CHANNEL` (Compose, `.env.example` and the template) defaults to `stable` and accepts `preview`; the pre-#600 name `alpha` is still accepted as an alias for `preview` with a startup notice, and any other value stops container startup.
+
+The container timezone `TZ` (Compose, `.env.example` and the template) defaults to `America/New_York` and takes any IANA name, for example `Europe/London`. It sets the container's local time: log timestamps, scheduled and timed features, and the bundled Spoolman's timestamps. The image ships the timezone database and points `/etc/localtime` at the default zone; a `TZ` set at runtime overrides it for every process, and an unknown name is logged at startup while the default is used instead. Print Handy's chat display times keep following `discord.timezone`, a separate setting.
 
 The template and the Compose environment also carry the feature-enabling variables (#252) — the ones that turn a feature on, as opposed to tuning settings, which stay in a mounted YAML pointed to by `PRINT_HANDY_CONFIG`:
 

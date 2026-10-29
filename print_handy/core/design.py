@@ -340,7 +340,15 @@ def fetch_link_source(url, target_dir) -> Path:
     except DesignError:
         raise
     except Exception as exc:
-        raise DesignError("the linked model could not be downloaded — check the link is public and try again") from None
+        # Keep a curated, operator-fixable cause (a missing or refused site
+        # token, a robot check, a site download gap, an intake size limit):
+        # its text names the remedy. Only an unrecognised failure gets the
+        # generic wording, and the cause stays chained for the log.
+        from .. import diagnostics
+        from .intake_resources import IntakeLimitExceeded
+        if isinstance(exc, IntakeLimitExceeded) or diagnostics.known_cause(exc) is not None:
+            raise DesignError(str(exc)) from exc
+        raise DesignError("the linked model could not be downloaded — check the link is public and try again") from exc
 
 
 def source_note(session) -> str:

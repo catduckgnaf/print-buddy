@@ -128,7 +128,12 @@ def maker_id(url):
 
 def maker_inventory(url):
     mid=maker_id(url)
-    d=request_json(f"https://api.bambulab.com/v1/design-service/design/{mid}",headers=maker_headers())
+    try:
+        d=request_json(f"https://api.bambulab.com/v1/design-service/design/{mid}",headers=maker_headers())
+    except urllib.error.HTTPError as exc:
+        refused=_maker_refused(exc)
+        if refused is not None: raise refused from None
+        raise
     rows=[]
     for ix, i in enumerate(d.get("instances",[]),1):
         mi=i.get("extention",{}).get("modelInfo",{})
@@ -192,6 +197,22 @@ def _reuse_cached(cached, target, site):
     return dest
 
 
+def _maker_refused(exc):
+    """SiteLoginNeeded for a MakerWorld 401/403 (the account token), else None.
+
+    The raw HTTPError text ("HTTP Error 401: Unauthorized") names no site,
+    so the #590 known-cause check could not recognise it and the operator
+    got the generic bundle advice; this names the token and lets intake
+    offer the renew flow. A 418 robot check is handled separately.
+    """
+    if getattr(exc, "code", None) not in (401, 403): return None
+    return SiteLoginNeeded("makerworld", "refused",
+        f"MakerWorld refused the request ({exc.code}), which usually means the MakerWorld "
+        "account token is missing, invalid or expired. Sign in at makerworld.com, copy the "
+        "token cookie into ~/.config/bambu/token (see docs/PROJECT-REFERENCE.md, MakerWorld "
+        "account token), then send the link again.")
+
+
 def maker_download(job, source, target):
     cached=_cached_maker_source(source.get("instance_id"))
     if cached is not None:
@@ -204,6 +225,8 @@ def maker_download(job, source, target):
             # account/IP looks automated. Never try to solve or dodge it; say so plainly.
             raise RuntimeError("MakerWorld blocked the download with a robot check (captcha). Open the model on "
                                "makerworld.com while logged in and pass the check there, or wait a while, then send the link again") from None
+        refused=_maker_refused(exc)
+        if refused is not None: raise refused from None
         raise
     name=Path(r.get("name") or "model.3mf").name
     target=target/name
@@ -3584,13 +3607,25 @@ def _job_fit(job, brim_override):
     return fit, supports, brim_override
 
 
-def _rearranged_group_placement(src, manifest, group, bed):
+def _merge_edge(brim):
+    """Bed-edge margin for merge/rearrange packing: the merge edge margin plus the job's brim.
+
+    The single-plate arranger already adds the brim (full_size_one_plate);
+    the merge planner and the per-slot rearranger must too, or a brim on a
+    part packed at the bare edge margin (1 mm with layout.spacing minimum)
+    crosses the bed edge.
+    """
+    from .plate_merge import EDGE_MARGIN_MM
+    return EDGE_MARGIN_MM + float(brim or 0)
+
+
+def _rearranged_group_placement(src, manifest, group, bed, brim=0):
     """export_single_color_plate kwargs that place one rearranged slot plate at 100%."""
     from . import plate_merge
     from .orca_adapter import _yaw
     keys = set(group['part_keys'])
     object_ids = {str(part['object_id']) for part in manifest['parts'] if part['key'] in keys}
-    arranged = plate_merge.arrange_group(src, object_ids, bed)
+    arranged = plate_merge.arrange_group(src, object_ids, bed, edge=_merge_edge(brim))
     if arranged is None:
         raise RuntimeError(f"the slot {group['slot']} parts do not fit one {bed} mm plate at 100% even "
                            'rearranged; choose split or shrink instead. Nothing sliced')
@@ -3645,7 +3680,8 @@ def full_size_one_plate(source, state, decisions=None):
         slots = _part_slots(view, manifest)
         flagged = {'full_size_rearrange_plan': {'rearrange_plate': True}}
         verdict = plate_merge.plan(source, manifest, _plates_for(source, manifest), slots, st,
-                                   bed=int(bed[0]), job=flagged)
+                                   bed=int(bed[0]), job=flagged,
+                                   edge=_merge_edge(st.get('brim_override')))
         if verdict.get('mode') != 'merge':
             return None
         boxes = list((verdict.get('placed_bounds_mm') or {}).values())
@@ -3770,7 +3806,8 @@ def slice_multi_plate(job, job_path, src, manifest, decisions, st, brim_override
         # slices one fitted plate per slot; the whole model was verified to fit.
         verdict['reason'] = 'Resized per-part job: one fitted plate per slot'
     elif mode == 'merge':
-        verdict = plate_merge.plan(src, manifest, plates, slots, st, job=job)
+        _, _, plan_brim = _job_fit(job, brim_override)
+        verdict = plate_merge.plan(src, manifest, plates, slots, st, job=job, edge=_merge_edge(plan_brim))
         if verdict['mode'] == 'merge':
             merged_slice = (_slice_merged_multi_tool if _job_adapter(job).multi_tool else _slice_merged)
             try:
@@ -4748,7 +4785,8 @@ def slice_job(job_path, brim_override=None, copies=None, scale=None, recipe_sha2
                 # multicolor bed: each slot plate is packed on its own bed
                 # (parts may turn 90 degrees) instead of keeping the
                 # author's layout, which is what overflowed the bed.
-                placement_kw = _rearranged_group_placement(src, manifest, group, int(st['bed_mm'][0]))
+                placement_kw = _rearranged_group_placement(src, manifest, group, int(st['bed_mm'][0]),
+                                                           brim=brim_override)
             report = export_single_color_plate(src, plate, decisions, group['part_keys'], bed=int(st['bed_mm'][0]), slot_colors=st.get('ifs_slots') or {}, **placement_kw)
             slice_dir = work / 'sliced' / 'orca' / uuid.uuid4().hex
             out, provenance, configs = slice_model(plate, slice_dir, st, brim_override, preserve_layout=True, filament_slot=group['slot'], **({'supports': supports} if supports is not None else {}))

@@ -96,6 +96,15 @@ class StandaloneAdapter(BasePlatformAdapter):
                 handle.close()
         return SendResult(True, message_id=str(first.id) if first is not None else None)
 
+    async def delete_message(self, chat_id, message_id, metadata=None):
+        try:
+            channel = await self._channel(chat_id, metadata)
+            await channel.get_partial_message(int(message_id)).delete()
+            return True
+        except Exception as exc:
+            logger.info("Discord delete failed: %r", exc)
+            return False
+
     async def send_clarify(self, chat_id, question, choices, clarify_id, session_key, metadata=None):
         """One message with one button per choice. A press resolves ``clarify_id`` in the registry."""
         import discord

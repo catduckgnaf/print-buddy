@@ -30,7 +30,7 @@ from ..core import prompts
 from . import health
 from . import matrix_rest as mx
 from . import routing
-from .platform import BasePlatformAdapter, SendResult
+from .platform import BasePlatformAdapter, SendResult, answered_note
 from .rest import chunks, split_media
 
 logger = logging.getLogger(__name__)
@@ -142,6 +142,15 @@ class StandaloneAdapter(BasePlatformAdapter):
             return SendResult(False, error=str(exc))
         return SendResult(True, message_id=first or None)
 
+    async def delete_message(self, chat_id, message_id, metadata=None):
+        try:
+            await asyncio.to_thread(mx.redact, self.homeserver, self.token, str(chat_id),
+                                    str(message_id), opener=self.opener)
+            return True
+        except Exception as exc:
+            logger.info("Matrix redact failed: %r", exc)
+            return False
+
     async def send_clarify(self, chat_id, question, choices, clarify_id, session_key, metadata=None):
         """The question plus a numbered choice list; answers come back as typed replies."""
         labels = [str(c) for c in choices]
@@ -189,7 +198,7 @@ class StandaloneAdapter(BasePlatformAdapter):
         cid = self.open_prompt(session_key)
         if cid is None or not self.registry.is_open(cid):
             return False
-        await self.close_prompt(cid, f"Answered by message: {text[:100]}")
+        await self.close_prompt(cid, answered_note(text))
         return bool(self.registry.resolve_gateway_clarify(cid, str(text)))
 
     async def close_prompt(self, clarify_id, note):

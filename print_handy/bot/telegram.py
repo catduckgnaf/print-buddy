@@ -153,6 +153,15 @@ class StandaloneAdapter(BasePlatformAdapter):
             payload["message_thread_id"] = str(thread)
         return self._call(method, payload, files=[(field, path)])
 
+    async def delete_message(self, chat_id, message_id, metadata=None):
+        try:
+            await asyncio.to_thread(self._call, "deleteMessage",
+                                    {"chat_id": str(chat_id), "message_id": int(message_id)})
+            return True
+        except Exception as exc:
+            logger.info("Telegram delete failed: %r", exc)
+            return False
+
     async def send_clarify(self, chat_id, question, choices, clarify_id, session_key, metadata=None):
         """One message with an inline keyboard, one button per choice."""
         labels = [str(c) for c in choices][:MAX_BUTTONS]

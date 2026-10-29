@@ -38,14 +38,15 @@ _OFFLOAD = {('model_job', 'audit'), ('model_job', 'slice_job'), ('source_colors'
             ('model_job', 'per_part_fit_options'), ('plate_merge', 'full_size_split_possible'),
             ('geometry_layout', 'inspect_geometry'), ('geometry_layout', 'arrange_and_export'),
             ('geometry_layout', 'probe_single_plate_rearrange'), ('model_job', 'full_size_one_plate'),
-            ('cad_split', 'check_source_against_split_plan'), ('cad_split', 'prepare_cad_split')}
+            ('cad_split', 'check_source_against_split_plan'), ('cad_split', 'prepare_cad_split'),
+            ('model_parts', 'combine')}
 # Steps that run the slicer share one lane; the geometry-only steps share a small general lane.
 _SLICER_STEPS = {('model_job', 'slice_job'), ('orca_adapter', 'orca_plate_capacity'), ('orca_adapter', 'fit_options')}
 _STEP_LABELS = {'slice_job': 'slicing', 'audit': 'the model check', 'inventory': 'the color check',
                 'orca_plate_capacity': 'the bed fit check', 'fit_options': 'the bed fit check',
                 'per_part_fit_options': 'the per-part fit check', 'full_size_split_possible': 'the split check',
                 'inspect_geometry': 'the geometry check', 'arrange_and_export': 'the layout',
-                'probe_single_plate_rearrange': 'the layout check',
+                'probe_single_plate_rearrange': 'the layout check', 'combine': 'combining the files',
                 'check_source_against_split_plan': 'the split check', 'prepare_cad_split': 'the split'}
 
 
@@ -559,8 +560,12 @@ def preview_sentence(job, row, filament_note=None):
     if not desc and not est and not named_profile and not filament_note:
         return None  # a bare title or filename echo adds nothing; a named profile does
     text = _end_sentence(f'That looks like {title}' + (f', {desc}' if desc else ''))
-    if profile and profile.casefold() != title.casefold():
-        text += _end_sentence(f' I will use the selected profile: {profile}')
+    if profile and (row or {}).get('kind') == 'parts':
+        text += _end_sentence(f' I will print these files together: {profile}')
+    elif profile and profile.casefold() != title.casefold():
+        # Only MakerWorld rows are print profiles; the file-list sites list files.
+        what = 'profile' if (job or {}).get('site') == 'makerworld' else 'file'
+        text += _end_sentence(f' I will use the selected {what}: {profile}')
     if filament_note:
         text += f' Filament: {filament_note}.'
     if est:
@@ -915,6 +920,54 @@ def interrupted_note(saved):
             'Print Handy stopped. That run is not reused; every choice and confirmation is asked again.')
 
 
+# Receipt statuses where Print Handy itself is working or waiting on a button it posted. A restart
+# kills the work and the buttons, so a receipt left in one of these by another process is stranded.
+IN_PROGRESS_STATUSES = frozenset({'INSPECTING_SOURCE', 'AWAITING_COLOR', 'COLORS_SAVED', 'SLICE_APPROVED'})
+INTERRUPTED_MAX_AGE_S = 24 * 3600  # older receipts are history, not a conversation someone is waiting in
+
+
+async def announce_interrupted(root, adapter, now=None):
+    """Tell each chat whose intake a restart stranded, once. Returns the intake ids announced.
+
+    Only receipts this version wrote (they carry chat_id and owner), written by another Print Handy
+    process, still in an in-progress status and recent. The receipt is marked INTERRUPTED before the post,
+    so a failing post or another restart never repeats it. Nothing is resumed: no approval survives.
+    """
+    root = Path(root)
+    now = time.time() if now is None else now
+    announced = []
+    try:
+        paths = sorted(root.glob('*.json'))
+    except OSError:
+        return announced
+    for path in paths:
+        try:
+            receipt = json.loads(path.read_text())
+            age = now - path.stat().st_mtime
+        except (OSError, ValueError):
+            continue
+        if (not isinstance(receipt, dict) or receipt.get('status') not in IN_PROGRESS_STATUSES
+                or not receipt.get('chat_id') or receipt.get('owner') in (None, owned_worker._OWNER)
+                or receipt.get('interrupted_notified') or age > INTERRUPTED_MAX_AGE_S):
+            continue
+        receipt.update(status='INTERRUPTED', interrupted_notified=True, interrupted_from=receipt['status'])
+        try:
+            path.write_text(json.dumps(receipt, indent=2) + '\n')
+        except OSError:
+            continue
+        thread = receipt.get('thread_id')
+        try:
+            await adapter.send(
+                chat_id=str(receipt['chat_id']), metadata={'thread_id': thread} if thread else None,
+                content='Print Handy restarted while it was preparing that model, so the preparation '
+                        'stopped. No slice was finished, and nothing was uploaded or started. '
+                        'Send the link or file again to start over.')
+        except Exception:
+            logger.warning('could not post the interrupted-intake note', exc_info=True)
+        announced.append(receipt.get('intake_id') or path.stem)
+    return announced
+
+
 _LIVE_KEY = contextvars.ContextVar('prepared_intake_live_key', default=None)
 
 
@@ -964,13 +1017,47 @@ def _saved_reply(text):
     raise ValueError('reply `saved` once the token file is in place, or `cancel`')
 
 
+def _connect_reply(site):
+    """The typed-reply parser for ``site``'s connect prompt.
+
+    `saved` (and its synonyms) answers like the button. Anything else must be
+    the token itself: it is normalized and shape-checked
+    (site_accounts.accept_pasted), written to the token file
+    (site_accounts.save_token) and the prompt is then answered as if Saved had
+    been pressed, so the token never travels through the prompt registry. A
+    value that does not look like a token is refused with the reason (never
+    the value) and the prompt stays open. link_intake.note_secret_reply tells
+    the chat handler to delete the operator's message.
+    """
+    from . import link_intake
+    from .site_accounts import accept_pasted, save_token, token_path
+
+    def parse(text):
+        try:
+            return _saved_reply(text)
+        except ValueError:
+            pass
+        token, problem = accept_pasted(site, text)
+        if problem:
+            raise ValueError(problem)
+        try:
+            save_token(site, token)
+        except OSError as exc:
+            raise ValueError(
+                f"I couldn't save it to {token_path(site)} ({exc.strerror or type(exc).__name__}). "
+                'Save it there yourself and reply `saved`, or reply `cancel`.') from None
+        link_intake.note_secret_reply()
+        return SAVED_LABEL
+    return parse
+
+
 async def _with_connect(adapter, source, key, metadata, timeout, attempt):
     """Run ``attempt()`` (a coroutine factory); on SiteLoginNeeded offer the connect flow and retry.
 
     Covers both places a site credential is needed (#462, #464): the model
     lookup (MakerWorld, Thingiverse, Cults3D, MyMiniFactory without a key)
-    and the download (every login site). Never a dead end, and the
-    credential itself is never collected in chat.
+    and the download (every login site). Never a dead end; the operator can
+    paste the credential or save it on the Print Handy machine.
     """
     for connect_round in range(MAX_CONNECT_ROUNDS + 1):
         try:
@@ -982,34 +1069,28 @@ async def _with_connect(adapter, source, key, metadata, timeout, attempt):
 
 
 async def _connect_account(adapter, source, key, metadata, exc, timeout):
-    """Offer to connect (or renew) the site behind ``exc``; True when the operator saved it.
+    """Walk the operator through connecting (or renewing) the site behind ``exc``.
 
-    The walkthrough (site_accounts.connect_steps) says where the credential
-    lives, how to get it from the operator's own account or signed-in
-    browser, and links the docs section; it is saved on the Print Handy
-    machine, never pasted into chat. An expired or refused login is offered
-    as a renewal. False means the operator declined, and the caller reports
-    the original refusal.
+    One message carries everything (site_accounts.connect_steps): why it is
+    needed, where the credential comes from, the two ways to hand it over
+    (paste it as the next message, or save the file on the Print Handy machine
+    and press Saved), what pasting risks, and the docs link. A pasted value is
+    saved by ``_connect_reply``; either way True comes back and the caller
+    retries. False means the operator cancelled, and the caller reports the
+    original refusal. An expired or refused login reads as a renewal.
     """
     from .site_accounts import LOGIN_SITES, connect_steps
     label = LOGIN_SITES[exc.site].label
-    renew = exc.reason in ('expired', 'refused')
     lead = {
         'missing': f'{label} needs you to be signed in for this model, and no {label} account is connected yet.',
         'empty': f'{label} needs you to be signed in for this model, and the saved {label} login is empty or incomplete.',
         'expired': f'Your saved {label} login has expired.',
         'refused': f'{label} turned down the saved login (it has most likely expired).',
     }.get(exc.reason, f'{label} needs you to be signed in for this model.')
-    offer = f'Renew {label} login' if renew else f'Connect {label} account'
-    pick = await _ask(adapter, source, key, f'{lead} Nothing was downloaded.',
-                      [offer, 'Not now (cancel)'], timeout)
-    if pick != 0:
-        return False
-    await adapter.send(chat_id=source.chat_id, content=connect_steps(exc.site, renew=renew),
-                       metadata=metadata)
-    saved = await _ask(adapter, source, key,
-                       f'Press Saved once the {label} token file is in place.',
-                       [SAVED_LABEL, 'Cancel'], timeout, parser=_saved_reply)
+    renew = exc.reason in ('expired', 'refused')
+    question = connect_steps(exc.site, renew=renew, lead=f'**{lead}** Nothing was downloaded.')
+    saved = await _ask(adapter, source, key, question, [SAVED_LABEL, 'Cancel'], timeout,
+                       parser=_connect_reply(exc.site))
     return saved in (0, SAVED_LABEL)
 
 
@@ -1278,6 +1359,137 @@ async def _send_source_thumbnail(adapter, source, path, target):
         pass
 
 
+FILE_LIST_SITES = ('printables', 'thingiverse', 'myminifactory', 'cults3d', 'crealitycloud',
+                   'thangs', 'nexprint', 'makeronline', 'direct')
+CHOOSE_FILES = 'Choose files'
+
+
+def _and(words):
+    words = [str(w) for w in words]
+    return words[0] if len(words) == 1 else ', '.join(words[:-1]) + ' and ' + words[-1]
+
+
+def _file_name(row):
+    return str(row.get('name') or row.get('title') or 'file')
+
+
+def _parts_title(rows):
+    """'UNO-container-1, UNO-uno-latch-1 and UNO-cap-sign-1': the files of a multi-file job, plainly."""
+    return _and(re.sub(r'\.(?:stl|3mf)$', '', _file_name(r), flags=re.I) for r in rows)
+
+
+async def _choose_files(adapter, source, key, rows, timeout):
+    """The files of a file-list model to print, as rows: all parts by default.
+
+    Files on Printables, Thingiverse and the other file-list sites are parts of
+    one model, not alternatives. Versions of one part (cap with or without a
+    sign, M3 or M4) get one short question per group; 'Choose files' picks any
+    subset, including a single file. One 3MF among STLs usually holds the whole
+    model already laid out, so it is offered first.
+    """
+    from . import model_parts
+    names = [_file_name(r) for r in rows]
+    three_mf = model_parts.plan(names)['assembly_3mf']
+    if three_mf is not None:
+        stls = [r for r in rows if _file_name(r).lower().endswith('.stl')]
+        pick = await _ask(adapter, source, key,
+                          f'This model has a 3MF project, {names[three_mf]}, and {len(stls)} STL '
+                          f"file{'s' if len(stls) != 1 else ''}. A 3MF on the model page usually holds the "
+                          "whole model already laid out, so I'll use it.",
+                          [f'Use {names[three_mf]}'[:80], f"Print the STL file{'s' if len(stls) != 1 else ''}",
+                           CHOOSE_FILES], timeout)
+        if pick == 0:
+            return [rows[three_mf]]
+        if pick == 2:
+            return await _pick_files(adapter, source, key, rows, timeout)
+        rows = stls
+        if len(rows) == 1:
+            return rows
+        names = [_file_name(r) for r in rows]
+    plan = model_parts.plan(names)
+    shown = plan['names']
+    groups = plan['groups']
+    described = [shown[i] for i in plan['parts']] + [
+        f"{'a' if ' and ' not in g['subject'] else 'the'} {g['subject']} in {len(g['options'])} versions"
+        for g in groups]
+    lead = (f'This model has {len(rows)} files that print together: {_and(described)}. '
+            "I'll put them on one job, one of each.")
+    counts = [f'{names[i]} suggests {n}' for i, n in plan['quantities'].items()]
+    if counts:
+        lead += f" ({_and(counts)}; I still print one of each, so print more copies separately if you need them.)"
+    picked = list(plan['parts'])
+    if not groups:
+        pick = await _ask(adapter, source, key, lead, [f'Print all {len(rows)}', CHOOSE_FILES], timeout)
+        if pick == 1:
+            return await _pick_files(adapter, source, key, rows, timeout)
+        return rows
+    for n, group in enumerate(groups):
+        options = group['options'][:5]
+        labels = [o['label'][:60] for o in options]
+        question = f"Which {group['subject']}?"
+        if n == 0:
+            more = (f" Showing {len(options)} of {len(group['options'])}; use {CHOOSE_FILES} for the others."
+                    if len(options) < len(group['options']) else '')
+            pick = await _ask(adapter, source, key, f'{lead} {question}{more}', labels + [CHOOSE_FILES], timeout)
+            if pick == len(labels):
+                return await _pick_files(adapter, source, key, rows, timeout)
+        else:
+            pick = await _ask(adapter, source, key, question, labels, timeout)
+        picked.extend(options[pick]['files'])
+    return [r for i, r in enumerate(rows) if i in picked]
+
+
+async def _pick_files(adapter, source, key, rows, timeout):
+    """'Choose files': any subset by typed numbers, or one file by button (the old single pick)."""
+    from . import model_parts
+    listing = '\n'.join(f'{i}. {_file_name(r)}' for i, r in enumerate(rows, 1))
+    shown = rows[:4]
+    pick = await _ask(adapter, source, key,
+                      'Which files should I print? Type their numbers, for example 1 3, or pick one file.\n' + listing,
+                      [f'{i}: {_file_name(r)}'[:70] for i, r in enumerate(shown, 1)], timeout,
+                      parser=lambda text: model_parts.parse_file_numbers(text, len(rows)))
+    if isinstance(pick, int):
+        return [shown[pick]]
+    return [rows[i] for i in sorted(pick)]
+
+
+def _combined_source(job, rows, paths, combined):
+    """JOB.json source fields for a multi-file job: one row per file, and the combined project for older readers."""
+    parts = [dict(row, downloaded_file=str(path)) for row, path in zip(rows, paths)]
+    selected = {'kind': 'parts', 'name': Path(combined['path']).name, 'title': _parts_title(rows),
+                'files': [_file_name(r) for r in rows]}
+    return {'selected_source': selected, 'selected_sources': parts,
+            'downloaded_file': combined['path'], 'combined_objects': combined['objects']}
+
+
+async def _fetch_parts(adapter, source, key, metadata, timeout, job, parts, folder, fetch, state):
+    """Download each chosen file once and combine them into one project; returns its path.
+
+    Every file goes to its own folder (two files may share a name), through the
+    same site-login and Stop wrapping as a single download. The combined 3MF has
+    one object per part, so fit, rearrange, split and per-part colors treat it
+    like any multi-object 3MF. JOB.json keeps every file in selected_sources.
+    """
+    from . import model_parts
+    from .intake_resources import check_source
+    paths = []
+    for n, row in enumerate(parts, 1):
+        dest = folder / 'source' / 'parts' / str(n)
+        path = await _with_connect(
+            adapter, source, key, metadata, timeout,
+            lambda row=row, dest=dest: _with_stop(adapter, source, key, metadata, None,
+                                                  asyncio.to_thread(fetch, job, row, dest)))
+        await asyncio.to_thread(check_source, path)
+        paths.append(Path(path))
+    target = folder / 'source' / f"{job.get('slug') or 'model'}-parts.3mf"
+    bed = list(state.get('bed_mm') or BED)[:2] + ([state['max_print_height_mm']] if state.get('max_print_height_mm') else [])
+    combined = await _with_stop(adapter, source, key, metadata,
+                                f'Putting the {len(paths)} files together as one project.',
+                                _heavy(model_parts.combine, target, [str(p) for p in paths], bed))
+    job.update(_combined_source(job, parts, paths, combined))
+    return Path(combined['path'])
+
+
 async def prepare_link(event, adapter, state, root, timeout=None, reuse=None, printer_id=None):
     from . import model_job as mj
     from .source_colors import inventory, canonical_prompts, grouped_prompts, validate_decisions
@@ -1294,7 +1506,9 @@ async def prepare_link(event, adapter, state, root, timeout=None, reuse=None, pr
     origin = (url or (f'reprint:{reuse.get("intake_id")}' if reuse else None)
               or f'upload:{upload_job(upload)["sources"][0]["name"]}')
     receipt = {'intake_id': iid, 'url': origin, 'status': 'INSPECTING_SOURCE',
-               'sliced': False, 'uploaded': False, 'started': False}
+               'sliced': False, 'uploaded': False, 'started': False,
+               'chat_id': str(source.chat_id), 'thread_id': str(source.thread_id) if source.thread_id else None,
+               'owner': owned_worker._OWNER}
     try:
         with receipt_path.open('x') as f:
             json.dump(receipt, f)
@@ -1336,8 +1550,7 @@ async def prepare_link(event, adapter, state, root, timeout=None, reuse=None, pr
             job = await _with_connect(adapter, source, key, metadata, timeout,
                                       lambda: asyncio.to_thread(mj.inventory_for_url, url))
         rows = job.get('sources', [])
-        if job['site'] in ('printables', 'thingiverse', 'myminifactory', 'cults3d', 'crealitycloud',
-                           'thangs', 'nexprint', 'makeronline', 'direct'):
+        if job['site'] in FILE_LIST_SITES:
             rows = [r for r in rows if Path(r.get('name', '')).suffix.lower() in {'.3mf', '.stl'}]
         if not rows:
             raise ValueError(job.get('no_geometry_reason') or 'source inventory contains no selectable geometry')
@@ -1353,7 +1566,7 @@ async def prepare_link(event, adapter, state, root, timeout=None, reuse=None, pr
                 + (job.get('download_gap') or mj.MAKERONLINE_DOWNLOAD_GAP)
                 + " Nothing was downloaded or sliced.")
         hint = re.fullmatch(r'profileId-(\d+)', urlsplit(url or '').fragment or '')
-        suggested = [r for r in rows if hint and str(r.get('instance_id')) == hint[1]]
+        parts = None  # two or more files of one file-list model, printed together
         if job['site'] == 'makerworld':
             from .makerworld_profiles import choose as choose_maker_profile, selection_summary
             chosen = choose_maker_profile(rows, hint[1] if hint else None)
@@ -1371,48 +1584,27 @@ async def prepare_link(event, adapter, state, root, timeout=None, reuse=None, pr
                 chosen = rows[selected]
         elif len(rows) == 1:
             chosen = rows[0]
-        elif len(rows) <= 4:
-            labels = [f"{i}: {r.get('title') or r.get('name')}"[:70]
-                      + (' (suggested by link)' if len(suggested) == 1 and r is suggested[0] else '')
-                      for i, r in enumerate(rows, 1)]
-            chosen = rows[await _ask(adapter, source, key,
-                                     f'This model has {len(rows)} print profiles. Which profile should I use?',
-                                     labels, timeout)]
         else:
-            # More than four choices are never resolved from arbitrary typed text.
-            # Present the available options only; the intake can be restarted with a narrower source.
-            order = list(suggested[:1]) + [r for r in rows if not suggested[:1] or r is not suggested[0]]
-            shown = order[:4]
-            labels = [f"{rows.index(r) + 1}: {r.get('title') or r.get('name')}"[:70]
-                      + (' (suggested by link)' if suggested[:1] and r is suggested[0] else '')
-                      for r in shown]
-            pick = await _ask(adapter, source, key,
-                             f'This model has {len(rows)} print profiles. Showing {len(shown)}; '
-                             'choose Other and type a profile number or name for any other.',
-                             labels, timeout, allow_other=True)
-            if isinstance(pick, int):
-                chosen = shown[pick]
-            else:
-                typed = pick.strip().casefold()
-                num = re.fullmatch(r'#?(\d+)(?::.*)?', typed)
-                hits = [r for i, r in enumerate(rows, 1) if num and (str(i) == num[1] or str(r.get('instance_id')) == num[1])]
-                if not hits:
-                    hits = [r for r in rows if typed and typed in f"{r.get('title') or ''} {r.get('name') or ''}".casefold()]
-                if len(hits) != 1:
-                    raise ValueError(f'"{pick}" matched {len(hits)} of {len(rows)} profiles; send the link again and give a profile number or a more specific name')
-                chosen = hits[0]
+            picked = await _choose_files(adapter, source, key, rows, timeout)
+            chosen = picked[0]
+            if len(picked) > 1:
+                parts = picked
+                chosen = {'kind': 'parts', 'title': _parts_title(parts)}
         await send_preview(adapter, source, job, chosen, metadata, state=state)
         folder = mj.intake_folder(mj.ARCHIVE, job['slug'], iid)
         folder.mkdir(parents=True, exist_ok=False)
         job.update(url=url, intake_id=iid, hardware=state, selected_source=chosen)
         fetch = copy_upload if (reuse or job['site'] == 'upload') else (
             lambda j, chosen, dest: mj.download_for_site(j, chosen, dest))
-        path = await _with_connect(
-            adapter, source, key, metadata, timeout,
-            lambda: _with_stop(adapter, source, key, metadata, None,
-                               asyncio.to_thread(fetch, job, chosen, folder / 'source')))
-        job['downloaded_file'] = str(path)
         from .intake_resources import check_source
+        if parts:
+            path = await _fetch_parts(adapter, source, key, metadata, timeout, job, parts, folder, fetch, state)
+        else:
+            path = await _with_connect(
+                adapter, source, key, metadata, timeout,
+                lambda: _with_stop(adapter, source, key, metadata, None,
+                                   asyncio.to_thread(fetch, job, chosen, folder / 'source')))
+            job['downloaded_file'] = str(path)
         await asyncio.to_thread(check_source, path)
         if job['site'] == 'upload':
             job['title'] = await asyncio.to_thread(upload_title, path) or job['title']
@@ -2202,6 +2394,10 @@ async def prepare_link(event, adapter, state, root, timeout=None, reuse=None, pr
                 question = breakdown + '\n' + question
             if slot_lines:
                 question = slot_lines + '\n' + question
+            from .spool_remap import confirm_note
+            remap = confirm_note(job_adapter, sliced)
+            if remap:
+                question += '\n' + remap
             if delivery.only_printer(enabled):
                 go = await _ask(adapter, source, key, question, [print_next.START_LABEL, print_next.CANCEL_LABEL], timeout)
             else:

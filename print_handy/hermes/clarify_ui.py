@@ -27,7 +27,7 @@ import logging
 import urllib.request
 
 from ..bot import rest
-from ..bot.platform import SendResult, custom_id, parse_custom_id
+from ..bot.platform import SendResult, answered_note, custom_id, parse_custom_id
 from ..core import prompts
 from . import _config
 
@@ -190,7 +190,7 @@ class HermesClarifyAdapter:
             if hasattr(self.registry, "open_prompt_scoped") else self.registry.open_prompt_for(session_key)
         if cid is None or not self.registry.resolve_gateway_clarify(cid, str(text)):
             return False
-        await self.close_prompt(cid, f"Answered by message: {str(text)[:100]}")
+        await self.close_prompt(cid, answered_note(text))
         return True
 
     async def handle_click(self, interaction, clarify_id, index):

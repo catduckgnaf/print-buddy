@@ -15,7 +15,7 @@ Current release: **2.2.0**
 ## How it works
 
 1. **Share a model.** Drop a MakerWorld, Printables, Thingiverse, MyMiniFactory, Creality Cloud, Thangs or Nexprint link in the chat, a direct link to an STL or 3MF file (a Dropbox share link works too), or upload an STL or 3MF file. MakerOnline links are checked for their file inventory only; downloads are not supported. Cults3D links are recognized the same way, but Cults' API exposes listing details only, never the files, so intake names that gap instead.
-2. **Make a few choices.** Print Handy walks you through colors and filament, how many copies, and — if the model needs it — how it should fit on the bed. Then it slices the model for your printer.
+2. **Make a few choices.** A model that comes as several files (a box, its lid, a latch) prints as one job; you only pick between versions of a part, such as a lid with or without a logo. Print Handy walks you through colors and filament, how many copies, and — if the model needs it — how it should fit on the bed. Then it slices the model for your printer.
 3. **Check and confirm.** You see the result before anything happens. Only when you approve it does Print Handy send the job to a configured printer.
 4. **Follow along.** Progress, alerts and timelapses come back to the same chat.
 

@@ -7,10 +7,14 @@ operator's signed-in browser already holds (a cookie value); MyMiniFactory
 uses its documented OAuth sign-in. None of these can be logged in to from a
 script (login pages sit behind robot checks, and Print Handy never stores a
 password or solves a captcha), so "connecting an account" always means the
-operator saves the value in a token file on the Print Handy machine, or in
-the site's environment variable. The value is never collected in chat: the
-chat flow (see prepared_intake) walks the operator through the steps, links
-the docs section, and then retries once they reply that it is saved.
+operator hands Print Handy a value from their own account: saved in a token
+file on the Print Handy machine (or the site's environment variable), or
+pasted into the chat flow (see prepared_intake), which says up front what
+that risks, checks the value's shape, writes it with owner-only permissions
+(``save_token``) and tries to delete the message. The value is never logged,
+echoed, or put in a receipt or an error text. The chat flow shows the whole
+walkthrough in its first message and retries the download once the value is
+in place.
 
 ``SiteLoginNeeded`` is what every provider raises when a request needs the
 credential and it is missing, empty, expired or refused; the intake turns it
@@ -23,6 +27,7 @@ from __future__ import annotations
 import base64
 import json
 import os
+import re
 import time
 from dataclasses import dataclass
 from pathlib import Path
@@ -43,6 +48,12 @@ class LoginSite:
     # Site-specific walkthrough steps; empty means the browser-cookie steps.
     steps: tuple[str, ...] = ()
     intro: str = ""
+    # Cookie names that hold the value when the operator pastes a cookie
+    # string (``name=value; name2=value2``); one name, or for Creality the
+    # user id then the token.
+    cookies: tuple[str, ...] = ()
+    # Plain-words shape of the value, for the "doesn't look like" re-ask.
+    shape: str = "a single token with no spaces"
 
     @property
     def env_name(self):
@@ -63,11 +74,13 @@ LOGIN_SITES = {
     "makerworld": LoginSite(
         "makerworld", "MakerWorld", "bambu", "https://makerworld.com",
         "Cookies for https://makerworld.com, the cookie named `token`",
-        "MakerWorld account token", env="MAKERWORLD_TOKEN"),
+        "MakerWorld account token", env="MAKERWORLD_TOKEN", cookies=("token",),
+        shape="the long value of the `token` cookie"),
     "thingiverse": LoginSite(
         "thingiverse", "Thingiverse", "thingiverse", "https://www.thingiverse.com",
         "the App Token on your Thingiverse app's page",
         "Thingiverse App Token", env="THINGIVERSE_TOKEN",
+        shape="the App Token, 32 letters and digits",
         intro="Thingiverse links use Thingiverse's official API with a free App Token from "
               "your own account.",
         steps=("Sign in at https://www.thingiverse.com, then open "
@@ -80,6 +93,7 @@ LOGIN_SITES = {
     "cults3d": LoginSite(
         "cults3d", "Cults3D", "cults3d", "https://cults3d.com",
         "your Cults API key page", "Cults3D API key", env="CULTS3D_TOKEN",
+        shape="`nickname:key`, your Cults nickname, a colon, then the API key",
         intro="Cults3D links use Cults' official API with an API key from your own account. "
               "(Cults' API shows a model's listing only, never its files.)",
         steps=("Sign in at https://cults3d.com and open https://cults3d.com/en/api/keys.",
@@ -89,18 +103,22 @@ LOGIN_SITES = {
     "crealitycloud": LoginSite(
         "crealitycloud", "Creality Cloud", "crealitycloud", "https://www.crealitycloud.com",
         "Cookies for https://www.crealitycloud.com, TWO cookies: `model_user_id` (a number) and "
-        "`model_token`. Save them together as `model_user_id:model_token`, for example "
-        "`1234567890:4f2a…`",
-        "Creality Cloud login token"),
+        "`model_token`. Join them as `model_user_id:model_token`, for example "
+        "`1234567890:4f2a…` (pasting both as `model_user_id=...; model_token=...` works too)",
+        "Creality Cloud login token", cookies=("model_user_id", "model_token"),
+        shape="`model_user_id:model_token`, the number from the `model_user_id` cookie, a colon, "
+              "then the `model_token` value"),
     "thangs": LoginSite(
         "thangs", "Thangs", "thangs", "https://thangs.com",
         "Cookies for https://thangs.com, the cookie named `accessToken`",
-        "Thangs login token"),
+        "Thangs login token", cookies=("accessToken",),
+        shape="the long value of the `accessToken` cookie"),
     "nexprint": LoginSite(
         "nexprint", "Nexprint", "nexprint", "https://www.nexprint.com",
         "Cookies for https://www.nexprint.com, the cookie named `auth_token` "
         "(or Local Storage, `ACCOUNT_INFO`, its `access_token` value)",
-        "Nexprint login token"),
+        "Nexprint login token", cookies=("auth_token",),
+        shape="the long value of the `auth_token` cookie"),
     # MyMiniFactory's documented OAuth sign-in (#464): the operator registers
     # their own app once and signs in through MyMiniFactory's own page; the
     # access token it returns in the redirect URL is the saved login. Its
@@ -111,6 +129,8 @@ LOGIN_SITES = {
         "the address bar after signing in (the `access_token=` value, or paste the whole URL)",
         "MyMiniFactory sign-in", token_file="oauth_token", env="MYMINIFACTORY_OAUTH_TOKEN",
         intro="MyMiniFactory downloads go through its own sign-in (OAuth).",
+        shape="the whole address from the address bar after approving (it holds `access_token=`), "
+              "or just the token",
         steps=("One time only: sign in at https://www.myminifactory.com, open Account Settings, "
                "then **Developers**, and register an app: Name `Print Handy`; Client key any unique "
                "slug, for example `print_handy`; Url and Redirect uri any page you control, for "
@@ -168,14 +188,39 @@ def refused(site, detail=""):
         f"docs/PROJECT-REFERENCE.md, {acc.doc_section}), then send the link again."))
 
 
-def _normalize(raw):
+def _cookie_pairs(text):
+    """``{name: value}`` from a pasted cookie string, or {} when it is not one."""
+    body = text.strip()
+    if body[:7].casefold() == "cookie:":
+        body = body[7:]
+    pairs = {}
+    for part in body.split(";"):
+        if not part.strip():
+            continue
+        name, sep, value = part.strip().partition("=")
+        if not sep or not name.strip() or any(c.isspace() for c in name.strip()):
+            return {}
+        pairs[name.strip()] = value.strip().strip("\"'")
+    return pairs
+
+
+def _normalize(raw, site=None):
     """The bare token from what an operator is likely to paste.
 
     Accepts the cookie value as-is, wrapped in quotes, with a leading
-    ``Bearer ``, a MyMiniFactory sign-in address (``#access_token=...``), or
-    (Nexprint) the whole ``ACCOUNT_INFO`` JSON object from local storage.
+    ``Bearer ``, a MyMiniFactory sign-in address (``#access_token=...``),
+    (Nexprint) the whole ``ACCOUNT_INFO`` JSON object from local storage, and,
+    for a ``site`` whose value lives in cookies, a pasted cookie string
+    (``model_user_id=123; model_token=abc``, in either order, optionally after
+    ``Cookie:``). Creality's two cookies become ``model_user_id:model_token``.
     """
     token = raw.strip()
+    acc = LOGIN_SITES.get(site)
+    if acc is not None and acc.cookies and "=" in token and not token.startswith("{"):
+        pairs = _cookie_pairs(token)
+        wanted = [pairs.get(name) for name in acc.cookies]
+        if wanted and all(wanted):
+            return ":".join(wanted)
     if "access_token=" in token and not token.startswith("{"):
         from urllib.parse import parse_qs, urlsplit
         part = urlsplit(token).fragment or urlsplit(token).query or token
@@ -192,7 +237,7 @@ def _normalize(raw):
     token = token.strip("\"'")
     if token[:7].casefold() == "bearer ":
         token = token[7:].strip()
-    return token
+    return token.strip("\"'")
 
 
 def stored(site, *, environ=None):
@@ -205,10 +250,10 @@ def stored(site, *, environ=None):
     acc = LOGIN_SITES[site]
     path = token_path(site)
     try:
-        return _normalize(path.read_text(encoding="utf-8")), str(path)
+        return _normalize(path.read_text(encoding="utf-8"), site), str(path)
     except FileNotFoundError:
         env = os.environ if environ is None else environ
-        value = _normalize(env.get(acc.env_name) or "")
+        value = _normalize(env.get(acc.env_name) or "", site)
         return (value, f"the {acc.env_name} environment variable") if value else (None, None)
 
 
@@ -239,12 +284,79 @@ def read_token(site, *, now=None, environ=None):
     return token
 
 
-def connect_steps(site, *, renew=False):
-    """The chat walkthrough for connecting ``site``. Never asks for the value itself."""
+_PASTE_PATTERNS = {
+    "thingiverse": r"[A-Za-z0-9]{20,64}",
+    "cults3d": r"[^:\s]+:[A-Za-z0-9_\-]{16,}",
+    "crealitycloud": r"\d{4,}:[^\s:]{16,}",
+}
+
+
+def accept_pasted(site, raw, *, now=None):
+    """``(token, "")`` for a value pasted in chat that looks like ``site``'s credential.
+
+    Otherwise ``("", reason)``. The check is cheap and local: the right shape
+    for the site, and a JWT that has not already expired. The reason never
+    contains any of the pasted text, so it is safe to post and to log.
+    """
+    acc = LOGIN_SITES[site]
+    token = _normalize(str(raw or ""), site)
+    pattern = _PASTE_PATTERNS.get(site)
+    ok = (0 < len(token) <= 4096 and not any(c.isspace() for c in token)
+          and (re.fullmatch(pattern, token) if pattern else len(token) >= 16))
+    if not ok:
+        return "", (f"That doesn't look like a {acc.label} token (I expect {acc.shape}). "
+                    "Nothing was saved. Paste it again, or reply `cancel`.")
+    exp = _jwt_expiry(token)
+    if exp is not None and exp <= (time.time() if now is None else now):
+        return "", (f"That {acc.label} token has already expired. Sign in again, copy a fresh one "
+                    "and paste that, or reply `cancel`.")
+    return token, ""
+
+
+def save_token(site, token):
+    """Write ``token`` as the only content of ``site``'s token file, atomically.
+
+    The folder is created 0700 and the file 0600 (owner only; the chmod calls
+    are no-ops on Windows). The write goes to a sibling temp file that
+    replaces the target, so a reader never sees half a token. Returns the
+    path. OSError messages carry the path only, never the value.
+    """
+    path = token_path(site)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        os.chmod(path.parent, 0o700)
+    except OSError:
+        pass
+    tmp = path.parent / f".{path.name}.{os.getpid()}.tmp"
+    fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+            handle.write(token + "\n")
+        os.chmod(tmp, 0o600)
+        os.replace(tmp, path)
+    finally:
+        try:
+            tmp.unlink()
+        except OSError:
+            pass
+    return path
+
+
+RISK_NOTE = ("Pasting is quickest, but know where it goes: Print Handy stores the token on the "
+             "machine it runs on, and anyone who can read this channel could see your message "
+             "until it is deleted. I'll delete it right away if I can, but the chat service may "
+             "keep a copy. If that bothers you, use the file instead.")
+
+
+def connect_steps(site, *, renew=False, lead=""):
+    """The complete chat walkthrough for connecting ``site``, in one message.
+
+    ``lead`` is the one-line reason it is needed. Then the numbered steps,
+    the two ways to hand the value over (paste it in chat, or save it on the
+    Print Handy machine), a plain note on what pasting risks, and the docs link.
+    """
     acc = LOGIN_SITES[site]
     path = token_path(site)
-    folder = path.parent
-    verb = "Renew your" if renew else "Connect your"
     intro = acc.intro or (
         f"Print Handy can't sign in for you ({acc.label}'s login page has a robot check, and "
         "passwords are never stored), so it uses the login token your browser already has.")
@@ -252,19 +364,14 @@ def connect_steps(site, *, renew=False):
         f"Sign in at {acc.sign_in_url} in a browser.",
         "Open the developer tools (F12), then Application (Chrome/Edge) or Storage (Firefox).",
         f"Copy the value from {acc.where}."]
-    lines = [f"**{verb} {acc.label} account**",
-             f"{intro} **Don't paste it here** — chat is not a safe place for it."]
+    lines = ([lead.strip(), ""] if lead.strip() else []) + [intro, ""]
     lines += [f"{n}. {text}" for n, text in enumerate(steps, 1)]
-    lines.append(f"{len(steps) + 1}. On the machine running Print Handy, save it as the only "
-                 f"content of `{path}`:\n"
-                 f"```\nmkdir -p {folder} && chmod 700 {folder}\n"
-                 f"(umask 077 && cat > {path})   # paste, press Enter, then Ctrl-D\n```")
-    lines.append("In Docker, write it to the host folder mounted at `/data/.config` "
-                 f"(`dot-config/{acc.folder}/{acc.token_file}`, owned by 1000:1000), or put it in "
-                 f"your `.env` as `{acc.env_name}=<value>` and restart (a saved file wins over the "
-                 "variable).")
-    lines.append(f"Full instructions: {acc.docs_url}")
-    lines.append("Then press **Saved — try again** and I'll carry on from here.")
+    lines.append(f"{len(steps) + 1}. **Paste it here as your next message**, or save it on the "
+                 f"Print Handy machine as the only content of `{path}` (Docker: "
+                 f"`dot-config/{acc.folder}/{acc.token_file}`, owned by 1000:1000) and press "
+                 "**Saved**. I'll carry on from there.")
+    lines += ["", RISK_NOTE]
+    lines += ["", f"Save command, `.env` option and details: {acc.docs_url}"]
     return "\n".join(lines)
 
 
@@ -323,9 +430,9 @@ def source_report(*, now=None, environ=None):
             source = "variable" if where and where.startswith("the ") else "token file"
             lines.append(f"- ✅ **{label}**: connected ({source})")
         elif state == "expired":
-            lines.append(f"- ⚠️ **{label}**: login expired — post a {label} link and press "
-                         f"**Renew {label} login**")
+            lines.append(f"- ⚠️ **{label}**: login expired — post a {label} link and I'll walk "
+                         "you through renewing it")
         else:
-            lines.append(f"- ❌ **{label}**: not connected — post a {label} link and press "
-                         f"**Connect {label} account**, or see {acc.docs_url}")
+            lines.append(f"- ❌ **{label}**: not connected — post a {label} link and I'll walk "
+                         f"you through connecting it, or see {acc.docs_url}")
     return "\n".join(lines)

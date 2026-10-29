@@ -269,9 +269,9 @@ def plate_picker_components(aid: str, options: list[dict[str, str]]) -> list[dic
 
 
 def parse_plate_custom_id(custom_id: str) -> tuple[str, str] | None:
-    """Return ('pick' | 'go' | 'spool', alert id) for plate picker controls, or None for unrelated ones."""
+    """Return ('pick' | 'go' | 'spool' | 'drop', alert id) for plate controls, or None."""
     parts = str(custom_id or "").split(":")
-    if len(parts) == 3 and parts[0] == PLATE_PREFIX and parts[1] in ("pick", "go", "spool") and parts[2]:
+    if len(parts) == 3 and parts[0] == PLATE_PREFIX and parts[1] in ("pick", "go", "spool", "drop") and parts[2]:
         return parts[1], parts[2]
     return None
 
@@ -284,6 +284,34 @@ def post_plate_picker(token: str, channel_id: str, content: str, plan_id: str,
     aid = record("plate-picker", "", plan_id=plan_id)
     body = json.dumps({"content": content[:1990], "components": plate_picker_components(aid, options),
                        "allowed_mentions": {"parse": []}}).encode()
+    req = urllib.request.Request(f"{rest.API}/channels/{channel_id}/messages", data=body,
+                                 method="POST", headers={"Authorization": f"Bot {token}",
+                                                         "Content-Type": "application/json",
+                                                         "User-Agent": "DiscordBot (hermes-3dprinting, 1.0)"})
+    try:
+        with urllib.request.urlopen(req, timeout=15) as resp:
+            return 200 <= resp.status < 300
+    except Exception:
+        take(aid)
+        return False
+
+
+def post_plate_confirm(token: str, channel_id: str, content: str, plan_id: str, part_id: str) -> bool:
+    """Post the empty-bed offer with the existing next-plate confirm button.
+
+    The go button is the same control the plate picker uses, so confirm runs
+    print_next.start. Drop leaves the queue alone. This function only posts.
+    """
+    if not token or not channel_id or not plan_id or not part_id:
+        return False
+    from . import print_next
+    from .next_plate_offer import confirm_components
+    aid = record("plate-confirm", "", plan_id=plan_id, part_id=str(part_id))
+    body = json.dumps({
+        "content": content[:1990],
+        "components": confirm_components(aid, confirm_label=print_next.START_LABEL,
+                                         cancel_label=print_next.CANCEL_LABEL),
+        "allowed_mentions": {"parse": []}}).encode()
     req = urllib.request.Request(f"{rest.API}/channels/{channel_id}/messages", data=body,
                                  method="POST", headers={"Authorization": f"Bot {token}",
                                                          "Content-Type": "application/json",

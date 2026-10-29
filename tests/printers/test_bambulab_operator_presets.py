@@ -296,7 +296,7 @@ def test_filament_summary_names_the_vendor_profile_then_the_preset(tmp_path):
 
 
 def test_preview_sentence_names_the_filament_when_given_a_note():
-    job, row = {"title": "Ghost Stand", "summary": "A sturdy stand."}, {"title": "ghost"}
+    job, row = {"title": "Ghost Stand", "summary": "A sturdy stand.", "site": "makerworld"}, {"title": "ghost"}
     plain = prepared_intake.preview_sentence(job, row)
     assert "Filament:" not in plain
     noted = prepared_intake.preview_sentence(job, row, "Black PETG, your preset 'PETG fast'")

@@ -4017,6 +4017,37 @@ async def print_reboot_dispatch(event, gateway, **kwargs):
     return {'action': 'skip', 'reason': 'deterministic print reboot handled'}
 
 
+async def _delete_secret_message(event, source, adapter):
+    """Best effort: delete the operator's message that carried a pasted login token.
+
+    Prefers the adapter's own delete_message (the standalone adapters); on the
+    Hermes Discord adapter falls back to its discord.py client. Any failure is
+    ignored and answered with a plain note, so the operator knows to delete it.
+    """
+    message_id = getattr(event, 'message_id', None)
+    deleted = False
+    try:
+        host = getattr(adapter, '_host', None) or adapter
+        if message_id and hasattr(host, 'delete_message'):
+            deleted = bool(await host.delete_message(source.chat_id, message_id,
+                                                      {'thread_id': source.thread_id} if source.thread_id else None))
+        elif message_id and getattr(host, '_client', None) is not None:
+            client = host._client
+            channel = client.get_channel(int(source.thread_id or source.chat_id)) or                 await client.fetch_channel(int(source.thread_id or source.chat_id))
+            await channel.get_partial_message(int(message_id)).delete()
+            deleted = True
+    except Exception:
+        deleted = False
+    note = ('Token saved. I deleted your message.' if deleted else
+            "Token saved. I couldn't delete your message, so please delete it yourself.")
+    if adapter is not None:
+        try:
+            await adapter.send(chat_id=source.chat_id, content=note,
+                               metadata={'thread_id': source.thread_id} if source.thread_id else None)
+        except Exception:
+            pass
+
+
 async def typed_quantity_dispatch(event, gateway, **kwargs):
     """A typed reply ("4", "3 copies") while a print quantity prompt is open answers that prompt."""
     if not _is_print_discord_event(event):
@@ -4028,6 +4059,9 @@ async def typed_quantity_dispatch(event, gateway, **kwargs):
     error = typed_reply(source, getattr(event, 'text', ''))
     if error is None:
         return None
+    from print_handy.core.link_intake import take_secret_reply
+    if error == '' and take_secret_reply():  # a pasted login token: remove that message
+        await _delete_secret_message(event, source, _adapter_for(gateway, source))
     if error:
         adapter = _adapter_for(gateway, source)
         if adapter is not None:
@@ -4066,6 +4100,9 @@ async def typed_answer_dispatch(event, gateway, **kwargs):
                                      getattr(event, 'text', '')):
             return None
         return {'action': 'skip', 'reason': 'typed clarify answer handled'}
+    from print_handy.core.link_intake import take_secret_reply
+    if error == '' and take_secret_reply():  # a pasted login token: remove that message
+        await _delete_secret_message(event, source, _adapter_for(gateway, source))
     if error:
         adapter = _adapter_for(gateway, source)
         if adapter is not None:
@@ -4928,6 +4965,14 @@ def alert_button_handlers(bot, adapter):
                                         custom_id=f'{pab.PLATE_PREFIX}:go:{confirm_aid}'))
         await interaction.response.edit_message(content=print_next.question_text(target), view=view)
 
+    async def handle_plate_drop(interaction, aid):
+        """Dismiss an empty-bed offer. Does not start a plate."""
+        alert = await asyncio.to_thread(pab.take, aid)
+        if not alert:
+            await interaction.response.send_message('That offer is old or was already used. Nothing started.', ephemeral=True)
+            return
+        await interaction.response.edit_message(content='Left the queue alone. Nothing started.', view=None)
+
     async def handle_plate_go(interaction, aid):
         """The one Confirm tap. The alert is single use and print_next.start re-checks the printer and claim."""
         from print_handy.hermes import print_next
@@ -5075,7 +5120,7 @@ def alert_button_handlers(bot, adapter):
                 await reject(interaction)
                 return
             await {'pick': handle_plate_pick, 'go': handle_plate_go,
-                   'spool': handle_plate_spool}[plate[0]](interaction, plate[1])
+                   'spool': handle_plate_spool, 'drop': handle_plate_drop}[plate[0]](interaction, plate[1])
             return
         parsed = pab.parse_custom_id(custom_id)
         insertion = pab.parse_insertion_custom_id(custom_id)

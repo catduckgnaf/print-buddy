@@ -343,6 +343,8 @@ def run():
 
 
 def main(argv):
+    from ..core import resources
+    resources.apply_to_environment()  # before numpy/onnxruntime load: pools follow the CPU quota
     command = argv[0] if argv else "run"
     if command == "run":
         return run()

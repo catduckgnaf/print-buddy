@@ -270,6 +270,8 @@ def launch(data=None, printer_id=None):
 
 
 def main(argv=None):
+    from .core import resources
+    resources.apply_to_environment()  # before numpy/onnxruntime load: pools follow the CPU quota
     args = list(sys.argv[1:] if argv is None else argv)
     printer_id = None
     if "--printer" in args:

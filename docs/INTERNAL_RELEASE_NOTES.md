@@ -2,6 +2,10 @@
 
 # Unreleased
 
+**Fixes:**
+- `python3 -m print_handy.doctor` no longer reports a false `FAIL  orca cli: ... --help exited -6` inside the Docker container. OrcaSlicer writes `00000.log` into its working directory and aborted because `docker exec` starts in `/app`, which the container user cannot write; the doctor's OrcaSlicer probe and the `/print-handy debugging` slicer version check now run from a temporary directory. Slicing was not affected.
+- Docker docs: Unraid users are pointed at the Community Applications template's new optional **Account tokens** path (`/data/.config`), which keeps MakerWorld, Thingiverse, MyMiniFactory and Cults3D tokens across container updates.
+
 # Version 2.1.9
 
 **Release Date:** 2026-10-29

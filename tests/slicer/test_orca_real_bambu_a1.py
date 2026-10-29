@@ -1,7 +1,7 @@
 """Bambu Lab A1 with the real Orca CLI: profiles generated from the installed OrcaSlicer, the production slice path,
 the A1 guards on real output, the baseline proposal.
 
-Skipped unless PRINT_HANDY_REAL_SLICER=1; CI's real-slicer jobs run tests/slicer with the pinned
+Skipped unless PRINT_HANDY_REAL_SLICER=1; CI's Slicer test jobs run tests/slicer with the pinned
 OrcaSlicer v2.5.0-beta bundle (#356: the shipped slicer line). The A1 templates are generated
 (profiles.install, production identities only) from that OrcaSlicer's own resources folder:
 PB_ORCA_RESOURCES, else the Flatpak's install location. OrcaSlicer 2.5 packs its vendor profiles

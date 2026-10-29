@@ -10,7 +10,8 @@ services:
       PRINT_HANDY_CONFIG: ${PRINT_HANDY_CONFIG:-/app/config/docker.yaml}
       PRINT_HANDY__BOT__MODE: standalone
       # Bundled OrcaSlicer channel the entrypoint selects at startup (docs/SETTINGS.md
-      # "Runtime environment"); stable is the default, alpha is the other accepted value.
+      # "Runtime environment"); stable is the default, preview is the other channel
+      # (alpha, its old name, is still accepted for now).
       PRINT_HANDY_ORCA_CHANNEL: ${PRINT_HANDY_ORCA_CHANNEL:-stable}
       # Container timezone (docs/SETTINGS.md "Compose variables"): IANA name for
       # the container's local time — log timestamps, scheduled and timed

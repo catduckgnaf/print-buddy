@@ -13,15 +13,23 @@ if [[ "$tz" == *[!A-Za-z0-9._+/-]* || "$tz" == */../* || "$tz" == ../* || ! -f "
 fi
 export TZ="$tz"
 channel="${PRINT_HANDY_ORCA_CHANNEL:-stable}"
+# 'alpha' was the preview channel's name until #600 renamed it to describe the
+# role instead of the upstream stage. It stays an accepted alias for at least
+# one release, with a startup notice; installs should switch to 'preview'.
+if [ "$channel" = alpha ]; then
+    echo "PRINT_HANDY_ORCA_CHANNEL=alpha is the old name for the 'preview' channel; it still works in this release but will be removed in a later one - set PRINT_HANDY_ORCA_CHANNEL=preview instead." >&2
+    channel=preview
+fi
+export PRINT_HANDY_ORCA_CHANNEL="$channel"
 case "$channel" in
     stable)
         selected=/usr/local/bin/orca-slicer-stable
         ;;
-    alpha)
-        selected=/usr/local/bin/orca-slicer-alpha
+    preview)
+        selected=/usr/local/bin/orca-slicer-preview
         ;;
     *)
-        echo "PRINT_HANDY_ORCA_CHANNEL must be 'stable' or 'alpha'; got '$channel'" >&2
+        echo "PRINT_HANDY_ORCA_CHANNEL must be 'stable' or 'preview'; got '$channel'" >&2
         exit 2
         ;;
 esac

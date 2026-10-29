@@ -260,13 +260,13 @@ class OrcaPrebuiltTests(unittest.TestCase):
         self.assertIn("print-handy-bambu-", mounts[0])
         self.assertIn('COPY --from=orca-prebuilt /out/ /', DOCKERFILE)
         self.assertIn('sh /usr/local/bin/orca-prebuilt stable "$TARGETARCH"', DOCKERFILE)
-        self.assertIn('sh /usr/local/bin/orca-prebuilt alpha "$TARGETARCH"', DOCKERFILE)
+        self.assertIn('sh /usr/local/bin/orca-prebuilt preview "$TARGETARCH"', DOCKERFILE)
 
     def test_both_channels_are_pinned_prebuilts(self):
         helper = (ROOT / "docker" / "orca-prebuilt.sh").read_text()
         # Both channels pin OrcaSlicer v2.5.0-beta: it is the shipped slicer
-        # (the #356 alpha's successor), and the alpha channel converges on it
-        # until upstream publishes a newer prerelease.
+        # (the successor of the v2.5.0-alpha pinned in #356), and the preview
+        # channel converges on it until upstream publishes a newer prerelease.
         for pin in ("version=2.5.0-beta", "revision=345efec64c7b95a05ce5cf96df0dde66a158835c",
                     "sha256_amd64=15b0e9f9d577bc7a84cfef4f1ecc6e16ef75bc253e500d772fcaa66f4c25b97e",
                     "asset_amd64=OrcaSlicer_Linux_AppImage_Ubuntu2404_V2.5.0-beta.AppImage",
@@ -289,8 +289,8 @@ class OrcaPrebuiltTests(unittest.TestCase):
         pinned versions, matching the amd64 pins' provenance.
         """
         helper = (ROOT / "docker" / "orca-prebuilt.sh").read_text()
-        blocks = dict(re.findall(r"(stable|alpha)\)\n(.*?)\n        ;;", helper, re.S))
-        self.assertEqual(set(blocks), {"stable", "alpha"})
+        blocks = dict(re.findall(r"(stable|preview)\)\n(.*?)\n        ;;", helper, re.S))
+        self.assertEqual(set(blocks), {"stable", "preview"})
         expected = {
             "stable": ("2.5.0-beta", "345efec64c7b95a05ce5cf96df0dde66a158835c", {
                 "amd64": ("OrcaSlicer_Linux_AppImage_Ubuntu2404_V2.5.0-beta.AppImage",
@@ -298,7 +298,7 @@ class OrcaPrebuiltTests(unittest.TestCase):
                 "arm64": ("OrcaSlicer_Linux_AppImage_Ubuntu2404_aarch64_V2.5.0-beta.AppImage",
                           "941ea21d012483770a582589590b539f34cbe1c041aa367f9008fbe8c3e6bcd9"),
             }),
-            "alpha": ("2.5.0-beta", "345efec64c7b95a05ce5cf96df0dde66a158835c", {
+            "preview": ("2.5.0-beta", "345efec64c7b95a05ce5cf96df0dde66a158835c", {
                 "amd64": ("OrcaSlicer_Linux_AppImage_Ubuntu2404_V2.5.0-beta.AppImage",
                           "15b0e9f9d577bc7a84cfef4f1ecc6e16ef75bc253e500d772fcaa66f4c25b97e"),
                 "arm64": ("OrcaSlicer_Linux_AppImage_Ubuntu2404_aarch64_V2.5.0-beta.AppImage",
@@ -333,12 +333,15 @@ class OrcaPrebuiltTests(unittest.TestCase):
                 self.assertEqual(result.returncode, 2)
                 self.assertIn("amd64 and arm64 only", result.stderr)
         # A supported arch with an unknown channel is refused before any download.
+        # "alpha" is refused here too: it is only an alias for the runtime
+        # entrypoint (#600), never a build channel.
         for arch in ("amd64", "arm64"):
-            with self.subTest(arch=arch):
-                result = subprocess.run(["sh", str(script), "beta", arch],
-                                        capture_output=True, text=True, timeout=30)
-                self.assertEqual(result.returncode, 2)
-                self.assertIn("usage: orca-prebuilt.sh stable|alpha amd64|arm64", result.stderr)
+            for bad_channel in ("beta", "alpha"):
+                with self.subTest(arch=arch, channel=bad_channel):
+                    result = subprocess.run(["sh", str(script), bad_channel, arch],
+                                            capture_output=True, text=True, timeout=30)
+                    self.assertEqual(result.returncode, 2)
+                    self.assertIn("usage: orca-prebuilt.sh stable|preview amd64|arm64", result.stderr)
 
     def test_each_channel_has_its_own_wrapper_and_identity(self):
         helper = (ROOT / "docker" / "orca-prebuilt.sh").read_text()
@@ -491,7 +494,7 @@ class UnraidTemplateTests(unittest.TestCase):
         # The bot token may be empty: the listener and Spoolman run while the bot idles.
         self.assertEqual(variables["DISCORD_BOT_TOKEN"].get("Required"), "false")
         # The runtime Orca channel selector (#180): in the template, the Compose runtime
-        # environment and as a settable .env.example line, so both reach alpha without a rebuild.
+        # environment and as a settable .env.example line, so both reach preview without a rebuild.
         self.assertEqual(variables["PRINT_HANDY_ORCA_CHANNEL"].text, "stable")
         self.assertEqual(compose_env["PRINT_HANDY_ORCA_CHANNEL"], "${PRINT_HANDY_ORCA_CHANNEL:-stable}")
         self.assertRegex(ENV_EXAMPLE, r"(?m)^PRINT_HANDY_ORCA_CHANNEL=stable$")

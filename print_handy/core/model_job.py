@@ -69,12 +69,28 @@ def request_json(url, *, data=None, headers=None, timeout=25):
     with urllib.request.urlopen(req, timeout=timeout) as r: return json.load(r)
 
 
+class _DropAuthOnHostChange(urllib.request.HTTPRedirectHandler):
+    """Follow redirects, but never carry an Authorization header to another host.
+
+    A site's signed-in download often redirects to signed object storage
+    (MyMiniFactory to dl4.myminifactory.com, verified 2026-10-29): that host
+    must not receive the operator's token, and it rejects a signed URL that
+    also carries an Authorization header (HTTP 400 InvalidArgument).
+    """
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        new = super().redirect_request(req, fp, code, msg, headers, newurl)
+        if new is not None and urllib.parse.urlsplit(newurl).hostname != urllib.parse.urlsplit(req.full_url).hostname:
+            new.remove_header("Authorization")
+        return new
+
+
 def download(url, target, headers=None):
     target.parent.mkdir(parents=True, exist_ok=True)
     h={"User-Agent":UA}; h.update(headers or {})
     req=urllib.request.Request(url, headers=h)
     from .intake_resources import save_download
-    with urllib.request.urlopen(req, timeout=90) as r:
+    opener=urllib.request.build_opener(_DropAuthOnHostChange) if "Authorization" in h else None
+    with (opener.open(req, timeout=90) if opener else urllib.request.urlopen(req, timeout=90)) as r:
         save_download(r, target)
     if target.stat().st_size == 0: raise RuntimeError("downloaded an empty file")
 
@@ -299,17 +315,26 @@ def thingiverse_download(job, source, target):
     return dest
 
 MYMINIFACTORY="https://www.myminifactory.com/api/v2"
-# #462 Stage 2 (catduck's decision, 2026-10-27): MyMiniFactory is INVENTORY-ONLY.
-# Per MyMiniFactory's own API guidelines
+# MyMiniFactory downloads (#464): per MyMiniFactory's own API guidelines
 # (https://www.myminifactory.com/pages/api-guidelines), browsing needs no user
 # login, but downloading an object inside an app requires the downloader to be
-# logged in to their MyMiniFactory account (OAuth). That login route is not
-# built, so downloads refuse with this named gap instead of failing obscurely
-# or pretending the link is printable.
+# signed in to their MyMiniFactory account (OAuth). The operator signs in once
+# through MyMiniFactory's own OAuth page (site_accounts, "myminifactory") and
+# the access token is the saved login. Verified live end to end 2026-10-29:
+# with that token the API returns each file's download_url (an API key alone
+# returns none); the download URL answers the signed-in request with a 302 to
+# signed storage on dl4.myminifactory.com, and the file arrives intact. The
+# token must not follow that redirect (see _DropAuthOnHostChange). Cloudflare
+# fronts www.myminifactory.com and has challenged other clients there; a
+# challenge is a plain stop with the browser workaround — Print Handy never
+# tries to get past it.
+MYMINIFACTORY_CHALLENGE_GAP=(
+    "MyMiniFactory's download page answered with a Cloudflare robot check, so nothing "
+    "was downloaded. Print Handy never tries to get past a robot check. This depends "
+    "on the network Print Handy runs from. Workaround: open the model page in a browser, "
+    "download the .stl/.3mf file there, then upload or drop the file here instead.")
 MYMINIFACTORY_DOWNLOAD_GAP=(
-    "Print Handy cannot download files from MyMiniFactory. MyMiniFactory's API only "
-    "allows downloads when the person downloading is logged in to their MyMiniFactory "
-    "account (OAuth login), and that login route is not built yet, so nothing was "
+    "MyMiniFactory did not give a download link for this file, so nothing was "
     "downloaded. Workaround: open the model page in a browser, download the .stl/.3mf "
     "file there, then upload or drop the file here instead.")
 def myminifactory_api_key():
@@ -330,9 +355,21 @@ def _mmf_blocked(exc):
                         "Check the API key file (see docs/PROJECT-REFERENCE.md, MyMiniFactory API key), "
                         "then send the link again. Print Handy does not try to bypass robot checks.")
 def _mmf_json(path):
+    """GET an API v2 path with the API key, or with the OAuth sign-in when there is no key file."""
     sep="&" if "?" in path else "?"
     try:
-        return request_json(f"{MYMINIFACTORY}{path}{sep}key={myminifactory_api_key()}")
+        key=myminifactory_api_key()
+    except RuntimeError as missing:
+        from .site_accounts import read_token
+        try:
+            token=read_token("myminifactory")
+        except SiteLoginNeeded:
+            raise missing from None
+        url, headers=f"{MYMINIFACTORY}{path}", {"Authorization":f"Bearer {token}"}
+    else:
+        url, headers=f"{MYMINIFACTORY}{path}{sep}key={key}", None
+    try:
+        return request_json(url, headers=headers)
     except urllib.error.HTTPError as exc:
         blocked=_mmf_blocked(exc)
         if blocked is not None: raise blocked from None
@@ -366,17 +403,33 @@ def myminifactory_inventory(url):
     license_value=d.get("license")
     if isinstance(license_value, dict): license_value=license_value.get("name")
     job={"site":"myminifactory","model_id":mid,"title":title,"slug":slug,
-         "license":license_value,"sources":rows,
-         "download_gap":MYMINIFACTORY_DOWNLOAD_GAP}
+         "license":license_value,"sources":rows}
     if not rows:
         job["no_geometry_reason"]=(
             f"MyMiniFactory listing for object {mid} exposes no STL/3MF in its file "
             "list, so there is no selectable geometry to reslice")
     return job
 def myminifactory_download(job, source, target):
-    # Inventory-only (#462 Stage 2): never touches the network. The registry
-    # routes here so any download attempt refuses with the named gap.
-    raise RuntimeError(MYMINIFACTORY_DOWNLOAD_GAP)
+    cached=_cached_source("myminifactory", "id", source.get("id"), job.get("model_id"))
+    if cached is not None and cached.name == Path(source.get("name") or "").name:
+        return _reuse_cached(cached, target, "MyMiniFactory")
+    from .site_accounts import read_token, refused
+    token=read_token("myminifactory")
+    auth={"Authorization":f"Bearer {token}"}
+    # GET /files/{id} is "information of a file including the download link";
+    # download_url is filled in only for an OAuth-signed-in user.
+    status, d=_web_api("GET", f"{MYMINIFACTORY}/files/{source.get('id')}", headers=auth)
+    if status == 401: raise refused("myminifactory")
+    if status == 403: raise RuntimeError(MYMINIFACTORY_CHALLENGE_GAP)
+    url=d.get("download_url") if isinstance(d, dict) else None
+    if not url: raise RuntimeError(MYMINIFACTORY_DOWNLOAD_GAP)
+    try:
+        return _fetch_chosen(url, target, source.get("name"), "MyMiniFactory", exact=True, headers=auth)
+    except urllib.error.HTTPError as exc:
+        if exc.code == 403 and (exc.headers or {}).get("cf-mitigated"):
+            raise RuntimeError(MYMINIFACTORY_CHALLENGE_GAP) from None
+        if exc.code in (401, 403): raise refused("myminifactory", f" ({exc.code})") from None
+        raise
 
 
 CULTS3D = "https://cults3d.com/graphql"
@@ -870,7 +923,7 @@ def _is_3mf_package(archive):
     return "[Content_Types].xml" in names or "3D/3dmodel.model" in names
 
 
-def _fetch_chosen(url, target, name, label, *, exact):
+def _fetch_chosen(url, target, name, label, *, exact, headers=None):
     """Download ``url`` into ``target`` and keep only the chosen file ``name``.
 
     A zip answer (a whole-model download) is unpacked to the entry named
@@ -884,7 +937,15 @@ def _fetch_chosen(url, target, name, label, *, exact):
     target.mkdir(parents=True, exist_ok=True)
     dest = target/name
     staged = target/(name + ".download")
-    download(url, staged)
+    download(url, staged, headers)
+    with staged.open("rb") as head:
+        start = head.read(512).lstrip().lower()
+    if start.startswith((b"<!doctype html", b"<html")):
+        # A sign-in or robot-check page saved as if it were the model.
+        staged.unlink(missing_ok=True)
+        raise RuntimeError(f"{label} sent a web page instead of the file (usually a sign-in or "
+                           "robot-check page), so nothing was kept. Download the file from the "
+                           "model page in a browser and upload or drop it here instead.")
     archive = None
     if zipfile.is_zipfile(staged):
         archive = zipfile.ZipFile(staged)

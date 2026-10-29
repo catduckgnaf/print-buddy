@@ -1,7 +1,8 @@
 """Login-token model sites (#464): where each token lives and how to connect it.
 
 Creality Cloud, Thangs and Nexprint download through the web
-app's own API with the operator's login token — a value the signed-in
+app's own API with the operator's login token (MyMiniFactory through its
+documented OAuth sign-in, whose access token is kept the same way) — a value the signed-in
 browser keeps in a cookie or local storage. None of these sites can be
 logged in to from a script (their login pages sit behind robot checks, and
 Print Handy never stores a password or solves a captcha), so "connecting an
@@ -32,11 +33,13 @@ class LoginSite:
     sign_in_url: str
     where: str
     doc_section: str
+    token_file: str = "token"
+    env: str = ""
 
     @property
     def env_name(self):
         """The environment variable that can hold the token instead of the file."""
-        return f"{self.folder.upper()}_TOKEN"
+        return self.env or f"{self.folder.upper()}_TOKEN"
 
 
 LOGIN_SITES = {
@@ -55,7 +58,19 @@ LOGIN_SITES = {
         "Cookies for https://www.nexprint.com, the cookie named `auth_token` "
         "(or Local Storage, `ACCOUNT_INFO`, its `access_token` value)",
         "Nexprint login token"),
+    # MyMiniFactory's documented OAuth sign-in (#464): the operator registers
+    # their own app once and signs in through MyMiniFactory's own page; the
+    # access token it returns in the redirect URL is the saved login. Its
+    # folder already holds the inventory API key as `token`, so the sign-in
+    # lives beside it as `oauth_token`.
+    "myminifactory": LoginSite(
+        "myminifactory", "MyMiniFactory", "myminifactory", "https://www.myminifactory.com",
+        "the address bar after signing in (the `access_token=` value, or paste the whole URL)",
+        "MyMiniFactory sign-in", token_file="oauth_token", env="MYMINIFACTORY_OAUTH_TOKEN"),
 }
+
+MMF_AUTHORIZE = ("https://auth.myminifactory.com/web/authorize?client_id={client}"
+                 "&redirect_uri={redirect}&response_type=token&state=print-handy")
 
 
 class SiteLoginNeeded(RuntimeError):
@@ -73,7 +88,8 @@ class SiteLoginNeeded(RuntimeError):
 
 
 def token_path(site) -> Path:
-    return Path.home()/".config"/LOGIN_SITES[site].folder/"token"
+    acc = LOGIN_SITES[site]
+    return Path.home()/".config"/acc.folder/acc.token_file
 
 
 def _jwt_expiry(token):
@@ -109,6 +125,14 @@ def _normalize(raw):
     local storage, whose ``access_token`` is the token.
     """
     token = raw.strip()
+    # MyMiniFactory's sign-in lands on the redirect URL with the token in
+    # its fragment (#access_token=...&expires_in=...): accept the whole URL.
+    if "access_token=" in token and not token.startswith("{"):
+        from urllib.parse import parse_qs, urlsplit
+        part = urlsplit(token).fragment or urlsplit(token).query or token
+        found = parse_qs(part).get("access_token")
+        if found:
+            token = found[0]
     if token.startswith("{"):
         try:
             info = json.loads(token)
@@ -158,11 +182,37 @@ def read_token(site, *, now=None, environ=None):
     return token
 
 
+def _mmf_steps(path, folder, acc):
+    return (
+        "**Connect your MyMiniFactory account**\n"
+        "MyMiniFactory downloads go through its own sign-in (OAuth). **Don't paste the token here** "
+        "(or the address from step 3) — chat is not a safe place for it.\n"
+        "1. One time only: sign in at https://www.myminifactory.com, open Account Settings, then "
+        "**Developers**, and register an app: Name `Print Handy`; Client key any unique slug, "
+        "for example `print_handy`; Url and Redirect uri any page you control, for example "
+        "`https://github.com/catduckgnaf/print-handy`. Save.\n"
+        "2. Open this link in that browser, with your client key and redirect uri filled in "
+        "(the redirect uri URL-encoded):\n"
+        f"`{MMF_AUTHORIZE.format(client='<client key>', redirect='<redirect uri>')}`\n"
+        "3. Approve. The browser lands on your redirect page; copy the **whole address** from "
+        "the address bar (it holds `#access_token=...`).\n"
+        f"4. On the machine running Print Handy, save it as the only content of `{path}`:\n"
+        f"```\nmkdir -p {folder} && chmod 700 {folder}\n"
+        f"(umask 077 && cat > {path})   # paste, press Enter, then Ctrl-D\n```\n"
+        "In Docker, write it to the host folder mounted at `/data/.config` "
+        f"(`dot-config/{acc.folder}/{acc.token_file}`, owned by 1000:1000), or put it in your "
+        f"`.env` as `{acc.env_name}=<token>` and restart.\n"
+        "Then press **Saved — try again**. The sign-in lasts about a week; when it runs out "
+        "I'll ask again (step 1 is not repeated).")
+
+
 def connect_steps(site):
     """The chat walkthrough for connecting ``site``. Never asks for the token itself."""
     acc = LOGIN_SITES[site]
     path = token_path(site)
     folder = path.parent
+    if site == "myminifactory":
+        return _mmf_steps(path, folder, acc)
     return (
         f"**Connect your {acc.label} account**\n"
         f"Print Handy can't sign in for you ({acc.label}'s login page has a robot check, and "

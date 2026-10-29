@@ -190,7 +190,27 @@ mkdir -p ~/.config/myminifactory && chmod 700 ~/.config/myminifactory
 chmod 600 ~/.config/myminifactory/token
 ```
 
-**MyMiniFactory support is inventory-only.** With the key, pasting a MyMiniFactory object link lists the model's `.stl`/`.3mf` files — and then intake stops. Print Handy cannot download files from MyMiniFactory: under [MyMiniFactory's own API guidelines](https://www.myminifactory.com/pages/api-guidelines), downloading an object inside an app requires the person downloading to be logged in to their MyMiniFactory account (OAuth), and that login route is not built yet. The refusal names this gap, lists the files the inventory found, and states that nothing was downloaded or sliced. The workaround is to open the model page in a browser, download the file there, and upload or drop the file in the chat instead. Without the key file, MyMiniFactory intake stops with a message naming the file; an empty file stops it too. If MyMiniFactory answers with a 401/403, intake reports that plainly (key missing, invalid or expired, or the site challenging the connection) and stops; Print Handy never tries to solve or bypass a robot check.
+Without the key file, intake can also look a model up through the download sign-in below.
+
+### MyMiniFactory sign-in
+
+Downloading from MyMiniFactory uses its documented OAuth sign-in: [MyMiniFactory's API guidelines](https://www.myminifactory.com/pages/api-guidelines) allow in-app downloads only when the person downloading is signed in to their MyMiniFactory account, and an API key alone never gets a download link. The sign-in is saved as `~/.config/myminifactory/oauth_token` (Docker: `/data/.config/myminifactory/oauth_token`), or the `MYMINIFACTORY_OAUTH_TOKEN` variable when that file does not exist. When a download needs it, the bot's **Connect MyMiniFactory account** button walks through these steps:
+
+1. **Register an app, once.** Sign in at <https://www.myminifactory.com>, open Account Settings, then **Developers**, and fill in the form: **Name** `Print Handy`; **Client key** any unique slug, for example `print_handy` (this is your client key); **Url** and **Redirect uri** any page you control, for example `https://github.com/catduckgnaf/print-handy`; **Email** as shown. Tick the robot check and Save. (Developers also shows an **API key** for the app; that key is what the [MyMiniFactory API key](#myminifactory-api-key) file above holds.)
+2. **Sign in.** Open `https://auth.myminifactory.com/web/authorize?client_id=<client key>&redirect_uri=<redirect uri, URL-encoded>&response_type=token&state=print-handy` in the same browser and approve.
+3. **Copy the address.** The browser lands on your redirect page with `#access_token=...&expires_in=604800...` in the address bar. The part after `#` never reaches that page's server.
+4. **Save it** as the only content of the file. The whole address is fine; Print Handy picks the `access_token` out of it:
+
+```bash
+mkdir -p ~/.config/myminifactory && chmod 700 ~/.config/myminifactory
+(umask 077 && cat > ~/.config/myminifactory/oauth_token)   # paste the address, press Enter, then Ctrl-D
+```
+
+The sign-in lasts 7 days (`expires_in=604800`). When it runs out, the bot offers the connect flow again and only steps 2 to 4 are needed. Never paste the address into chat.
+
+How a download works: the API's file lookup returns the file's download link for a signed-in user; that link answers with a redirect to MyMiniFactory's signed file storage (`dl4.myminifactory.com`), and Print Handy follows it **without** carrying the sign-in token to the storage host. MyMiniFactory's website sits behind Cloudflare; if a download ever answers with a Cloudflare robot check, intake stops and says so, with the browser workaround. Print Handy never tries to get past a robot check.
+
+Live status: verified end to end on 2026-10-29 with an operator sign-in (model 111400, `flying-benchy.stl`): the lookup, the file list, the download link and the download itself, a valid STL byte-for-byte the size the listing reported.
 
 ### Cults3D API key
 
@@ -226,7 +246,7 @@ Live status: verified end to end on 2026-10-29 with an operator login (acceptanc
 
 ### Connecting a login-token site from chat
 
-Creality Cloud, Thangs and Nexprint all download with the operator's own login token: a value the signed-in browser keeps in a cookie, saved on the Print Handy machine as `~/.config/<site>/token` (Docker: `/data/.config/<site>/token`, from the mounted `dot-config` folder). Print Handy cannot sign in for you. Each site's login page sits behind a robot check, and Print Handy never stores a password or solves a captcha, so the token always comes from a browser you signed in with yourself.
+Creality Cloud, Thangs and Nexprint all download with the operator's own login token (MyMiniFactory with its OAuth sign-in, handled the same way; see [MyMiniFactory sign-in](#myminifactory-sign-in)): a value the signed-in browser keeps in a cookie, saved on the Print Handy machine as `~/.config/<site>/token` (Docker: `/data/.config/<site>/token`, from the mounted `dot-config` folder). Print Handy cannot sign in for you. Each site's login page sits behind a robot check, and Print Handy never stores a password or solves a captcha, so the token always comes from a browser you signed in with yourself.
 
 You do not have to set these up in advance. When a download needs a token that is missing, empty, expired or refused, the bot does not just fail. It says which, and offers two buttons:
 

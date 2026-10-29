@@ -37,7 +37,7 @@ _OFFLOAD = {('model_job', 'audit'), ('model_job', 'slice_job'), ('source_colors'
             ('orca_adapter', 'orca_plate_capacity'), ('orca_adapter', 'fit_options'),
             ('model_job', 'per_part_fit_options'), ('plate_merge', 'full_size_split_possible'),
             ('geometry_layout', 'inspect_geometry'), ('geometry_layout', 'arrange_and_export'),
-            ('geometry_layout', 'probe_single_plate_rearrange'),
+            ('geometry_layout', 'probe_single_plate_rearrange'), ('model_job', 'full_size_one_plate'),
             ('cad_split', 'check_source_against_split_plan'), ('cad_split', 'prepare_cad_split')}
 # Steps that run the slicer share one lane; the geometry-only steps share a small general lane.
 _SLICER_STEPS = {('model_job', 'slice_job'), ('orca_adapter', 'orca_plate_capacity'), ('orca_adapter', 'fit_options')}
@@ -187,6 +187,118 @@ async def _with_stop(adapter, source, key, metadata, text, work, *, allow_stop=F
                     with contextlib.suppress(Exception):
                         await retire(cid)
     return result
+
+
+# Fit-check progress: one status line, refreshed while a check runs. When the
+# chat adapter can edit messages (Discord, Matrix, Telegram) the same message is
+# updated; otherwise a new line is posted only when the phase changes or, for a
+# long phase, at most once per FIT_FALLBACK_HEARTBEAT_S.
+FIT_HEARTBEAT_S = 15.0
+FIT_FALLBACK_HEARTBEAT_S = 60.0
+
+
+def _elapsed_text(seconds):
+    seconds = max(0, int(round(seconds)))
+    if seconds < 60:
+        return f'{seconds} s'
+    minutes, rest = divmod(seconds, 60)
+    return f'{minutes} min {rest} s' if rest else f'{minutes} min'
+
+
+class FitStatus:
+    """A single, informative status message for the bed-fit checks.
+
+    ``run(phase, work)`` shows what is being tried and how long the fit check
+    has taken so far, refreshes that every FIT_HEARTBEAT_S while the work
+    runs, and never repeats identical text. Delivery failures never block
+    the check.
+    """
+
+    def __init__(self, adapter, source, metadata, clock=time.monotonic):
+        self.adapter, self.source, self.metadata, self.clock = adapter, source, metadata, clock
+        self.started = clock()
+        self.message_id = None
+        self.last_text = None
+        self.last_post = None
+        adapter_state = getattr(adapter, '__dict__', {})
+        # Scripted test adapters (picks/clicks) record questions only, as _with_stop does.
+        self.silent = 'picks' in adapter_state or 'clicks' in adapter_state
+        self.can_edit = callable(getattr(adapter, 'edit_message', None))
+
+    def elapsed(self):
+        return _elapsed_text(self.clock() - self.started)
+
+    def _target(self):
+        thread = (self.metadata or {}).get('thread_id') or getattr(self.source, 'thread_id', None)
+        return str(thread or self.source.chat_id)
+
+    async def show(self, text, heartbeat=False):
+        if self.silent or not text or text == self.last_text:
+            return
+        if self.message_id is not None and self.can_edit:
+            try:
+                result = await self.adapter.edit_message(chat_id=self._target(), message_id=self.message_id,
+                                                         content=text)
+            except Exception:
+                result = None
+            if result is not None and getattr(result, 'success', False):
+                self.last_text = text
+                return
+            self.can_edit = False  # this adapter or message cannot be edited: post instead
+        if heartbeat and self.last_post is not None and self.clock() - self.last_post < FIT_FALLBACK_HEARTBEAT_S:
+            return
+        try:
+            sent = await self.adapter.send(chat_id=str(self.source.chat_id), content=text, metadata=self.metadata)
+        except Exception:
+            return  # progress delivery must not block offline work
+        self.last_text, self.last_post = text, self.clock()
+        message_id = getattr(sent, 'message_id', None)
+        if message_id:
+            self.message_id = str(message_id)
+
+    async def run(self, phase, work, first_text=None):
+        """Await ``work`` while the status names ``phase`` and the time spent so far."""
+        await self.show(first_text or f'Checking the fit: {phase} ({self.elapsed()}).')
+        task = asyncio.ensure_future(work)
+        try:
+            while True:
+                done, _ = await asyncio.wait({task}, timeout=FIT_HEARTBEAT_S)
+                if done:
+                    return task.result()
+                await self.show(f'Still checking the fit: {phase} ({self.elapsed()}).', heartbeat=True)
+        finally:
+            if not task.done():
+                task.cancel()
+                with contextlib.suppress(asyncio.CancelledError, Exception):
+                    await task
+
+    async def finish(self, outcome):
+        """Close the status line with the result and total time, only if one was shown."""
+        if self.last_text is not None:
+            await self.show(f'Fit check done in {self.elapsed()}: {outcome}')
+
+
+def _auto_rearrange_eligible(job, latest):
+    """A 100% one-plate rearrangement may be applied without asking.
+
+    Not when the operator already fixed a size or orientation for this job, and
+    not for an inch-confirmed STL (its capacity was probed at authored size).
+    """
+    if (job.get('unit_decision') or {}).get('units') == 'inch':
+        return False
+    scale = latest.get('scale')
+    if scale is not None and abs(float(scale) - 1.0) > 1e-9:
+        return False
+    return not (latest.get('orientation') or latest.get('full_size_split_plan'))
+
+
+def auto_rearrange_notice(title, plan, printer=None):
+    """One line saying what was done, distinguishing the author's layout from ours."""
+    count = int(plan.get('part_count') or 0)
+    parts = f'the {count} parts' if count > 1 else 'the parts'
+    verb = 'rotated and rearranged' if int(plan.get('turned_parts') or 0) else 'rearranged'
+    return (f"{title} does not fit the {printer or _printer_name()} bed as the author laid it out, "
+            f"so I {verb} {parts} onto one plate at 100%.")
 
 
 LARGE_MESH_MB = 20
@@ -553,7 +665,12 @@ def fit_question(title, options):
     extent_text = ' × '.join(f'{v:g}' for v in extent[:3]) + ' mm' if extent else 'measured dimensions unavailable'
     checked = options.get('orientations_checked') or (parts[0].get('orientations_checked') if parts else None)
     orientations = ', '.join(checked or ['authored XY', 'verified rotations'])
-    lines = [f'{part_name} ({extent_text}) does not fit the bed full size.']
+    lines = [f'{part_name} ({extent_text}) does not fit the bed full size as the author laid it out.']
+    rearrange = options.get('rearrange_100')
+    if rearrange:
+        count = rearrange.get('part_count')
+        lines.append(f"Rearranged: {'all ' + str(count) + ' parts' if count else 'the parts'} "
+                     'fit one plate at full size.')
     blocking = options.get('blocking_part') or next(
         (part for part in parts if part.get('fits_full_size') is False), None)
     if blocking:
@@ -1270,9 +1387,11 @@ async def prepare_link(event, adapter, state, root, timeout=None, reuse=None, pr
         if decisions['mode'] == 'single_color':
             latest['filament_selection'] = validated['selection']
         from . import orca_adapter
+        fit_status = FitStatus(adapter, source, metadata)
         try:
-            capacity = await _with_stop(adapter, source, key, metadata, "Checking whether it fits the bed. Press Stop to cancel.",
-                                        _heavy(orca_adapter.orca_plate_capacity, path, state))
+            capacity = await fit_status.run('checking the layout as the author laid it out',
+                                            _heavy(orca_adapter.orca_plate_capacity, path, state),
+                                            first_text='Checking whether it fits the bed.')
         except Exception as exc:
             logger.exception('fit check failed; intake is resumable')
             receipt['status'] = 'FIT_UNKNOWN'
@@ -1341,10 +1460,40 @@ async def prepare_link(event, adapter, state, root, timeout=None, reuse=None, pr
             receipt_path.write_text(json.dumps(receipt, indent=2) + '\n')
             mj.write_job(folder, latest)
             capacity = 1
+        rearrange_checked = False
+        if capacity < 1 and _auto_rearrange_eligible(job, latest):
+            # Cheapest full-size answer first, before any Orca option search:
+            # if every part fits one plate at 100% just by moving/turning
+            # parts, do it and say so instead of asking. The check uses the
+            # planner the slice path uses, so the plan is one it honors.
+            try:
+                one_plate = await fit_status.run('trying the parts rearranged on one plate at 100%',
+                                                 _heavy(mj.full_size_one_plate, path, state,
+                                                        latest.get('color_decisions')))
+                rearrange_checked = True
+            except Exception:
+                logger.exception('one-plate rearrangement check failed; falling back to the full fit search')
+                one_plate = None
+            if one_plate:
+                title = latest.get('title') or 'This model'
+                latest['scale'] = 1.0
+                latest['full_size_rearrange_plan'] = one_plate
+                latest.pop('orientation', None)
+                latest.pop('full_size_split_plan', None)
+                receipt.update(full_size_rearrange=True, fit_auto_rearranged=True, scale=1.0,
+                               fit_options={'rearrange_100': one_plate})
+                receipt_path.write_text(json.dumps(receipt, indent=2) + '\n')
+                mj.write_job(folder, latest)
+                await fit_status.finish('fits one plate at 100% rearranged.')
+                await adapter.send(chat_id=source.chat_id, content=auto_rearrange_notice(title, one_plate),
+                                   metadata=metadata)
+                capacity = 1
         if capacity < 1:
             try:
-                options = await _with_stop(adapter, source, key, metadata, "Checking resize options. Press Stop to cancel.",
-                                           _heavy(orca_adapter.fit_options, path, state))
+                options = await fit_status.run('trying rotations and smaller sizes',
+                                               _heavy(orca_adapter.fit_options, path,
+                                                      {**state, 'fit_rearrange_checked': True}
+                                                      if rearrange_checked else state))
             except Exception as exc:
                 receipt['status'] = 'FIT_UNKNOWN'
                 receipt['fit_error'] = str(exc)
@@ -1370,9 +1519,14 @@ async def prepare_link(event, adapter, state, root, timeout=None, reuse=None, pr
             # Per-part slicing applies the chosen fit to every slot plate. Offer
             # only the options every slot plate was verified to honor.
             if (latest.get('color_decisions') or {}).get('mode') == 'per_part':
-                options = await _with_stop(adapter, source, key, metadata, "Checking resize options. Press Stop to cancel.",
-                                           _heavy(mj.per_part_fit_options, path, latest['color_decisions'], options,
-                                                  int((state.get('bed_mm') or BED)[0])))
+                # The geometry-only rearrange probe does not know the
+                # multicolor merge rules (spacing, prime tower), so per-part
+                # jobs offer a one-plate rearrangement only when
+                # full_size_one_plate proved it above.
+                options.pop('rearrange_100', None)
+                options = await fit_status.run('checking each color plate',
+                                               _heavy(mj.per_part_fit_options, path, latest['color_decisions'], options,
+                                                      int((state.get('bed_mm') or BED)[0])))
             if options.get('parts'):
                 # Prefer the per-part fit evaluation (#76): a part blocks only
                 # when it fits no plate alone at any checked yaw or exceeds the
@@ -1388,25 +1542,30 @@ async def prepare_link(event, adapter, state, root, timeout=None, reuse=None, pr
                     options['blocking_part'] = failing[0]
                     options['orientations_checked'] = ['authored XY (measured)'] + [r.get('label', 'rotation') for r in options.get('rotations') or []]
             full_size_split = False
-            rotate_100 = any(float(r.get('scale') or 0) >= 0.995 and not r.get('supports')
-                             for r in options.get('rotations') or [])
+            # A full-size single-plate answer (a plain rotation, or every part
+            # rearranged onto one plate) ends the search: no split checks.
+            rotate_100 = (any(float(r.get('scale') or 0) >= 0.995 and not r.get('supports')
+                              for r in options.get('rotations') or [])
+                          or bool(options.get('rearrange_100')))
             try:
                 if rotate_100:
-                    raise LookupError('a plain 100% rotation fits; skip the split checks')
-                full_size_split = await _with_stop(adapter, source, key, metadata, "Checking whether it splits at full size. Press Stop to cancel.",
-                                                   _heavy(plate_merge.full_size_split_possible, path, manifest,
-                                                          int((state.get('bed_mm') or BED)[0])))
-            except Exception:
-                full_size_split = False
-            try:
-                if rotate_100:
-                    raise LookupError('a plain 100% rotation fits; skip the split checks')
-                split_plan = await _with_stop(adapter, source, key, metadata, "Checking whether it splits at full size. Press Stop to cancel.",
-                                             _heavy(split_fit.split_plan_100, path,
-                                                    int((state.get('bed_mm') or BED)[0]),
-                                                    brim_policy=options.get('brim_policy'), state=state))
+                    raise LookupError('a 100% one-plate fit exists; skip the split checks')
+                split_plan = await fit_status.run('trying a split onto separate plates at 100%',
+                                                  _heavy(split_fit.split_plan_100, path,
+                                                         int((state.get('bed_mm') or BED)[0]),
+                                                         brim_policy=options.get('brim_policy'), state=state))
             except Exception:
                 split_plan = None
+            try:
+                if rotate_100 or split_plan:
+                    # A concrete split plan supersedes the generic "parts can be
+                    # separated" offer, so that check is only needed without one.
+                    raise LookupError('a split plan or a 100% one-plate fit already answers this')
+                full_size_split = await fit_status.run('trying a split onto separate plates at 100%',
+                                                       _heavy(plate_merge.full_size_split_possible, path, manifest,
+                                                              int((state.get('bed_mm') or BED)[0])))
+            except Exception:
+                full_size_split = False
             if split_plan:
                 options['split_plan'] = split_plan
             elif full_size_split:
@@ -1483,14 +1642,21 @@ async def prepare_link(event, adapter, state, root, timeout=None, reuse=None, pr
                             label += ')'
                         labels.append(label)
                     distribution.append(f"{', '.join(labels)} on plate {index}")
-                prompt = (f"{title} does not fit the {_printer_name()} bed full size as one plate. "
-                          f"Full size works as {len(split_plan['plates'])} plates: " + '; '.join(distribution) +
+                if options.get('rearrange_100'):
+                    lead = (f"{title} does not fit the {_printer_name()} bed as the author laid it out. "
+                            'Rearranged, it fits one plate at full size. '
+                            f"It also works full size as {len(split_plan['plates'])} plates: ")
+                else:
+                    lead = (f"{title} does not fit the {_printer_name()} bed full size as one plate, even rearranged. "
+                            f"Full size works as {len(split_plan['plates'])} plates: ")
+                prompt = (lead + '; '.join(distribution) +
                           '. Choose a fit option, or type split / 100% / shrink / cancel.')
             else:
                 prompt = fit_question(title, options)
             # Fits at 100% by rotation alone (no supports): just do it, no question, no announcement.
             silent = next((r for r in picked if r['kind'] == 'rotate' and r['scale'] >= 0.995
                            and not r.get('supports')), None)
+            await fit_status.finish('turned to fit at 100%.' if silent is not None else 'choose how to print it.')
             while silent is None:
                 scale_pick = await _ask(adapter, source, key, prompt,
                                         [row['label'] for row in picked], timeout,
@@ -1554,7 +1720,8 @@ async def prepare_link(event, adapter, state, root, timeout=None, reuse=None, pr
                 # plate at exactly the yaw recorded in its split plan).
                 capacity = 1
             else:
-                capacity = await _with_stop(adapter, source, key, metadata, "Checking whether it fits the bed. Press Stop to cancel.",
+                capacity = await FitStatus(adapter, source, metadata).run(
+                                            'confirming the chosen size on the bed',
                                             _heavy(orca_adapter.orca_plate_capacity, path, state,
                                                    scale=selected_scale,
                                                    **({'rotation': rotation, 'supports': bool(row.get('supports'))}

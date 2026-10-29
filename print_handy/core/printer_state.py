@@ -727,6 +727,10 @@ def main():
             print("  - " + p)
         for w in facts.get("warnings") or []:
             print("  - warning: " + w)
+        spacing = settings.spacing_summary(settings.current())
+        print(f"  part spacing: {spacing['label']} preset - "
+              + ", ".join(f"{name} {value:g}" for name, value in spacing["values"].items())
+              + (f" (set explicitly: {', '.join(spacing['overridden'])})" if spacing["overridden"] else ""))
         sys.exit(0 if ok else 2)
     # set
     if a.spool is not None:

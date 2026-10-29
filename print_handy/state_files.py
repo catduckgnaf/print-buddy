@@ -23,6 +23,7 @@ from . import settings
 # greps the source and fails when a name appears there that is missing here.
 KNOWN = (
     "bot_health.json",
+    "calibration_records.json",
     "family_listener.json",
     "gcode-bounds-cache",
     "ifs_pending_prompts.json",

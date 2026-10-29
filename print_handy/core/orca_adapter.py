@@ -1672,8 +1672,9 @@ def orca_plate_capacity(source: Path, state: dict, spacing_mm: float = 10.0, edg
         if z_hi - z_lo < 0.01:
             z_hi = z_lo + 0.01
 
-        def write_stl(path, fx, fy):
-            pts = [(cx + (x - cx) * fx, cy + (y - cy) * fy) for x, y in hull]
+        def write_stl(path, fx, fy, center=None):
+            ox, oy = (center[0] - cx, center[1] - cy) if center else (0.0, 0.0)
+            pts = [(cx + ox + (x - cx) * fx, cy + oy + (y - cy) * fy) for x, y in hull]
             n = len(pts)
             tris = []
             for i in range(1, n - 1):  # hull is CCW: bottom faces down, top faces up
@@ -1692,7 +1693,11 @@ def orca_plate_capacity(source: Path, state: dict, spacing_mm: float = 10.0, edg
         dilated_stl = tmp / 'dilated.stl'
         write_stl(dilated_stl, sx, sy)
         single_stl = tmp / 'single.stl'
-        write_stl(single_stl, scale, scale)
+        # An exact rotation sliced alone is placed bed-centered with no arrange
+        # (place_stl), so probe it the same way: Orca's arrange pass otherwise
+        # rejects diagonal hulls the slice path would print (about 1 mm per side).
+        exact_single = rotation is not None and copy_limit == 1
+        write_stl(single_stl, scale, scale, center=(bed_x / 2.0, bed_y / 2.0) if exact_single else None)
         m_base = json.loads(Path(TEMPLATES / 'machine.json').read_text())
         ppath = TEMPLATES / 'process.json'
         fpath = TEMPLATES / 'filament.json'
@@ -1719,6 +1724,7 @@ def orca_plate_capacity(source: Path, state: dict, spacing_mm: float = 10.0, edg
             return path
 
         def probe(stl, copies, edge, tag):
+            arrange = '0' if exact_single and tag == 'single' else '1'
             probe_dir = tmp / f'probe_{tag}_{copies}'
             probe_dir.mkdir(exist_ok=True)
             cmd = [
@@ -1726,7 +1732,7 @@ def orca_plate_capacity(source: Path, state: dict, spacing_mm: float = 10.0, edg
                 '--load-settings', f'{machine_for(edge)};{ppath}',
                 '--load-filaments', str(fpath),
                 '--allow-newer-file', '--clone-objects', str(copies),
-                '--arrange', '1', *(['--allow-rotations'] if allow_rotations else []), '--orient', '0',
+                '--arrange', arrange, *(['--allow-rotations'] if allow_rotations else []), '--orient', '0',
                 '--ensure-on-bed',
                 '--outputdir', str(probe_dir),
                 '--export-3mf', 'probe.3mf',
@@ -1922,7 +1928,20 @@ def _yaw(degrees):
     return [c, -s, 0, s, c, 0, 0, 0, 1]
 
 
+_POINTS_CACHE: list = []  # [(triangles, points)]: the one model being fitted right now
+
+
 def _unique_points(tris):
+    """Deduplicated vertices, shared (do not mutate). One fit search asks for these
+    several times for the same cached mesh, so the last answer is kept."""
+    if _POINTS_CACHE and _POINTS_CACHE[0][0] is tris:
+        return _POINTS_CACHE[0][1]
+    points = _unique_points_uncached(tris)
+    _POINTS_CACHE[:] = [(tris, points)]
+    return points
+
+
+def _unique_points_uncached(tris):
     if isinstance(tris, IndexedTriangles):
         # Same set the legacy comprehension builds (points referenced by at
         # least one face, deduplicated by value), without expanding faces.
@@ -1937,7 +1956,43 @@ def _unique_points(tris):
     return list({p for tri in tris for p in tri})
 
 
+def _drop_interior(points):
+    """Drop points strictly inside the octagon of the eight directional extremes.
+
+    A point strictly inside a polygon whose corners are input points can never be
+    a hull vertex, so the hull is unchanged. Dense meshes shed most of their
+    vertices here, which keeps the pure-Python chain below short.
+    """
+    try:
+        import numpy as np
+        arr = np.asarray(points, dtype=float)
+        if arr.ndim != 2 or arr.shape[1] != 2:
+            return points
+        corners = []
+        for k in range(8):
+            angle = math.radians(45 * k)
+            corner = arr[int(np.argmax(arr[:, 0] * math.cos(angle) + arr[:, 1] * math.sin(angle)))]
+            if not corners or not np.array_equal(corners[-1], corner):
+                corners.append(corner)
+        if len(corners) < 3:
+            return points
+        span = float(np.ptp(arr)) or 1.0
+        inside = np.ones(len(arr), dtype=bool)
+        for i, a in enumerate(corners):
+            b = corners[(i + 1) % len(corners)]
+            edge = (b[0] - a[0]) * (arr[:, 1] - a[1]) - (b[1] - a[1]) * (arr[:, 0] - a[0])
+            inside &= edge > 1e-9 * span * span
+        keep = arr[~inside]
+        # Corners may be in either winding; only trust the prune when it removed
+        # points and left a real polygon behind.
+        return [tuple(row) for row in keep.tolist()] if 3 <= len(keep) < len(arr) else points
+    except Exception:
+        return points
+
+
 def _hull(points):
+    if len(points) > 4096:
+        points = _drop_interior(points)
     pts = sorted(set(points))
     if len(pts) <= 2:
         return pts
@@ -2204,9 +2259,18 @@ def rotation_alternatives(source: Path, state: dict, authored_max: float = 0.0, 
         if scale <= authored_max + 0.004:
             continue
         needs = overhang > authored_overhang * 1.5 + 100.0
+        if small_contact(contact, dims[0] * dims[1]):
+            # The 5 mm brim this orientation will print with takes bed from it too.
+            brim_state = {**state, 'brim_policy': {'type': 'outer_only', 'width_mm': ORIENTATION_BRIM_MM}}
+            scale, yaw, dims = _orientation_bound(points, brim_state, up)
+            if scale <= authored_max + 0.004:
+                continue
+            brim = True
+        else:
+            brim = False
         candidates.append({'name': name, 'axis': axis, 'rotation': _matmul(_yaw(yaw), up), 'bound': scale,
                            'dims_full_mm': dims, 'supports': needs, 'bed_contact_mm2': round(contact),
-                           'overhang_mm2': round(overhang)})
+                           'overhang_mm2': round(overhang), 'brim': brim})
     # An envelope is not a placement: equal dimensions can hide different
     # contact faces, hulls and support geometry. Only identical transforms are
     # redundant; independently verify every distinct rigid placement.
@@ -2224,8 +2288,10 @@ def rotation_alternatives(source: Path, state: dict, authored_max: float = 0.0, 
     # The rotation goes straight to the probe, which uses the cached rotated hull
     # instead of writing and re-reading a dense rotated mesh per orientation.
     for row in candidates:
-        fits = lambda s, rot=row['rotation'], sup=bool(row['supports']): orca_plate_capacity(
-            source, state, scale=s, copy_limit=1, allow_rotations=False, rotation=rot, supports=sup) > 0
+        brim_policy = ({'type': 'outer_only', 'width_mm': ORIENTATION_BRIM_MM} if row.get('brim') else None)
+        fits = lambda s, rot=row['rotation'], sup=bool(row['supports']), bp=brim_policy: orca_plate_capacity(
+            source, state, scale=s, copy_limit=1, allow_rotations=False, rotation=rot, supports=sup,
+            brim_policy=bp) > 0
         verified.append(_confirm_scale(fits, row['bound']))
     results = []
     for row, scale in zip(candidates, verified):
@@ -2234,10 +2300,7 @@ def rotation_alternatives(source: Path, state: dict, authored_max: float = 0.0, 
         row = dict(row, scale=scale, full_size=scale >= 1.0,
                    dims_mm=[round(v * scale, 1) for v in row['dims_full_mm']])
         row['rotation'] = [round(v, 9) for v in row['rotation']]
-        contact = row.get('bed_contact_mm2')
-        footprint = row['dims_mm'][0] * row['dims_mm'][1]
-        # Tall part on a sliver of bed: recommend a brim so it does not topple.
-        row['brim'] = contact is not None and (contact < 400 or contact < 0.05 * footprint)
+        row['brim'] = bool(row.get('brim'))  # decided with the bound above: its width is already budgeted
         extras = [x for x, on in (('supports', row['supports']), ('brim', row['brim'])) if on]
         row['label'] = (f"{row['name']}, {'full size' if scale >= 1.0 else scale_label(scale)}"
                         + (f" (needs {' + '.join(extras)})" if extras else ''))
@@ -2245,6 +2308,34 @@ def rotation_alternatives(source: Path, state: dict, authored_max: float = 0.0, 
     # At equal verified scale/support requirements, preserve the authored contact face.
     results.sort(key=lambda r: (-r['scale'], r['supports'], r['axis'] != '+Z'))
     return results[:limit]
+
+
+ORIENTATION_BRIM_MM = 5.0
+
+
+def small_contact(contact_mm2, footprint_mm2):
+    """A tall part on a sliver of bed needs a brim so it does not topple."""
+    return contact_mm2 is not None and (contact_mm2 < 400 or contact_mm2 < 0.05 * footprint_mm2)
+
+
+def authored_needs_brim(source: Path) -> bool:
+    """Whether the model as authored stands on too little bed to print without a brim.
+
+    A wide, flat base does not need one, and a tight-fit brim would only take bed
+    from it. Anything that cannot be measured answers True (the old behavior:
+    try the widest brim that fits).
+    """
+    try:
+        tris = source_triangles(source)
+        if not tris:
+            return True
+        points = _unique_points(tris)
+        xs = [p[0] for p in points]
+        ys = [p[1] for p in points]
+        contact, _ = _surface_stats(tris, IDENTITY_ROT)
+        return small_contact(contact, (max(xs) - min(xs)) * (max(ys) - min(ys)))
+    except Exception:
+        return True
 
 
 def fit_options(source: Path, state: dict, brim_override=None) -> dict:
@@ -2260,10 +2351,14 @@ def fit_options(source: Path, state: dict, brim_override=None) -> dict:
     # Tight fits must not inherit auto_brim: choose a fitting explicit policy.
     # An operator override is authoritative and its width is included in clearance.
     requested = brim_override if brim_override is not None else state.get('brim_override')
-    policies = ([{'type': 'outer_only', 'width_mm': float(requested), 'label': f'Outer-only brim, {float(requested):g} mm'}]
-                if requested is not None else
-                [{'type': 'outer_only', 'width_mm': w, 'label': f'Outer-only brim, {w:g} mm'} for w in (3.0, 2.0, 1.0)]
-                + [{'type': 'no_brim', 'width_mm': 0.0, 'label': 'No brim'}])
+    no_brim = {'type': 'no_brim', 'width_mm': 0.0, 'label': 'No brim'}
+    if requested is not None:
+        policies = [{'type': 'outer_only', 'width_mm': float(requested), 'label': f'Outer-only brim, {float(requested):g} mm'}]
+    elif not authored_needs_brim(source):
+        policies = [no_brim]  # wide flat base: a brim would only shrink the part
+    else:
+        policies = ([{'type': 'outer_only', 'width_mm': w, 'label': f'Outer-only brim, {w:g} mm'} for w in (3.0, 2.0, 1.0)]
+                    + [no_brim])
     policy = policies[-1]
     scales = []
     for candidate in policies:

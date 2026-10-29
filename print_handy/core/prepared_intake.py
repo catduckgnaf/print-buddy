@@ -293,6 +293,31 @@ def _auto_rearrange_eligible(job, latest):
     return not (latest.get('orientation') or latest.get('full_size_split_plan'))
 
 
+def _single_body(job, manifest):
+    """True when the model is one object in one connected shell: nothing to rearrange or split.
+
+    Conservative: any missing measurement (no audit, unknown shell count, a
+    multi-part or multi-plate project) answers False so the full search runs.
+    """
+    audit = job.get('audit') if isinstance(job.get('audit'), dict) else {}
+    mesh = audit.get('mesh_audit') if isinstance(audit.get('mesh_audit'), dict) else {}
+    if mesh.get('shells') != 1:
+        return False
+    if len((manifest or {}).get('parts') or []) > 1:
+        return False
+    return int(audit.get('plates') or 1) <= 1 and int(audit.get('objects') or 1) <= 1
+
+
+def audit_dimensions(job):
+    """Measured [x, y, z] mm from the model audit, else None."""
+    audit = job.get('audit') if isinstance(job.get('audit'), dict) else {}
+    mesh = audit.get('mesh_audit') if isinstance(audit.get('mesh_audit'), dict) else {}
+    dims = mesh.get('dimensions_mm')
+    if isinstance(dims, (list, tuple)) and len(dims) >= 3 and all(isinstance(v, (int, float)) for v in dims[:3]):
+        return [float(v) for v in dims[:3]]
+    return None
+
+
 def auto_rearrange_notice(title, plan, printer=None):
     """One line saying what was done, distinguishing the author's layout from ours."""
     count = int(plan.get('part_count') or 0)
@@ -610,24 +635,89 @@ def fit_choice_rows(options):
     elif options.get('full_size_split') and len(rows) < 2:
         rows.append({'kind': 'split', 'label': 'Split plates at 100%', 'scale': 1.0})
     full_size_available = any(row['kind'] in ('split', 'rearrange') for row in rows)
-    for alt in (options.get('rotations') or [])[:1 if full_size_available else 2]:
+    rotations = options.get('rotations') or []
+
+    def rotate_row(alt, label):
+        return {'kind': 'rotate', 'label': label, 'scale': float(alt['scale']),
+                'rotation': alt['rotation'], 'axis': alt.get('axis'),
+                'dims_full_mm': alt.get('dims_full_mm'), 'supports': bool(alt.get('supports')),
+                'brim': bool(alt.get('brim'))}
+
+    full_rotations = 0
+    for alt in rotations:
         scale = float(alt['scale'])
-        if scale < 0.995:
+        if scale < 0.995 or full_rotations >= (1 if full_size_available else 2):
             continue
         support = ' + supports' if alt.get('supports') else ' · rotated'
-        rows.append({'kind': 'rotate', 'label': f'{_pct(scale)}{support}', 'scale': scale,
-                     'rotation': alt['rotation'], 'axis': alt.get('axis'),
-                     'dims_full_mm': alt.get('dims_full_mm'), 'supports': bool(alt.get('supports')),
-                     'brim': bool(alt.get('brim'))})
+        rows.append(rotate_row(alt, f'{_pct(scale)}{support}'))
+        full_rotations += 1
         if len(rows) == 2:
             break
-    if len(rows) < 3:
-        for scale in options.get('scales') or []:
-            if float(scale) < 0.995:
-                rows.append({'kind': 'scale', 'label': f'Shrink to {_pct(scale)}', 'scale': float(scale)})
-                break
+    # Below 100%: offer the largest sizes that really fit, best first. A rotation
+    # that needs supports is only worth a button when it beats every no-support
+    # one, and a plain shrink only when no rotation without supports prints larger.
+    partial = [alt for alt in rotations if 0 < float(alt['scale']) < 0.995]
+    plain = max((a for a in partial if not a.get('supports')), key=lambda a: float(a['scale']), default=None)
+    braced = max((a for a in partial if a.get('supports')), key=lambda a: float(a['scale']), default=None)
+    shrink = next((float(v) for v in options.get('scales') or [] if float(v) < 0.995), None)
+    offers = []
+    if shrink is not None and not (plain and float(plain['scale']) > shrink):
+        offers.append({'kind': 'scale', 'label': f'Shrink to {_pct(shrink)}', 'scale': shrink})
+    if plain:
+        offers.append(rotate_row(plain, f"{_pct(plain['scale'])} · {_rotation_phrase(plain)}"))
+    if braced and (not plain or float(braced['scale']) > float(plain['scale'])):
+        offers.append(rotate_row(braced, f"{_pct(braced['scale'])} · {_rotation_phrase(braced)} + supports"))
+    offers.sort(key=lambda row: -row['scale'])
+    for row in offers:
+        if len(rows) < 3:
+            rows.append(row)
     rows.append({'kind': 'cancel', 'label': 'Cancel'})
     return rows
+
+
+def _rotation_phrase(alt):
+    """Short button words for a rotated option: "turned 126°" or "rotated 90° on Y"."""
+    name = str(alt.get('name') or alt.get('label') or '')
+    turn = re.match(r'Turn (-?[\d.]+)°', name)
+    if turn:
+        return f'turned {turn[1]}°'
+    tilt = re.match(r'Rotate (-?[\d.]+)° on ([A-Z])', name)
+    return f'rotated {tilt[1]}° on {tilt[2]}' if tilt else 'rotated'
+
+
+FIT_HINT_PREFIX = 'Pick a fit option, or type '
+
+
+def row_brim_policy(row, options):
+    """Brim policy that goes with the chosen fit row, or None to use the model's own rule.
+
+    The tight-fit policy was sized for the authored orientation. A rotated row was
+    sized separately: no brim when its bed contact is wide, or the 5 mm
+    small-contact brim when it was flagged (that stays with the orientation).
+    """
+    if row.get('kind') != 'rotate':
+        return options.get('brim_policy')
+    if row.get('brim'):
+        return None
+    return {'type': 'no_brim', 'width_mm': 0.0, 'label': 'No brim'}
+
+
+def fit_hint(rows):
+    """The "type ..." hint, naming only actions that are actually offered."""
+    kinds = {row['kind'] for row in rows}
+    words = []
+    if 'rearrange' in kinds:
+        words.append('rearrange')
+    if 'split' in kinds:
+        words.append('split')
+    if any(row['kind'] in ('rearrange', 'split') or (row['kind'] in ('rotate', 'painted') and row['scale'] >= 0.995)
+           for row in rows):
+        words.append('100%')
+    if any(row['kind'] == 'scale' or (row['kind'] in ('rotate', 'painted') and row['scale'] < 0.995)
+           for row in rows):
+        words.append('shrink')
+    words.append('cancel')
+    return FIT_HINT_PREFIX + ' / '.join(words) + '.'
 
 
 def _fit_choice_reply(text, rows):
@@ -645,7 +735,9 @@ def _fit_choice_reply(text, rows):
         matches = [i for i, row in enumerate(rows) if row['kind'] == 'cancel']
     elif value in {'shrink', 'smaller'}:
         matches = [i for i, row in enumerate(rows) if row['kind'] == 'scale'
-                   or (row['kind'] == 'painted' and row['scale'] < 1.0)]
+                   or (row['kind'] in ('painted', 'rotate') and row['scale'] < 0.995)]
+        if len(matches) > 1:  # several smaller sizes are offered: "shrink" means the largest
+            matches = [max(matches, key=lambda i: rows[i]['scale'])]
     elif re.fullmatch(r'\d+(?:\.\d+)?\s*%', value):
         percent = float(value.rstrip('%').strip())
         matches = [i for i, row in enumerate(rows)
@@ -661,7 +753,8 @@ def _fit_choice_reply(text, rows):
     return matches[0]
 
 
-def fit_question(title, options):
+def fit_question(title, options, rows=None):
+    rows = rows if rows is not None else fit_choice_rows(options)
     scales = options.get('scales') or []
     rotations = options.get('rotations') or []
     parts = options.get('parts') or []
@@ -701,9 +794,10 @@ def fit_question(title, options):
                      + (f"; {'; '.join(warn)}" if warn else '') + '.')
     if options.get('full_size_split'):
         lines.append('Full-size option: separate already-independent parts onto the original plates (100%).')
-    if options.get('brim_policy'):
-        lines.append('Tight-fit brim policy: ' + options['brim_policy'].get('label', 'No brim') + '.')
-    lines.append('Pick a fit option, or type split / 100% / shrink / cancel.')
+    policy = options.get('brim_policy')
+    if policy and float(policy.get('width_mm') or 0) > 0 and any(row['kind'] == 'scale' for row in rows):
+        lines.append('Tight-fit brim policy: ' + policy.get('label', 'Outer-only brim') + '.')
+    lines.append(fit_hint(rows))
     return '\n'.join(lines)
 
 
@@ -1724,8 +1818,11 @@ async def prepare_link(event, adapter, state, root, timeout=None, reuse=None, pr
             receipt_path.write_text(json.dumps(receipt, indent=2) + '\n')
             mj.write_job(folder, latest)
             capacity = 1
-        rearrange_checked = False
-        if capacity < 1 and _auto_rearrange_eligible(job, latest):
+        # One object, one shell: there is nothing to rearrange or split, so both
+        # searches are skipped (they only cost time) and neither is advertised.
+        single_body = capacity < 1 and _single_body(job, manifest)
+        rearrange_checked = single_body
+        if capacity < 1 and not single_body and _auto_rearrange_eligible(job, latest):
             # Cheapest full-size answer first, before any Orca option search:
             # if every part fits one plate at 100% just by moving/turning
             # parts, do it and say so instead of asking. The check uses the
@@ -1805,6 +1902,10 @@ async def prepare_link(event, adapter, state, root, timeout=None, reuse=None, pr
                     options['extent_mm'] = failing[0]['extent_mm']
                     options['blocking_part'] = failing[0]
                     options['orientations_checked'] = ['authored XY (measured)'] + [r.get('label', 'rotation') for r in options.get('rotations') or []]
+            if not options.get('extent_mm'):
+                measured = audit_dimensions(job)
+                if measured:
+                    options['extent_mm'] = measured
             full_size_split = False
             # A full-size single-plate answer (a plain rotation, or every part
             # rearranged onto one plate) ends the search: no split checks.
@@ -1812,8 +1913,8 @@ async def prepare_link(event, adapter, state, root, timeout=None, reuse=None, pr
                               for r in options.get('rotations') or [])
                           or bool(options.get('rearrange_100')))
             try:
-                if rotate_100:
-                    raise LookupError('a 100% one-plate fit exists; skip the split checks')
+                if rotate_100 or single_body:
+                    raise LookupError('a 100% one-plate fit exists, or there is nothing to split')
                 split_plan = await fit_status.run('trying a split onto separate plates at 100%',
                                                   _heavy(split_fit.split_plan_100, path,
                                                          int((state.get('bed_mm') or BED)[0]),
@@ -1821,7 +1922,7 @@ async def prepare_link(event, adapter, state, root, timeout=None, reuse=None, pr
             except Exception:
                 split_plan = None
             try:
-                if rotate_100 or split_plan:
+                if rotate_100 or split_plan or single_body:
                     # A concrete split plan supersedes the generic "parts can be
                     # separated" offer, so that check is only needed without one.
                     raise LookupError('a split plan or a 100% one-plate fit already answers this')
@@ -1914,9 +2015,9 @@ async def prepare_link(event, adapter, state, root, timeout=None, reuse=None, pr
                     lead = (f"{title} does not fit the {_printer_name()} bed full size as one plate, even rearranged. "
                             f"Full size works as {len(split_plan['plates'])} plates: ")
                 prompt = (lead + '; '.join(distribution) +
-                          '. Choose a fit option, or type split / 100% / shrink / cancel.')
+                          '. Choose a fit option, or type ' + fit_hint(picked)[len(FIT_HINT_PREFIX):])
             else:
-                prompt = fit_question(title, options)
+                prompt = fit_question(title, options, picked)
             # Fits at 100% by rotation alone (no supports): just do it, no question, no announcement.
             silent = next((r for r in picked if r['kind'] == 'rotate' and r['scale'] >= 0.995
                            and not r.get('supports')), None)
@@ -1945,9 +2046,15 @@ async def prepare_link(event, adapter, state, root, timeout=None, reuse=None, pr
                                    content='Print cancelled. Nothing was sliced, uploaded, or started.',
                                    metadata=metadata)
                 return {'action': 'skip', 'reason': 'cancelled oversized model'}
-            if options.get('brim_policy'):
-                latest['fit_brim_policy'] = options['brim_policy']
-                receipt['fit_brim_policy'] = options['brim_policy']
+            brim_policy = row_brim_policy(row, options)
+            if brim_policy:
+                latest['fit_brim_policy'] = brim_policy
+                receipt['fit_brim_policy'] = brim_policy
+            else:
+                # A turned model keeps its own brim rule (5 mm only when it stands
+                # on a small contact patch); the authored layout's policy must not leak in.
+                latest.pop('fit_brim_policy', None)
+                receipt.pop('fit_brim_policy', None)
             if row['kind'] == 'rearrange':
                 latest['scale'] = 1.0
                 latest['full_size_rearrange_plan'] = row.get('rearrange_100') or {'rearrange_plate': True}
@@ -1988,7 +2095,10 @@ async def prepare_link(event, adapter, state, root, timeout=None, reuse=None, pr
                                             'confirming the chosen size on the bed',
                                             _heavy(orca_adapter.orca_plate_capacity, path, state,
                                                    scale=selected_scale,
-                                                   **({'rotation': rotation, 'supports': bool(row.get('supports'))}
+                                                   **({'rotation': rotation, 'supports': bool(row.get('supports')),
+                                                       **({'brim_policy': {'type': 'outer_only',
+                                                                           'width_mm': orca_adapter.ORIENTATION_BRIM_MM}}
+                                                          if row.get('brim') else {})}
                                                       if rotation else {})))
                 if capacity < 1:
                     raise RuntimeError(f'Orca no longer verifies a fit for {row["label"]}')

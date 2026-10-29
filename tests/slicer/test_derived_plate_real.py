@@ -64,5 +64,4 @@ def test_single_slot_plate_from_a_two_filament_source_slices(source_extruder):
             plate, tmp / "slice", state, preserve_layout=True, filament_slot=1)
         assert Path(out).is_file() and Path(out).stat().st_size > 0
         gcode = Path(out).read_text(errors="replace")
-        assert "
-T1" not in gcode, "a derived single-slot plate must stay on tool 0"
+        assert "\nT1" not in gcode, "a derived single-slot plate must stay on tool 0"

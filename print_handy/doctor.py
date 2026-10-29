@@ -159,6 +159,8 @@ def check_zmod_version(data):
     except Exception as exc:
         return f"unknown (Moonraker's update status could not be read: {exc})"
     zmod = status.component("zmod")
+    if zmod is not None and zmod.current and zmod.source == "system_info":
+        return f"{zmod.current} (from the printer's OS info)"
     if zmod is not None and zmod.current:
         return zmod.current
     return "unknown (not reported by Moonraker)"

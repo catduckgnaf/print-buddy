@@ -8,7 +8,12 @@ names and classifies each one against the descriptive registry in
 ``firmware/commands.toml`` (loaded through print_handy.knowledge):
 
 - **known** — the name matches a registry macro entry: show its description
-  and safety note.
+  and safety note. When the caller names the printer (the /print-macros
+  dispatch does), only entries scoped to that printer model — or to every
+  printer — count: registry entries are per-printer facts, and a name-only
+  match would show one firmware's description for another's macro of the
+  same name (issue #612: a Sovol START_PRINT described as ZMod's). Without
+  a printer, classification stays name-only for offline callers.
 - **printer-defined** — the printer defines it but the registry does not:
   listed by name only; no description is invented for it.
 - **internal** — the name starts with ``_`` (the Klipper helper convention):
@@ -115,16 +120,23 @@ def parse_macro_names(payload) -> list:
     return names
 
 
-def _registry_index(registry):
+def _registry_index(registry, printer=None):
     """Case-insensitive name -> entry index over the registry's macro entries only.
 
     A macro entry is reachable by its registry name and by the macro name its
     command line starts with; a name written as several words (the IFS feed
     entry lists two macro names) indexes each word.
+
+    With `printer` (a registered model key), only entries that apply to that
+    printer — its `printers` list names the key, or "*" — are indexed, the
+    same filter knowledge search applies. Without one, every macro entry is
+    indexed by name, as before.
     """
     index = {}
     for entry in registry.firmware_entries:
         if entry.kind != "macro":
+            continue
+        if printer is not None and "*" not in entry.printers and printer not in entry.printers:
             continue
         keys = [token for token in re.split(r"[^A-Za-z0-9_]+", entry.name) if token]
         if entry.command:
@@ -134,12 +146,17 @@ def _registry_index(registry):
     return index
 
 
-def classify(names, registry=None) -> MacroListing:
-    """Split discovered names into known / printer-defined / internal."""
+def classify(names, registry=None, printer=None) -> MacroListing:
+    """Split discovered names into known / printer-defined / internal.
+
+    `printer` scopes the known match to entries for that printer model (see
+    _registry_index): a discovered name with no entry for this printer is
+    printer-defined, never described from another printer's registry entry.
+    """
     if registry is None:
         from . import knowledge
         registry = knowledge.default_registry()
-    index = _registry_index(registry)
+    index = _registry_index(registry, printer=printer)
     known, printer_defined, internal, user_hooks = [], [], [], []
     for name in names:
         if name.upper() in USER_HOOKS:
@@ -153,7 +170,7 @@ def classify(names, registry=None) -> MacroListing:
     return MacroListing(tuple(known), tuple(printer_defined), tuple(internal), tuple(user_hooks))
 
 
-def discover(transport, registry=None) -> MacroListing:
+def discover(transport, registry=None, printer=None) -> MacroListing:
     """Fetch and classify the printer's macros through `transport`.
 
     `transport` is the spool_sync.moonraker client shape: a callable taking
@@ -167,7 +184,7 @@ def discover(transport, registry=None) -> MacroListing:
         raise
     except Exception as exc:
         raise MacroError(f"the objects-list request failed: {exc}") from exc
-    return classify(parse_macro_names(payload), registry=registry)
+    return classify(parse_macro_names(payload), registry=registry, printer=printer)
 
 
 # --------------------------------------------------------------------- stage 2: run
@@ -234,7 +251,7 @@ def _validate_args(arg_tokens) -> tuple:
     return tuple(validated)
 
 
-def prepare_run(transport, name_token, arg_tokens=(), registry=None) -> PreparedRun:
+def prepare_run(transport, name_token, arg_tokens=(), registry=None, printer=None) -> PreparedRun:
     """Validate one run request against the live printer; send nothing.
 
     Re-discovers the macro set at run time (the printer is the authority —
@@ -246,7 +263,7 @@ def prepare_run(transport, name_token, arg_tokens=(), registry=None) -> Prepared
     will be asked to confirm.
     """
     try:
-        listing = discover(transport, registry=registry)
+        listing = discover(transport, registry=registry, printer=printer)
     except MacroError:
         raise MacroError(RUN_COULD_NOT_READ_TEXT) from None
     name_token = str(name_token or "").strip()

@@ -149,6 +149,85 @@ def test_generic_verify_gcode_needs_its_own_start_macro(monkeypatch, rig):
     assert not [r for r in fake.requests if ZMOD_STEPS.search(json.dumps(r))]
 
 
+# A job sliced by the Sovol Zero profiles (issue #612, rpcyan586/svzero-profiles):
+# a bare START_PRINT whose temperatures ride on the heater lines, END_PRINT at
+# the tail. The stock variant is what the same profiles emit on stock firmware
+# (the pack-only calls are unknown commands there and Klipper steps over them);
+# the pack variant adds the chamber/clean/cooldown calls the macro pack defines.
+SVZERO_HEADER = """; nozzle_diameter = 0.4
+; filament_type = PLA
+; first_layer_height = 0.2
+; estimated printing time (normal mode) = 1h 2m 0s
+; total filament used [g] = 12.3
+"""
+
+SVZERO_BODY = """G90
+;LAYER_CHANGE
+;TYPE:Outer wall
+;WIDTH:0.42
+G1 X10 Y10 Z0.2 E1
+;LAYER_CHANGE
+;WIDTH:0.42
+G1 X20 Y20 Z0.4 E2
+END_PRINT
+"""
+
+SVZERO_STOCK = SVZERO_HEADER + """SVZERO_REQUIRE VERSION=2.1.2 MODE=standard
+_PREFLIGHT
+M140 S60
+M190 S60
+START_PRINT
+M104 S215
+M109 S215
+PURGE_LINE VOL_MAX=12 FIL_D=1.75 NOZZLE=0.4 CLEAR=8
+""" + SVZERO_BODY
+
+SVZERO_PACK = SVZERO_HEADER + """SVZERO_REQUIRE VERSION=2.1.2 MODE=standard
+_PREFLIGHT
+M140 S60
+M141 S32
+SET_CLEAN_TEMP MATERIAL=PLA
+COOLDOWN_ARM MATERIAL=PLA
+M190 S60
+START_PRINT
+SVZERO_NOZZLE_GROWTH TEMP=215
+M104 S215
+M109 S215
+PURGE_LINE VOL_MAX=12 FIL_D=1.75 NOZZLE=0.4 CLEAR=8
+""" + SVZERO_BODY
+
+
+@pytest.mark.parametrize("text", [SVZERO_STOCK, SVZERO_PACK],
+                         ids=["stock-firmware", "macro-pack"])
+def test_generic_verify_gcode_accepts_a_sovol_style_start(monkeypatch, rig, text):
+    use_model(monkeypatch, "klipper.generic")
+    fake, gcode = rig
+    gcode.write_text(text)
+    assert model_job.verify_gcode(gcode) is True
+
+
+def test_generic_verify_gcode_refuses_a_sovol_style_start_with_wrong_heaters(monkeypatch, rig):
+    use_model(monkeypatch, "klipper.generic")
+    fake, gcode = rig
+    gcode.write_text(SVZERO_STOCK.replace("M109 S215", "M109 S200"))
+    with pytest.raises(RuntimeError, match=r"missing PRINT_START matching bed 60.*accepted starts"):
+        model_job.verify_gcode(gcode)
+
+
+def test_sovol_style_start_arguments_are_the_contract_when_present():
+    # With BED_TEMP/EXTRUDER_TEMP arguments the arguments decide, in both
+    # directions: heater lines cannot rescue a wrong-argument start.
+    heaters = "M190 S60\nM109 S215\n"
+    assert model_job.sovol_style_start_matches(
+        "START_PRINT BED_TEMP=60 EXTRUDER_TEMP=215\n" + heaters, 60, 215)
+    assert not model_job.sovol_style_start_matches(
+        "START_PRINT BED_TEMP=70 EXTRUDER_TEMP=215\n" + heaters, 60, 215)
+    assert model_job.sovol_style_start_matches("START_PRINT\n" + heaters, 60, 215)
+    assert not model_job.sovol_style_start_matches("START_PRINT\nM190 S60\n", 60, 215)
+    assert not model_job.sovol_style_start_matches("START_PRINT_EXTRA\n" + heaters, 60, 215)
+    assert not model_job.sovol_style_start_matches(heaters, 60, 215)
+
+
 @pytest.mark.parametrize("configured,recorded", [("klipper.generic", "flashforge.ad5x"),
                                                  ("klipper.generic", None),
                                                  ("flashforge.ad5x", "klipper.generic"),

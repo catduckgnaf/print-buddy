@@ -2762,23 +2762,28 @@ async def macros_dispatch(event, gateway, **kwargs):
     live_key = _live_key_for(source, gateway, chosen)
     mr = spool_sync.moonraker_for(pid)
     args = str(getattr(event, 'text', '')).strip()[len('/print-macros'):].split()
+    model_key = None
     try:
         if pid:
             from print_handy import settings
-            connection = printers.get(settings.by_id(pid, _config.cfg())["model"],
+            model_key = settings.by_id(pid, _config.cfg())["model"]
+            connection = printers.get(model_key,
                                       settings.view_for(pid, _config.cfg())).connection
         else:
-            connection = printers.current().connection
+            current = printers.current()
+            connection = current.connection
+            model_key = getattr(current, "key", None)
     except Exception:
         logger.exception('/print-macros could not resolve the configured printer')
         connection = None
+        model_key = None
     if connection != 'moonraker':
         await adapter.send(chat_id=source.chat_id, metadata=metadata,
                            content=macros.not_moonraker_text(connection))
         return {'action': 'skip', 'reason': 'print macros not applicable to this printer'}
     if not args:
         try:
-            listing = await asyncio.to_thread(macros.discover, mr)
+            listing = await asyncio.to_thread(macros.discover, mr, printer=model_key)
             message = macros.listing_text(listing)
         except Exception:
             logger.exception('/print-macros failed')
@@ -2801,7 +2806,7 @@ async def macros_dispatch(event, gateway, **kwargs):
     try:
         try:
             prepared = await asyncio.to_thread(macros.prepare_run, mr,
-                                               args[1], args[2:])
+                                               args[1], args[2:], printer=model_key)
         except (macros.MacroRefusal, macros.MacroError) as exc:
             message = str(exc)
         else:

@@ -64,8 +64,8 @@ def test_single_plate_3mf_per_part_routes_to_merge_planner():
 def test_tower_reserve_is_only_a_fast_path():
     import inspect
     body = inspect.getsource(plate_merge.plan)
-    assert 'pack(extents, bed, spacing, reserve_y=reserve)' in body
-    fallback = body.index('loose = pack(extents, bed, spacing)')
+    assert 'pack(extents, bed, spacing, edge=edge, reserve_y=reserve)' in body
+    fallback = body.index('loose = pack(extents, bed, spacing, edge=edge)')
     assert 'color_geometry.prime_tower_xy(loose_bounds, bed=bed)' in body[fallback:]
 
 

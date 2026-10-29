@@ -21,10 +21,19 @@ from print_handy.webui_gate import start_blocked, webui_config
 
 def main():
     healthy = True
-    if os.environ.get("DISCORD_BOT_TOKEN"):
-        healthy &= bot_check() == 0
+    # The same decision the supervisor made (print_handy.bot_gate): the
+    # configured platform's own token, not DISCORD_BOT_TOKEN alone.
+    from print_handy.bot_gate import decide as bot_decide
+    try:
+        bot_started, _platform, bot_detail = bot_decide()
+    except Exception as exc:
+        print(f"FAIL  bot gate: configuration unresolved: {exc}")
+        healthy = False
     else:
-        print("ok  Discord bot disabled by empty token")
+        if bot_started:
+            healthy &= bot_check() == 0
+        else:
+            print(f"ok  {bot_detail}")
     # The listener is required exactly when the supervisor started it: the
     # listener registry (print_handy.listeners, #299) decides from the
     # instance's domain, mirroring the disabled-bot branch above. Since

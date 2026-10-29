@@ -96,8 +96,8 @@ def home(tmp_path, monkeypatch):
     path = tmp_path/'home'
     path.mkdir()
     monkeypatch.setenv('HOME', str(path))
-    for name in ('CREALITYCLOUD_TOKEN', 'THANGS_TOKEN', 'NEXPRINT_TOKEN'):
-        monkeypatch.delenv(name, raising=False)
+    for acc in site_accounts.LOGIN_SITES.values():
+        monkeypatch.delenv(acc.env_name, raising=False)
     return path
 
 
@@ -663,3 +663,30 @@ def test_archive_member_is_capped_as_it_expands(home, monkeypatch, tmp_path):
     with pytest.raises(intake_resources.IntakeLimitExceeded, match='MiB limit'):
         model_job.thangs_download(job, job['sources'][0], tmp_path/'src')
     assert not list((tmp_path/'src').glob('*'))  # nothing partial left behind
+
+
+def test_makerworld_401_is_a_named_token_refusal(home, monkeypatch):
+    # A raw "HTTP Error 401: Unauthorized" names no site, so the #590 known
+    # cause could not recognise it; it is now a SiteLoginNeeded the intake
+    # turns into "Renew MakerWorld login".
+    import urllib.error
+    from print_handy import diagnostics
+    save_token('makerworld', 'old-token')
+
+    def refuse(url, **kw):
+        raise urllib.error.HTTPError(url, 401, 'Unauthorized', {}, None)
+    monkeypatch.setattr(model_job, 'request_json', refuse)
+    with pytest.raises(SiteLoginNeeded) as caught:
+        model_job.maker_inventory('https://makerworld.com/en/models/931302-holder')
+    assert caught.value.site == 'makerworld' and caught.value.reason == 'refused'
+    assert diagnostics.known_cause(caught.value) is not None
+
+
+def test_design_fetch_keeps_a_known_cause(home, monkeypatch, tmp_path):
+    # The design flow used to replace every failure with "check the link is
+    # public"; a curated cause (here a missing MakerWorld token) is kept.
+    from print_handy.core import design
+    with pytest.raises(design.DesignError) as caught:
+        design.fetch_link_source('https://makerworld.com/en/models/931302-holder', tmp_path/'src')
+    assert 'account token' in str(caught.value)
+    assert 'check the link is public' not in str(caught.value)

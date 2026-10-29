@@ -349,3 +349,43 @@ class ConfigPageTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class DnsRebindingTests(unittest.TestCase):
+    """A tokenless loopback Web UI answers only to loopback names.
+
+    A hostile page that rebinds its own hostname to 127.0.0.1 is "same
+    origin" with the Web UI, so without a Host check it could read the form
+    token from GET /config and post settings changes (for example adding
+    itself to discord.allowed_user_ids). Its requests still carry the
+    attacker's hostname in Host and Origin.
+    """
+
+    # The page helpers only, not ConfigPageTests' own tests.
+    start = ConfigPageTests.start
+    request = ConfigPageTests.request
+    get_config = ConfigPageTests.get_config
+    browser_form = ConfigPageTests.browser_form
+    post = ConfigPageTests.post
+
+    def test_rebound_host_cannot_read_or_write(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            port, local, environ = self.start(tmp)
+            evil = {"Host": f"rebind.attacker.example:{port}"}
+            code, _body = self.request(port, "GET", "/config", headers=evil)
+            self.assertEqual(code, 403)
+            _code, _body, csrf = self.get_config(port)  # the operator's own page
+            before = local.read_bytes()
+            form = self.browser_form(environ, csrf, **{"discord.chat_id": "999"})
+            code, _body = self.post(port, "/config/preview", form, headers=evil)
+            self.assertEqual(code, 403)
+            code, _body = self.post(port, "/config/preview", form,
+                                    headers={"Origin": "http://rebind.attacker.example"})
+            self.assertEqual(code, 403)
+            self.assertEqual(local.read_bytes(), before)
+            # Loopback names still work, and /healthz is never gated.
+            for host in (f"127.0.0.1:{port}", f"localhost:{port}", f"[::1]:{port}"):
+                code, _body = self.request(port, "GET", "/config", headers={"Host": host})
+                self.assertEqual(code, 200, host)
+            code, _body = self.request(port, "GET", "/healthz", headers=evil)
+            self.assertNotEqual(code, 403)

@@ -11,7 +11,7 @@ import os
 import shutil
 from pathlib import Path
 
-RECIPE_VERSION = 1
+RECIPE_VERSION = 2  # 2: the layout spacing and prime-tower settings are inputs too
 PROFILE_FILES = ('machine', 'process', 'filament')
 
 
@@ -70,6 +70,7 @@ def slice_recipe(job, source_sha256, state=None, *, copies=None, scale=None, bri
     nozzle = state.get('nozzle') or {}
     tuned = get_tuned_nozzle_profile(nozzle['diameter_mm']) if nozzle.get('diameter_mm') else None
     slots = state.get('ifs_slots') or {}
+    current = settings.current()
     return {
         'recipe_version': RECIPE_VERSION,
         'source_sha256': source_sha256,
@@ -80,7 +81,11 @@ def slice_recipe(job, source_sha256, state=None, *, copies=None, scale=None, bri
         'supports_brim': {'supports': supports, 'orientation_brim': orientation_brim,
                           'fit_brim_policy': job.get('fit_brim_policy')},
         'layout': {'plate_mode': job.get('plate_mode'), 'full_size_split_plan': job.get('full_size_split_plan'),
-                    'full_size_rearrange_plan': job.get('full_size_rearrange_plan')},
+                    'full_size_rearrange_plan': job.get('full_size_rearrange_plan'),
+                    # Part gaps, edge margins and the prime tower decide where
+                    # parts land, so a settings change must not reuse an old slice.
+                    'spacing': settings.spacing_summary(current)['values'],
+                    'prime_tower': dict(current.get('prime_tower') or {})},
         'filament': {'decisions_sha256': mj.decisions_digest(decisions) if decisions else None,
                      'selected_slot': (job.get('filament_selection') or {}).get('slot'),
                      'slots': {str(key): {field: (row or {}).get(field) for field in ('material', 'color', 'hex')}

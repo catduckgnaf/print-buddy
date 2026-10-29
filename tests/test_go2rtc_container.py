@@ -259,6 +259,7 @@ class SupervisorGo2rtcGateTests(unittest.TestCase):
             "case \"$*\" in\n"
             "  *print_handy.listener_gate*--roster*) printf 'printer1\\n'; exit 0 ;;\n"
             "  *print_handy.listener_gate*) exit 3 ;;\n"
+            "  *print_handy.bot_gate*) exit 3 ;;\n"
             "  *print_handy.webui_gate*) exit 3 ;;\n"
             "  *print_handy.live_gate*) exit 3 ;;\n"
             "  *print_handy.go2rtc*--write-config*) printf '%s\\n' \"$GO2RTC_TEST_CONFIG\" ;;\n"

@@ -35,7 +35,10 @@ def multi_filament_source(path):
     project = {key: [value[0]] * len(PALETTE) for key, value in template.items()
                if isinstance(value, list) and value and not key.endswith("_settings_id")}
     project.update(filament_colour=[c for c, _ in PALETTE], filament_type=[m for _, m in PALETTE],
-                   filament_is_support=["0", "0"], filament_settings_id=[template["filament_settings_id"][0]] * 2)
+                   filament_settings_id=[template["filament_settings_id"][0]] * 2)
+    # Bambu Studio projects (MakerWorld) have no filament_is_support, an Orca-only key. Orca fills it from the
+    # one loaded filament profile (1 entry) next to the project's 2-entry filament_colour.
+    project.pop("filament_is_support", None)
     with zipfile.ZipFile(path) as archive:
         entries = {info.filename: archive.read(info) for info in archive.infolist()}
     entries["Metadata/project_settings.config"] = json.dumps(project, indent=4).encode()

@@ -55,7 +55,7 @@ Subsystems in use:
 | --- | --- |
 | `DISCORD` | Discord startup and login (bot token, gateway intents) |
 | `SPOOLMAN` | Talking to the Spoolman service (unreachable, refused, not configured) |
-| `INTAKE` | Preparing a model from a link or file (fetch, fit and colour steps) |
+| `INTAKE` | Preparing a model from a link or file (fetch, fit and color steps) |
 | `SLICING` | Slicing a prepared model |
 | `PRINTER` | Printer-bound actions from chat (stop, resume, next plate, print again, restart) |
 | `DEBUG` | Debug log mode and its export |
@@ -95,14 +95,14 @@ no MakerWorld account token set up — while chat got only a generic
 not help), and a `PB_INTAKE_UNKNOWN` reference. The rules now are:
 
 - **A known cause is named.** `print_handy.diagnostics.known_cause`
-  recognises the curated, operator-phrased failures Print Handy raises
+  recognizes the curated, operator-phrased failures Print Handy raises
   at its model-site boundaries — a missing, empty or refused site
   credential (MakerWorld, Thingiverse, MyMiniFactory, Cults3D), a site
   robot check, a site's built-in download gap, Spoolman not answering
   or not configured — and the chat post states that cause in plain
   words with its remedy (for a token: the site, the credential, and the
   docs/PROJECT-REFERENCE.md section that explains setting it up). The
-  wording is built in `diagnostics.py` from the recognised pattern,
+  wording is built in `diagnostics.py` from the recognized pattern,
   never copied from raw exception text, so no internal path, secret or
   traceback can ride along — the #467 no-raw-text pin still holds.
 - **A known cause is classified, not `UNKNOWN`.** The same recognition
@@ -112,7 +112,7 @@ not help), and a `PB_INTAKE_UNKNOWN` reference. The rules now are:
   classify as `configuration` and 429/5xx as `transient` for the same
   reason. An unrecognised failure is still honestly `unknown`.
 - **Resending is only suggested when it can help.** Intake and
-  colour-selection posts offer "send the link or file again" only for a
+  color-selection posts offer "send the link or file again" only for a
   transient failure; a known cause gets its remedy, and a genuinely
   unknown failure keeps the diagnostics bundle hint
   (``/print-handy bundle``) with no resend advice.

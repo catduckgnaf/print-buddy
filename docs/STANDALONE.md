@@ -177,7 +177,7 @@ Required environment: `PRINT_HANDY__BOT__MODE=standalone`, `DISCORD_BOT_TOKEN`, 
   `/print-macros` (Moonraker printers only; lists the macros the printer defines, and `run <name>` runs one behind a confirmation),
   `/print-firmware` (firmware version report on Moonraker printers; `update <component>` applies one component update behind a confirmation on ZMod and vanilla Klipper printers only; `guide zmod` / `guide stock` walk through the manual AD5X updates; other families get their manual update guidance),
   `/print-calibration` (printer calibrations with before/after values and an accept step before anything saves, on ZMod and vanilla Klipper printers; Z offset is report + guide; `records` lists past runs),
-  `/print-handy` (guided setup and read-only debugging), `/print-help`. Typing the same text works too.
+  `/print-handy` (guided setup and read-only debugging), `/print-source` (which model sites are connected), `/print-help`. Typing the same text works too.
 * `/print-design <what to make>` (or the short `/design`) designs a new part with AI + OpenSCAD (see
   [AI design](DESIGN.md)); with a model file dropped in the same message, or a model link in it, it edits
   that model instead, and phrases like "design me …" or "design this" start design without the command.

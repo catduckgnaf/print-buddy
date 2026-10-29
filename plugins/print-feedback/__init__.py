@@ -2699,6 +2699,28 @@ async def lookup_dispatch(event, gateway, **kwargs):
     return {'action': 'skip', 'reason': 'print lookup handled'}
 
 
+async def source_dispatch(event, gateway, **kwargs):
+    """/print-source: which model sites are ready, need a login, or are listing-only (#462, #464).
+
+    Read-only: it checks whether each site's credential is saved (and, for a
+    JWT, not expired) without contacting any site, and never shows a value.
+    """
+    source, adapter = _control_preamble(event, gateway, '/print-source')
+    if source is None:
+        return None
+    if adapter is None:
+        return {'action': 'skip', 'reason': 'source UI delivery unavailable'}
+    from print_handy.core import site_accounts
+    metadata = {'thread_id': source.thread_id} if source.thread_id else None
+    try:
+        message = await asyncio.to_thread(site_accounts.source_report)
+    except Exception:
+        logger.exception('/print-source failed')
+        message = 'Could not read the saved site logins. Nothing was changed.'
+    await adapter.send(chat_id=source.chat_id, metadata=metadata, content=message)
+    return {'action': 'skip', 'reason': 'print source handled'}
+
+
 async def macros_dispatch(event, gateway, **kwargs):
     """/print-macros [run <name> [KEY=VALUE ...]]: the configured Moonraker printer's macros (issue #291).
 
@@ -5108,6 +5130,7 @@ _DISPATCH_HOOKS = (
     maintenance_dispatch,
     coldpull_dispatch,
     lookup_dispatch,
+    source_dispatch,
     troubleshoot_dispatch,
     macros_dispatch,
     firmware_dispatch,

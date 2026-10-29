@@ -1,19 +1,22 @@
-"""Login-token model sites (#464): where each token lives and how to connect it.
+"""Model-site credentials (#462, #464): where each one lives and how to connect it.
 
-Creality Cloud, Thangs and Nexprint download through the web
-app's own API with the operator's login token (MyMiniFactory through its
-documented OAuth sign-in, whose access token is kept the same way) — a value the signed-in
-browser keeps in a cookie or local storage. None of these sites can be
-logged in to from a script (their login pages sit behind robot checks, and
-Print Handy never stores a password or solves a captcha), so "connecting an
-account" means the operator copies that value from their own browser into a
-token file. The token is never collected in chat: the chat flow (see
-prepared_intake) walks the operator through these steps and then retries
-the download once they reply that the file is saved.
+Every model site that needs a credential is listed in ``LOGIN_SITES``:
+MakerWorld, Thingiverse and Cults3D use a token or key the operator creates
+on the site; Creality Cloud, Thangs and Nexprint use the login token the
+operator's signed-in browser already holds (a cookie value); MyMiniFactory
+uses its documented OAuth sign-in. None of these can be logged in to from a
+script (login pages sit behind robot checks, and Print Handy never stores a
+password or solves a captcha), so "connecting an account" always means the
+operator saves the value in a token file on the Print Handy machine, or in
+the site's environment variable. The value is never collected in chat: the
+chat flow (see prepared_intake) walks the operator through the steps, links
+the docs section, and then retries once they reply that it is saved.
 
-``SiteLoginNeeded`` is what every provider raises when a download needs the
-login and the token is missing, empty, expired or refused; the intake turns
-it into the "Connect account" offer instead of a dead-end failure.
+``SiteLoginNeeded`` is what every provider raises when a request needs the
+credential and it is missing, empty, expired or refused; the intake turns it
+into the "Connect account" (or "Renew login") offer instead of a dead end.
+``source_report`` is the ``/print-source`` answer: every site, what it
+needs, and whether that is in place, without ever showing a credential.
 """
 from __future__ import annotations
 
@@ -23,6 +26,8 @@ import os
 import time
 from dataclasses import dataclass
 from pathlib import Path
+
+DOCS = "https://github.com/catduckgnaf/print-handy/blob/main/docs/PROJECT-REFERENCE.md"
 
 
 @dataclass(frozen=True)
@@ -35,14 +40,52 @@ class LoginSite:
     doc_section: str
     token_file: str = "token"
     env: str = ""
+    # Site-specific walkthrough steps; empty means the browser-cookie steps.
+    steps: tuple[str, ...] = ()
+    intro: str = ""
 
     @property
     def env_name(self):
-        """The environment variable that can hold the token instead of the file."""
+        """The environment variable that can hold the credential instead of the file."""
         return self.env or f"{self.folder.upper()}_TOKEN"
 
+    @property
+    def docs_url(self):
+        anchor = "".join(c for c in self.doc_section.lower().replace(" ", "-")
+                         if c.isalnum() or c == "-")
+        return f"{DOCS}#{anchor}"
+
+
+MMF_AUTHORIZE = ("https://auth.myminifactory.com/web/authorize?client_id={client}"
+                 "&redirect_uri={redirect}&response_type=token&state=print-handy")
 
 LOGIN_SITES = {
+    "makerworld": LoginSite(
+        "makerworld", "MakerWorld", "bambu", "https://makerworld.com",
+        "Cookies for https://makerworld.com, the cookie named `token`",
+        "MakerWorld account token", env="MAKERWORLD_TOKEN"),
+    "thingiverse": LoginSite(
+        "thingiverse", "Thingiverse", "thingiverse", "https://www.thingiverse.com",
+        "the App Token on your Thingiverse app's page",
+        "Thingiverse App Token", env="THINGIVERSE_TOKEN",
+        intro="Thingiverse links use Thingiverse's official API with a free App Token from "
+              "your own account.",
+        steps=("Sign in at https://www.thingiverse.com, then open "
+               "https://www.thingiverse.com/developers and choose **Create an App**, then **Web App**.",
+               "Fill in the form: App Name `Print Handy`; any description; App URL and Callback "
+               "URL `https://github.com/catduckgnaf/print-handy`. Agree and create it (it can stay "
+               "private and unpublished).",
+               "On the app's page, copy the **App Token** (32 letters and digits). Not the Client "
+               "Secret.")),
+    "cults3d": LoginSite(
+        "cults3d", "Cults3D", "cults3d", "https://cults3d.com",
+        "your Cults API key page", "Cults3D API key", env="CULTS3D_TOKEN",
+        intro="Cults3D links use Cults' official API with an API key from your own account. "
+              "(Cults' API shows a model's listing only, never its files.)",
+        steps=("Sign in at https://cults3d.com and open https://cults3d.com/en/api/keys.",
+               "Create a key and copy it.",
+               "Write it as `nickname:key`: your Cults nickname exactly as on your profile, "
+               "capitals included, a colon, then the key.")),
     "crealitycloud": LoginSite(
         "crealitycloud", "Creality Cloud", "crealitycloud", "https://www.crealitycloud.com",
         "Cookies for https://www.crealitycloud.com, TWO cookies: `model_user_id` (a number) and "
@@ -66,15 +109,23 @@ LOGIN_SITES = {
     "myminifactory": LoginSite(
         "myminifactory", "MyMiniFactory", "myminifactory", "https://www.myminifactory.com",
         "the address bar after signing in (the `access_token=` value, or paste the whole URL)",
-        "MyMiniFactory sign-in", token_file="oauth_token", env="MYMINIFACTORY_OAUTH_TOKEN"),
+        "MyMiniFactory sign-in", token_file="oauth_token", env="MYMINIFACTORY_OAUTH_TOKEN",
+        intro="MyMiniFactory downloads go through its own sign-in (OAuth).",
+        steps=("One time only: sign in at https://www.myminifactory.com, open Account Settings, "
+               "then **Developers**, and register an app: Name `Print Handy`; Client key any unique "
+               "slug, for example `print_handy`; Url and Redirect uri any page you control, for "
+               "example `https://github.com/catduckgnaf/print-handy`. Save.",
+               "Open this link in that browser, with your client key and redirect uri filled in "
+               "(the redirect uri URL-encoded):\n"
+               f"`{MMF_AUTHORIZE.format(client='<client key>', redirect='<redirect uri>')}`",
+               "Approve. The browser lands on your redirect page; copy the **whole address** from "
+               "the address bar (it holds `#access_token=...`). The sign-in lasts about a week; "
+               "renewing it repeats only this step and the one before.")),
 }
-
-MMF_AUTHORIZE = ("https://auth.myminifactory.com/web/authorize?client_id={client}"
-                 "&redirect_uri={redirect}&response_type=token&state=print-handy")
 
 
 class SiteLoginNeeded(RuntimeError):
-    """A download needs the operator's login token for ``site``.
+    """A request needs the operator's credential for ``site``.
 
     ``reason`` is ``missing``, ``empty``, ``expired`` or ``refused``. The
     message is the plain, complete remedy, so callers that do not offer the
@@ -107,7 +158,7 @@ def _jwt_expiry(token):
 
 
 def refused(site, detail=""):
-    """The SiteLoginNeeded for a token the site turned down."""
+    """The SiteLoginNeeded for a credential the site turned down."""
     acc = LOGIN_SITES[site]
     lead = f"{acc.label} refused the login token{detail}"
     return SiteLoginNeeded(site, "refused", (
@@ -121,12 +172,10 @@ def _normalize(raw):
     """The bare token from what an operator is likely to paste.
 
     Accepts the cookie value as-is, wrapped in quotes, with a leading
-    ``Bearer ``, or (Nexprint) the whole ``ACCOUNT_INFO`` JSON object from
-    local storage, whose ``access_token`` is the token.
+    ``Bearer ``, a MyMiniFactory sign-in address (``#access_token=...``), or
+    (Nexprint) the whole ``ACCOUNT_INFO`` JSON object from local storage.
     """
     token = raw.strip()
-    # MyMiniFactory's sign-in lands on the redirect URL with the token in
-    # its fragment (#access_token=...&expires_in=...): accept the whole URL.
     if "access_token=" in token and not token.startswith("{"):
         from urllib.parse import parse_qs, urlsplit
         part = urlsplit(token).fragment or urlsplit(token).query or token
@@ -146,31 +195,39 @@ def _normalize(raw):
     return token
 
 
-def read_token(site, *, now=None, environ=None):
-    """The stripped login token for ``site``; SiteLoginNeeded when unusable.
+def stored(site, *, environ=None):
+    """(value, where) for ``site``'s saved credential, or (None, None) when none is saved.
 
-    The token file wins when it exists (the chat connect flow writes it, so
-    a freshly saved token always takes effect); otherwise the site's
-    environment variable (``THANGS_TOKEN`` and so on, e.g. from the .env)
-    is used. A JWT whose ``exp`` has passed is refused here, before any
-    request, so the operator hears "expired" rather than a site refusal.
+    The file wins when it exists (the chat connect flow writes it, so a
+    freshly saved value always takes effect); otherwise the environment
+    variable. ``value`` is normalized and may be empty (an empty file).
     """
     acc = LOGIN_SITES[site]
     path = token_path(site)
-    env = os.environ if environ is None else environ
     try:
-        token = _normalize(path.read_text(encoding="utf-8"))
-        where = str(path)
+        return _normalize(path.read_text(encoding="utf-8")), str(path)
     except FileNotFoundError:
-        token = _normalize(env.get(acc.env_name) or "")
-        where = f"the {acc.env_name} environment variable"
-        if not token:
-            raise SiteLoginNeeded(site, "missing", (
-                f"{acc.label} downloads need a login token in {path} (or the "
-                f"{acc.env_name} environment variable); sign in at "
-                f"{acc.sign_in_url} in a browser, open the developer tools, copy the "
-                f"value from {acc.where}, and store it as the only content of that "
-                f"file; see docs/PROJECT-REFERENCE.md ({acc.doc_section})")) from None
+        env = os.environ if environ is None else environ
+        value = _normalize(env.get(acc.env_name) or "")
+        return (value, f"the {acc.env_name} environment variable") if value else (None, None)
+
+
+def read_token(site, *, now=None, environ=None):
+    """The login token for ``site``; SiteLoginNeeded when unusable.
+
+    A JWT whose ``exp`` has passed is refused here, before any request, so
+    the operator hears "expired" rather than a site refusal.
+    """
+    acc = LOGIN_SITES[site]
+    path = token_path(site)
+    token, where = stored(site, environ=environ)
+    if token is None:
+        raise SiteLoginNeeded(site, "missing", (
+            f"{acc.label} downloads need a login token in {path} (or the "
+            f"{acc.env_name} environment variable); sign in at "
+            f"{acc.sign_in_url} in a browser, open the developer tools, copy the "
+            f"value from {acc.where}, and store it as the only content of that "
+            f"file; see docs/PROJECT-REFERENCE.md ({acc.doc_section})"))
     if not token:
         raise SiteLoginNeeded(site, "empty", f"{acc.label} token empty: {path} has no token in it")
     exp = _jwt_expiry(token)
@@ -182,53 +239,93 @@ def read_token(site, *, now=None, environ=None):
     return token
 
 
-def _mmf_steps(path, folder, acc):
-    return (
-        "**Connect your MyMiniFactory account**\n"
-        "MyMiniFactory downloads go through its own sign-in (OAuth). **Don't paste the token here** "
-        "(or the address from step 3) — chat is not a safe place for it.\n"
-        "1. One time only: sign in at https://www.myminifactory.com, open Account Settings, then "
-        "**Developers**, and register an app: Name `Print Handy`; Client key any unique slug, "
-        "for example `print_handy`; Url and Redirect uri any page you control, for example "
-        "`https://github.com/catduckgnaf/print-handy`. Save.\n"
-        "2. Open this link in that browser, with your client key and redirect uri filled in "
-        "(the redirect uri URL-encoded):\n"
-        f"`{MMF_AUTHORIZE.format(client='<client key>', redirect='<redirect uri>')}`\n"
-        "3. Approve. The browser lands on your redirect page; copy the **whole address** from "
-        "the address bar (it holds `#access_token=...`).\n"
-        f"4. On the machine running Print Handy, save it as the only content of `{path}`:\n"
-        f"```\nmkdir -p {folder} && chmod 700 {folder}\n"
-        f"(umask 077 && cat > {path})   # paste, press Enter, then Ctrl-D\n```\n"
-        "In Docker, write it to the host folder mounted at `/data/.config` "
-        f"(`dot-config/{acc.folder}/{acc.token_file}`, owned by 1000:1000), or put it in your "
-        f"`.env` as `{acc.env_name}=<token>` and restart.\n"
-        "Then press **Saved — try again**. The sign-in lasts about a week; when it runs out "
-        "I'll ask again (step 1 is not repeated).")
-
-
-def connect_steps(site):
-    """The chat walkthrough for connecting ``site``. Never asks for the token itself."""
+def connect_steps(site, *, renew=False):
+    """The chat walkthrough for connecting ``site``. Never asks for the value itself."""
     acc = LOGIN_SITES[site]
     path = token_path(site)
     folder = path.parent
-    if site == "myminifactory":
-        return _mmf_steps(path, folder, acc)
-    return (
-        f"**Connect your {acc.label} account**\n"
+    verb = "Renew your" if renew else "Connect your"
+    intro = acc.intro or (
         f"Print Handy can't sign in for you ({acc.label}'s login page has a robot check, and "
-        "passwords are never stored), so it uses the login token your browser already has. "
-        "**Don't paste the token here** — chat is not a safe place for it.\n"
-        f"1. Sign in at {acc.sign_in_url} in a browser.\n"
-        "2. Open the developer tools (F12), then Application (Chrome/Edge) or Storage (Firefox).\n"
-        f"3. Copy the value from {acc.where}.\n"
-        "4. On the machine running Print Handy, save it as the only content of "
-        f"`{path}`:\n"
-        f"```\nmkdir -p {folder} && chmod 700 {folder}\n"
-        f"(umask 077 && cat > {path})   # paste, press Enter, then Ctrl-D\n```\n"
-        "In Docker, write it to the host folder mounted at `/data/.config` "
-        f"(`dot-config/{acc.folder}/token`, owned by 1000:1000), or run the commands above "
-        "inside the container.\n"
-        f"Or put it in your `.env` as `{acc.env_name}=<token>` and restart Print Handy "
-        "(a saved file takes priority over the variable).\n"
-        "Then press **Saved — try again** and I'll retry the download. Tokens expire; "
-        "when that happens I'll ask again.")
+        "passwords are never stored), so it uses the login token your browser already has.")
+    steps = list(acc.steps) or [
+        f"Sign in at {acc.sign_in_url} in a browser.",
+        "Open the developer tools (F12), then Application (Chrome/Edge) or Storage (Firefox).",
+        f"Copy the value from {acc.where}."]
+    lines = [f"**{verb} {acc.label} account**",
+             f"{intro} **Don't paste it here** — chat is not a safe place for it."]
+    lines += [f"{n}. {text}" for n, text in enumerate(steps, 1)]
+    lines.append(f"{len(steps) + 1}. On the machine running Print Handy, save it as the only "
+                 f"content of `{path}`:\n"
+                 f"```\nmkdir -p {folder} && chmod 700 {folder}\n"
+                 f"(umask 077 && cat > {path})   # paste, press Enter, then Ctrl-D\n```")
+    lines.append("In Docker, write it to the host folder mounted at `/data/.config` "
+                 f"(`dot-config/{acc.folder}/{acc.token_file}`, owned by 1000:1000), or put it in "
+                 f"your `.env` as `{acc.env_name}=<value>` and restart (a saved file wins over the "
+                 "variable).")
+    lines.append(f"Full instructions: {acc.docs_url}")
+    lines.append("Then press **Saved — try again** and I'll carry on from here.")
+    return "\n".join(lines)
+
+
+# /print-source: every site Print Handy knows, in the order people meet them.
+# kind: "login" (needs a LOGIN_SITES credential to download), "open" (no
+# credential), "listing" (listing only; credential named when one is used),
+# "none" (not supported).
+SOURCES = (
+    ("makerworld", "MakerWorld", "login", ""),
+    ("printables", "Printables", "open", "no login needed"),
+    ("thingiverse", "Thingiverse", "login", ""),
+    ("myminifactory", "MyMiniFactory", "login", ""),
+    ("crealitycloud", "Creality Cloud", "login", ""),
+    ("thangs", "Thangs", "login", ""),
+    ("nexprint", "Nexprint", "login", ""),
+    ("cults3d", "Cults3D", "listing", "listing only — Cults' API never shares a model's files"),
+    ("makeronline", "MakerOnline", "listing",
+     "listing only — its downloads need a browser security check Print Handy won't fake"),
+    ("grabcad", "GrabCAD", "none", "not supported — its firewall blocks apps and its terms forbid them"),
+)
+
+
+def credential_state(site, *, now=None, environ=None):
+    """'ready', 'missing', 'empty' or 'expired' for ``site``'s saved credential."""
+    value, _ = stored(site, environ=environ)
+    if value is None:
+        return "missing"
+    if not value:
+        return "empty"
+    exp = _jwt_expiry(value)
+    if exp is not None and exp <= (time.time() if now is None else now):
+        return "expired"
+    return "ready"
+
+
+def source_report(*, now=None, environ=None):
+    """The /print-source answer: one line per site. Never shows a credential."""
+    lines = ["**Model sources** — post a link from any of these:"]
+    for site, label, kind, note in SOURCES:
+        if kind == "open":
+            lines.append(f"- ✅ **{label}**: ready ({note})")
+            continue
+        if kind == "none":
+            lines.append(f"- ⛔ **{label}**: {note}")
+            continue
+        if site not in LOGIN_SITES:
+            lines.append(f"- ℹ️ **{label}**: {note}")
+            continue
+        state = credential_state(site, now=now, environ=environ)
+        acc = LOGIN_SITES[site]
+        if kind == "listing":
+            have = "key saved" if state == "ready" else "needs your API key"
+            lines.append(f"- ℹ️ **{label}**: {note} ({have})")
+        elif state == "ready":
+            _, where = stored(site, environ=environ)
+            source = "variable" if where and where.startswith("the ") else "token file"
+            lines.append(f"- ✅ **{label}**: connected ({source})")
+        elif state == "expired":
+            lines.append(f"- ⚠️ **{label}**: login expired — post a {label} link and press "
+                         f"**Renew {label} login**")
+        else:
+            lines.append(f"- ❌ **{label}**: not connected — post a {label} link and press "
+                         f"**Connect {label} account**, or see {acc.docs_url}")
+    return "\n".join(lines)

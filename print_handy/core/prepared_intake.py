@@ -702,27 +702,49 @@ def _saved_reply(text):
     raise ValueError('reply `saved` once the token file is in place, or `cancel`')
 
 
-async def _connect_account(adapter, source, key, metadata, exc, timeout):
-    """Offer to connect the login-token site behind ``exc``; True when the operator saved it.
+async def _with_connect(adapter, source, key, metadata, timeout, attempt):
+    """Run ``attempt()`` (a coroutine factory); on SiteLoginNeeded offer the connect flow and retry.
 
-    The walkthrough (site_accounts.connect_steps) says where the token lives
-    and how to copy it from the operator's own signed-in browser; the token
-    is saved on the Print Handy machine, never pasted into chat. False means
-    the operator declined, and the caller reports the original refusal.
+    Covers both places a site credential is needed (#462, #464): the model
+    lookup (MakerWorld, Thingiverse, Cults3D, MyMiniFactory without a key)
+    and the download (every login site). Never a dead end, and the
+    credential itself is never collected in chat.
+    """
+    for connect_round in range(MAX_CONNECT_ROUNDS + 1):
+        try:
+            return await attempt()
+        except SiteLoginNeeded as exc:
+            if connect_round == MAX_CONNECT_ROUNDS or not await _connect_account(
+                    adapter, source, key, metadata, exc, timeout):
+                raise
+
+
+async def _connect_account(adapter, source, key, metadata, exc, timeout):
+    """Offer to connect (or renew) the site behind ``exc``; True when the operator saved it.
+
+    The walkthrough (site_accounts.connect_steps) says where the credential
+    lives, how to get it from the operator's own account or signed-in
+    browser, and links the docs section; it is saved on the Print Handy
+    machine, never pasted into chat. An expired or refused login is offered
+    as a renewal. False means the operator declined, and the caller reports
+    the original refusal.
     """
     from .site_accounts import LOGIN_SITES, connect_steps
     label = LOGIN_SITES[exc.site].label
+    renew = exc.reason in ('expired', 'refused')
     lead = {
-        'missing': f'{label} needs you to be signed in to download this model, and no {label} account is connected yet.',
-        'empty': f'{label} needs you to be signed in to download this model, and the saved {label} token file is empty.',
+        'missing': f'{label} needs you to be signed in for this model, and no {label} account is connected yet.',
+        'empty': f'{label} needs you to be signed in for this model, and the saved {label} login is empty or incomplete.',
         'expired': f'Your saved {label} login has expired.',
         'refused': f'{label} turned down the saved login (it has most likely expired).',
-    }.get(exc.reason, f'{label} needs you to be signed in to download this model.')
+    }.get(exc.reason, f'{label} needs you to be signed in for this model.')
+    offer = f'Renew {label} login' if renew else f'Connect {label} account'
     pick = await _ask(adapter, source, key, f'{lead} Nothing was downloaded.',
-                      [f'Connect {label} account', 'Not now (cancel)'], timeout)
+                      [offer, 'Not now (cancel)'], timeout)
     if pick != 0:
         return False
-    await adapter.send(chat_id=source.chat_id, content=connect_steps(exc.site), metadata=metadata)
+    await adapter.send(chat_id=source.chat_id, content=connect_steps(exc.site, renew=renew),
+                       metadata=metadata)
     saved = await _ask(adapter, source, key,
                        f'Press Saved once the {label} token file is in place.',
                        [SAVED_LABEL, 'Cancel'], timeout, parser=_saved_reply)
@@ -1029,7 +1051,8 @@ async def prepare_link(event, adapter, state, root, timeout=None, reuse=None, pr
         elif upload:
             job = upload_job(upload)
         else:
-            job = await asyncio.to_thread(mj.inventory_for_url, url)
+            job = await _with_connect(adapter, source, key, metadata, timeout,
+                                      lambda: asyncio.to_thread(mj.inventory_for_url, url))
         rows = job.get('sources', [])
         if job['site'] in ('printables', 'thingiverse', 'myminifactory', 'cults3d', 'crealitycloud',
                            'thangs', 'nexprint', 'makeronline'):
@@ -1102,19 +1125,10 @@ async def prepare_link(event, adapter, state, root, timeout=None, reuse=None, pr
         job.update(url=url, intake_id=iid, hardware=state, selected_source=chosen)
         fetch = copy_upload if (reuse or job['site'] == 'upload') else (
             lambda j, chosen, dest: mj.download_for_site(j, chosen, dest))
-        for connect_round in range(MAX_CONNECT_ROUNDS + 1):
-            try:
-                path = await _with_stop(
-                    adapter, source, key, metadata, None,
-                    asyncio.to_thread(fetch, job, chosen, folder / 'source'))
-                break
-            except SiteLoginNeeded as exc:
-                # The site needs the operator's login (#464): offer the guided
-                # connect flow, then retry this same download — never a dead end,
-                # and the token itself is never collected in chat.
-                if connect_round == MAX_CONNECT_ROUNDS or not await _connect_account(
-                        adapter, source, key, metadata, exc, timeout):
-                    raise
+        path = await _with_connect(
+            adapter, source, key, metadata, timeout,
+            lambda: _with_stop(adapter, source, key, metadata, None,
+                               asyncio.to_thread(fetch, job, chosen, folder / 'source')))
         job['downloaded_file'] = str(path)
         from .intake_resources import check_source
         await asyncio.to_thread(check_source, path)

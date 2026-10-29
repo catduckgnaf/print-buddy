@@ -102,7 +102,7 @@ def test_link_connect_saved_retry_through_the_real_bot(cfg, tmp_path, monkeypatc
 
     texts = [p.get('text', '') for p in stub.payloads('sendMessage')]
     walkthrough = next(t for t in texts if 'Connect your Nexprint account' in t)
-    assert 'auth_token' in walkthrough and "Don't paste the token here" in walkthrough
+    assert 'auth_token' in walkthrough and "Don't paste it here" in walkthrough
     assert str(site_accounts.token_path('nexprint')) in walkthrough
     downloads = [h for url, h in api_calls if 'presigned-download-url' in url]
     # First attempt never reached the network (no token); the retry sent the saved one.

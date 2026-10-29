@@ -56,10 +56,10 @@ COMMANDS = (
     Command("print-macros", "List the printer's macros, or run one (asks first)",
             (Option("args", "run <name> [KEY=VALUE ...]"),),
             "/print-macros [run <name> [KEY=VALUE ...]]"),
-    Command("print-firmware", "Firmware versions, one update (asks first), update guides",
+    Command("print-firmware", "Firmware versions, an update (asks first), guides",
             (Option("args", "update <component> | guide zmod | guide stock"),),
             "/print-firmware [update <name> | guide <zmod|stock>]"),
-    Command("print-calibration", "Calibrations with before/after values — nothing saves without your accept",
+    Command("print-calibration", "Calibrations, before/after values; saves only on accept",
             (Option("args", "mesh | screws | pid extruder|bed [temp] | shaper | belts | zoffset | records"),),
             "/print-calibration [mesh|screws|pid|shaper|belts|zoffset|records]"),
     Command("print-live", "Live camera in the voice channel (Discord only)",
@@ -73,6 +73,7 @@ COMMANDS = (
                     ("setup", "add-printer", "debugging", "bundle", "debug", "status",
                      "cancel", "help")),),
             "/print-handy [setup | add-printer | debug | status | help]"),
+    Command("print-source", "Which model sites are connected", usage="/print-source"),
     Command("print-help", "What Print Handy can do", usage="/print-help"),
 )
 
@@ -96,7 +97,7 @@ def as_text(name, values):
 
 def help_text(bot_name="Print Handy"):
     lines = [f"**{bot_name}** prints from this channel. Nothing starts without a button press.",
-             "- Post .3mf/.stl or a MakerWorld/Printables/Thingiverse/MyMiniFactory/Creality/Thangs/Nexprint link.",
+             "- Post a model link or a .3mf/.stl to print; `/print-source` lists the sites.",
              '- "print it" after a link, or "print the last one again", reuses the last model.',
              '- "print 57" (or "print #57") reprints print #57, like "/print-again 57".',
              '- "add new filament" / "add a new spool" / "swap the filament" starts the guided /spool flow.']

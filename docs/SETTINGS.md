@@ -328,6 +328,9 @@ Secrets come from the environment only (Docker: `.env`, never committed or share
 | `BAMBU_LAN_PASSWORD` | Bambu Lab printers: the LAN access code for read-only status. The variable name is `bambu.lan_access_code_env` |
 | `MOONRAKER_API_KEY` | Moonraker API key, only when Moonraker requires one |
 | `CLIPROXY_API_KEY` | Key for `services.vision_chat_url` |
+| `MAKERWORLD_TOKEN` | MakerWorld links: the account token, used when `~/.config/bambu/token` does not exist (a saved file wins) |
+| `THINGIVERSE_TOKEN` | Thingiverse links: the App Token, used when `~/.config/thingiverse/token` does not exist (a saved file wins) |
+| `CULTS3D_TOKEN` | Cults3D links: `nickname:key`, used when `~/.config/cults3d/token` does not exist (a saved file wins) |
 | `CREALITYCLOUD_TOKEN` | Creality Cloud downloads: the login, written `model_user_id:model_token`, used when `~/.config/crealitycloud/token` does not exist (a saved file wins). See [Connecting a login-token site from chat](PROJECT-REFERENCE.md#connecting-a-login-token-site-from-chat) |
 | `THANGS_TOKEN` | Thangs downloads: the login token, used when `~/.config/thangs/token` does not exist (a saved file wins) |
 | `NEXPRINT_TOKEN` | Nexprint downloads: the login token, used when `~/.config/nexprint/token` does not exist (a saved file wins) |

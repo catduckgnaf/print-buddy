@@ -96,13 +96,14 @@ def download(url, target, headers=None):
 
 
 def maker_headers():
+    # The token file, else MAKERWORLD_TOKEN (site_accounts.stored).
+    from .site_accounts import stored
     path=Path.home()/".config/bambu/token"
-    try:
-        token=path.read_text().strip()
-    except FileNotFoundError:
-        raise RuntimeError(f"MakerWorld links need an account token in {path}; "
-                           "see docs/PROJECT-REFERENCE.md (MakerWorld account token)") from None
-    if not token: raise RuntimeError("MakerWorld token empty")
+    token, _=stored("makerworld")
+    if token is None:
+        raise SiteLoginNeeded("makerworld", "missing", f"MakerWorld links need an account token in {path}; "
+                              "see docs/PROJECT-REFERENCE.md (MakerWorld account token)")
+    if not token: raise SiteLoginNeeded("makerworld", "empty", "MakerWorld token empty")
     return {"Authorization":f"Bearer {token}", "Origin":"https://makerworld.com",
             "Referer":"https://makerworld.com/", "x-bbl-app-source":"makerworld"}
 
@@ -244,15 +245,16 @@ def printables_download(job, source, target):
 
 THINGIVERSE="https://api.thingiverse.com"
 def thingiverse_headers():
+    # The token file, else THINGIVERSE_TOKEN (site_accounts.stored).
+    from .site_accounts import stored
     path=Path.home()/".config/thingiverse/token"
-    try:
-        token=path.read_text().strip()
-    except FileNotFoundError:
-        raise RuntimeError(f"Thingiverse links need a free Thingiverse App Token in {path}; "
-                           "create an app/token at https://www.thingiverse.com/developers "
-                           "(under your Thingiverse account) and store the App Token as the only "
-                           "content of that file; see docs/PROJECT-REFERENCE.md (Thingiverse App Token)") from None
-    if not token: raise RuntimeError("Thingiverse token empty")
+    token, _=stored("thingiverse")
+    if token is None:
+        raise SiteLoginNeeded("thingiverse", "missing", f"Thingiverse links need a free Thingiverse App Token in {path}; "
+                              "create an app/token at https://www.thingiverse.com/developers "
+                              "(under your Thingiverse account) and store the App Token as the only "
+                              "content of that file; see docs/PROJECT-REFERENCE.md (Thingiverse App Token)")
+    if not token: raise SiteLoginNeeded("thingiverse", "empty", "Thingiverse token empty")
     return {"Authorization":f"Bearer {token}"}
 def _thingiverse_blocked(exc):
     """Plain RuntimeError for a Thingiverse 401/403/challenge, else None. Never bypass a challenge."""
@@ -262,7 +264,10 @@ def _thingiverse_blocked(exc):
     except Exception: challenged=False
     cause=("Thingiverse answered with a Cloudflare robot check (challenge)" if challenged
            else "Thingiverse refused the request (401/403), which usually means the App Token is missing, invalid or expired, or the site is challenging this connection")
-    return RuntimeError(f"{cause}. Open thingiverse.com in a browser and pass any check there, "
+    # A plain 401 is the token itself: offer the connect flow (renew).
+    kind=(lambda message: SiteLoginNeeded("thingiverse", "refused", message)) \
+        if getattr(exc, "code", None) == 401 and not challenged else RuntimeError
+    return kind(f"{cause}. Open thingiverse.com in a browser and pass any check there, "
                         "check the token file (see docs/PROJECT-REFERENCE.md, Thingiverse App Token), "
                         "then send the link again. Print Handy does not try to bypass robot checks.")
 def _thingiverse_json(url):
@@ -280,8 +285,10 @@ def thingiverse_inventory(url):
     # Verified against the official API shape documented by open-source SDKs
     # (e.g. the Go thingiverse client): GET /things/{id} -> {id, name, license (string),
     # public_url, ...}; GET /things/{id}/files -> [{id, name, size, download_url, ...}].
-    # The per-file download_url is the download route; no live token was available to
-    # re-verify it end to end, which the #462 PR body names explicitly.
+    # The per-file download_url is the download route. Verified end to end live on
+    # 2026-10-29 with an operator App Token (thing 763622: lookup, file list and a real
+    # STL download); the token also passes the Cloudflare check that answers
+    # anonymous requests.
     mid=thingiverse_id(url)
     d=_thingiverse_json(f"{THINGIVERSE}/things/{mid}")
     if not isinstance(d, dict) or not d: raise RuntimeError("Thingiverse thing not found")
@@ -363,8 +370,12 @@ def _mmf_json(path):
         from .site_accounts import read_token
         try:
             token=read_token("myminifactory")
-        except SiteLoginNeeded:
-            raise missing from None
+        except SiteLoginNeeded as no_sign_in:
+            # Neither credential: the sign-in covers listing AND download,
+            # so the connect flow offers that; the key-file remedy stays named.
+            raise SiteLoginNeeded("myminifactory", no_sign_in.reason,
+                                  f"{missing} Or connect the MyMiniFactory sign-in, which also "
+                                  "downloads: see docs/PROJECT-REFERENCE.md (MyMiniFactory sign-in).") from None
         url, headers=f"{MYMINIFACTORY}{path}", {"Authorization":f"Bearer {token}"}
     else:
         url, headers=f"{MYMINIFACTORY}{path}{sep}key={key}", None
@@ -461,17 +472,18 @@ def cults_credentials():
     match the Cults profile exactly, capitals included. The key is never
     logged, and no error message includes it.
     """
+    from .site_accounts import stored
     path = Path.home()/".config"/"cults3d"/"token"
-    if not path.exists():
-        raise RuntimeError(
+    raw, _ = stored("cults3d")  # the token file, else CULTS3D_TOKEN
+    if raw is None:
+        raise SiteLoginNeeded("cults3d", "missing",
             f"Cults3D needs an API key first. Create one at https://cults3d.com/en/api/keys "
             f"and save it as the only content of {path} in the form nickname:key (your Cults "
             "nickname, a colon, then the API key), readable only by the account that runs "
             "Print Handy. See docs/PROJECT-REFERENCE.md (Cults3D API key).")
-    raw = path.read_text(encoding="utf-8").strip()
     nickname, sep, key = raw.partition(":")
     if not sep or not nickname.strip() or not key.strip():
-        raise RuntimeError(
+        raise SiteLoginNeeded("cults3d", "empty",
             f"The Cults3D token file at {path} must contain exactly nickname:key — your "
             "Cults nickname, a colon, then the API key from "
             "https://cults3d.com/en/api/keys — as its only content.")
@@ -482,7 +494,7 @@ def cults_credentials():
 def _cults_blocked(exc):
     code = getattr(exc, "code", None)
     if code == 401:
-        return RuntimeError(
+        return SiteLoginNeeded("cults3d", "refused",
             "Cults3D refused the request (401), which usually means the nickname or API "
             "key in ~/.config/cults3d/token is wrong — the nickname must match your Cults "
             "profile exactly, capitals included. Check the file, then send the link again.")

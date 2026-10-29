@@ -192,7 +192,7 @@ def test_missing_token_names_the_variable_too(home, monkeypatch):
     with pytest.raises(SiteLoginNeeded) as caught:
         site_accounts.read_token('nexprint')
     assert 'NEXPRINT_TOKEN' in str(caught.value)
-    assert '`.env` as `NEXPRINT_TOKEN=<token>`' in site_accounts.connect_steps('nexprint')
+    assert '`.env` as `NEXPRINT_TOKEN=<value>`' in site_accounts.connect_steps('nexprint')
 
 
 def test_crealitycloud_reads_its_variable(home, monkeypatch):
@@ -229,9 +229,36 @@ def test_token_file_accepts_common_paste_shapes(home, pasted):
 def test_connect_steps_never_ask_for_the_token_in_chat(home):
     for site in site_accounts.LOGIN_SITES:
         text = site_accounts.connect_steps(site)
-        assert "Don't paste the token here" in text
+        assert "Don't paste it here" in text
         assert str(site_accounts.token_path(site)) in text
         assert 'umask 077' in text
+        # Every walkthrough links its own docs section.
+        acc = site_accounts.LOGIN_SITES[site]
+        assert acc.docs_url in text and acc.docs_url.startswith(site_accounts.DOCS + '#')
+    assert site_accounts.LOGIN_SITES['thingiverse'].docs_url.endswith('#thingiverse-app-token')
+    assert site_accounts.LOGIN_SITES['cults3d'].docs_url.endswith('#cults3d-api-key')
+    assert site_accounts.LOGIN_SITES['myminifactory'].docs_url.endswith('#myminifactory-sign-in')
+    assert 'Create an App' in site_accounts.connect_steps('thingiverse')
+    assert site_accounts.connect_steps('thangs', renew=True).startswith('**Renew your Thangs account**')
+
+
+def test_source_report_shows_every_site_and_never_a_credential(home, monkeypatch):
+    for name in ('MAKERWORLD_TOKEN', 'THINGIVERSE_TOKEN', 'CULTS3D_TOKEN', 'MYMINIFACTORY_OAUTH_TOKEN'):
+        monkeypatch.delenv(name, raising=False)
+    save_token('thingiverse', 'tv-secret-123')
+    save_token('thangs', jwt(time.time() - 60))      # expired
+    monkeypatch.setenv('NEXPRINT_TOKEN', 'np-secret-456')
+    report = site_accounts.source_report()
+    lines = {line.split('**')[1]: line for line in report.splitlines()[1:]}
+    assert set(lines) == {label for _, label, _, _ in site_accounts.SOURCES}
+    assert 'connected (token file)' in lines['Thingiverse']
+    assert 'connected (variable)' in lines['Nexprint']
+    assert 'login expired' in lines['Thangs'] and 'Renew Thangs login' in lines['Thangs']
+    assert 'not connected' in lines['MakerWorld'] and 'Connect MakerWorld account' in lines['MakerWorld']
+    assert 'no login needed' in lines['Printables']
+    assert 'listing only' in lines['MakerOnline'] and 'listing only' in lines['Cults3D']
+    assert 'not supported' in lines['GrabCAD']
+    assert 'tv-secret-123' not in report and 'np-secret-456' not in report
 
 
 # ---------------------------------------------------------------- Thangs
@@ -523,7 +550,7 @@ def test_connect_flow_retries_the_download_after_saved(env, home, monkeypatch):
     assert adapter.questions[0]['choices'][:2] == ['Connect Nexprint account', 'Not now (cancel)']
     assert 'no Nexprint account is connected' in adapter.questions[0]['question']
     walkthrough = next(text for text in adapter.sent if 'Connect your Nexprint account' in text)
-    assert 'auth_token' in walkthrough and "Don't paste the token here" in walkthrough
+    assert 'auth_token' in walkthrough and "Don't paste it here" in walkthrough
     assert adapter.questions[1]['choices'][0] == 'Saved — try again'
     receipt = json.loads(next(env.root.glob('*.json')).read_text())
     assert 'sentinel' in receipt['error']
@@ -539,9 +566,11 @@ def test_connect_flow_refused_token_is_offered_again(env, home, monkeypatch):
     adapter = Adapter([0, 0, 1])
     asyncio.run(prepared_intake.prepare_link(
         _event(NEXPRINT_URL), adapter, state(), env.root, timeout=1))
-    offers = [q for q in adapter.questions if q['choices'][0] == 'Connect Nexprint account']
+    # A refused login is offered as a renewal, every time it is refused.
+    offers = [q for q in adapter.questions if q['choices'][0] == 'Renew Nexprint login']
     assert len(offers) == 2
     assert 'turned down the saved login' in offers[1]['question']
+    assert any('**Renew your Nexprint account**' in t for t in adapter.sent)
     receipt = json.loads(next(env.root.glob('*.json')).read_text())
     assert receipt['status'] == 'FAILED' and receipt['sliced'] is False
 
@@ -586,3 +615,32 @@ def test_saved_reply_parser():
     assert prepared_intake._saved_reply(label) == label
     with pytest.raises(ValueError):
         prepared_intake._saved_reply('eyJhbGciOi.paste.attempt')
+
+
+def test_connect_flow_at_the_lookup_for_a_key_site(env, home, monkeypatch):
+    # Thingiverse needs its App Token for the lookup itself, before any
+    # file list exists: the connect offer comes at the lookup, with the
+    # Thingiverse-specific steps and docs link, then the lookup is retried.
+    monkeypatch.delenv('THINGIVERSE_TOKEN', raising=False)
+    lookups = []
+
+    def lookup(url):
+        lookups.append(url)
+        model_job.thingiverse_headers()  # no token yet on the first call
+        raise RuntimeError('sentinel: lookup retried with the token saved')
+    monkeypatch.setattr(model_job, 'thingiverse_inventory', lookup)
+    url = 'https://www.thingiverse.com/thing:763622'
+
+    class SavingAdapter(Adapter):
+        async def send_clarify(self, **kw):
+            if kw['question'].startswith('Press Saved'):
+                save_token('thingiverse', 'tv-token')  # the operator saves it, then presses Saved
+            return await super().send_clarify(**kw)
+    adapter = SavingAdapter([0, 0])
+    asyncio.run(prepared_intake.prepare_link(_event(url), adapter, state(), env.root, timeout=1))
+    assert lookups == [url, url]
+    assert adapter.questions[0]['choices'][0] == 'Connect Thingiverse account'
+    steps = next(t for t in adapter.sent if 'Connect your Thingiverse account' in t)
+    assert 'Create an App' in steps and '#thingiverse-app-token' in steps
+    receipt = json.loads(next(env.root.glob('*.json')).read_text())
+    assert 'sentinel' in receipt['error']

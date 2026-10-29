@@ -101,7 +101,15 @@ def _try(label, fn, *args):
             print(f"SPACING {label:58s} OK  extruded {extents}")
             return True
         except Exception as exc:  # noqa: BLE001 - the sweep records every refusal
-            print(f"SPACING {label:58s} NO  {type(exc).__name__}: {str(exc)[:160]}")
+            print(f"SPACING {label:58s} NO  {type(exc).__name__}: {str(exc)[:1500]}")
+            for path in sorted(Path(d).rglob("*.json")):
+                # The slicer inputs Print Handy wrote, so a slicer upgrade that rejects one is visible.
+                try:
+                    json.loads(path.read_text())
+                    state = "valid JSON"
+                except ValueError as err:
+                    state = f"INVALID JSON: {err}"
+                print(f"SPACING   input {path.relative_to(d)} ({path.stat().st_size} B, {state})")
             return False
 
 

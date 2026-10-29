@@ -181,15 +181,14 @@ Schema, validation limits and TOML migration: [CONFIGURATION-YAML.md](CONFIGURAT
 
 `layout.spacing` picks every part gap and margin at once. Every fit check, the automatic one-plate rearrangement, the multicolor merge (with its prime tower) and slicing use the same resolved values, so Print Handy only offers a layout the slicer will produce. A key set explicitly (in the YAML file or as its environment variable) wins over the preset; the others follow the preset.
 
-| Key | `minimum` (default) | `low` | `medium` (Standard) | `high` |
+| Preset | arrange gap / edge | merge spacing / edge margin | tower to part / bed edge | tower slack |
 |---|---|---|---|---|
-| `layout.arrange_gap_mm` | 2.0 | 3.5 | 5.0 | 7.5 |
-| `layout.arrange_edge_mm` | 1.0 | 3.0 | 5.0 | 7.5 |
-| `layout.merge_spacing_mm` | 2.0 | 6.0 | 10.0 | 15.0 |
-| `layout.merge_edge_margin_mm` | 1.0 | 4.5 | 8.0 | 12.0 |
-| `prime_tower.part_clearance_mm` | 3.5 | 6.0 | 8.0 | 12.0 |
-| `prime_tower.edge_mm` | 4.0 | 7.0 | 10.0 | 15.0 |
-| `prime_tower.merge_slack_mm` | 1.0 | 3.0 | 5.0 | 7.5 |
+| `minimum` (default) | 2.0 / 1.0 | 2.0 / 1.0 | 3.5 / 4.0 | 1.0 |
+| `low` | 3.5 / 3.0 | 6.0 / 4.5 | 6.0 / 7.0 | 3.0 |
+| `medium` (Standard) | 5.0 / 5.0 | 10.0 / 8.0 | 8.0 / 10.0 | 5.0 |
+| `high` | 7.5 / 7.5 | 15.0 / 12.0 | 12.0 / 15.0 | 7.5 |
+
+Columns, in mm: `layout.arrange_gap_mm` / `layout.arrange_edge_mm`, `layout.merge_spacing_mm` / `layout.merge_edge_margin_mm`, `prime_tower.part_clearance_mm` / `prime_tower.edge_mm`, `prime_tower.merge_slack_mm`.
 
 `medium` is the fixed set Print Handy used before presets existed. `low` is halfway between `minimum` and `medium`, and `high` is 1.5 × `medium`, both rounded to 0.5 mm; use `high` for wide brims or warping materials.
 

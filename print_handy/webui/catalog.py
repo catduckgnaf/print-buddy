@@ -73,6 +73,7 @@ class Field:
 GROUP_OF = {
     "printer.model": "printer",
     "printer.slicer": "slicing",
+    "printer.zmod_delivery_format": "printer",
     "delivery.methods": "slicing",
     "bot.mode": "platform",
     "bot.platform": "platform",
@@ -148,6 +149,11 @@ CATALOG = (
     _field("delivery", "methods", "Delivery methods", "picker",
            "Post-slice options offered, as a list; only the ones the printer's vendor profile offers.",
            choices_source=SOURCE_VENDOR_DELIVERY, validator="settings vendor choices"),
+    _field("printer", "zmod_delivery_format", "ZMod delivery format", "picker",
+           "Flashforge/ZMod printers only: auto sends the sliced .gcode.3mf when the printer "
+           "reports ZMod 1.7.5+ and plain .gcode otherwise; gcode always sends .gcode; "
+           "3mf always sends the package.",
+           choices=("auto", "gcode", "3mf"), validator="settings zmod delivery format check"),
     # Bot and chat platform (guided setup: mode, plus bot platform from #164).
     _field("bot", "mode", "Bot mode", "picker",
            "standalone runs Print Handy's own bot; hermes runs it as a Hermes Agent profile.",

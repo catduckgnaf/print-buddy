@@ -110,6 +110,30 @@ class OrcaRealSliceTests(unittest.TestCase):
         sg.approve_baseline(gcode, path=baseline)
         self.assertTrue(sg.enforce_approved_baseline(gcode, path=baseline).ok)
 
+    def test_real_slice_packages_as_zmod_3mf_and_passes_the_same_guard(self):
+        """#564 Stage 1: a real AD5X slice packs to a .gcode.3mf whose inner G-code is the
+        sliced file byte for byte, reads back through the package reader, and passes the
+        same post-slice guard the plain .gcode passes."""
+        import zipfile
+
+        from print_handy.core import gcode_3mf
+
+        result, out = self.slice(write_cube(self.dir / "zmod3mf.stl", 20))
+        self.assertEqual(result.returncode, 0)
+        gcode = out / "plate_1.gcode"
+        self.assertNotEqual(self.guard(out).status, "blocked")
+        package = gcode_3mf.package(gcode, gcode_3mf.package_path_for(gcode))
+        with zipfile.ZipFile(package) as archive:
+            names = archive.namelist()
+            self.assertIn("Metadata/plate_1.gcode", names)
+            self.assertIn("Metadata/plate_1.json", names)
+            self.assertIn("Metadata/slice_info.config", names)
+            self.assertEqual(archive.read("Metadata/plate_1.gcode"), gcode.read_bytes())
+        inner = self.dir / "inner.gcode"
+        inner.write_text(gcode_3mf.read_gcode_text(package))
+        r = sg.post_slice(inner, tool_slots={0: 1}, result_json=None)
+        self.assertNotEqual(r.status, "blocked", r.blocked)
+
 
 @pytest.mark.skipif(not REAL, reason="set PRINT_HANDY_REAL_SLICER=1 to slice with the real Orca CLI")
 # The A1 (0.4 mm only) slices from profiles generated from the installed OrcaSlicer: test_orca_real_bambu_a1.py.

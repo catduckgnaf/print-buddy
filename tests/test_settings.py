@@ -184,7 +184,8 @@ class OverrideTests(unittest.TestCase):
         inventory = settings.load(home=settings.HOME, local=False, environ={})
         expected = {
             "printer": {"name", "firmware", "start_macro", "end_macro", "bed_mm",
-                        "max_print_height_mm", "nozzle_diameter_mm", "ifs_slots", "model", "vendor", "slicer"},
+                        "max_print_height_mm", "nozzle_diameter_mm", "ifs_slots", "model", "vendor", "slicer",
+                        "zmod_delivery_format"},
             "layout": {"single_copy_edge_mm", "multi_copy_edge_mm", "merge_edge_margin_mm", "merge_spacing_mm", "max_merged_hours"},
             "prime_tower": {"size_mm", "part_clearance_mm", "edge_mm", "merge_slack_mm"},
             "cold_pull": {"pla_trial", "petg"},

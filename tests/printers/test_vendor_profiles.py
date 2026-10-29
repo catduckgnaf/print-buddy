@@ -58,6 +58,7 @@ def without_added(data):
         data.pop("slicer", None)
     for key in ADDED_PRINTER_KEYS:
         data.get("printer", {}).pop(key, None)
+    data.get("printer", {}).pop("zmod_delivery_format", None)  # added by #564, after capture
     return data
 
 

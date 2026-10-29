@@ -34,6 +34,8 @@ def model_link(text):
         return text
     if host in {'cults3d.com', 'www.cults3d.com'} and re.match(r'/(?:[a-z]{2}/)?3d-model/(?:[^/]+/)?[^/]+/?$', path):
         return text
+    if host in {'crealitycloud.com', 'www.crealitycloud.com'} and re.match(r'/(?:[a-z]{2}(?:-[a-z]{2})?/)?model-detail/[^/]+/?$', path, re.I):
+        return text
     return None
 
 

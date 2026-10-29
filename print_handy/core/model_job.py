@@ -15,7 +15,7 @@ print stay separate unless --print-now is given, which means the operator clicke
 "bed clear" for exactly this job. `python3 -m print_handy.core.model_job print-now FILE|JOB.json` starts an
 already sliced job the same way.
 """
-import argparse, base64, hashlib, html, json, logging, math, os, re, shutil, subprocess, sys, time, urllib.parse, urllib.request, zipfile
+import argparse, base64, hashlib, html, http.client, json, logging, math, os, re, shutil, subprocess, sys, time, urllib.parse, urllib.request, zipfile
 import xml.etree.ElementTree as ET
 from pathlib import Path
 from typing import Any, NamedTuple
@@ -510,29 +510,322 @@ def cults_download(job, source, target):
     """Refuse plainly: Cults' API exposes no files (see CULTS_DOWNLOAD_GAP)."""
     raise RuntimeError(CULTS_DOWNLOAD_GAP)
 
+
+CREALITYCLOUD = "https://www.crealitycloud.com"
+
+# Creality Cloud (#604, reopening the #464 classification): the web app's own
+# JSON API. The app proxies /api/* to its configured API base
+# (admin.crealitycloud.com) and answers with {code, msg, result} envelopes;
+# code 0 is success and code 4 is the token refusal (ERR_TOKEN in the web
+# client's own error table). Model detail and the source-file inventory are
+# served anonymously; downloads go through memberDownload, which requires
+# the account login token the web client keeps in its model_token cookie.
+# Following the token-file pattern of the other model sites, the operator
+# copies that cookie value into ~/.config/crealitycloud/token. No password
+# is ever stored, and no site check is bypassed. Verified live 2026-10-29
+# against the acceptance model (bag-clip-30mm): detail and file list
+# answered anonymously with code 0, and memberDownload answered
+# {"code": 4, "msg": "Invalid Token"} without a token — so the success
+# shape of its result was NOT verifiable from here and is parsed
+# defensively in _crealitycloud_download_url; an answer with no findable
+# file URL refuses with a named gap instead of guessing.
+CREALITYCLOUD_ANSWER_GAP = (
+    "Creality Cloud answered the download request, but Print Handy could not "
+    "find a file URL in the answer, so nothing was downloaded. This download "
+    "path has not been verified with a live login token yet. Workaround: open "
+    "the model page in a browser, download the .stl/.3mf file there, then "
+    "upload or drop the file here instead.")
+
+
+def crealitycloud_headers(token=None):
+    """The __CXY_* headers the Creality Cloud web client itself sends.
+
+    __CXY_TIMEZONE_ is not optional decoration: without it the API
+    refuses every call with code 1 (Invalid Parameter), verified live
+    2026-10-29. Its value is the local UTC offset in seconds, the web
+    client's own formula.
+    """
+    import datetime
+    offset = datetime.datetime.now().astimezone().utcoffset()
+    return {"Content-Type": "application/json",
+            "__CXY_APP_ID_": "cxy-gen2", "__CXY_APP_VER_": "7.3.28",
+            "__CXY_PLATFORM_": "2", "__CXY_BRAND_": "creality",
+            "__CXY_APP_CH_": "not set", "__CXY_OS_VER_": "not set",
+            "__CXY_DUID_": "not set", "__CXY_OS_LANG_": "0",
+            "__CXY_TOKEN_": token or "", "__CXY_UID_": "",
+            "__CXY_TIMEZONE_": str(int(offset.total_seconds())) if offset else "0",
+            "__CXY_REQUESTID_": os.urandom(16).hex()}
+
+
+def crealitycloud_token():
+    path = Path.home()/".config"/"crealitycloud"/"token"
+    try:
+        token = path.read_text(encoding="utf-8").strip()
+    except FileNotFoundError:
+        raise RuntimeError(
+            f"Creality Cloud downloads need a login token in {path}; sign in at "
+            "https://www.crealitycloud.com in a browser, open the browser's "
+            "developer tools, copy the value of the cookie named model_token, "
+            "and store it as the only content of that file; see "
+            "docs/PROJECT-REFERENCE.md (Creality Cloud login token)") from None
+    if not token: raise RuntimeError("Creality Cloud token empty")
+    return token
+
+
+def _crealitycloud_token_refused():
+    return RuntimeError(
+        "Creality Cloud refused the login token (the site answered \"Invalid "
+        "Token\"), which usually means the token in "
+        "~/.config/crealitycloud/token is missing, invalid or expired. Sign "
+        "in at https://www.crealitycloud.com, copy the value of the "
+        "model_token cookie into that file (see docs/PROJECT-REFERENCE.md, "
+        "Creality Cloud login token), then send the link again.")
+
+
+def _crealitycloud_blocked(exc):
+    """Plain RuntimeError for a Creality Cloud 401/403, else None."""
+    if getattr(exc, "code", None) not in (401, 403): return None
+    return RuntimeError(
+        "Creality Cloud refused the request (401/403), which usually means "
+        "the login token is missing, invalid or expired, or the site is "
+        "challenging this connection. Check the token file (see "
+        "docs/PROJECT-REFERENCE.md, Creality Cloud login token), then send "
+        "the link again. Print Handy does not try to bypass site checks.")
+
+
+def _crealitycloud_request(path, body, token=None):
+    """One POST to the Creality Cloud web API; returns the parsed envelope.
+
+    A local transport rather than the shared request_json, for one
+    live-verified reason: this API's edge truncates uncompressed chunked
+    reads often enough to fail most calls (IncompleteRead), while the
+    same calls with gzip encoding succeed almost every time (observed
+    2026-10-29). Retries live in _crealitycloud_result.
+    """
+    import gzip
+    headers = crealitycloud_headers(token)
+    headers["Accept-Encoding"] = "gzip"
+    headers["User-Agent"] = UA
+    headers["Accept"] = "application/json"
+    req = urllib.request.Request(f"{CREALITYCLOUD}{path}",
+                                 data=json.dumps(body).encode(), headers=headers)
+    with urllib.request.urlopen(req, timeout=25) as r:
+        raw = r.read()
+        if r.headers.get("Content-Encoding") == "gzip":
+            raw = gzip.decompress(raw)
+    return json.loads(raw.decode("utf-8"))
+
+
+def _crealitycloud_result(path, body, token=None):
+    """One Creality Cloud API call; returns the envelope's result.
+
+    HTTP stays 200 for API refusals — the envelope code decides. Known
+    codes are named with their remedy; an unknown code is reported by
+    number only, never by copying the site's message text into chat.
+    Transport-level dropped reads are retried (see _crealitycloud_request):
+    every call made here is an idempotent read or a download request, and
+    envelope refusals are never retried.
+    """
+    resp = None
+    for attempt in range(4):
+        try:
+            resp = _crealitycloud_request(path, body, token)
+            break
+        except urllib.error.HTTPError as exc:
+            blocked = _crealitycloud_blocked(exc)
+            if blocked is not None: raise blocked from None
+            raise
+        except (http.client.HTTPException, ConnectionError, TimeoutError,
+                urllib.error.URLError, ValueError):
+            if attempt == 3: raise
+            time.sleep(0.5 * (attempt + 1))
+    if not isinstance(resp, dict) or "code" not in resp:
+        raise RuntimeError("Creality Cloud answered with an unexpected "
+                           "response, so the request was not followed")
+    code = resp.get("code")
+    if code == 0: return resp.get("result")
+    if code == 4: raise _crealitycloud_token_refused()
+    if code in (512, 517):
+        raise RuntimeError("Creality Cloud says this model does not exist — "
+                           "it may have been removed, or the link is wrong")
+    raise RuntimeError(f"Creality Cloud refused the request (code {code})")
+
+
+def crealitycloud_slug(url):
+    """The model slug from a Creality Cloud URL (/model-detail/<slug>)."""
+    path = urllib.parse.urlparse(str(url)).path
+    m = re.search(r"/model-detail/([^/]+)/?$", path)
+    if not m: raise ValueError(f"Creality Cloud URL needs /model-detail/<slug>: {url}")
+    return m.group(1)
+
+
+def crealitycloud_profile_id(url):
+    """The ?profileId= print-profile id from a Creality Cloud URL, or None."""
+    query = urllib.parse.parse_qs(urllib.parse.urlparse(str(url)).query)
+    values = query.get("profileId") or []
+    return values[0] if values else None
+
+
+def _crealitycloud_profile_file(group_id, profile_id):
+    """Source file name inside one 3MF print profile, or None (best effort).
+
+    A profile is a Creality Print 3MF holding one source file; the detail
+    the API pre-parses from it names that file. A failed lookup returns
+    None — the profile hint never blocks the inventory.
+    """
+    try:
+        listing = _crealitycloud_result(
+            "/api/cxy/v3/model/3mfList",
+            {"modelGroupId": group_id, "page": 1, "pageSize": 100})
+    except Exception:
+        return None
+    for profile in (listing or {}).get("list") or []:
+        if not isinstance(profile, dict): continue
+        if str(profile.get("id")) != str(profile_id): continue
+        infos = ((profile.get("preParse3mfResult") or {}).get("allObjectInfos")) or []
+        for info in infos:
+            name = str((info or {}).get("object_name") or "").strip()
+            if name: return name
+    return None
+
+
+def crealitycloud_inventory(url):
+    slug = crealitycloud_slug(url)
+    detail = _crealitycloud_result("/api/cxy/v3/model/modelGroupDetail", {"id": slug})
+    group = (detail or {}).get("groupItem") if isinstance(detail, dict) else None
+    if not isinstance(group, dict) or not group.get("id"):
+        raise RuntimeError(f"Creality Cloud model not found for {url} — the link "
+                           "may be wrong, or the model may have been removed")
+    group_id = str(group["id"])
+    listing = _crealitycloud_result("/api/cxy/v3/model/fileListPage",
+                                    {"modelId": group_id, "page": 1, "pageSize": 100})
+    rows = []
+    for f in (listing or {}).get("list") or []:
+        if not isinstance(f, dict): continue
+        fmt = str(f.get("fileFormat") or "").lower()
+        if fmt not in {".stl", ".3mf"}: continue
+        name = str(f.get("fileName") or "").strip()
+        if not name: continue
+        if not name.lower().endswith(fmt): name += fmt
+        rows.append({"id": f.get("id"), "name": name, "bytes": f.get("fileSize"),
+                     "kind": "files", "file_key": f.get("fileKey")})
+    title = str(group.get("groupName") or "").strip() or f"crealitycloud-{slug}"
+    job = {"site": "crealitycloud", "model_id": group_id, "title": title,
+           "slug": str(group.get("urlAlias") or slug),
+           "license": group.get("license"), "sources": rows}
+    if group.get("isPay"): job["paid"] = True
+    # The link's profileId names one print profile; the source file inside
+    # it is the file the link points at, so offer that file first.
+    profile_id = crealitycloud_profile_id(url)
+    if profile_id and len(rows) > 1:
+        pointed = _crealitycloud_profile_file(group_id, profile_id)
+        for row in rows:
+            if pointed and row["name"].casefold() == pointed.casefold():
+                row["suggested_by_link"] = True
+                rows.remove(row)
+                rows.insert(0, row)
+                break
+    if not rows:
+        job["no_geometry_reason"] = (
+            f"Creality Cloud listing \"{title}\" exposes no STL/3MF source "
+            "files in its file list, so there is no selectable geometry to "
+            "reslice — Print Handy never uses a site's pre-sliced G-code or "
+            "its printer-specific print profiles. If the model page offers "
+            "source files the API does not list, download the .stl/.3mf "
+            "file there in a browser, then upload or drop the file here "
+            "instead.")
+    return job
+
+
+def _crealitycloud_download_url(result):
+    """The file URL in a memberDownload answer, or None.
+
+    The success shape was not verifiable without a live token (see the
+    section comment), so accept the shapes this API family uses: a bare
+    URL string, a dict carrying one under a URL key, or a list of either.
+    """
+    if isinstance(result, str): return result or None
+    if isinstance(result, list):
+        for item in result:
+            found = _crealitycloud_download_url(item)
+            if found: return found
+        return None
+    if isinstance(result, dict):
+        for key in ("url", "downloadUrl", "downloadZip", "zipUrl", "fileUrl", "link"):
+            value = result.get(key)
+            if isinstance(value, str) and value: return value
+        for key in ("list", "files", "urls"):
+            found = _crealitycloud_download_url(result.get(key))
+            if found: return found
+    return None
+
+
+def crealitycloud_download(job, source, target):
+    cached = _cached_source("crealitycloud", "id", source.get("id"), job.get("model_id"))
+    if cached is not None and cached.name == Path(source.get("name") or "").name:
+        return _reuse_cached(cached, target, "Creality Cloud")
+    token = crealitycloud_token()
+    result = _crealitycloud_result(
+        "/api/cxy/v3/model/memberDownload",
+        {"modelId": job["model_id"], "trailType": 0,
+         "fileIds": [source.get("id")]}, token=token)
+    url = _crealitycloud_download_url(result)
+    if not url: raise RuntimeError(CREALITYCLOUD_ANSWER_GAP)
+    name = Path(source.get("name") or "model.stl").name
+    target = Path(target)
+    dest = target/name
+    staged = target/(name + ".download")
+    download(url, staged)
+    if zipfile.is_zipfile(staged):
+        # A multi-file answer arrives as one zip: keep the chosen file (or
+        # the only geometry file in it) and nothing else.
+        with zipfile.ZipFile(staged) as archive:
+            entries = [n for n in archive.namelist()
+                       if not n.endswith("/")
+                       and Path(n).suffix.lower() in {".stl", ".3mf"}]
+            pick = next((n for n in entries if Path(n).name == name), None)
+            if pick is None and len(entries) == 1: pick = entries[0]
+            if pick is None:
+                staged.unlink(missing_ok=True)
+                raise RuntimeError(
+                    f"Creality Cloud sent a zip with {len(entries)} model "
+                    f"files and none is named {name}, so Print Handy cannot "
+                    "tell which one was chosen; nothing was kept")
+            with archive.open(pick) as src, dest.open("wb") as out:
+                shutil.copyfileobj(src, out)
+        staged.unlink(missing_ok=True)
+    else:
+        staged.replace(dest)
+    if dest.stat().st_size == 0:
+        raise RuntimeError("Creality Cloud download was empty")
+    return dest
+
 # Per-site registry (#462): site -> function NAME, resolved through this module's globals
 # at call time so existing tests that monkeypatch maker_*/printables_*/thingiverse_*/
 # myminifactory_* by name keep working exactly as before.
 SITE_INVENTORY_FUNCS={"makerworld":"maker_inventory","printables":"printables_inventory",
                       "thingiverse":"thingiverse_inventory",
                       "myminifactory":"myminifactory_inventory",
-                      "cults3d":"cults_inventory"}
+                      "cults3d":"cults_inventory",
+                      "crealitycloud":"crealitycloud_inventory"}
 SITE_DOWNLOAD_FUNCS={"makerworld":"maker_download","printables":"printables_download",
                      "thingiverse":"thingiverse_download",
                      "myminifactory":"myminifactory_download",
-                     "cults3d":"cults_download"}
+                     "cults3d":"cults_download",
+                     "crealitycloud":"crealitycloud_download"}
 SITE_HOSTS={"makerworld.com":"makerworld","www.makerworld.com":"makerworld",
             "printables.com":"printables","www.printables.com":"printables",
             "thingiverse.com":"thingiverse","www.thingiverse.com":"thingiverse",
             "myminifactory.com":"myminifactory","www.myminifactory.com":"myminifactory",
-            "cults3d.com":"cults3d","www.cults3d.com":"cults3d"}
+            "cults3d.com":"cults3d","www.cults3d.com":"cults3d",
+            "crealitycloud.com":"crealitycloud","www.crealitycloud.com":"crealitycloud"}
 def inventory_for_url(url):
     site=SITE_HOSTS.get((urllib.parse.urlparse(url).hostname or "").lower())
-    if site is None: raise ValueError("supported sites: MakerWorld, Printables, Thingiverse, MyMiniFactory, Cults3D")
+    if site is None: raise ValueError("supported sites: MakerWorld, Printables, Thingiverse, MyMiniFactory, Cults3D, Creality Cloud")
     return globals()[SITE_INVENTORY_FUNCS[site]](url)
 def download_for_site(job, source, target):
     name=SITE_DOWNLOAD_FUNCS.get((job or {}).get("site"))
-    if name is None: raise ValueError("supported sites: MakerWorld, Printables, Thingiverse, MyMiniFactory, Cults3D")
+    if name is None: raise ValueError("supported sites: MakerWorld, Printables, Thingiverse, MyMiniFactory, Cults3D, Creality Cloud")
     return globals()[name](job, source, target)
 
 

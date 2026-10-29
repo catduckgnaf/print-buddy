@@ -284,6 +284,25 @@ def fetch_link_source(url, target_dir) -> Path:
                     f"that Thingiverse link has {len(rows)} model files, so design cannot pick "
                     "one; drop the file you want edited")
             return Path(mj.thingiverse_download(job, rows[0], target_dir))
+        if "crealitycloud.com" in host:
+            job = mj.crealitycloud_inventory(str(url))
+            rows = [row for row in job["sources"]
+                    if Path(str(row.get("name") or "")).suffix.lower() in (".3mf", ".stl")]
+            if not rows:
+                raise DesignError("that Creality Cloud link has no STL or 3MF file to edit")
+            chosen = next((row for row in rows if row.get("suggested_by_link")), None)
+            if chosen is None and len(rows) == 1:
+                chosen = rows[0]
+            if chosen is None:
+                raise DesignError(
+                    f"that Creality Cloud link has {len(rows)} model files, so design cannot pick "
+                    "one; drop the file you want edited")
+            try:
+                return Path(mj.crealitycloud_download(job, chosen, target_dir))
+            except RuntimeError as exc:
+                # The download's own wording names the cause and remedy
+                # (the login-token file, a refused token), so keep it.
+                raise DesignError(str(exc)) from None
         if "myminifactory.com" in host:
             # Inventory-only (#462 Stage 2): there is no file design could fetch —
             # MyMiniFactory downloads need a login this build does not have — so

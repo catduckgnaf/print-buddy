@@ -63,6 +63,7 @@ def unmatched_text(bot_name="Print Handy"):
     """
     return (f"I didn't understand that, so nothing happened.\n"
             f"{bot_name} prints from this channel: post a MakerWorld, Printables or Thingiverse link, "
+            "a direct link to a .3mf or .stl file (a Dropbox share link works too), "
             "or drop one .3mf or .stl file, and I will prepare it — nothing starts without a button press.\n"
             "For everything I can do, type `/print-help`.")
 

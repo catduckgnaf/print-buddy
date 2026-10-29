@@ -334,6 +334,8 @@ Secrets come from the environment only (Docker: `.env`, never committed or share
 
 The MakerWorld account token is not an environment variable. It is the file `~/.config/bambu/token` (Docker: `/data/.config/bambu/token`), needed only for MakerWorld links; see [MakerWorld account token](PROJECT-REFERENCE.md#makerworld-account-token).
 
+Direct file links — a public link straight at a `.stl` or `.3mf` file on any host, including a Dropbox share link — need no token and no setting; the fetch is guarded (public addresses only, the shared 200 MiB intake size limit) as described in [Direct file links](PROJECT-REFERENCE.md#direct-file-links).
+
 ## Legacy environment names
 
 The names below predate `PRINT_HANDY__SECTION__KEY` and still work; new installs should use the long form. The full map is `LEGACY_ENV` in `print_handy/settings.py`, for example `MOONRAKER_URL` → `services.moonraker_url`, `SPOOLMAN_URL` → `services.spoolman_url`, `PRINT_DISCORD_CHAT_ID` → `discord.chat_id`.

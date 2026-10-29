@@ -79,6 +79,17 @@ def parse_custom_id(value):
     return cid, int(index)
 
 
+def answered_note(text):
+    """The "Answered by message" line left on a prompt a typed reply closed.
+
+    A long unbroken string may be a pasted login token, so it is never echoed back.
+    """
+    shown = str(text)[:100]
+    if len(shown) >= 20 and not any(c.isspace() for c in shown):
+        return "Answered by message."
+    return f"Answered by message: {shown}"
+
+
 def describe_access(allowed_count, denied_count, channel_open):
     """The one-line access mode every surface reports (#386).
 
@@ -256,7 +267,7 @@ class BasePlatformAdapter:
         cid = self.open_prompt(session_key)
         if cid is None or not self.registry.resolve_gateway_clarify(cid, str(text)):
             return False
-        await self.close_prompt(cid, f"Answered by message: {str(text)[:100]}")
+        await self.close_prompt(cid, answered_note(text))
         return True
 
     async def answer_choice(self, clarify_id, index, *, user_id=None, user=None):
@@ -275,6 +286,14 @@ class BasePlatformAdapter:
         if not self.registry.resolve_gateway_clarify(clarify_id, labels[index]):
             return None
         return labels[index]
+
+    async def delete_message(self, chat_id, message_id, metadata=None):
+        """Delete one chat message (best effort). True when the service accepted it.
+
+        Used to remove a message that carried a pasted login token. The default
+        deletes nothing; a platform that can, overrides it. Never raises.
+        """
+        return False
 
     async def close_prompt(self, clarify_id, note):  # pragma: no cover - overridden per platform
         """Edit or close the service-side prompt message. Default: nothing to edit."""

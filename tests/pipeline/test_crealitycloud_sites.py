@@ -418,8 +418,7 @@ def test_prepared_intake_crealitycloud_stops_at_token_gap(
     adapter = Adapter([1])
     asyncio.run(prepared_intake.prepare_link(
         event, adapter, state(), env.root, timeout=1))
-    assert adapter.questions[0]['choices'][:2] == ['Connect Creality Cloud account',
-                                                    'Not now (cancel)']
+    assert adapter.questions[0]['choices'][:2] == ['Saved — try again', 'Cancel']
     receipt = json.loads(next(env.root.glob('*.json')).read_text())
     assert receipt['status'] == 'FAILED'
     assert '.config/crealitycloud/token' in receipt['error'].replace('\\', '/')

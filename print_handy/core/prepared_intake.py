@@ -923,13 +923,47 @@ def _saved_reply(text):
     raise ValueError('reply `saved` once the token file is in place, or `cancel`')
 
 
+def _connect_reply(site):
+    """The typed-reply parser for ``site``'s connect prompt.
+
+    `saved` (and its synonyms) answers like the button. Anything else must be
+    the token itself: it is normalized and shape-checked
+    (site_accounts.accept_pasted), written to the token file
+    (site_accounts.save_token) and the prompt is then answered as if Saved had
+    been pressed, so the token never travels through the prompt registry. A
+    value that does not look like a token is refused with the reason (never
+    the value) and the prompt stays open. link_intake.note_secret_reply tells
+    the chat handler to delete the operator's message.
+    """
+    from . import link_intake
+    from .site_accounts import accept_pasted, save_token, token_path
+
+    def parse(text):
+        try:
+            return _saved_reply(text)
+        except ValueError:
+            pass
+        token, problem = accept_pasted(site, text)
+        if problem:
+            raise ValueError(problem)
+        try:
+            save_token(site, token)
+        except OSError as exc:
+            raise ValueError(
+                f"I couldn't save it to {token_path(site)} ({exc.strerror or type(exc).__name__}). "
+                'Save it there yourself and reply `saved`, or reply `cancel`.') from None
+        link_intake.note_secret_reply()
+        return SAVED_LABEL
+    return parse
+
+
 async def _with_connect(adapter, source, key, metadata, timeout, attempt):
     """Run ``attempt()`` (a coroutine factory); on SiteLoginNeeded offer the connect flow and retry.
 
     Covers both places a site credential is needed (#462, #464): the model
     lookup (MakerWorld, Thingiverse, Cults3D, MyMiniFactory without a key)
-    and the download (every login site). Never a dead end, and the
-    credential itself is never collected in chat.
+    and the download (every login site). Never a dead end; the operator can
+    paste the credential or save it on the Print Handy machine.
     """
     for connect_round in range(MAX_CONNECT_ROUNDS + 1):
         try:
@@ -941,34 +975,28 @@ async def _with_connect(adapter, source, key, metadata, timeout, attempt):
 
 
 async def _connect_account(adapter, source, key, metadata, exc, timeout):
-    """Offer to connect (or renew) the site behind ``exc``; True when the operator saved it.
+    """Walk the operator through connecting (or renewing) the site behind ``exc``.
 
-    The walkthrough (site_accounts.connect_steps) says where the credential
-    lives, how to get it from the operator's own account or signed-in
-    browser, and links the docs section; it is saved on the Print Handy
-    machine, never pasted into chat. An expired or refused login is offered
-    as a renewal. False means the operator declined, and the caller reports
-    the original refusal.
+    One message carries everything (site_accounts.connect_steps): why it is
+    needed, where the credential comes from, the two ways to hand it over
+    (paste it as the next message, or save the file on the Print Handy machine
+    and press Saved), what pasting risks, and the docs link. A pasted value is
+    saved by ``_connect_reply``; either way True comes back and the caller
+    retries. False means the operator cancelled, and the caller reports the
+    original refusal. An expired or refused login reads as a renewal.
     """
     from .site_accounts import LOGIN_SITES, connect_steps
     label = LOGIN_SITES[exc.site].label
-    renew = exc.reason in ('expired', 'refused')
     lead = {
         'missing': f'{label} needs you to be signed in for this model, and no {label} account is connected yet.',
         'empty': f'{label} needs you to be signed in for this model, and the saved {label} login is empty or incomplete.',
         'expired': f'Your saved {label} login has expired.',
         'refused': f'{label} turned down the saved login (it has most likely expired).',
     }.get(exc.reason, f'{label} needs you to be signed in for this model.')
-    offer = f'Renew {label} login' if renew else f'Connect {label} account'
-    pick = await _ask(adapter, source, key, f'{lead} Nothing was downloaded.',
-                      [offer, 'Not now (cancel)'], timeout)
-    if pick != 0:
-        return False
-    await adapter.send(chat_id=source.chat_id, content=connect_steps(exc.site, renew=renew),
-                       metadata=metadata)
-    saved = await _ask(adapter, source, key,
-                       f'Press Saved once the {label} token file is in place.',
-                       [SAVED_LABEL, 'Cancel'], timeout, parser=_saved_reply)
+    renew = exc.reason in ('expired', 'refused')
+    question = connect_steps(exc.site, renew=renew, lead=f'**{lead}** Nothing was downloaded.')
+    saved = await _ask(adapter, source, key, question, [SAVED_LABEL, 'Cancel'], timeout,
+                       parser=_connect_reply(exc.site))
     return saved in (0, SAVED_LABEL)
 
 

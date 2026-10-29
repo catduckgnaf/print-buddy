@@ -1,6 +1,6 @@
 """Bambu Lab A1 with the real Bambu Studio CLI: the vendor-default primary path and the Orca->Bambu fallback.
 
-Skipped unless PRINT_HANDY_REAL_SLICER=1 and PRINT_HANDY_REAL_BAMBU=1; CI's real-slicer-bambu job
+Skipped unless PRINT_HANDY_REAL_SLICER=1 and PRINT_HANDY_REAL_BAMBU=1; CI's Slicer test (bambu) job
 runs this file with the Flathub Bambu Studio the home configuration uses ([bambu] command in
 config/home.yaml: flatpak run --command=bambu-studio com.bambulab.BambuStudio). The A1 templates
 still come from the installed OrcaSlicer's resources: that is the production arrangement

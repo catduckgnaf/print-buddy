@@ -162,6 +162,7 @@ def doctor_checks(data):
     report("orca cli", doctor.check_orca, data)
     for key in doctor.SERVICE_PATHS:
         report(key.replace("_url", ""), doctor.check_service, data, key)
+    report("zmod version", doctor.check_zmod_version, data)
     report("bot mode", doctor.check_bot, data)
     report("hermes discord platform", doctor.check_hermes_platform, data)
     report("logging", doctor.check_logging, data)

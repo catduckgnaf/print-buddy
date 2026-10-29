@@ -114,7 +114,18 @@ class DoctorTests(unittest.TestCase):
         with mock.patch.object(doctor.urllib.request, "urlopen", return_value=response) as urlopen:
             code, text = self.run_doctor('[services]\nmoonraker_url = "http://ad5x.lan:7125/"\n')
         self.assertEqual(code, 0, text)
-        self.assertEqual(urlopen.call_args[0][0], "http://ad5x.lan:7125/printer/info")
+        # The first call is the service probe; the doctor's zmod version row
+        # (#562) reads the update status afterwards on this ZMod install.
+        self.assertEqual(urlopen.call_args_list[0][0][0], "http://ad5x.lan:7125/printer/info")
+
+    def test_doctor_run_reports_the_zmod_version_row(self):
+        """#562 Part 2, Gap 2: the row shows in a full run, so the
+        diagnostics bundle (which embeds doctor output) carries it too."""
+        with mock.patch.object(doctor.urllib.request, "urlopen",
+                               side_effect=_routing_urlopen(STATUS_WITH_ZMOD)):
+            code, text = self.run_doctor('[services]\nmoonraker_url = "http://ad5x.lan:7125"\n')
+        self.assertEqual(code, 0, text)
+        self.assertIn("ok    zmod version: 1.7.5", text)
 
     def test_missing_orca_binary_fails(self):
         code, text = self.run_doctor('[orca]\ncommand = ["definitely-not-orca-xyz"]\n')
@@ -167,3 +178,85 @@ class DoctorTests(unittest.TestCase):
         self.assertEqual(code, 0, text)
         self.assertIn("ok    hermes discord platform", text)
         self.assertIn("no explicit discord platform disable", text)
+
+
+class _FakeResponse:
+    """A urlopen response: a status for the service probe, JSON for the reader."""
+
+    def __init__(self, payload=None, status=200):
+        self.status = status
+        self.payload = payload
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc):
+        return False
+
+    def read(self):
+        return json.dumps(self.payload).encode() if self.payload is not None else b""
+
+
+def _routing_urlopen(status_payload):
+    """Route by path: the update-status read gets the payload, probes get a bare 200."""
+    def fake(req, timeout=None):
+        url = req.full_url if hasattr(req, "full_url") else req
+        if url.endswith("/machine/update/status"):
+            return _FakeResponse(status_payload)
+        return _FakeResponse()
+    return fake
+
+
+STATUS_WITH_ZMOD = {"result": {"version_info": {
+    "klipper": {"version": "v0.12.0-289", "remote_version": "v0.12.0-289"},
+    "zmod": {"version": "1.7.5", "remote_version": "1.7.5"}}}}
+
+
+class ZmodVersionDoctorTests(unittest.TestCase):
+    """#562 Part 2, Gap 2 (option b): the ZMod version rides in the doctor."""
+
+    DATA = {"printer": {"model": "flashforge.ad5x"},
+            "services": {"moonraker_url": "http://ad5x.lan:7125"}}
+
+    def check(self, urlopen):
+        with mock.patch.object(doctor.urllib.request, "urlopen", side_effect=urlopen):
+            return doctor.check_zmod_version(self.DATA)
+
+    def test_version_is_read_through_the_firmware_reader(self):
+        detail = self.check(_routing_urlopen(STATUS_WITH_ZMOD))
+        self.assertEqual(detail, "1.7.5")
+
+    def test_absent_component_reports_unknown_not_silence(self):
+        payload = {"result": {"version_info": {
+            "klipper": {"version": "v0.12.0-289", "remote_version": "v0.12.0-289"}}}}
+        self.assertEqual(self.check(_routing_urlopen(payload)),
+                         "unknown (not reported by Moonraker)")
+
+    def test_component_without_a_current_version_reports_unknown(self):
+        payload = {"result": {"version_info": {"zmod": {"remote_version": "1.7.5"}}}}
+        self.assertEqual(self.check(_routing_urlopen(payload)),
+                         "unknown (not reported by Moonraker)")
+
+    def test_unreachable_moonraker_is_named_unknown_and_never_raises(self):
+        def refused(req, timeout=None):
+            raise OSError("connection refused")
+        detail = self.check(refused)
+        self.assertTrue(detail.startswith("unknown (Moonraker's update status could not be read:"),
+                        detail)
+        self.assertIn("connection refused", detail)
+
+    def test_malformed_status_is_named_unknown_and_never_raises(self):
+        detail = self.check(_routing_urlopen({"result": {"status": {}}}))
+        self.assertTrue(detail.startswith("unknown (Moonraker's update status could not be read:"),
+                        detail)
+
+    def test_non_zmod_family_skips_without_calling_out(self):
+        data = {"printer": {"model": "klipper.generic"},
+                "services": {"moonraker_url": "http://printer.lan:7125"}}
+        urlopen = mock.Mock(side_effect=AssertionError("must not be called"))
+        with mock.patch.object(doctor.urllib.request, "urlopen", urlopen):
+            self.assertIsNone(doctor.check_zmod_version(data))
+
+    def test_no_moonraker_url_skips(self):
+        data = {"printer": {"model": "flashforge.ad5x"}, "services": {}}
+        self.assertIsNone(doctor.check_zmod_version(data))

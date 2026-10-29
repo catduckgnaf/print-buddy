@@ -31,8 +31,10 @@ baseline.
 
 `/print-firmware` reports the installed ZMod version for a ZMod printer,
 read from the `zmod` component in Moonraker's update status — or states
-"ZMod version unknown" when Moonraker does not report one. Print Handy
-never guesses a version and never gates printing on it.
+"ZMod version unknown" when Moonraker does not report one. The doctor
+reports it too, on its own `zmod version` row, so the diagnostics bundle
+carries it into bug reports. Print Handy never guesses a version and
+never gates printing on it.
 
 ## How the models differ
 

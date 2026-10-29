@@ -12,7 +12,10 @@ import time
 from . import _config
 
 CHECK_S = 300
-STATE = _config.state_file("PRINT_HANDY_NEXT_PLATE_OFFER", "next_plate_offer.json")
+
+
+def _state_path():
+    return _config.state_file("PRINT_HANDY_NEXT_PLATE_OFFER", "next_plate_offer.json")
 
 
 def decide(label, verdict, *, said, plan_id) -> dict:
@@ -44,15 +47,16 @@ def decide(label, verdict, *, said, plan_id) -> dict:
 
 def _load() -> dict:
     try:
-        data = json.loads(STATE.read_text())
+        data = json.loads(_state_path().read_text())
         return data if isinstance(data, dict) else {}
     except (OSError, ValueError):
         return {}
 
 
 def _save(data: dict) -> None:
-    STATE.parent.mkdir(parents=True, exist_ok=True)
-    STATE.write_text(json.dumps(data))
+    path = _state_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(data))
 
 
 def remember(plan_id: str) -> None:

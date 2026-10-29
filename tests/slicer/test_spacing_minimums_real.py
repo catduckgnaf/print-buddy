@@ -31,10 +31,16 @@ def _state():
     return json.loads(STATE.read_text())
 
 
-def _source(path, shapes):
-    """shapes: [((w, d), h, (x, y))] closed boxes; build object ids are 1, 3, 5, ..."""
+def _source(path, shapes, filaments=2):
+    """shapes: [((w, d), h, (x, y))] closed boxes; build object ids are 1, 3, 5, ...
+
+    The single-slot plate gets a one-filament project: OrcaSlicer 2.5.0-beta refuses
+    (-5, "filament_is_support's count 1 not equal to filament_colour's size 2") a
+    derived single-filament slice of a project that lists more filaments.
+    """
     rows = [(f"Part {i + 1}", 1, mm.box(w, d, h), at) for i, ((w, d), h, at) in enumerate(shapes)]
-    mm.write_3mf(path, rows, [("Plate 1", list(range(len(rows))))], [("#FFFFFF", "PLA"), ("#FF00FF", "PLA")])
+    palette = [("#FFFFFF", "PLA"), ("#FF00FF", "PLA")][:filaments]
+    mm.write_3mf(path, rows, [("Plate 1", list(range(len(rows))))], palette)
     return path
 
 
@@ -66,7 +72,7 @@ def _extents(gcode):
 
 def _single(tmp, shapes, brim):
     state = _state()
-    src = _source(tmp / "src.3mf", shapes)
+    src = _source(tmp / "src.3mf", shapes, filaments=1)
     manifest = source_colors.inventory(src)
     decisions = _decisions(state, manifest)
     plate = tmp / "plate.3mf"

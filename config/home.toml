@@ -234,6 +234,8 @@ light_object = ""
 #   4: diff < 4.0 for 3 layers; alerts even when vision says "ok"
 #   5: diff < 5.0 for 2 layers; alerts even when vision says "ok"
 # Periodic camera checks run every 1800, 1200, 900, 600 or 450 seconds for levels 1 to 5.
+# The Moonraker (Klipper) watchdog never alerts on a stall when vision says "ok"/"safe", at any
+# level; the per-level "ok" rule above applies to the Bambu launched-print monitor.
 sensitivity = 3
 
 [timelapse]

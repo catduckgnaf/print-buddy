@@ -1905,6 +1905,17 @@ def _send_light_script(script):
                         data={"script": script}, timeout=15)
 
 
+_DARK_WORD = re.compile(r"\b(?:dark|black)\b", re.IGNORECASE)
+_DARK_SUBJECT = re.compile(r"\b(?:camera|feed|image|frame|picture|view|scene|see|visible|light|lighting)\b",
+                           re.IGNORECASE)
+
+
+def _verdict_says_dark(verdict, detail):
+    """True when an uncertain verdict blames a dark camera feed (#476), not the print."""
+    detail = str(detail or "")
+    return verdict == "uncertain" and bool(_DARK_WORD.search(detail) and _DARK_SUBJECT.search(detail))
+
+
 def _visual_layer(stats):
     info = stats.get("info") if isinstance(stats, dict) else None
     if not isinstance(info, dict):
@@ -2170,6 +2181,7 @@ class Listener:
         self.display_off = None  # live ZMod display mode from the last presence poll; None until read
         self.presence_failure = None  # last presence poll failure, logged once until it changes
         self.capture_session = None  # #246 stage 2: active timelapse_capture session, if any
+        self.print_identity = None  # this print's identity, fixed at its fresh start
         self._auto_light = None  # #516: AutoLightPolicy, built lazily from [vision]
         self.light_target = None  # #516: resolved Moonraker light object, cached
         self.light_target_resolved = False
@@ -2345,12 +2357,15 @@ class Listener:
     def _visual_identity(self):
         """This print's identity for watchdog mutes (#476): the notification identity.
 
-        The same identity the lifecycle notifications claim on (Moonraker
-        job id when known, else filename + start-claim time). It can be
-        None early in a print; the mute store's fallback key covers that.
+        The identity recorded at the print's fresh start, which the
+        lifecycle claims and the capture key use too. Recomputing it later
+        would flip it once the start claim expires (start_claim_ttl_s), and
+        a mute would stop matching mid-print. Before any start is seen it
+        falls back to the computed identity, which can be None; the mute
+        store's fallback key covers that.
         """
-        return _notification_identity({"start_time": start_claim_time(self.filename),
-                                       **self.last_stats, "filename": self.filename})
+        return self.print_identity or _notification_identity(
+            {"start_time": start_claim_time(self.filename), **self.last_stats, "filename": self.filename})
 
     async def _dark_frame_check(self, reason, layer):
         """Handle one completely dark frame (#476). True when the frame was dark.
@@ -2379,8 +2394,10 @@ class Listener:
         vision failure, alerts. Missing plastic, spaghetti, and a detached part
         alert. Layers that advanced with an unchanged frame are promoted to a
         stall here, because the scheduler cannot see the camera before capture.
-        At [visual_watch] sensitivity 1 or 2 a stall alerts only when the vision
-        verdict is not ok/safe; at 3 to 5 every stall alerts.
+        A stall alerts only when the vision verdict is not ok/safe: an ok frame
+        never raises an operator alert, at any [visual_watch] sensitivity. A
+        verdict that says the feed is dark gets the dark-camera notice, not an
+        alert, and its stillness is not a stall.
         """
         image = None
         try:
@@ -2419,11 +2436,23 @@ class Listener:
             verdict, detail = await asyncio.to_thread(_visual_verdict, image, prompt, self.local_streak)
             suspicious = verdict in {"air", "spaghetti", "detached", "uncertain", "no", "unsafe"}
             if reason == "stalled_layers" and changed is False:
-                # Levels 1 and 2 trust a healthy vision verdict over the pixel diff.
-                suspicious = not (self.visual_watch.profile["vision_veto"] and verdict in VISUAL_HEALTHY_VERDICTS)
+                # A healthy vision verdict outranks the pixel diff.
+                suspicious = verdict not in VISUAL_HEALTHY_VERDICTS
             if verdict == "uncertain":
                 suspicious = True
             log(f"visual check file={self.filename!r} reason={reason} layer={layer} changed={changed} verdict={verdict} detail={detail!r}")
+            if _verdict_says_dark(verdict, detail):
+                # A dark feed frame_dark's thresholds let through: a camera
+                # fact, not a print alert. Its stillness is no stall, so
+                # neither the stall nor the dark baseline is kept.
+                if stall:
+                    self.visual_watch.alerted_stall_layer = None
+                if prior is None:
+                    self.visual_frames.pop(self.filename, None)
+                else:
+                    self.visual_frames[self.filename] = prior
+                await self._dark_frame_check(reason, layer)
+                return
             if suspicious and image is not None:
                 from . import print_alert_buttons as pab
                 if await asyncio.to_thread(pab.visual_muted, self.filename, self._visual_identity()):
@@ -2465,25 +2494,41 @@ class Listener:
         old = self.state
         identity = _notification_identity({"start_time": start_claim_time(self.filename),
                                            **self.last_stats, "filename": self.filename})
+        fresh_start = new_state == "printing" and old != "paused"
+        if fresh_start:
+            # One identity per print, fixed here and reused by the watchdog
+            # mute, the capture key and the terminal claim: recomputing it
+            # later flips once the start claim expires (start_claim_ttl_s).
+            # An unclaimed start gets its own so a mute outlives midnight.
+            self.print_identity = identity or f"file:{self.filename}|seen:{time.time()}"
+            identity = self.print_identity
+        else:
+            identity = self.print_identity or identity
         # A job that ends into standby (printer-side stop, job removed, Klipper
         # or printer restart during a long pause) never passes through a
         # TERMINAL state, but the job is just as over: #370. Treat it as a
         # terminal transition so it gets the same single claimed notice.
         gone = old in ("printing", "paused") and new_state == "standby"
-        phase = "start" if new_state == "printing" and old != "paused" else ("terminal" if old in ("printing", "paused") and (new_state in TERMINAL or gone) else None)
+        phase = "start" if fresh_start else ("terminal" if old in ("printing", "paused") and (new_state in TERMINAL or gone) else None)
+        duplicate_start = False
         if phase and not _claim_notification(identity, phase):
             log(f"suppressed duplicate {phase} notice identity={identity!r}")
-            self.state = new_state
-            return
+            if phase != "start":
+                self.state = new_state
+                return
+            # A listener restart mid-print re-sees the claimed start: only
+            # the start post is a duplicate, the print still needs its
+            # capture, light and watchdog.
+            duplicate_start = True
         self.state = new_state
         log(f"state {old} -> {new_state} file={self.filename!r} ({reason})")
         _record_transition_markers(old, new_state, self.filename, self.last_stats)
-        if new_state == "printing" and old != "paused" and self.capture_session is None:
+        if fresh_start:
             # A fresh start (or a print already running when the listener
-            # (re)connected): open the #246 stage 2 capture session. A
-            # resume keeps the session the pause left open.
+            # (re)connected): open the #246 stage 2 capture session,
+            # replacing any session a missed end left open. A resume keeps
+            # the session the pause left open.
             self._capture_begin(identity)
-        if new_state == "printing" and old != "paused":
             # #516: auto light-on at a fresh print start (a resume is not
             # a start; the light never went off during a pause).
             await self.light_print_started()
@@ -2502,7 +2547,9 @@ class Listener:
                 self.slot_tracker.reset()
                 self.visual_watch.reset()
                 self.local_streak.reset()
-                if start_claimed(self.filename):
+                if duplicate_start:
+                    log(f"start already announced; no second start post: {self.filename!r}")
+                elif start_claimed(self.filename):
                     log(f"start claimed by print-now; updating its message, no second start post: {self.filename!r}")
                     await asyncio.to_thread(announce_warmup_done, self.filename)
                 else:
@@ -2543,18 +2590,29 @@ class Listener:
                     self.start_screen_cancel_reboot("moonraker cancelled")
             elif new_state != "complete":
                 await asyncio.to_thread(post, print_summary.format_event(new_state, self.filename))
-        await asyncio.to_thread(run_announcer, f"{old}->{new_state}")
-        if new_state in ("complete", "cancelled", "error", "standby") and old in ("printing", "paused"):
-            self.visual_watch.reset()
-            self.local_streak.reset()
-            self.visual_frames.pop(self.filename, None)
+        ended = new_state in ("complete", "cancelled", "error", "standby") and old in ("printing", "paused")
+        if ended:
+            # Close the capture before the announcer: its timelapse
+            # postprocess only finds a capture whose manifest is no longer
+            # "capturing", and would otherwise attach the previous job's.
             self._capture_end(new_state)
-            # #516: the print is over; open the auto light-off idle window.
-            await self.light_print_finished()
-            # An auto-started live session ends with its print (#311 stage 4).
-            await asyncio.to_thread(_live_auto_on_print_end)
-            await self._retire_paused_prompt(new_state)
-            await self.after_print(new_state)
+        await asyncio.to_thread(run_announcer, f"{old}->{new_state}")
+        if ended:
+            await self._print_ended(new_state)
+
+    async def _print_ended(self, new_state):
+        """End-of-print cleanup, for a terminal transition or a Klipper shutdown."""
+        self.visual_watch.reset()
+        self.local_streak.reset()
+        self.visual_frames.pop(self.filename, None)
+        self._capture_end(new_state)
+        self.print_identity = None
+        # #516: the print is over; open the auto light-off idle window.
+        await self.light_print_finished()
+        # An auto-started live session ends with its print (#311 stage 4).
+        await asyncio.to_thread(_live_auto_on_print_end)
+        await self._retire_paused_prompt(new_state)
+        await self.after_print(new_state)
 
     async def _retire_paused_prompt(self, new_state):
         """Retire this job's paused prompt now that the job has ended (#370).
@@ -2837,6 +2895,9 @@ class Listener:
                             else:
                                 log("firmware stop already alerted for this job; not posting again")
                             self.state = "error"
+                            # Klipper comes back as error -> standby, which
+                            # is not a terminal transition: clean up here.
+                            await self._print_ended("error")
                     elif method == "notify_klippy_ready":
                         log("klippy ready; resubscribing")
                         await ws.send(SUBSCRIBE)

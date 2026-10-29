@@ -13,6 +13,7 @@ import copy
 import hashlib
 import io
 import json
+import logging
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -32,6 +33,7 @@ def _fresh_detector_state(monkeypatch):
     """The detector caches sessions/failures per process; every test
     starts from a clean slate and no PRINT_VISION_URL leaks in."""
     monkeypatch.setattr(lv, "_sessions", {})
+    monkeypatch.setattr(lv, "_active_providers", {})
     monkeypatch.setattr(lv, "_failures", {})
     monkeypatch.setattr(lv, "_verified_files", set())
     monkeypatch.setattr(lv, "_ort", None)
@@ -524,6 +526,121 @@ def test_bambu_monitor_verdict_threads_its_streak(process_cfg):
     single = bambu_watch._default_verdict(adapter)
     assert single(frame(84), "prompt")[0] == "uncertain"
     assert single(frame(84), "prompt")[0] == "uncertain"
+
+
+# --------------------------------------------------------------- execution providers
+
+
+class _FakeSession:
+    def __init__(self, providers):
+        self._providers = providers
+
+    def get_providers(self):
+        return list(self._providers)
+
+
+class _FakeOrt:
+    """onnxruntime stand-in: reports a fixed provider list and records
+    every session request. No GPU exists in the test environment, so
+    accelerated providers are only ever simulated here — live GPU proof
+    is an operator follow-up, as the docs state."""
+
+    def __init__(self, available, refuse_accelerated=False):
+        self._available = available
+        self._refuse = refuse_accelerated
+        self.requested = []
+
+    def get_available_providers(self):
+        return list(self._available)
+
+    def InferenceSession(self, _path, providers=None):
+        providers = list(providers or [])
+        self.requested.append(providers)
+        if self._refuse and providers != ["CPUExecutionProvider"]:
+            raise RuntimeError("accelerator cannot initialise")
+        return _FakeSession(providers)
+
+
+def test_select_providers_prefers_in_the_documented_order():
+    both = ["CPUExecutionProvider", "TensorRTExecutionProvider", "CUDAExecutionProvider"]
+    assert lv.select_providers(both) == ["CUDAExecutionProvider", "CPUExecutionProvider"]
+    assert lv.select_providers(["OpenVINOExecutionProvider"]) == [
+        "OpenVINOExecutionProvider", "CPUExecutionProvider"]
+    assert lv.select_providers(["CoreMLExecutionProvider", "CPUExecutionProvider"]) == [
+        "CoreMLExecutionProvider", "CPUExecutionProvider"]
+    assert lv.select_providers(["DmlExecutionProvider"]) == [
+        "DmlExecutionProvider", "CPUExecutionProvider"]
+
+
+def test_select_providers_cpu_only_and_degenerate_inputs():
+    assert lv.select_providers(["CPUExecutionProvider"]) == ["CPUExecutionProvider"]
+    assert lv.select_providers([]) == ["CPUExecutionProvider"]
+    assert lv.select_providers(None) == ["CPUExecutionProvider"]
+    assert lv.select_providers(["AzureExecutionProvider"]) == ["CPUExecutionProvider"]
+
+
+def test_session_uses_the_selected_accelerated_provider(monkeypatch, tmp_path):
+    fake = _FakeOrt(["CPUExecutionProvider", "CUDAExecutionProvider"])
+    monkeypatch.setattr(lv, "_ort", fake)
+    path = tmp_path / "model.onnx"
+    lv._session(path)
+    assert fake.requested == [["CUDAExecutionProvider", "CPUExecutionProvider"]]
+    assert lv.active_provider(cfg_with(local_model_path=str(path))) == "CUDAExecutionProvider"
+
+
+def test_session_logs_the_active_provider_once(monkeypatch, tmp_path, caplog):
+    fake = _FakeOrt(["CUDAExecutionProvider", "CPUExecutionProvider"])
+    monkeypatch.setattr(lv, "_ort", fake)
+    path = tmp_path / "model.onnx"
+    with caplog.at_level(logging.INFO, logger=lv.__name__):
+        lv._session(path)
+        lv._session(path)  # cached: no second session, no second line
+    assert len(fake.requested) == 1
+    lines = [r for r in caplog.records
+             if "execution provider: CUDAExecutionProvider" in r.getMessage()]
+    assert len(lines) == 1
+
+
+def test_session_falls_back_to_cpu_when_the_accelerator_cannot_initialise(
+        monkeypatch, tmp_path):
+    fake = _FakeOrt(["CUDAExecutionProvider", "CPUExecutionProvider"],
+                    refuse_accelerated=True)
+    monkeypatch.setattr(lv, "_ort", fake)
+    path = tmp_path / "model.onnx"
+    lv._session(path)
+    assert fake.requested == [["CUDAExecutionProvider", "CPUExecutionProvider"],
+                              ["CPUExecutionProvider"]]
+    assert lv.active_provider(cfg_with(local_model_path=str(path))) == "CPUExecutionProvider"
+
+
+def test_session_on_a_cpu_only_host_requests_cpu(monkeypatch, tmp_path):
+    fake = _FakeOrt(["CPUExecutionProvider"])
+    monkeypatch.setattr(lv, "_ort", fake)
+    path = tmp_path / "model.onnx"
+    lv._session(path)
+    assert fake.requested == [["CPUExecutionProvider"]]
+    assert lv.active_provider(cfg_with(local_model_path=str(path))) == "CPUExecutionProvider"
+
+
+def test_active_provider_is_none_before_any_session():
+    assert lv.active_provider(cfg_with()) is None
+
+
+def test_selected_provider_reports_the_head_without_a_session(monkeypatch):
+    fake = _FakeOrt(["OpenVINOExecutionProvider", "CPUExecutionProvider"])
+    monkeypatch.setattr(lv, "_ort", fake)
+    assert lv.selected_provider() == "OpenVINOExecutionProvider"
+    assert fake.requested == []  # no session was created to find out
+
+
+def test_selected_provider_is_none_when_the_runtime_is_unusable(monkeypatch):
+    monkeypatch.setattr(lv, "_ort_error", RuntimeError("no onnxruntime here"))
+    assert lv.selected_provider() is None
+
+
+def test_status_names_the_execution_provider():
+    state, detail = lv.detector_status(cfg_with())
+    assert state == "ready" and "execution provider: CPUExecutionProvider" in detail
 
 
 # --------------------------------------------------------------- vision_ready

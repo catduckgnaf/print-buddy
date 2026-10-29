@@ -192,7 +192,7 @@ def test_missing_token_names_the_variable_too(home, monkeypatch):
     with pytest.raises(SiteLoginNeeded) as caught:
         site_accounts.read_token('nexprint')
     assert 'NEXPRINT_TOKEN' in str(caught.value)
-    assert '`.env` as `NEXPRINT_TOKEN=<value>`' in site_accounts.connect_steps('nexprint')
+    assert 'NEXPRINT_TOKEN' in str(caught.value)
 
 
 def test_crealitycloud_reads_its_variable(home, monkeypatch):
@@ -226,20 +226,23 @@ def test_token_file_accepts_common_paste_shapes(home, pasted):
     assert site_accounts.read_token('nexprint') == 'tok123'
 
 
-def test_connect_steps_never_ask_for_the_token_in_chat(home):
+def test_connect_steps_is_the_whole_walkthrough_in_one_message(home):
     for site in site_accounts.LOGIN_SITES:
-        text = site_accounts.connect_steps(site)
-        assert "Don't paste it here" in text
-        assert str(site_accounts.token_path(site)) in text
-        assert 'umask 077' in text
+        text = site_accounts.connect_steps(site, lead='**Lead line.**')
+        assert text.startswith('**Lead line.**')
+        # Paste it here is an option, with the honest risk note beside it.
+        assert 'Paste it here' in text and "Don't paste it here" not in text
+        assert site_accounts.RISK_NOTE in text and 'may keep a copy' in text
+        # Saving on the machine stays an option, with its path.
+        assert str(site_accounts.token_path(site)) in text and 'Saved' in text
         # Every walkthrough links its own docs section.
         acc = site_accounts.LOGIN_SITES[site]
         assert acc.docs_url in text and acc.docs_url.startswith(site_accounts.DOCS + '#')
+        assert len(text) < 2400, (site, len(text))  # one chat message's worth
     assert site_accounts.LOGIN_SITES['thingiverse'].docs_url.endswith('#thingiverse-app-token')
     assert site_accounts.LOGIN_SITES['cults3d'].docs_url.endswith('#cults3d-api-key')
     assert site_accounts.LOGIN_SITES['myminifactory'].docs_url.endswith('#myminifactory-sign-in')
     assert 'Create an App' in site_accounts.connect_steps('thingiverse')
-    assert site_accounts.connect_steps('thangs', renew=True).startswith('**Renew your Thangs account**')
 
 
 def test_source_report_shows_every_site_and_never_a_credential(home, monkeypatch):
@@ -253,8 +256,8 @@ def test_source_report_shows_every_site_and_never_a_credential(home, monkeypatch
     assert set(lines) == {label for _, label, _, _ in site_accounts.SOURCES}
     assert 'connected (token file)' in lines['Thingiverse']
     assert 'connected (variable)' in lines['Nexprint']
-    assert 'login expired' in lines['Thangs'] and 'Renew Thangs login' in lines['Thangs']
-    assert 'not connected' in lines['MakerWorld'] and 'Connect MakerWorld account' in lines['MakerWorld']
+    assert 'login expired' in lines['Thangs'] and 'renewing it' in lines['Thangs']
+    assert 'not connected' in lines['MakerWorld'] and 'connecting it' in lines['MakerWorld']
     assert 'no login needed' in lines['Printables']
     assert 'listing only' in lines['MakerOnline'] and 'listing only' in lines['Cults3D']
     assert 'not supported' in lines['GrabCAD']
@@ -529,9 +532,8 @@ def _quiet_preview(monkeypatch):
 
 
 def test_connect_flow_retries_the_download_after_saved(env, home, monkeypatch):
-    # No token: the bot offers to connect, sends the walkthrough (which never
-    # asks for the token in chat), and after "Saved — try again" retries the
-    # same download. The retry is stopped by a sentinel so this test covers
+    # No token: the bot asks once, with the whole walkthrough in that one
+    # message, and after "Saved — try again" retries the same download. The retry is stopped by a sentinel so this test covers
     # exactly the connect loop.
     monkeypatch.setattr(model_job, 'nexprint_inventory', lambda url: _single_source_job())
     _quiet_preview(monkeypatch)
@@ -543,15 +545,16 @@ def test_connect_flow_retries_the_download_after_saved(env, home, monkeypatch):
             site_accounts.read_token('nexprint')  # raises: no file yet
         raise RuntimeError('sentinel: download retried')
     monkeypatch.setattr(model_job, 'download_for_site', fake_download)
-    adapter = Adapter([0, 0])
+    adapter = Adapter([0])
     asyncio.run(prepared_intake.prepare_link(
         _event(NEXPRINT_URL), adapter, state(), env.root, timeout=1))
     assert attempts == ['k', 'k']
-    assert adapter.questions[0]['choices'][:2] == ['Connect Nexprint account', 'Not now (cancel)']
-    assert 'no Nexprint account is connected' in adapter.questions[0]['question']
-    walkthrough = next(text for text in adapter.sent if 'Connect your Nexprint account' in text)
-    assert 'auth_token' in walkthrough and "Don't paste it here" in walkthrough
-    assert adapter.questions[1]['choices'][0] == 'Saved — try again'
+    assert len(adapter.questions) == 1
+    first = adapter.questions[0]
+    assert first['choices'][:2] == ['Saved — try again', 'Cancel']
+    assert 'no Nexprint account is connected' in first['question']
+    assert 'auth_token' in first['question'] and 'Paste it here' in first['question']
+    assert not any('Connect your Nexprint account' in text for text in adapter.sent)
     receipt = json.loads(next(env.root.glob('*.json')).read_text())
     assert 'sentinel' in receipt['error']
 
@@ -563,14 +566,12 @@ def test_connect_flow_refused_token_is_offered_again(env, home, monkeypatch):
     def refused(job, chosen, dest):
         raise site_accounts.refused('nexprint')
     monkeypatch.setattr(model_job, 'download_for_site', refused)
-    adapter = Adapter([0, 0, 1])
+    adapter = Adapter([0, 1])
     asyncio.run(prepared_intake.prepare_link(
         _event(NEXPRINT_URL), adapter, state(), env.root, timeout=1))
-    # A refused login is offered as a renewal, every time it is refused.
-    offers = [q for q in adapter.questions if q['choices'][0] == 'Renew Nexprint login']
-    assert len(offers) == 2
-    assert 'turned down the saved login' in offers[1]['question']
-    assert any('**Renew your Nexprint account**' in t for t in adapter.sent)
+    # A refused login is asked about again every time it is refused.
+    assert len(adapter.questions) == 2
+    assert all('turned down the saved login' in q['question'] for q in adapter.questions)
     receipt = json.loads(next(env.root.glob('*.json')).read_text())
     assert receipt['status'] == 'FAILED' and receipt['sliced'] is False
 
@@ -599,7 +600,7 @@ def test_connect_flow_gives_up_after_three_rounds(env, home, monkeypatch):
         calls.append(1)
         raise site_accounts.refused('nexprint')
     monkeypatch.setattr(model_job, 'download_for_site', refused)
-    adapter = Adapter([0, 0] * prepared_intake.MAX_CONNECT_ROUNDS)
+    adapter = Adapter([0] * prepared_intake.MAX_CONNECT_ROUNDS)
     asyncio.run(prepared_intake.prepare_link(
         _event(NEXPRINT_URL), adapter, state(), env.root, timeout=1))
     assert len(calls) == prepared_intake.MAX_CONNECT_ROUNDS + 1
@@ -633,14 +634,14 @@ def test_connect_flow_at_the_lookup_for_a_key_site(env, home, monkeypatch):
 
     class SavingAdapter(Adapter):
         async def send_clarify(self, **kw):
-            if kw['question'].startswith('Press Saved'):
+            if kw['question'].startswith('**Thingiverse needs'):
                 save_token('thingiverse', 'tv-token')  # the operator saves it, then presses Saved
             return await super().send_clarify(**kw)
-    adapter = SavingAdapter([0, 0])
+    adapter = SavingAdapter([0])
     asyncio.run(prepared_intake.prepare_link(_event(url), adapter, state(), env.root, timeout=1))
     assert lookups == [url, url]
-    assert adapter.questions[0]['choices'][0] == 'Connect Thingiverse account'
-    steps = next(t for t in adapter.sent if 'Connect your Thingiverse account' in t)
+    assert adapter.questions[0]['choices'][0] == 'Saved — try again'
+    steps = adapter.questions[0]['question']
     assert 'Create an App' in steps and '#thingiverse-app-token' in steps
     receipt = json.loads(next(env.root.glob('*.json')).read_text())
     assert 'sentinel' in receipt['error']
@@ -668,7 +669,7 @@ def test_archive_member_is_capped_as_it_expands(home, monkeypatch, tmp_path):
 def test_makerworld_401_is_a_named_token_refusal(home, monkeypatch):
     # A raw "HTTP Error 401: Unauthorized" names no site, so the #590 known
     # cause could not recognise it; it is now a SiteLoginNeeded the intake
-    # turns into "Renew MakerWorld login".
+    # turns into the renew-login question.
     import urllib.error
     from print_handy import diagnostics
     save_token('makerworld', 'old-token')

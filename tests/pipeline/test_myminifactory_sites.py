@@ -295,10 +295,10 @@ def test_prepared_intake_myminifactory_offers_the_connect_flow(env, tmp_path, mo
     monkeypatch.setattr(prepared_intake, 'send_preview', fake_preview)
     event = S(source=S(profile='3dprinting', chat_id='c1', thread_id=None, user_id='u'),
               message_id='mmf1', text=MMF_URL)
-    adapter = Adapter([0, 1])  # Connect, then Cancel at "Saved — try again"
+    adapter = Adapter([1])  # Cancel at the one connect question
     asyncio.run(prepared_intake.prepare_link(event, adapter, state(), env.root, timeout=1))
-    assert adapter.questions[0]['choices'][0] == 'Connect MyMiniFactory account'
-    steps = next(t for t in adapter.sent if 'Connect your MyMiniFactory account' in t)
+    assert adapter.questions[0]['choices'][0] == 'Saved — try again'
+    steps = adapter.questions[0]['question']
     assert 'auth.myminifactory.com/web/authorize' in steps and 'Developers' in steps
     receipt = json.loads(next(env.root.glob('*.json')).read_text())
     assert receipt['status'] == 'FAILED'

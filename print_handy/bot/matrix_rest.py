@@ -92,6 +92,15 @@ def send_event(homeserver, token, room_id, event_type, content, txn_id=None, *, 
                     content, timeout=timeout, opener=opener)
 
 
+def redact(homeserver, token, room_id, event_id, *, txn_id=None, opener=None, timeout=30):
+    """Redact (delete) one event. Returns the response dict."""
+    room = urllib.parse.quote(str(room_id), safe="")
+    event = urllib.parse.quote(str(event_id), safe="")
+    txn = urllib.parse.quote(str(txn_id or uuid.uuid4().hex), safe="")
+    return _request(homeserver, token, "PUT", f"{CLIENT}/rooms/{room}/redact/{event}/{txn}",
+                    {}, timeout=timeout, opener=opener)
+
+
 def send_message(homeserver, token, room_id, text, *, txn_id=None, opener=None, timeout=30):
     """One m.room.message text event. Returns the event id, or ''."""
     sent = send_event(homeserver, token, room_id, "m.room.message",

@@ -122,12 +122,38 @@ def typed_reply(source, text):
     cid, parser = _typed_prompts[keys[-1]]
     if str(text or '').strip().casefold() in CANCEL_WORDS:
         return '' if cm.resolve_gateway_clarify(cid, 'cancel') else None
+    global _secret_taken
+    _secret_taken = False
     try:
         value = parser(text)
     except ValueError as exc:
+        _secret_taken = False
         return str(exc)
     # A prompt a button already answered is closed: let the text fall through instead of swallowing it.
-    return '' if cm.resolve_gateway_clarify(cid, str(value)) else None
+    resolved = cm.resolve_gateway_clarify(cid, str(value))
+    if not resolved:
+        _secret_taken = False
+    return '' if resolved else None
+
+
+# A parser that took a secret (a pasted login token) calls note_secret_reply()
+# while typed_reply runs; the dispatcher then asks take_secret_reply() whether
+# the operator's message should be deleted. Reset at the start of every
+# typed_reply, so a flag never outlives the reply that set it.
+_secret_taken = False
+
+
+def note_secret_reply():
+    """Called by a typed-reply parser that just accepted a secret from the message."""
+    global _secret_taken
+    _secret_taken = True
+
+
+def take_secret_reply():
+    """True once after a typed_reply that accepted a secret: delete that message."""
+    global _secret_taken
+    taken, _secret_taken = _secret_taken, False
+    return taken
 
 
 CANCEL_WORDS = {'cancel', 'stop', 'nevermind', 'never mind', 'abort'}

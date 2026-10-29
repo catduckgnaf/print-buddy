@@ -110,6 +110,11 @@ def _try(label, fn, *args):
                 except ValueError as err:
                     state = f"INVALID JSON: {err}"
                 print(f"SPACING   input {path.relative_to(d)} ({path.stat().st_size} B, {state})")
+            for path in sorted(Path(d).rglob("*.log")):
+                tail = path.read_text(errors="replace").strip().splitlines()[-25:]
+                print(f"SPACING   log {path.relative_to(d)}:
+" + "
+".join("SPACING     " + line for line in tail))
             return False
 
 

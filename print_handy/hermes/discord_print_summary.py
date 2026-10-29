@@ -180,7 +180,10 @@ def find_job(filename, archive=None, context_path=None):
                     hit = False
             if not hit and local.is_file():
                 # model_job.remote_name: optional "<Title>_" prefix, the plate stem, then the full SHA256.
-                m = re.fullmatch(rf"(?:.+_)?{re.escape(local.stem)}_([0-9a-f]{{64}}){re.escape(local.suffix)}", name)
+                # A .gcode.3mf upload (#564) appends .3mf to that name; its digest is the inner
+                # G-code's, so the package name binds to the same local plate.
+                tail = re.escape(local.suffix) + (r"(?:\.3mf)?" if local.suffix == ".gcode" else "")
+                m = re.fullmatch(rf"(?:.+_)?{re.escape(local.stem)}_([0-9a-f]{{64}}){tail}", name)
                 hit = bool(m) and _sha256(local) == m[1]
             if hit:
                 plate = next((p for p in plates_of(job) if p.get("gcode") == gcode), None)

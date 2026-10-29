@@ -420,6 +420,44 @@ def test_mapped_unresolved_start_is_uncertain_and_blocks_the_next_job(mapped):
     assert len(mapped.scripts) == 1 and len(uploads(mapped.run)) == 1
 
 
+def test_mapped_launch_uploads_3mf_package_when_zmod_is_current(mapped, monkeypatch):
+    """#564: the native mapped route uploads the .gcode.3mf package and points
+    SET_ZCOLOR at the package name when ZMod >= 1.7.5 and the format is auto."""
+    adapter = model_job.printers.current()
+    adapter.config = {"printer": {"zmod_delivery_format": "auto"}}
+    adapter.model.vendor_key = "flashforge"
+    monkeypatch.setattr(model_job, "_zmod_version", lambda st: (1, 7, 5))
+    jp, g = make_job(mapped.root, "a")
+    job = json.loads(jp.read_text())
+    out = model_job.print_mapped_native(g, mapped.st, {"display_off": 0}, {"0": 1}, job, jp, 0, False)
+    cmds = [c.args[0] for c in mapped.run.call_args_list if len(c.args[0]) >= 4 and c.args[0][1] == "upload"]
+    assert len(cmds) == 1
+    cmd = cmds[0]
+    assert cmd[2].endswith(".gcode.3mf") and cmd[3].endswith(".gcode.3mf")
+    assert cmd[4] == model_job.file_sha256(Path(cmd[2]))
+    assert mapped.scripts and mapped.scripts[0].startswith("SET_ZCOLOR FILENAME=" + cmd[3])
+    assert out["delivery_format"]["format"] == "3mf"
+    # The note lands on the job dict, which write_job persists (best effort in this
+    # fixture: the mocked native layer leaves non-serializable state in the job, so
+    # the on-disk write warns and skips — the same behaviour as the pre-existing
+    # pending-usage write in this harness).
+    assert job["delivery_format"]["format"] == "3mf"
+
+
+def test_mapped_launch_stays_on_plain_gcode_when_version_is_unknown(mapped, monkeypatch):
+    """#564 fallback pin: auto + an unreadable ZMod version is today's plain upload."""
+    adapter = model_job.printers.current()
+    adapter.config = {"printer": {"zmod_delivery_format": "auto"}}
+    adapter.model.vendor_key = "flashforge"
+    monkeypatch.setattr(model_job, "_zmod_version", lambda st: None)
+    _, launch = launch_mapped(mapped, "a")
+    out = launch()
+    cmds = [c.args[0] for c in mapped.run.call_args_list if len(c.args[0]) >= 4 and c.args[0][1] == "upload"]
+    assert len(cmds) == 1
+    assert cmds[0][2].endswith("x.gcode") and cmds[0][3].endswith(".gcode") and not cmds[0][3].endswith(".3mf")
+    assert "delivery_format" not in out
+
+
 def test_operator_can_clear_a_lease_left_by_another_host_but_not_a_live_local_one():
     from print_handy.core import launch_state
     lease = launch_state.acquire(PRINTER, remote="a.gcode")

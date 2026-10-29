@@ -160,11 +160,12 @@ def plate_metadata(text, plate=1) -> dict:
 
 
 def _slice_info(plate, nozzle_mm):
+    nozzle = f'  <metadata key="nozzle_diameters" value="{float(nozzle_mm):g}"/>\n' if nozzle_mm else ""
     return ('<?xml version="1.0" encoding="UTF-8"?>\n<config>\n <header>\n'
             '  <header_item key="X-BBL-Client-Type" value="slicer"/>\n'
             '  <header_item key="X-Print-Handy" value="zmod 3mf delivery"/>\n </header>\n <plate>\n'
             f'  <metadata key="index" value="{int(plate)}"/>\n'
-            f'  <metadata key="nozzle_diameters" value="{float(nozzle_mm):g}"/>\n </plate>\n</config>\n')
+            f'{nozzle} </plate>\n</config>\n')
 
 
 def package(gcode, target, plate=1, nozzle_mm=0.4, thumbnails=None) -> Path:

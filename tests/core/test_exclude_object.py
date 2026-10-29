@@ -29,5 +29,7 @@ def test_exclude_sends_the_name_only_after_confirm():
 def test_last_object_is_a_cancel_and_an_unknown_name_is_refused():
     last = exclude_plan(["only"], "only", confirmed=True)
     assert last["action"] == "cancel_print" and last["body"] is None
+    asked = exclude_plan(["only"], "only", confirmed=False)
+    assert asked["action"] == "cancel_print" and asked["body"] is None
     missing = exclude_plan(["hinge_left"], "nope", confirmed=True)
     assert missing["action"] == "refuse" and missing["body"] is None

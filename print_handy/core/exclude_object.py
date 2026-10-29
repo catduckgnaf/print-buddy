@@ -3,10 +3,10 @@
 Stage 1 lists objects whose G-code carries EXCLUDE_OBJECT_DEFINE. A file
 without that metadata produces no line, not an error.
 
-Stage 2 builds the Moonraker exclude call only after confirm. Excluding the
-last remaining object is not an exclude: the caller must use the existing
-cancel confirm. A refused or unconfirmed name never produces a call, so a
-failed or skipped exclude cannot be reported as done.
+Stage 2 builds the Moonraker exclude call only after confirm. The last
+remaining object is not an exclude, confirmed or not: the caller must use
+the existing cancel confirm. A refused or unconfirmed name never produces
+a call, so a failed or skipped exclude cannot be reported as done.
 """
 from __future__ import annotations
 
@@ -54,13 +54,16 @@ def exclude_plan(names, target, *, confirmed: bool, remaining=None) -> dict:
     if target not in left:
         return {"action": "refuse", "name": target,
                 "reason": f"{target} is not an object still printing on this plate", "body": None}
-    if not confirmed:
-        return {"action": "confirm", "name": target,
-                "reason": f"Cancel {target} and keep printing the rest?", "body": None}
     after = [name for name in left if name != target]
     if not after:
         return {"action": "cancel_print", "name": target,
                 "reason": "That is the last object. Cancel the whole print instead.", "body": None}
+    if any(ch in target for ch in "\r\n;\"'\\"):
+        return {"action": "refuse", "name": target,
+                "reason": f"{target} cannot be excluded from chat", "body": None}
+    if not confirmed:
+        return {"action": "confirm", "name": target,
+                "reason": f"Cancel {target} and keep printing the rest?", "body": None}
     return {
         "action": "exclude",
         "name": target,

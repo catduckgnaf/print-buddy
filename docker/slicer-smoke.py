@@ -17,7 +17,12 @@ from print_handy.core import slice_guard
 
 def main():
     channel = os.environ["PRINT_HANDY_ORCA_CHANNEL"]
-    assert channel in {"stable", "alpha"}
+    # 'alpha' is the preview channel's old name (#600), kept as an alias for
+    # at least one release; the entrypoint already normalizes it, and a direct
+    # run with the old value gets the same treatment here.
+    if channel == "alpha":
+        channel = "preview"
+    assert channel in {"stable", "preview"}
     binary = Path(f"/opt/orca-{channel}/bin/orca-slicer")
     assert binary.is_file() and os.access(binary, os.X_OK), binary
     revision = Path(f"/orca-{channel}-source-revision").read_text().strip()

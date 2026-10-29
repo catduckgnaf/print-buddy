@@ -138,6 +138,23 @@ class DoctorTests(unittest.TestCase):
         self.assertEqual(code, 1)
         self.assertIn("FAIL  orca cli: flatpak run com.orcaslicer.OrcaSlicer --help exited 1", text)
 
+    def test_orca_probe_runs_from_a_writable_scratch_dir(self):
+        # OrcaSlicer writes 00000.log into its cwd and aborts (-6) when it cannot; docker exec's
+        # default cwd (/app) is not writable by the container user, so the probe must not inherit it.
+        seen = {}
+
+        def fake_run(command, **kwargs):
+            cwd = kwargs.get("cwd")
+            seen["cwd"] = cwd
+            seen["writable"] = bool(cwd) and os.path.isdir(cwd) and os.access(cwd, os.W_OK)
+            return mock.MagicMock(returncode=0)
+
+        with mock.patch.object(doctor.shutil, "which", return_value="/usr/local/bin/orca-slicer"),                 mock.patch.object(doctor.subprocess, "run", side_effect=fake_run):
+            doctor.check_orca({"orca": {"command": ["/usr/local/bin/orca-slicer"]}})
+        self.assertTrue(seen["writable"])
+        self.assertNotEqual(os.path.abspath(seen["cwd"]), os.path.abspath(os.getcwd()))
+        self.assertFalse(os.path.exists(seen["cwd"]))  # scratch dir is cleaned up
+
     def test_missing_hardware_record_fails_with_the_path(self):
         code, text = self.run_doctor(hardware=False)
         self.assertEqual(code, 1)

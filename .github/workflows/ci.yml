@@ -94,7 +94,8 @@ jobs:
           export PRINT_HANDY__PATHS__HERMES_HOME="/tmp/print-handy"
           "/tmp/clean/bin/python" -m print_handy.bot check
 
-  real-slicer:
+  slicer-test-stable:
+    name: Slicer test (stable)
     # The production track: OrcaSlicer v2.5.0-beta is the shipped slicer (#356), so the full
     # corpus and the slicer fixtures run against its upstream flatpak bundle. That bundle ships
     # packed vendor profiles only (BBL.opc), so this job is also the packed-tree proof:
@@ -138,7 +139,7 @@ jobs:
               https://github.com/OrcaSlicer/OrcaSlicer/releases/download/v2.5.0-beta/OrcaSlicer-Linux-flatpak_V2.5.0-beta_x86_64.flatpak
           fi
           echo '2d2f6979a3379d5fe77c62bbdff0ea36ec415ef43c9557e118ed45b95d39de03  '"$bundle" | sha256sum --check
-          echo "ORCA_BETA_BUNDLE=$bundle" >> "$GITHUB_ENV"
+          echo "ORCA_PREVIEW_BUNDLE=$bundle" >> "$GITHUB_ENV"
       - name: Install OrcaSlicer app bundle and runtime
         run: |
           set -euo pipefail
@@ -146,21 +147,23 @@ jobs:
           flatpak install --user -y --noninteractive flathub org.gnome.Platform//50
           # The restored cache may already contain the app; do not reinstall its bundle.
           if ! flatpak info --user --show-ref "$ORCA_FLATPAK_APP_ID" >/dev/null 2>&1; then
-            flatpak install --user --bundle -y --noninteractive "$ORCA_BETA_BUNDLE"
+            flatpak install --user --bundle -y --noninteractive "$ORCA_PREVIEW_BUNDLE"
           fi
           flatpak info --user --show-ref "$ORCA_FLATPAK_APP_ID"
           flatpak info --user --show-commit "$ORCA_FLATPAK_APP_ID"
-      - name: Run real-slicer tests (2.5.0 beta)
+      - name: Run slicer tests (2.5.0 beta)
         run: xvfb-run -a python -m pytest -v -s tests/slicer
       - name: Discord flow corpus with real Orca
         run: xvfb-run -a python -m pytest -v -s tests/corpus
 
-  real-slicer-alpha:
-    # The alpha channel pins the same v2.5.0-beta build as production (both channels
-    # in docker/orca-prebuilt.sh moved from the 2.5.0-alpha of #356 to the beta), so
-    # this job runs the same bundle as real-slicer on a fast subset as a smoke track.
-    # When upstream publishes a newer prerelease, point this job at it to restore the
-    # ahead-of-production meaning.
+  slicer-test-preview:
+    name: Slicer test (preview)
+    # The preview channel pins the same v2.5.0-beta build as production (both
+    # channels in docker/orca-prebuilt.sh pin it), so this job runs the same
+    # bundle as Slicer test (stable) on a fast subset as a smoke track. When
+    # upstream publishes a newer prerelease, point this job at it to restore
+    # the ahead-of-production meaning. Job names describe the channel's role,
+    # not the upstream stage (#600).
     # Flatpak plus xvfb requires a full system session and display; kept on the host runner after
     # Debian 13 container attempts failed during actual slicer startup.
     runs-on: ubuntu-24.04
@@ -200,7 +203,7 @@ jobs:
               https://github.com/OrcaSlicer/OrcaSlicer/releases/download/v2.5.0-beta/OrcaSlicer-Linux-flatpak_V2.5.0-beta_x86_64.flatpak
           fi
           echo '2d2f6979a3379d5fe77c62bbdff0ea36ec415ef43c9557e118ed45b95d39de03  '"$bundle" | sha256sum --check
-          echo "ORCA_BETA_BUNDLE=$bundle" >> "$GITHUB_ENV"
+          echo "ORCA_PREVIEW_BUNDLE=$bundle" >> "$GITHUB_ENV"
       - name: Install OrcaSlicer app bundle and runtime
         run: |
           set -euo pipefail
@@ -208,7 +211,7 @@ jobs:
           flatpak install --user -y --noninteractive flathub org.gnome.Platform//50
           # The restored cache may already contain the app; do not reinstall its bundle.
           if ! flatpak info --user --show-ref "$ORCA_FLATPAK_APP_ID" >/dev/null 2>&1; then
-            flatpak install --user --bundle -y --noninteractive "$ORCA_BETA_BUNDLE"
+            flatpak install --user --bundle -y --noninteractive "$ORCA_PREVIEW_BUNDLE"
           fi
           flatpak info --user --show-ref "$ORCA_FLATPAK_APP_ID"
           flatpak info --user --show-commit "$ORCA_FLATPAK_APP_ID"
@@ -220,7 +223,8 @@ jobs:
           tests/corpus/test_corpus.py::test_discord_flow[single-part]
           tests/corpus/test_corpus.py::test_discord_flow[plates-multicolor]
 
-  real-slicer-bambu:
+  slicer-test-bambu:
+    name: Slicer test (bambu)
     # Bambu Studio is the Bambu Lab vendor default slicer and the one-shot fallback when
     # Orca execution fails, but it stays out of the published image (the image
     # workflows keep the source-build stage off) and was covered only with the slicer
@@ -259,7 +263,7 @@ jobs:
           path: |
             ~/.cache/orcaslicer-v2.5.0-beta.flatpak
             ~/.local/share/flatpak
-          key: real-slicer-bambu-flatpak-${{ env.BAMBU_FLATPAK_COMMIT }}-${{ runner.os }}-x86_64
+          key: slicer-test-bambu-flatpak-${{ env.BAMBU_FLATPAK_COMMIT }}-${{ runner.os }}-x86_64
       - name: Download and verify upstream OrcaSlicer v2.5.0-beta bundle
         run: |
           set -euo pipefail
@@ -273,7 +277,7 @@ jobs:
               https://github.com/OrcaSlicer/OrcaSlicer/releases/download/v2.5.0-beta/OrcaSlicer-Linux-flatpak_V2.5.0-beta_x86_64.flatpak
           fi
           echo '2d2f6979a3379d5fe77c62bbdff0ea36ec415ef43c9557e118ed45b95d39de03  '"$bundle" | sha256sum --check
-          echo "ORCA_BETA_BUNDLE=$bundle" >> "$GITHUB_ENV"
+          echo "ORCA_PREVIEW_BUNDLE=$bundle" >> "$GITHUB_ENV"
       - name: Install OrcaSlicer app bundle and runtime
         run: |
           set -euo pipefail
@@ -281,7 +285,7 @@ jobs:
           flatpak install --user -y --noninteractive flathub org.gnome.Platform//50
           # The restored cache may already contain the app; do not reinstall its bundle.
           if ! flatpak info --user --show-ref "$ORCA_FLATPAK_APP_ID" >/dev/null 2>&1; then
-            flatpak install --user --bundle -y --noninteractive "$ORCA_BETA_BUNDLE"
+            flatpak install --user --bundle -y --noninteractive "$ORCA_PREVIEW_BUNDLE"
           fi
           flatpak info --user --show-ref "$ORCA_FLATPAK_APP_ID"
           flatpak info --user --show-commit "$ORCA_FLATPAK_APP_ID"
@@ -299,7 +303,7 @@ jobs:
           echo "Bambu Studio deployed commit: $deployed (pinned: $BAMBU_FLATPAK_COMMIT)"
           test "$deployed" = "$BAMBU_FLATPAK_COMMIT"
           flatpak info --user "$BAMBU_FLATPAK_APP_ID" | grep -E 'Version|Ref'
-      - name: Run real-slicer tests against Bambu Studio
+      - name: Run slicer tests against Bambu Studio
         run: xvfb-run -a python -m pytest -v -s tests/slicer/test_bambu_real_a1.py
 
   spoolman:

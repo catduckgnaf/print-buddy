@@ -26,6 +26,7 @@ Recommendation: run ZMod screenless (`display_off=1`) and use HelixScreen,
 Fluidd or Mainsail as the local interface.
 
 > **Known gap in 2.2.0: screenless prints cannot be started from chat yet.**
+> This includes HelixScreen setups: HelixScreen runs on screenless ZMod.
 > Every AD5X job Print Handy slices is bound to an IFS slot, and the route
 > that starts a slot-bound print (`SET_ZCOLOR`) still needs the stock
 > firmware's API, which only answers with the native screen on. Screenless,

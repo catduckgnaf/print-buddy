@@ -5750,8 +5750,8 @@ def print_mapped_native(g, st, mesh, mapping, job, job_path, wait_s, reprint):
         # plate claim is released, instead of a traceback.
         raise SystemExit("REFUSED: this print is bound to an IFS slot, and Print Handy can only "
                          "start slot-bound prints with ZMod's native screen on (display_off=0). "
-                         "ZMod is running screenless. Switch the native screen on, or start the "
-                         "file from HelixScreen, Fluidd or Mainsail. Nothing uploaded or started.")
+                         "ZMod is running screenless (HelixScreen or no screen). To print from "
+                         "chat, switch the native screen on. Nothing uploaded or started.")
     text = g.read_text()
     _embedded = adapter.native.embedded_mapping
     _embedded(text, st)  # refuses a spool swapped since slicing, before any printer I/O

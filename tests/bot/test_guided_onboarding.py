@@ -70,6 +70,18 @@ def test_start_refuses_when_the_config_does_not_load(tmp_path):
     assert st.get("k") is None
 
 
+def test_start_refuses_up_front_when_the_settings_file_is_not_writable(tmp_path, monkeypatch):
+    # Docker: /app/config/docker.yaml is baked into the image and root-owned, so
+    # the apply at the end of the walkthrough could never succeed.
+    from print_handy import roster_write
+    monkeypatch.setattr(roster_write, "write_refusal",
+                        lambda environ=None: "REFUSED: set PRINT_HANDY_CONFIG to a writable file")
+    st = store(tmp_path)
+    reply = start(st)
+    assert "cannot start" in reply and "PRINT_HANDY_CONFIG" in reply
+    assert st.get("k") is None
+
+
 def test_onboarding_and_setup_refuse_each_other(tmp_path):
     st = store(tmp_path)
     start(st, now=1000)

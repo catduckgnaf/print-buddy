@@ -515,7 +515,8 @@ def list_text(*, client: Client = spoolman, state_path: Path | None = None,
         f = s.get("filament") or {}
         grams = s.get("remaining_weight")
         g = f", {grams:.0f} g" if isinstance(grams, (int, float)) else ""
-        lines.append(f"#{s['id']} {f.get('name') or '?'} {f.get('material') or ''}{g}".rstrip())
+        from .discord_print_summary import filament_label
+        lines.append(f"#{s['id']} {filament_label(f.get('name'), f.get('material'), '?')}{g}".rstrip())
     if not shelf:
         lines.append("(nothing on the shelf)")
     lines.append("Guided: `/spool` walks you through adding or changing a spool with buttons · "

@@ -424,8 +424,8 @@ def insertion_select_options(spools: list[dict[str, Any]], mapped: dict[str, Any
                          and int(s.get("id") or 0) not in excluded_ids), key=score)[:25]:
         filament = spool.get("filament") or {}
         grams = spool.get("remaining_weight")
-        detail = " ".join(part for part in (str(filament.get("name") or "").strip(),
-                                               str(filament.get("material") or "").strip(),
+        from .discord_print_summary import filament_label
+        detail = " ".join(part for part in (filament_label(filament.get("name"), filament.get("material")),
                                                f"{grams:g} g" if isinstance(grams, (int, float)) else "") if part)
         options.append({"label": f"#{spool.get('id')} {detail}"[:100], "value": str(spool.get("id")),
                         "description": "Select this shelf spool"})

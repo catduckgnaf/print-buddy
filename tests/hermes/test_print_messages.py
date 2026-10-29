@@ -587,12 +587,10 @@ def test_listener_terminal_event_has_single_notification_owner(job, monkeypatch,
     posted = [p for p in posted if not p.startswith("A print was cancelled.")]
     if final == "complete":
         assert len(posted) == 1 and posted[0].startswith("Print started:")
-    # Cancellation is acknowledged immediately, then the detailed Klipper report
-    # arrives separately once diagnostics finish. The maintenance nudge is distinct.
+    # Cancellation is one post: the cancelled summary leads the detailed Klipper
+    # report (no separate ack). The maintenance nudge is distinct.
     elif final == "cancelled":
-        # Cancellation is acknowledged immediately, then detailed Klipper diagnostics
-        # arrive separately once collection finishes.
-        assert len(posted) == 3 and verb in posted[1] and verb in posted[2] and TITLE in posted[2]
+        assert len(posted) == 2 and verb in posted[1] and TITLE in posted[1]
     else:
         assert len(posted) == 2 and verb in posted[1] and TITLE in posted[1]
     assert not any(HEX.search(p) for p in posted)

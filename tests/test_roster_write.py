@@ -152,6 +152,48 @@ def test_missing_file_refused(tmp_path):
         _add(tmp_path / "local.yaml", NEW_BAMBU)
 
 
+def test_docker_image_settings_file_refused_up_front(tmp_path, monkeypatch):
+    # The image's /app/config/docker.yaml is root-owned and not on a volume.
+    path = _write(tmp_path, ROSTER_ONE, name="docker.yaml")
+    monkeypatch.setattr(roster_write, "_IMAGE_SETTINGS", path.resolve())
+    with pytest.raises(roster_write.RosterWriteError, match="baked into the Docker image") as err:
+        _add(path, NEW_BAMBU)
+    assert "PRINT_HANDY_CONFIG" in str(err.value)
+    assert path.read_text() == ROSTER_ONE
+    assert list(tmp_path.iterdir()) == [path]
+
+
+def test_unwritable_settings_file_refused_up_front(tmp_path, monkeypatch):
+    path = _write(tmp_path, ROSTER_ONE)
+    monkeypatch.setattr(roster_write.os, "access", lambda p, mode: False)
+    with pytest.raises(roster_write.RosterWriteError, match="not writable") as err:
+        _add(path, NEW_BAMBU)
+    assert "PRINT_HANDY_CONFIG" in str(err.value)
+    assert path.read_text() == ROSTER_ONE
+
+
+def test_oserror_on_write_maps_to_the_refusal(tmp_path, monkeypatch):
+    path = _write(tmp_path, ROSTER_ONE)
+
+    def denied(*_a, **_k):
+        raise PermissionError(13, "Permission denied")
+    monkeypatch.setattr(roster_write.tempfile, "mkstemp", denied)
+    with pytest.raises(roster_write.RosterWriteError, match="Permission denied") as err:
+        _add(path, NEW_BAMBU)
+    assert "PRINT_HANDY_CONFIG" in str(err.value)
+    assert path.read_text() == ROSTER_ONE
+
+
+def test_write_refusal_names_the_image_file_and_passes_a_writable_one(tmp_path, monkeypatch):
+    baked = _write(tmp_path, ROSTER_ONE, name="docker.yaml")
+    monkeypatch.setattr(roster_write, "_IMAGE_SETTINGS", baked.resolve())
+    refusal = roster_write.write_refusal({"PRINT_HANDY_CONFIG": str(baked)})
+    assert refusal and "baked into the Docker image" in refusal and "PRINT_HANDY_CONFIG" in refusal
+    mounted = _write(tmp_path, ROSTER_ONE, name="local.yaml")
+    assert roster_write.write_refusal({"PRINT_HANDY_CONFIG": str(mounted)}) is None
+    assert roster_write.write_refusal({"PRINT_HANDY_CONFIG": str(tmp_path / "absent.yaml")}) is None
+
+
 def test_unroundtrippable_file_refused_byte_identical(tmp_path):
     text = "printer:\n  model: flashforge.ad5x\nprinter:\n  name: Dup\n"
     path = _write(tmp_path, text)

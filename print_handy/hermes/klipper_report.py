@@ -31,7 +31,25 @@ def _url(path: str) -> str:
 def _get(path: str, timeout: float = 10) -> Any:
     with urllib.request.urlopen(_url(path), timeout=timeout) as resp:
         raw = resp.read()
-    return json.loads(raw) if path.startswith(("/printer", "/server/gcode")) else raw.decode("utf-8", "replace")
+    return (json.loads(raw) if path.startswith(("/printer", "/server/gcode", "/server/history"))
+            else raw.decode("utf-8", "replace"))
+
+
+def _job_for(filename: str, job: dict[str, Any] | None) -> dict[str, Any] | None:
+    """The finished history job for this print, or None.
+
+    Moonraker writes the history record from print_stats as they were before
+    the cancel macro reset them, so it keeps the real durations and filament
+    after ZMod's cancel has zeroed the live print_stats and parked the head.
+    A job still in progress, or one for a different file, is not this print.
+    """
+    if not isinstance(job, dict) or job.get("status") in (None, "in_progress"):
+        return None
+    name = str(job.get("filename") or "")
+    want = str(filename or "")
+    if want and name and name.rsplit("/", 1)[-1] != want.rsplit("/", 1)[-1]:
+        return None
+    return job
 
 
 def mark_bot_cancel(now: float | None = None) -> None:
@@ -94,11 +112,20 @@ def log_alarms(text: str, limit: int = 6) -> list[str]:
 
 
 def build(filename: str, status: dict[str, Any], store: list[dict[str, Any]], log_tail: str,
-          *, by_bot: bool, now: float | None = None) -> str:
+          *, by_bot: bool, now: float | None = None, job: dict[str, Any] | None = None) -> str:
     from . import print_alert_buttons as pab
     from .. import printers
     now = time.time() if now is None else now
-    ps = status.get("print_stats") or {}
+    live_ps = status.get("print_stats") or {}
+    job = _job_for(filename, job)
+    # After a macro reset (state "standby") the live counters read zero and the
+    # toolhead sits at the park position, so neither describes the cancelled print.
+    reset = live_ps.get("state") == "standby"
+    ps = dict(live_ps)
+    if job:
+        for key in ("print_duration", "total_duration", "filament_used"):
+            if job.get(key) is not None:
+                ps[key] = job[key]
     wh = status.get("webhooks") or {}
     info = ps.get("info") or {}
     who = "by the print bot (/print-stop or a button)" if by_bot else "from the printer screen or another client"
@@ -109,8 +136,11 @@ def build(filename: str, status: dict[str, Any], store: list[dict[str, Any]], lo
     prog = (status.get("virtual_sdcard") or {}).get("progress")
     if isinstance(prog, (int, float)) and prog:
         where.append(f"{prog * 100:.0f}% of the file")
+    planned = ((job or {}).get("metadata") or {}).get("filament_total")
+    if not where and isinstance(planned, (int, float)) and planned > 0 and ps.get("filament_used"):
+        where.append(f"about {min(float(ps['filament_used']) / planned, 1) * 100:.0f}% of the planned filament")
     pos = (status.get("gcode_move") or {}).get("gcode_position") or (status.get("toolhead") or {}).get("position")
-    if pos and len(pos) >= 3:
+    if pos and len(pos) >= 3 and not reset:
         where.append(f"nozzle at Z={pos[2]:.2f} mm")
     lines.append("Stopped at: " + (", ".join(where) or "position unknown"))
     lines.append(f"Printed for {_hm(ps.get('print_duration'))} (job open {_hm(ps.get('total_duration'))}), "
@@ -144,6 +174,12 @@ def report(filename: str) -> str:
         status = (_get(QUERY).get("result") or {}).get("status") or {}
     except Exception:
         pass
+    job: dict[str, Any] | None = None
+    try:
+        jobs = (_get("/server/history/list?limit=1&order=desc").get("result") or {}).get("jobs") or []
+        job = jobs[0] if jobs else None
+    except Exception:
+        pass
     try:
         store = (_get("/server/gcode_store?count=100").get("result") or {}).get("gcode_store") or []
     except Exception:
@@ -154,7 +190,7 @@ def report(filename: str) -> str:
             tail = resp.read().decode("utf-8", "replace")
     except Exception:
         pass
-    text = build(filename, status, store, tail, by_bot=cancelled_by_bot())
+    text = build(filename, status, store, tail, by_bot=cancelled_by_bot(), job=job)
     if not status:
         text += "\n(Couldn't read live printer state; report is partial.)"
     return text

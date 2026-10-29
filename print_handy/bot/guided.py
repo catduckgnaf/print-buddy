@@ -1291,6 +1291,10 @@ def handle_text(key, text, *, store, now=None, token_env="DISCORD_BOT_TOKEN",
                 return ("**Printer onboarding cannot start** — the current settings do not "
                         f"load: {exc}\nFix the configuration first (`/print-handy debugging` "
                         "shows the checks), then run `/print-handy add-printer` again.")
+            from .. import roster_write
+            refusal = roster_write.write_refusal()
+            if refusal:
+                return f"**Printer onboarding cannot start** — {refusal}"
             entries = cfg.get("printers") or []
             session = {"key": key, "flow": "onboard", "status": "onboarding",
                        "ob_answers": {}, "ob_step": 0, "ob_keys": ["model", "name"],

@@ -2456,7 +2456,8 @@ async def _spool_guided_change(adapter, source, metadata, gateway, spool_sync, p
     if listed:
         for i, entry in enumerate(listed, 1):
             grams = (f", {entry['remaining_grams']:g} g left" if entry.get('remaining_grams') is not None else '')
-            lines.append(f"{i}. #{entry['spool_id']} {entry['name']} {entry['material']}{grams}".rstrip())
+            from print_handy.hermes.discord_print_summary import filament_label
+            lines.append(f"{i}. #{entry['spool_id']} {filament_label(entry['name'], entry['material'])}{grams}".rstrip())
     else:
         lines.append('(nothing on the shelf)')
     choices = [f"#{entry['spool_id']} {entry['name']}"[:80] for entry in listed[:3]] + ['Add a new spool']

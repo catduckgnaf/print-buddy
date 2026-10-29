@@ -4,6 +4,7 @@
 #
 # Moonraker comes from `services.moonraker_url` (config/local.yaml or legacy config/local.toml). The helper path comes from
 # $HERMES_RESTART_HELPER or `paths.hermes_restart_helper`. $GRACE (seconds, default 900) is the wait.
+# Intakes are watched in $PRINT_HANDY_INTAKE_DIR, else <paths.hermes_home>/state/model-link-intakes.
 set -u
 REPO=$(cd "$(dirname "$0")/.." && pwd)
 cd "$REPO" || exit 1
@@ -21,7 +22,18 @@ while :; do
   case "$s" in printing|paused|unknown) sleep 60 ;; *) break ;; esac
 done
 # A restart kills an intake mid-slice and leaves "Slicing." hanging in Discord. Wait for it.
-INTAKES=${PRINT_HANDY_INTAKE_DIR:-${HERMES_HOME:-$HOME/.hermes/profiles/3dprinting}/state/model-link-intakes}
+# The intake folder is <paths.hermes_home>/state/model-link-intakes, the same
+# path the Python side uses (settings.state_dir). The profile name is the
+# operator's choice since #577, so it is never hard-coded here.
+if [ -z "${PRINT_HANDY_INTAKE_DIR:-}" ]; then
+  HH=$(python3 -m print_handy.settings get paths.hermes_home 2>/dev/null)
+  HH=${HH:-${HERMES_HOME:-}}
+  if [ -z "$HH" ]; then
+    echo "paths.hermes_home is not configured and HERMES_HOME is unset; set PRINT_HANDY_INTAKE_DIR" >&2
+    exit 2
+  fi
+fi
+INTAKES=${PRINT_HANDY_INTAKE_DIR:-${HH%/}/state/model-link-intakes}
 intake_busy() {
   python3 - "$INTAKES" <<'PY'
 import json, sys, time

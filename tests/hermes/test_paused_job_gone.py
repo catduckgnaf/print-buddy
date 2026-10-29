@@ -53,11 +53,9 @@ def test_paused_then_standby_posts_cancelled_notice_once_and_retires_prompt(monk
     posted, alerts, retired = _drive(monkeypatch, ["standby", "printing", "paused", "standby"])
     assert [kind for kind, _ in alerts] == ["paused"]
     terminal = _terminal_posts(posted)
-    # The established cancelled shape: a prompt acknowledgement, then the
-    # detailed report once diagnostics finish. Exactly one of each.
-    assert len(terminal) == 2
-    assert terminal[0].startswith("Print cancelled: charm")
-    assert "Print cancelled" in terminal[1] and "Klipper report stub" in terminal[1]
+    # One cancelled post: the summary leads the detailed report (no separate ack).
+    assert len(terminal) == 1
+    assert terminal[0].startswith("Print cancelled: charm") and "Klipper report stub" in terminal[0]
     assert retired == [(FILE, ("paused",), "Print ended at the printer.")]
 
 
@@ -65,7 +63,7 @@ def test_printing_then_standby_posts_cancelled_notice(monkeypatch):
     posted, alerts, retired = _drive(monkeypatch, ["standby", "printing", "standby"])
     assert alerts == []
     terminal = _terminal_posts(posted)
-    assert len(terminal) == 2 and terminal[0].startswith("Print cancelled: charm")
+    assert len(terminal) == 1 and terminal[0].startswith("Print cancelled: charm")
     assert retired == [(FILE, ("paused",), "Print ended at the printer.")]
 
 
@@ -73,9 +71,9 @@ def test_cancelled_arriving_after_standby_does_not_post_twice(monkeypatch):
     posted, _, retired = _drive(monkeypatch,
                                 ["standby", "printing", "paused", "standby", "cancelled"])
     terminal = _terminal_posts(posted)
-    assert len(terminal) == 2
-    assert terminal[0] == "Print cancelled: charm"  # one acknowledgement
-    assert sum("Klipper report stub" in p for p in terminal) == 1  # one report
+    assert len(terminal) == 1  # one post: summary plus report
+    assert terminal[0].startswith("Print cancelled: charm")
+    assert sum("Klipper report stub" in p for p in terminal) == 1
     assert len(retired) == 1
 
 
@@ -83,9 +81,9 @@ def test_paused_then_cancelled_behaves_as_before_and_retires_prompt(monkeypatch)
     posted, alerts, retired = _drive(monkeypatch, ["standby", "printing", "paused", "cancelled"])
     assert [kind for kind, _ in alerts] == ["paused"]
     terminal = _terminal_posts(posted)
-    assert len(terminal) == 2
+    assert len(terminal) == 1
     assert terminal[0].startswith("Print cancelled: charm")
-    assert "Klipper report stub" in terminal[1]
+    assert "Klipper report stub" in terminal[0]
     assert retired == [(FILE, ("paused",), "Print cancelled.")]
 
 

@@ -60,7 +60,11 @@ def test_where_text():
     assert print_stop.where_text(st("paused")) == ""
 
 
-def test_listener_cancel_posts_simple_report_before_slow_diagnostics(monkeypatch):
+def test_listener_cancel_posts_one_message_without_waiting_for_diagnostics(monkeypatch):
+    # One post per cancel: post_cancel_report leads with the cancelled summary
+    # (and falls back to it alone), so the listener posts no separate ack that
+    # read as a duplicate. The slow report runs in the background: the
+    # transition finishes while it is still collecting.
     lis = mel.Listener()
     lis.state, lis.filename = "printing", "a.gcode"
     posted = []
@@ -72,24 +76,20 @@ def test_listener_cancel_posts_simple_report_before_slow_diagnostics(monkeypatch
         assert release_diagnostic.wait(timeout=2)
         return True
 
-    with mock.patch.object(mel, "post") as post, \
-            mock.patch.object(mel, "run_announcer"), \
-            mock.patch.object(mel, "maintenance_cancel_reminder", new=lambda: asyncio.sleep(0)), \
-            mock.patch.object(mel, "post_cancel_report", side_effect=slow_report), \
-            mock.patch.object(lis, "after_print", new=lambda state: asyncio.sleep(0)):
+    with mock.patch.object(mel, "post") as post,             mock.patch.object(mel, "run_announcer"),             mock.patch.object(mel, "maintenance_cancel_reminder", new=lambda: asyncio.sleep(0)),             mock.patch.object(mel, "post_cancel_report", side_effect=slow_report) as report,             mock.patch.object(lis, "after_print", new=lambda state: asyncio.sleep(0)):
         post.side_effect = lambda message: posted.append(message) or True
 
         async def exercise():
-            transition = asyncio.create_task(lis.on_status({"state": "cancelled"}, "event"))
             try:
-                await asyncio.wait_for(asyncio.to_thread(diagnostic_started.wait, 0.5), timeout=0.75)
-                assert posted, "no lifecycle report arrived while diagnostics were running"
-                assert any("Print cancelled" in message for message in posted)
+                await asyncio.wait_for(lis.on_status({"state": "cancelled"}, "event"), timeout=1.5)
+                assert diagnostic_started.wait(0.5)
+                assert not any("Print cancelled" in message for message in posted)
             finally:
                 release_diagnostic.set()
-                await transition
+                await asyncio.gather(*list(lis.background_tasks))
 
         asyncio.run(exercise())
+    report.assert_called_once_with("a.gcode")
 
 
 def test_listener_cancel_does_not_auto_restart_firmware(monkeypatch):

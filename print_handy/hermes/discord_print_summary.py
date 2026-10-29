@@ -43,6 +43,20 @@ def safe_label(value, fallback="Print"):
     return text or fallback
 
 
+def filament_label(name, material, name_fallback="", material_fallback=""):
+    """'<name> <material>', without naming the material twice.
+
+    Spoolman filament names often already end with the material ("Coffee
+    PLA+"), so appending it again read "Coffee PLA+ PLA+" in alerts.
+    """
+    name = str(name or "").strip() or name_fallback
+    material = str(material or "").strip() or material_fallback
+    if name and material and (name.casefold() == material.casefold()
+                              or name.casefold().endswith(" " + material.casefold())):
+        return name
+    return " ".join(part for part in (name, material) if part)
+
+
 def parse_duration(text):
     """'1d 2h 3m 4s' -> seconds, or None."""
     if not text:
@@ -273,7 +287,8 @@ def format_confirmed_print(*, model, parts=(), plate=None, slot=None, color=None
         details.append(f"Plate {plate}" + (f" of {plates_total}" if plates_total and plates_total > 1 else ""))
     if slot is not None or color or material:
         prefix = f"{position_noun} {slot}: " if slot is not None else "Filament: "
-        details.append(prefix + f"{safe_label(color, 'color unknown')} {safe_label(material, 'material unknown')}")
+        details.append(prefix + filament_label(safe_label(color, 'color unknown'),
+                                               safe_label(material, 'material unknown')))
     if filament_g is not None:
         details.append(f"Filament: {filament_g:g} g")
     if kind in ("started", "slice"):
@@ -502,7 +517,8 @@ def format_slice_summary(job, now=None):
         label = f"Plate {row['plate']}" if row.get("plate") is not None else "Plate"
         parts = ", ".join(row["parts"]) or "all parts"
         slot = f"{noun} {row['slot']}" if row.get("slot") is not None else f"{noun} unknown"
-        fil = f"{safe_label(row['color'], 'color unknown')} {safe_label(row['material'], 'material unknown')}, {slot}"
+        fil = (filament_label(safe_label(row['color'], 'color unknown'),
+                              safe_label(row['material'], 'material unknown')) + f", {slot}")
         est = human(row["seconds"]) if row.get("seconds") is not None else "estimate unknown"
         grams = row.get("filament_g")
         amount = f" | {grams:g} g" if grams is not None else ""

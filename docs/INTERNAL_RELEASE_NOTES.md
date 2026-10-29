@@ -2,6 +2,7 @@
 
 # Unreleased
 
+- Repository cleanup: a stray OrcaSlicer startup log (`00000.log`, written by Orca into its working directory) was committed to the repository root by accident alongside the OrcaSlicer beta bump; it is removed, and the name is gitignored so it cannot be committed again. No code or behaviour change.
 - Bundled OrcaSlicer bumped from v2.5.0-alpha to v2.5.0-beta (upstream prerelease, published 2026-10-27, tag commit `345efec64c7b95a05ce5cf96df0dde66a158835c`): both channels in `docker/orca-prebuilt.sh` pin the beta AppImages (amd64 `15b0e9f9…`, aarch64 `941ea21d…`), the real-slicer CI legs download the beta flatpak (`2d2f6979…`), and every generated-template vendor pack gains checked 2.5.0-beta identities (tree + packed cache, computed from the beta source tree and the SHA-verified beta AppImage with the shared flatten pipeline; BBL `02.08.00.16`, Anycubic `02.04.00.10`, Elegoo `02.04.00.13`, QIDI `02.04.00.19`, Prusa and Creality kept their alpha vendor versions). The alpha channel keeps its name — it is the prerelease channel; it pins the same beta build until upstream publishes a newer prerelease. Alpha and 2.4.2 identities are retained, so folders generated from them keep verifying. Not verified on live hardware.
 
 # Version 2.1.9

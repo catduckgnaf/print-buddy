@@ -166,7 +166,7 @@ def test_visual_check_promotes_unchanged_layers_and_ignores_motion(monkeypatch):
 
     monkeypatch.setattr(mel, "_camera_snapshot_bytes", snapshot)
     monkeypatch.setattr(mel, "_visual_alert", lambda filename, image, reason, identity=None: alerts.append(reason))
-    monkeypatch.setattr(mel, "_visual_verdict", lambda image, prompt, streak=None: ("safe", "plastic present"))
+    monkeypatch.setattr(mel, "_visual_verdict", lambda image, prompt, streak=None: ("uncertain", "nozzle hidden"))
 
     async def unchanged():
         listener = mel.Listener()
@@ -277,8 +277,10 @@ def _stall_alerts(monkeypatch, level, verdict):
     return alerts
 
 
-def test_low_sensitivity_trusts_healthy_vision_on_a_stall(monkeypatch):
-    for level in (1, 2):
+def test_every_sensitivity_trusts_healthy_vision_on_a_stall(monkeypatch):
+    # Live: "stalled_layers at layer 159: ok; visual check needs operator
+    # review" alerted at sensitivity 3. An ok verdict is never an alert.
+    for level in (1, 2, 3, 4, 5):
         assert _stall_alerts(monkeypatch, level, ("ok", "")) == [], level
         assert _stall_alerts(monkeypatch, level, ("safe", "plastic present")) == [], level
 
@@ -292,10 +294,56 @@ def test_low_sensitivity_still_alerts_on_a_bad_stall(monkeypatch):
         assert alerts and "the vision check could not be completed" in alerts[0], level
 
 
-def test_default_and_higher_sensitivity_alert_on_every_stall(monkeypatch):
+def test_default_and_higher_sensitivity_alert_on_a_bad_stall(monkeypatch):
     for level in (3, 4, 5):
-        alerts = _stall_alerts(monkeypatch, level, ("ok", ""))
-        assert alerts and "stalled_layers" in alerts[0], level
+        for verdict in (("air", "empty"), ("empty_idle", "")):
+            alerts = _stall_alerts(monkeypatch, level, verdict)
+            assert alerts and "stalled_layers" in alerts[0], (level, verdict)
+
+
+def test_vision_dark_verdict_detection():
+    assert mel._verdict_says_dark("uncertain", "The camera feed is completely dark")
+    assert mel._verdict_says_dark("uncertain", "Image is too dark to judge")
+    assert not mel._verdict_says_dark("uncertain", "dark")  # no camera wording: an ordinary uncertain
+    assert not mel._verdict_says_dark("uncertain", "nozzle hidden")
+    assert not mel._verdict_says_dark("spaghetti", "black filament tangled in the frame")
+
+
+def test_vision_dark_verdict_posts_the_dark_notice_not_an_alert(monkeypatch, tmp_path):
+    # Live: "periodic at layer 1: uncertain; The camera feed is completely
+    # dark" and repeated "stalled_layers ... uncertain" on a dark static
+    # frame both posted as print alerts.
+    import asyncio
+    from unittest.mock import patch
+
+    alerts, notices = [], []
+    monkeypatch.setattr(mel, "_camera_snapshot_bytes", lambda: _jpeg() + b"x")
+    monkeypatch.setattr(mel, "_frame_changed", lambda before, after: False)
+    monkeypatch.setattr(mel, "_visual_verdict",
+                        lambda image, prompt, streak=None: ("uncertain", "The camera feed is completely dark"))
+    monkeypatch.setattr(mel, "_visual_alert", lambda filename, image, reason, identity=None: alerts.append(reason))
+    monkeypatch.setattr(mel, "_visual_dark_notice", lambda filename, identity=None: notices.append(filename))
+
+    async def run():
+        listener = mel.Listener()
+        listener.filename = "dim.gcode"
+        with patch.object(pab, "STATE", tmp_path / "alerts.json"):
+            await listener.visual_check("periodic", 1)
+            listener.visual_watch.layer2_checked = listener.visual_watch.layer5_checked = True
+            baseline = _jpeg()
+            listener.visual_frames["dim.gcode"] = baseline
+            listener.visual_watch.record(5, 100, baseline)
+            layer = 5 + listener.visual_watch.profile["stall_layers"]
+            await listener.visual_check(listener.visual_watch.due(layer, 200), layer)
+        return listener, baseline
+
+    listener, baseline = asyncio.run(run())
+    assert alerts == []
+    assert notices == ["dim.gcode"]
+    # The still dark frame was no stall: the stall latch stays free and the
+    # dark frame does not replace the baseline.
+    assert listener.visual_watch.alerted_stall_layer is None
+    assert listener.visual_frames["dim.gcode"] == baseline
 
 
 DIRECT_URL = "http://printer.example/webcam/?action=snapshot"
@@ -494,6 +542,63 @@ def test_muted_print_posts_no_visual_alert(monkeypatch, tmp_path):
 
     asyncio.run(run())
     assert alerts == []
+
+
+def test_print_identity_outlives_the_start_claim(monkeypatch, tmp_path):
+    # "Stop asking for this print" keyed to file|start-claim; once the claim
+    # expired (start_claim_ttl_s) the key flipped and the alerts came back.
+    import asyncio
+    from unittest.mock import AsyncMock, patch
+
+    claim = {"ts": 1000.0}
+    claims = []
+    real_claim = mel._claim_notification
+    monkeypatch.setattr(mel, "start_claim_time", lambda name, now=None: claim["ts"])
+    monkeypatch.setattr(mel, "start_claimed", lambda name, now=None: False)
+    monkeypatch.setattr(mel, "NOTIFICATION_STATE", tmp_path / "notifications.json")
+    monkeypatch.setattr(mel, "_claim_notification",
+                        lambda identity, phase, path=None: claims.append((identity, phase)) or real_claim(identity, phase))
+    monkeypatch.setattr(mel, "post", lambda message: True)
+    monkeypatch.setattr(mel, "run_announcer", lambda reason: None)
+    monkeypatch.setattr(mel, "log", lambda line: None)
+    monkeypatch.setattr(pab, "retire_alerts", lambda *args, **kwargs: 0)
+
+    async def run():
+        listener = mel.Listener()
+        listener.after_print = AsyncMock()
+        with patch.object(pab, "STATE", tmp_path / "alerts.json"):
+            await listener.on_status({"state": "standby", "filename": "long.gcode"}, "test")
+            await listener.on_status({"state": "printing"}, "test")
+            started = listener._visual_identity()
+            pab.mute_visual("long.gcode", started)
+            claim["ts"] = None  # the start claim expired mid-print
+            muted = pab.visual_muted("long.gcode", listener._visual_identity())
+            await listener.on_status({"state": "error"}, "test")
+        return started, muted
+
+    started, muted = asyncio.run(run())
+    assert started == "file:long.gcode|start:1000.0"
+    assert muted
+    assert claims == [(started, "start"), (started, "terminal")]
+
+
+def test_unclaimed_print_gets_a_stable_identity(monkeypatch):
+    import asyncio
+
+    monkeypatch.setattr(mel, "start_claim_time", lambda name, now=None: None)
+    monkeypatch.setattr(mel, "post", lambda message: True)
+    monkeypatch.setattr(mel, "run_announcer", lambda reason: None)
+    monkeypatch.setattr(mel, "log", lambda line: None)
+
+    async def run():
+        listener = mel.Listener()
+        await listener.on_status({"state": "standby", "filename": "screen.gcode"}, "test")
+        await listener.on_status({"state": "printing"}, "test")
+        return listener._visual_identity(), listener._visual_identity()
+
+    first, again = asyncio.run(run())
+    # Not the mute store's filename + day fallback, which flips at midnight.
+    assert first and first.startswith("file:screen.gcode|seen:") and first == again
 
 
 # -- no vision endpoint: the watch stays off ------------------------------------

@@ -540,6 +540,109 @@ class ListenerCaptureHookTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(session.frame_count, 1)
             listener._capture_end("complete")
 
+    async def test_capture_is_closed_before_the_announcer_looks_for_it(self):
+        # The completion's timelapse postprocess (find_capture) skips a
+        # "capturing" manifest: run first, it found no video for a first
+        # print and the previous job's video for a reprint.
+        from print_handy.hermes import timelapse_encode
+        self.install_config(capture_enabled=True)
+        listener = mel.Listener()
+        found = []
+        with mock.patch.object(timelapse_capture, "fetch_frame", return_value=JPEG):
+            await self.drive_start(listener)
+            session = listener.capture_session
+            await listener._capture_due(1)
+            with mock.patch.object(mel, "post"), \
+                    mock.patch.object(mel, "run_announcer",
+                                      side_effect=lambda reason: found.append(
+                                          timelapse_encode.find_capture("/gcodes/benchy.gcode"))), \
+                    mock.patch.object(mel, "_claim_notification", return_value=True), \
+                    mock.patch.object(listener, "after_print", new=mock.AsyncMock()):
+                await listener.on_status({"state": "complete"}, "event")
+        self.assertEqual(found, [session.directory])
+
+    async def test_klippy_shutdown_runs_the_end_of_print_cleanup(self):
+        self.install_config(capture_enabled=True)
+        listener = mel.Listener()
+
+        class Socket:
+            def __init__(self, messages):
+                self.messages = [json.dumps(m) for m in messages]
+
+            async def __aenter__(self):
+                return self
+
+            async def __aexit__(self, *exc):
+                return False
+
+            async def send(self, data):
+                pass
+
+            async def recv(self):
+                if not self.messages:
+                    raise ConnectionError("script done")
+                return self.messages.pop(0)
+
+        with mock.patch.object(timelapse_capture, "fetch_frame", return_value=JPEG):
+            await self.drive_start(listener)
+            session = listener.capture_session
+            await listener._capture_due(1)
+            for name in ("poll_native_presence", "poll_spoolman_new_spools", "nag_if_due",
+                         "light_idle_tick", "after_print", "_retire_paused_prompt"):
+                setattr(listener, name, mock.AsyncMock())
+            listener.maintenance_last_check = time.monotonic()
+            with mock.patch.object(mel.websockets, "connect",
+                                   return_value=Socket([{"method": "notify_klippy_shutdown"}])), \
+                    mock.patch.object(mel, "post_shutdown_alert") as alert:
+                with self.assertRaises(ConnectionError):
+                    await listener.session()
+        alert.assert_called_once_with("benchy.gcode")
+        self.assertEqual(listener.state, "error")
+        self.assertIsNone(listener.capture_session)
+        self.assertEqual(json.loads(session.manifest_path.read_text())["state"], "error")
+        listener.after_print.assert_awaited_once_with("error")
+        listener._retire_paused_prompt.assert_awaited_once_with("error")
+
+    async def test_a_new_print_replaces_a_capture_a_missed_end_left_open(self):
+        self.install_config(capture_enabled=True)
+        listener = mel.Listener()
+        with mock.patch.object(timelapse_capture, "fetch_frame", return_value=JPEG):
+            await self.drive_start(listener)
+            stale = listener.capture_session
+            await listener._capture_due(1)
+            listener.state = "error"  # the print died without an end transition
+            with mock.patch.object(mel, "post"), mock.patch.object(mel, "run_announcer"), \
+                    mock.patch.object(mel, "start_claimed", return_value=False), \
+                    mock.patch.object(mel, "_claim_notification", return_value=True):
+                await listener.on_status({"state": "printing", "filename": "benchy.gcode"}, "event")
+            fresh = listener.capture_session
+            self.assertIsNotNone(fresh)
+            self.assertIsNot(fresh, stale)
+            self.assertEqual(json.loads(stale.manifest_path.read_text())["state"], "superseded")
+            listener._capture_end("complete")
+
+    async def test_listener_restart_mid_claimed_print_still_captures(self):
+        # The restarted listener re-sees the start a Discord print already
+        # claimed: only the start post is a duplicate.
+        self.install_config(capture_enabled=True)
+        state = Path(self.tmp.name) / "notifications.json"
+        with mock.patch.object(mel, "NOTIFICATION_STATE", state), \
+                mock.patch.object(mel, "start_claim_time", return_value=1000.0):
+            self.assertTrue(mel._claim_notification("file:benchy.gcode|start:1000.0", "start"))
+            listener = mel.Listener()  # fresh process: state None
+            listener.light_print_started = mock.AsyncMock()
+            with mock.patch.object(timelapse_capture, "fetch_frame", return_value=JPEG), \
+                    mock.patch.object(mel, "post") as post, \
+                    mock.patch.object(mel, "announce_warmup_done") as warmup, \
+                    mock.patch.object(mel, "run_announcer"):
+                await listener.on_status({"state": "printing", "filename": "benchy.gcode"}, "subscribe")
+                self.assertEqual(listener.state, "printing")
+                self.assertIsNotNone(listener.capture_session)
+                listener.light_print_started.assert_awaited_once()
+                post.assert_not_called()
+                warmup.assert_not_called()
+                listener._capture_end("complete")
+
 
 def _mjpeg_stream(*frames):
     """A recorded multipart MJPEG body: one part per frame, then the closing boundary."""

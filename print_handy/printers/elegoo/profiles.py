@@ -1,7 +1,7 @@
 """Elegoo Orca profiles, generated on the operator's machine from their own OrcaSlicer installation.
 
 The sibling of bambulab/profiles.py for Orca's `Elegoo` vendor profiles (profiles/Elegoo.json,
-vendor profiles 02.04.00.06 in OrcaSlicer 2.4.2 and 02.04.00.11 in v2.5.0-alpha, whose installs
+vendor profiles 02.04.00.06 in OrcaSlicer 2.4.2, 02.04.00.11 in v2.5.0-alpha and 02.04.00.13 in v2.5.0-beta, whose installs
 serve the same profiles packed as profiles/Elegoo.opc): Print Handy ships no OrcaSlicer or Elegoo profile content
 (AGPL-3.0). It ships only the profile names and the SHA-256 identity of the vendor profiles it has
 been checked against (the printer's `orca_identity` fact). The flattening/hashing pipeline itself is

@@ -16,25 +16,26 @@ case "$arch" in
 esac
 case "$channel" in
     stable)
-        # Print Handy ships OrcaSlicer v2.5.0-alpha (#356): it is the first release whose
-        # BBL vendor profiles cover the H2C and A2L, and the profiles pipeline reads its
-        # packed preset caches (profiles/<Vendor>.opc) directly. There is no newer
-        # upstream release, so the alpha channel below currently pins the same build;
-        # the channels diverge again when upstream publishes a newer alpha.
-        version=2.5.0-alpha
-        revision=3880f2c58ec392ed2bd5938ab31c9c7c496c0eb2
-        sha256_amd64=386a5ef38991a4fc32ae2e35ee4261bea43d983683ac675a2c2e2395ab2bc7bb
-        sha256_arm64=b64c705537a80ca0f4a5d0b51fa21d1f789191141f54b7f3599d2f2b9bfad0be
-        asset_amd64=OrcaSlicer_Linux_AppImage_Ubuntu2404_V2.5.0-alpha.AppImage
-        asset_arm64=OrcaSlicer_Linux_AppImage_Ubuntu2404_aarch64_V2.5.0-alpha.AppImage
+        # Print Handy ships OrcaSlicer v2.5.0-beta: the 2.5 line is the first whose
+        # BBL vendor profiles cover the H2C and A2L (#356, on the alpha), and the
+        # profiles pipeline reads its packed preset caches (profiles/<Vendor>.opc)
+        # directly. Upstream published the beta on 2026-10-27, after the alpha, so
+        # the alpha channel below currently pins the same build; the channels
+        # diverge again when upstream publishes a newer prerelease.
+        version=2.5.0-beta
+        revision=345efec64c7b95a05ce5cf96df0dde66a158835c
+        sha256_amd64=15b0e9f9d577bc7a84cfef4f1ecc6e16ef75bc253e500d772fcaa66f4c25b97e
+        sha256_arm64=941ea21d012483770a582589590b539f34cbe1c041aa367f9008fbe8c3e6bcd9
+        asset_amd64=OrcaSlicer_Linux_AppImage_Ubuntu2404_V2.5.0-beta.AppImage
+        asset_arm64=OrcaSlicer_Linux_AppImage_Ubuntu2404_aarch64_V2.5.0-beta.AppImage
         ;;
     alpha)
-        version=2.5.0-alpha
-        revision=3880f2c58ec392ed2bd5938ab31c9c7c496c0eb2
-        sha256_amd64=386a5ef38991a4fc32ae2e35ee4261bea43d983683ac675a2c2e2395ab2bc7bb
-        sha256_arm64=b64c705537a80ca0f4a5d0b51fa21d1f789191141f54b7f3599d2f2b9bfad0be
-        asset_amd64=OrcaSlicer_Linux_AppImage_Ubuntu2404_V2.5.0-alpha.AppImage
-        asset_arm64=OrcaSlicer_Linux_AppImage_Ubuntu2404_aarch64_V2.5.0-alpha.AppImage
+        version=2.5.0-beta
+        revision=345efec64c7b95a05ce5cf96df0dde66a158835c
+        sha256_amd64=15b0e9f9d577bc7a84cfef4f1ecc6e16ef75bc253e500d772fcaa66f4c25b97e
+        sha256_arm64=941ea21d012483770a582589590b539f34cbe1c041aa367f9008fbe8c3e6bcd9
+        asset_amd64=OrcaSlicer_Linux_AppImage_Ubuntu2404_V2.5.0-beta.AppImage
+        asset_arm64=OrcaSlicer_Linux_AppImage_Ubuntu2404_aarch64_V2.5.0-beta.AppImage
         ;;
     *) echo 'usage: orca-prebuilt.sh stable|alpha amd64|arm64' >&2; exit 2 ;;
 esac
@@ -55,7 +56,7 @@ chmod 0755 "$asset"
 test -x squashfs-root/AppRun
 test -x squashfs-root/bin/orca-slicer
 mv "squashfs-root" "/out/opt/orca-$channel"
-# The alpha AppImage extracts with directories the runtime user cannot traverse
+# The prebuilt AppImage extracts with directories the runtime user cannot traverse
 # (stat on bin/orca-slicer failed with EACCES in hosted validation); normalize the
 # extracted tree to world-readable/traversable without changing upstream files.
 chmod -R a+rX "/out/opt/orca-$channel"

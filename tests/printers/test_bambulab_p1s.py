@@ -196,7 +196,7 @@ def test_p1s_fit_uses_model_specific_working_volume(p1s_profiles):
 
 
 def test_profile_defaults_reference_orca_profile_names_and_sources(p1s_profiles):
-    assert facts.ORCA_RELEASE == ("v2.5.0-alpha", "3880f2c58ec392ed2bd5938ab31c9c7c496c0eb2")
+    assert facts.ORCA_RELEASE == ("v2.5.0-beta", "345efec64c7b95a05ce5cf96df0dde66a158835c")
     assert all(fact.source in {"ORCA", "BAMBU", "DERIVED"} for fact in facts.P1S.values())
 
 

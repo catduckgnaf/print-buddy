@@ -64,8 +64,8 @@ def test_anycubic_registration_and_defaults(key):
 def test_anycubic_identity_is_a_real_pin(key):
     f = getattr(anycubic_facts, MODELS[key])
     entries = f["orca_identity"].value
-    # One pin per checked packaging: 2.4.2's tree, then 2.5.0-alpha's tree and packed cache.
-    assert [known["vendor_version"] for known in entries] == ["02.04.00.02", "02.04.00.09", "02.04.00.09"]
+    # One pin per checked packaging: 2.4.2's tree, then 2.5.0-alpha's and 2.5.0-beta's tree and packed cache.
+    assert [known["vendor_version"] for known in entries] == ["02.04.00.02", "02.04.00.09", "02.04.00.09", "02.04.00.10", "02.04.00.10"]
     for known in entries:
         assert all(re.fullmatch(r"[0-9a-f]{64}", d) for d in known["sha256"].values())
     assert all(fixture.identity(f)["sha256"] != known["sha256"] for known in entries)

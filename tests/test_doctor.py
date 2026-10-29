@@ -222,6 +222,21 @@ class ZmodVersionDoctorTests(unittest.TestCase):
         with mock.patch.object(doctor.urllib.request, "urlopen", side_effect=urlopen):
             return doctor.check_zmod_version(self.DATA)
 
+    def test_unreadable_update_manager_version_falls_back_to_the_os_info(self):
+        """Live ZMod reports its git_repo components as "?"; the OS info names it."""
+        status = {"result": {"version_info": {"Z-Mod": {"version": "?", "remote_version": "?"}}}}
+        system_info = {"result": {"system_info": {"distribution": {
+            "name": "zmod 1.7.5 -> 1.7.5-2", "version": "1.7.5"}}}}
+
+        def fake(req, timeout=None):
+            url = req.full_url if hasattr(req, "full_url") else req
+            if url.endswith("/machine/update/status"):
+                return _FakeResponse(status)
+            if url.endswith("/machine/system_info"):
+                return _FakeResponse(system_info)
+            return _FakeResponse()
+        self.assertEqual(self.check(fake), "1.7.5-2 (from the printer's OS info)")
+
     def test_version_is_read_through_the_firmware_reader(self):
         detail = self.check(_routing_urlopen(STATUS_WITH_ZMOD))
         self.assertEqual(detail, "1.7.5")

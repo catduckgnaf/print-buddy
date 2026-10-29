@@ -30,8 +30,13 @@ is recorded upstream. The next ZMod release diffs against this 1.7.5
 baseline.
 
 `/print-firmware` reports the installed ZMod version for a ZMod printer,
-read from the `zmod` component in Moonraker's update status — or states
-"ZMod version unknown" when Moonraker does not report one. The doctor
+read from the `zmod` component in Moonraker's update status (ZMod names it
+`Z-Mod`). On the printer itself that component is a git checkout Moonraker
+cannot read, so it reports `?`; Print Handy then reads the version from the
+OS distribution in `/machine/system_info`, which ZMod names like
+`zmod 1.7.5 -> 1.7.5-2` (base -> installed), and says so in the report. When
+neither source names a version it states "ZMod version unknown". `?` is never
+treated as a version or as an available update. The doctor
 reports it too, on its own `zmod version` row, so the diagnostics bundle
 carries it into bug reports. Print Handy never guesses a version and
 never gates printing on it.

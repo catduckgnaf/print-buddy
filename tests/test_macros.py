@@ -551,3 +551,23 @@ def test_bot_command_text_for_a_run():
     from print_handy.bot import commands as bot_commands
     assert bot_commands.as_text("print-macros", {"args": "run PRINT_START"}) == "/print-macros run PRINT_START"
     assert bot_commands.as_text("print-macros", {}) == "/print-macros"
+
+
+# ------------------------------------------------------------ user hooks (#562)
+
+def test_classify_lists_zmods_user_prepare_print_as_a_user_hook(registry):
+    listing = macros.classify(["_USER_PREPARE_PRINT", "_PARK_HELPERS"], registry=registry)
+    assert listing.user_hooks == ("_USER_PREPARE_PRINT",)
+    assert listing.internal == ("_PARK_HELPERS",)
+    text = macros.listing_text(listing)
+    assert "Firmware hooks you can fill in" in text
+    assert text.index("_USER_PREPARE_PRINT") < text.index("Internal helper macros")
+
+
+def test_prepare_run_refuses_a_user_hook_with_its_own_reason():
+    payload = {"result": {"objects": ["gcode_macro PRINT_START", "gcode_macro _USER_PREPARE_PRINT"]}}
+    transport = RunTransport(payload=payload)
+    with pytest.raises(macros.MacroRefusal) as refused:
+        macros.prepare_run(transport, "_user_prepare_print")
+    assert "firmware hook" in str(refused.value)
+    assert transport.posts == []

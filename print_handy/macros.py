@@ -14,6 +14,9 @@ names and classifies each one against the descriptive registry in
 - **internal** — the name starts with ``_`` (the Klipper helper convention):
   separated from the operator list, never presented as an operator macro, and
   never runnable from the bot.
+- **user hook** — an underscore name the firmware documents as a hook for the
+  operator to fill in (ZMod's ``_USER_PREPARE_PRINT``, #562). Listed so the
+  operator knows it runs, never runnable from the bot: the firmware calls it.
 
 Stage 1 (list) is read-only: its only request is the GET of the objects list.
 Stage 2 (run) adds exactly one write: after the operator confirms the exact
@@ -31,6 +34,11 @@ OBJECTS_LIST_PATH = "/printer/objects/list"
 GCODE_SCRIPT_PATH = "/printer/gcode/script"
 PRINT_STATE_PATH = "/printer/objects/query?print_stats=state"
 MACRO_PREFIX = "gcode_macro "
+
+# Documented firmware hooks the operator edits and the firmware calls (#562).
+# ZMod 1.7.5 runs _USER_PREPARE_PRINT before a file is sent to print, so it can
+# change printer state after Print Handy's readiness checks.
+USER_HOOKS = frozenset({"_USER_PREPARE_PRINT"})
 
 COULD_NOT_READ_TEXT = ("Could not read the printer's macros from Moonraker. "
                        "Nothing was sent to the printer.")
@@ -71,10 +79,12 @@ class MacroListing:
     known: tuple = ()              # tuple[tuple[str, FirmwareEntry], ...]
     printer_defined: tuple = ()    # tuple[str, ...]
     internal: tuple = ()           # tuple[str, ...]
+    user_hooks: tuple = ()         # tuple[str, ...]
 
     @property
     def names(self):
-        return tuple(name for name, _entry in self.known) + self.printer_defined + self.internal
+        return (tuple(name for name, _entry in self.known) + self.printer_defined
+                + self.user_hooks + self.internal)
 
 
 def parse_macro_names(payload) -> list:
@@ -130,15 +140,17 @@ def classify(names, registry=None) -> MacroListing:
         from . import knowledge
         registry = knowledge.default_registry()
     index = _registry_index(registry)
-    known, printer_defined, internal = [], [], []
+    known, printer_defined, internal, user_hooks = [], [], [], []
     for name in names:
-        if name.startswith("_"):
+        if name.upper() in USER_HOOKS:
+            user_hooks.append(name)
+        elif name.startswith("_"):
             internal.append(name)
         elif name.casefold() in index:
             known.append((name, index[name.casefold()]))
         else:
             printer_defined.append(name)
-    return MacroListing(tuple(known), tuple(printer_defined), tuple(internal))
+    return MacroListing(tuple(known), tuple(printer_defined), tuple(internal), tuple(user_hooks))
 
 
 def discover(transport, registry=None) -> MacroListing:
@@ -248,6 +260,10 @@ def prepare_run(transport, name_token, arg_tokens=(), registry=None) -> Prepared
         if known_name.casefold() == wanted:
             canonical, entry = known_name, known_entry
             break
+    if canonical is None and any(hook.casefold() == wanted for hook in listing.user_hooks):
+        raise MacroRefusal(f"{name_token} is a firmware hook: the printer runs it itself (ZMod "
+                           "calls it before a file is sent to print). Edit it in the printer's "
+                           "config; Print Handy never runs it. Nothing was sent.")
     if canonical is None and name_token.startswith("_"):
         if any(internal_name.casefold() == wanted for internal_name in listing.internal):
             raise MacroRefusal(f"{name_token} is an internal helper macro (names starting with _ "
@@ -333,6 +349,11 @@ def listing_text(listing: MacroListing) -> str:
     if listing.printer_defined:
         lines.append("\nDefined by your printer's config (Print Handy has no description for these):")
         lines += [f"- {name}" for name in listing.printer_defined]
+    if listing.user_hooks:
+        lines.append("\nFirmware hooks you can fill in (the printer runs these itself; "
+                     "ZMod's _USER_PREPARE_PRINT runs before a file is sent to print, after "
+                     "Print Handy's readiness checks):")
+        lines += [f"- {name}" for name in listing.user_hooks]
     if listing.internal:
         lines.append("\nInternal helper macros (part of the printer's own config machinery, "
                      "not operator macros):")

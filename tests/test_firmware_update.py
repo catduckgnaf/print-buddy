@@ -740,3 +740,65 @@ def test_dispatch_bare_on_a_prusa_returns_its_guidance_without_any_call():
     assert out["reason"] == "print firmware not applicable to this printer"
     assert transport.calls == []
     assert ".bbf" in adapter.sent[-1]
+
+
+# ----------------------------------------------- ZMod version from the OS info
+
+# Recorded from a live AD5X on ZMod 1.7.5-2 (2026-10-29): the Update Manager's
+# git_repo components have no usable checkout on the printer and report "?".
+STATUS_LIVE_ZMOD_UNREADABLE = {"result": {"version_info": {
+    "Z-Mod": {"configured_type": "git_repo", "version": "?", "remote_version": "?",
+              "full_version_string": "?", "is_valid": False},
+    "klippy": {"configured_type": "git_repo", "version": "?", "remote_version": "?"},
+    "fluidd": {"configured_type": "web", "version": "v1.37.17", "remote_version": "?"}}}}
+SYSTEM_INFO_LIVE_ZMOD = {"result": {"system_info": {"distribution": {
+    "name": "zmod 1.7.5 -> 1.7.5-2", "id": "buildroot", "version": "1.7.5",
+    "codename": "AD5X 3.1.7"}}}}
+
+
+def test_question_mark_versions_are_unknown_not_versions_or_updates():
+    status = fw.parse_update_status(STATUS_LIVE_ZMOD_UNREADABLE)
+    assert status.component("klippy").current is None
+    assert status.component("fluidd").remote is None
+    assert status.updates_available == ()
+
+
+def test_component_lookup_matches_zmods_own_component_name():
+    status = fw.parse_update_status(STATUS_LIVE_ZMOD_UNREADABLE)
+    assert status.component("zmod").name == "Z-Mod"
+
+
+@pytest.mark.parametrize("name,expected", [
+    ("zmod 1.7.5 -> 1.7.5-2", "1.7.5-2"),
+    ("zmod 1.7.5", "1.7.5"),
+    ("ZMod OS", "1.9.4"),
+    ("Debian GNU/Linux", None),
+])
+def test_zmod_version_from_system_info(name, expected):
+    payload = {"result": {"system_info": {"distribution": {"name": name, "version": "1.9.4"}}}}
+    assert fw.zmod_version_from_system_info(payload) == expected
+
+
+def test_unreadable_zmod_component_is_filled_from_the_os_info():
+    transport = FakeTransport(status=STATUS_LIVE_ZMOD_UNREADABLE, system_info=SYSTEM_INFO_LIVE_ZMOD)
+    zmod = fw.fetch_status(transport).component("zmod")
+    assert (zmod.current, zmod.source) == ("1.7.5-2", "system_info")
+
+
+def test_os_info_is_only_read_when_the_zmod_version_is_unreadable():
+    transport = FakeTransport(system_info=SYSTEM_INFO_LIVE_ZMOD)
+    assert fw.fetch_status(transport).component("zmod").current == "1.9.2"
+    assert [path for _m, path, _b in transport.calls] == [fw.UPDATE_STATUS_PATH]
+
+
+def test_unreadable_os_info_keeps_the_version_unknown():
+    transport = FakeTransport(status=STATUS_LIVE_ZMOD_UNREADABLE, system_info=None)
+    assert fw.fetch_status(transport).component("zmod").current is None
+
+
+def test_report_names_the_os_info_version_and_claims_no_pairing():
+    transport = FakeTransport(status=STATUS_LIVE_ZMOD_UNREADABLE, system_info=SYSTEM_INFO_LIVE_ZMOD)
+    text = fw.firmware_report(transport, AD5X)
+    assert "ZMod version: 1.7.5-2 (from the printer's OS info" in text
+    assert "pair correctly" not in text and "mismatch" not in text
+    assert "Everything Print Handy can check here is up to date." in text

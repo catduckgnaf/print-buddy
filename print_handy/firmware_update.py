@@ -39,7 +39,7 @@ from __future__ import annotations
 
 import re
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
 UPDATE_STATUS_PATH = "/machine/update/status"
 UPDATE_REFRESH_PATH = "/machine/update/refresh"
@@ -137,6 +137,10 @@ class Component:
     current: str | None = None
     remote: str | None = None
     package_count: int = 0
+    # Where `current` came from: the Update Manager itself, or (ZMod only)
+    # the OS distribution in /machine/system_info when the Update Manager
+    # could not read the component's checkout.
+    source: str = "update_manager"
 
     @property
     def update_available(self) -> bool:
@@ -150,9 +154,10 @@ class UpdateStatus:
     components: tuple = ()          # tuple[Component, ...]
 
     def component(self, name):
-        wanted = str(name or "").casefold()
+        # ZMod's Moonraker names the component "Z-Mod"; callers ask for "zmod".
+        wanted = _component_key(name)
         for component in self.components:
-            if component.name.casefold() == wanted:
+            if _component_key(component.name) == wanted:
                 return component
         return None
 
@@ -161,9 +166,16 @@ class UpdateStatus:
         return tuple(c for c in self.components if c.update_available)
 
 
+def _component_key(name):
+    return re.sub(r"[^0-9a-z]", "", str(name or "").casefold())
+
+
 def _version_str(value):
     if isinstance(value, str):
-        return value.strip() or None
+        value = value.strip()
+        # "?" is Moonraker's placeholder for a version it could not read
+        # (a git_repo component without a usable checkout, as on ZMod).
+        return value if value and value != "?" else None
     if isinstance(value, (int, float)) and not isinstance(value, bool):
         return str(value)
     return None
@@ -222,7 +234,29 @@ def fetch_status(transport, *, refresh=False) -> UpdateStatus:
         raise
     except Exception as exc:
         raise FirmwareError(f"the update-status request failed: {exc}") from exc
-    return parse_update_status(payload)
+    return _with_zmod_from_system_info(parse_update_status(payload), transport)
+
+
+def _with_zmod_from_system_info(status, transport):
+    """Fill in an unreadable `zmod` component's version from the OS distribution.
+
+    On the printer, ZMod's Update Manager entries are git_repo components
+    with no usable checkout, so they report "?". The ZMod OS image names
+    itself in /machine/system_info (``"zmod 1.7.5 -> 1.7.5-2"``), which is
+    the installed version. Only a present `zmod` component without a
+    version triggers the extra read; it is best-effort and never raises.
+    """
+    zmod = status.component("zmod")
+    if zmod is None or zmod.current:
+        return status
+    try:
+        version = zmod_version_from_system_info(transport("GET", SYSTEM_INFO_PATH))
+    except Exception:
+        return status
+    if not version:
+        return status
+    filled = replace(zmod, current=version, source="system_info")
+    return UpdateStatus(tuple(filled if c is zmod else c for c in status.components))
 
 
 # ------------------------------------------------------- ZMod pairing and MCU
@@ -261,6 +295,29 @@ def os_version_from_system_info(payload):
     if not isinstance(distribution, dict):
         return None
     return _version_str(distribution.get("version")) or _version_str(distribution.get("version_id"))
+
+
+def zmod_version_from_system_info(payload):
+    """The installed ZMod version from a /machine/system_info response, or None.
+
+    ZMod's OS image reports a distribution named like ``"zmod 1.7.5"`` or,
+    after a component update, ``"zmod 1.7.5 -> 1.7.5-2"`` (base -> current);
+    the last version named is the one installed. A distribution not named
+    zmod is not evidence of anything.
+    """
+    try:
+        distribution = payload["result"]["system_info"]["distribution"]
+    except (TypeError, KeyError):
+        return None
+    if not isinstance(distribution, dict):
+        return None
+    name = _version_str(distribution.get("name")) or ""
+    if not name.casefold().startswith("zmod"):
+        return None
+    versions = re.findall(r"v?\d+(?:\.\d+)+(?:-[0-9A-Za-z.]+)?", name)
+    if versions:
+        return versions[-1].lstrip("v")
+    return _version_str(distribution.get("version"))
 
 
 def fetch_os_version(transport):
@@ -340,7 +397,10 @@ def report_text(status, entry, *, pairing="unknown", os_version=None,
         # component (or reports it without a current version), never
         # silently omitted and never guessed.
         zmod = status.component("zmod")
-        if zmod is not None and zmod.current:
+        if zmod is not None and zmod.current and zmod.source == "system_info":
+            lines.append(f"ZMod version: {zmod.current} (from the printer's OS info; the "
+                         "Update Manager could not read it)")
+        elif zmod is not None and zmod.current:
             lines.append(f"ZMod version: {zmod.current}")
         else:
             lines.append("ZMod version: unknown (not reported by Moonraker)")
@@ -398,7 +458,9 @@ def firmware_report(transport, entry, *, refresh=False) -> str:
     if entry is not None and entry.firmware_family == "zmod":
         os_version = fetch_os_version(transport)
         zmod = status.component("zmod")
-        pairing = pairing_state(os_version, zmod.current if zmod else None)
+        # A version read from the OS info cannot be paired against the OS info.
+        if zmod is not None and zmod.source != "system_info":
+            pairing = pairing_state(os_version, zmod.current)
     klipper = status.component("klipper")
     if klipper is not None and klipper.current:
         mcu_version = fetch_mcu_version(transport)

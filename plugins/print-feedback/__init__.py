@@ -136,12 +136,19 @@ def _failure_post(label, exc, note, *, subsystem):
     ``label`` says what was being done, in the person's words; ``note``
     says what state things are in and what to do next. The raw exception
     text is *not* posted (#467): it is classified for the stable greppable
-    ``PB_<SUBSYSTEM>_<CATEGORY>`` marker that ends the post, and the full
+    ``PH_<SUBSYSTEM>_<CATEGORY>`` marker that ends the post, and the full
     detail stays in the log and the diagnostics bundle. Built through the
     shared ``diagnostics.plain_post`` so every platform surface uses the
     one wording system.
     """
     from print_handy import diagnostics
+    known = diagnostics.known_cause(exc)
+    if known is not None:
+        # #590: a recognised, operator-fixable cause is named with its
+        # remedy instead of only the generic note and an UNKNOWN marker.
+        return diagnostics.plain_post(
+            f"{label} didn't work. {known.cause}", next_step=f"{note} {known.remedy}",
+            subsystem=subsystem, exc=exc)
     return diagnostics.plain_post(
         f"{label} didn't work.", next_step=note,
         subsystem=subsystem, exc=exc)

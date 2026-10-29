@@ -10,7 +10,7 @@ class SpoolmanNoticeTests(unittest.TestCase):
         self.assertIn("Spoolman unavailable", notice)          # what failed
         self.assertIn("the print continues", notice)           # degradation stated
         self.assertIn("services.spoolman_url", notice)         # what to check
-        self.assertIn("PB_SPOOLMAN_", notice)                  # where the marker lives
+        self.assertIn("PH_SPOOLMAN_", notice)                  # where the marker lives
 
 
 if __name__ == "__main__":

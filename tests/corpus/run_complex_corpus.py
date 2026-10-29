@@ -11,12 +11,19 @@ README (tests/corpus/complex/README.md) says so plainly.
 
 Usage:
     COMPLEX_CORPUS_ROOT=~/print-handy-complex-corpus \
-        python tests/corpus/run_complex_corpus.py [--tier public|private] [--only slug,...]
+        python tests/corpus/run_complex_corpus.py [--tier public|private] [--only slug,...] [--real-slicer]
+
+--real-slicer (or PRINT_HANDY_REAL_SLICER=1) runs the harness's real tier:
+the installed Orca CLI does the fit probes and the slice, instead of the
+mock tier's Python fit model and fake G-code writer.
 
 Writes JSON rows (model, result, seconds, error, receipt facts) to
 $CORPUS_RESULTS or ./complex-results.json and prints them as it goes.
 A case whose model has not been fetched is reported as NOT_FETCHED, never
-silently dropped.
+silently dropped. A case with expected_failure in the manifest (a recorded
+product bug: a list of error substrings) is
+XFAIL while one of those errors reproduces and XPASS once the case passes;
+any other failure is FAIL.
 """
 import argparse
 import json
@@ -53,6 +60,9 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--tier", default="public")
     parser.add_argument("--only", default=None, help="comma-separated slugs")
+    parser.add_argument("--real-slicer", action="store_true",
+                        default=os.environ.get("PRINT_HANDY_REAL_SLICER") == "1",
+                        help="real tier: the installed Orca CLI probes and slices")
     parser.add_argument("--root", default=os.environ.get("COMPLEX_CORPUS_ROOT")
                         or os.environ.get("PRINT_HANDY_PRIVATE_CORPUS"))
     args = parser.parse_args()
@@ -67,7 +77,8 @@ def main():
         if case["tier"] != args.tier or (only and case["slug"] not in only):
             continue
         row = {"model": case["slug"], "target_domain": case["target_domain"],
-               "target_printer": case["target_printer"], "result": "PASS",
+               "target_printer": case["target_printer"],
+               "slicer_tier": "real" if args.real_slicer else "mock", "result": "PASS",
                "seconds": 0.0, "error": ""}
         if case["status"] != "ready":
             row.update(result="BLOCKED", error=case.get("blocked_reason", case["status"]))
@@ -85,9 +96,11 @@ def main():
         case_ns = S(name=case["slug"], dir=folder, model=model, data=data,
                     clicks=data.get("click", []), expect=data.get("expect", {}))
         started = time.monotonic()
+        run = None
         try:
             run = harness.run_case(case_ns, workroot / case["slug"],
-                                   state_file=target_state(case, workroot))
+                                   state_file=target_state(case, workroot),
+                                   real_slicer=args.real_slicer)
             if case_ns.expect.get("status") == "FAILED":
                 # A pinned refusal: the harness's generic check also asserts a
                 # print started, which a refused case by definition never does.
@@ -104,6 +117,25 @@ def main():
                               "copies": run.receipt.get("copies")}
         except Exception as exc:  # noqa: BLE001 - recorded per case, like run_external_corpus
             row.update(result="FAIL", error=f"{type(exc).__name__}: {exc}")
+            if run is not None:
+                # The expectation message carries the receipt status; the
+                # underlying slice/fit error lives in its own receipt fields.
+                row["receipt"] = {"status": run.receipt.get("status"),
+                                  "scale": run.receipt.get("scale"),
+                                  "copies": run.receipt.get("copies")}
+                for field in ("slice_error", "fit_error"):
+                    if run.receipt.get(field):
+                        row["receipt"][field] = run.receipt[field]
+                        row["error"] += f"\nreceipt {field}: {run.receipt[field]}"
+        known =case.get("expected_failure") or []
+        if known:
+            # A recorded product bug: XFAIL while a known error still
+            # reproduces, XPASS once the case passes (drop expected_failure
+            # then). Any other failure stays a plain FAIL.
+            if row["result"] == "PASS":
+                row["result"] = "XPASS"
+            elif any(text in row["error"] for text in known):
+                row["result"] = "XFAIL"
         row["seconds"] = round(time.monotonic() - started, 2)
         results.append(row)
         print(json.dumps(row), flush=True)

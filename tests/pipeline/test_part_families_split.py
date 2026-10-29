@@ -53,7 +53,9 @@ def test_grouped_prompts_cover_every_canonical_key_exactly_once():
 
 def test_single_plate_3mf_per_part_routes_to_merge_planner():
     import inspect
-    body = inspect.getsource(model_job.slice_job)
+    # The routing lives in _slice_job_impl; slice_job wraps it to record the
+    # delivery format after a successful slice (#564 stage 1).
+    body = inspect.getsource(model_job._slice_job_impl)
     route = body.index("if src.suffix.lower() == '.3mf':")
     assert 'return slice_multi_plate(' in body[route:route + 400]
     assert 'except ImplicitPlateSplit' in body[route:route + 600]

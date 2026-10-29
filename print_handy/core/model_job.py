@@ -168,12 +168,16 @@ def _cached_source(site, key, value, model_id=None):
             d=json.loads(jp.read_text())
         except (OSError, ValueError):
             continue
-        sel=d.get("selected_source") or {}
-        f=Path(d.get("downloaded_file") or "")
-        if (d.get("site")==site and str(sel.get(key))==str(value)
-                and (model_id is None or str(d.get("model_id"))==str(model_id))
-                and f.is_file() and f.stat().st_size>0):
-            if best is None or f.stat().st_mtime>best.stat().st_mtime: best=f
+        if d.get("site")!=site or (model_id is not None and str(d.get("model_id"))!=str(model_id)):
+            continue
+        # A multi-file job records each file's own download in selected_sources.
+        rows=[(d.get("selected_source") or {}, d.get("downloaded_file"))]+[
+            (r, r.get("downloaded_file")) for r in d.get("selected_sources") or [] if isinstance(r, dict)]
+        for sel, path in rows:
+            f=Path(path or "")
+            if (isinstance(sel, dict) and str(sel.get(key))==str(value)
+                    and f.is_file() and f.stat().st_size>0):
+                if best is None or f.stat().st_mtime>best.stat().st_mtime: best=f
     return best
 
 

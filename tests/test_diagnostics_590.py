@@ -100,7 +100,7 @@ def test_robot_check_is_a_transient_known_cause():
 
 def test_site_download_gaps_are_known_causes_with_a_browser_remedy():
     from print_handy.core import model_job
-    for gap in (model_job.MYMINIFACTORY_DOWNLOAD_GAP, model_job.CULTS_DOWNLOAD_GAP):
+    for gap in (model_job.MAKERONLINE_DOWNLOAD_GAP, model_job.CULTS_DOWNLOAD_GAP):
         known = diagnostics.known_cause(RuntimeError(gap))
         assert known is not None and known.category is Category.CONFIGURATION
         assert "browser" in known.remedy and "upload or drop" in known.remedy

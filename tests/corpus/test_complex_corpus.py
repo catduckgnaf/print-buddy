@@ -37,10 +37,10 @@ DOMAINS = {"moonraker", "bambulab_lan", "prusalink", "elegoo_sdcp",
            "octoprint", "flashforge_stock", "offline"}
 
 
-def test_manifest_covers_all_twelve_catalogue_cases_and_three_private():
+def test_manifest_covers_all_twelve_catalogue_cases_and_four_private():
     assert len(PUBLIC) == 12, [c["slug"] for c in PUBLIC]
-    assert len(PRIVATE) == 3, [c["slug"] for c in PRIVATE]
-    assert len({c["slug"] for c in CASES}) == 15
+    assert len(PRIVATE) == 4, [c["slug"] for c in PRIVATE]
+    assert len({c["slug"] for c in CASES}) == 16
 
 
 def test_every_domain_has_a_case():
@@ -96,6 +96,72 @@ def test_targets_exist_in_the_printer_registry():
     keys = set(re.findall(r'^key = "([^"]+)"', registry, re.M))
     for case in CASES:
         assert case["target_printer"] in keys, (case["slug"], case["target_printer"])
+
+
+def test_case_clicks_take_precedence_over_generic_clicks():
+    """The harness answers with the FIRST matching [[click]] rule, so a case's
+    own rules must be written before the generic ones - otherwise a case can
+    never pick per-part colours or '100% · rearrange 1 plate'."""
+    case = next(c for c in CASES if c["slug"] == "duplo-swing-two-seats")
+    data = tomllib.loads(fetch_complex_corpus.case_toml(case))
+    clicks = data["click"]
+    own = fetch_complex_corpus.CASE_CLICKS[case["slug"]]
+    assert clicks[:len(own)] == own
+    assert clicks[len(own):] == fetch_complex_corpus.GENERIC_CLICKS
+
+    def first_answer(question):
+        return next(r["button"] for r in clicks if r["question"].casefold() in question.casefold())
+
+    assert first_answer("Inspected 9 parts: ... Choose colors for these parts or one color "
+                        "for everything?") == "Choose colors"
+    assert first_answer("Duplo swing - Two seats does not fit the Flashforge AD5X bed full "
+                        "size as one plate.") == "rearrange 1 plate"
+    # A case without its own rules keeps exactly the generic answers.
+    plain = next(c for c in CASES if c["slug"] == "stanford-dragon")
+    assert tomllib.loads(fetch_complex_corpus.case_toml(plain))["click"] == \
+        fetch_complex_corpus.GENERIC_CLICKS
+
+
+def test_case_toml_writes_table_expectations_as_toml():
+    case = next(c for c in CASES if c["slug"] == "duplo-swing-two-seats")
+    expect = tomllib.loads(fetch_complex_corpus.case_toml(case))["expect"]
+    assert expect == fetch_complex_corpus.CASE_EXPECT["duplo-swing-two-seats"]
+
+
+def test_expected_failures_are_error_substring_lists_on_ready_cases():
+    for case in CASES:
+        if "expected_failure" in case:
+            known = case["expected_failure"]
+            assert case["status"] == "ready", case["slug"]
+            assert isinstance(known, list) and known and all(isinstance(t, str) and t for t in known)
+
+
+def test_makerworld_link_uses_the_production_download_call(monkeypatch):
+    from print_handy.core import model_job
+    seen = {}
+
+    def fake_request_json(url, headers=None, **_kw):
+        seen.update(url=url, headers=headers)
+        return {"name": "x.3mf", "url": "https://example.test/x.3mf"}
+
+    monkeypatch.setattr(model_job, "maker_headers", lambda: {"Authorization": "Bearer t"})
+    monkeypatch.setattr(model_job, "request_json", fake_request_json)
+    assert fetch_complex_corpus.makerworld_link("976429") == "https://example.test/x.3mf"
+    assert seen["url"].endswith("/design-service/instance/976429/f3mf?type=download")
+    assert seen["headers"] == {"Authorization": "Bearer t"}
+
+
+def test_makerworld_robot_check_is_reported_not_bypassed(monkeypatch):
+    import urllib.error
+    from print_handy.core import model_job
+
+    def robot_check(url, **_kw):
+        raise urllib.error.HTTPError(url, 418, "I'm a teapot", None, None)
+
+    monkeypatch.setattr(model_job, "maker_headers", lambda: {})
+    monkeypatch.setattr(model_job, "request_json", robot_check)
+    with pytest.raises(RuntimeError, match="robot check"):
+        fetch_complex_corpus.makerworld_link("976429")
 
 
 class _FakeResponse:

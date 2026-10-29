@@ -73,8 +73,56 @@ COMPLEX_CORPUS_ROOT=~/print-handy-private-corpus CORPUS_WORK=<disk dir> \
   python tests/corpus/run_complex_corpus.py --tier private
 ```
 
-The MakerWorld case (16 Color Polymaker Scientist) is `blocked-download`:
-this codebase's MakerWorld route requires the account token file
-`~/.config/bambu/token`, and without one the file cannot be obtained through
-the eligible route. No scrape or captcha workaround is used, there or
-anywhere else in this corpus.
+Private cases (none of these files is ever committed, released or uploaded):
+
+| Slug | Licence | Target | Why it is here |
+| :--- | :--- | :--- | :--- |
+| `colormix-chameleon` | CC BY-NC-SA | Prusa XL | 972,972 painted triangles, 5-tool |
+| `dragon-statue` | Standard Digital File License | Flashforge AD5X (stock) | 32.9 MB STL, heavy supports |
+| `polymaker-scientist` | Standard Digital File License | Bambu H2D | `blocked-download` (no stats measured) |
+| `duplo-swing-two-seats` | CC BY-NC | Flashforge AD5X | Live 2.1.9 failure: per-part colours + "100% · rearrange 1 plate" |
+
+The fetcher has a MakerWorld route: the same account-token API call
+production intake uses (`print_handy.core.model_job.maker_download`, token
+file `~/.config/bambu/token`). Without the token it stops with the product's
+own "needs an account token" error; a MakerWorld robot check (HTTP 418) is
+reported, never solved or worked around. In either case, place the file at
+`<private root>/<slug>/model.3mf` by hand: the fetcher accepts a file that
+matches the manifest's SHA256 and size without contacting the site, so
+`fetch_complex_corpus.py --private-root <root> --only <slug>` then writes its
+`case.toml` and `ATTRIBUTION`. No scrape or captcha workaround is used, there
+or anywhere else in this corpus. The 16 Color Polymaker Scientist case stays
+`blocked-download` until someone with the token fetches and measures it.
+
+### Click rules and known failures
+
+The harness answers each question with the **first** `[[click]]` rule that
+matches it. `case_toml()` writes a case's own rules (`CASE_CLICKS` in
+`fetch_complex_corpus.py`) **before** the generic ones, so a case can
+override a generic answer, for example choosing per-part colours instead of
+"One color for everything", or "100% · rearrange 1 plate" instead of
+"Shrink to". A case without its own rules gets exactly the generic set, as
+before.
+
+A manifest case may carry `expected_failure`, a list of error substrings for
+a recorded product bug. The runner reports `XFAIL` while one of them
+reproduces, `XPASS` once the case passes (then delete `expected_failure`),
+and plain `FAIL` for anything else. When a case fails, the runner appends the
+receipt's `slice_error` / `fit_error` to the row's error, because the
+expectation message itself only names the receipt status.
+
+`duplo-swing-two-seats` carries one until the per-part + rearrange fix lands.
+Its clicks repeat the live attempt: per-part colours with every part on slot 1
+except double-frame on slot 4, then "100% · rearrange 1 plate". The mock tier
+reproduces the live error (`part group does not fit the target bed without
+cropping`), because the colour-geometry export that raises it is Python and
+is not mocked; the real tier fails the same way. The slot split matters: when the parts go on three slots
+(frame, seats and chains separately), each per-slot group fits on its own and
+the flow instead slices three plates and asks "Which plate prints first?".
+That ignores the rearrange plan as well, but raises no error. The fit search
+for this 9-part model takes about 2.5 minutes, and a whole mock-tier run
+about 4.7 minutes.
+
+`run_complex_corpus.py --real-slicer` (or `PRINT_HANDY_REAL_SLICER=1`) runs
+the harness's real tier, where the installed Orca CLI does the fit probes
+and the slice.

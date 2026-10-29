@@ -159,18 +159,31 @@ class StandaloneAdapter(BasePlatformAdapter):
                 await interaction.response.send_message("Not allowed. Nothing changed.", ephemeral=True)
                 return True
         labels = row["choices"] if row else (self.registry.choices(cid) or [])
-        if not 0 <= index < len(labels) or not self.registry.resolve_gateway_clarify(cid, labels[index]):
+        if not 0 <= index < len(labels):
             await interaction.response.send_message("That question already closed. Nothing changed.",
                                                     ephemeral=True)
+            return True
+        # Acknowledge before resolving: resolving wakes the waiting flow (slice start, file reads),
+        # which can hold the event loop past Discord's 3 s interaction window, and the presser then
+        # sees "This interaction failed" with nothing logged. A deferred update claims nothing yet.
+        try:
+            await interaction.response.defer()
+        except Exception:
+            logger.warning("could not acknowledge prompt click", exc_info=True)
+        if not self.registry.resolve_gateway_clarify(cid, labels[index]):
+            try:
+                await interaction.followup.send("That question already closed. Nothing changed.", ephemeral=True)
+            except Exception:
+                logger.debug("could not report a closed question", exc_info=True)
             return True
         who = getattr(user, "display_name", None) or getattr(user, "name", None) or "Someone"
         question = row["question"] if row else str(getattr(getattr(interaction, "message", None), "content", "") or "")
         self._prompts.pop(cid, None)
         try:
-            await interaction.response.edit_message(
+            await interaction.edit_original_response(
                 content=f"{question}\n> {who} chose **{labels[index]}**"[:rest.LIMIT], view=None)
         except Exception:
-            logger.debug("could not acknowledge prompt click", exc_info=True)
+            logger.debug("could not record the choice on the prompt", exc_info=True)
         return True
 
 

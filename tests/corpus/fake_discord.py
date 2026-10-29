@@ -100,6 +100,7 @@ class _Response:
 
     async def defer(self, **kwargs):
         self.done = True
+        self.interaction.acks.append(("defer", kwargs))
 
 
 class FakeInteraction:
@@ -114,11 +115,16 @@ class FakeInteraction:
         if values is not None:
             self.data["values"] = list(values)
         self.replies = []
+        self.acks = []  # deferred acknowledgements, in order
         self.response = _Response(self)
         self.followup = S(send=self._followup)
 
     async def _followup(self, content=None, **kwargs):
         self.replies.append({"content": content, "followup": True})
+
+    async def edit_original_response(self, *, content=None, view=None, **kwargs):
+        if self.message is not None:
+            await self.message.edit(content=content, view=view)
 
 
 class FakeClient:

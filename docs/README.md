@@ -29,6 +29,7 @@ Do not run both Discord modes with the same token. Installing, enabling services
 - [Printer support](PRINTER-SUPPORT.md): what "supported" means for each printer, how to try one that is not listed, what a built-in printer consists of, and the hardware checklist for confirming a listed printer works.
 - [Optional Flash Studio slicer](FLASH-STUDIO.md): opt-in, user-installed Flash Studio executable for Flashforge printers; an empty path keeps the normal OrcaSlicer choice.
 - [Home Assistant panic and printer controls](home-assistant-panic.md): direct, no-LLM AD5X/ZMod printer controls from a Home Assistant dashboard, including the emergency-stop panic restart; no extra daemon.
+- [Best practices on specific devices](DEVICE-BEST-PRACTICES.md): per-printer recommended settings, the order to change them in, and what has been verified on hardware. Starts with [AD5X best practices](DEVICE-AD5X.md): screenless with HelixScreen, ZMod version, Z offset, bed mesh and KAMP, Nopoop purge, QuickSwap order and risks, 3MF delivery.
 - [AD5X integration contract](AD5X-CONTRACT.md): printer-specific behavior and limitations.
 - [ZMod printers](ZMOD.md): all five ZMod models (AD5X, AD5M, AD5M Pro supported; Creator 5 / 5 Pro staged), and how their filament systems differ.
 - [Stock Flashforge printers](FLASHFORGE-STOCK.md): the Adventurer 5X on factory firmware — the LAN HTTP API, IFS prints, the launched-print monitor, and timelapse from the camera source the printer advertises (the AD5X has no built-in camera; read the verification status before expecting a video).

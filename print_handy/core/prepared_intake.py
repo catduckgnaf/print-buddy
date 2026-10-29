@@ -1243,7 +1243,7 @@ async def prepare_link(event, adapter, state, root, timeout=None, reuse=None, pr
                                       lambda: asyncio.to_thread(mj.inventory_for_url, url))
         rows = job.get('sources', [])
         if job['site'] in ('printables', 'thingiverse', 'myminifactory', 'cults3d', 'crealitycloud',
-                           'thangs', 'nexprint', 'makeronline'):
+                           'thangs', 'nexprint', 'makeronline', 'direct'):
             rows = [r for r in rows if Path(r.get('name', '')).suffix.lower() in {'.3mf', '.stl'}]
         if not rows:
             raise ValueError(job.get('no_geometry_reason') or 'source inventory contains no selectable geometry')
@@ -2245,6 +2245,12 @@ async def prepare_link(event, adapter, state, root, timeout=None, reuse=None, pr
             # would hide the remedy.
             content = (f'That model could not be downloaded: {exc} '
                        'Nothing was sliced, uploaded or started.')
+        elif isinstance(exc, mj.DirectLinkError):
+            # Also curated and user-phrased (#607): a direct file link that
+            # returned a web page, pointed at a non-public address, or could
+            # not be reached. The text names the cause and the remedy, so
+            # keep it — the generic wording would hide both.
+            content = (f'That file could not be fetched. {exc}')
         elif isinstance(exc, ValueError) and str(exc).startswith('requires one to four distinct configured'):
             # Also curated and user-phrased: a multi-slot/toolhead printer
             # with nothing configured. The text names the exact setup gap,

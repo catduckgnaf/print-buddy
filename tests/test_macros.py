@@ -133,6 +133,41 @@ def test_classify_never_calls_commands_or_errors_known_macros(registry):
     assert listing.printer_defined == ("BED_MESH_CALIBRATE", "SAVE_CONFIG")
 
 
+# ------------------------------------------- printer-scoped matching (issue #612)
+
+# The operator-named Sovol Zero macro-pack macros that share names with
+# registry entries for other printers (rpcyan586/svzero-profiles, pinned in
+# issue #612), plus the two generic Klipper names.
+SVZERO_SHARED_NAMES = ["START_PRINT", "END_PRINT", "LOAD_FILAMENT", "UNLOAD_FILAMENT",
+                       "CANCEL_PRINT", "PRINT_START"]
+
+
+def test_classify_scoped_never_borrows_another_printers_entry(registry):
+    listing = macros.classify(SVZERO_SHARED_NAMES, registry=registry, printer="klipper.generic")
+    known = {name: entry.id for name, entry in listing.known}
+    assert known == {"PRINT_START": "klipper.print-start",
+                     "CANCEL_PRINT": "klipper.cancel-print"}
+    assert set(listing.printer_defined) == {"START_PRINT", "END_PRINT",
+                                            "LOAD_FILAMENT", "UNLOAD_FILAMENT"}
+
+
+def test_classify_scoped_to_the_ad5x_keeps_its_zmod_entries(registry):
+    listing = macros.classify(SVZERO_SHARED_NAMES, registry=registry, printer="flashforge.ad5x")
+    known = {name: entry.id for name, entry in listing.known}
+    assert known["START_PRINT"] == "zmod.start-print"
+    assert known["END_PRINT"] == "zmod.end-print"
+    assert known["LOAD_FILAMENT"] == "zmod.load-filament"
+    # The generic Klipper PRINT_START entry is not scoped to the AD5X either:
+    # scoping cuts both ways, so it is printer-defined there, not borrowed.
+    assert "PRINT_START" in listing.printer_defined
+
+
+def test_classify_unscoped_keeps_the_name_only_behaviour(registry):
+    # Callers that cannot name a printer keep the pre-#612 behaviour.
+    listing = macros.classify(["START_PRINT"], registry=registry)
+    assert listing.known[0][1].id == "zmod.start-print"
+
+
 # ------------------------------------------------------------------- discovery
 
 def test_discover_makes_exactly_one_read_only_get():
@@ -314,6 +349,21 @@ def test_prepare_run_canonicalises_the_name_and_builds_the_exact_script():
     assert transport.calls == [("GET", "/printer/objects/list", None),
                                ("GET", macros.PRINT_STATE_PATH, None)]
     assert transport.posts == []
+
+
+def test_prepare_run_scoped_carries_no_borrowed_entry(registry):
+    # On klipper.generic a discovered START_PRINT is the printer's own macro
+    # (e.g. Sovol's), never ZMod's: the prompt must say it is not described.
+    prepared = macros.prepare_run(RunTransport(), "START_PRINT",
+                                  registry=registry, printer="klipper.generic")
+    assert prepared.entry is None
+    assert macros.NOT_DESCRIBED_WORDING in macros.run_prompt_text(prepared)
+
+
+def test_prepare_run_scoped_to_the_ad5x_keeps_the_zmod_entry(registry):
+    prepared = macros.prepare_run(RunTransport(), "START_PRINT",
+                                  registry=registry, printer="flashforge.ad5x")
+    assert prepared.entry is not None and prepared.entry.id == "zmod.start-print"
 
 
 def test_prepare_run_appends_validated_arguments_in_order():

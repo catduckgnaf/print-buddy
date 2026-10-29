@@ -210,6 +210,37 @@ def test_report_fails_soft_when_the_status_cannot_be_read():
         fw.firmware_report(FakeTransport(error=OSError("unreachable")), AD5X)
 
 
+# ------------------------------------------------- ZMod version line (#562)
+
+STATUS_NO_ZMOD = {"result": {"version_info": {
+    "klipper": {"version": "v0.12.0-289", "remote_version": "v0.12.0-289"},
+    "moonraker": {"version": "v0.9.3-10", "remote_version": "v0.9.3-10"}}}}
+
+STATUS_ZMOD_NO_VERSION = {"result": {"version_info": {
+    "klipper": {"version": "v0.12.0-289", "remote_version": "v0.12.0-289"},
+    "zmod": {"remote_version": "1.9.2"}}}}
+
+
+def test_report_names_the_zmod_version_when_moonraker_reports_it():
+    text = fw.firmware_report(FakeTransport(), AD5X)
+    assert "ZMod version: 1.9.2" in text
+
+
+def test_report_says_zmod_version_unknown_when_the_component_is_absent():
+    text = fw.firmware_report(FakeTransport(status=STATUS_NO_ZMOD), AD5X)
+    assert "ZMod version: unknown (not reported by Moonraker)" in text
+
+
+def test_report_says_zmod_version_unknown_when_no_current_version_is_reported():
+    text = fw.firmware_report(FakeTransport(status=STATUS_ZMOD_NO_VERSION), AD5X)
+    assert "ZMod version: unknown (not reported by Moonraker)" in text
+
+
+def test_report_has_no_zmod_version_line_for_other_families():
+    text = fw.firmware_report(FakeTransport(), GENERIC)
+    assert "ZMod version:" not in text
+
+
 # ------------------------------------------------------------- ZMod pairing
 
 @pytest.mark.parametrize("os_version,zmod_version,expected", [

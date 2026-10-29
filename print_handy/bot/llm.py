@@ -32,6 +32,11 @@ ALLOWED = (
     # for its own confirmation but changes the printer, so it stays out (#561).
     re.compile(r"/print-firmware"),
     re.compile(r"/print-firmware guide (?:zmod|stock)"),
+    # The calibration menu, records and Z-offset report are read-only; a
+    # calibration run or an accept may never come from the model (#565).
+    re.compile(r"/print-calibration"),
+    re.compile(r"/print-calibration records"),
+    re.compile(r"/print-calibration zoffset"),
     # Design asks for its own buttons before anything is sliced (#388 Stage 2);
     # /design is its short alias (#388 close-out).
     re.compile(r"/print-design(?: [\w .#/-]{1,160})?", re.I),

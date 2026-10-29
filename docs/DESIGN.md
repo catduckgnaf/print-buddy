@@ -87,7 +87,8 @@ The model writes the part, but it never gets to run anything general:
 
 Attach the model to the design message — drop the file in the same message as
 `/print-design <the change>`, or paste a supported model-site link in it
-(MakerWorld, Printables, Thingiverse, MyMiniFactory, Cults3D, Creality Cloud). The
+(MakerWorld, Printables, Thingiverse, MyMiniFactory, Cults3D, Creality Cloud, Thangs,
+Nexprint, MakerOnline). The
 original is never modified: design works on a copy inside its session folder.
 
 - **`.scad`** — edited in source form. The model returns the complete updated
@@ -106,7 +107,8 @@ original is never modified: design works on a copy inside its session folder.
 - **A model link** — the file is fetched through the ordinary link machinery
   first (MakerWorld picks its default profile; Printables, Thingiverse and
   Creality Cloud must offer one STL/3MF file — a Creality Cloud link's print
-  profile names its file when it has one; MyMiniFactory and Cults3D links
+  profile names its file when it has one; Thangs, Nexprint and MakerOnline
+  must offer one STL/3MF file too; MyMiniFactory and Cults3D links
   stop with their download gaps named), then edited like a dropped file.
 
 ## Saying it instead of the command

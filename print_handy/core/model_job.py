@@ -23,6 +23,7 @@ from typing import Any, NamedTuple
 from .. import firmware_update, printers, settings
 from ..printers.base import MultiColorUnsupported
 from . import _external, gcode_3mf, launch_state, printer_state, spoolman_client
+from .site_accounts import SiteLoginNeeded
 
 logger = logging.getLogger(__name__)
 
@@ -562,18 +563,18 @@ def crealitycloud_token():
     try:
         token = path.read_text(encoding="utf-8").strip()
     except FileNotFoundError:
-        raise RuntimeError(
+        raise SiteLoginNeeded("crealitycloud", "missing", 
             f"Creality Cloud downloads need a login token in {path}; sign in at "
             "https://www.crealitycloud.com in a browser, open the browser's "
             "developer tools, copy the value of the cookie named model_token, "
             "and store it as the only content of that file; see "
             "docs/PROJECT-REFERENCE.md (Creality Cloud login token)") from None
-    if not token: raise RuntimeError("Creality Cloud token empty")
+    if not token: raise SiteLoginNeeded("crealitycloud", "empty", "Creality Cloud token empty")
     return token
 
 
 def _crealitycloud_token_refused():
-    return RuntimeError(
+    return SiteLoginNeeded("crealitycloud", "refused", 
         "Creality Cloud refused the login token (the site answered \"Invalid "
         "Token\"), which usually means the token in "
         "~/.config/crealitycloud/token is missing, invalid or expired. Sign "
@@ -771,34 +772,442 @@ def crealitycloud_download(job, source, target):
          "fileIds": [source.get("id")]}, token=token)
     url = _crealitycloud_download_url(result)
     if not url: raise RuntimeError(CREALITYCLOUD_ANSWER_GAP)
-    name = Path(source.get("name") or "model.stl").name
+    # memberDownload names one file; a multi-file answer arrives as one zip
+    # and keeps only the chosen file (_fetch_chosen, which also knows a 3MF
+    # is itself a zip and must not be unpacked).
+    return _fetch_chosen(url, target, source.get("name"), "Creality Cloud", exact=True)
+
+# ---------------------------------------------------------------------------
+# Login-token web-API sites (#464): Thangs, Nexprint, MakerOnline.
+#
+# Like Creality Cloud above, each of these uses the JSON API its own web app
+# calls. Model detail and the file list answer anonymously; the download
+# needs the operator's login token (see site_accounts), which the operator
+# copies from their signed-in browser into ~/.config/<site>/token. No
+# password is stored, no captcha is solved, and no site check is bypassed:
+# a robot check or captcha answer is a plain stop. Verified live 2026-10-29
+# for the anonymous legs and for each download gate refusing a tokenless
+# request; the download success shapes come from each web client's own code
+# and are parsed defensively, refusing with a named gap instead of guessing.
+# ---------------------------------------------------------------------------
+
+def _web_api(method, url, *, body=None, headers=None, timeout=25):
+    """One JSON request; returns (HTTP status, parsed body or text). Never raises on 4xx/5xx.
+
+    The sites below answer refusals with JSON bodies on 4xx statuses (and
+    sometimes on 200), so the caller decides from both. gzip is requested
+    (smaller and, on Creality's edge, more reliable); dropped reads are
+    retried — every call here is an idempotent read or a download-link request.
+    """
+    import gzip
+    h = {"User-Agent": UA, "Accept": "application/json", "Accept-Encoding": "gzip"}
+    h.update(headers or {})
+    data = None
+    if body is not None:
+        data = json.dumps(body).encode()
+        h["Content-Type"] = "application/json"
+    for attempt in range(3):
+        req = urllib.request.Request(url, data=data, headers=h, method=method)
+        try:
+            with urllib.request.urlopen(req, timeout=timeout) as r:
+                status, raw, enc = r.status, r.read(), r.headers.get("Content-Encoding")
+        except urllib.error.HTTPError as exc:
+            status, enc = exc.code, (exc.headers.get("Content-Encoding") if exc.headers else None)
+            raw = exc.read() or b""
+        except (http.client.HTTPException, ConnectionError, TimeoutError, urllib.error.URLError):
+            if attempt == 2: raise
+            time.sleep(0.5 * (attempt + 1))
+            continue
+        break
+    if enc == "gzip" and raw:
+        raw = gzip.decompress(raw)
+    text = raw.decode("utf-8", "replace")
+    try:
+        return status, json.loads(text)
+    except ValueError:
+        return status, text
+
+
+def _answer_url(result):
+    """The file URL in a download-link answer (string, dict or list), or None."""
+    if isinstance(result, str): return result if result.startswith("http") else None
+    if isinstance(result, list):
+        for item in result:
+            found = _answer_url(item)
+            if found: return found
+        return None
+    if isinstance(result, dict):
+        for key in ("signedUrl", "resultUrl", "url", "downloadUrl", "file_url", "fileUrl",
+                    "downloadZip", "zipUrl", "link"):
+            value = result.get(key)
+            if isinstance(value, str) and value.startswith("http"): return value
+        for key in ("fileInfoList", "list", "files", "urls", "data"):
+            found = _answer_url(result.get(key))
+            if found: return found
+    return None
+
+
+def _is_3mf_package(archive):
+    names = set(archive.namelist())
+    return "[Content_Types].xml" in names or "3D/3dmodel.model" in names
+
+
+def _fetch_chosen(url, target, name, label, *, exact):
+    """Download ``url`` into ``target`` and keep only the chosen file ``name``.
+
+    A zip answer (a whole-model download) is unpacked to the entry named
+    ``name``, or to its only geometry file. A 3MF is itself a zip, so a zip
+    that IS a 3MF package is the file, not an archive of files. A plain file
+    answer is the chosen file when ``exact`` (the request named one file);
+    otherwise its name must match, or nothing is kept.
+    """
+    name = Path(name or "model.stl").name
     target = Path(target)
+    target.mkdir(parents=True, exist_ok=True)
     dest = target/name
     staged = target/(name + ".download")
     download(url, staged)
+    archive = None
     if zipfile.is_zipfile(staged):
-        # A multi-file answer arrives as one zip: keep the chosen file (or
-        # the only geometry file in it) and nothing else.
-        with zipfile.ZipFile(staged) as archive:
-            entries = [n for n in archive.namelist()
-                       if not n.endswith("/")
+        archive = zipfile.ZipFile(staged)
+        if _is_3mf_package(archive):
+            archive.close()
+            archive = None
+    if archive is not None:
+        with archive:
+            entries = [n for n in archive.namelist() if not n.endswith("/")
                        and Path(n).suffix.lower() in {".stl", ".3mf"}]
-            pick = next((n for n in entries if Path(n).name == name), None)
+            pick = next((n for n in entries if Path(n).name.casefold() == name.casefold()), None)
             if pick is None and len(entries) == 1: pick = entries[0]
             if pick is None:
                 staged.unlink(missing_ok=True)
                 raise RuntimeError(
-                    f"Creality Cloud sent a zip with {len(entries)} model "
-                    f"files and none is named {name}, so Print Handy cannot "
-                    "tell which one was chosen; nothing was kept")
+                    f"{label} sent a zip with {len(entries)} model files and none is named "
+                    f"{name}, so Print Handy cannot tell which one was chosen; nothing was kept")
             with archive.open(pick) as src, dest.open("wb") as out:
                 shutil.copyfileobj(src, out)
         staged.unlink(missing_ok=True)
     else:
+        sent = urllib.parse.unquote(Path(urllib.parse.urlparse(url).path).name)
+        if not exact and sent.casefold() != name.casefold():
+            staged.unlink(missing_ok=True)
+            raise RuntimeError(
+                f"{label} sent a single file ({sent or 'unnamed'}) that is not the chosen "
+                f"{name}, so nothing was kept. Download the file from the model page in a "
+                "browser and upload or drop it here instead.")
         staged.replace(dest)
     if dest.stat().st_size == 0:
-        raise RuntimeError("Creality Cloud download was empty")
+        raise RuntimeError(f"{label} download was empty")
     return dest
+
+
+def _answer_gap(label):
+    return (f"{label} answered the download request, but Print Handy could not find a "
+            "file URL in the answer, so nothing was downloaded. This download path has "
+            "not been verified with a live login token yet. Workaround: open the model "
+            "page in a browser, download the .stl/.3mf file there, then upload or drop "
+            "the file here instead.")
+
+
+def _title_slug(title, fallback):
+    return re.sub(r'[^a-z0-9]+', '-', str(title).lower()).strip('-') or fallback
+
+
+# Creative Commons codes in the order both Anycubic's and Elegoo's web
+# clients enumerate them; each site's own trailing value is its house license.
+_CC_LICENSES = ["CC BY", "CC BY-SA", "CC BY-NC", "CC BY-NC-SA", "CC BY-ND", "CC BY-NC-ND", "CC0"]
+
+
+THANGS = "https://thangs.com"
+THANGS_ANSWER_GAP = _answer_gap("Thangs")
+
+
+def thangs_id(url):
+    """The model id from a Thangs URL: /designer/<user>/3d-model/<title>-<id> or /m/<id>."""
+    path = urllib.parse.unquote(urllib.parse.urlparse(str(url)).path)
+    m = re.fullmatch(r"/m/(\d+)/?", path) or re.search(r"/3d-model/.*-(\d+)/?$", path)
+    if not m: raise ValueError(f"Thangs URL needs /3d-model/<title>-<number> or /m/<number>: {url}")
+    return m.group(1)
+
+
+def thangs_inventory(url):
+    # GET /api/models/v2/<id> is the call the model page itself makes (its
+    # answer is embedded in the page's __NEXT_DATA__). A model that does not
+    # exist, or is not public, answers 403 Forbidden rather than 404.
+    mid = thangs_id(url)
+    status, d = _web_api("GET", f"{THANGS}/api/models/v2/{mid}?likes=false")
+    if status in (403, 404):
+        raise RuntimeError(f"Thangs model {mid} was not found — it may have been removed or "
+                           "made private, or the link is wrong")
+    if status != 200 or not isinstance(d, dict) or not d.get("id"):
+        raise RuntimeError(f"Thangs answered the model lookup with HTTP {status}, so the "
+                           "link was not followed")
+    rows = []
+    for part in d.get("parts") or []:
+        if not isinstance(part, dict): continue
+        # name can be a display name without an extension; the stored file
+        # name carries the real format.
+        name = str(part.get("originalFileName") or "").strip() \
+            or Path(str(part.get("filename") or "")).name
+        if Path(name).suffix.lower() not in {".stl", ".3mf"}: continue
+        rows.append({"id": part.get("partIdentifier"), "name": name, "bytes": part.get("size"),
+                     "kind": "files"})
+    title = str(d.get("name") or "").strip() or f"thangs-{mid}"
+    license_file = d.get("license")
+    # Thangs keeps the license as an uploaded file; its name is the best
+    # summary the API gives ("Creative Commons - Attribution 4.0 ...pdf"),
+    # unless it is just a generic LICENSE file.
+    license_value = Path(str(license_file)).stem if license_file else None
+    if license_value and license_value.casefold() in {"license", "licence"}:
+        license_value = "license file on the model page"
+    job = {"site": "thangs", "model_id": str(d["id"]), "title": title,
+           "slug": _title_slug(title, mid), "license": license_value, "sources": rows}
+    if d.get("visibility") == "paid" or d.get("plans") or d.get("marketplaceInfo"):
+        job["paid"] = True
+    if not rows:
+        job["no_geometry_reason"] = (
+            f"Thangs model \"{title}\" lists no STL/3MF files, so there is no selectable "
+            "geometry to reslice")
+    return job
+
+
+def thangs_download(job, source, target):
+    cached = _cached_source("thangs", "id", source.get("id"), job.get("model_id"))
+    if cached is not None and cached.name == Path(source.get("name") or "").name:
+        return _reuse_cached(cached, target, "Thangs")
+    from .site_accounts import read_token, refused
+    token = read_token("thangs")
+    # Thangs downloads a whole model, never one part: the web client asks
+    # for this signed URL and loads it. A multi-part answer is a zip that
+    # _fetch_chosen unpacks to the chosen part.
+    status, d = _web_api("GET", f"{THANGS}/api/v2/models/{job['model_id']}/download-url",
+                         headers={"Authorization": f"Bearer {token}"})
+    if status == 401:
+        raise refused("thangs")
+    if status == 403:
+        if job.get("paid"):
+            raise RuntimeError(
+                "Thangs refused the download: this model needs a Thangs membership or a "
+                "purchase that the signed-in account does not have. Print Handy never buys "
+                "or unlocks models; nothing was downloaded.")
+        raise refused("thangs", " (403)")
+    if status == 429:
+        raise RuntimeError("Thangs is rate-limiting downloads right now; wait a few minutes, "
+                           "then send the link again")
+    if status != 200 or not isinstance(d, dict):
+        raise RuntimeError(f"Thangs answered the download request with HTTP {status}; "
+                           "nothing was downloaded")
+    if (d.get("userDownloadData") or {}).get("downloadLimitReached"):
+        raise RuntimeError("Thangs says this account reached its daily download limit; "
+                           "try again tomorrow. Nothing was downloaded.")
+    if d.get("fileName") == "Error":
+        raise RuntimeError("Thangs says this model's download is not ready yet; try again "
+                           "later. Nothing was downloaded.")
+    url = _answer_url(d)
+    if not url: raise RuntimeError(THANGS_ANSWER_GAP)
+    single = len(job.get("sources") or []) <= 1
+    return _fetch_chosen(url, target, source.get("name"), "Thangs", exact=single)
+
+
+NEXPRINT = "https://www.nexprint.com/gateway"
+NEXPRINT_ANSWER_GAP = _answer_gap("Nexprint")
+NEXPRINT_LICENSES = _CC_LICENSES + ["Nexprint Standard License"]
+
+
+def nexprint_id(url):
+    """The model id from a Nexprint URL: /[<lang>/]models/<id>."""
+    path = urllib.parse.urlparse(str(url)).path
+    m = re.search(r"/models/([A-Za-z0-9]+)/?$", path)
+    if not m: raise ValueError(f"Nexprint URL needs /models/<id>: {url}")
+    return m.group(1)
+
+
+def _nexprint_result(method, path, body=None, token=None):
+    """One Nexprint gateway call; returns the envelope's data.
+
+    The gateway keeps HTTP 200 for refusals and puts the cause in the
+    envelope's code (401 = not signed in). Known codes are named with their
+    remedy; an unknown one is reported by number, never by the site's text.
+    """
+    headers = {"User-Lang": "en"}
+    if token: headers["Authorization"] = f"Bearer {token}"
+    status, d = _web_api(method, f"{NEXPRINT}{path}", body=body, headers=headers)
+    if not isinstance(d, dict) or "code" not in d:
+        if token and status in (401, 403):
+            from .site_accounts import refused
+            raise refused("nexprint")
+        raise RuntimeError(f"Nexprint answered with an unexpected response (HTTP {status}), "
+                           "so the request was not followed")
+    code = d.get("code")
+    if code in (0, 200): return d.get("data")
+    if code in (401, 902):
+        from .site_accounts import refused
+        raise refused("nexprint")
+    if code in (1003002049, 1003002050, 1003002051):
+        raise RuntimeError("Nexprint says this account reached its download limit; try again "
+                           "later. Nothing was downloaded.")
+    if code == 403:
+        raise RuntimeError("Nexprint refused the request as unusual activity. Open the model "
+                           "on nexprint.com in a browser, then send the link again later. "
+                           "Print Handy does not try to bypass site checks.")
+    raise RuntimeError(f"Nexprint refused the request (code {code})")
+
+
+def nexprint_inventory(url):
+    mid = nexprint_id(url)
+    d = _nexprint_result("GET", "/api/v1/model-library-server/model-base-info/get?id="
+                         + urllib.parse.quote(mid))
+    # An unknown id still answers code 0, with every field null.
+    if not isinstance(d, dict) or not d.get("id"):
+        raise RuntimeError(f"Nexprint model {mid} was not found — it may have been removed, "
+                           "or the link is wrong")
+    model_id = str(d["id"])
+    # Print settings ship as 3MF files that also appear in modelFileList;
+    # downloading one is a type 5 request against the setting's id.
+    settings_by_file = {}
+    for setting in d.get("settingInfoList") or []:
+        f = (setting or {}).get("settingFile") or {}
+        if f.get("fileId") is not None:
+            settings_by_file[str(f["fileId"])] = setting
+    rows, seen = [], set()
+    for f in d.get("modelFileList") or []:
+        if not isinstance(f, dict) or f.get("fileId") is None: continue
+        fid = str(f["fileId"])
+        if fid in seen: continue
+        seen.add(fid)
+        name = str(f.get("fileName") or "").strip()
+        if Path(name).suffix.lower() not in {".stl", ".3mf"}: continue
+        setting = settings_by_file.get(fid)
+        size = f.get("fileSize")
+        row = {"id": fid, "name": name, "bytes": int(size) if isinstance(size, (int, float)) else None,
+               "kind": "files", "file_type": "5" if setting else "2",
+               "biz_id": str(setting["id"]) if setting else model_id}
+        if setting and setting.get("settingName"):
+            # Setting projects often share the designer file's name; the
+            # picker shows the setting's name so the rows stay distinct.
+            row["profile"] = str(setting["settingName"])
+            row["title"] = f"{name} (print setting: {row['profile']})"
+        rows.append(row)
+    # The designer's own files first, then print-setting projects.
+    rows.sort(key=lambda r: r["file_type"] != "2")
+    title = str(d.get("modelName") or "").strip() or f"nexprint-{mid}"
+    lic = d.get("licenseType")
+    job = {"site": "nexprint", "model_id": model_id, "title": title,
+           "slug": _title_slug(title, mid),
+           "license": NEXPRINT_LICENSES[lic] if isinstance(lic, int) and 0 <= lic < len(NEXPRINT_LICENSES) else None,
+           "sources": rows}
+    if not rows:
+        job["no_geometry_reason"] = (
+            f"Nexprint model \"{title}\" lists no STL/3MF files, so there is no selectable "
+            "geometry to reslice")
+    return job
+
+
+def nexprint_download(job, source, target):
+    cached = _cached_source("nexprint", "id", source.get("id"), job.get("model_id"))
+    if cached is not None and cached.name == Path(source.get("name") or "").name:
+        return _reuse_cached(cached, target, "Nexprint")
+    from .site_accounts import read_token
+    token = read_token("nexprint")
+    d = _nexprint_result(
+        "POST", "/api/v1/model-library-server/common/presigned-download-url",
+        {"fileInfoList": [{"fileId": str(source.get("id")),
+                           "type": source.get("file_type") or "2",
+                           "bizId": source.get("biz_id") or job["model_id"]}]},
+        token=token)
+    url = _answer_url(d)
+    if not url: raise RuntimeError(NEXPRINT_ANSWER_GAP)
+    return _fetch_chosen(url, target, source.get("name"), "Nexprint", exact=True)
+
+
+MAKERONLINE = "https://makeronline.com"
+MAKERONLINE_ANSWER_GAP = _answer_gap("MakerOnline")
+MAKERONLINE_LICENSES = _CC_LICENSES + ["Standard Digital File License"]
+MAKERONLINE_CAPTCHA_GAP = (
+    "MakerOnline asked for a captcha before this download. Print Handy never solves or "
+    "skips a captcha, so nothing was downloaded. Open the model page on makeronline.com "
+    "in a browser, download the .stl/.3mf file there, then upload or drop the file here "
+    "instead.")
+
+
+def makeronline_id(url):
+    """The model id from a MakerOnline URL: /[<lang>/]model/<title>/<id>.html."""
+    path = urllib.parse.unquote(urllib.parse.urlparse(str(url)).path)
+    m = re.search(r"/model/(?:.*/)?(\d+)\.html$", path)
+    if not m: raise ValueError(f"MakerOnline URL needs /model/<title>/<number>.html: {url}")
+    return m.group(1)
+
+
+def _makeronline_result(method, path, body=None, token=None):
+    """One MakerOnline API call; returns the envelope's data.
+
+    The web client sends the login token as the raw Authorization value
+    (a JWT, no "Bearer"). code 1003 is the captcha demand: a hard stop.
+    """
+    headers = {"lang": "en"}
+    if token: headers["Authorization"] = token
+    status, d = _web_api(method, f"{MAKERONLINE}{path}", body=body, headers=headers)
+    if not isinstance(d, dict) or "code" not in d:
+        if token and status in (401, 403):
+            from .site_accounts import refused
+            raise refused("makeronline")
+        raise RuntimeError(f"MakerOnline answered with an unexpected response (HTTP {status}), "
+                           "so the request was not followed")
+    code = d.get("code")
+    if code == 0: return d.get("data")
+    if code == -1 or status == 401:
+        from .site_accounts import refused
+        raise refused("makeronline")
+    if code == 1003: raise RuntimeError(MAKERONLINE_CAPTCHA_GAP)
+    if code == 1 and "not exist" in str(d.get("message") or ""):
+        raise RuntimeError("MakerOnline says this model does not exist — it may have been "
+                           "removed, or the link is wrong")
+    raise RuntimeError(f"MakerOnline refused the request (code {code})")
+
+
+def makeronline_inventory(url):
+    mid = makeronline_id(url)
+    d = _makeronline_result("GET", f"/api/mold/detail?id={mid}")
+    if not isinstance(d, dict) or not d.get("id"):
+        raise RuntimeError(f"MakerOnline model {mid} was not found — it may have been removed, "
+                           "or the link is wrong")
+    rows = []
+    for f in d.get("files") or []:
+        if not isinstance(f, dict) or not f.get("key"): continue
+        name = str(f.get("file_name") or "").strip()
+        if Path(name).suffix.lower() not in {".stl", ".3mf"}: continue
+        rows.append({"id": f["key"], "name": name, "bytes": f.get("file_size"),
+                     "kind": "files", "file_id": f.get("file_id")})
+    title = str(d.get("title") or "").strip() or f"makeronline-{mid}"
+    lic = d.get("license")
+    job = {"site": "makeronline", "model_id": str(d["id"]), "title": title,
+           "slug": _title_slug(title, mid),
+           "license": MAKERONLINE_LICENSES[lic - 1] if isinstance(lic, int) and 1 <= lic <= len(MAKERONLINE_LICENSES) else None,
+           "sources": rows}
+    if not rows:
+        job["no_geometry_reason"] = (
+            f"MakerOnline model \"{title}\" lists no STL/3MF model files, so there is no "
+            "selectable geometry to reslice — Print Handy never uses a site's printer-specific "
+            "print profiles or pre-sliced G-code")
+    return job
+
+
+def makeronline_download(job, source, target):
+    cached = _cached_source("makeronline", "id", source.get("id"), job.get("model_id"))
+    if cached is not None and cached.name == Path(source.get("name") or "").name:
+        return _reuse_cached(cached, target, "MakerOnline")
+    from .site_accounts import read_token
+    token = read_token("makeronline")
+    mold_id = job["model_id"]
+    d = _makeronline_result(
+        "POST", "/api/file/download",
+        {"key": source.get("id"), "file_type": 1, "is_batch_down": 0,
+         "mold_id": int(mold_id) if str(mold_id).isdigit() else mold_id},
+        token=token)
+    url = _answer_url(d)
+    if not url: raise RuntimeError(MAKERONLINE_ANSWER_GAP)
+    return _fetch_chosen(url, target, source.get("name"), "MakerOnline", exact=True)
+
 
 # Per-site registry (#462): site -> function NAME, resolved through this module's globals
 # at call time so existing tests that monkeypatch maker_*/printables_*/thingiverse_*/
@@ -807,25 +1216,32 @@ SITE_INVENTORY_FUNCS={"makerworld":"maker_inventory","printables":"printables_in
                       "thingiverse":"thingiverse_inventory",
                       "myminifactory":"myminifactory_inventory",
                       "cults3d":"cults_inventory",
-                      "crealitycloud":"crealitycloud_inventory"}
+                      "crealitycloud":"crealitycloud_inventory",
+                      "thangs":"thangs_inventory","nexprint":"nexprint_inventory",
+                      "makeronline":"makeronline_inventory"}
 SITE_DOWNLOAD_FUNCS={"makerworld":"maker_download","printables":"printables_download",
                      "thingiverse":"thingiverse_download",
                      "myminifactory":"myminifactory_download",
                      "cults3d":"cults_download",
-                     "crealitycloud":"crealitycloud_download"}
+                     "crealitycloud":"crealitycloud_download",
+                     "thangs":"thangs_download","nexprint":"nexprint_download",
+                     "makeronline":"makeronline_download"}
 SITE_HOSTS={"makerworld.com":"makerworld","www.makerworld.com":"makerworld",
             "printables.com":"printables","www.printables.com":"printables",
             "thingiverse.com":"thingiverse","www.thingiverse.com":"thingiverse",
             "myminifactory.com":"myminifactory","www.myminifactory.com":"myminifactory",
             "cults3d.com":"cults3d","www.cults3d.com":"cults3d",
-            "crealitycloud.com":"crealitycloud","www.crealitycloud.com":"crealitycloud"}
+            "crealitycloud.com":"crealitycloud","www.crealitycloud.com":"crealitycloud",
+            "thangs.com":"thangs","www.thangs.com":"thangs",
+            "nexprint.com":"nexprint","www.nexprint.com":"nexprint",
+            "makeronline.com":"makeronline","www.makeronline.com":"makeronline"}
 def inventory_for_url(url):
     site=SITE_HOSTS.get((urllib.parse.urlparse(url).hostname or "").lower())
-    if site is None: raise ValueError("supported sites: MakerWorld, Printables, Thingiverse, MyMiniFactory, Cults3D, Creality Cloud")
+    if site is None: raise ValueError("supported sites: MakerWorld, Printables, Thingiverse, MyMiniFactory, Cults3D, Creality Cloud, Thangs, Nexprint, MakerOnline")
     return globals()[SITE_INVENTORY_FUNCS[site]](url)
 def download_for_site(job, source, target):
     name=SITE_DOWNLOAD_FUNCS.get((job or {}).get("site"))
-    if name is None: raise ValueError("supported sites: MakerWorld, Printables, Thingiverse, MyMiniFactory, Cults3D, Creality Cloud")
+    if name is None: raise ValueError("supported sites: MakerWorld, Printables, Thingiverse, MyMiniFactory, Cults3D, Creality Cloud, Thangs, Nexprint, MakerOnline")
     return globals()[name](job, source, target)
 
 

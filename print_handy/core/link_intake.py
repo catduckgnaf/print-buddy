@@ -36,6 +36,13 @@ def model_link(text):
         return text
     if host in {'crealitycloud.com', 'www.crealitycloud.com'} and re.match(r'/(?:[a-z]{2}(?:-[a-z]{2})?/)?model-detail/[^/]+/?$', path, re.I):
         return text
+    if host in {'thangs.com', 'www.thangs.com'} and (
+            re.fullmatch(r'/m/\d+/?', path) or re.search(r'/3d-model/[^/]*-\d+/?$', path)):
+        return text
+    if host in {'nexprint.com', 'www.nexprint.com'} and re.fullmatch(r'/(?:[a-z]{2}(?:-[a-z]{2})?/)?models/[A-Za-z0-9]+/?', path, re.I):
+        return text
+    if host in {'makeronline.com', 'www.makeronline.com'} and re.fullmatch(r'/(?:[a-z]{2}(?:-[a-z]{2})?/)?model/(?:[^/]+/)?\d+\.html', path, re.I):
+        return text
     return None
 
 

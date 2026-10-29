@@ -224,6 +224,52 @@ Without the file, a Creality Cloud link still produces the model summary and fil
 
 Live status: the model lookup and file list were verified against the live API on 2026-10-29 (acceptance model `bag-clip-30mm`), and the download gate was verified to refuse tokenless requests. The download itself has **not** been verified live yet, because that needs the operator's token; the first download with the token file in place is what verifies it, and if the site's answer carries no file URL Print Handy says so plainly instead of guessing.
 
+### Connecting a login-token site from chat
+
+Creality Cloud, Thangs, Nexprint and MakerOnline all download with the operator's own login token: a value the signed-in browser keeps in a cookie, saved on the Print Handy machine as `~/.config/<site>/token` (Docker: `/data/.config/<site>/token`, from the mounted `dot-config` folder). Print Handy cannot sign in for you. Each site's login page sits behind a robot check, and Print Handy never stores a password or solves a captcha, so the token always comes from a browser you signed in with yourself.
+
+You do not have to set these up in advance. When a download needs a token that is missing, empty, expired or refused, the bot does not just fail. It says which, and offers two buttons:
+
+1. **Connect <site> account** posts a walkthrough: sign in at the site, open the browser's developer tools, copy the named cookie, and the exact command that saves it to the right path on the Print Handy machine (with the Docker variant). **The token is never pasted into chat.** Chat messages pass through the chat provider's servers and stay in the channel history, so the walkthrough says so and Print Handy never asks for it there. This follows the same rule as the setup flows: secrets are never collected in chat.
+2. When the file is saved, press **Saved, try again** (or type `saved`). The bot retries the same download, and the intake continues from there with no need to post the link again. If the site still refuses the token, the offer comes back, up to three times.
+
+**Not now (cancel)** stops the intake with the token file and its path named, and nothing is sliced, uploaded or started. Login tokens expire; when one does, the next download offers the connect flow again. A token that is a JWT with an `exp` claim is checked locally first, so an expired one is named as expired before any request is sent.
+
+### Thangs login token
+
+Thangs links use the JSON API the Thangs web app itself uses (`thangs.com/api/...`). Links look like `thangs.com/designer/<user>/3d-model/<title>-<id>` or the short `thangs.com/m/<id>`. Looking up the model and listing its parts needs no login. The download asks the API for the model's signed download URL with the token sent as an `Authorization: Bearer` header. The token is the value of the `accessToken` cookie on `https://thangs.com` (the same value is in Local Storage under `accessToken`), saved as `~/.config/thangs/token`:
+
+```bash
+mkdir -p ~/.config/thangs && chmod 700 ~/.config/thangs
+(umask 077 && cat > ~/.config/thangs/token)   # paste the accessToken cookie value, press Enter, then Ctrl-D
+```
+
+Thangs downloads a whole model, never a single part. When the answer is a zip, Print Handy keeps only the part you chose. Membership models and store items are marked in the model lookup. Downloading one needs a matching Thangs membership or purchase on the signed-in account; Print Handy never buys or unlocks a model, and a refusal says so. Free Thangs accounts have a daily download limit, which is named plainly when reached. Thangs uses short-lived login tokens with a refresh step that Print Handy does not perform, so expect to reconnect from time to time.
+
+### Nexprint login token
+
+Nexprint (Elegoo) links use the gateway API the Nexprint web app itself uses (`www.nexprint.com/gateway/...`). Links look like `www.nexprint.com/en/models/<id>`. The model lookup and file list need no login. Each file is downloaded through a presigned-URL request with the token sent as an `Authorization: Bearer` header. The token is the value of the `auth_token` cookie on `https://www.nexprint.com` (or `access_token` inside Local Storage `ACCOUNT_INFO`), saved as `~/.config/nexprint/token`:
+
+```bash
+mkdir -p ~/.config/nexprint && chmod 700 ~/.config/nexprint
+(umask 077 && cat > ~/.config/nexprint/token)   # paste the auth_token cookie value, press Enter, then Ctrl-D
+```
+
+Both the designer's own STL/3MF files and the model's print-setting 3MF projects are offered; a setting project is labeled with its setting name. Nexprint's download limits are named when reached. Only the `.com` site is supported, not `nexprint.cn`.
+
+### MakerOnline login token
+
+MakerOnline (Anycubic) links use the JSON API the MakerOnline web app itself uses (`makeronline.com/api/...`). Links look like `makeronline.com/en/model/<title>/<id>.html`. The model lookup and file list need no login. The download sends the token as the raw `Authorization` header value (MakerOnline's own client sends it with no `Bearer` prefix). The token is the value of the `mo_access_token` cookie on `https://makeronline.com`, saved as `~/.config/makeronline/token`:
+
+```bash
+mkdir -p ~/.config/makeronline && chmod 700 ~/.config/makeronline
+(umask 077 && cat > ~/.config/makeronline/token)   # paste the mo_access_token cookie value, press Enter, then Ctrl-D
+```
+
+MakerOnline can ask for a captcha before a download. Print Handy never solves or skips a captcha (and never uses the site's app-only paths around it), so that answer is a plain stop: download the file from the model page in a browser and upload or drop it instead. Only the model's own STL/3MF files are offered; its printer-specific print profiles are not.
+
+Live status for all three: on 2026-10-29 the model lookup and file list were verified against each live API, and each download endpoint was verified to refuse a request with no token or a made-up one. The download itself has **not** been verified live yet, because that needs the operator's token. The first download with a token file in place is what verifies it; if the answer carries no file URL, Print Handy says so plainly instead of guessing.
+
 ### All settings
 
 | Section | Key | Default | What it does |

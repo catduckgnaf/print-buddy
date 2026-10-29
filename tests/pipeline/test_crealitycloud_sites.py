@@ -393,8 +393,9 @@ def test_design_fetch_crealitycloud_uses_profile_file(
 def test_prepared_intake_crealitycloud_stops_at_token_gap(
         env, token_home, monkeypatch):
     # token_home exists but this test removes the file: inventory succeeds,
-    # the single source is chosen, and the download stops with the token
-    # remedy named in the receipt — nothing sliced or started.
+    # the single source is chosen, the connect-account offer (#464) is
+    # declined with "Not now", and the download stops with the token remedy
+    # named in the receipt — nothing sliced or started.
     (token_home/'.config'/'crealitycloud'/'token').unlink()
     job = {'site': 'crealitycloud', 'model_id': GROUP_ID,
            'title': 'Bag Closure Clips', 'slug': SLUG, 'license': 'CXY-SL',
@@ -409,10 +410,28 @@ def test_prepared_intake_crealitycloud_stops_at_token_gap(
     event = S(source=S(profile='3dprinting', chat_id='c1', thread_id=None,
                        user_id='u'),
               message_id='cc1', text=PLAIN_URL)
-    adapter = Adapter([])
+    adapter = Adapter([1])
     asyncio.run(prepared_intake.prepare_link(
         event, adapter, state(), env.root, timeout=1))
+    assert adapter.questions[0]['choices'][:2] == ['Connect Creality Cloud account',
+                                                    'Not now (cancel)']
     receipt = json.loads(next(env.root.glob('*.json')).read_text())
     assert receipt['status'] == 'FAILED'
     assert '.config/crealitycloud/token' in receipt['error'].replace('\\', '/')
     assert receipt['sliced'] is False and receipt['started'] is False
+    assert '.config/crealitycloud/token' in adapter.sent[-1].replace('\\', '/')
+
+
+def test_crealitycloud_download_3mf_is_not_unpacked(token_home, monkeypatch, tmp_path):
+    # A 3MF is itself a zip; the download must keep it whole rather than
+    # treat it as an archive of model files (and refuse for finding none).
+    buffer = io.BytesIO()
+    with zipfile.ZipFile(buffer, 'w') as archive:
+        archive.writestr('[Content_Types].xml', '<Types/>')
+        archive.writestr('3D/3dmodel.model', '<model/>')
+    result = {'code': 0, 'msg': 'ok', 'result': 'https://cdn.example/files/clip.3mf'}
+    job, _, _ = _download_setup(monkeypatch, tmp_path, result, payload=buffer.getvalue())
+    dest = model_job.crealitycloud_download(
+        job, {'id': 'f3', 'name': 'bag clip.3mf'}, tmp_path/'src')
+    assert dest.name == 'bag clip.3mf'
+    assert dest.read_bytes() == buffer.getvalue()

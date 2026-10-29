@@ -334,7 +334,7 @@ Secrets come from the environment only (Docker: `.env`, never committed or share
 
 The MakerWorld account token is not an environment variable. It is the file `~/.config/bambu/token` (Docker: `/data/.config/bambu/token`), needed only for MakerWorld links; see [MakerWorld account token](PROJECT-REFERENCE.md#makerworld-account-token).
 
-The Creality Cloud download token is likewise a file, not an environment variable: `~/.config/crealitycloud/token` (Docker: `/data/.config/crealitycloud/token`), needed only for Creality Cloud downloads; see [Creality Cloud login token](PROJECT-REFERENCE.md#creality-cloud-login-token).
+The Creality Cloud download token is likewise a file, not an environment variable: `~/.config/crealitycloud/token` (Docker: `/data/.config/crealitycloud/token`), needed only for Creality Cloud downloads; see [Creality Cloud login token](PROJECT-REFERENCE.md#creality-cloud-login-token). Thangs, Nexprint and MakerOnline work the same way, with `~/.config/thangs/token`, `~/.config/nexprint/token` and `~/.config/makeronline/token` (Docker: under `/data/.config/`); see [Connecting a login-token site from chat](PROJECT-REFERENCE.md#connecting-a-login-token-site-from-chat).
 
 ## Legacy environment names
 

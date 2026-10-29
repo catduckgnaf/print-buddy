@@ -658,6 +658,7 @@ _LIVE_KEY = contextvars.ContextVar('prepared_intake_live_key', default=None)
 
 from .link_intake import PromptCancelled as IntakeCancelled  # noqa: E402  typed Cancel/Stop at any prompt
 from .link_intake import PromptExpired as IntakeExpired  # noqa: E402  button question reached its timeout
+from .site_accounts import SiteLoginNeeded  # noqa: E402  a download needs the operator's site login (#464)
 
 
 async def _spool_projection_text(mj, job, manifest, state, copies):
@@ -680,6 +681,43 @@ async def _spool_projection_text(mj, job, manifest, state, copies):
             rows, position_noun='Toolhead' if mj._job_adapter(job).multi_tool else 'Slot')
     except Exception:
         return ''
+
+
+MAX_CONNECT_ROUNDS = 3
+
+
+def _saved_reply(text):
+    """Typed `saved`/`stored`/`done` answers the connect prompt like its button."""
+    if str(text or '').strip().casefold().rstrip('.!') in {'saved', 'stored', 'done', 'try again'}:
+        return 0
+    raise ValueError('not a saved reply')
+
+
+async def _connect_account(adapter, source, key, metadata, exc, timeout):
+    """Offer to connect the login-token site behind ``exc``; True when the operator saved it.
+
+    The walkthrough (site_accounts.connect_steps) says where the token lives
+    and how to copy it from the operator's own signed-in browser; the token
+    is saved on the Print Handy machine, never pasted into chat. False means
+    the operator declined, and the caller reports the original refusal.
+    """
+    from .site_accounts import LOGIN_SITES, connect_steps
+    label = LOGIN_SITES[exc.site].label
+    lead = {
+        'missing': f'{label} needs you to be signed in to download this model, and no {label} account is connected yet.',
+        'empty': f'{label} needs you to be signed in to download this model, and the saved {label} token file is empty.',
+        'expired': f'Your saved {label} login has expired.',
+        'refused': f'{label} turned down the saved login (it has most likely expired).',
+    }.get(exc.reason, f'{label} needs you to be signed in to download this model.')
+    pick = await _ask(adapter, source, key, f'{lead} Nothing was downloaded.',
+                      [f'Connect {label} account', 'Not now (cancel)'], timeout)
+    if pick != 0:
+        return False
+    await adapter.send(chat_id=source.chat_id, content=connect_steps(exc.site), metadata=metadata)
+    saved = await _ask(adapter, source, key,
+                       f'Press Saved once the {label} token file is in place.',
+                       ['Saved — try again', 'Cancel'], timeout, parser=_saved_reply)
+    return saved == 0
 
 
 async def _ask(adapter, source, key, question, choices, timeout=None, **kwargs):
@@ -984,7 +1022,8 @@ async def prepare_link(event, adapter, state, root, timeout=None, reuse=None, pr
         else:
             job = await asyncio.to_thread(mj.inventory_for_url, url)
         rows = job.get('sources', [])
-        if job['site'] in ('printables', 'thingiverse', 'myminifactory', 'cults3d', 'crealitycloud'):
+        if job['site'] in ('printables', 'thingiverse', 'myminifactory', 'cults3d', 'crealitycloud',
+                           'thangs', 'nexprint', 'makeronline'):
             rows = [r for r in rows if Path(r.get('name', '')).suffix.lower() in {'.3mf', '.stl'}]
         if not rows:
             raise ValueError(job.get('no_geometry_reason') or 'source inventory contains no selectable geometry')
@@ -1054,9 +1093,19 @@ async def prepare_link(event, adapter, state, root, timeout=None, reuse=None, pr
         job.update(url=url, intake_id=iid, hardware=state, selected_source=chosen)
         fetch = copy_upload if (reuse or job['site'] == 'upload') else (
             lambda j, chosen, dest: mj.download_for_site(j, chosen, dest))
-        path = await _with_stop(
-            adapter, source, key, metadata, None,
-            asyncio.to_thread(fetch, job, chosen, folder / 'source'))
+        for connect_round in range(MAX_CONNECT_ROUNDS + 1):
+            try:
+                path = await _with_stop(
+                    adapter, source, key, metadata, None,
+                    asyncio.to_thread(fetch, job, chosen, folder / 'source'))
+                break
+            except SiteLoginNeeded as exc:
+                # The site needs the operator's login (#464): offer the guided
+                # connect flow, then retry this same download — never a dead end,
+                # and the token itself is never collected in chat.
+                if connect_round == MAX_CONNECT_ROUNDS or not await _connect_account(
+                        adapter, source, key, metadata, exc, timeout):
+                    raise
         job['downloaded_file'] = str(path)
         from .intake_resources import check_source
         await asyncio.to_thread(check_source, path)
@@ -1883,6 +1932,12 @@ async def prepare_link(event, adapter, state, root, timeout=None, reuse=None, pr
             # the remedy): keep its reason, lead plainly, drop its prefix.
             reason = str(exc).removeprefix('Model intake refused: ')
             content = (f'That model could not be prepared. {reason}')
+        elif isinstance(exc, SiteLoginNeeded):
+            # Curated and user-phrased by site_accounts: the text names the
+            # token file and how to fill it, so keep it — the generic wording
+            # would hide the remedy.
+            content = (f'That model could not be downloaded: {exc} '
+                       'Nothing was sliced, uploaded or started.')
         elif isinstance(exc, ValueError) and str(exc).startswith('requires one to four distinct configured'):
             # Also curated and user-phrased: a multi-slot/toolhead printer
             # with nothing configured. The text names the exact setup gap,

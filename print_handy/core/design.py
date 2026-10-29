@@ -248,8 +248,9 @@ def fetch_link_source(url, target_dir) -> Path:
     makerworld_profiles.choose (the URL's profileId when present);
     Printables, Thingiverse and Creality Cloud must offer exactly one
     STL/3MF file, except that a Creality Cloud link's print profile names
-    its file when it has one; Cults3D and MyMiniFactory stop with their
-    named download gaps. Ambiguity is a plain refusal, never a silent pick.
+    its file when it has one; Thangs, Nexprint and MakerOnline must offer
+    exactly one too; Cults3D and MyMiniFactory stop with their named
+    download gaps. Ambiguity is a plain refusal, never a silent pick.
     """
     from . import model_job as mj
     target_dir = Path(target_dir)
@@ -304,6 +305,24 @@ def fetch_link_source(url, target_dir) -> Path:
             except RuntimeError as exc:
                 # The download's own wording names the cause and remedy
                 # (the login-token file, a refused token), so keep it.
+                raise DesignError(str(exc)) from None
+        login_site = mj.SITE_HOSTS.get(host.lower()) if host else None
+        if login_site in ("thangs", "nexprint", "makeronline"):
+            label = {"thangs": "Thangs", "nexprint": "Nexprint", "makeronline": "MakerOnline"}[login_site]
+            job = mj.inventory_for_url(str(url))
+            rows = [row for row in job["sources"]
+                    if Path(str(row.get("name") or "")).suffix.lower() in (".3mf", ".stl")]
+            if not rows:
+                raise DesignError(f"that {label} link has no STL or 3MF file to edit")
+            if len(rows) != 1:
+                raise DesignError(
+                    f"that {label} link has {len(rows)} model files, so design cannot pick "
+                    "one; drop the file you want edited")
+            try:
+                return Path(mj.download_for_site(job, rows[0], target_dir))
+            except RuntimeError as exc:
+                # The download's own wording names the cause and remedy
+                # (the login-token file, a refused token, a captcha stop).
                 raise DesignError(str(exc)) from None
         if "myminifactory.com" in host:
             # Inventory-only (#462 Stage 2): there is no file design could fetch —

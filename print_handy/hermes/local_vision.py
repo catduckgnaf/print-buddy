@@ -44,6 +44,16 @@ failure that keeps being seen across consecutive checks escalates to a
 failure verdict, the multi-frame escalation Obico's own serving applies
 and Stage 1 noted as missing. The single-frame bands below keep their
 meaning; the streak only judges persistence.
+
+GPU execution providers (later stage): session creation asks
+onnxruntime which providers the host offers and picks the most
+preferred accelerated one (:data:`PROVIDER_PREFERENCE`), with CPU
+always in the list as the fallback; a provider that fails to
+initialise retries once on CPU alone. The active provider is logged
+once at load and reported by :func:`detector_status` (the bot check
+row). Selection is automatic — there is no provider setting. The
+wiring is tested against fake provider lists; live GPU proof is an
+operator follow-up (see #455), so no host is claimed GPU-verified.
 """
 from __future__ import annotations
 
@@ -126,6 +136,7 @@ _lock = threading.Lock()
 _ort = None
 _ort_error: Exception | None = None
 _sessions: dict[str, object] = {}
+_active_providers: dict[str, str] = {}
 _failures: dict[str, str] = {}
 _verified_files: set[str] = set()
 
@@ -229,6 +240,76 @@ def _ensure_model_file(path: Path, cfg=None) -> None:
                              f"prepared: {exc}") from exc
 
 
+# --- Execution providers ---------------------------------------------------------
+# Documented preference order for accelerated providers, most preferred
+# first. CUDA before TensorRT: the CUDA provider is a plain runtime,
+# while the TensorRT provider first builds an engine (which can take
+# minutes) — a watchdog's first check must not pay that. OpenVINO covers
+# Intel/AMD integrated GPUs (the #246 VAAPI hosts), CoreML Apple
+# Silicon, DirectML Windows GPUs, ROCm AMD on Linux. Only one
+# accelerated provider is requested, plus CPU: the choice is
+# deterministic, CPU stays the per-node and whole-session fallback, and
+# the active provider is a single name the operator can be shown.
+PROVIDER_PREFERENCE = (
+    "CUDAExecutionProvider",
+    "TensorRTExecutionProvider",
+    "OpenVINOExecutionProvider",
+    "CoreMLExecutionProvider",
+    "DmlExecutionProvider",
+    "ROCMExecutionProvider",
+    "CPUExecutionProvider",
+)
+
+
+def select_providers(available) -> list[str]:
+    """The provider list for a new session, from what onnxruntime
+    reports as available on this host: the most preferred accelerated
+    provider offered, then CPU. Pure and total — unknown or empty input
+    yields CPU only."""
+    offered = set(available or ())
+    for provider in PROVIDER_PREFERENCE:
+        if provider != "CPUExecutionProvider" and provider in offered:
+            return [provider, "CPUExecutionProvider"]
+    return ["CPUExecutionProvider"]
+
+
+def selected_provider(cfg=None) -> str | None:
+    """The provider a session would run on on this host — the head of
+    :func:`select_providers` over what onnxruntime reports — computed
+    without creating a session or touching the model. None when
+    onnxruntime is unusable. (``cfg`` is accepted for symmetry with the
+    other status helpers; selection depends on the host, not the
+    config.)"""
+    try:
+        ort = _runtime()
+        return select_providers(ort.get_available_providers())[0]
+    except Exception:  # noqa: BLE001 - status surfaces must never raise
+        return None
+
+
+def active_provider(cfg=None) -> str | None:
+    """The execution provider the live session for the configured model
+    actually runs on in this process, or None before the first session
+    (or when its load failed)."""
+    return _active_providers.get(f"session:{model_path(cfg)}")
+
+
+def _create_session(ort, path: Path, providers: list[str]):
+    """One InferenceSession attempt, with a single CPU-only retry when
+    an accelerated provider was requested but cannot initialise — an
+    accelerator that is present-but-broken (driver mismatch, missing
+    libraries) degrades to CPU, never to a dead detector."""
+    try:
+        return ort.InferenceSession(str(path), providers=providers)
+    except Exception:
+        if providers == ["CPUExecutionProvider"]:
+            raise
+        logger.warning(
+            "local detector: session with execution providers %s failed; "
+            "falling back to CPUExecutionProvider", providers)
+        return ort.InferenceSession(str(path), providers=["CPUExecutionProvider"])
+
+
 def _session(path: Path):
     key = f"session:{path}"
     remembered = _remembered_failure(key)
@@ -239,13 +320,21 @@ def _session(path: Path):
             return _sessions[key]
         try:
             ort = _runtime()
-            session = ort.InferenceSession(str(path), providers=["CPUExecutionProvider"])
+            providers = select_providers(ort.get_available_providers())
+            session = _create_session(ort, path, providers)
         except LocalVisionError:
             raise
         except Exception as exc:  # noqa: BLE001 - corrupt model etc. degrade the same way
             raise _fail(key, f"the local detector model at {path} could not be "
                              f"loaded: {exc}") from exc
         _sessions[key] = session
+        try:
+            active = (session.get_providers() or ["CPUExecutionProvider"])[0]
+        except Exception:  # noqa: BLE001 - a session that cannot name its providers still judges frames
+            active = providers[-1]
+        _active_providers[key] = active
+        logger.info("local detector session ready at %s (execution provider: %s)",
+                    path, active)
         return session
 
 
@@ -460,10 +549,12 @@ def detector_status(cfg=None) -> tuple[str, str]:
         return "unavailable", _remembered_failure(key)
     if _remembered_failure(f"session:{path}"):
         return "unavailable", _remembered_failure(f"session:{path}")
+    provider = active_provider(cfg) or selected_provider(cfg)
+    suffix = f"; execution provider: {provider}" if provider else ""
     if path.is_file():
-        return "ready", f"{MODEL_NAME} present at {path}"
+        return "ready", f"{MODEL_NAME} present at {path}{suffix}"
     return "ready", (f"model downloads on first use (~{MODEL_SIZE_BYTES // 1_000_000} MB "
-                     f"from the pinned source, SHA-256 verified) into {path}")
+                     f"from the pinned source, SHA-256 verified) into {path}{suffix}")
 
 
 def detector_ready(cfg=None) -> bool:

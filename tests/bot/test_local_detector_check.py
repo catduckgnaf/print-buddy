@@ -27,6 +27,7 @@ def test_local_detector_row_on_and_ready(cfg, monkeypatch):
     assert ok is True
     assert detail.startswith("on (")
     assert "present" in detail and "no vision endpoint is configured" in detail
+    assert "execution provider: CPUExecutionProvider" in detail
 
 
 def test_local_detector_row_on_but_runtime_missing(cfg, monkeypatch):

@@ -1,6 +1,6 @@
 """#390 Stage 6: the Discord action handlers' generic failure posts meet
 the operator bar — what failed, the state/remedy note, and the stable
-greppable PB_* marker, redacted. #467: the raw exception text is no
+greppable PH_* marker, redacted. #467: the raw exception text is no
 longer posted; it is classified for the marker and kept in the log."""
 import importlib.util
 import re
@@ -20,18 +20,18 @@ def test_failure_post_carries_label_note_and_marker_without_raw_detail():
     assert post.startswith("Stop didn't work.")
     assert "Check the printer screen." in post
     assert "printer did not answer" not in post  # raw detail demoted to the log (#467)
-    assert "Reference: PB_PRINTER_UNKNOWN" in post
+    assert "Reference: PH_PRINTER_UNKNOWN" in post
 
 
 def test_failure_post_marker_reflects_the_classified_category():
     post = plugin._failure_post(
         "Next plate", ConnectionError("connection reset"), "Check the printer screen before retrying.",
         subsystem="printer")
-    assert "Reference: PB_PRINTER_TRANSIENT" in post
+    assert "Reference: PH_PRINTER_TRANSIENT" in post
     post = plugin._failure_post(
         "Color selection", RuntimeError("bad profile"), "No slicing, upload or print started.",
         subsystem="intake")
-    assert "Reference: PB_INTAKE_UNKNOWN" in post
+    assert "Reference: PH_INTAKE_UNKNOWN" in post
 
 
 def test_failure_post_is_redacted():

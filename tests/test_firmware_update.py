@@ -801,4 +801,13 @@ def test_report_names_the_os_info_version_and_claims_no_pairing():
     text = fw.firmware_report(transport, AD5X)
     assert "ZMod version: 1.7.5-2 (from the printer's OS info" in text
     assert "pair correctly" not in text and "mismatch" not in text
-    assert "Everything Print Handy can check here is up to date." in text
+    # Every remote is "?": the report must not claim anything is up to date.
+    assert "up to date" not in text
+    assert "- Z-Mod: 1.7.5-2 (latest version not reported)" in text
+    assert "did not report the latest version for Z-Mod, klippy, fluidd" in text
+
+
+def test_update_refuses_a_component_whose_latest_version_is_unknown():
+    transport = FakeTransport(status=STATUS_LIVE_ZMOD_UNREADABLE, system_info=SYSTEM_INFO_LIVE_ZMOD)
+    with pytest.raises(fw.FirmwareRefusal, match="does not report the latest version of .*Z-Mod.*Nothing was sent"):
+        fw.prepare_update(transport, AD5X, "zmod")

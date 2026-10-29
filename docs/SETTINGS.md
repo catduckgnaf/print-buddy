@@ -64,7 +64,7 @@ Schema, validation limits and TOML migration: [CONFIGURATION-YAML.md](CONFIGURAT
 | `services.camera_snapshot_url` | `PRINT_HANDY__SERVICES__CAMERA_SNAPSHOT_URL` | empty | Camera snapshot URL; derived from the Moonraker host when empty |
 | `services.spoolman_url` | `PRINT_HANDY__SERVICES__SPOOLMAN_URL` | empty | Spoolman URL. The Docker config and Compose default to `http://127.0.0.1:8000`, the bundled Spoolman API in the same container. Set another URL, plus `PRINT_HANDY_BUNDLED_SPOOLMAN=false`, to use an existing external Spoolman instead |
 | `services.openviking_url` | `PRINT_HANDY__SERVICES__OPENVIKING_URL` | empty | Optional OpenViking memory store |
-| `services.vision_chat_url` | `PRINT_HANDY__SERVICES__VISION_CHAT_URL` | empty | OpenAI-compatible endpoint for camera checks and roasts; empty disables both |
+| `services.vision_chat_url` | `PRINT_HANDY__SERVICES__VISION_CHAT_URL` | empty | OpenAI-compatible endpoint for camera checks and roasts; empty disables both. Needs a vision-capable model. See [Model endpoints](#model-endpoints) |
 | `services.stock_api_port` | `PRINT_HANDY__SERVICES__STOCK_API_PORT` | `8898` | Flashforge stock API port for IFS presence |
 | `services.octoprint_url` | `PRINT_HANDY__SERVICES__OCTOPRINT_URL` | empty | OctoPrint printers (`octoprint.marlin`): OctoPrint URL. API key: `OCTOPRINT_API_KEY` secret |
 | `discord.chat_id` | `PRINT_HANDY__DISCORD__CHAT_ID` | empty | Discord channel ID |
@@ -100,7 +100,7 @@ Schema, validation limits and TOML migration: [CONFIGURATION-YAML.md](CONFIGURAT
 | `bot.health_port` | `PRINT_HANDY__BOT__HEALTH_PORT` | `0` | Serve `GET /healthz` on this port; `0` turns the HTTP check off |
 | `bot.health_stale_s` | `PRINT_HANDY__BOT__HEALTH_STALE_S` | `120` | Bot health fails when its heartbeat is older than this |
 | `bot.sync_commands` | `PRINT_HANDY__BOT__SYNC_COMMANDS` | `true` | Register the slash commands with Discord at startup |
-| `llm.chat_url` | `PRINT_HANDY__LLM__CHAT_URL` | empty | Optional OpenAI-compatible chat URL; empty: unmatched text gets the command list |
+| `llm.chat_url` | `PRINT_HANDY__LLM__CHAT_URL` | empty | Optional OpenAI-compatible chat URL; empty: unmatched text gets the short "didn't understand" reply. See [Model endpoints](#model-endpoints) |
 | `llm.model` | `PRINT_HANDY__LLM__MODEL` | empty | LLM model name, required when `chat_url` is set |
 | `llm.api_key_env` | `PRINT_HANDY__LLM__API_KEY_ENV` | `LLM_API_KEY` | Name of the environment variable holding the LLM API key |
 | `llm.timeout_s` | `PRINT_HANDY__LLM__TIMEOUT_S` | `20` | LLM request timeout |
@@ -118,8 +118,8 @@ Schema, validation limits and TOML migration: [CONFIGURATION-YAML.md](CONFIGURAT
 | `listener.ifs_presence_poll_s` | `PRINT_HANDY__LISTENER__IFS_PRESENCE_POLL_S` | `15` | IFS spool presence poll |
 | `listener.spool_nag_s` | `PRINT_HANDY__LISTENER__SPOOL_NAG_S` | `600` | Reminder interval for an unanswered spool question |
 | `listener.start_claim_ttl_s` | `PRINT_HANDY__LISTENER__START_CLAIM_TTL_S` | `1800` | How long a start button stays claimed |
-| `vision.model` | `PRINT_HANDY__VISION__MODEL` | `gemini-latest` | Model for camera checks |
-| `vision.roast_model` | `PRINT_HANDY__VISION__ROAST_MODEL` | `luna-latest` | Model for the print-start roast |
+| `vision.model` | `PRINT_HANDY__VISION__MODEL` | `gemini-latest` | Model for camera checks. The default is a CLIProxyAPI alias: set your own server's vision model name |
+| `vision.roast_model` | `PRINT_HANDY__VISION__ROAST_MODEL` | `luna-latest` | Model for the print-start roast. The default is a CLIProxyAPI alias: set your own server's model name |
 | `vision.roast_enabled` | `PRINT_HANDY__VISION__ROAST_ENABLED` | `true` | The one-line roast on the print-started post only (never on the completion post), on every platform (Telegram included). On by default: it runs whenever an LLM/vision endpoint is available (`services.vision_chat_url` plus `CLIPROXY_API_KEY`); `false` turns roasts off without disabling camera checks |
 | `vision.local_detector_enabled` | `PRINT_HANDY__VISION__LOCAL_DETECTOR_ENABLED` | `false` | Built-in local failure detector for the camera watchdog (#455): when `true`, frames are judged by an ONNX detector on this machine whenever no vision endpoint route is configured, so a no-LLM, no-cloud install still gets bad-print detection. Off by default; see [Local failure detector](#local-failure-detector) |
 | `vision.local_model_path` | `PRINT_HANDY__VISION__LOCAL_MODEL_PATH` | empty | Path of the local detector's ONNX model file. Empty uses the default location (a `models` folder under the Hermes home) and the pinned model; set it to a file you placed yourself to run fully offline |
@@ -177,6 +177,41 @@ Schema, validation limits and TOML migration: [CONFIGURATION-YAML.md](CONFIGURAT
 **Photo label intake (#514).** When any label-reading route is available, the new-spool walkthrough's first step also offers **Use a photo of the label**. The operator sends one photo of the spool's box or sticker as the next message in the channel, and the routes are tried in a fixed order: (1) the label's own **barcode/QR code**, decoded locally with the zxing-cpp library (a runtime dependency) — deterministic data the manufacturer printed; (2) the **vision endpoint** — the same availability rule the camera watchdog uses: `PRINT_VISION_URL` set, or `services.vision_chat_url` with its key; (3) **local OCR** with the tesseract binary (installed in the shipped container image; elsewhere, install `tesseract-ocr` to enable it), matched against the known filament types and the material/colour/brand vocabulary labels are printed from. The first route that reads a complete spec wins; partial results are never merged across routes. Every route extracts the same fields — brand, material (with sub-type), colour/blend, net weight and, when printed, the recommended nozzle/bed temperatures — and the values pre-fill the walkthrough at its confirmation step, which names the route that read them. Nothing is created from a photo without that confirmation, and Edit details walks the normal steps instead. A photo no route can use refuses with the reason and falls back to the manual steps. Label temperatures are recorded on the Spoolman filament the spool is created with, so they win over material defaults exactly like temperatures entered in Spoolman itself, for every material; a filament type that already exists keeps the temperatures it already has. The photo itself is never stored or recorded: it goes only to the one route that reads it (a local decoder, a local binary, or the configured vision endpoint). With no route available the button is not offered and the walkthrough is unchanged. The guided `/spool` flow does not offer the photo step: its gateway prompts answer with buttons or text and cannot carry an attachment.
 | `cold_pull.<profile>` | file only | from the vendor profile *model* | Hot and cold cold-pull temperatures; profile names are yours |
 
+## Model endpoints
+
+Every model feature talks to an **OpenAI-compatible chat completions** endpoint
+(`POST .../v1/chat/completions`), so any provider or local server that speaks
+that API works: OpenAI, OpenRouter, Cloudflare Workers AI, a CLIProxyAPI
+instance, or a local server such as Ollama, LM Studio, llama.cpp or vLLM.
+Nothing requires Hermes; the standalone bot (Discord, Telegram or Matrix)
+reads these settings directly.
+
+| Feature | URL | Model | Key |
+| --- | --- | --- | --- |
+| Plain-language chat (Discord) | `llm.chat_url` | `llm.model` | the variable named by `llm.api_key_env` (default `LLM_API_KEY`), optional |
+| AI design (`/print-design`) | `design.chat_url`, else `llm.chat_url` | `design.model`, else `llm.model` | `design.api_key_env`, else `llm.api_key_env` |
+| Camera watchdog, spool label photos | `services.vision_chat_url` | `vision.model` | `CLIPROXY_API_KEY` |
+| Print-start roast | `services.vision_chat_url` | `vision.roast_model` | `CLIPROXY_API_KEY` |
+
+Things to know:
+
+- **Keys are optional where the server needs none.** Chat and design send a
+  key only when one is set. The vision route needs `CLIPROXY_API_KEY` for a
+  hosted endpoint, but not for one on this machine or your LAN (loopback or
+  private address, `localhost`, a Docker service name like `ollama`, or a
+  `.local` / `.lan` / `.home.arpa` name), since a local server usually takes
+  no key. A hosted vision URL without its key keeps the camera watch off
+  rather than posting a false alert at every check.
+- **Set the model names.** `vision.model` and `vision.roast_model` default to
+  `gemini-latest` and `luna-latest`, aliases that only a CLIProxyAPI setup
+  knows. With any other server, set them to that server's model names, and
+  pick a vision-capable model for `vision.model`.
+- **The URL is the full chat completions path**, for example
+  `http://ollama:11434/v1/chat/completions` for an Ollama container or
+  `https://api.openai.com/v1/chat/completions`.
+- Running all of this on Cloudflare's free tier is covered in
+  [Cloudflare](CLOUDFLARE.md).
+
 ## Part spacing presets
 
 `layout.spacing` picks every part gap and margin at once. Every fit check, the automatic one-plate rearrangement, the multicolor merge (with its prime tower) and slicing use the same resolved values, so Print Handy only offers a layout the slicer will produce. A key set explicitly (in the YAML file or as its environment variable) wins over the preset; the others follow the preset.
@@ -213,6 +248,7 @@ The contract is deliberately small:
 - **How verdicts map:** `ok` / `safe` are healthy (a healthy verdict vetoes a pixel-diff stall alert: at every `visual_watch.sensitivity` level on the Moonraker watchdog, at 1–2 on the Bambu monitor). An `uncertain` verdict whose reason says the camera feed is dark gets the once-per-print dark-camera notice on the Moonraker watchdog instead of an alert. `air`, `spaghetti` and `detached` alert. `uncertain` also alerts — a frame that cannot be judged is treated as needing review, never as a pass. `empty_idle` is neither: an idle printer with an empty bed is expected.
 - **Timeout and failures:** Print Handy waits at most **30 seconds** for the answer. Anything that goes wrong — endpoint unreachable, timeout, an HTTP error status, or a body that is not a JSON object — degrades to verdict `uncertain` with the detail "the vision check could not be completed", so a broken endpoint produces visible alerts instead of silently passing frames. The underlying error is written to the log (`vision check failed via PRINT_VISION_URL: ...`), which is where a mis-configured URL is diagnosed.
 - **Label reads (#514):** the same endpoint may also receive the spool-label prompt (the photo intake above): the request shape is identical, the `image` is the operator's label photo, and the response body should be the JSON object the prompt describes (brand / material / color / grams / nozzle_temp / bed_temp) instead of a verdict object. An endpoint that only answers verdicts will simply fail the label read — the walkthrough refuses with the reason and falls back to its manual steps.
+- **Reference implementation:** [`examples/cloudflare/vision-verdict`](../examples/cloudflare/vision-verdict/README.md) is a small Cloudflare Worker that answers this contract with a Workers AI vision model (verdicts only). Setup, free-tier usage and privacy are in [Running the AI features on Cloudflare's free tier](CLOUDFLARE.md).
 
 ## Semantic lookup endpoint (PRINT_FUZZY_URL)
 
@@ -224,6 +260,7 @@ The contract is deliberately small:
 - **Response:** HTTP 200 with `{"matches": [{"id": "...", "text": "...", "score": 0.0–1.0}], "degraded": false}` — cosine similarities, best first. An endpoint that cannot answer says `{"matches": [], "degraded": true, "reason": "..."}`. Matches whose id is not one of the candidates sent are ignored.
 - **Threshold:** the `0.55` sent today is the reference spike's placeholder, chosen before a live corpus existed; expect to tune it against your own lookups. Scores below it are the endpoint's to drop.
 - **Timeout and failures:** Print Handy waits at most **10 seconds**. Anything that goes wrong — unreachable, timeout, an HTTP error status, a malformed body, `degraded: true` — silently keeps the local behaviour (the usual "Nothing in the registries matches" reply), and the failure is written to the log (`semantic lookup via PRINT_FUZZY_URL failed, ...`).
+- **Reference implementation:** [`examples/cloudflare/fuzzy-lookup`](../examples/cloudflare/fuzzy-lookup/README.md) is the Cloudflare Worker this contract was designed around (Workers AI embeddings, stateless, secret in the path). Setup, free-tier usage and privacy are in [Running the AI features on Cloudflare's free tier](CLOUDFLARE.md).
 
 ## Local failure detector
 
@@ -355,7 +392,7 @@ Secrets come from the environment only (Docker: `.env`, never committed or share
 | `OCTOPRINT_API_KEY` | `octoprint.marlin` printers: OctoPrint application key |
 | `BAMBU_LAN_PASSWORD` | Bambu Lab printers: the LAN access code for read-only status. The variable name is `bambu.lan_access_code_env` |
 | `MOONRAKER_API_KEY` | Moonraker API key, only when Moonraker requires one |
-| `CLIPROXY_API_KEY` | Key for `services.vision_chat_url` |
+| `CLIPROXY_API_KEY` | Key for `services.vision_chat_url` (the name is historical; any provider's key goes here). Not needed when that endpoint is on this machine or your LAN |
 | `MAKERWORLD_TOKEN` | MakerWorld links: the account token, used when `~/.config/bambu/token` does not exist (a saved file wins) |
 | `THINGIVERSE_TOKEN` | Thingiverse links: the App Token, used when `~/.config/thingiverse/token` does not exist (a saved file wins) |
 | `CULTS3D_TOKEN` | Cults3D links: `nickname:key`, used when `~/.config/cults3d/token` does not exist (a saved file wins) |

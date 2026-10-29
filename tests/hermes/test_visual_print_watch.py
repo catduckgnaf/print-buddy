@@ -614,9 +614,11 @@ def test_vision_ready_needs_an_endpoint_the_watch_can_actually_use(monkeypatch):
     assert vw.vision_ready(lambda: "key", lines.append) is False
     assert vw.vision_ready(lambda: "key", lines.append) is False
     assert len(lines) == 1 and "camera watch skipped" in lines[0]  # said once, not per check
-    urls["vision_chat_url"] = "http://vision.local/v1/chat/completions"
-    assert vw.vision_ready(lambda: "", None) is False  # a URL without its key judges nothing
+    urls["vision_chat_url"] = "https://vision.example.com/v1/chat/completions"
+    assert vw.vision_ready(lambda: "", None) is False  # a hosted URL without its key judges nothing
     assert vw.vision_ready(lambda: "key", None) is True
+    urls["vision_chat_url"] = "http://vision.local/v1/chat/completions"
+    assert vw.vision_ready(lambda: "", None) is True  # a LAN server takes no key
     urls["vision_chat_url"] = ""
     monkeypatch.setenv("PRINT_VISION_URL", "http://detector.local/judge")
     assert vw.vision_ready(lambda: "", None) is True

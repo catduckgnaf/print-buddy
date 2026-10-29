@@ -34,6 +34,12 @@ mocked Moonraker responses in `tests/test_firmware_update.py`.
 There is no automatic applying and no background updater. Availability
 may be reported; only a person confirms an update.
 
+When Moonraker reports `?` for a component's latest version (a live
+AD5X on ZMod 1.7.5-2 does this for every git component), that row says
+"latest version not reported" and the report says Print Handy cannot
+tell whether an update exists. It never says "up to date" for such a
+component, and `/print-firmware update` refuses it rather than guess.
+
 ## Safety rules (stage 2 apply)
 
 - **Eligibility is a property of the printer profile**, from

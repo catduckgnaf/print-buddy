@@ -148,6 +148,17 @@ class Component:
             return True
         return bool(self.remote) and self.remote != (self.current or "")
 
+    @property
+    def remote_unknown(self) -> bool:
+        """True when Moonraker reported no readable available version ("?").
+
+        Such a component is neither up to date nor behind: Print Handy cannot
+        tell, and must not say "up to date" (live ZMod 1.7.5-2 reports "?"
+        for every git component). The ``system`` row reports packages, not
+        versions, so it is never unknown this way.
+        """
+        return self.name != "system" and not self.package_count and not self.remote
+
 
 @dataclass(frozen=True)
 class UpdateStatus:
@@ -164,6 +175,10 @@ class UpdateStatus:
     @property
     def updates_available(self):
         return tuple(c for c in self.components if c.update_available)
+
+    @property
+    def remotes_unknown(self):
+        return tuple(c for c in self.components if c.remote_unknown)
 
 
 def _component_key(name):
@@ -381,6 +396,8 @@ def _component_line(component, *, eligible):
         if eligible:
             line += f" — update with `/print-firmware update {component.name}`"
         return line
+    if component.remote_unknown:
+        return f"- {component.name}: {current} (latest version not reported)"
     return f"- {component.name}: {current} (up to date)"
 
 
@@ -404,7 +421,13 @@ def report_text(status, entry, *, pairing="unknown", os_version=None,
             lines.append(f"ZMod version: {zmod.current}")
         else:
             lines.append("ZMod version: unknown (not reported by Moonraker)")
-    if not status.updates_available:
+    unknown = status.remotes_unknown
+    if unknown:
+        names = ", ".join(c.name for c in unknown)
+        lines.append(f"\nThe printer did not report the latest version for {names}, so "
+                     "Print Handy cannot tell whether an update exists for "
+                     f"{'it' if len(unknown) == 1 else 'them'}. Check in Fluidd or Mainsail.")
+    elif not status.updates_available:
         lines.append("\nEverything Print Handy can check here is up to date.")
     if entry is not None and entry.vendor in FORK_VENDORS:
         lines.append("\nThis printer runs its vendor's own Klipper-based firmware. These "
@@ -546,6 +569,11 @@ def prepare_update(transport, entry, component_token) -> PreparedUpdate:
                               f"{component_token!r}. Run `/print-firmware` to see the "
                               "components it actually reports — a typed name is never sent "
                               "on trust. Nothing was sent.")
+    if component.remote_unknown:
+        raise FirmwareRefusal(f"The printer does not report the latest version of "
+                              f"**{component.name}**, so Print Handy cannot tell whether "
+                              "an update exists and will not request one. Check in Fluidd "
+                              "or Mainsail. Nothing was sent.")
     if not component.update_available:
         raise FirmwareRefusal(f"**{component.name}** is already up to date "
                               f"({component.current or 'version not reported'}); there is "

@@ -25,6 +25,14 @@ and in what order.
 Recommendation: run ZMod screenless (`display_off=1`) and use HelixScreen,
 Fluidd or Mainsail as the local interface.
 
+> **Known gap in 2.2.0: screenless prints cannot be started from chat yet.**
+> Every AD5X job Print Handy slices is bound to an IFS slot, and the route
+> that starts a slot-bound print (`SET_ZCOLOR`) still needs the stock
+> firmware's API, which only answers with the native screen on. Screenless,
+> Print Handy refuses the start with a plain message and uploads nothing.
+> Calibration, Z offset, IFS presence and monitoring all work screenless.
+> To print from chat today, switch the native screen on (`display_off=0`).
+
 Why it works better with Print Handy:
 
 - **One owner for each value.** With the stock screen running, the screen
@@ -120,6 +128,11 @@ purge line lands inside the adaptive area. With KAMP on, ZMod forces
 `LINE_PURGE` regardless; without object labels in Orca it falls back to
 `_CLEAR2`.
 
+Print Handy's AD5X slices do not emit object labels (`gcode_label_objects`
+and `exclude_object` are off in the AD5X Orca template), so with KAMP on,
+expect ZMod's `_CLEAR2` fallback purge. Whether ZMod still builds an
+adaptive mesh without labels has not been checked on a printer.
+
 Today Print Handy's readiness check does not say whether a given print will
 use KAMP or the saved `auto` mesh. Keep the full mesh current anyway: it is
 the fallback and the reference for how flat the bed is.
@@ -181,12 +194,14 @@ and the [Settings reference](SETTINGS.md).
 | `gcode` | Always `.gcode` |
 | `3mf` | Always `.gcode.3mf`, even when the version is unknown |
 
-Recommendation: leave it on `auto`. If Print Handy cannot read the version
-(see [ZMod version](#zmod-version)), `auto` sends plain `.gcode`, which is
-the long-standing path. With the version readable as 1.7.5 or newer, `auto`
-sends `.gcode.3mf`. Do not force `3mf` until the live checks on issue
-#564 (starting a packaged print, colour mapping on the printer, web UI
-metadata, timelapse markers) have passed on your printer.
+`auto` is the default. If Print Handy cannot read the version (see
+[ZMod version](#zmod-version)), `auto` sends plain `.gcode`, the
+long-standing path. With the version readable as 1.7.5 or newer, `auto`
+already sends `.gcode.3mf`, and that path has not yet passed the live
+checks on issue #564 (starting a packaged print, color mapping on the
+printer, web UI metadata, timelapse markers). If a packaged print
+misbehaves on your printer, set `gcode` to go back to the long-standing
+path, and report what you saw on #564.
 
 ## Spools, IFS slots and Spoolman
 
@@ -217,3 +232,5 @@ lasts for the print.
 | Nopoop multicolour print sliced by Print Handy | Not verified |
 | QuickSwap with Print Handy | Not verified |
 | `.gcode.3mf` live print on ZMod 1.7.5 | Not verified |
+| Starting a slot-bound print screenless (`display_off=1`) | Not supported yet: refused before upload |
+| `/print-calibration mesh` from chat (the table's mesh row used the `mesh-run` script path) | Not verified |

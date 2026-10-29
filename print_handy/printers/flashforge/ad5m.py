@@ -24,7 +24,7 @@ MODEL = PrinterModel(
             # Usable print area, matching printable_area in the template machine.json.
             "bed_mm": [220.0, 220.0],
             "max_print_height_mm": 220.0,
-            # Orca templates are tuned for this nozzle. Slicing refuses any other size.
+            # The base template's nozzle; other supported sizes use the tuned profiles.
             "nozzle_diameter_mm": 0.4,
             # One extruder, no IFS: a single filament slot.
             "ifs_slots": 1,

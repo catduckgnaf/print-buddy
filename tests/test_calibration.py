@@ -499,6 +499,17 @@ def test_mesh_flow_zmod_screenless_measures_without_saving_then_accepts_once():
     assert "Saved" in message
 
 
+def test_mesh_cooldown_leaves_heaters_alone_when_a_print_started_meanwhile():
+    # A print started from the screen while the mesh was read back keeps its heaters.
+    transport = FakeTransport(states=("standby", "standby", "printing"))
+    _t, facts = zmod_facts(transport)
+    prepared = cal.prepare_mesh(transport, AD5X, facts)
+    result = cal.execute_mesh(transport, prepared, poll_interval_s=0, sleep=NO_SLEEP)
+    assert "TURN_OFF_HEATERS" not in transport.scripts
+    assert result.cooled is None
+    assert "Heaters left as they are" in cal.mesh_result_text(result)
+
+
 def test_mesh_result_warns_when_the_heaters_cannot_be_confirmed_off():
     transport = FakeTransport(heaters_stuck=True)
     _t, facts = zmod_facts(transport)
@@ -591,7 +602,8 @@ def test_mesh_and_shaper_accept_refuse_when_a_print_started_meanwhile():
     for action in (cal.accept_mesh, cal.discard_mesh):
         with pytest.raises(cal.CalibrationRefusal):
             action(transport, result)
-    assert transport.scripts == [prepared.script, "TURN_OFF_HEATERS"]
+    # The print that started meanwhile also keeps its heaters (no cooldown sent).
+    assert transport.scripts == [prepared.script]
     transport = FakeTransport(states=("standby", "standby", "printing"),
                               store_appends={"ZSHAPER": SHAPER_REPORT_ZMOD})
     facts = cal.fetch_facts(transport)

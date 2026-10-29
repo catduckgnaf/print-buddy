@@ -1103,8 +1103,9 @@ class MeshResult:
     prepared: PreparedMesh
     after: MeshSummary
     # True when the heaters were turned off after measuring and the readback
-    # showed both targets at 0; False when that could not be confirmed.
-    cooled: bool = True
+    # showed both targets at 0; False when that could not be confirmed; None
+    # when they were left alone because the printer was no longer idle.
+    cooled: bool | None = True
 
     @property
     def before(self):
@@ -1125,14 +1126,22 @@ def _fetch_bed_mesh(transport):
 HEATER_TARGETS_PATH = "/printer/objects/query?extruder=target&heater_bed=target"
 
 
-def _cool_down(transport) -> bool:
+def _cool_down(transport) -> bool | None:
     """Turn both heaters off after a measurement and confirm it by readback.
 
     The leveling macros heat the bed and nozzle; the Accept/Discard prompt
     can wait a long time, so the heaters must not sit at temperature while
-    it does. Returns False (never raises) when the off command or the
-    readback fails, so the measured mesh is still presented.
+    it does. The printer is re-checked first: a print started from the
+    screen or another client while the mesh was being read back must keep
+    its heaters, so a printer that is not idle (or whose state cannot be
+    read) is left alone and None is returned. Returns False (never raises)
+    when the off command or the readback fails, so the measured mesh is
+    still presented.
     """
+    try:
+        _require_idle_now(transport, recheck=True)
+    except Exception:
+        return None
     try:
         _send_script(transport, "TURN_OFF_HEATERS")
         status = transport("GET", HEATER_TARGETS_PATH)["result"]["status"]
@@ -1190,9 +1199,15 @@ def mesh_result_text(result: MeshResult) -> str:
     else:
         lines.append(f"- Measured — {after.text()} (no earlier mesh was readable "
                      "to compare against).")
-    lines += ["", "Heaters turned off after measuring (checked)." if result.cooled else
-              "**Print Handy could not confirm the heaters turned off after measuring. "
-              "Check the printer and turn them off yourself.**"]
+    if result.cooled:
+        lines += ["", "Heaters turned off after measuring (checked)."]
+    elif result.cooled is None:
+        lines += ["", "**Heaters left as they are: the printer was no longer idle after "
+                      "measuring (a print may have started), so Print Handy did not turn "
+                      "them off. Check the printer.**"]
+    else:
+        lines += ["", "**Print Handy could not confirm the heaters turned off after "
+                      "measuring. Check the printer and turn them off yourself.**"]
     lines += ["",
               "The measured mesh is loaded in memory only — nothing has been saved.",
               f"- **{ACCEPT_LABEL}**: stores it as profile '{result.prepared.profile}' "

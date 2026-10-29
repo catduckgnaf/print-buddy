@@ -108,6 +108,9 @@ Right after the new mesh reads back, Print Handy sends `TURN_OFF_HEATERS`
 and checks that both heater targets read 0, so the printer does not sit
 hot while the Accept/Discard question waits. The result says whether that
 was confirmed; if it was not, it tells you to turn the heaters off yourself.
+The printer is re-checked first: if it is no longer idle (a print started
+from the screen or another client meanwhile), the heaters are left alone and
+the result says so.
 
 The result presentation is the mesh range (lowest → highest probed
 point) before and after, with the signed range difference.

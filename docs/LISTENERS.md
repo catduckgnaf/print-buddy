@@ -116,6 +116,13 @@ they belong to their launched-print monitor.
 
 Moonraker's listener has always posted the full lifecycle — starts
 (launched and external), pauses with Resume/Cancel buttons, completions.
+When that G-code contains `EXCLUDE_OBJECT_DEFINE` names, the Moonraker
+start post also lists them (`Objects still printing: ...`). A file without
+that metadata is unchanged. Chat does not send an exclude yet. The confirm
+gate can build a Moonraker `EXCLUDE_OBJECT` script only after a confirm,
+and the last remaining object is the existing whole-print cancel, but no
+button sends that script. Bambu, Prusa, OctoPrint, and stock Flashforge
+are not given an exclude.
 #460 gives every other family the same contract through one shared
 mechanism (`print_handy/hermes/family_control.py`), not five copies:
 

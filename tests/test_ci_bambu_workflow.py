@@ -1,4 +1,4 @@
-"""Contract tests for the real-slicer-bambu CI job (.github/workflows/ci.yml).
+"""Contract tests for the Slicer test (bambu) CI job (.github/workflows/ci.yml).
 
 Bambu Studio is the Bambu Lab vendor default slicer and the one-shot fallback
 when Orca execution fails, but it is not in the published image and was, until
@@ -24,7 +24,7 @@ def load_workflow():
 
 
 def bambu_job():
-    return load_workflow()["jobs"]["real-slicer-bambu"]
+    return load_workflow()["jobs"]["slicer-test-bambu"]
 
 
 def job_runs(job):
@@ -72,10 +72,22 @@ class RealSlicerBambuWorkflowContract(unittest.TestCase):
 
     def test_existing_real_slicer_legs_are_untouched(self):
         jobs = load_workflow()["jobs"]
-        for name in ("real-slicer", "real-slicer-alpha"):
+        for name in ("slicer-test-stable", "slicer-test-preview"):
             self.assertIn(name, jobs)
             self.assertEqual(jobs[name]["env"]["PRINT_HANDY_REAL_SLICER"], "1")
             self.assertNotIn("PRINT_HANDY_REAL_BAMBU", jobs[name]["env"])
+
+    def test_slicer_job_names_are_stage_neutral(self):
+        # #600: job display names describe the channel's role, never the
+        # upstream stage; these names are the GitHub check contexts, and
+        # branch protection requires "Slicer test (stable)".
+        jobs = load_workflow()["jobs"]
+        self.assertEqual(jobs["slicer-test-stable"]["name"], "Slicer test (stable)")
+        self.assertEqual(jobs["slicer-test-preview"]["name"], "Slicer test (preview)")
+        self.assertEqual(jobs["slicer-test-bambu"]["name"], "Slicer test (bambu)")
+        for job_id in jobs:
+            self.assertNotIn("alpha", job_id)
+            self.assertNotIn("beta", job_id)
 
 
 if __name__ == "__main__":

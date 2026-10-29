@@ -3857,7 +3857,7 @@ def _note_delivery_format(job, job_path, note):
         logger.warning("could not record delivery format: %s", exc)
 
 
-def _zmod_upload_artifact(adapter, st, g, sha, remote, job, job_path):
+def _zmod_upload_artifact(adapter, st, g, sha, remote):
     """Resolve the Moonraker upload artifact for a Flashforge/ZMod print (#564).
 
     Returns (upload_path, upload_sha256, remote, note). The default — and every
@@ -3868,6 +3868,7 @@ def _zmod_upload_artifact(adapter, st, g, sha, remote, job, job_path):
     the remote name keeps the G-code's stem+sha with a .3mf suffix so
     find_job/record binding is unchanged. All verification has already run on
     the .gcode by the time this is called; nothing here re-checks or alters it.
+    Callers note the returned note on the job once the upload verifies.
     """
     setting = str(adapter.config.get("printer", {}).get("zmod_delivery_format") or "gcode").strip().casefold()
     if getattr(getattr(adapter, "model", None), "vendor_key", None) != "flashforge":
@@ -4503,7 +4504,7 @@ def print_mapped_native(g, st, mesh, mapping, job, job_path, wait_s, reprint):
                 raise RuntimeError(f'T{tool} slot {slot} occupancy is unknown or unconfirmed')
     sha = file_sha256(g)
     remote = remote_name(g, sha, job)
-    upload_path, upload_sha, remote, delivery = _zmod_upload_artifact(adapter, st, g, sha, remote, job, job_path)
+    upload_path, upload_sha, remote, delivery = _zmod_upload_artifact(adapter, st, g, sha, remote)
     lease = launch_state.acquire(_printer_key(st, job), job_json=job_path, gcode_sha256=sha, remote=remote,
                                  observed_file=(status.get('print_stats') or {}).get('filename'))
     try:
@@ -5446,7 +5447,6 @@ def print_now(target, wait_s=25, accept_default_z_offset=False, reprint=False, r
         if adapter.multi_slot: raise
         raise SystemExit("REFUSED: " + " ".join(str(exc).split()) + ". Nothing uploaded or started.")
     sha=file_sha256(g); remote=remote_name(g, sha, job)
-    upload_path, upload_sha, remote, delivery = _zmod_upload_artifact(adapter, st, g, sha, remote, job, job_path)
     text=g.read_text(errors="ignore")
     if mesh.get('display_off') in (0, 1):
         try:
@@ -5458,6 +5458,7 @@ def print_now(target, wait_s=25, accept_default_z_offset=False, reprint=False, r
             validate_native_start(read_stock_detail(st), selection)
         except Exception as exc:
             raise SystemExit(f'REFUSED: native preflight: {exc}. Nothing uploaded or started.') from exc
+    upload_path, upload_sha, remote, delivery = _zmod_upload_artifact(adapter, st, g, sha, remote)
     lease=launch_state.acquire(_printer_key(st, job), job_json=job_path, gcode_sha256=sha, remote=remote, observed_file=fn)
     try:
         _require_idle(st)  # again inside the lease: the first read may predate another job's start

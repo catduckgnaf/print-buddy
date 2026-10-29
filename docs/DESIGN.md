@@ -86,7 +86,8 @@ The model writes the part, but it never gets to run anything general:
 ## Editing an existing model
 
 Attach the model to the design message — drop the file in the same message as
-`/print-design <the change>`, or paste a MakerWorld/Printables link in it. The
+`/print-design <the change>`, or paste a supported model-site link in it
+(MakerWorld, Printables, Thingiverse, MyMiniFactory, Cults3D, Creality Cloud). The
 original is never modified: design works on a copy inside its session folder.
 
 - **`.scad`** — edited in source form. The model returns the complete updated
@@ -103,8 +104,10 @@ original is never modified: design works on a copy inside its session folder.
   pattern) do not — the design says so in plain words instead of guessing. A
   `.3mf` is converted through the same geometry loader intake uses.
 - **A model link** — the file is fetched through the ordinary link machinery
-  first (MakerWorld picks its default profile; Printables must offer one
-  STL/3MF file), then edited like a dropped file.
+  first (MakerWorld picks its default profile; Printables, Thingiverse and
+  Creality Cloud must offer one STL/3MF file — a Creality Cloud link's print
+  profile names its file when it has one; MyMiniFactory and Cults3D links
+  stop with their download gaps named), then edited like a dropped file.
 
 ## Saying it instead of the command
 

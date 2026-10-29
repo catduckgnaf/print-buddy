@@ -245,9 +245,11 @@ def fetch_link_source(url, target_dir) -> Path:
 
     The minimal existing fetch-to-file path (the same inventory + download
     pair prepared intake drives): MakerWorld picks its profile with
-    makerworld_profiles.choose (the URL's profileId when present), Printables
-    must offer exactly one STL/3MF file. Ambiguity is a plain refusal, never
-    a silent pick.
+    makerworld_profiles.choose (the URL's profileId when present);
+    Printables, Thingiverse and Creality Cloud must offer exactly one
+    STL/3MF file, except that a Creality Cloud link's print profile names
+    its file when it has one; Cults3D and MyMiniFactory stop with their
+    named download gaps. Ambiguity is a plain refusal, never a silent pick.
     """
     from . import model_job as mj
     target_dir = Path(target_dir)

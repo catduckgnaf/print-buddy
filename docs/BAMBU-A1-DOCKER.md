@@ -96,7 +96,7 @@ docker compose exec combined python3 scripts/bambu-templates.py --printer a1 --r
 docker compose exec combined python3 scripts/bambu-templates.py --printer a1 --resources /opt/orca-stable/resources --check
 ```
 
-The first command reports `wrote Bambu Lab A1 Orca templates from OrcaSlicer 2.5.0-beta (BBL vendor profiles 02.08.00.16) to /data/hermes/state/orca-profiles/bambulab_a1`; `--check` writes nothing and should end with `matches; generated folder is current`. The templates live in the `hermes` volume, so they survive a recreate. Nothing is downloaded. `PRINT_HANDY_ORCA_CHANNEL=alpha` currently installs the same v2.5.0-beta release as `stable` (both channels moved from the #356 alpha to the beta); the channels diverge again when upstream publishes a newer prerelease.
+The first command reports `wrote Bambu Lab A1 Orca templates from OrcaSlicer 2.5.0-beta (BBL vendor profiles 02.08.00.16) to /data/hermes/state/orca-profiles/bambulab_a1`; `--check` writes nothing and should end with `matches; generated folder is current`. The templates live in the `hermes` volume, so they survive a recreate. Nothing is downloaded. `PRINT_HANDY_ORCA_CHANNEL=preview` currently installs the same v2.5.0-beta release as `stable`; the channels diverge again when upstream publishes a newer prerelease. (`alpha`, the preview channel's name before #600, is still accepted as an alias.)
 
 ## 3. Write the hardware record by hand
 

@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import base64
 import json
+import os
 import time
 from dataclasses import dataclass
 from pathlib import Path
@@ -31,6 +32,11 @@ class LoginSite:
     sign_in_url: str
     where: str
     doc_section: str
+
+    @property
+    def env_name(self):
+        """The environment variable that can hold the token instead of the file."""
+        return f"{self.folder.upper()}_TOKEN"
 
 
 LOGIN_SITES = {
@@ -87,9 +93,10 @@ def refused(site, detail=""):
     acc = LOGIN_SITES[site]
     lead = f"{acc.label} refused the login token{detail}"
     return SiteLoginNeeded(site, "refused", (
-        f"{lead}, which usually means the token in {token_path(site)} is "
-        f"invalid or expired. Sign in at {acc.sign_in_url} again and replace the "
-        f"file (see docs/PROJECT-REFERENCE.md, {acc.doc_section}), then send the link again."))
+        f"{lead}, which usually means the saved token ({token_path(site)} or the "
+        f"{acc.env_name} environment variable) is invalid or expired. Sign in at "
+        f"{acc.sign_in_url} again and save the new value in that file (see "
+        f"docs/PROJECT-REFERENCE.md, {acc.doc_section}), then send the link again."))
 
 
 def _normalize(raw):
@@ -113,29 +120,38 @@ def _normalize(raw):
     return token
 
 
-def read_token(site, *, now=None):
+def read_token(site, *, now=None, environ=None):
     """The stripped login token for ``site``; SiteLoginNeeded when unusable.
 
-    A JWT whose ``exp`` has passed is refused here, before any request, so
-    the operator hears "expired" rather than a generic site refusal.
+    The token file wins when it exists (the chat connect flow writes it, so
+    a freshly saved token always takes effect); otherwise the site's
+    environment variable (``THANGS_TOKEN`` and so on, e.g. from the .env)
+    is used. A JWT whose ``exp`` has passed is refused here, before any
+    request, so the operator hears "expired" rather than a site refusal.
     """
     acc = LOGIN_SITES[site]
     path = token_path(site)
+    env = os.environ if environ is None else environ
     try:
         token = _normalize(path.read_text(encoding="utf-8"))
+        where = str(path)
     except FileNotFoundError:
-        raise SiteLoginNeeded(site, "missing", (
-            f"{acc.label} downloads need your login token in {path}; sign in at "
-            f"{acc.sign_in_url} in a browser, open the developer tools, copy the "
-            f"value from {acc.where}, and store it as the only content of that "
-            f"file; see docs/PROJECT-REFERENCE.md ({acc.doc_section})")) from None
+        token = _normalize(env.get(acc.env_name) or "")
+        where = f"the {acc.env_name} environment variable"
+        if not token:
+            raise SiteLoginNeeded(site, "missing", (
+                f"{acc.label} downloads need a login token in {path} (or the "
+                f"{acc.env_name} environment variable); sign in at "
+                f"{acc.sign_in_url} in a browser, open the developer tools, copy the "
+                f"value from {acc.where}, and store it as the only content of that "
+                f"file; see docs/PROJECT-REFERENCE.md ({acc.doc_section})")) from None
     if not token:
         raise SiteLoginNeeded(site, "empty", f"{acc.label} token empty: {path} has no token in it")
     exp = _jwt_expiry(token)
     if exp is not None and exp <= (time.time() if now is None else now):
         raise SiteLoginNeeded(site, "expired", (
-            f"The {acc.label} login token in {path} has expired. Sign in at "
-            f"{acc.sign_in_url} again and replace the file with the new value "
+            f"The {acc.label} login token in {where} has expired. Sign in at "
+            f"{acc.sign_in_url} again and save the new value in {path} "
             f"(see docs/PROJECT-REFERENCE.md, {acc.doc_section})."))
     return token
 
@@ -160,5 +176,7 @@ def connect_steps(site):
         "In Docker, write it to the host folder mounted at `/data/.config` "
         f"(`dot-config/{acc.folder}/token`, owned by 1000:1000), or run the commands above "
         "inside the container.\n"
+        f"Or put it in your `.env` as `{acc.env_name}=<token>` and restart Print Handy "
+        "(a saved file takes priority over the variable).\n"
         "Then press **Saved — try again** and I'll retry the download. Tokens expire; "
         "when that happens I'll ask again.")

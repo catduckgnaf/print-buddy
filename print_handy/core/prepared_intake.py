@@ -686,11 +686,20 @@ async def _spool_projection_text(mj, job, manifest, state, copies):
 MAX_CONNECT_ROUNDS = 3
 
 
+SAVED_LABEL = 'Saved — try again'
+
+
 def _saved_reply(text):
-    """Typed `saved`/`stored`/`done` answers the connect prompt like its button."""
-    if str(text or '').strip().casefold().rstrip('.!') in {'saved', 'stored', 'done', 'try again'}:
-        return 0
-    raise ValueError('not a saved reply')
+    """Typed `saved`/`stored`/`done` answers the connect prompt like its button.
+
+    Returns the button's own label: link_intake.typed_reply resolves the
+    prompt with this value and ask() then matches it as that button, the
+    same path a press takes.
+    """
+    value = str(text or '').strip()
+    if value == SAVED_LABEL or value.casefold().rstrip('.!') in {'saved', 'stored', 'done', 'try again'}:
+        return SAVED_LABEL
+    raise ValueError('reply `saved` once the token file is in place, or `cancel`')
 
 
 async def _connect_account(adapter, source, key, metadata, exc, timeout):
@@ -716,8 +725,8 @@ async def _connect_account(adapter, source, key, metadata, exc, timeout):
     await adapter.send(chat_id=source.chat_id, content=connect_steps(exc.site), metadata=metadata)
     saved = await _ask(adapter, source, key,
                        f'Press Saved once the {label} token file is in place.',
-                       ['Saved — try again', 'Cancel'], timeout, parser=_saved_reply)
-    return saved == 0
+                       [SAVED_LABEL, 'Cancel'], timeout, parser=_saved_reply)
+    return saved in (0, SAVED_LABEL)
 
 
 async def _ask(adapter, source, key, question, choices, timeout=None, **kwargs):

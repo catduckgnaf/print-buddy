@@ -559,18 +559,9 @@ def crealitycloud_headers(token=None):
 
 
 def crealitycloud_token():
-    path = Path.home()/".config"/"crealitycloud"/"token"
-    try:
-        token = path.read_text(encoding="utf-8").strip()
-    except FileNotFoundError:
-        raise SiteLoginNeeded("crealitycloud", "missing", 
-            f"Creality Cloud downloads need a login token in {path}; sign in at "
-            "https://www.crealitycloud.com in a browser, open the browser's "
-            "developer tools, copy the value of the cookie named model_token, "
-            "and store it as the only content of that file; see "
-            "docs/PROJECT-REFERENCE.md (Creality Cloud login token)") from None
-    if not token: raise SiteLoginNeeded("crealitycloud", "empty", "Creality Cloud token empty")
-    return token
+    # The token file, else CREALITYCLOUD_TOKEN (see site_accounts.read_token).
+    from .site_accounts import read_token
+    return read_token("crealitycloud")
 
 
 def _crealitycloud_token_refused():

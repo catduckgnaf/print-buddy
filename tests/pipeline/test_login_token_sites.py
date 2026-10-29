@@ -96,6 +96,8 @@ def home(tmp_path, monkeypatch):
     path = tmp_path/'home'
     path.mkdir()
     monkeypatch.setenv('HOME', str(path))
+    for name in ('CREALITYCLOUD_TOKEN', 'THANGS_TOKEN', 'NEXPRINT_TOKEN'):
+        monkeypatch.delenv(name, raising=False)
     return path
 
 
@@ -175,6 +177,27 @@ def test_missing_token_names_the_file_and_cookie(home):
     assert caught.value.site == 'thangs' and caught.value.reason == 'missing'
     message = str(caught.value).replace('\\', '/')
     assert '.config/thangs/token' in message and 'accessToken' in message
+
+
+def test_token_from_environment_variable(home, monkeypatch):
+    monkeypatch.setenv('THANGS_TOKEN', 'Bearer env-token')
+    assert site_accounts.read_token('thangs') == 'env-token'
+    # A saved file (what the chat connect flow writes) wins over the variable.
+    save_token('thangs', 'file-token')
+    assert site_accounts.read_token('thangs') == 'file-token'
+
+
+def test_missing_token_names_the_variable_too(home, monkeypatch):
+    monkeypatch.delenv('NEXPRINT_TOKEN', raising=False)
+    with pytest.raises(SiteLoginNeeded) as caught:
+        site_accounts.read_token('nexprint')
+    assert 'NEXPRINT_TOKEN' in str(caught.value)
+    assert '`.env` as `NEXPRINT_TOKEN=<token>`' in site_accounts.connect_steps('nexprint')
+
+
+def test_crealitycloud_reads_its_variable(home, monkeypatch):
+    monkeypatch.setenv('CREALITYCLOUD_TOKEN', 'cc-env')
+    assert model_job.crealitycloud_token() == 'cc-env'
 
 
 def test_empty_token_refuses(home):
@@ -555,7 +578,11 @@ def test_connect_flow_gives_up_after_three_rounds(env, home, monkeypatch):
 
 
 def test_saved_reply_parser():
-    assert prepared_intake._saved_reply('Saved') == 0
-    assert prepared_intake._saved_reply(' stored. ') == 0
+    label = prepared_intake.SAVED_LABEL
+    assert prepared_intake._saved_reply('Saved') == label
+    assert prepared_intake._saved_reply(' stored. ') == label
+    # typed_reply resolves the prompt with the parser's value; that value
+    # must read back as the button, or ask() would re-ask forever.
+    assert prepared_intake._saved_reply(label) == label
     with pytest.raises(ValueError):
         prepared_intake._saved_reply('eyJhbGciOi.paste.attempt')

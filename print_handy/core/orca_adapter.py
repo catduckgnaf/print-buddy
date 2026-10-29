@@ -972,7 +972,8 @@ def slice_model(source, folder, state, brim=None, first_layer=False, color_decis
         if not isinstance(slot, dict):
             raise RuntimeError(f'derived plate slot {filament_slot} is not in the saved IFS map')
         if not slot.get('spoolman_id') or not slot.get('material') or not slot.get('physical_color_verified'):
-            raise RuntimeError('IFS slot color/material mapping is unverified')
+            from .slice_refusal import unconfirmed_slot_colour
+            raise unconfirmed_slot_colour(filament_slot, slot, 'IFS slot color/material mapping is unverified')
         if slot.get('spoolman_id') != state['spool'].get('spoolman_id'):
             # The selected slot, not whichever spool happened to be active last,
             # defines this job's material; launch syncs the active spool to it.
@@ -998,22 +999,32 @@ def slice_model(source, folder, state, brim=None, first_layer=False, color_decis
                 print(f"WARNING: Spoolman spool #{slot['spoolman_id']} material "
                       f"{spool.get('filament', {}).get('material')!r} differs from slot {filament_slot}'s "
                       f"recorded {slot['material']!r}; slicing on the slot record", flush=True)
-        color = slot.get('hex')
+        color_slot, color_row = filament_slot, slot
     else:
-        matching = [s for s in slots.values() if s.get('spoolman_id') == state['spool'].get('spoolman_id')]
-        color = state['spool'].get('color_code')
+        matching = [(k, s) for k, s in slots.items() if s.get('spoolman_id') == state['spool'].get('spoolman_id')]
+        color_slot, color_row = 'active', {'hex': state['spool'].get('color_code'),
+                                           'color': state['spool'].get('color'),
+                                           'name': state['spool'].get('name'),
+                                           'material': state['spool'].get('material')}
+        if state['spool'].get('color_code') is None:
+            color_row = None  # no recorded colour and no slots: the profile's own colour stays
         if slots:
             if len(matching) != 1:
                 raise RuntimeError('selected spool must resolve to exactly one IFS slot')
-            slot = matching[0]
+            color_slot, slot = matching[0]
             from .printer_state import same_material
-            if not same_material(slot.get('material'), state['spool']['material']) or not slot.get('physical_color_verified'):
-                raise RuntimeError('IFS slot color/material mapping is unverified')
-            color = slot.get('hex')
-    if color is not None:
-        if not isinstance(color, str) or not re.fullmatch(r'#?[0-9A-Fa-f]{6}', color):
-            raise RuntimeError('filament color must be an explicit six-digit RGB value')
-        color = '#' + color.lstrip('#').upper()
+            if not same_material(slot.get('material'), state['spool']['material']):
+                from .slice_refusal import slot_mismatch
+                raise slot_mismatch(color_slot, slot, state['spool'], 'IFS slot color/material mapping is unverified')
+            if not slot.get('physical_color_verified'):
+                from .slice_refusal import unconfirmed_slot_colour
+                raise unconfirmed_slot_colour(color_slot, slot, 'IFS slot color/material mapping is unverified')
+            color_row = slot
+    # The colour code only colours the preview and the 3MF filament label.
+    # A slot without one gets the next source in line (its name, else the
+    # neutral default, with a WARNING) instead of killing the slice.
+    from .filament_colour import slot_hex
+    color = slot_hex(color_slot, color_row) if color_row is not None else None
     from .printer_state import _material_temperature_contract
     _material_temperature_contract(state)
     # The printer picks the filament profile for the job's material (Bambu Lab: its checked vendor profile for that
@@ -1075,10 +1086,10 @@ def slice_model(source, folder, state, brim=None, first_layer=False, color_decis
                 if active_material is not None and not same_material(record['material'], active_material):
                     raise RuntimeError('mixed material requires independently calibrated per-toolhead temperatures/density')
                 materials.append(record['material'])
-                hex_color = record.get('hex')
+                from .filament_colour import slot_hex
                 data.update({'name': f"Hermes toolhead {position} {record['material']}",
                              'filament_settings_id': [f"Hermes toolhead {position} {record['material']}"],
-                             'filament_colour': ['#' + hex_color.lstrip('#').upper()] if hex_color
+                             'filament_colour': [slot_hex(position, record)] if record.get('hex')
                                                 else filament['filament_colour'],
                              'filament_is_support': ['0']})
             path = folder / f'filament_tool_{tool}.json'
@@ -1103,6 +1114,7 @@ def slice_model(source, folder, state, brim=None, first_layer=False, color_decis
         configs[0].write_text(json.dumps(machine, indent=2) + '\n')
         configs[1].write_text(json.dumps(process, indent=2) + '\n')
         filament_paths = []
+        from .filament_colour import slot_hex
         for tool, physical_slot in mapping.items():
             slot = state['ifs_slots'][str(physical_slot)]
             from .printer_state import same_material
@@ -1111,7 +1123,7 @@ def slice_model(source, folder, state, brim=None, first_layer=False, color_decis
             data = copy.deepcopy(filament)
             data.update({'name': f"Hermes slot {physical_slot} {slot['material']}",
                          'filament_settings_id': [f"Hermes slot {physical_slot} {slot['material']}"],
-                         'filament_colour': ['#' + slot['hex'].lstrip('#').upper()],
+                         'filament_colour': [slot_hex(physical_slot, slot)],
                          'filament_is_support': ['0']})
             path = folder / f'filament_tool_{tool}.json'
             path.write_text(json.dumps(data, indent=2) + '\n')

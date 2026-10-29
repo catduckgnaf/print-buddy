@@ -2,6 +2,11 @@
 
 # Unreleased
 
+**What users can do now:**
+- Never type a hex colour, and never lose a slice to a missing one: every spool records a colour code derived from its colour name and finish ("matte white" → white; a blend like "rose red blue green" records its first colour plus all of them as Spoolman multi-colour hexes), a picked swatch or label read wins, and the new-spool walkthrough asks with swatch buttons only when the name cannot be read. Picking a spool for a slot confirms that slot's colour. Slicing falls back from the slot record to Spoolman, the printer's reported slot colour and the name, and only then to neutral grey — which chat says before slicing; existing blank slots are backfilled on read and by the listener at startup, never overwriting a valid colour. Live failure 2026-10-29 (AD5X multicolour and one-colour jobs).
+- Understand a refused slice: a deterministic refusal now says why in plain words ("Slot 1 (Matte white PLA) was never confirmed as loaded … Is Matte white PLA loaded in slot 1?"), carries `PB_SLICING_CONFIGURATION` instead of `PB_SLICING_UNKNOWN`, and offers the safe one-tap fix instead of a blind retry that would fail the same way.
+
+**Technical details:**
 - Bundled OrcaSlicer bumped from v2.5.0-alpha to v2.5.0-beta (upstream prerelease, published 2026-10-27, tag commit `345efec64c7b95a05ce5cf96df0dde66a158835c`): both channels in `docker/orca-prebuilt.sh` pin the beta AppImages (amd64 `15b0e9f9…`, aarch64 `941ea21d…`), the real-slicer CI legs download the beta flatpak (`2d2f6979…`), and every generated-template vendor pack gains checked 2.5.0-beta identities (tree + packed cache, computed from the beta source tree and the SHA-verified beta AppImage with the shared flatten pipeline; BBL `02.08.00.16`, Anycubic `02.04.00.10`, Elegoo `02.04.00.13`, QIDI `02.04.00.19`, Prusa and Creality kept their alpha vendor versions). The alpha channel keeps its name — it is the prerelease channel; it pins the same beta build until upstream publishes a newer prerelease. Alpha and 2.4.2 identities are retained, so folders generated from them keep verifying. Not verified on live hardware.
 
 # Version 2.1.9

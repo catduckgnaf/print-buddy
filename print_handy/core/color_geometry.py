@@ -495,10 +495,11 @@ def export_production_plate(source, target, decisions, slot_colors):
     if len(chosen) != 1:
         raise RuntimeError('production plate uses one filament index; mixed slots need per-object extruders')
     slot = chosen.pop()
-    color = slot_colors.get(str(slot)) or slot_colors.get(slot)
-    if not isinstance(color, str) or not re.fullmatch(r'#?[0-9A-Fa-f]{6}', color):
-        raise RuntimeError('filament color must be an explicit six-digit RGB value')
-    color = '#' + color.lstrip('#').upper()
+    # The colour only recolours the plate's filament label and preview. A
+    # slot without a code gets its name's colour or the neutral default
+    # (with a WARNING) rather than a refused slice.
+    from .filament_colour import slot_hex
+    color = slot_hex(slot, slot_colors.get(str(slot)) or slot_colors.get(slot))
     with zipfile.ZipFile(source) as archive:
         names = [name for name in archive.namelist() if not name.startswith('Auxiliaries/')]
         if 'Metadata/project_settings.config' not in names or 'Metadata/model_settings.config' not in names:
@@ -880,12 +881,11 @@ def export_single_color_plate(source, target, decisions, part_keys, bed=BED_MM, 
     colour = None
     if slot_colors:
         row = slot_colors.get(str(slot)) or slot_colors.get(slot) or {}
-        colour = row.get('hex') if isinstance(row, dict) else row
-        if not isinstance(colour, str) or not re.fullmatch(r'#?[0-9A-Fa-f]{6}', colour):
-            raise RuntimeError('filament color must be an explicit six-digit RGB value')
         if isinstance(row, dict) and row.get('physical_color_verified') is not True:
-            raise RuntimeError('derived plate slot color is not physically verified')
-        colour = '#' + colour.lstrip('#').upper()
+            from .slice_refusal import unconfirmed_slot_colour
+            raise unconfirmed_slot_colour(slot, row, 'derived plate slot color is not physically verified')
+        from .filament_colour import slot_hex
+        colour = slot_hex(slot, row)
         if 'Metadata/project_settings.config' not in payload:
             raise RuntimeError('derived plate slot color requires project settings')
         payload['Metadata/project_settings.config'] = _recolor_filament_indexes(

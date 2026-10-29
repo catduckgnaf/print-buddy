@@ -50,4 +50,7 @@ if __name__ == '__main__':
     try:
         main()
     except Exception as exc:  # report to the parent; it re-raises with the same message
-        sys.stdout.write('\n' + json.dumps({'ok': False, 'type': type(exc).__name__, 'error': str(exc)}))
+        reply = {'ok': False, 'type': type(exc).__name__, 'error': str(exc)}
+        if hasattr(exc, 'as_dict'):  # a SliceRefusal crosses the process boundary as data
+            reply['refusal'] = exc.as_dict()
+        sys.stdout.write('\n' + json.dumps(reply))

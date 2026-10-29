@@ -2098,7 +2098,12 @@ def _answer_spool_question(listener, spool_sync, context, choice):
     if choice['status'] == 'new':
         state = spool_sync.load_state()
         previous_slot = (state.get('ifs_slots') or {}).get(str(slot)) or {}
-        existing_hex = spool_sync.screen_hex(previous_slot.get('hex'))
+        # The colour code: a picked swatch, else the colour name read against
+        # the named-colour table, else (only then) the slot's previous swatch.
+        from print_handy.core import filament_colour
+        existing_hex = (spool_sync.screen_hex(choice.get('hex'))
+                        or filament_colour.derive_hex(choice.get('color'), choice.get('material'))
+                        or spool_sync.screen_hex(previous_slot.get('hex')))
         made = spool_sync.create_spool({'brand': choice.get('brand'), 'material': choice['material'],
                                         'color': choice['color'], 'grams': choice['grams'], 'hex': existing_hex,
                                         'nozzle_temp': choice.get('nozzle_temp'),
@@ -4378,7 +4383,7 @@ def alert_button_handlers(bot, adapter):
                  'grams': None, 'old_spool_id': old_spool_id, 'old_remaining': old_remaining,
                  'disposition': None, 'photo_offered': _photo_intake_ready(),
                  'from_photo': False, 'photo_route': None,
-                 'nozzle_temp': None, 'bed_temp': None}
+                 'nozzle_temp': None, 'bed_temp': None, 'hex': None}
         await intake_advance(interaction, state)
 
     async def intake_post_step(channel, state):
@@ -4512,12 +4517,14 @@ def alert_button_handlers(bot, adapter):
             from print_handy.hermes import spool_sync
             values = {'brand': state.get('brand') or '', 'material': state.get('material') or '',
                       'color': state.get('color') or '', 'grams': str(state.get('grams') or ''), 'lot': '',
-                      'nozzle_temp': state.get('nozzle_temp'), 'bed_temp': state.get('bed_temp')}
+                      'nozzle_temp': state.get('nozzle_temp'), 'bed_temp': state.get('bed_temp'),
+                      'hex': state.get('hex')}
             if state.get('origin') == 'spool-question':
                 from print_handy.hermes import moonraker_event_listener as listener
                 choice = {'status': 'new', 'brand': values['brand'] or None, 'material': values['material'],
                           'color': values['color'], 'grams': values['grams'], 'lot': None,
-                          'nozzle_temp': values['nozzle_temp'], 'bed_temp': values['bed_temp']}
+                          'nozzle_temp': values['nozzle_temp'], 'bed_temp': values['bed_temp'],
+                          'hex': values['hex']}
                 result = await asyncio.to_thread(_answer_spool_question, listener, spool_sync,
                                                  state.get('context') or {}, choice)
             else:
@@ -4538,7 +4545,7 @@ def alert_button_handlers(bot, adapter):
         state = {key: alert.get(key) for key in
                  ('origin', 'slot', 'context', 'step', 'predicted_id', 'prompt_brand', 'types',
                   'brand', 'material', 'color', 'grams', 'old_spool_id', 'old_remaining', 'disposition',
-                  'photo_offered', 'from_photo', 'photo_route', 'nozzle_temp', 'bed_temp')}
+                  'photo_offered', 'from_photo', 'photo_route', 'nozzle_temp', 'bed_temp', 'hex')}
         # Claim the step before acting on it: two clicks can both peek the
         # same alert, but only one take() succeeds. Without this check a
         # double confirmation would run intake_finish twice and create/bind
@@ -4596,7 +4603,7 @@ def alert_button_handlers(bot, adapter):
         state = {key: alert.get(key) for key in
                  ('origin', 'slot', 'context', 'step', 'predicted_id', 'prompt_brand', 'types',
                   'brand', 'material', 'color', 'grams', 'old_spool_id', 'old_remaining', 'disposition',
-                  'photo_offered', 'from_photo', 'photo_route', 'nozzle_temp', 'bed_temp')}
+                  'photo_offered', 'from_photo', 'photo_route', 'nozzle_temp', 'bed_temp', 'hex')}
         value = str((getattr(interaction, 'data', {}) or {}).get('values', [''])[0] or '')
         if value == pab.INTAKE_OTHER:
             field = 'brand' if state.get('step') == 'brand' else 'color'
@@ -4604,8 +4611,11 @@ def alert_button_handlers(bot, adapter):
             return
         if state.get('step') == 'brand':
             state['brand'] = None if value == pab.INTAKE_SKIP else value
+        elif state.get('step') == 'swatch':
+            state['hex'] = value  # the closest colour, picked on a button; never typed hex
         else:
             state['color'] = value
+            state['hex'] = None  # a new colour name is read afresh
         await intake_advance(interaction, state)
 
     async def spool_question_select(interaction, alert):

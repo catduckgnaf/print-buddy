@@ -1313,10 +1313,22 @@ def apply_stock_presence(status, stock):
 def _validate_slot_selection(state, selection):
     """The selected IFS slot, not the globally active spool, owns a single-color job."""
     slot = state.get('ifs_slots', {}).get(str(selection['slot']), {})
+    mapping_matches = (slot.get('spoolman_id') and slot.get('spoolman_id') == selection['spoolman_id']
+                       and str(slot.get('material', '')).casefold() == selection['material'].casefold())
+    if mapping_matches and not slot.get('physical_color_verified'):
+        # Only the colour confirmation is missing: say so plainly and offer
+        # the one-button fix instead of a retry that fails the same way.
+        from .slice_refusal import unconfirmed_slot_colour
+        raise unconfirmed_slot_colour(
+            selection['slot'], slot,
+            f"selected IFS slot {selection['slot']} is unverified or its material/spool mapping differs")
     if (not slot.get('physical_color_verified') or not slot.get('spoolman_id')
             or slot.get('spoolman_id') != selection['spoolman_id']
             or str(slot.get('material', '')).casefold() != selection['material'].casefold()):
-        raise RuntimeError(f"selected IFS slot {selection['slot']} is unverified or its material/spool mapping differs")
+        # A different spool or material is never waved through: plain reason, no one-tap fix.
+        from .slice_refusal import slot_mismatch
+        raise slot_mismatch(selection['slot'], slot, selection,
+                            f"selected IFS slot {selection['slot']} is unverified or its material/spool mapping differs")
     return slot
 
 

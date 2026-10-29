@@ -38,6 +38,14 @@ Two `PB_` spellings survived the main rename and were cleaned up later, again as
 - **Compose:** rename `PRINT_BUDDY_IMAGE` to `PRINT_HANDY_IMAGE` and every `PRINT_BUDDY__...` entry in the environment to its `PRINT_HANDY__...` spelling. The `/data/...` container paths are unchanged.
 - **Unraid:** the renamed template (`print-handy.xml`) is a **new Community Applications app** — CA does not migrate an existing app when its name, file and image change. Install the new template, create (or copy) your appdata at `/mnt/user/appdata/print-handy` (copying the old `print-buddy` appdata contents across keeps your state; rename any `print_buddy_*` state files inside to `print_handy_*`), move the configuration values across under the new env var names, start the new container and check it passes its healthcheck, then remove the old app.
 
+## OrcaSlicer channel rename: `alpha` becomes `preview` (#600)
+
+The bundled OrcaSlicer channels are named for their role, not for the upstream release stage, because the stage changes (alpha, beta, release candidate) while the role does not. The second channel is now called `preview`:
+
+- If you set `PRINT_HANDY_ORCA_CHANNEL=alpha`, change it to `PRINT_HANDY_ORCA_CHANNEL=preview` when convenient. Nothing breaks today: `alpha` is still accepted as an alias for `preview` and the container prints a startup notice saying so, but the alias will be removed in a later release.
+- The on-disk names follow the channel: the wrapper is `/usr/local/bin/orca-slicer-preview`, the install tree is `/opt/orca-preview`, and the build record is `/orca-preview-build-info` (its `channel=` field reads `preview`; the exact pinned OrcaSlicer build is unchanged).
+- The CI jobs were renamed to match: "Slicer test (stable)", "Slicer test (preview)" and "Slicer test (bambu)". This only affects contributors; branch protection on `main` requires "Slicer test (stable)" in place of the old `real-slicer` check.
+
 ## Printer (AD5X, ZMod)
 
 Do this while the printer is idle. These steps run on the printer, so the script only prints them.

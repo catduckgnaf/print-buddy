@@ -11,6 +11,7 @@ import json
 import shutil
 import subprocess
 import sys
+import tempfile
 import urllib.request
 from pathlib import Path
 
@@ -101,7 +102,10 @@ def check_orca(data):
     command = data["orca"]["command"]
     if not shutil.which(command[0]):
         raise RuntimeError(f"{command[0]} is not on PATH")
-    run = subprocess.run([*command, "--help"], capture_output=True, text=True, timeout=120)
+    # OrcaSlicer writes 00000.log into its working directory and aborts when it cannot; in Docker
+    # the default cwd (/app) is not writable by the container user, so probe from a scratch dir.
+    with tempfile.TemporaryDirectory(prefix="print-handy-doctor-") as scratch:
+        run = subprocess.run([*command, "--help"], capture_output=True, text=True, timeout=120, cwd=scratch)
     if run.returncode != 0:
         raise RuntimeError(f"{' '.join(command)} --help exited {run.returncode}")
     return " ".join(command)

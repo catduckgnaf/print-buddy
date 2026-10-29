@@ -14,12 +14,13 @@ tests/corpus/complex_cases.toml, into a root outside the repo (default
 Downloads use the same eligible-site paths as production intake (#462):
 Printables through its GraphQL API (the getDownloadLink mutation
 print_handy.core.model_job.printables_download uses; no token), NASA through
-its direct public file link. Private-tier cases are licence-flagged for local
+its direct public file link, MakerWorld through the account-token API call
+print_handy.core.model_job.maker_download uses (~/.config/bambu/token). Private-tier cases are licence-flagged for local
 runs only: they are skipped unless --private-root is given, and they are never
 written into the public root.
 
 Usage:
-    python tests/corpus/fetch_complex_corpus.py [--root DIR] [--private-root DIR]
+    python tests/corpus/fetch_complex_corpus.py [--root DIR] [--private-root DIR] [--only slug,...]
 """
 import argparse
 import hashlib
@@ -41,6 +42,10 @@ fileType: $fileType) { ok output { link } errors { field messages } } }"""
 
 # The generic answers every complex case starts from (same set as
 # run_external_corpus.py), plus the per-case clicks recorded in CASE_CLICKS.
+# The harness answers a question with the FIRST [[click]] rule that matches
+# it, so case_toml() writes a case's own rules before these generic ones:
+# a case can override a generic answer (per-part colours instead of "One
+# color for everything", "100% · rearrange 1 plate" instead of "Shrink to").
 GENERIC_CLICKS = [
     {"question": "Choose the color", "button": "White"},
     {"question": "one color for everything?", "button": "One color for everything"},
@@ -48,7 +53,32 @@ GENERIC_CLICKS = [
     {"question": "How many copies", "button": "One copy"},
     {"question": "·", "button": "Slice and print"},
 ]
-CASE_CLICKS = {}  # slug -> extra [[click]] rules, filled from verified local runs
+# slug -> [[click]] rules that take precedence over GENERIC_CLICKS. Button
+# text matches the fixture state's slot labels (tests/pipeline/fixtures/
+# printer_hardware.json: 1 white, 2 pink, 3 black, 4 dark green PLA).
+CASE_CLICKS = {
+    # Live failure on 2.1.9 (2026-10-29): per-part colours + the fit
+    # planner's "100% · rearrange 1 plate" sliced the authored layout and
+    # failed "part group does not fit the target bed without cropping". The
+    # colours mirror that live attempt's slot split (archived JOB.json): every
+    # part on slot 1 except double-frame on slot 4, so the 8-part slot-1 group
+    # keeps the authored 239 mm layout. Part questions are matched by
+    # "<part>, " (the name before its measured size) so they answer both the
+    # grouped ("Choose one color/material for both framelegs: frameLeg,
+    # 95.4 x ...") and the individual ("Choose slot/color/material for
+    # frameLeg, 95.4 x ...") wording.
+    "duplo-swing-two-seats": [
+        {"question": "one color for everything?", "button": "Choose colors"},
+        {"question": "frameLeg, ", "button": "White"},
+        {"question": "double-frame, ", "button": "Dark green"},
+        {"question": "seat-brick, ", "button": "White"},
+        {"question": "chain, ", "button": "White"},
+        {"question": "bed full size", "button": "rearrange 1 plate"},
+        # On a failed slice, stop rather than retry: the receipt keeps the
+        # slice error, which the runner reports (and matches expected_failure).
+        {"question": "Slicing this model did not work", "button": "Cancel"},
+    ],
+}
 # Verified 2026-10-27 (mock-tier flow runs): these three cases exceed the
 # product's own intake limits, so the honest pinned expectation is the
 # refusal receipt - the corpus case documents the limit behaviour.
@@ -56,6 +86,15 @@ CASE_EXPECT = {
     "fnaf-mask": {"status": "FAILED"},       # STL 36,467,384 B > 32 MiB intake cap
     "gyroid-surface": {"status": "FAILED"},  # STL 45,001,084 B > 32 MiB intake cap
     "chinese-dragon": {"status": "FAILED"},  # 3MF model XML > 400 MiB intake cap
+    # What a working flow must do for the live 2026-10-29 failure: start one
+    # full-size print with the chosen per-part colours on one rearranged plate.
+    # Expected to fail on 2.1.9 until the rearrange-with-per-part-colours fix
+    # lands (complex_cases.toml records expected_failure for the runner).
+    "duplo-swing-two-seats": {
+        "status": "STARTED", "scale": 1.0, "gcodes": 1,
+        "colors": {"frameLeg": "white", "double-frame": "dark green",
+                   "seat-brick": "white", "chain": "white"},
+    },
 }
 
 
@@ -100,6 +139,28 @@ def printables_link(file_id, model_id):
     if not link.get("ok"):
         raise RuntimeError(f"Printables refused a download link: {link.get('errors')}")
     return link["output"]["link"]
+
+
+def makerworld_link(instance_id):
+    """The signed file URL for one MakerWorld print profile, through the same
+    API call and account token production intake uses
+    (print_handy.core.model_job.maker_download / maker_headers; the token is
+    ~/.config/bambu/token). Without the token this raises the product's own
+    "needs an account token" error. A 418 is MakerWorld's robot check: it is
+    reported, never solved or worked around."""
+    import urllib.error
+    sys.path.insert(0, str(HERE.parents[1]))
+    from print_handy.core import model_job
+    try:
+        data = model_job.request_json(
+            f"https://api.bambulab.com/v1/design-service/instance/{instance_id}/f3mf?type=download",
+            headers=model_job.maker_headers())
+    except urllib.error.HTTPError as exc:
+        if exc.code == 418:
+            raise RuntimeError("MakerWorld answered with a robot check (418); not bypassed - "
+                               "place the file in the private root by hand") from None
+        raise
+    return data["url"]
 
 
 def download(url, dest):
@@ -153,6 +214,8 @@ def fetch_file(case, file_id, dest, want_bytes, want_sha):
         url = printables_link(file_id, case["site_model_id"])
     elif case["site"] == "nasa":
         url = NASA_STL
+    elif case["site"] == "makerworld":
+        url = makerworld_link(case["site_instance_id"])
     else:
         raise RuntimeError(f"no fetch route for site {case['site']}")
     download(url, dest)
@@ -162,8 +225,19 @@ def fetch_file(case, file_id, dest, want_bytes, want_sha):
     print(f"  fetched {dest.name} {got}")
 
 
+def _toml_value(value):
+    """A TOML literal for an [expect] value. JSON covers strings, numbers,
+    booleans and arrays; a table (e.g. colors = {part: color}) must be a TOML
+    inline table, which JSON's "key": value syntax is not."""
+    if isinstance(value, dict):
+        return "{ " + ", ".join(f"{json.dumps(str(k))} = {_toml_value(v)}"
+                                for k, v in value.items()) + " }"
+    return json.dumps(value)
+
+
 def case_toml(case):
-    clicks = GENERIC_CLICKS + CASE_CLICKS.get(case["slug"], [])
+    # Case rules first: the harness takes the first matching rule.
+    clicks = CASE_CLICKS.get(case["slug"], []) + GENERIC_CLICKS
     lines = [f"# Complex corpus case for #458 - fetched, not committed. See complex_cases.toml.",
              f"license = {json.dumps(case['license'])}",
              f"fixture = {json.dumps(case['file'])}",
@@ -175,7 +249,7 @@ def case_toml(case):
     expect = {"status": "STARTED", **CASE_EXPECT.get(case["slug"], {})}
     lines.append("[expect]")
     for key, value in expect.items():
-        lines.append(f"{key} = {json.dumps(value)}")
+        lines.append(f"{key} = {_toml_value(value)}")
     return "\n".join(lines) + "\n"
 
 
@@ -185,13 +259,17 @@ def main():
                         help="public corpus root (outside the repository)")
     parser.add_argument("--private-root", default=None,
                         help="also fetch private-tier cases into this separate root")
+    parser.add_argument("--only", default=None, help="comma-separated slugs")
     args = parser.parse_args()
+    only = set(args.only.split(",")) if args.only else None
     manifest = tomllib.loads(MANIFEST.read_text())
     extras = {}
     for row in manifest.get("case.extra_file", []):
         pass  # tomllib nests these under each case; handled below
     for case in manifest["case"]:
         tier = case["tier"]
+        if only and case["slug"] not in only:
+            continue
         if case["status"] != "ready":
             print(f"SKIP {case['slug']}: {case['status']} - {case.get('blocked_reason', '')[:100]}")
             continue

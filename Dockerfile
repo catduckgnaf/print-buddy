@@ -12,7 +12,7 @@ RUN mkdir -p /out && \
     if [ "$WITH_ORCA" = true ]; then \
       apt-get update && apt-get install -y --no-install-recommends ca-certificates curl && \
       sh /usr/local/bin/orca-prebuilt stable "$TARGETARCH" && \
-      sh /usr/local/bin/orca-prebuilt alpha "$TARGETARCH" && \
+      sh /usr/local/bin/orca-prebuilt preview "$TARGETARCH" && \
       rm -rf /var/lib/apt/lists/*; \
     fi
 

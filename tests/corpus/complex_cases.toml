@@ -483,3 +483,32 @@ target_bed_mm = [350.0, 320.0]
 target_max_height_mm = 325.0
 status = "blocked-download"
 blocked_reason = "MakerWorld downloads in this codebase require the account token file ~/.config/bambu/token (print_handy.core.model_job.maker_headers raises without it); that file is absent on this machine, so the file could not be obtained through the eligible route. The model's metadata was read from MakerWorld's public design API, which confirms the title and licence ('Standard Digital File License', one print instance). No scrape or paywall workaround was attempted."
+
+[[case]]
+tier = "private"
+slug = "duplo-swing-two-seats"
+title = "Duplo swing - Two seats"
+author = "nathan_b (remix of their own 'Duplo swing', MakerWorld design 860061)"
+source_page = "https://makerworld.com/en/models/999334-duplo-swing-two-seats#profileId-976429"
+site = "makerworld"
+site_model_id = "999334"
+site_instance_id = "976429"
+license = "Creative Commons — Attribution — Noncommercial"
+target_domain = "moonraker"
+target_printer = "flashforge.ad5x"
+target_printer_label = "Flashforge AD5X"
+target_bed_mm = [220.0, 220.0]
+target_max_height_mm = 250.0
+status = "ready"
+file = "model.3mf"
+bytes = 1973618
+sha256 = "858deba9db0fbe68371417764e5ac1547fc20ab840cf323eb66e51b33a2a83cc"
+triangles = 44964
+dims_mm = [239.3, 201.27, 16.6]
+colors = "9 separate parts, unpainted, all authored in one filament (#E4BDD0 PLA; the project lists a second, unused #FFFFFF PETG filament): 2x frameLeg, 2x seat-brick, 4x chain, 1x double-frame. The case repeats the live attempt's per-part choice: every part on slot 1 (white) except double-frame on slot 4 (dark green)"
+supports = "Flat parts (16.6 mm tall), none expected"
+# Known product bug (live 2026-10-29, 2.1.9): the runner reports XFAIL while this error
+# reproduces (it does in the mock tier: the colour-geometry export that raises it is Python,
+# not mocked). Remove it once the fix lands and the case passes (XPASS).
+expected_failure = ["part group does not fit the target bed without cropping"]
+notes = "PRIVATE TIER ONLY - CC BY-NC (MakerWorld API licence value 'BY-NC') permits non-commercial use only, so the file is never committed, released or uploaded. Downloaded file is 'Duplo swing - double.3mf' from print profile 976429 (fetched 2026-10-29 through the fetcher's MakerWorld route with an account token; bytes and SHA256 match the copy the live install archived) ('0.2mm layer, 4 walls, 15% infill'), Bambu Studio 01.10.02.73 project, one authored plate. Measured: 9 build items over 6 mesh objects; 44,964 triangles as built (29,536 unique mesh triangles - the chain and seat meshes are instanced); authored layout 239.30 x 201.27 x 16.60 mm, wider than the 220 mm AD5X bed, so the fit planner offers '100% · rearrange 1 plate' (live plan size_mm [207.55, 204.0, 16.6], 9 parts). Live failure on 2.1.9 (2026-10-29): per-part colours + that rearrange choice fail at slice with 'part group does not fit the target bed without cropping' - slice_job takes slice_multi_plate for a per-part 3MF before the rearrange_plan block, so the plan is ignored. expected_failure pins that error until the fix lands; the runner reports XFAIL while it reproduces and XPASS once it does not."

@@ -84,12 +84,12 @@ jobs:
           { echo "build_start=$start"; echo "build_end=$(date -u +%FT%TZ)"
             echo "image_id=$(docker image inspect --format '{{.Id}}' "$IMAGE")"
             docker image inspect --format 'platform={{.Os}}/{{.Architecture}} size={{.Size}}' "$IMAGE"
-            docker run --rm --entrypoint sh "$IMAGE" -c 'cat /orca-stable-build-info 2>/dev/null || echo orca-stable=absent; cat /orca-alpha-build-info 2>/dev/null || echo orca-alpha=absent; cat /bambu-build-info 2>/dev/null || echo bambu=absent'
+            docker run --rm --entrypoint sh "$IMAGE" -c 'cat /orca-stable-build-info 2>/dev/null || echo orca-stable=absent; cat /orca-preview-build-info 2>/dev/null || echo orca-preview=absent; cat /bambu-build-info 2>/dev/null || echo bambu=absent'
           } | tee evidence/identity.txt
       - name: Headless slice with each bundled Orca channel
         run: |
           set -euo pipefail
-          for channel in stable alpha; do
+          for channel in stable preview; do
             docker run --rm --network none --cpus 2 --memory 4g --pids-limit 256 \
               --cap-drop ALL --security-opt no-new-privileges:true \
               --tmpfs /data:uid=1000,gid=1000,size=512m \

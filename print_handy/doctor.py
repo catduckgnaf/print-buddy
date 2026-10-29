@@ -16,7 +16,7 @@ import urllib.request
 from pathlib import Path
 
 from . import settings, state_files
-from .core import spoolman_client
+from .core import resources, spoolman_client
 
 # Moonraker and Spoolman endpoints that answer without auth when the service is up.
 SERVICE_PATHS = {"moonraker_url": "/printer/info", "spoolman_url": "/api/v1/health"}
@@ -109,6 +109,11 @@ def check_orca(data):
     if run.returncode != 0:
         raise RuntimeError(f"{' '.join(command)} --help exited {run.returncode}")
     return " ".join(command)
+
+
+def check_pids(data):
+    """(text, warn) for processes against the container PID limit; None when no limit exists."""
+    return resources.pid_report()
 
 
 def check_service(data, key):
@@ -356,6 +361,12 @@ def run(out=sys.stdout):
         except Exception as exc:
             shared = f"could not compare tokens: {exc}"
         print(f"WARN  bot token: {shared}" if shared else "ok    bot token: not shared with a Hermes profile", file=out)
+    try:
+        pids = check_pids(data)
+    except Exception as exc:  # an unreadable cgroup is a warning here, never a failed check
+        pids = (f"could not check: {exc}", True)
+    if pids is not None:
+        print(f"{'WARN' if pids[1] else 'ok  '}  pid limit: {pids[0]}", file=out)
     try:
         warning = check_strays(data)
     except Exception as exc:  # a scan problem is a warning, never a failed check

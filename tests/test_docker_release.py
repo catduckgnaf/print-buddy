@@ -459,9 +459,11 @@ class UnraidTemplateTests(unittest.TestCase):
         self.assertEqual(value["--user"], service["user"])
         self.assertEqual(value["--cap-drop"], "ALL")
         self.assertIn(value["--security-opt"], service["security_opt"])
-        self.assertEqual(int(value["--pids-limit"]), service["pids_limit"])
-        self.assertEqual(value["--memory"], service["mem_limit"])
-        self.assertEqual(float(value["--cpus"]), float(service["cpus"]))
+        # No resource limits ship: a pids/memory/cpus limit starved OrcaSlicer on a large host.
+        for flag in ("--pids-limit", "--memory", "--cpus"):
+            self.assertNotIn(flag, value)
+        for key in ("pids_limit", "mem_limit", "cpus", "deploy"):
+            self.assertNotIn(key, service)
         self.assertEqual(value["--shm-size"], service["shm_size"])
         self.assertEqual(value["--restart"], service["restart"])
         self.assertEqual(sorted(logs), sorted(f"{k}={v}" for k, v in service["logging"]["options"].items()))
@@ -473,8 +475,10 @@ class UnraidTemplateTests(unittest.TestCase):
     def test_paths_and_variables_match_the_runtime(self):
         compose_env = self.service["environment"]
         paths = self.configs(UNRAID, "Path")
-        self.assertEqual(set(paths), DATA_TARGETS | {"/data/spoolman"})
-        self.assertEqual(set(paths), {v.split(":")[-1] for v in self.service["volumes"]})
+        # /data/.config (account tokens) is an optional Unraid mapping; Compose uses an override file.
+        self.assertEqual(set(paths) - {"/data/.config"}, DATA_TARGETS | {"/data/spoolman"})
+        self.assertEqual(set(paths) - {"/data/.config"}, {v.split(":")[-1] for v in self.service["volumes"]})
+        self.assertEqual(paths["/data/.config"].get("Required"), "false")
         self.assertTrue(all(p.text.startswith("/mnt/user/appdata/print-handy/") for p in paths.values()))
         variables = self.configs(UNRAID, "Variable")
         for key in ("PRINT_HANDY_CONFIG", "PRINT_HANDY__BOT__MODE", "PRINT_HANDY__SERVICES__SPOOLMAN_URL",

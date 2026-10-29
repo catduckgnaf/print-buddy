@@ -294,20 +294,37 @@ def active_provider(cfg=None) -> str | None:
     return _active_providers.get(f"session:{model_path(cfg)}")
 
 
+def _session_options(ort):
+    """SessionOptions whose thread pools follow the container's CPU quota, or None when it has none.
+
+    onnxruntime sizes its own pools from the host CPU count and ignores OMP_NUM_THREADS.
+    """
+    from ..core import resources
+    budget = resources.thread_budget()
+    if not budget:
+        return None
+    options = ort.SessionOptions()
+    options.intra_op_num_threads = budget
+    options.inter_op_num_threads = 1
+    return options
+
+
 def _create_session(ort, path: Path, providers: list[str]):
     """One InferenceSession attempt, with a single CPU-only retry when
     an accelerated provider was requested but cannot initialise — an
     accelerator that is present-but-broken (driver mismatch, missing
     libraries) degrades to CPU, never to a dead detector."""
+    options = _session_options(ort)
+    extra = {"sess_options": options} if options is not None else {}
     try:
-        return ort.InferenceSession(str(path), providers=providers)
+        return ort.InferenceSession(str(path), providers=providers, **extra)
     except Exception:
         if providers == ["CPUExecutionProvider"]:
             raise
         logger.warning(
             "local detector: session with execution providers %s failed; "
             "falling back to CPUExecutionProvider", providers)
-        return ort.InferenceSession(str(path), providers=["CPUExecutionProvider"])
+        return ort.InferenceSession(str(path), providers=["CPUExecutionProvider"], **extra)
 
 
 def _session(path: Path):

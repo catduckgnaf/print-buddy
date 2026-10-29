@@ -174,6 +174,8 @@ class PrintHandyBot(ext_commands.Bot):
         self.connected = False  # gateway session up: set on ready/resume, cleared on disconnect
 
     async def setup_hook(self):
+        from ..core import resources
+        resources.cap_default_executor(asyncio.get_running_loop())  # asyncio.to_thread pool follows the CPU quota
         self.core = BotCore(self, self.cfg)
         for name, command in commands.registrations():
             self.tree.add_command(_slash(lambda: self.core, command, name))

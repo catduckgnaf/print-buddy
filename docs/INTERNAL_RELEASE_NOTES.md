@@ -2,7 +2,7 @@
 
 # Unreleased
 
-Nothing yet.
+- Fix: fit probes and slices hung for the full Orca timeout when the container sat at its PID limit. A `--cpus` quota does not shrink the CPU count that OrcaSlicer (TBB), numpy, onnxruntime and Python executors see, so on a large host they each started dozens of threads. Pools are now sized to the cgroup CPU quota (or `PRINT_HANDY_THREADS`) and left at their defaults when there is no quota. The shipped Unraid template and Compose file no longer set `--pids-limit`, `--memory` or `--cpus`, and the template gains the optional Account tokens (`/data/.config`) mapping. A refused process start now reports the container PID limit instead of timing out, and the doctor shows process usage against any limit.
 
 # Version 2.2.0
 

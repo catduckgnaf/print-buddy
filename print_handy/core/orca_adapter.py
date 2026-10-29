@@ -14,7 +14,7 @@ import xml.etree.ElementTree as ET
 import zipfile
 from .. import logs, printers, settings
 from ..printers.base import start_code_problems
-from . import mesh_fast
+from . import mesh_fast, resources
 from .compact_geometry import IndexedTriangles
 from . import slice_guard as sg
 from .slice_guard import pre_slice, post_slice
@@ -771,6 +771,28 @@ def _keep_failure_logs(folder: Path) -> Path:
         return folder
 
 
+def _spawn_slicer(command, *, timeout, cwd):
+    """subprocess.run for a slicer under the container's CPU budget, with a clear PID-limit failure.
+
+    The affinity mask (taskset) and the pool environment keep Orca's TBB and BLAS pools to the CPUs the
+    container may really use. When the process is refused (EAGAIN) or times out while the container is
+    at its PID limit, the cause is the limit, so say so instead of reporting a bare failure or timeout.
+    """
+    try:
+        return subprocess.run(resources.slicer_command(command), capture_output=True, text=True,
+                              timeout=timeout, cwd=cwd, env=resources.child_env())
+    except subprocess.TimeoutExpired as exc:
+        limit = resources.pid_limit_error()
+        if limit is not None:
+            raise limit from exc
+        raise
+    except OSError as exc:
+        limit = resources.explain_spawn_failure(exc)
+        if limit is not None:
+            raise limit from exc
+        raise
+
+
 def _run_slicer(command, name, folder):
     """subprocess.run for a slicer, logging the command name, exit code and elapsed time.
 
@@ -784,8 +806,8 @@ def _run_slicer(command, name, folder):
         # directory at startup and aborts when that directory is not writable (the
         # Docker image's /app is not). The folder is also where _keep_failure_logs
         # already collects 00000.log from.
-        result = subprocess.run(command, capture_output=True, text=True, timeout=600, cwd=folder)
-    except (subprocess.TimeoutExpired, OSError):
+        result = _spawn_slicer(command, timeout=600, cwd=folder)
+    except (subprocess.TimeoutExpired, OSError, resources.ResourceLimitError):
         logger.exception('%s did not complete after %.1fs', name, time.monotonic() - started)
         raise
     level = logging.WARNING if result.returncode else logging.INFO
@@ -1711,7 +1733,7 @@ def orca_plate_capacity(source: Path, state: dict, spacing_mm: float = 10.0, edg
                 str(stl)
             ]
             try:
-                result = subprocess.run(cmd, capture_output=True, text=True, timeout=120, cwd=probe_dir)
+                result = _spawn_slicer(cmd, timeout=120, cwd=probe_dir)
             except subprocess.TimeoutExpired as exc:
                 raise RuntimeError(f'Orca fit probe timed out for {copies} copies') from exc
             p3mf = probe_dir / 'probe.3mf'

@@ -426,3 +426,11 @@ def test_family_alert_record_carries_its_connection(tmp_path):
     assert family["connection"] == "prusalink" and family["printer_id"] == "prusa-two"
     # Moonraker alert records are unchanged: no connection marker at all.
     assert "connection" not in moonraker and "printer_id" not in moonraker
+
+
+def test_insertion_options_name_the_material_once():
+    from print_handy.hermes import print_alert_buttons as pab_
+    spools = [{"id": 21, "remaining_weight": 800,
+               "filament": {"name": "Coffee PLA+", "material": "PLA+"}}]
+    label = pab_.insertion_select_options(spools)[0]["label"]
+    assert label == "#21 Coffee PLA+ 800 g"

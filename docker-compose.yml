@@ -10,7 +10,8 @@ services:
       PRINT_HANDY_CONFIG: ${PRINT_HANDY_CONFIG:-/app/config/docker.yaml}
       PRINT_HANDY__BOT__MODE: standalone
       # Bundled OrcaSlicer channel the entrypoint selects at startup (docs/SETTINGS.md
-      # "Runtime environment"); stable is the default, alpha is the other accepted value.
+      # "Runtime environment"); stable is the default, preview is the other channel
+      # (alpha, its old name, is still accepted for now).
       PRINT_HANDY_ORCA_CHANNEL: ${PRINT_HANDY_ORCA_CHANNEL:-stable}
       PRINT_HANDY__SERVICES__SPOOLMAN_URL: ${PRINT_HANDY__SERVICES__SPOOLMAN_URL:-http://127.0.0.1:8000}
       # Camera watchdog (docs/DOCKER.md "Camera watch"): alert-only spaghetti, detached,

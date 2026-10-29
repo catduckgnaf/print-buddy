@@ -192,7 +192,7 @@ jobs:
       - name: Headless slice with each bundled Orca channel
         run: |
           set -euo pipefail
-          channels="stable alpha"
+          channels="stable preview"
           for channel in $channels; do
             docker run --rm --network none --cpus 2 --memory 4g --pids-limit 256 \
               --cap-drop ALL --security-opt no-new-privileges:true \

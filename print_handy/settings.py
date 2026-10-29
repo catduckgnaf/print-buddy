@@ -117,6 +117,9 @@ OPTIONAL_KEYS = {("printer", "nozzle_type"): str, ("printer", "tool_count"): int
                  ("live_stream", "encoder"): str, ("live_stream", "empty_timeout_s"): int,
                  ("live_stream", "activity_origin"): str,
                  ("flashforge_stock", "host"): str,
+                 ("notify", "mqtt_enabled"): bool, ("notify", "mqtt_host"): str,
+                 ("notify", "mqtt_port"): int, ("notify", "mqtt_topic"): str,
+                 ("notify", "mqtt_username"): str,
                  ("prusa", "link_host"): str, ("prusa", "api_key_env"): str,
                  ("discord", "denied_user_ids"): str,
                  ("discord", "chat_llm_enabled"): bool,
@@ -206,6 +209,13 @@ def _check_keys(home, extra, source):
                                     "([[printers]] in TOML, a list under printers: in YAML)")
             continue
         if section not in home or not isinstance(values, dict):
+            if (section == "notify" and isinstance(values, dict)
+                    and values and all((section, key) in OPTIONAL_KEYS for key in values)):
+                for key, value in values.items():
+                    expected_type = OPTIONAL_KEYS[(section, key)]
+                    if not isinstance(value, expected_type):
+                        raise SettingsError(f"{source}: [{section}] {key} should be {expected_type.__name__}, got {value!r}")
+                continue
             raise SettingsError(f"{source}: unknown section [{section}]")
         for key, value in values.items():
             if key not in home[section]:

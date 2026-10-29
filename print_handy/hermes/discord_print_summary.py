@@ -367,7 +367,15 @@ def format_event(kind, filename, now=None, archive=None, context_path=None, extr
             position_noun=_position_noun(job), printer_name=printer_name)
     if extra:
         message += "\n" + scrub(extra)
-    return scrub(message)
+    message = scrub(message)
+    try:
+        from ..notify import emit, event_for
+        name = event_for(kind, extra)
+        if name:
+            emit(name, message)
+    except Exception:
+        pass
+    return message
 
 
 def _copies(job):

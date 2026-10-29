@@ -148,6 +148,11 @@ Schema, validation limits and TOML migration: [CONFIGURATION-YAML.md](CONFIGURAT
 | `timelapse.capture_max_bytes` | `PRINT_HANDY__TIMELAPSE__CAPTURE_MAX_BYTES` | `536870912` | Per-job cap on captured frame bytes; capture stops at the cap and keeps the frames already taken. `0` disables the cap |
 | `timelapse.capture_encoder` | `PRINT_HANDY__TIMELAPSE__CAPTURE_ENCODER` | `auto` | Encoder preference for the Stage 3 assembly encode (#246): `auto` (VAAPI → NVENC → QSV → CPU), `vaapi`, `nvenc`, `qsv` or `cpu`. A failing or unavailable hardware encoder falls back to CPU; GPU paths are not verified on real hardware |
 | `webui.enabled` | `PRINT_HANDY__WEBUI__ENABLED` | `false` | Optional Web UI (#286) switch; off by default, and nothing listens while disabled |
+| `notify.mqtt_enabled` | `PRINT_HANDY__NOTIFY__MQTT_ENABLED` | `false` | Publish print events to MQTT for Home Assistant (#622). Off by default. A failed publish does not block chat or the print |
+| `notify.mqtt_host` | `PRINT_HANDY__NOTIFY__MQTT_HOST` | `` | Broker host. Empty leaves MQTT off even when enabled |
+| `notify.mqtt_port` | `PRINT_HANDY__NOTIFY__MQTT_PORT` | `1883` | Broker port. 0 uses 1883 |
+| `notify.mqtt_topic` | `PRINT_HANDY__NOTIFY__MQTT_TOPIC` | `print-handy` | Topic root. Events are `<root>/print_started`, `paused`, `runout`, `watchdog_offer`, `complete`, `failed`, `spool_added` |
+| `notify.mqtt_username` | `PRINT_HANDY__NOTIFY__MQTT_USERNAME` | `` | Optional username. The password is `MQTT_PASSWORD` in the environment, never in this file |
 | `webui.host` | `PRINT_HANDY__WEBUI__HOST` | `127.0.0.1` | Host the Web UI binds to when enabled; a plain IP address or hostname |
 | `webui.port` | `PRINT_HANDY__WEBUI__PORT` | `0` | Port the Web UI binds to when enabled; `0` means no port has been chosen yet |
 | `webui.access_token_env` | `PRINT_HANDY__WEBUI__ACCESS_TOKEN_ENV` | `WEBUI_ACCESS_TOKEN` | Name of the environment variable holding the optional Web UI access token; the token itself is never a setting |

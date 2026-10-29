@@ -1940,6 +1940,11 @@ def _with_printer_name(text):
 def _visual_alert(filename, image, reason, identity=None):
     # #317: a watchdog alert is blooper material; record() never raises.
     print_markers.record(filename, print_markers.WATCHDOG_ALERT, detail=reason)
+    try:
+        from ..notify import emit
+        emit("watchdog_offer", reason)
+    except Exception:
+        pass
     target = Path(os.environ.get("PRINT_WATCH_FRAME_DIR") or _config.cache_dir() / "print-watch")
     target.mkdir(parents=True, exist_ok=True)
     path = target / f"{int(time.time())}-{Path(filename or 'print').stem}.jpg"

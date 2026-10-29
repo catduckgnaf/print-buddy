@@ -16,11 +16,19 @@ is the product, and it is the same for every driven calibration:
    polls the printer for the result — never one long blocking call), it
    presents the new values and the numeric differences: old → new with
    signed deltas (mesh range, PID terms, shaper frequency/type, screw
-   errors).
+   errors). Moonraker holds the run command's HTTP call open until the
+   gcode finishes, so a run that outlasts the client timeout is treated
+   as sent and its result is still collected by polling; a connection
+   that fails before the command goes out is a failure. Console results
+   are matched by timestamp, so a full Moonraker console history (it
+   keeps the newest 1000 lines) does not hide them.
 5. **Accept / Discard.** Nothing is saved before this step. Accept sends
    exactly the documented save, once (and warns first when the save
    restarts Klipper). Discard sends the documented revert, or nothing
-   when nothing was applied — and never a save.
+   when nothing was applied — and never a save. Both re-check that the
+   printer is still idle first. No answer before the prompt times out is
+   not a Discard: nothing is sent, and the reply says the new values
+   stay in memory until Klipper restarts.
 6. **A record either way.** Every finished run (accepted, discarded or
    failed) and every report or guide writes a calibration record;
    `/print-calibration records` lists the recent ones.
@@ -70,20 +78,24 @@ mesh menu entry.
 
 - **ZMod, screenless:** ZMod's `AUTO_FULL_BED_LEVEL` (load-cell aware,
   cleans the nozzle first; ZMod's docs say the built-in web mesh tools
-  are not suitable for these printers). It is run with `SAVE=0`, so it
-  measures and loads the mesh in memory only. Accept stores it as the
-  profile `print_handy` (`BED_MESH_PROFILE SAVE=print_handy` +
-  `SAVE_CONFIG`); Discard reloads the previously active profile or
-  clears the mesh. The saved profile is used when your start code loads
-  it (ZMod's `START_PRINT MESH=` name); it never replaces the native
-  screen's mesh. The run also re-zeros the Z offset's start point, as
+  are not suitable for these printers). It is run as
+  `AUTO_FULL_BED_LEVEL PROFILE=print_handy SAVE=0 EXTRUDER_TEMP=220
+  BED_TEMP=60` (the temperatures of the screenless mesh contract,
+  `config/mesh-interface.json`), so it measures into the scratch
+  profile `print_handy` in memory only. The before value is the saved
+  `auto` profile — the one ZMod's `START_PRINT MESH=auto` loads. Accept
+  loads the measurement, saves it as `auto`, removes the scratch
+  profile and sends `SAVE_CONFIG`; Discard removes the scratch profile
+  and reloads the previously active profile (or clears the mesh). It
+  never replaces the native screen's mesh. The run also re-zeros the Z offset's start point, as
   ZMod's leveling always does.
 - **ZMod, native screen:** the screen owns the mesh — it loads its mesh
   for every print — so Print Handy **reports** the stored mesh's range
   and guides a rebuild from the stock screen instead of measuring over
   the owner.
 - **Generic Klipper:** `BED_MESH_CALIBRATE PROFILE=print_handy`, same
-  accept/discard shape.
+  accept/discard shape; Accept saves it as `default`, the profile
+  Klipper loads at startup.
 
 The result presentation is the mesh range (lowest → highest probed
 point) before and after, with the signed range difference.
@@ -130,7 +142,9 @@ value the bot can responsibly set in either mode:
   saves them itself — no `Z_OFFSET_APPLY_*` commands are needed or
   wanted. Print Handy reports the saved value and whether
   `LOAD_ZOFFSET=1` is armed, and explains `LOAD_ZOFFSET_NATIVE` for the
-  one-time copy from the screen's store.
+  one-time copy from the screen's store: with its default `START=0` it
+  copies the native-screen offset into screenless mode and saves it
+  (`START=1`, used at boot, only reports). There is no reverse copy.
 - **Generic Klipper:** `PROBE_CALIBRATE` is an interactive `TESTZ`
   paper-test dialogue at the bed — guide only. Print Handy reports the
   configured `probe.z_offset` and walks through the steps.

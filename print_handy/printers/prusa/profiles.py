@@ -1,7 +1,7 @@
 """Prusa Orca profiles, generated on the operator's machine from their own OrcaSlicer installation.
 
 The sibling of bambulab/profiles.py for Orca's `Prusa` vendor profiles (profiles/Prusa.json,
-vendor profiles 02.04.00.03 in OrcaSlicer 2.4.2 and 02.04.00.17 in v2.5.0-alpha, whose installs
+vendor profiles 02.04.00.03 in OrcaSlicer 2.4.2 and 02.04.00.17 in v2.5.0-alpha and v2.5.0-beta, whose installs
 serve the same profiles packed as profiles/Prusa.opc): Print Handy ships no OrcaSlicer or Prusa profile content
 (AGPL-3.0). It ships only the profile names and the SHA-256 identity of the vendor profiles it has
 been checked against (the printer's `orca_identity` fact). The flattening/hashing pipeline itself is

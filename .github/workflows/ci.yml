@@ -95,7 +95,7 @@ jobs:
           "/tmp/clean/bin/python" -m print_handy.bot check
 
   real-slicer:
-    # The production track: OrcaSlicer v2.5.0-alpha is the shipped slicer (#356), so the full
+    # The production track: OrcaSlicer v2.5.0-beta is the shipped slicer (#356), so the full
     # corpus and the slicer fixtures run against its upstream flatpak bundle. That bundle ships
     # packed vendor profiles only (BBL.opc), so this job is also the packed-tree proof:
     # template generation here goes through print_handy's preset-cache reader.
@@ -118,27 +118,27 @@ jobs:
         run: |
           sudo apt-get update -q
           sudo apt-get install -y -q flatpak xvfb
-      - name: Cache OrcaSlicer 2.5.0 alpha bundle and runtime
+      - name: Cache OrcaSlicer 2.5.0 beta bundle and runtime
         uses: actions/cache@v6
         with:
           path: |
-            ~/.cache/orcaslicer-v2.5.0-alpha.flatpak
+            ~/.cache/orcaslicer-v2.5.0-beta.flatpak
             ~/.local/share/flatpak
-          key: orcaslicer-flatpak-v2.5.0-alpha-${{ runner.os }}-x86_64
-      - name: Download and verify upstream OrcaSlicer v2.5.0-alpha bundle
+          key: orcaslicer-flatpak-v2.5.0-beta-${{ runner.os }}-x86_64
+      - name: Download and verify upstream OrcaSlicer v2.5.0-beta bundle
         run: |
           set -euo pipefail
-          bundle="$HOME/.cache/orcaslicer-v2.5.0-alpha.flatpak"
+          bundle="$HOME/.cache/orcaslicer-v2.5.0-beta.flatpak"
           mkdir -p "$(dirname "$bundle")"
-          if [ -f "$bundle" ] && ! echo '2caa907e75ca1cd499568d7940d1fe787b795b3deff1d5dcf4cda31f1a4b6d32  '"$bundle" | sha256sum --check --status; then
+          if [ -f "$bundle" ] && ! echo '2d2f6979a3379d5fe77c62bbdff0ea36ec415ef43c9557e118ed45b95d39de03  '"$bundle" | sha256sum --check --status; then
             rm "$bundle"
           fi
           if [ ! -f "$bundle" ]; then
             curl --fail --location --retry 3 --output "$bundle" \
-              https://github.com/OrcaSlicer/OrcaSlicer/releases/download/v2.5.0-alpha/OrcaSlicer-Linux-flatpak_V2.5.0-alpha_x86_64.flatpak
+              https://github.com/OrcaSlicer/OrcaSlicer/releases/download/v2.5.0-beta/OrcaSlicer-Linux-flatpak_V2.5.0-beta_x86_64.flatpak
           fi
-          echo '2caa907e75ca1cd499568d7940d1fe787b795b3deff1d5dcf4cda31f1a4b6d32  '"$bundle" | sha256sum --check
-          echo "ORCA_ALPHA_BUNDLE=$bundle" >> "$GITHUB_ENV"
+          echo '2d2f6979a3379d5fe77c62bbdff0ea36ec415ef43c9557e118ed45b95d39de03  '"$bundle" | sha256sum --check
+          echo "ORCA_BETA_BUNDLE=$bundle" >> "$GITHUB_ENV"
       - name: Install OrcaSlicer app bundle and runtime
         run: |
           set -euo pipefail
@@ -146,20 +146,21 @@ jobs:
           flatpak install --user -y --noninteractive flathub org.gnome.Platform//50
           # The restored cache may already contain the app; do not reinstall its bundle.
           if ! flatpak info --user --show-ref "$ORCA_FLATPAK_APP_ID" >/dev/null 2>&1; then
-            flatpak install --user --bundle -y --noninteractive "$ORCA_ALPHA_BUNDLE"
+            flatpak install --user --bundle -y --noninteractive "$ORCA_BETA_BUNDLE"
           fi
           flatpak info --user --show-ref "$ORCA_FLATPAK_APP_ID"
           flatpak info --user --show-commit "$ORCA_FLATPAK_APP_ID"
-      - name: Run real-slicer tests (2.5.0 alpha)
+      - name: Run real-slicer tests (2.5.0 beta)
         run: xvfb-run -a python -m pytest -v -s tests/slicer
       - name: Discord flow corpus with real Orca
         run: xvfb-run -a python -m pytest -v -s tests/corpus
 
   real-slicer-alpha:
-    # #356: the alpha channel IS the production release now (v2.5.0-alpha is the shipped
-    # slicer and there is no newer upstream build), so this job runs the same bundle as
-    # real-slicer on a fast subset as a smoke track. When upstream publishes a newer
-    # alpha, point this job at it to restore the ahead-of-production meaning.
+    # The alpha channel pins the same v2.5.0-beta build as production (both channels
+    # in docker/orca-prebuilt.sh moved from the 2.5.0-alpha of #356 to the beta), so
+    # this job runs the same bundle as real-slicer on a fast subset as a smoke track.
+    # When upstream publishes a newer prerelease, point this job at it to restore the
+    # ahead-of-production meaning.
     # Flatpak plus xvfb requires a full system session and display; kept on the host runner after
     # Debian 13 container attempts failed during actual slicer startup.
     runs-on: ubuntu-24.04
@@ -179,27 +180,27 @@ jobs:
         run: |
           sudo apt-get update -q
           sudo apt-get install -y -q flatpak xvfb
-      - name: Cache OrcaSlicer 2.5.0 alpha bundle and runtime
+      - name: Cache OrcaSlicer 2.5.0 beta bundle and runtime
         uses: actions/cache@v6
         with:
           path: |
-            ~/.cache/orcaslicer-v2.5.0-alpha.flatpak
+            ~/.cache/orcaslicer-v2.5.0-beta.flatpak
             ~/.local/share/flatpak
-          key: orcaslicer-flatpak-v2.5.0-alpha-${{ runner.os }}-x86_64
-      - name: Download and verify upstream OrcaSlicer v2.5.0-alpha bundle
+          key: orcaslicer-flatpak-v2.5.0-beta-${{ runner.os }}-x86_64
+      - name: Download and verify upstream OrcaSlicer v2.5.0-beta bundle
         run: |
           set -euo pipefail
-          bundle="$HOME/.cache/orcaslicer-v2.5.0-alpha.flatpak"
+          bundle="$HOME/.cache/orcaslicer-v2.5.0-beta.flatpak"
           mkdir -p "$(dirname "$bundle")"
-          if [ -f "$bundle" ] && ! echo '2caa907e75ca1cd499568d7940d1fe787b795b3deff1d5dcf4cda31f1a4b6d32  '"$bundle" | sha256sum --check --status; then
+          if [ -f "$bundle" ] && ! echo '2d2f6979a3379d5fe77c62bbdff0ea36ec415ef43c9557e118ed45b95d39de03  '"$bundle" | sha256sum --check --status; then
             rm "$bundle"
           fi
           if [ ! -f "$bundle" ]; then
             curl --fail --location --retry 3 --output "$bundle" \
-              https://github.com/OrcaSlicer/OrcaSlicer/releases/download/v2.5.0-alpha/OrcaSlicer-Linux-flatpak_V2.5.0-alpha_x86_64.flatpak
+              https://github.com/OrcaSlicer/OrcaSlicer/releases/download/v2.5.0-beta/OrcaSlicer-Linux-flatpak_V2.5.0-beta_x86_64.flatpak
           fi
-          echo '2caa907e75ca1cd499568d7940d1fe787b795b3deff1d5dcf4cda31f1a4b6d32  '"$bundle" | sha256sum --check
-          echo "ORCA_ALPHA_BUNDLE=$bundle" >> "$GITHUB_ENV"
+          echo '2d2f6979a3379d5fe77c62bbdff0ea36ec415ef43c9557e118ed45b95d39de03  '"$bundle" | sha256sum --check
+          echo "ORCA_BETA_BUNDLE=$bundle" >> "$GITHUB_ENV"
       - name: Install OrcaSlicer app bundle and runtime
         run: |
           set -euo pipefail
@@ -207,13 +208,13 @@ jobs:
           flatpak install --user -y --noninteractive flathub org.gnome.Platform//50
           # The restored cache may already contain the app; do not reinstall its bundle.
           if ! flatpak info --user --show-ref "$ORCA_FLATPAK_APP_ID" >/dev/null 2>&1; then
-            flatpak install --user --bundle -y --noninteractive "$ORCA_ALPHA_BUNDLE"
+            flatpak install --user --bundle -y --noninteractive "$ORCA_BETA_BUNDLE"
           fi
           flatpak info --user --show-ref "$ORCA_FLATPAK_APP_ID"
           flatpak info --user --show-commit "$ORCA_FLATPAK_APP_ID"
-      - name: Run slicer tests (2.5.0 alpha)
+      - name: Run slicer tests (2.5.0 beta)
         run: xvfb-run -a python -m pytest -v -s tests/slicer
-      - name: Run representative Discord fixtures (2.5.0 alpha only)
+      - name: Run representative Discord fixtures (2.5.0 beta only)
         run: >-
           xvfb-run -a python -m pytest -v -s
           tests/corpus/test_corpus.py::test_discord_flow[single-part]
@@ -256,23 +257,23 @@ jobs:
         uses: actions/cache@v6
         with:
           path: |
-            ~/.cache/orcaslicer-v2.5.0-alpha.flatpak
+            ~/.cache/orcaslicer-v2.5.0-beta.flatpak
             ~/.local/share/flatpak
           key: real-slicer-bambu-flatpak-${{ env.BAMBU_FLATPAK_COMMIT }}-${{ runner.os }}-x86_64
-      - name: Download and verify upstream OrcaSlicer v2.5.0-alpha bundle
+      - name: Download and verify upstream OrcaSlicer v2.5.0-beta bundle
         run: |
           set -euo pipefail
-          bundle="$HOME/.cache/orcaslicer-v2.5.0-alpha.flatpak"
+          bundle="$HOME/.cache/orcaslicer-v2.5.0-beta.flatpak"
           mkdir -p "$(dirname "$bundle")"
-          if [ -f "$bundle" ] && ! echo '2caa907e75ca1cd499568d7940d1fe787b795b3deff1d5dcf4cda31f1a4b6d32  '"$bundle" | sha256sum --check --status; then
+          if [ -f "$bundle" ] && ! echo '2d2f6979a3379d5fe77c62bbdff0ea36ec415ef43c9557e118ed45b95d39de03  '"$bundle" | sha256sum --check --status; then
             rm "$bundle"
           fi
           if [ ! -f "$bundle" ]; then
             curl --fail --location --retry 3 --output "$bundle" \
-              https://github.com/OrcaSlicer/OrcaSlicer/releases/download/v2.5.0-alpha/OrcaSlicer-Linux-flatpak_V2.5.0-alpha_x86_64.flatpak
+              https://github.com/OrcaSlicer/OrcaSlicer/releases/download/v2.5.0-beta/OrcaSlicer-Linux-flatpak_V2.5.0-beta_x86_64.flatpak
           fi
-          echo '2caa907e75ca1cd499568d7940d1fe787b795b3deff1d5dcf4cda31f1a4b6d32  '"$bundle" | sha256sum --check
-          echo "ORCA_ALPHA_BUNDLE=$bundle" >> "$GITHUB_ENV"
+          echo '2d2f6979a3379d5fe77c62bbdff0ea36ec415ef43c9557e118ed45b95d39de03  '"$bundle" | sha256sum --check
+          echo "ORCA_BETA_BUNDLE=$bundle" >> "$GITHUB_ENV"
       - name: Install OrcaSlicer app bundle and runtime
         run: |
           set -euo pipefail
@@ -280,7 +281,7 @@ jobs:
           flatpak install --user -y --noninteractive flathub org.gnome.Platform//50
           # The restored cache may already contain the app; do not reinstall its bundle.
           if ! flatpak info --user --show-ref "$ORCA_FLATPAK_APP_ID" >/dev/null 2>&1; then
-            flatpak install --user --bundle -y --noninteractive "$ORCA_ALPHA_BUNDLE"
+            flatpak install --user --bundle -y --noninteractive "$ORCA_BETA_BUNDLE"
           fi
           flatpak info --user --show-ref "$ORCA_FLATPAK_APP_ID"
           flatpak info --user --show-commit "$ORCA_FLATPAK_APP_ID"

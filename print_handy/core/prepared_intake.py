@@ -241,6 +241,9 @@ async def _heavy(func, *args, **kwargs):
         detail = err.decode(errors="replace")[-400:].strip() or 'it stopped without reporting why (killed or crashed)'
         raise RuntimeError(f'{name} worker failed: {detail}') from None
     if not reply.get('ok'):
+        if isinstance(reply.get('refusal'), dict):
+            from .slice_refusal import from_dict
+            raise from_dict(reply['refusal'])
         exc = {'ValueError': ValueError, 'FileNotFoundError': FileNotFoundError}.get(reply.get('type'), RuntimeError)
         raise exc(reply.get('error'))
     return Path(reply['result']) if reply.get('path') else reply['result']
@@ -726,6 +729,26 @@ async def _spool_projection_text(mj, job, manifest, state, copies):
         rows = mj.intake_spool_projection(job, weights, manifest, copies=copies)
         return mj.format_spool_projection(
             rows, position_noun='Toolhead' if mj._job_adapter(job).multi_tool else 'Slot')
+    except Exception:
+        return ''
+
+
+def _color_guess_text(mj, job, decisions):
+    """Display only: say so when a slot this job uses has no real color code.
+
+    A slot whose color could not be worked out previews in neutral gray;
+    the operator hears that before slicing rather than discovering it.
+    """
+    try:
+        slots = {row.get('slot') for row in ((decisions or {}).get('choices') or {}).values()
+                 if isinstance(row, dict) and row.get('slot') is not None}
+        selection = (job or {}).get('filament_selection') or {}
+        if isinstance(selection, dict) and selection.get('slot') is not None:
+            slots.add(selection['slot'])
+        from .filament_color import chat_notes
+        if not slots:
+            return ''
+        return '\n'.join(chat_notes(mj.printer_state.load(), slots))
     except Exception:
         return ''
 
@@ -1604,6 +1627,9 @@ async def prepare_link(event, adapter, state, root, timeout=None, reuse=None, pr
         caveat = (' Parts go on one multicolor bed when they fit; if they must split I will say why and '
                   'let you choose which plate prints first.' if multi and decisions['mode'] == 'per_part' else '')
         spool_text = await _spool_projection_text(mj, latest, manifest, state, chosen_quantity)
+        color_text = _color_guess_text(mj, latest, decisions)
+        if color_text:
+            spool_text = (spool_text + '\n' + color_text) if spool_text else color_text
         source_estimate = _preview_estimate(latest.get('selected_source'))
         estimate_s = source_estimate[0] * chosen_quantity if source_estimate else None
         # No source estimate: there is no time to show yet (the post-slice message gives it).
@@ -1667,12 +1693,35 @@ async def prepare_link(event, adapter, state, root, timeout=None, reuse=None, pr
             for stale in ('slice_approval', 'bed_clear_approval', 'gcodes'):
                 receipt.pop(stale, None)
             receipt_path.write_text(json.dumps(receipt, indent=2) + '\n')
-            retry = await _ask(adapter, source, key,
-                diagnostics.plain_post('Slicing this model did not work.',
-                                       not_happened='No G-code was kept, and nothing was uploaded or started.',
-                                       next_step='Retry once from the saved model?',
-                                       subsystem='slicing', exc=slice_error),
-                ['Retry slice once (no print)', 'Cancel'], timeout)
+            # A deterministic refusal says why in plain words and offers its
+            # one safe fix instead of a blind retry that would fail the same way.
+            from . import slice_refusal
+            refusal = slice_refusal.explain(slice_error)
+            if refusal is not None and not refusal.fix:
+                await adapter.send(chat_id=source.chat_id, metadata=metadata, content=diagnostics.plain_post(
+                    refusal.plain, not_happened='Nothing was sliced, uploaded or started.',
+                    next_step=refusal.next_step, subsystem='slicing', exc=slice_error))
+                return {'action': 'skip', 'reason': 'slice refused: ' + str(slice_error)}
+            if refusal is not None:
+                prompt = diagnostics.plain_post(refusal.plain, next_step=refusal.next_step,
+                                                subsystem='slicing', exc=slice_error)
+                labels = [refusal.fix_label, 'No, cancel']
+            else:
+                prompt = diagnostics.plain_post('Slicing this model did not work.',
+                                                not_happened='No G-code was kept, and nothing was uploaded or started.',
+                                                next_step='Retry once from the saved model?',
+                                                subsystem='slicing', exc=slice_error)
+                labels = ['Retry slice once (no print)', 'Cancel']
+            retry = await _ask(adapter, source, key, prompt, labels, timeout)
+            if retry == 0 and refusal is not None:
+                try:
+                    await owned_worker.in_thread(slice_refusal.apply_fix, refusal.fix)
+                except Exception:
+                    logger.exception('slice refusal fix failed')
+                    await adapter.send(chat_id=source.chat_id, metadata=metadata,
+                                       content='That confirmation could not be saved, so nothing was sliced, '
+                                               'uploaded or started. Set the spool with `/spool`, then ask again.')
+                    return {'action': 'skip', 'reason': 'slice refusal fix failed'}
             if retry != 0:
                 receipt.update(status='CANCELLED', sliced=False, uploaded=False, started=False)
                 receipt_path.write_text(json.dumps(receipt, indent=2) + '\n')
@@ -1708,8 +1757,13 @@ async def prepare_link(event, adapter, state, root, timeout=None, reuse=None, pr
                                slice_error=str(retry_error))
                 receipt.pop('slice_approval', None)
                 receipt_path.write_text(json.dumps(receipt, indent=2) + '\n')
+                again = slice_refusal.explain(retry_error)
                 await adapter.send(chat_id=source.chat_id,
-                    content='The one retry also failed. No G-code was retained; nothing was uploaded or started.',
+                    content=(diagnostics.plain_post(again.plain,
+                                                    not_happened='Nothing was sliced, uploaded or started.',
+                                                    next_step=again.next_step, subsystem='slicing',
+                                                    exc=retry_error) if again is not None else
+                             'The one retry also failed. No G-code was retained; nothing was uploaded or started.'),
                     metadata=metadata)
                 return {'action': 'skip', 'reason': 'slice retry failed'}
         mj._timing(jp, 'intake_slice_returned')

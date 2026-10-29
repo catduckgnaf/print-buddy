@@ -199,6 +199,14 @@ def classify(exc: BaseException, *, category: Category | None = None) -> Categor
     """
     if category is not None:
         return Category(category)
+    declared = getattr(exc, "diagnostic_category", None)
+    if declared is not None:
+        # A boundary's own exception type knows what it is (#390): e.g. a
+        # deterministic slice refusal is configuration, never *_UNKNOWN.
+        try:
+            return Category(declared)
+        except ValueError:
+            pass
     from . import settings  # lazy: settings is imported by nearly everything
     if isinstance(exc, settings.SettingsError):
         return Category.CONFIGURATION

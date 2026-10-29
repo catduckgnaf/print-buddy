@@ -135,6 +135,24 @@ def material_family(material):
     return m
 
 
+_DISPLAY_ACRONYMS = frozenset({"PLA", "PETG", "PET", "PCTG", "ABS", "ASA", "TPU", "TPE", "PA", "PA6", "PA11",
+                               "PA12", "PC", "PVA", "BVOH", "HIPS", "PP", "PE", "PEEK", "PEI", "CF", "GF", "HT", "HF"})
+
+
+def display_material(material):
+    """A material label for chat: polymer names upper-case, other lower-case words capitalised.
+
+    'Pla' -> 'PLA', 'silk pla' -> 'Silk PLA', 'petg-cf' -> 'PETG-CF'. Display only: stored and
+    compared labels (Spoolman, job records, material_family) are never rewritten with this.
+    """
+    def word(match):
+        text = match.group(0)
+        if text.upper() in _DISPLAY_ACRONYMS:
+            return text.upper()
+        return text[:1].upper() + text[1:] if text.islower() else text
+    return re.sub(r"[A-Za-z0-9]+", word, str(material or "").strip())
+
+
 def same_material(a, b):
     """True when two material labels slice as the same family."""
     fa, fb = material_family(a), material_family(b)

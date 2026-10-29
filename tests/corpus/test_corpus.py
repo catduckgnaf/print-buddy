@@ -156,7 +156,7 @@ def test_discord_flow(case, tmp_path):
         assert len(run.slice_starts) == 1, run.slice_starts
         first_slice = next(i for i, event in enumerate(run.events) if event[0] == "slice_start")
         option_prompts = [i for i, event in enumerate(run.events)
-                          if event[0] == "prompt" and "time after slicing" not in event[1].casefold()
+                          if event[0] == "prompt" and "ready to slice" not in event[1].casefold()
                           and any(term in event[1].casefold() for term in
                                   ("fit", "orient", "support", "quality", "layer", "material", "filament", "color", "how many copies"))]
         assert all(index < first_slice for index in option_prompts), run.events
@@ -237,7 +237,7 @@ def test_discord_flow_standalone(case, tmp_path):
     assert run.adapter.questions
     first_slice = next(i for i, event in enumerate(run.events) if event[0] == "slice_start")
     option_prompts = [i for i, event in enumerate(run.events)
-                      if event[0] == "prompt" and "time after slicing" not in event[1].casefold()
+                      if event[0] == "prompt" and "ready to slice" not in event[1].casefold()
                       and any(term in event[1].casefold() for term in
                               ("fit", "orient", "support", "quality", "layer", "material", "filament", "color", "how many copies"))]
     assert option_prompts and all(i < first_slice for i in option_prompts), run.events

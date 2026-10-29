@@ -299,8 +299,56 @@ def _preview_description(text):
     text = ' '.join(words).strip()
     first = re.split(r'(?<=[.!?])\s', text, maxsplit=1)[0].strip().rstrip('.!?:;,- ')
     if len(first) > 120:
-        first = first[:120].rsplit(' ', 1)[0].rstrip('.,;:- ')
+        # Cut at a word boundary, drop dangling short words ('so I extended the') and mark the cut.
+        words = first[:121].rsplit(' ', 1)[0].split()
+        while len(words) > 1 and words[-1].lower().strip('.,;:-') in _DANGLING_WORDS:
+            words.pop()
+        first = ' '.join(words).rstrip('.,;:- ') + '…'
     return first
+
+
+_DANGLING_WORDS = frozenset(
+    'a an the and or but so to of for in on at by with from as that which who my your his her its our their '
+    'i we you he she it they is are was were be this these those'.split())
+
+
+def _end_sentence(text):
+    """Close a sentence with a full stop unless it already ends with the truncation ellipsis."""
+    return text if text.endswith('…') else text + '.'
+
+
+_QUESTION_PREFIX = re.compile(r'^Choose (?:the |one )?(?:loaded )?(?:slot/)?color/material for ')
+
+
+def _choice_summary(manifest, questions, choices, color_of):
+    """Pre-slice summary of per-part choices, identical parts grouped.
+
+    '2× frameLeg: Matte white PLA · seat-brick: Pink PLA'. A size is added only where two groups
+    would otherwise show the same part name.
+    """
+    from .source_colors import short_part_name
+    from .part_translator import size_hint
+    parts = {'part:' + p['key']: p for p in manifest.get('parts', [])}
+    questions_by_key = {row['key']: row.get('question', '') for row in questions}
+    groups = {}
+    for key, selection in choices.items():
+        part = parts.get(key)
+        if part is not None:
+            # 'Tall post ("Part 1")' -> 'Tall post': the CAD name was for the question; the size
+            # below tells same-named groups apart.
+            name, hint = re.sub(r'\s*\("[^"]*"\)$', '', short_part_name(part)), size_hint(part)
+        else:  # painted region rows and anything unexpected: the question's subject
+            name, hint = _QUESTION_PREFIX.sub('', questions_by_key.get(key, '')).split(' (')[0] or key, ''
+        group = (name, hint, color_of(selection))
+        groups[group] = groups.get(group, 0) + 1
+    hints_per_name = {}
+    for name, hint, _ in groups:
+        hints_per_name.setdefault(name, set()).add(hint)
+    out = []
+    for (name, hint, color), count in groups.items():
+        label = f'{name} ({hint})' if hint and len(hints_per_name[name]) > 1 else name
+        out.append(f"{f'{count}× ' if count > 1 else ''}{label}: {color}")
+    return ' · '.join(out)
 
 
 def _preview_estimate(row):
@@ -370,9 +418,9 @@ def preview_sentence(job, row, filament_note=None):
     named_profile = bool(profile and str((row or {}).get('title') or '').strip())
     if not desc and not est and not named_profile and not filament_note:
         return None  # a bare title or filename echo adds nothing; a named profile does
-    text = f'That looks like {title}' + (f', {desc}' if desc else '') + '.'
+    text = _end_sentence(f'That looks like {title}' + (f', {desc}' if desc else ''))
     if profile and profile.casefold() != title.casefold():
-        text += f' I will use the selected profile: {profile}.'
+        text += _end_sentence(f' I will use the selected profile: {profile}')
     if filament_note:
         text += f' Filament: {filament_note}.'
     if est:
@@ -1140,7 +1188,8 @@ async def prepare_link(event, adapter, state, root, timeout=None, reuse=None, pr
             options = ['Keep distinct source regions' if manifest['painted'] else 'Choose colors for these parts',
                        'One color for everything']
             if families:
-                together = '; '.join(row['question'].split(' for ', 1)[1].split(' (', 1)[0] for row in families)
+                together = '; '.join(row.get('label') or row['question'].split(' for ', 1)[1].split(' (', 1)[0]
+                                     for row in families)
                 options[0] = f'Choose colors ({together} share one color)'[:80]
                 options.append('Choose every part individually')
             count = len(manifest['parts'])
@@ -1528,13 +1577,13 @@ async def prepare_link(event, adapter, state, root, timeout=None, reuse=None, pr
             sel = sel or {}
             color = str(sel.get('color') or '').strip()
             noun = 'Toolhead' if mj._job_adapter(latest).multi_tool else 'Slot'
-            return ' '.join(v for v in (color[:1].upper() + color[1:], str(sel.get('material') or '')) if v) or f"{noun} {sel.get('slot')}"
+            from .printer_state import display_material
+            material = display_material(sel.get('material'))
+            return ' '.join(v for v in (color[:1].upper() + color[1:], material) if v) or f"{noun} {sel.get('slot')}"
         if validated.get('mode') == 'single_color':
             names = _color_of(validated.get('selection'))
         else:
-            labels = {row['key']: re.sub(r'^Choose the color/material for ', '', row.get('question', ''))
-                      .split(' (')[0] for row in questions}
-            names = ' · '.join(f"{labels.get(k, k)}: {_color_of(v)}" for k, v in validated.get('choices', {}).items())
+            names = _choice_summary(manifest, questions, validated.get('choices', {}), _color_of)
         # Never promise "together" before slicing: the planner may still split with a stated reason.
         print_label = 'Slice and print now (bed is clear)'
         cancel_label = 'Cancel print request'
@@ -1543,10 +1592,10 @@ async def prepare_link(event, adapter, state, root, timeout=None, reuse=None, pr
         spool_text = await _spool_projection_text(mj, latest, manifest, state, chosen_quantity)
         source_estimate = _preview_estimate(latest.get('selected_source'))
         estimate_s = source_estimate[0] * chosen_quantity if source_estimate else None
-        estimate_text = ('time after slicing' if estimate_s is None else
-                         f"~{mj.human_dur(estimate_s + 300)}")
+        # No source estimate: there is no time to show yet (the post-slice message gives it).
+        estimate_text = '' if estimate_s is None else f"~{mj.human_dur(estimate_s + 300)}"
         if chosen_quantity and chosen_quantity != 1:
-            estimate_text = f"{chosen_quantity} copies · " + estimate_text
+            estimate_text = ' · '.join(x for x in (f"{chosen_quantity} copies", estimate_text) if x)
         # Post-slice choices come from the printer's vendor profile ([delivery] methods). Printing is
         # offered only where the vendor offers it AND the operator enabled it in [delivery] methods
         # (for Bambu Lab that means the LAN print opt-in; it is never a default there).
@@ -1554,7 +1603,7 @@ async def prepare_link(event, adapter, state, root, timeout=None, reuse=None, pr
         can_print = delivery.PRINTER in enabled
         first_labels = [print_label, 'Slice only', 'Stop with colors saved', cancel_label][0 if can_print else 1:]
         choice = await _ask(adapter, source, key,
-            f'{names} · {estimate_text}'
+            ' · '.join(x for x in ('Ready to slice', names, estimate_text) if x)
             + ('\n' + spool_text if spool_text else '') + caveat,
             first_labels, timeout,
             on_shown=early.release.set)

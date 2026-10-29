@@ -431,16 +431,14 @@ def _shape_word(bounds):
     return 'Chunky piece'
 
 
-def _prompt_name(part):
-    """English display name for a question. Never used as a decision key.
+def _prompt_parts(part, plural=False):
+    """(base name, [detail, ...]) for a question; _prompt_name joins them.
 
-    'Cylinder A (98 x 98 x 12 mm, plate 2, author made it White)': name alone
-    is useless when the CAD export calls half the model 'Cylinder'.
+    plural words the author colour for a group of identical parts ('author made them Pink').
     """
     try:
         from . import part_translator
-        base = part_translator.translate_name(part.get('name') or '') if not part_translator.is_meaningless(part.get('name')) \
-            else (part.get('object_name') or 'Main body')
+        base = part_translator.translate_name(part.get('name') or '') if not part_translator.is_meaningless(part.get('name'))             else (part.get('object_name') or 'Main body')
         hint = part_translator.size_hint(part)
     except Exception:
         base, hint = part.get('name') or '', ''
@@ -457,8 +455,45 @@ def _prompt_name(part):
             color = part_translator.named_color(part['author_color']).title()
         except Exception:
             color = str(part['author_color'])
-        details.append(f'author made it {color}')
+        details.append(f"author made {'them' if plural else 'it'} {color}")
+    return base, details
+
+
+def _prompt_name(part):
+    """English display name for a question. Never used as a decision key.
+
+    'Cylinder A (98 x 98 x 12 mm, plate 2, author made it White)': name alone
+    is useless when the CAD export calls half the model 'Cylinder'.
+    """
+    base, details = _prompt_parts(part)
     return f"{base}, {', '.join(details)}" if details else base
+
+
+def short_part_name(part):
+    """The part's display name without size, plate or author colour (for summaries)."""
+    return _prompt_parts(part)[0]
+
+
+def _family_question(fam, chunk):
+    """One question for a group of sibling parts, without repeating identical parts.
+
+    'Choose one color/material for the 4 chains (15 x 87.7 x 6 mm, author made them Pink)'
+    """
+    count = len(chunk)
+    who = f"both {fam['noun']}" if count == 2 else f"the {count} {fam['noun']}"
+    parts = [_prompt_parts(p, plural=True) for p in chunk]
+    detail_sets = {tuple(d) for _, d in parts}
+    bases = list(dict.fromkeys(b for b, _ in parts))
+    if len(detail_sets) == 1:
+        details = list(next(iter(detail_sets)))
+        inner = ', '.join(bases) if len(bases) > 1 else ''
+        inner = '; '.join(x for x in (inner, ', '.join(details)) if x)
+        return f"Choose one color/material for {who}" + (f" ({inner})" if inner else '')
+    counts = {}
+    for name in fam['names']:
+        counts[name] = counts.get(name, 0) + 1
+    listed = '; '.join(f'{n}× {name}' if n > 1 else name for name, n in counts.items())
+    return f"Choose one color/material for {who}: {listed}"
 
 
 def _palette_rows(manifest, canonical=False):
@@ -637,7 +672,10 @@ def part_families(manifest):
             if re.match(r'(?i)(cylinder|cube|box|sphere|cone|body|object|part|mesh|solid|extrude|torus)', noun):
                 noun = 'matching pieces'
             label = (f"{'both' if len(chunk) == 2 else f'all {len(chunk)}'} {noun}{ext_suffix}" if len(chunk) > 1 else f"{names[0]}{ext_suffix}")
-            out.append({'keys': [p['key'] for p in chunk], 'names': names, 'label': label})
+            fam = {'keys': [p['key'] for p in chunk], 'names': names, 'label': label, 'noun': noun}
+            if len(chunk) > 1:
+                fam['question'] = _family_question(fam, chunk)
+            out.append(fam)
     return out
 
 
@@ -658,7 +696,7 @@ def grouped_prompts(manifest):
             out.append({**by_key[keys[0]], 'keys': keys})
         else:
             out.append({'key': keys[0], 'keys': keys, 'source_extruder': by_key[keys[0]]['source_extruder'],
-                        'question': f"Choose one color/material for {fam['label']}: " + '; '.join(fam['names'])})
+                        'label': fam['label'], 'question': fam['question']})
     out += [{**row, 'keys': [row['key']]} for row in rows if not row['key'].startswith('part:')]
     return out
 

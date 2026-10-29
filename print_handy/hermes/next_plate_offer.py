@@ -1,8 +1,11 @@
 """Offer the next plate when the empty-bed check says the bed is clear (#621).
 
-The offer is a message. It does not start a print. Confirm is still
-``/print-next``, which keeps the bed-clear button. One offer per plate,
-and one "not clear" note per plate. No camera verdict means no message.
+The offer does not start a print. On Discord it carries the existing
+next-plate confirm button (``pbplate:go``), and that button runs
+``print_next.start``. Dismiss (``pbplate:drop``) leaves the queue alone.
+Telegram and Matrix have no buttons, so the offer names ``/print-next``,
+which still asks before it starts. One offer per plate, and one "not clear"
+note per plate. No camera verdict means no message.
 """
 from __future__ import annotations
 
@@ -12,6 +15,16 @@ import time
 from . import _config
 
 CHECK_S = 300
+
+
+def confirm_components(aid: str, *, confirm_label: str, cancel_label: str) -> list[dict]:
+    """The existing next-plate confirm, plus a dismiss that does not start."""
+    return [{"type": 1, "components": [
+        {"type": 2, "style": 3, "label": str(confirm_label)[:80],
+         "custom_id": f"pbplate:go:{aid}"},
+        {"type": 2, "style": 2, "label": str(cancel_label)[:80],
+         "custom_id": f"pbplate:drop:{aid}"},
+    ]}]
 
 
 def _state_path():
@@ -75,21 +88,24 @@ def due(now=None) -> bool:
     return now - float(data.get("checked_at") or 0) >= CHECK_S
 
 
-def observe(verdict, now=None) -> str:
-    """Apply one camera verdict. Returns the message to post, or ""."""
+def observe(verdict, now=None) -> dict:
+    """Apply one camera verdict. Returns the offer choice. Starts nothing."""
     data = _load()
     plan_id = data.get("plan_id")
-    if not plan_id:
-        return ""
     now = time.time() if now is None else now
+    empty = {"action": "none", "text": "", "plan_id": "", "part_id": ""}
+    if not plan_id:
+        return empty
     data["checked_at"] = now
     label = ""
+    part_id = ""
     try:
         from . import print_next
         from .print_records import remaining_plate_choices
         plan = print_next.load_plan(plan_id)
         parts = remaining_plate_choices(plan)
         if parts:
+            part_id = str(parts[0]["id"])
             label = print_next.plate_choice_label(parts[0])
         else:
             data["plan_id"] = ""
@@ -97,8 +113,9 @@ def observe(verdict, now=None) -> str:
         label = ""
     said = set(data.get("said") or [])
     choice = decide(label, verdict, said=said, plan_id=str(plan_id))
+    choice = {**choice, "plan_id": str(plan_id), "part_id": part_id}
     if choice["action"] != "none":
         said.add(choice["action"])
         data["said"] = sorted(said)
     _save(data)
-    return choice["text"]
+    return choice

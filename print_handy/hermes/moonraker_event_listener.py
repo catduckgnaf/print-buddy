@@ -227,6 +227,30 @@ def post_plate_picker(plan_id):
     return post(f"To start the next plate, type `/print-next {plan_id}`.")
 
 
+def post_bed_clear_offer(choice):
+    """Post the empty-bed offer with the existing confirm button. Starts nothing.
+
+    Buttonless platforms return False so the caller posts the text, which
+    names `/print-next` and does not start a plate.
+    """
+    if _buttonless_standalone():
+        return False
+    plan_id = str((choice or {}).get("plan_id") or "")
+    part_id = str((choice or {}).get("part_id") or "")
+    text = str((choice or {}).get("text") or "")
+    if not plan_id or not part_id or not text:
+        return False
+    try:
+        from . import print_alert_buttons as pab
+        if pab.post_plate_confirm(_bot_token(), announcer.DISCORD_CHAT_ID, text, plan_id, part_id):
+            log(f"post next-plate offer plan={plan_id} part={part_id}")
+            return True
+        log(f"next-plate offer button post failed plan={plan_id}; falling back to text")
+    except Exception as exc:
+        log(f"next-plate offer button post error plan={plan_id}: {exc!r}")
+    return False
+
+
 def post_insertion_confirmation(slot):
     """Offer an answer-only IFS insertion UI, then retain the command-text fallback."""
     if _buttonless_standalone():
@@ -2818,7 +2842,12 @@ class Listener:
             return
         verdict, detail = await asyncio.to_thread(_visual_verdict, image, _AUTO_LIGHT_PROMPT)
         log(f"next plate bed check verdict={verdict} detail={detail!r}")
-        text = next_plate_offer.observe(verdict)
+        choice = next_plate_offer.observe(verdict)
+        if not isinstance(choice, dict):
+            return
+        if choice.get("action") == "offer" and await asyncio.to_thread(post_bed_clear_offer, choice):
+            return
+        text = choice.get("text") or ""
         if text:
             await asyncio.to_thread(post, text)
 

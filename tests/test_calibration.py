@@ -208,6 +208,8 @@ class FakeTransport:
             return {"result": {"gcode_store": [
                 {"message": message, "type": "response", "time": when}
                 for when, message in self.store]}}
+        if path == cal.PRINTER_INFO_PATH:
+            return {"result": {"state": "ready"}}
         if path == cal.NATIVE_CONFIG_PATH:
             if self.native_config is None:
                 raise OSError("no native config")
@@ -1024,3 +1026,70 @@ def test_dispatch_ignores_other_text():
         _event("/print-calibrationx"), _gateway(FakeAdapter()))) is None
     assert asyncio.run(plugin.calibration_dispatch(
         _event("print-calibration"), _gateway(FakeAdapter()))) is None
+
+
+
+# ------------------------------------------------- SAVE_CONFIG restarts Klipper
+
+class RestartingTransport(FakeTransport):
+    """SAVE_CONFIG drops the request like a live printer does, then Klipper
+    is unreachable for `startup_reads` info reads before it reports ready."""
+
+    def __init__(self, save_error, startup_reads=2, **kwargs):
+        super().__init__(**kwargs)
+        self.save_error = save_error
+        self.startup_reads = startup_reads
+
+    def __call__(self, method, path, body=None):
+        if path == cal.GCODE_SCRIPT_PATH and (body or {}).get("script") == "SAVE_CONFIG":
+            self.calls.append((method, path, body))
+            raise self.save_error
+        if path == cal.PRINTER_INFO_PATH:
+            self.calls.append((method, path, body))
+            if self.startup_reads > 0:
+                self.startup_reads -= 1
+                raise urllib.error.URLError(ConnectionRefusedError(111, "Connection refused"))
+            return {"result": {"state": "ready"}}
+        return super().__call__(method, path, body)
+
+
+def _http_error(code):
+    return urllib.error.HTTPError(cal.GCODE_SCRIPT_PATH, code, "Klippy Disconnected", {}, None)
+
+
+@pytest.mark.parametrize("error", [
+    _http_error(503),
+    ConnectionResetError(104, "Connection reset by peer"),
+    urllib.error.URLError(ConnectionResetError(104, "Connection reset by peer")),
+])
+def test_save_config_disconnect_is_the_expected_restart_not_a_failure(error):
+    transport = RestartingTransport(error)
+    cal._save_config(transport, sleep=NO_SLEEP)
+    assert transport.scripts == ["SAVE_CONFIG"]
+    reads = [path for method, path, _b in transport.calls if method == "GET"]
+    assert reads.count(cal.PRINTER_INFO_PATH) == 3
+
+
+def test_save_config_other_errors_stay_uncertain_and_are_not_resent():
+    transport = RestartingTransport(_http_error(400))
+    with pytest.raises(cal.CalibrationError) as excinfo:
+        cal._save_config(transport, sleep=NO_SLEEP)
+    assert "The send did not succeed" in str(excinfo.value)
+    assert transport.scripts == ["SAVE_CONFIG"]
+
+
+def test_save_config_that_never_comes_back_ready_is_unconfirmed():
+    transport = RestartingTransport(_http_error(503), startup_reads=10_000)
+    with pytest.raises(cal.CalibrationError) as excinfo:
+        cal._save_config(transport, attempts=3, sleep=NO_SLEEP)
+    assert "not confirmed" in str(excinfo.value)
+    assert transport.scripts == ["SAVE_CONFIG"]
+
+
+def test_accept_mesh_reports_saved_after_the_live_503_restart():
+    transport = RestartingTransport(_http_error(503))
+    prepared = cal.prepare_mesh(transport, AD5X)
+    result = cal.execute_mesh(transport, prepared, poll_interval_s=0, sleep=NO_SLEEP)
+    text = cal.accept_mesh(transport, result, sleep=NO_SLEEP)
+    assert "restarted and is ready" in text
+    assert transport.scripts.count("SAVE_CONFIG") == 1

@@ -423,10 +423,56 @@ def generate_roast(title, summary=""):
 def start_message_with_roast(filename, archive=None, context_path=None):
     """Format the canonical start message and append a best-effort model roast."""
     message = print_summary.format_event("started", filename, archive=archive, context_path=context_path)
+    try:
+        from ..core.exclude_object import objects_line_for_path
+        _job, plate = print_summary.find_job(filename, archive=archive, context_path=context_path)
+        line = objects_line_for_path((plate or {}).get("gcode"))
+        if line:
+            message += "\n" + line
+    except Exception:
+        pass
     job, _plate = print_summary.find_job(filename, archive=archive)
     title = (job or {}).get("title") or Path(str(filename or "")).stem
     roast = generate_roast(title)
     return f"{message}\n\n{roast}" if roast else message
+
+
+def post_exclude_objects(filename, archive=None, context_path=None):
+    """Offer one-object cancel when the G-code names objects. Starts nothing.
+
+    No exclude-object metadata posts nothing. Discord gets a menu that only
+    asks. Telegram and Matrix get the typed `/exclude` line. A failed menu
+    post falls back to that line.
+    """
+    try:
+        from ..core.exclude_object import object_names
+        _job, plate = print_summary.find_job(filename, archive=archive, context_path=context_path)
+        path = (plate or {}).get("gcode") if isinstance(plate, dict) else None
+        text = ""
+        if path:
+            text = Path(path).read_text(encoding="utf-8", errors="replace")
+        names = object_names(text)
+        if not names:
+            return False
+        from . import exclude_chat
+        content = exclude_chat.surface_text(names)
+        if not _buttonless_standalone():
+            from . import print_alert_buttons as pab
+            printer_id = ""
+            try:
+                from print_handy import listeners as _listeners
+                printer_id = _listeners.instance_printer_id() or ""
+            except Exception:
+                printer_id = ""
+            aid = pab.record("exclude-pick", filename or "", names=names, printer_id=printer_id)
+            if exclude_chat.post_picker(_bot_token(), announcer.DISCORD_CHAT_ID, content, aid, names):
+                log(f"post exclude menu file={filename!r} objects={len(names)}")
+                return True
+            log(f"exclude menu post failed file={filename!r}; falling back to text")
+        return post(content)
+    except Exception as exc:
+        log(f"exclude object post error file={filename!r}: {exc!r}")
+        return False
 
 
 def _live_auto_on_print_start():
@@ -2578,8 +2624,10 @@ class Listener:
                 elif start_claimed(self.filename):
                     log(f"start claimed by print-now; updating its message, no second start post: {self.filename!r}")
                     await asyncio.to_thread(announce_warmup_done, self.filename)
+                    await asyncio.to_thread(post_exclude_objects, self.filename)
                 else:
                     await asyncio.to_thread(post, start_message_with_roast(self.filename))
+                    await asyncio.to_thread(post_exclude_objects, self.filename)
                 # The live view's auto-start trigger (#311 stage 4):
                 # fail-soft, and a no-op unless auto_start_on_print is on.
                 await asyncio.to_thread(_live_auto_on_print_start)

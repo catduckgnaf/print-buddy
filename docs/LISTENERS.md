@@ -116,6 +116,16 @@ they belong to their launched-print monitor.
 
 Moonraker's listener has always posted the full lifecycle — starts
 (launched and external), pauses with Resume/Cancel buttons, completions.
+When that G-code contains `EXCLUDE_OBJECT_DEFINE` names, the Moonraker
+start post lists them (`Objects still printing: ...`) and offers a cancel
+control. Choosing one object asks once. Confirm sends one Moonraker
+`EXCLUDE_OBJECT NAME=...` script for that name. The last remaining object
+uses the existing `/print-stop` confirm instead of an exclude. A file
+without that metadata does not offer the control. A failed exclude is
+reported and is not described as cancelled. The camera watchdog does not
+exclude or stop a print. Bambu, Prusa, OctoPrint, and stock Flashforge
+are not given an exclude. On Telegram and Matrix the same choice is
+`/exclude <name>`, which asks before anything is sent.
 #460 gives every other family the same contract through one shared
 mechanism (`print_handy/hermes/family_control.py`), not five copies:
 

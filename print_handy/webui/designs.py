@@ -169,7 +169,7 @@ def _page(title, body):
 
 
 _NAV = ('<p><a href="/">Status</a> · <a href="/config">Configuration</a> · '
-        '<a href="/designs">Designs</a></p>')
+        '<a href="/designs">Designs</a> · <a href="/layers">Layers</a></p>')
 
 
 def render_designs_page(rows):

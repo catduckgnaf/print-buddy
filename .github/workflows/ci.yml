@@ -40,9 +40,17 @@ jobs:
           command -v ffmpeg || { apt-get update -q && apt-get install -y -q ffmpeg; }
           ffmpeg -version | head -n 1
           ffprobe -version | head -n 1
+      - name: Install jq for the shell CLI tests
+        # jq is a shipped runtime dependency (the image's runtime stage
+        # installs it; bin/moonrakerctl parses Moonraker JSON with it); the
+        # offline legs install it too, so the shell CLI tests in
+        # tests/pipeline execute here instead of skipping.
+        run: |
+          command -v jq || { apt-get update -q && apt-get install -y -q jq; }
+          jq --version
       - name: Offline tests (no printer, no slicer, no network)
         timeout-minutes: 25
-        run: python -m pytest -q tests
+        run: python -m pytest -q -rs tests
 
   discord-timing:
     # Fake Discord flow timing on both transports, mock slicer, 3 repeats; medians must stay within
@@ -90,6 +98,31 @@ jobs:
           PRINT_HANDY__DISCORD__CHAT_ID: "100000000000000001"
           PRINT_HANDY__DISCORD__ALLOWED_USER_IDS: "200000000000000002"
           DISCORD_BOT_TOKEN: not-a-real-token
+        run: |
+          export PRINT_HANDY__PATHS__HERMES_HOME="/tmp/print-handy"
+          "/tmp/clean/bin/python" -m print_handy.bot check
+      # #164 stages 2-3: Telegram and Matrix are standalone platforms too, and
+      # stdlib-only by design. The same clean venv must pass `bot check` on
+      # each, so a stray non-runtime import in their paths fails here instead
+      # of on a real standalone install.
+      - name: Standalone bot setup check (Telegram)
+        env:
+          PRINT_HANDY__BOT__MODE: standalone
+          PRINT_HANDY__BOT__PLATFORM: telegram
+          PRINT_HANDY__TELEGRAM__CHAT_ID: "-1001234567890"
+          PRINT_HANDY__TELEGRAM__ALLOWED_USER_IDS: "424242"
+          TELEGRAM_BOT_TOKEN: not-a-real-token
+        run: |
+          export PRINT_HANDY__PATHS__HERMES_HOME="/tmp/print-handy"
+          "/tmp/clean/bin/python" -m print_handy.bot check
+      - name: Standalone bot setup check (Matrix)
+        env:
+          PRINT_HANDY__BOT__MODE: standalone
+          PRINT_HANDY__BOT__PLATFORM: matrix
+          PRINT_HANDY__MATRIX__HOMESERVER_URL: "https://matrix.example.org"
+          PRINT_HANDY__MATRIX__ROOM_ID: "!prints:example.org"
+          PRINT_HANDY__MATRIX__ALLOWED_USER_IDS: "@user:example.org"
+          MATRIX_ACCESS_TOKEN: not-a-real-token
         run: |
           export PRINT_HANDY__PATHS__HERMES_HOME="/tmp/print-handy"
           "/tmp/clean/bin/python" -m print_handy.bot check

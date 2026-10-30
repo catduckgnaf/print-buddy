@@ -92,10 +92,16 @@ GROUP_OF = {
     "matrix.allowed_user_ids": "platform",
     "matrix.approval_user_id": "platform",
     "services.moonraker_url": "services",
+    "services.octoprint_url": "services",
+    "bambu.lan_host": "services",
+    "prusa.link_host": "services",
+    "flashforge_stock.host": "services",
+    "elegoo_sdcp.host": "services",
     "services.spoolman_url": "services",
     "spool.prompt_brand": "services",
     "services.camera_source": "images",
     "services.camera_snapshot_url": "images",
+    "timelapse.capture_source_url": "images",
     "services.vision_chat_url": "images",
     "vision.model": "images",
     "vision.roast_model": "images",
@@ -216,10 +222,28 @@ CATALOG = (
            "Matrix user ID allowed to approve prints, full @user:server form; always allowed.",
            validator="settings matrix check"),
     # Services (guided setup: Moonraker and Spoolman URLs).
-    _field("services", "moonraker_url", "Moonraker URL", "url",
-           "Klipper/Moonraker HTTP URL, for example http://printer.local:7125; empty if this "
-           "printer has no Moonraker connection.",
+    _field("services", "moonraker_url", "Printer URL", "url",
+           "The address Print Handy uses to talk to a Moonraker printer. That can be "
+           "Moonraker on the printer, or Klipper on another computer. Example: "
+           "http://printer.local:7125. Leave empty when this model does not use Moonraker.",
            validator="guided service URL / settings services check"),
+    _field("services", "octoprint_url", "Printer URL", "url",
+           "The address Print Handy uses to talk to OctoPrint, including an OctoPi "
+           "that is not running on the printer. Example: http://octopi.local. "
+           "Leave empty when this model does not use OctoPrint.",
+           validator="settings services check"),
+    _field("bambu", "lan_host", "Printer URL", "host",
+           "Bambu Lab LAN hostname or IP. Not a full URL. Empty means no LAN connection.",
+           validator="settings bambu check"),
+    _field("prusa", "link_host", "Printer URL", "host",
+           "PrusaLink hostname or IP. Not a full URL. Empty means no LAN connection.",
+           validator="settings prusa check"),
+    _field("flashforge_stock", "host", "Printer URL", "host",
+           "Stock Flashforge LAN hostname or IP. Not a full URL. Empty means offline.",
+           validator="settings flashforge stock check"),
+    _field("elegoo_sdcp", "host", "Printer URL", "host",
+           "Elegoo SDCP hostname or IP. Not a full URL. Empty means no LAN connection.",
+           validator="settings elegoo sdcp check"),
     _field("services", "spoolman_url", "Spoolman URL", "url",
            "Spoolman URL for filament inventory; empty when Spoolman is not used.",
            validator="guided Spoolman URL / settings services check"),
@@ -236,13 +260,19 @@ CATALOG = (
     _field("services", "camera_source", "Camera source", "picker",
            "Which camera still images come from (#294): auto follows the configured "
            "printer vendor's rule, or pin one source — the Moonraker webcam snapshot, "
-           "the Bambu camera (LAN stills / RTSPS via go2rtc), a go2rtc stream — "
+           "the Bambu camera (LAN stills / RTSPS via go2rtc), a go2rtc stream "
+           "(put the camera's rtsp:// address in RTSP stream URL), "
            "or none for no camera images.",
            choices=tuple(settings.CAMERA_SOURCES), validator="settings camera source check"),
     _field("services", "camera_snapshot_url", "Camera snapshot URL", "url",
            "Camera snapshot URL for status images and the camera watchdog; empty derives "
            "it from the Moonraker host.",
            validator="settings services check"),
+    _field("timelapse", "capture_source_url", "RTSP stream URL", "text",
+           "An rtsp:// or rtsps:// address. Print Handy hands it to go2rtc, which holds "
+           "the one camera connection and fans the stream out for timelapse and live view. "
+           "A go2rtc ffmpeg: source is also accepted. Empty keeps the snapshot URL.",
+           validator="settings timelapse check"),
     _field("services", "vision_chat_url", "Vision chat URL", "url",
            "OpenAI-compatible chat endpoint used for camera checks; empty disables them. "
            "Its API key stays in the environment, never here.",
@@ -424,7 +454,10 @@ def choices_for(field, *, model_key=None, data=None):
     if field.choices_source is None:
         return tuple(field.choices)
     if field.choices_source == SOURCE_PRINTER_REGISTRY:
-        return tuple(sorted(printers.MODELS))
+        return tuple(sorted(
+            printers.MODELS,
+            key=lambda key: (printers.MODELS[key].label.casefold(), key),
+        ))
     if field.choices_source == SOURCE_BOT_PLATFORMS:
         from ..bot.platform import KNOWN_PLATFORMS
         return tuple(KNOWN_PLATFORMS)
@@ -440,3 +473,53 @@ def choices_for(field, *, model_key=None, data=None):
         return tuple(vendor.slicers if field.choices_source == SOURCE_VENDOR_SLICERS
                      else vendor.delivery)
     raise ValueError(f"{field.id}: unknown choices source {field.choices_source!r}")  # pragma: no cover
+
+
+def choice_label(field, choice) -> str:
+    """The text a picker shows for one stored choice. Model keys stay the values."""
+    field = field_by_id(field)
+    if field is not None and field.choices_source == SOURCE_PRINTER_REGISTRY:
+        model = printers.MODELS.get(str(choice))
+        if model is not None:
+            return model.label
+    return str(choice)
+
+
+# One connection, one address field. The others stay in the form as hidden
+# inputs so a save does not clear a URL that belongs to a different model.
+PRINTER_URL_BY_CONNECTION = {
+    "moonraker": "services.moonraker_url",
+    "octoprint": "services.octoprint_url",
+    "bambulab_lan": "bambu.lan_host",
+    "prusalink": "prusa.link_host",
+    "flashforge_stock": "flashforge_stock.host",
+    "elegoo_sdcp": "elegoo_sdcp.host",
+}
+
+
+def _configured_model(data):
+    if not isinstance(data, dict):
+        return None
+    raw = (data.get("printer") or {}).get("model")
+    if not raw:
+        return None
+    try:
+        return printers.MODELS[settings._model_key(raw)]
+    except (KeyError, ValueError, AttributeError):
+        return None
+
+
+def config_page_visible(field, data) -> bool:
+    """Whether /config draws this field. Hidden fields are still submitted."""
+    field = field_by_id(field)
+    if field is None:
+        return True
+    model = _configured_model(data)
+    if field.id == "printer.zmod_delivery_format":
+        return bool(model and model.vendor.key == "flashforge")
+    if field.id in PRINTER_URL_BY_CONNECTION.values():
+        if model is None:
+            return field.id == "services.moonraker_url"
+        return field.id == PRINTER_URL_BY_CONNECTION.get(
+            model.vendor.connection, "services.moonraker_url")
+    return True

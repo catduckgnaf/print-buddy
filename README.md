@@ -128,16 +128,16 @@ One thing to know either way: slicing needs a compatible OrcaSlicer and the righ
 
 ## Is my printer supported?
 
-Print Handy groups printers by **how they connect**, because that is what decides what it can do with yours. There are 46 registered printer models today; this is the short version, and the full model-by-model list lives in the printer guides.
+Print Handy groups printers by **how they connect**, because that is what decides what it can do with yours. There are 80 registered printer models today; this is the short version, and the full model-by-model list lives in the printer guides.
 
 | Your printer connects by… | What you get | Which printers |
 |---|---|---|
-| **Moonraker (Klipper)** | The full flow: guided slicing, gated print start, progress, alerts and timelapses | Flashforge AD5X, AD5M and Creator 5 family running ZMod; Elegoo Neptune 4 family; Qidi Q1 Pro, X-Plus and X-Max lines; Creality K1 and Ender-3 V3 Klipper line; Anycubic Kobra 2 line on Moonraker-exposed firmware (see the Anycubic doc's stock-firmware caveat); Sovol SV06. **Any other Klipper printer** can use the generic Klipper profile. See [ZMod](docs/ZMOD.md) · [Elegoo](docs/ELEGOO.md) · [Qidi](docs/QIDI.md) · [Creality](docs/CREALITY.md) · [Anycubic](docs/ANYCUBIC.md) |
+| **Moonraker (Klipper)** | The full flow: guided slicing, gated print start, progress, alerts and timelapses | Flashforge AD5X, AD5M and Creator 5 family running ZMod; Elegoo Neptune 4 family; Qidi Q1 Pro, X-Plus and X-Max lines; Creality K1 and Ender-3 V3 Klipper line; Anycubic Kobra 2 line on Moonraker-exposed firmware (see the Anycubic doc's stock-firmware caveat); Sovol SV01 through SV08, including the ACE, Plus, and Zero, on Klipper. **Any other Klipper printer** can use the generic Klipper profile. See [ZMod](docs/ZMOD.md) · [Elegoo](docs/ELEGOO.md) · [Qidi](docs/QIDI.md) · [Creality](docs/CREALITY.md) · [Anycubic](docs/ANYCUBIC.md) · [Sovol](docs/SOVOL.md) |
 | **Bambu Lab LAN** | Slicing, G-code checks and Bambu packaging, with opt-in LAN status, upload and gated print start | A1, A1 mini, P1P, P1S, P2S, X1, X1 Carbon, X1E, H2S, A2L and the dual-nozzle H2D, H2D Pro, H2C and X2D. See [Bambu Lab printers](docs/BAMBU-LAB.md) |
 | **PrusaLink** | Slicing plus opt-in LAN status, upload and gated print start | MK4S, CORE One, XL and MINI+. See [Prusa printers](docs/PRUSA.md) |
 | **Flashforge stock LAN** | Built-in profile over the printer's own LAN API — no Moonraker, no ZMod | AD5X on stock firmware. See [Stock Flashforge printers](docs/FLASHFORGE-STOCK.md) |
 | **Elegoo SDCP** | SDCP LAN, opt-in | Centauri Carbon. See [Elegoo printers](docs/ELEGOO.md) |
-| **OctoPrint (Marlin)** | A generic OctoPrint/Marlin profile, plus built-in presets with real dimensions | Ender-3, Ender-3 Pro, Ender-3 V2 and Ender-3 V3 SE presets, plus Anycubic i3 Mega S, Vyper, Chiron, 4Max Pro 2 and first-generation Kobra presets; any other Marlin printer behind OctoPrint uses the generic profile. See [OctoPrint + Marlin](docs/OCTOPRINT-MARLIN.md) |
+| **OctoPrint (Marlin)** | A generic OctoPrint/Marlin profile, plus built-in presets with real dimensions | Ender-3, Ender-3 Pro, Ender-3 V2 and Ender-3 V3 SE presets, plus Anycubic i3 Mega S, Vyper, Chiron, 4Max Pro 2 and first-generation Kobra presets; Sovol SV01, SV01 Pro, SV02, SV03, SV05, SV06, and SV06 Plus on stock Marlin. Any other Marlin printer behind OctoPrint uses the generic profile. See [OctoPrint + Marlin](docs/OCTOPRINT-MARLIN.md) · [Sovol](docs/SOVOL.md) |
 
 **Not listed?** A Klipper printer with Moonraker can use `klipper.generic`; a Marlin printer behind OctoPrint can use `octoprint.marlin`. Set your real bed size, height, nozzle and start/end macros first, because the placeholder numbers will not match your machine. Then open a [printer request](https://github.com/catduckgnaf/print-handy/issues/new?template=printer_report.yml).
 

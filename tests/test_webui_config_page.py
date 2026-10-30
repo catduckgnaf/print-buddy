@@ -145,6 +145,18 @@ class ConfigPageTests(unittest.TestCase):
         self.assertIn('<option value="auto" selected>', body)
         # The sensitivity number input carries the catalog bounds.
         self.assertIn('min="1" max="5"', row_segment(body, "visual_watch.sensitivity"))
+        # Every picker is A–Z by the text shown, not by the stored key order.
+        platform = re.findall(r'<option value="([^"]*)"', row_segment(body, "bot.platform"))
+        self.assertEqual(platform, ["discord", "matrix", "telegram"])
+        model_labels = re.findall(r"<option[^>]*>([^<]*)</option>", row_segment(body, "printer.model"))
+        self.assertEqual(model_labels, sorted(model_labels, key=str.casefold))
+        self.assertGreater(len(model_labels), 1)
+        # Default home model is Flashforge ZMod: Moonraker is the Printer URL
+        # field, and the OctoPrint address stays in the form as a hidden input.
+        self.assertIn('name="services.moonraker_url"', body)
+        self.assertIn('type="hidden" name="services.octoprint_url"', body)
+        self.assertIn('name="printer.zmod_delivery_format"', body)
+        self.assertNotIn('type="hidden" name="printer.zmod_delivery_format"', body)
 
     def test_status_page_links_to_config(self):
         with tempfile.TemporaryDirectory() as tmp:

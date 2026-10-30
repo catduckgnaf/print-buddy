@@ -148,7 +148,7 @@ def _validate_service_url(value, answers):
     from ..setup_wizard import _url
     error = _url(text)
     if error:
-        raise ValueError(f"Moonraker URL {error}, or reply `skip`")
+        raise ValueError(f"Printer URL {error}, or reply `skip`")
     return text
 
 
@@ -230,9 +230,10 @@ def steps(token_env="DISCORD_BOT_TOKEN"):
              "Reply with the numeric Discord user IDs allowed to use Print Handy, separated by "
              "commas (right-click a user > Copy User ID, with Developer Mode on) — or reply "
              "`everyone` to let anyone who can post in the print channel use it.", _validate_user_ids),
-        Step("moonraker_url", "Moonraker URL (optional)",
-             "If this printer runs Klipper/Moonraker, reply with its URL (for example "
-             "http://printer.local:7125). Otherwise reply `skip`.", _validate_service_url),
+        Step("moonraker_url", "Printer URL (optional)",
+             "Reply with the printer's URL. For Klipper this is Moonraker "
+             "(for example http://printer.local:7125), including a Klipper or OctoPi "
+             "host that is not the printer itself. Otherwise reply `skip`.", _validate_service_url),
         Step("spoolman_url", "Spoolman URL (optional)",
              "If you run Spoolman for filament inventory, reply with its URL (for example "
              "http://spoolman.local:7912; the Spoolman included in the Docker stack is "
@@ -298,9 +299,10 @@ def _add_step_defs():
                         "Reply with the new printer's own channel ID. It cannot share the main "
                         "print channel — that one is the first printer's, and approvals in a "
                         "channel can only start that channel's printer.", _validate_new_chat_id),
-        "moonraker_url": Step("moonraker_url", "Moonraker URL (optional)",
-                              "If this printer runs Klipper/Moonraker, reply with its URL (for "
-                              "example http://printer.local:7125). Otherwise reply `skip`.",
+        "moonraker_url": Step("moonraker_url", "Printer URL (optional)",
+                              "Reply with the printer's URL. For Klipper this is Moonraker "
+                              "(for example http://printer.local:7125), including a Klipper or OctoPi "
+                              "host that is not the printer itself. Otherwise reply `skip`.",
                               _validate_service_url),
     }
 
@@ -483,12 +485,12 @@ def _onboard_keys(answers):
 
 _STEP_LABELS_OB = {
     "model": "Printer model", "name": "Display name",
-    "moonraker_url": "Moonraker URL", "zmod_secrets": "Stock side-channel secrets",
-    "lan_gate": "LAN connection", "lan_host": "Printer address (LAN)",
+    "moonraker_url": "Printer URL", "zmod_secrets": "Stock side-channel secrets",
+    "lan_gate": "LAN connection", "lan_host": "Printer URL",
     "lan_serial": "Printer serial", "lan_secret": "LAN access code (stored, never pasted)",
-    "link_host": "Printer address (PrusaLink)", "prusa_secret": "API key (stored, never pasted)",
-    "host": "Printer address", "sdcp_trust": "Network trust",
-    "octoprint_url": "OctoPrint URL", "octo_secret": "API key (stored, never pasted)",
+    "link_host": "Printer URL", "prusa_secret": "API key (stored, never pasted)",
+    "host": "Printer URL", "sdcp_trust": "Network trust",
+    "octoprint_url": "Printer URL", "octo_secret": "API key (stored, never pasted)",
     "stock_secrets": "Serial + check code (stored, never pasted)",
     "probe": "Live connection test",
 }
@@ -519,8 +521,9 @@ def _onboard_step_defs(session, probe_runner=None):
                      f"names. Reply with a name, or `default` for {label!r}.",
                      _validate_ob_name),
         "moonraker_url": Step("moonraker_url", _STEP_LABELS_OB["moonraker_url"],
-                              "Reply with the printer's Moonraker URL (for example "
-                              "http://printer.local:7125). To add the printer offline "
+                              "Reply with the printer's URL. For Klipper this is Moonraker "
+                              "(for example http://printer.local:7125), including a host that "
+                              "is not the printer itself. To add the printer offline "
                               "instead — slicing only, nothing tested — reply `skip`.",
                               _validate_service_url),
         "zmod_secrets": Step(
@@ -579,9 +582,9 @@ def _onboard_step_defs(session, probe_runner=None):
             _validate_trust_ack),
         "octoprint_url": Step(
             "octoprint_url", _STEP_LABELS_OB["octoprint_url"],
-            "Reply with the OctoPrint URL (for example "
-            "http://ender.local:5000), or reply `skip` to add the printer "
-            "offline.",
+            "Reply with the printer's URL. For OctoPrint that is the OctoPrint "
+            "address, including an OctoPi that is not the printer (for example "
+            "http://octopi.local). Reply `skip` to add the printer offline.",
             lambda value, answers: ("" if value.strip().casefold() in ("", "skip")
                                     else _url_or_err(value))),
         "octo_secret": Step(
@@ -1089,7 +1092,7 @@ def _review_text(session):
              f"- Bot mode: `{answers.get('mode')}`",
              "- Print channel and access: the user IDs you entered (not repeated here), "
              "or everyone in the channel if you chose `everyone`",
-             f"- Moonraker URL: {answers.get('moonraker_url') or 'not set'}",
+             f"- Printer URL: {answers.get('moonraker_url') or 'not set'}",
              f"- Spoolman URL: {answers.get('spoolman_url') or 'not set'}",
              f"- Bot token: {'stored in its environment variable' if answers.get('token_stored') else 'not stored yet — the bot cannot log in until it is'}"]
     roster = answers.get("printers") or []

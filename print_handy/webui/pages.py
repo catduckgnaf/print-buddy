@@ -42,7 +42,7 @@ import tempfile
 from pathlib import Path
 
 from . import config as config_api
-from .catalog import choices_for, field_by_id
+from .catalog import choice_label, choices_for, config_page_visible, field_by_id
 
 CSRF_FIELD = "_csrf"
 CONFIRM_FIELD = "confirm"
@@ -114,6 +114,11 @@ def _current(field, field_value, submitted):
     return raw[0] if raw else ""
 
 
+def _ordered_choices(field, choices):
+    """Picker options are A–Z by the text on screen. The stored value is unchanged."""
+    return sorted(choices, key=lambda choice: (choice_label(field, choice).casefold(), choice))
+
+
 def _control(field, value, *, data, disabled):
     name = _esc(field.id)
     dis = " disabled" if disabled else ""
@@ -122,21 +127,22 @@ def _control(field, value, *, data, disabled):
         return (f'<input type="checkbox" id="f-{name}" name="{name}" '
                 f'value="true"{checked}{dis}>')
     if field.kind == "picker":
-        choices = [str(choice) for choice in choices_for(field, data=data)]
+        choices = _ordered_choices(field, [str(choice) for choice in choices_for(field, data=data)])
         if isinstance(value, (list, tuple)):
             selected = {str(item) for item in value}
             options = "".join(
                 f'<option value="{_esc(choice)}"{" selected" if choice in selected else ""}>'
-                f'{_esc(choice)}</option>' for choice in choices)
+                f'{_esc(choice_label(field, choice))}</option>' for choice in choices)
             size = min(max(len(choices), 2), 8)
             return (f'<select id="f-{name}" name="{name}" multiple size="{size}"{dis}>'
                     f'{options}</select>')
         current = "" if value is None else str(value)
         if current and current not in choices:
             choices = [current, *choices]  # show the real value, never a silent substitute
+        choices = _ordered_choices(field, choices)
         options = "".join(
             f'<option value="{_esc(choice)}"{" selected" if choice == current else ""}>'
-            f'{_esc(choice)}</option>' for choice in choices)
+            f'{_esc(choice_label(field, choice))}</option>' for choice in choices)
         return f'<select id="f-{name}" name="{name}"{dis}>{options}</select>'
     if field.kind == "number":
         attrs = ""
@@ -153,6 +159,11 @@ def _control(field, value, *, data, disabled):
 
 def _field_row(field_value, *, data, errors, submitted):
     field = field_value.field
+    if not config_page_visible(field, data):
+        value = _current(field, field_value, submitted)
+        text = "" if value is None else _show(value)
+        return (f'<input type="hidden" name="{_esc(field.id)}" '
+                f'value="{_esc(text)}">')
     disabled = field_value.env_overridden
     badge = PROVENANCE_LABELS.get(field_value.provenance, field_value.provenance)
     parts = [f'<div class="field" id="row-{_esc(field.id)}">',

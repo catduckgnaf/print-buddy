@@ -1,0 +1,44 @@
+# Sovol printers
+
+[Documentation home](README.md) · [Printer profiles](PRINTER-PROFILES.md) · [OctoPrint + Marlin](OCTOPRINT-MARLIN.md)
+
+Sovol is split the same way Flashforge is: one brand for the Klipper path, one for the stock Marlin path. Pick the key that matches the firmware the printer is running today. A machine that can do either, such as the SV06, is listed twice.
+
+| Path | Vendor key | Connection | Printer URL |
+|---|---|---|---|
+| Sovol (Klipper) | `sovol.<model>` | Moonraker | `services.moonraker_url` |
+| Sovol (Marlin/OctoPrint) | `sovol_marlin.<model>` | OctoPrint | `services.octoprint_url` |
+
+The Printer URL is the address Print Handy talks to. It does not have to be on the printer. A Klipper host or an OctoPi on another computer is the right value.
+
+## Models
+
+Build volumes are the printable area and height from the OrcaSlicer Sovol machine profile for that model (the 0.4 mm nozzle file), except the SV03, which has no Orca profile and uses the Marlin firmware printer table (360 x 360 x 410 mm). None of these entries have been checked on a live printer. The slicer templates are Print Handy's generic Klipper or Marlin set with that volume substituted. They are not a tuned copy of Sovol's own profiles, and upstream profile text is not in this repository.
+
+Stock Marlin, also listed under Klipper for a converted machine:
+
+| Model | Bed (mm) | Height (mm) |
+|---|---|---|
+| SV01, SV01 Pro, SV02 | 280 x 240 | 300 |
+| SV03 | 360 x 360 | 410 |
+| SV05 | 220 x 220 | 300 |
+| SV06 | 220 x 220 | 250 on `sovol_marlin.sv06` |
+| SV06 Plus | 300 x 300 | 340 |
+
+`sovol.sv06` keeps the height this project already sliced with (220 mm). Do not treat that as the Orca 250 mm figure.
+
+Factory Klipper (Klipper key only):
+
+| Model | Bed (mm) | Height (mm) | Motion |
+|---|---|---|---|
+| SV06 ACE | 220 x 220 | 250 | CoreXZ |
+| SV06 Plus ACE | 300 x 300 | 350 | CoreXZ |
+| SV07 | 220 x 220 | 250 | Cartesian |
+| SV07 Plus | 300 x 300 | 350 | Cartesian |
+| SV08 | 350 x 350 | 345 | CoreXY |
+| SV08 Max | 500 x 500 | 500 | CoreXY |
+| Zero | 152.4 cube | 152.4 | CoreXY |
+
+SV04 and the M1D are not registered. OrcaSlicer does not ship a machine profile for either, and the M1D's single-head and multi-head volumes are different products.
+
+Start G-code on the Klipper keys is the same `PRINT_START` / `PRINT_END` family as `sovol.sv06`. If the installed firmware uses a different macro, set `printer.start_macro` and `printer.end_macro` before the first print. The Marlin keys use OctoPrint and do not send Moonraker macros.

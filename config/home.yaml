@@ -62,6 +62,9 @@ paths:
 services:
   moonraker_url: ''
   moonraker_ws_url: ''
+  # OctoPrint base URL, including an OctoPi that is not the printer. Empty
+  # unless the selected model connects through OctoPrint.
+  octoprint_url: ''
   # Which camera still images come from (#294): auto follows the printer
   # vendor's rule; or pin moonraker, bambu, go2rtc, or none.
   camera_source: auto

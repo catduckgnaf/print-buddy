@@ -75,10 +75,27 @@ Wiki reason:
 
 <!-- Wiki updated: link the page. Deferred: link a tracking issue. Not applicable: explain why versioned docs cover the change and no separate wiki page needs updating. -->
 
+## Surfaces and variables
+
+<!-- Required by contribution-policy. For every configuration or settings variable this PR adds or changes, give a verdict for each surface below; a variable that exists on some surfaces and not others is how dead options and missing fields ship. A PR that adds or changes no variable chooses "not applicable" and says why. -->
+
+Variables: checked | not applicable
+Variables reason:
+
+<!-- When "checked", name each added or changed variable and its verdict per surface: -->
+<!-- - Defaults tree: present in the model/vendor defaults or settings.OPTIONAL_KEYS -->
+<!-- - Environment loader: PRINT_HANDY__ name in .env.example and accepted by the loader, or file-only by design -->
+<!-- - Web UI catalog: field added in print_handy/webui/catalog.py, or a recorded no-UI verdict with the reason -->
+<!-- - Consuming code: the module or adapter that reads it, named -->
+<!-- - Docs: docs/SETTINGS.md row and any surface doc updated -->
+<!-- - Unraid templates: in-repo template updated, or the catduck-unraid-templates follow-up named -->
+
 ## Reviewer checklist
 
 - [ ] User-visible behavior, configuration and limitations match the docs and release note.
 - [ ] Documentation impact and wiki impact were reviewed, including any exemption or deferral.
 - [ ] Tests cover the changed behavior; reported checks match actual evidence.
 - [ ] Safety/authorization guards and contributor attribution are preserved.
+- [ ] Behavior changes were checked against every adapter/connection in their scope (the printer-scope rule: a change for one printer family is verified for all families it touches, not only the one at hand).
+- [ ] Registry/data changes keep their parity and drift tests green, or the exemption list is updated with a tracking reference.
 - [ ] Required current-head CI checks pass before merge; no deployment or live action is implied.

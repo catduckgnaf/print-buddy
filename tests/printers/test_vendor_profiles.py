@@ -71,7 +71,7 @@ def load(environ=None, local=False):
 # ----------------------------------------------------------------------------- layout
 
 def test_every_printer_sits_under_its_vendor_package():
-    assert set(printers.VENDORS) == {"anycubic", "bambulab", "creality", "elegoo", "elegoo_sdcp", "flashforge", "flashforge_stock", "klipper", "octoprint", "prusa", "qidi", "sovol"}
+    assert set(printers.VENDORS) == {"anycubic", "bambulab", "creality", "elegoo", "elegoo_sdcp", "flashforge", "flashforge_stock", "klipper", "octoprint", "prusa", "qidi", "sovol", "sovol_marlin"}
     for key, model in printers.MODELS.items():
         assert model.vendor is printers.VENDORS[model.vendor_key]
         assert key == f"{model.vendor.key}.{model.printer_key}"
@@ -193,7 +193,14 @@ def test_printer_adapters_expose_display_and_firmware_names():
 
 
 def test_unique_printer_name_alone_resolves():
+    assert load({"PRINT_HANDY__PRINTER__MODEL": "zero"})["printer"]["model"] == "sovol.zero"
+    # sv06 was unique before sovol_marlin.sv06 existed; existing configs keep meaning the Klipper one.
     assert load({"PRINT_HANDY__PRINTER__MODEL": "sv06"})["printer"]["model"] == "sovol.sv06"
+    assert load({"PRINT_HANDY__PRINTER__MODEL": "sv06", "PRINT_HANDY__PRINTER__VENDOR": "sovol_marlin"}
+                )["printer"]["model"] == "sovol_marlin.sv06"
+    # A name that was never unique is still refused rather than guessed.
+    with pytest.raises(settings.SettingsError, match="several vendors"):
+        load({"PRINT_HANDY__PRINTER__MODEL": "sv01"})
     # ad5x exists for both the ZMod vendor and the stock vendor, so the bare name is refused.
     with pytest.raises(settings.SettingsError, match="several vendors"):
         load({"PRINT_HANDY__PRINTER__MODEL": "ad5x"})
@@ -313,3 +320,25 @@ def test_klipper_and_zmod_start_code_never_passes_for_bambu():
     assert start_code_problems(clean, stock) == []
     assert start_code_problems(clean + "START_PRINT EXTRUDER_TEMP=215\n", stock)[0].count("START_PRINT") == 1
 
+
+
+def test_every_marlin_template_homes_before_it_moves():
+    """A stock-Marlin start sequence must home (G28) before positioning: Marlin
+    runs the template unchanged, and an unhomed printer prints from a wrong origin."""
+    import json
+    from pathlib import Path
+    root = Path(printers.__file__).resolve().parent.parent / "templates" / "orca"
+    checked = 0
+    for key, model in printers.MODELS.items():
+        if model.vendor.connection != "octoprint":
+            continue
+        machine = root / key.replace(".", "_") / "machine.json"
+        if not machine.is_file():
+            continue
+        lines = [line.split(";")[0].strip() for line in
+                 json.loads(machine.read_text())["machine_start_gcode"].splitlines()]
+        assert "G28" in lines, key
+        moves = [i for i, line in enumerate(lines) if line.split(" ")[0] in ("G0", "G1", "G90")]
+        assert not moves or lines.index("G28") < moves[0], key
+        checked += 1
+    assert checked >= 9

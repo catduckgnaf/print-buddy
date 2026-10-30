@@ -157,13 +157,31 @@ def _control(field, value, *, data, disabled):
             f'value="{_esc("" if value is None else value)}"{dis}>')
 
 
+def _form_value(value):
+    """A value as parse_form reads it back: raw, never the display text
+    (_show's "(empty)" would come back as a real value and fail to save)."""
+    if value is None or value is False:
+        return ""
+    if value is True:
+        return "true"
+    if isinstance(value, float) and value == int(value):
+        return str(int(value))
+    return str(value)
+
+
+def _hidden_inputs(field, value):
+    """A field the page does not show for this model, kept in the form so a
+    save does not clear it: one input per list item, raw values otherwise."""
+    name = _esc(field.id)
+    items = value if isinstance(value, (list, tuple)) else [value]
+    return "".join(f'<input type="hidden" name="{name}" value="{_esc(_form_value(item))}">'
+                   for item in items)
+
+
 def _field_row(field_value, *, data, errors, submitted):
     field = field_value.field
     if not config_page_visible(field, data):
-        value = _current(field, field_value, submitted)
-        text = "" if value is None else _show(value)
-        return (f'<input type="hidden" name="{_esc(field.id)}" '
-                f'value="{_esc(text)}">')
+        return _hidden_inputs(field, _current(field, field_value, submitted))
     disabled = field_value.env_overridden
     badge = PROVENANCE_LABELS.get(field_value.provenance, field_value.provenance)
     parts = [f'<div class="field" id="row-{_esc(field.id)}">',
@@ -372,7 +390,8 @@ def parse_form(form, field_values, *, only=None):
                 continue
         else:
             value = (raw[0] if raw else "").strip()
-        if value != field_value.value:
+        # An optional key absent from every layer (None) submitted empty is not a change.
+        if value != field_value.value and not (value == "" and field_value.value is None):
             changes[field] = value
     return changes, submitted, errors
 

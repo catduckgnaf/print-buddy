@@ -43,4 +43,6 @@ Factory Klipper (Klipper key only):
 
 The SV04 is an IDEX machine, and the M1D is a multi-tool machine. These catalog entries are the single-mode or single-toolhead volume only. They do not slice copy mode, mirror mode, or a tool change.
 
-Start G-code on the Klipper keys is the same `PRINT_START` / `PRINT_END` family as `sovol.sv06`. If the installed firmware uses a different macro, set `printer.start_macro` and `printer.end_macro` before the first print. The Marlin keys use OctoPrint and do not send Moonraker macros.
+Start G-code on the Klipper keys is the same `PRINT_START` / `PRINT_END` family as `sovol.sv06`. If the installed firmware uses a different macro, set `printer.start_macro` and `printer.end_macro` before the first print. The Marlin keys use OctoPrint and do not send Moonraker macros; their start G-code heats, then homes (`G28`) before it prints.
+
+A config written before this split with a bare `model: sv06` keeps meaning `sovol.sv06`. Use `sovol_marlin.sv06` (or `vendor: sovol_marlin`) for the stock Marlin SV06.

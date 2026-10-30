@@ -170,7 +170,9 @@ class CatalogTests(unittest.TestCase):
         for field in CATALOG:
             with self.subTest(field=field.id):
                 self.assertIn(field.section, data)
-                self.assertIn(field.key, data[field.section])
+                # An optional key (settings.OPTIONAL_KEYS) is a real setting absent from the defaults tree.
+                if (field.section, field.key) not in settings.OPTIONAL_KEYS:
+                    self.assertIn(field.key, data[field.section])
                 self.assertTrue(field.label)
                 self.assertTrue(field.help)
                 self.assertTrue(field.restart_required)

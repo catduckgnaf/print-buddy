@@ -70,8 +70,6 @@ hermes_restart_helper = "~/.hermes/skills/autonomous-ai-agents/hermes-safe-resta
 moonraker_url = ""
 # Derived from moonraker_url when empty.
 moonraker_ws_url = ""
-# OctoPrint base URL, including an OctoPi that is not the printer.
-octoprint_url = ""
 # Which camera still images come from (#294): auto follows the printer
 # vendor's rule; or pin moonraker, bambu, go2rtc, or none.
 camera_source = "auto"

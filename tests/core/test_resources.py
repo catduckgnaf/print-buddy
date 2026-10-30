@@ -24,6 +24,7 @@ def clean_env(monkeypatch, tmp_path_factory):
         monkeypatch.delenv(name, raising=False)
     # An empty cgroup root: the tests never read the machine's real limits unless they set their own.
     monkeypatch.setattr(resources, 'CGROUP_ROOT', tmp_path_factory.mktemp('cgroup'))
+    monkeypatch.setattr(resources, 'affinity_cpus', lambda: list(range(8)))  # the host's CPUs, whatever it has
 
 
 # --- CPU budget ---------------------------------------------------------------------------
@@ -33,6 +34,13 @@ def clean_env(monkeypatch, tmp_path_factory):
 def test_cgroup_v2_quota(tmp_path, text, expected):
     write(tmp_path, 'cpu.max', text)
     assert resources.thread_budget({}, tmp_path) == expected
+
+
+def test_quota_above_the_cpus_this_process_may_use_is_capped(tmp_path, monkeypatch):
+    monkeypatch.setattr(resources, 'affinity_cpus', lambda: [0, 1])
+    write(tmp_path, 'cpu.max', '800000 100000\n')
+    assert resources.thread_budget({}, tmp_path) == 2
+    assert resources.thread_budget({resources.THREADS_ENV: '6'}, tmp_path) == 6  # an explicit count still wins
 
 
 def test_cgroup_v1_quota(tmp_path):

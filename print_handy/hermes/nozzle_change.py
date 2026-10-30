@@ -126,6 +126,26 @@ def _job_state(status: dict[str, Any]) -> str:
     return str((status.get("print_stats") or {}).get("state") or "unknown").casefold()
 
 
+def _extruders(status: dict[str, Any]) -> list[tuple[str, dict[str, Any]]]:
+    """Return all reported extruder objects in status in stable order.
+
+    Detects 'extruder', 'extruder1', 'extruder2', etc., matching Moonraker/Klipper
+    and multi-tool conventions.
+    """
+    if not isinstance(status, dict):
+        return []
+    extruders = []
+    if isinstance(status.get("extruder"), dict):
+        extruders.append(("extruder", status["extruder"]))
+    extras = []
+    for k, v in status.items():
+        if k.startswith("extruder") and k[8:].isdigit() and isinstance(v, dict):
+            extras.append((int(k[8:]), k, v))
+    for _, k, v in sorted(extras):
+        extruders.append((k, v))
+    return extruders
+
+
 def _extruder(status: dict[str, Any]) -> dict[str, Any]:
     return status.get("extruder") or {}
 
@@ -232,15 +252,39 @@ def cooldown(*, gcode_sender: Callable[[str], Any] | None = None,
                 st = _state_view(reader, printer_id)
             except Exception:
                 st = {}
-            ext = _extruder(st)
-            last = ext.get("temperature")
-            if isinstance(last, (int, float)) and float(last) < SAFE_TEMP_C:
-                if float(ext.get("target") or 0) != 0.0:
-                    return False, (f"Hotend readback is {float(last):.0f} °C but the heater target is "
-                                   f"{ext.get('target')!r}, not 0. Check the printer; not recording the change yet.")
-                return True, f"Hotend is at {float(last):.0f} °C with the heater off. Safe to record the new nozzle."
+            all_ext = _extruders(st)
+            if not all_ext:
+                # Fallback if no extruder dicts are indexed as dicts
+                ext = _extruder(st)
+                all_ext = [("extruder", ext)]
+
+            # Check if all reported nozzles are cool and targets are 0
+            hot_nozzles = []
+            nonzero_targets = []
+            for name, ext in all_ext:
+                t = ext.get("temperature")
+                tgt = float(ext.get("target") or 0)
+                if tgt != 0.0:
+                    nonzero_targets.append((name, ext.get("target")))
+                if not isinstance(t, (int, float)) or float(t) >= SAFE_TEMP_C:
+                    hot_nozzles.append((name, t))
+
+            primary_temp = all_ext[0][1].get("temperature")
+            last = primary_temp if len(all_ext) == 1 else {name: ext.get("temperature") for name, ext in all_ext}
+
+            if not hot_nozzles:
+                if nonzero_targets:
+                    targets_desc = ", ".join(f"{name}={tgt!r}" for name, tgt in nonzero_targets)
+                    return False, (f"All reported nozzles are below {SAFE_TEMP_C} °C but heater target(s) are "
+                                   f"non-zero ({targets_desc}). Check the printer; not recording the change yet.")
+                temps_desc = f"{float(primary_temp or 0):.0f} °C" if len(all_ext) == 1 else ", ".join(
+                    f"{name}: {float(ext.get('temperature') or 0):.0f} °C" for name, ext in all_ext
+                )
+                label = "Hotend is" if len(all_ext) == 1 else "All reported nozzles are"
+                return True, f"{label} at {temps_desc} with the heater off. Safe to record the new nozzle."
+
             if time.monotonic() >= deadline:
-                return False, (f"Hotend is still at {last!r} after {timeout_s:.0f}s (needs < {SAFE_TEMP_C} °C). "
+                return False, (f"Nozzle(s) still hot after {timeout_s:.0f}s (needs < {SAFE_TEMP_C} °C, current: {last!r}). "
                                "Nothing was recorded. Check the printer and re-run /nozzle change to finish.")
             time.sleep(poll_s)
     finally:

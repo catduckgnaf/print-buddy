@@ -231,6 +231,43 @@ def test_calibration_prompts_cover_z_mesh_and_pressure_advance():
     assert "historical only" in text and "Bed Mesh Leveling" in text
 
 
+def test_cooldown_multi_nozzle_requires_all_below_50():
+    sent = []
+    # Both nozzles hot initially, then extruder cools down but extruder1 stays hot
+    def partial_cool_reader():
+        return {
+            "extruder": {"temperature": 40.0, "target": 0.0},
+            "extruder1": {"temperature": 150.0, "target": 0.0},
+        }
+
+    ok, detail = nc.cooldown(gcode_sender=sent.append, reader=partial_cool_reader,
+                             timeout_s=0.05, poll_s=0.01)
+    assert not ok and "Nozzle(s) still hot" in detail
+    assert sent == ["M104 S0"]
+
+    # Target non-zero on extruder1 even if temperature is low
+    def nonzero_target_reader():
+        return {
+            "extruder": {"temperature": 40.0, "target": 0.0},
+            "extruder1": {"temperature": 45.0, "target": 50.0},
+        }
+
+    ok, detail = nc.cooldown(gcode_sender=lambda s: None, reader=nonzero_target_reader,
+                             timeout_s=0.05, poll_s=0.01)
+    assert not ok and "heater target(s) are non-zero" in detail
+
+    # Both cooled and target 0
+    def fully_cooled_reader():
+        return {
+            "extruder": {"temperature": 42.0, "target": 0.0},
+            "extruder1": {"temperature": 44.0, "target": 0.0},
+        }
+
+    ok, detail = nc.cooldown(gcode_sender=lambda s: None, reader=fully_cooled_reader,
+                             timeout_s=5, poll_s=0.01)
+    assert ok and "All reported nozzles are at extruder: 42 °C, extruder1: 44 °C" in detail
+
+
 def test_commands_table_registers_nozzle():
     from print_handy.bot import commands, llm
     cmd = commands.by_name("nozzle")

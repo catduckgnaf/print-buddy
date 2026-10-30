@@ -134,5 +134,49 @@ class PostReleaseSurfacesWorkflowContract(unittest.TestCase):
         self.assertIn("Docs sync check", run)
 
 
+class PostReleaseLinksPreReleaseChecklist(unittest.TestCase):
+    """#657: when the pre-release checklist already opened a
+    "Release checklist: <tag>" issue for the version, the post-release
+    check records its verification there instead of opening a competing
+    "Post-release surfaces check" issue — one checklist per version."""
+
+    def test_checklist_step_looks_up_the_pre_release_issue(self):
+        run = run_block()
+        self.assertIn('pre_title="Release checklist: $tag"', run)
+        # The pre-release lookup precedes issue creation, and the
+        # pre-existing branch comments on that issue rather than
+        # creating a new one.
+        self.assertLess(
+            run.index('pre_title="Release checklist: $tag"'),
+            run.index("issue create"),
+        )
+        self.assertIn('gh issue comment "$pre_existing"', run)
+        self.assertIn(
+            "Recorded the post-release surfaces check on pre-release "
+            "checklist issue",
+            run,
+        )
+
+    def test_own_issue_still_wins_when_it_exists(self):
+        run = run_block()
+        # The existing surfaces issue is looked up first; the
+        # pre-release lookup only runs when there is none.
+        self.assertLess(
+            run.index('issue_title="Post-release surfaces check: $tag"'),
+            run.index('pre_title="Release checklist: $tag"'),
+        )
+        self.assertIn('if [ -z "$existing" ]; then', run)
+        self.assertIn('gh issue comment "$existing"', run)
+
+    def test_docs_sync_note_falls_back_to_the_pre_release_issue(self):
+        workflow = load_workflow()
+        run = workflow["jobs"]["surfaces"]["steps"][1]["run"]
+        self.assertIn('"Release checklist: $tag"', run)
+        self.assertLess(
+            run.index('issue_title="Post-release surfaces check: $tag"'),
+            run.index('"Release checklist: $tag"'),
+        )
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -227,6 +227,8 @@ class OverrideTests(unittest.TestCase):
             "webui": {"enabled", "host", "port", "access_token_env"},
             "live_stream": {"enabled", "voice_channel_id", "auto_start_on_print", "max_height", "fps",
                             "max_bitrate_kbps", "encoder", "empty_timeout_s", "activity_origin", "port"},
+            "notify": {"mqtt_enabled", "mqtt_host", "mqtt_port", "mqtt_topic", "mqtt_username",
+                       "ntfy_enabled", "ntfy_url", "ntfy_topic"},
             "maintenance": {"quick_hours", "full_hours", "full_days"},
             "delivery": {"methods"},
             "nozzle_temp_offsets": {"brass", "hardened_steel", "stainless_steel", "ruby", "tungsten_carbide", "diamond"},
@@ -270,6 +272,13 @@ class OverrideTests(unittest.TestCase):
         self.assertEqual(settings.load(local=False, environ={})["timelapse"]["mode"], "off")
         with_moonraker = self.toml("services:\n  moonraker_url: http://printer.local:7125\n", "moonraker.yaml")
         self.assertEqual(settings.load(local=with_moonraker, environ={})["timelapse"]["mode"], "rendered")
+        # 2.2.2: with no Moonraker URL, an enabled in-container capture
+        # derives container — the mode now gates the capture path, and
+        # "off" would have vetoed the capture the operator turned on.
+        capture_on = self.toml("timelapse:\n  capture_enabled: true\n", "capture.yaml")
+        self.assertEqual(settings.load(local=capture_on, environ={})["timelapse"]["mode"], "container")
+        env_capture = {"PRINT_HANDY__TIMELAPSE__CAPTURE_ENABLED": "true"}
+        self.assertEqual(settings.load(local=False, environ=env_capture)["timelapse"]["mode"], "container")
         # An explicit value always wins over the derivation, and the
         # environment overrides the file like any other scalar.
         explicit = self.toml("timelapse:\n  mode: container\n", "container.yaml")
@@ -585,6 +594,63 @@ class SettingsCliTests(unittest.TestCase):
 
     def test_unknown_key_fails(self):
         self.assertNotEqual(self.run_cli("get", "services.nope").returncode, 0)
+
+
+class NotifySettingsTests(unittest.TestCase):
+    """The [notify] section (#622): in the defaults tree since 2.2.2, both
+    channels off by default, credentials never settings."""
+
+    DEFAULTS = {"mqtt_enabled": False, "mqtt_host": "", "mqtt_port": 1883,
+                "mqtt_topic": "print-handy", "mqtt_username": "",
+                "ntfy_enabled": False, "ntfy_url": "", "ntfy_topic": ""}
+
+    def load_local(self, text, environ=None):
+        with tempfile.TemporaryDirectory() as tmp:
+            local = Path(tmp) / "local.yaml"
+            local.write_text(text)
+            return settings.load(local=local, environ=environ or {})
+
+    def test_absent_section_yields_the_defaults(self):
+        self.assertEqual(self.load_local("visual_watch:\n  sensitivity: 3\n")["notify"],
+                         self.DEFAULTS)
+
+    def test_values_load_and_normalise(self):
+        data = self.load_local(
+            "notify:\n  mqtt_enabled: true\n  mqtt_host: broker.local\n  mqtt_port: 0\n"
+            "  mqtt_topic: /house/prints/\n  ntfy_enabled: true\n"
+            "  ntfy_url: https://ntfy.sh/\n  ntfy_topic: my-prints\n")
+        notify = data["notify"]
+        self.assertEqual(notify["mqtt_port"], 0)  # 0 reads as 1883 at publish time
+        self.assertEqual(notify["mqtt_topic"], "house/prints")
+        self.assertEqual(notify["ntfy_url"], "https://ntfy.sh")
+        self.assertEqual(notify["ntfy_topic"], "my-prints")
+
+    def test_env_override_loads(self):
+        data = self.load_local("visual_watch:\n  sensitivity: 3\n",
+                               environ={"PRINT_HANDY__NOTIFY__NTFY_ENABLED": "true",
+                                        "PRINT_HANDY__NOTIFY__NTFY_URL": "https://ntfy.sh"})
+        self.assertIs(data["notify"]["ntfy_enabled"], True)
+
+    def test_ntfy_enabled_without_a_url_is_refused(self):
+        with self.assertRaisesRegex(settings.SettingsError, "ntfy_enabled is true but ntfy_url is empty"):
+            self.load_local("notify:\n  ntfy_enabled: true\n")
+
+    def test_bad_values_are_refused(self):
+        for text in ("notify:\n  mqtt_enabled: sometimes\n",
+                     "notify:\n  mqtt_port: 70000\n",
+                     "notify:\n  mqtt_port: -1\n",
+                     "notify:\n  ntfy_url: ntfy.sh\n",
+                     "notify:\n  mqtt_host: 42\n"):
+            with self.subTest(text=text):
+                with self.assertRaisesRegex(settings.SettingsError, "notify"):
+                    self.load_local(text)
+
+    def test_an_older_file_with_only_notify_keys_still_loads(self):
+        # Pre-2.2.2 the section existed only via OPTIONAL_KEYS; a file
+        # carrying it must keep loading now that it is in the tree.
+        data = self.load_local("notify:\n  mqtt_enabled: true\n  mqtt_host: broker.local\n")
+        self.assertEqual(data["notify"]["mqtt_host"], "broker.local")
+        self.assertEqual(data["notify"]["ntfy_topic"], "")
 
 
 class LiveStreamSettingsTests(unittest.TestCase):

@@ -712,6 +712,29 @@ class BeginExplicitUrlTests(unittest.TestCase):
             url="http://192.0.2.10:8080/?action=stream", fetch=lambda url: JPEG))
         self.assertFalse((self.cache / "timelapse").exists())
 
+    def test_mode_off_and_camera_none_begin_nothing(self):
+        # 2.2.2 wiring: [timelapse] mode and [services] camera_source
+        # were dead options at this seam — mode=off stopped nothing and
+        # camera_source=none still captured. Both gates now apply,
+        # including to an explicit per-printer URL.
+        data = make_data(self.cache, mode="off")
+        self.assertIsNone(timelapse_capture.begin(
+            "job:9", "a.gcode", data=data,
+            url="http://192.0.2.10:8080/?action=stream", fetch=lambda url: JPEG))
+        data = make_data(self.cache)
+        data["services"]["camera_source"] = "none"
+        self.assertIsNone(timelapse_capture.begin(
+            "job:9", "a.gcode", data=data,
+            url="http://192.0.2.10:8080/?action=stream", fetch=lambda url: JPEG))
+        self.assertFalse((self.cache / "timelapse").exists())
+
+    def test_mode_container_begins_without_the_capture_switch(self):
+        data = make_data(self.cache, capture_enabled=False, mode="container")
+        session = timelapse_capture.begin("job:9", "a.gcode", data=data,
+                                          fetch=lambda url: JPEG)
+        self.assertIsNotNone(session)
+        session.stop()
+
 
 if __name__ == "__main__":
     unittest.main()

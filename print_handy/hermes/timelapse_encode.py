@@ -269,12 +269,16 @@ def captured_video(job_key, *, data=None, max_bytes, log=None, probe=None,
     capture was off, no finished capture matches the job, it holds no
     frames, or every encoder failed. An already-assembled video that
     still fits is reused, so a retried postprocess does not re-encode.
+
+    The gate is go2rtc.capture_active ([timelapse] mode over
+    capture_enabled, 2.2.2), the same gate sessions open under, so a
+    mode change cannot strand or resurrect a capture.
     """
     log = log or (lambda message: None)
     try:
         data = _config.cfg() if data is None else data
         from .. import go2rtc
-        if not go2rtc.capture_enabled(data):
+        if not go2rtc.capture_active(data):
             return None
         directory = find_capture(job_key, data=data)
         if directory is None:

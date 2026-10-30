@@ -1,6 +1,9 @@
 """Offline tests for the visual watchdog trigger policy."""
 import sys
 from pathlib import Path
+
+import pytest
+
 from print_handy.hermes import moonraker_event_listener as mel
 from print_handy.hermes import print_alert_buttons as pab
 
@@ -394,6 +397,50 @@ def test_watchdog_snapshot_falls_back_direct_when_the_fanout_fails(monkeypatch):
     seen = _record_snapshot_requests(monkeypatch, FANOUT_URL, fail_urls={FANOUT_URL})
     assert mel._camera_snapshot_bytes() == _jpeg()
     assert seen == [FANOUT_URL, DIRECT_URL]  # sequential fallback, never parallel
+
+
+# -- camera_source pin (2.2.2 wiring; the pin was a dead option before) -------
+
+def _pin_config(monkeypatch, pin):
+    cfg = {"services": {"camera_source": pin}}
+    monkeypatch.setattr(mel, "_config", type("Cfg", (), {"cfg": staticmethod(lambda: cfg)})())
+
+
+def test_watchdog_snapshot_pin_none_takes_no_image(monkeypatch):
+    seen = _record_snapshot_requests(monkeypatch, FANOUT_URL)
+    _pin_config(monkeypatch, "none")
+    with pytest.raises(ValueError, match="camera_source is none"):
+        mel._camera_snapshot_bytes()
+    assert seen == []  # neither source was opened
+
+
+def test_watchdog_snapshot_pin_moonraker_never_uses_the_fanout(monkeypatch):
+    seen = _record_snapshot_requests(monkeypatch, FANOUT_URL)
+    _pin_config(monkeypatch, "moonraker")
+    assert mel._camera_snapshot_bytes() == _jpeg()
+    assert seen == [DIRECT_URL]
+
+
+def test_watchdog_snapshot_pin_go2rtc_uses_only_the_fanout(monkeypatch):
+    seen = _record_snapshot_requests(monkeypatch, FANOUT_URL)
+    _pin_config(monkeypatch, "go2rtc")
+    assert mel._camera_snapshot_bytes() == _jpeg()
+    assert seen == [FANOUT_URL]
+    # And when the fan-out is not running, the pin names itself instead
+    # of silently falling back to the direct URL.
+    seen = _record_snapshot_requests(monkeypatch, None)
+    _pin_config(monkeypatch, "go2rtc")
+    with pytest.raises(ValueError, match="camera_source is go2rtc"):
+        mel._camera_snapshot_bytes()
+    assert seen == []
+
+
+def test_watchdog_snapshot_pin_bambu_names_the_mismatch(monkeypatch):
+    seen = _record_snapshot_requests(monkeypatch, FANOUT_URL)
+    _pin_config(monkeypatch, "bambu")
+    with pytest.raises(ValueError, match="camera_source is bambu"):
+        mel._camera_snapshot_bytes()
+    assert seen == []
 
 
 # -- #476: dark frames -------------------------------------------------------

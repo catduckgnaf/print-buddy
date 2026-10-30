@@ -6,6 +6,11 @@ name: Post-release surfaces check
 # hints, and requires an explicit "updated / verified-no-change" decision
 # for every surface before it can close (#394).
 #
+# If the pre-release checklist workflow (#657) already opened a
+# "Release checklist: <tag>" issue for this version before tagging, this
+# check is recorded on THAT issue as a comment instead — one checklist
+# issue per version, never two competing ones.
+#
 # Why this exists: #355 removed the -light variant (scripts/install-light.sh
 # and docs/INSTALL-LIGHT.md, per #353), but the GitHub Pages site kept
 # serving the Light install guide until it was removed by hand. A release
@@ -169,12 +174,25 @@ jobs:
 
           cat body.md >> "$GITHUB_STEP_SUMMARY"
 
-          # One checklist issue per release: update it, never duplicate it.
+          # One checklist issue per release: update it, never duplicate
+          # it — and when the pre-release checklist (#657) already
+          # opened a "Release checklist: $tag" issue for this version,
+          # record this check there instead of opening a competing one.
+          # (Release tags in this repo are the bare version, so the
+          # pre-release issue title matches the tag string exactly.)
           issue_title="Post-release surfaces check: $tag"
           existing="$(gh issue list --repo "$repo" --state open --limit 100 \
             --json number,title \
             | jq -r --arg t "$issue_title" \
               '[.[] | select(.title == $t) | .number] | first // empty')"
+          pre_title="Release checklist: $tag"
+          pre_existing=""
+          if [ -z "$existing" ]; then
+            pre_existing="$(gh issue list --repo "$repo" --state open --limit 100 \
+              --json number,title \
+              | jq -r --arg t "$pre_title" \
+                '[.[] | select(.title == $t) | .number] | first // empty')"
+          fi
           if [ -n "$existing" ]; then
             {
               echo "Surfaces check re-run for $tag (release event or manual dispatch). Current checklist:"
@@ -183,6 +201,14 @@ jobs:
             } > update.md
             gh issue comment "$existing" --repo "$repo" --body-file update.md
             echo "Updated existing checklist issue #$existing for $tag."
+          elif [ -n "$pre_existing" ]; then
+            {
+              echo "Post-release surfaces check for $tag (the release is published). This version's pre-release checklist is its single checklist issue (#657), so the post-release verification is recorded here instead of on a separate issue:"
+              echo ""
+              cat body.md
+            } > update.md
+            gh issue comment "$pre_existing" --repo "$repo" --body-file update.md
+            echo "Recorded the post-release surfaces check on pre-release checklist issue #$pre_existing for $tag."
           else
             gh issue create --repo "$repo" --title "$issue_title" \
               --label documentation --label enhancement \
@@ -213,14 +239,22 @@ jobs:
             note="Docs auto-sync for $tag was **attempted but the dispatch failed** (the \`DOCS_SYNC_TOKEN\` secret may lack access to catduckgnaf/print-handy-docs). Sync by hand instead: open the [Docs auto-sync workflow]($manual_link), run it with ref \`$tag\`, and merge the sync PR it opens."
           fi
 
-          # Record the outcome on this release's checklist issue; if the
-          # issue cannot be found, fall back to the step summary. Either
-          # way this step never fails the run.
+          # Record the outcome on this release's checklist issue — its
+          # own surfaces issue, or the pre-release checklist issue the
+          # first step recorded this check on (#657); if neither can be
+          # found, fall back to the step summary. Either way this step
+          # never fails the run.
           issue_title="Post-release surfaces check: $tag"
           existing="$(gh issue list --repo "$repo" --state open --limit 100 \
             --json number,title \
             | jq -r --arg t "$issue_title" \
               '[.[] | select(.title == $t) | .number] | first // empty')"
+          if [ -z "$existing" ]; then
+            existing="$(gh issue list --repo "$repo" --state open --limit 100 \
+              --json number,title \
+              | jq -r --arg t "Release checklist: $tag" \
+                '[.[] | select(.title == $t) | .number] | first // empty')"
+          fi
           if [ -n "$existing" ]; then
             gh issue comment "$existing" --repo "$repo" --body "$note" \
               || echo "$note" >> "$GITHUB_STEP_SUMMARY"

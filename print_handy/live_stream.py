@@ -137,6 +137,18 @@ VAAPI_DEVICE = "/dev/dri/renderD128"
 # the Activity page (print_handy.live_activity) requests it, so the
 # page can never ask for a stream the container does not publish.
 GO2RTC_STREAM_NAME = "camera"
+# The transcoded live-view stream (#311, wired in 2.2.2): when a
+# [live_stream] transcode value is set away from its default, go2rtc's
+# generated config publishes this second stream — an ffmpeg transcode
+# of the raw GO2RTC_STREAM_NAME restream, so the camera still gets
+# exactly one upstream pull and timelapse capture keeps the camera's
+# own stream — and the Activity page requests this name instead.
+GO2RTC_LIVE_STREAM_NAME = "camera-live"
+# The [live_stream] transcode values and their defaults. While all four
+# hold their defaults the live view is the raw relay; changing any one
+# engages the transcode with all four current values applied.
+LIVE_TRANSCODE_DEFAULTS = {"max_height": 720, "fps": 15,
+                           "max_bitrate_kbps": 2500, "encoder": "auto"}
 
 _SENSITIVE_QUERY_KEYS = frozenset({
     "token", "api_key", "apikey", "api-key", "access_token", "access-token",
@@ -740,6 +752,25 @@ def _section_value(section, key, default):
     return default if value is None else value
 
 
+def transcode_engaged(section) -> bool:
+    """True when a [live_stream] transcode value is set away from its default.
+
+    The four values (max_height, fps, max_bitrate_kbps, encoder) act as
+    one switch: at their defaults the live view is go2rtc's relay of the
+    camera stream as it arrives; changing any one makes
+    print_handy.go2rtc publish the transcoded GO2RTC_LIVE_STREAM_NAME
+    stream with all four applied, and the Activity page plays that one.
+    Missing keys read as the defaults, like everywhere in this module.
+    """
+    return any(_section_value(section, key, default) != default
+               for key, default in LIVE_TRANSCODE_DEFAULTS.items())
+
+
+def feed_stream_name(section) -> str:
+    """The go2rtc stream the live Activity page plays for this section."""
+    return GO2RTC_LIVE_STREAM_NAME if transcode_engaged(section) else GO2RTC_STREAM_NAME
+
+
 def start_problem(section):
     """Why /print-live start cannot proceed, or None when it can.
 
@@ -779,10 +810,25 @@ def _duration(seconds):
 
 
 def _plan_line(section):
-    return (f"Feed plan: {_section_value(section, 'encoder', 'auto')} encoder, "
-            f"{_section_value(section, 'max_height', 720)}p at "
-            f"{_section_value(section, 'fps', 15)} fps, "
-            f"{_section_value(section, 'max_bitrate_kbps', 2500)} kbit/s cap.")
+    """What the live feed actually is, from the section's transcode values.
+
+    At the defaults the feed is the camera stream relayed as it arrives.
+    With any transcode value changed, go2rtc publishes the transcoded
+    stream the Activity plays (print_handy.go2rtc's generated config),
+    so the plan sentence names real, applied values — it is no longer
+    a description of a plan nothing runs (the 2.2.1 audit found the old
+    wording printed the values while the relay ignored them).
+    """
+    if transcode_engaged(section):
+        return (f"Feed plan: {_section_value(section, 'encoder', 'auto')} encoder, "
+                f"{_section_value(section, 'max_height', 720)}p at "
+                f"{_section_value(section, 'fps', 15)} fps, "
+                f"{_section_value(section, 'max_bitrate_kbps', 2500)} kbit/s cap — "
+                "the live view is transcoded to this plan; timelapse capture "
+                "keeps the camera's own stream.")
+    return ("Feed: the camera stream is relayed to the live view as it arrives; "
+            "change the live feed height, frame rate, bitrate cap or encoder "
+            "and the live view is transcoded to those values instead.")
 
 
 def pointer_text(session, section):

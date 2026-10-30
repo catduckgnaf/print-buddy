@@ -306,5 +306,139 @@ class ServerRouteTests(unittest.TestCase):
             self.assertNotIn(OTHER_SECRET, body)
 
 
+FAKE_LIVE = {"state": "printing", "filename": "benchy.gcode", "progress": 0.42,
+             "hotend_c": 219.8, "bed_c": 60.1, "hotend_target_c": 220.0,
+             "bed_target_c": 60.0, "layer": 12, "total_layer": 90}
+
+
+class PrinterStatusTests(unittest.TestCase):
+    """#664: status.printer_status — shape, defaults, unavailable, 404."""
+
+    def test_known_printer_shape_and_passthrough(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            data = load_settings(tmp)
+            code, body = status.printer_status(
+                data, "flashforge-ad5x", read=lambda adapter, view: dict(FAKE_LIVE))
+        self.assertEqual(code, 200)
+        self.assertTrue(body["ok"])
+        self.assertEqual(body["id"], "flashforge-ad5x")
+        self.assertEqual(body["model"], "flashforge.ad5x")
+        self.assertEqual(body["vendor"], "flashforge")
+        self.assertEqual(body["connection"], "moonraker")
+        shown = body["status"]
+        self.assertEqual(shown["state"], "printing")
+        self.assertEqual(shown["filename"], "benchy.gcode")
+        self.assertEqual(shown["progress"], 0.42)
+        self.assertEqual(shown["hotend_c"], 219.8)
+        # Adapter-provided optional fields pass through under their own names.
+        self.assertEqual(shown["hotend_target_c"], 220.0)
+        self.assertEqual(shown["bed_target_c"], 60.0)
+        self.assertEqual(shown["layer"], 12)
+        self.assertEqual(shown["total_layer"], 90)
+
+    def test_core_fields_filled_when_adapter_omits_them(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            data = load_settings(tmp)
+            code, body = status.printer_status(
+                data, "flashforge-ad5x", read=lambda adapter, view: {"state": "standby"})
+        self.assertEqual(code, 200)
+        shown = body["status"]
+        self.assertEqual(shown["state"], "standby")
+        self.assertEqual(shown["filename"], "")
+        self.assertIsNone(shown["progress"])
+        self.assertIsNone(shown["hotend_c"])
+        self.assertIsNone(shown["bed_c"])
+
+    def test_failed_read_is_unavailable_not_an_error(self):
+        def refused(adapter, view):
+            raise ConnectionError("connection refused")
+
+        with tempfile.TemporaryDirectory() as tmp:
+            data = load_settings(tmp)
+            code, body = status.printer_status(data, "flashforge-ad5x", read=refused)
+        self.assertEqual(code, 200)
+        self.assertTrue(body["ok"])
+        shown = body["status"]
+        self.assertEqual(shown["state"], "unavailable")
+        self.assertIn("refused", shown["detail"])
+        self.assertEqual(shown["filename"], "")
+        self.assertIsNone(shown["progress"])
+
+    def test_unknown_printer_is_404(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            data = load_settings(tmp)
+            code, body = status.printer_status(data, "no-such-printer")
+        self.assertEqual(code, 404)
+        self.assertFalse(body["ok"])
+        self.assertIn("no-such-printer", body["reason"])
+
+
+class PrinterStatusRouteTests(unittest.TestCase):
+    """#664: the HTTP route — same auth as /api/status, 404s, real wiring."""
+
+    def start(self, tmp, environ=None, printer_status_func=None):
+        data = load_settings(tmp, "webui:\n  enabled: true\n  port: 8765\n",
+                             environ=environ)
+        httpd = server.make_server(data, environ={} if environ is None else environ,
+                                   port=0, snapshot_func=lambda: FAKE_SNAPSHOT,
+                                   printer_status_func=printer_status_func)
+        thread = threading.Thread(target=httpd.serve_forever, daemon=True)
+        thread.start()
+        self.addCleanup(httpd.shutdown)
+        self.addCleanup(httpd.server_close)
+        return httpd.server_address[1]
+
+    def request(self, port, path, headers=None):
+        conn = http.client.HTTPConnection("127.0.0.1", port, timeout=5)
+        try:
+            conn.request("GET", path, headers=headers or {})
+            response = conn.getresponse()
+            return response.status, response.read().decode()
+        finally:
+            conn.close()
+
+    def test_token_required_and_accepted_like_api_status(self):
+        fake = lambda printer_id: (200, {"ok": True, "id": printer_id,
+                                         "status": dict(FAKE_LIVE)})
+        with tempfile.TemporaryDirectory() as tmp:
+            port = self.start(tmp, environ={"WEBUI_ACCESS_TOKEN": TOKEN},
+                              printer_status_func=fake)
+            path = "/api/printers/flashforge-ad5x/status"
+            code, _ = self.request(port, path)
+            self.assertEqual(code, 401)
+            code, _ = self.request(port, path, headers={server.TOKEN_HEADER: "wrong"})
+            self.assertEqual(code, 401)
+            code, body = self.request(port, path, headers={server.TOKEN_HEADER: TOKEN})
+            self.assertEqual(code, 200)
+            payload = json.loads(body)
+            self.assertEqual(payload["id"], "flashforge-ad5x")
+            self.assertEqual(payload["status"]["state"], "printing")
+            self.assertNotIn(TOKEN, body)
+
+    def test_real_wiring_unknown_printer_and_unavailable(self):
+        # No printer_status_func: the route runs status.printer_status on
+        # the loaded settings. The default settings name no Moonraker URL,
+        # so the known printer reads unavailable without any network.
+        with tempfile.TemporaryDirectory() as tmp:
+            port = self.start(tmp)
+            code, body = self.request(port, "/api/printers/nope/status")
+            self.assertEqual(code, 404)
+            self.assertFalse(json.loads(body)["ok"])
+            code, body = self.request(port, "/api/printers/flashforge-ad5x/status")
+            self.assertEqual(code, 200)
+            payload = json.loads(body)
+            self.assertTrue(payload["ok"])
+            self.assertEqual(payload["status"]["state"], "unavailable")
+
+    def test_malformed_printer_paths_are_404(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            port = self.start(tmp)
+            for path in ("/api/printers/", "/api/printers/flashforge-ad5x",
+                         "/api/printers/flashforge-ad5x/status/extra",
+                         "/api/printers//status"):
+                code, _ = self.request(port, path)
+                self.assertEqual(code, 404, path)
+
+
 if __name__ == "__main__":
     unittest.main()

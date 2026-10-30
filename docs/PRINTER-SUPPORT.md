@@ -10,7 +10,7 @@ The code has no single "support level" field. A printer model either exists or i
 
 | Level | What it is | Where it lives |
 |---|---|---|
-| **Generic adapter** | A placeholder model for any printer that speaks the same protocol. It has one nominal bed (`klipper.generic`: 220 x 220 mm, 220 mm high, 0.4 mm nozzle) and no facts about your machine. You override the numbers. | `print_handy/printers/klipper/generic.py`, `print_handy/printers/octoprint/marlin.py` |
+| **Generic adapter** | A placeholder model for any printer that speaks the same protocol. It has one nominal bed (`klipper.generic`: 220 x 220 mm, 250 mm high, 0.4 mm nozzle) and no facts about your machine. You override the numbers. | `print_handy/printers/klipper/generic.py`, `print_handy/printers/octoprint/marlin.py` |
 | **Built-in model (offline-tested)** | A model module with its own bed, height, nozzle limits and slicer templates, usually with a vendor G-code guard and sourced facts, all pinned by automated tests that use fake printers and fake transports. | `print_handy/printers/<vendor>/<model>.py`, listed in `printers/registry/<vendor>.toml` |
 | **Verified on hardware** | A person ran the checklist below on the real printer and reported the result. | Stated only in prose in the docs. No field in the code records it. |
 

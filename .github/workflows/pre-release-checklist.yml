@@ -1,0 +1,141 @@
+name: Pre-release checklist
+
+# Before a non-nightly version is tagged, open (or update) ONE checklist
+# issue for it: "Release checklist: <version>". The issue is generated
+# from the merged PRs in the previous-release-tag -> HEAD range by
+# scripts/build_release_checklist.py and combines the post-release
+# surfaces (#394) with the checks that were missing when their absence
+# shipped as post-release surprises (#657): variables verified on every
+# surface, adapter/connection coverage, the registry and docs matrices,
+# Docker/GHCR, both Unraid template repos, and the live checks the
+# range's PRs say are still owed.
+#
+# The rule (CONTRIBUTING.md): no non-nightly release is tagged until
+# this issue exists and every fix-first item on it is resolved or
+# explicitly deferred by catduck on the issue. Nightly is exempt by
+# name — nightly.yml is a separate workflow that never dispatches this
+# one, and this workflow is manual-dispatch only, with the target
+# version (not yet tagged) as an input.
+#
+# When the version is later published, the post-release surfaces
+# workflow records its verification as a comment on this issue instead
+# of opening a competing "Post-release surfaces check" issue.
+#
+# The workflow only ever opens or comments on an issue in this repo. It
+# never edits code, docs, the wiki, repo settings or tags, and it uses
+# only the workflow GITHUB_TOKEN — no secrets.
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Target version to prepare (MAJOR.MINOR.PATCH, not yet tagged)"
+        type: string
+        required: true
+      from:
+        description: "Start of the range (blank = the latest release tag)"
+        type: string
+        required: false
+        default: ""
+
+permissions:
+  contents: read
+  issues: write
+  pull-requests: read
+
+jobs:
+  checklist:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+      - name: Open or update the version's release checklist issue
+        env:
+          GH_TOKEN: ${{ github.token }}
+          INPUT_VERSION: ${{ inputs.version }}
+          INPUT_FROM: ${{ inputs.from }}
+          TO_REF: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          repo="${{ github.repository }}"
+          version="$INPUT_VERSION"
+          echo "Release checklist target: $version"
+
+          # Range start: the explicit "from" input, else the latest
+          # release tag (the releases list is newest first; nightly
+          # publishes no GitHub releases, so it can never appear here).
+          from_ref="$INPUT_FROM"
+          if [ -z "$from_ref" ]; then
+            from_ref="$(gh api "repos/$repo/releases?per_page=1" \
+              --jq '.[0].tag_name // empty')"
+          fi
+          if [ -z "$from_ref" ]; then
+            echo "No range start: no releases found and no 'from' input given." >&2
+            exit 1
+          fi
+          echo "Range: $from_ref...$TO_REF"
+
+          # Merged PRs in the range: squash-merged PR numbers ride in
+          # the compare commits' subjects as "(#NNN)".
+          gh api "repos/$repo/compare/$from_ref...$TO_REF" --paginate > compare.json
+          jq -s '[.[].commits[]]' compare.json > commits.json
+          mapfile -t pr_numbers < <(jq -r \
+            '.[].commit.message | split("\n")[0]
+             | capture("\\(#(?<n>[0-9]+)\\)$"; "") | .n // empty' commits.json \
+            | sort -un)
+
+          # Per-PR data for the generator. A trailing "(#NNN)" can also
+          # be an issue number carried by a direct-to-main commit; its
+          # pulls lookup 404s, and under "set -e" that must not abort
+          # the step before the checklist issue is created (the #642
+          # lesson from the post-release workflow). Guard the lookup and
+          # skip non-PRs; the files fetch below only runs for numbers
+          # that passed it, so its failure is a genuine error.
+          : > prs.ndjson
+          for n in "${pr_numbers[@]}"; do
+            if ! gh api "repos/$repo/pulls/$n" > pr.json; then
+              echo "#$n is not a pull request (issue reference or direct commit) — skipped"
+              continue
+            fi
+            gh api "repos/$repo/pulls/$n/files?per_page=100" --paginate \
+              | jq -s '[.[].[] | {filename, status}]' > files.json
+            jq -n --argjson number "$n" \
+              --slurpfile pr pr.json --slurpfile files files.json \
+              '{number: $number,
+                title: ($pr[0].title // ""),
+                labels: [($pr[0].labels // [])[].name],
+                body: ($pr[0].body // ""),
+                files: $files[0]}' >> prs.ndjson
+          done
+          jq -s '.' prs.ndjson > prs.json
+          jq -n --arg version "$version" --arg from_ref "$from_ref" \
+            --arg to_ref "$TO_REF" --arg repo "$repo" \
+            --slurpfile prs prs.json \
+            '{version: $version, from_ref: $from_ref, to_ref: $to_ref,
+              repo: $repo, prs: $prs[0]}' > range.json
+
+          python3 scripts/build_release_checklist.py \
+            --input range.json --output body.md --title-output title.txt
+          issue_title="$(cat title.txt)"
+          echo "Checklist issue title: $issue_title"
+
+          cat body.md >> "$GITHUB_STEP_SUMMARY"
+
+          # One checklist issue per version: update it, never duplicate it.
+          existing="$(gh issue list --repo "$repo" --state open --limit 100 \
+            --json number,title \
+            | jq -r --arg t "$issue_title" \
+              '[.[] | select(.title == $t) | .number] | first // empty')"
+          if [ -n "$existing" ]; then
+            {
+              echo "Release checklist re-run for $version (manual dispatch). Current checklist:"
+              echo ""
+              cat body.md
+            } > update.md
+            gh issue comment "$existing" --repo "$repo" --body-file update.md
+            echo "Updated existing checklist issue #$existing for $version."
+          else
+            gh issue create --repo "$repo" --title "$issue_title" \
+              --label documentation --label enhancement \
+              --body-file body.md
+          fi

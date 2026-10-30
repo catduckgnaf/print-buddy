@@ -27,7 +27,7 @@ Each file holds one `[[entry]]` per command, macro or error:
 | `aliases` | Phrasings lookups should match (for example "ifs load"). |
 | `firmware` | `zmod`, `klipper` or `marlin`. ZMod is listed separately from stock Klipper because the AD5X macro set and authority rules differ. Must match the file the entry sits in. |
 | `kind` | `command`, `macro` or `error`. |
-| `printers` | Registered printer model keys (see `../printers/registry.toml`) the entry is known to apply to, or `["*"]` for every printer on that firmware. |
+| `printers` | Registered printer model keys (see `../printers/registry/<vendor>.toml`) the entry is known to apply to, or `["*"]` for every printer on that firmware. |
 | `pack` | Optional. Names a macro pack that rides on the firmware (for example a vendor or community macro pack layered over stock Klipper); absent means the firmware's stock set. A lowercase slug. Lookups can filter on it alongside firmware and printer. No entry carries one yet — the field exists so a justified pack entry has a scope of its own instead of borrowing a printer key or the stock set's name. |
 | `command` | The literal command line, with `<placeholders>` for values. Empty for errors. |
 | `description` | What it does, when to use it, and the traps. |

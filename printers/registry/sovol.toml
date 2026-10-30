@@ -1,0 +1,230 @@
+# Printer registry: sovol. See printers/README.md for the schema.
+#
+# One [[printer]] per registered model whose key starts with "sovol." — the
+# loader (print_handy/knowledge/registry.py) merges every file in this directory
+# in sorted filename order, and tests pin each entry against the code profile in
+# print_handy/printers/sovol/ so this file cannot silently drift from the code.
+
+[[printer]]
+key = "sovol.sv06"
+label = "Sovol SV06 (Klipper)"
+vendor = "sovol"
+firmware = "Klipper"
+firmware_family = "klipper"
+connection = "moonraker"
+kinematics = "Cartesian (moving bed)"
+bed_mm = [220.0, 220.0]
+max_height_mm = 220.0
+filament_slots = 1
+profile = "print_handy/printers/sovol/sv06.py"
+notes = "Stock Klipper profile under the Sovol name."
+
+[[printer]]
+key = "sovol.sv01"
+label = "Sovol SV01 (Klipper)"
+vendor = "sovol"
+firmware = "Klipper"
+firmware_family = "klipper"
+connection = "moonraker"
+kinematics = "Cartesian (moving bed)"
+bed_mm = [280, 240]
+max_height_mm = 300
+filament_slots = 1
+profile = "print_handy/printers/sovol/sv01.py"
+notes = "Offline catalog entry. OrcaSlicer Sovol SV01 0.4 nozzle printable area. Generic templates, not a tuned vendor profile, and not checked on hardware."
+
+[[printer]]
+key = "sovol.sv01_pro"
+label = "Sovol SV01 Pro (Klipper)"
+vendor = "sovol"
+firmware = "Klipper"
+firmware_family = "klipper"
+connection = "moonraker"
+kinematics = "Cartesian (moving bed)"
+bed_mm = [280, 240]
+max_height_mm = 300
+filament_slots = 1
+profile = "print_handy/printers/sovol/sv01_pro.py"
+notes = "Offline catalog entry. OrcaSlicer Sovol SV01 Pro 0.4 nozzle printable area. Generic templates, not a tuned vendor profile, and not checked on hardware."
+
+[[printer]]
+key = "sovol.sv02"
+label = "Sovol SV02 (Klipper)"
+vendor = "sovol"
+firmware = "Klipper"
+firmware_family = "klipper"
+connection = "moonraker"
+kinematics = "Cartesian (moving bed)"
+bed_mm = [280, 240]
+max_height_mm = 300
+filament_slots = 1
+profile = "print_handy/printers/sovol/sv02.py"
+notes = "Offline catalog entry. OrcaSlicer Sovol SV02 0.4 nozzle printable area. Generic templates, not a tuned vendor profile, and not checked on hardware."
+
+[[printer]]
+key = "sovol.sv03"
+label = "Sovol SV03 (Klipper)"
+vendor = "sovol"
+firmware = "Klipper"
+firmware_family = "klipper"
+connection = "moonraker"
+kinematics = "Cartesian (moving bed)"
+bed_mm = [360, 360]
+max_height_mm = 410
+filament_slots = 1
+profile = "print_handy/printers/sovol/sv03.py"
+notes = "Offline catalog entry. Marlin firmware printer table (Sovol SV-03); OrcaSlicer has no SV03 profile. Generic templates, not a tuned vendor profile, and not checked on hardware."
+
+[[printer]]
+key = "sovol.sv04"
+label = "Sovol SV04 (Klipper)"
+vendor = "sovol"
+firmware = "Klipper"
+firmware_family = "klipper"
+connection = "moonraker"
+kinematics = "Cartesian (IDEX)"
+bed_mm = [300, 300]
+max_height_mm = 400
+filament_slots = 1
+profile = "print_handy/printers/sovol/sv04.py"
+notes = "Offline catalog entry. Single-mode 300 x 300 x 400 mm from the SV04 firmware specifications. Copy and mirror modes are smaller and are not this bed. Generic templates, not an IDEX profile, and not checked on hardware."
+
+[[printer]]
+key = "sovol.sv05"
+label = "Sovol SV05 (Klipper)"
+vendor = "sovol"
+firmware = "Klipper"
+firmware_family = "klipper"
+connection = "moonraker"
+kinematics = "Cartesian (moving bed)"
+bed_mm = [220, 220]
+max_height_mm = 300
+filament_slots = 1
+profile = "print_handy/printers/sovol/sv05.py"
+notes = "Offline catalog entry. OrcaSlicer Sovol SV05 0.4 nozzle printable area. Generic templates, not a tuned vendor profile, and not checked on hardware."
+
+[[printer]]
+key = "sovol.sv06_plus"
+label = "Sovol SV06 Plus (Klipper)"
+vendor = "sovol"
+firmware = "Klipper"
+firmware_family = "klipper"
+connection = "moonraker"
+kinematics = "Cartesian (moving bed)"
+bed_mm = [300, 300]
+max_height_mm = 340
+filament_slots = 1
+profile = "print_handy/printers/sovol/sv06_plus.py"
+notes = "Offline catalog entry. OrcaSlicer Sovol SV06 Plus 0.4 nozzle printable area. Generic templates, not a tuned vendor profile, and not checked on hardware."
+
+[[printer]]
+key = "sovol.sv06_ace"
+label = "Sovol SV06 ACE (Klipper)"
+vendor = "sovol"
+firmware = "Klipper"
+firmware_family = "klipper"
+connection = "moonraker"
+kinematics = "CoreXZ"
+bed_mm = [220, 220]
+max_height_mm = 250
+filament_slots = 1
+profile = "print_handy/printers/sovol/sv06_ace.py"
+notes = "Offline catalog entry. OrcaSlicer Sovol SV06 ACE 0.4 nozzle printable area. Generic templates, not a tuned vendor profile, and not checked on hardware."
+
+[[printer]]
+key = "sovol.sv06_plus_ace"
+label = "Sovol SV06 Plus ACE (Klipper)"
+vendor = "sovol"
+firmware = "Klipper"
+firmware_family = "klipper"
+connection = "moonraker"
+kinematics = "CoreXZ"
+bed_mm = [300, 300]
+max_height_mm = 350
+filament_slots = 1
+profile = "print_handy/printers/sovol/sv06_plus_ace.py"
+notes = "Offline catalog entry. OrcaSlicer Sovol SV06 Plus ACE 0.4 nozzle printable area. Generic templates, not a tuned vendor profile, and not checked on hardware."
+
+[[printer]]
+key = "sovol.sv07"
+label = "Sovol SV07 (Klipper)"
+vendor = "sovol"
+firmware = "Klipper"
+firmware_family = "klipper"
+connection = "moonraker"
+kinematics = "Cartesian (moving bed)"
+bed_mm = [220, 220]
+max_height_mm = 250
+filament_slots = 1
+profile = "print_handy/printers/sovol/sv07.py"
+notes = "Offline catalog entry. OrcaSlicer Sovol SV07 0.4 nozzle printable area. Generic templates, not a tuned vendor profile, and not checked on hardware."
+
+[[printer]]
+key = "sovol.sv07_plus"
+label = "Sovol SV07 Plus (Klipper)"
+vendor = "sovol"
+firmware = "Klipper"
+firmware_family = "klipper"
+connection = "moonraker"
+kinematics = "Cartesian (moving bed)"
+bed_mm = [300, 300]
+max_height_mm = 350
+filament_slots = 1
+profile = "print_handy/printers/sovol/sv07_plus.py"
+notes = "Offline catalog entry. OrcaSlicer Sovol SV07 Plus 0.4 nozzle printable area. Generic templates, not a tuned vendor profile, and not checked on hardware."
+
+[[printer]]
+key = "sovol.sv08"
+label = "Sovol SV08 (Klipper)"
+vendor = "sovol"
+firmware = "Klipper"
+firmware_family = "klipper"
+connection = "moonraker"
+kinematics = "CoreXY"
+bed_mm = [350, 350]
+max_height_mm = 345
+filament_slots = 1
+profile = "print_handy/printers/sovol/sv08.py"
+notes = "Offline catalog entry. OrcaSlicer Sovol SV08 0.4 nozzle printable area. Generic templates, not a tuned vendor profile, and not checked on hardware."
+
+[[printer]]
+key = "sovol.sv08_max"
+label = "Sovol SV08 Max (Klipper)"
+vendor = "sovol"
+firmware = "Klipper"
+firmware_family = "klipper"
+connection = "moonraker"
+kinematics = "CoreXY"
+bed_mm = [500, 500]
+max_height_mm = 500
+filament_slots = 1
+profile = "print_handy/printers/sovol/sv08_max.py"
+notes = "Offline catalog entry. OrcaSlicer Sovol SV08 MAX 0.4 nozzle printable area. Generic templates, not a tuned vendor profile, and not checked on hardware."
+
+[[printer]]
+key = "sovol.zero"
+label = "Sovol Zero (Klipper)"
+vendor = "sovol"
+firmware = "Klipper"
+firmware_family = "klipper"
+connection = "moonraker"
+kinematics = "CoreXY"
+bed_mm = [152.4, 152.4]
+max_height_mm = 152.4
+filament_slots = 1
+profile = "print_handy/printers/sovol/zero.py"
+notes = "Offline catalog entry. OrcaSlicer Sovol Zero 0.4 nozzle printable area. Generic templates, not a tuned vendor profile, and not checked on hardware."
+
+[[printer]]
+key = "sovol.m1d"
+label = "Sovol M1D (Klipper)"
+vendor = "sovol"
+firmware = "Klipper"
+firmware_family = "klipper"
+connection = "moonraker"
+kinematics = "CoreXY"
+bed_mm = [300, 300]
+max_height_mm = 350
+filament_slots = 1
+profile = "print_handy/printers/sovol/m1d.py"
+notes = "Offline catalog entry. Single-toolhead 300 x 300 x 350 mm from Sovol's M1D specification. Seven-tool printing is 240 x 300 x 350 mm and is not this bed. Generic templates, not a multi-tool profile, and not checked on hardware."

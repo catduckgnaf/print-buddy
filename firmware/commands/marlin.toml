@@ -10,7 +10,7 @@
 # behind the existing guarded print-control flows and their confirmation buttons.
 #
 # kind is one of: command, macro, error.
-# printers lists the registered printer model keys (printers/registry.toml) the entry
+# printers lists the registered printer model keys (printers/registry/) the entry
 # is known to apply to, or ["*"] when it applies to every printer on that firmware.
 # pack is optional: it names a macro pack that rides on this firmware (absent = the
 # firmware's stock set). No entry carries one yet; see firmware/README.md.

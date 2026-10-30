@@ -1,0 +1,76 @@
+# Printer registry: flashforge. See printers/README.md for the schema.
+#
+# One [[printer]] per registered model whose key starts with "flashforge." — the
+# loader (print_handy/knowledge/registry.py) merges every file in this directory
+# in sorted filename order, and tests pin each entry against the code profile in
+# print_handy/printers/flashforge/ so this file cannot silently drift from the code.
+
+[[printer]]
+key = "flashforge.ad5x"
+label = "Flashforge AD5X (ZMod)"
+vendor = "flashforge"
+firmware = "ZMod Klipper"
+firmware_family = "zmod"
+connection = "moonraker"
+kinematics = "CoreXY"
+bed_mm = [220.0, 220.0]
+max_height_mm = 220.0
+filament_slots = 4
+profile = "print_handy/printers/flashforge/ad5x.py"
+notes = "Physical sheet is 235 mm; the usable print area is 220 mm. IFS with 4 slots and a native screen that owns Z offset and mesh in native mode."
+
+[[printer]]
+key = "flashforge.ad5m"
+label = "Flashforge AD5M (ZMod)"
+vendor = "flashforge"
+firmware = "ZMod Klipper"
+firmware_family = "zmod"
+connection = "moonraker"
+kinematics = "CoreXY"
+bed_mm = [220.0, 220.0]
+max_height_mm = 220.0
+filament_slots = 1
+profile = "print_handy/printers/flashforge/ad5m.py"
+notes = "Single extruder, no IFS. Same 220 mm cube as the AD5X without the filament system; the PRINT_HANDY spool-match macro is AD5X-only."
+
+[[printer]]
+key = "flashforge.ad5m_pro"
+label = "Flashforge AD5M Pro (ZMod)"
+vendor = "flashforge"
+firmware = "ZMod Klipper"
+firmware_family = "zmod"
+connection = "moonraker"
+kinematics = "CoreXY"
+bed_mm = [220.0, 220.0]
+max_height_mm = 220.0
+filament_slots = 1
+profile = "print_handy/printers/flashforge/ad5m_pro.py"
+notes = "Single extruder, no IFS. The Pro adds the enclosure, camera and air filtration over the AD5M; print geometry is identical."
+
+[[printer]]
+key = "flashforge.creator5"
+label = "Flashforge Creator 5 (ZMod)"
+vendor = "flashforge"
+firmware = "ZMod Klipper"
+firmware_family = "zmod"
+connection = "moonraker"
+kinematics = "CoreXY"
+bed_mm = [256.0, 256.0]
+max_height_mm = 256.0
+tools = 4
+profile = "print_handy/printers/flashforge/creator5.py"
+notes = "Four independent toolheads (a tool changer, T0-T3), not an IFS feeder: tools are recorded under tools, and there are no filament_slots. No active chamber heating. ZMod documents no Klipper 13 support on the Creator models. Print start is not verified on a live printer."
+
+[[printer]]
+key = "flashforge.creator5_pro"
+label = "Flashforge Creator 5 Pro (ZMod)"
+vendor = "flashforge"
+firmware = "ZMod Klipper"
+firmware_family = "zmod"
+connection = "moonraker"
+kinematics = "CoreXY"
+bed_mm = [256.0, 256.0]
+max_height_mm = 256.0
+tools = 4
+profile = "print_handy/printers/flashforge/creator5_pro.py"
+notes = "Four independent toolheads (a tool changer, T0-T3), not an IFS feeder: tools are recorded under tools, and there are no filament_slots. The Pro adds the enclosed frame, active chamber heating and air filtration over the Creator 5; print geometry is identical. ZMod documents no Klipper 13 support on the Creator models. Print start is not verified on a live printer."

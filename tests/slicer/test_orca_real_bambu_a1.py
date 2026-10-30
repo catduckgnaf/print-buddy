@@ -191,7 +191,7 @@ def test_a1_oversized_model_is_never_accepted(work, a1):
     bed = facts.A1["bed_mm"].value
     result, gcode = orca_cli(a1.templates_dir(), write_cube(work / "huge.stl", bed[0] + 10), work / "out")
     accepted = (result.returncode == 0 and gcode.is_file()
-                and sg.post_slice(gcode, tool_slots={0: 1}, ifs_slots=1, bed=bed, templates=a1.templates_dir(),
+                and sg.post_slice(gcode, tool_slots={0: 1}, filament_slots=1, bed=bed, templates=a1.templates_dir(),
                                   envelope=a1.motion_envelope_mm).status != "blocked"
                 and not a1.gcode_problems(gcode.read_text(errors="replace")))
     assert not accepted, "an oversized model produced A1 G-code the guards accepted"

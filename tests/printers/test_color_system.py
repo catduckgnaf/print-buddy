@@ -34,9 +34,9 @@ def test_every_model_names_its_class():
 def test_class_agrees_with_the_model_counts():
     for key, model in printers.MODELS.items():
         printer = model.defaults()["printer"]
-        ifs_slots = int(printer.get("ifs_slots", 1))
+        filament_slots = int(printer.get("filament_slots", 1))
         tool_count = int(printer.get("tool_count", 1))
-        assert (ifs_slots > 1) == (model.color_system == "multi_slot"), key
+        assert (filament_slots > 1) == (model.color_system == "multi_slot"), key
         assert (tool_count > 1) == (model.color_system == "multi_tool"), key
 
 
@@ -59,7 +59,7 @@ def test_contradictory_models_are_refused():
     with pytest.raises(ValueError, match="color_system"):
         _model(color_system="rainbow")
     with pytest.raises(ValueError, match="multi_slot"):
-        _model(settings={"printer": {"ifs_slots": 4}})  # slots without the class
+        _model(settings={"printer": {"filament_slots": 4}})  # slots without the class
     with pytest.raises(ValueError, match="multi_tool"):
         _model(settings={"printer": {"tool_count": 4}})  # tools without the class
     with pytest.raises(ValueError, match="multi_slot"):

@@ -94,16 +94,16 @@ def _bound(**extra):
 
 
 def test_backfill_fills_blank_hex_and_confirms_an_operator_bound_slot():
-    state = {"ifs_slots": {"2": _bound()}}
+    state = {"filament_slots": {"2": _bound()}}
     changes = fc.fill_missing_slot_hexes(state)
-    rec = state["ifs_slots"]["2"]
+    rec = state["filament_slots"]["2"]
     assert rec["hex"] == "C2185B" and rec["hex_source"] == "name"
     assert rec["physical_color_verified"] is True
     assert changes == [{"slot": "2", "hex": "C2185B", "source": "name", "previous": ""}]
 
 
 def test_backfill_never_overwrites_a_valid_hex():
-    state = {"ifs_slots": {"1": _bound(hex="F95D73", physical_color_verified=True),
+    state = {"filament_slots": {"1": _bound(hex="F95D73", physical_color_verified=True),
                            "3": {"spoolman_id": 4, "hex": "000000", "color": "white",
                                  "physical_color_verified": True}}}
     before = json.loads(json.dumps(state))
@@ -113,40 +113,40 @@ def test_backfill_never_overwrites_a_valid_hex():
 
 
 def test_backfill_upgrades_only_its_own_guess_to_an_authoritative_source():
-    state = {"ifs_slots": {"2": _bound(hex="C2185B", hex_source="name", physical_color_verified=True)}}
+    state = {"filament_slots": {"2": _bound(hex="C2185B", hex_source="name", physical_color_verified=True)}}
     assert fc.fill_missing_slot_hexes(state) == []  # a second name read changes nothing
     fc.fill_missing_slot_hexes(state, printer_hexes={"2": "0C6283"})
-    assert state["ifs_slots"]["2"]["hex"] == "0C6283"
-    assert state["ifs_slots"]["2"]["hex_source"] == "printer"
+    assert state["filament_slots"]["2"]["hex"] == "0C6283"
+    assert state["filament_slots"]["2"]["hex_source"] == "printer"
 
 
 def test_insertion_bound_slot_with_hex_but_unverified_color_is_confirmed():
     # Live 2026-10-29: Matte white PLA, spool 16, "Created and bound from
     # Discord IFS insertion": loading verified, color not. Picking the
     # spool by name for the slot is the confirmation.
-    state = {"ifs_slots": {"1": _bound(slot=1, material="PLA", color="matte white", hex="FFFFFF",
+    state = {"filament_slots": {"1": _bound(slot=1, material="PLA", color="matte white", hex="FFFFFF",
                                        spoolman_id=16, name="Matte white PLA")}}
     fc.fill_missing_slot_hexes(state)
-    assert state["ifs_slots"]["1"]["physical_color_verified"] is True
-    assert state["ifs_slots"]["1"]["hex"] == "FFFFFF"
+    assert state["filament_slots"]["1"]["physical_color_verified"] is True
+    assert state["filament_slots"]["1"]["hex"] == "FFFFFF"
 
 
 def test_a_slot_not_bound_by_the_operator_stays_unverified():
-    state = {"ifs_slots": {"1": {"spoolman_id": 16, "material": "PLA", "hex": "FFFFFF",
+    state = {"filament_slots": {"1": {"spoolman_id": 16, "material": "PLA", "hex": "FFFFFF",
                                  "physical_color_verified": False, "physical_loading_verified": False}}}
     fc.fill_missing_slot_hexes(state)
-    assert state["ifs_slots"]["1"]["physical_color_verified"] is False
+    assert state["filament_slots"]["1"]["physical_color_verified"] is False
 
 
 def test_load_state_backfills_in_memory(tmp_path):
     path = tmp_path / "printer_hardware.json"
-    path.write_text(json.dumps({"ifs_slots": {"2": _bound()}}))
-    assert spool_sync.load_state(path)["ifs_slots"]["2"]["hex"] == "C2185B"
+    path.write_text(json.dumps({"filament_slots": {"2": _bound()}}))
+    assert spool_sync.load_state(path)["filament_slots"]["2"]["hex"] == "C2185B"
 
 
 def test_backfill_slot_colors_prefers_the_printers_hex_then_spoolman_and_persists(tmp_path):
     path = tmp_path / "printer_hardware.json"
-    path.write_text(json.dumps({"ifs_slots": {
+    path.write_text(json.dumps({"filament_slots": {
         "1": _bound(slot=1, spoolman_id=16, color="matte white", name="Matte white PLA", material="PLA"),
         "2": _bound(),
         "3": _bound(slot=3, spoolman_id=9, hex="111111", physical_color_verified=True),
@@ -168,7 +168,7 @@ def test_backfill_slot_colors_prefers_the_printers_hex_then_spoolman_and_persist
             {"ID": 1, "HEX": "EEEEEE"}, {"ID": 2, "HEX": "0C6283"}, {"ID": 3, "HEX": "222222"}]}}}}
 
     changes = spool_sync.backfill_slot_colors(client=client, mr=mr, state_path=path)
-    saved = json.loads(path.read_text())["ifs_slots"]
+    saved = json.loads(path.read_text())["filament_slots"]
     # The printer already shows EEEEEE for slot 1: adopting it (not Spoolman's
     # FAFAFA) means mapped launch cannot see a "live RGB mapping mismatch".
     assert saved["1"]["hex"] == "EEEEEE" and saved["1"]["hex_source"] == "printer"
@@ -186,9 +186,9 @@ def test_backfill_slot_colors_prefers_the_printers_hex_then_spoolman_and_persist
 
 
 def test_backfill_adopts_the_printers_hex_over_an_earlier_name_guess():
-    state = {"ifs_slots": {"2": _bound(hex="C2185B", hex_source="name", physical_color_verified=True)}}
+    state = {"filament_slots": {"2": _bound(hex="C2185B", hex_source="name", physical_color_verified=True)}}
     fc.fill_missing_slot_hexes(state, spoolman_hexes={17: "AAAAAA"}, printer_hexes={"2": "0C6283"})
-    assert (state["ifs_slots"]["2"]["hex"], state["ifs_slots"]["2"]["hex_source"]) == ("0C6283", "printer")
+    assert (state["filament_slots"]["2"]["hex"], state["filament_slots"]["2"]["hex_source"]) == ("0C6283", "printer")
 
 
 def test_a_derived_code_reaches_the_screen_through_bind_slot_screen_sync(tmp_path, monkeypatch):
@@ -198,7 +198,7 @@ def test_a_derived_code_reaches_the_screen_through_bind_slot_screen_sync(tmp_pat
     from print_handy.printers.flashforge.zmod import screen
 
     state = tmp_path / "hw.json"
-    state.write_text(json.dumps({"ifs_slots": {}}))
+    state.write_text(json.dumps({"filament_slots": {}}))
     spool = {"id": 17, "location": "Shelf",
              "filament": {"name": "Rose Red Blue Green Silk PLA", "material": "Silk PLA", "color_hex": None}}
 
@@ -221,13 +221,13 @@ def test_a_derived_code_reaches_the_screen_through_bind_slot_screen_sync(tmp_pat
 
 def test_backfill_slot_colors_survives_spoolman_and_printer_being_down(tmp_path):
     path = tmp_path / "printer_hardware.json"
-    path.write_text(json.dumps({"ifs_slots": {"2": _bound()}}))
+    path.write_text(json.dumps({"filament_slots": {"2": _bound()}}))
 
     def down(*args, **kwargs):
         raise OSError("down")
 
     spool_sync.backfill_slot_colors(client=down, mr=down, state_path=path)
-    assert json.loads(path.read_text())["ifs_slots"]["2"]["hex"] == "C2185B"
+    assert json.loads(path.read_text())["filament_slots"]["2"]["hex"] == "C2185B"
 
 
 # ------------------------------------------------------------- intake
@@ -294,7 +294,7 @@ def test_slot_record_always_has_a_code_and_is_confirmed():
     assert rec["physical_color_verified"] is True
     galaxy = spool_sync._slot_record(1, {"id": 5, "filament": {"name": "Galaxy", "material": "PLA"}}, None, "t")
     assert galaxy["hex"] == fc.NEUTRAL_DEFAULT and galaxy["hex_source"] == "default"
-    assert fc.chat_notes({"ifs_slots": {"1": galaxy}}, [1])[0].startswith("Slot 1 (Galaxy PLA) has no color")
+    assert fc.chat_notes({"filament_slots": {"1": galaxy}}, [1])[0].startswith("Slot 1 (Galaxy PLA) has no color")
 
 
 def test_walkthrough_asks_swatch_buttons_only_when_the_name_is_unreadable():
@@ -354,27 +354,27 @@ def test_unconfirmed_slot_refusal_is_plain_classified_and_fixable():
 
 def test_apply_fix_confirms_the_slot_and_never_overwrites_a_valid_hex(monkeypatch):
     from print_handy.core import printer_state
-    store = {"ifs_slots": {"1": {"spoolman_id": 16, "material": "PLA", "hex": "F0F0F0",
+    store = {"filament_slots": {"1": {"spoolman_id": 16, "material": "PLA", "hex": "F0F0F0",
                                  "physical_color_verified": False}}}
     saved = []
     monkeypatch.setattr(printer_state, "load", lambda *a: json.loads(json.dumps(store)))
     monkeypatch.setattr(printer_state, "save", lambda st, *a: saved.append(st))
     line = slice_refusal.apply_fix({"kind": "confirm_slot_color", "slot": "1", "hex": "FFFFFF"})
-    assert saved[0]["ifs_slots"]["1"]["hex"] == "F0F0F0"
-    assert saved[0]["ifs_slots"]["1"]["physical_color_verified"] is True
+    assert saved[0]["filament_slots"]["1"]["hex"] == "F0F0F0"
+    assert saved[0]["filament_slots"]["1"]["physical_color_verified"] is True
     assert line == "Slot 1 color confirmed as #F0F0F0."
 
 
 def test_validate_slot_selection_material_mismatch_is_never_waved_through():
     from print_handy.core import model_job
-    state = {"ifs_slots": {"1": {"spoolman_id": 16, "material": "PETG", "hex": "FFFFFF",
+    state = {"filament_slots": {"1": {"spoolman_id": 16, "material": "PETG", "hex": "FFFFFF",
                                  "physical_color_verified": False}}}
     with pytest.raises(RuntimeError, match="selected IFS slot 1") as caught:
         model_job._validate_slot_selection(state, {"slot": 1, "spoolman_id": 16, "material": "PLA"})
     assert caught.value.fix is None  # never a one-tap override for a different material
     assert caught.value.plain == ("Slot 1 (PETG) does not match the spool chosen for this job (PLA), "
                                   "so I stopped before slicing.")
-    state["ifs_slots"]["1"]["material"] = "PLA"
+    state["filament_slots"]["1"]["material"] = "PLA"
     with pytest.raises(slice_refusal.SliceRefusal) as refusal:
         model_job._validate_slot_selection(state, {"slot": 1, "spoolman_id": 16, "material": "PLA"})
     assert refusal.value.fix["slot"] == "1"

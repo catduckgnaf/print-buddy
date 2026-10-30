@@ -67,7 +67,7 @@ class ScreenlessReadTests(ListenerCase):
         detail = {"status": "ready", "hasMatlStation": True}
         with mock.patch.object(print_control, "_call", return_value=zmod_status(0)), \
                 mock.patch("print_handy.core.model_job.read_stock_detail", return_value=detail) as read, \
-                mock.patch("print_handy.core.model_job.read_stock_ifs_slots_from_detail", return_value={1: True}):
+                mock.patch("print_handy.core.model_job.read_stock_filament_slots_from_detail", return_value={1: True}):
             self.assertEqual(await lis.read_slots(), (detail, {1: True}))
         read.assert_called_once()
 

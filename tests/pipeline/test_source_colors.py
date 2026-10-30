@@ -96,7 +96,7 @@ def test_verify_readiness_pipeline_idle_with_native_presence_fake_transport():
     selection = {'slot': 1, 'color': 'white', 'material': 'PLA', 'spoolman_id': 10}
     # The active spool differs on purpose: the selected slot owns the job.
     st = {'moonraker_url': 'http://fake', 'spool': {'spoolman_id': 12},
-          'ifs_slots': {'1': {'spoolman_id': 10, 'material': 'PLA', 'physical_color_verified': True}}}
+          'filament_slots': {'1': {'spoolman_id': 10, 'material': 'PLA', 'physical_color_verified': True}}}
     status = {'print_stats': {'state': 'standby'},
               'filament_switch_sensor head_switch_sensor': {'enabled': True, 'filament_detected': False},
               'zmod_color': {'slots': [{'ID': '1', 'Material': 'PLA', 'Color': 'white', 'hasFilament': False}]}}
@@ -125,7 +125,7 @@ def test_slice_job_stl_binds_source_hash_before_decision_validation(tmp_path, mo
     stl.write_text('solid x\nendsolid x\n')
     st = {'spool': {'spoolman_id': 12, 'material': 'PLA'}, 'nozzle': {'diameter_mm': 0.4},
           'bed_mm': [220, 220], 'max_print_height_mm': 220,
-          'ifs_slots': {'3': {'spoolman_id': 8, 'color': 'black', 'material': 'PLA', 'physical_color_verified': True}}}
+          'filament_slots': {'3': {'spoolman_id': 8, 'color': 'black', 'material': 'PLA', 'physical_color_verified': True}}}
     selection = {'slot': 3, 'color': 'black', 'material': 'PLA', 'spoolman_id': 8}
     jp = tmp_path / 'JOB.json'
     jp.write_text(json.dumps({'downloaded_file': str(stl), 'audit': {'plates': 1, 'size_x': 40, 'size_y': 10, 'size_z': 5},

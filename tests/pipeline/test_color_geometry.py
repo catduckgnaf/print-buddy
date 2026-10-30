@@ -13,7 +13,7 @@ def decisions(src,st):
  m=source_colors.inventory(src)
  slots=[1,2,4]
  return {'mode':'per_part','source_sha256':m['source_sha256'],'choices':{
-  q['key']:model_job.resolve_filament_selection(st,dict(st['ifs_slots'][str(slots[q['source_extruder']-1])],slot=slots[q['source_extruder']-1])) for q in source_colors.prompts(m)}}
+  q['key']:model_job.resolve_filament_selection(st,dict(st['filament_slots'][str(slots[q['source_extruder']-1])],slot=slots[q['source_extruder']-1])) for q in source_colors.prompts(m)}}
 
 @needs_coupon
 def test_preserves_instances_and_transforms(tmp_path):
@@ -93,7 +93,7 @@ def test_single_color_plate_shifts_without_cropping_or_rewriting_mesh(tmp_path):
 </Relationships>''')
     manifest = source_colors.inventory(source)
     state = json.loads(STATE.read_text())
-    slot = dict(state['ifs_slots']['4'], slot=4)
+    slot = dict(state['filament_slots']['4'], slot=4)
     selection = model_job.resolve_filament_selection(state, slot)
     decisions = {'schema': 'part_slots_v1', 'mode': 'per_part', 'source_sha256': manifest['source_sha256'],
                  'choices': {row['key']: selection for row in source_colors.canonical_prompts(manifest)}}
@@ -187,13 +187,13 @@ def test_derived_plate_uses_its_own_slot_not_the_loaded_spool(tmp_path):
     _two_slot_source(source)
     manifest = source_colors.inventory(source)
     state = json.loads(STATE.read_text())
-    state['spool'] = dict(state['ifs_slots']['4'])
-    assert state['ifs_slots']['4']['hex'].lstrip('#').upper() == '067749'
-    assert state['spool']['spoolman_id'] == state['ifs_slots']['4']['spoolman_id']
-    white = model_job.resolve_filament_selection(state, dict(state['ifs_slots']['1'], slot=1))
+    state['spool'] = dict(state['filament_slots']['4'])
+    assert state['filament_slots']['4']['hex'].lstrip('#').upper() == '067749'
+    assert state['spool']['spoolman_id'] == state['filament_slots']['4']['spoolman_id']
+    white = model_job.resolve_filament_selection(state, dict(state['filament_slots']['1'], slot=1))
     decisions = {'schema': 'part_slots_v1', 'mode': 'per_part', 'source_sha256': manifest['source_sha256'],
                  'choices': {row['key']: white for row in source_colors.canonical_prompts(manifest)}}
-    report = export_single_color_plate(source, tmp_path / 'white.3mf', decisions, ['1:1'], slot_colors=state['ifs_slots'])
+    report = export_single_color_plate(source, tmp_path / 'white.3mf', decisions, ['1:1'], slot_colors=state['filament_slots'])
     assert report['slot'] == 1
     assert report['filament_colour'] == '#FFFFFF'
     with zipfile.ZipFile(tmp_path / 'white.3mf') as archive:
@@ -216,8 +216,8 @@ def test_slice_job_emits_both_slots_without_calling_the_printer(tmp_path, monkey
     _two_slot_source(source)
     state = json.loads(STATE.read_text())
     manifest = source_colors.inventory(source)
-    white = model_job.resolve_filament_selection(state, dict(state['ifs_slots']['1'], slot=1))
-    green = model_job.resolve_filament_selection(state, dict(state['ifs_slots']['4'], slot=4))
+    white = model_job.resolve_filament_selection(state, dict(state['filament_slots']['1'], slot=1))
+    green = model_job.resolve_filament_selection(state, dict(state['filament_slots']['4'], slot=4))
     by_extruder = {1: white, 2: green}
     choices = {}
     for row in source_colors.canonical_prompts(manifest):
@@ -233,7 +233,7 @@ def test_slice_job_emits_both_slots_without_calling_the_printer(tmp_path, monkey
     def fake_slice(source, folder, state, brim=None, first_layer=False, color_decisions=None, preserve_layout=False, filament_slot=None):
         folder = Path(folder)
         folder.mkdir(parents=True, exist_ok=True)
-        slot = state['ifs_slots'][str(filament_slot)]
+        slot = state['filament_slots'][str(filament_slot)]
         out = folder / f'slot{filament_slot}.gcode'
         out.write_text(f'; filament_colour = {slot["hex"]}\n; nozzle_diameter = 0.4\nM190 S{state["temps_c"]["bed"]}\nM104 S{state["temps_c"]["nozzle"]} T0\nSTART_PRINT BED_TEMP={state["temps_c"]["bed"]} EXTRUDER_TEMP={state["temps_c"]["nozzle"]}\nG1 X10 Y10 Z0.2\nEND_PRINT\n')
         return out, {'slot': filament_slot}, []
@@ -294,7 +294,7 @@ def test_multiline_objects_keep_their_own_component(tmp_path):
 </Relationships>''')
     manifest = source_colors.inventory(source)
     state = json.loads(STATE.read_text())
-    slot = dict(state['ifs_slots']['4'], slot=4)
+    slot = dict(state['filament_slots']['4'], slot=4)
     selection = model_job.resolve_filament_selection(state, slot)
     decisions = {'schema': 'part_slots_v1', 'mode': 'per_part', 'source_sha256': manifest['source_sha256'],
                  'choices': {row['key']: selection for row in source_colors.canonical_prompts(manifest)}}
@@ -317,7 +317,7 @@ def test_selected_object_with_foreign_part_is_refused(tmp_path):
     _two_slot_source(source)
     manifest = source_colors.inventory(source)
     state = json.loads(STATE.read_text())
-    white = model_job.resolve_filament_selection(state, dict(state['ifs_slots']['1'], slot=1))
+    white = model_job.resolve_filament_selection(state, dict(state['filament_slots']['1'], slot=1))
     decisions = {'schema': 'part_slots_v1', 'mode': 'per_part', 'source_sha256': manifest['source_sha256'],
                  'choices': {row['key']: white for row in source_colors.canonical_prompts(manifest)}}
     with pytest.raises(RuntimeError, match='do not match'):
@@ -330,8 +330,8 @@ def _two_slot_job(tmp_path, **extra):
     _two_slot_source(source)
     state = json.loads(STATE.read_text())
     manifest = source_colors.inventory(source)
-    white = model_job.resolve_filament_selection(state, dict(state['ifs_slots']['1'], slot=1))
-    green = model_job.resolve_filament_selection(state, dict(state['ifs_slots']['4'], slot=4))
+    white = model_job.resolve_filament_selection(state, dict(state['filament_slots']['1'], slot=1))
+    green = model_job.resolve_filament_selection(state, dict(state['filament_slots']['4'], slot=4))
     by_extruder = {1: white, 2: green}
     choices = {}
     for row in source_colors.canonical_prompts(manifest):
@@ -373,7 +373,7 @@ def test_resized_plate_composes_fit_into_selected_items_only(tmp_path):
     from print_handy.core.color_geometry import _compose, fit_transform
     before = source.read_bytes()
     fit = {'scale': 0.5, 'rotation': _yaw(90)}
-    report = export_single_color_plate(source, tmp_path / 'white.3mf', decisions, ['1:1'], slot_colors=state['ifs_slots'], fit=fit)
+    report = export_single_color_plate(source, tmp_path / 'white.3mf', decisions, ['1:1'], slot_colors=state['filament_slots'], fit=fit)
     assert source.read_bytes() == before
     assert report['fit']['scale'] == 0.5
     # Holder is 40 x 20 (XY): yawed 90 degrees and halved it is 10 x 20.
@@ -420,7 +420,7 @@ def test_slice_job_applies_chosen_fit_to_every_slot_plate(tmp_path, monkeypatch)
         assert not kwargs, 'derived plates are pre-fitted; Orca must not rescale them again'
         calls.append({'slot': filament_slot, 'supports': supports, 'brim': brim})
         folder = Path(folder); folder.mkdir(parents=True, exist_ok=True)
-        slot = state['ifs_slots'][str(filament_slot)]
+        slot = state['filament_slots'][str(filament_slot)]
         out = folder / f'slot{filament_slot}.gcode'
         out.write_text(f'; filament_colour = {slot["hex"]}\n; nozzle_diameter = 0.4\nM190 S{state["temps_c"]["bed"]}\nM104 S{state["temps_c"]["nozzle"]} T0\nSTART_PRINT BED_TEMP={state["temps_c"]["bed"]} EXTRUDER_TEMP={state["temps_c"]["nozzle"]}\nG1 X10 Y10 Z0.2\nEND_PRINT\n')
         return out, {'slot': filament_slot}, []

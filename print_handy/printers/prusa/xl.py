@@ -74,9 +74,9 @@ MODEL = PrinterModel(
             "max_print_height_mm": facts.XL["max_print_height_mm"].value,
             "nozzle_diameter_mm": 0.4,
             "nozzle_type": "brass",
-            # Five independent toolheads (tools, not slots): ifs_slots stays 1 so no
+            # Five independent toolheads (tools, not slots): filament_slots stays 1 so no
             # IFS behavior in core switches on; tool_count names the heads (#670).
-            "ifs_slots": 1,
+            "filament_slots": 1,
             "tool_count": 5,
         },
     },

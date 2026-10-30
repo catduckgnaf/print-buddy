@@ -56,13 +56,13 @@ def test_single_slot_plate_from_a_two_filament_source_slices(source_extruder):
         source = multi_filament_source(tmp / "source.3mf")
         state = json.loads(STATE.read_text())
         manifest = source_colors.inventory(source)
-        white = model_job.resolve_filament_selection(state, dict(state["ifs_slots"]["1"], slot=1))
+        white = model_job.resolve_filament_selection(state, dict(state["filament_slots"]["1"], slot=1))
         decisions = {"schema": "part_slots_v1", "mode": "per_part", "source_sha256": manifest["source_sha256"],
                      "choices": {row["key"]: white for row in source_colors.canonical_prompts(manifest)}}
         keys = [part["key"] for part in manifest["parts"] if part["source_extruder"] == source_extruder]
         assert keys
         plate = tmp / "slot1.3mf"
-        export_single_color_plate(source, plate, decisions, keys, slot_colors=state["ifs_slots"])
+        export_single_color_plate(source, plate, decisions, keys, slot_colors=state["filament_slots"])
         out, _provenance, _configs = orca_adapter.slice_model(
             plate, tmp / "slice", state, preserve_layout=True, filament_slot=1)
         assert Path(out).is_file() and Path(out).stat().st_size > 0

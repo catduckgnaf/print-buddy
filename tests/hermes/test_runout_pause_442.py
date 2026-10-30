@@ -129,7 +129,7 @@ class ListenerRunoutCase(unittest.IsolatedAsyncioTestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
         self.hardware = Path(self.tmp.name) / "hardware.json"
-        self.hardware.write_text(json.dumps({"active_slot": 1, "ifs_slots": {
+        self.hardware.write_text(json.dumps({"active_slot": 1, "filament_slots": {
             "1": {"spoolman_id": 10, "material": "PLA", "color": "white"}}}))
         self.old_hardware = mel.HARDWARE_STATE
         mel.HARDWARE_STATE = self.hardware

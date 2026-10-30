@@ -324,7 +324,7 @@ def test_xl_guard_accepts_five_tools_and_refuses_a_sixth():
 
 def test_xl_tool_count_flows_through_settings():
     cfg = config_for("prusa.xl")
-    assert cfg["printer"]["tool_count"] == 5 and cfg["printer"]["ifs_slots"] == 1
+    assert cfg["printer"]["tool_count"] == 5 and cfg["printer"]["filament_slots"] == 1
     # tool_count is a real setting on the multi_tool class (the Creator surface):
     # an operator value within the class loads; the same key on a single-tool
     # Prusa model is refused by the class validation.

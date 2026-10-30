@@ -29,7 +29,7 @@ MODEL = PrinterModel(
             "max_print_height_mm": facts.KOBRA2["max_print_height_mm"].value,
             "nozzle_diameter_mm": 0.4,
             "nozzle_type": "brass",
-            "ifs_slots": 1,
+            "filament_slots": 1,
         },
     },
 )

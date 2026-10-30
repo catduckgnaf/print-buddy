@@ -112,17 +112,17 @@ def test_settings_validation_nozzle_size_and_type(monkeypatch):
 
 def test_pre_slice_guard_abrasive_material_on_brass():
     from print_handy.core.slice_guard import pre_slice
-    res = pre_slice(nozzle_type="brass", materials=["PLA-CF"], bed=(220, 220), ifs_slots=1)
+    res = pre_slice(nozzle_type="brass", materials=["PLA-CF"], bed=(220, 220), filament_slots=1)
     assert res.status == "blocked"
     assert any("Refusing to slice abrasive material 'PLA-CF' on a brass nozzle" in msg for msg in res.blocked)
 
     # Multi-material check: abrasive in slot 2 while slot 1 is non-abrasive
-    res_multi = pre_slice(nozzle_type="brass", materials=["PLA", "PLA-CF"], bed=(220, 220), ifs_slots=2, tool_slots={0: 1, 1: 2})
+    res_multi = pre_slice(nozzle_type="brass", materials=["PLA", "PLA-CF"], bed=(220, 220), filament_slots=2, tool_slots={0: 1, 1: 2})
     assert res_multi.status == "blocked"
     assert any("Refusing to slice abrasive material 'PLA-CF' on a brass nozzle" in msg for msg in res_multi.blocked)
 
     # Hardened steel should not be blocked
-    res_ok = pre_slice(nozzle_type="hardened_steel", materials=["PLA-CF"], bed=(220, 220), ifs_slots=1)
+    res_ok = pre_slice(nozzle_type="hardened_steel", materials=["PLA-CF"], bed=(220, 220), filament_slots=1)
     assert res_ok.status != "blocked"
 
 
@@ -221,7 +221,7 @@ def test_tuned_nozzle_profiles_configured(tmp_path, monkeypatch):
         "nozzle": {"diameter_mm": 0.6, "type": "hardened_steel"},
         "spool": {"spoolman_id": 1, "material": "PLA", "density": 1.24},
         "temps_c": {"nozzle": 220, "bed": 60},
-        "ifs_slots": {"1": {"slot": 1, "spoolman_id": 1, "material": "PLA", "physical_color_verified": True, "hex": "FFFFFF"}},
+        "filament_slots": {"1": {"slot": 1, "spoolman_id": 1, "material": "PLA", "physical_color_verified": True, "hex": "FFFFFF"}},
     }
     _out, _prov, configs = orca_adapter.slice_model(dummy_stl, tmp_path / "out_06", state_06)
     machine_cfg = json.loads(configs[0].read_text())
@@ -343,12 +343,12 @@ def test_pre_slice_guard_nozzle_temperature():
     from print_handy.core.slice_guard import pre_slice
 
     # Brass with temperature > 300 should block
-    res = pre_slice(nozzle_type="brass", nozzle_temp=310, bed=(220, 220), ifs_slots=1)
+    res = pre_slice(nozzle_type="brass", nozzle_temp=310, bed=(220, 220), filament_slots=1)
     assert res.status == "blocked"
     assert any("exceeds maximum safe limit of 300" in msg for msg in res.blocked)
 
     # Hardened steel with 310 should pass
-    res_ok = pre_slice(nozzle_type="hardened_steel", nozzle_temp=310, bed=(220, 220), ifs_slots=1)
+    res_ok = pre_slice(nozzle_type="hardened_steel", nozzle_temp=310, bed=(220, 220), filament_slots=1)
     assert res_ok.status != "blocked"
 
 
@@ -379,7 +379,7 @@ def test_orca_adapter_thermal_and_flow_adjustments(tmp_path, monkeypatch):
         "nozzle": {"diameter_mm": 0.4, "type": "hardened_steel"},
         "spool": {"spoolman_id": 1, "material": "PLA", "density": 1.24},
         "temps_c": {"nozzle": 220, "bed": 60},
-        "ifs_slots": {"1": {"slot": 1, "spoolman_id": 1, "material": "PLA", "physical_color_verified": True, "hex": "FFFFFF"}},
+        "filament_slots": {"1": {"slot": 1, "spoolman_id": 1, "material": "PLA", "physical_color_verified": True, "hex": "FFFFFF"}},
     }
 
     base_config = settings.current()

@@ -103,7 +103,7 @@ The `[printer] model` key is `<vendor>.<printer>`, which is the package name and
 | `connection`: `moonraker`, `octoprint`, `offline`, `bambulab_lan` or `flashforge_stock` | `bed_mm`, `max_print_height_mm` (printable area) |
 | `start_code`: `zmod`, `klipper_macro`, `marlin`, `bambu` or `flashforge_stock` | printable-area exclusions and motion envelope (in its Orca `machine.json` and adapter) |
 | `slicers`: allowed `[printer] slicer` values, first is default | `supported_nozzle_sizes`, `supported_nozzle_types`, `nozzle_diameter_mm` |
-| `fallback_slicer`: one isolated attempt after an Orca failure | `color_system` (see Color architectures), `ifs_slots` / AMS / AMS Lite, multi-color support |
+| `fallback_slicer`: one isolated attempt after an Orca failure | `color_system` (see Color architectures), `filament_slots` / AMS / AMS Lite, multi-color support |
 | `file_formats`: what the printer takes, primary first | `adapter` class, Orca `templates` folder, protected-settings `baseline` |
 | `delivery` and `default_delivery`: post-slice options | `label`, `printer.name` |
 | `settings`: shared `firmware`, macro names, layout margins, prime tower, cold pull | any vendor setting it needs to override |
@@ -128,13 +128,13 @@ registry), one of three classes (issue #656):
 | Class | Meaning | Models |
 |---|---|---|
 | `single` | One extruder, one filament position. | Every model not listed below. |
-| `multi_slot` | One extruder fed by several filament slots (an IFS-style feeder): `[printer] ifs_slots` is greater than 1, and slot mapping, spool-slot validation and native slot sync hang off this class. | `flashforge.ad5x` (ZMod), `flashforge_stock.ad5x` |
-| `multi_tool` | Several independent toolheads, each with its own extruder and filament: `[printer] tool_count` is greater than 1 and `ifs_slots` stays 1, so no IFS behavior switches on; slicer tool *i* always prints with toolhead *i*. | `flashforge.creator5`, `flashforge.creator5_pro`, `prusa.xl` |
+| `multi_slot` | One extruder fed by several filament slots (an IFS-style feeder): `[printer] filament_slots` is greater than 1, and slot mapping, spool-slot validation and native slot sync hang off this class. | `flashforge.ad5x` (ZMod), `flashforge_stock.ad5x` |
+| `multi_tool` | Several independent toolheads, each with its own extruder and filament: `[printer] tool_count` is greater than 1 and `filament_slots` stays 1, so no IFS behavior switches on; slicer tool *i* always prints with toolhead *i*. | `flashforge.creator5`, `flashforge.creator5_pro`, `prusa.xl` |
 
 The class is the authority: the adapter properties `multi_slot` / `multi_tool` and the
-settings validation for `ifs_slots` / `tool_count` read it, instead of re-inferring the
+settings validation for `filament_slots` / `tool_count` read it, instead of re-inferring the
 architecture from counts or adapter flags. The classes are mutually exclusive by
-construction, and a model whose settings contradict its class (`ifs_slots` above 1
+construction, and a model whose settings contradict its class (`filament_slots` above 1
 outside `multi_slot`, `tool_count` above 1 outside `multi_tool`) is refused when the
 profile loads. One recorded posture remains from Stage 1: the Bambu AMS models are
 `single` in this stage, with AMS unification a named follow-up (#671). The Prusa XL's
@@ -183,7 +183,7 @@ MODEL = PrinterModel(
     vendor=VENDOR,
     supported_nozzle_sizes=(0.4,),
     settings={"printer": {"name": "Sovol SV08", "bed_mm": [350.0, 350.0], "max_print_height_mm": 345.0,
-                          "nozzle_diameter_mm": 0.4, "ifs_slots": 1}},
+                          "nozzle_diameter_mm": 0.4, "filament_slots": 1}},
 )
 ```
 

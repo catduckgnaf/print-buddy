@@ -25,7 +25,7 @@ SERVICE_PATHS = {"moonraker_url": "/printer/info", "spoolman_url": "/api/v1/heal
 def check_settings(data):
     printer = data["printer"]
     positions = (f"{printer['tool_count']} toolhead(s)" if printer.get("tool_count", 1) != 1
-                 else f"{printer['ifs_slots']} slot(s)")
+                 else f"{printer['filament_slots']} slot(s)")
     return (f"{printer['name']}, bed {printer['bed_mm'][0]:g}x{printer['bed_mm'][1]:g} mm, "
                   f"{positions}, {printer['nozzle_diameter_mm']:g} mm nozzle")
 

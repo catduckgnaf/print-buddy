@@ -371,9 +371,9 @@ class ZmodMultiToolTests(unittest.TestCase):
                 self.assertEqual((a.tool_count, a.slot_count), (4, 4))
                 self.assertEqual((a.multi_tool, a.multi_slot, a.has_native_screen), (True, False, False))
                 # The settings pin the same split: tool_count names the heads,
-                # ifs_slots stays 1 so no IFS behaviour in core switches on.
+                # filament_slots stays 1 so no IFS behaviour in core switches on.
                 self.assertEqual(a.config["printer"]["tool_count"], 4)
-                self.assertEqual(a.config["printer"]["ifs_slots"], 1)
+                self.assertEqual(a.config["printer"]["filament_slots"], 1)
                 with self.assertRaises(MultiColorUnsupported):
                     a.native
 
@@ -563,12 +563,12 @@ class SettingsModelTests(unittest.TestCase):
         local = Path(tempfile.mkdtemp()) / "local.toml"
         local.write_text('[printer]\nmodel = "sovol.sv06"\n')
         data = settings.load(local=local, environ={})
-        self.assertEqual((data["printer"]["model"], data["printer"]["ifs_slots"]), (SV06, 1))
+        self.assertEqual((data["printer"]["model"], data["printer"]["filament_slots"]), (SV06, 1))
         self.assertEqual(data["orca"]["templates"].name, "sovol_sv06")
 
     def test_klipper_models_need_one_slot(self):
-        with self.assertRaisesRegex(settings.SettingsError, "ifs_slots must be 1"):
-            self.load(model=GENERIC, ifs_slots=4)
+        with self.assertRaisesRegex(settings.SettingsError, "filament_slots must be 1"):
+            self.load(model=GENERIC, filament_slots=4)
 
     def test_each_model_uses_its_template_folder_by_default(self):
         for key, model in printers.MODELS.items():

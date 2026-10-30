@@ -50,7 +50,7 @@ def transport(st, submissions):
                   'extruder': {'target': 0}, 'heater_bed': {'target': 0},
                   'filament_switch_sensor head_switch_sensor': {'enabled': True},
                   'zmod_color': {'slots': [{'ID': str(i), 'Material': slot['material'], 'HEX': slot['hex']}
-                                        for i, slot in st['ifs_slots'].items()]}}
+                                        for i, slot in st['filament_slots'].items()]}}
         return {'result': {'status': status}}
     return reply
 
@@ -185,7 +185,7 @@ def test_idle_guard_refusal_happens_before_approval_upload_and_start(tmp_path):
             'extruder': {'target':0}, 'heater_bed': {'target':0},
             'filament_switch_sensor head_switch_sensor': {'enabled':True},
             'zmod_color': {'slots': [{'ID': str(i), 'Material': slot['material'], 'HEX': slot['hex']}
-                                     for i, slot in st['ifs_slots'].items()]}}
+                                     for i, slot in st['filament_slots'].items()]}}
     native = detail(st)
     native['rightTargetTemp'] = 210.0
     native['rightTemp'] = 119.74
@@ -363,7 +363,7 @@ def test_live_slot_label_pla_accepts_pla_plus_spool(tmp_path):
     # zmod_color labels a PLA+ spool's slot as plain PLA. The live check must use the material
     # family rule (same_material), not an exact string, or a correctly loaded PLA+ spool is refused.
     st = state()
-    for slot in st['ifs_slots'].values():
+    for slot in st['filament_slots'].values():
         slot['material'] = 'PLA+'
     path = tmp_path/'coupon.gcode'; path.write_text(artifact(3))
     mapping = {'0': 1, '1': 2, '2': 4}

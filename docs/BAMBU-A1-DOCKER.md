@@ -120,7 +120,7 @@ Create `data/hermes/state/printer_hardware.json` on the host (the container sees
     "color_code": "#000000"
   },
   "temps_c": {"nozzle": 240, "bed": 85},
-  "ifs_slots": {
+  "filament_slots": {
     "1": {
       "spoolman_id": 1,
       "name": "Black PETG",
@@ -137,9 +137,9 @@ Make the file owned by 1000:1000. What each part does, and what you see when it 
 
 | Key | Used for | If missing or wrong |
 |---|---|---|
-| `ifs_slots` with one slot | The color/material labels offered on the first link and the slot the slice is bound to | `requires one to four distinct configured slots` (the link is refused) |
+| `filament_slots` with one slot | The color/material labels offered on the first link and the slot the slice is bound to | `requires one to four distinct configured slots` (the link is refused) |
 | `bed_mm`, `max_print_height_mm` | Placement on the bed and the fit check | `Slicing failed: 'bed_mm'` |
-| `ifs_slots.1.spoolman_id`, `material`, `physical_color_verified: true` | The guard that the physical slot matches what is sliced | `IFS slot color/material mapping is unverified` |
+| `filament_slots.1.spoolman_id`, `material`, `physical_color_verified: true` | The guard that the physical slot matches what is sliced | `IFS slot color/material mapping is unverified` |
 | `hex` | The filament color written into the slice; must be six hex digits | `filament color must be an explicit six-digit RGB value` |
 | `spool.material`, `temps_c` | Material family and the temperatures the G-code guard checks; 240/85 °C are the documented PETG defaults | An unrecognised material fails closed |
 | `nozzle` | The A1 accepts only 0.4 mm, stainless or hardened steel | A readiness problem naming the supported sizes |

@@ -122,7 +122,7 @@ def test_per_part_rearranged_job_slices_one_multicolor_plate(tmp_path, monkeypat
         out = folder / 'plate_1.gcode'
         labels = ''.join(f'; printing object Part {p["object_id"]} id:{i} copy 0\n'
                          for i, p in enumerate(manifest['parts']))
-        slot = state['ifs_slots']['1']
+        slot = state['filament_slots']['1']
         out.write_text(f'; filament_colour = {slot["hex"]}\n; nozzle_diameter = 0.4\n'
                        '; estimated printing time (normal mode) = 2h 0m 0s\n'
                        f'M190 S{state["temps_c"]["bed"]}\nM104 S{state["temps_c"]["nozzle"]} T0\n'
@@ -360,7 +360,7 @@ def test_duplo_shaped_per_part_job_is_rearranged_without_asking_and_slices(env, 
     # Now slice the saved job through the real slice path; only Orca is faked.
     st = json.loads(STATE.read_text())
     # The slots the intake state offered, with the hardware fixture's verified fields.
-    st['ifs_slots'].update({k: {**st['ifs_slots'].get(k, {}), **v} for k, v in state()['ifs_slots'].items()})
+    st['filament_slots'].update({k: {**st['filament_slots'].get(k, {}), **v} for k, v in state()['filament_slots'].items()})
     monkeypatch.setattr(model_job.printer_state, 'load', lambda *a, **k: st)
     exported = []
 
@@ -456,7 +456,7 @@ def _duplo_source(path):
 
 def _slots_by_name(manifest, rule):
     st = json.loads(STATE.read_text())
-    sel = {s: model_job.resolve_filament_selection(st, dict(st['ifs_slots'][str(s)], slot=s)) for s in (1, 2, 4)}
+    sel = {s: model_job.resolve_filament_selection(st, dict(st['filament_slots'][str(s)], slot=s)) for s in (1, 2, 4)}
     name_of = {str(i): name for i, (name, _w, _d) in enumerate(DUPLO_PARTS, 1)}
     choices = {}
     for part in manifest['parts']:

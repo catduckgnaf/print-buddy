@@ -21,6 +21,6 @@ MODEL = PrinterModel(
     vendor=VENDOR,
     settings={"printer": {
         "name": "Creality Ender-3 V3 SE (OctoPrint)", "bed_mm": [220.0, 220.0], "max_print_height_mm": 250.0,
-        "nozzle_diameter_mm": 0.4, "ifs_slots": 1,
+        "nozzle_diameter_mm": 0.4, "filament_slots": 1,
     }},
 )

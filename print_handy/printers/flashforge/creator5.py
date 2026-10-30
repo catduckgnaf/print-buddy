@@ -1,7 +1,7 @@
 """Flashforge Creator 5 on ZMod Klipper: 4 independent toolheads, 256 mm cube.
 
 Quirks: the toolheads are a tool changer (T0-T3, Klipper extruder..extruder3), not an
-IFS feeder — the model records tool_count, ifs_slots stays 1, and the adapter is the
+IFS feeder — the model records tool_count, filament_slots stays 1, and the adapter is the
 multi-tool one (tools, not slots; see adapter.ZmodMultiToolAdapter). START_PRINT takes
 MESH like its siblings (the C5Pro build's macro reads params.MESH; #301 evidence
 addendum), so the start/end G-code is the shared ZMod form. ZMod documents no Klipper
@@ -31,9 +31,9 @@ MODEL = PrinterModel(
             "max_print_height_mm": 256.0,
             # Orca templates are tuned for this nozzle. Slicing refuses any other size.
             "nozzle_diameter_mm": 0.4,
-            # Four independent toolheads (tools, not IFS slots): ifs_slots stays 1
+            # Four independent toolheads (tools, not IFS slots): filament_slots stays 1
             # so no IFS behaviour in core switches on; tool_count names the heads.
-            "ifs_slots": 1,
+            "filament_slots": 1,
             "tool_count": 4,
         },
     },

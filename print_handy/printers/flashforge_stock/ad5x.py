@@ -22,6 +22,6 @@ MODEL = PrinterModel(
         "max_print_height_mm": 220.0,
         "nozzle_diameter_mm": 0.4,
         # Physical IFS bays. Print start uses slot occupancy, not a second tool.
-        "ifs_slots": 4,
+        "filament_slots": 4,
     }},
 )

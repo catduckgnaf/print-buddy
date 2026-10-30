@@ -140,7 +140,7 @@ def _bind_harness(tmp_path):
     state = tmp_path / "hw.json"
     state.write_text(json.dumps({
         "spool": {"spoolman_id": 3, "name": "Pink PLA", "material": "PLA", "density": 1.24, "diameter_mm": 1.75},
-        "ifs_slots": {"2": {"spoolman_id": 3, "material": "PLA", "color": "pink"}}}))
+        "filament_slots": {"2": {"spoolman_id": 3, "material": "PLA", "color": "pink"}}}))
     spools = {
         3: {"id": 3, "location": "IFS Slot 2", "filament": {"name": "Pink PLA", "material": "PLA", "color_hex": "F95D73"}},
         7: {"id": 7, "location": "Shelf", "filament": {"name": "Coffee PLA+", "material": "PLA+", "color_hex": "6F4E37"}},
@@ -268,7 +268,7 @@ def test_walkthrough_clicks_create_and_bind_with_disposition(tmp_path, monkeypat
         {"filament_id": 5, "brand": "Sunlu", "material": "Silk PLA",
          "color": "Rose Red Blue Green", "hex": None}])
     monkeypatch.setattr(spool_sync, "load_state", lambda: {
-        "ifs_slots": {"2": {"spoolman_id": 13, "name": "Matte White PLA+", "remaining_grams": 0.0}}})
+        "filament_slots": {"2": {"spoolman_id": 13, "name": "Matte White PLA+", "remaining_grams": 0.0}}})
     monkeypatch.setattr(spool_sync, "create_spool", lambda spec: {"spool_id": 18})
     binds = []
 
@@ -329,7 +329,7 @@ def _walk_to_confirm(tmp_path, monkeypatch):
         {"filament_id": 5, "brand": "Sunlu", "material": "Silk PLA",
          "color": "Rose Red Blue Green", "hex": None}])
     monkeypatch.setattr(spool_sync, "load_state", lambda: {
-        "ifs_slots": {"2": {"spoolman_id": 13, "name": "Matte White PLA+", "remaining_grams": 0.0}}})
+        "filament_slots": {"2": {"spoolman_id": 13, "name": "Matte White PLA+", "remaining_grams": 0.0}}})
     created = []
 
     def fake_create(spec):

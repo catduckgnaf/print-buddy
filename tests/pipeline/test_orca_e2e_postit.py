@@ -41,8 +41,8 @@ def test_postit_per_part_slices_once_with_real_orca(tmp_path):
     shutil.copy2(SOURCE, src)
     state = json.loads(STATE.read_text())
     manifest = source_colors.inventory(src)
-    white = model_job.resolve_filament_selection(state, dict(state['ifs_slots']['1'], slot=1))
-    pink = model_job.resolve_filament_selection(state, dict(state['ifs_slots']['2'], slot=2))
+    white = model_job.resolve_filament_selection(state, dict(state['filament_slots']['1'], slot=1))
+    pink = model_job.resolve_filament_selection(state, dict(state['filament_slots']['2'], slot=2))
     # Holder in slot 2, every stencil in slot 1: the grouped intake asks two questions for this.
     assert len(source_colors.grouped_prompts(manifest)) == 2
     choices = {}

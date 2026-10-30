@@ -37,7 +37,7 @@ MODEL = PrinterModel(
             "max_print_height_mm": facts.A1["max_print_height_mm"].value,
             "nozzle_diameter_mm": 0.4,
             "nozzle_type": "stainless_steel",
-            "ifs_slots": 1,
+            "filament_slots": 1,
         },
     },
 )

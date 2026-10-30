@@ -161,6 +161,139 @@ def test_next_step_for_only_suggests_retry_when_transient():
         MAKERWORLD_TOKEN_ERROR, transient="RETRY", other="OTHER") != "RETRY"
 
 
+# ------------------------------------------- direct links + Creality fold
+
+def _direct(text):
+    from print_handy.core import model_job
+    return model_job.DirectLinkError(text)
+
+
+#: One case per curated DirectLinkError in model_job (#607), with the
+#: category the follow-on spec assigns it. Texts are the provider's own.
+DIRECT_LINK_CASES = [
+    ("That link points at 192.168.1.5, which is not a public address, so "
+     "Print Handy will not fetch it. Direct file links must be public links "
+     "anyone on the internet can open. Nothing was downloaded.",
+     Category.CONFIGURATION, "not public"),
+    ("Direct file links must start with http:// or https://. Nothing was "
+     "downloaded.", Category.CONFIGURATION, "http:// or https://"),
+    ("That link has a user name or password in it, so Print Handy will not "
+     "fetch it. Share the file with a public link instead. Nothing was "
+     "downloaded.", Category.CONFIGURATION, "user name or password"),
+    ("That link has no host name, so it cannot be fetched. Nothing was "
+     "downloaded.", Category.CONFIGURATION, "no host name"),
+    ("That direct link has no address to fetch. Send the link again.",
+     Category.CONFIGURATION, "no address to fetch"),
+    ("Print Handy could not look up the host files.example.com, so the file "
+     "was not downloaded. Check the link, or check the network connection, "
+     "then send the link again.", Category.TRANSIENT, "could not look up"),
+    ("Print Handy could not reach the host for that link, so the file was "
+     "not downloaded. Check the link, or check the network connection, then "
+     "send the link again.", Category.TRANSIENT, "could not reach the host"),
+    ("That link redirected too many times, so the file was not downloaded. "
+     "Send a link that points at the file more directly. Nothing was "
+     "downloaded.", Category.CONFIGURATION, "redirected too many times"),
+    ("That link returned a web page instead of a print file, so nothing was "
+     "saved as a model. The link has to end at the file itself: for a file "
+     "host, use its direct download link; a Dropbox share link works as-is.",
+     Category.CONFIGURATION, "web page instead of a print file"),
+    ("That link's file is not a 3MF file (a 3MF is a zip archive), so it was "
+     "not saved. Check the link points at the model's .3mf file itself.",
+     Category.CONFIGURATION, "not a 3MF file"),
+    ("That link gave back notes.txt, which is not a print file Print Handy "
+     "can use. Direct links must serve a .stl or .3mf file. Nothing was "
+     "saved.", Category.CONFIGURATION, "not a print file"),
+    ("That link downloaded as an empty file, so nothing was saved.",
+     Category.CONFIGURATION, "empty file"),
+]
+
+
+@pytest.mark.parametrize("text,category,fragment", DIRECT_LINK_CASES)
+def test_direct_link_failures_are_known_causes(text, category, fragment):
+    exc = _direct(text)
+    known = diagnostics.known_cause(exc)
+    assert known is not None
+    assert known.category is category
+    assert diagnostics.classify(exc) is category
+    assert fragment in known.cause
+
+
+@pytest.mark.parametrize("code,category", [
+    (401, Category.CONFIGURATION), (403, Category.CONFIGURATION),
+    (404, Category.CONFIGURATION), (429, Category.TRANSIENT),
+    (503, Category.TRANSIENT)])
+def test_direct_link_http_status_is_parsed_from_the_text(code, category):
+    # DirectLinkError discards the HTTPError, so the status only exists in
+    # the curated text; known_cause must read it from there (403 vs 503).
+    exc = _direct(
+        f"The host for that link answered with HTTP {code}, so the file was "
+        "not downloaded. Check the link is public and the file is still "
+        "there, then send it again.")
+    known = diagnostics.known_cause(exc)
+    assert known is not None and known.category is category
+    assert diagnostics.classify(exc) is category
+    assert f"HTTP {code}" in known.cause
+    if category is Category.CONFIGURATION:
+        assert "send it again" not in known.remedy.lower()
+
+
+def test_direct_link_recognition_needs_the_error_type():
+    # The same phrasing on a plain RuntimeError is not a direct-link
+    # failure; recognition is gated on the DirectLinkError type name.
+    text = DIRECT_LINK_CASES[0][0]
+    assert diagnostics.known_cause(RuntimeError(text)) is None
+
+
+def test_direct_link_post_leaks_no_host_or_url_credentials():
+    post = diagnostics.known_post(
+        "Preparing that model stopped before it was ready.",
+        not_happened="Nothing was downloaded.",
+        subsystem="intake", exc=_direct(DIRECT_LINK_CASES[0][0]))
+    assert post is not None and "not public" in post
+    assert "192.168.1.5" not in post and "DirectLinkError" not in post
+    assert post.rstrip().endswith("Reference: PH_INTAKE_CONFIGURATION")
+    creds = diagnostics.known_post(
+        "Preparing that model stopped before it was ready.",
+        subsystem="intake",
+        exc=_direct("That link has a user name or password in it "
+                    "(https://user:secretpw@files.example.com/x.stl), so "
+                    "Print Handy will not fetch it."))
+    assert creds is not None and "user name or password" in creds
+    assert "secretpw" not in creds and "files.example.com" not in creds
+
+
+def test_crealitycloud_answer_gap_is_a_known_cause():
+    from print_handy.core import model_job
+    known = diagnostics.known_cause(RuntimeError(model_job.CREALITYCLOUD_ANSWER_GAP))
+    assert known is not None and known.category is Category.CONFIGURATION
+    assert "could not find a file URL" in known.cause
+    assert "browser" in known.remedy and "upload or drop" in known.remedy
+
+
+@pytest.mark.parametrize("text", [
+    "Creality Cloud says this model does not exist — it may have been "
+    "removed, or the link is wrong",
+    "Creality Cloud model not found for "
+    "https://www.crealitycloud.com/model-detail/gone-model — the link may "
+    "be wrong, or the model may have been removed"])
+def test_crealitycloud_missing_model_is_a_known_cause(text):
+    known = diagnostics.known_cause(RuntimeError(text))
+    assert known is not None and known.category is Category.CONFIGURATION
+    assert "does not exist" in known.cause
+    # The raw text (with its URL) never reaches the chat wording.
+    assert "crealitycloud.com/model-detail" not in known.cause + known.remedy
+
+
+def test_crealitycloud_unfixable_answers_stay_unknown():
+    # Not operator-fixable, so the conservative unknown treatment stays:
+    # a changed/unexpected site answer and a bare envelope refusal code.
+    assert diagnostics.known_cause(RuntimeError(
+        "Creality Cloud answered with an unexpected response, so the "
+        "request was not followed")) is None
+    assert diagnostics.known_cause(RuntimeError(
+        "Creality Cloud refused the request (code 7)")) is None
+
+
 # ------------------------------------------------------------- wizard env
 
 def test_wizard_presets_use_print_handy_wizard_prefix():

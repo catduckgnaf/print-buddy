@@ -269,7 +269,15 @@ def _firmware_entry(raw, file_firmware, problems):
 
 
 def _load_firmware_entries(root, problems):
-    """Load every firmware/commands/*.toml in sorted filename order and merge.
+    """Load every firmware/commands/*.toml and merge, family files first.
+
+    Files are read in FIRMWARES order (any further *.toml files after them,
+    in sorted filename order), which reproduces the family sequence the
+    single firmware/commands.toml used. That order is observable: the macro
+    name index keeps the first entry that claims a name, and a bare
+    START_PRINT must keep resolving to the ZMod entry it resolved to when
+    the registry was one file (the #645 Creality/Sovol START_PRINT entries
+    are reached through their printer scopes, not the unscoped name).
 
     The merged entries are the same logical registry the single
     firmware/commands.toml used to hold (issue #644); duplicate ids are
@@ -279,7 +287,9 @@ def _load_firmware_entries(root, problems):
     commands_dir = root / "firmware" / "commands"
     if not commands_dir.is_dir():
         raise RegistryError(f"registry file missing: {commands_dir}")
-    paths = sorted(commands_dir.glob("*.toml"))
+    by_name = {path.stem: path for path in commands_dir.glob("*.toml")}
+    paths = [by_name.pop(family) for family in FIRMWARES if family in by_name]
+    paths += [by_name[name] for name in sorted(by_name)]
     if not paths:
         raise RegistryError(f"registry file missing: no *.toml files in {commands_dir}")
     entries: list[FirmwareEntry] = []

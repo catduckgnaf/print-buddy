@@ -11,9 +11,10 @@ guarded print-control flows and their confirmation buttons.
 One file per firmware family under `commands/` (issue #644): `commands/zmod.toml`,
 `commands/klipper.toml` and `commands/marlin.toml`. An entry lives in the file
 named for its `firmware` value — the loader loads every `*.toml` in
-`commands/` in sorted filename order, merges them into one registry, and
-rejects an entry whose `firmware` field disagrees with its file, so the
-partition cannot silently drift. Splitting by brand instead was rejected:
+`commands/` in firmware-family order (the sequence the single file used,
+so name resolution behaves exactly as it did before the split), merges
+them into one registry, and rejects an entry whose `firmware` field
+disagrees with its file, so the partition cannot silently drift. Splitting by brand instead was rejected:
 an entry applies along its firmware, not its brand (the AD5X entries are
 ZMod macros, shared Klipper entries span brands, and single brands span
 firmwares).

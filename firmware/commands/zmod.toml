@@ -1,13 +1,22 @@
-# Firmware command, macro and error registry. See firmware/README.md for the schema.
+# ZMod firmware command and macro registry. See firmware/README.md for the schema.
+#
+# Covers the ZMod firmware set for the Flashforge AD5X family as Print Handy
+# registers it today. Entries are verified from the sources each entry's notes
+# name -- chiefly the shipped ZMod config set (ghzserg/zmod_ff5x) at the commit
+# pinned in the notes, and print-handy.cfg in this repository for Print Handy's
+# own macro. Entries scoped to flashforge.ad5x stay scoped there: ZMod macro
+# applicability is per model and per accessory (the IFS macros, for example,
+# cannot apply to a printer with no IFS).
 #
 # Every entry is advisory reference data for lookups (issue #169). An entry is never
 # sent to a printer by the lookup or troubleshooting code; sending anything stays
 # behind the existing guarded print-control flows and their confirmation buttons.
 #
-# firmware is one of: zmod, klipper, marlin.
 # kind is one of: command, macro, error.
 # printers lists the registered printer model keys (printers/registry.toml) the entry
 # is known to apply to, or ["*"] when it applies to every printer on that firmware.
+# pack is optional: it names a macro pack that rides on this firmware (absent = the
+# firmware's stock set). No entry carries one yet; see firmware/README.md.
 
 [[entry]]
 id = "zmod.start-print"
@@ -20,7 +29,6 @@ command = "START_PRINT BED_TEMP=<bed C> EXTRUDER_TEMP=<nozzle C> MESH=<mesh prof
 description = "ZMod start macro on the AD5X. Owns heating, homing and mesh loading for the job; the slicer template emits it and Print Handy checks the temperatures and MESH= argument against the job instead of inventing its own startup."
 safety = "Heats the nozzle and bed and moves the toolhead. Only ever runs as part of a confirmed print start, never from a lookup."
 notes = "An explicit Z_OFFSET argument is not part of the normal flow; the saved or native-screen offset is the authority (see docs/AD5X-CONTRACT.md)."
-
 [[entry]]
 id = "zmod.end-print"
 name = "END_PRINT"
@@ -31,7 +39,6 @@ printers = ["flashforge.ad5x"]
 command = "END_PRINT"
 description = "ZMod end macro emitted by the AD5X Orca template: turns heaters off and parks the toolhead at the end of a job."
 safety = "Runs only as the tail of a sliced job."
-
 [[entry]]
 id = "zmod.change-zcolor"
 name = "CHANGE_ZCOLOR"
@@ -42,7 +49,6 @@ printers = ["flashforge.ad5x"]
 command = "CHANGE_ZCOLOR SLOT=<1-4> TYPE=<material> HEX=<rrggbb>"
 description = "Tells the AD5X native screen which material and colour sit in an IFS slot, so the screen agrees with Spoolman. Print Handy builds this line in the printer adapter when a spool binding changes."
 safety = "Changes printer screen state. It is sent only by the spool-binding flow, never by a lookup or a troubleshooting step."
-
 [[entry]]
 id = "zmod.ifs-load"
 name = "_INSERT_PRUTOK_IFS / IFS_F10"
@@ -53,7 +59,6 @@ printers = ["flashforge.ad5x"]
 command = "_INSERT_PRUTOK_IFS"
 description = "ZMod IFS feed path on the AD5X: feeds staged filament from an IFS slot into the extruder. Filament staged in the IFS buffer or tube reads as not detected at the head sensor until a load like this runs."
 safety = "Extrudes filament and needs a hot nozzle. Operator action at the printer or through the existing confirmed flows only."
-
 [[entry]]
 id = "zmod.auto-full-bed-level"
 name = "AUTO_FULL_BED_LEVEL"
@@ -64,7 +69,6 @@ printers = ["flashforge.ad5x"]
 command = "AUTO_FULL_BED_LEVEL"
 description = "Full bed levelling routine exposed by the AD5X ZMod install. One of the levelling macros verified present on the machine; the AD5X does not expose G34, so older gantry-alignment instructions do not apply to it."
 safety = "Homes and probes the bed with a hot or warming nozzle. Run it at the printer, not from a lookup."
-
 [[entry]]
 id = "zmod.bed-level-screws-tune"
 name = "BED_LEVEL_SCREWS_TUNE"
@@ -75,7 +79,6 @@ printers = ["flashforge.ad5x"]
 command = "BED_LEVEL_SCREWS_TUNE"
 description = "AD5X ZMod helper that probes over the bed screws so the operator can tram the bed by hand between probes."
 safety = "Moves the toolhead over the bed. Keep hands clear while it probes."
-
 [[entry]]
 id = "zmod.coldpull"
 name = "COLDPULL"
@@ -87,7 +90,6 @@ command = "COLDPULL"
 description = "ZMod's interactive cold pull on the AD5X. It asks which material is loaded (a prompt on the screen/client), heats and loads that material, then cools to the material's pull temperature so the operator can pull the filament out by hand and take the nozzle plug with it. Print Handy's guided /print-coldpull is a separate flow; this entry describes the macro ZMod itself ships."
 safety = "Heats the nozzle to full printing temperature and extrudes before cooling. The pull itself is a hand action at the printer while the nozzle is still warm; never run it unattended."
 notes = "Source: ghzserg/zmod_ff5x@5409ffe7ffee572219837fbd0d7de381469537f6, en/base.cfg (shipped AD5X config set). Generic firmware knowledge from the shipped config, not verified on a Print Handy printer."
-
 [[entry]]
 id = "zmod.load-filament"
 name = "LOAD_FILAMENT"
@@ -99,7 +101,6 @@ command = "LOAD_FILAMENT EXTRUDE_LEN=<mm> EXTRUDER_TEMP=<nozzle C>"
 description = "Heats the nozzle (the default target is the temperature ZMod's filament-change flow last stored) and extrudes EXTRUDE_LEN of filament (125 mm built-in default) into the extruder. It is the load half of ZMod's filament-change prompts and of LOAD_MATERIAL."
 safety = "Extrudes at full temperature; molten filament leaves the nozzle. Keep hands clear and give the purge somewhere to go."
 notes = "Source: ghzserg/zmod_ff5x@5409ffe7ffee572219837fbd0d7de381469537f6, en/base.cfg. Generic firmware knowledge from the shipped config, not verified on a Print Handy printer."
-
 [[entry]]
 id = "zmod.unload-filament"
 name = "UNLOAD_FILAMENT"
@@ -111,7 +112,6 @@ command = "UNLOAD_FILAMENT"
 description = "Heats the nozzle to the stored filament-change temperature and retracts the filament out of the extruder (75 mm built-in default distance). The unload half of ZMod's filament-change prompts; LOAD_FILAMENT is the reverse."
 safety = "Heats the nozzle to full temperature first. Wait for the retract to finish before pulling the filament free by hand."
 notes = "Source: ghzserg/zmod_ff5x@5409ffe7ffee572219837fbd0d7de381469537f6, en/base.cfg. Generic firmware knowledge from the shipped config, not verified on a Print Handy printer."
-
 [[entry]]
 id = "zmod.load-material"
 name = "LOAD_MATERIAL"
@@ -123,7 +123,6 @@ command = "LOAD_MATERIAL"
 description = "ZMod's manual filament load/change routine: it saves the current heater state and walks the operator through selecting and loading material with on-screen prompts, using the LOAD_FILAMENT and UNLOAD_FILAMENT paths underneath."
 safety = "Heats and extrudes as part of the guided change. Stay at the printer and answer its prompts; do not start it remotely and walk away."
 notes = "Source: ghzserg/zmod_ff5x@5409ffe7ffee572219837fbd0d7de381469537f6, en/base.cfg. Generic firmware knowledge from the shipped config, not verified on a Print Handy printer."
-
 [[entry]]
 id = "zmod.clear-nozzle"
 name = "CLEAR_NOZZLE"
@@ -135,7 +134,6 @@ command = "CLEAR_NOZZLE EXTRUDER_TEMP=<nozzle C> BED_TEMP=<bed C>"
 description = "ZMod's nozzle-cleaning routine: heats nozzle and bed (built-in defaults 230 C and 80 C) and runs its cleaning moves, then turns nozzle control off. Print Handy's AD5X preparation flows rely on ZMod cleaning as part of mesh and start preparation; this is the operator-facing name for the same routine."
 safety = "Heats both heaters and moves the toolhead against the cleaning surface. Keep the bed area clear and hands away while it runs."
 notes = "Source: ghzserg/zmod_ff5x@5409ffe7ffee572219837fbd0d7de381469537f6, en/base.cfg. Generic firmware knowledge from the shipped config, not verified on a Print Handy printer."
-
 [[entry]]
 id = "zmod.set-extruder-slot"
 name = "SET_EXTRUDER_SLOT"
@@ -147,7 +145,6 @@ command = "SET_EXTRUDER_SLOT SLOT=<1-4>"
 description = "Records in ZMod which IFS slot is the one loaded in the extruder. It is the bookkeeping step at the end of a slot load — Print Handy's own slot-load flow sends it after the IFS feed macros — and it does not feed or move filament by itself."
 safety = "No motion. Recording the wrong slot makes the screen, ZMod's automatic spool switching and usage accounting all agree on the wrong spool."
 notes = "Source: ghzserg/zmod_ff5x@5409ffe7ffee572219837fbd0d7de381469537f6, en/ad5x.cfg; also sent by Print Handy itself in print_handy/hermes/slot_load.py. Generic firmware knowledge from the shipped config, not verified on a Print Handy printer."
-
 [[entry]]
 id = "zmod.set-active-spool"
 name = "SET_ACTIVE_SPOOL"
@@ -159,7 +156,6 @@ command = "SET_ACTIVE_SPOOL ID=<spool id>"
 description = "Tells Spoolman, through Moonraker's spoolman remote method, which spool is active so extrusion is charged to it. The macro ships in ZMod's base config; the same macro is part of the standard Klipper Spoolman integration, so other Klipper printers may define it too."
 safety = "No motion and no heating. A wrong ID silently charges filament usage to the wrong spool until it is corrected."
 notes = "Source: ghzserg/zmod_ff5x@5409ffe7ffee572219837fbd0d7de381469537f6, en/base.cfg. Generic firmware knowledge from the shipped config, not verified on a Print Handy printer."
-
 [[entry]]
 id = "zmod.clear-active-spool"
 name = "CLEAR_ACTIVE_SPOOL"
@@ -171,7 +167,6 @@ command = "CLEAR_ACTIVE_SPOOL"
 description = "Clears Spoolman's active spool (sets it to none) through Moonraker's spoolman remote method, so extrusion is charged to nobody until the next SET_ACTIVE_SPOOL. Ships in ZMod's base config; the same macro is part of the standard Klipper Spoolman integration."
 safety = "No motion. While no spool is active, filament use is not recorded against any spool."
 notes = "Source: ghzserg/zmod_ff5x@5409ffe7ffee572219837fbd0d7de381469537f6, en/base.cfg. Generic firmware knowledge from the shipped config, not verified on a Print Handy printer."
-
 [[entry]]
 id = "zmod.save-zmod-data"
 name = "SAVE_ZMOD_DATA"
@@ -183,7 +178,6 @@ command = "SAVE_ZMOD_DATA <KEY>=<value> ..."
 description = "Saves ZMod's own settings (saved variables such as dialog behaviour, motor-stop and screen options) — the settings interface Print Handy's ZMod documentation points operators at instead of editing vendor macro files. GET_ZMOD_DATA reports the current values."
 safety = "No motion. The values persist across restarts and change how ZMod behaves on every later print; change one key at a time and note the old value first."
 notes = "Source: ghzserg/zmod_ff5x@5409ffe7ffee572219837fbd0d7de381469537f6, en/base.cfg. Generic firmware knowledge from the shipped config, not verified on a Print Handy printer."
-
 [[entry]]
 id = "zmod.get-zmod-data"
 name = "GET_ZMOD_DATA"
@@ -195,7 +189,6 @@ command = "GET_ZMOD_DATA"
 description = "Reports ZMod's current parameter values (screen mode, Guppy and Moonraker options, and the other SAVE_ZMOD_DATA settings) to the console. The read side of SAVE_ZMOD_DATA."
 safety = "Reports only; it heats nothing and moves nothing."
 notes = "Source: ghzserg/zmod_ff5x@5409ffe7ffee572219837fbd0d7de381469537f6, en/base.cfg. Generic firmware knowledge from the shipped config, not verified on a Print Handy printer."
-
 [[entry]]
 id = "zmod.nozzle-control"
 name = "NOZZLE_CONTROL"
@@ -207,7 +200,6 @@ command = "NOZZLE_CONTROL WEIGHT=<grams>"
 description = "Sets the load-cell weight threshold (built-in default 1500 g) at which ZMod's nozzle control treats bed contact as a nozzle hit or a detached part, handing the value to ZMod's znozzle helper. This is a protection threshold, not a print-quality setting."
 safety = "Raising the threshold weakens nozzle-hit and part-detachment detection; lowering it can false-trigger mid-print. Change it only with a reason, and test afterwards."
 notes = "Source: ghzserg/zmod_ff5x@5409ffe7ffee572219837fbd0d7de381469537f6, en/base.cfg. Generic firmware knowledge from the shipped config, not verified on a Print Handy printer."
-
 [[entry]]
 id = "zmod.pid-tune-extruder"
 name = "PID_TUNE_EXTRUDER"
@@ -219,7 +211,6 @@ command = "PID_TUNE_EXTRUDER TEMPERATURE=<nozzle C>"
 description = "Homes, moves to mid-bed and runs Klipper PID_CALIBRATE for the extruder (built-in default target 245 C, part fan on), then saves the result through ZMod's save flow, which restarts the firmware. PID_TUNE_BED is the bed equivalent."
 safety = "Cycles the nozzle temperature repeatedly around the target and ends in a firmware restart when it saves. Never run it mid-print, and watch the first cycle."
 notes = "Source: ghzserg/zmod_ff5x@5409ffe7ffee572219837fbd0d7de381469537f6, en/base.cfg. Generic firmware knowledge from the shipped config, not verified on a Print Handy printer."
-
 [[entry]]
 id = "zmod.pid-tune-bed"
 name = "PID_TUNE_BED"
@@ -231,7 +222,6 @@ command = "PID_TUNE_BED TEMPERATURE=<bed C>"
 description = "Homes, moves to mid-bed and runs Klipper PID_CALIBRATE for the heated bed (built-in default target 80 C), then saves the result through ZMod's save flow, which restarts the firmware. PID_TUNE_EXTRUDER is the nozzle equivalent."
 safety = "Cycles the bed temperature repeatedly around the target and ends in a firmware restart when it saves. Never run it mid-print."
 notes = "Source: ghzserg/zmod_ff5x@5409ffe7ffee572219837fbd0d7de381469537f6, en/base.cfg. Generic firmware knowledge from the shipped config, not verified on a Print Handy printer."
-
 [[entry]]
 id = "zmod.zshaper"
 name = "ZSHAPER"
@@ -243,7 +233,6 @@ command = "ZSHAPER"
 description = "ZMod's input-shaper calibration: homes, runs Klipper resonance testing on X and Y (TEST_RESONANCES) and hands the measurements to ZMod's shaper analysis, which proposes the shaper settings. BELTS_SHAPER_CALIBRATION is ZMod's separate belt-frequency test."
 safety = "The printer vibrates hard and loudly during the resonance sweeps. Nothing on the bed, the printer on a stable surface, and be ready to power off if anything comes loose."
 notes = "Source: ghzserg/zmod_ff5x@5409ffe7ffee572219837fbd0d7de381469537f6, en/base.cfg. Generic firmware knowledge from the shipped config, not verified on a Print Handy printer."
-
 [[entry]]
 id = "zmod.display-off"
 name = "DISPLAY_OFF"
@@ -255,7 +244,6 @@ command = "DISPLAY_OFF"
 description = "Switches the AD5X to screenless operation: it saves display_off=1 so ZMod owns the printer and the stock Flashforge screen leaves the loop, after showing its own warning prompt. Z-offset and mesh authority change with the mode; Print Handy's AD5X contract documents which mode owns what. DISPLAY_ON reverses it."
 safety = "A mode change, not a display toggle: in screenless mode the stock screen's dialogs and its Z-offset and mesh handling no longer apply. Do not switch until you know which mode owns your saved offset and mesh."
 notes = "Source: ghzserg/zmod_ff5x@5409ffe7ffee572219837fbd0d7de381469537f6, en/base.cfg. Generic firmware knowledge from the shipped config, not verified on a Print Handy printer."
-
 [[entry]]
 id = "zmod.display-on"
 name = "DISPLAY_ON"
@@ -267,7 +255,6 @@ command = "DISPLAY_ON"
 description = "Re-enables the stock Flashforge screen (saves display_off=0) and reboots so the native screen owns its dialogs, Z offset and mesh again. The reverse of DISPLAY_OFF."
 safety = "Reboots the printer and hands Z-offset and mesh authority back to the native screen; a saved offset from screenless mode may not be the one the screen applies. Never run it mid-print."
 notes = "Source: ghzserg/zmod_ff5x@5409ffe7ffee572219837fbd0d7de381469537f6, en/base.cfg. Generic firmware knowledge from the shipped config, not verified on a Print Handy printer."
-
 [[entry]]
 id = "zmod.print-handy"
 name = "PRINT_HANDY"
@@ -279,251 +266,3 @@ command = "PRINT_HANDY SLOT=<1-4>"
 description = "Print Handy's own macro, shipped in this repository's print-handy.cfg for a ZMod install. It compares the colour and material stored for the IFS slots (the values copied from the COLOR menu into its variables) and reports which other slots hold the same colour and material as SLOT= — or as a COLOR= and MATERIAL= pair given directly — the matches ZMod's own automatic spool switching could use."
 safety = "Reports only. It never switches slots, loads filament or changes the loaded spool; acting on the report stays with the separate confirmed flows."
 notes = "Source: print-handy.cfg in this repository (the ZMod plugin file). Present only on a printer where the Print Handy ZMod plugin is installed and enabled."
-
-[[entry]]
-id = "klipper.print-start"
-name = "PRINT_START"
-aliases = ["print start", "klipper start macro"]
-firmware = "klipper"
-kind = "macro"
-printers = ["klipper.generic", "sovol.sv06"]
-command = "PRINT_START BED=<bed C> HOTEND=<nozzle C>"
-description = "Stock Klipper start macro name Print Handy's generic Klipper and Sovol profiles expect the printer to provide. The installed macro owns heating, homing and mesh loading for the job."
-safety = "Heats and moves. Runs only as part of a confirmed print start."
-
-[[entry]]
-id = "klipper.print-end"
-name = "PRINT_END"
-aliases = ["print end", "klipper end macro"]
-firmware = "klipper"
-kind = "macro"
-printers = ["klipper.generic", "sovol.sv06"]
-command = "PRINT_END"
-description = "Stock Klipper end macro name for the generic Klipper and Sovol profiles: heaters off and park at the end of a job."
-safety = "Runs only as the tail of a sliced job."
-
-[[entry]]
-id = "klipper.pause"
-name = "PAUSE"
-aliases = ["pause print klipper", "klipper pause macro"]
-firmware = "klipper"
-kind = "macro"
-printers = ["klipper.generic", "sovol.sv06", "flashforge.ad5x"]
-command = "PAUSE"
-description = "Pauses the running print. Klipper itself provides PAUSE as a built-in command when the [pause_resume] section is configured — that built-in is not a gcode_macro and never appears in a macro listing. The PAUSE a macro listing discovers is a config-defined wrapper (Mainsail's client config ships one; ZMod ships its own) that adds toolhead parking, a small retract and heater-state bookkeeping around the built-in, driven by the config's client variables."
-safety = "The nozzle stays at printing temperature while parked over or beside the print. A pause is not a state to leave unattended for hours; resume or cancel deliberately."
-notes = "Sources: mainsail-crew/mainsail-config@ff3869a621db17ce3ef660adbbd3fa321995ac42 (mainsail.cfg), klipper3d/klipper@ee2c6fb6b00b2b5d097ef70d0868df7d74943b51 (docs/G-Codes.md [pause_resume]), and ghzserg/zmod_ff5x@5409ffe7ffee572219837fbd0d7de381469537f6 (en/client.cfg) for the AD5X. Generic firmware knowledge, not verified on a Print Handy printer."
-
-[[entry]]
-id = "klipper.resume"
-name = "RESUME"
-aliases = ["resume print klipper", "klipper resume macro"]
-firmware = "klipper"
-kind = "macro"
-printers = ["klipper.generic", "sovol.sv06", "flashforge.ad5x"]
-command = "RESUME"
-description = "Resumes a paused print, returning the toolhead to the position PAUSE captured. Klipper's built-in RESUME exists under the same [pause_resume] conditions as PAUSE; the macro a listing discovers is the config-defined wrapper (Mainsail client config; ZMod), which also restores the heater targets and speed PAUSE recorded. The Mainsail wrapper refuses to resume when its configured runout sensor reports no filament."
-safety = "The toolhead moves back to the captured position, possibly over the print. Make sure nothing (hands, tools, a removed part) is in its path and the part is still on the bed."
-notes = "Sources: mainsail-crew/mainsail-config@ff3869a621db17ce3ef660adbbd3fa321995ac42 (mainsail.cfg), klipper3d/klipper@ee2c6fb6b00b2b5d097ef70d0868df7d74943b51 (docs/G-Codes.md [pause_resume]), and ghzserg/zmod_ff5x@5409ffe7ffee572219837fbd0d7de381469537f6 (en/client.cfg) for the AD5X. Generic firmware knowledge, not verified on a Print Handy printer."
-
-[[entry]]
-id = "klipper.cancel-print"
-name = "CANCEL_PRINT"
-aliases = ["cancel print klipper", "abort print klipper", "klipper cancel macro"]
-firmware = "klipper"
-kind = "macro"
-printers = ["klipper.generic", "sovol.sv06", "flashforge.ad5x"]
-command = "CANCEL_PRINT"
-description = "Cancels the running print. Klipper has a built-in of this name under [pause_resume] / [virtual_sdcard]; the macro a listing discovers is the config-defined wrapper (Mainsail client config; ZMod), which retracts, can park the toolhead first if the config's park_at_cancel is enabled, and runs the config's cancel handling around the built-in."
-safety = "The job is gone: cancelling cannot be resumed. What happens to the heaters afterwards follows the installed config, so check the printer instead of assuming it cooled down."
-notes = "Sources: mainsail-crew/mainsail-config@ff3869a621db17ce3ef660adbbd3fa321995ac42 (mainsail.cfg), klipper3d/klipper@ee2c6fb6b00b2b5d097ef70d0868df7d74943b51 (docs/G-Codes.md [pause_resume]), and ghzserg/zmod_ff5x@5409ffe7ffee572219837fbd0d7de381469537f6 (en/client.cfg) for the AD5X. Generic firmware knowledge, not verified on a Print Handy printer."
-
-[[entry]]
-id = "klipper.set-pause-next-layer"
-name = "SET_PAUSE_NEXT_LAYER"
-aliases = ["pause next layer", "pause at next layer"]
-firmware = "klipper"
-kind = "macro"
-printers = ["klipper.generic", "sovol.sv06", "flashforge.ad5x"]
-command = "SET_PAUSE_NEXT_LAYER ENABLE=<0|1>"
-description = "Arms a pause when the next layer change begins (ENABLE=0 disarms it). It only records the request in the SET_PRINT_STATS_INFO macro state: the pause fires if the job's G-code feeds layer counters through SET_PRINT_STATS_INFO, and it calls PAUSE unless a different MACRO= was recorded. Defined by Mainsail's client config; ZMod's base config defines the same macro."
-safety = "No motion by itself. The pause it arms stops the job mid-print at temperature, so arm it only when someone will attend to it."
-notes = "Sources: mainsail-crew/mainsail-config@ff3869a621db17ce3ef660adbbd3fa321995ac42 (mainsail.cfg) and ghzserg/zmod_ff5x@5409ffe7ffee572219837fbd0d7de381469537f6 (en/base.cfg) for the AD5X. Generic firmware knowledge, not verified on a Print Handy printer."
-
-[[entry]]
-id = "klipper.set-pause-at-layer"
-name = "SET_PAUSE_AT_LAYER"
-aliases = ["pause at layer", "pause on layer number"]
-firmware = "klipper"
-kind = "macro"
-printers = ["klipper.generic", "sovol.sv06", "flashforge.ad5x"]
-command = "SET_PAUSE_AT_LAYER LAYER=<layer number>"
-description = "Arms a pause when the job reaches the given layer number (ENABLE=0 disarms it), through the same SET_PRINT_STATS_INFO state and conditions as SET_PAUSE_NEXT_LAYER. Layer numbers are the slicer's count, starting where the job's own layer-change G-code starts counting. Defined by Mainsail's client config; ZMod's base config defines the same macro."
-safety = "No motion by itself. A wrong layer number parks the job mid-print at temperature at the wrong moment, or never; check it against the sliced job's layer count."
-notes = "Sources: mainsail-crew/mainsail-config@ff3869a621db17ce3ef660adbbd3fa321995ac42 (mainsail.cfg) and ghzserg/zmod_ff5x@5409ffe7ffee572219837fbd0d7de381469537f6 (en/base.cfg) for the AD5X. Generic firmware knowledge, not verified on a Print Handy printer."
-
-[[entry]]
-id = "klipper.set-print-stats-info"
-name = "SET_PRINT_STATS_INFO"
-aliases = ["set print stats info", "layer counter macro"]
-firmware = "klipper"
-kind = "macro"
-printers = ["klipper.generic", "sovol.sv06", "flashforge.ad5x"]
-command = "SET_PRINT_STATS_INFO TOTAL_LAYER=<count> CURRENT_LAYER=<count>"
-description = "The support macro the layer-pause features hang off. Slicer start and layer-change G-code calls it with the job's layer counters; the config-defined version (Mainsail client config; ZMod base config) checks the armed SET_PAUSE_NEXT_LAYER / SET_PAUSE_AT_LAYER state and fires the recorded pause call, then passes through to Klipper's built-in. It is plumbing the slicer drives, not an operator control."
-safety = "Calling it by hand with invented counters makes layer pauses fire at the wrong layer, or not at all, on the running job."
-notes = "Sources: mainsail-crew/mainsail-config@ff3869a621db17ce3ef660adbbd3fa321995ac42 (mainsail.cfg) and ghzserg/zmod_ff5x@5409ffe7ffee572219837fbd0d7de381469537f6 (en/base.cfg) for the AD5X. Generic firmware knowledge, not verified on a Print Handy printer."
-
-[[entry]]
-id = "klipper.bed-mesh-calibrate"
-name = "BED_MESH_CALIBRATE"
-aliases = ["bed mesh calibrate", "mesh calibrate", "probe mesh", "g29 klipper"]
-firmware = "klipper"
-kind = "command"
-printers = ["*"]
-command = "BED_MESH_CALIBRATE"
-description = "Probes the bed and builds a new mesh. Klipper has no G29; this is the mesh routine. A mesh is not applied automatically after homing: the start macro or BED_MESH_PROFILE LOAD must load it."
-safety = "Long probing move over the whole bed; the call blocks until it finishes. Keep the bed clear and hands away."
-
-[[entry]]
-id = "klipper.bed-mesh-profile-load"
-name = "BED_MESH_PROFILE LOAD"
-aliases = ["load mesh", "bed mesh profile load", "mesh load"]
-firmware = "klipper"
-kind = "command"
-printers = ["*"]
-command = "BED_MESH_PROFILE LOAD=default"
-description = "Loads a saved bed mesh profile (default shown). Check the start G-code actually loads the intended profile when a mesh seems ignored."
-safety = "No motion by itself, but it changes which mesh the next moves use."
-
-[[entry]]
-id = "klipper.probe-calibrate"
-name = "PROBE_CALIBRATE"
-aliases = ["probe calibrate", "z probe calibration", "probe offset calibrate"]
-firmware = "klipper"
-kind = "command"
-printers = ["*"]
-command = "PROBE_CALIBRATE"
-description = "Interactive Klipper routine for setting the probe Z offset: probes the bed, then walks the operator through paper-test moves (TESTZ) before ACCEPT and SAVE_CONFIG."
-safety = "Moves the nozzle toward the bed in small steps. One wrong step can drive the nozzle into the bed; follow the prompts and be ready to power off."
-
-[[entry]]
-id = "klipper.screws-tilt-calculate"
-name = "SCREWS_TILT_CALCULATE"
-aliases = ["screws tilt", "tram klipper", "bed tramming klipper"]
-firmware = "klipper"
-kind = "command"
-printers = ["*"]
-command = "SCREWS_TILT_CALCULATE"
-description = "Probes over each bed screw and reports how far to turn each one to tram the bed. Requires a [screws_tilt_adjust] section in the printer config."
-safety = "Probes over the bed; keep hands clear while it runs, turn screws only while it is stopped between probes."
-
-[[entry]]
-id = "klipper.save-config"
-name = "SAVE_CONFIG"
-aliases = ["save config", "persist calibration"]
-firmware = "klipper"
-kind = "command"
-printers = ["*"]
-command = "SAVE_CONFIG"
-description = "Persists calibration values Klipper is holding (probe offset, mesh, PID) into printer.cfg and restarts the firmware. Values from a calibration routine are lost on restart until this runs."
-safety = "Restarts the Klipper firmware. Never run it mid-print."
-
-[[entry]]
-id = "klipper.move-out-of-range"
-name = "Move out of range"
-aliases = ["move out of range", "out of range error"]
-firmware = "klipper"
-kind = "error"
-printers = ["*"]
-command = ""
-description = "Klipper refused a move outside the axis limits in printer.cfg. Usual causes: a job sliced for a bigger bed, a start macro that parks off-bed, or wrong axis limits after a config change. Compare the job's printer profile with the configured model before changing limits."
-safety = "Do not widen axis limits just to make the error go away; that can drive the toolhead into the frame."
-
-[[entry]]
-id = "marlin.g28"
-name = "G28"
-aliases = ["home", "home all", "homing"]
-firmware = "marlin"
-kind = "command"
-printers = ["octoprint.marlin"]
-command = "G28"
-description = "Homes all axes (G28 X Y or G28 Z home one axis). The first move a Marlin printer makes before probing or printing."
-safety = "Moves every axis to its endstop. Keep the area around the printer clear."
-
-[[entry]]
-id = "marlin.g29"
-name = "G29"
-aliases = ["bed level probe", "auto bed leveling", "abl"]
-firmware = "marlin"
-kind = "command"
-printers = ["octoprint.marlin"]
-command = "G29"
-description = "Probes the bed and builds the levelling mesh on Marlin printers with a probe. Follow with M420 S1 in start G-code (or store the mesh) so the mesh is actually applied while printing."
-safety = "Probes over the bed; a failed probe can push the nozzle into the bed if the probe does not trigger. Watch the first probe point."
-
-[[entry]]
-id = "marlin.m420"
-name = "M420 S1"
-aliases = ["load mesh marlin", "enable leveling", "mesh on"]
-firmware = "marlin"
-kind = "command"
-printers = ["octoprint.marlin"]
-command = "M420 S1"
-description = "Turns bed levelling on using the stored or probed mesh. Marlin has no BED_MESH_PROFILE; M420 S1 after G28 is the usual start-G-code line, because homing turns levelling off."
-safety = "No motion by itself."
-
-[[entry]]
-id = "marlin.m851"
-name = "M851"
-aliases = ["z probe offset", "z offset marlin", "babystep offset"]
-firmware = "marlin"
-kind = "command"
-printers = ["octoprint.marlin"]
-command = "M851 Z<offset mm>"
-description = "Reads or sets the probe Z offset on Marlin (M851 with no argument reports it). Negative moves the nozzle closer to the bed. Store a change with M500 or it is lost on restart."
-safety = "A too-negative offset drives the nozzle into the bed on the next print. Change in small steps and test with a first-layer print."
-
-[[entry]]
-id = "marlin.m600"
-name = "M600"
-aliases = ["filament change", "pause change filament", "m600 pause"]
-firmware = "marlin"
-kind = "command"
-printers = ["octoprint.marlin"]
-command = "M600"
-description = "Marlin filament-change pause: parks the toolhead, unloads, and waits for the operator to load new filament and confirm. Needs the printer's filament-change feature enabled in firmware."
-safety = "The nozzle stays hot during the pause. Mind the burn risk while changing filament."
-
-[[entry]]
-id = "marlin.heat-commands"
-name = "M104 / M109 / M140 / M190"
-aliases = ["set temperature", "heat nozzle", "heat bed", "m104", "m109", "m140", "m190"]
-firmware = "marlin"
-kind = "command"
-printers = ["*"]
-command = "M104 S<nozzle C>  M109 S<nozzle C> (wait)  M140 S<bed C>  M190 S<bed C> (wait)"
-description = "Set heater targets: M104/M140 set and return immediately, M109/M190 wait until the target is reached. M104 S0 and M140 S0 turn the heaters off; slicer end G-code for Marlin must contain both, and Print Handy's Marlin guard checks for them."
-safety = "A set target stays until something turns it off. Never leave a hot printer unattended to cool 'later'."
-
-[[entry]]
-id = "marlin.m500"
-name = "M500"
-aliases = ["store settings", "save eeprom"]
-firmware = "marlin"
-kind = "command"
-printers = ["octoprint.marlin"]
-command = "M500"
-description = "Stores current settings (offsets, steps, PID) to EEPROM so they survive a restart. M503 reports the current values."
-safety = "No motion. Storing wrong values persists them; read them back with M503 first when unsure."
-
-[[entry]]
-id = "marlin.heating-failed"
-name = "Heating failed / Thermal Runaway"
-aliases = ["heating failed", "thermal runaway", "thermal protection", "err extruder heater"]
-firmware = "marlin"
-kind = "error"
-printers = ["octoprint.marlin"]
-command = ""
-description = "Marlin stopped heating because a temperature did not move as expected, or moved when it should not. Common causes: a loose or failed thermistor, a heater cartridge fault, a silicone sock or fan cooling the block, or a target the heater cannot reach. The printer needs a power cycle after the fault is fixed."
-safety = "This is a fire-safety protection doing its job. Do not disable thermal protection to clear it. Power off, let everything cool, and inspect the thermistor and heater wiring before heating again."

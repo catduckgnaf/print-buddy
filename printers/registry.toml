@@ -6,7 +6,7 @@
 # key, firmware, connection, bed and height against the model's own defaults so
 # this file cannot silently drift from the code.
 #
-# firmware_family is the lookup family used by firmware/commands.toml:
+# firmware_family is the lookup family used by firmware/commands/:
 # zmod, klipper or marlin. Printers whose firmware has no command registry yet
 # use "none".
 

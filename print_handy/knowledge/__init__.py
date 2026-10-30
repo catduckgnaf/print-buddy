@@ -71,7 +71,7 @@ def _format_match(match: Match) -> str:
             f"height {item.max_height_mm:g} mm, {positions}. {item.notes}")
 
 
-def lookup_text(query, *, firmware=None, printer=None, registry=None) -> str:
+def lookup_text(query, *, firmware=None, printer=None, pack=None, registry=None) -> str:
     """The Discord-ready answer for one lookup. Always ends with the advisory note."""
     query = str(query or "").strip()
     if not query:
@@ -79,9 +79,9 @@ def lookup_text(query, *, firmware=None, printer=None, registry=None) -> str:
                 "(`/print-lookup bed mesh klipper`), a symptom (`/print-lookup first layer not sticking`) "
                 "or a printer (`/print-lookup ad5x`).\n" + ADVISORY_NOTE)
     registry = registry or default_registry()
-    results = registry.lookup(query, firmware=firmware, printer=printer)
+    results = registry.lookup(query, firmware=firmware, printer=printer, pack=pack)
     if not results:
-        semantic = _semantic_lookup(query, registry, firmware=firmware, printer=printer)
+        semantic = _semantic_lookup(query, registry, firmware=firmware, printer=printer, pack=pack)
         if semantic:
             body = "\n\n".join(_format_match(match) for match in semantic)
             return (f"No local match for {query!r}. Closest by meaning, from the semantic endpoint "
@@ -92,7 +92,7 @@ def lookup_text(query, *, firmware=None, printer=None, registry=None) -> str:
     return body + "\n\n" + ADVISORY_NOTE
 
 
-def _semantic_lookup(query, registry, *, firmware=None, printer=None):
+def _semantic_lookup(query, registry, *, firmware=None, printer=None, pack=None):
     """#468 stage 4: meaning-level matches from the operator's PRINT_FUZZY_URL endpoint.
 
     Consulted only when the local lookup found nothing — local results are
@@ -115,10 +115,13 @@ def _semantic_lookup(query, registry, *, firmware=None, printer=None):
         by_id[cid] = (kind, item)
 
     firmware_norm = _norm(firmware).replace(" ", "") or None
+    pack_norm = _norm(pack).replace(" ", "-") if pack is not None else None
     for entry in registry.firmware_entries:
         if firmware_norm and entry.firmware != firmware_norm:
             continue
         if printer and "*" not in entry.printers and printer not in entry.printers:
+            continue
+        if pack_norm is not None and entry.pack != pack_norm:
             continue
         add("firmware", entry, entry.id, entry.name)
     for symptom in registry.symptoms:

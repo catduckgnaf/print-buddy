@@ -1,0 +1,97 @@
+# Marlin firmware command and error registry. See firmware/README.md for the schema.
+#
+# Covers the Marlin command set Print Handy meets on OctoPrint-connected
+# printers. Entries are generic Marlin firmware knowledge; Print Handy's Marlin
+# guard relies on the heater and settings commands described here (M104/M109/
+# M140/M190, M500) behaving as these entries say.
+#
+# Every entry is advisory reference data for lookups (issue #169). An entry is never
+# sent to a printer by the lookup or troubleshooting code; sending anything stays
+# behind the existing guarded print-control flows and their confirmation buttons.
+#
+# kind is one of: command, macro, error.
+# printers lists the registered printer model keys (printers/registry.toml) the entry
+# is known to apply to, or ["*"] when it applies to every printer on that firmware.
+# pack is optional: it names a macro pack that rides on this firmware (absent = the
+# firmware's stock set). No entry carries one yet; see firmware/README.md.
+
+[[entry]]
+id = "marlin.g28"
+name = "G28"
+aliases = ["home", "home all", "homing"]
+firmware = "marlin"
+kind = "command"
+printers = ["octoprint.marlin"]
+command = "G28"
+description = "Homes all axes (G28 X Y or G28 Z home one axis). The first move a Marlin printer makes before probing or printing."
+safety = "Moves every axis to its endstop. Keep the area around the printer clear."
+[[entry]]
+id = "marlin.g29"
+name = "G29"
+aliases = ["bed level probe", "auto bed leveling", "abl"]
+firmware = "marlin"
+kind = "command"
+printers = ["octoprint.marlin"]
+command = "G29"
+description = "Probes the bed and builds the levelling mesh on Marlin printers with a probe. Follow with M420 S1 in start G-code (or store the mesh) so the mesh is actually applied while printing."
+safety = "Probes over the bed; a failed probe can push the nozzle into the bed if the probe does not trigger. Watch the first probe point."
+[[entry]]
+id = "marlin.m420"
+name = "M420 S1"
+aliases = ["load mesh marlin", "enable leveling", "mesh on"]
+firmware = "marlin"
+kind = "command"
+printers = ["octoprint.marlin"]
+command = "M420 S1"
+description = "Turns bed levelling on using the stored or probed mesh. Marlin has no BED_MESH_PROFILE; M420 S1 after G28 is the usual start-G-code line, because homing turns levelling off."
+safety = "No motion by itself."
+[[entry]]
+id = "marlin.m851"
+name = "M851"
+aliases = ["z probe offset", "z offset marlin", "babystep offset"]
+firmware = "marlin"
+kind = "command"
+printers = ["octoprint.marlin"]
+command = "M851 Z<offset mm>"
+description = "Reads or sets the probe Z offset on Marlin (M851 with no argument reports it). Negative moves the nozzle closer to the bed. Store a change with M500 or it is lost on restart."
+safety = "A too-negative offset drives the nozzle into the bed on the next print. Change in small steps and test with a first-layer print."
+[[entry]]
+id = "marlin.m600"
+name = "M600"
+aliases = ["filament change", "pause change filament", "m600 pause"]
+firmware = "marlin"
+kind = "command"
+printers = ["octoprint.marlin"]
+command = "M600"
+description = "Marlin filament-change pause: parks the toolhead, unloads, and waits for the operator to load new filament and confirm. Needs the printer's filament-change feature enabled in firmware."
+safety = "The nozzle stays hot during the pause. Mind the burn risk while changing filament."
+[[entry]]
+id = "marlin.heat-commands"
+name = "M104 / M109 / M140 / M190"
+aliases = ["set temperature", "heat nozzle", "heat bed", "m104", "m109", "m140", "m190"]
+firmware = "marlin"
+kind = "command"
+printers = ["*"]
+command = "M104 S<nozzle C>  M109 S<nozzle C> (wait)  M140 S<bed C>  M190 S<bed C> (wait)"
+description = "Set heater targets: M104/M140 set and return immediately, M109/M190 wait until the target is reached. M104 S0 and M140 S0 turn the heaters off; slicer end G-code for Marlin must contain both, and Print Handy's Marlin guard checks for them."
+safety = "A set target stays until something turns it off. Never leave a hot printer unattended to cool 'later'."
+[[entry]]
+id = "marlin.m500"
+name = "M500"
+aliases = ["store settings", "save eeprom"]
+firmware = "marlin"
+kind = "command"
+printers = ["octoprint.marlin"]
+command = "M500"
+description = "Stores current settings (offsets, steps, PID) to EEPROM so they survive a restart. M503 reports the current values."
+safety = "No motion. Storing wrong values persists them; read them back with M503 first when unsure."
+[[entry]]
+id = "marlin.heating-failed"
+name = "Heating failed / Thermal Runaway"
+aliases = ["heating failed", "thermal runaway", "thermal protection", "err extruder heater"]
+firmware = "marlin"
+kind = "error"
+printers = ["octoprint.marlin"]
+command = ""
+description = "Marlin stopped heating because a temperature did not move as expected, or moved when it should not. Common causes: a loose or failed thermistor, a heater cartridge fault, a silicone sock or fan cooling the block, or a target the heater cannot reach. The printer needs a power cycle after the fault is fixed."
+safety = "This is a fire-safety protection doing its job. Do not disable thermal protection to clear it. Power off, let everything cool, and inspect the thermistor and heater wiring before heating again."

@@ -19,7 +19,7 @@ one place, for lookups, troubleshooting and humans browsing the repository.
 | `label` | Display name, identical to `MODEL.label`. |
 | `vendor` | The vendor package name under `print_handy/printers/`. |
 | `firmware` | The firmware string from the model's own defaults. |
-| `firmware_family` | Lookup family in `../firmware/commands.toml`: `zmod`, `klipper`, `marlin`, or `none` when no command registry exists for it yet. |
+| `firmware_family` | Lookup family in `../firmware/commands/`: `zmod`, `klipper`, `marlin`, or `none` when no command registry exists for it yet. |
 | `connection` | How Print Handy reaches the printer (the vendor profile's connection). |
 | `kinematics` | Motion system, or `unspecified` for the generic placeholder profiles. |
 | `bed_mm`, `max_height_mm` | Usable print area and height from the model's defaults. |

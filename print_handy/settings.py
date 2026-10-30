@@ -120,6 +120,8 @@ OPTIONAL_KEYS = {("printer", "nozzle_type"): str, ("printer", "tool_count"): int
                  ("notify", "mqtt_enabled"): bool, ("notify", "mqtt_host"): str,
                  ("notify", "mqtt_port"): int, ("notify", "mqtt_topic"): str,
                  ("notify", "mqtt_username"): str,
+                 ("notify", "ntfy_enabled"): bool, ("notify", "ntfy_url"): str,
+                 ("notify", "ntfy_topic"): str,
                  ("prusa", "link_host"): str, ("prusa", "api_key_env"): str,
                  ("discord", "denied_user_ids"): str,
                  ("discord", "chat_llm_enabled"): bool,
@@ -834,7 +836,13 @@ LOG_FORMATS = ("text", "json")
 # [timelapse] mode (#246/#295): "rendered" keeps the printer-rendered
 # moonraker-timelapse path, "container" is #246's in-container capture,
 # "off" disables timelapses. An empty file value derives in validate():
-# "rendered" when a Moonraker URL is configured, else "off".
+# "rendered" when a Moonraker URL is configured, else "container" when
+# in-container capture is enabled, else "off". The mode is resolved
+# here; the gates that consume it live in print_handy.go2rtc
+# (capture_active / rendered_active, 2.2.2): "off" vetoes both paths,
+# "container" opens the capture gate and closes the rendered path, and
+# "rendered" leaves the capture gate to capture_enabled exactly as
+# before.
 TIMELAPSE_MODES = ("rendered", "container", "off")
 # [timelapse] capture_trigger (#246 stage 2): how in-container frame capture
 # decides a frame is due. "interval" is the default (printer-agnostic);
@@ -856,7 +864,10 @@ CAPTURE_ENCODERS = ("auto", "vaapi", "nvenc", "qsv", "cpu")
 TIMELAPSE_ENCODERS = ("cpu", "vaapi", "qsv", "nvenc")
 # [services] camera_source (#294): which camera the still images come
 # from. "auto" follows the printer vendor's rule; the explicit values pin
-# one source; "none" turns camera images off.
+# one source; "none" turns camera images off. The pin is consumed by
+# print_handy.go2rtc.resolve_source (the fan-out source selection), by
+# the stills fetch in the Moonraker listener, and by the Bambu adapter's
+# camera paths (2.2.2).
 CAMERA_SOURCES = ("auto", "moonraker", "bambu", "go2rtc", "none")
 
 
@@ -978,13 +989,24 @@ def _validate_timelapse(data):
 
     The mode derives from the configured services when absent or empty:
     "rendered" (the printer-rendered moonraker-timelapse path) when a
-    Moonraker URL is set, else "off". An explicit value always wins,
-    including "container" for #246's in-container capture."""
+    Moonraker URL is set, else "container" when in-container capture is
+    enabled, else "off". The middle case matters since 2.2.2, when the
+    mode started gating the paths (print_handy.go2rtc.capture_active /
+    rendered_active): a non-Moonraker install with capture on IS in
+    container mode, and deriving "off" there would have vetoed the
+    capture it explicitly enabled. An explicit value always wins,
+    including "off" over an enabled capture."""
     timelapse = data.setdefault("timelapse", {})
+    timelapse.setdefault("capture_enabled", False)
     raw = timelapse.setdefault("mode", "")
     mode = str(raw or "").strip().lower()
     if not mode:
-        mode = "rendered" if data["services"].get("moonraker_url") else "off"
+        if data["services"].get("moonraker_url"):
+            mode = "rendered"
+        elif timelapse.get("capture_enabled"):
+            mode = "container"
+        else:
+            mode = "off"
     if mode not in TIMELAPSE_MODES:
         raise SettingsError(f"[timelapse] mode must be one of {', '.join(TIMELAPSE_MODES)}, got {raw!r}")
     timelapse["mode"] = mode
@@ -1002,7 +1024,8 @@ def _validate_timelapse(data):
     # with its own defaults); the Stage 2 keys are normalised here so a
     # config file that predates them — including config/docker.yaml, which
     # carries only [timelapse] mode — still loads with the defaults.
-    timelapse.setdefault("capture_enabled", False)
+    # (capture_enabled itself is setdefault'd above: the mode derivation
+    # reads it.)
     timelapse.setdefault("capture_source_url", "")
     trigger = str(timelapse.setdefault("capture_trigger", "interval") or "interval").strip().lower()
     if trigger not in CAPTURE_TRIGGERS:
@@ -1161,6 +1184,47 @@ def _validate_vision(data):
         raise SettingsError(f"[vision] light_object must be a Moonraker light object name "
                             f"like 'led chamber_led' or empty, got {light_object!r}")
     vision["light_object"] = light_object.strip()
+
+
+def _validate_notify(data):
+    """The [notify] section (#622): print events out to MQTT and ntfy.
+
+    Both channels are off by default and independent: either, both or
+    neither may be on. The section joined the defaults tree in 2.2.2
+    (it was OPTIONAL_KEYS-only before, so the section appeared in loaded
+    settings only when a file set it). Neither channel's credential is a
+    setting: the MQTT password is MQTT_PASSWORD in the environment and
+    the ntfy access token is NTFY_ACCESS_TOKEN, the same env-only rule
+    as every other secret. mqtt_port 0 reads as the default 1883 at
+    publish time (notify.py), the port convention the shipped docs
+    already promised.
+    """
+    notify = data.setdefault("notify", {})
+    for key in ("mqtt_enabled", "ntfy_enabled"):
+        value = notify.setdefault(key, False)
+        if not isinstance(value, bool):
+            raise SettingsError(f"[notify] {key} must be true or false, got {value!r}")
+    host = notify.setdefault("mqtt_host", "")
+    if not isinstance(host, str):
+        raise SettingsError(f"[notify] mqtt_host must be a broker hostname or empty, got {host!r}")
+    notify["mqtt_host"] = host.strip()
+    port = notify.setdefault("mqtt_port", 1883)
+    if isinstance(port, bool) or not isinstance(port, int) or not 0 <= port <= 65535:
+        raise SettingsError(f"[notify] mqtt_port must be a port number from 0 to 65535 "
+                            f"(0 uses 1883), got {port!r}")
+    for key, default in (("mqtt_topic", "print-handy"), ("mqtt_username", ""), ("ntfy_topic", "")):
+        value = notify.setdefault(key, default)
+        if not isinstance(value, str):
+            raise SettingsError(f"[notify] {key} must be a string, got {value!r}")
+        notify[key] = value.strip()
+    notify["mqtt_topic"] = notify["mqtt_topic"].strip("/") or "print-handy"
+    url = str(notify.setdefault("ntfy_url", "") or "").strip().rstrip("/")
+    if url and not url.startswith(("http://", "https://")):
+        raise SettingsError(f"[notify] ntfy_url must be an http(s) URL or empty, got {url!r}")
+    notify["ntfy_url"] = url
+    if notify["ntfy_enabled"] and not url:
+        raise SettingsError("[notify] ntfy_enabled is true but ntfy_url is empty; "
+                            "set the ntfy server (for example https://ntfy.sh) or turn ntfy off")
 
 
 def _validate_spool(data):
@@ -1438,6 +1502,7 @@ def validate(data):
     _validate_design(data)
     _validate_vision(data)
     _validate_spool(data)
+    _validate_notify(data)
     _validate_logging(data)
     _validate_webui(data)
     _validate_timelapse(data)

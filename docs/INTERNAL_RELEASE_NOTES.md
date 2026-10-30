@@ -2,7 +2,13 @@
 
 # Unreleased
 
-Nothing yet.
+**What users can do now:**
+- Every Web UI setting now does what it says (the 2.2.1 settings-surface audit found six options that were offered and saved but changed nothing; all six are wired, none was removed):
+  - **Camera source** (`services.camera_source`) pins the stills source for real: `moonraker` uses the Moonraker webcam snapshot only, `bambu` the printer's own Bambu camera, `go2rtc` the go2rtc fan-out only, and `none` turns camera images off — no watchdog stills, no timelapse capture, no fan-out. A path the pin excludes refuses and names the pin instead of silently using another source.
+  - **Timelapse mode** (`timelapse.mode`) gates both timelapse paths: `off` stops in-container capture and the printer-rendered attach, `container` runs capture on its own and skips the rendered path, and `rendered` leaves the capture gate to the capture switch as before. The derived default gained a case for the same reason: with no Moonraker URL, an enabled capture now derives `container` instead of `off`, so the derivation cannot veto a capture the operator turned on. The **In-container capture** toggle (`timelapse.capture_enabled`) is offered in the Web UI next to the mode.
+  - The **live feed values** (`live_stream.max_height`, `fps`, `max_bitrate_kbps`, `encoder`) shape the Discord live view: while all four hold their defaults the feed is the camera stream relayed as it arrives; changing any one makes go2rtc publish a transcoded live stream with all four applied (the ffmpeg argument builder's first production caller), fed from the loopback restream so the camera still gets one upstream pull. Timelapse capture and watchdog stills keep the camera's own stream. The `/print-live` text now says which of the two the feed is.
+- Print events over ntfy (#622's second channel): set `notify.ntfy_enabled` and `notify.ntfy_url` (plus `notify.ntfy_topic`, or name the topic in the URL) to get the same events MQTT publishes as phone notifications. A protected topic's token is `NTFY_ACCESS_TOKEN` in the environment only. With both channels on, an event counts as delivered when either takes it, and one channel's failure never blocks the other or the chat post.
+- Settings the Web UI was missing are now offered: the MQTT set (`notify.mqtt_enabled` / `mqtt_host` / `mqtt_port` / `mqtt_topic` / `mqtt_username`; the password stays `MQTT_PASSWORD` in the environment), **Printer serial** (`bambu.lan_serial`, shown with the Bambu LAN address the validator pairs it with), **Plate spacing** (`layout.spacing`), and the **Model endpoints** group (chat, design and agent endpoint URLs and model names; API keys stay in the environment). The `[notify]` section also joined the defaults tree, so it loads with its defaults like every other section instead of existing only when a file sets it.
 
 # Version 2.2.1
 

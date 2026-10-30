@@ -5,7 +5,12 @@ binary (docker/go2rtc-prebuilt.sh), and docker/supervise.sh runs it as a
 supervised child exactly when a feature needs the camera fan-out.
 go2rtc's only job is stream normalisation — it ingests the configured
 camera source and restreams it on loopback; nothing in this module
-captures frames or encodes video.
+captures frames or encodes video. One exception, added in 2.2.2: when a
+[live_stream] transcode value is set away from its default, the
+generated config also publishes a transcoded live-view stream (an
+ffmpeg exec source over the loopback restream), so the live feed's
+height, frame rate, bitrate cap and encoder preference are applied to
+the feed the Activity plays; capture still reads the raw stream.
 
 Two features share the one upstream camera pull (the #311 contention
 rule: go2rtc holds the single connection to the camera and fans out):
@@ -41,13 +46,16 @@ from __future__ import annotations
 
 import json
 import os
+import shlex
 import sys
 import urllib.request
 from pathlib import Path
 
 from . import settings
-from .live_stream import (GO2RTC_STREAM_NAME, CameraSource, LiveStreamError,
-                          derive_from_snapshot_url, redact_url)
+from .live_stream import (GO2RTC_LIVE_STREAM_NAME, GO2RTC_STREAM_NAME,
+                          CameraSource, LiveStreamError, build_ffmpeg_args,
+                          derive_from_snapshot_url, redact_url,
+                          transcode_engaged)
 
 API_URL = "http://127.0.0.1:1984/api"
 #: Where go2rtc serves a JPEG still of the one published stream, on its
@@ -74,6 +82,61 @@ def capture_enabled(data=None) -> bool:
     return bool(data.get("timelapse", {}).get("capture_enabled", False))
 
 
+def timelapse_mode(data=None) -> str:
+    """The resolved [timelapse] mode: rendered, container or off.
+
+    Settings validation derives an empty mode ("rendered" when a
+    Moonraker URL is configured, else "container" when in-container
+    capture is enabled, else "off"); the same derivation is mirrored
+    here so a raw settings dict reads the same as a loaded one.
+    """
+    data = settings.current() if data is None else data
+    timelapse = data.get("timelapse", {})
+    mode = str(timelapse.get("mode") or "").strip().lower()
+    if mode in ("rendered", "container", "off"):
+        return mode
+    if data.get("services", {}).get("moonraker_url"):
+        return "rendered"
+    return "container" if timelapse.get("capture_enabled") else "off"
+
+
+def capture_active(data=None) -> bool:
+    """The in-container capture gate: [timelapse] mode over capture_enabled.
+
+    This is the gate the capture paths consult (2.2.2 wired mode into
+    them; before, only the raw switch was read and mode=off stopped
+    nothing). "off" vetoes capture even when capture_enabled is set;
+    an explicit "container" opens capture on its own; "rendered" leaves
+    the gate to capture_enabled exactly as before — the derivation makes
+    "rendered" the mode of every Moonraker install, so it must not veto
+    a capture the operator explicitly enabled there.
+    """
+    mode = timelapse_mode(data)
+    if mode == "off":
+        return False
+    if mode == "container":
+        return True
+    return capture_enabled(data)
+
+
+def rendered_active(data=None) -> bool:
+    """True when the printer-rendered timelapse path may attach a clip.
+
+    "off" disables timelapses outright and an explicit "container"
+    chooses the in-container capture instead, so neither attaches the
+    printer-rendered clip; "rendered" (including the derived default)
+    leaves the rendered path as it has always run.
+    """
+    return timelapse_mode(data) not in ("off", "container")
+
+
+def camera_source(data=None) -> str:
+    """The [services] camera_source pin: auto, moonraker, bambu, go2rtc or none."""
+    data = settings.current() if data is None else data
+    value = str(data.get("services", {}).get("camera_source") or "auto").strip().lower()
+    return value if value in ("auto", "moonraker", "bambu", "go2rtc", "none") else "auto"
+
+
 def live_enabled(data=None) -> bool:
     """True when [live_stream] enabled is set in the resolved settings (#311)."""
     data = settings.current() if data is None else data
@@ -89,7 +152,7 @@ def needed_by(data=None) -> tuple:
     """
     data = settings.current() if data is None else data
     needed = []
-    if capture_enabled(data):
+    if capture_active(data):
         needed.append("timelapse capture")
     if live_enabled(data):
         needed.append("live viewing")
@@ -129,19 +192,38 @@ def resolve_source(data=None) -> CameraSource | None:
     webcam case) via print_handy.live_stream's snapshot derivation.
     A go2rtc ``ffmpeg:`` source is passed through verbatim as the stream
     URL — go2rtc, not this module, interprets it.
+
+    The [services] camera_source pin narrows the choice (2.2.2; before,
+    nothing read the pin and "auto" behavior applied whatever it said):
+    "none" resolves no source at all; "moonraker" uses only the
+    snapshot-URL derivation, ignoring a stream override — the Moonraker
+    webcam is the source, not an operator-named stream; "go2rtc" and
+    "bambu" accept a stream override, and "go2rtc" additionally refuses
+    a snapshot-only derivation (a stills URL is not the fan-out stream
+    the pin asks for); "bambu" resolves no shared fan-out source without
+    a stream override — the Bambu adapter runs its own camera paths, and
+    its RTSPS stream reaches the fan-out through capture_source_url.
     """
     data = settings.current() if data is None else data
+    pin = camera_source(data)
+    if pin == "none":
+        return None
     override = (data.get("timelapse", {}).get("capture_source_url") or "").strip()
-    if override.startswith("ffmpeg:"):
-        return CameraSource(stream_url=override, snapshot_url=None,
-                            kind="mjpeg", name=GO2RTC_STREAM_NAME)
-    if override.startswith(("rtsp://", "rtsps://")):
-        return CameraSource(stream_url=override, snapshot_url=None,
-                            kind="rtsp", name=GO2RTC_STREAM_NAME)
-    url = override or (data.get("services", {}).get("camera_snapshot_url") or "").strip()
+    stream_override = override if override.startswith(("ffmpeg:", "rtsp://", "rtsps://")) else ""
+    if stream_override and pin in ("auto", "go2rtc", "bambu"):
+        kind = "mjpeg" if stream_override.startswith("ffmpeg:") else "rtsp"
+        return CameraSource(stream_url=stream_override, snapshot_url=None,
+                            kind=kind, name=GO2RTC_STREAM_NAME)
+    if pin == "bambu":
+        return None
+    url = (override if not stream_override else "") or \
+        (data.get("services", {}).get("camera_snapshot_url") or "").strip()
     if not url:
         return None
-    return derive_from_snapshot_url(url, name=GO2RTC_STREAM_NAME)
+    source = derive_from_snapshot_url(url, name=GO2RTC_STREAM_NAME)
+    if pin == "go2rtc" and source is not None and source.kind == "snapshot":
+        return None
+    return source
 
 
 def source_url(source: CameraSource) -> str:
@@ -150,12 +232,79 @@ def source_url(source: CameraSource) -> str:
     return source.stream_url or source.snapshot_url or ""
 
 
-def render_config(source: CameraSource) -> str:
+#: Where go2rtc restreams the raw camera stream on loopback. The
+#: transcoded live stream's ffmpeg reads this restream, so the camera
+#: still gets exactly one upstream pull (the #311 contention rule) and
+#: the transcode only runs while someone is watching.
+RESTREAM_URL = f"rtsp://127.0.0.1:8554/{GO2RTC_STREAM_NAME}"
+
+
+def transcode_plan(data=None, *, probe=None, run=None) -> dict | None:
+    """The live-view transcode plan, or None when the feed is relayed as-is.
+
+    Engaged exactly when live viewing is enabled and a [live_stream]
+    transcode value is set away from its default
+    (:func:`print_handy.live_stream.transcode_engaged`). The encoder is
+    the first candidate for the operator's [live_stream] encoder
+    preference from a probe of the real ffmpeg — the timelapse encode's
+    prober and candidate order, which guarantee a CPU candidate last,
+    so a plan always exists when ffmpeg does. ``probe`` and ``run`` are
+    injectable for tests.
+    """
+    data = settings.current() if data is None else data
+    section = data.get("live_stream", {})
+    if not live_enabled(data) or not transcode_engaged(section):
+        return None
+    from .hermes import timelapse_encode
+    if probe is None:
+        ffmpeg = data.get("paths", {}).get("ffmpeg") or "ffmpeg"
+        probe = timelapse_encode.probe_ffmpeg(ffmpeg, run=run)
+    candidate = timelapse_encode.candidates(str(section.get("encoder") or "auto"), probe)[0]
+    return {"candidate": candidate,
+            "max_height": int(section.get("max_height") or 720),
+            "fps": int(section.get("fps") or 15),
+            "bitrate_kbps": int(section.get("max_bitrate_kbps") or 2500)}
+
+
+#: Stands in for go2rtc's {output} placeholder while the exec command is
+#: shell-quoted: braces are not in shlex's safe set, so a literal
+#: {output} would come out quoted and the address go2rtc substitutes
+#: would reach ffmpeg wrapped in quote characters.
+_OUTPUT_SENTINEL = "__GO2RTC_OUTPUT__"
+
+
+def _transcode_source(plan: dict) -> str:
+    """The go2rtc exec source that produces the transcoded live stream.
+
+    The argv comes from print_handy.live_stream.build_ffmpeg_args — its
+    first production caller (2.2.2; the 2.2.1 audit found none, so the
+    four [live_stream] values shaped nothing). The builder's contract
+    leaves muxer/transport flags to the caller: go2rtc's exec source
+    publishes to its local RTSP server, whose address replaces
+    ``{output}`` in the command at launch, so the caller appends the
+    RTSP output flags before that placeholder.
+    """
+    argv = build_ffmpeg_args(plan["candidate"], input_url=RESTREAM_URL,
+                             max_height=plan["max_height"], fps=plan["fps"],
+                             bitrate_kbps=plan["bitrate_kbps"], output=_OUTPUT_SENTINEL)
+    argv = argv[:-1] + ["-rtsp_transport", "tcp", "-f", "rtsp", _OUTPUT_SENTINEL]
+    return "exec:" + " ".join(shlex.quote(arg) for arg in argv).replace(
+        _OUTPUT_SENTINEL, "{output}")
+
+
+def render_config(source: CameraSource, *, transcode: dict | None = None) -> str:
     """go2rtc YAML for one camera source; API and RTSP bind loopback only.
 
     The URL is emitted as a JSON string scalar, which is valid YAML and
     needs no hand-rolled escaping. The file holds the raw URL (go2rtc
     needs it), so callers must treat the file as a secret.
+
+    With a transcode plan, a second stream is published under
+    :data:`print_handy.live_stream.GO2RTC_LIVE_STREAM_NAME`: an exec
+    source running ffmpeg over the raw stream's loopback restream. The
+    raw stream keeps its name and full quality — timelapse capture and
+    the watchdog stills read it — and only the Activity's live view
+    plays the transcoded one.
     """
     lines = [
         "# Generated by Print Handy (print_handy.go2rtc) from settings; do not edit.",
@@ -168,8 +317,11 @@ def render_config(source: CameraSource) -> str:
         "  level: info",
         "streams:",
         f"  {GO2RTC_STREAM_NAME}: {json.dumps(source_url(source))}",
-        "",
     ]
+    if transcode is not None:
+        lines.append(f"  {GO2RTC_LIVE_STREAM_NAME}: "
+                     f"{json.dumps(_transcode_source(transcode))}")
+    lines.append("")
     return "\n".join(lines)
 
 
@@ -192,7 +344,7 @@ def write_config(path=None, data=None) -> Path:
     path.parent.mkdir(parents=True, exist_ok=True)
     fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
     with os.fdopen(fd, "w") as handle:
-        handle.write(render_config(source))
+        handle.write(render_config(source, transcode=transcode_plan(data)))
     os.chmod(path, 0o600)
     return path
 

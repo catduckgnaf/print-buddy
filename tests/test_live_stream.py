@@ -490,6 +490,21 @@ def test_session_viewer_hook_drives_empty_expiry():
         session.note_viewers(-1, now=0.0)
 
 
+def test_transcode_engages_only_away_from_the_default_feed_values():
+    # The four feed values act as one switch (2.2.2 wiring): at their
+    # defaults the feed is the raw relay under the raw stream name;
+    # changing any one engages the transcoded stream the Activity plays.
+    assert ls.transcode_engaged({}) is False
+    assert ls.transcode_engaged({"max_height": 720, "fps": 15,
+                                 "max_bitrate_kbps": 2500, "encoder": "auto"}) is False
+    for changed in ({"max_height": 1080}, {"fps": 30},
+                    {"max_bitrate_kbps": 6000}, {"encoder": "cpu"}):
+        assert ls.transcode_engaged(changed) is True
+        assert ls.feed_stream_name(changed) == ls.GO2RTC_LIVE_STREAM_NAME
+    assert ls.feed_stream_name({}) == ls.GO2RTC_STREAM_NAME == "camera"
+    assert ls.GO2RTC_LIVE_STREAM_NAME == "camera-live"
+
+
 def test_start_problem_gates_on_enabled_then_channel():
     assert "off" in ls.start_problem({})
     assert "off" in ls.start_problem({"enabled": False, "voice_channel_id": "1"})
@@ -501,9 +516,17 @@ def test_pointer_text_names_the_channel_the_activity_and_the_plan():
     session = ls.LiveStreamSession().start("42", now=0.0)
     text = ls.pointer_text(session, ENABLED_SECTION)
     assert "<#123456789012345678>" in text and "activity" in text
-    assert "720p at 15 fps" in text and "2500 kbit/s" in text
+    # At the default feed values the pointer says the feed is relayed
+    # as-is — the 2.2.1 text printed plan numbers the relay ignored
+    # (the audit's dead-option finding); the numbers are named only
+    # when a transcode value is changed and they are actually applied.
+    assert "relayed to the live view as it arrives" in text
     section = dict(ENABLED_SECTION, activity_origin="https://pb.example")
     assert "https://pb.example" in ls.pointer_text(session, section)
+    tuned = dict(ENABLED_SECTION, max_height=1080, fps=30, max_bitrate_kbps=6000)
+    tuned_text = ls.pointer_text(session, tuned)
+    assert "1080p at 30 fps" in tuned_text and "6000 kbit/s" in tuned_text
+    assert "transcoded to this plan" in tuned_text
 
 
 def test_session_text_reports_off_ready_and_live_states():

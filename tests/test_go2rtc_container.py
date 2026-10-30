@@ -420,5 +420,168 @@ class FanoutFrameUrlTests(unittest.TestCase):
         self.assertEqual(timelapse_capture.GO2RTC_FRAME_URL, go2rtc.FRAME_URL)
 
 
+def mode_data(mode="", capture_enabled=False, moonraker=True):
+    """A settings dict for the mode gates, with the mode left to derive."""
+    timelapse = {"capture_enabled": capture_enabled, "capture_source_url": ""}
+    if mode:
+        timelapse["mode"] = mode
+    services = {"camera_snapshot_url": "http://printer.example/webcam/?action=snapshot"}
+    if moonraker:
+        services["moonraker_url"] = "http://printer.example:7125"
+    return {"timelapse": timelapse, "services": services, "paths": {"cache": "/data/cache"}}
+
+
+class TimelapseModeGateTests(unittest.TestCase):
+    """2.2.2 wiring: [timelapse] mode gates capture and the rendered path.
+
+    Before the fix the mode was a dead catalog option: capture read only
+    capture_enabled and nothing read the mode at all.
+    """
+
+    def test_mode_off_vetoes_capture_and_the_rendered_path(self):
+        data = mode_data(mode="off", capture_enabled=True)
+        self.assertFalse(go2rtc.capture_active(data))
+        self.assertFalse(go2rtc.rendered_active(data))
+        self.assertEqual(go2rtc.needed_by(data), ())
+
+    def test_mode_container_opens_capture_and_closes_the_rendered_path(self):
+        data = mode_data(mode="container", capture_enabled=False)
+        self.assertTrue(go2rtc.capture_active(data))
+        self.assertFalse(go2rtc.rendered_active(data))
+        self.assertEqual(go2rtc.needed_by(data), ("timelapse capture",))
+
+    def test_mode_rendered_leaves_the_capture_switch_in_charge(self):
+        self.assertTrue(go2rtc.capture_active(mode_data(mode="rendered", capture_enabled=True)))
+        self.assertFalse(go2rtc.capture_active(mode_data(mode="rendered", capture_enabled=False)))
+        self.assertTrue(go2rtc.rendered_active(mode_data(mode="rendered")))
+
+    def test_derived_modes_match_the_settings_derivation(self):
+        # The same three derivations settings._validate_timelapse applies:
+        # Moonraker URL -> rendered; capture on without one -> container;
+        # neither -> off (and capture stays off there).
+        self.assertEqual(go2rtc.timelapse_mode(mode_data()), "rendered")
+        self.assertEqual(go2rtc.timelapse_mode(mode_data(capture_enabled=True, moonraker=False)),
+                         "container")
+        self.assertEqual(go2rtc.timelapse_mode(mode_data(moonraker=False)), "off")
+        self.assertTrue(go2rtc.capture_active(mode_data(capture_enabled=True, moonraker=False)))
+
+
+def pin_data(pin, **timelapse):
+    data = make_data(**timelapse)
+    data["services"]["camera_source"] = pin
+    return data
+
+
+class CameraSourcePinTests(unittest.TestCase):
+    """2.2.2 wiring: [services] camera_source narrows the fan-out source.
+
+    Before the fix nothing read the pin: "none" did not turn camera
+    images off and an explicit source changed nothing.
+    """
+
+    def test_pin_none_resolves_no_source_and_the_gate_stays_closed(self):
+        data = pin_data("none")
+        self.assertIsNone(go2rtc.resolve_source(data))
+        self.assertEqual(go2rtc.gate(data), 3)
+
+    def test_pin_moonraker_ignores_a_stream_override(self):
+        source = go2rtc.resolve_source(
+            pin_data("moonraker", capture_source_url="rtsp://cam.example/live"))
+        self.assertEqual(source.kind, "mjpeg")
+        self.assertEqual(source.stream_url, "http://printer.example/webcam/?action=stream")
+
+    def test_pin_go2rtc_accepts_a_stream_but_refuses_a_stills_only_source(self):
+        source = go2rtc.resolve_source(
+            pin_data("go2rtc", capture_source_url="rtsp://cam.example/live"))
+        self.assertEqual(source.kind, "rtsp")
+        stills = pin_data("go2rtc")
+        stills["services"]["camera_snapshot_url"] = "http://printer.example/snap.jpg"
+        self.assertIsNone(go2rtc.resolve_source(stills))
+
+    def test_pin_bambu_resolves_a_shared_source_only_from_the_stream_override(self):
+        self.assertIsNone(go2rtc.resolve_source(pin_data("bambu")))
+        source = go2rtc.resolve_source(
+            pin_data("bambu", capture_source_url="rtsps://192.0.2.5:322/stream_0"))
+        self.assertEqual(source.kind, "rtsp")
+
+    def test_pin_auto_keeps_the_shipped_behavior(self):
+        source = go2rtc.resolve_source(pin_data("auto", capture_source_url="rtsp://cam.example/live"))
+        self.assertEqual(source.kind, "rtsp")
+        source = go2rtc.resolve_source(pin_data(""))
+        self.assertEqual(source.kind, "mjpeg")
+
+
+def live_data(**live):
+    data = make_data(capture_enabled=False)
+    section = {"enabled": True, "max_height": 720, "fps": 15,
+               "max_bitrate_kbps": 2500, "encoder": "auto"}
+    section.update(live)
+    data["live_stream"] = section
+    data["paths"]["ffmpeg"] = "/nonexistent/ffmpeg"
+    return data
+
+
+class LiveTranscodeConfigTests(unittest.TestCase):
+    """2.2.2 wiring: the [live_stream] feed values shape the generated config.
+
+    Before the fix the four values were dead options: build_ffmpeg_args
+    had no production caller and the shipped feed ignored them. Now a
+    value away from its default makes write_config publish a transcoded
+    stream, built by that same builder, over the raw stream's restream.
+    """
+
+    CPU_PROBE = None  # built in setUp: an ffmpeg with only libx264
+
+    def setUp(self):
+        from print_handy.live_stream import EncoderProbe
+        self.cpu_probe = EncoderProbe(encoders=frozenset({"libx264"}))
+
+    def test_no_plan_at_the_default_feed_values(self):
+        self.assertIsNone(go2rtc.transcode_plan(live_data(), probe=self.cpu_probe))
+        self.assertIsNone(go2rtc.transcode_plan(live_data(enabled=False, fps=30),
+                                                probe=self.cpu_probe))
+
+    def test_plan_carries_the_section_values_and_the_probed_candidate(self):
+        plan = go2rtc.transcode_plan(
+            live_data(max_height=1080, fps=30, max_bitrate_kbps=6000, encoder="cpu"),
+            probe=self.cpu_probe)
+        self.assertEqual(plan["candidate"].encoder, "libx264")
+        self.assertEqual((plan["max_height"], plan["fps"], plan["bitrate_kbps"]),
+                         (1080, 30, 6000))
+
+    def test_rendered_config_publishes_the_transcoded_stream(self):
+        data = live_data(max_height=1080, fps=30, max_bitrate_kbps=6000, encoder="cpu")
+        config = go2rtc.render_config(go2rtc.resolve_source(data),
+                                      transcode=go2rtc.transcode_plan(data, probe=self.cpu_probe))
+        # The raw stream keeps its name and URL (capture reads it)...
+        self.assertIn('camera: "http://printer.example/webcam/?action=stream"', config)
+        # ...and the live stream is an ffmpeg exec over the loopback
+        # restream, with all four values in the argv and go2rtc's
+        # {output} placeholder as the publish target.
+        self.assertIn("camera-live:", config)
+        self.assertIn("exec:ffmpeg", config)
+        self.assertIn("-i rtsp://127.0.0.1:8554/camera", config)
+        self.assertIn("scale=-2:1080", config)
+        self.assertIn("-r 30", config)
+        self.assertIn("-b:v 6000k", config)
+        self.assertIn("libx264", config)
+        self.assertIn("-f rtsp {output}", config)
+
+    def test_write_config_end_to_end(self):
+        # paths.ffmpeg names no real binary: the probe reports nothing
+        # and the plan still exists on the guaranteed CPU candidate.
+        import tempfile
+        data = live_data(fps=24)
+        with tempfile.TemporaryDirectory() as tmp:
+            path = go2rtc.write_config(Path(tmp) / "go2rtc.yaml", data)
+            text = path.read_text()
+        self.assertIn("camera-live:", text)
+        self.assertIn("-r 24", text)
+        data = live_data()
+        with tempfile.TemporaryDirectory() as tmp:
+            path = go2rtc.write_config(Path(tmp) / "go2rtc.yaml", data)
+            self.assertNotIn("camera-live", path.read_text())
+
+
 if __name__ == "__main__":
     unittest.main()

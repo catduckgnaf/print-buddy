@@ -137,6 +137,36 @@ def test_adapter_snapshot_uses_the_tcp6000_client(monkeypatch):
     assert adapter.camera_snapshot(transport_factory=factory_for(transport)) == JPEG
 
 
+def _pinned_adapter(key, monkeypatch, pin):
+    config = {"bambu": {"lan_host": HOST, "lan_serial": "00M00A000000000"},
+              "services": {"camera_source": pin}}
+    monkeypatch.setenv("BAMBU_LAN_PASSWORD", CODE)
+    return printers.get(key, config)
+
+
+def test_adapter_camera_pin_none_and_moonraker_refuse_before_any_lan_work(monkeypatch):
+    # 2.2.2 wiring: [services] camera_source was a dead option for the
+    # Bambu paths too — "none" did not turn the printer's camera off and
+    # a moonraker pin changed nothing. Both now refuse by name, ahead of
+    # the model/LAN checks, and no frame source is handed out either.
+    for pin, needle in (("none", "camera_source is none"),
+                        ("moonraker", "camera_source is moonraker")):
+        adapter = _pinned_adapter("bambulab.a1", monkeypatch, pin)
+        with pytest.raises(BambuLanError) as excinfo:
+            adapter.camera_snapshot()
+        assert needle in str(excinfo.value)
+        with pytest.raises(BambuLanError) as excinfo:
+            adapter.camera_frame_source()
+        assert needle in str(excinfo.value)
+
+
+def test_adapter_camera_pin_bambu_go2rtc_and_auto_leave_the_vendor_path(monkeypatch):
+    for pin in ("bambu", "go2rtc", "auto"):
+        adapter = _pinned_adapter("bambulab.a1", monkeypatch, pin)
+        transport = FakeTransport(frame(JPEG))
+        assert adapter.camera_snapshot(transport_factory=factory_for(transport)) == JPEG
+
+
 def test_adapter_snapshot_without_lan_configuration_is_a_plain_note(monkeypatch):
     adapter = _adapter("bambulab.a1", monkeypatch, lan=False)
     with pytest.raises(BambuLanError) as excinfo:

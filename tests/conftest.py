@@ -38,6 +38,13 @@ def _test_settings():
         openviking_url="http://viking.test:1933", vision_chat_url="http://vision.test:8317/v1/chat/completions")
     data["discord"]["chat_id"] = "100000000000000001"
     data["timelapse"].update(archive_host="archive.test", archive_dir="/archive/timelapses")
+    # The Moonraker URL above is patched in after the load, so the mode
+    # that load derived ("off", from the shipped home config's empty URL)
+    # is stale: a load that saw this URL derives "rendered". Since 2.2.2
+    # the mode gates the timelapse paths (go2rtc.capture_active /
+    # rendered_active), so the fixture carries the mode its own services
+    # imply, exactly as a real load of the same config would resolve.
+    data["timelapse"]["mode"] = "rendered"
     return data
 
 

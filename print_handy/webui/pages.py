@@ -60,6 +60,7 @@ GROUPS = (
     ("printer", "Printer"),
     ("platform", "Platform and chat"),
     ("services", "Services"),
+    ("endpoints", "Model endpoints"),
     ("timelapse", "Timelapse"),
     ("images", "Images and camera watch"),
     ("live", "Live camera (Discord)"),

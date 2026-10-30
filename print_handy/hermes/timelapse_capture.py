@@ -438,12 +438,18 @@ def begin(job_key, filename="", *, data=None, fetch=None, log=None, environ=None
     one: a caller whose camera source is per-printer state rather than a
     setting (the stock Flashforge monitor reads the stream URL the printer
     advertises in /detail, #373) passes it together with a matching
-    ``fetch``. The capture_enabled gate, the knobs, the storage discipline
+    ``fetch``. The capture gate, the knobs, the storage discipline
     and the pruning are unchanged either way.
+
+    The gate is go2rtc.capture_active — [timelapse] mode over
+    capture_enabled (2.2.2) — and camera_source "none" refuses a session
+    even for an explicit ``url``: no camera images means no capture.
     """
     data = _config.cfg() if data is None else data
     try:
-        if not go2rtc.capture_enabled(data):
+        if not go2rtc.capture_active(data):
+            return None
+        if go2rtc.camera_source(data) == "none":
             return None
         url = url or frame_url(data, environ)
         if not url:

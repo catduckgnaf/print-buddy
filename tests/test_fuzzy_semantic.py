@@ -204,3 +204,123 @@ def test_lookup_text_without_the_url_set_is_unchanged(monkeypatch, registry):
     monkeypatch.delenv("PRINT_FUZZY_URL", raising=False)
     text = knowledge.lookup_text("bed wont stick", registry=registry)
     assert "Nothing in the registries matches 'bed wont stick'" in text
+
+
+# ------------------------------------------- hardening: hostile payloads
+
+@pytest.mark.parametrize("score", [float("nan"), float("inf"), float("-inf"),
+                                   "0.9", True, None, [0.9], {"s": 0.9}])
+def test_hostile_scores_are_rejected_and_degrade(stub_factory, monkeypatch, score):
+    # json.dumps emits the non-standard NaN/Infinity literals for the
+    # float cases, exactly what a buggy or hostile endpoint can send.
+    stub = stub_factory(payload={"matches": [{"id": "flow:clog", "text": "Nozzle clog",
+                                              "score": score}], "degraded": False})
+    monkeypatch.setenv("PRINT_FUZZY_URL", stub.url)
+    assert fuzzy_semantic.semantic_matches("bed wont stick", CANDIDATES) == []
+
+
+def test_nan_score_no_longer_crashes_the_lookup(stub_factory, monkeypatch, registry):
+    """F1 regression: before the hardening, round(NaN * 100) raised inside
+    _semantic_lookup and the dispatcher answered "Lookup failed"."""
+    stub = stub_factory(payload={"matches": [{"id": "symptom:first-layer-not-sticking",
+                                              "text": "x", "score": float("nan")}], "degraded": False})
+    monkeypatch.setenv("PRINT_FUZZY_URL", stub.url)
+    text = knowledge.lookup_text("bed wont stick", registry=registry)
+    assert "Nothing in the registries matches 'bed wont stick'" in text
+
+
+def test_hostile_entry_does_not_sink_a_valid_match(stub_factory, monkeypatch):
+    stub = stub_factory(payload={"matches": [
+        {"id": "symptom:first-layer-not-sticking", "text": "x", "score": float("inf")},
+        {"id": "flow:clog", "text": "Nozzle clog", "score": 0.9}], "degraded": False})
+    monkeypatch.setenv("PRINT_FUZZY_URL", stub.url)
+    out = fuzzy_semantic.semantic_matches("bed wont stick", CANDIDATES)
+    assert [m["id"] for m in out] == ["flow:clog"]
+
+
+def test_threshold_is_enforced_deduped_and_order_is_deterministic(stub_factory, monkeypatch):
+    stub = stub_factory(payload={"matches": [
+        {"id": "flow:clog", "text": "Nozzle clog", "score": 0.6},
+        {"id": "symptom:first-layer-not-sticking", "text": "x", "score": 0.9},
+        {"id": "flow:clog", "text": "Nozzle clog", "score": 0.8},   # duplicate: best wins
+        {"id": "flow:other", "text": "x", "score": 0.4},            # below the sent threshold
+    ], "degraded": False})
+    monkeypatch.setenv("PRINT_FUZZY_URL", stub.url)
+    out = fuzzy_semantic.semantic_matches("bed wont stick", CANDIDATES)
+    assert [(m["id"], m["score"]) for m in out] == [
+        ("symptom:first-layer-not-sticking", 0.9), ("flow:clog", 0.8)]
+
+
+def test_out_of_range_scores_are_clamped(stub_factory, monkeypatch):
+    stub = stub_factory(payload={"matches": [{"id": "flow:clog", "text": "x", "score": 1.7}],
+                                 "degraded": False})
+    monkeypatch.setenv("PRINT_FUZZY_URL", stub.url)
+    out = fuzzy_semantic.semantic_matches("bed wont stick", CANDIDATES)
+    assert out[0]["score"] == 1.0
+
+
+def test_oversized_response_body_degrades(stub_factory, monkeypatch):
+    raw = b'{"matches": [], "degraded": false, "pad": "' + b"x" * (300 * 1024) + b'"}'
+    stub = stub_factory(raw=raw)
+    monkeypatch.setenv("PRINT_FUZZY_URL", stub.url)
+    assert fuzzy_semantic.semantic_matches("bed wont stick", CANDIDATES) == []
+
+
+def test_slow_drip_response_hits_the_total_deadline(monkeypatch):
+    """Each drip byte arrives well inside any per-read timeout, so only a
+    total deadline can cut this off (F4)."""
+    import socket as _socket
+
+    server = _socket.socket()
+    server.setsockopt(_socket.SOL_SOCKET, _socket.SO_REUSEADDR, 1)
+    server.bind(("127.0.0.1", 0))
+    server.listen(1)
+    port = server.getsockname()[1]
+
+    def drip():
+        conn, _ = server.accept()
+        conn.recv(65536)
+        conn.sendall(b"HTTP/1.1 200 OK\r\nContent-Type: application/json\r\n"
+                     b"Content-Length: 100000\r\n\r\n{")
+        try:
+            for _ in range(40):
+                conn.sendall(b"x")
+                time.sleep(0.15)
+        except OSError:
+            pass
+        conn.close()
+        server.close()
+
+    threading.Thread(target=drip, daemon=True).start()
+    monkeypatch.setenv("PRINT_FUZZY_URL", f"http://127.0.0.1:{port}/sekrit/fuzzy")
+    monkeypatch.setattr(fuzzy_semantic, "TIMEOUT_S", 0.6)
+    start = time.monotonic()
+    assert fuzzy_semantic.semantic_matches("bed wont stick", CANDIDATES) == []
+    assert time.monotonic() - start < 2.0
+
+
+def test_non_http_schemes_are_a_configuration_error(monkeypatch, caplog):
+    monkeypatch.setenv("PRINT_FUZZY_URL", "ftp://127.0.0.1:9/fuzzy")
+    with caplog.at_level(logging.ERROR, logger="print_handy.core.fuzzy_semantic"):
+        assert fuzzy_semantic.configured() is False
+        assert fuzzy_semantic.semantic_matches("bed wont stick", CANDIDATES) == []
+    assert "http or https" in caplog.text
+
+
+def test_non_local_plain_http_warns_about_cleartext(monkeypatch, caplog):
+    # A public-range address (the TEST-NET ranges read as "private" to
+    # ipaddress, so they cannot play this part); the warning is logged at
+    # validation time, before the doomed connection attempt.
+    monkeypatch.setenv("PRINT_FUZZY_URL", "http://8.8.8.8:81/fuzzy")
+    monkeypatch.setattr(fuzzy_semantic, "TIMEOUT_S", 0.3)
+    with caplog.at_level(logging.WARNING, logger="print_handy.core.fuzzy_semantic"):
+        assert fuzzy_semantic.semantic_matches("bed wont stick", CANDIDATES) == []
+    assert "cleartext" in caplog.text
+
+
+def test_local_plain_http_does_not_warn(stub_factory, monkeypatch, caplog):
+    stub = stub_factory(payload={"matches": [], "degraded": False})
+    monkeypatch.setenv("PRINT_FUZZY_URL", stub.url)  # 127.0.0.1 loopback
+    with caplog.at_level(logging.WARNING, logger="print_handy.core.fuzzy_semantic"):
+        assert fuzzy_semantic.semantic_matches("bed wont stick", CANDIDATES) == []
+    assert "cleartext" not in caplog.text

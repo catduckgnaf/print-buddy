@@ -75,6 +75,29 @@ def unmatched_text(bot_name="Print Handy"):
 SUGGESTION_TIMEOUT_S = 60
 SUGGEST_YES_LABEL = "Yes — run it"
 SUGGEST_NO_LABEL = "No"
+SUGGEST_NONE_LABEL = "None of these"
+MAX_SUGGESTION_CANDIDATES = 4
+
+
+def _command_scores(text):
+    """(scored, rest) for a command-shaped near miss, else (None, "").
+
+    ``scored`` is the (score, command) list the shared policy judges —
+    each command scored by its best name/alias window. ``rest`` is the
+    message's argument tail, carried over untouched.
+    """
+    parts = str(text or "").strip().split(None, 1)
+    if not parts or not parts[0].startswith("/"):
+        return None, ""
+    word = parts[0].lstrip("/").casefold()
+    if not word or commands.by_name(word):
+        return None, ""
+    scored = []
+    for cmd in commands.COMMANDS:
+        score = max(fuzzy.windowed_fuzzy_score(word, name) for name in (cmd.name, *cmd.aliases))
+        if score:
+            scored.append((score, cmd))
+    return scored, (parts[1] if len(parts) > 1 else "")
 
 
 def command_suggestion(text):
@@ -87,30 +110,44 @@ def command_suggestion(text):
     starts with "/"): plain chat is never a near miss, however similar a
     word in it looks — "hello there" would otherwise score 67 against the
     "help" window of print-help. An exact first word is not a near miss
-    and returns None, a tie between two commands returns None rather than
-    a coin flip, and the 65 floor plus the coverage guard keep the rest of
-    chat ("can you make my printer go brrr") suggestion-free.
-    Deterministic, offline, no LLM involved — it runs in the fallback
-    after every model lane has declined, so #466's no-LLM posture keeps
-    it too.
+    and returns None, and the shared confidence/conflict policy
+    (``fuzzy.decide``) governs the rest: a single uncontested contender —
+    direct or grey-zone — is the suggestion; a contested top (another
+    command within the clear margin) returns None here rather than a
+    coin flip, and ``command_suggestion_candidates`` offers the
+    contenders as a pick-list instead. The 65 floor plus the coverage
+    guard keep the rest of chat ("can you make my printer go brrr")
+    suggestion-free. Deterministic, offline, no LLM involved — it runs
+    in the fallback after every model lane has declined, so #466's
+    no-LLM posture keeps it too.
     """
-    parts = str(text or "").strip().split(None, 1)
-    if not parts or not parts[0].startswith("/"):
+    scored, rest = _command_scores(text)
+    if not scored:
         return None
-    word = parts[0].lstrip("/").casefold()
-    if not word or commands.by_name(word):
+    decision = fuzzy.decide(scored)
+    if decision.kind == "none" or len(decision.contenders) != 1:
         return None
-    best_score, best = 0, []
-    for cmd in commands.COMMANDS:
-        score = max(fuzzy.windowed_fuzzy_score(word, name) for name in (cmd.name, *cmd.aliases))
-        if score > best_score:
-            best_score, best = score, [cmd]
-        elif score and score == best_score:
-            best.append(cmd)
-    if not best_score or len(best) != 1:
-        return None
-    rest = parts[1] if len(parts) > 1 else ""
-    return f"/{best[0].name}" + (f" {rest}" if rest else "")
+    return f"/{decision.best.name}" + (f" {rest}" if rest else "")
+
+
+def command_suggestion_candidates(text):
+    """The contending commands for a near miss with no single clear answer.
+
+    When ``fuzzy.decide`` calls the top contested — a runner-up within
+    the clear margin — there is no honest single suggestion, so the
+    caller offers these canonical commands (arguments carried over) as a
+    did-you-mean pick-list and lets the user choose. Capped at
+    ``MAX_SUGGESTION_CANDIDATES`` so the choice fits a prompt. Returns []
+    whenever a single suggestion exists or nothing scores at all.
+    """
+    scored, rest = _command_scores(text)
+    if not scored:
+        return []
+    decision = fuzzy.decide(scored)
+    if decision.kind != "suggest" or len(decision.contenders) < 2:
+        return []
+    suffix = f" {rest}" if rest else ""
+    return [f"/{cmd.name}{suffix}" for cmd in decision.contenders[:MAX_SUGGESTION_CANDIDATES]]
 
 
 def agent_unavailable_text():
@@ -486,6 +523,12 @@ class BotCore:
             # both model lanes have declined — so it fires with no LLM
             # configured too, and never competes with a lane's answer.
             return await self._offer_suggestion(event, suggestion, metadata)
+        candidates = command_suggestion_candidates(event.text)
+        if candidates:
+            # The confidence/conflict policy found no single clear
+            # command but real contenders: offer them as a pick-list
+            # rather than guessing or staying silent.
+            return await self._offer_suggestion_choice(event, candidates, metadata)
         await self.adapter.send(chat_id=source.chat_id, content=self.unmatched, reply_to=event.message_id,
                                 metadata=metadata)
         return {"action": "skip", "reason": "command list"}
@@ -531,6 +574,56 @@ class BotCore:
         if answer == SUGGEST_YES_LABEL or (isinstance(answer, str) and answer.strip().casefold() in {"yes", "y"}):
             await self.adapter.close_prompt(clarify_id, f"Running {suggestion} — watch for its own confirmation.")
             routed = make_event(source, suggestion, f"{event.message_id}:fuzzy", metadata={"fuzzy_command": True})
+            return await self.process(routed, allow_llm=False)
+        if answer is None:
+            await self.adapter.close_prompt(clarify_id, "That suggestion expired — nothing ran.")
+            return {"action": "skip", "reason": "did-you-mean suggestion expired"}
+        await self.adapter.close_prompt(clarify_id, "OK — nothing ran.")
+        await self.adapter.send(chat_id=source.chat_id, content=self.unmatched, reply_to=event.message_id,
+                                metadata=metadata)
+        return {"action": "skip", "reason": "command list"}
+
+    async def _offer_suggestion_choice(self, event, candidates, metadata):
+        """Ask "Did you mean one of these?" for a contested near miss.
+
+        The shared policy (``fuzzy.decide``) found several commands
+        within the clear margin of the top score, so no single suggestion
+        is honest. The contenders are offered through the same clarify
+        registry as the single-suggestion prompt; only an explicit pick
+        re-dispatches, through ``process`` exactly as if typed — the
+        picked command still runs its own confirmation and names its
+        target before anything prints. "None of these", a non-answer, a
+        delivery failure or the 60-second expiry all fall back to the
+        plain unmatched reply path, and nothing runs.
+        """
+        source = event.source
+        registry = prompts.gateway()
+        clarify_id = f"fuzzy-{uuid.uuid4().hex[:12]}"
+        question = ("Did you mean one of these? Nothing runs unless you pick one — "
+                    "and the command still asks before anything prints.")
+        labels = [*candidates, SUGGEST_NONE_LABEL]
+        answer, delivered = None, True
+        try:
+            registry.register(clarify_id, session_key(source), question, labels)
+            result = await self.adapter.send_clarify(chat_id=source.chat_id, question=question,
+                                                     choices=labels, clarify_id=clarify_id,
+                                                     session_key=session_key(source), metadata=metadata)
+            if not getattr(result, "success", False):
+                raise RuntimeError("did-you-mean delivery failed")
+            answer = await asyncio.to_thread(registry.wait_for_response, clarify_id, SUGGESTION_TIMEOUT_S)
+        except Exception:
+            logger.warning("did-you-mean pick-list failed; sending the unmatched reply", exc_info=True)
+            delivered = False
+        finally:
+            registry.resolve_gateway_clarify(clarify_id, registry.CANCELLED)
+            registry.wait_for_response(clarify_id, 0.001)
+        if not delivered:
+            await self.adapter.send(chat_id=source.chat_id, content=self.unmatched, reply_to=event.message_id,
+                                    metadata=metadata)
+            return {"action": "skip", "reason": "command list"}
+        if answer in candidates:
+            await self.adapter.close_prompt(clarify_id, f"Running {answer} — watch for its own confirmation.")
+            routed = make_event(source, answer, f"{event.message_id}:fuzzy", metadata={"fuzzy_command": True})
             return await self.process(routed, allow_llm=False)
         if answer is None:
             await self.adapter.close_prompt(clarify_id, "That suggestion expired — nothing ran.")

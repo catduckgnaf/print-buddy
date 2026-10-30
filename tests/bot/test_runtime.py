@@ -432,3 +432,60 @@ def test_did_you_mean_expires_quietly_and_dispatches_nothing(cfg, monkeypatch):
     assert seen == []
     assert any("Did you mean `/spool list`?" in q["question"] for q in discord.questions)
     assert runtime.unmatched_text(cfg["discord"]["bot_name"]) not in discord.sent
+
+
+# ------------------------------------- confidence/conflict policy (decide)
+
+def _recording_print_router(seen):
+    """A stub plugin recording any corrected /print-* command it is handed."""
+    class _Plugin:
+        def register(self, router):
+            async def record(event, gateway):
+                if event.text.startswith("/print-"):
+                    seen.append(event.text)
+                    return {"action": "skip", "reason": "recorded"}
+                return None
+            router.register_hook("pre_gateway_dispatch", record)
+    return Router(plugin=_Plugin())
+
+
+def test_suggestion_candidates_only_for_contested_near_misses():
+    # "/prnt" sits within the clear margin of several print-* commands:
+    # no single suggestion (the pin above), but real contenders to offer.
+    candidates = runtime.command_suggestion_candidates("/prnt")
+    assert len(candidates) >= 2 and "/print-stop" in candidates
+    assert all(c.startswith("/print-") for c in candidates)
+    # A clear near miss has a single suggestion and no candidate list.
+    assert runtime.command_suggestion_candidates("/spol list") == []
+    # Nothing scoring, or not command-shaped: no candidates either.
+    assert runtime.command_suggestion_candidates("/zzzz") == []
+    assert runtime.command_suggestion_candidates("hello there") == []
+
+
+def test_did_you_mean_pick_list_dispatches_the_picked_command(cfg):
+    seen = []
+    discord, core = make(cfg, router=_recording_print_router(seen))
+
+    async def flow():
+        task = asyncio.create_task(core.handle_message(discord.message("/prnt")))
+        await press(discord, "/print-stop")
+        return await task
+
+    out = run(flow())
+    assert seen == ["/print-stop"]
+    assert out == {"action": "skip", "reason": "recorded"}
+
+
+def test_did_you_mean_pick_list_none_of_these_dispatches_nothing(cfg):
+    seen = []
+    discord, core = make(cfg, router=_recording_print_router(seen))
+
+    async def flow():
+        task = asyncio.create_task(core.handle_message(discord.message("/prnt")))
+        await press(discord, runtime.SUGGEST_NONE_LABEL)
+        return await task
+
+    out = run(flow())
+    assert seen == []
+    assert out == {"action": "skip", "reason": "command list"}
+    assert discord.sent[-1] == runtime.unmatched_text(cfg["discord"]["bot_name"])

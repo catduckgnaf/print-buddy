@@ -301,7 +301,13 @@ def assign_print_numbers(first_launch: dict[Path, float], numbers_path: Path | N
 
 
 def _fold(text: str) -> str:
-    return " ".join(re.sub(r"[^0-9a-z]+", " ", str(text).casefold()).split())
+    """The shared fold — ``core.fuzzy.norm`` is the one implementation.
+
+    Title matching therefore folds the same way everywhere: diacritics
+    fold to their base letters and CJK titles stay matchable by name
+    instead of folding away to nothing.
+    """
+    return fuzzy.norm(text)
 
 
 def match_printed(query: str, rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -316,6 +322,9 @@ def match_printed(query: str, rows: list[dict[str, Any]]) -> list[dict[str, Any]
     return [r for r in rows if all(w in _fold(r["title"]) for w in words)]
 
 
+FUZZY_SCAN_LIMIT = 500
+
+
 def fuzzy_printed(query: str, rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """#468 stage 2: typo-tolerant near matches over printed titles, best score first.
 
@@ -324,9 +333,13 @@ def fuzzy_printed(query: str, rows: list[dict[str, Any]]) -> list[dict[str, Any]
     a target, not even a single high-confidence one, and print numbers never
     reach here (the bare-integer path in resolve_print stays exact, #436).
     Scores come from core.fuzzy (floor 65, windowed for long titles); ties
-    keep the rows' newest-first order.
+    keep the rows' newest-first order. Only the newest ``FUZZY_SCAN_LIMIT``
+    rows are fuzzy-scored — the archive grows unbounded and the windowed
+    scorer is the expensive pass; exact and substring matching above still
+    scan every row, so an old print remains findable by its real name.
     """
-    scored = [(fuzzy.windowed_fuzzy_score(query, r["title"]), pos, r) for pos, r in enumerate(rows)]
+    scored = [(fuzzy.windowed_fuzzy_score(query, r["title"]), pos, r)
+              for pos, r in enumerate(rows[:FUZZY_SCAN_LIMIT])]
     scored = [entry for entry in scored if entry[0]]
     scored.sort(key=lambda entry: (-entry[0], entry[1]))
     return [row for _score_value, _pos, row in scored]

@@ -286,6 +286,52 @@ def test_resolve_number_like_query_never_goes_fuzzy(tmp_path):
         print_control.resolve_print("22", tmp_path)
 
 
+# ------------------------------------------- number words + fold hardening
+
+def test_resolve_number_word_query_suggests_the_spelled_title(tmp_path):
+    """Number equivalence is fuzzy-scorer-only: "mark 2" finds the print
+    titled "Mark Two" — but as a did-you-mean pick-list, never a resolve."""
+    from print_handy.hermes.print_next import NextPlateError
+    _printed(tmp_path, "mark-two--a", "Mark Two Bracket", 100)
+    _printed(tmp_path, "benchy--b", "Benchy", 200)
+    with pytest.raises(NextPlateError) as exc:
+        print_control.resolve_print("mark 2", tmp_path)
+    msg = str(exc.value)
+    assert "Did you mean one of these?" in msg and "2. Mark Two Bracket" in msg
+
+
+def test_resolve_number_word_never_selects_a_print_number(tmp_path):
+    """The other half of the boundary: the word "two" is not print #2.
+    It is a name query, and with no title anywhere near it the answer is
+    the plain no-match refusal — no target is ever resolved from it."""
+    from print_handy.hermes.print_next import NextPlateError
+    _three(tmp_path)
+    with pytest.raises(NextPlateError) as exc:
+        print_control.resolve_print("two", tmp_path)
+    assert str(exc.value) == 'no printed job matches "two". Type /print-again list'
+    # ...while the digit form still resolves print #2 exactly.
+    assert print_control.resolve_print("2", tmp_path)["title"] == "G4 Instant Desk Stand"
+
+
+def test_resolve_cjk_title_matches_by_name(tmp_path):
+    """The Unicode fold keeps CJK: a Chinese-titled print is findable by
+    its name (and resolvable on an exact title match), not only by number."""
+    g = _printed(tmp_path, "nozzle-plug--a", "喷嘴堵塞工具", 100)
+    _printed(tmp_path, "benchy--b", "Benchy", 200)
+    assert print_control.resolve_print("喷嘴堵塞工具", tmp_path)["gcode"] == str(g.resolve())
+
+
+def test_fuzzy_printed_scans_only_the_newest_rows(tmp_path):
+    """The archive is unbounded; the fuzzy pass scores at most
+    FUZZY_SCAN_LIMIT newest rows (exact/substring matching still see all)."""
+    for i in range(print_control.FUZZY_SCAN_LIMIT + 5):
+        _printed(tmp_path, f"job-{i:04d}--x", "Benchy", i + 1)
+    _printed(tmp_path, "old-zebra--z", "Zebra Hook", print_control.FUZZY_SCAN_LIMIT + 100)
+    rows = print_control.printed_jobs(tmp_path)
+    assert print_control.fuzzy_printed("zebra hok", rows) == []  # beyond the scan cap
+    assert print_control.match_printed("zebra hook", rows)      # exact path unaffected
+
+
 def _copy_gcode(tmp_path, duration="1h", grams=12.0):
     g = tmp_path / "copy.gcode"
     g.write_text(f"; estimated printing time (normal mode) = {duration}\n"

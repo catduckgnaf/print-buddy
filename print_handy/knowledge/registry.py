@@ -14,7 +14,6 @@ physical actions stay behind the existing guarded print-control flows.
 """
 from __future__ import annotations
 
-import re
 import tomllib
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -86,7 +85,14 @@ class Match:
 
 
 def _norm(text):
-    return re.sub(r"[^a-z0-9]+", " ", str(text or "").casefold()).strip()
+    """The shared fold — ``core.fuzzy.norm`` is the one implementation.
+
+    Kept as a local name because the registry's callers import it from
+    here; routing it through core.fuzzy means the Unicode-honest fold
+    (diacritics, CJK) applies to registry matching too, and the copies
+    can never drift apart again.
+    """
+    return fuzzy.norm(text)
 
 
 def _score(query, targets):

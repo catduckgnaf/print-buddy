@@ -2,7 +2,9 @@
 
 # Unreleased
 
-Nothing yet.
+**Toward a future 2.2.2 (not yet scheduled):**
+
+- Fuzzy matching hardening and widening (post-2.2.1 audit): the semantic-lookup client now validates what an endpoint returns (non-finite or non-numeric scores are rejected instead of crashing the lookup into "Lookup failed", scores clamp to 0–1, the 0.55 threshold is enforced client-side with duplicates dropped and a deterministic score order), reads under one total 10-second deadline with a 256 KiB body cap, and only accepts `http`/`https` URLs (with a cleartext warning for plain `http` to a non-local address). The local matcher now works fully offline on more of what people type: number words equal digits (`two`/`2`, `second`/`2nd`, `twenty one`/`21`, including inside titles like "Mark Two"), common variants fold together (plurals, `cfg`/`config`, `temp`/`temperature`, `mm`/`millimeter`, `hot end`/`hotend`), accents fold consistently and CJK text is no longer erased by the normalizer, and sound-spelled words (`enuf`, `retrakshun`) can reach their entries. A single confidence/conflict rule now governs every did-you-mean surface: a fuzzy result is used directly only at high confidence with a clear margin over the runner-up; a close or grey-zone result becomes a "Did you mean…?" pick-list instead (a mistyped command with several near matches now offers the choices rather than staying silent, and picking one runs it through the usual flow). Long stuffed titles no longer cost a quadratic scan in `/print-again` (the window pass is capped and its fuzzy scan covers the newest 500 archived prints; exact and substring matching still scan everything). The #468 boundaries are unchanged: exact matches behave exactly as before, print numbers stay exact (typing "two" never selects print #2), and a fuzzy hit can still only offer choices — never execute.
 
 # Version 2.2.1
 

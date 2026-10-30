@@ -89,12 +89,48 @@ def test_setup_rejects_invalid_ids_and_urls_without_advancing(tmp_path):
     assert "Setup step 7 of 7" in out
 
 
+def test_printer_url_follows_the_model(tmp_path):
+    st = store(tmp_path)
+    say(st, "/print-handy setup")
+    prompt = None
+    for answer in ("sovol_marlin.sv04", "standalone", CHAT, USER):
+        prompt = say(st, answer)
+    assert "OctoPrint" in prompt and "octopi.local" in prompt
+    out = say(st, "http://octopi.local")
+    assert "Setup step 6 of 7" in out
+    for answer in ("skip", "stored"):
+        say(st, answer)
+    target = tmp_path / "local.yaml"
+    say(st, "apply", apply_config=lambda answers: guided._apply_answers(answers, target))
+    written = target.read_text()
+    assert "octoprint_url:" in written and "http://octopi.local" in written
+    assert "moonraker_url" not in written
+
+    st = store(tmp_path)
+    say(st, "/print-handy setup restart")
+    prompt = None
+    for answer in ("bambulab.a1", "standalone", CHAT, USER):
+        prompt = say(st, answer)
+    assert "hostname" in prompt
+    out = say(st, "http://192.168.1.50")
+    assert "does not work" in out and "hostname" in out
+    out = say(st, "192.168.1.50")
+    assert "Setup step 6 of 7" in out
+    for answer in ("skip", "stored"):
+        say(st, answer)
+    target = tmp_path / "bambu.yaml"
+    say(st, "apply", apply_config=lambda answers: guided._apply_answers(answers, target))
+    written = target.read_text()
+    assert "lan_host:" in written and "192.168.1.50" in written
+    assert "moonraker_url" not in written
+
+
 def test_spoolman_step_is_offered_for_models_without_moonraker(tmp_path):
     st = store(tmp_path)
     say(st, "/print-handy setup")
     for answer in ("bambulab.a1", "standalone", CHAT, USER):
         say(st, answer)
-    out = say(st, "skip")  # Moonraker: a Bambu Lab model has no Moonraker connection
+    out = say(st, "skip")  # hostname printers can skip the Printer URL
     assert "Setup step 6 of 7: Spoolman URL" in out
     out = say(st, "http://spoolman.test:7912")
     assert "Setup step 7 of 7" in out

@@ -143,12 +143,12 @@ class ContractTests(unittest.TestCase):
                                        "octoprint.maxpro2", "octoprint.kobra", "octoprint.kobraneo",
                                        "octoprint.kobraplus", "octoprint.kobramax",
                                        "sovol.sv01", "sovol.sv01_pro", "sovol.sv02", "sovol.sv03",
-                                       "sovol.sv05", "sovol.sv06_plus", "sovol.sv06_ace",
+                                       "sovol.sv04", "sovol.sv05", "sovol.sv06_plus", "sovol.sv06_ace",
                                        "sovol.sv06_plus_ace", "sovol.sv07", "sovol.sv07_plus",
-                                       "sovol.sv08", "sovol.sv08_max", "sovol.zero",
+                                       "sovol.sv08", "sovol.sv08_max", "sovol.zero", "sovol.m1d",
                                        "sovol_marlin.sv01", "sovol_marlin.sv01_pro", "sovol_marlin.sv02",
-                                       "sovol_marlin.sv03", "sovol_marlin.sv05", "sovol_marlin.sv06",
-                                       "sovol_marlin.sv06_plus"})
+                                       "sovol_marlin.sv03", "sovol_marlin.sv04", "sovol_marlin.sv05",
+                                       "sovol_marlin.sv06", "sovol_marlin.sv06_plus"})
         for key, model in printers.MODELS.items():
             self.assertEqual(model.key, key)
             shipped = settings.ROOT / "print_handy" / "templates" / "orca" / model.templates

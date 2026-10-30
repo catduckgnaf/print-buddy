@@ -127,15 +127,86 @@ _CREDENTIAL_PROBLEMS = ("need", "missing", "empty", "refused", "401", "403",
                         "needs an api key first", "is wrong")
 
 #: Download gaps that are a property of the site, not of the install:
-#: the remedy is a browser download, never a retry.
+#: the remedy is a browser download, never a retry. Each entry is the
+#: site name, the phrasing cue in its curated gap message, and the cause.
 _SITE_DOWNLOAD_GAPS = (
-    ("MakerOnline",
+    ("MakerOnline", "cannot download",
      "MakerOnline's downloads need a browser security check that Print Handy "
      "does not fake, so the file cannot be fetched from here."),
-    ("Cults3D",
+    ("Cults3D", "cannot download",
      "Cults3D's API gives a listing's details but never its 3D files, so the "
      "file cannot be fetched from here."),
+    # Creality Cloud (#605 follow-on): memberDownload answered, but no file
+    # URL could be found in the answer (model_job.CREALITYCLOUD_ANSWER_GAP).
+    ("Creality Cloud", "could not find a file url",
+     "Creality Cloud answered the download request, but Print Handy could "
+     "not find a file URL in the answer, so nothing was downloaded (the "
+     "site may have changed its answer)."),
 )
+
+#: Creality Cloud (#605 follow-on): the model the link names is gone —
+#: the API's 512/517 envelope ("says this model does not exist") and the
+#: inventory lookup ("model not found for …") say the same thing.
+_CREALITY_MISSING_CUES = ("says this model does not exist", "model not found for")
+
+#: Direct file links (#607, #608 follow-on): the curated DirectLinkError
+#: cases from print_handy.core.model_job, as (phrasing cue, category,
+#: cause, remedy). Recognition is gated on the exception type name (the
+#: SpoolmanUnavailable trick), so lookalike text from another boundary
+#: cannot claim these causes; the cause/remedy wording is built here,
+#: never copied from the exception text — the original message can name
+#: the operator's host, which stays out of chat. The HTTP-status case is
+#: handled separately below because its category depends on the code.
+_DIRECT_LINK_CAUSES = (
+    ("is not a public address", Category.CONFIGURATION,
+     "That link points at an address that is not public, so Print Handy "
+     "will not fetch it.",
+     "Use a public link anyone on the internet can open."),
+    ("must start with http://", Category.CONFIGURATION,
+     "That link does not start with http:// or https://, so it cannot be "
+     "fetched as a direct file link.",
+     "Send an http:// or https:// link to the file."),
+    ("has a user name or password in it", Category.CONFIGURATION,
+     "That link carries a user name or password in it, and links like "
+     "that are refused.",
+     "Share the file with a public link that needs no sign-in."),
+    ("has no host name", Category.CONFIGURATION,
+     "That link has no host name, so there is nothing to fetch.",
+     "Send the complete link to the file."),
+    ("has no address to fetch", Category.CONFIGURATION,
+     "That direct link has no address to fetch.",
+     "Send the complete link to the file."),
+    ("could not look up the host", Category.TRANSIENT,
+     "Print Handy could not look up the host for that link, so the file "
+     "was not downloaded.",
+     "Check the link and the network connection, then send the link again."),
+    ("could not reach the host", Category.TRANSIENT,
+     "Print Handy could not reach the host for that link, so the file "
+     "was not downloaded.",
+     "Check the link and the network connection, then send the link again."),
+    ("redirected too many times", Category.CONFIGURATION,
+     "That link redirected too many times, so the file was not downloaded.",
+     "Send a link that points at the file more directly."),
+    ("returned a web page instead of a print file", Category.CONFIGURATION,
+     "That link returned a web page instead of a print file, so nothing "
+     "was saved as a model.",
+     "Use the host's direct download link; a Dropbox share link works as-is."),
+    ("is not a 3mf file", Category.CONFIGURATION,
+     "The file at that link is not a 3MF file, so it was not saved.",
+     "Check that the link points at the model's .3mf file itself."),
+    ("which is not a print file", Category.CONFIGURATION,
+     "That link served a file that is not a print file Print Handy can use.",
+     "Check that the link points at the model's .stl or .3mf file itself."),
+    ("downloaded as an empty file", Category.CONFIGURATION,
+     "That link downloaded as an empty file, so nothing was saved.",
+     "Check that the link points at the model's .stl or .3mf file itself."),
+)
+
+#: The one DirectLinkError whose category depends on data inside the
+#: curated text: "answered with HTTP {code}" (#608). DirectLinkError
+#: discards the HTTPError, so classify()'s ``code`` attribute path can
+#: never see the status; it is parsed out of the curated text here.
+_DIRECT_HTTP_RE = re.compile(r"answered with http (\d{3})")
 
 
 def known_cause(exc: BaseException) -> KnownCause | None:
@@ -144,9 +215,13 @@ def known_cause(exc: BaseException) -> KnownCause | None:
     Recognition is an allowlist over the curated, operator-phrased
     messages Print Handy itself raises at its model-site boundaries
     (#590): a missing/expired/refused site credential, a site robot
-    check, or a site's built-in download gap. Anything else returns
-    None and keeps the conservative ``unknown`` treatment — an
-    unrecognised exception's text is never surfaced in chat.
+    check, or a site's built-in download gap. Two later boundaries fold
+    into the same allowlist: Creality Cloud's answer gap and missing
+    model (#605), and the direct file link refusals (#607), recognised
+    by the ``DirectLinkError`` type name over its curated phrasing.
+    Anything else returns None and keeps the conservative ``unknown``
+    treatment — an unrecognised exception's text is never surfaced in
+    chat.
     """
     text = str(exc or "")
     low = text.lower()
@@ -161,13 +236,20 @@ def known_cause(exc: BaseException) -> KnownCause | None:
             "Remove the PID limit from the container (--pids-limit in the Unraid Extra "
             "Parameters, pids_limit in Compose) or raise it to 4096 or more, restart the "
             "container, then try again. `python3 -m print_handy.doctor` shows the current usage.")
-    for site, gap in _SITE_DOWNLOAD_GAPS:
-        if site.lower() in low and "cannot download" in low:
+    for site, cue, gap in _SITE_DOWNLOAD_GAPS:
+        if site.lower() in low and cue in low:
             return KnownCause(
                 Category.CONFIGURATION,
                 gap,
                 "Download the .stl or .3mf file from the model page in a browser, "
                 "then upload or drop that file here instead.")
+    if "creality cloud" in low and any(cue in low for cue in _CREALITY_MISSING_CUES):
+        return KnownCause(
+            Category.CONFIGURATION,
+            "Creality Cloud says that model does not exist — it may have "
+            "been removed, or the link is wrong.",
+            "Check the link on the Creality Cloud model page, then send "
+            "the corrected link.")
     for site, credential, section in _SITE_CREDENTIALS:
         if site.lower() not in low:
             continue
@@ -201,6 +283,28 @@ def known_cause(exc: BaseException) -> KnownCause | None:
             "Spoolman did not answer.",
             "Check that the Spoolman service is running and that "
             "services.spoolman_url points at it.")
+    if error_type == "DirectLinkError":
+        # Direct file links (#607): every curated case is recognised, so
+        # a direct-link failure names its cause instead of falling back
+        # to unknown. The HTTP case parses its status out of the text
+        # (see _DIRECT_HTTP_RE); an unlisted status stays configuration,
+        # matching the remedy (check the link is public and the file is
+        # still there).
+        http = _DIRECT_HTTP_RE.search(low)
+        if http is not None:
+            code = int(http.group(1))
+            category = (Category.TRANSIENT if code == 429 or code >= 500
+                        else Category.CONFIGURATION)
+            return KnownCause(
+                category,
+                f"The host for that link answered with HTTP {code}, so "
+                "the file was not downloaded.",
+                "Check the link is public and the file is still there, "
+                "then send it again." if category is Category.TRANSIENT else
+                "Check the link is public and the file is still there.")
+        for cue, category, cause, remedy in _DIRECT_LINK_CAUSES:
+            if cue in low:
+                return KnownCause(category, cause, remedy)
     return None
 
 

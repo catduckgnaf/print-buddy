@@ -185,8 +185,10 @@ class ContractTests(unittest.TestCase):
                 self.assertTrue(all(v > 0 for v in (*vol.bed_mm, vol.max_height_mm)))
                 self.assertGreaterEqual(a.slot_count, 1)
                 if family == "flashforge_stock.ad5x":
-                    # One tool and four physical IFS bays. That is not multicolor.
-                    self.assertEqual((a.slot_count, a.multi_slot), (4, False))
+                    # One tool and four physical IFS bays: the model's class is
+                    # multi_slot (#656), and multicolor stays refused by the
+                    # adapter's own mapping/start paths, not by the class.
+                    self.assertEqual((a.slot_count, a.multi_slot), (4, True))
                 elif a.multi_tool:
                     # Toolheads are filament positions without being IFS slots:
                     # slot_count counts them, multi_slot stays off, multi_tool is on.

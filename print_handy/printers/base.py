@@ -36,6 +36,16 @@ in helper modules without a MODEL or in a subpackage. See docs/PRINTER-PROFILES.
 Settings merge, later wins key by key: vendor defaults, printer defaults, YAML home config, selected YAML/TOML local config, environment.
 config/home.yaml picks the model with printer.model: flashforge.ad5x.
 
+Color architecture (issue #656): every MODEL names color_system, one of "single", "multi_slot"
+(one extruder fed by several IFS-style slots; only the two AD5X profiles), or "multi_tool"
+(independent toolheads, each with its own extruder and filament; only the Creator pair). Every
+other model is "single" in this stage — including the Prusa XL, whose other toolheads the
+adapter does not drive yet, and the Bambu AMS models, whose slot unification is follow-up work.
+The class is the authority: PrinterAdapter.multi_slot / multi_tool derive from it, the settings
+validation for ifs_slots and tool_count reads it, and a model whose settings contradict its
+class (ifs_slots above 1 outside multi_slot, tool_count above 1 outside multi_tool) is refused
+when the profile loads.
+
 Where printer specifics live, and which responsibilities sit behind PrinterAdapter:
 
   responsibility                 flashforge.ad5x (ZMod)                  klipper.generic / sovol.sv06
@@ -118,6 +128,13 @@ class BuildVolume:
 # How Print Handy reaches a printer. "offline" means it never does: it slices and validates, a person
 # moves the file.
 CONNECTIONS = ("moonraker", "octoprint", "offline", "bambulab_lan", "flashforge_stock", "prusalink", "elegoo_sdcp")
+# The three color architectures (issue #656). Every model names exactly one; the class is the
+# authority the adapter properties (multi_slot, multi_tool) and the settings validation read, so the
+# architecture is never re-inferred from ifs_slots or adapter flags:
+#   single      one extruder, one filament position (the large majority of models)
+#   multi_slot  one extruder fed by several filament slots (an IFS-style feeder; the AD5X pair)
+#   multi_tool  several independent toolheads, each with its own extruder and filament (the Creator pair)
+COLOR_SYSTEMS = ("single", "multi_slot", "multi_tool")
 # Start G-code families. Each printer runs only its own; see start_code_problems.
 START_CODES = ("zmod", "klipper_macro", "marlin", "bambu", "flashforge_stock", "prusa", "elegoo_sdcp", "elegoo_inline",
                "qidi", "creality", "anycubic")
@@ -247,6 +264,31 @@ class PrinterModel:
     # True when the Orca templates are not shipped but generated on the operator's machine into
     # <state>/orca-profiles/<templates> (third-party profiles; see printers/bambulab/profiles.py).
     generated_templates: bool = False
+    # The model's color architecture (COLOR_SYSTEMS). "single" unless the model's own
+    # settings say otherwise: multi_slot needs ifs_slots > 1, multi_tool needs tool_count > 1,
+    # and no other class may carry either count (see __post_init__).
+    color_system: str = "single"
+
+    def __post_init__(self):
+        if self.color_system not in COLOR_SYSTEMS:
+            raise ValueError(f"model {self.key}: color_system must be one of {COLOR_SYSTEMS}, "
+                             f"got {self.color_system!r}")
+        merged = merge_settings(self.vendor.settings if self.vendor else {}, self.settings)
+        printer = merged.get("printer") or {}
+        ifs_slots = int(printer.get("ifs_slots", 1))
+        tool_count = int(printer.get("tool_count", 1))
+        if ifs_slots > 1 and self.color_system != "multi_slot":
+            raise ValueError(f"model {self.key}: ifs_slots {ifs_slots} > 1 requires "
+                             f"color_system 'multi_slot', got {self.color_system!r}")
+        if tool_count > 1 and self.color_system != "multi_tool":
+            raise ValueError(f"model {self.key}: tool_count {tool_count} > 1 requires "
+                             f"color_system 'multi_tool', got {self.color_system!r}")
+        if self.color_system == "multi_slot" and ifs_slots <= 1:
+            raise ValueError(f"model {self.key}: color_system 'multi_slot' requires ifs_slots > 1, "
+                             f"got {ifs_slots}")
+        if self.color_system == "multi_tool" and tool_count <= 1:
+            raise ValueError(f"model {self.key}: color_system 'multi_tool' requires tool_count > 1, "
+                             f"got {tool_count}")
 
     @property
     def vendor_key(self) -> str:
@@ -273,11 +315,6 @@ class PrinterModel:
 class PrinterAdapter(ABC):
     """What call sites need from a printer model. Build with a settings dict (default: process settings)."""
 
-    multi_slot: bool = False
-    # Independent toolheads (a tool changer), as opposed to one extruder fed by multi_slot
-    # IFS slots: tools are fixed positions (slicer tool i always prints with toolhead i),
-    # each with its own filament. [printer] tool_count names them; ifs_slots stays 1.
-    multi_tool: bool = False
     # ZMod-style native screen: display_off modes, saved/screen Z offset authority, MD5 gcode, stock /detail.
     has_native_screen: bool = False
     # (xmin, ymin, xmax, ymax) when vendor start/end G-code moves off the bed; None holds every move to the bed.
@@ -295,6 +332,23 @@ class PrinterAdapter(ABC):
             model = _model(config["printer"]["model"])
         self.config = config
         self.model = model
+
+    @property
+    def color_system(self) -> str:
+        """The model's color architecture (COLOR_SYSTEMS); the model is the only authority for it."""
+        return self.model.color_system
+
+    @property
+    def multi_slot(self) -> bool:
+        """One extruder fed by several filament slots (an IFS-style feeder), from the model's class."""
+        return self.color_system == "multi_slot"
+
+    @property
+    def multi_tool(self) -> bool:
+        """Independent toolheads (a tool changer), as opposed to one extruder fed by multi_slot
+        IFS slots: tools are fixed positions (slicer tool i always prints with toolhead i),
+        each with its own filament. [printer] tool_count names them; ifs_slots stays 1."""
+        return self.color_system == "multi_tool"
 
     @property
     def key(self) -> str:

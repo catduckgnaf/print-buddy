@@ -7,7 +7,6 @@ from ..base import MultiColorUnsupported, PrinterAdapter, basic_status
 
 
 class KlipperAdapter(PrinterAdapter):
-    multi_slot = False
 
     @property
     def slot_count(self):

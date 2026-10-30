@@ -16,6 +16,7 @@ kinematics = "unspecified"
 bed_mm = [220.0, 220.0]
 max_height_mm = 220.0
 filament_slots = 1
+color_system = "single"
 profile = "print_handy/printers/octoprint/marlin.py"
 notes = "Marlin support goes through OctoPrint's serial connection and REST API, not direct USB/serial. Dimensions are placeholders to override in local config."
 
@@ -30,6 +31,7 @@ kinematics = "Cartesian (moving bed)"
 bed_mm = [220.0, 220.0]
 max_height_mm = 250.0
 filament_slots = 1
+color_system = "single"
 profile = "print_handy/printers/octoprint/ender3.py"
 notes = "Ender-3 preset of the OctoPrint/Marlin support: real dimensions instead of the octoprint.marlin placeholders. Dimensions are the pinned Orca profile's printable area/height (OrcaSlicer v2.5.0-alpha, Creality profiles 02.03.02.87)."
 
@@ -44,6 +46,7 @@ kinematics = "Cartesian (moving bed)"
 bed_mm = [220.0, 220.0]
 max_height_mm = 250.0
 filament_slots = 1
+color_system = "single"
 profile = "print_handy/printers/octoprint/ender3pro.py"
 notes = "Ender-3 Pro preset of the OctoPrint/Marlin support: real dimensions instead of the octoprint.marlin placeholders. Dimensions are the pinned Orca profile's printable area/height (OrcaSlicer v2.5.0-alpha, Creality profiles 02.03.02.87)."
 
@@ -58,6 +61,7 @@ kinematics = "Cartesian (moving bed)"
 bed_mm = [220.0, 220.0]
 max_height_mm = 250.0
 filament_slots = 1
+color_system = "single"
 profile = "print_handy/printers/octoprint/ender3v2.py"
 notes = "Ender-3 V2 preset of the OctoPrint/Marlin support: real dimensions instead of the octoprint.marlin placeholders. Dimensions are the pinned Orca profile's printable area/height (OrcaSlicer v2.5.0-alpha, Creality profiles 02.03.02.87); upstream ships only a 0.4 mm nozzle machine profile for this model."
 
@@ -72,6 +76,7 @@ kinematics = "Cartesian (moving bed)"
 bed_mm = [220.0, 220.0]
 max_height_mm = 250.0
 filament_slots = 1
+color_system = "single"
 profile = "print_handy/printers/octoprint/ender3v3se.py"
 notes = "Despite the V3 name, the stock firmware is Marlin-based — the pinned Orca profile declares gcode_flavor marlin2 — so this is an OctoPrint preset, not a Klipper one; the printer has no Moonraker endpoint. Dimensions are the pinned Orca profile's printable area/height (OrcaSlicer v2.5.0-alpha, Creality profiles 02.03.02.87)."
 
@@ -86,6 +91,7 @@ kinematics = "Cartesian (moving bed)"
 bed_mm = [210.0, 210.0]
 max_height_mm = 205.0
 filament_slots = 1
+color_system = "single"
 profile = "print_handy/printers/octoprint/i3megas.py"
 notes = "Anycubic Marlin preset of the OctoPrint/Marlin support: real dimensions instead of the octoprint.marlin placeholders. Dimensions are the pinned Orca profile's printable area/height (OrcaSlicer v2.5.0-alpha, Anycubic profiles 02.04.00.09)."
 
@@ -100,6 +106,7 @@ kinematics = "Cartesian (moving bed)"
 bed_mm = [250.0, 255.0]
 max_height_mm = 265.0
 filament_slots = 1
+color_system = "single"
 profile = "print_handy/printers/octoprint/vyper.py"
 notes = "Anycubic Marlin preset of the OctoPrint/Marlin support: real dimensions instead of the octoprint.marlin placeholders. Dimensions are the pinned Orca profile's printable area/height (OrcaSlicer v2.5.0-alpha, Anycubic profiles 02.04.00.09)."
 
@@ -114,6 +121,7 @@ kinematics = "Cartesian (moving bed)"
 bed_mm = [400.0, 400.0]
 max_height_mm = 450.0
 filament_slots = 1
+color_system = "single"
 profile = "print_handy/printers/octoprint/chiron.py"
 notes = "Anycubic Marlin preset of the OctoPrint/Marlin support: real dimensions instead of the octoprint.marlin placeholders. Dimensions are the pinned Orca profile's printable area/height (OrcaSlicer v2.5.0-alpha, Anycubic profiles 02.04.00.09)."
 
@@ -128,6 +136,7 @@ kinematics = "Cartesian (moving bed)"
 bed_mm = [270.0, 210.0]
 max_height_mm = 190.0
 filament_slots = 1
+color_system = "single"
 profile = "print_handy/printers/octoprint/maxpro2.py"
 notes = "Anycubic Marlin preset of the OctoPrint/Marlin support: real dimensions instead of the octoprint.marlin placeholders. Dimensions are the pinned Orca profile's printable area/height (OrcaSlicer v2.5.0-alpha, Anycubic profiles 02.04.00.09). The first-generation 4Max Pro is not preset: upstream names no default filament profile for it."
 
@@ -142,6 +151,7 @@ kinematics = "Cartesian (moving bed)"
 bed_mm = [220.0, 220.0]
 max_height_mm = 250.0
 filament_slots = 1
+color_system = "single"
 profile = "print_handy/printers/octoprint/kobra.py"
 notes = "Anycubic Marlin preset of the OctoPrint/Marlin support: real dimensions instead of the octoprint.marlin placeholders. Dimensions are the pinned Orca profile's printable area/height (OrcaSlicer v2.5.0-alpha, Anycubic profiles 02.04.00.09). The first Kobra line is Marlin; the Kobra 2 family is the separate anycubic vendor."
 
@@ -156,6 +166,7 @@ kinematics = "Cartesian (moving bed)"
 bed_mm = [220.0, 220.0]
 max_height_mm = 250.0
 filament_slots = 1
+color_system = "single"
 profile = "print_handy/printers/octoprint/kobraneo.py"
 notes = "Anycubic Marlin preset of the OctoPrint/Marlin support: real dimensions instead of the octoprint.marlin placeholders. The pinned Orca profile declares gcode_flavor marlin2. Dimensions are the pinned Orca profile's printable area/height (OrcaSlicer v2.5.0-alpha, Anycubic profiles 02.04.00.09)."
 
@@ -170,6 +181,7 @@ kinematics = "Cartesian (moving bed)"
 bed_mm = [300.0, 300.0]
 max_height_mm = 350.0
 filament_slots = 1
+color_system = "single"
 profile = "print_handy/printers/octoprint/kobraplus.py"
 notes = "Anycubic Marlin preset of the OctoPrint/Marlin support: real dimensions instead of the octoprint.marlin placeholders. Dimensions are the pinned Orca profile's printable area/height (OrcaSlicer v2.5.0-alpha, Anycubic profiles 02.04.00.09)."
 
@@ -184,5 +196,6 @@ kinematics = "Cartesian (moving bed)"
 bed_mm = [400.0, 400.0]
 max_height_mm = 450.0
 filament_slots = 1
+color_system = "single"
 profile = "print_handy/printers/octoprint/kobramax.py"
 notes = "Anycubic Marlin preset of the OctoPrint/Marlin support: real dimensions instead of the octoprint.marlin placeholders. Dimensions are the pinned Orca profile's printable area/height (OrcaSlicer v2.5.0-alpha, Anycubic profiles 02.04.00.09)."

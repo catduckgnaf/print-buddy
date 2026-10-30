@@ -16,6 +16,7 @@ kinematics = "Cartesian (moving bed)"
 bed_mm = [250.0, 210.0]
 max_height_mm = 220.0
 filament_slots = 1
+color_system = "single"
 profile = "print_handy/printers/prusa/mk4s.py"
 notes = "PrusaLink LAN (status, verified upload, gated start) when configured; otherwise slicing/checks/Discord delivery only. Not tested on hardware."
 
@@ -30,6 +31,7 @@ kinematics = "CoreXY"
 bed_mm = [250.0, 220.0]
 max_height_mm = 270.0
 filament_slots = 1
+color_system = "single"
 profile = "print_handy/printers/prusa/coreone.py"
 notes = "Enclosed CoreXY on PrusaLink. Chamber is not driven. Not tested on hardware."
 
@@ -44,6 +46,7 @@ kinematics = "CoreXY"
 bed_mm = [360.0, 360.0]
 max_height_mm = 360.0
 filament_slots = 1
+color_system = "single"
 profile = "print_handy/printers/prusa/xl.py"
 notes = "Five toolheads; Print Handy slices single-tool (tool 0) jobs only. PrusaLink as the other Prusa models."
 
@@ -58,5 +61,6 @@ kinematics = "Cartesian (moving bed)"
 bed_mm = [180.0, 180.0]
 max_height_mm = 180.0
 filament_slots = 1
+color_system = "single"
 profile = "print_handy/printers/prusa/miniplus.py"
 notes = "Runs Orca MINI profiles (printer_model Prusa MINI). PrusaLink as the other Prusa models."

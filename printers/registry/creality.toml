@@ -16,6 +16,7 @@ kinematics = "Cartesian (moving bed)"
 bed_mm = [220.0, 220.0]
 max_height_mm = 250.0
 filament_slots = 1
+color_system = "single"
 profile = "print_handy/printers/creality/ender3v3.py"
 notes = "Creality OS (Klipper-based) + Moonraker. Open-frame bed-slinger; not tested on hardware. Marlin Enders are not this vendor — they use octoprint.marlin."
 
@@ -30,6 +31,7 @@ kinematics = "Cartesian (moving bed)"
 bed_mm = [220.0, 220.0]
 max_height_mm = 245.0
 filament_slots = 1
+color_system = "single"
 profile = "print_handy/printers/creality/ender3v3ke.py"
 notes = "Creality OS (Klipper-based) + Moonraker. Its Orca start code is fully inline (no START_PRINT macro call); the adapter ships the template sequence verbatim. Not tested on hardware."
 
@@ -44,6 +46,7 @@ kinematics = "Cartesian (moving bed)"
 bed_mm = [300.0, 300.0]
 max_height_mm = 330.0
 filament_slots = 1
+color_system = "single"
 profile = "print_handy/printers/creality/ender3v3plus.py"
 notes = "Creality OS (Klipper-based) + Moonraker. Open-frame bed-slinger; not tested on hardware. Marlin Enders are not this vendor — they use octoprint.marlin."
 
@@ -58,6 +61,7 @@ kinematics = "CoreXY"
 bed_mm = [220.0, 220.0]
 max_height_mm = 250.0
 filament_slots = 1
+color_system = "single"
 profile = "print_handy/printers/creality/k1.py"
 notes = "Creality OS (Klipper-based) + Moonraker. Enclosed CoreXY; not tested on hardware."
 
@@ -72,6 +76,7 @@ kinematics = "CoreXY"
 bed_mm = [220.0, 220.0]
 max_height_mm = 250.0
 filament_slots = 1
+color_system = "single"
 profile = "print_handy/printers/creality/k1c.py"
 notes = "Creality OS (Klipper-based) + Moonraker. Enclosed CoreXY; not tested on hardware."
 
@@ -86,5 +91,6 @@ kinematics = "CoreXY"
 bed_mm = [300.0, 300.0]
 max_height_mm = 300.0
 filament_slots = 1
+color_system = "single"
 profile = "print_handy/printers/creality/k1max.py"
 notes = "Creality OS (Klipper-based) + Moonraker. Enclosed CoreXY; not tested on hardware."

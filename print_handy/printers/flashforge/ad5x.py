@@ -16,6 +16,7 @@ MODEL = PrinterModel(
     supported_nozzle_sizes=(0.25, 0.4, 0.6, 0.8),
     supported_nozzle_types=("stainless_steel", "hardened_steel"),
     vendor=VENDOR,
+    color_system="multi_slot",
     # Printer-specific defaults; firmware, macro names, margins, prime tower and cold pull come from VENDOR.
     settings={
         "printer": {

@@ -33,7 +33,6 @@ _BUSY_STATES = {"RUNNING", "PREPARE", "SLICING", "PAUSE"}
 
 
 class BambuAdapter(PrinterAdapter):
-    multi_slot = False
     transport = "bambulab_lan"
     facts: dict = {}  # the printer's sourced facts (facts.py), set by each printer's subclass
     # Slicers this printer's guard accepts. Bambu Studio is the Bambu Lab default (owner decision); every line

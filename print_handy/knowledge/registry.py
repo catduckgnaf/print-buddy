@@ -27,6 +27,9 @@ from .flows import Flow, Node, Option
 
 ROOT = Path(__file__).resolve().parents[2]
 FIRMWARES = ("zmod", "klipper", "marlin")
+# Mirrors print_handy.printers.base.COLOR_SYSTEMS (kept local so this read-only
+# loader imports no printer code); the registry drift test asserts the two agree.
+COLOR_SYSTEMS = ("single", "multi_slot", "multi_tool")
 ENTRY_KINDS = ("command", "macro", "error")
 FLOW_KINDS = ("question", "advice")
 
@@ -80,6 +83,9 @@ class PrinterEntry:
     # Independent toolheads (a tool changer) when the model has them; 0 means the
     # model's filament positions are its filament_slots (or a single extruder).
     tools: int = 0
+    # The model's color architecture (printers.base.COLOR_SYSTEMS, issue #656):
+    # single, multi_slot or multi_tool. The drift test pins it to MODEL.color_system.
+    color_system: str = "single"
 
 
 @dataclass(frozen=True)
@@ -388,13 +394,24 @@ def load_registry(root=ROOT) -> Registry:
             kinematics=str(raw.get("kinematics", "")).strip(),
             bed_mm=(float(bed[0]), float(bed[1])), max_height_mm=float(raw.get("max_height_mm") or 0),
             filament_slots=int(raw.get("filament_slots") or 0), tools=int(raw.get("tools") or 0),
-            profile=str(raw.get("profile", "")).strip(), notes=str(raw.get("notes", "")).strip())
+            profile=str(raw.get("profile", "")).strip(), notes=str(raw.get("notes", "")).strip(),
+            color_system=str(raw.get("color_system", "")).strip())
         where = f"printer {printer.key or '?'}"
         if printer.key.split(".", 1)[0] != vendor_file or printer.vendor != vendor_file:
             problems.append(f"{where}: filed in printers/registry/{vendor_file}.toml, but the "
                             f"key prefix and vendor field must both be '{vendor_file}'")
         if printer.firmware_family not in (*FIRMWARES, "none"):
             problems.append(f"{where}: firmware_family must be one of {FIRMWARES} or 'none'")
+        if printer.color_system not in COLOR_SYSTEMS:
+            problems.append(f"{where}: color_system must be one of {COLOR_SYSTEMS}")
+        if printer.color_system == "multi_slot" and printer.filament_slots <= 1:
+            problems.append(f"{where}: color_system 'multi_slot' requires filament_slots above 1")
+        if printer.color_system != "multi_slot" and printer.filament_slots > 1:
+            problems.append(f"{where}: filament_slots above 1 requires color_system 'multi_slot'")
+        if printer.color_system == "multi_tool" and printer.tools <= 1:
+            problems.append(f"{where}: color_system 'multi_tool' requires tools above 1")
+        if printer.color_system != "multi_tool" and printer.tools > 1:
+            problems.append(f"{where}: tools above 1 requires color_system 'multi_tool'")
         if not printer.key or not printer.profile:
             problems.append(f"{where}: key and profile are required")
         if printer.key in {p.key for p in printers}:

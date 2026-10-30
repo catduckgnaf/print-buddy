@@ -27,7 +27,6 @@ _BUSY_STATES = {"PRINTING", "BUSY", "PAUSED"}
 
 
 class PrusaAdapter(PrinterAdapter):
-    multi_slot = False
     transport = "prusalink"
     facts: dict = {}  # the printer's sourced facts (facts.py), set by each printer's subclass
     verified_slicers = ("orca",)

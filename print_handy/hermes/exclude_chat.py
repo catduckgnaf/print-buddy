@@ -35,6 +35,13 @@ def read_live(printer_id=None) -> dict:
             "excluded": [str(name) for name in excluded]}
 
 
+def still_printing(names, live) -> list:
+    """The file's object names Klipper has not excluded. Klipper stores and
+    reports object names uppercased, so the match ignores case."""
+    gone = {str(name).upper() for name in (live or {}).get("excluded") or []}
+    return [name for name in names if str(name).upper() not in gone]
+
+
 def _changed(filename, live) -> str:
     """Why the live printer no longer matches the alert, or "" when it still does."""
     from .print_stop import ACTIVE
@@ -106,7 +113,7 @@ def prepare(alert, index, live=None) -> dict:
     why = _changed(alert.get("filename"), now)
     if why:
         return {"step": "refuse", "text": why + " Nothing sent."}
-    left = [name for name in names if name not in now["excluded"]]
+    left = still_printing(names, now)
     plan = exclude_plan(names, target, confirmed=False, remaining=left)
     base = {"filename": alert.get("filename") or "", "printer_id": alert.get("printer_id") or "",
             "name": target, "names": names}
@@ -139,7 +146,7 @@ def confirm_send(alert, sender, live=None) -> dict:
     why = _changed(alert.get("filename"), now)
     if why:
         return {"sent": False, "text": why + " Nothing was sent, and nothing was excluded."}
-    left = [name for name in names if name not in now["excluded"]]
+    left = still_printing(names, now)
     plan = exclude_plan(names, target, confirmed=True, remaining=left)
     body = plan.get("body") or None
     script = ((body or {}).get("params") or {}).get("script")

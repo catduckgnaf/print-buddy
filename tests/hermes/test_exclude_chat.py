@@ -92,6 +92,15 @@ def test_last_object_guard_counts_what_klipper_already_excluded():
     assert ok["sent"] is True and "Still printing: C." in ok["text"]
 
 
+def test_klipper_uppercased_excluded_names_still_count():
+    # Klipper stores and reports object names uppercased; Orca writes them lowercase.
+    names = ["cube_id_0_copy_0", "cube_id_1_copy_0"]
+    alert = {"kind": "exclude-pick", "filename": "plate.gcode", "names": names}
+    live = _live(excluded=["CUBE_ID_0_COPY_0"])
+    assert prepare(alert, 1, live)["step"] == "cancel_print"
+    assert prepare(alert, 0, live)["step"] == "refuse"
+
+
 def test_read_live_fails_closed_without_excluded_list(monkeypatch):
     from print_handy.hermes import exclude_chat, print_stop
     monkeypatch.setattr(print_stop, "status", lambda pid=None: {"state": "printing", "filename": "p.gcode"})

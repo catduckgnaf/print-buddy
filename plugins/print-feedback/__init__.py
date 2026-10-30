@@ -3599,7 +3599,7 @@ async def exclude_dispatch(event, gateway, **kwargs):
             except OSError:
                 gcode = ''
             names = object_names(gcode)
-            left = [name for name in names if name not in st['excluded']]
+            left = exclude_chat.still_printing(names, st)
             plan = exclude_plan(names, target, confirmed=False, remaining=left)
             if plan['action'] == 'refuse' or not names:
                 message = plan['reason'] + ' Nothing sent.'

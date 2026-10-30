@@ -29,6 +29,12 @@ COMPLETE = "Print complete: Stand"
 
 def _use_settings(monkeypatch, **environ):
     """Install a config built by the real settings loader as the listener's config."""
+    # A Moonraker listener's config always names its Moonraker URL — the
+    # listener cannot run without one — and since 2.2.2 the timelapse
+    # mode derived from it ("rendered") gates the rendered path these
+    # tests exercise. The bare defaults derive "off" instead, which is
+    # not a config this listener could ever run under.
+    environ.setdefault("PRINT_HANDY__SERVICES__MOONRAKER_URL", "http://printer.test:7125")
     data = settings.load(local=False, environ=environ)
     monkeypatch.setattr(mel._config, "_override", data)
     return data

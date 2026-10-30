@@ -1,8 +1,12 @@
-"""Events that already have a chat post, plus one MQTT subscriber (#622).
+"""Events that already have a chat post, plus MQTT and ntfy subscribers (#622).
 
-Off unless [notify] mqtt_enabled is true and mqtt_host is set. The password
-is MQTT_PASSWORD from the environment, never from YAML and never from chat.
-A delivery failure is logged and does not raise, so chat and the print continue.
+Each channel is off unless its own switch is on: MQTT needs [notify]
+mqtt_enabled true and mqtt_host set; ntfy needs ntfy_enabled true and an
+ntfy_url (validation refuses enabled-without-URL at load). Neither
+channel's credential is a setting: the MQTT password is MQTT_PASSWORD
+and the ntfy access token is NTFY_ACCESS_TOKEN, both from the
+environment only. A delivery failure is logged and does not raise, so
+chat and the print continue.
 """
 from __future__ import annotations
 
@@ -10,6 +14,7 @@ import logging
 import os
 import secrets
 import socket
+import urllib.request
 
 log = logging.getLogger("print_handy.notify")
 
@@ -31,16 +36,22 @@ def event_for(kind, extra=None) -> str:
     return _FROM_FORMAT.get(kind, "")
 
 
-def emit(kind, summary, *, printer_id="", connector=None) -> bool:
-    """Publish one event. Returns False when MQTT is off or the publish fails.
+def emit(kind, summary, *, printer_id="", connector=None, http_opener=None) -> bool:
+    """Publish one event to every enabled channel.
 
-    ``connector`` is a test seam: ``connector(host, port)`` returns an object
-    with ``sendall`` and ``close``. Production uses a TCP connection.
+    Returns True when at least one enabled channel delivered; False when
+    no channel is on or every delivery failed. ``connector`` is the MQTT
+    test seam: ``connector(host, port)`` returns an object with
+    ``sendall`` and ``close`` (production uses a TCP connection).
+    ``http_opener`` is the ntfy test seam: ``http_opener(request,
+    timeout=...)`` returns a response with a ``status`` (production uses
+    urllib.request.urlopen).
     """
     try:
-        return _emit(kind, summary, printer_id=printer_id, connector=connector)
+        return _emit(kind, summary, printer_id=printer_id, connector=connector,
+                     http_opener=http_opener)
     except Exception as exc:
-        log.warning("mqtt publish failed: %s", exc)
+        log.warning("notify publish failed: %s", exc)
         return False
 
 
@@ -50,18 +61,8 @@ def _settings():
     return data.get("notify") if isinstance(data, dict) else None
 
 
-def _emit(kind, summary, *, printer_id, connector) -> bool:
-    if kind not in EVENTS:
-        return False
-    cfg = _settings() or {}
-    if cfg.get("mqtt_enabled") is not True:
-        return False
-    host = str(cfg.get("mqtt_host") or "").strip()
-    if not host:
-        return False
-    port = int(cfg.get("mqtt_port") or 1883)
-    topic_root = str(cfg.get("mqtt_topic") or "print-handy").strip("/") or "print-handy"
-    topic = f"{topic_root}/{kind}"
+def _payload(kind, summary, printer_id) -> str:
+    """The one-line event payload both channels carry."""
     payload = str(summary or "").splitlines()[0][:240]
     if not printer_id:
         try:
@@ -71,6 +72,35 @@ def _emit(kind, summary, *, printer_id, connector) -> bool:
             printer_id = ""
     if printer_id:
         payload = f"{printer_id}: {payload}"
+    return payload
+
+
+def _emit(kind, summary, *, printer_id, connector, http_opener) -> bool:
+    if kind not in EVENTS:
+        return False
+    cfg = _settings() or {}
+    payload = _payload(kind, summary, printer_id)
+    delivered = False
+    if cfg.get("mqtt_enabled") is True:
+        try:
+            delivered = _emit_mqtt(cfg, kind, payload, connector=connector) or delivered
+        except Exception as exc:
+            log.warning("mqtt publish failed: %s", exc)
+    if cfg.get("ntfy_enabled") is True:
+        try:
+            delivered = _emit_ntfy(cfg, kind, payload, http_opener=http_opener) or delivered
+        except Exception as exc:
+            log.warning("ntfy publish failed: %s", exc)
+    return delivered
+
+
+def _emit_mqtt(cfg, kind, payload, *, connector) -> bool:
+    host = str(cfg.get("mqtt_host") or "").strip()
+    if not host:
+        return False
+    port = int(cfg.get("mqtt_port") or 1883)
+    topic_root = str(cfg.get("mqtt_topic") or "print-handy").strip("/") or "print-handy"
+    topic = f"{topic_root}/{kind}"
     username = str(cfg.get("mqtt_username") or "")
     password = os.environ.get("MQTT_PASSWORD") or ""
     packet = _publish_packet(topic, payload, username=username, password=password)
@@ -88,6 +118,52 @@ def _emit(kind, summary, *, printer_id, connector) -> bool:
         closer = getattr(sock, "close", None)
         if closer:
             closer()
+    return True
+
+
+def _ntfy_target(cfg) -> str:
+    """The ntfy topic URL: ntfy_url, with ntfy_topic appended when set.
+
+    ntfy_url may already name the topic (https://ntfy.sh/my-topic); when
+    ntfy_topic is also set and the URL does not already end with it, the
+    topic is appended (https://ntfy.sh + my-topic). No topic anywhere
+    means there is nowhere to publish: the empty string.
+    """
+    base = str(cfg.get("ntfy_url") or "").strip().rstrip("/")
+    topic = str(cfg.get("ntfy_topic") or "").strip().strip("/")
+    if not base:
+        return ""
+    if topic and not base.endswith(f"/{topic}"):
+        return f"{base}/{topic}"
+    return base
+
+
+def _emit_ntfy(cfg, kind, payload, *, http_opener) -> bool:
+    """One ntfy publish: a plain HTTP POST of the payload to the topic URL.
+
+    The title names the event; the body is the same one-line payload the
+    MQTT channel sends. A protected topic's access token comes from
+    NTFY_ACCESS_TOKEN in the environment, sent as a Bearer token — it is
+    never a setting and never logged. A non-2xx answer is a failed
+    delivery, logged like an MQTT refusal.
+    """
+    url = _ntfy_target(cfg)
+    if not url:
+        log.warning("ntfy publish skipped: [notify] ntfy_url names no topic "
+                    "(set ntfy_topic, or include the topic in ntfy_url)")
+        return False
+    headers = {"Title": f"Print Handy: {kind}", "Tags": "printer"}
+    token = os.environ.get("NTFY_ACCESS_TOKEN") or ""
+    if token:
+        headers["Authorization"] = f"Bearer {token}"
+    request = urllib.request.Request(url, data=payload.encode("utf-8"),
+                                     headers=headers, method="POST")
+    opener = http_opener or urllib.request.urlopen
+    with opener(request, timeout=5) as response:
+        status = getattr(response, "status", 200)
+    if not 200 <= int(status) < 300:
+        log.warning("ntfy server refused the publish (HTTP %s)", status)
+        return False
     return True
 
 

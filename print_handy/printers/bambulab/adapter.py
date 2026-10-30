@@ -115,6 +115,27 @@ class BambuAdapter(PrinterAdapter):
         return self.client().set_chamber_light(on)
 
     # -- Camera (#294) ------------------------------------------------------
+    def _camera_pin_gate(self):
+        """Refuse camera work the [services] camera_source pin excludes (2.2.2).
+
+        "none" turns camera images off everywhere the setting applies,
+        including this printer's own camera; "moonraker" pins stills to
+        the Moonraker webcam source, which this printer does not have.
+        "auto", "bambu" and "go2rtc" leave the vendor paths below
+        exactly as they were (the X1 stills already come through the
+        go2rtc fan-out; the A1/P1 port-6000 path is this printer's own
+        Bambu source).
+        """
+        from ... import go2rtc
+        pin = go2rtc.camera_source(self.config)
+        if pin == "none":
+            raise BambuLanError(f"{self.label}: camera images are off "
+                                "([services] camera_source is none); no snapshot was taken")
+        if pin == "moonraker":
+            raise BambuLanError(f"{self.label}: [services] camera_source is moonraker, the "
+                                "Moonraker webcam source, which this printer does not have; "
+                                "no snapshot was taken")
+
     def camera_kind(self):
         """The verified camera protocol for this model ("tcp6000" / "rtsps"), or None when unverified."""
         from . import camera
@@ -132,6 +153,7 @@ class BambuAdapter(PrinterAdapter):
         camera protocol says that instead of guessing.
         """
         from . import camera
+        self._camera_pin_gate()
         kind = self.camera_kind()
         if kind is None:
             raise BambuLanError(f"{self.label}: Print Handy has not verified a camera protocol for this model; "
@@ -157,6 +179,7 @@ class BambuAdapter(PrinterAdapter):
         running for this printer — so the caller logs it once, plainly.
         """
         from . import camera
+        self._camera_pin_gate()
         kind = self.camera_kind()
         if kind is None:
             raise BambuLanError(f"{self.label}: Print Handy has not verified a camera protocol for this model; "

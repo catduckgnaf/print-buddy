@@ -90,7 +90,7 @@ from dataclasses import dataclass
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Mapping, Protocol
 
-from .live_stream import GO2RTC_STREAM_NAME
+from .live_stream import GO2RTC_STREAM_NAME, feed_stream_name
 
 __all__ = [
     "ACTIVITY_PAGE",
@@ -438,7 +438,8 @@ def _pump(client, upstream):
 
 
 def make_handler(*, transport, allowlist, secret, page=ACTIVITY_PAGE, clock=time.time,
-                 on_viewer=None, on_leave=None, feed_upstream=FEED_UPSTREAM):
+                 on_viewer=None, on_leave=None, feed_upstream=FEED_UPSTREAM,
+                 stream_name=DEFAULT_STREAM_NAME):
     """A BaseHTTPRequestHandler class bound to the given auth pieces.
 
     Routes: ``GET /health`` (open; reveals nothing), ``POST /api/token``
@@ -457,7 +458,15 @@ def make_handler(*, transport, allowlist, secret, page=ACTIVITY_PAGE, clock=time
     page serve note a viewer; the leave beacon notes the leave. A
     callback that raises never breaks serving — presence is
     bookkeeping, the feed is the feature.
+
+    ``stream_name`` is the one go2rtc stream this server proxies and
+    the page asks for by default: the raw camera stream, or the
+    transcoded live stream when a [live_stream] transcode value is set
+    (print_handy.live_stream.feed_stream_name, wired in 2.2.2). The
+    served page's default stream is rewritten to it, so page and proxy
+    can never disagree about the name.
     """
+    served_page = page.replace('|| "camera"', f'|| "{stream_name}"')
 
     def _notify(callback, user_id):
         if callback is None or not user_id:
@@ -519,7 +528,7 @@ def make_handler(*, transport, allowlist, secret, page=ACTIVITY_PAGE, clock=time
                 self._json(403, {"ok": False, "error": "not authorised"})
                 return
             query = urllib.parse.parse_qs(urllib.parse.urlparse(self.path).query)
-            if (query.get("src") or [""])[0] != DEFAULT_STREAM_NAME:
+            if (query.get("src") or [""])[0] != stream_name:
                 self._json(404, {"ok": False, "error": "not found"})
                 return
             try:
@@ -528,7 +537,7 @@ def make_handler(*, transport, allowlist, secret, page=ACTIVITY_PAGE, clock=time
                 self._json(502, {"ok": False, "error": "the camera feed is unavailable"})
                 return
             try:
-                lines = [f"GET /api/ws?src={DEFAULT_STREAM_NAME} HTTP/1.1",
+                lines = [f"GET /api/ws?src={stream_name} HTTP/1.1",
                          f"Host: {feed_upstream[0]}:{feed_upstream[1]}",
                          "Upgrade: websocket", "Connection: Upgrade"]
                 for name in ("Sec-WebSocket-Key", "Sec-WebSocket-Version",
@@ -582,7 +591,7 @@ def make_handler(*, transport, allowlist, secret, page=ACTIVITY_PAGE, clock=time
                                "text/plain; charset=utf-8")
                     return
                 _notify(on_viewer, user_id)
-                self._send(200, page, "text/html; charset=utf-8",
+                self._send(200, served_page, "text/html; charset=utf-8",
                            extra=(("Content-Security-Policy", _PAGE_CSP),))
                 return
             self._json(404, {"ok": False, "error": "not found"})
@@ -756,13 +765,15 @@ def main(argv=None) -> int:
             except Exception:
                 pass  # enforcement is bookkeeping; the feed keeps serving
 
+    stream_name = feed_stream_name(data["live_stream"])
     server = make_server(
         "127.0.0.1", config.port,
         transport=UrllibOAuthTransport(config.client_id, client_secret()),
         allowlist=allowlist, secret=session_secret(),
-        on_viewer=presence.note_viewer, on_leave=presence.note_leave)
+        on_viewer=presence.note_viewer, on_leave=presence.note_leave,
+        stream_name=stream_name)
     print(f"live activity: serving on 127.0.0.1:{config.port} "
-          f"for {config.activity_origin}")
+          f"for {config.activity_origin} (stream {stream_name})")
     ticker = threading.Thread(target=_tick, daemon=True)
     ticker.start()
     try:

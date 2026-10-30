@@ -318,6 +318,22 @@ empty_timeout_s = 300
 activity_origin = ""
 port = 0
 
+[notify]
+# Print events out of chat (#622): MQTT and ntfy, either or both, off by
+# default. A failed publish never blocks chat or a print. Neither
+# channel's credential is a setting: the MQTT password is MQTT_PASSWORD
+# and the ntfy access token is NTFY_ACCESS_TOKEN, both environment only.
+mqtt_enabled = false
+mqtt_host = ""
+mqtt_port = 1883
+mqtt_topic = "print-handy"
+mqtt_username = ""
+ntfy_enabled = false
+# The ntfy server (https://ntfy.sh or a self-hosted one); the topic URL
+# may name the topic itself, or set ntfy_topic and it is appended.
+ntfy_url = ""
+ntfy_topic = ""
+
 [maintenance]
 quick_hours = 25
 full_hours = 75

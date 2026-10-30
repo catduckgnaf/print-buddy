@@ -152,3 +152,102 @@ def test_connack_refusal_is_reported_and_client_ids_differ(monkeypatch):
     other = Broker(b"\x20\x02\x00\x00")
     emit("complete", "done", connector=lambda *_: other)
     assert ok.sent[:30] != other.sent[:30]
+
+
+# --------------------------------------------------------------------- ntfy (#622, 2.2.2)
+
+class _Response:
+    def __init__(self, status=200):
+        self.status = status
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *args):
+        return False
+
+
+class _Http:
+    """The ntfy test seam: records requests, answers with a fixed status."""
+
+    def __init__(self, status=200):
+        self.status = status
+        self.requests = []
+
+    def __call__(self, request, timeout=0):
+        self.requests.append(request)
+        return _Response(self.status)
+
+
+def _ntfy_settings(monkeypatch, **overrides):
+    cfg = {"ntfy_enabled": True, "ntfy_url": "https://ntfy.example", "ntfy_topic": "prints"}
+    cfg.update(overrides)
+    monkeypatch.setattr("print_handy.notify._settings", lambda: cfg)
+    return cfg
+
+
+def test_ntfy_publish_posts_the_event_to_the_topic_url(monkeypatch):
+    _ntfy_settings(monkeypatch)
+    http = _Http()
+    assert emit("complete", "plate 1 finished", printer_id="ad5x", http_opener=http) is True
+    (request,) = http.requests
+    assert request.full_url == "https://ntfy.example/prints"
+    assert request.data == b"ad5x: plate 1 finished"
+    assert request.headers["Title"] == "Print Handy: complete"
+
+
+def test_ntfy_url_may_name_the_topic_itself(monkeypatch):
+    _ntfy_settings(monkeypatch, ntfy_url="https://ntfy.example/prints", ntfy_topic="")
+    http = _Http()
+    assert emit("failed", "stopped", http_opener=http) is True
+    assert http.requests[0].full_url == "https://ntfy.example/prints"
+    # A topic equal to the URL's last segment is not doubled.
+    _ntfy_settings(monkeypatch, ntfy_url="https://ntfy.example/prints", ntfy_topic="prints")
+    http = _Http()
+    assert emit("failed", "stopped", http_opener=http) is True
+    assert http.requests[0].full_url == "https://ntfy.example/prints"
+
+
+def test_ntfy_is_off_by_default_and_a_refusal_does_not_raise(monkeypatch):
+    monkeypatch.setattr("print_handy.notify._settings", lambda: {"ntfy_enabled": False})
+    assert emit("complete", "done", http_opener=lambda *_: (_ for _ in ()).throw(
+        AssertionError("opened"))) is False
+    _ntfy_settings(monkeypatch)
+    assert emit("complete", "done", http_opener=_Http(status=403)) is False
+
+    def refuse(request, timeout=0):
+        raise OSError("refused")
+
+    assert emit("complete", "done", http_opener=refuse) is False
+    # Enabled but nowhere to publish: no topic in the URL or the setting.
+    _ntfy_settings(monkeypatch, ntfy_url="", ntfy_topic="")
+    assert emit("complete", "done", http_opener=_Http()) is False
+
+
+def test_ntfy_token_is_env_only(monkeypatch):
+    _ntfy_settings(monkeypatch)
+    monkeypatch.setenv("NTFY_ACCESS_TOKEN", "tk_test_token")
+    http = _Http()
+    assert emit("complete", "done", http_opener=http) is True
+    assert http.requests[0].headers["Authorization"] == "Bearer tk_test_token"
+    from print_handy.settings import OPTIONAL_KEYS
+    assert ("notify", "ntfy_token") not in OPTIONAL_KEYS
+    assert ("notify", "ntfy_access_token") not in OPTIONAL_KEYS
+
+
+def test_one_channels_failure_never_blocks_the_other(monkeypatch):
+    monkeypatch.setattr("print_handy.notify._settings", lambda: {
+        "mqtt_enabled": True, "mqtt_host": "broker.local", "mqtt_topic": "print-handy",
+        "ntfy_enabled": True, "ntfy_url": "https://ntfy.example", "ntfy_topic": "prints"})
+
+    def refuse(host, port):
+        raise OSError("refused")
+
+    # MQTT down, ntfy up: delivered.
+    assert emit("complete", "done", connector=refuse, http_opener=_Http()) is True
+    # ntfy down, MQTT up: delivered.
+    sock = _Sock()
+    assert emit("complete", "done", connector=lambda host, port: sock,
+                http_opener=_Http(status=500)) is True
+    # Both down: not delivered, and nothing raised either way.
+    assert emit("complete", "done", connector=refuse, http_opener=_Http(status=500)) is False

@@ -18,6 +18,7 @@ The YAML file remains the only source of truth. The Web UI does not keep a secon
 | `GET /` | The status page |
 | `GET /config` | The picker configuration page |
 | `GET /api/status` | The same status snapshot as JSON |
+| `GET /api/printers/<id>/status` | One roster printer's live status as JSON: its identity plus the adapter's normalized status (`state`, `filename`, `progress`, temperatures, and any target/ETA/layer fields that printer's adapter reports). An unknown id is a 404; a printer that cannot be reached answers with `state: "unavailable"` instead of an error |
 | `GET /healthz` | The standalone bot heartbeat verdict: `200` when it passes, `503` when it does not |
 | `GET /designs` | The read-only designs catalog (#388): AI design sessions on disk, newest first |
 | `GET /designs/<id>` | One design session: its final `.scad` source and file downloads |
@@ -48,7 +49,9 @@ The status page reports:
 - the other configured service URLs; and
 - the doctor checks as rows, each with an `ok`, `skip`, `fail`, or `warn` status and its detail.
 
-With a multi-printer roster configured, the status page also lists the roster read-only — each printer's id, name, model, connection, channel and endpoint — and `/api/status` carries the same rows under `printers`. **Stage 2e decision (#337): the roster is not editable here.** The field catalog addresses global fields only in this version, so per-printer changes stay where the roster is declared: the config file, the CLI setup wizard, or the guided setup's review step. A per-printer addressing scheme for the catalog is a future stage's decision, deliberately not pre-empted by this one.
+With a multi-printer roster configured, the status page also lists the roster read-only — each printer's id, name, model, connection, channel and endpoint — and `/api/status` carries the same rows under `printers`.
+
+For external consumers (the Home Assistant integration, dashboards), `GET /api/printers/<id>/status` serves one printer's live status (#664): the same identity fields as a roster row plus a `status` object holding the printer adapter's normalized status, read live through that printer's own connection — `state`, `filename`, `progress`, `hotend_c`, `bed_c`, and, where the adapter provides them, `hotend_target_c`, `bed_target_c`, `remaining_min`, `layer` and `total_layer`. It sits behind the same access-token auth as `/api/status` and is read-only — it sends nothing to the printer. An unknown id is a 404. A configured printer that is offline or unreachable still answers 200 with `status.state` set to `"unavailable"` and a `detail`, so a consumer polling every printer does not lose the whole poll to one dead machine; a printer on the `offline` connection reads the same way. **Stage 2e decision (#337): the roster is not editable here.** The field catalog addresses global fields only in this version, so per-printer changes stay where the roster is declared: the config file, the CLI setup wizard, or the guided setup's review step. A per-printer addressing scheme for the catalog is a future stage's decision, deliberately not pre-empted by this one.
 
 The Web UI doctor rows reuse the local doctor checks — settings, printer model, Orca templates, core modules, hardware record, Orca CLI, configured Moonraker and Spoolman services, bot mode, and stray state files. Two command-line doctor checks are deliberately not run by the page: Discord login and the shared-token comparison. Both need the bot token, and the login check can make a live network call; run `python3 -m print_handy.doctor` when you want those checks.
 

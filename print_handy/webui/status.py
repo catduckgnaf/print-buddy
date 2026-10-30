@@ -22,6 +22,13 @@ the pieces that already own each fact — nothing here reimplements them:
   need the bot token and up to a 10 s network call, so they stay with
   ``python3 -m print_handy.doctor`` where an operator asked for them.
 
+``printer_status()`` is the per-printer companion (#664): one roster
+printer's live status for ``GET /api/printers/<id>/status``, read through
+that printer's own adapter — the same reads the listeners and chat
+monitors poll — for external consumers (the Home Assistant integration,
+dashboards). A printer that cannot be read answers with an explicit
+unavailable status instead of failing the request.
+
 No secret values appear anywhere in the snapshot: no tokens, no API keys,
 and no values of the environment variables the ``*_env`` settings name
 (the names themselves are not included either — URLs and IDs only).
@@ -31,6 +38,8 @@ from __future__ import annotations
 import json
 import os
 import socket
+import urllib.parse
+import urllib.request
 from urllib.parse import urlparse
 
 from .. import __version__, doctor, healthcheck, printers, settings
@@ -273,3 +282,99 @@ def _roster_section(data):
 def snapshot_json(**kwargs):
     """The snapshot as a JSON string (the /api/status body)."""
     return json.dumps(snapshot(**kwargs), indent=1, sort_keys=True, default=str)
+
+
+# -- per-printer live status: GET /api/printers/<id>/status (#664) ---------
+
+# The client read each non-Moonraker family performs for a status poll —
+# the same reads the launched-print monitors and the family listeners
+# poll (print_handy.hermes.family_control.status_fn_for is the
+# reference; it is not imported here so the Web UI keeps no Hermes
+# dependency). Moonraker connections read through the objects query
+# below instead.
+_FAMILY_STATUS_READS = {
+    "bambulab_lan": "snapshot",
+    "prusalink": "snapshot",
+    "elegoo_sdcp": "status",
+    "octoprint": "status",
+    "flashforge_stock": "detail",
+}
+
+_STATUS_TIMEOUT_S = 4
+
+# Core normalized-status fields a consumer can always rely on (the
+# listeners' STATUS_FIELDS contract in print_handy.listeners). An
+# adapter dict that omits one on an odd protocol gets the default
+# rather than dropping the key.
+_STATUS_DEFAULTS = {"state": "unknown", "filename": "", "progress": None,
+                    "hotend_c": None, "bed_c": None}
+
+
+def _moonraker_status(adapter, view):
+    """One Moonraker objects query, normalized by the printer's adapter."""
+    base = (view.get("services", {}).get("moonraker_url") or "").rstrip("/")
+    if not base:
+        raise ValueError("no Moonraker URL is configured for this printer")
+    objects = urllib.parse.quote("&".join(adapter.moonraker_objects()), safe="&=")
+    request = urllib.request.Request(f"{base}/printer/objects/query?{objects}",
+                                     headers={"Accept": "application/json"})
+    with urllib.request.urlopen(request, timeout=_STATUS_TIMEOUT_S) as response:
+        payload = json.loads(response.read() or b"{}")
+    raw = (payload.get("result") or {}).get("status") or {}
+    return adapter.normalize_status(raw)
+
+
+def read_live_status(adapter, view):
+    """The adapter's normalized live status for one roster printer.
+
+    Raises on any failure — an unreachable printer, an unconfigured
+    family, or the ``offline`` connection, which Print Handy never
+    contacts. ``printer_status()`` renders that as the explicit
+    unavailable status; nothing here retries or guesses.
+    """
+    connection = getattr(adapter, "connection", None) or getattr(adapter, "transport", None)
+    if connection == "moonraker":
+        return _moonraker_status(adapter, view)
+    method = _FAMILY_STATUS_READS.get(connection)
+    if method is not None:
+        return adapter.normalize_status(getattr(adapter.client(), method)())
+    if connection == "offline":
+        raise ValueError("connection 'offline': Print Handy never contacts this printer")
+    raise ValueError(f"no live status read for connection {connection!r}")
+
+
+def printer_status(data, printer_id, *, read=None):
+    """(http_code, body) for GET /api/printers/<id>/status (#664).
+
+    The identity fields match the /api/status roster rows. An unknown id
+    is a 404 in the Web UI's ``{ok, reason}`` shape. A known printer
+    whose live read fails — unreachable, unconfigured, or on the
+    ``offline`` connection — still answers 200 with
+    ``status.state == "unavailable"`` and a detail: a consumer polling
+    every printer must not lose the whole poll to one dead machine.
+    ``read`` overrides the live read for tests.
+    """
+    try:
+        entry = settings.by_id(printer_id, data)
+    except settings.SettingsError:
+        return 404, {"ok": False,
+                     "reason": f"no printer with id {printer_id!r} is configured"}
+    view = settings.view_for(printer_id, data)
+    body = {
+        "ok": True,
+        "id": entry["id"],
+        "name": entry.get("name") or "",
+        "model": entry.get("model") or "",
+        "vendor": view["printer"].get("vendor") or "",
+        "connection": healthcheck.listener_connection(view),
+    }
+    read = read_live_status if read is None else read
+    try:
+        adapter = printers.get(entry["model"], view)
+        live = read(adapter, view)
+        normalized = {**_STATUS_DEFAULTS, **(live or {})}
+    except Exception as exc:  # a dead printer is data, not a server error
+        normalized = {**_STATUS_DEFAULTS, "state": "unavailable",
+                      "detail": f"{type(exc).__name__}: {exc}"}
+    body["status"] = normalized
+    return 200, body

@@ -7,6 +7,10 @@ step) serving:
   interpolated value escaped, no JavaScript);
 - ``GET /api/status`` — the status snapshot as JSON
   (:mod:`print_handy.webui.status`);
+- ``GET /api/printers/<id>/status`` — one roster printer's live status
+  as JSON (:func:`print_handy.webui.status.printer_status`, #664): the
+  adapter's normalized status, read live; an unknown id is a 404 and an
+  unreachable printer answers with an explicit unavailable status;
 - ``GET /healthz`` — the bot heartbeat evaluation, with the same
   200/503 + JSON shape as the standalone bot's own health server;
 - ``GET /config`` — the picker configuration page
@@ -70,7 +74,7 @@ import sys
 import time
 from http.cookies import SimpleCookie
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-from urllib.parse import parse_qs, urlparse
+from urllib.parse import parse_qs, unquote, urlparse
 
 from .. import settings
 from ..bot import health as bot_health
@@ -382,6 +386,8 @@ class _Handler(BaseHTTPRequestHandler):
                            "text/html; charset=utf-8")
             elif path == "/api/status":
                 self._json(200, self.server.snapshot_func())
+            elif path.startswith("/api/printers/"):
+                self._printer_status_route(path[len("/api/printers/"):])
             elif path == "/config":
                 self._send(200, self._config_html(self._field_values()),
                            "text/html; charset=utf-8")
@@ -402,10 +408,23 @@ class _Handler(BaseHTTPRequestHandler):
                     self._json(code, body)
             else:
                 self._json(404, {"ok": False,
-                                 "reason": "try /, /api/status, /healthz, /config, "
-                                           "/designs, /layers or /login"})
+                                 "reason": "try /, /api/status, /api/printers/<id>/status, "
+                                           "/healthz, /config, /designs, /layers or /login"})
         except Exception as exc:  # a broken snapshot is a 500, never a dropped connection
             self._json(500, {"ok": False, "reason": f"{type(exc).__name__}: {exc}"})
+
+    # -- per-printer live status (#664) -------------------------------------
+    def _printer_status_route(self, rest):
+        """GET /api/printers/<id>/status: exactly one id segment plus the
+        literal ``status`` tail; anything else under /api/printers/ is a
+        404 naming the one route that exists there."""
+        segments = rest.split("/")
+        if len(segments) != 2 or not segments[0] or segments[1] != "status":
+            self._json(404, {"ok": False,
+                             "reason": "try /api/printers/<id>/status"})
+            return
+        code, payload = self.server.printer_status_func(unquote(segments[0]))
+        self._json(code, payload)
 
     # -- designs catalog (read-only, #388 stage 3) --------------------------
     def _design_route(self, rest):
@@ -662,7 +681,8 @@ class _Handler(BaseHTTPRequestHandler):
     do_OPTIONS = _read_only
 
 
-def make_server(data=None, *, environ=None, host=None, port=None, snapshot_func=None):
+def make_server(data=None, *, environ=None, host=None, port=None, snapshot_func=None,
+                printer_status_func=None):
     """A bound (not yet serving) ThreadingHTTPServer for the Web UI.
 
     ``host``/``port`` override the settings (tests bind port 0 for an
@@ -697,6 +717,8 @@ def make_server(data=None, *, environ=None, host=None, port=None, snapshot_func=
     server.sessions = {}
     server.snapshot_func = snapshot_func or (
         lambda: status_module.snapshot(data, environ=environ))
+    server.printer_status_func = printer_status_func or (
+        lambda printer_id: status_module.printer_status(data, printer_id))
     return server
 
 

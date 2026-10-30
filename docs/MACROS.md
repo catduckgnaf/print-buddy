@@ -98,11 +98,11 @@ the `firmware/commands/` macro entries scoped to the model: the entries
 | Qidi Q1 Pro, X-Max 3, X-Plus 3, X-Plus 4, X-Smart 3 | Moonraker | Qidi's stock Klipper start macro is `PRINT_START` — Qidi's own profiles open with it (the Q1 Pro passes `BED=` / `HOTEND=` / `CHAMBER=`) and continue inline. The registry describes it for all five models. There is no `PRINT_END` entry: Qidi's profiles store the end sequence inline, not as a macro (recorded NO-ADD below). Registry coverage: 1 entry each. |
 | Anycubic Kobra 2 / Neo / Pro / Plus / Max | Moonraker | A Moonraker family, so `/print-macros` works — but Print Handy's profiles for the family run a **fully inline** start sequence with no start macro at all, and the Anycubic guard treats a `START_PRINT`-led file as another ecosystem's start code. No registry entries are scoped to these models (recorded NO-ADD below): a community Klipper install on a Kobra 2 commonly defines `START_PRINT` / `END_PRINT`, but describing those names for this family would contradict what Print Handy itself ships and accepts for it, so discovered macros on a Kobra 2 list as defined by the printer's own config. Registry coverage: 0 entries, by verdict. |
 | Elegoo Neptune 4 / Pro / Plus / Max | Moonraker | A Moonraker printer, so `/print-macros` works — but note the start sequence is **inline** in the sliced file, not a macro call. `PRINT_START` is a foreign marker on this family: Print Handy's Elegoo guard refuses a file that calls it (see `print_handy/printers/elegoo/guard.py`). A `PRINT_START` macro appearing in a Neptune's own config listing is the printer's business; Print Handy never emits one into a Neptune job. No registry entries are scoped to these models (recorded NO-ADD below). Registry coverage: 0 entries, by verdict. |
-| Bambu Lab (all 13 models) | Bambu LAN | No Klipper macros at all. The printer runs plain G/M/T codes only; Klipper or ZMod macro lines are refused by the G-code guard before they can reach the hardware (see the note in `print_handy/printers/base.py`). No macro namespace, so `/print-macros` explains instead of listing. |
-| Prusa MK4S / CORE One / XL / MINI+ | PrusaLink | Buddy firmware, not Klipper. There is no Moonraker and no user macro namespace; start/end behavior lives in the slicer profile's G-code. `/print-macros` explains instead of listing. |
-| Elegoo Centauri Carbon | SDCP | No Moonraker and no macro namespace exposed over SDCP. `/print-macros` explains instead of listing. |
-| Flashforge Adventurer 5X (stock) | Stock Flashforge | Stock firmware, plain G-code only — the same line-by-line guard posture as Bambu. The ZMod macro set exists only on a ZMod install (the AD5X row above). `/print-macros` explains instead of listing. |
-| Marlin via OctoPrint (all 13 OctoPrint models, and the 8 Sovol Marlin/OctoPrint models) | OctoPrint | Marlin has no Klipper-style macro namespace; start/end G-code lives in the slicer profile or OctoPrint settings. `/print-macros` explains instead of listing. |
+| Bambu Lab (all 13 models) | Bambu LAN | No Klipper macros at all. The printer runs plain G/M/T codes only; Klipper or ZMod macro lines are refused by the G-code guard before they can reach the hardware (see the note in `print_handy/printers/base.py`). No macro namespace, so `/print-macros` explains instead of listing. Bambu's error vocabulary is its HMS fault codes; those are decoded by the dedicated HMS lookup in the Bambu adapter from its generated table, not by this registry (recorded verdict below). |
+| Prusa MK4S / CORE One / XL / MINI+ | PrusaLink | Buddy firmware, not Klipper. There is no Moonraker and no user macro namespace; start/end behavior lives in the slicer profile's G-code. `/print-macros` explains instead of listing. The command side is decided (issue #647): Buddy is its own registry family (`prusa`), describing the layer that is Prusa's alone — the `M862.3` model check and `M862.6` feature check the stock start G-code opens with, the print-check refusal they produce, and the XL's `M863` tool remapping. The generic Marlin-compatible codes are not repeated there. Registry coverage: 3 entries per model, 4 on the XL. |
+| Elegoo Centauri Carbon | SDCP | No Moonraker and no macro namespace exposed over SDCP. `/print-macros` explains instead of listing. SDCP's status codes are protocol values Print Handy's client translates; there is no published operator command or error vocabulary to describe (recorded verdict below). |
+| Flashforge Adventurer 5X (stock) | Stock Flashforge | Stock firmware, plain G-code only — the same line-by-line guard posture as Bambu. The ZMod macro set exists only on a ZMod install (the AD5X row above). `/print-macros` explains instead of listing. The stock LAN API is the protocol Print Handy speaks to the printer, not an operator vocabulary, and stock publishes no error-code set for lookup (recorded verdict below). |
+| Marlin via OctoPrint (all 13 OctoPrint models, and the 8 Sovol Marlin/OctoPrint models) | OctoPrint | Marlin has no Klipper-style macro namespace; start/end G-code lives in the slicer profile or OctoPrint settings. `/print-macros` explains instead of listing. The command/error side is decided per model (issue #647): the standard Marlin set — homing, mesh probing and loading, probe offset, filament change, EEPROM store, and the thermal errors — is scoped to every one of the 21 presets, so `/print-lookup` describes it for a named Ender, Kobra or Sovol Marlin preset exactly as it does for the generic `octoprint.marlin`. Registry coverage: 8 entries scoped per model, plus the shared heater entry. |
 
 ### Recorded NO-ADD verdicts
 
@@ -136,9 +136,68 @@ own config, with no invented description.
   feed path, `SET_EXTRUDER_SLOT`, `AUTO_FULL_BED_LEVEL`,
   `BED_LEVEL_SCREWS_TUNE` and `PRINT_HANDY` stay AD5X-only: the IFS is
   AD5X hardware, and the helpers were verified on the AD5X.
-- **Non-Moonraker families** (Bambu Lab, Prusa, Elegoo SDCP, stock
-  Flashforge, Marlin/OctoPrint) — no entries, because there is no macro
-  namespace to describe; `/print-macros` explains instead of listing.
+- **Non-Moonraker macros** (Bambu Lab, Prusa, Elegoo SDCP, stock
+  Flashforge, Marlin/OctoPrint) — no macro entries, because there is no
+  macro namespace to describe; `/print-macros` explains instead of listing.
+  This verdict covers macros only; the command and error side of each family
+  is decided separately in the next section.
+- **Prusa `M870` chamber vents** — no entry. Prusa's Buddy command list
+  documents `M870` for the CORE One+ and CORE One L; the registered model is
+  the CORE One, whose vents are not the automatic ones that code drives, so
+  the code is not described for it.
+- **Bambu Lab HMS codes in the registry** — no entries. Bambu's error
+  vocabulary is real and citable, but it already has a dedicated home: the
+  Bambu adapter's HMS lookup decodes the codes from a table generated from
+  Bambu Studio's own resources at a pinned commit (`print_handy/printers/bambulab/hms.py`),
+  per-model texts included. Registry entries would duplicate that generated
+  table in hand-written form and drift from it.
+- **Elegoo SDCP commands and errors** — no entries. SDCP is a machine
+  protocol: its command numbers and status codes are values Print Handy's
+  client sends and translates, not an operator vocabulary, and Elegoo
+  publishes no user-facing error-code set for the Centauri Carbon that a
+  lookup could describe.
+- **Stock Flashforge commands and errors** — no entries. Beyond plain
+  G-code, the stock AD5X speaks Flashforge's LAN HTTP API, which is the
+  integration protocol Print Handy's stock adapter implements, not a
+  vocabulary a user types or reads; stock publishes no error-code set for
+  lookup. The described macro set for this hardware is the ZMod one, and it
+  exists only on a ZMod install.
+
+## Commands and errors for the non-Moonraker families (issue #647)
+
+The registry's entries cover commands and error codes as well as macros,
+and its lookup serves every registered model — so #645's macro verdicts
+left the other two kinds undecided for the non-Moonraker families. #647
+decides them, family by family:
+
+- **Marlin over OctoPrint — entries, scopes widened.** The Marlin entries
+  were written as generic Marlin knowledge but scoped to the generic
+  `octoprint.marlin` preset alone, so the 20 named presets (the Ender and
+  Anycubic OctoPrint models, the Sovol Marlin line) resolved almost nothing
+  Marlin-specific. Every preset runs this same firmware, so the standard
+  set now names all 21 models, and one error entry was added on the same
+  evidence: `MINTEMP / MAXTEMP triggered`, Marlin's own sensor-range error
+  strings. The heater entry stays scoped to all printers, as before.
+- **Prusa Buddy — entries, under a new `prusa` firmware family.** Buddy is
+  Prusa's fork of Marlin 2, but the layer a user meets is Prusa's own and
+  Prusa publishes it: the `M862.3` / `M862.6` print checks that open the
+  stock start G-code, the refusal they produce, and the XL's `M863` tool
+  remapping. Those entries sit in `firmware/commands/prusa.toml` under
+  firmware `prusa`, and the Prusa models' registry `firmware_family` is now
+  `prusa`. A separate family — rather than a scope on the Marlin file — is
+  what keeps Marlin's entries from describing Prusa's checks and Prusa's
+  checks from leaking into Marlin lookups; the generic Marlin-compatible
+  codes are deliberately not repeated in the Prusa file. `M870` is the one
+  documented Buddy code deliberately left out (verdict above).
+- **Bambu Lab, Elegoo SDCP, stock Flashforge — recorded verdicts, no
+  entries**, for the reasons in the verdict list above: Bambu's HMS
+  vocabulary is already decoded by its own generated lookup, and SDCP and
+  the stock Flashforge API are integration protocols with no published
+  operator command or error vocabulary to describe.
+
+Every non-Moonraker model now ends in a decided state — scoped entries or
+a named verdict — and the coverage tests pin that state, including that no
+family's lookup borrows another family's entries.
 
 ## Sovol Zero, and the svzero-profiles macro pack (issue #612)
 

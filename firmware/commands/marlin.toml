@@ -5,6 +5,13 @@
 # guard relies on the heater and settings commands described here (M104/M109/
 # M140/M190, M500) behaving as these entries say.
 #
+# Scope (issue #647): the standard entries name every registered Marlin preset
+# (the OctoPrint models and the Sovol Marlin line), not just the generic
+# octoprint.marlin preset they were first scoped to \u2014 each preset runs
+# this same firmware, so a named Ender or Kobra preset now resolves the same
+# Marlin descriptions the generic preset always did. The heater entry stays
+# scoped ["*"]: it describes commands every firmware in the registry shares.
+#
 # Every entry is advisory reference data for lookups (issue #169). An entry is never
 # sent to a printer by the lookup or troubleshooting code; sending anything stays
 # behind the existing guarded print-control flows and their confirmation buttons.
@@ -21,50 +28,55 @@ name = "G28"
 aliases = ["home", "home all", "homing"]
 firmware = "marlin"
 kind = "command"
-printers = ["octoprint.marlin"]
+printers = ["octoprint.marlin", "octoprint.ender3", "octoprint.ender3pro", "octoprint.ender3v2", "octoprint.ender3v3se", "octoprint.i3megas", "octoprint.vyper", "octoprint.chiron", "octoprint.maxpro2", "octoprint.kobra", "octoprint.kobraneo", "octoprint.kobraplus", "octoprint.kobramax", "sovol_marlin.sv01", "sovol_marlin.sv01_pro", "sovol_marlin.sv02", "sovol_marlin.sv03", "sovol_marlin.sv04", "sovol_marlin.sv05", "sovol_marlin.sv06_plus", "sovol_marlin.sv06"]
 command = "G28"
 description = "Homes all axes (G28 X Y or G28 Z home one axis). The first move a Marlin printer makes before probing or printing."
 safety = "Moves every axis to its endstop. Keep the area around the printer clear."
+notes = "Source: Marlin firmware documentation (marlinfw.org G-code reference). Generic Marlin knowledge; the scope names every registered Marlin preset (issue #647) because each runs this same firmware \u2014 the entry was previously scoped to the generic octoprint.marlin preset only."
 [[entry]]
 id = "marlin.g29"
 name = "G29"
 aliases = ["bed level probe", "auto bed leveling", "abl"]
 firmware = "marlin"
 kind = "command"
-printers = ["octoprint.marlin"]
+printers = ["octoprint.marlin", "octoprint.ender3", "octoprint.ender3pro", "octoprint.ender3v2", "octoprint.ender3v3se", "octoprint.i3megas", "octoprint.vyper", "octoprint.chiron", "octoprint.maxpro2", "octoprint.kobra", "octoprint.kobraneo", "octoprint.kobraplus", "octoprint.kobramax", "sovol_marlin.sv01", "sovol_marlin.sv01_pro", "sovol_marlin.sv02", "sovol_marlin.sv03", "sovol_marlin.sv04", "sovol_marlin.sv05", "sovol_marlin.sv06_plus", "sovol_marlin.sv06"]
 command = "G29"
 description = "Probes the bed and builds the levelling mesh on Marlin printers with a probe. Follow with M420 S1 in start G-code (or store the mesh) so the mesh is actually applied while printing."
 safety = "Probes over the bed; a failed probe can push the nozzle into the bed if the probe does not trigger. Watch the first probe point."
+notes = "Source: Marlin firmware documentation (marlinfw.org G-code reference). Generic Marlin knowledge; the scope names every registered Marlin preset (issue #647) because each runs this same firmware \u2014 the entry was previously scoped to the generic octoprint.marlin preset only."
 [[entry]]
 id = "marlin.m420"
 name = "M420 S1"
 aliases = ["load mesh marlin", "enable leveling", "mesh on"]
 firmware = "marlin"
 kind = "command"
-printers = ["octoprint.marlin"]
+printers = ["octoprint.marlin", "octoprint.ender3", "octoprint.ender3pro", "octoprint.ender3v2", "octoprint.ender3v3se", "octoprint.i3megas", "octoprint.vyper", "octoprint.chiron", "octoprint.maxpro2", "octoprint.kobra", "octoprint.kobraneo", "octoprint.kobraplus", "octoprint.kobramax", "sovol_marlin.sv01", "sovol_marlin.sv01_pro", "sovol_marlin.sv02", "sovol_marlin.sv03", "sovol_marlin.sv04", "sovol_marlin.sv05", "sovol_marlin.sv06_plus", "sovol_marlin.sv06"]
 command = "M420 S1"
 description = "Turns bed levelling on using the stored or probed mesh. Marlin has no BED_MESH_PROFILE; M420 S1 after G28 is the usual start-G-code line, because homing turns levelling off."
 safety = "No motion by itself."
+notes = "Source: Marlin firmware documentation (marlinfw.org G-code reference). Generic Marlin knowledge; the scope names every registered Marlin preset (issue #647) because each runs this same firmware \u2014 the entry was previously scoped to the generic octoprint.marlin preset only."
 [[entry]]
 id = "marlin.m851"
 name = "M851"
 aliases = ["z probe offset", "z offset marlin", "babystep offset"]
 firmware = "marlin"
 kind = "command"
-printers = ["octoprint.marlin"]
+printers = ["octoprint.marlin", "octoprint.ender3", "octoprint.ender3pro", "octoprint.ender3v2", "octoprint.ender3v3se", "octoprint.i3megas", "octoprint.vyper", "octoprint.chiron", "octoprint.maxpro2", "octoprint.kobra", "octoprint.kobraneo", "octoprint.kobraplus", "octoprint.kobramax", "sovol_marlin.sv01", "sovol_marlin.sv01_pro", "sovol_marlin.sv02", "sovol_marlin.sv03", "sovol_marlin.sv04", "sovol_marlin.sv05", "sovol_marlin.sv06_plus", "sovol_marlin.sv06"]
 command = "M851 Z<offset mm>"
 description = "Reads or sets the probe Z offset on Marlin (M851 with no argument reports it). Negative moves the nozzle closer to the bed. Store a change with M500 or it is lost on restart."
 safety = "A too-negative offset drives the nozzle into the bed on the next print. Change in small steps and test with a first-layer print."
+notes = "Source: Marlin firmware documentation (marlinfw.org G-code reference). Generic Marlin knowledge; the scope names every registered Marlin preset (issue #647) because each runs this same firmware \u2014 the entry was previously scoped to the generic octoprint.marlin preset only."
 [[entry]]
 id = "marlin.m600"
 name = "M600"
 aliases = ["filament change", "pause change filament", "m600 pause"]
 firmware = "marlin"
 kind = "command"
-printers = ["octoprint.marlin"]
+printers = ["octoprint.marlin", "octoprint.ender3", "octoprint.ender3pro", "octoprint.ender3v2", "octoprint.ender3v3se", "octoprint.i3megas", "octoprint.vyper", "octoprint.chiron", "octoprint.maxpro2", "octoprint.kobra", "octoprint.kobraneo", "octoprint.kobraplus", "octoprint.kobramax", "sovol_marlin.sv01", "sovol_marlin.sv01_pro", "sovol_marlin.sv02", "sovol_marlin.sv03", "sovol_marlin.sv04", "sovol_marlin.sv05", "sovol_marlin.sv06_plus", "sovol_marlin.sv06"]
 command = "M600"
 description = "Marlin filament-change pause: parks the toolhead, unloads, and waits for the operator to load new filament and confirm. Needs the printer's filament-change feature enabled in firmware."
 safety = "The nozzle stays hot during the pause. Mind the burn risk while changing filament."
+notes = "Source: Marlin firmware documentation (marlinfw.org G-code reference). Generic Marlin knowledge; the scope names every registered Marlin preset (issue #647) because each runs this same firmware \u2014 the entry was previously scoped to the generic octoprint.marlin preset only."
 [[entry]]
 id = "marlin.heat-commands"
 name = "M104 / M109 / M140 / M190"
@@ -81,17 +93,30 @@ name = "M500"
 aliases = ["store settings", "save eeprom"]
 firmware = "marlin"
 kind = "command"
-printers = ["octoprint.marlin"]
+printers = ["octoprint.marlin", "octoprint.ender3", "octoprint.ender3pro", "octoprint.ender3v2", "octoprint.ender3v3se", "octoprint.i3megas", "octoprint.vyper", "octoprint.chiron", "octoprint.maxpro2", "octoprint.kobra", "octoprint.kobraneo", "octoprint.kobraplus", "octoprint.kobramax", "sovol_marlin.sv01", "sovol_marlin.sv01_pro", "sovol_marlin.sv02", "sovol_marlin.sv03", "sovol_marlin.sv04", "sovol_marlin.sv05", "sovol_marlin.sv06_plus", "sovol_marlin.sv06"]
 command = "M500"
 description = "Stores current settings (offsets, steps, PID) to EEPROM so they survive a restart. M503 reports the current values."
 safety = "No motion. Storing wrong values persists them; read them back with M503 first when unsure."
+notes = "Source: Marlin firmware documentation (marlinfw.org G-code reference). Generic Marlin knowledge; the scope names every registered Marlin preset (issue #647) because each runs this same firmware \u2014 the entry was previously scoped to the generic octoprint.marlin preset only."
 [[entry]]
 id = "marlin.heating-failed"
 name = "Heating failed / Thermal Runaway"
 aliases = ["heating failed", "thermal runaway", "thermal protection", "err extruder heater"]
 firmware = "marlin"
 kind = "error"
-printers = ["octoprint.marlin"]
+printers = ["octoprint.marlin", "octoprint.ender3", "octoprint.ender3pro", "octoprint.ender3v2", "octoprint.ender3v3se", "octoprint.i3megas", "octoprint.vyper", "octoprint.chiron", "octoprint.maxpro2", "octoprint.kobra", "octoprint.kobraneo", "octoprint.kobraplus", "octoprint.kobramax", "sovol_marlin.sv01", "sovol_marlin.sv01_pro", "sovol_marlin.sv02", "sovol_marlin.sv03", "sovol_marlin.sv04", "sovol_marlin.sv05", "sovol_marlin.sv06_plus", "sovol_marlin.sv06"]
 command = ""
 description = "Marlin stopped heating because a temperature did not move as expected, or moved when it should not. Common causes: a loose or failed thermistor, a heater cartridge fault, a silicone sock or fan cooling the block, or a target the heater cannot reach. The printer needs a power cycle after the fault is fixed."
 safety = "This is a fire-safety protection doing its job. Do not disable thermal protection to clear it. Power off, let everything cool, and inspect the thermistor and heater wiring before heating again."
+notes = "Source: Marlin firmware documentation (marlinfw.org G-code reference). Generic Marlin knowledge; the scope names every registered Marlin preset (issue #647) because each runs this same firmware \u2014 the entry was previously scoped to the generic octoprint.marlin preset only."
+[[entry]]
+id = "marlin.mintemp-maxtemp"
+name = "MINTEMP / MAXTEMP triggered"
+aliases = ["mintemp", "maxtemp", "mintemp triggered", "maxtemp triggered", "err mintemp", "err maxtemp", "thermistor error"]
+firmware = "marlin"
+kind = "error"
+printers = ["octoprint.marlin", "octoprint.ender3", "octoprint.ender3pro", "octoprint.ender3v2", "octoprint.ender3v3se", "octoprint.i3megas", "octoprint.vyper", "octoprint.chiron", "octoprint.maxpro2", "octoprint.kobra", "octoprint.kobraneo", "octoprint.kobraplus", "octoprint.kobramax", "sovol_marlin.sv01", "sovol_marlin.sv01_pro", "sovol_marlin.sv02", "sovol_marlin.sv03", "sovol_marlin.sv04", "sovol_marlin.sv05", "sovol_marlin.sv06_plus", "sovol_marlin.sv06"]
+command = ""
+description = "Marlin halted because a temperature reading left the plausible range: MINTEMP triggered means a heater read below the minimum (usually a disconnected or broken thermistor circuit, which reads as extreme cold), MAXTEMP triggered means it read above the maximum (usually a shorted thermistor or its wires touching). The message names the heater at fault. Unlike a heating-failed halt, this one is about the sensor's reading itself, not about heat failing to arrive; the printer stops and needs a reset once the sensor fault is fixed."
+safety = "Power off and inspect the named heater's thermistor and wiring before resetting. A shorted thermistor can also mask a real overheat, so do not clear the error and reheat on trust."
+notes = "Source: Marlin firmware's own temperature error strings ('MINTEMP triggered' / 'MAXTEMP triggered', raised by the temperature module's error path); OctoPrint's virtual-printer documentation reproduces the same two strings for its simulated Marlin. Facts only; the description is written for Print Handy. Generic Marlin knowledge, not verified on a Print Handy printer."

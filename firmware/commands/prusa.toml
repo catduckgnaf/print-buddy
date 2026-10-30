@@ -1,0 +1,67 @@
+# Prusa Buddy firmware command and error registry. See firmware/README.md for the schema.
+#
+# Covers the Prusa-specific command layer of Buddy firmware (the firmware the
+# MK4S, CORE One, XL and MINI+ run, reached over PrusaLink). Buddy is Prusa's
+# own fork of Marlin 2: the generic codes are Marlin-compatible and are NOT
+# repeated here (they belong to Marlin's documentation, and scoping Marlin's
+# entries to these printers would describe another firmware's build). What
+# lives here is the layer that is Prusa's alone and that a user actually meets
+# in a sliced file or on the printer's screen: the M862 print checking the
+# stock start G-code opens with, the XL tool remapping, and the refusal the
+# checks produce. That published, Prusa-only set is why Buddy is its own
+# registry family (issue #647) rather than a scope on the Marlin file.
+#
+# Every entry is advisory reference data for lookups (issue #169). An entry is never
+# sent to a printer by the lookup or troubleshooting code; sending anything stays
+# behind the existing guarded print-control flows and their confirmation buttons.
+#
+# kind is one of: command, macro, error.
+# printers lists the registered printer model keys (printers/registry/) the entry
+# is known to apply to, or ["*"] when it applies to every printer on that firmware.
+# pack is optional: it names a macro pack that rides on this firmware (absent = the
+# firmware's stock set). No entry carries one yet; see firmware/README.md.
+
+[[entry]]
+id = "prusa.m862-model-check"
+name = "M862.3"
+aliases = ["m862", "printer model check", "check model name", "sliced for a different printer"]
+firmware = "prusa"
+kind = "command"
+printers = ["prusa.mk4s", "prusa.coreone", "prusa.xl", "prusa.miniplus"]
+command = "M862.3 P \"<printer model>\""
+description = "Buddy's print check for the printer model: before a print starts, the printer compares the model named in the file against itself and refuses a file sliced for a different model. The M862 family covers the neighbouring checks too (M862.1 nozzle diameter, M862.2 model code, M862.4 firmware version); the check runs at file start, not mid-print. Print Handy's Prusa guard makes the same comparison before delivery, from the file's own printer_model header."
+safety = "A check only: it moves and heats nothing. A refusal means the file was sliced for another model; re-slice with this printer's profile rather than bypassing the check."
+notes = "Source: Prusa Knowledge Base, 'Buddy firmware-specific G-code commands' (help.prusa3d.com), the published G-code list for Prusa Buddy firmware (MINI/MINI+/XL/MK4/MK3.5), M862 section. Facts only; the description is written for Print Handy. Generic firmware knowledge from that source, not verified on a Print Handy printer."
+[[entry]]
+id = "prusa.m862-feature-check"
+name = "M862.6"
+aliases = ["firmware feature check", "check firmware features", "input shaper check", "g-code level check"]
+firmware = "prusa"
+kind = "command"
+printers = ["prusa.mk4s", "prusa.coreone", "prusa.xl", "prusa.miniplus"]
+command = "M862.6 P \"<feature>\""
+description = "Buddy's print check for firmware features: the file names a feature it requires (the stock example is \"Input shaper\") and the printer checks its own feature list before starting, warning or refusing when the feature is missing. Its sibling M862.5 does the same for the file's G-code level. Both run before the print starts; a file sliced by a newer slicer for an older firmware is the usual trigger."
+safety = "A check only: it moves and heats nothing. Treat a refusal as a slicer/firmware mismatch, not a printer fault."
+notes = "Source: Prusa Knowledge Base, 'Buddy firmware-specific G-code commands' (help.prusa3d.com), M862.5 and M862.6 sections, including the messages those checks show. Facts only; the description is written for Print Handy. Generic firmware knowledge from that source, not verified on a Print Handy printer."
+[[entry]]
+id = "prusa.m863-tool-remap"
+name = "M863"
+aliases = ["tool remapping", "tool remap", "remap tools"]
+firmware = "prusa"
+kind = "command"
+printers = ["prusa.xl"]
+command = "M863 M P<tool> L<tool>"
+description = "Buddy tool remapping on the XL: redefines which physical toolhead prints the parts a file assigned to another tool (M863 M P0 L1 prints tool 0's parts with tool 1), set on the printer before the print. M863 with no arguments reports the current mapping, E1/E0 enables or disables remapping, and R resets it. Print Handy slices Prusa jobs single-tool and never emits this; the mapping is an on-printer setting an operator chooses."
+safety = "Changes which toolhead prints which part of a job. A forgotten mapping silently swaps filaments on the next multi-tool file; report the mapping with a bare M863 before starting if a print comes out in the wrong material."
+notes = "Source: Prusa Knowledge Base, 'Buddy firmware-specific G-code commands' (help.prusa3d.com), M863 section. Scoped to the XL only: it is the registered Prusa model with more than one tool; the registered MK4S, CORE One and MINI+ are single-tool models with no MMU variant in the registry. Facts only; the description is written for Print Handy. Not verified on a Print Handy printer."
+[[entry]]
+id = "prusa.print-check-refusal"
+name = "G-code isn't fully compatible (print cancelled)"
+aliases = ["print cancelled prusa", "g-code not compatible", "sliced for a different level", "re-slice the model", "missing requested features"]
+firmware = "prusa"
+kind = "error"
+printers = ["prusa.mk4s", "prusa.coreone", "prusa.xl", "prusa.miniplus"]
+command = ""
+description = "The printer refused the file before starting because an M862 print check failed: the file was sliced for a different model, a different G-code level, or needs a firmware feature this printer does not list (the screen names which, for example a missing Input shaper). Nothing is wrong with the printer; the file and the machine disagree. Re-slice with this model's own profile in a current slicer and send the new file."
+safety = "The refusal happens before any heating or motion. Do not work around it by editing the check lines out of the file; a file sliced for another model can carry the wrong motion and temperature limits."
+notes = "Source: Prusa Knowledge Base, 'Buddy firmware-specific G-code commands' (help.prusa3d.com), M862.5/M862.6 example messages ('G-code sliced for a different level. Please re-slice the model again. Print cancelled.' and the missing-features message). Facts only; the description is written for Print Handy. Not verified on a Print Handy printer."

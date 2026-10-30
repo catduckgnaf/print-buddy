@@ -2,7 +2,7 @@
 
 # Unreleased
 
-Nothing yet.
+- Macro registry coverage for every printer: the descriptive macro registry (`firmware/commands.toml`) previously described macros for only 3 of the 43 Moonraker models (AD5X, generic Klipper, Sovol SV06); every other Moonraker model's discovered macros listed as undescribed. Entries now cover the ZMod AD5M pair (shared `zmod_ff5x` base/client config set) and the Creator 5 pair's template-emitted names, PRINT_START/PRINT_END for every Sovol Klipper model, the SV08 stock `START_PRINT`/`CLEAN_NOZZLE` and the Zero's stock `START_PRINT`/`END_PRINT`, Creality's stock `START_PRINT`/`END_PRINT`, and Qidi's stock `PRINT_START`. Recorded NO-ADD verdicts (docs/MACROS.md): the Anycubic Kobra 2 and Elegoo Neptune families (fully inline profiles; a macro-led file is foreign on both), the Qidi end macro (inline), the Mainsail client set beyond the models verified to ship it, the SV08 stock end name (unverified), and the Creator 5 ZMod operator set beyond its template names. Also fixed: the Anycubic adapter's module docstring was a stale copy of the Creality one and described the wrong family's start code; it now matches the Anycubic guard and guide (fully inline start, no start macro).
 
 # Version 2.2.1
 

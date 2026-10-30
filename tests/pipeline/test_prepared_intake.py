@@ -1599,7 +1599,7 @@ def test_slice_refusal_crosses_the_worker_boundary_as_data():
 UNO_FILES = ['UNO - cap-sign-1.stl', 'UNO - container-1.stl', 'UNO - uno-latch-1.stl', 'UNO - cap-nosign-1.stl']
 
 
-def _parts_model(env, monkeypatch, names, answers, typed=None):
+def _parts_model(env, monkeypatch, names, answers, typed=None, size=None):
     """A Printables model whose files are tiny STL boxes (or a 3MF); returns adapter, downloads, JOB.json."""
     from .test_model_parts import cube_stl
     monkeypatch.setattr(model_job, 'printables_inventory', lambda url: {
@@ -1611,7 +1611,7 @@ def _parts_model(env, monkeypatch, names, answers, typed=None):
         downloads.append(chosen['name'])
         if chosen['name'].endswith('.3mf'):
             return _copy(env.tmp / 'source.3mf', dest)
-        return cube_stl(Path(dest) / chosen['name'], (30 + 5 * len(downloads), 20, 10))
+        return cube_stl(Path(dest) / chosen['name'], size or (30 + 5 * len(downloads), 20, 10))
     monkeypatch.setattr(model_job, 'printables_download', download)
 
     class Typed(Adapter):
@@ -1659,6 +1659,35 @@ def test_parts_without_versions_offer_all_or_choose_files(env, monkeypatch):
     assert 'arm left, arm right and base' in adapter.questions[0]['question']
     assert downloads == ['arm_left.stl', 'arm_right.stl', 'base.stl']
     assert len(job['selected_sources']) == 3
+
+
+def _unit_questions(adapter):
+    return [q for q in adapter.questions if 'do not record units' in q['question']]
+
+
+def test_tiny_stl_parts_ask_inch_or_mm_once_for_the_set(env, monkeypatch):
+    adapter, downloads, job = _parts_model(env, monkeypatch, ['arm_left.stl', 'arm_right.stl', 'base.stl'],
+                                           [0, 1, 0, 0, 2], size=(3, 2, 1))
+    asked = _unit_questions(adapter)
+    assert len(asked) == 1 and 'One answer covers all the STL files' in asked[0]['question']
+    assert asked[0]['choices'][:2] == ['Millimeters — print at 3 x 2 x 1 mm', 'Inches — print at 76.2 x 50.8 x 25.4 mm']
+    assert job['unit_provenance']['units'] == 'inch' and job['unit_provenance']['factor'] == 25.4
+    from .test_model_parts import _objects
+    sizes = sorted(round(o['box'][1] - o['box'][0], 1) for o in _objects(job['downloaded_file']))
+    assert sizes == [76.2, 76.2, 76.2]
+
+
+def test_tiny_stl_parts_answered_millimeters_stay_small(env, monkeypatch):
+    adapter, downloads, job = _parts_model(env, monkeypatch, ['arm_left.stl', 'arm_right.stl'],
+                                           [0, 0, 0, 0, 2], size=(3, 2, 1))
+    assert len(_unit_questions(adapter)) == 1 and job['unit_provenance']['units'] == 'mm'
+    from .test_model_parts import _objects
+    assert {round(o['box'][1] - o['box'][0], 1) for o in _objects(job['downloaded_file'])} == {3.0}
+
+
+def test_normal_sized_stl_parts_do_not_ask_about_units(env, monkeypatch):
+    adapter, downloads, job = _parts_model(env, monkeypatch, UNO_FILES, [1, 1, 0, 2])
+    assert not _unit_questions(adapter) and 'unit_provenance' not in job
 
 
 def test_choose_files_takes_typed_numbers(env, monkeypatch):

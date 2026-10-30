@@ -4,6 +4,7 @@ import errno
 import os
 import subprocess
 import sys
+import time
 
 import pytest
 
@@ -169,6 +170,31 @@ def test_slicer_timeout_at_pid_limit_names_the_limit(monkeypatch):
     monkeypatch.setattr(orca_adapter.subprocess, 'run', hang)
     with pytest.raises(resources.ResourceLimitError) as info:
         orca_adapter._spawn_slicer(['orca-slicer'], timeout=1, cwd='.')
+    assert '256 of 256' in str(info.value)
+
+
+def test_slicer_timeout_samples_the_pid_count_before_the_slicer_is_killed(monkeypatch):
+    set_pids(resources.CGROUP_ROOT, 256, 256)
+
+    def hang_then_die(cmd, timeout, **kwargs):
+        # subprocess.run kills the slicer before it raises, which frees its threads.
+        deadline = time.monotonic() + 5
+        while time.monotonic() < deadline and not (resources.CGROUP_ROOT / 'sampled').exists():
+            time.sleep(0.01)
+        set_pids(resources.CGROUP_ROOT, 20, 256)
+        raise subprocess.TimeoutExpired(cmd, timeout)
+
+    real_error = resources.pid_limit_error
+
+    def marking(root=None):
+        found = real_error(root)
+        (resources.CGROUP_ROOT / 'sampled').write_text('1')
+        return found
+
+    monkeypatch.setattr(resources, 'pid_limit_error', marking)
+    monkeypatch.setattr(orca_adapter.subprocess, 'run', hang_then_die)
+    with pytest.raises(resources.ResourceLimitError) as info:
+        orca_adapter._spawn_slicer(['orca-slicer'], timeout=0.3, cwd='.')
     assert '256 of 256' in str(info.value)
 
 

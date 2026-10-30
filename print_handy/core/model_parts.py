@@ -269,13 +269,14 @@ def _bounds(triangles):
     return lo, hi
 
 
-def combine(target, sources, bed=None, gap=10.0):
+def combine(target, sources, bed=None, gap=10.0, stl_inches=False):
     """Write one geometry-only 3MF (millimeters) with one object per part of ``sources``.
 
     Parts keep their size and authored orientation. When every part fits the
     bed together they are packed onto it (turned 0 or 90 degrees about Z);
     otherwise they are set out in a row, flat on Z=0, never overlapping, and
     the intake fit step rearranges or splits them like any multi-object 3MF.
+    ``stl_inches`` reads the STL files as inches (3MF files carry their own units).
     Returns ``{'path', 'objects': [names], 'on_one_bed': bool}``.
     """
     from .compact_geometry import TransformedTriangles
@@ -284,7 +285,8 @@ def combine(target, sources, bed=None, gap=10.0):
     parts = []
     seen = {}
     for src in sources:
-        loaded, _, _, _ = load_parts(Path(src))
+        inch = stl_inches and Path(src).suffix.lower() == '.stl'
+        loaded, _, _, _ = load_parts(Path(src), input_unit='inch' if inch else None)
         for part in loaded:
             name = str(part.get('node') or part['id'])
             seen[name] = seen.get(name, 0) + 1

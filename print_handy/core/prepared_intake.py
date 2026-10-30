@@ -1481,12 +1481,27 @@ async def _fetch_parts(adapter, source, key, metadata, timeout, job, parts, fold
                                                   asyncio.to_thread(fetch, job, row, dest)))
         await asyncio.to_thread(check_source, path)
         paths.append(Path(path))
+    from . import model_job as mj
+    unit_q = await asyncio.to_thread(mj.parts_unit_question, job, paths)
+    inches = False
+    if unit_q is not None:
+        # The combined project is millimeters, so the STL files' units are settled here, once for the set.
+        measured = ' x '.join(f'{float(value):g}' for value in unit_q['original_mm'])
+        as_inch = ' x '.join(f'{float(value):g}' for value in unit_q['inch_mm'])
+        inches = 1 == await _ask(adapter, source, key, (
+            f'The largest STL file measures {measured} mm as written, and STL files do not record units. '
+            f'Is that size in millimeters, or in inches (which would print at {as_inch} mm)? '
+            'One answer covers all the STL files.'), unit_q['choices'], timeout)
     target = folder / 'source' / f"{job.get('slug') or 'model'}-parts.3mf"
     bed = list(state.get('bed_mm') or BED)[:2] + ([state['max_print_height_mm']] if state.get('max_print_height_mm') else [])
     combined = await _with_stop(adapter, source, key, metadata,
                                 f'Putting the {len(paths)} files together as one project.',
-                                _heavy(model_parts.combine, target, [str(p) for p in paths], bed))
+                                _heavy(model_parts.combine, target, [str(p) for p in paths], bed, stl_inches=inches))
     job.update(_combined_source(job, parts, paths, combined))
+    if unit_q is not None:
+        job['unit_provenance'] = {'units': 'inch' if inches else 'mm', 'source': 'user_confirmation',
+                                  'original_mm': unit_q['original_mm'],
+                                  'factor': mj.INCH_TO_MM if inches else 1.0}
     return Path(combined['path'])
 
 

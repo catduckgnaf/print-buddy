@@ -3303,6 +3303,11 @@ def unit_question(job):
                          or (job.get('audit') or {}).get('sha256'))
             if not decision.get('source_sha256') or not known_sha or decision['source_sha256'] == known_sha:
                 return None
+    return _unit_packet(dims)
+
+
+def _unit_packet(dims):
+    """The inch-vs-mm question packet for authored extents ``dims`` (mm as written)."""
     inch_dims = tuple(round(value * INCH_TO_MM, 6) for value in dims)
     measured = ' x '.join(f'{value:g}' for value in dims)
     as_inch = ' x '.join(f'{value:g}' for value in inch_dims)
@@ -3312,6 +3317,33 @@ def unit_question(job):
                          f'is that millimeters (prints at {measured} mm) or inches (prints at {as_inch} mm)?'),
             'choices': [f'Millimeters — print at {measured} mm', f'Inches — print at {as_inch} mm'],
             'resume': 'slice JOB.json --approved --units mm|inch (or unit-select JOB.json --units mm|inch)'}
+
+
+
+def parts_unit_question(job, paths):
+    """The inch-vs-mm question for the STL files of a multi-file job, or None when units are settled.
+
+    A combined job is a 3MF (millimeters), so the single-STL check never sees
+    its parts. Same rule on the parts instead: when the largest STL part is
+    under UNIT_QUESTION_MAX_MM the set is ambiguous, and one answer covers all
+    the STL files (3MF parts carry their own units).
+    """
+    if job.get('scale') is not None or _is_generated_mm(job):
+        return None
+    from .geometry_layout import load_parts
+    from .model_parts import _bounds
+    largest = None
+    for path in paths:
+        if Path(str(path)).suffix.lower() != '.stl':
+            continue
+        for part in load_parts(Path(path))[0]:
+            lo, hi = _bounds(part['triangles'])
+            dims = tuple(top - bottom for bottom, top in zip(lo, hi))
+            if largest is None or max(dims) > max(largest):
+                largest = dims
+    if largest is None or not all(value > 0 for value in largest) or max(largest) >= UNIT_QUESTION_MAX_MM:
+        return None
+    return _unit_packet(largest)
 
 
 def intake_unit_confirmation(job_path, units=None, interactive=False):

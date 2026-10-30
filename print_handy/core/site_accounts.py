@@ -288,20 +288,28 @@ _PASTE_PATTERNS = {
     "thingiverse": r"[A-Za-z0-9]{20,64}",
     "cults3d": r"[^:\s]+:[A-Za-z0-9_\-]{16,}",
     "crealitycloud": r"\d{4,}:[^\s:]{16,}",
+    "thangs": r"(?=.{40,})[A-Za-z0-9_\-]+\.[A-Za-z0-9_\-]+\.[A-Za-z0-9_\-]+",  # a JWT (its `exp` is documented)
 }
+
+
+def _looks_like_address(token):
+    """True for a link or file path: ordinary messages, never a bare token."""
+    return "://" in token or "/" in token or "\\" in token or token.casefold().startswith("www.")
 
 
 def accept_pasted(site, raw, *, now=None):
     """``(token, "")`` for a value pasted in chat that looks like ``site``'s credential.
 
     Otherwise ``("", reason)``. The check is cheap and local: the right shape
-    for the site, and a JWT that has not already expired. The reason never
+    for the site (never a link or path), and a JWT that has not already expired. The reason never
     contains any of the pasted text, so it is safe to post and to log.
     """
     acc = LOGIN_SITES[site]
     token = _normalize(str(raw or ""), site)
     pattern = _PASTE_PATTERNS.get(site)
+    # A MyMiniFactory sign-in address was already reduced to its token by _normalize.
     ok = (0 < len(token) <= 4096 and not any(c.isspace() for c in token)
+          and not _looks_like_address(token)
           and (re.fullmatch(pattern, token) if pattern else len(token) >= 16))
     if not ok:
         return "", (f"That doesn't look like a {acc.label} token (I expect {acc.shape}). "

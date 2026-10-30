@@ -19,6 +19,18 @@ def _num(section, key):
     return value
 
 
+def _travel(section):
+    """An axis' length: ``position_max`` less ``position_min`` (Klipper's default 0, never below it)."""
+    top = _num(section, "position_max")
+    if top is None:
+        return None
+    try:
+        bottom = max(float(section.get("position_min", 0)), 0.0)
+    except (TypeError, ValueError):
+        bottom = 0.0
+    return top - bottom if top > bottom else None
+
+
 def from_configfile(payload) -> dict:
     """Pull nozzle, bed, and max Z out of a Moonraker configfile query.
 
@@ -37,10 +49,12 @@ def from_configfile(payload) -> dict:
     nozzle = _num(config.get("extruder"), "nozzle_diameter")
     if nozzle is not None:
         found["nozzle_mm"] = nozzle
-    bed_x = _num(config.get("stepper_x"), "position_max")
-    bed_y = _num(config.get("stepper_y"), "position_max")
+    bed_x = _travel(config.get("stepper_x"))
+    bed_y = _travel(config.get("stepper_y"))
     mesh = config.get("bed_mesh") if isinstance(config.get("bed_mesh"), dict) else None
-    if mesh and isinstance(mesh.get("mesh_max"), str) and isinstance(mesh.get("mesh_min"), str):
+    # The probed mesh is inset from the bed edges, so it only stands in when the steppers are missing.
+    if not (bed_x and bed_y) and mesh and isinstance(mesh.get("mesh_max"), str) \
+            and isinstance(mesh.get("mesh_min"), str):
         try:
             max_x, max_y = (float(part) for part in mesh["mesh_max"].split(","))
             min_x, min_y = (float(part) for part in mesh["mesh_min"].split(","))

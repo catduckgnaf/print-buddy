@@ -32,3 +32,24 @@ def test_a_mismatch_warns_and_does_not_rewrite():
     assert "bed is smaller" in nested_text and "max Z is lower" in nested_text
     assert "nozzle" not in nested_text.split(".", 1)[0]
     assert warning_for(nested, {"nozzle_mm": 0.6, "bed_mm": [220, 220], "max_z_mm": 220}) == ""
+
+
+def _config(**sections):
+    return {"result": {"status": {"configfile": {"config": sections}}}}
+
+
+def test_the_inset_bed_mesh_does_not_shrink_the_bed():
+    # K1-like: the probed mesh covers 5..215 of a 230 mm bed.
+    found = from_configfile(_config(
+        stepper_x={"position_max": "230", "position_min": "0"},
+        stepper_y={"position_max": "230"},
+        bed_mesh={"mesh_min": "5, 5", "mesh_max": "215, 215"}))
+    assert found["bed_mm"] == [230.0, 230.0]
+    model = SimpleNamespace(bed_mm=(220, 220), max_print_height_mm=250, supported_nozzle_sizes=(0.4,))
+    assert warning_for(model, found) == ""
+
+
+def test_the_axis_length_is_position_max_less_position_min_and_the_mesh_is_the_fallback():
+    assert from_configfile(_config(stepper_x={"position_max": "245", "position_min": "-5"},
+                                   stepper_y={"position_max": "300", "position_min": "20"}))["bed_mm"] == [245.0, 280.0]
+    assert from_configfile(_config(bed_mesh={"mesh_min": "5, 5", "mesh_max": "215, 215"}))["bed_mm"] == [210.0, 210.0]

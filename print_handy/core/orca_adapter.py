@@ -9,6 +9,7 @@ import re
 import shutil
 import struct
 import subprocess
+import threading
 import time
 import xml.etree.ElementTree as ET
 import zipfile
@@ -777,12 +778,22 @@ def _spawn_slicer(command, *, timeout, cwd):
     The affinity mask (taskset) and the pool environment keep Orca's TBB and BLAS pools to the CPUs the
     container may really use. When the process is refused (EAGAIN) or times out while the container is
     at its PID limit, the cause is the limit, so say so instead of reporting a bare failure or timeout.
+    subprocess.run kills the slicer before it raises, which frees its threads, so the PID count is
+    sampled by a timer just before the timeout, while they are still alive.
     """
+    sampled = []
+    timer = threading.Timer(max(timeout - min(1.0, timeout * 0.1), 0),
+                            lambda: sampled.append(resources.pid_limit_error()))
+    timer.daemon = True
+    try:
+        timer.start()
+    except RuntimeError:  # no thread to spare is itself the PID limit; checked after the failure
+        pass
     try:
         return subprocess.run(resources.slicer_command(command), capture_output=True, text=True,
                               timeout=timeout, cwd=cwd, env=resources.child_env())
     except subprocess.TimeoutExpired as exc:
-        limit = resources.pid_limit_error()
+        limit = next((found for found in sampled if found is not None), None) or resources.pid_limit_error()
         if limit is not None:
             raise limit from exc
         raise
@@ -791,6 +802,8 @@ def _spawn_slicer(command, *, timeout, cwd):
         if limit is not None:
             raise limit from exc
         raise
+    finally:
+        timer.cancel()
 
 
 def _run_slicer(command, name, folder):

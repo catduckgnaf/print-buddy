@@ -103,7 +103,8 @@ COREONE = {
 }
 
 XL = {
-    # The 5-tool XL: Print Handy slices single-tool jobs only; the other toolheads are not driven.
+    # The 5-tool XL is a multi_tool model (#670): its toolheads are driven through the
+    # adapter contract; readiness/status stay printer-level (no per-tool PrusaLink telemetry).
     "printer_model": Fact("Prusa XL 5T", "ORCA", True),
     "orca_profiles": Fact({"machine": "Prusa XL 5T 0.4 nozzle", "process": "0.20mm Speed @Prusa XL 5T 0.4",
                            "filament": "Generic PLA @Prusa XL"}, "ORCA", True),

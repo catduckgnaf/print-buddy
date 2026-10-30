@@ -36,7 +36,13 @@ class PrusaAdapter(PrinterAdapter):
 
     @property
     def slot_count(self):
-        return 1  # filament paths Print Handy drives; the XL's other toolheads are not driven
+        # Filament paths on a single-tool Prusa; the XL overrides this with its
+        # toolheads (XLAdapter), whose positions are the toolheads themselves.
+        return 1
+
+    @property
+    def tool_count(self):
+        return int((self.config.get("printer") or {}).get("tool_count", 1))
 
     @property
     def motion_envelope_mm(self):
@@ -115,6 +121,7 @@ class PrusaAdapter(PrinterAdapter):
 
     # -- color / tools -----------------------------------------------------------
     def normalize_tool_mapping(self, mapping, state):
+        """Single-tool models refuse any tool but 0; the XL overrides this (XLAdapter)."""
         tools = {str(k) for k in (mapping or {"0": 1})}
         if tools != {"0"}:
             raise MultiColorUnsupported(

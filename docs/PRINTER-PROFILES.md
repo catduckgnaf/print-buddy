@@ -51,7 +51,7 @@ print_handy/printers/
     __init__.py          VENDOR  Prusa: PrusaLink LAN, slicer-owned start code, OrcaSlicer, .gcode/.bgcode
     mk4s.py              MODEL   prusa.mk4s: 250 x 210 mm bed, 220 mm height, single tool
     coreone.py           MODEL   prusa.coreone: 250 x 220 mm bed, 270 mm height, enclosed
-    xl.py                MODEL   prusa.xl: 360 mm cube, 5 toolheads (single-tool jobs only)
+    xl.py                MODEL   prusa.xl: 360 mm cube, 5 toolheads (multi-tool model)
     miniplus.py          MODEL   prusa.miniplus: 180 mm cube, Orca MINI profiles
                                  (adapter.py, client.py, guard.py, facts.py, profiles.py; see PRUSA.md)
   elegoo/
@@ -129,17 +129,17 @@ registry), one of three classes (issue #656):
 |---|---|---|
 | `single` | One extruder, one filament position. | Every model not listed below. |
 | `multi_slot` | One extruder fed by several filament slots (an IFS-style feeder): `[printer] ifs_slots` is greater than 1, and slot mapping, spool-slot validation and native slot sync hang off this class. | `flashforge.ad5x` (ZMod), `flashforge_stock.ad5x` |
-| `multi_tool` | Several independent toolheads, each with its own extruder and filament: `[printer] tool_count` is greater than 1 and `ifs_slots` stays 1, so no IFS behavior switches on; slicer tool *i* always prints with toolhead *i*. | `flashforge.creator5`, `flashforge.creator5_pro` |
+| `multi_tool` | Several independent toolheads, each with its own extruder and filament: `[printer] tool_count` is greater than 1 and `ifs_slots` stays 1, so no IFS behavior switches on; slicer tool *i* always prints with toolhead *i*. | `flashforge.creator5`, `flashforge.creator5_pro`, `prusa.xl` |
 
 The class is the authority: the adapter properties `multi_slot` / `multi_tool` and the
 settings validation for `ifs_slots` / `tool_count` read it, instead of re-inferring the
 architecture from counts or adapter flags. The classes are mutually exclusive by
 construction, and a model whose settings contradict its class (`ifs_slots` above 1
 outside `multi_slot`, `tool_count` above 1 outside `multi_tool`) is refused when the
-profile loads. Two recorded Stage 1 postures: the Prusa XL is `single` for now — its
-adapter does not drive its other toolheads yet, and classifying it is follow-up work —
-and the Bambu AMS models are `single` in this stage, with AMS unification also a
-named follow-up.
+profile loads. One recorded posture remains from Stage 1: the Bambu AMS models are
+`single` in this stage, with AMS unification a named follow-up (#671). The Prusa XL's
+Stage 1 posture ended with #670: it is `multi_tool`, driven through the same adapter
+contract as the Creator pair.
 
 ## Config
 

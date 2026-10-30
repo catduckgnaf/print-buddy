@@ -9,14 +9,15 @@ import pytest
 from print_handy import printers
 from print_handy.printers.base import COLOR_SYSTEMS, PrinterModel
 
-# The only non-single models in this stage. The Prusa XL and the Bambu AMS
-# models stay "single" here by the issue's own scoping: classifying them is
-# named follow-up work, not a silent omission.
+# The only non-single models. The Prusa XL joined multi_tool with #670 (the
+# adapter-contract driving landed with the classification); the Bambu AMS
+# models stay "single" here by their own issue's scoping (#671).
 EXPECTED = {
     "flashforge.ad5x": "multi_slot",
     "flashforge_stock.ad5x": "multi_slot",
     "flashforge.creator5": "multi_tool",
     "flashforge.creator5_pro": "multi_tool",
+    "prusa.xl": "multi_tool",
 }
 
 
@@ -27,7 +28,7 @@ def test_every_model_names_its_class():
         assert model.color_system == EXPECTED.get(key, "single"), key
     counts = {name: sum(1 for m in printers.MODELS.values() if m.color_system == name)
               for name in COLOR_SYSTEMS}
-    assert counts == {"single": 79, "multi_slot": 2, "multi_tool": 2}
+    assert counts == {"single": 78, "multi_slot": 2, "multi_tool": 3}
 
 
 def test_class_agrees_with_the_model_counts():

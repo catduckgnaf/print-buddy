@@ -1,7 +1,7 @@
 # Symptom index. See knowledge/README.md for the schema.
 #
 # Each symptom names the guided flow that works it (knowledge/troubleshooting.toml)
-# and, where useful, firmware registry entries (firmware/commands.toml) a lookup
+# and, where useful, firmware registry entries (firmware/commands/) a lookup
 # can jump to. first_checks are read-only observations, never printer actions.
 
 [[symptom]]

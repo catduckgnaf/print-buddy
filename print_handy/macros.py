@@ -5,7 +5,7 @@ object per macro defined in the printer's own Klipper config, so the printer —
 not Print Handy's registry — is the authority on which macros exist. This
 module fetches that list through an injected transport, extracts the macro
 names and classifies each one against the descriptive registry in
-``firmware/commands.toml`` (loaded through print_handy.knowledge):
+``firmware/commands/`` (loaded through print_handy.knowledge):
 
 - **known** — the name matches a registry macro entry: show its description
   and safety note. When the caller names the printer (the /print-macros

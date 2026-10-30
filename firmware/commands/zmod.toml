@@ -1,0 +1,269 @@
+# ZMod firmware command and macro registry. See firmware/README.md for the schema.
+#
+# Covers the ZMod firmware set for the Flashforge AD5X family as Print Handy
+# registers it today. Entries are verified from the sources each entry's notes
+# name -- chiefly the shipped ZMod config set (ghzserg/zmod_ff5x) at the commit
+# pinned in the notes, and print-handy.cfg in this repository for Print Handy's
+# own macro. Entries scoped to flashforge.ad5x stay scoped there: ZMod macro
+# applicability is per model and per accessory (the IFS macros, for example,
+# cannot apply to a printer with no IFS).
+#
+# Every entry is advisory reference data for lookups (issue #169). An entry is never
+# sent to a printer by the lookup or troubleshooting code; sending anything stays
+# behind the existing guarded print-control flows and their confirmation buttons.
+#
+# kind is one of: command, macro, error.
+# printers lists the registered printer model keys (printers/registry/) the entry
+# is known to apply to, or ["*"] when it applies to every printer on that firmware.
+# pack is optional: it names a macro pack that rides on this firmware (absent = the
+# firmware's stock set). No entry carries one yet; see firmware/README.md.
+
+[[entry]]
+id = "zmod.start-print"
+name = "START_PRINT"
+aliases = ["start print", "zmod start", "ad5x start macro"]
+firmware = "zmod"
+kind = "macro"
+printers = ["flashforge.ad5x", "flashforge.ad5m", "flashforge.ad5m_pro", "flashforge.creator5", "flashforge.creator5_pro"]
+command = "START_PRINT BED_TEMP=<bed C> EXTRUDER_TEMP=<nozzle C> MESH=<mesh profile>"
+description = "ZMod start macro on the ZMod Flashforge models (AD5X, AD5M, AD5M Pro, Creator 5, Creator 5 Pro). Owns heating, homing and mesh loading for the job; the slicer template emits it and Print Handy checks the temperatures and MESH= argument against the job instead of inventing its own startup."
+safety = "Heats the nozzle and bed and moves the toolhead. Only ever runs as part of a confirmed print start, never from a lookup."
+notes = "An explicit Z_OFFSET argument is not part of the normal flow; the saved or native-screen offset is the authority (see docs/AD5X-CONTRACT.md). Scope: Print Handy's Orca templates emit this exact START_PRINT line for all five ZMod models (print_handy/templates/orca/flashforge_*); the AD5X-specific authority rules in the notes live in docs/AD5X-CONTRACT.md."
+[[entry]]
+id = "zmod.end-print"
+name = "END_PRINT"
+aliases = ["end print", "zmod end"]
+firmware = "zmod"
+kind = "macro"
+printers = ["flashforge.ad5x", "flashforge.ad5m", "flashforge.ad5m_pro", "flashforge.creator5", "flashforge.creator5_pro"]
+command = "END_PRINT"
+description = "ZMod end macro emitted by the ZMod models' Orca templates: turns heaters off and parks the toolhead at the end of a job."
+safety = "Runs only as the tail of a sliced job."
+notes = "Scope: Print Handy's Orca templates emit END_PRINT for all five ZMod models (print_handy/templates/orca/flashforge_*)."
+[[entry]]
+id = "zmod.change-zcolor"
+name = "CHANGE_ZCOLOR"
+aliases = ["change zcolor", "ifs slot sync", "screen slot sync", "slot colour sync"]
+firmware = "zmod"
+kind = "macro"
+printers = ["flashforge.ad5x"]
+command = "CHANGE_ZCOLOR SLOT=<1-4> TYPE=<material> HEX=<rrggbb>"
+description = "Tells the AD5X native screen which material and colour sit in an IFS slot, so the screen agrees with Spoolman. Print Handy builds this line in the printer adapter when a spool binding changes."
+safety = "Changes printer screen state. It is sent only by the spool-binding flow, never by a lookup or a troubleshooting step."
+[[entry]]
+id = "zmod.ifs-load"
+name = "_INSERT_PRUTOK_IFS / IFS_F10"
+aliases = ["ifs load", "ifs unload", "load filament ifs", "feed filament ad5x"]
+firmware = "zmod"
+kind = "macro"
+printers = ["flashforge.ad5x"]
+command = "_INSERT_PRUTOK_IFS"
+description = "ZMod IFS feed path on the AD5X: feeds staged filament from an IFS slot into the extruder. Filament staged in the IFS buffer or tube reads as not detected at the head sensor until a load like this runs."
+safety = "Extrudes filament and needs a hot nozzle. Operator action at the printer or through the existing confirmed flows only."
+[[entry]]
+id = "zmod.auto-full-bed-level"
+name = "AUTO_FULL_BED_LEVEL"
+aliases = ["full bed level", "auto level ad5x", "bed level ad5x"]
+firmware = "zmod"
+kind = "macro"
+printers = ["flashforge.ad5x"]
+command = "AUTO_FULL_BED_LEVEL"
+description = "Full bed levelling routine exposed by the AD5X ZMod install. One of the levelling macros verified present on the machine; the AD5X does not expose G34, so older gantry-alignment instructions do not apply to it."
+safety = "Homes and probes the bed with a hot or warming nozzle. Run it at the printer, not from a lookup."
+[[entry]]
+id = "zmod.bed-level-screws-tune"
+name = "BED_LEVEL_SCREWS_TUNE"
+aliases = ["screws tune", "bed screws ad5x", "tram ad5x"]
+firmware = "zmod"
+kind = "macro"
+printers = ["flashforge.ad5x"]
+command = "BED_LEVEL_SCREWS_TUNE"
+description = "AD5X ZMod helper that probes over the bed screws so the operator can tram the bed by hand between probes."
+safety = "Moves the toolhead over the bed. Keep hands clear while it probes."
+[[entry]]
+id = "zmod.coldpull"
+name = "COLDPULL"
+aliases = ["cold pull", "zmod cold pull", "nozzle cold pull"]
+firmware = "zmod"
+kind = "macro"
+printers = ["flashforge.ad5x", "flashforge.ad5m", "flashforge.ad5m_pro"]
+command = "COLDPULL"
+description = "ZMod's interactive cold pull on the AD5X. It asks which material is loaded (a prompt on the screen/client), heats and loads that material, then cools to the material's pull temperature so the operator can pull the filament out by hand and take the nozzle plug with it. Print Handy's guided /print-coldpull is a separate flow; this entry describes the macro ZMod itself ships."
+safety = "Heats the nozzle to full printing temperature and extrudes before cooling. The pull itself is a hand action at the printer while the nozzle is still warm; never run it unattended."
+notes = "Source: ghzserg/zmod_ff5x@5409ffe7ffee572219837fbd0d7de381469537f6, en/base.cfg (shipped AD5X config set). Generic firmware knowledge from the shipped config, not verified on a Print Handy printer. Scope extended to the AD5M models, which ship the same zmod_ff5x base.cfg."
+[[entry]]
+id = "zmod.load-filament"
+name = "LOAD_FILAMENT"
+aliases = ["load filament zmod", "zmod load", "feed filament zmod"]
+firmware = "zmod"
+kind = "macro"
+printers = ["flashforge.ad5x", "flashforge.ad5m", "flashforge.ad5m_pro"]
+command = "LOAD_FILAMENT EXTRUDE_LEN=<mm> EXTRUDER_TEMP=<nozzle C>"
+description = "Heats the nozzle (the default target is the temperature ZMod's filament-change flow last stored) and extrudes EXTRUDE_LEN of filament (125 mm built-in default) into the extruder. It is the load half of ZMod's filament-change prompts and of LOAD_MATERIAL."
+safety = "Extrudes at full temperature; molten filament leaves the nozzle. Keep hands clear and give the purge somewhere to go."
+notes = "Source: ghzserg/zmod_ff5x@5409ffe7ffee572219837fbd0d7de381469537f6, en/base.cfg. Generic firmware knowledge from the shipped config, not verified on a Print Handy printer. Scope extended to the AD5M models, which ship the same zmod_ff5x base.cfg."
+[[entry]]
+id = "zmod.unload-filament"
+name = "UNLOAD_FILAMENT"
+aliases = ["unload filament zmod", "zmod unload", "retract filament zmod"]
+firmware = "zmod"
+kind = "macro"
+printers = ["flashforge.ad5x", "flashforge.ad5m", "flashforge.ad5m_pro"]
+command = "UNLOAD_FILAMENT"
+description = "Heats the nozzle to the stored filament-change temperature and retracts the filament out of the extruder (75 mm built-in default distance). The unload half of ZMod's filament-change prompts; LOAD_FILAMENT is the reverse."
+safety = "Heats the nozzle to full temperature first. Wait for the retract to finish before pulling the filament free by hand."
+notes = "Source: ghzserg/zmod_ff5x@5409ffe7ffee572219837fbd0d7de381469537f6, en/base.cfg. Generic firmware knowledge from the shipped config, not verified on a Print Handy printer. Scope extended to the AD5M models, which ship the same zmod_ff5x base.cfg."
+[[entry]]
+id = "zmod.load-material"
+name = "LOAD_MATERIAL"
+aliases = ["load material", "manual filament change zmod", "change material zmod"]
+firmware = "zmod"
+kind = "macro"
+printers = ["flashforge.ad5x", "flashforge.ad5m", "flashforge.ad5m_pro"]
+command = "LOAD_MATERIAL"
+description = "ZMod's manual filament load/change routine: it saves the current heater state and walks the operator through selecting and loading material with on-screen prompts, using the LOAD_FILAMENT and UNLOAD_FILAMENT paths underneath."
+safety = "Heats and extrudes as part of the guided change. Stay at the printer and answer its prompts; do not start it remotely and walk away."
+notes = "Source: ghzserg/zmod_ff5x@5409ffe7ffee572219837fbd0d7de381469537f6, en/base.cfg. Generic firmware knowledge from the shipped config, not verified on a Print Handy printer. Scope extended to the AD5M models, which ship the same zmod_ff5x base.cfg."
+[[entry]]
+id = "zmod.clear-nozzle"
+name = "CLEAR_NOZZLE"
+aliases = ["clear nozzle", "nozzle cleaning zmod", "wipe nozzle zmod"]
+firmware = "zmod"
+kind = "macro"
+printers = ["flashforge.ad5x", "flashforge.ad5m", "flashforge.ad5m_pro"]
+command = "CLEAR_NOZZLE EXTRUDER_TEMP=<nozzle C> BED_TEMP=<bed C>"
+description = "ZMod's nozzle-cleaning routine: heats nozzle and bed (built-in defaults 230 C and 80 C) and runs its cleaning moves, then turns nozzle control off. Print Handy's AD5X preparation flows rely on ZMod cleaning as part of mesh and start preparation; this is the operator-facing name for the same routine."
+safety = "Heats both heaters and moves the toolhead against the cleaning surface. Keep the bed area clear and hands away while it runs."
+notes = "Source: ghzserg/zmod_ff5x@5409ffe7ffee572219837fbd0d7de381469537f6, en/base.cfg. Generic firmware knowledge from the shipped config, not verified on a Print Handy printer. Scope extended to the AD5M models, which ship the same zmod_ff5x base.cfg."
+[[entry]]
+id = "zmod.set-extruder-slot"
+name = "SET_EXTRUDER_SLOT"
+aliases = ["set extruder slot", "loaded slot record", "slot loaded zmod"]
+firmware = "zmod"
+kind = "macro"
+printers = ["flashforge.ad5x"]
+command = "SET_EXTRUDER_SLOT SLOT=<1-4>"
+description = "Records in ZMod which IFS slot is the one loaded in the extruder. It is the bookkeeping step at the end of a slot load — Print Handy's own slot-load flow sends it after the IFS feed macros — and it does not feed or move filament by itself."
+safety = "No motion. Recording the wrong slot makes the screen, ZMod's automatic spool switching and usage accounting all agree on the wrong spool."
+notes = "Source: ghzserg/zmod_ff5x@5409ffe7ffee572219837fbd0d7de381469537f6, en/ad5x.cfg; also sent by Print Handy itself in print_handy/hermes/slot_load.py. Generic firmware knowledge from the shipped config, not verified on a Print Handy printer."
+[[entry]]
+id = "zmod.set-active-spool"
+name = "SET_ACTIVE_SPOOL"
+aliases = ["set active spool", "spoolman active spool", "active spool zmod"]
+firmware = "zmod"
+kind = "macro"
+printers = ["flashforge.ad5x", "flashforge.ad5m", "flashforge.ad5m_pro"]
+command = "SET_ACTIVE_SPOOL ID=<spool id>"
+description = "Tells Spoolman, through Moonraker's spoolman remote method, which spool is active so extrusion is charged to it. The macro ships in ZMod's base config; the same macro is part of the standard Klipper Spoolman integration, so other Klipper printers may define it too."
+safety = "No motion and no heating. A wrong ID silently charges filament usage to the wrong spool until it is corrected."
+notes = "Source: ghzserg/zmod_ff5x@5409ffe7ffee572219837fbd0d7de381469537f6, en/base.cfg. Generic firmware knowledge from the shipped config, not verified on a Print Handy printer. Scope extended to the AD5M models, which ship the same zmod_ff5x base.cfg."
+[[entry]]
+id = "zmod.clear-active-spool"
+name = "CLEAR_ACTIVE_SPOOL"
+aliases = ["clear active spool", "no active spool", "spoolman clear spool"]
+firmware = "zmod"
+kind = "macro"
+printers = ["flashforge.ad5x", "flashforge.ad5m", "flashforge.ad5m_pro"]
+command = "CLEAR_ACTIVE_SPOOL"
+description = "Clears Spoolman's active spool (sets it to none) through Moonraker's spoolman remote method, so extrusion is charged to nobody until the next SET_ACTIVE_SPOOL. Ships in ZMod's base config; the same macro is part of the standard Klipper Spoolman integration."
+safety = "No motion. While no spool is active, filament use is not recorded against any spool."
+notes = "Source: ghzserg/zmod_ff5x@5409ffe7ffee572219837fbd0d7de381469537f6, en/base.cfg. Generic firmware knowledge from the shipped config, not verified on a Print Handy printer. Scope extended to the AD5M models, which ship the same zmod_ff5x base.cfg."
+[[entry]]
+id = "zmod.save-zmod-data"
+name = "SAVE_ZMOD_DATA"
+aliases = ["save zmod data", "zmod settings", "save zmod settings"]
+firmware = "zmod"
+kind = "macro"
+printers = ["flashforge.ad5x", "flashforge.ad5m", "flashforge.ad5m_pro"]
+command = "SAVE_ZMOD_DATA <KEY>=<value> ..."
+description = "Saves ZMod's own settings (saved variables such as dialog behaviour, motor-stop and screen options) — the settings interface Print Handy's ZMod documentation points operators at instead of editing vendor macro files. GET_ZMOD_DATA reports the current values."
+safety = "No motion. The values persist across restarts and change how ZMod behaves on every later print; change one key at a time and note the old value first."
+notes = "Source: ghzserg/zmod_ff5x@5409ffe7ffee572219837fbd0d7de381469537f6, en/base.cfg. Generic firmware knowledge from the shipped config, not verified on a Print Handy printer. Scope extended to the AD5M models, which ship the same zmod_ff5x base.cfg."
+[[entry]]
+id = "zmod.get-zmod-data"
+name = "GET_ZMOD_DATA"
+aliases = ["get zmod data", "zmod parameters", "show zmod settings"]
+firmware = "zmod"
+kind = "macro"
+printers = ["flashforge.ad5x", "flashforge.ad5m", "flashforge.ad5m_pro"]
+command = "GET_ZMOD_DATA"
+description = "Reports ZMod's current parameter values (screen mode, Guppy and Moonraker options, and the other SAVE_ZMOD_DATA settings) to the console. The read side of SAVE_ZMOD_DATA."
+safety = "Reports only; it heats nothing and moves nothing."
+notes = "Source: ghzserg/zmod_ff5x@5409ffe7ffee572219837fbd0d7de381469537f6, en/base.cfg. Generic firmware knowledge from the shipped config, not verified on a Print Handy printer. Scope extended to the AD5M models, which ship the same zmod_ff5x base.cfg."
+[[entry]]
+id = "zmod.nozzle-control"
+name = "NOZZLE_CONTROL"
+aliases = ["nozzle control", "nozzle hit detection", "part detachment detection"]
+firmware = "zmod"
+kind = "macro"
+printers = ["flashforge.ad5x", "flashforge.ad5m", "flashforge.ad5m_pro"]
+command = "NOZZLE_CONTROL WEIGHT=<grams>"
+description = "Sets the load-cell weight threshold (built-in default 1500 g) at which ZMod's nozzle control treats bed contact as a nozzle hit or a detached part, handing the value to ZMod's znozzle helper. This is a protection threshold, not a print-quality setting."
+safety = "Raising the threshold weakens nozzle-hit and part-detachment detection; lowering it can false-trigger mid-print. Change it only with a reason, and test afterwards."
+notes = "Source: ghzserg/zmod_ff5x@5409ffe7ffee572219837fbd0d7de381469537f6, en/base.cfg. Generic firmware knowledge from the shipped config, not verified on a Print Handy printer. Scope extended to the AD5M models, which ship the same zmod_ff5x base.cfg."
+[[entry]]
+id = "zmod.pid-tune-extruder"
+name = "PID_TUNE_EXTRUDER"
+aliases = ["pid tune extruder", "extruder pid zmod", "hotend pid calibration"]
+firmware = "zmod"
+kind = "macro"
+printers = ["flashforge.ad5x", "flashforge.ad5m", "flashforge.ad5m_pro"]
+command = "PID_TUNE_EXTRUDER TEMPERATURE=<nozzle C>"
+description = "Homes, moves to mid-bed and runs Klipper PID_CALIBRATE for the extruder (built-in default target 245 C, part fan on), then saves the result through ZMod's save flow, which restarts the firmware. PID_TUNE_BED is the bed equivalent."
+safety = "Cycles the nozzle temperature repeatedly around the target and ends in a firmware restart when it saves. Never run it mid-print, and watch the first cycle."
+notes = "Source: ghzserg/zmod_ff5x@5409ffe7ffee572219837fbd0d7de381469537f6, en/base.cfg. Generic firmware knowledge from the shipped config, not verified on a Print Handy printer. Scope extended to the AD5M models, which ship the same zmod_ff5x base.cfg."
+[[entry]]
+id = "zmod.pid-tune-bed"
+name = "PID_TUNE_BED"
+aliases = ["pid tune bed", "bed pid zmod", "bed pid calibration"]
+firmware = "zmod"
+kind = "macro"
+printers = ["flashforge.ad5x", "flashforge.ad5m", "flashforge.ad5m_pro"]
+command = "PID_TUNE_BED TEMPERATURE=<bed C>"
+description = "Homes, moves to mid-bed and runs Klipper PID_CALIBRATE for the heated bed (built-in default target 80 C), then saves the result through ZMod's save flow, which restarts the firmware. PID_TUNE_EXTRUDER is the nozzle equivalent."
+safety = "Cycles the bed temperature repeatedly around the target and ends in a firmware restart when it saves. Never run it mid-print."
+notes = "Source: ghzserg/zmod_ff5x@5409ffe7ffee572219837fbd0d7de381469537f6, en/base.cfg. Generic firmware knowledge from the shipped config, not verified on a Print Handy printer. Scope extended to the AD5M models, which ship the same zmod_ff5x base.cfg."
+[[entry]]
+id = "zmod.zshaper"
+name = "ZSHAPER"
+aliases = ["zshaper", "input shaper calibration zmod", "resonance calibration zmod"]
+firmware = "zmod"
+kind = "macro"
+printers = ["flashforge.ad5x", "flashforge.ad5m", "flashforge.ad5m_pro"]
+command = "ZSHAPER"
+description = "ZMod's input-shaper calibration: homes, runs Klipper resonance testing on X and Y (TEST_RESONANCES) and hands the measurements to ZMod's shaper analysis, which proposes the shaper settings. BELTS_SHAPER_CALIBRATION is ZMod's separate belt-frequency test."
+safety = "The printer vibrates hard and loudly during the resonance sweeps. Nothing on the bed, the printer on a stable surface, and be ready to power off if anything comes loose."
+notes = "Source: ghzserg/zmod_ff5x@5409ffe7ffee572219837fbd0d7de381469537f6, en/base.cfg. Generic firmware knowledge from the shipped config, not verified on a Print Handy printer. Scope extended to the AD5M models, which ship the same zmod_ff5x base.cfg."
+[[entry]]
+id = "zmod.display-off"
+name = "DISPLAY_OFF"
+aliases = ["display off", "screenless mode", "disable stock screen"]
+firmware = "zmod"
+kind = "macro"
+printers = ["flashforge.ad5x", "flashforge.ad5m", "flashforge.ad5m_pro"]
+command = "DISPLAY_OFF"
+description = "Switches the AD5X to screenless operation: it saves display_off=1 so ZMod owns the printer and the stock Flashforge screen leaves the loop, after showing its own warning prompt. Z-offset and mesh authority change with the mode; Print Handy's AD5X contract documents which mode owns what. DISPLAY_ON reverses it."
+safety = "A mode change, not a display toggle: in screenless mode the stock screen's dialogs and its Z-offset and mesh handling no longer apply. Do not switch until you know which mode owns your saved offset and mesh."
+notes = "Source: ghzserg/zmod_ff5x@5409ffe7ffee572219837fbd0d7de381469537f6, en/base.cfg. Generic firmware knowledge from the shipped config, not verified on a Print Handy printer. Scope extended to the AD5M models, which ship the same zmod_ff5x base.cfg."
+[[entry]]
+id = "zmod.display-on"
+name = "DISPLAY_ON"
+aliases = ["display on", "enable stock screen", "native screen on"]
+firmware = "zmod"
+kind = "macro"
+printers = ["flashforge.ad5x", "flashforge.ad5m", "flashforge.ad5m_pro"]
+command = "DISPLAY_ON"
+description = "Re-enables the stock Flashforge screen (saves display_off=0) and reboots so the native screen owns its dialogs, Z offset and mesh again. The reverse of DISPLAY_OFF."
+safety = "Reboots the printer and hands Z-offset and mesh authority back to the native screen; a saved offset from screenless mode may not be the one the screen applies. Never run it mid-print."
+notes = "Source: ghzserg/zmod_ff5x@5409ffe7ffee572219837fbd0d7de381469537f6, en/base.cfg. Generic firmware knowledge from the shipped config, not verified on a Print Handy printer. Scope extended to the AD5M models, which ship the same zmod_ff5x base.cfg."
+[[entry]]
+id = "zmod.print-handy"
+name = "PRINT_HANDY"
+aliases = ["print handy macro", "matching spool slots", "same spool another slot"]
+firmware = "zmod"
+kind = "macro"
+printers = ["flashforge.ad5x"]
+command = "PRINT_HANDY SLOT=<1-4>"
+description = "Print Handy's own macro, shipped in this repository's print-handy.cfg for a ZMod install. It compares the colour and material stored for the IFS slots (the values copied from the COLOR menu into its variables) and reports which other slots hold the same colour and material as SLOT= — or as a COLOR= and MATERIAL= pair given directly — the matches ZMod's own automatic spool switching could use."
+safety = "Reports only. It never switches slots, loads filament or changes the loaded spool; acting on the report stays with the separate confirmed flows."
+notes = "Source: print-handy.cfg in this repository (the ZMod plugin file). Present only on a printer where the Print Handy ZMod plugin is installed and enabled."

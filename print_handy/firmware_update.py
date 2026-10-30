@@ -85,7 +85,7 @@ class FirmwareRefusal(RuntimeError):
 # --------------------------------------------------------------------- profiles
 
 def printer_entry(model_key, registry=None):
-    """The printers/registry.toml entry for a model key, or None when unregistered."""
+    """The printer registry entry for a model key, or None when unregistered."""
     if registry is None:
         from . import knowledge
         registry = knowledge.default_registry()
@@ -99,7 +99,7 @@ def apply_block_reason(entry) -> str | None:
     """Why stage 2 apply is not offered for this registry entry, or None when it is.
 
     Eligibility is a property of the printer profile — firmware family,
-    vendor and connection from printers/registry.toml — never of what the
+    vendor and connection from the printer registry — never of what the
     printer's Update Manager happens to offer.
     """
     if entry is None:

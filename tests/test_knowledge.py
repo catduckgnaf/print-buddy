@@ -74,6 +74,42 @@ def test_missing_registry_is_rejected(tmp_path):
         knowledge.load_registry(tmp_path)
 
 
+def _copy_registries(tmp_path):
+    for name in ("knowledge", "firmware", "printers"):
+        shutil.copytree(ROOT / name, tmp_path / name)
+    return tmp_path / "printers" / "registry"
+
+
+def test_printer_registry_duplicate_key_across_files_is_rejected(tmp_path):
+    registry_dir = _copy_registries(tmp_path)
+    sovol = registry_dir / "sovol.toml"
+    block = sovol.read_text().split("\n[[printer]]", 2)[1]
+    with open(registry_dir / "sovol_marlin.toml", "a") as handle:
+        handle.write("\n[[printer]]" + block.replace('"sovol.', '"sovol_marlin.', 1)
+                     .replace('vendor = "sovol"', 'vendor = "sovol_marlin"', 1))
+    with pytest.raises(RegistryError, match="key duplicated"):
+        knowledge.load_registry(tmp_path)
+
+
+def test_printer_registry_entry_in_wrong_vendor_file_is_rejected(tmp_path):
+    registry_dir = _copy_registries(tmp_path)
+    klipper = registry_dir / "klipper.toml"
+    block = klipper.read_text().split("\n[[printer]]", 1)[1]
+    klipper.write_text(klipper.read_text().split("\n[[printer]]", 1)[0])
+    with open(registry_dir / "sovol.toml", "a") as handle:
+        handle.write("\n[[printer]]" + block)
+    with pytest.raises(RegistryError, match="must both be 'sovol'"):
+        knowledge.load_registry(tmp_path)
+
+
+def test_printer_registry_empty_directory_is_rejected(tmp_path):
+    registry_dir = _copy_registries(tmp_path)
+    for path in registry_dir.glob("*.toml"):
+        path.unlink()
+    with pytest.raises(RegistryError, match="printer registry missing or empty"):
+        knowledge.load_registry(tmp_path)
+
+
 # ----------------------------------------------------------------------- lookups
 
 def top(registry, query, **kwargs):

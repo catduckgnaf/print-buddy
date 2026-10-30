@@ -3,7 +3,7 @@
 Unlike run_external_corpus.py (one generic case for every file, default
 printer fixture), each complex case runs with a printer state built from its
 manifest target: the AD5X fixture state with printer name, bed and max height
-replaced from printers/registry.toml values recorded in complex_cases.toml.
+replaced from printer registry values recorded in complex_cases.toml.
 That exercises fit / height / colour logic against the target printer's
 geometry. It does NOT switch the slicer vendor profile or the slot/tool
 layout - the state still carries the fixture's spool/IFS layout - and the

@@ -31,7 +31,7 @@ MODEL = PrinterModel(
             "max_print_height_mm": facts.H2DPRO["max_print_height_mm"].value,
             "nozzle_diameter_mm": 0.4,
             "nozzle_type": "hardened_steel",
-            "ifs_slots": 1,
+            "filament_slots": 1,
         },
     },
 )

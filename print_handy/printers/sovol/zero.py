@@ -23,7 +23,7 @@ MODEL = PrinterModel(
             "bed_mm": [152.4, 152.4],
             "max_print_height_mm": 152.4,
             "nozzle_diameter_mm": 0.4,
-            "ifs_slots": 1,
+            "filament_slots": 1,
         },
     },
 )

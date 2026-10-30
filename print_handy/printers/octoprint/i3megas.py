@@ -22,6 +22,6 @@ MODEL = PrinterModel(
     supported_nozzle_sizes=(0.4,),
     settings={"printer": {
         "name": "Anycubic i3 Mega S (OctoPrint)", "bed_mm": [210.0, 210.0], "max_print_height_mm": 205.0,
-        "nozzle_diameter_mm": 0.4, "ifs_slots": 1,
+        "nozzle_diameter_mm": 0.4, "filament_slots": 1,
     }},
 )

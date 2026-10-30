@@ -112,7 +112,7 @@ def apply_fix(fix: dict[str, Any] | None, *, printer_id: str | None = None) -> s
     from . import printer_state
     state = printer_state.load(printer_id) if printer_id else printer_state.load()
     slot = str(fix["slot"])
-    record = (state.get("ifs_slots") or {}).get(slot)
+    record = (state.get("filament_slots") or {}).get(slot)
     if not isinstance(record, dict):
         raise ValueError(f"slot {slot} is not in the hardware record")
     hx = filament_color.normalize_hex(fix.get("hex")) or filament_color.NEUTRAL_DEFAULT

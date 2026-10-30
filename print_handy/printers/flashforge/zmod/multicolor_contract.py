@@ -34,7 +34,7 @@ def normalize_mapping(mapping, state):
             embedded_spool_id = None
         if isinstance(slot, bool) or not isinstance(slot, int) or slot not in range(1, 5):
             raise RuntimeError('malformed physical slot mapping')
-        configured = state.get('ifs_slots', {}).get(str(slot), {})
+        configured = state.get('filament_slots', {}).get(str(slot), {})
         if not configured.get('material') or not configured.get('physical_color_verified'):
             raise RuntimeError(f'unknown or unverified mapping for physical slot {slot}')
         if embedded_spool_id is not None and embedded_spool_id != configured.get('spoolman_id'):
@@ -53,7 +53,7 @@ def describe_mapping(mapping, state):
     normalized = normalize_mapping(mapping, state)
     rows = []
     for tool, slot in sorted(normalized.items(), key=lambda item: int(item[0])):
-        cfg = state.get('ifs_slots', {}).get(str(slot), {})
+        cfg = state.get('filament_slots', {}).get(str(slot), {})
         color = cfg.get('color') or cfg.get('name') or 'unknown color'
         material = cfg.get('material') or 'unknown material'
         rows.append(f'T{tool} -> slot {slot}: {color} {material}')
@@ -106,7 +106,7 @@ def validate_materials(text, material, state, mapping=None):
         if index not in mapping:
             continue
         slot = mapping[index]
-        actual = state['ifs_slots'][str(slot)]['material']
+        actual = state['filament_slots'][str(slot)]['material']
         from ....core.printer_state import same_material
         if not same_material(materials[int(index)], actual):
             raise RuntimeError(f'T{index} material {materials[int(index)]!r} != slot {slot} material {actual!r}')
@@ -140,7 +140,7 @@ def finalize(path, colors, state=None, mapping=None):
                 raise RuntimeError('used logical tool is outside explicit physical IFS mapping')
             materials = ['PLA'] * (max(map(int, mapping)) + 1)
             for tool in used:
-                materials[tool] = state['ifs_slots'][str(mapping[str(tool)])]['material']
+                materials[tool] = state['filament_slots'][str(mapping[str(tool)])]['material']
             text = text.rstrip('\n') + '\n; filament_type = ' + ';'.join(materials) + '\n'
             lines = text.splitlines(keepends=True)
             material_text = ';'.join(materials)
@@ -159,11 +159,11 @@ def finalize(path, colors, state=None, mapping=None):
             raise RuntimeError('mapped finalization requires hardware state')
         recorded = {}
         for tool, slot in mapping.items():
-            spool_id = state['ifs_slots'][str(slot)].get('spoolman_id')
+            spool_id = state['filament_slots'][str(slot)].get('spoolman_id')
             recorded[tool] = {'physical_slot': slot, 'spoolman_id': spool_id} if spool_id is not None else slot
         metadata.append(MAP_PREFIX + json.dumps(recorded, sort_keys=True, separators=(',', ':')) + '\n')
         for tool in sorted(map(int, mapping)):
-            slot = state['ifs_slots'][str(mapping[str(tool)])]
+            slot = state['filament_slots'][str(mapping[str(tool)])]
             # Same fallback as slicing: a slot without a code gets its name's
             # color or the neutral default (WARNING logged), never a refusal.
             from print_handy.core.filament_color import slot_hex

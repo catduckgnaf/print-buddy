@@ -342,7 +342,7 @@ def _photo_harness(monkeypatch, tmp_path, vision_answer):
     monkeypatch.setattr(spool_sync, "next_spool_id", lambda: 18)
     monkeypatch.setattr(spool_sync, "filament_types", lambda: [])
     monkeypatch.setattr(spool_sync, "load_state", lambda: {
-        "ifs_slots": {"2": {"spoolman_id": 13, "name": "Matte White PLA+", "remaining_grams": 0.0}}})
+        "filament_slots": {"2": {"spoolman_id": 13, "name": "Matte White PLA+", "remaining_grams": 0.0}}})
     created, binds = [], []
 
     def fake_create(spec):
@@ -454,7 +454,7 @@ def test_photo_button_absent_without_a_vision_endpoint(tmp_path, monkeypatch):
     monkeypatch.setattr(plugin, "_photo_intake_ready", lambda: False)
     monkeypatch.setattr(spool_sync, "next_spool_id", lambda: 18)
     monkeypatch.setattr(spool_sync, "filament_types", lambda: [])
-    monkeypatch.setattr(spool_sync, "load_state", lambda: {"ifs_slots": {}})
+    monkeypatch.setattr(spool_sync, "load_state", lambda: {"filament_slots": {}})
     bot = S(listeners={}, add_listener=lambda fn, name: bot.listeners.__setitem__(name, fn))
     plugin.alert_button_handlers(bot, S())
     sink = []
@@ -663,7 +663,7 @@ def test_photo_walkthrough_code_route_prefills(tmp_path, monkeypatch):
     monkeypatch.setattr(spool_sync, "next_spool_id", lambda: 18)
     monkeypatch.setattr(spool_sync, "filament_types", lambda: [])
     monkeypatch.setattr(spool_sync, "load_state", lambda: {
-        "ifs_slots": {"2": {"spoolman_id": 13, "name": "Matte White PLA+", "remaining_grams": 0.0}}})
+        "filament_slots": {"2": {"spoolman_id": 13, "name": "Matte White PLA+", "remaining_grams": 0.0}}})
     created = []
     monkeypatch.setattr(spool_sync, "create_spool",
                         lambda spec: created.append(spec) or {"spool_id": 18})

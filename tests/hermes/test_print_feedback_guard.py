@@ -154,7 +154,7 @@ def test_runout_new_spool_carries_slot_hex_into_created_filament():
         clear_runout_pause=mock.Mock(),
     )
     runout_sync = SimpleNamespace(
-        load_state=lambda: {'ifs_slots': {'3': {'spoolman_id': 8, 'hex': '#161616'}}},
+        load_state=lambda: {'filament_slots': {'3': {'spoolman_id': 8, 'hex': '#161616'}}},
         screen_hex=spool_sync.screen_hex,
         create_spool=lambda spec: spool_sync.create_spool(spec, client=client),
         bind_slot=lambda *_args, **_kwargs: {'slot': 3},

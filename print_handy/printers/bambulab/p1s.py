@@ -33,7 +33,7 @@ MODEL = PrinterModel(
             "nozzle_type": "stainless_steel",
             # Filament slots: the AMS unit's trays from the facts ("ams":
             # (unit, slots)); the AMS is this model's slot system (#671).
-            "ifs_slots": facts.P1S["ams"].value[1],
+            "filament_slots": facts.P1S["ams"].value[1],
         },
     },
 )

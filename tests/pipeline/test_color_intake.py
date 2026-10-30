@@ -143,7 +143,7 @@ def test_external_identity_collision_fails_closed(tmp_path):
 def state():
     return {'nozzle': {'diameter_mm': 0.6, 'type': 'brass'}, 'z_offset_mm': 0.0,
             'temps_c': {'nozzle': 220, 'bed': 60}, 'spool': {'material': 'PLA', 'spoolman_id': 10, 'name': 'white'},
-            'ifs_slots': {'1': {'color': 'white', 'material': 'PLA', 'spoolman_id': 10},
+            'filament_slots': {'1': {'color': 'white', 'material': 'PLA', 'spoolman_id': 10},
                           '3': {'color': 'black', 'material': 'PLA', 'spoolman_id': 12}}}
 
 

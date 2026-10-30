@@ -122,8 +122,10 @@ def _hardware_read_path(path: Path | None = None, printer_id: str | None = None)
 
 def load_state(path: Path | None = None, *, printer_id: str | None = None) -> dict[str, Any]:
     state = json.loads(_hardware_read_path(path, printer_id).read_text())
-    # Same backfill as printer_state.load: a slot with no color code gets
-    # one from its name; a valid hex is never touched.
+    # Same load fix-ups as printer_state.load: adopt the pre-#672 slot-map key,
+    # then backfill slot color codes (a slot with no color code gets one from
+    # its name; a valid hex is never touched).
+    filament_color.adopt_renamed_slots_key(state)
     filament_color.fill_missing_slot_hexes(state)
     return state
 
@@ -142,7 +144,7 @@ def _loaded_spool_ids(state: dict[str, Any]) -> set[int]:
     active = (state.get("spool") or {}).get("spoolman_id")
     if active is not None:
         ids.add(int(active))
-    for rec in (state.get("ifs_slots") or {}).values():
+    for rec in (state.get("filament_slots") or {}).values():
         sid = (rec or {}).get("spoolman_id")
         if sid is not None:
             ids.add(int(sid))
@@ -387,7 +389,7 @@ def bind_slot(slot: int, spool_id: int, *, client: Client = spoolman, mr: Client
     if spool.get("archived"):
         raise SpoolError(f"spool #{spool_id} is archived (used up); pick a live one")
     state = load_state(state_path, printer_id=printer_id)
-    slots = state.setdefault("ifs_slots", {})
+    slots = state.setdefault("filament_slots", {})
     for key, rec in slots.items():
         if str(key) != str(slot) and (rec or {}).get("spoolman_id") == int(spool_id):
             raise SpoolError(f"spool #{spool_id} is already mapped to slot {key}. Move that slot first. Nothing changed")
@@ -480,7 +482,7 @@ def backfill_slot_colors(*, client: Client = spoolman, mr: Client = moonraker,
     except (OSError, ValueError):
         return []
     state = json.loads(json.dumps(raw))
-    slots = state.get("ifs_slots") or {}
+    slots = state.get("filament_slots") or {}
     pending = {str(key): rec for key, rec in slots.items() if isinstance(rec, dict) and rec.get("spoolman_id")
                and (not filament_color.normalize_hex(rec.get("hex"))
                     or rec.get("hex_source") in filament_color.DERIVED_SOURCES)}
@@ -557,7 +559,7 @@ def sync_all_screens(*, mr: Client = moonraker, state_path: Path | None = None,
     state = load_state(state_path, printer_id=printer_id)
     out = []
     for slot in SLOTS:
-        rec = (state.get("ifs_slots") or {}).get(str(slot)) or {}
+        rec = (state.get("filament_slots") or {}).get(str(slot)) or {}
         if not rec.get("spoolman_id"):
             out.append(f"Slot {slot}: no spool mapped, screen left alone")
             continue
@@ -584,7 +586,7 @@ def list_text(*, client: Client = spoolman, state_path: Path | None = None,
     lines = ["**Loaded**"]
     loaded = set()
     for slot in SLOTS:
-        rec = (state.get("ifs_slots") or {}).get(str(slot)) or {}
+        rec = (state.get("filament_slots") or {}).get(str(slot)) or {}
         sid = rec.get("spoolman_id")
         live = by_id.get(sid) or {}
         grams = live.get("remaining_weight")

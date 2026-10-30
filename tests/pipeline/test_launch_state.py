@@ -385,13 +385,13 @@ def mapped(tmp_path):
                                       "hasFilament": mapped_presence[0]}]},
             "filament_switch_sensor head_switch_sensor": {"enabled": True}}}}
 
-    st = {"moonraker_url": PRINTER, "ifs_slots": {"1": {"material": "PLA", "hex": "#000000"}}}
+    st = {"moonraker_url": PRINTER, "filament_slots": {"1": {"material": "PLA", "hex": "#000000"}}}
     with mock.patch.object(model_job.printers, "current", return_value=adapter), \
          mock.patch.object(model_job, "START_CLAIMS", tmp_path / "claims.json"), \
          mock.patch.object(model_job, "validate_saved_mesh_start"), \
          mock.patch.object(model_job, "_mr", side_effect=fake_mr), \
          mock.patch.object(model_job, "read_stock_detail", return_value={}), \
-         mock.patch.object(model_job, "read_stock_ifs_slots_from_detail", return_value={1: True}), \
+         mock.patch.object(model_job, "read_stock_filament_slots_from_detail", return_value={1: True}), \
          mock.patch.object(model_job, "_sync_active_spool"), \
          mock.patch.object(model_job, "_announce_print_name"), \
          mock.patch.object(model_job, "_publish_job_card"), \

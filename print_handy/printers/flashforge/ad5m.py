@@ -27,7 +27,7 @@ MODEL = PrinterModel(
             # The base template's nozzle; other supported sizes use the tuned profiles.
             "nozzle_diameter_mm": 0.4,
             # One extruder, no IFS: a single filament slot.
-            "ifs_slots": 1,
+            "filament_slots": 1,
         },
     },
 )

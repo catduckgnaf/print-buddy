@@ -11,13 +11,13 @@ def test_rebinding_slot_does_not_keep_previous_spool_color():
 
 
 def test_selection_material_and_color_match_configured_slot():
-    state = {"ifs_slots": {"1": {"spoolman_id": 7, "color": "Coffee", "material": "PLA+"}}}
+    state = {"filament_slots": {"1": {"spoolman_id": 7, "color": "Coffee", "material": "PLA+"}}}
     with pytest.raises(ValueError):
         model_job.resolve_filament_selection(state, {"slot": 1, "spoolman_id": 7, "color": "Blue", "material": "PLA+"})
 
 
 def test_selection_rejects_material_mismatch():
-    state = {"ifs_slots": {"1": {"spoolman_id": 7, "color": "Coffee", "material": "PLA+"}}}
+    state = {"filament_slots": {"1": {"spoolman_id": 7, "color": "Coffee", "material": "PLA+"}}}
     with pytest.raises(ValueError):
         model_job.resolve_filament_selection(state, {"slot": 1, "spoolman_id": 7, "color": "coffee", "material": "PETG"})
 
@@ -27,7 +27,7 @@ def test_partial_stock_detail_is_rejected(monkeypatch):
     detail = {"hasMatlStation": True, "matlStationInfo": {"slotInfos": [
         {"slotId": 1, "hasFilament": True}, {"slotId": 2, "hasFilament": False}]}}
     with pytest.raises(RuntimeError, match="incomplete"):
-        stock.read_stock_ifs_slots_from_detail(detail)
+        stock.read_stock_filament_slots_from_detail(detail)
 
 
 def test_multicolor_spool_records_its_first_color_as_a_representative_swatch():

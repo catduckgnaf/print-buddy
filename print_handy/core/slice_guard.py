@@ -24,15 +24,15 @@ class Result:
         return {"status": self.status, "ok": self.ok, "warnings": self.warnings,
                 "blocked": self.blocked, "effective_settings": self.effective_settings}
 
-def _printer(bed, ifs_slots):
+def _printer(bed, filament_slots):
     printer = settings.current()['printer']
-    return tuple(bed or printer['bed_mm']), int(ifs_slots or printer['ifs_slots'])
+    return tuple(bed or printer['bed_mm']), int(filament_slots or printer['filament_slots'])
 
 def pre_slice(*, bounds=None, bed=None, profile=None, required_keys=(), before_profile=None,
-              filaments=1, ifs_slots=None, tool_slots=None, nozzle_type=None, materials=None,
+              filaments=1, filament_slots=None, tool_slots=None, nozzle_type=None, materials=None,
               nozzle_temp=None, nozzle_temp_is_effective=False):
     """bounds is placed XY bbox (xmin,ymin,xmax,ymax); tools map T-index to 1-based IFS slot."""
-    r=Result(); profile=profile or {}; tool_slots=tool_slots or {}; bed,ifs_slots=_printer(bed,ifs_slots)
+    r=Result(); profile=profile or {}; tool_slots=tool_slots or {}; bed,filament_slots=_printer(bed,filament_slots)
     if nozzle_type:
         from .nozzle import check_nozzle_material_safety, AbrasiveNozzleError, check_nozzle_temperature_safety, NozzleError
         mats = [materials] if isinstance(materials, str) else (materials or [])
@@ -62,12 +62,12 @@ def pre_slice(*, bounds=None, bed=None, profile=None, required_keys=(), before_p
     if bounds is not None:
         x0,y0,x1,y1=map(float,bounds)
         if x0<0 or y0<0 or x1>bed[0] or y1>bed[1]: r.block(f"Placed model bounds ({x0:g}..{x1:g} x, {y0:g}..{y1:g} mm) exceed the {bed[0]:g}x{bed[1]:g} mm bed.")
-    if int(filaments)>int(ifs_slots): r.block(f"Profile has {filaments} filaments but only {ifs_slots} IFS slots are available.")
+    if int(filaments)>int(filament_slots): r.block(f"Profile has {filaments} filaments but only {filament_slots} IFS slots are available.")
     if int(filaments)>1 and not tool_slots: r.block("Multi-filament job has no explicit T-index to physical IFS-slot mapping.")
     for t,slot in tool_slots.items():
         try: ti,si=int(str(t).lstrip('T')),int(slot)
         except (ValueError,TypeError): r.block(f"Invalid tool-to-slot mapping {t!r} → {slot!r}."); continue
-        if ti<0 or si<1 or si>ifs_slots: r.block(f"T{ti} maps to IFS slot {si}; valid slots are 1 through {ifs_slots}.")
+        if ti<0 or si<1 or si>filament_slots: r.block(f"T{ti} maps to IFS slot {si}; valid slots are 1 through {filament_slots}.")
     if tool_slots and len(tool_slots)!=int(filaments): r.block("Explicit T-index mapping count does not match the profile filament count.")
     return r
 
@@ -336,14 +336,14 @@ def toolpath_motion_problems(text, bed, envelope, height=None, z_headroom=1.0):
                                     f"X{target['X']:g} Y{target['Y']:g} Z{z:g} ({where}).")
     return problems[:10]
 
-def post_slice(gcode, *, ifs_slots=None, tool_slots=None, bed=None, result_json=None,
+def post_slice(gcode, *, filament_slots=None, tool_slots=None, bed=None, result_json=None,
                templates=None, profile_paths=(), envelope=None):
     """Check bounds + effective motion/profile settings and capture provenance.
 
     envelope (xmin, ymin, xmax, ymax) is for printers whose vendor start/end G-code moves off the bed:
     only Orca's toolpath (see split_toolpath) is held to the bed and tool-checked (toolpath_motion_problems).
     """
-    r=Result(); tool_slots=tool_slots or {}; bed,ifs_slots=_printer(bed,ifs_slots)
+    r=Result(); tool_slots=tool_slots or {}; bed,filament_slots=_printer(bed,filament_slots)
     if isinstance(gcode, Path):
         text=gcode.read_text(errors="replace")
     elif isinstance(gcode, str) and "\\n" not in gcode and len(gcode)<4096 and Path(gcode).is_file():
@@ -413,8 +413,8 @@ def post_slice(gcode, *, ifs_slots=None, tool_slots=None, bed=None, result_json=
     tools={int(n) for n in re.findall(r"(?im)^\s*T(\d+)\s*(?:;.*)?$",body)}
     for n in sorted(tools):
         if n not in tool_slots: r.block(f"G-code uses T{n}, but no physical IFS slot mapping is recorded.")
-        elif not 1<=int(tool_slots[n])<=ifs_slots: r.block(f"T{n} maps outside the available IFS slots.")
-    if tools and max(tools)>=ifs_slots: r.block(f"G-code uses tool T{max(tools)} but only {ifs_slots} IFS slots are available.")
+        elif not 1<=int(tool_slots[n])<=filament_slots: r.block(f"T{n} maps outside the available IFS slots.")
+    if tools and max(tools)>=filament_slots: r.block(f"G-code uses tool T{max(tools)} but only {filament_slots} IFS slots are available.")
     coords=[]; x=y=0.0
     if envelope is not None:
         for problem in toolpath_motion_problems(text, bed, envelope):

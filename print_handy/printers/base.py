@@ -46,8 +46,8 @@ neither the one-extruder multi_slot shape nor the multi_tool tool-changer contra
 stay "single" with the reason recorded on their profiles (#671); their AMS trays are resolved
 per filament slot at print start (bambulab/ams_mapping.py), outside the class machinery.
 The class is the authority: PrinterAdapter.multi_slot / multi_tool derive from it, the settings
-validation for ifs_slots and tool_count reads it, and a model whose settings contradict its
-class (ifs_slots above 1 outside multi_slot, tool_count above 1 outside multi_tool) is refused
+validation for filament_slots and tool_count reads it, and a model whose settings contradict its
+class (filament_slots above 1 outside multi_slot, tool_count above 1 outside multi_tool) is refused
 when the profile loads.
 
 Where printer specifics live, and which responsibilities sit behind PrinterAdapter:
@@ -55,7 +55,7 @@ Where printer specifics live, and which responsibilities sit behind PrinterAdapt
   responsibility                 flashforge.ad5x (ZMod)                  klipper.generic / sovol.sv06
   -----------------------------  --------------------------------------  ----------------------------
   build volume, margins          model settings                          same keys, 1 slot
-  slot count / multi-slot        [printer] ifs_slots (IFS, 4)            1, single extruder
+  slot count / multi-slot        [printer] filament_slots (IFS, 4)            1, single extruder
   Orca template folder           templates/orca/flashforge_ad5x          templates/orca/<model folder>
   Orca start G-code              START_PRINT ... MESH=<mesh> + M190/     PRINT_START BED= HOTEND=
                                  M104 preamble (adapter)                 (macro names from settings)
@@ -74,7 +74,7 @@ Runtime decisions that follow the adapter (core/model_job, printer_state, orca_a
   - multi_slot False (generic/sovol): no IFS selection or spool-slot validation, no multicolor finalization,
     no native_startup/native_idle, no mapped-native launch; slicing refuses multicolor and multi-plate sources
     with MultiColorUnsupported (a REFUSED line).
-  - multi_tool True (flashforge.creator5, creator5_pro): ifs_slots stays 1, so every multi_slot gate above
+  - multi_tool True (flashforge.creator5, creator5_pro): filament_slots stays 1, so every multi_slot gate above
     stays off; the tools live at the adapter contract instead — normalize_tool_mapping accepts only the
     identity tool -> toolhead map for T0..T{tool_count-1} and refuses anything else, readiness and status
     are per-toolhead (extruder..extruder3, zmod_color.active_tool_id), and a job's G-code tool changes are
@@ -102,9 +102,9 @@ cannot reach (the Bambu print, slice and readiness paths dispatch by connection/
 and its slots are printer-reported rather than record-bound — see PrinterAdapter.slots_bound_by_record):
   - core/model_job: IFS selection and filament readiness, mapped-native launch (print_mapped_native), the
     zmod_color / display_off telemetry read, thin delegators to zmod.stock
-  - core/prepared_intake, core/plate_merge, core/color_geometry, core/source_colors: ifs_slots bounds, the
+  - core/prepared_intake, core/plate_merge, core/color_geometry, core/source_colors: filament_slots bounds, the
     four-slot mapping and prime tower placement for IFS multicolor plates
-  - core/orca_adapter: the START_PRINT/MESH start G-code goes through the adapter; IFS_SLOTS guard bounds
+  - core/orca_adapter: the START_PRINT/MESH start G-code goes through the adapter; FILAMENT_SLOTS guard bounds
     and the tool-mapped prime tower retry remain
   - core/spool_lifecycle, core/clear_job: IFS slot reconciliation, native idle cancel handling
   - hermes/spool_sync (Spoolman binding), moonraker_event_listener (IFS presence poll, runout pause),
@@ -137,7 +137,7 @@ class BuildVolume:
 CONNECTIONS = ("moonraker", "octoprint", "offline", "bambulab_lan", "flashforge_stock", "prusalink", "elegoo_sdcp")
 # The three color architectures (issue #656). Every model names exactly one; the class is the
 # authority the adapter properties (multi_slot, multi_tool) and the settings validation read, so the
-# architecture is never re-inferred from ifs_slots or adapter flags:
+# architecture is never re-inferred from filament_slots or adapter flags:
 #   single      one extruder, one filament position (the large majority of models)
 #   multi_slot  one extruder fed by several filament slots (an IFS-style feeder; the AD5X pair
 #               and the single-nozzle Bambu AMS models)
@@ -273,7 +273,7 @@ class PrinterModel:
     # <state>/orca-profiles/<templates> (third-party profiles; see printers/bambulab/profiles.py).
     generated_templates: bool = False
     # The model's color architecture (COLOR_SYSTEMS). "single" unless the model's own
-    # settings say otherwise: multi_slot needs ifs_slots > 1, multi_tool needs tool_count > 1,
+    # settings say otherwise: multi_slot needs filament_slots > 1, multi_tool needs tool_count > 1,
     # and no other class may carry either count (see __post_init__).
     color_system: str = "single"
 
@@ -283,17 +283,17 @@ class PrinterModel:
                              f"got {self.color_system!r}")
         merged = merge_settings(self.vendor.settings if self.vendor else {}, self.settings)
         printer = merged.get("printer") or {}
-        ifs_slots = int(printer.get("ifs_slots", 1))
+        filament_slots = int(printer.get("filament_slots", 1))
         tool_count = int(printer.get("tool_count", 1))
-        if ifs_slots > 1 and self.color_system != "multi_slot":
-            raise ValueError(f"model {self.key}: ifs_slots {ifs_slots} > 1 requires "
+        if filament_slots > 1 and self.color_system != "multi_slot":
+            raise ValueError(f"model {self.key}: filament_slots {filament_slots} > 1 requires "
                              f"color_system 'multi_slot', got {self.color_system!r}")
         if tool_count > 1 and self.color_system != "multi_tool":
             raise ValueError(f"model {self.key}: tool_count {tool_count} > 1 requires "
                              f"color_system 'multi_tool', got {self.color_system!r}")
-        if self.color_system == "multi_slot" and ifs_slots <= 1:
-            raise ValueError(f"model {self.key}: color_system 'multi_slot' requires ifs_slots > 1, "
-                             f"got {ifs_slots}")
+        if self.color_system == "multi_slot" and filament_slots <= 1:
+            raise ValueError(f"model {self.key}: color_system 'multi_slot' requires filament_slots > 1, "
+                             f"got {filament_slots}")
         if self.color_system == "multi_tool" and tool_count <= 1:
             raise ValueError(f"model {self.key}: color_system 'multi_tool' requires tool_count > 1, "
                              f"got {tool_count}")
@@ -364,7 +364,7 @@ class PrinterAdapter(ABC):
     def multi_tool(self) -> bool:
         """Independent toolheads (a tool changer), as opposed to one extruder fed by multi_slot
         IFS slots: tools are fixed positions (slicer tool i always prints with toolhead i),
-        each with its own filament. [printer] tool_count names them; ifs_slots stays 1."""
+        each with its own filament. [printer] tool_count names them; filament_slots stays 1."""
         return self.color_system == "multi_tool"
 
     @property

@@ -157,7 +157,7 @@ def test_real_slicer_supported_nozzle_sizes(printer_key, size):
             "spool": {"spoolman_id": 1, "material": "PLA", "density": 1.24},
             "temps_c": {"nozzle": 220, "bed": 60},
             "calibration_baseline": {"native_mesh": "auto"},
-            "ifs_slots": {
+            "filament_slots": {
                 "1": {
                     "slot": 1,
                     "spoolman_id": 1,

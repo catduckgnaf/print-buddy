@@ -48,7 +48,7 @@ def test_copy_layout_refusal_has_actionable_remedy_before_slicer_runs(tmp_path, 
 def _state():
     import copy
     state = copy.deepcopy(job.printer_state.load())
-    state['ifs_slots'] = {'1': {'slot': 1, 'spoolman_id': 1, 'material': 'PLA',
+    state['filament_slots'] = {'1': {'slot': 1, 'spoolman_id': 1, 'material': 'PLA',
                                 'physical_color_verified': True, 'hex': 'FFFFFF'}}
     state['spool'].update(spoolman_id=1, material='PLA', density=1.24)
     return state
@@ -274,7 +274,7 @@ def test_designer_support_placement_keys_carry_over_the_template(tmp_path, monke
     monkeypatch.setattr(adapter, 'finalize_zmod', lambda *_args: None)
     state = job.printer_state.load()
     state = {**state, 'spool': {**state['spool'], 'color_code': 'F7E6DE'}}
-    state['ifs_slots'] = {'1': {'spoolman_id': state['spool']['spoolman_id'], 'material': state['spool']['material'],
+    state['filament_slots'] = {'1': {'spoolman_id': state['spool']['spoolman_id'], 'material': state['spool']['material'],
                                 'physical_color_verified': True}}
     _out, provenance, _ = adapter.slice_model(source, tmp_path / 'out', state, preserve_layout=True)
     assert seen['support_threshold_angle'] == '35' and seen['enable_support'] == '1'

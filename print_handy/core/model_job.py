@@ -56,7 +56,7 @@ def _moonrakerctl_env(st):
         env["MOONRAKER_URL"] = str(url).rstrip("/")
     return env
 TIMEZONE = settings.current()["discord"]["timezone"]
-IFS_SLOTS = settings.current()["printer"]["ifs_slots"]
+FILAMENT_SLOTS = settings.current()["printer"]["filament_slots"]
 BED_MM = int(min(settings.current()["printer"]["bed_mm"]))
 MAX_HEIGHT_MM = settings.current()["printer"]["max_print_height_mm"]
 
@@ -2083,12 +2083,12 @@ def build_tool_labels(selections):
 def position_limit(adapter=None):
     """Highest colour position a selection may name on the printer.
 
-    An IFS printer bounds selections by [printer] ifs_slots; a multi_tool
+    An IFS printer bounds selections by [printer] filament_slots; a multi_tool
     printer's positions are its toolheads (the adapter's slot_count) even
-    though ifs_slots stays 1 there, so the bound is whichever the printer
+    though filament_slots stays 1 there, so the bound is whichever the printer
     actually has. Every other printer keeps exactly the bound it has today.
     """
-    limit = IFS_SLOTS
+    limit = FILAMENT_SLOTS
     try:
         limit = max(limit, int((adapter or printers.current()).slot_count or 1))
     except Exception:
@@ -2104,7 +2104,7 @@ def validate_filament_selection(selection, spool_optional=False, limit=None):
     (position_limit); the default keeps the configured IFS bound.
     """
     if limit is None:
-        limit = IFS_SLOTS
+        limit = FILAMENT_SLOTS
     if not isinstance(selection, dict):
         raise ValueError("explicit filament selection is required (use 'filament-select' command)")
     slot = selection.get("slot")
@@ -2124,14 +2124,14 @@ def validate_filament_selection(selection, spool_optional=False, limit=None):
 def configured_slots(state):
     """The slot records intake offers, keyed by slot number.
 
-    A recorded `ifs_slots` map is used as is. A single-extruder printer with no slot map has one slot,
+    A recorded `filament_slots` map is used as is. A single-extruder printer with no slot map has one slot,
     its configured spool (#263): slot entries are only written from Spoolman, so an offline printer never
     gets one. Printers whose slots are bound in the record (AD5X IFS, stock Flashforge) still need their
     recorded map. A multi_slot printer whose feeder reports its own contents (Bambu AMS, #671) is not
     record-bound either: its record carries the one configured spool, offered as slot 1 the #263 way,
     and the printer's reported trays are matched to a job's filament slots at print start instead.
     """
-    mappings = (state or {}).get("ifs_slots") or {}
+    mappings = (state or {}).get("filament_slots") or {}
     current = printers.current()
     if mappings or (current.slot_count != 1 and current.slots_bound_by_record):
         return mappings
@@ -2283,9 +2283,9 @@ def check_filament_readiness(state, status, selection=None, *, observed_at=None,
     slot_id = selection["slot"]
     def slot_id_of(item):
         raw = item.get("ID") if isinstance(item, dict) else None
-        if isinstance(raw, int) and not isinstance(raw, bool) and 1 <= raw <= IFS_SLOTS:
+        if isinstance(raw, int) and not isinstance(raw, bool) and 1 <= raw <= FILAMENT_SLOTS:
             return raw
-        if isinstance(raw, str) and raw.isdigit() and 1 <= int(raw) <= IFS_SLOTS:
+        if isinstance(raw, str) and raw.isdigit() and 1 <= int(raw) <= FILAMENT_SLOTS:
             return int(raw)
         return None
 
@@ -2354,7 +2354,7 @@ def read_filament_telemetry(state):
     stock_detail_used = False
     if mode == 0:
         try:
-            native_slots = read_stock_ifs_slots(state)
+            native_slots = read_stock_filament_slots(state)
             # Native authenticated /detail is authoritative for occupancy.
             apply_stock_presence(status, native_slots)
             slots = color.get("slots") if isinstance(color, dict) else None
@@ -2411,14 +2411,14 @@ def validate_native_start(detail, selection):
     return printers.current().native.validate_native_start(detail, selection)
 
 
-def read_stock_ifs_slots_from_detail(detail):
+def read_stock_filament_slots_from_detail(detail):
     """Extract native slot presence from one already-fetched authenticated detail sample."""
-    return printers.current().native.read_stock_ifs_slots_from_detail(detail)
+    return printers.current().native.read_stock_filament_slots_from_detail(detail)
 
 
-def read_stock_ifs_slots(state, *, post=None):
+def read_stock_filament_slots(state, *, post=None):
     """Native presence, not the screen-mode hardcoded zmod_color flags."""
-    return read_stock_ifs_slots_from_detail(read_stock_detail(state, post=post))
+    return read_stock_filament_slots_from_detail(read_stock_detail(state, post=post))
 
 
 def apply_stock_presence(status, stock):
@@ -2428,7 +2428,7 @@ def apply_stock_presence(status, stock):
 
 def _validate_slot_selection(state, selection):
     """The selected IFS slot, not the globally active spool, owns a single-color job."""
-    slot = state.get('ifs_slots', {}).get(str(selection['slot']), {})
+    slot = state.get('filament_slots', {}).get(str(selection['slot']), {})
     mapping_matches = (slot.get('spoolman_id') and slot.get('spoolman_id') == selection['spoolman_id']
                        and str(slot.get('material', '')).casefold() == selection['material'].casefold())
     if mapping_matches and not slot.get('physical_color_verified'):
@@ -2468,7 +2468,7 @@ def _sync_active_spool(st, slot):
     that is Spoolman data contradicting the operator's record, not an
     outage, and the refusal protects the physical gate (#235).
     """
-    configured = st.get('ifs_slots', {}).get(str(slot), {})
+    configured = st.get('filament_slots', {}).get(str(slot), {})
     sid = configured.get('spoolman_id')
     if not isinstance(sid, int) or isinstance(sid, bool):
         raise RuntimeError(f'IFS slot {slot} has no mapped Spoolman spool; nothing uploaded or started')
@@ -2557,7 +2557,7 @@ def _verify_filament_readiness(state, selection=None):
                 raise RuntimeError("native status='printing' conflicts with Moonraker standby; execution state unresolved")
             if native_phase in ("ready", "idle", "standby") and moonraker_phase in ("printing", "paused"):
                 raise RuntimeError(f"Moonraker {moonraker_phase} conflicts with native status={native_phase!r}; execution state unresolved")
-            apply_stock_presence(status, read_stock_ifs_slots_from_detail(detail))
+            apply_stock_presence(status, read_stock_filament_slots_from_detail(detail))
             observed_at = native_at
         problems = check_filament_readiness(state, status, selection, observed_at=observed_at)
         if problems:
@@ -2887,7 +2887,7 @@ def record_start(gcode_path, moonraker_name=None, started_at=None):
         ctx['tool_to_physical_slot'] = mapped
         ctx['active_spool']['accounting_only_not_job_color'] = True
         ctx['slicer_settings']['mapped_materials'] = {
-            tool: st['ifs_slots'][str(slot)] for tool, slot in mapped.items()}
+            tool: st['filament_slots'][str(slot)] for tool, slot in mapped.items()}
         ctx['printer_profile'] = 'Reviewed Orca AD5X native multicolor'
     if (job or {}).get('delivery_format'):
         ctx['delivery_format'] = job['delivery_format']
@@ -3561,7 +3561,7 @@ def intake_color_choices(job_path, state, mode=None, slots=None, interactive=Fal
         return True
     questions = canonical_prompts(manifest) if job.get('color_schema') == 'part_slots_v1' else prompts(manifest)
     available = []
-    for slot, label in sorted(state.get('ifs_slots', {}).items()):
+    for slot, label in sorted(state.get('filament_slots', {}).items()):
         selection = resolve_filament_selection(state, dict(label, slot=int(slot)))
         noun = 'Toolhead' if multi_tool else 'Slot'
         available.append({'label': f"{noun} {slot}: {selection['color']} {selection['material']} (configured label)",
@@ -3608,7 +3608,7 @@ def intake_color_choices(job_path, state, mode=None, slots=None, interactive=Fal
         slots = [int(input(row['question'] + ': ')) for row in rows]
     if not slots or len(slots) != len(rows):
         raise ValueError('supply one --color-slot for every displayed question (one for single_color)')
-    selections = [resolve_filament_selection(state, dict(state.get('ifs_slots', {}).get(str(slot), {}), slot=slot)) for slot in slots]
+    selections = [resolve_filament_selection(state, dict(state.get('filament_slots', {}).get(str(slot), {}), slot=slot)) for slot in slots]
     if multi_tool and mode == 'per_part':
         _check_tool_assignments(manifest, rows, selections)
     decisions = {'source_sha256': manifest['source_sha256'], 'mode': mode}
@@ -4076,7 +4076,7 @@ def _slice_merged(job, job_path, src, manifest, decisions, view, verdict, st, br
         derived = work / 'derived'; derived.mkdir(exist_ok=True)
         plate = derived / 'merged.3mf'
         report = export_single_color_plate(src, plate, view, [p['key'] for p in manifest['parts']], bed=int(st['bed_mm'][0]),
-                                           slot_colors=st.get('ifs_slots') or {}, item_shifts=verdict['shifts'],
+                                           slot_colors=st.get('filament_slots') or {}, item_shifts=verdict['shifts'],
                                            **({'fit_by_object': fit_by_object} if fit_by_object else {}))
         if fit_by_object:
             # Re-read the derived plate: every turned object must have
@@ -4103,7 +4103,7 @@ def _slice_merged(job, job_path, src, manifest, decisions, view, verdict, st, br
                     raise RuntimeError(f'merged plate did not land at the recorded turn for object {oid}; '
                                        'refusing to slice it as turned')
         out, provenance, configs = slice_model(plate, slice_dir, st, brim_override, preserve_layout=True, filament_slot=slots[0])
-        material = st.get('ifs_slots', {}).get(str(slots[0]), {}).get('material')
+        material = st.get('filament_slots', {}).get(str(slots[0]), {}).get('material')
         if not material:
             raise RuntimeError(f'merged plate physical IFS slot {slots[0]} has no verified material')
         finalize_multicolor(out, None, st, {'0': slots[0]})
@@ -4317,9 +4317,9 @@ def _slice_per_plate(job, job_path, src, manifest, decisions, view, plates, st, 
             current_fit = {'scale': psc} if psc < 1.0 else None
         plate = derived / f'plate{plate_id}_slot{slot}.3mf'
         try:
-            if not st.get('ifs_slots', {}).get(str(slot), {}).get('material'):
+            if not st.get('filament_slots', {}).get(str(slot), {}).get('material'):
                 raise RuntimeError(f'derived plate physical IFS slot {slot} has no verified material')
-            report = export_single_color_plate(src, plate, view, keys, bed=int(st['bed_mm'][0]), slot_colors=st.get('ifs_slots') or {}, **({'fit': current_fit} if current_fit is not None else {}))
+            report = export_single_color_plate(src, plate, view, keys, bed=int(st['bed_mm'][0]), slot_colors=st.get('filament_slots') or {}, **({'fit': current_fit} if current_fit is not None else {}))
             slice_dir = work / 'sliced' / 'orca' / uuid.uuid4().hex
             out, provenance, configs = slice_model(plate, slice_dir, st, brim_override, preserve_layout=True, filament_slot=slot, **({'supports': supports} if supports is not None else {}))
             finalize_multicolor(out, None, st, {'0': slot})
@@ -4406,7 +4406,7 @@ def _slice_full_size_split(job, job_path, src, manifest, decisions, st):
     if len(slots) != 1:
         raise RuntimeError('full-size split plan requires one physical filament slot')
     slot = slots[0]
-    if not (st.get('ifs_slots') or {}).get(str(slot), {}).get('material'):
+    if not (st.get('filament_slots') or {}).get(str(slot), {}).get('material'):
         raise RuntimeError(f'full-size split physical IFS slot {slot} has no verified material')
     work = Path(job_path).parent
     derived = work / 'derived'
@@ -4628,7 +4628,7 @@ def _slice_full_size_split(job, job_path, src, manifest, decisions, st):
                 fit_by_object[oid] = {'rotation': row['rotation']}
                 member_rotations[oid] = row['rotation']
         report = export_single_color_plate(src, plate, view, keys, bed=int(st['bed_mm'][0]),
-                                           slot_colors=st.get('ifs_slots') or {},
+                                           slot_colors=st.get('filament_slots') or {},
                                            **({'fit': fit} if fit is not None else {}),
                                            **({'fit_by_object': fit_by_object}
                                               if fit_by_object is not None else {}),
@@ -4894,13 +4894,13 @@ def slice_job(job_path, brim_override=None, copies=None, scale=None, recipe_sha2
                 # author's layout, which is what overflowed the bed.
                 placement_kw = _rearranged_group_placement(src, manifest, group, int(st['bed_mm'][0]),
                                                            brim=brim_override)
-            report = export_single_color_plate(src, plate, decisions, group['part_keys'], bed=int(st['bed_mm'][0]), slot_colors=st.get('ifs_slots') or {}, **placement_kw)
+            report = export_single_color_plate(src, plate, decisions, group['part_keys'], bed=int(st['bed_mm'][0]), slot_colors=st.get('filament_slots') or {}, **placement_kw)
             slice_dir = work / 'sliced' / 'orca' / uuid.uuid4().hex
             out, provenance, configs = slice_model(plate, slice_dir, st, brim_override, preserve_layout=True, filament_slot=group['slot'], **({'supports': supports} if supports is not None else {}))
             # Keep the plate's physical IFS slot explicit. Orca may retain
             # project-wide unused filament_type entries although all geometry
             # is remapped to logical T0 on this single-color derivative.
-            material = st.get('ifs_slots', {}).get(str(group['slot']), {}).get('material')
+            material = st.get('filament_slots', {}).get(str(group['slot']), {}).get('material')
             if not material:
                 raise RuntimeError(f"derived plate physical IFS slot {group['slot']} has no verified material")
             finalize_multicolor(out, None, st, {'0': group['slot']})
@@ -5074,7 +5074,7 @@ def prepare_first_layer(slot, color, material, spoolman_id, slicer="orca"):
     """Offline geometry + real slicer output. No printer contact or start permission."""
     st = printer_state.load()
     selection = {"slot": slot, "color": color, "material": material, "spoolman_id": spoolman_id}
-    mapped = st.get("ifs_slots", {}).get(str(slot), {})
+    mapped = st.get("filament_slots", {}).get(str(slot), {})
     if (mapped.get("spoolman_id") != spoolman_id or
             str(mapped.get("color", "")).casefold() != color.casefold() or
             str(mapped.get("material", "")).casefold() != material.casefold() or
@@ -5252,7 +5252,7 @@ def _announce_print_name(st, job, slots=None, gcode=None):
         return None
     colors = []
     for slot in slots or []:
-        row = (st.get("ifs_slots") or {}).get(str(slot)) or {}
+        row = (st.get("filament_slots") or {}).get(str(slot)) or {}
         label = " ".join(w.capitalize() for w in str(row.get("color") or "").split())
         if label and label not in colors:
             colors.append(label)
@@ -5408,7 +5408,7 @@ def intake_spool_weights(state, spool_ids, fetch=None):
 
     Display only. Never raises; an unreachable Spoolman just falls back.
     """
-    slots = {s.get('spoolman_id'): s for s in ((state or {}).get('ifs_slots') or {}).values()
+    slots = {s.get('spoolman_id'): s for s in ((state or {}).get('filament_slots') or {}).values()
              if isinstance(s, dict) and s.get('spoolman_id') is not None}
     weights = {}
     for sid in spool_ids:
@@ -5720,7 +5720,7 @@ def live_snapshot(st):
     try:
         tel=read_filament_telemetry(st); palette=tel.get("configured_palette")
         presence={}
-        try: presence=read_stock_ifs_slots(st)
+        try: presence=read_stock_filament_slots(st)
         except Exception: pass
         if isinstance(palette,list):
             snap["slots"]=[{"slot":p.get("ID"),"color":p.get("Color"),"material":p.get("Material"),
@@ -5851,11 +5851,11 @@ def print_mapped_native(g, st, mesh, mapping, job, job_path, wait_s, reprint):
     if screenless:
         occupancy = adapter.native.read_zmod_color_slots(status)
     else:
-        occupancy = read_stock_ifs_slots_from_detail(read_native())
+        occupancy = read_stock_filament_slots_from_detail(read_native())
     normalize_mapping = adapter.native.normalize_mapping
     mapped = normalize_mapping(mapping, st)
     for tool, slot in mapped.items():
-        expected = st['ifs_slots'][str(slot)]
+        expected = st['filament_slots'][str(slot)]
         matches = [item for item in configured if str(item.get('ID')) == str(slot)]
         # Family match (PLA == PLA+): the native slot label is coarser than Spoolman's material,
         # so an exact compare refused a correctly loaded PLA+ spool.
@@ -6035,8 +6035,8 @@ def remap_slot(target, new_slot, tool="0", state=None):
                 break
 
     slot_int = int(new_slot)
-    if slot_int not in range(1, IFS_SLOTS + 1):
-        raise ValueError(f"physical IFS slot must be an integer from 1 through {IFS_SLOTS}")
+    if slot_int not in range(1, FILAMENT_SLOTS + 1):
+        raise ValueError(f"physical IFS slot must be an integer from 1 through {FILAMENT_SLOTS}")
 
     selection = resolve_filament_selection(st, {"slot": slot_int})
 

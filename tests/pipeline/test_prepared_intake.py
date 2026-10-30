@@ -627,7 +627,7 @@ def test_intake_spool_projection_scales_by_copies_and_flags_shortfall():
 
 
 def test_intake_spool_weights_prefers_spoolman_then_slot_record_never_guesses():
-    st = {'ifs_slots': {'1': {'spoolman_id': 10, 'remaining_grams': 500},
+    st = {'filament_slots': {'1': {'spoolman_id': 10, 'remaining_grams': 500},
                         '3': {'spoolman_id': 12}}}
     assert model_job.intake_spool_weights(st, [10, 12]) == {10: 500.0}
     assert model_job.intake_spool_weights(st, [10, 12], lambda sid: {'remaining_weight': 321.5}) == {
@@ -649,7 +649,7 @@ def test_color_save_prompt_shows_spool_projection_and_estimate_before_print_choi
     monkeypatch.setattr(source_colors, 'inventory',
                         lambda path: {**real(path), 'filament_stats': {'total_g': 25, 'total_m': 8, 'extruders': {}}})
     st = state()
-    st['ifs_slots']['1']['remaining_grams'] = 200
+    st['filament_slots']['1']['remaining_grams'] = 200
     adapter = Adapter([1, 0, 2])  # one color, slot 1, stop with colors saved
     event = S(source=S(profile='3dprinting', chat_id='c1', thread_id=None, user_id='u'), message_id='spool1',
               text='https://www.printables.com/model/1-ghost')

@@ -27,7 +27,7 @@ _S = settings.current()
 TEMPLATES = _S['orca']['templates']
 BED = _S['printer']['bed_mm']
 MAX_HEIGHT_MM = _S['printer']['max_print_height_mm']
-IFS_SLOTS = _S['printer']['ifs_slots']
+FILAMENT_SLOTS = _S['printer']['filament_slots']
 NOZZLE_MM = _S['printer']['nozzle_diameter_mm']
 # PRINT_HANDY_ORCA_CMD selects a native OrcaSlicer binary without changing the home Flatpak default.
 # ORCA_FLATPAK_APP_ID selects a different installed Flatpak app while preserving that default.
@@ -625,7 +625,7 @@ def _sanitize_imported_settings(path, templates, slot_count, filament_profiles=(
         if replacement != previous:
             settings[key] = replacement
             changed[key] = [previous, replacement]
-    slot_count = max(1, min(int(slot_count), IFS_SLOTS))
+    slot_count = max(1, min(int(slot_count), FILAMENT_SLOTS))
     template_filament = json.loads(filament_template.read_text())
     per_slot_filament = tuple(key for key in template_filament if key.startswith('filament_') and not key.endswith('_settings_id'))
     for key in ('filament_z_hop_types', 'filament_wipe', 'filament_wipe_distance'):
@@ -1020,7 +1020,7 @@ def slice_model(source, folder, state, brim=None, first_layer=False, color_decis
     from .nozzle import get_nozzle_type_adjustments
     adj = get_nozzle_type_adjustments(nozzle_type)
     machine['nozzle_temperature_range_high'] = [str(int(adj['max_temperature_c']))]
-    slots = state.get('ifs_slots') or {}
+    slots = state.get('filament_slots') or {}
     if filament_slot is not None:
         slot = slots.get(str(filament_slot)) or slots.get(filament_slot)
         if not isinstance(slot, dict):
@@ -1136,7 +1136,7 @@ def slice_model(source, folder, state, brim=None, first_layer=False, color_decis
             data = copy.deepcopy(filament)
             position = tool + 1
             if tool in used:
-                record = state['ifs_slots'][str(position)]
+                record = state['filament_slots'][str(position)]
                 if active_material is not None and not same_material(record['material'], active_material):
                     raise RuntimeError('mixed material requires independently calibrated per-toolhead temperatures/density')
                 materials.append(record['material'])
@@ -1170,7 +1170,7 @@ def slice_model(source, folder, state, brim=None, first_layer=False, color_decis
         filament_paths = []
         from .filament_color import slot_hex
         for tool, physical_slot in mapping.items():
-            slot = state['ifs_slots'][str(physical_slot)]
+            slot = state['filament_slots'][str(physical_slot)]
             from .printer_state import same_material
             if not same_material(slot['material'], state['spool']['material']):
                 raise RuntimeError('mixed material requires independently calibrated per-slot temperatures/density')
@@ -1273,14 +1273,14 @@ def slice_model(source, folder, state, brim=None, first_layer=False, color_decis
     used_materials = []
     if mapped_profile and mapping:
         for tool, physical_slot in mapping.items():
-            slot = state.get('ifs_slots', {}).get(str(physical_slot))
+            slot = state.get('filament_slots', {}).get(str(physical_slot))
             if slot and slot.get('material'):
                 used_materials.append(slot['material'])
     if not used_materials:
         used_materials = filament.get('filament_type') or [state.get('spool', {}).get('material')]
     gate = pre_slice(bounds=bounds_xy, bed=bed, profile=effective_profile,
                      before_profile=None, filaments=len(filament_paths),
-                     ifs_slots=(int(printer.slot_count) if multi_tool else IFS_SLOTS), tool_slots=tool_slots,
+                     filament_slots=(int(printer.slot_count) if multi_tool else FILAMENT_SLOTS), tool_slots=tool_slots,
                      nozzle_type=nozzle_type, materials=used_materials,
                      nozzle_temp=effective_nozzle_temp, nozzle_temp_is_effective=True)
     if gate.status == 'blocked':
@@ -1504,7 +1504,7 @@ def slice_model(source, folder, state, brim=None, first_layer=False, color_decis
         finalize_zmod(output, filament['filament_colour'][0], state['spool']['material'], printer)
     result_path = folder / 'result.json'
     post_gate = post_slice(output, result_json=None if slicer != 'OrcaSlicer' else (result_path if result_path.is_file() else None),
-                           bed=bed, ifs_slots=(int(printer.slot_count) if multi_tool else IFS_SLOTS), tool_slots=tool_slots,
+                           bed=bed, filament_slots=(int(printer.slot_count) if multi_tool else FILAMENT_SLOTS), tool_slots=tool_slots,
                            templates=templates, profile_paths=filament_paths,
                            envelope=printer.motion_envelope_mm)
     # Each vendor runs only its own start code: e.g. no Klipper/ZMod macro reaches a Bambu Lab printer.

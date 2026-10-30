@@ -22,6 +22,6 @@ MODEL = PrinterModel(
     supported_nozzle_sizes=(0.4,),
     settings={"printer": {
         "name": "Anycubic Kobra Max (OctoPrint)", "bed_mm": [400.0, 400.0], "max_print_height_mm": 450.0,
-        "nozzle_diameter_mm": 0.4, "ifs_slots": 1,
+        "nozzle_diameter_mm": 0.4, "filament_slots": 1,
     }},
 )

@@ -198,16 +198,17 @@ def test_bambu_output_still_fails_the_same_post_slice_gate(tmp_path, monkeypatch
 
 
 def test_absent_orca_slice_refuses_before_fallback_or_output(tmp_path, monkeypatch):
-    from print_handy.core.slice_failure import SliceFailure
+    from print_handy.core import slice_failure
     missing = str(tmp_path / 'no-orca-executable')
     monkeypatch.setattr(adapter, 'ORCA_COMMAND', [missing])
     # Otherwise taskset itself starts successfully and reports an exit code for
     # the missing child instead of Popen raising FileNotFoundError.
     monkeypatch.setattr(adapter.resources, 'slicer_command', lambda command: command)
     with patch('urllib.request.urlopen', side_effect=AssertionError('network fallback')):
-        with pytest.raises(SliceFailure, match='no-orca-executable') as info:
+        with pytest.raises(FileNotFoundError, match='no-orca-executable') as info:
             adapter.slice_model(_source(tmp_path), tmp_path / 'out', _state())
-    assert info.value.kind == 'launch'
+    assert 'could not be opened' in slice_failure.post(info.value)
+    assert not slice_failure.explain(info.value).retryable
     assert not list((tmp_path / 'out').glob('*.gcode'))
 
 

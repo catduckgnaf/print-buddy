@@ -835,7 +835,9 @@ def _run_slicer(command, name, folder):
             except OSError:
                 logger.warning('Could not save partial %s timeout output', name, exc_info=True)
         kept = _keep_failure_logs(folder)
-        if isinstance(exc, resources.ResourceLimitError):
+        # Keep the existing missing-executable API: callers may distinguish it
+        # from a failed engine run. The worker protocol preserves this type too.
+        if isinstance(exc, (resources.ResourceLimitError, FileNotFoundError)):
             raise
         kind = 'timeout' if isinstance(exc, subprocess.TimeoutExpired) else 'launch'
         raise SliceFailure(f'{name} did not complete: {exc}; logs: {kept}',

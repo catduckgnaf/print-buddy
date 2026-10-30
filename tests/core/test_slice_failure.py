@@ -124,6 +124,15 @@ def test_configuration_error_remains_nonretryable_after_worker_roundtrip():
     assert not slice_failure.explain(back).retryable
 
 
+def test_missing_executable_preserves_exception_api_and_helpful_worker_message():
+    back = worker_errors.decode(json.loads(json.dumps(worker_errors.encode(FileNotFoundError('SECRET path')))))
+    assert isinstance(back, FileNotFoundError)
+    assert 'could not be opened' in slice_failure.post(back)
+    assert '/print-handy debugging' in slice_failure.post(back)
+    assert 'SECRET' not in slice_failure.post(back)
+    assert not slice_failure.explain(back).retryable
+
+
 def test_failed_retry_keeps_new_known_cause_remedy():
     post = slice_failure.post(ResourceLimitError('container is at its process limit SECRET'), retry_failed=True)
     assert 'The one retry also failed' in post and '--pids-limit' in post

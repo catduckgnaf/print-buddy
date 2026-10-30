@@ -57,7 +57,7 @@ services:
   stock_api_port: 8898
 printer:
   # Override with PRINT_HANDY__PRINTER__MODEL=sovol.sv06 etc.
-  model: flashforge.ad5x
+  model: klipper.generic
 spool:
   # Ask for brand/vendor in the new-spool walkthrough (#512); off by default.
   prompt_brand: false

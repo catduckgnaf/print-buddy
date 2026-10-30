@@ -19,6 +19,7 @@ from . import mesh_fast, resources
 from .compact_geometry import IndexedTriangles
 from . import slice_guard as sg
 from .slice_guard import pre_slice, post_slice
+from .slice_failure import SliceFailure
 
 logger = logging.getLogger(__name__)
 
@@ -820,9 +821,27 @@ def _run_slicer(command, name, folder):
         # Docker image's /app is not). The folder is also where _keep_failure_logs
         # already collects 00000.log from.
         result = _spawn_slicer(command, timeout=600, cwd=folder)
-    except (subprocess.TimeoutExpired, OSError, resources.ResourceLimitError):
+    except (subprocess.TimeoutExpired, OSError, resources.ResourceLimitError) as exc:
         logger.exception('%s did not complete after %.1fs', name, time.monotonic() - started)
-        raise
+        # Preserve partial output before background-slice cleanup removes the work
+        # folder. Resource limits retain their own, more specific explanation.
+        if isinstance(exc, subprocess.TimeoutExpired):
+            def decoded(value):
+                return value.decode(errors='replace') if isinstance(value, bytes) else (value or '')
+            filename = {'OrcaSlicer': 'orca.log', 'Bambu Studio': 'bambu.log',
+                        'Flash Studio': 'flash-studio.log'}[name]
+            try:
+                (folder / filename).write_text(decoded(exc.stdout) + decoded(exc.stderr))
+            except OSError:
+                logger.warning('Could not save partial %s timeout output', name, exc_info=True)
+        kept = _keep_failure_logs(folder)
+        # Keep the existing missing-executable API: callers may distinguish it
+        # from a failed engine run. The worker protocol preserves this type too.
+        if isinstance(exc, (resources.ResourceLimitError, FileNotFoundError)):
+            raise
+        kind = 'timeout' if isinstance(exc, subprocess.TimeoutExpired) else 'launch'
+        raise SliceFailure(f'{name} did not complete: {exc}; logs: {kept}',
+                           kind=kind, slicer=name) from exc
     level = logging.WARNING if result.returncode else logging.INFO
     logger.log(level, '%s run finished rc=%s in %.1fs', name, result.returncode, time.monotonic() - started)
     if result.returncode:
@@ -1185,7 +1204,8 @@ def slice_model(source, folder, state, brim=None, first_layer=False, color_decis
         cols = max(1, int((float(bed_x) + 10) // (width + 10)))
         rows = (count + cols - 1) // cols
         if rows * (depth + 10) > float(bed_y) + 10:
-            raise RuntimeError(f'{count} copies of {width:g}x{depth:g} mm do not fit the printer bed')
+            raise SliceFailure(f'{count} copies of {width:g}x{depth:g} mm do not fit the printer bed',
+                               kind='layout')
         shifts = []
         for index in range(count):
             col, row = index % cols, index // cols
@@ -1264,7 +1284,7 @@ def slice_model(source, folder, state, brim=None, first_layer=False, color_decis
                      nozzle_type=nozzle_type, materials=used_materials,
                      nozzle_temp=effective_nozzle_temp, nozzle_temp_is_effective=True)
     if gate.status == 'blocked':
-        raise RuntimeError('Pre-slice guard blocked: ' + '; '.join(gate.blocked))
+        raise SliceFailure('Pre-slice guard blocked: ' + '; '.join(gate.blocked), kind='guard')
     # Unknown placement is advisory, never a false block.
     if bounds_xy is None:
         gate.warn('Placed mesh bounds are unavailable; adapter did not block on geometry bounds.')
@@ -1307,8 +1327,9 @@ def slice_model(source, folder, state, brim=None, first_layer=False, color_decis
         result = _run_slicer(command, 'Flash Studio', folder)
         (folder / 'flash-studio.log').write_text(result.stdout + result.stderr)
         if result.returncode or not output.is_file() or output.stat().st_size == 0:
-            raise RuntimeError(f'Flash Studio slicing failed ({result.returncode}) or produced no G-code; '
-                               f'see {_keep_failure_logs(folder) / "flash-studio.log"}')
+            raise SliceFailure(f'Flash Studio slicing failed ({result.returncode}) or produced no G-code; '
+                               f'see {_keep_failure_logs(folder) / "flash-studio.log"}',
+                               kind='engine', slicer='Flash Studio', returncode=result.returncode)
     else:
         result = _run_slicer(command, 'OrcaSlicer', folder)
         (folder / 'orca.log').write_text(result.stdout + result.stderr)
@@ -1359,11 +1380,14 @@ def slice_model(source, folder, state, brim=None, first_layer=False, color_decis
                                          or output.stat().st_size == 0)
     if orca_failed and not bambu_allowed:
         details = _orca_failure_details(folder)
-        raise RuntimeError(f'Orca slicing failed ({result.returncode}) or no G-code output{details}; '
-                           f'see {_keep_failure_logs(folder) / "orca.log"}')
+        raise SliceFailure(f'Orca slicing failed ({result.returncode}) or no G-code output{details}; '
+                           f'see {_keep_failure_logs(folder) / "orca.log"}',
+                           kind='conflict' if _orca_conflict(folder) else 'engine',
+                           slicer='OrcaSlicer', returncode=result.returncode)
     if primary == 'flash_studio' and (result.returncode or not output.is_file() or output.stat().st_size == 0):
-        raise RuntimeError(f'Flash Studio slicing failed ({result.returncode}) or produced no G-code; '
-                           f'see {_keep_failure_logs(folder) / "flash-studio.log"}')
+        raise SliceFailure(f'Flash Studio slicing failed ({result.returncode}) or produced no G-code; '
+                           f'see {_keep_failure_logs(folder) / "flash-studio.log"}',
+                           kind='engine', slicer='Flash Studio', returncode=result.returncode)
     if primary == 'bambu_studio' or orca_failed:
         # Only an actual Orca execution failure (or the opt-in Bambu Studio primary) reaches this
         # branch. All Print Handy validation and placement refusals above remain fail-closed and
@@ -1433,13 +1457,15 @@ def slice_model(source, folder, state, brim=None, first_layer=False, color_decis
         (folder / 'bambu.log').write_text(bambu_result.stdout + bambu_result.stderr)
         if bambu_result.returncode or not output.is_file() or output.stat().st_size == 0:
             if primary == 'bambu_studio':
-                raise RuntimeError(
+                raise SliceFailure(
                     f'Bambu Studio is the configured slicer; Bambu Studio failed ({bambu_result.returncode}) '
-                    f'or produced no G-code; see {_keep_failure_logs(folder) / "bambu.log"}'
+                    f'or produced no G-code; see {_keep_failure_logs(folder) / "bambu.log"}',
+                    kind='engine', slicer='Bambu Studio', returncode=bambu_result.returncode
                 )
-            raise RuntimeError(
+            raise SliceFailure(
                 f'{orca_failure}; {bambu_role} failed ({bambu_result.returncode}) or produced no G-code; '
-                + f'see {_keep_failure_logs(folder) / "bambu.log"}'
+                + f'see {_keep_failure_logs(folder) / "bambu.log"}', kind='engine',
+                slicer='OrcaSlicer and Bambu Studio', returncode=bambu_result.returncode
             )
         if primary == 'bambu_studio':
             configs.extend([bambu_machine, bambu_process, *bambu_filaments])
@@ -1460,9 +1486,10 @@ def slice_model(source, folder, state, brim=None, first_layer=False, color_decis
     generator = sg.generator_identity(text)
     if generator is None or (primary == 'flash_studio' and not generator.startswith('Flash Studio')):
         if primary == 'flash_studio':
-            raise RuntimeError('Flash Studio did not generate recognized G-code; see '
-                               f'{_keep_failure_logs(folder) / "flash-studio.log"}')
-        raise RuntimeError(f'output is not generated by {slicer}')
+            raise SliceFailure('Flash Studio did not generate recognized G-code; see '
+                               f'{_keep_failure_logs(folder) / "flash-studio.log"}',
+                               kind='output', slicer=slicer)
+        raise SliceFailure(f'output is not generated by {slicer}', kind='output', slicer=slicer)
     if multi_tool:
         # No finalize: Orca's output already addresses the toolheads
         # directly, and a multi_tool printer has no native slot contract (#346).
@@ -1492,11 +1519,12 @@ def slice_model(source, folder, state, brim=None, first_layer=False, color_decis
     baseline_gate = (sg.enforce_approved_baseline(output, **baseline_kw)
                      if output.stat().st_size > 1000 else sg.Result())
     if baseline_gate.status == 'blocked':
-        raise RuntimeError('Post-slice protected-settings guard blocked: ' + '; '.join(baseline_gate.blocked))
+        raise SliceFailure('Post-slice protected-settings guard blocked: ' + '; '.join(baseline_gate.blocked),
+                           kind='guard')
     if baseline_gate.warnings:
         post_gate.warn(*baseline_gate.warnings)
     if post_gate.status == 'blocked':
-        raise RuntimeError('Post-slice guard blocked: ' + '; '.join(post_gate.blocked))
+        raise SliceFailure('Post-slice guard blocked: ' + '; '.join(post_gate.blocked), kind='guard')
     warnings = gate.warnings + post_gate.warnings + baseline_gate.warnings
     return output, {'tool_mapping': mapping, 'source_sha256': digest(source), 'gcode_sha256': digest(output),
                     'config_sha256': {str(p): digest(p) for p in configs}, 'geometry': geometry,

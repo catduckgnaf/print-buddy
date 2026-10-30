@@ -198,7 +198,7 @@ What changed, surface by surface:
 
 | Surface | Before → after |
 | --- | --- |
-| Slicing failure (prepared intake) | `Slicing failed: {raw error}` → "Slicing this model did not work. No G-code was kept, and nothing was uploaded or started. Retry once from the saved model?" + `Reference: PH_SLICING_*`; the raw error stays in the receipt and log |
+| Slicing failure (prepared intake) | Names the failed slicer (including a failed fallback), timeout, process limit, copy placement, changed job, or safety check and gives a specific next step. An unidentified cause says so and points to `/print-handy bundle`. Every failed retry retains its reason, reference and diagnostics step. Raw errors stay in the receipt and logs. |
 | Deterministic slice refusal (prepared intake) | A `SliceRefusal` (`print_handy/core/slice_refusal.py`) says the reason in plain words — e.g. "Slot 1 (Matte white PLA) was never confirmed as loaded, so I have not sliced yet … Is Matte white PLA loaded in slot 1?" — classified `configuration` (`Reference: PH_SLICING_CONFIGURATION`, never `*_UNKNOWN`). Where a safe fix exists it is the button ("Yes, slot 1 has it: slice"), applied before the one re-slice; with no safe fix the post explains and offers no retry. An exception may declare its own category with a `diagnostic_category` attribute, which `classify` honors |
 | Backup-slicer notice | `Bambu Studio sliced it because OrcaSlicer failed: {reason}` → "Sliced with the backup slicer (Bambu Studio) because the main slicer could not slice this model."; the reason is logged |
 | Fit / resize checks unverified | trailing raw exception → plain unverified wording + resume step + marker |

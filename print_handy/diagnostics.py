@@ -152,7 +152,8 @@ def known_cause(exc: BaseException) -> KnownCause | None:
     low = text.lower()
     # The container's PID limit (print_handy.core.resources). Matched on the stable phrase as well as
     # the type, because a worker process reports its failure to the parent as message text only.
-    if type(exc).__name__ == "ResourceLimitError" or _PID_LIMIT_PHRASE in low:
+    error_type = getattr(exc, 'worker_error_type', type(exc).__name__)
+    if error_type == "ResourceLimitError" or _PID_LIMIT_PHRASE in low:
         return KnownCause(
             Category.CONFIGURATION,
             "The container hit its process limit (PID limit), so the slicer or a worker "
@@ -189,7 +190,7 @@ def known_cause(exc: BaseException) -> KnownCause | None:
                 f"Set up the {credential} — see \"{section}\" in "
                 "docs/PROJECT-REFERENCE.md. Until it is in place, "
                 f"{site} links cannot be fetched.")
-    if type(exc).__name__ == "SpoolmanUnavailable":
+    if error_type == "SpoolmanUnavailable":
         if "not configured" in low:
             return KnownCause(
                 Category.CONFIGURATION,
@@ -236,6 +237,13 @@ def classify(exc: BaseException, *, category: Category | None = None) -> Categor
             return Category.TRANSIENT
     if isinstance(exc, (TimeoutError, ConnectionError)):
         return Category.TRANSIENT
+    # subprocess timeouts are not TimeoutError subclasses. Workers serialize this
+    # category so the parent does not silently turn a timeout into *_UNKNOWN.
+    import subprocess
+    if isinstance(exc, subprocess.TimeoutExpired):
+        return Category.TRANSIENT
+    if isinstance(exc, (TypeError, AttributeError, AssertionError, NameError, ImportError)):
+        return Category.PROGRAMMING
     if isinstance(exc, OSError):
         return Category.TRANSIENT if exc.errno in TRANSIENT_ERRNOS else Category.UNKNOWN
     return Category.UNKNOWN

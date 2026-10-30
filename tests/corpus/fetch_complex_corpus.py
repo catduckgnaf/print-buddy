@@ -79,7 +79,7 @@ CASE_CLICKS = {
         # this rule only answers if the fit question comes back.
         {"question": "bed full size", "button": "rearrange 1 plate"},
         # On a failed slice, stop rather than retry so the receipt keeps the error.
-        {"question": "Slicing this model did not work", "button": "Cancel"},
+        {"question": "No G-code was kept", "button": "Cancel"},
     ],
 }
 # Verified 2026-10-27 (mock-tier flow runs): these three cases exceed the

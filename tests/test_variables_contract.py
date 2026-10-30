@@ -33,8 +33,8 @@ verdict here), "#286" is the Web UI catalog stage whose secret-name rule
 excludes *_env / token keys from the catalog on purpose, "#524" retired the
 two discord keys (kept so existing configs still load), and "PR #655" is the
 settings-wiring fix that gives services.camera_source a consumer and the
-[notify] MQTT keys their Web UI fields — when it merges, those entries go
-stale and must be removed.
+[notify] MQTT keys their Web UI fields. Exemptions resolved by that merged
+change have been removed; the stale-entry check remains enforced.
 """
 import re
 import unittest
@@ -51,20 +51,15 @@ ROOT = settings.ROOT
 # ---------------------------------------------------------------------------
 EXEMPTIONS = {
     ("agent", "api_key_env"): (frozenset({"webui"}), "#286"),
-    ("agent", "chat_url"): (frozenset({"webui"}), "#657"),
-    ("agent", "model"): (frozenset({"webui"}), "#657"),
     ("agent", "timeout_s"): (frozenset({"webui"}), "#657"),
     ("bambu", "command"): (frozenset({"webui"}), "#657"),
     ("bambu", "lan_access_code_env"): (frozenset({"webui"}), "#286"),
-    ("bambu", "lan_serial"): (frozenset({"webui"}), "#657"),
     ("bambu", "start_confirm_s"): (frozenset({"webui"}), "#657"),
     ("bot", "health_port"): (frozenset({"webui"}), "#657"),
     ("bot", "health_stale_s"): (frozenset({"webui"}), "#657"),
     ("bot", "sync_commands"): (frozenset({"webui"}), "#657"),
     ("design", "api_key_env"): (frozenset({"webui"}), "#286"),
-    ("design", "chat_url"): (frozenset({"webui"}), "#657"),
     ("design", "enabled"): (frozenset({"webui"}), "#657"),
-    ("design", "model"): (frozenset({"webui"}), "#657"),
     ("design", "repair_attempts"): (frozenset({"webui"}), "#657"),
     ("design", "timeout_s"): (frozenset({"webui"}), "#657"),
     ("discord", "bot_name"): (frozenset({"webui"}), "#657"),
@@ -83,14 +78,11 @@ EXEMPTIONS = {
     ("layout", "merge_spacing_mm"): (frozenset({"webui"}), "#657"),
     ("layout", "multi_copy_edge_mm"): (frozenset({"webui"}), "#657"),
     ("layout", "single_copy_edge_mm"): (frozenset({"webui"}), "#657"),
-    ("layout", "spacing"): (frozenset({"webui"}), "#657"),
     ("listener", "ifs_presence_poll_s"): (frozenset({"webui"}), "#657"),
     ("listener", "spool_nag_s"): (frozenset({"webui"}), "#657"),
     ("listener", "start_claim_ttl_s"): (frozenset({"webui"}), "#657"),
     ("listener", "tick_s"): (frozenset({"webui"}), "#657"),
     ("llm", "api_key_env"): (frozenset({"webui"}), "#286"),
-    ("llm", "chat_url"): (frozenset({"webui"}), "#657"),
-    ("llm", "model"): (frozenset({"webui"}), "#657"),
     ("llm", "timeout_s"): (frozenset({"webui"}), "#657"),
     ("logging", "file"): (frozenset({"webui"}), "#657"),
     ("logging", "levels"): (frozenset({"webui"}), "#657"),
@@ -100,11 +92,6 @@ EXEMPTIONS = {
     ("matrix", "access_token_env"): (frozenset({"webui"}), "#286"),
     ("matrix", "bot_user_id"): (frozenset({"webui"}), "#657"),
     ("matrix", "upload_max_bytes"): (frozenset({"webui"}), "#657"),
-    ("notify", "mqtt_enabled"): (frozenset({"webui"}), "PR #655"),
-    ("notify", "mqtt_host"): (frozenset({"webui"}), "PR #655"),
-    ("notify", "mqtt_port"): (frozenset({"webui"}), "PR #655"),
-    ("notify", "mqtt_topic"): (frozenset({"webui"}), "PR #655"),
-    ("notify", "mqtt_username"): (frozenset({"webui"}), "PR #655"),
     ("orca", "command"): (frozenset({"webui"}), "#657"),
     ("orca", "templates"): (frozenset({"webui"}), "#657"),
     ("paths", "archive"): (frozenset({"webui"}), "#657"),
@@ -131,14 +118,12 @@ EXEMPTIONS = {
     ("printer", "tool_count"): (frozenset({"webui"}), "#657"),
     ("printer", "vendor"): (frozenset({"webui"}), "#657"),
     ("prusa", "api_key_env"): (frozenset({"webui"}), "#286"),
-    ("services", "camera_source"): (frozenset({"consumer"}), "PR #655"),
     ("services", "moonraker_ws_url"): (frozenset({"webui"}), "#657"),
     ("services", "openviking_url"): (frozenset({"webui"}), "#657"),
     ("services", "stock_api_port"): (frozenset({"webui"}), "#657"),
     ("slicer", "flash_studio_path"): (frozenset({"webui"}), "#657"),
     ("telegram", "token_env"): (frozenset({"webui"}), "#286"),
     ("telegram", "upload_max_bytes"): (frozenset({"webui"}), "#657"),
-    ("timelapse", "capture_enabled"): (frozenset({"webui"}), "#657"),
     ("timelapse", "capture_encoder"): (frozenset({"webui"}), "#657"),
     ("timelapse", "capture_interval_s"): (frozenset({"webui"}), "#657"),
     ("timelapse", "capture_max_bytes"): (frozenset({"webui"}), "#657"),

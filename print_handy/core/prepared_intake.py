@@ -379,11 +379,8 @@ async def _heavy(func, *args, **kwargs):
         detail = err.decode(errors="replace")[-400:].strip() or 'it stopped without reporting why (killed or crashed)'
         raise RuntimeError(f'{name} worker failed: {detail}') from None
     if not reply.get('ok'):
-        if isinstance(reply.get('refusal'), dict):
-            from .slice_refusal import from_dict
-            raise from_dict(reply['refusal'])
-        exc = {'ValueError': ValueError, 'FileNotFoundError': FileNotFoundError}.get(reply.get('type'), RuntimeError)
-        raise exc(reply.get('error'))
+        from .worker_errors import decode
+        raise decode(reply)
     return Path(reply['result']) if reply.get('path') else reply['result']
 
 
@@ -2252,6 +2249,7 @@ async def prepare_link(event, adapter, state, root, timeout=None, reuse=None, pr
             # A deterministic refusal says why in plain words and offers its
             # one safe fix instead of a blind retry that would fail the same way.
             from . import slice_refusal
+            from . import slice_failure
             refusal = slice_refusal.explain(slice_error)
             if refusal is not None and not refusal.fix:
                 await adapter.send(chat_id=source.chat_id, metadata=metadata, content=diagnostics.plain_post(
@@ -2263,10 +2261,10 @@ async def prepare_link(event, adapter, state, root, timeout=None, reuse=None, pr
                                                 subsystem='slicing', exc=slice_error)
                 labels = [refusal.fix_label, 'No, cancel']
             else:
-                prompt = diagnostics.plain_post('Slicing this model did not work.',
-                                                not_happened='No G-code was kept, and nothing was uploaded or started.',
-                                                next_step='Retry once from the saved model?',
-                                                subsystem='slicing', exc=slice_error)
+                prompt = slice_failure.post(slice_error)
+                if not slice_failure.explain(slice_error).retryable:
+                    await adapter.send(chat_id=source.chat_id, metadata=metadata, content=prompt)
+                    return {'action': 'skip', 'reason': 'slice failed: ' + str(slice_error)}
                 labels = ['Retry slice once (no print)', 'Cancel']
             retry = await _ask(adapter, source, key, prompt, labels, timeout)
             if retry == 0 and refusal is not None:
@@ -2319,7 +2317,7 @@ async def prepare_link(event, adapter, state, root, timeout=None, reuse=None, pr
                                                     not_happened='Nothing was sliced, uploaded or started.',
                                                     next_step=again.next_step, subsystem='slicing',
                                                     exc=retry_error) if again is not None else
-                             'The one retry also failed. No G-code was retained; nothing was uploaded or started.'),
+                             slice_failure.post(retry_error, retry_failed=True)),
                     metadata=metadata)
                 return {'action': 'skip', 'reason': 'slice retry failed'}
         mj._timing(jp, 'intake_slice_returned')

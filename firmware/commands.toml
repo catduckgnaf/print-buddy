@@ -15,11 +15,11 @@ name = "START_PRINT"
 aliases = ["start print", "zmod start", "ad5x start macro"]
 firmware = "zmod"
 kind = "macro"
-printers = ["flashforge.ad5x"]
+printers = ["flashforge.ad5x", "flashforge.ad5m", "flashforge.ad5m_pro", "flashforge.creator5", "flashforge.creator5_pro"]
 command = "START_PRINT BED_TEMP=<bed C> EXTRUDER_TEMP=<nozzle C> MESH=<mesh profile>"
-description = "ZMod start macro on the AD5X. Owns heating, homing and mesh loading for the job; the slicer template emits it and Print Handy checks the temperatures and MESH= argument against the job instead of inventing its own startup."
+description = "ZMod start macro on the ZMod Flashforge models (AD5X, AD5M, AD5M Pro, Creator 5, Creator 5 Pro). Owns heating, homing and mesh loading for the job; the slicer template emits it and Print Handy checks the temperatures and MESH= argument against the job instead of inventing its own startup."
 safety = "Heats the nozzle and bed and moves the toolhead. Only ever runs as part of a confirmed print start, never from a lookup."
-notes = "An explicit Z_OFFSET argument is not part of the normal flow; the saved or native-screen offset is the authority (see docs/AD5X-CONTRACT.md)."
+notes = "An explicit Z_OFFSET argument is not part of the normal flow; the saved or native-screen offset is the authority (see docs/AD5X-CONTRACT.md). Scope: Print Handy's Orca templates emit this exact START_PRINT line for all five ZMod models (print_handy/templates/orca/flashforge_*); the AD5X-specific authority rules in the notes live in docs/AD5X-CONTRACT.md."
 
 [[entry]]
 id = "zmod.end-print"
@@ -27,10 +27,11 @@ name = "END_PRINT"
 aliases = ["end print", "zmod end"]
 firmware = "zmod"
 kind = "macro"
-printers = ["flashforge.ad5x"]
+printers = ["flashforge.ad5x", "flashforge.ad5m", "flashforge.ad5m_pro", "flashforge.creator5", "flashforge.creator5_pro"]
 command = "END_PRINT"
-description = "ZMod end macro emitted by the AD5X Orca template: turns heaters off and parks the toolhead at the end of a job."
+description = "ZMod end macro emitted by the ZMod models' Orca templates: turns heaters off and parks the toolhead at the end of a job."
 safety = "Runs only as the tail of a sliced job."
+notes = "Scope: Print Handy's Orca templates emit END_PRINT for all five ZMod models (print_handy/templates/orca/flashforge_*)."
 
 [[entry]]
 id = "zmod.change-zcolor"
@@ -82,11 +83,11 @@ name = "COLDPULL"
 aliases = ["cold pull", "zmod cold pull", "nozzle cold pull"]
 firmware = "zmod"
 kind = "macro"
-printers = ["flashforge.ad5x"]
+printers = ["flashforge.ad5x", "flashforge.ad5m", "flashforge.ad5m_pro"]
 command = "COLDPULL"
 description = "ZMod's interactive cold pull on the AD5X. It asks which material is loaded (a prompt on the screen/client), heats and loads that material, then cools to the material's pull temperature so the operator can pull the filament out by hand and take the nozzle plug with it. Print Handy's guided /print-coldpull is a separate flow; this entry describes the macro ZMod itself ships."
 safety = "Heats the nozzle to full printing temperature and extrudes before cooling. The pull itself is a hand action at the printer while the nozzle is still warm; never run it unattended."
-notes = "Source: ghzserg/zmod_ff5x@5409ffe7ffee572219837fbd0d7de381469537f6, en/base.cfg (shipped AD5X config set). Generic firmware knowledge from the shipped config, not verified on a Print Handy printer."
+notes = "Source: ghzserg/zmod_ff5x@5409ffe7ffee572219837fbd0d7de381469537f6, en/base.cfg (shipped AD5X config set). Generic firmware knowledge from the shipped config, not verified on a Print Handy printer. Scope extended to the AD5M models, which ship the same zmod_ff5x base.cfg."
 
 [[entry]]
 id = "zmod.load-filament"
@@ -94,11 +95,11 @@ name = "LOAD_FILAMENT"
 aliases = ["load filament zmod", "zmod load", "feed filament zmod"]
 firmware = "zmod"
 kind = "macro"
-printers = ["flashforge.ad5x"]
+printers = ["flashforge.ad5x", "flashforge.ad5m", "flashforge.ad5m_pro"]
 command = "LOAD_FILAMENT EXTRUDE_LEN=<mm> EXTRUDER_TEMP=<nozzle C>"
 description = "Heats the nozzle (the default target is the temperature ZMod's filament-change flow last stored) and extrudes EXTRUDE_LEN of filament (125 mm built-in default) into the extruder. It is the load half of ZMod's filament-change prompts and of LOAD_MATERIAL."
 safety = "Extrudes at full temperature; molten filament leaves the nozzle. Keep hands clear and give the purge somewhere to go."
-notes = "Source: ghzserg/zmod_ff5x@5409ffe7ffee572219837fbd0d7de381469537f6, en/base.cfg. Generic firmware knowledge from the shipped config, not verified on a Print Handy printer."
+notes = "Source: ghzserg/zmod_ff5x@5409ffe7ffee572219837fbd0d7de381469537f6, en/base.cfg. Generic firmware knowledge from the shipped config, not verified on a Print Handy printer. Scope extended to the AD5M models, which ship the same zmod_ff5x base.cfg."
 
 [[entry]]
 id = "zmod.unload-filament"
@@ -106,11 +107,11 @@ name = "UNLOAD_FILAMENT"
 aliases = ["unload filament zmod", "zmod unload", "retract filament zmod"]
 firmware = "zmod"
 kind = "macro"
-printers = ["flashforge.ad5x"]
+printers = ["flashforge.ad5x", "flashforge.ad5m", "flashforge.ad5m_pro"]
 command = "UNLOAD_FILAMENT"
 description = "Heats the nozzle to the stored filament-change temperature and retracts the filament out of the extruder (75 mm built-in default distance). The unload half of ZMod's filament-change prompts; LOAD_FILAMENT is the reverse."
 safety = "Heats the nozzle to full temperature first. Wait for the retract to finish before pulling the filament free by hand."
-notes = "Source: ghzserg/zmod_ff5x@5409ffe7ffee572219837fbd0d7de381469537f6, en/base.cfg. Generic firmware knowledge from the shipped config, not verified on a Print Handy printer."
+notes = "Source: ghzserg/zmod_ff5x@5409ffe7ffee572219837fbd0d7de381469537f6, en/base.cfg. Generic firmware knowledge from the shipped config, not verified on a Print Handy printer. Scope extended to the AD5M models, which ship the same zmod_ff5x base.cfg."
 
 [[entry]]
 id = "zmod.load-material"
@@ -118,11 +119,11 @@ name = "LOAD_MATERIAL"
 aliases = ["load material", "manual filament change zmod", "change material zmod"]
 firmware = "zmod"
 kind = "macro"
-printers = ["flashforge.ad5x"]
+printers = ["flashforge.ad5x", "flashforge.ad5m", "flashforge.ad5m_pro"]
 command = "LOAD_MATERIAL"
 description = "ZMod's manual filament load/change routine: it saves the current heater state and walks the operator through selecting and loading material with on-screen prompts, using the LOAD_FILAMENT and UNLOAD_FILAMENT paths underneath."
 safety = "Heats and extrudes as part of the guided change. Stay at the printer and answer its prompts; do not start it remotely and walk away."
-notes = "Source: ghzserg/zmod_ff5x@5409ffe7ffee572219837fbd0d7de381469537f6, en/base.cfg. Generic firmware knowledge from the shipped config, not verified on a Print Handy printer."
+notes = "Source: ghzserg/zmod_ff5x@5409ffe7ffee572219837fbd0d7de381469537f6, en/base.cfg. Generic firmware knowledge from the shipped config, not verified on a Print Handy printer. Scope extended to the AD5M models, which ship the same zmod_ff5x base.cfg."
 
 [[entry]]
 id = "zmod.clear-nozzle"
@@ -130,11 +131,11 @@ name = "CLEAR_NOZZLE"
 aliases = ["clear nozzle", "nozzle cleaning zmod", "wipe nozzle zmod"]
 firmware = "zmod"
 kind = "macro"
-printers = ["flashforge.ad5x"]
+printers = ["flashforge.ad5x", "flashforge.ad5m", "flashforge.ad5m_pro"]
 command = "CLEAR_NOZZLE EXTRUDER_TEMP=<nozzle C> BED_TEMP=<bed C>"
 description = "ZMod's nozzle-cleaning routine: heats nozzle and bed (built-in defaults 230 C and 80 C) and runs its cleaning moves, then turns nozzle control off. Print Handy's AD5X preparation flows rely on ZMod cleaning as part of mesh and start preparation; this is the operator-facing name for the same routine."
 safety = "Heats both heaters and moves the toolhead against the cleaning surface. Keep the bed area clear and hands away while it runs."
-notes = "Source: ghzserg/zmod_ff5x@5409ffe7ffee572219837fbd0d7de381469537f6, en/base.cfg. Generic firmware knowledge from the shipped config, not verified on a Print Handy printer."
+notes = "Source: ghzserg/zmod_ff5x@5409ffe7ffee572219837fbd0d7de381469537f6, en/base.cfg. Generic firmware knowledge from the shipped config, not verified on a Print Handy printer. Scope extended to the AD5M models, which ship the same zmod_ff5x base.cfg."
 
 [[entry]]
 id = "zmod.set-extruder-slot"
@@ -154,11 +155,11 @@ name = "SET_ACTIVE_SPOOL"
 aliases = ["set active spool", "spoolman active spool", "active spool zmod"]
 firmware = "zmod"
 kind = "macro"
-printers = ["flashforge.ad5x"]
+printers = ["flashforge.ad5x", "flashforge.ad5m", "flashforge.ad5m_pro"]
 command = "SET_ACTIVE_SPOOL ID=<spool id>"
 description = "Tells Spoolman, through Moonraker's spoolman remote method, which spool is active so extrusion is charged to it. The macro ships in ZMod's base config; the same macro is part of the standard Klipper Spoolman integration, so other Klipper printers may define it too."
 safety = "No motion and no heating. A wrong ID silently charges filament usage to the wrong spool until it is corrected."
-notes = "Source: ghzserg/zmod_ff5x@5409ffe7ffee572219837fbd0d7de381469537f6, en/base.cfg. Generic firmware knowledge from the shipped config, not verified on a Print Handy printer."
+notes = "Source: ghzserg/zmod_ff5x@5409ffe7ffee572219837fbd0d7de381469537f6, en/base.cfg. Generic firmware knowledge from the shipped config, not verified on a Print Handy printer. Scope extended to the AD5M models, which ship the same zmod_ff5x base.cfg."
 
 [[entry]]
 id = "zmod.clear-active-spool"
@@ -166,11 +167,11 @@ name = "CLEAR_ACTIVE_SPOOL"
 aliases = ["clear active spool", "no active spool", "spoolman clear spool"]
 firmware = "zmod"
 kind = "macro"
-printers = ["flashforge.ad5x"]
+printers = ["flashforge.ad5x", "flashforge.ad5m", "flashforge.ad5m_pro"]
 command = "CLEAR_ACTIVE_SPOOL"
 description = "Clears Spoolman's active spool (sets it to none) through Moonraker's spoolman remote method, so extrusion is charged to nobody until the next SET_ACTIVE_SPOOL. Ships in ZMod's base config; the same macro is part of the standard Klipper Spoolman integration."
 safety = "No motion. While no spool is active, filament use is not recorded against any spool."
-notes = "Source: ghzserg/zmod_ff5x@5409ffe7ffee572219837fbd0d7de381469537f6, en/base.cfg. Generic firmware knowledge from the shipped config, not verified on a Print Handy printer."
+notes = "Source: ghzserg/zmod_ff5x@5409ffe7ffee572219837fbd0d7de381469537f6, en/base.cfg. Generic firmware knowledge from the shipped config, not verified on a Print Handy printer. Scope extended to the AD5M models, which ship the same zmod_ff5x base.cfg."
 
 [[entry]]
 id = "zmod.save-zmod-data"
@@ -178,11 +179,11 @@ name = "SAVE_ZMOD_DATA"
 aliases = ["save zmod data", "zmod settings", "save zmod settings"]
 firmware = "zmod"
 kind = "macro"
-printers = ["flashforge.ad5x"]
+printers = ["flashforge.ad5x", "flashforge.ad5m", "flashforge.ad5m_pro"]
 command = "SAVE_ZMOD_DATA <KEY>=<value> ..."
 description = "Saves ZMod's own settings (saved variables such as dialog behaviour, motor-stop and screen options) — the settings interface Print Handy's ZMod documentation points operators at instead of editing vendor macro files. GET_ZMOD_DATA reports the current values."
 safety = "No motion. The values persist across restarts and change how ZMod behaves on every later print; change one key at a time and note the old value first."
-notes = "Source: ghzserg/zmod_ff5x@5409ffe7ffee572219837fbd0d7de381469537f6, en/base.cfg. Generic firmware knowledge from the shipped config, not verified on a Print Handy printer."
+notes = "Source: ghzserg/zmod_ff5x@5409ffe7ffee572219837fbd0d7de381469537f6, en/base.cfg. Generic firmware knowledge from the shipped config, not verified on a Print Handy printer. Scope extended to the AD5M models, which ship the same zmod_ff5x base.cfg."
 
 [[entry]]
 id = "zmod.get-zmod-data"
@@ -190,11 +191,11 @@ name = "GET_ZMOD_DATA"
 aliases = ["get zmod data", "zmod parameters", "show zmod settings"]
 firmware = "zmod"
 kind = "macro"
-printers = ["flashforge.ad5x"]
+printers = ["flashforge.ad5x", "flashforge.ad5m", "flashforge.ad5m_pro"]
 command = "GET_ZMOD_DATA"
 description = "Reports ZMod's current parameter values (screen mode, Guppy and Moonraker options, and the other SAVE_ZMOD_DATA settings) to the console. The read side of SAVE_ZMOD_DATA."
 safety = "Reports only; it heats nothing and moves nothing."
-notes = "Source: ghzserg/zmod_ff5x@5409ffe7ffee572219837fbd0d7de381469537f6, en/base.cfg. Generic firmware knowledge from the shipped config, not verified on a Print Handy printer."
+notes = "Source: ghzserg/zmod_ff5x@5409ffe7ffee572219837fbd0d7de381469537f6, en/base.cfg. Generic firmware knowledge from the shipped config, not verified on a Print Handy printer. Scope extended to the AD5M models, which ship the same zmod_ff5x base.cfg."
 
 [[entry]]
 id = "zmod.nozzle-control"
@@ -202,11 +203,11 @@ name = "NOZZLE_CONTROL"
 aliases = ["nozzle control", "nozzle hit detection", "part detachment detection"]
 firmware = "zmod"
 kind = "macro"
-printers = ["flashforge.ad5x"]
+printers = ["flashforge.ad5x", "flashforge.ad5m", "flashforge.ad5m_pro"]
 command = "NOZZLE_CONTROL WEIGHT=<grams>"
 description = "Sets the load-cell weight threshold (built-in default 1500 g) at which ZMod's nozzle control treats bed contact as a nozzle hit or a detached part, handing the value to ZMod's znozzle helper. This is a protection threshold, not a print-quality setting."
 safety = "Raising the threshold weakens nozzle-hit and part-detachment detection; lowering it can false-trigger mid-print. Change it only with a reason, and test afterwards."
-notes = "Source: ghzserg/zmod_ff5x@5409ffe7ffee572219837fbd0d7de381469537f6, en/base.cfg. Generic firmware knowledge from the shipped config, not verified on a Print Handy printer."
+notes = "Source: ghzserg/zmod_ff5x@5409ffe7ffee572219837fbd0d7de381469537f6, en/base.cfg. Generic firmware knowledge from the shipped config, not verified on a Print Handy printer. Scope extended to the AD5M models, which ship the same zmod_ff5x base.cfg."
 
 [[entry]]
 id = "zmod.pid-tune-extruder"
@@ -214,11 +215,11 @@ name = "PID_TUNE_EXTRUDER"
 aliases = ["pid tune extruder", "extruder pid zmod", "hotend pid calibration"]
 firmware = "zmod"
 kind = "macro"
-printers = ["flashforge.ad5x"]
+printers = ["flashforge.ad5x", "flashforge.ad5m", "flashforge.ad5m_pro"]
 command = "PID_TUNE_EXTRUDER TEMPERATURE=<nozzle C>"
 description = "Homes, moves to mid-bed and runs Klipper PID_CALIBRATE for the extruder (built-in default target 245 C, part fan on), then saves the result through ZMod's save flow, which restarts the firmware. PID_TUNE_BED is the bed equivalent."
 safety = "Cycles the nozzle temperature repeatedly around the target and ends in a firmware restart when it saves. Never run it mid-print, and watch the first cycle."
-notes = "Source: ghzserg/zmod_ff5x@5409ffe7ffee572219837fbd0d7de381469537f6, en/base.cfg. Generic firmware knowledge from the shipped config, not verified on a Print Handy printer."
+notes = "Source: ghzserg/zmod_ff5x@5409ffe7ffee572219837fbd0d7de381469537f6, en/base.cfg. Generic firmware knowledge from the shipped config, not verified on a Print Handy printer. Scope extended to the AD5M models, which ship the same zmod_ff5x base.cfg."
 
 [[entry]]
 id = "zmod.pid-tune-bed"
@@ -226,11 +227,11 @@ name = "PID_TUNE_BED"
 aliases = ["pid tune bed", "bed pid zmod", "bed pid calibration"]
 firmware = "zmod"
 kind = "macro"
-printers = ["flashforge.ad5x"]
+printers = ["flashforge.ad5x", "flashforge.ad5m", "flashforge.ad5m_pro"]
 command = "PID_TUNE_BED TEMPERATURE=<bed C>"
 description = "Homes, moves to mid-bed and runs Klipper PID_CALIBRATE for the heated bed (built-in default target 80 C), then saves the result through ZMod's save flow, which restarts the firmware. PID_TUNE_EXTRUDER is the nozzle equivalent."
 safety = "Cycles the bed temperature repeatedly around the target and ends in a firmware restart when it saves. Never run it mid-print."
-notes = "Source: ghzserg/zmod_ff5x@5409ffe7ffee572219837fbd0d7de381469537f6, en/base.cfg. Generic firmware knowledge from the shipped config, not verified on a Print Handy printer."
+notes = "Source: ghzserg/zmod_ff5x@5409ffe7ffee572219837fbd0d7de381469537f6, en/base.cfg. Generic firmware knowledge from the shipped config, not verified on a Print Handy printer. Scope extended to the AD5M models, which ship the same zmod_ff5x base.cfg."
 
 [[entry]]
 id = "zmod.zshaper"
@@ -238,11 +239,11 @@ name = "ZSHAPER"
 aliases = ["zshaper", "input shaper calibration zmod", "resonance calibration zmod"]
 firmware = "zmod"
 kind = "macro"
-printers = ["flashforge.ad5x"]
+printers = ["flashforge.ad5x", "flashforge.ad5m", "flashforge.ad5m_pro"]
 command = "ZSHAPER"
 description = "ZMod's input-shaper calibration: homes, runs Klipper resonance testing on X and Y (TEST_RESONANCES) and hands the measurements to ZMod's shaper analysis, which proposes the shaper settings. BELTS_SHAPER_CALIBRATION is ZMod's separate belt-frequency test."
 safety = "The printer vibrates hard and loudly during the resonance sweeps. Nothing on the bed, the printer on a stable surface, and be ready to power off if anything comes loose."
-notes = "Source: ghzserg/zmod_ff5x@5409ffe7ffee572219837fbd0d7de381469537f6, en/base.cfg. Generic firmware knowledge from the shipped config, not verified on a Print Handy printer."
+notes = "Source: ghzserg/zmod_ff5x@5409ffe7ffee572219837fbd0d7de381469537f6, en/base.cfg. Generic firmware knowledge from the shipped config, not verified on a Print Handy printer. Scope extended to the AD5M models, which ship the same zmod_ff5x base.cfg."
 
 [[entry]]
 id = "zmod.display-off"
@@ -250,11 +251,11 @@ name = "DISPLAY_OFF"
 aliases = ["display off", "screenless mode", "disable stock screen"]
 firmware = "zmod"
 kind = "macro"
-printers = ["flashforge.ad5x"]
+printers = ["flashforge.ad5x", "flashforge.ad5m", "flashforge.ad5m_pro"]
 command = "DISPLAY_OFF"
 description = "Switches the AD5X to screenless operation: it saves display_off=1 so ZMod owns the printer and the stock Flashforge screen leaves the loop, after showing its own warning prompt. Z-offset and mesh authority change with the mode; Print Handy's AD5X contract documents which mode owns what. DISPLAY_ON reverses it."
 safety = "A mode change, not a display toggle: in screenless mode the stock screen's dialogs and its Z-offset and mesh handling no longer apply. Do not switch until you know which mode owns your saved offset and mesh."
-notes = "Source: ghzserg/zmod_ff5x@5409ffe7ffee572219837fbd0d7de381469537f6, en/base.cfg. Generic firmware knowledge from the shipped config, not verified on a Print Handy printer."
+notes = "Source: ghzserg/zmod_ff5x@5409ffe7ffee572219837fbd0d7de381469537f6, en/base.cfg. Generic firmware knowledge from the shipped config, not verified on a Print Handy printer. Scope extended to the AD5M models, which ship the same zmod_ff5x base.cfg."
 
 [[entry]]
 id = "zmod.display-on"
@@ -262,11 +263,11 @@ name = "DISPLAY_ON"
 aliases = ["display on", "enable stock screen", "native screen on"]
 firmware = "zmod"
 kind = "macro"
-printers = ["flashforge.ad5x"]
+printers = ["flashforge.ad5x", "flashforge.ad5m", "flashforge.ad5m_pro"]
 command = "DISPLAY_ON"
 description = "Re-enables the stock Flashforge screen (saves display_off=0) and reboots so the native screen owns its dialogs, Z offset and mesh again. The reverse of DISPLAY_OFF."
 safety = "Reboots the printer and hands Z-offset and mesh authority back to the native screen; a saved offset from screenless mode may not be the one the screen applies. Never run it mid-print."
-notes = "Source: ghzserg/zmod_ff5x@5409ffe7ffee572219837fbd0d7de381469537f6, en/base.cfg. Generic firmware knowledge from the shipped config, not verified on a Print Handy printer."
+notes = "Source: ghzserg/zmod_ff5x@5409ffe7ffee572219837fbd0d7de381469537f6, en/base.cfg. Generic firmware knowledge from the shipped config, not verified on a Print Handy printer. Scope extended to the AD5M models, which ship the same zmod_ff5x base.cfg."
 
 [[entry]]
 id = "zmod.print-handy"
@@ -286,10 +287,11 @@ name = "PRINT_START"
 aliases = ["print start", "klipper start macro"]
 firmware = "klipper"
 kind = "macro"
-printers = ["klipper.generic", "sovol.sv06"]
+printers = ["klipper.generic", "sovol.sv06", "sovol.m1d", "sovol.sv01", "sovol.sv01_pro", "sovol.sv02", "sovol.sv03", "sovol.sv04", "sovol.sv05", "sovol.sv06_ace", "sovol.sv06_plus", "sovol.sv06_plus_ace", "sovol.sv07", "sovol.sv07_plus", "sovol.sv08", "sovol.sv08_max", "sovol.zero"]
 command = "PRINT_START BED=<bed C> HOTEND=<nozzle C>"
 description = "Stock Klipper start macro name Print Handy's generic Klipper and Sovol profiles expect the printer to provide. The installed macro owns heating, homing and mesh loading for the job."
 safety = "Heats and moves. Runs only as part of a confirmed print start."
+notes = "Sovol scope: Print Handy's Orca-derived templates emit this name (PRINT_START BED=... HOTEND=... / PRINT_END) for every Sovol Klipper model (print_handy/templates/orca/sovol_*); the templates are generic and not checked on hardware. Stock firmware naming differs on some models - the Sovol SV08 and Zero stock configs name their own start macro START_PRINT (see klipper.sovol-start-print)."
 
 [[entry]]
 id = "klipper.print-end"
@@ -297,10 +299,11 @@ name = "PRINT_END"
 aliases = ["print end", "klipper end macro"]
 firmware = "klipper"
 kind = "macro"
-printers = ["klipper.generic", "sovol.sv06"]
+printers = ["klipper.generic", "sovol.sv06", "sovol.m1d", "sovol.sv01", "sovol.sv01_pro", "sovol.sv02", "sovol.sv03", "sovol.sv04", "sovol.sv05", "sovol.sv06_ace", "sovol.sv06_plus", "sovol.sv06_plus_ace", "sovol.sv07", "sovol.sv07_plus", "sovol.sv08", "sovol.sv08_max", "sovol.zero"]
 command = "PRINT_END"
 description = "Stock Klipper end macro name for the generic Klipper and Sovol profiles: heaters off and park at the end of a job."
 safety = "Runs only as the tail of a sliced job."
+notes = "Sovol scope: Print Handy's Orca-derived templates emit this name (PRINT_START BED=... HOTEND=... / PRINT_END) for every Sovol Klipper model (print_handy/templates/orca/sovol_*); the templates are generic and not checked on hardware. Stock firmware naming differs on some models - the Sovol SV08 and Zero stock configs name their own start macro START_PRINT (see klipper.sovol-start-print)."
 
 [[entry]]
 id = "klipper.pause"
@@ -308,11 +311,11 @@ name = "PAUSE"
 aliases = ["pause print klipper", "klipper pause macro"]
 firmware = "klipper"
 kind = "macro"
-printers = ["klipper.generic", "sovol.sv06", "flashforge.ad5x"]
+printers = ["klipper.generic", "sovol.sv06", "flashforge.ad5x", "flashforge.ad5m", "flashforge.ad5m_pro"]
 command = "PAUSE"
 description = "Pauses the running print. Klipper itself provides PAUSE as a built-in command when the [pause_resume] section is configured — that built-in is not a gcode_macro and never appears in a macro listing. The PAUSE a macro listing discovers is a config-defined wrapper (Mainsail's client config ships one; ZMod ships its own) that adds toolhead parking, a small retract and heater-state bookkeeping around the built-in, driven by the config's client variables."
 safety = "The nozzle stays at printing temperature while parked over or beside the print. A pause is not a state to leave unattended for hours; resume or cancel deliberately."
-notes = "Sources: mainsail-crew/mainsail-config@ff3869a621db17ce3ef660adbbd3fa321995ac42 (mainsail.cfg), klipper3d/klipper@ee2c6fb6b00b2b5d097ef70d0868df7d74943b51 (docs/G-Codes.md [pause_resume]), and ghzserg/zmod_ff5x@5409ffe7ffee572219837fbd0d7de381469537f6 (en/client.cfg) for the AD5X. Generic firmware knowledge, not verified on a Print Handy printer."
+notes = "Sources: mainsail-crew/mainsail-config@ff3869a621db17ce3ef660adbbd3fa321995ac42 (mainsail.cfg), klipper3d/klipper@ee2c6fb6b00b2b5d097ef70d0868df7d74943b51 (docs/G-Codes.md [pause_resume]), and ghzserg/zmod_ff5x@5409ffe7ffee572219837fbd0d7de381469537f6 (en/client.cfg) for the AD5X. Generic firmware knowledge, not verified on a Print Handy printer. Scope extended to the AD5M models, which ship the same zmod_ff5x client.cfg / base.cfg."
 
 [[entry]]
 id = "klipper.resume"
@@ -320,11 +323,11 @@ name = "RESUME"
 aliases = ["resume print klipper", "klipper resume macro"]
 firmware = "klipper"
 kind = "macro"
-printers = ["klipper.generic", "sovol.sv06", "flashforge.ad5x"]
+printers = ["klipper.generic", "sovol.sv06", "flashforge.ad5x", "flashforge.ad5m", "flashforge.ad5m_pro"]
 command = "RESUME"
 description = "Resumes a paused print, returning the toolhead to the position PAUSE captured. Klipper's built-in RESUME exists under the same [pause_resume] conditions as PAUSE; the macro a listing discovers is the config-defined wrapper (Mainsail client config; ZMod), which also restores the heater targets and speed PAUSE recorded. The Mainsail wrapper refuses to resume when its configured runout sensor reports no filament."
 safety = "The toolhead moves back to the captured position, possibly over the print. Make sure nothing (hands, tools, a removed part) is in its path and the part is still on the bed."
-notes = "Sources: mainsail-crew/mainsail-config@ff3869a621db17ce3ef660adbbd3fa321995ac42 (mainsail.cfg), klipper3d/klipper@ee2c6fb6b00b2b5d097ef70d0868df7d74943b51 (docs/G-Codes.md [pause_resume]), and ghzserg/zmod_ff5x@5409ffe7ffee572219837fbd0d7de381469537f6 (en/client.cfg) for the AD5X. Generic firmware knowledge, not verified on a Print Handy printer."
+notes = "Sources: mainsail-crew/mainsail-config@ff3869a621db17ce3ef660adbbd3fa321995ac42 (mainsail.cfg), klipper3d/klipper@ee2c6fb6b00b2b5d097ef70d0868df7d74943b51 (docs/G-Codes.md [pause_resume]), and ghzserg/zmod_ff5x@5409ffe7ffee572219837fbd0d7de381469537f6 (en/client.cfg) for the AD5X. Generic firmware knowledge, not verified on a Print Handy printer. Scope extended to the AD5M models, which ship the same zmod_ff5x client.cfg / base.cfg."
 
 [[entry]]
 id = "klipper.cancel-print"
@@ -332,11 +335,11 @@ name = "CANCEL_PRINT"
 aliases = ["cancel print klipper", "abort print klipper", "klipper cancel macro"]
 firmware = "klipper"
 kind = "macro"
-printers = ["klipper.generic", "sovol.sv06", "flashforge.ad5x"]
+printers = ["klipper.generic", "sovol.sv06", "flashforge.ad5x", "flashforge.ad5m", "flashforge.ad5m_pro"]
 command = "CANCEL_PRINT"
 description = "Cancels the running print. Klipper has a built-in of this name under [pause_resume] / [virtual_sdcard]; the macro a listing discovers is the config-defined wrapper (Mainsail client config; ZMod), which retracts, can park the toolhead first if the config's park_at_cancel is enabled, and runs the config's cancel handling around the built-in."
 safety = "The job is gone: cancelling cannot be resumed. What happens to the heaters afterwards follows the installed config, so check the printer instead of assuming it cooled down."
-notes = "Sources: mainsail-crew/mainsail-config@ff3869a621db17ce3ef660adbbd3fa321995ac42 (mainsail.cfg), klipper3d/klipper@ee2c6fb6b00b2b5d097ef70d0868df7d74943b51 (docs/G-Codes.md [pause_resume]), and ghzserg/zmod_ff5x@5409ffe7ffee572219837fbd0d7de381469537f6 (en/client.cfg) for the AD5X. Generic firmware knowledge, not verified on a Print Handy printer."
+notes = "Sources: mainsail-crew/mainsail-config@ff3869a621db17ce3ef660adbbd3fa321995ac42 (mainsail.cfg), klipper3d/klipper@ee2c6fb6b00b2b5d097ef70d0868df7d74943b51 (docs/G-Codes.md [pause_resume]), and ghzserg/zmod_ff5x@5409ffe7ffee572219837fbd0d7de381469537f6 (en/client.cfg) for the AD5X. Generic firmware knowledge, not verified on a Print Handy printer. Scope extended to the AD5M models, which ship the same zmod_ff5x client.cfg / base.cfg."
 
 [[entry]]
 id = "klipper.set-pause-next-layer"
@@ -344,11 +347,11 @@ name = "SET_PAUSE_NEXT_LAYER"
 aliases = ["pause next layer", "pause at next layer"]
 firmware = "klipper"
 kind = "macro"
-printers = ["klipper.generic", "sovol.sv06", "flashforge.ad5x"]
+printers = ["klipper.generic", "sovol.sv06", "flashforge.ad5x", "flashforge.ad5m", "flashforge.ad5m_pro"]
 command = "SET_PAUSE_NEXT_LAYER ENABLE=<0|1>"
 description = "Arms a pause when the next layer change begins (ENABLE=0 disarms it). It only records the request in the SET_PRINT_STATS_INFO macro state: the pause fires if the job's G-code feeds layer counters through SET_PRINT_STATS_INFO, and it calls PAUSE unless a different MACRO= was recorded. Defined by Mainsail's client config; ZMod's base config defines the same macro."
 safety = "No motion by itself. The pause it arms stops the job mid-print at temperature, so arm it only when someone will attend to it."
-notes = "Sources: mainsail-crew/mainsail-config@ff3869a621db17ce3ef660adbbd3fa321995ac42 (mainsail.cfg) and ghzserg/zmod_ff5x@5409ffe7ffee572219837fbd0d7de381469537f6 (en/base.cfg) for the AD5X. Generic firmware knowledge, not verified on a Print Handy printer."
+notes = "Sources: mainsail-crew/mainsail-config@ff3869a621db17ce3ef660adbbd3fa321995ac42 (mainsail.cfg) and ghzserg/zmod_ff5x@5409ffe7ffee572219837fbd0d7de381469537f6 (en/base.cfg) for the AD5X. Generic firmware knowledge, not verified on a Print Handy printer. Scope extended to the AD5M models, which ship the same zmod_ff5x client.cfg / base.cfg."
 
 [[entry]]
 id = "klipper.set-pause-at-layer"
@@ -356,11 +359,11 @@ name = "SET_PAUSE_AT_LAYER"
 aliases = ["pause at layer", "pause on layer number"]
 firmware = "klipper"
 kind = "macro"
-printers = ["klipper.generic", "sovol.sv06", "flashforge.ad5x"]
+printers = ["klipper.generic", "sovol.sv06", "flashforge.ad5x", "flashforge.ad5m", "flashforge.ad5m_pro"]
 command = "SET_PAUSE_AT_LAYER LAYER=<layer number>"
 description = "Arms a pause when the job reaches the given layer number (ENABLE=0 disarms it), through the same SET_PRINT_STATS_INFO state and conditions as SET_PAUSE_NEXT_LAYER. Layer numbers are the slicer's count, starting where the job's own layer-change G-code starts counting. Defined by Mainsail's client config; ZMod's base config defines the same macro."
 safety = "No motion by itself. A wrong layer number parks the job mid-print at temperature at the wrong moment, or never; check it against the sliced job's layer count."
-notes = "Sources: mainsail-crew/mainsail-config@ff3869a621db17ce3ef660adbbd3fa321995ac42 (mainsail.cfg) and ghzserg/zmod_ff5x@5409ffe7ffee572219837fbd0d7de381469537f6 (en/base.cfg) for the AD5X. Generic firmware knowledge, not verified on a Print Handy printer."
+notes = "Sources: mainsail-crew/mainsail-config@ff3869a621db17ce3ef660adbbd3fa321995ac42 (mainsail.cfg) and ghzserg/zmod_ff5x@5409ffe7ffee572219837fbd0d7de381469537f6 (en/base.cfg) for the AD5X. Generic firmware knowledge, not verified on a Print Handy printer. Scope extended to the AD5M models, which ship the same zmod_ff5x client.cfg / base.cfg."
 
 [[entry]]
 id = "klipper.set-print-stats-info"
@@ -368,11 +371,11 @@ name = "SET_PRINT_STATS_INFO"
 aliases = ["set print stats info", "layer counter macro"]
 firmware = "klipper"
 kind = "macro"
-printers = ["klipper.generic", "sovol.sv06", "flashforge.ad5x"]
+printers = ["klipper.generic", "sovol.sv06", "flashforge.ad5x", "flashforge.ad5m", "flashforge.ad5m_pro", "flashforge.creator5", "flashforge.creator5_pro"]
 command = "SET_PRINT_STATS_INFO TOTAL_LAYER=<count> CURRENT_LAYER=<count>"
 description = "The support macro the layer-pause features hang off. Slicer start and layer-change G-code calls it with the job's layer counters; the config-defined version (Mainsail client config; ZMod base config) checks the armed SET_PAUSE_NEXT_LAYER / SET_PAUSE_AT_LAYER state and fires the recorded pause call, then passes through to Klipper's built-in. It is plumbing the slicer drives, not an operator control."
 safety = "Calling it by hand with invented counters makes layer pauses fire at the wrong layer, or not at all, on the running job."
-notes = "Sources: mainsail-crew/mainsail-config@ff3869a621db17ce3ef660adbbd3fa321995ac42 (mainsail.cfg) and ghzserg/zmod_ff5x@5409ffe7ffee572219837fbd0d7de381469537f6 (en/base.cfg) for the AD5X. Generic firmware knowledge, not verified on a Print Handy printer."
+notes = "Sources: mainsail-crew/mainsail-config@ff3869a621db17ce3ef660adbbd3fa321995ac42 (mainsail.cfg) and ghzserg/zmod_ff5x@5409ffe7ffee572219837fbd0d7de381469537f6 (en/base.cfg) for the AD5X. Generic firmware knowledge, not verified on a Print Handy printer. Scope extended to the AD5M models, which ship the same zmod_ff5x client.cfg / base.cfg. Creator 5 scope: Print Handy's Creator 5 templates emit SET_PRINT_STATS_INFO TOTAL_LAYER=... in the start sequence, so the name is expected on those ZMod installs too."
 
 [[entry]]
 id = "klipper.bed-mesh-calibrate"
@@ -527,3 +530,75 @@ printers = ["octoprint.marlin"]
 command = ""
 description = "Marlin stopped heating because a temperature did not move as expected, or moved when it should not. Common causes: a loose or failed thermistor, a heater cartridge fault, a silicone sock or fan cooling the block, or a target the heater cannot reach. The printer needs a power cycle after the fault is fixed."
 safety = "This is a fire-safety protection doing its job. Do not disable thermal protection to clear it. Power off, let everything cool, and inspect the thermistor and heater wiring before heating again."
+
+[[entry]]
+id = "klipper.creality-start-print"
+name = "START_PRINT"
+aliases = ["creality start print", "k1 start macro", "ender v3 start macro"]
+firmware = "klipper"
+kind = "macro"
+printers = ["creality.ender3v3", "creality.ender3v3ke", "creality.ender3v3plus", "creality.k1", "creality.k1c", "creality.k1max"]
+command = "START_PRINT BED_TEMP=<bed C> EXTRUDER_TEMP=<nozzle C>"
+description = "The Creality Klipper (Creality OS) stock start macro, defined in the printer's gcode_macro.cfg. It runs the family's own preparation - homing, leveling calibration and nozzle cleaning through its CX_ helper macros - with the job temperatures passed as arguments. Print Handy's Creality profiles open with this macro; on the Ender-3 V3 KE a profile may instead run the whole sequence inline, in which case no macro call appears in the file even though the firmware defines the macro."
+safety = "Heats the nozzle and bed and moves the toolhead. Only ever runs as part of a confirmed print start, never from a lookup."
+notes = "Sources: print_handy/printers/creality/adapter.py and guard.py in this repository (the profiles open with the printer's own START_PRINT macro; PRINT_START is a foreign marker on this family), and the stock [gcode_macro START_PRINT] in gcode_macro.cfg quoted on the Creality community forum for the K1 series (forum.creality.com, K1C START_PRINT thread). Generic firmware knowledge from those sources, not verified on a Print Handy printer."
+
+[[entry]]
+id = "klipper.creality-end-print"
+name = "END_PRINT"
+aliases = ["creality end print", "k1 end macro"]
+firmware = "klipper"
+kind = "macro"
+printers = ["creality.ender3v3", "creality.ender3v3ke", "creality.ender3v3plus", "creality.k1", "creality.k1c", "creality.k1max"]
+command = "END_PRINT"
+description = "The Creality Klipper (Creality OS) stock end macro from gcode_macro.cfg: turns the heaters off, presents the print and runs the family's cooldown helpers (the WAIT_TEMP pair on the K1 series). The tail of a Creality job, the counterpart of START_PRINT."
+safety = "Runs only as the tail of a sliced job. The cooldown fans can keep running after the macro returns; that is the firmware's own routine, not a stuck print."
+notes = "Sources: the stock [gcode_macro END_PRINT] body quoted on the Creality community forum for the K1 series (forum.creality.com, K1 Max END_PRINT thread), and print_handy/printers/creality in this repository for the family's start/end posture. Generic firmware knowledge, not verified on a Print Handy printer."
+
+[[entry]]
+id = "klipper.qidi-print-start"
+name = "PRINT_START"
+aliases = ["qidi print start", "qidi start macro"]
+firmware = "klipper"
+kind = "macro"
+printers = ["qidi.q1pro", "qidi.xmax3", "qidi.xplus3", "qidi.xplus4", "qidi.xsmart3"]
+command = "PRINT_START BED=<bed C> HOTEND=<nozzle C> CHAMBER=<chamber C>"
+description = "Qidi's stock Klipper start macro. Qidi's own Orca profiles open with it - the Q1 Pro passes BED, HOTEND and CHAMBER - and the macro owns the printer's preparation (heating including the chamber, homing, leveling) before the profile's inline sequence continues. There is no matching PRINT_END entry: Qidi's profiles store their end sequence inline, not as a macro call."
+safety = "Heats the nozzle, bed and chamber and moves the toolhead. Only ever runs as part of a confirmed print start, never from a lookup."
+notes = "Sources: print_handy/printers/qidi/profiles.py and adapter.py in this repository (Qidi's profiles open with the printer's PRINT_START macro; the Q1 Pro passes BED/HOTEND/CHAMBER), and the Qidi community Plus4 wiki's OrcaSlicer template (PRINT_START BED= HOTEND= CHAMBER=). Generic firmware knowledge from those sources, not verified on a Print Handy printer."
+
+[[entry]]
+id = "klipper.sovol-start-print"
+name = "START_PRINT"
+aliases = ["sovol start print", "sv08 start macro", "sovol zero start macro"]
+firmware = "klipper"
+kind = "macro"
+printers = ["sovol.sv08", "sovol.sv08_max", "sovol.zero"]
+command = "START_PRINT"
+description = "The start macro name Sovol's own Klipper firmware uses on the SV08 line and the Zero, where other Sovol models follow the PRINT_START convention Print Handy emits. On the SV08 stock config (Macro.cfg) START_PRINT takes no temperature arguments: it reads the temperatures from the heater targets the slicer set first, with its calibration behavior held in the config's _global_var variables. On the Zero's stock firmware (1.3.7 and 1.4.x) the profiles call START_PRINT bare the same way, the job temperatures riding on the M140 / M190 / M104 / M109 heater lines. A listing that discovers START_PRINT on one of these models is seeing the stock firmware macro, not a ZMod or Creality one - the descriptions are deliberately separate entries."
+safety = "Heats the nozzle and bed and moves the toolhead, including the SV08's calibration routine. Only ever runs as part of a confirmed print start, never from a lookup."
+notes = "Sources: the SV08 stock Macro.cfg [gcode_macro START_PRINT] and _global_var variables quoted in the Klipper Discourse SV08 thread, and rpcyan586/svzero-profiles@eb38beb for the Zero's stock naming (release v2.1.2; GPL-3.0 - facts only, nothing copied; the full audit is issue #612 in this repository). The SV08 Max is scoped with the SV08 because it ships the same Sovol Klipper firmware family. Generic firmware knowledge from those sources, not verified on a Print Handy printer."
+
+[[entry]]
+id = "klipper.sovol-zero-end-print"
+name = "END_PRINT"
+aliases = ["sovol zero end print", "zero end macro"]
+firmware = "klipper"
+kind = "macro"
+printers = ["sovol.zero"]
+command = "END_PRINT"
+description = "The Sovol Zero stock end macro, the counterpart of its stock START_PRINT: both firmwares the svzero-profiles project documents (1.3.7 and 1.4.x) ship it, and the optional community macro pack replaces it along with START_PRINT. Scoped to the Zero only: the SV08's stock end name was not verified from a citable source, so no SV08 entry claims it."
+safety = "Runs only as the tail of a sliced job. With the community macro pack installed, its post-print cooldown timers can keep fans and the bed target changing after the job ends; that is the pack working as designed."
+notes = "Source: rpcyan586/svzero-profiles@eb38beb (release v2.1.2; GPL-3.0 - facts only, nothing copied; the full audit is issue #612 in this repository). Generic firmware knowledge, not verified on a Print Handy printer."
+
+[[entry]]
+id = "klipper.sovol-sv08-clean-nozzle"
+name = "CLEAN_NOZZLE"
+aliases = ["sv08 clean nozzle", "sovol nozzle cleaning", "clean nozzle sv08"]
+firmware = "klipper"
+kind = "macro"
+printers = ["sovol.sv08"]
+command = "CLEAN_NOZZLE"
+description = "The SV08 stock nozzle-cleaning macro from the firmware's Macro.cfg: it runs the toolhead through the cleaning routine at the printer's cleaning block as part of print preparation. Sovol's eddy-current sensor upgrade kit ships a revised version of the same macro, so what a given SV08's CLEAN_NOZZLE does follows the firmware and kit it runs. Scoped to the SV08 only; the SV08 Max's stock cleaning name was not verified from a citable source."
+safety = "Heats the nozzle and moves the toolhead against the cleaning block. Keep the block area clear and hands away while it runs."
+notes = "Source: community documentation of the SV08 stock Macro.cfg, which names the original START_PRINT and CLEAN_NOZZLE macros in that file (the GP3D macro additions for the SV08). Generic firmware knowledge, not verified on a Print Handy printer."

@@ -107,7 +107,7 @@ STAGE3_IDS = {
 
 def test_stage3_registry_growth_is_complete_and_provenanced(registry):
     """Stage 3 of #291: every added entry loads, is a macro, and names its source."""
-    assert len(registry.firmware_entries) == 45
+    assert len(registry.firmware_entries) == 51
     by_id = {e.id: e for e in registry.firmware_entries}
     assert STAGE3_IDS <= set(by_id)
     for entry_id in STAGE3_IDS:
@@ -115,6 +115,26 @@ def test_stage3_registry_growth_is_complete_and_provenanced(registry):
         assert entry.kind == "macro", entry_id
         assert entry.notes, entry_id
         assert ("@" in entry.notes) or ("print-handy.cfg" in entry.notes), entry_id
+
+
+ALL_PRINTERS_IDS = {
+    "klipper.creality-start-print", "klipper.creality-end-print",
+    "klipper.qidi-print-start", "klipper.sovol-start-print",
+    "klipper.sovol-zero-end-print", "klipper.sovol-sv08-clean-nozzle",
+}
+
+
+def test_all_printers_registry_growth_is_complete_and_provenanced(registry):
+    """Macro coverage for every Moonraker family: each added entry loads, is a
+    macro, names its source, and is scoped to registered model keys only."""
+    by_id = {e.id: e for e in registry.firmware_entries}
+    assert ALL_PRINTERS_IDS <= set(by_id)
+    for entry_id in ALL_PRINTERS_IDS:
+        entry = by_id[entry_id]
+        assert entry.kind == "macro", entry_id
+        assert entry.notes and "Source" in entry.notes, entry_id
+        assert entry.printers and "*" not in entry.printers, entry_id
+        assert set(entry.printers) <= set(printers.MODELS), entry_id
 
 
 def test_lookup_stage3_entries_by_name_and_alias(registry):

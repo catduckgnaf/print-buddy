@@ -136,9 +136,16 @@ def _never_touch_live_printer(monkeypatch, request):
             pass
 
 
-@pytest.fixture(scope="session", autouse=True)
+@pytest.fixture(scope="package", autouse=True)
 def _clarify_gateway_stand_in():
-    """Hermes' clarify gateway is not installed in CI: use an in-memory stand in (same as tests/pipeline)."""
+    """Hermes' clarify gateway is not installed in CI: use an in-memory stand in (same as tests/pipeline).
+
+    Package scope, not session: the stand-in must leave with tests/hermes.
+    Left installed, prompts.gateway() kept returning it for every later
+    package, so a tests/bot plugin flow registered its prompt here while
+    the test answered print_handy.core.prompts, and waited out the 600 s
+    confirm timeout (the order-dependent /print-stop routing hang).
+    """
     try:
         import tools.clarify_gateway  # noqa: F401
         yield

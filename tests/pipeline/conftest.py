@@ -95,10 +95,11 @@ def _scratch_state(tmp_path, monkeypatch):
     monkeypatch.setattr(model_job, "BOUNDS_CACHE", root / "bounds-cache")
 
 
-@pytest.fixture(scope="session", autouse=True)
+@pytest.fixture(scope="package", autouse=True)
 def _clarify_gateway_stand_in():
     """Hermes' clarify gateway is not installed in CI. Install an in-memory stand in with the same
-    four calls the intake code makes (register, wait_for_response, resolve_gateway_clarify, CANCELLED)."""
+    four calls the intake code makes (register, wait_for_response, resolve_gateway_clarify, CANCELLED).
+    Package scope so it leaves with tests/pipeline (see tests/hermes/conftest.py)."""
     try:
         import tools.clarify_gateway  # noqa: F401
         yield

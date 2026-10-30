@@ -5,6 +5,10 @@ confirmed exclude builds the Moonraker script, and this module sends it
 only when that script names the chosen object. The last remaining object
 is not an exclude: the caller uses the existing stop confirm. A failed
 send is reported and is not described as cancelled.
+
+Both the ask and the send read the live printer first. Klipper's own
+excluded list decides what is still printing, and a different file, an idle
+printer, or a failed read means nothing is sent.
 """
 from __future__ import annotations
 
@@ -15,6 +19,32 @@ from ..core.exclude_object import exclude_plan
 
 PREFIX = "pbexclude"
 _ACTIONS = ("pick", "go", "stop", "keep")
+
+
+def read_live(printer_id=None) -> dict:
+    """Live state, file, and Klipper's excluded objects. Raises when any of it cannot be read."""
+    from . import print_stop
+    pid = printer_id or None
+    st = print_stop.status(pid)
+    data = print_stop._send("/printer/objects/query?exclude_object", printer_id=pid)
+    obj = (((data or {}).get("result") or {}).get("status") or {}).get("exclude_object")
+    excluded = obj.get("excluded_objects") if isinstance(obj, dict) else None
+    if not isinstance(excluded, list):
+        raise RuntimeError("the printer did not report its excluded objects")
+    return {"state": st.get("state"), "filename": st.get("filename") or "",
+            "excluded": [str(name) for name in excluded]}
+
+
+def _changed(filename, live) -> str:
+    """Why the live printer no longer matches the alert, or "" when it still does."""
+    from .print_stop import ACTIVE
+    if not isinstance(live, dict):
+        return "Could not check the printer."
+    if live.get("state") not in ACTIVE:
+        return f"The printer is {live.get('state')}."
+    if not filename or live.get("filename") != filename:
+        return "A different print is running now."
+    return ""
 
 
 def surface_text(names) -> str:
@@ -56,8 +86,12 @@ def parse_custom_id(custom_id: str):
     return None
 
 
-def prepare(alert, index) -> dict:
-    """The ask step. Never sends, and never builds a script for the last object."""
+def prepare(alert, index, live=None) -> dict:
+    """The ask step. Never sends, and never builds a script for the last object.
+
+    ``live()`` returns :func:`read_live`'s dict. Without it, or when it
+    raises, nothing can be verified and the answer is a refusal.
+    """
     if not isinstance(alert, dict) or alert.get("kind") != "exclude-pick":
         return {"step": "stale", "text": "That object list is old or was already used. Nothing sent."}
     names = [str(name) for name in alert.get("names") or []]
@@ -65,7 +99,15 @@ def prepare(alert, index) -> dict:
         target = names[int(index)]
     except (TypeError, ValueError, IndexError):
         return {"step": "refuse", "text": "That object is not on this plate. Nothing sent."}
-    plan = exclude_plan(names, target, confirmed=False)
+    try:
+        now = live() if live else None
+    except Exception:
+        now = None
+    why = _changed(alert.get("filename"), now)
+    if why:
+        return {"step": "refuse", "text": why + " Nothing sent."}
+    left = [name for name in names if name not in now["excluded"]]
+    plan = exclude_plan(names, target, confirmed=False, remaining=left)
     base = {"filename": alert.get("filename") or "", "printer_id": alert.get("printer_id") or "",
             "name": target, "names": names}
     if plan["action"] == "cancel_print":
@@ -76,8 +118,12 @@ def prepare(alert, index) -> dict:
     return {**base, "step": "confirm", "text": plan["reason"]}
 
 
-def confirm_send(alert, sender) -> dict:
+def confirm_send(alert, sender, live=None) -> dict:
     """Send one confirmed exclude. ``sender(script)`` raises when the call fails.
+
+    ``live()`` is read just before the send: the same file must still be
+    printing or paused, and the object must still be one of its remaining
+    ones. No ``live``, or a failed read, sends nothing.
 
     A plan with no body, including the last object, is not sent. A raised
     sender is reported and is not described as cancelled.
@@ -86,7 +132,15 @@ def confirm_send(alert, sender) -> dict:
         return {"sent": False, "text": "That confirm is old or was already used. Nothing sent."}
     names = [str(name) for name in alert.get("names") or []]
     target = str(alert.get("name") or "")
-    plan = exclude_plan(names, target, confirmed=True)
+    try:
+        now = live() if live else None
+    except Exception:
+        now = None
+    why = _changed(alert.get("filename"), now)
+    if why:
+        return {"sent": False, "text": why + " Nothing was sent, and nothing was excluded."}
+    left = [name for name in names if name not in now["excluded"]]
+    plan = exclude_plan(names, target, confirmed=True, remaining=left)
     body = plan.get("body") or None
     script = ((body or {}).get("params") or {}).get("script")
     expected = f"EXCLUDE_OBJECT NAME={target}"
@@ -97,8 +151,8 @@ def confirm_send(alert, sender) -> dict:
     except Exception as exc:
         return {"sent": False,
                 "text": f"Exclude was not sent for {target}. It was not cancelled. {exc}"}
-    left = [name for name in names if name != target]
-    still = ", ".join(left) if left else "none"
+    still_on = [name for name in left if name != target]
+    still = ", ".join(still_on) if still_on else "none"
     return {"sent": True, "script": script,
             "text": (f"Exclude sent for {target}. Still printing: {still}. "
                      "Check the printer screen.")}

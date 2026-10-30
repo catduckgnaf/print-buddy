@@ -7,6 +7,7 @@ the Print Handy package: print_handy.hermes (listener helpers, print control) an
 import asyncio
 import contextlib
 import copy
+import functools
 import json
 import logging
 import os
@@ -3581,8 +3582,14 @@ async def exclude_dispatch(event, gateway, **kwargs):
     _seen[key] = time.monotonic()
     live_key = gateway._session_key_for_source(source)
     try:
-        st = await asyncio.to_thread(print_stop.status, **_pkw(pid))
-        if st.get('state') not in print_stop.ACTIVE:
+        live = functools.partial(exclude_chat.read_live, pid)
+        try:
+            st = await asyncio.to_thread(live)
+        except Exception:
+            st = None
+        if st is None:
+            message = 'Could not check the printer, so no exclude was offered. Nothing sent.'
+        elif st.get('state') not in print_stop.ACTIVE:
             message = f"Nothing to exclude: printer is {st.get('state')}. Nothing sent."
         else:
             _job, plate = await asyncio.to_thread(summary.find_job, st.get('filename') or '')
@@ -3592,7 +3599,8 @@ async def exclude_dispatch(event, gateway, **kwargs):
             except OSError:
                 gcode = ''
             names = object_names(gcode)
-            plan = exclude_plan(names, target, confirmed=False)
+            left = [name for name in names if name not in st['excluded']]
+            plan = exclude_plan(names, target, confirmed=False, remaining=left)
             if plan['action'] == 'refuse' or not names:
                 message = plan['reason'] + ' Nothing sent.'
             elif plan['action'] == 'cancel_print':
@@ -3619,7 +3627,8 @@ async def exclude_dispatch(event, gateway, **kwargs):
                                  timeout=30, **_pkw(pid))
                     result = await asyncio.to_thread(
                         exclude_chat.confirm_send,
-                        {'kind': 'exclude-go', 'name': target, 'names': names}, sender)
+                        {'kind': 'exclude-go', 'name': target, 'names': names,
+                         'filename': st.get('filename') or ''}, sender, live)
                     message = result['text']
     except Exception as exc:
         logger.exception('exclude failed')
@@ -5168,7 +5177,8 @@ def alert_button_handlers(bot, adapter):
                 index = (getattr(interaction, 'data', {}) or {}).get('values', [None])[0]
             except (TypeError, AttributeError):
                 index = None
-            step = exclude_chat.prepare(alert, index)
+            step = await asyncio.to_thread(
+                exclude_chat.prepare, alert, index, functools.partial(exclude_chat.read_live, alert.get('printer_id') or None))
             if step['step'] in ('stale', 'refuse'):
                 await interaction.response.send_message(step['text'], ephemeral=True)
                 return
@@ -5218,7 +5228,8 @@ def alert_button_handlers(bot, adapter):
         def sender(script):
             pc._send('/printer/gcode/script', method='POST', data={'script': script},
                      timeout=30, printer_id=printer_id)
-        result = await asyncio.to_thread(exclude_chat.confirm_send, alert, sender)
+        result = await asyncio.to_thread(
+            exclude_chat.confirm_send, alert, sender, functools.partial(exclude_chat.read_live, printer_id))
         await interaction.response.edit_message(content=result['text'], view=None)
 
     async def on_interaction(interaction):

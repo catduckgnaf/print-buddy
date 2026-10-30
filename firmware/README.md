@@ -17,7 +17,7 @@ guarded print-control flows and their confirmation buttons.
 | `aliases` | Phrasings lookups should match (for example "ifs load"). |
 | `firmware` | `zmod`, `klipper` or `marlin`. ZMod is listed separately from stock Klipper because the AD5X macro set and authority rules differ. |
 | `kind` | `command`, `macro` or `error`. |
-| `printers` | Registered printer model keys (see `../printers/registry.toml`) the entry is known to apply to, or `["*"]` for every printer on that firmware. |
+| `printers` | Registered printer model keys (see `../printers/registry/<vendor>.toml`) the entry is known to apply to, or `["*"]` for every printer on that firmware. |
 | `command` | The literal command line, with `<placeholders>` for values. Empty for errors. |
 | `description` | What it does, when to use it, and the traps. |
 | `safety` | What it can do physically (heat, motion, extrusion, restart) and the guard that applies. |

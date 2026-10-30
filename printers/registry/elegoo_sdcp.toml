@@ -1,0 +1,20 @@
+# Printer registry: elegoo_sdcp. See printers/README.md for the schema.
+#
+# One [[printer]] per registered model whose key starts with "elegoo_sdcp." — the
+# loader (print_handy/knowledge/registry.py) merges every file in this directory
+# in sorted filename order, and tests pin each entry against the code profile in
+# print_handy/printers/elegoo_sdcp/ so this file cannot silently drift from the code.
+
+[[printer]]
+key = "elegoo_sdcp.centauricarbon"
+label = "Elegoo Centauri Carbon"
+vendor = "elegoo_sdcp"
+firmware = "Elegoo SDCP"
+firmware_family = "none"
+connection = "elegoo_sdcp"
+kinematics = "CoreXY"
+bed_mm = [256.0, 256.0]
+max_height_mm = 256.0
+filament_slots = 1
+profile = "print_handy/printers/elegoo_sdcp/centauricarbon.py"
+notes = "Closed firmware; SDCP v3.0 LAN protocol (unauthenticated). Marketed bed is 260 x 260 mm; the pinned Orca profile's printable area is 256 x 256 mm and is what is recorded."

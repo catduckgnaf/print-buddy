@@ -1,0 +1,76 @@
+# Printer registry: qidi. See printers/README.md for the schema.
+#
+# One [[printer]] per registered model whose key starts with "qidi." — the
+# loader (print_handy/knowledge/registry.py) merges every file in this directory
+# in sorted filename order, and tests pin each entry against the code profile in
+# print_handy/printers/qidi/ so this file cannot silently drift from the code.
+
+[[printer]]
+key = "qidi.q1pro"
+label = "Qidi Q1 Pro"
+vendor = "qidi"
+firmware = "Klipper"
+firmware_family = "klipper"
+connection = "moonraker"
+kinematics = "CoreXY"
+bed_mm = [245.0, 245.0]
+max_height_mm = 240.0
+filament_slots = 1
+profile = "print_handy/printers/qidi/q1pro.py"
+notes = "Stock Klipper + Moonraker. Enclosed CoreXY with an actively heated chamber (set by the template start code, not driven separately). The pinned Orca profile records a bed exclusion polygon along the back edge; not tested on hardware."
+
+[[printer]]
+key = "qidi.xplus3"
+label = "Qidi X-Plus 3"
+vendor = "qidi"
+firmware = "Klipper"
+firmware_family = "klipper"
+connection = "moonraker"
+kinematics = "CoreXY"
+bed_mm = [280.0, 280.0]
+max_height_mm = 270.0
+filament_slots = 1
+profile = "print_handy/printers/qidi/xplus3.py"
+notes = "Stock Klipper + Moonraker. Enclosed CoreXY; not tested on hardware."
+
+[[printer]]
+key = "qidi.xplus4"
+label = "Qidi X-Plus 4"
+vendor = "qidi"
+firmware = "Klipper"
+firmware_family = "klipper"
+connection = "moonraker"
+kinematics = "CoreXY"
+bed_mm = [305.0, 305.0]
+max_height_mm = 280.0
+filament_slots = 1
+profile = "print_handy/printers/qidi/xplus4.py"
+notes = "Stock Klipper + Moonraker. Enclosed CoreXY with an actively heated chamber (set by the template start code, not driven separately). The pinned Orca profile records a bed exclusion polygon; not tested on hardware."
+
+[[printer]]
+key = "qidi.xmax3"
+label = "Qidi X-Max 3"
+vendor = "qidi"
+firmware = "Klipper"
+firmware_family = "klipper"
+connection = "moonraker"
+kinematics = "CoreXY"
+bed_mm = [325.0, 325.0]
+max_height_mm = 315.0
+filament_slots = 1
+profile = "print_handy/printers/qidi/xmax3.py"
+notes = "Stock Klipper + Moonraker. Enclosed CoreXY; not tested on hardware."
+
+[[printer]]
+key = "qidi.xsmart3"
+label = "Qidi X-Smart 3"
+vendor = "qidi"
+firmware = "Klipper"
+firmware_family = "klipper"
+connection = "moonraker"
+kinematics = "CoreXY"
+bed_mm = [175.0, 180.0]
+max_height_mm = 170.0
+filament_slots = 1
+profile = "print_handy/printers/qidi/xsmart3.py"
+notes = "Stock Klipper + Moonraker. Marketed bed is 180 x 180 mm; the pinned Orca profile's printable area is 175 x 180 mm and is what is recorded. Not tested on hardware."

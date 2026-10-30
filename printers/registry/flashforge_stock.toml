@@ -1,0 +1,20 @@
+# Printer registry: flashforge_stock. See printers/README.md for the schema.
+#
+# One [[printer]] per registered model whose key starts with "flashforge_stock." — the
+# loader (print_handy/knowledge/registry.py) merges every file in this directory
+# in sorted filename order, and tests pin each entry against the code profile in
+# print_handy/printers/flashforge_stock/ so this file cannot silently drift from the code.
+
+[[printer]]
+key = "flashforge_stock.ad5x"
+label = "Flashforge Adventurer 5X (stock)"
+vendor = "flashforge_stock"
+firmware = "Flashforge stock"
+firmware_family = "none"
+connection = "flashforge_stock"
+kinematics = "CoreXY"
+bed_mm = [220.0, 220.0]
+max_height_mm = 220.0
+filament_slots = 4
+profile = "print_handy/printers/flashforge_stock/ad5x.py"
+notes = "Stock Adventurer firmware over its LAN HTTP API; no Moonraker. Print start is not verified on a live printer."

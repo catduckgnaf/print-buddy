@@ -1,0 +1,62 @@
+# Printer registry: elegoo. See printers/README.md for the schema.
+#
+# One [[printer]] per registered model whose key starts with "elegoo." — the
+# loader (print_handy/knowledge/registry.py) merges every file in this directory
+# in sorted filename order, and tests pin each entry against the code profile in
+# print_handy/printers/elegoo/ so this file cannot silently drift from the code.
+
+[[printer]]
+key = "elegoo.neptune4"
+label = "Elegoo Neptune 4"
+vendor = "elegoo"
+firmware = "Klipper"
+firmware_family = "klipper"
+connection = "moonraker"
+kinematics = "Cartesian"
+bed_mm = [230.0, 230.0]
+max_height_mm = 265.0
+filament_slots = 1
+profile = "print_handy/printers/elegoo/neptune4.py"
+notes = "Stock Klipper + Moonraker. Marketed bed is 235 x 235 mm; the pinned Orca profile's printable area is 230 x 230 mm and is what is recorded."
+
+[[printer]]
+key = "elegoo.neptune4pro"
+label = "Elegoo Neptune 4 Pro"
+vendor = "elegoo"
+firmware = "Klipper"
+firmware_family = "klipper"
+connection = "moonraker"
+kinematics = "Cartesian"
+bed_mm = [230.0, 230.0]
+max_height_mm = 265.0
+filament_slots = 1
+profile = "print_handy/printers/elegoo/neptune4pro.py"
+notes = "Stock Klipper + Moonraker. Marketed bed is 235 x 235 mm; the pinned Orca profile's printable area is 230 x 230 mm and is what is recorded."
+
+[[printer]]
+key = "elegoo.neptune4plus"
+label = "Elegoo Neptune 4 Plus"
+vendor = "elegoo"
+firmware = "Klipper"
+firmware_family = "klipper"
+connection = "moonraker"
+kinematics = "Cartesian"
+bed_mm = [325.0, 325.0]
+max_height_mm = 385.0
+filament_slots = 1
+profile = "print_handy/printers/elegoo/neptune4plus.py"
+notes = "Stock Klipper + Moonraker. Marketed bed is 320 x 320 mm; the pinned Orca profile's printable area is 325 x 325 mm and is what is recorded."
+
+[[printer]]
+key = "elegoo.neptune4max"
+label = "Elegoo Neptune 4 Max"
+vendor = "elegoo"
+firmware = "Klipper"
+firmware_family = "klipper"
+connection = "moonraker"
+kinematics = "Cartesian"
+bed_mm = [426.0, 426.0]
+max_height_mm = 480.0
+filament_slots = 1
+profile = "print_handy/printers/elegoo/neptune4max.py"
+notes = "Stock Klipper + Moonraker. Marketed bed is 420 x 420 mm; the pinned Orca profile's printable area is 426 x 426 mm and is what is recorded."

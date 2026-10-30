@@ -57,5 +57,15 @@ class KlipperAdapter(PrinterAdapter):
     def moonraker_objects(self):
         return ["webhooks", "print_stats", "virtual_sdcard", "extruder", "heater_bed"]
 
+    def dynamic_moonraker_objects(self, available_objects: list[str]) -> list[str]:
+        """Dynamically detect and query all configured extruders from Moonraker's object list."""
+        objs = list(self.moonraker_objects())
+        if not available_objects:
+            return objs
+        for obj in available_objects:
+            if obj.startswith("extruder") and obj[8:].isdigit() and obj not in objs:
+                objs.append(obj)
+        return objs
+
     def normalize_status(self, raw):
         return basic_status(raw)

@@ -62,7 +62,7 @@ NONE = "none"
 STATUS_FIELDS = ("state", "filename", "progress", "hotend_c", "bed_c")
 # Optional status fields a domain reports when its protocol carries them.
 STATUS_OPTIONAL_FIELDS = ("hotend_target_c", "bed_target_c", "remaining_min",
-                          "layer", "total_layer")
+                          "layer", "total_layer", "toolheads")
 # Event kinds a listener may emit into the bot core.
 EVENT_KINDS = ("status", "completion", "error", "snapshot_available")
 

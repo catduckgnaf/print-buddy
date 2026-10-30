@@ -504,13 +504,27 @@ def basic_status(raw: dict) -> dict[str, Any]:
     """Plain Moonraker fields shared by every model."""
     raw = raw if isinstance(raw, dict) else {}
     stats = raw.get("print_stats") or {}
-    return {
+    out: dict[str, Any] = {
         "state": stats.get("state", "unknown"),
         "filename": stats.get("filename") or "",
         "progress": (raw.get("virtual_sdcard") or {}).get("progress"),
         "hotend_c": (raw.get("extruder") or {}).get("temperature"),
         "bed_c": (raw.get("heater_bed") or {}).get("temperature"),
     }
+    # Dynamic multi-toolhead telemetry if extruder1..N exist
+    extras = []
+    for k, v in raw.items():
+        if k.startswith("extruder") and k[8:].isdigit() and isinstance(v, dict):
+            extras.append((int(k[8:]), k, v))
+    if extras:
+        out["toolheads"] = [
+            {"tool": 0, "name": "extruder", "temperature": out["hotend_c"]}
+        ]
+        for idx, k, v in sorted(extras):
+            out["toolheads"].append(
+                {"tool": idx, "name": k, "temperature": v.get("temperature")}
+            )
+    return out
 
 
 # A Bambu Lab printer runs plain G/M/T codes only. Klipper macros (PRINT_START, the ZMod

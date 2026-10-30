@@ -24,6 +24,7 @@ MODEL = PrinterModel(
     templates="bambulab_a1",
     generated_templates=True,
     vendor=VENDOR,
+    color_system="multi_slot",
     # Proposed in config/protected-settings-baseline.bambulab.a1.proposed.json; not approved by this change.
     baseline="protected-settings-baseline.bambulab.a1.json",
     # Only the 0.4 mm vendor profile is templated; 0.2, 0.6 and 0.8 mm hotends exist but are refused here.
@@ -37,7 +38,9 @@ MODEL = PrinterModel(
             "max_print_height_mm": facts.A1["max_print_height_mm"].value,
             "nozzle_diameter_mm": 0.4,
             "nozzle_type": "stainless_steel",
-            "ifs_slots": 1,
+            # Filament slots: the AMS unit's trays from the facts ("ams":
+            # (unit, slots)); the AMS is this model's slot system (#671).
+            "ifs_slots": facts.A1["ams"].value[1],
         },
     },
 )

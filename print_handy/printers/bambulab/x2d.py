@@ -1,5 +1,7 @@
 """Bambu Lab X2D (inherits bambulab VENDOR). The dual-nozzle X-series model: a 256 x 256 mm bed and 261 mm height, a 320 C hotend, and no bed exclusion. Its two extruders are described by facts ("extruders": 2); print starts resolve AMS trays per filament slot through ams_mapping.py (#308).
 
+Color architecture (#671): classified "single" deliberately. Two independent extruders, each fed by its own AMS, are neither the one-extruder multi_slot shape nor the multi_tool tool-changer contract (identity tool mapping, tool-shaped intake), so neither class is claimed; the slicer assigns filaments to extruders in the file itself, and print starts resolve AMS trays per filament slot (ams_mapping.py), outside the class machinery.
+
 Sourced values: facts.py (X2D); docs/BAMBU-LAB.md. Templates: generated on the operator's
 machine from their own OrcaSlicer into <state>/orca-profiles/bambulab_x2d (profiles.py); none are shipped.
 """

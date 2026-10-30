@@ -2126,10 +2126,14 @@ def configured_slots(state):
 
     A recorded `ifs_slots` map is used as is. A single-extruder printer with no slot map has one slot,
     its configured spool (#263): slot entries are only written from Spoolman, so an offline printer never
-    gets one. Printers with several slots or bays (AD5X IFS, stock Flashforge) still need their recorded map.
+    gets one. Printers whose slots are bound in the record (AD5X IFS, stock Flashforge) still need their
+    recorded map. A multi_slot printer whose feeder reports its own contents (Bambu AMS, #671) is not
+    record-bound either: its record carries the one configured spool, offered as slot 1 the #263 way,
+    and the printer's reported trays are matched to a job's filament slots at print start instead.
     """
     mappings = (state or {}).get("ifs_slots") or {}
-    if mappings or printers.current().slot_count != 1:
+    current = printers.current()
+    if mappings or (current.slot_count != 1 and current.slots_bound_by_record):
         return mappings
     spool = (state or {}).get("spool") or {}
     material = spool.get("material")
@@ -2160,7 +2164,12 @@ def resolve_filament_selection(state, selection):
     if not isinstance(configured, dict):
         raise ValueError(f"slot {slot} configured mapping is invalid")
     mapped_id = configured.get("spoolman_id")
-    unbound = bool(configured) and mapped_id is None and printers.current().slot_count == 1
+    # "Unbound" = the slot's spool is the printer's one configured spool (the
+    # configured_slots synthesis), not a per-slot record binding: a printer
+    # whose slots are not bound in the record (single-extruder models, and the
+    # Bambu AMS models since #671) needs no Spoolman ID for it.
+    unbound = bool(configured) and mapped_id is None and (
+        printers.current().slot_count == 1 or not printers.current().slots_bound_by_record)
     if selection.get("spoolman_id") is None:
         if mapped_id is None and not unbound:
             raise ValueError(f"slot {slot} requires an explicit Spoolman spool ID; no configured mapping")
@@ -2864,7 +2873,16 @@ def record_start(gcode_path, moonraker_name=None, started_at=None):
             # Split plates advance the same plan that /print-next reads.
             ctx.update(multipart_plan_id=plan['plan_id'], part_id=part['id'], required_parts=plan['parts'])
             break
-    mapped = printers.current().native.embedded_mapping(text, st) if printers.current().multi_slot else None
+    mapped = None
+    current = printers.current()
+    if current.multi_slot:
+        # Only a native adapter has an embedded mapping to lift; a multi_slot
+        # adapter without the native contract (Bambu AMS, #671 — the stock
+        # AD5X never had one either) records the plain start, as it did while
+        # it was classified single.
+        native = current.native_or_none
+        if native is not None:
+            mapped = native.embedded_mapping(text, st)
     if mapped is not None:
         ctx['tool_to_physical_slot'] = mapped
         ctx['active_spool']['accounting_only_not_job_color'] = True
@@ -3530,7 +3548,12 @@ def intake_color_choices(job_path, state, mode=None, slots=None, interactive=Fal
         manifest['source_sha256'] = file_sha256(job['downloaded_file'])
     adapter = _job_adapter(job)
     multi_tool = adapter.multi_tool
-    if not adapter.multi_slot and not multi_tool:
+    # The slot questions below are built from the record's slot map, so they serve the
+    # record-bound multi_slot printers (and, tool-shaped, the multi_tool pair). A Bambu
+    # AMS model is multi_slot by class (#671) but not record-bound: its filament slots
+    # are the file's own, matched to reported AMS trays at print start, so a source that
+    # needs slot choices is refused here exactly as it was while the model was "single".
+    if not multi_tool and not (adapter.multi_slot and adapter.slots_bound_by_record):
         if manifest['requires_choices']:
             raise MultiColorUnsupported(
                 f"{adapter.label} has a single extruder; this source has several parts or colors that need a "
@@ -4717,7 +4740,13 @@ def slice_job(job_path, brim_override=None, copies=None, scale=None, recipe_sha2
     # verify_gcode. A file that never leaves disk does not need Moonraker or Spoolman.
     job = json.loads(Path(job_path).read_text()); st = printer_state.load()
     adapter = _job_adapter(job)
-    generic = not adapter.multi_slot
+    # "generic" = not sliced through the record-bound IFS machinery (per-slot
+    # selections validated against the record map, per-part plates exported by
+    # record slot, native finalization). A multi_tool printer stays "generic"
+    # here, and so does a Bambu AMS model (#671): multi_slot by class, but its
+    # filament slots are the sliced file's own — Print Handy never slices per
+    # slot for it — so its slicing behavior is exactly what it was as "single".
+    generic = not (adapter.multi_slot and adapter.slots_bound_by_record)
     # A multi_tool printer stays "generic" for the IFS-shaped gates below, but
     # its per-toolhead colour decisions are honoured (#346): the refusal gate
     # and the decisions drop both exempt it, and per-part decisions route to
@@ -7171,7 +7200,12 @@ def _main():
         raise SystemExit('REFUSED: inspect-only cannot approve slicing or printing')
     if not a.approved and not a.inspect_only: raise SystemExit("REFUSED: --select requires the operator's explicit --approved slicing authorization; use --inspect-only for preparation")
     if a.select<1 or a.select>len(job["sources"]): raise SystemExit("invalid --select")
-    if a.print_now and printers.get(job.get("printer_model") or printers.current().key).multi_slot and not job.get("filament_selection"):
+    # The explicit-selection gate guards the record-bound slot printers (AD5X pair):
+    # the wrong record slot is the wrong filament, silently. A Bambu AMS model's
+    # explicit choice is its job ams_mapping (or the print path's snapshot
+    # resolution), never a record slot, so the gate does not apply to it (#671).
+    _print_now_adapter = printers.get(job.get("printer_model") or printers.current().key)
+    if a.print_now and _print_now_adapter.multi_slot and _print_now_adapter.slots_bound_by_record and not job.get("filament_selection"):
         raise SystemExit("REFUSED: --print-now requires explicit filament selection (--filament-slot, --filament-color, --filament-material, or use 'filament-select' command)")
     chosen=job["sources"][a.select-1]
     # Site profile settings are never imported. The selected 3MF/STL supplies geometry

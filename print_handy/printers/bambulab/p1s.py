@@ -20,6 +20,7 @@ MODEL = PrinterModel(
     templates="bambulab_p1s",
     generated_templates=True,
     vendor=VENDOR,
+    color_system="multi_slot",
     baseline="protected-settings-baseline.bambulab.p1s.json",
     supported_nozzle_sizes=(0.4,),
     supported_nozzle_types=("stainless_steel", "hardened_steel"),
@@ -30,7 +31,9 @@ MODEL = PrinterModel(
             "max_print_height_mm": facts.P1S["max_print_height_mm"].value,
             "nozzle_diameter_mm": 0.4,
             "nozzle_type": "stainless_steel",
-            "ifs_slots": 1,
+            # Filament slots: the AMS unit's trays from the facts ("ams":
+            # (unit, slots)); the AMS is this model's slot system (#671).
+            "ifs_slots": facts.P1S["ams"].value[1],
         },
     },
 )

@@ -9,6 +9,9 @@ from ..base import MultiColorUnsupported, PrinterAdapter, basic_status
 
 class ZmodAdapter(PrinterAdapter):
     has_native_screen = True
+    # The IFS slots are bound to spools in the hardware record's slot map:
+    # intake, slicing and print-now validate selections against that map.
+    slots_bound_by_record = True
 
     @property
     def slot_count(self):

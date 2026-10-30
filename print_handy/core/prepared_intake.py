@@ -2385,10 +2385,14 @@ async def prepare_link(event, adapter, state, root, timeout=None, reuse=None, pr
                                      f"{record.get('color') or 'unknown color'} {record.get('material') or 'unknown material'}")
                     slot_lines = '\n'.join(lines)
             elif job_adapter.multi_slot:  # a single extruder printer has no slot map
-                native = job_adapter.native
-                _map = native.embedded_mapping(first.read_text(), state)
-                if _map:
-                    slot_lines = native.describe_mapping(_map, state)
+                # Only a native adapter can describe an embedded slot map; a
+                # multi_slot adapter without one (Bambu AMS, #671) has nothing
+                # to describe here, exactly as while it was classified single.
+                native = job_adapter.native_or_none
+                if native is not None:
+                    _map = native.embedded_mapping(first.read_text(), state)
+                    if _map:
+                        slot_lines = native.describe_mapping(_map, state)
         except Exception as exc:  # a bad map is refused later by print-now; show why now
             slot_lines = f'Heads-up on the filament positions: {exc}'
         estimate_text = (f"~{mj.human_dur(actual_estimate)} printing, ~{mj.human_dur(actual_estimate + 300)} total "

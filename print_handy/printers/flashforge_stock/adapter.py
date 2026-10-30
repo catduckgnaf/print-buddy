@@ -20,6 +20,9 @@ class StockFlashforgeAdapter(PrinterAdapter):
 
     transport = "flashforge_stock"
     has_native_screen = False
+    # The four IFS bays are bound to spools in the hardware record's slot map,
+    # like the ZMod AD5X: a stock print requires a record-bound selection.
+    slots_bound_by_record = True
     verified_slicers = ("orca", "flash_studio")
 
     @property

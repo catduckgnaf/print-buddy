@@ -334,6 +334,13 @@ def test_dual_model_registration(key, monkeypatch):
                                               "PRINT_HANDY__PATHS__HERMES_HOME": str(fixture.HERMES)})
     a = printers.get(key, cfg)
     assert a.extruder_count() == 2 and (a.slot_count, a.multi_slot) == (1, False)
+    # #671's treatment is load-bearing, not just a label: the model stays
+    # "single" in the settings layer too, so a slot count above 1 is refused
+    # for it exactly as for any single model.
+    with pytest.raises(settings.SettingsError, match="ifs_slots must be 1"):
+        settings.load(local=False, environ={"PRINT_HANDY__PRINTER__MODEL": key,
+                                            "PRINT_HANDY__PRINTER__IFS_SLOTS": "4",
+                                            "PRINT_HANDY__PATHS__HERMES_HOME": str(fixture.HERMES)})
     assert a.build_volume().bed_mm == tuple(float(v) for v in f["bed_mm"].value)
     fixture.trust(type(a), f, monkeypatch.setattr)
     folder = fixture.install(a, f)

@@ -160,7 +160,8 @@ def test_a1_is_a_model_of_the_shared_bambu_vendor():
     assert not {"connection", "delivery", "slicers", "start_code"} & (set(facts.A1) | set(facts.VENDOR_FACTS))
     vol = a.build_volume()
     assert (vol.bed_mm, vol.max_height_mm) == ((256.0, 256.0), 256.0)
-    assert (a.slot_count, a.multi_slot, a.has_native_screen) == (1, False, False)
+    # The AMS Lite is the A1's slot system (#671): multi_slot, four slots.
+    assert (a.slot_count, a.multi_slot, a.has_native_screen) == (4, True, False)
     assert a.supported_nozzle_sizes == (0.4,) and a.supported_nozzle_types == ("stainless_steel", "hardened_steel")
 
 
@@ -175,8 +176,11 @@ def test_settings_follow_the_vendor_and_the_printer():
         config_for(A1, nozzle_diameter_mm=0.6)
     with pytest.raises(settings.SettingsError, match="nozzle_type 'brass' is not supported"):
         config_for(A1, nozzle_type="brass")
-    with pytest.raises(settings.SettingsError, match="ifs_slots must be 1"):
-        config_for(A1, ifs_slots=4)
+    # #671: the A1 is multi_slot and 4 is its own AMS Lite count, so the
+    # settings layer accepts it (the "ifs_slots must be 1" refusal now applies
+    # to the still-single models — pinned for a dual-nozzle model in
+    # test_bambu_ams_mapping).
+    assert config_for(A1, ifs_slots=4)["printer"]["ifs_slots"] == 4
     with pytest.raises(settings.SettingsError, match="must be empty for model 'bambulab.a1'"):
         settings.load(local=False, environ={"PRINT_HANDY__PRINTER__MODEL": A1,
                                            "PRINT_HANDY__SERVICES__MOONRAKER_URL": "http://printer.test:7125"})

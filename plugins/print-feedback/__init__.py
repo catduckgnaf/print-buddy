@@ -5176,17 +5176,22 @@ def alert_button_handlers(bot, adapter):
         timeout = (globals().get('_config').safety_confirm_timeout_s() if globals().get('_config') else 600)
         if action == 'pick':
             alert = await asyncio.to_thread(pab.peek, aid)
+            if not isinstance(alert, dict):
+                await interaction.response.send_message('That object list is old or was already used. Nothing sent.', ephemeral=True)
+                return
             try:
                 index = (getattr(interaction, 'data', {}) or {}).get('values', [None])[0]
             except (TypeError, AttributeError):
                 index = None
+            # The live read is two printer calls: acknowledge first, inside Discord's 3 s window.
+            await interaction.response.defer()
             step = await asyncio.to_thread(
                 exclude_chat.prepare, alert, index, functools.partial(exclude_chat.read_live, alert.get('printer_id') or None))
             if step['step'] in ('stale', 'refuse'):
-                await interaction.response.send_message(step['text'], ephemeral=True)
+                await interaction.followup.send(step['text'], ephemeral=True)
                 return
             if not await asyncio.to_thread(pab.take, aid):
-                await interaction.response.send_message('That object list is old or was already used. Nothing sent.', ephemeral=True)
+                await interaction.followup.send('That object list is old or was already used. Nothing sent.', ephemeral=True)
                 return
             if step['step'] == 'cancel_print':
                 new_id = await asyncio.to_thread(
@@ -5203,7 +5208,7 @@ def alert_button_handlers(bot, adapter):
             for label, act, style in labels:
                 view.add_item(discord.ui.Button(
                     label=label[:80], style=style, custom_id=f'{exclude_chat.PREFIX}:{act}:{new_id}'))
-            await interaction.response.edit_message(content=step['text'], view=view)
+            await interaction.edit_original_response(content=step['text'], view=view)
             return
         alert = await asyncio.to_thread(pab.take, aid)
         if not alert:
@@ -5217,12 +5222,13 @@ def alert_button_handlers(bot, adapter):
             if alert.get('kind') != 'exclude-cancel':
                 await interaction.response.edit_message(content='That confirm is not a stop. Nothing sent.', view=None)
                 return
+            await interaction.response.defer()
             try:
                 _sent, message = await asyncio.to_thread(print_stop.cancel, alert.get('filename') or '', printer_id=printer_id)
             except Exception as exc:
                 logger.exception('exclude stop failed')
                 message = f'Stop was not sent. The print was not cancelled. {exc}'
-            await interaction.response.edit_message(content=message, view=None)
+            await interaction.edit_original_response(content=message, view=None)
             return
         if action != 'go' or alert.get('kind') != 'exclude-go':
             await interaction.response.edit_message(content='That confirm is not an exclude. Nothing sent.', view=None)
@@ -5231,9 +5237,10 @@ def alert_button_handlers(bot, adapter):
         def sender(script):
             pc._send('/printer/gcode/script', method='POST', data={'script': script},
                      timeout=30, printer_id=printer_id)
+        await interaction.response.defer()
         result = await asyncio.to_thread(
             exclude_chat.confirm_send, alert, sender, functools.partial(exclude_chat.read_live, printer_id))
-        await interaction.response.edit_message(content=result['text'], view=None)
+        await interaction.edit_original_response(content=result['text'], view=None)
 
     async def on_interaction(interaction):
         data = getattr(interaction, 'data', None) or {}

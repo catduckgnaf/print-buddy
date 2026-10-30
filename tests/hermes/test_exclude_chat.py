@@ -123,3 +123,47 @@ def test_watchdog_check_does_not_exclude_or_stop():
     assert "EXCLUDE_OBJECT" not in body
     assert "print/cancel" not in body
     assert "print_stop" not in body
+
+
+def _exclude_click(monkeypatch, tmp_path, custom_id, values=None):
+    """The real plugin button handler with a fake Discord that records call order."""
+    import asyncio
+    from print_handy.hermes import exclude_chat, print_alert_buttons as pab
+    from tests.hermes.test_print_next import Interaction
+    from tests.hermes.test_stop_button_view import _install
+    monkeypatch.setattr(pab, 'STATE', tmp_path / 'alerts.json')
+    _sent, on_interaction, _plugin = _install(monkeypatch)
+    import sys
+    sys.modules['discord'].ButtonStyle.secondary = 2
+    order = []
+    click = Interaction(custom_id, values)
+
+    async def defer(**_kw):
+        order.append('defer')
+
+    async def edit_original_response(content=None, view=None, **_kw):
+        order.append(('edit', content))
+    click.response.defer = defer
+    click.edit_original_response = edit_original_response
+
+    def live(printer_id=None):
+        order.append('live')
+        return {"state": "printing", "filename": "plate.gcode", "excluded": []}
+    monkeypatch.setattr(exclude_chat, 'read_live', live)
+    return pab, click, order, lambda: asyncio.run(on_interaction(click))
+
+
+def test_stale_picker_answers_without_crashing(monkeypatch, tmp_path):
+    _pab, click, order, run = _exclude_click(monkeypatch, tmp_path, "pbexclude:pick:missing", ["0"])
+    run()
+    assert click.out == [('send', 'That object list is old or was already used. Nothing sent.')]
+    assert order == []  # no defer and no printer read for a stale picker
+
+
+def test_picker_acknowledges_before_reading_the_printer(monkeypatch, tmp_path):
+    pab, click, order, run = _exclude_click(monkeypatch, tmp_path, "", ["1"])
+    aid = pab.record("exclude-pick", "plate.gcode", names=["A", "B", "C"])
+    click.data["custom_id"] = f"pbexclude:pick:{aid}"
+    run()
+    assert order[0] == 'defer' and order[1] == 'live'
+    assert order[-1][0] == 'edit' and "Cancel B" in order[-1][1]

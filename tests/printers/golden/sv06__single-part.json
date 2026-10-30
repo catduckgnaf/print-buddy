@@ -594,7 +594,7 @@
       ],
       "end_macro": "PRINT_END",
       "ifs_slots": 1,
-      "max_print_height_mm": 220.0,
+      "max_print_height_mm": 250.0,
       "nozzle_diameter_mm": 0.4,
       "start_macro": "PRINT_START"
     }

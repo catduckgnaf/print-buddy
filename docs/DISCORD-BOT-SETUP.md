@@ -236,7 +236,9 @@ Cloudflare, so the hostname survives restarts:
   (`8091` in the examples — `[live_stream] port`, which the Unraid template pre-fills).
 - Run the connector beside Print Handy: with Compose, the profiled sidecar does it
   (`docker compose --profile live-stream up -d`, with `CLOUDFLARED_IMAGE` set to a tested
-  connector image); on Unraid, run a separate `cloudflared` container with the same token.
+  connector image); on Unraid, run a separate `cloudflared` container with the same token,
+  sharing Print Handy's network (Extra Parameters `--network container:<print-handy container name>`),
+  because `127.0.0.1` inside a container with its own network is that container, not Print Handy.
   If the tunnel is down, only the live view is unreachable — the bot and prints are
   unaffected. Set `[live_stream] activity_origin` to the hostname's https origin, for
   example `https://ph-live.example.com`.

@@ -1594,6 +1594,76 @@ def test_slice_refusal_crosses_the_worker_boundary_as_data():
     assert '#9E9E9E' in back.plain  # an unreadable name says the neutral default out loud
 
 
+@pytest.mark.parametrize('copies', [1, 2])
+@pytest.mark.parametrize('worker_roundtrip', [False, True])
+@pytest.mark.parametrize('kind,phrase,retryable', [
+    ('engine', 'OrcaSlicer failed or produced no usable G-code', False),
+    ('guard', 'safety check rejected', False),
+    ('layout', 'copies could not be placed', False),
+    ('recipe', 'settings changed', False),
+    ('timeout', 'time limit', True),
+    ('pid', 'process limit', False),
+    ('unknown', 'could not identify the cause', True),
+])
+def test_slice_failure_journey_reports_cause_and_remedy(env, monkeypatch, copies, worker_roundtrip,
+                                                      kind, phrase, retryable):
+    from print_handy.core import orca_adapter, slice_failure, worker_errors
+    from print_handy.core.resources import ResourceLimitError
+    monkeypatch.setattr(orca_adapter, 'orca_plate_capacity', lambda *a, **k: 7)
+    calls = []
+    error = (ResourceLimitError('container is at its process limit SECRET') if kind == 'pid' else
+             RuntimeError('SECRET unknown') if kind == 'unknown' else
+             slice_failure.SliceFailure('SECRET raw detail', kind=kind, slicer='OrcaSlicer'))
+
+    def fail(job_path, copies=None, **kwargs):
+        calls.append(copies or 1)
+        # A partial artifact must not survive any of these failure paths.
+        folder = Path(job_path).parent / 'sliced'
+        folder.mkdir(parents=True, exist_ok=True)
+        (folder / 'partial.gcode').write_text('unusable')
+        raise (worker_errors.decode(json.loads(json.dumps(worker_errors.encode(error))))
+               if worker_roundtrip else error)
+
+    monkeypatch.setattr(model_job, 'slice_job', fail)
+    # One color, slot, quantity, Slice and print now; cancel the optional retry.
+    # A spare Cancel also lets this test fail on the released handler's actual
+    # generic message, rather than failing because its blind retry exhausted picks.
+    adapter, result, receipt = run_flow(env, [1, 0, copies - 1, 0, 1],
+                                      mid=f'failure-{kind}-{copies}-{worker_roundtrip}')
+    posts = '\n'.join(adapter.sent + [q['question'] for q in adapter.questions])
+    assert phrase in posts and 'SECRET' not in posts
+    remedy = {'pid': '--pids-limit', 'recipe': 'Prepare the saved model again',
+              'layout': 'fewer copies', 'guard': 'do not bypass',
+              'engine': '/print-handy bundle', 'timeout': '/print-handy bundle',
+              'unknown': '/print-handy bundle'}[kind]
+    assert remedy in posts
+    retry_questions = [q for q in adapter.questions if q['choices'][0] == 'Retry slice once (no print)']
+    assert bool(retry_questions) is retryable
+    assert calls == [copies] and env.starts == []
+    assert receipt['uploaded'] is False and receipt['started'] is False
+    assert receipt['slice_error'] == str(error)
+    assert 'slice_approval' not in receipt and 'gcodes' not in receipt
+    assert not list((env.tmp / 'archive').rglob('partial.gcode'))
+
+
+def test_second_slice_failure_keeps_reference_and_diagnostics_step(env, monkeypatch):
+    from print_handy.core.slice_failure import SliceFailure
+    calls = []
+
+    def fail(*args, **kwargs):
+        calls.append(1)
+        raise SliceFailure('SECRET timeout', kind='timeout', slicer='OrcaSlicer')
+
+    monkeypatch.setattr(model_job, 'slice_job', fail)
+    adapter, result, receipt = run_flow(env, [1, 0, 0, 0], mid='retry-fails-helpfully')
+    final = adapter.sent[-1]
+    assert 'The one retry also failed' in final and 'time limit' in final
+    assert '/print-handy bundle' in final and 'PH_SLICING_TRANSIENT' in final
+    assert 'SECRET' not in final and 'retry the slice once' not in final
+    assert len(calls) == 2 and env.starts == []
+    assert receipt['status'] == 'SLICE_FAILED' and 'slice_approval' not in receipt
+
+
 # --- multi-file models: file-list site files are parts of one model, printed together ---
 
 UNO_FILES = ['UNO - cap-sign-1.stl', 'UNO - container-1.stl', 'UNO - uno-latch-1.stl', 'UNO - cap-nosign-1.stl']

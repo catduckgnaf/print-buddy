@@ -4741,8 +4741,9 @@ def slice_job(job_path, brim_override=None, copies=None, scale=None, recipe_sha2
     if recipe_sha256 is not None and recipe_sha256 != recipe['sha256']:
         # The request was bound to a recipe the job no longer describes (a background slice
         # requested before the job changed). Slicing now would label one recipe with another.
-        raise RuntimeError('slice request is for another slice recipe; the job changed after it was requested. '
-                           'Nothing sliced')
+        from .slice_failure import SliceFailure
+        raise SliceFailure('slice request is for another slice recipe; the job changed after it was requested. '
+                           'Nothing sliced', kind='recipe')
     # A Bambu/Orca multi-plate project is not one PrusaSlicer bed. Its aggregate
     # dimensions and center are not meaningful for an individual printable plate.
     if src.suffix.lower() == ".3mf":

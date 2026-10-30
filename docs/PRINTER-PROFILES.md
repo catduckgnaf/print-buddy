@@ -25,6 +25,10 @@ print_handy/printers/
   sovol/
     __init__.py          VENDOR  Sovol: the Klipper profile under the Sovol name
     sv06.py              MODEL   sovol.sv06
+    sv01.py, sv08.py, …  MODEL   the rest of the Klipper line; see SOVOL.md
+  sovol_marlin/
+    __init__.py          VENDOR  Sovol on stock Marlin, through OctoPrint
+    sv06.py              MODEL   sovol_marlin.sv06
   octoprint/
     __init__.py          VENDOR  OctoPrint: REST to Marlin, slicer-owned start code, OrcaSlicer, .gcode
     marlin.py            MODEL   octoprint.marlin
@@ -131,6 +135,7 @@ These forms are also accepted, and are stored as the full key:
 printer:
   vendor: sovol                # "bambu" is accepted for "bambulab"
   model: sv06                  # the printer part; on its own it works when only one vendor has that name
+                               # (a bare sv06 still means sovol.sv06, as before sovol_marlin.sv06 existed)
   slicer: orca                 # orca everywhere; bambu_studio only where the vendor allows it (Bambu Lab)
 delivery:
   methods: [printer, discord]  # a subset of the vendor's delivery options; default is the vendor default

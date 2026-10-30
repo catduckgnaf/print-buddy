@@ -170,7 +170,7 @@ def test_name_must_differ_from_existing_printers(tmp_path):
     reply = say(st, "workshop ad5x")  # case-insensitive clash
     assert "already called" in reply
     reply = say(st, "default")  # the model's own label is fine
-    assert "Moonraker URL" in reply
+    assert "Printer URL" in reply
     session = st.get("k")
     assert session["ob_answers"]["name"] == "Creality K1"
     assert session["ob_answers"]["printer_id"] == "creality-k1"
@@ -190,7 +190,7 @@ def test_probe_failure_back_fix_and_retry(tmp_path):
     reply = say(st, "test", probe_runner=flaky)
     assert "did not pass" in reply and "nothing answered" in reply
     reply = say(st, "back", probe_runner=flaky)
-    assert "Moonraker URL" in reply  # returned to the failing field
+    assert "Printer URL" in reply  # returned to the failing field
     assert "moonraker_url" not in st.get("k")["ob_answers"]
     say(st, "http://right.local:7125", probe_runner=flaky)
     reply = say(st, "test", probe_runner=flaky)
@@ -214,7 +214,7 @@ def test_bambu_walkthrough_uses_a_per_printer_secret_name(tmp_path):
     start(st, now=1000)
     walk(st, ["bambulab.a1", "A1 Shelf"])
     reply = say(st, "yes")
-    assert "Printer address (LAN)" in reply
+    assert "Printer URL" in reply
     walk(st, ["192.0.2.44", "01P00A000000001"])
     reply = say(st, "stored")
     assert "$BAMBU_LAN_PASSWORD_A1_SHELF" in reply or "Live connection test" in reply

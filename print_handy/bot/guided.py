@@ -137,18 +137,65 @@ def _validate_user_ids(value, _answers):
     return value.strip()
 
 
+def _connection_of(model_key):
+    model = printers.MODELS.get(model_key or "")
+    return model.vendor.connection if model is not None else "moonraker"
+
+
+def _printer_url_prompt(model_key):
+    """What the checklist should ask for, based on the model already chosen."""
+    conn = _connection_of(model_key)
+    if conn == "octoprint":
+        return ("Reply with the printer's URL. For OctoPrint that is the OctoPrint "
+                "address, including an OctoPi that is not the printer (for example "
+                "http://octopi.local). Reply `skip` to leave it unset.")
+    if conn in ("bambulab_lan", "prusalink", "flashforge_stock", "elegoo_sdcp"):
+        return ("Reply with the printer's hostname or IP. Not a full URL, and no port "
+                "(for example printer.local or 192.168.1.50). Reply `skip` to leave it unset.")
+    if conn == "moonraker":
+        return ("Reply with the printer's URL. For Klipper this is Moonraker "
+                "(for example http://printer.local:7125), including a Klipper host "
+                "that is not the printer itself. Reply `skip` to leave it unset.")
+    return "This model has no printer address. Reply `skip`."
+
+
+def _address_placement(model_key, address):
+    """Where a non-empty Printer URL is written: (section, key), or None."""
+    if not address:
+        return None
+    conn = _connection_of(model_key)
+    if conn == "moonraker":
+        return ("services", "moonraker_url")
+    if conn == "octoprint":
+        return ("services", "octoprint_url")
+    if conn == "bambulab_lan":
+        return ("bambu", "lan_host")
+    if conn == "prusalink":
+        return ("prusa", "link_host")
+    if conn == "flashforge_stock":
+        return ("flashforge_stock", "host")
+    if conn == "elegoo_sdcp":
+        return ("elegoo_sdcp", "host")
+    return None
+
+
 def _validate_service_url(value, answers):
     text = value.strip()
     if text.lower() in ("", "skip", "none"):
         return ""
-    model = printers.MODELS.get(answers.get("model"))
-    if model is not None and model.vendor.connection in ("offline", "bambulab_lan", "flashforge_stock", "prusalink", "elegoo_sdcp"):
-        raise ValueError("this printer model has no Moonraker connection (Print Handy would refuse the "
-                         "setting); reply `skip`")
+    conn = _connection_of(answers.get("model"))
+    if conn in ("bambulab_lan", "prusalink", "flashforge_stock", "elegoo_sdcp"):
+        from ..setup_wizard import _host
+        error = _host(text)
+        if error:
+            raise ValueError(f"Printer URL {error}, or reply `skip`")
+        return text
+    if conn not in ("moonraker", "octoprint"):
+        raise ValueError("this printer model has no printer address; reply `skip`")
     from ..setup_wizard import _url
     error = _url(text)
     if error:
-        raise ValueError(f"Moonraker URL {error}, or reply `skip`")
+        raise ValueError(f"Printer URL {error}, or reply `skip`")
     return text
 
 
@@ -230,9 +277,9 @@ def steps(token_env="DISCORD_BOT_TOKEN"):
              "Reply with the numeric Discord user IDs allowed to use Print Handy, separated by "
              "commas (right-click a user > Copy User ID, with Developer Mode on) — or reply "
              "`everyone` to let anyone who can post in the print channel use it.", _validate_user_ids),
-        Step("moonraker_url", "Moonraker URL (optional)",
-             "If this printer runs Klipper/Moonraker, reply with its URL (for example "
-             "http://printer.local:7125). Otherwise reply `skip`.", _validate_service_url),
+        Step("moonraker_url", "Printer URL (optional)",
+             "Reply with the printer's URL, or `skip`. The question names the right "
+             "kind of address for the model you already picked.", _validate_service_url),
         Step("spoolman_url", "Spoolman URL (optional)",
              "If you run Spoolman for filament inventory, reply with its URL (for example "
              "http://spoolman.local:7912; the Spoolman included in the Docker stack is "
@@ -298,9 +345,8 @@ def _add_step_defs():
                         "Reply with the new printer's own channel ID. It cannot share the main "
                         "print channel — that one is the first printer's, and approvals in a "
                         "channel can only start that channel's printer.", _validate_new_chat_id),
-        "moonraker_url": Step("moonraker_url", "Moonraker URL (optional)",
-                              "If this printer runs Klipper/Moonraker, reply with its URL (for "
-                              "example http://printer.local:7125). Otherwise reply `skip`.",
+        "moonraker_url": Step("moonraker_url", "Printer URL (optional)",
+                              "Reply with the printer's URL, or `skip`.",
                               _validate_service_url),
     }
 
@@ -319,7 +365,11 @@ def _add_keys(session):
 def _add_prompt_text(session, note=""):
     keys = session["add_keys"]
     step = _add_step_defs()[keys[session["add_step"]]]
-    head = f"**Add a printer ({session['add_step'] + 1} of {len(keys)}): {step.label}**\n{step.prompt}"
+    prompt = step.prompt
+    if step.key == "moonraker_url":
+        draft = session.get("draft") or {}
+        prompt = _printer_url_prompt(draft.get("model") or (session.get("answers") or {}).get("model"))
+    head = f"**Add a printer ({session['add_step'] + 1} of {len(keys)}): {step.label}**\n{prompt}"
     return (note + "\n" if note else "") + head + "\n\n" + checklist_text(session) + \
         "\n\nReply with the answer, or `/print-handy cancel` to pause (your checklist is saved)."
 
@@ -483,12 +533,12 @@ def _onboard_keys(answers):
 
 _STEP_LABELS_OB = {
     "model": "Printer model", "name": "Display name",
-    "moonraker_url": "Moonraker URL", "zmod_secrets": "Stock side-channel secrets",
-    "lan_gate": "LAN connection", "lan_host": "Printer address (LAN)",
+    "moonraker_url": "Printer URL", "zmod_secrets": "Stock side-channel secrets",
+    "lan_gate": "LAN connection", "lan_host": "Printer URL",
     "lan_serial": "Printer serial", "lan_secret": "LAN access code (stored, never pasted)",
-    "link_host": "Printer address (PrusaLink)", "prusa_secret": "API key (stored, never pasted)",
-    "host": "Printer address", "sdcp_trust": "Network trust",
-    "octoprint_url": "OctoPrint URL", "octo_secret": "API key (stored, never pasted)",
+    "link_host": "Printer URL", "prusa_secret": "API key (stored, never pasted)",
+    "host": "Printer URL", "sdcp_trust": "Network trust",
+    "octoprint_url": "Printer URL", "octo_secret": "API key (stored, never pasted)",
     "stock_secrets": "Serial + check code (stored, never pasted)",
     "probe": "Live connection test",
 }
@@ -519,8 +569,9 @@ def _onboard_step_defs(session, probe_runner=None):
                      f"names. Reply with a name, or `default` for {label!r}.",
                      _validate_ob_name),
         "moonraker_url": Step("moonraker_url", _STEP_LABELS_OB["moonraker_url"],
-                              "Reply with the printer's Moonraker URL (for example "
-                              "http://printer.local:7125). To add the printer offline "
+                              "Reply with the printer's URL. For Klipper this is Moonraker "
+                              "(for example http://printer.local:7125), including a host that "
+                              "is not the printer itself. To add the printer offline "
                               "instead — slicing only, nothing tested — reply `skip`.",
                               _validate_service_url),
         "zmod_secrets": Step(
@@ -579,9 +630,9 @@ def _onboard_step_defs(session, probe_runner=None):
             _validate_trust_ack),
         "octoprint_url": Step(
             "octoprint_url", _STEP_LABELS_OB["octoprint_url"],
-            "Reply with the OctoPrint URL (for example "
-            "http://ender.local:5000), or reply `skip` to add the printer "
-            "offline.",
+            "Reply with the printer's URL. For OctoPrint that is the OctoPrint "
+            "address, including an OctoPi that is not the printer (for example "
+            "http://octopi.local). Reply `skip` to add the printer offline.",
             lambda value, answers: ("" if value.strip().casefold() in ("", "skip")
                                     else _url_or_err(value))),
         "octo_secret": Step(
@@ -1077,7 +1128,8 @@ def checklist_text(session):
 def _prompt_text(session, note=""):
     flow = steps()
     step = flow[session["step"]]
-    head = f"**Setup step {session['step'] + 1} of {len(flow)}: {step.label}**\n{step.prompt}"
+    prompt = _printer_url_prompt((session.get("answers") or {}).get("model")) if step.key == "moonraker_url" else step.prompt
+    head = f"**Setup step {session['step'] + 1} of {len(flow)}: {step.label}**\n{prompt}"
     return (note + "\n" if note else "") + head + "\n\n" + checklist_text(session) + \
         "\n\nReply with the answer, or `/print-handy cancel` to pause (your checklist is saved)."
 
@@ -1089,7 +1141,7 @@ def _review_text(session):
              f"- Bot mode: `{answers.get('mode')}`",
              "- Print channel and access: the user IDs you entered (not repeated here), "
              "or everyone in the channel if you chose `everyone`",
-             f"- Moonraker URL: {answers.get('moonraker_url') or 'not set'}",
+             f"- Printer URL: {answers.get('moonraker_url') or 'not set'}",
              f"- Spoolman URL: {answers.get('spoolman_url') or 'not set'}",
              f"- Bot token: {'stored in its environment variable' if answers.get('token_stored') else 'not stored yet — the bot cannot log in until it is'}"]
     roster = answers.get("printers") or []
@@ -1098,7 +1150,7 @@ def _review_text(session):
         for extra in roster:
             lines.append(f"- Added printer: `{extra['id']}` — model `{extra.get('model')}`, "
                          f"channel {'its own' if extra.get('chat_id') else 'the main print channel'}"
-                         + (f", Moonraker {extra['moonraker_url']}" if extra.get('moonraker_url') else ""))
+                         + (f", Printer URL {extra['moonraker_url']}" if extra.get('moonraker_url') else ""))
     lines += ["", checklist_text(session), "",
               "Reply `apply` to write these settings to config/local.yaml (values already there "
               "always win; the token is never written). Reply `add` to add another printer — it "
@@ -1115,15 +1167,17 @@ def _manual_text(session):
     if roster:
         lines.append("   - a `printers:` list (TOML spelling: `[[printers]]`), one entry per printer:")
         first = f"     - `id` = `{answers.get('printer_id')}`, `model` = `{answers.get('model')}`"
-        if answers.get("moonraker_url"):
-            first += ", `moonraker_url` = the URL you entered above"
+        placed = _address_placement(answers.get("model"), answers.get("moonraker_url"))
+        if placed:
+            first += f", `{placed[1]}` = the Printer URL you entered above"
         lines.append(first)
         for extra in roster:
             entry = f"     - `id` = `{extra['id']}`, `model` = `{extra.get('model')}`"
             if extra.get("chat_id"):
                 entry += ", `chat_id` = the channel ID you entered above"
-            if extra.get("moonraker_url"):
-                entry += ", `moonraker_url` = the URL you entered above"
+            extra_placed = _address_placement(extra.get("model"), extra.get("moonraker_url"))
+            if extra_placed:
+                entry += f", `{extra_placed[1]}` = the Printer URL you entered above"
             lines.append(entry)
         lines.append("   - entry values can be overridden later with PRINT_HANDY__PRINTERS__<ID>__<KEY>; "
                      "the list itself is file-only (docs/SETTINGS.md, 'Printers list')")
@@ -1133,7 +1187,9 @@ def _manual_text(session):
               "   - `[discord] chat_id` and `allowed_user_ids` = what you entered above "
               "(blank `allowed_user_ids` = everyone in the channel)"]
     if answers.get("moonraker_url") and not roster:
-        lines.append("   - `[services] moonraker_url` = the URL you entered above")
+        placed = _address_placement(answers.get("model"), answers.get("moonraker_url"))
+        if placed:
+            lines.append(f"   - `[{placed[0]}] {placed[1]}` = the Printer URL you entered above")
     if answers.get("spoolman_url"):
         lines.append("   - `[services] spoolman_url` = the URL you entered above")
     lines += ["2. Store the Discord bot token in the environment variable named by `[discord] "
@@ -1146,19 +1202,23 @@ def _manual_text(session):
     return "\n".join(lines)
 
 
+def _stamp_address(entry, model_key, address):
+    placed = _address_placement(model_key, address)
+    if placed is not None:
+        entry[placed[1]] = address
+
+
 def _roster_config(answers):
     """The [[printers]] config for a roster apply (#337): the first printer plus
     every added one, with Spoolman kept as the one shared inventory service."""
     first = {"id": answers["printer_id"], "model": answers["model"]}
-    if answers.get("moonraker_url"):
-        first["moonraker_url"] = answers["moonraker_url"]
+    _stamp_address(first, answers["model"], answers.get("moonraker_url"))
     entries = [first]
     for extra in answers["printers"]:
         entry = {"id": extra["id"], "model": extra["model"]}
         if extra.get("chat_id"):
             entry["chat_id"] = extra["chat_id"]
-        if extra.get("moonraker_url"):
-            entry["moonraker_url"] = extra["moonraker_url"]
+        _stamp_address(entry, extra.get("model"), extra.get("moonraker_url"))
         entries.append(entry)
     config = {"printers": entries, "bot": {"mode": answers["mode"]},
               "discord": {"chat_id": answers["chat_id"], "allowed_user_ids": answers["user_ids"]}}
@@ -1227,13 +1287,11 @@ def _apply_answers(answers, config_path):
     else:
         config = {"printer": {"model": answers["model"]}, "bot": {"mode": answers["mode"]},
                   "discord": {"chat_id": answers["chat_id"], "allowed_user_ids": answers["user_ids"]}}
-        services = {}
-        if answers.get("moonraker_url"):
-            services["moonraker_url"] = answers["moonraker_url"]
+        placed = _address_placement(answers.get("model"), answers.get("moonraker_url"))
+        if placed:
+            config.setdefault(placed[0], {})[placed[1]] = answers["moonraker_url"]
         if answers.get("spoolman_url"):
-            services["spoolman_url"] = answers["spoolman_url"]
-        if services:
-            config["services"] = services
+            config.setdefault("services", {})["spoolman_url"] = answers["spoolman_url"]
     writer = _Consent()
     if not setup_wizard.merge_config(Path(config_path), config, writer):
         detail = writer.notes[-1] if writer.notes else "the wizard merge declined to write"

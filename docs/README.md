@@ -34,6 +34,7 @@ Do not run both Discord modes with the same token. Installing, enabling services
 - [ZMod printers](ZMOD.md): all five ZMod models (AD5X, AD5M, AD5M Pro supported; Creator 5 / 5 Pro staged), and how their filament systems differ.
 - [Stock Flashforge printers](FLASHFORGE-STOCK.md): the Adventurer 5X on factory firmware — the LAN HTTP API, IFS prints, the launched-print monitor, and timelapse from the camera source the printer advertises (the AD5X has no built-in camera; read the verification status before expecting a video).
 - [OctoPrint/Marlin notes](OCTOPRINT-MARLIN.md): read the integration-specific limits before assuming Moonraker feature parity.
+- [Sovol printers](SOVOL.md): Klipper and Marlin/OctoPrint keys for the SV series, the SV08 family, and the Zero, with the build volume each key uses.
 - [Bambu Lab printers](BAMBU-LAB.md): profiles for every single-nozzle Bambu Lab printer (A1, A1 mini, P1P, P1S, P2S, X1, X1 Carbon, X1E, H2S), generating slicer profiles from your own OrcaSlicer, the G-code guard, opt-in read-only LAN status, unverified values, and the licensing basis awaiting approval.
 - [Bambu Lab live connectivity research](BAMBU-CONNECTIVITY.md): LAN MQTT/FTPS evidence from maintained integrations, the 2025 authorization change, the staged live-support plan for the A1/P1S, and the unknowns that need a live test.
 - [Prusa printers](PRUSA.md): the MK4S/CORE One/XL/MINI+ profiles, generating slicer profiles from your own OrcaSlicer, the PrusaLink LAN client (status, verified upload, gated start), and what is not supported.

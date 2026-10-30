@@ -9,8 +9,8 @@ from print_handy.bot import guided
 from print_handy.bot.platform import KNOWN_PLATFORMS
 from print_handy.webui import (CATALOG, ENVIRONMENT, HOME_CONFIG, MODEL_DEFAULT,
                                SETTINGS_FILE, WebUIConfigError, choices_for,
-                               field_by_id, read_fields, settings_file_path,
-                               write_changes)
+                               config_page_visible, field_by_id, read_fields,
+                               settings_file_path, write_changes)
 
 # Guided-setup step keys -> the catalog field that covers the same setting.
 # token_stored is deliberately absent: it collects no setting (the token is
@@ -170,13 +170,18 @@ class CatalogTests(unittest.TestCase):
         for field in CATALOG:
             with self.subTest(field=field.id):
                 self.assertIn(field.section, data)
-                self.assertIn(field.key, data[field.section])
+                # An optional key (settings.OPTIONAL_KEYS) is a real setting absent from the defaults tree.
+                if (field.section, field.key) not in settings.OPTIONAL_KEYS:
+                    self.assertIn(field.key, data[field.section])
                 self.assertTrue(field.label)
                 self.assertTrue(field.help)
                 self.assertTrue(field.restart_required)
 
     def test_choices_come_from_their_sources(self):
-        self.assertEqual(choices_for(field_by_id("printer.model")), tuple(sorted(printers.MODELS)))
+        self.assertEqual(
+            choices_for(field_by_id("printer.model")),
+            tuple(sorted(printers.MODELS, key=lambda key: (printers.MODELS[key].label.casefold(), key))),
+        )
         self.assertEqual(choices_for(field_by_id("bot.platform")), tuple(KNOWN_PLATFORMS))
         self.assertEqual(choices_for(field_by_id("bot.mode")), tuple(settings.BOT_MODES))
         self.assertEqual(choices_for(field_by_id("printer.slicer"), model_key="bambulab.a1"),
@@ -184,6 +189,21 @@ class CatalogTests(unittest.TestCase):
         self.assertEqual(choices_for(field_by_id("delivery.methods"), model_key="bambulab.a1"),
                          printers.MODELS["bambulab.a1"].vendor.delivery)
         self.assertIn("America/New_York", choices_for(field_by_id("discord.timezone")))
+
+    def test_printer_url_and_rtsp_fields_follow_the_model(self):
+        rtsp = field_by_id("timelapse.capture_source_url")
+        self.assertEqual(rtsp.label, "RTSP stream URL")
+        self.assertEqual(rtsp.group, "images")
+        self.assertEqual(field_by_id("services.moonraker_url").label, "Printer URL")
+        self.assertEqual(field_by_id("services.octoprint_url").label, "Printer URL")
+        data = settings.load(local=False, environ={})
+        self.assertTrue(config_page_visible("services.moonraker_url", data))
+        self.assertFalse(config_page_visible("services.octoprint_url", data))
+        self.assertTrue(config_page_visible("printer.zmod_delivery_format", data))
+        data["printer"]["model"] = "sovol_marlin.sv06"
+        self.assertTrue(config_page_visible("services.octoprint_url", data))
+        self.assertFalse(config_page_visible("services.moonraker_url", data))
+        self.assertFalse(config_page_visible("printer.zmod_delivery_format", data))
         with self.assertRaises(ValueError):
             choices_for(field_by_id("printer.slicer"))
 

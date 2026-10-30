@@ -5056,6 +5056,9 @@ def alert_button_handlers(bot, adapter):
         if not alert:
             await interaction.response.send_message('That offer is old or was already used. Nothing started.', ephemeral=True)
             return
+        from print_handy.hermes import next_plate_offer
+        with contextlib.suppress(Exception):
+            await asyncio.to_thread(next_plate_offer.clear)
         await interaction.response.edit_message(content='Left the queue alone. Nothing started.', view=None)
 
     async def handle_plate_go(interaction, aid):

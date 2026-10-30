@@ -38,3 +38,41 @@ def test_dismiss_handler_does_not_start_and_go_still_uses_print_next():
     assert "print_next.start" not in drop
     assert "Nothing started" in drop
     assert "print_next.start" in go
+
+
+def test_each_plate_of_the_same_plan_gets_its_own_offer(tmp_path, monkeypatch):
+    from print_handy.hermes import next_plate_offer as npo
+    monkeypatch.setenv("PRINT_HANDY_NEXT_PLATE_OFFER", str(tmp_path / "offer.json"))
+    npo.remember("plan-a")
+    data = npo._load()
+    data["said"] = ["offer"]
+    npo._save(data)
+    npo.remember("plan-a")
+    assert npo._load()["said"] == []
+    npo.clear()
+    assert npo.due() is False
+
+
+def test_dismiss_clears_the_offer_state():
+    from pathlib import Path
+    text = (Path(__file__).resolve().parents[2] / "plugins/print-feedback/__init__.py").read_text(encoding="utf-8")
+    drop = text[text.index("async def handle_plate_drop"):text.index("async def handle_plate_go")]
+    assert "next_plate_offer" in drop and "clear" in drop
+
+
+def test_bed_check_does_not_run_during_a_print(tmp_path, monkeypatch):
+    import asyncio
+    from print_handy.hermes import moonraker_event_listener as mel
+    from print_handy.hermes import next_plate_offer as npo
+    monkeypatch.setenv("PRINT_HANDY_NEXT_PLATE_OFFER", str(tmp_path / "offer.json"))
+    npo.remember("plan-a")
+    looked = []
+    monkeypatch.setattr(mel, "_vision_ready", lambda: looked.append(1) or False)
+    listener = mel.Listener()
+    listener.state = "printing"
+    asyncio.run(listener.offer_next_plate_if_clear())
+    assert looked == []
+    assert npo._load()["checked_at"] == 0
+    listener.state = "complete"
+    asyncio.run(listener.offer_next_plate_if_clear())
+    assert looked == [1]

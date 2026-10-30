@@ -73,11 +73,16 @@ def _save(data: dict) -> None:
 
 
 def remember(plan_id: str) -> None:
-    """A multi-plate job finished a plate and still has another queued."""
-    data = _load()
-    if data.get("plan_id") != plan_id:
-        data = {"plan_id": plan_id, "said": [], "checked_at": 0}
-    _save(data)
+    """A multi-plate job finished a plate and still has another queued.
+
+    Every finished plate starts a fresh look, so each plate gets its own offer.
+    """
+    _save({"plan_id": plan_id, "said": [], "checked_at": 0})
+
+
+def clear() -> None:
+    """Stop looking for the bed. Dismissing an offer ends the checks for this plate."""
+    _save({})
 
 
 def due(now=None) -> bool:

@@ -2,7 +2,12 @@
 
 # Unreleased
 
-**Toward a future 2.2.2 (not yet scheduled):**
+Nothing yet.
+
+# Version 2.2.2
+
+**Release Date:** 2026-10-30
+**Still owed:** the first live print from chat on a screenless ZMod AD5X (new in 2.2.0); the live-stream transcode against a live camera; the Sovol profiles, MQTT, exclude-object and the next-plate offer are offline-tested only.
 
 **Upgrade notes (read before updating a 2.2.1 install):**
 - Docker and docker-compose: the shipped default model is now `klipper.generic`, not `flashforge.ad5x` (#654, #663). An AD5X install that never set `PRINT_HANDY__PRINTER__MODEL` must set it to `flashforge.ad5x`, or it comes back as a one-slot Generic Klipper with the wrong start and end macros. The container now logs a warning when it sees an AD5X-shaped install running on the default, and the `filament_slots` error names the variable to set (#678). Unraid installs keep the model saved in their template.

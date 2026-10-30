@@ -74,6 +74,42 @@ def test_missing_registry_is_rejected(tmp_path):
         knowledge.load_registry(tmp_path)
 
 
+def _copy_registries(tmp_path):
+    for name in ("knowledge", "firmware", "printers"):
+        shutil.copytree(ROOT / name, tmp_path / name)
+    return tmp_path / "printers" / "registry"
+
+
+def test_printer_registry_duplicate_key_across_files_is_rejected(tmp_path):
+    registry_dir = _copy_registries(tmp_path)
+    sovol = registry_dir / "sovol.toml"
+    block = sovol.read_text().split("\n[[printer]]", 2)[1]
+    with open(registry_dir / "sovol_marlin.toml", "a") as handle:
+        handle.write("\n[[printer]]" + block.replace('"sovol.', '"sovol_marlin.', 1)
+                     .replace('vendor = "sovol"', 'vendor = "sovol_marlin"', 1))
+    with pytest.raises(RegistryError, match="key duplicated"):
+        knowledge.load_registry(tmp_path)
+
+
+def test_printer_registry_entry_in_wrong_vendor_file_is_rejected(tmp_path):
+    registry_dir = _copy_registries(tmp_path)
+    klipper = registry_dir / "klipper.toml"
+    block = klipper.read_text().split("\n[[printer]]", 1)[1]
+    klipper.write_text(klipper.read_text().split("\n[[printer]]", 1)[0])
+    with open(registry_dir / "sovol.toml", "a") as handle:
+        handle.write("\n[[printer]]" + block)
+    with pytest.raises(RegistryError, match="must both be 'sovol'"):
+        knowledge.load_registry(tmp_path)
+
+
+def test_printer_registry_empty_directory_is_rejected(tmp_path):
+    registry_dir = _copy_registries(tmp_path)
+    for path in registry_dir.glob("*.toml"):
+        path.unlink()
+    with pytest.raises(RegistryError, match="printer registry missing or empty"):
+        knowledge.load_registry(tmp_path)
+
+
 # ----------------------------------------------------------------------- lookups
 
 def top(registry, query, **kwargs):
@@ -107,7 +143,7 @@ STAGE3_IDS = {
 
 def test_stage3_registry_growth_is_complete_and_provenanced(registry):
     """Stage 3 of #291: every added entry loads, is a macro, and names its source."""
-    assert len(registry.firmware_entries) == 45
+    assert len(registry.firmware_entries) == 51
     by_id = {e.id: e for e in registry.firmware_entries}
     assert STAGE3_IDS <= set(by_id)
     for entry_id in STAGE3_IDS:
@@ -115,6 +151,26 @@ def test_stage3_registry_growth_is_complete_and_provenanced(registry):
         assert entry.kind == "macro", entry_id
         assert entry.notes, entry_id
         assert ("@" in entry.notes) or ("print-handy.cfg" in entry.notes), entry_id
+
+
+ALL_PRINTERS_IDS = {
+    "klipper.creality-start-print", "klipper.creality-end-print",
+    "klipper.qidi-print-start", "klipper.sovol-start-print",
+    "klipper.sovol-zero-end-print", "klipper.sovol-sv08-clean-nozzle",
+}
+
+
+def test_all_printers_registry_growth_is_complete_and_provenanced(registry):
+    """Macro coverage for every Moonraker family: each added entry loads, is a
+    macro, names its source, and is scoped to registered model keys only."""
+    by_id = {e.id: e for e in registry.firmware_entries}
+    assert ALL_PRINTERS_IDS <= set(by_id)
+    for entry_id in ALL_PRINTERS_IDS:
+        entry = by_id[entry_id]
+        assert entry.kind == "macro", entry_id
+        assert entry.notes and "Source" in entry.notes, entry_id
+        assert entry.printers and "*" not in entry.printers, entry_id
+        assert set(entry.printers) <= set(printers.MODELS), entry_id
 
 
 def test_lookup_stage3_entries_by_name_and_alias(registry):

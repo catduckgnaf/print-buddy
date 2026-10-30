@@ -1,0 +1,76 @@
+# Printer registry: anycubic. See printers/README.md for the schema.
+#
+# One [[printer]] per registered model whose key starts with "anycubic." — the
+# loader (print_handy/knowledge/registry.py) merges every file in this directory
+# in sorted filename order, and tests pin each entry against the code profile in
+# print_handy/printers/anycubic/ so this file cannot silently drift from the code.
+
+[[printer]]
+key = "anycubic.kobra2"
+label = "Anycubic Kobra 2"
+vendor = "anycubic"
+firmware = "Klipper"
+firmware_family = "klipper"
+connection = "moonraker"
+kinematics = "Cartesian (moving bed)"
+bed_mm = [220.0, 220.0]
+max_height_mm = 250.0
+filament_slots = 1
+profile = "print_handy/printers/anycubic/kobra2.py"
+notes = "Klipper-derived Anycubic firmware; Moonraker only where exposed — the stock firmware has no Moonraker endpoint, so this vendor covers community-firmware installs such as Rinkhals. Open-frame bed-slinger; not tested on hardware."
+
+[[printer]]
+key = "anycubic.kobra2neo"
+label = "Anycubic Kobra 2 Neo"
+vendor = "anycubic"
+firmware = "Klipper"
+firmware_family = "klipper"
+connection = "moonraker"
+kinematics = "Cartesian (moving bed)"
+bed_mm = [220.0, 220.0]
+max_height_mm = 250.0
+filament_slots = 1
+profile = "print_handy/printers/anycubic/kobra2neo.py"
+notes = "Klipper-derived Anycubic firmware; Moonraker only where exposed — the stock firmware has no Moonraker endpoint, so this vendor covers community-firmware installs such as Rinkhals. Open-frame bed-slinger; not tested on hardware. Its Orca profile declares gcode_flavor marlin2; the route follows the hardware."
+
+[[printer]]
+key = "anycubic.kobra2pro"
+label = "Anycubic Kobra 2 Pro"
+vendor = "anycubic"
+firmware = "Klipper"
+firmware_family = "klipper"
+connection = "moonraker"
+kinematics = "Cartesian (moving bed)"
+bed_mm = [220.0, 220.0]
+max_height_mm = 250.0
+filament_slots = 1
+profile = "print_handy/printers/anycubic/kobra2pro.py"
+notes = "Klipper-derived Anycubic firmware; Moonraker only where exposed — the stock firmware has no Moonraker endpoint, so this vendor covers community-firmware installs such as Rinkhals. Open-frame bed-slinger; not tested on hardware."
+
+[[printer]]
+key = "anycubic.kobra2plus"
+label = "Anycubic Kobra 2 Plus"
+vendor = "anycubic"
+firmware = "Klipper"
+firmware_family = "klipper"
+connection = "moonraker"
+kinematics = "Cartesian (moving bed)"
+bed_mm = [320.0, 320.0]
+max_height_mm = 400.0
+filament_slots = 1
+profile = "print_handy/printers/anycubic/kobra2plus.py"
+notes = "Klipper-derived Anycubic firmware; Moonraker only where exposed — the stock firmware has no Moonraker endpoint, so this vendor covers community-firmware installs such as Rinkhals. Open-frame bed-slinger; not tested on hardware."
+
+[[printer]]
+key = "anycubic.kobra2max"
+label = "Anycubic Kobra 2 Max"
+vendor = "anycubic"
+firmware = "Klipper"
+firmware_family = "klipper"
+connection = "moonraker"
+kinematics = "Cartesian (moving bed)"
+bed_mm = [420.0, 420.0]
+max_height_mm = 500.0
+filament_slots = 1
+profile = "print_handy/printers/anycubic/kobra2max.py"
+notes = "Klipper-derived Anycubic firmware; Moonraker only where exposed — the stock firmware has no Moonraker endpoint, so this vendor covers community-firmware installs such as Rinkhals. Open-frame bed-slinger; not tested on hardware."

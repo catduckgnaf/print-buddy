@@ -146,7 +146,7 @@ class CalibrationRefusal(RuntimeError):
 # --------------------------------------------------------------------- profiles
 
 def printer_entry(model_key, registry=None):
-    """The printers/registry.toml entry for a model key, or None when unregistered."""
+    """The printer registry entry for a model key, or None when unregistered."""
     from . import firmware_update
     return firmware_update.printer_entry(model_key, registry=registry)
 

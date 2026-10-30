@@ -1,13 +1,14 @@
-"""Anycubic printers (Klipper-based Anycubic OS line): stock Klipper + Moonraker transport, pinned Orca templates.
+"""Anycubic printers (Kobra 2 series): Klipper + Moonraker transport, pinned Orca templates.
 
-The Ender-3 V3 and K1 families run Anycubic OS — a Klipper firmware — behind a Moonraker
-endpoint, so the transport methods are the Klipper adapter's unchanged. What differs from
+The Kobra 2 family runs a Klipper firmware behind a Moonraker endpoint, so the
+transport methods are the Klipper adapter's unchanged. What differs from
 klipper.generic is identity: the generic profile's default bed (220 x 220 x 250 mm) matches
 only some of these printers by accident, so each model carries its own sourced facts and
 generated, identity-pinned Orca templates, and the start code is the template's own
-sequence — the profiles open with the START_PRINT macro, or run fully inline on the
-Ender-3 V3 KE — so the Klipper adapter's macro start is overridden with the template's
-sequence verbatim. Each printer subclasses this adapter with its facts (see k1.py).
+sequence — the family's profiles run a fully inline start sequence with no start
+macro at all (see guard.py) — so the Klipper adapter's macro start is overridden with
+the template's sequence verbatim. Each printer subclasses this adapter with its
+facts (see kobra2.py).
 Anycubic's Marlin printers are not this vendor; they slice through octoprint.marlin.
 """
 import json

@@ -284,6 +284,36 @@ def test_stock_walkthrough_names_the_shared_secret_limitation(tmp_path):
     assert "$AD5X_SERIAL" in prompt and "shared" in prompt
 
 
+def test_zmod_secrets_step_is_ad5x_only():
+    # The stock side channel the secrets serve is AD5X-only in the adapters:
+    # ZmodSingleExtruderAdapter (AD5M) and ZmodMultiToolAdapter (Creator)
+    # expose no native module and no stock /detail API (#648).
+    def keys(model):
+        return guided._onboard_keys({"model": model,
+                                     "moonraker_url": "http://printer.local:7125"})
+    ad5x = keys("flashforge.ad5x")
+    assert "zmod_secrets" in ad5x and ad5x.index("zmod_secrets") < ad5x.index("probe")
+    for model in ("flashforge.ad5m", "flashforge.ad5m_pro", "flashforge.creator5",
+                  "flashforge.creator5_pro", "creality.k1", "klipper.generic"):
+        other = keys(model)
+        assert "zmod_secrets" not in other and "probe" in other, model
+
+
+def test_ad5x_walkthrough_zmod_secrets_prompt_scopes_the_pair_to_the_ad5x(tmp_path):
+    st = store(tmp_path)
+    start(st, now=1000)
+    reply = walk(st, ["flashforge.ad5x", "Second AD5X", "http://ad5x2.local:7125"])
+    session = st.get("k")
+    current = session["ob_keys"][session["ob_step"]]
+    assert current == "zmod_secrets"
+    prompt = guided._onboard_step_defs(session)["zmod_secrets"].prompt
+    assert "Stock side-channel secrets" in reply
+    assert "AD5X's stock side channel" in prompt
+    assert "same pair this AD5X uses on the stock Flashforge LAN connection" in prompt
+    assert "other ZMod printers (AD5M, Creator) have no stock side channel" in prompt
+    assert "shared by every stock/ZMod printer" not in prompt
+
+
 # ---------------------------------------------------------------------- review, apply, lifecycle
 
 def test_apply_failure_keeps_the_session_at_review(tmp_path):

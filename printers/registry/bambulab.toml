@@ -1,0 +1,202 @@
+# Printer registry: bambulab. See printers/README.md for the schema.
+#
+# One [[printer]] per registered model whose key starts with "bambulab." — the
+# loader (print_handy/knowledge/registry.py) merges every file in this directory
+# in sorted filename order, and tests pin each entry against the code profile in
+# print_handy/printers/bambulab/ so this file cannot silently drift from the code.
+
+[[printer]]
+key = "bambulab.a1"
+label = "Bambu Lab A1"
+vendor = "bambulab"
+firmware = "Bambu Lab (offline handoff only)"
+firmware_family = "none"
+connection = "bambulab_lan"
+kinematics = "Cartesian (moving bed)"
+bed_mm = [256.0, 256.0]
+max_height_mm = 256.0
+filament_slots = 1
+profile = "print_handy/printers/bambulab/a1.py"
+notes = "Slicing, fit checks and G-code validation, plus opt-in read-only LAN status when configured. AMS Lite is not driven."
+
+[[printer]]
+key = "bambulab.p1s"
+label = "Bambu Lab P1S"
+vendor = "bambulab"
+firmware = "Bambu Lab (offline handoff only)"
+firmware_family = "none"
+connection = "bambulab_lan"
+kinematics = "CoreXY"
+bed_mm = [256.0, 256.0]
+max_height_mm = 256.0
+filament_slots = 1
+profile = "print_handy/printers/bambulab/p1s.py"
+notes = "Slicing, fit checks and G-code validation, plus opt-in read-only LAN status when configured."
+
+[[printer]]
+key = "bambulab.a1mini"
+label = "Bambu Lab A1 mini"
+vendor = "bambulab"
+firmware = "Bambu Lab (offline handoff only)"
+firmware_family = "none"
+connection = "bambulab_lan"
+kinematics = "Cartesian (moving bed)"
+bed_mm = [180.0, 180.0]
+max_height_mm = 180.0
+filament_slots = 1
+profile = "print_handy/printers/bambulab/a1mini.py"
+notes = "180 mm sibling of the A1 with an AMS Lite that is not driven. Same opt-in LAN path as every Bambu Lab model."
+
+[[printer]]
+key = "bambulab.p1p"
+label = "Bambu Lab P1P"
+vendor = "bambulab"
+firmware = "Bambu Lab (offline handoff only)"
+firmware_family = "none"
+connection = "bambulab_lan"
+kinematics = "CoreXY"
+bed_mm = [256.0, 256.0]
+max_height_mm = 256.0
+filament_slots = 1
+profile = "print_handy/printers/bambulab/p1p.py"
+notes = "Open-frame P1/X1 platform printer; Orca slices to 250 mm with an 18 x 28 mm front-left exclusion. AMS is not driven."
+
+[[printer]]
+key = "bambulab.x1"
+label = "Bambu Lab X1"
+vendor = "bambulab"
+firmware = "Bambu Lab (offline handoff only)"
+firmware_family = "none"
+connection = "bambulab_lan"
+kinematics = "CoreXY"
+bed_mm = [256.0, 256.0]
+max_height_mm = 256.0
+filament_slots = 1
+profile = "print_handy/printers/bambulab/x1.py"
+notes = "Original X1; Orca slices to 250 mm with an 18 x 28 mm front-left exclusion. AMS is not driven."
+
+[[printer]]
+key = "bambulab.x1c"
+label = "Bambu Lab X1 Carbon"
+vendor = "bambulab"
+firmware = "Bambu Lab (offline handoff only)"
+firmware_family = "none"
+connection = "bambulab_lan"
+kinematics = "CoreXY"
+bed_mm = [256.0, 256.0]
+max_height_mm = 256.0
+filament_slots = 1
+profile = "print_handy/printers/bambulab/x1c.py"
+notes = "X1 Carbon with hardened steel stock hotend; Orca slices to 250 mm with an 18 x 28 mm front-left exclusion. AMS is not driven."
+
+[[printer]]
+key = "bambulab.x1e"
+label = "Bambu Lab X1E"
+vendor = "bambulab"
+firmware = "Bambu Lab (offline handoff only)"
+firmware_family = "none"
+connection = "bambulab_lan"
+kinematics = "CoreXY"
+bed_mm = [256.0, 256.0]
+max_height_mm = 256.0
+filament_slots = 1
+profile = "print_handy/printers/bambulab/x1e.py"
+notes = "Enterprise X1E with Ethernet and heated chamber (chamber not driven); Orca slices to 250 mm. AMS is not driven."
+
+[[printer]]
+key = "bambulab.p2s"
+label = "Bambu Lab P2S"
+vendor = "bambulab"
+firmware = "Bambu Lab (offline handoff only)"
+firmware_family = "none"
+connection = "bambulab_lan"
+kinematics = "CoreXY"
+bed_mm = [256.0, 256.0]
+max_height_mm = 256.0
+filament_slots = 1
+profile = "print_handy/printers/bambulab/p2s.py"
+notes = "P1S successor; Orca uses the full 256 mm height and no bed exclusion. AMS 2 Pro is not driven beyond a single path."
+
+[[printer]]
+key = "bambulab.h2s"
+label = "Bambu Lab H2S"
+vendor = "bambulab"
+firmware = "Bambu Lab (offline handoff only)"
+firmware_family = "none"
+connection = "bambulab_lan"
+kinematics = "CoreXY"
+bed_mm = [340.0, 320.0]
+max_height_mm = 340.0
+filament_slots = 1
+profile = "print_handy/printers/bambulab/h2s.py"
+notes = "Single-nozzle H2 model with a 350 C hotend. The dual-nozzle H2D and H2C are registered separately (#308, #356)."
+
+[[printer]]
+key = "bambulab.h2d"
+label = "Bambu Lab H2D"
+vendor = "bambulab"
+firmware = "Bambu Lab (offline handoff only)"
+firmware_family = "none"
+connection = "bambulab_lan"
+kinematics = "CoreXY"
+bed_mm = [350.0, 320.0]
+max_height_mm = 325.0
+filament_slots = 1
+profile = "print_handy/printers/bambulab/h2d.py"
+notes = "Dual-nozzle flagship (two extruders). Print starts resolve AMS trays per filament slot (#308). The 350 mm width spans both tools; a single tool reaches 305 mm."
+
+[[printer]]
+key = "bambulab.h2dpro"
+label = "Bambu Lab H2D Pro"
+vendor = "bambulab"
+firmware = "Bambu Lab (offline handoff only)"
+firmware_family = "none"
+connection = "bambulab_lan"
+kinematics = "CoreXY"
+bed_mm = [350.0, 320.0]
+max_height_mm = 325.0
+filament_slots = 1
+profile = "print_handy/printers/bambulab/h2dpro.py"
+notes = "Pro variant of the dual-nozzle H2D, with its own Orca profiles and identity (#308)."
+
+[[printer]]
+key = "bambulab.x2d"
+label = "Bambu Lab X2D"
+vendor = "bambulab"
+firmware = "Bambu Lab (offline handoff only)"
+firmware_family = "none"
+connection = "bambulab_lan"
+kinematics = "CoreXY"
+bed_mm = [256.0, 256.0]
+max_height_mm = 261.0
+filament_slots = 1
+profile = "print_handy/printers/bambulab/x2d.py"
+notes = "Dual-nozzle X-series model (two extruders). Print starts resolve AMS trays per filament slot (#308)."
+
+[[printer]]
+key = "bambulab.h2c"
+label = "Bambu Lab H2C"
+vendor = "bambulab"
+firmware = "Bambu Lab (offline handoff only)"
+firmware_family = "none"
+connection = "bambulab_lan"
+kinematics = "CoreXY"
+bed_mm = [330.0, 320.0]
+max_height_mm = 325.0
+filament_slots = 1
+profile = "print_handy/printers/bambulab/h2c.py"
+notes = "Dual-nozzle H-series model (two extruders) with a 350 C hotend. Print starts resolve AMS trays per filament slot (#308). Registered from OrcaSlicer v2.5.0-alpha's BBL profiles (#356)."
+
+[[printer]]
+key = "bambulab.a2l"
+label = "Bambu Lab A2L"
+vendor = "bambulab"
+firmware = "Bambu Lab (offline handoff only)"
+firmware_family = "none"
+connection = "bambulab_lan"
+kinematics = "Cartesian (moving bed)"
+bed_mm = [330.0, 320.0]
+max_height_mm = 325.0
+filament_slots = 1
+profile = "print_handy/printers/bambulab/a2l.py"
+notes = "Large-format A-series bed-slinger with a single 0.4 nozzle, as its OrcaSlicer profile declares; AMS Lite is not driven. Registered from OrcaSlicer v2.5.0-alpha's BBL profiles (#356)."

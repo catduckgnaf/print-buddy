@@ -576,10 +576,14 @@ def _onboard_step_defs(session, probe_runner=None):
                               _validate_service_url),
         "zmod_secrets": Step(
             "zmod_secrets", _STEP_LABELS_OB["zmod_secrets"],
-            "Optional: this printer's stock side channel (IFS occupancy, the "
+            "Optional: the AD5X's stock side channel (IFS occupancy, the "
             "printer's own start button) uses two secrets, `$AD5X_SERIAL` and "
-            "`$AD5X_CHECK_CODE`, shared by every stock/ZMod printer on the "
-            "install. " + env_hint + " Reply `stored` if they are saved (the "
+            "`$AD5X_CHECK_CODE` — this printer's stock-firmware serial number "
+            "and check code. They are the same pair this AD5X uses on the "
+            "stock Flashforge LAN connection, and one pair serves the whole "
+            "install; the other ZMod printers (AD5M, Creator) have no stock "
+            "side channel and never use them. " + env_hint +
+            " Reply `stored` if they are saved (the "
             "main Moonraker connection does not need them), or `skip`.",
             _validate_secret_stored),
         "lan_gate": Step(

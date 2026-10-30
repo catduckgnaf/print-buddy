@@ -6,18 +6,30 @@ Root-level index of firmware commands, macros and error codes for Print Handy
 sends the command. Sending anything to a printer stays behind the existing
 guarded print-control flows and their confirmation buttons.
 
-## File
+## Files
 
-`commands.toml`, one `[[entry]]` per command, macro or error:
+One file per firmware family under `commands/` (issue #644): `commands/zmod.toml`,
+`commands/klipper.toml` and `commands/marlin.toml`. An entry lives in the file
+named for its `firmware` value — the loader loads every `*.toml` in
+`commands/` in firmware-family order (the sequence the single file used,
+so name resolution behaves exactly as it did before the split), merges
+them into one registry, and rejects an entry whose `firmware` field
+disagrees with its file, so the partition cannot silently drift. Splitting by brand instead was rejected:
+an entry applies along its firmware, not its brand (the AD5X entries are
+ZMod macros, shared Klipper entries span brands, and single brands span
+firmwares).
+
+Each file holds one `[[entry]]` per command, macro or error:
 
 | Field | Meaning |
 | --- | --- |
 | `id` | Stable slug prefixed with the family: `zmod.`, `klipper.` or `marlin.`. |
 | `name` | The command or macro name as the firmware knows it, or the error text. |
 | `aliases` | Phrasings lookups should match (for example "ifs load"). |
-| `firmware` | `zmod`, `klipper` or `marlin`. ZMod is listed separately from stock Klipper because the AD5X macro set and authority rules differ. |
+| `firmware` | `zmod`, `klipper` or `marlin`. ZMod is listed separately from stock Klipper because the AD5X macro set and authority rules differ. Must match the file the entry sits in. |
 | `kind` | `command`, `macro` or `error`. |
 | `printers` | Registered printer model keys (see `../printers/registry/<vendor>.toml`) the entry is known to apply to, or `["*"]` for every printer on that firmware. |
+| `pack` | Optional. Names a macro pack that rides on the firmware (for example a vendor or community macro pack layered over stock Klipper); absent means the firmware's stock set. A lowercase slug. Lookups can filter on it alongside firmware and printer. No entry carries one yet — the field exists so a justified pack entry has a scope of its own instead of borrowing a printer key or the stock set's name. |
 | `command` | The literal command line, with `<placeholders>` for values. Empty for errors. |
 | `description` | What it does, when to use it, and the traps. |
 | `safety` | What it can do physically (heat, motion, extrusion, restart) and the guard that applies. |

@@ -96,9 +96,20 @@ jobs:
           pr_rows=""
           removed_pages=""
           for n in "${pr_numbers[@]}"; do
-            title="$(gh api "repos/$repo/pulls/$n" --jq .title)"
-            labels="$(gh api "repos/$repo/pulls/$n" \
-              --jq '[.labels[].name] | join(", ")' )"
+            # A trailing "(#NNN)" can also be an issue number carried by a
+            # direct-to-main commit (in 2.2.1, #619-#622 were issues, not
+            # PRs). The pulls lookup for such a number 404s; under
+            # "set -e" that killed this step before the checklist issue
+            # was created. Guard the lookup: skip a number that is not a
+            # pull request, with a log line, and carry on. The files
+            # fetch below only runs for a number that passed this lookup,
+            # so its failure is a genuine error and still fails loudly.
+            if ! gh api "repos/$repo/pulls/$n" > pr.json; then
+              echo "#$n is not a pull request (issue reference or direct commit) — skipped"
+              continue
+            fi
+            title="$(jq -r .title pr.json)"
+            labels="$(jq -r '[.labels[].name] | join(", ")' pr.json)"
             gh api "repos/$repo/pulls/$n/files?per_page=100" --paginate \
               | jq -s '[.[].[]]' > files.json
             hints="$(jq -r '

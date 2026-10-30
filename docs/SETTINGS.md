@@ -23,17 +23,17 @@ Schema, validation limits and TOML migration: [CONFIGURATION-YAML.md](CONFIGURAT
 | `prime_tower.part_clearance_mm` | `PRINT_HANDY__PRIME_TOWER__PART_CLEARANCE_MM` | `3.5` *preset* | Prime tower to part clearance |
 | `prime_tower.edge_mm` | `PRINT_HANDY__PRIME_TOWER__EDGE_MM` | `4.0` *preset* | Prime tower to bed edge clearance |
 | `prime_tower.merge_slack_mm` | `PRINT_HANDY__PRIME_TOWER__MERGE_SLACK_MM` | `1.0` *preset* | Extra room kept for the tower when merging |
-| `printer.firmware` | `PRINT_HANDY__PRINTER__FIRMWARE` | `ZMod Klipper` *model* | Firmware label shown in job summaries |
-| `printer.start_macro` | `PRINT_HANDY__PRINTER__START_MACRO` | `START_PRINT` *model* | Klipper start macro for stock Klipper models |
-| `printer.end_macro` | `PRINT_HANDY__PRINTER__END_MACRO` | `END_PRINT` *model* | Klipper end macro for stock Klipper models |
-| `printer.name` | `PRINT_HANDY__PRINTER__NAME` | `Flashforge AD5X` *model* | Printer name shown in job summaries |
+| `printer.firmware` | `PRINT_HANDY__PRINTER__FIRMWARE` | `Klipper` *model* | Firmware label shown in job summaries |
+| `printer.start_macro` | `PRINT_HANDY__PRINTER__START_MACRO` | `PRINT_START` *model* | Klipper start macro for stock Klipper models |
+| `printer.end_macro` | `PRINT_HANDY__PRINTER__END_MACRO` | `PRINT_END` *model* | Klipper end macro for stock Klipper models |
+| `printer.name` | `PRINT_HANDY__PRINTER__NAME` | `Generic Klipper` *model* | Printer name shown in job summaries |
 | `printer.bed_mm` | file only | `[220.0, 220.0]` *model* | Usable print area `[x, y]` in mm |
-| `printer.max_print_height_mm` | `PRINT_HANDY__PRINTER__MAX_PRINT_HEIGHT_MM` | `220.0` *model* | Tallest allowed print |
+| `printer.max_print_height_mm` | `PRINT_HANDY__PRINTER__MAX_PRINT_HEIGHT_MM` | `250.0` *model* | Tallest allowed print |
 | `printer.nozzle_diameter_mm` | `PRINT_HANDY__PRINTER__NOZZLE_DIAMETER_MM` | `0.4` *model* | Installed nozzle; slicing refuses any other |
-| `printer.filament_slots` | `PRINT_HANDY__PRINTER__FILAMENT_SLOTS` | `4` *model* | Filament slots; 1 for a single extruder — on a `multi_slot` model the feeder's slots (IFS bays, or an AMS unit's trays on the single-nozzle Bambu models, #671). Renamed from `printer.ifs_slots` (#672): the old key in a config file and the old environment spelling (ending `__IFS_SLOTS`) still load as a deprecated alias, and this name wins when both spellings are set |
+| `printer.filament_slots` | `PRINT_HANDY__PRINTER__FILAMENT_SLOTS` | `1` *model* | Filament slots; 1 for a single extruder — on a `multi_slot` model the feeder's slots (IFS bays, or an AMS unit's trays on the single-nozzle Bambu models, #671). Renamed from `printer.ifs_slots` (#672): the old key in a config file and the old environment spelling (ending `__IFS_SLOTS`) still load as a deprecated alias, and this name wins when both spellings are set |
 | `printer.tool_count` | `PRINT_HANDY__PRINTER__TOOL_COUNT` | `1` *model* | Independent toolheads on a tool-changer model (Creator 5 / 5 Pro: 4; Prusa XL: 5); slicer tool *i* is toolhead *i*, never an IFS slot |
 | `printer.model` | `PRINT_HANDY__PRINTER__MODEL` | `klipper.generic` | Printer brand and model: `klipper.generic`, `flashforge.ad5x`, `sovol.sv06`, `octoprint.marlin`, `bambulab.a1`, `bambulab.p1s` (Bambu Lab models are offline only). Sets every model default marked *model* |
-| `printer.vendor` | `PRINT_HANDY__PRINTER__VENDOR` | `flashforge` *model* | Vendor part of the model key, set by the model; `vendor` plus a bare printer name is also accepted |
+| `printer.vendor` | `PRINT_HANDY__PRINTER__VENDOR` | `klipper` *model* | Vendor part of the model key, set by the model; `vendor` plus a bare printer name is also accepted |
 | `printer.slicer` | `PRINT_HANDY__PRINTER__SLICER` | `orca` *model* | Slicer: `orca` everywhere; Bambu Lab printers default to `bambu_studio` and may pick `orca` |
 | `printer.zmod_delivery_format` | `PRINT_HANDY__PRINTER__ZMOD_DELIVERY_FORMAT` | `auto` *model* (Flashforge/ZMod only) | Print-file format sent to a ZMod printer: `auto` sends the sliced `.gcode.3mf` when the printer reports ZMod 1.7.5+ (instant colour mapping, no MD5 preprocessor, instant KAMP data) and plain `.gcode` when the version is older or unknown; `gcode` always sends `.gcode`; `3mf` always sends the package. Setting it for another vendor is refused |
 | `slicer.flash_studio_path` | `PRINT_HANDY__SLICER__FLASH_STUDIO_PATH` | empty | Optional path to a Flash Studio executable the user already installed. Empty keeps OrcaSlicer. A set but missing or non-executable path is an error, not a fallback. Never downloaded or bundled. |

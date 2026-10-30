@@ -28,7 +28,7 @@ from typing import Any, Callable
 from zoneinfo import ZoneInfo
 
 from .. import settings
-from . import spoolman_client
+from . import filament_color, spoolman_client
 
 LOCAL_TZ = ZoneInfo(settings.current()["discord"]["timezone"])
 
@@ -916,7 +916,7 @@ def main():
 
     if args.cmd == "reconcile":
         if args.state_file:
-            st = json.loads(Path(args.state_file).read_text())
+            st = filament_color.adopt_renamed_slots_key(json.loads(Path(args.state_file).read_text()))
         else:
             st = printer_state.load()
 

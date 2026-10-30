@@ -19,6 +19,7 @@ Unknown local keys and values with mismatched types fail loudly.
 from __future__ import annotations
 
 import copy
+import json
 import math
 import os
 import re
@@ -48,6 +49,7 @@ HOME = ROOT / "config" / "home.yaml"
 LEGACY_HOME = ROOT / "config" / "home.toml"
 LOCAL = ROOT / "config" / "local.yaml"
 LEGACY_LOCAL = ROOT / "config" / "local.toml"
+SHIPPED_DOCKER_CONFIGS = {(ROOT / "config" / "docker.yaml").resolve(), (ROOT / "config" / "docker.toml").resolve()}
 
 
 class SettingsError(ValueError):
@@ -1477,7 +1479,11 @@ def validate(data):
         # several IFS bays), so no per-model exception is needed here. Stock
         # Flashforge keeps one tool and still has four physical IFS bays;
         # occupancy is checked at print start; this is not a multicolor profile.
-        raise SettingsError(f"[printer] filament_slots must be 1 for model {key!r} (single extruder)")
+        hint = ""
+        if key == "klipper.generic":
+            hint = ("; if this is a Flashforge AD5X, set PRINT_HANDY__PRINTER__MODEL=flashforge.ad5x "
+                    "(the Docker default changed to klipper.generic in 2.2.2)")
+        raise SettingsError(f"[printer] filament_slots must be 1 for model {key!r} (single extruder){hint}")
     if "tool_count" in data["printer"]:
         # Independent toolheads (a tool changer) are tools, not IFS slots: the count
         # is only meaningful on a multi-tool model, where filament_slots still stays 1.
@@ -1596,6 +1602,10 @@ def load(home=None, local=None, environ=None):
         key = _model_key(pick("model"), pick("vendor"))
     data = _merge(printer_registry.MODELS[key].defaults(), home_data)
     base = copy.deepcopy(data)
+    global _model_defaulted
+    shipped = bool(local) and Path(local).resolve() in SHIPPED_DOCKER_CONFIGS
+    _model_defaulted = bool(shipped and first is None and not environ.get("PRINT_HANDY__PRINTER__MODEL")
+                            and not environ.get("PRINT_HANDY__PRINTER__VENDOR"))
     if local:
         _check_keys(base, extra, local)
         data = _merge(data, extra)
@@ -1607,6 +1617,38 @@ def load(home=None, local=None, environ=None):
 
 
 _override = None
+
+
+# Set by load(): the model came only from the image's own config/docker.* (no
+# environment variable, no operator file, no roster). See defaulted_model_warning.
+_model_defaulted = False
+
+
+def defaulted_model_warning(data=None):
+    """A startup warning when a Docker install may have been moved to Generic Klipper by 2.2.2.
+
+    The image default changed from flashforge.ad5x to klipper.generic. An AD5X
+    owner who never set PRINT_HANDY__PRINTER__MODEL is now on the generic model
+    silently; the tell is a hardware record from the old model (several loaded
+    slots or a zmod_* entry). Returns the message, or None when nothing looks wrong.
+    """
+    data = data or current()
+    if not _model_defaulted or data["printer"]["model"] != "klipper.generic":
+        return None
+    try:
+        record = json.loads((state_dir(data) / "printer_hardware.json").read_text())
+    except (OSError, ValueError):
+        return None
+    if not isinstance(record, dict):
+        return None
+    slots = record.get("filament_slots", record.get("ifs_slots"))
+    multi_slot = isinstance(slots, dict) and len(slots) > 1
+    zmod = any(key.startswith("zmod_") and value not in (None, "", False, 0) for key, value in record.items())
+    if not (multi_slot or zmod):
+        return None
+    return ("[printer] model was not set, so this install uses the Docker default klipper.generic (changed from "
+            "flashforge.ad5x in 2.2.2), but its hardware record carries AD5X multi-slot or ZMod data. If this is a "
+            "Flashforge AD5X, set PRINT_HANDY__PRINTER__MODEL=flashforge.ad5x")
 
 
 def set_override(data):

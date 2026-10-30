@@ -281,6 +281,10 @@ def main(argv=None):
             return 2
         printer_id = args[index + 1]
     try:
+        from . import settings
+        warning = settings.defaulted_model_warning()
+        if warning:
+            print(f"listener: WARNING {warning}", file=sys.stderr)
         return launch(printer_id=printer_id)
     except Exception as exc:  # settings errors name themselves; keep the code 2 contract
         from . import settings

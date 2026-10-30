@@ -32,7 +32,7 @@ from pathlib import Path
 import websockets
 
 from .. import __version__, debug_mode, go2rtc, healthcheck, logs, printers
-from ..core import delivery, spoolman_client
+from ..core import delivery, filament_color, spoolman_client
 from . import _config
 from . import moonraker_discord_announcements as announcer
 from . import discord_print_summary as print_summary
@@ -554,7 +554,7 @@ def paused_message(filename, runout=False, slot=None, spool_id=None):
 def recovery_slot(filename):
     """The slot and spool this job was using, from the hardware map. No printer call."""
     try:
-        state = json.loads(HARDWARE_STATE.read_text())
+        state = filament_color.adopt_renamed_slots_key(json.loads(HARDWARE_STATE.read_text()))
     except (OSError, ValueError):
         return None, None
     slots = state.get("filament_slots") or {}
@@ -2197,7 +2197,7 @@ class MidPrintSlotTracker:
 
 def _mapped_spool(slot):
     try:
-        state = json.loads(HARDWARE_STATE.read_text())
+        state = filament_color.adopt_renamed_slots_key(json.loads(HARDWARE_STATE.read_text()))
     except (OSError, ValueError):
         return None
     return ((state.get("filament_slots") or {}).get(str(slot)) or {}).get("spoolman_id")

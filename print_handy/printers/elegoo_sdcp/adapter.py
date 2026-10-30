@@ -26,7 +26,6 @@ _BUSY_CODES = {1, 2, 5, 9, 10}
 
 
 class ElegooSdcpAdapter(PrinterAdapter):
-    multi_slot = False
     transport = "elegoo_sdcp"
     facts: dict = {}  # the printer's sourced facts (facts.py), set by the printer's subclass
     verified_slicers = ("orca",)

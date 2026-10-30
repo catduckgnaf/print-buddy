@@ -57,6 +57,11 @@ def test_printer_registry_matches_code_profiles(registry):
             assert entry.filament_slots == 0
         else:
             assert entry.filament_slots == int(defaults["ifs_slots"])
+        # The color architecture (issue #656): registry and MODEL agree, and the
+        # recorded counts match the class.
+        assert entry.color_system == model.color_system
+        assert (entry.filament_slots > 1) == (entry.color_system == "multi_slot")
+        assert (entry.tools > 1) == (entry.color_system == "multi_tool")
         assert (ROOT / entry.profile).is_file()
 
 

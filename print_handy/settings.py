@@ -708,7 +708,7 @@ def _validate_entry_overrides(scratch, model):
         printer["nozzle_type"] = norm_type
     if "tool_count" in printer:
         printer["tool_count"] = _positive(scratch, "printer", "tool_count", int)
-        if printer["tool_count"] != 1 and not model.adapter.multi_tool:
+        if printer["tool_count"] != 1 and model.color_system != "multi_tool":
             raise SettingsError(f"[printer] tool_count must be 1 for model {model.key!r} (single tool)")
 
 
@@ -1371,16 +1371,17 @@ def validate(data):
             supported_types = ", ".join(sorted(model.supported_nozzle_types))
             raise SettingsError(f"[printer] nozzle_type {nozzle_type!r} is not supported by model {key!r} (supported: {supported_types})")
         data["printer"]["nozzle_type"] = norm_type
-    if not model.adapter.multi_slot and data["printer"]["ifs_slots"] != 1:
-        # Stock Flashforge keeps one tool and still has four physical IFS bays.
-        # Occupancy is checked at print start; this is not a multicolor profile.
-        if model.key != "flashforge_stock.ad5x" or data["printer"]["ifs_slots"] != 4:
-            raise SettingsError(f"[printer] ifs_slots must be 1 for model {key!r} (single extruder)")
+    if model.color_system != "multi_slot" and data["printer"]["ifs_slots"] != 1:
+        # The class carries this now: both AD5X profiles are multi_slot (one tool,
+        # several IFS bays), so no per-model exception is needed here. Stock
+        # Flashforge keeps one tool and still has four physical IFS bays;
+        # occupancy is checked at print start; this is not a multicolor profile.
+        raise SettingsError(f"[printer] ifs_slots must be 1 for model {key!r} (single extruder)")
     if "tool_count" in data["printer"]:
         # Independent toolheads (a tool changer) are tools, not IFS slots: the count
         # is only meaningful on a multi-tool model, where ifs_slots still stays 1.
         data["printer"]["tool_count"] = _positive(data, "printer", "tool_count", int)
-        if data["printer"]["tool_count"] != 1 and not model.adapter.multi_tool:
+        if data["printer"]["tool_count"] != 1 and model.color_system != "multi_tool":
             raise SettingsError(f"[printer] tool_count must be 1 for model {key!r} (single tool)")
     _validate_vendor_choices(data, model)
     for key, default in (("start_macro", "PRINT_START"), ("end_macro", "PRINT_END")):

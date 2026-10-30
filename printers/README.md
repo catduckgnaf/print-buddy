@@ -25,6 +25,7 @@ one place, for lookups, troubleshooting and humans browsing the repository.
 | `bed_mm`, `max_height_mm` | Usable print area and height from the model's defaults. |
 | `filament_slots` | Independent filament paths the profile drives. |
 | `tools` | Independent toolheads (a tool changer) when the model has them; toolhead models record `tools` instead of `filament_slots`. |
+| `color_system` | The model's color architecture (issue #656): `single`, `multi_slot` (one extruder fed by several slots; `filament_slots` above 1), or `multi_tool` (independent toolheads; `tools` above 1). Identical to `MODEL.color_system`. Only the AD5X pair is `multi_slot` and only the Creator pair is `multi_tool`; everything else is `single`. |
 | `profile` | Path of the profile module that is the source of truth. |
 | `notes` | Quirks a troubleshooter should know before trusting the numbers. |
 

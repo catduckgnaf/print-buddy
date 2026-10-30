@@ -1,0 +1,18 @@
+# Printer registry: snapmaker. See printers/README.md for the schema.
+#
+# One [[printer]] per registered model whose key starts with "snapmaker."
+
+[[printer]]
+key = "snapmaker.u1"
+label = "Snapmaker U1"
+vendor = "snapmaker"
+firmware = "Klipper"
+firmware_family = "klipper"
+connection = "moonraker"
+kinematics = "CoreXY"
+bed_mm = [270.0, 270.0]
+max_height_mm = 270.0
+tools = 4
+color_system = "multi_tool"
+profile = "print_handy/printers/snapmaker/u1.py"
+notes = "Four independent toolheads (a tool changer, T0-T3), not a filament feeder. Bed, height, temperatures and tool count are the manufacturer's published specification and are unverified here. Templates are generic files Print Handy wrote; Snapmaker and OrcaSlicer profiles are not shipped. Print start is not verified on a live printer."

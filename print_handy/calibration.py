@@ -128,7 +128,7 @@ IDLE_STATES = frozenset({"standby", "complete", "cancelled", "error"})
 BUSY_STATES = frozenset({"printing", "paused"})
 
 ELIGIBLE_FAMILIES = frozenset({"zmod", "klipper"})
-FORK_VENDORS = frozenset({"elegoo", "creality", "qidi", "anycubic"})
+FORK_VENDORS = frozenset({"elegoo", "creality", "qidi", "anycubic", "snapmaker"})
 
 # Macros the PID flows must never send: both auto-SAVE_CONFIG, which
 # would destroy the accept gate (Stage 0 evidence, ZMod wiki).

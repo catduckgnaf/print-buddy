@@ -29,3 +29,10 @@ def _home_slicer_commands(monkeypatch):
 def _clarify_gateway_stand_in():
     harness.install_clarify_stand_in()
     yield
+
+
+def pytest_collection_modifyitems(items):
+    """A hung corpus case fails at 10 minutes instead of holding the job."""
+    for item in items:
+        item.add_marker(pytest.mark.timeout(600))
+

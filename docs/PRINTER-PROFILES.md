@@ -90,6 +90,10 @@ print_handy/printers/
     kobra2plus.py        MODEL   anycubic.kobra2plus: 320 x 320 mm bed, 400 mm height
     kobra2max.py         MODEL   anycubic.kobra2max: 420 x 420 mm bed, 500 mm height
                                  (adapter.py, guard.py, facts.py, profiles.py; see ANYCUBIC.md)
+  snapmaker/
+    __init__.py          VENDOR  Snapmaker: Moonraker, Klipper-macro start, OrcaSlicer, .gcode
+    u1.py                MODEL   snapmaker.u1: 270 mm cube, 4 toolheads (tool changer, not IFS)
+                                 (adapter.py, guard.py, facts.py; generic templates; see SNAPMAKER.md)
 templates/orca/<folder>/ machine.json, process.json, filament.json per printer; a model with
                          generated_templates (the A1) ships none: <state>/orca-profiles/<folder>
 ```

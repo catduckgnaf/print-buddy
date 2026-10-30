@@ -21,7 +21,7 @@ from types import SimpleNamespace
 from urllib.parse import urlsplit
 
 from .. import diagnostics, logs, printers, settings
-from . import _external, delivery, owned_worker, split_fit
+from . import _external, delivery, owned_worker, plate_merge, split_fit
 
 BED = settings.current()['printer']['bed_mm']
 FILAMENT_SLOTS = settings.current()['printer']['filament_slots']

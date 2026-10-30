@@ -26,7 +26,15 @@
 - Knowledge coverage for the non-Moonraker families (#647, #668): the Marlin entries name all 21 Marlin models, Prusa Buddy firmware is its own family, and Bambu, SDCP and stock Flashforge carry recorded verdicts in docs/MACROS.md.
 - The registries are split by vendor (`printers/registry/`) and by firmware (`firmware/commands/`) (#652, #653). Nothing moved for users; duplicate entries now refuse to load.
 - Guided setup asks for the ZMod secrets only on an AD5X (#651).
-- Multi-nozzle nozzle change (#676): the guided nozzle-change cooldown checks every extruder, not just the first.
+- Multi-nozzle nozzle change (#676): the guided nozzle-change cooldown checks every extruder, not just the first. It reads each extruder the printer has (from the printer's adapter, else Moonraker's object list) and turns every heater off, not only the active one (#679); before that fix the check only ever saw the first extruder.
+
+**Fixes and reliability (post-2.2.1 review):**
+- An upgraded install whose hardware record still names the slot map `ifs_slots` keeps each slot's spool on its first runout or filament pause; the runout recovery and spool lookups, and `spool_lifecycle reconcile --state-file`, adopt the old key like the main loaders do (#677).
+- Docker: a container on the shipped default model whose hardware record looks like an AD5X (several loaded slots) logs a warning and shows a `doctor` row naming `PRINT_HANDY__PRINTER__MODEL`; the `filament_slots must be 1` error for `klipper.generic` says the same (#678).
+- A slice blocked by a safety guard now says which guard and why in chat (redacted, one line). A Bambu Studio fallback that fails to start keeps the OrcaSlicer failure that triggered it, and a fallback timeout stays retryable (#681).
+- `notify.ntfy_enabled` with no topic (neither `ntfy_topic` nor a topic in `ntfy_url`) is refused at load instead of silently skipping every event (#682).
+- Contributor tooling: the PR policy check flags an empty `Reason:` line instead of reading the next line as the reason, and the release checklist generator tolerates a PR with no labels (#682).
+- Tests: the in-memory clarify gateway that tests/hermes and tests/pipeline install no longer outlives its package, which fixes the order-dependent `/print-stop` routing test hang.
 
 # Version 2.2.1
 

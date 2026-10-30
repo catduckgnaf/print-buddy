@@ -9,13 +9,13 @@ import pytest
 from print_handy import printers
 from print_handy.printers.base import COLOR_SYSTEMS, PrinterModel
 
-# The only non-single models. The Prusa XL stays "single" here by the issue's
-# own scoping: classifying it is named follow-up work, not a silent omission.
-# The single-nozzle Bambu AMS models are multi_slot since #671 (four AMS slots
-# each, from their profile facts); the dual-nozzle Bambu models (H2D/H2C
-# family) stay "single" by #671's explicit treatment — two independent
-# extruders, each AMS-fed, are neither the multi_slot shape nor the multi_tool
-# contract — and test_bambu_ams_mapping pins their (slot_count, multi_slot).
+# The only non-single models. The Prusa XL joined multi_tool with #670 (the
+# adapter-contract driving landed with the classification). The single-nozzle
+# Bambu AMS models are multi_slot since #671 (four AMS slots each, from their
+# profile facts); the dual-nozzle Bambu models (H2D/H2C family) stay "single"
+# by #671's explicit treatment — two independent extruders, each AMS-fed, are
+# neither the multi_slot shape nor the multi_tool contract — and
+# test_bambu_ams_mapping pins their (slot_count, multi_slot).
 EXPECTED = {
     "flashforge.ad5x": "multi_slot",
     "flashforge_stock.ad5x": "multi_slot",
@@ -31,6 +31,7 @@ EXPECTED = {
     "bambulab.x1": "multi_slot",
     "bambulab.x1c": "multi_slot",
     "bambulab.x1e": "multi_slot",
+    "prusa.xl": "multi_tool",
 }
 
 
@@ -41,7 +42,7 @@ def test_every_model_names_its_class():
         assert model.color_system == EXPECTED.get(key, "single"), key
     counts = {name: sum(1 for m in printers.MODELS.values() if m.color_system == name)
               for name in COLOR_SYSTEMS}
-    assert counts == {"single": 69, "multi_slot": 12, "multi_tool": 2}
+    assert counts == {"single": 68, "multi_slot": 12, "multi_tool": 3}
 
 
 def test_class_agrees_with_the_model_counts():

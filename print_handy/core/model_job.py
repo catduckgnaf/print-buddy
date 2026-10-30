@@ -6457,7 +6457,8 @@ def _print_prusa(adapter, state, gcode, job, job_path, wait_s, reprint):
     """The PrusaLink print path (#242), mirroring _print_octoprint's guard order.
 
     Every check that can refuse cleanly runs before the submission lease: link configured,
-    live snapshot idle with no readiness problems, G-code verified, single-tool only. Inside
+    live snapshot idle with no readiness problems, G-code verified, tools within the model's
+    toolheads. Inside
     the lease the snapshot is taken again and the bed-clear approval is consumed; only then
     does anything reach the printer: the verified upload (PUT, size read back by the client),
     then the POST that starts that exact file. Acceptance is confirmed from a fresh snapshot,

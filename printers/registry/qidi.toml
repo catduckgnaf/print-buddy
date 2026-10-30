@@ -16,6 +16,7 @@ kinematics = "CoreXY"
 bed_mm = [245.0, 245.0]
 max_height_mm = 240.0
 filament_slots = 1
+color_system = "single"
 profile = "print_handy/printers/qidi/q1pro.py"
 notes = "Stock Klipper + Moonraker. Enclosed CoreXY with an actively heated chamber (set by the template start code, not driven separately). The pinned Orca profile records a bed exclusion polygon along the back edge; not tested on hardware."
 
@@ -30,6 +31,7 @@ kinematics = "CoreXY"
 bed_mm = [280.0, 280.0]
 max_height_mm = 270.0
 filament_slots = 1
+color_system = "single"
 profile = "print_handy/printers/qidi/xplus3.py"
 notes = "Stock Klipper + Moonraker. Enclosed CoreXY; not tested on hardware."
 
@@ -44,6 +46,7 @@ kinematics = "CoreXY"
 bed_mm = [305.0, 305.0]
 max_height_mm = 280.0
 filament_slots = 1
+color_system = "single"
 profile = "print_handy/printers/qidi/xplus4.py"
 notes = "Stock Klipper + Moonraker. Enclosed CoreXY with an actively heated chamber (set by the template start code, not driven separately). The pinned Orca profile records a bed exclusion polygon; not tested on hardware."
 
@@ -58,6 +61,7 @@ kinematics = "CoreXY"
 bed_mm = [325.0, 325.0]
 max_height_mm = 315.0
 filament_slots = 1
+color_system = "single"
 profile = "print_handy/printers/qidi/xmax3.py"
 notes = "Stock Klipper + Moonraker. Enclosed CoreXY; not tested on hardware."
 
@@ -72,5 +76,6 @@ kinematics = "CoreXY"
 bed_mm = [175.0, 180.0]
 max_height_mm = 170.0
 filament_slots = 1
+color_system = "single"
 profile = "print_handy/printers/qidi/xsmart3.py"
 notes = "Stock Klipper + Moonraker. Marketed bed is 180 x 180 mm; the pinned Orca profile's printable area is 175 x 180 mm and is what is recorded. Not tested on hardware."

@@ -16,5 +16,6 @@ kinematics = "CoreXY"
 bed_mm = [220.0, 220.0]
 max_height_mm = 220.0
 filament_slots = 4
+color_system = "multi_slot"
 profile = "print_handy/printers/flashforge_stock/ad5x.py"
 notes = "Stock Adventurer firmware over its LAN HTTP API; no Moonraker. Print start is not verified on a live printer."

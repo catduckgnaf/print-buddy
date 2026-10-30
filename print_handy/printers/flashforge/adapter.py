@@ -8,7 +8,6 @@ from ..base import MultiColorUnsupported, PrinterAdapter, basic_status
 
 
 class ZmodAdapter(PrinterAdapter):
-    multi_slot = True
     has_native_screen = True
 
     @property
@@ -72,7 +71,6 @@ class ZmodSingleExtruderAdapter(ZmodAdapter):
     spool-match macro stays AD5X-only; nothing here claims it.
     """
 
-    multi_slot = False
     has_native_screen = False
 
     @property
@@ -138,8 +136,6 @@ class ZmodMultiToolAdapter(ZmodSingleExtruderAdapter):
     AFC Lite's lanes use), not per IFS slot. No native-screen sync and no
     stock /detail API, as for the single-extruder adapter.
     """
-
-    multi_tool = True
 
     @property
     def tool_count(self):

@@ -19,6 +19,16 @@ import pytest
 
 from . import fetch_complex_corpus
 
+
+@pytest.mark.parametrize('error', [RuntimeError('private technical detail'), TimeoutError('private timeout')])
+def test_private_case_cancels_current_slice_failure_prompt(error):
+    from print_handy.core.slice_failure import post
+    # The corpus must answer the actual product prompt, not a retired wording.
+    rules = fetch_complex_corpus.CASE_CLICKS['duplo-swing-two-seats'] + fetch_complex_corpus.GENERIC_CLICKS
+    question = post(error)
+    picked = next(row['button'] for row in rules if row['question'].casefold() in question.casefold())
+    assert picked == 'Cancel'
+
 MANIFEST = Path(__file__).resolve().parent / "complex_cases.toml"
 CASES = tomllib.loads(MANIFEST.read_text())["case"]
 PUBLIC = [c for c in CASES if c["tier"] == "public"]

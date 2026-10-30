@@ -19,7 +19,6 @@ class StockFlashforgeAdapter(PrinterAdapter):
     """One tool on stock firmware, with IFS slot occupancy, over the Flashforge LAN HTTP API."""
 
     transport = "flashforge_stock"
-    multi_slot = False
     has_native_screen = False
     verified_slicers = ("orca", "flash_studio")
 

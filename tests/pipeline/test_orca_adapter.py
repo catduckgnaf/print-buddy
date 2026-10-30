@@ -3,9 +3,46 @@ import json
 import struct
 import sys
 from unittest.mock import patch
+import pytest
 
 from print_handy.core import orca_adapter as adapter
 from print_handy.core import model_job as job
+
+
+def test_failed_two_copy_slice_keeps_both_engine_logs_and_structured_cause(tmp_path, monkeypatch):
+    from print_handy.core import slice_failure, worker_errors
+    from print_handy.hermes import _config
+    _allow_post(monkeypatch)
+    monkeypatch.setattr(_config, 'hermes_home', lambda: str(tmp_path / 'profile'))
+    calls = []
+
+    def fail(command, **kwargs):
+        calls.append(command)
+        return type('R', (), {'returncode': 18, 'stdout': '', 'stderr': 'SECRET engine output'})()
+
+    monkeypatch.setattr(adapter.subprocess, 'run', fail)
+    with pytest.raises(slice_failure.SliceFailure) as info:
+        adapter.slice_model(_source(tmp_path), tmp_path / 'slice', _state(), copies=2)
+    assert len(calls) == 2  # production Orca, then the existing Bambu fallback
+    kept = tmp_path / 'profile' / 'state' / 'slice-failures' / 'slice'
+    assert (kept / 'orca.log').read_text() == 'SECRET engine output'
+    assert (kept / 'bambu.log').read_text() == 'SECRET engine output'
+    back = worker_errors.decode(json.loads(json.dumps(worker_errors.encode(info.value))))
+    post = slice_failure.post(back)
+    assert 'OrcaSlicer and Bambu Studio' in post and 'exit code 18' in post
+    assert '/print-handy bundle' in post and 'SECRET' not in post
+    assert not slice_failure.explain(back).retryable
+    assert not (tmp_path / 'slice' / 'plate_1.gcode').exists()
+
+
+def test_copy_layout_refusal_has_actionable_remedy_before_slicer_runs(tmp_path, monkeypatch):
+    from print_handy.core import slice_failure
+    with patch.object(adapter.subprocess, 'run') as run:
+        with pytest.raises(slice_failure.SliceFailure) as info:
+            adapter.slice_model(_source(tmp_path), tmp_path / 'out', _state(), scale=300, copies=2)
+    run.assert_not_called()
+    assert info.value.kind == 'layout'
+    assert 'fewer copies' in slice_failure.post(info.value)
 
 
 def _state():
@@ -78,7 +115,8 @@ def test_bambu_runs_only_after_orca_execution_failure(tmp_path, monkeypatch):
                           '; model printing time: 1m 0s; total estimated time: 2m 0s\nG90\nG1 X1 Y1 Z0.2\nEND_PRINT\n')
         return type('R', (), {'returncode': 0, 'stdout': '', 'stderr': ''})()
 
-    monkeypatch.setattr(adapter.subprocess, 'run', run)
+    # Assert slicer arguments before the host's optional taskset prefix.
+    monkeypatch.setattr(adapter, '_spawn_slicer', run)
     output, provenance, configs = adapter.slice_model(_source(tmp_path), tmp_path / 'out', _state())
     assert output.is_file()
     assert len(calls) == 2
@@ -160,12 +198,17 @@ def test_bambu_output_still_fails_the_same_post_slice_gate(tmp_path, monkeypatch
 
 
 def test_absent_orca_slice_refuses_before_fallback_or_output(tmp_path, monkeypatch):
-    import pytest
+    from print_handy.core import slice_failure
     missing = str(tmp_path / 'no-orca-executable')
     monkeypatch.setattr(adapter, 'ORCA_COMMAND', [missing])
+    # Otherwise taskset itself starts successfully and reports an exit code for
+    # the missing child instead of Popen raising FileNotFoundError.
+    monkeypatch.setattr(adapter.resources, 'slicer_command', lambda command: command)
     with patch('urllib.request.urlopen', side_effect=AssertionError('network fallback')):
-        with pytest.raises(FileNotFoundError, match='no-orca-executable'):
+        with pytest.raises(FileNotFoundError, match='no-orca-executable') as info:
             adapter.slice_model(_source(tmp_path), tmp_path / 'out', _state())
+    assert 'could not be opened' in slice_failure.post(info.value)
+    assert not slice_failure.explain(info.value).retryable
     assert not list((tmp_path / 'out').glob('*.gcode'))
 
 

@@ -16,5 +16,6 @@ kinematics = "CoreXY"
 bed_mm = [256.0, 256.0]
 max_height_mm = 256.0
 filament_slots = 1
+color_system = "single"
 profile = "print_handy/printers/elegoo_sdcp/centauricarbon.py"
 notes = "Closed firmware; SDCP v3.0 LAN protocol (unauthenticated). Marketed bed is 260 x 260 mm; the pinned Orca profile's printable area is 256 x 256 mm and is what is recorded."

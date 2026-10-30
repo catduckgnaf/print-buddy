@@ -14,6 +14,7 @@ MODEL = PrinterModel(
     adapter=StockFlashforgeAdapter,
     templates="flashforge_ad5x",
     vendor=VENDOR,
+    color_system="multi_slot",
     supported_nozzle_sizes=(0.25, 0.4, 0.6, 0.8),
     settings={"printer": {
         "name": "Adventurer 5X",

@@ -345,7 +345,7 @@ Failures are named in chat with the cause and the remedy: the host could not be 
 | | `max_print_height_mm` | `220` | Tallest allowed print |
 | | `nozzle_diameter_mm` | `0.4` | Slicing refuses any other nozzle |
 | | `filament_slots` | `4` | Filament slots; 1 for a single extruder |
-| | `tool_count` | `1` | Independent toolheads on a tool-changer model (Creator 5 / 5 Pro: 4); slicer tool *i* is toolhead *i*, never an IFS slot |
+| | `tool_count` | `1` | Independent toolheads on a tool-changer model (Creator 5 / 5 Pro: 4, Prusa XL: 5); slicer tool *i* is toolhead *i*, never an IFS slot |
 | `layout` | `single_copy_edge_mm`, `multi_copy_edge_mm` | `1`, `3` | Distance from the bed edge |
 | | `spacing` | `minimum` | Part gap preset (`minimum`, `low`, `medium` Standard, `high`); fills the gap keys below unless one is set explicitly. See [SETTINGS.md](SETTINGS.md#part-spacing-presets) |
 | | `arrange_gap_mm`, `arrange_edge_mm` | `2`, `1` (preset) | Gaps when parts are rearranged onto one plate |

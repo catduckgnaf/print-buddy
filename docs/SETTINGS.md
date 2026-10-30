@@ -58,7 +58,7 @@ Schema, validation limits and TOML migration: [CONFIGURATION-YAML.md](CONFIGURAT
 | `paths.ffmpeg` | `PRINT_HANDY__PATHS__FFMPEG` | `ffmpeg` | ffmpeg binary or name on `PATH` |
 | `paths.hermes_agent` | `PRINT_HANDY__PATHS__HERMES_AGENT` | `/data/hermes/hermes-agent` | Hermes agent checkout (Hermes installs only) |
 | `paths.hermes_restart_helper` | `PRINT_HANDY__PATHS__HERMES_RESTART_HELPER` | `/data/hermes/restart_hermes.py` | Hermes restart helper (Hermes installs only) |
-| `services.moonraker_url` | `PRINT_HANDY__SERVICES__MOONRAKER_URL` | empty | Klipper printers: Moonraker HTTP URL, e.g. `http://printer.example:7125`. Required by the listener |
+| `services.moonraker_url` | `PRINT_HANDY__SERVICES__MOONRAKER_URL` | empty | Printer URL for a Moonraker connection. Klipper may be on another computer. Example: `http://printer.example:7125`. Required by the listener |
 | `services.moonraker_ws_url` | `PRINT_HANDY__SERVICES__MOONRAKER_WS_URL` | empty | Moonraker websocket; derived from `moonraker_url` when empty |
 | `services.camera_source` | `PRINT_HANDY__SERVICES__CAMERA_SOURCE` | `auto` | Which camera still images come from (#294): `auto` follows the printer vendor's rule, or pin `moonraker`, `bambu`, `go2rtc`, or `none` |
 | `services.camera_snapshot_url` | `PRINT_HANDY__SERVICES__CAMERA_SNAPSHOT_URL` | empty | Camera snapshot URL; derived from the Moonraker host when empty |
@@ -66,7 +66,7 @@ Schema, validation limits and TOML migration: [CONFIGURATION-YAML.md](CONFIGURAT
 | `services.openviking_url` | `PRINT_HANDY__SERVICES__OPENVIKING_URL` | empty | Optional OpenViking memory store |
 | `services.vision_chat_url` | `PRINT_HANDY__SERVICES__VISION_CHAT_URL` | empty | OpenAI-compatible endpoint for camera checks and roasts; empty disables both. Needs a vision-capable model. See [Model endpoints](#model-endpoints) |
 | `services.stock_api_port` | `PRINT_HANDY__SERVICES__STOCK_API_PORT` | `8898` | Flashforge stock API port for IFS presence |
-| `services.octoprint_url` | `PRINT_HANDY__SERVICES__OCTOPRINT_URL` | empty | OctoPrint printers (`octoprint.marlin`): OctoPrint URL. API key: `OCTOPRINT_API_KEY` secret |
+| `services.octoprint_url` | `PRINT_HANDY__SERVICES__OCTOPRINT_URL` | empty | Printer URL for OctoPrint, including Sovol Marlin keys and an OctoPi that is not the printer. API key: `OCTOPRINT_API_KEY` secret |
 | `discord.chat_id` | `PRINT_HANDY__DISCORD__CHAT_ID` | empty | Discord channel ID |
 | `discord.approval_user_id` | `PRINT_HANDY__DISCORD__APPROVAL_USER_ID` | empty | Discord user ID allowed to approve |
 | `discord.upload_max_bytes` | `PRINT_HANDY__DISCORD__UPLOAD_MAX_BYTES` | `9500000` | Largest upload per file on Discord: video is shrunk to it, and a sliced file or Bambu package over it is reported with its host path instead of offered for sending (see [PRINTER-PROFILES.md](PRINTER-PROFILES.md)). Keep it under your server's Discord cap (10 MB unboosted). This row governs Discord only — Telegram and Matrix posts are sized to their own `upload_max_bytes` rows below |
@@ -141,7 +141,7 @@ Schema, validation limits and TOML migration: [CONFIGURATION-YAML.md](CONFIGURAT
 | `timelapse.vertical_short_mode` | `PRINT_HANDY__TIMELAPSE__VERTICAL_SHORT_MODE` | `pad` | `pad` fills the 9:16 frame with a blurred background; `crop` centre-crops |
 | `timelapse.vertical_short_overlay` | `PRINT_HANDY__TIMELAPSE__VERTICAL_SHORT_OVERLAY` | `true` | Burn the print title / printer / filament / time overlay into the vertical short |
 | `timelapse.capture_enabled` | `PRINT_HANDY__TIMELAPSE__CAPTURE_ENABLED` | `false` | In-container timelapse capture (#246): starts the bundled go2rtc (full Docker image only) to normalise the camera source on loopback. Off by default and opt-in; off keeps today's printer-rendered behaviour. When both the file value and `PRINT_HANDY__TIMELAPSE__CAPTURE_ENABLED` are set, the environment variable wins (the settings load order ends with the environment). On stock Flashforge there is no go2rtc leg: the launched-print monitor captures from the camera source the printer advertises in `/detail` (see [FLASHFORGE-STOCK.md](FLASHFORGE-STOCK.md)) |
-| `timelapse.capture_source_url` | `PRINT_HANDY__TIMELAPSE__CAPTURE_SOURCE_URL` | empty | Explicit capture camera source (MJPEG/RTSP URL or a go2rtc `ffmpeg:` source). Empty derives it from `services.camera_snapshot_url` / the Moonraker webcam |
+| `timelapse.capture_source_url` | `PRINT_HANDY__TIMELAPSE__CAPTURE_SOURCE_URL` | empty | RTSP stream URL (`rtsp://` or `rtsps://`) or a go2rtc `ffmpeg:` source. go2rtc ingests it. Empty derives the camera from `services.camera_snapshot_url` / the Moonraker webcam |
 | `timelapse.capture_trigger` | `PRINT_HANDY__TIMELAPSE__CAPTURE_TRIGGER` | `interval` | Stage 2 frame capture trigger (#246): `interval` (a frame every `capture_interval_s`), `layer` (a frame on each Moonraker layer change) or `both` |
 | `timelapse.capture_interval_s` | `PRINT_HANDY__TIMELAPSE__CAPTURE_INTERVAL_S` | `5.0` | Seconds between captured frames for the interval trigger (above 0, at most 3600) |
 | `timelapse.capture_max_frames` | `PRINT_HANDY__TIMELAPSE__CAPTURE_MAX_FRAMES` | `3600` | Per-job cap on captured frames; capture stops at the cap and keeps the frames already taken. `0` disables the cap |

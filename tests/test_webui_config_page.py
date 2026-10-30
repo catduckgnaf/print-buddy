@@ -145,6 +145,21 @@ class ConfigPageTests(unittest.TestCase):
         self.assertIn('<option value="auto" selected>', body)
         # The sensitivity number input carries the catalog bounds.
         self.assertIn('min="1" max="5"', row_segment(body, "visual_watch.sensitivity"))
+        # Every picker is A–Z by the text shown, not by the stored key order.
+        platform = re.findall(r'<option value="([^"]*)"', row_segment(body, "bot.platform"))
+        self.assertEqual(platform, ["discord", "matrix", "telegram"])
+        model_labels = re.findall(r"<option[^>]*>([^<]*)</option>", row_segment(body, "printer.model"))
+        self.assertEqual(model_labels, sorted(model_labels, key=str.casefold))
+        self.assertGreater(len(model_labels), 1)
+        # Default home model is Flashforge ZMod: Moonraker is the Printer URL
+        # field, and the OctoPrint address stays in the form as a hidden input.
+        self.assertIn('name="services.moonraker_url"', body)
+        self.assertIn('type="hidden" name="services.octoprint_url" value=""', body)
+        # Hidden inputs carry raw values, never the display text: a posted
+        # "(empty)" would read as a change and fail to save.
+        self.assertNotRegex(body, r'type="hidden" name="[^"]+" value="\(empty\)"')
+        self.assertIn('name="printer.zmod_delivery_format"', body)
+        self.assertNotIn('type="hidden" name="printer.zmod_delivery_format"', body)
 
     def test_status_page_links_to_config(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -389,3 +404,25 @@ class DnsRebindingTests(unittest.TestCase):
                 self.assertEqual(code, 200, host)
             code, _body = self.request(port, "GET", "/healthz", headers=evil)
             self.assertNotEqual(code, 403)
+
+
+class HiddenFieldRoundTripTests(unittest.TestCase):
+    """A hidden field posts back exactly what the page read, so it is never a change."""
+
+    def test_hidden_values_and_absent_optional_keys_parse_as_no_change(self):
+        from print_handy.webui import pages
+        from print_handy.webui.catalog import field_by_id
+        cases = [("services.octoprint_url", None), ("services.octoprint_url", ""),
+                 ("discord.allowed_user_ids", ["1", "2"]), ("discord.allowed_user_ids", []),
+                 ("vision.roast_enabled", True), ("vision.roast_enabled", False),
+                 ("timelapse.render_wait_s", 900)]
+        for field_id, value in cases:
+            with self.subTest(field=field_id, value=value):
+                field = field_by_id(field_id)
+                html = pages._hidden_inputs(field, value)
+                form = {}
+                for name, raw in re.findall(r'name="([^"]+)" value="([^"]*)"', html):
+                    form.setdefault(name, []).append(raw)
+                fv = config_api.FieldValue(field=field, value=value, provenance=config_api.DEFAULT)
+                changes, _submitted, errors = pages.parse_form(form, [fv])
+                self.assertEqual((changes, errors), ({}, {}))

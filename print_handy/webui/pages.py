@@ -42,7 +42,7 @@ import tempfile
 from pathlib import Path
 
 from . import config as config_api
-from .catalog import choices_for, field_by_id
+from .catalog import choice_label, choices_for, config_page_visible, field_by_id
 
 CSRF_FIELD = "_csrf"
 CONFIRM_FIELD = "confirm"
@@ -114,6 +114,11 @@ def _current(field, field_value, submitted):
     return raw[0] if raw else ""
 
 
+def _ordered_choices(field, choices):
+    """Picker options are A–Z by the text on screen. The stored value is unchanged."""
+    return sorted(choices, key=lambda choice: (choice_label(field, choice).casefold(), choice))
+
+
 def _control(field, value, *, data, disabled):
     name = _esc(field.id)
     dis = " disabled" if disabled else ""
@@ -122,21 +127,22 @@ def _control(field, value, *, data, disabled):
         return (f'<input type="checkbox" id="f-{name}" name="{name}" '
                 f'value="true"{checked}{dis}>')
     if field.kind == "picker":
-        choices = [str(choice) for choice in choices_for(field, data=data)]
+        choices = _ordered_choices(field, [str(choice) for choice in choices_for(field, data=data)])
         if isinstance(value, (list, tuple)):
             selected = {str(item) for item in value}
             options = "".join(
                 f'<option value="{_esc(choice)}"{" selected" if choice in selected else ""}>'
-                f'{_esc(choice)}</option>' for choice in choices)
+                f'{_esc(choice_label(field, choice))}</option>' for choice in choices)
             size = min(max(len(choices), 2), 8)
             return (f'<select id="f-{name}" name="{name}" multiple size="{size}"{dis}>'
                     f'{options}</select>')
         current = "" if value is None else str(value)
         if current and current not in choices:
             choices = [current, *choices]  # show the real value, never a silent substitute
+        choices = _ordered_choices(field, choices)
         options = "".join(
             f'<option value="{_esc(choice)}"{" selected" if choice == current else ""}>'
-            f'{_esc(choice)}</option>' for choice in choices)
+            f'{_esc(choice_label(field, choice))}</option>' for choice in choices)
         return f'<select id="f-{name}" name="{name}"{dis}>{options}</select>'
     if field.kind == "number":
         attrs = ""
@@ -151,8 +157,31 @@ def _control(field, value, *, data, disabled):
             f'value="{_esc("" if value is None else value)}"{dis}>')
 
 
+def _form_value(value):
+    """A value as parse_form reads it back: raw, never the display text
+    (_show's "(empty)" would come back as a real value and fail to save)."""
+    if value is None or value is False:
+        return ""
+    if value is True:
+        return "true"
+    if isinstance(value, float) and value == int(value):
+        return str(int(value))
+    return str(value)
+
+
+def _hidden_inputs(field, value):
+    """A field the page does not show for this model, kept in the form so a
+    save does not clear it: one input per list item, raw values otherwise."""
+    name = _esc(field.id)
+    items = value if isinstance(value, (list, tuple)) else [value]
+    return "".join(f'<input type="hidden" name="{name}" value="{_esc(_form_value(item))}">'
+                   for item in items)
+
+
 def _field_row(field_value, *, data, errors, submitted):
     field = field_value.field
+    if not config_page_visible(field, data):
+        return _hidden_inputs(field, _current(field, field_value, submitted))
     disabled = field_value.env_overridden
     badge = PROVENANCE_LABELS.get(field_value.provenance, field_value.provenance)
     parts = [f'<div class="field" id="row-{_esc(field.id)}">',
@@ -361,7 +390,8 @@ def parse_form(form, field_values, *, only=None):
                 continue
         else:
             value = (raw[0] if raw else "").strip()
-        if value != field_value.value:
+        # An optional key absent from every layer (None) submitted empty is not a change.
+        if value != field_value.value and not (value == "" and field_value.value is None):
             changes[field] = value
     return changes, submitted, errors
 

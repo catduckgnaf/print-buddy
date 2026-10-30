@@ -141,7 +141,14 @@ class ContractTests(unittest.TestCase):
                                        "anycubic.kobra2plus", "anycubic.kobra2max",
                                        "octoprint.i3megas", "octoprint.vyper", "octoprint.chiron",
                                        "octoprint.maxpro2", "octoprint.kobra", "octoprint.kobraneo",
-                                       "octoprint.kobraplus", "octoprint.kobramax"})
+                                       "octoprint.kobraplus", "octoprint.kobramax",
+                                       "sovol.sv01", "sovol.sv01_pro", "sovol.sv02", "sovol.sv03",
+                                       "sovol.sv04", "sovol.sv05", "sovol.sv06_plus", "sovol.sv06_ace",
+                                       "sovol.sv06_plus_ace", "sovol.sv07", "sovol.sv07_plus",
+                                       "sovol.sv08", "sovol.sv08_max", "sovol.zero", "sovol.m1d",
+                                       "sovol_marlin.sv01", "sovol_marlin.sv01_pro", "sovol_marlin.sv02",
+                                       "sovol_marlin.sv03", "sovol_marlin.sv04", "sovol_marlin.sv05",
+                                       "sovol_marlin.sv06", "sovol_marlin.sv06_plus"})
         for key, model in printers.MODELS.items():
             self.assertEqual(model.key, key)
             shipped = settings.ROOT / "print_handy" / "templates" / "orca" / model.templates
@@ -176,7 +183,7 @@ class ContractTests(unittest.TestCase):
                 folder = a.templates_dir()
                 for name in ("machine", "process", "filament"):
                     json.loads((folder / f"{name}.json").read_text())
-                if family != "flashforge_stock.ad5x" and not family.startswith(("octoprint.", "bambulab.", "prusa.", "elegoo", "qidi.", "creality.", "anycubic.")):
+                if family != "flashforge_stock.ad5x" and not family.startswith(("octoprint.", "sovol_marlin.", "bambulab.", "prusa.", "elegoo", "qidi.", "creality.", "anycubic.")):
                     self.assertIn("[bed_temperature_initial_layer_single]", a.machine_start_gcode("X MESH=auto", "auto"))
                 plan = a.start_plan(60, 215)
                 if family == "flashforge_stock.ad5x":
@@ -208,7 +215,7 @@ class ContractTests(unittest.TestCase):
                     self.assertRaises(Exception, a.moonraker_objects)
                     self.assertIn("state", a.normalize_status({}))
                     continue
-                if family.startswith("octoprint."):
+                if family.startswith(("octoprint.", "sovol_marlin.")):
                     self.assertEqual(plan, ["M190 S60", "M109 S215"])
                     self.assertEqual(a.machine_end_gcode("END_PRINT"), "END_PRINT")
                     self.assertRaises(Exception, a.moonraker_start_commands, "part.gcode")

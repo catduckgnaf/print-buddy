@@ -31,3 +31,23 @@ def test_a_missing_map_does_not_raise_or_invent_a_sentence():
     assert confirm_note(adapter, {}) == NOTE
     other = SimpleNamespace(model=SimpleNamespace(vendor_key="bambulab"), config={})
     assert confirm_note(other, {}) == ""
+
+
+def test_auto_reads_the_zmod_version_for_the_card(monkeypatch):
+    from print_handy.core import model_job
+    adapter = SimpleNamespace(
+        model=SimpleNamespace(vendor_key="flashforge"),
+        config={"printer": {"zmod_delivery_format": "auto"}},
+    )
+    state = {"moonraker_url": "http://printer"}
+    assert confirm_note(adapter, {}) == ""
+    monkeypatch.setattr(model_job, "_zmod_version", lambda st: (1, 7, 5))
+    assert confirm_note(adapter, {}, state) == NOTE
+    monkeypatch.setattr(model_job, "_zmod_version", lambda st: (1, 7, 4))
+    assert confirm_note(adapter, {}, state) == ""
+
+    def boom(st):
+        raise OSError("down")
+
+    monkeypatch.setattr(model_job, "_zmod_version", boom)
+    assert confirm_note(adapter, {}, state) == ""

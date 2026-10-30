@@ -24,12 +24,14 @@ def note_for(setting, zmod_version) -> str:
     return NOTE if fmt == "3mf" else ""
 
 
-def confirm_note(adapter, job=None) -> str:
+def confirm_note(adapter, job=None, state=None) -> str:
     """The sentence for one confirm card, or "" when this card is not a 3MF send.
 
     A job that already recorded ``delivery_format.format == "3mf"`` is a 3MF
     send even if the version is not in hand. Anything else follows the
-    printer's setting, and an unknown version does not guess.
+    printer's setting, and an unknown version does not guess. With ``auto``
+    and a printer ``state``, the version is read the way delivery reads it;
+    a failed read is an unknown version and never breaks the card.
     """
     recorded = (job or {}).get("delivery_format") if isinstance(job, dict) else None
     if isinstance(recorded, dict) and recorded.get("format") == "3mf":
@@ -44,4 +46,10 @@ def confirm_note(adapter, job=None) -> str:
     if isinstance(recorded, dict) and recorded.get("zmod_version"):
         parts = tuple(int(p) for p in str(recorded["zmod_version"]).split(".") if p.isdigit())
         version = parts or None
+    if version is None and state and str(setting or "").strip().casefold() == "auto":
+        try:
+            from .model_job import _zmod_version
+            version = _zmod_version(state)
+        except Exception:
+            version = None
     return note_for(setting, version)

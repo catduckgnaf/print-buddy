@@ -2395,7 +2395,7 @@ async def prepare_link(event, adapter, state, root, timeout=None, reuse=None, pr
             if slot_lines:
                 question = slot_lines + '\n' + question
             from .spool_remap import confirm_note
-            remap = confirm_note(job_adapter, sliced)
+            remap = confirm_note(job_adapter, sliced, state)
             if remap:
                 question += '\n' + remap
             if delivery.only_printer(enabled):

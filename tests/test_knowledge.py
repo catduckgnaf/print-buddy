@@ -36,7 +36,7 @@ def registry():
 def test_registries_load_and_validate(registry):
     assert len(registry.flows) == 5
     assert len(registry.symptoms) >= 5
-    assert {e.firmware for e in registry.firmware_entries} == {"zmod", "klipper", "marlin"}
+    assert {e.firmware for e in registry.firmware_entries} == {"zmod", "klipper", "marlin", "prusa"}
 
 
 def test_printer_registry_matches_code_profiles(registry):
@@ -97,12 +97,26 @@ def _entry_block(path, entry_id):
     raise AssertionError(f"{entry_id} not in {path}")
 
 
+# The seven Marlin entries issue #647 deliberately changed after the split:
+# their scopes were widened from the generic preset to every registered
+# Marlin model, and each gained its source note. Everything else in the
+# pre-split set is still pinned field for field below.
+SPLIT_FIXTURE_WIDENED_BY_647 = {
+    "marlin.g28", "marlin.g29", "marlin.m420", "marlin.m851", "marlin.m600",
+    "marlin.m500", "marlin.heating-failed",
+}
+
+
 def test_split_registry_matches_pre_split_entries(registry):
     """The per-firmware split is content-preserving: the merged registry holds
     exactly the pre-split commands.toml entries (fixture captured from the
     single file as it stood on main after #645 landed, so it pins the
     51-entry set the split actually replaced), field for field, and no
-    shipped entry gained a pack value."""
+    shipped entry gained a pack value. Issue #647 later grew the registry on
+    purpose: its added entries sit outside the fixture (pinned by the #647
+    tests), and the seven Marlin entries it widened are compared here with
+    only the scope and notes fields set aside — those two changes are
+    asserted exactly in the #647 tests."""
     fixture = json.loads((ROOT / "tests" / "knowledge_pre_split_commands.json").read_text())
     expected = {row["id"]: row for row in fixture}
     assert len(expected) == 51
@@ -111,7 +125,16 @@ def test_split_registry_matches_pre_split_entries(registry):
         "kind": e.kind, "printers": list(e.printers), "command": e.command,
         "description": e.description, "safety": e.safety, "notes": e.notes,
     } for e in registry.firmware_entries}
-    assert actual == expected
+    assert set(expected) <= set(actual)
+    for entry_id, row in expected.items():
+        if entry_id in SPLIT_FIXTURE_WIDENED_BY_647:
+            got, want = dict(actual[entry_id]), dict(row)
+            for field in ("printers", "notes"):
+                got.pop(field)
+                want.pop(field)
+            assert got == want, entry_id
+        else:
+            assert actual[entry_id] == row, entry_id
     assert all(e.pack == "" for e in registry.firmware_entries)
 
 
@@ -248,7 +271,9 @@ STAGE3_IDS = {
 
 def test_stage3_registry_growth_is_complete_and_provenanced(registry):
     """Stage 3 of #291: every added entry loads, is a macro, and names its source."""
-    assert len(registry.firmware_entries) == 51
+    # 51 entries through #645; issue #647 added five more (the Prusa family
+    # and the Marlin sensor error), pinned by the #647 tests below.
+    assert len(registry.firmware_entries) == 56
     by_id = {e.id: e for e in registry.firmware_entries}
     assert STAGE3_IDS <= set(by_id)
     for entry_id in STAGE3_IDS:
@@ -278,6 +303,94 @@ def test_all_printers_registry_growth_is_complete_and_provenanced(registry):
         assert set(entry.printers) <= set(printers.MODELS), entry_id
 
 
+# ------------------------------------------------------------- issue #647
+
+NONMOONRAKER_IDS = {
+    "prusa.m862-model-check", "prusa.m862-feature-check", "prusa.m863-tool-remap",
+    "prusa.print-check-refusal", "marlin.mintemp-maxtemp",
+}
+
+# Non-Moonraker models whose decided state is a recorded verdict in
+# docs/MACROS.md rather than scoped entries (issue #647): Bambu's HMS codes
+# live in the Bambu adapter's generated lookup, and SDCP and the stock
+# Flashforge API are integration protocols with no published operator
+# command or error vocabulary to describe.
+VERDICT_ONLY_MODELS = (
+    {k for k in printers.MODELS if k.startswith("bambulab.")}
+    | {"elegoo_sdcp.centauricarbon", "flashforge_stock.ad5x"}
+)
+
+
+def test_nonmoonraker_registry_growth_is_complete_and_provenanced(registry):
+    """Issue #647: every entry the non-Moonraker pass added loads, names its
+    source, and is scoped to registered model keys only."""
+    by_id = {e.id: e for e in registry.firmware_entries}
+    assert NONMOONRAKER_IDS <= set(by_id)
+    for entry_id in NONMOONRAKER_IDS:
+        entry = by_id[entry_id]
+        assert entry.notes and "Source" in entry.notes, entry_id
+        assert entry.printers and "*" not in entry.printers, entry_id
+        assert set(entry.printers) <= set(printers.MODELS), entry_id
+    # Tool remapping is the XL's alone among the registered Prusa models.
+    assert by_id["prusa.m863-tool-remap"].printers == ("prusa.xl",)
+    assert by_id["marlin.mintemp-maxtemp"].kind == "error"
+    assert by_id["prusa.print-check-refusal"].kind == "error"
+
+
+def test_every_marlin_preset_resolves_the_standard_marlin_set(registry):
+    """The Marlin entries are generic Marlin knowledge; #647 scopes each one
+    to exactly the registered Marlin model set, so a named preset resolves
+    the same descriptions the generic octoprint.marlin preset always did.
+    The heater entry is the one exception: it is scoped to every printer."""
+    marlin_models = {p.key for p in registry.printers if p.firmware_family == "marlin"}
+    assert len(marlin_models) == 21
+    for entry in registry.firmware_entries:
+        if entry.firmware != "marlin":
+            continue
+        if entry.id == "marlin.heat-commands":
+            assert entry.printers == ("*",)
+        else:
+            assert set(entry.printers) == marlin_models, entry.id
+
+
+def test_every_nonmoonraker_model_is_in_a_decided_state(registry):
+    """Each non-Moonraker model either resolves at least one scoped entry or
+    is a verdict-only family whose verdict docs/MACROS.md records (#647)."""
+    scoped = set()
+    for entry in registry.firmware_entries:
+        scoped.update(k for k in entry.printers if k != "*")
+    for printer in registry.printers:
+        if printer.connection == "moonraker":
+            continue
+        if printer.key in VERDICT_ONLY_MODELS:
+            assert printer.key not in scoped, printer.key
+        else:
+            assert printer.key in scoped, printer.key
+    macros = (ROOT / "docs" / "MACROS.md").read_text()
+    for phrase in ("Bambu Lab HMS codes in the registry",
+                   "Elegoo SDCP commands and errors",
+                   "Stock Flashforge commands and errors"):
+        assert phrase in macros
+
+
+def test_no_family_borrows_another_families_entries(registry):
+    """Printer-scoped classification (#614) holds across the #647 families:
+    Prusa's checks resolve for Prusa models only, a named Marlin preset
+    resolves the Marlin set, and neither side borrows the other's entries."""
+    def firmware_ids(query, **kwargs):
+        return [h.item.id for h in registry.lookup(query, **kwargs) if h.kind == "firmware"]
+
+    assert "prusa.m862-model-check" in firmware_ids("M862.3", printer="prusa.mk4s")
+    assert "prusa.m862-model-check" not in firmware_ids("M862.3", printer="octoprint.ender3")
+    assert "prusa.m862-model-check" not in firmware_ids("M862.3", printer="flashforge.ad5x")
+    assert "marlin.g28" in firmware_ids("G28", printer="octoprint.ender3")
+    assert "marlin.heating-failed" in firmware_ids("heating failed", printer="sovol_marlin.sv06")
+    assert top(registry, "MINTEMP", printer="octoprint.kobramax").item.id == "marlin.mintemp-maxtemp"
+    assert "marlin.g28" not in firmware_ids("G28", printer="prusa.mk4s")
+    assert top(registry, "M862.3", firmware="prusa").item.id == "prusa.m862-model-check"
+    assert "prusa.m862-model-check" not in firmware_ids("M862.3", firmware="marlin")
+
+
 def test_lookup_stage3_entries_by_name_and_alias(registry):
     assert top(registry, "COLDPULL").item.id == "zmod.coldpull"
     assert top(registry, "cold pull").item.id == "zmod.coldpull"
@@ -299,7 +412,7 @@ def test_lookup_printer_filter_excludes_other_families(registry):
 
 def test_lookup_bad_firmware_filter_rejected(registry):
     with pytest.raises(RegistryError):
-        registry.lookup("mesh", firmware="prusa")
+        registry.lookup("mesh", firmware="reprap")
 
 
 def test_lookup_symptom_finds_its_flow(registry):

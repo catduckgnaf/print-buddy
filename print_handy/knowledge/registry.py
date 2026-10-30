@@ -6,8 +6,8 @@ repo can find it without knowing the package layout:
     knowledge/symptoms.toml         what users report, and the flow that works it
     knowledge/troubleshooting.toml  the guided flows (see flows.py)
     firmware/commands/              one file per firmware family (zmod.toml,
-                                    klipper.toml, marlin.toml): commands, macros
-                                    and errors for that family
+                                    klipper.toml, marlin.toml, prusa.toml):
+                                    commands, macros and errors for that family
     printers/registry/<vendor>.toml  one entry per registered printer model,
                                     one file per vendor package
 
@@ -26,7 +26,7 @@ from ..core import fuzzy
 from .flows import Flow, Node, Option
 
 ROOT = Path(__file__).resolve().parents[2]
-FIRMWARES = ("zmod", "klipper", "marlin")
+FIRMWARES = ("zmod", "klipper", "marlin", "prusa")
 # Mirrors print_handy.printers.base.COLOR_SYSTEMS (kept local so this read-only
 # loader imports no printer code); the registry drift test asserts the two agree.
 COLOR_SYSTEMS = ("single", "multi_slot", "multi_tool")

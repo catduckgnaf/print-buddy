@@ -9,7 +9,7 @@ guarded print-control flows and their confirmation buttons.
 ## Files
 
 One file per firmware family under `commands/` (issue #644): `commands/zmod.toml`,
-`commands/klipper.toml` and `commands/marlin.toml`. An entry lives in the file
+`commands/klipper.toml`, `commands/marlin.toml` and `commands/prusa.toml`. An entry lives in the file
 named for its `firmware` value — the loader loads every `*.toml` in
 `commands/` in firmware-family order (the sequence the single file used,
 so name resolution behaves exactly as it did before the split), merges
@@ -23,10 +23,10 @@ Each file holds one `[[entry]]` per command, macro or error:
 
 | Field | Meaning |
 | --- | --- |
-| `id` | Stable slug prefixed with the family: `zmod.`, `klipper.` or `marlin.`. |
+| `id` | Stable slug prefixed with the family: `zmod.`, `klipper.`, `marlin.` or `prusa.`. |
 | `name` | The command or macro name as the firmware knows it, or the error text. |
 | `aliases` | Phrasings lookups should match (for example "ifs load"). |
-| `firmware` | `zmod`, `klipper` or `marlin`. ZMod is listed separately from stock Klipper because the AD5X macro set and authority rules differ. Must match the file the entry sits in. |
+| `firmware` | `zmod`, `klipper`, `marlin` or `prusa`. ZMod is listed separately from stock Klipper because the AD5X macro set and authority rules differ. Prusa is listed separately from Marlin because Buddy firmware is Prusa's own fork of Marlin 2 with a published Prusa-specific command layer (the M862 print checks and friends, issue #647); its file describes only that layer, not the generic Marlin-compatible codes. Must match the file the entry sits in. |
 | `kind` | `command`, `macro` or `error`. |
 | `printers` | Registered printer model keys (see `../printers/registry/<vendor>.toml`) the entry is known to apply to, or `["*"]` for every printer on that firmware. |
 | `pack` | Optional. Names a macro pack that rides on the firmware (for example a vendor or community macro pack layered over stock Klipper); absent means the firmware's stock set. A lowercase slug. Lookups can filter on it alongside firmware and printer. No entry carries one yet — the field exists so a justified pack entry has a scope of its own instead of borrowing a printer key or the stock set's name. |
@@ -38,5 +38,7 @@ Each file holds one `[[entry]]` per command, macro or error:
 Only add an entry you can stand behind: prefer commands the repository already
 uses or documents, and say where an entry is generic firmware knowledge rather
 than verified on a Print Handy printer. The loader validates the schema
-(`print_handy/knowledge/registry.py`) and the tests pin the ZMod, Klipper and
-Marlin coverage the issue asks for.
+(`print_handy/knowledge/registry.py`) and the tests pin the ZMod, Klipper,
+Marlin and Prusa coverage the issues ask for, including the decided state of
+every non-Moonraker family (issue #647; the verdicts themselves live in
+`docs/MACROS.md`).

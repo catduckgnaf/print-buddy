@@ -9,9 +9,14 @@ config key and template path for no user benefit. This registry is the
 discoverable front door to those profiles: hardware facts and firmware family in
 one place, for lookups, troubleshooting and humans browsing the repository.
 
-## File
+## Files
 
-`registry.toml`, one `[[printer]]` per registered model:
+`registry/<vendor>.toml`, one file per vendor package, one `[[printer]]` per
+registered model. A model's entry lives in the file named for its key's vendor
+prefix (`sovol.sv06` in `registry/sovol.toml`, `sovol_marlin.sv06` in
+`registry/sovol_marlin.toml`); the loader merges every file in the directory in
+sorted order, and an entry filed in the wrong vendor's file fails validation.
+The table below is the schema for every entry, whichever file it sits in:
 
 | Field | Meaning |
 | --- | --- |
@@ -19,7 +24,7 @@ one place, for lookups, troubleshooting and humans browsing the repository.
 | `label` | Display name, identical to `MODEL.label`. |
 | `vendor` | The vendor package name under `print_handy/printers/`. |
 | `firmware` | The firmware string from the model's own defaults. |
-| `firmware_family` | Lookup family in `../firmware/commands.toml`: `zmod`, `klipper`, `marlin`, or `none` when no command registry exists for it yet. |
+| `firmware_family` | Lookup family in `../firmware/commands/`: `zmod`, `klipper`, `marlin`, or `none` when no command registry exists for it yet. |
 | `connection` | How Print Handy reaches the printer (the vendor profile's connection). |
 | `kinematics` | Motion system, or `unspecified` for the generic placeholder profiles. |
 | `bed_mm`, `max_height_mm` | Usable print area and height from the model's defaults. |

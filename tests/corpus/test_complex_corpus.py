@@ -92,7 +92,9 @@ def test_complex_cases_are_actually_complex():
 
 
 def test_targets_exist_in_the_printer_registry():
-    registry = (Path(__file__).resolve().parents[2] / "printers" / "registry.toml").read_text()
+    registry_files = sorted((Path(__file__).resolve().parents[2] / "printers" / "registry").glob("*.toml"))
+    assert registry_files, "printer registry directory is missing or empty"
+    registry = "\n".join(path.read_text() for path in registry_files)
     keys = set(re.findall(r'^key = "([^"]+)"', registry, re.M))
     for case in CASES:
         assert case["target_printer"] in keys, (case["slug"], case["target_printer"])

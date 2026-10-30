@@ -168,6 +168,69 @@ def test_classify_unscoped_keeps_the_name_only_behaviour(registry):
     assert listing.known[0][1].id == "zmod.start-print"
 
 
+# --------------------------------- macro coverage for every Moonraker family
+
+def _applicable_macro_ids(registry, model_key):
+    return {e.id for e in registry.firmware_entries
+            if e.kind == "macro" and ("*" in e.printers or model_key in e.printers)}
+
+
+def test_every_moonraker_model_has_macro_coverage_except_the_inline_verdicts(registry):
+    # The Web UI printer picker is the registry itself, so this is the
+    # coverage of every model a user can pick: every Moonraker model has at
+    # least one scoped macro entry, except the two families whose profiles
+    # run a fully inline start sequence and which have no verified vendor
+    # macro set - the Elegoo Neptune and Anycubic Kobra 2 families, the
+    # recorded NO-ADD verdicts in docs/MACROS.md.
+    for key, model in printers.MODELS.items():
+        if model.vendor.connection != "moonraker":
+            continue
+        ids = _applicable_macro_ids(registry, key)
+        if key.startswith(("elegoo.", "anycubic.")):
+            assert ids == set(), key
+        else:
+            assert ids, key
+
+
+def test_classify_scoped_describes_each_familys_own_start_macro(registry):
+    cases = [
+        ("creality.k1", "START_PRINT", "klipper.creality-start-print"),
+        ("creality.ender3v3", "END_PRINT", "klipper.creality-end-print"),
+        ("qidi.xplus4", "PRINT_START", "klipper.qidi-print-start"),
+        ("sovol.sv08", "START_PRINT", "klipper.sovol-start-print"),
+        ("sovol.sv08", "CLEAN_NOZZLE", "klipper.sovol-sv08-clean-nozzle"),
+        ("sovol.zero", "END_PRINT", "klipper.sovol-zero-end-print"),
+        ("sovol.sv07", "PRINT_START", "klipper.print-start"),
+        ("flashforge.ad5m", "COLDPULL", "zmod.coldpull"),
+        ("flashforge.ad5m_pro", "START_PRINT", "zmod.start-print"),
+        ("flashforge.creator5", "SET_PRINT_STATS_INFO", "klipper.set-print-stats-info"),
+        ("flashforge.creator5_pro", "END_PRINT", "zmod.end-print"),
+    ]
+    for model_key, name, entry_id in cases:
+        listing = macros.classify([name], registry=registry, printer=model_key)
+        known = {n: e.id for n, e in listing.known}
+        assert known.get(name) == entry_id, (model_key, name, known)
+
+
+def test_classify_scoped_neptune_borrows_nothing(registry):
+    # The Neptune verdict: its config may define these names, but no other
+    # family's entry describes them (the #612 rule, applied to the gap).
+    listing = macros.classify(["START_PRINT", "PRINT_START"], registry=registry,
+                              printer="elegoo.neptune4")
+    assert listing.known == ()
+    assert set(listing.printer_defined) == {"START_PRINT", "PRINT_START"}
+
+
+def test_classify_scoped_kobra2_borrows_nothing(registry):
+    # The Kobra 2 verdict is the same shape: Print Handy's profiles for the
+    # family are fully inline and its guard treats START_PRINT as foreign,
+    # so no other family's START_PRINT entry may describe a Kobra 2 listing.
+    listing = macros.classify(["START_PRINT", "PRINT_START"], registry=registry,
+                              printer="anycubic.kobra2pro")
+    assert listing.known == ()
+    assert set(listing.printer_defined) == {"START_PRINT", "PRINT_START"}
+
+
 # ------------------------------------------------------------------- discovery
 
 def test_discover_makes_exactly_one_read_only_get():

@@ -6,6 +6,7 @@ by construction, and the dispatch tests use a fake adapter that records sends.
 import ast
 import asyncio
 import importlib.util
+import json
 import shutil
 from pathlib import Path
 from types import SimpleNamespace as S
@@ -79,6 +80,141 @@ def test_missing_registry_is_rejected(tmp_path):
         knowledge.load_registry(tmp_path)
 
 
+# ------------------------------------------------- firmware split (issue #644)
+
+def _copy_registry_tree(tmp_path):
+    for name in ("knowledge", "firmware", "printers"):
+        shutil.copytree(ROOT / name, tmp_path / name)
+    return tmp_path
+
+
+def _entry_block(path, entry_id):
+    """The [[entry]] block for entry_id in a commands file, as raw text."""
+    chunks = path.read_text().split("[[entry]]")
+    for chunk in chunks[1:]:
+        if f'id = "{entry_id}"' in chunk:
+            return "[[entry]]" + chunk
+    raise AssertionError(f"{entry_id} not in {path}")
+
+
+def test_split_registry_matches_pre_split_entries(registry):
+    """The per-firmware split is content-preserving: the merged registry holds
+    exactly the pre-split commands.toml entries (fixture captured from the
+    single file as it stood on main after #645 landed, so it pins the
+    51-entry set the split actually replaced), field for field, and no
+    shipped entry gained a pack value."""
+    fixture = json.loads((ROOT / "tests" / "knowledge_pre_split_commands.json").read_text())
+    expected = {row["id"]: row for row in fixture}
+    assert len(expected) == 51
+    actual = {e.id: {
+        "id": e.id, "name": e.name, "aliases": list(e.aliases), "firmware": e.firmware,
+        "kind": e.kind, "printers": list(e.printers), "command": e.command,
+        "description": e.description, "safety": e.safety, "notes": e.notes,
+    } for e in registry.firmware_entries}
+    assert actual == expected
+    assert all(e.pack == "" for e in registry.firmware_entries)
+
+
+def test_duplicate_entry_id_across_files_rejected(tmp_path):
+    root = _copy_registry_tree(tmp_path)
+    commands = root / "firmware" / "commands"
+    block = _entry_block(commands / "klipper.toml", "klipper.print-start")
+    marlin = commands / "marlin.toml"
+    marlin.write_text(marlin.read_text() + "\n" + block)
+    with pytest.raises(RegistryError, match="duplicated"):
+        knowledge.load_registry(root)
+
+
+def test_entry_in_wrong_firmware_file_rejected(tmp_path):
+    root = _copy_registry_tree(tmp_path)
+    commands = root / "firmware" / "commands"
+    klipper = commands / "klipper.toml"
+    block = _entry_block(klipper, "klipper.print-start")
+    klipper.write_text(klipper.read_text().replace(block, ""))
+    marlin = commands / "marlin.toml"
+    marlin.write_text(marlin.read_text() + "\n" + block)
+    with pytest.raises(RegistryError, match="disagrees with the file"):
+        knowledge.load_registry(root)
+
+
+FIXTURE_PACK_ENTRY = """
+[[entry]]
+id = "klipper.fixture-pack-probe"
+name = "FIXTURE_PACK_PROBE"
+aliases = ["fixture pack probe"]
+firmware = "klipper"
+kind = "macro"
+printers = ["*"]
+pack = "fixture-pack"
+command = "FIXTURE_PACK_PROBE"
+description = "Fixture-only entry proving the pack field round-trips (issue #644)."
+safety = "Fixture only; it describes nothing real and is never sent anywhere."
+"""
+
+
+def test_pack_round_trips_through_loader_and_lookup(tmp_path):
+    root = _copy_registry_tree(tmp_path)
+    klipper = root / "firmware" / "commands" / "klipper.toml"
+    klipper.write_text(klipper.read_text() + FIXTURE_PACK_ENTRY)
+    reg = knowledge.load_registry(root)
+    entry = next(e for e in reg.firmware_entries if e.id == "klipper.fixture-pack-probe")
+    assert entry.pack == "fixture-pack"
+
+    def firmware_ids(**kwargs):
+        return [h.item.id for h in reg.lookup("fixture pack probe", **kwargs) if h.kind == "firmware"]
+
+    assert "klipper.fixture-pack-probe" in firmware_ids()
+    assert "klipper.fixture-pack-probe" in firmware_ids(pack="fixture-pack")
+    assert "klipper.fixture-pack-probe" in firmware_ids(pack="Fixture Pack")
+    assert "klipper.fixture-pack-probe" not in firmware_ids(pack="other-pack")
+    # pack="" is the stock filter: pack-carrying entries are kept out of it.
+    assert "klipper.fixture-pack-probe" not in firmware_ids(pack="")
+
+
+def test_pack_must_be_a_slug(tmp_path):
+    root = _copy_registry_tree(tmp_path)
+    klipper = root / "firmware" / "commands" / "klipper.toml"
+    klipper.write_text(klipper.read_text()
+                       + FIXTURE_PACK_ENTRY.replace('pack = "fixture-pack"', 'pack = "Fixture Pack!"'))
+    with pytest.raises(RegistryError, match="pack must be a lowercase slug"):
+        knowledge.load_registry(root)
+
+def _copy_registries(tmp_path):
+    for name in ("knowledge", "firmware", "printers"):
+        shutil.copytree(ROOT / name, tmp_path / name)
+    return tmp_path / "printers" / "registry"
+
+
+def test_printer_registry_duplicate_key_across_files_is_rejected(tmp_path):
+    registry_dir = _copy_registries(tmp_path)
+    sovol = registry_dir / "sovol.toml"
+    block = sovol.read_text().split("\n[[printer]]", 2)[1]
+    with open(registry_dir / "sovol_marlin.toml", "a") as handle:
+        handle.write("\n[[printer]]" + block.replace('"sovol.', '"sovol_marlin.', 1)
+                     .replace('vendor = "sovol"', 'vendor = "sovol_marlin"', 1))
+    with pytest.raises(RegistryError, match="key duplicated"):
+        knowledge.load_registry(tmp_path)
+
+
+def test_printer_registry_entry_in_wrong_vendor_file_is_rejected(tmp_path):
+    registry_dir = _copy_registries(tmp_path)
+    klipper = registry_dir / "klipper.toml"
+    block = klipper.read_text().split("\n[[printer]]", 1)[1]
+    klipper.write_text(klipper.read_text().split("\n[[printer]]", 1)[0])
+    with open(registry_dir / "sovol.toml", "a") as handle:
+        handle.write("\n[[printer]]" + block)
+    with pytest.raises(RegistryError, match="must both be 'sovol'"):
+        knowledge.load_registry(tmp_path)
+
+
+def test_printer_registry_empty_directory_is_rejected(tmp_path):
+    registry_dir = _copy_registries(tmp_path)
+    for path in registry_dir.glob("*.toml"):
+        path.unlink()
+    with pytest.raises(RegistryError, match="printer registry missing or empty"):
+        knowledge.load_registry(tmp_path)
+
+
 # ----------------------------------------------------------------------- lookups
 
 def top(registry, query, **kwargs):
@@ -112,7 +248,7 @@ STAGE3_IDS = {
 
 def test_stage3_registry_growth_is_complete_and_provenanced(registry):
     """Stage 3 of #291: every added entry loads, is a macro, and names its source."""
-    assert len(registry.firmware_entries) == 45
+    assert len(registry.firmware_entries) == 51
     by_id = {e.id: e for e in registry.firmware_entries}
     assert STAGE3_IDS <= set(by_id)
     for entry_id in STAGE3_IDS:
@@ -120,6 +256,26 @@ def test_stage3_registry_growth_is_complete_and_provenanced(registry):
         assert entry.kind == "macro", entry_id
         assert entry.notes, entry_id
         assert ("@" in entry.notes) or ("print-handy.cfg" in entry.notes), entry_id
+
+
+ALL_PRINTERS_IDS = {
+    "klipper.creality-start-print", "klipper.creality-end-print",
+    "klipper.qidi-print-start", "klipper.sovol-start-print",
+    "klipper.sovol-zero-end-print", "klipper.sovol-sv08-clean-nozzle",
+}
+
+
+def test_all_printers_registry_growth_is_complete_and_provenanced(registry):
+    """Macro coverage for every Moonraker family: each added entry loads, is a
+    macro, names its source, and is scoped to registered model keys only."""
+    by_id = {e.id: e for e in registry.firmware_entries}
+    assert ALL_PRINTERS_IDS <= set(by_id)
+    for entry_id in ALL_PRINTERS_IDS:
+        entry = by_id[entry_id]
+        assert entry.kind == "macro", entry_id
+        assert entry.notes and "Source" in entry.notes, entry_id
+        assert entry.printers and "*" not in entry.printers, entry_id
+        assert set(entry.printers) <= set(printers.MODELS), entry_id
 
 
 def test_lookup_stage3_entries_by_name_and_alias(registry):

@@ -13,8 +13,9 @@ connection is Moonraker, Print Handy makes one read-only request —
 printer reports, classified:
 
 - **Known to Print Handy** — the name matches a macro entry in the
-  descriptive registry ([`firmware/commands.toml`](../firmware/commands.toml),
-  the same registry `/print-lookup` searches), **and that entry is scoped to
+  descriptive registry (the per-firmware files under
+  [`firmware/commands/`](../firmware/commands), the same registry
+  `/print-lookup` searches), **and that entry is scoped to
   this printer model**. The listing shows the registry's description and
   safety note. Scoping matters: macro names repeat across firmwares with
   different behavior (a Sovol `START_PRINT` is not ZMod's `START_PRINT`), so
@@ -78,21 +79,71 @@ state-changing commands get in the allow-list.
 
 ## The per-vendor macro matrix, as it actually is
 
-| Printer | Connection | Macro situation |
+The Web UI's printer picker offers exactly the registered models — the
+picker's choices are derived from the printer registry, not hard-coded — so
+this matrix covers every model a user can pick. "Registry coverage" counts
+the `firmware/commands/` macro entries scoped to the model: the entries
+`/print-macros` can use to describe that model's discovered macros.
+
+| Printer family (models) | Connection | Macro situation |
 | --- | --- | --- |
-| Flashforge AD5X (ZMod) | Moonraker | ZMod macros in the printer's Klipper config: `START_PRINT` / `END_PRINT` own the job start and end, `CHANGE_ZCOLOR` syncs IFS slots to the native screen, `AUTO_FULL_BED_LEVEL` and `BED_LEVEL_SCREWS_TUNE` are the levelling helpers, and the IFS feed path is internal (`_`-prefixed). The registry also describes ZMod's operator macros verified from its shipped config (Stage 3 of #291): `COLDPULL`, `LOAD_FILAMENT` / `UNLOAD_FILAMENT` / `LOAD_MATERIAL`, `CLEAR_NOZZLE`, `SET_EXTRUDER_SLOT`, the Spoolman pair `SET_ACTIVE_SPOOL` / `CLEAR_ACTIVE_SPOOL`, `SAVE_ZMOD_DATA` / `GET_ZMOD_DATA`, `NOZZLE_CONTROL`, the PID tunes, `ZSHAPER`, `DISPLAY_OFF` / `DISPLAY_ON`, and Print Handy's own `PRINT_HANDY` slot-match reporter. `/print-macros` discovers the live set; `/print-lookup` describes the registry-known ones. |
-| Generic Klipper, Sovol SV06 | Moonraker | The printer's config is expected to provide `PRINT_START` / `PRINT_END`; Print Handy's profiles emit those names and the installed macro owns heating, homing and mesh loading. Anything else the config defines is discovered live by `/print-macros`. Where the config is Mainsail's client config, the registry also describes its `PAUSE` / `RESUME` / `CANCEL_PRINT` wrappers and the layer-pause set (`SET_PAUSE_NEXT_LAYER`, `SET_PAUSE_AT_LAYER`, `SET_PRINT_STATS_INFO`) — Klipper's own commands of the pause/resume names are built-ins under `[pause_resume]`, not macros, and never appear in a listing. |
-| Elegoo Neptune 4 / Pro / Plus / Max | Moonraker | A Moonraker printer, so `/print-macros` works — but note the start sequence is **inline** in the sliced file, not a macro call. `PRINT_START` is a foreign marker on this family: Print Handy's Elegoo guard refuses a file that calls it (see `print_handy/printers/elegoo/guard.py`). A `PRINT_START` macro appearing in a Neptune's own config listing is the printer's business; Print Handy never emits one into a Neptune job. |
-| Bambu Lab (all models) | Bambu LAN | No Klipper macros at all. The printer runs plain G/M/T codes only; Klipper or ZMod macro lines are refused by the G-code guard before they can reach the hardware (see the note in `print_handy/printers/base.py`). No macro namespace, so `/print-macros` explains instead of listing. |
-| Prusa MK4S / CORE One / XL / MINI+ | PrusaLink | Buddy firmware, not Klipper. There is no Moonraker and no user macro namespace; start/end behaviour lives in the slicer profile's G-code. `/print-macros` explains instead of listing. |
+| Flashforge AD5X (ZMod) | Moonraker | ZMod macros in the printer's Klipper config: `START_PRINT` / `END_PRINT` own the job start and end, `CHANGE_ZCOLOR` syncs IFS slots to the native screen, `AUTO_FULL_BED_LEVEL` and `BED_LEVEL_SCREWS_TUNE` are the levelling helpers, and the IFS feed path is internal (`_`-prefixed). The registry also describes ZMod's operator macros verified from its shipped config (Stage 3 of #291): `COLDPULL`, `LOAD_FILAMENT` / `UNLOAD_FILAMENT` / `LOAD_MATERIAL`, `CLEAR_NOZZLE`, `SET_EXTRUDER_SLOT`, the Spoolman pair `SET_ACTIVE_SPOOL` / `CLEAR_ACTIVE_SPOOL`, `SAVE_ZMOD_DATA` / `GET_ZMOD_DATA`, `NOZZLE_CONTROL`, the PID tunes, `ZSHAPER`, `DISPLAY_OFF` / `DISPLAY_ON`, and Print Handy's own `PRINT_HANDY` slot-match reporter. Registry coverage: 29 entries. `/print-macros` discovers the live set; `/print-lookup` describes the registry-known ones. |
+| Flashforge AD5M / AD5M Pro (ZMod) | Moonraker | The same ZMod firmware family as the AD5X: the AD5M models ship the same `zmod_ff5x` `base.cfg` and `client.cfg`, so the registry scopes the shared ZMod operator set to them too — start/end, the filament and cold-pull set, the Spoolman pair, the data and display macros, the PID tunes, `ZSHAPER`, and the Mainsail/ZMod client pause set. The AD5X-only hardware entries stay AD5X-only: the IFS path (`CHANGE_ZCOLOR`, `_INSERT_PRUTOK_IFS`, `SET_EXTRUDER_SLOT`), the levelling helpers verified on the AD5X, and `PRINT_HANDY`. Registry coverage: 23 entries. |
+| Flashforge Creator 5 / Creator 5 Pro (ZMod) | Moonraker | ZMod models whose Print Handy templates emit the same `START_PRINT ... MESH=auto` start, `END_PRINT` and `SET_PRINT_STATS_INFO` lines as the AD5X — the registry describes exactly those three for the Creator pair. The wider ZMod operator set is **not** scoped to them: it was verified from the ff5x config set the AD5X and AD5M ship, not from a Creator ZMod install (recorded NO-ADD below). Registry coverage: 3 entries. |
+| Generic Klipper, Sovol SV06 | Moonraker | The printer's config is expected to provide `PRINT_START` / `PRINT_END`; Print Handy's profiles emit those names and the installed macro owns heating, homing and mesh loading. Anything else the config defines is discovered live by `/print-macros`. Where the config is Mainsail's client config, the registry also describes its `PAUSE` / `RESUME` / `CANCEL_PRINT` wrappers and the layer-pause set (`SET_PAUSE_NEXT_LAYER`, `SET_PAUSE_AT_LAYER`, `SET_PRINT_STATS_INFO`) — Klipper's own commands of the pause/resume names are built-ins under `[pause_resume]`, not macros, and never appear in a listing. Registry coverage: 8 entries each. |
+| Sovol Klipper, other models (SV01 line, SV02–SV05, SV06 ACE / Plus / Plus ACE, SV07 / SV07 Plus, SV08 Max, M1D) | Moonraker | Print Handy's templates emit the same `PRINT_START` / `PRINT_END` pair as the SV06 for every Sovol Klipper model, and the registry now scopes that pair to all of them. The Mainsail client set is **not** scoped beyond the SV06 and generic Klipper: those entries describe Mainsail's client config specifically, and the other models' stock configs were not verified to ship it (recorded NO-ADD below). Registry coverage: 2 entries each. The SV08 Max also gets the stock `START_PRINT` entry (below), 3 in all. |
+| Sovol SV08 | Moonraker | Two start names are real on this model. Print Handy's templates emit `PRINT_START`, and Sovol's stock firmware config (Macro.cfg) defines its own `START_PRINT` — which takes no temperature arguments and reads the heater targets instead — plus a stock `CLEAN_NOZZLE`. The registry describes all three (and `PRINT_END`), with the stock names as their own entries so neither is described as the other. The stock end macro's name was not verified from a citable source, so no entry claims it (recorded NO-ADD below). Registry coverage: 4 entries. |
+| Sovol Zero | Moonraker | Registered as `sovol.zero` since 2.2.1. Stock firmware names its macros `START_PRINT` / `END_PRINT` (called bare; temperatures ride on the heater lines), and the registry now scopes entries for both to the Zero from the #612 audit inventory — see the Zero section below for the community macro pack that can replace them. Print Handy's template for the Zero emits `PRINT_START`, which is also described. Registry coverage: 4 entries. |
+| Creality Ender-3 V3 / V3 KE / V3 Plus, K1 / K1C / K1 Max | Moonraker | Creality's Klipper firmware (Creality OS) defines `START_PRINT` and `END_PRINT` in its `gcode_macro.cfg`; Print Handy's profiles open with `START_PRINT` (the Ender-3 V3 KE profile may run fully inline instead — the macro is still the family's stock start). The registry describes both, scoped to all six models. Registry coverage: 2 entries each. |
+| Qidi Q1 Pro, X-Max 3, X-Plus 3, X-Plus 4, X-Smart 3 | Moonraker | Qidi's stock Klipper start macro is `PRINT_START` — Qidi's own profiles open with it (the Q1 Pro passes `BED=` / `HOTEND=` / `CHAMBER=`) and continue inline. The registry describes it for all five models. There is no `PRINT_END` entry: Qidi's profiles store the end sequence inline, not as a macro (recorded NO-ADD below). Registry coverage: 1 entry each. |
+| Anycubic Kobra 2 / Neo / Pro / Plus / Max | Moonraker | A Moonraker family, so `/print-macros` works — but Print Handy's profiles for the family run a **fully inline** start sequence with no start macro at all, and the Anycubic guard treats a `START_PRINT`-led file as another ecosystem's start code. No registry entries are scoped to these models (recorded NO-ADD below): a community Klipper install on a Kobra 2 commonly defines `START_PRINT` / `END_PRINT`, but describing those names for this family would contradict what Print Handy itself ships and accepts for it, so discovered macros on a Kobra 2 list as defined by the printer's own config. Registry coverage: 0 entries, by verdict. |
+| Elegoo Neptune 4 / Pro / Plus / Max | Moonraker | A Moonraker printer, so `/print-macros` works — but note the start sequence is **inline** in the sliced file, not a macro call. `PRINT_START` is a foreign marker on this family: Print Handy's Elegoo guard refuses a file that calls it (see `print_handy/printers/elegoo/guard.py`). A `PRINT_START` macro appearing in a Neptune's own config listing is the printer's business; Print Handy never emits one into a Neptune job. No registry entries are scoped to these models (recorded NO-ADD below). Registry coverage: 0 entries, by verdict. |
+| Bambu Lab (all 13 models) | Bambu LAN | No Klipper macros at all. The printer runs plain G/M/T codes only; Klipper or ZMod macro lines are refused by the G-code guard before they can reach the hardware (see the note in `print_handy/printers/base.py`). No macro namespace, so `/print-macros` explains instead of listing. |
+| Prusa MK4S / CORE One / XL / MINI+ | PrusaLink | Buddy firmware, not Klipper. There is no Moonraker and no user macro namespace; start/end behavior lives in the slicer profile's G-code. `/print-macros` explains instead of listing. |
 | Elegoo Centauri Carbon | SDCP | No Moonraker and no macro namespace exposed over SDCP. `/print-macros` explains instead of listing. |
 | Flashforge Adventurer 5X (stock) | Stock Flashforge | Stock firmware, plain G-code only — the same line-by-line guard posture as Bambu. The ZMod macro set exists only on a ZMod install (the AD5X row above). `/print-macros` explains instead of listing. |
-| Marlin via OctoPrint | OctoPrint | Marlin has no Klipper-style macro namespace; start/end G-code lives in the slicer profile or OctoPrint settings. `/print-macros` explains instead of listing. |
+| Marlin via OctoPrint (all 13 OctoPrint models, and the 8 Sovol Marlin/OctoPrint models) | OctoPrint | Marlin has no Klipper-style macro namespace; start/end G-code lives in the slicer profile or OctoPrint settings. `/print-macros` explains instead of listing. |
+
+### Recorded NO-ADD verdicts
+
+A NO-ADD verdict is a decision, not a gap left hanging: the model's macros
+stay discoverable live by `/print-macros`, listed as defined by the printer's
+own config, with no invented description.
+
+- **Elegoo Neptune 4 family** — no entries. The start sequence is inline by
+  design and `PRINT_START` is a refused foreign marker; no vendor operator
+  macro set for the family was verified from a citable source.
+- **Anycubic Kobra 2 family** — no entries. Print Handy's profiles are fully
+  inline and its guard refuses `START_PRINT`-led files as foreign, so the
+  community Klipper `START_PRINT` convention is deliberately not described
+  for this family.
+- **Qidi end macro** — no `PRINT_END` entry. Qidi's profiles store the end
+  sequence inline; only `PRINT_START` is a macro call.
+- **Mainsail client set beyond generic Klipper, the SV06 and the ZMod
+  models** — the `PAUSE` / `RESUME` / `CANCEL_PRINT` wrappers and the
+  layer-pause set describe Mainsail's client config (and ZMod's client
+  config) specifically. They are not scoped to the Creality, Qidi, Anycubic,
+  Elegoo or other Sovol models, whose stock configs were not verified to
+  ship that client config; scoping them by name alone is the #612 error.
+- **Sovol SV08 stock end macro** — no entry under its stock name. The
+  SV08's stock `START_PRINT` and `CLEAN_NOZZLE` are verified from its
+  Macro.cfg; its stock end name was not verified from a citable source, so
+  only the `PRINT_END` name Print Handy emits is described.
+- **Creator 5 / Creator 5 Pro ZMod operator set** — only the three names
+  their templates emit are described. The wider ZMod operator set was
+  verified from the ff5x config set, not from a Creator ZMod install.
+- **AD5M / AD5M Pro IFS and levelling entries** — `CHANGE_ZCOLOR`, the IFS
+  feed path, `SET_EXTRUDER_SLOT`, `AUTO_FULL_BED_LEVEL`,
+  `BED_LEVEL_SCREWS_TUNE` and `PRINT_HANDY` stay AD5X-only: the IFS is
+  AD5X hardware, and the helpers were verified on the AD5X.
+- **Non-Moonraker families** (Bambu Lab, Prusa, Elegoo SDCP, stock
+  Flashforge, Marlin/OctoPrint) — no entries, because there is no macro
+  namespace to describe; `/print-macros` explains instead of listing.
 
 ## Sovol Zero, and the svzero-profiles macro pack (issue #612)
 
-The Sovol Zero is **not a registered Print Handy model**; a Zero is reachable
-today only as `klipper.generic`. What follows is verified from the community
+The Sovol Zero is registered as `sovol.zero` (since 2.2.1, alongside the
+other Sovol Klipper models). What follows is verified from the community
 profile project [rpcyan586/svzero-profiles](https://github.com/rpcyan586/svzero-profiles)
 at `main` eb38beb (release v2.1.2; GPL-3.0 — facts only, nothing copied), so a
 Zero's behavior is named instead of assumed to be plain stock Klipper:
@@ -145,19 +196,24 @@ Zero's behavior is named instead of assumed to be plain stock Klipper:
   commands, not a promise about every line: a command that names something
   the config does not have (the pack's own example is `SET_GCODE_VARIABLE`
   against a missing target) can still fail a job.
-- **Registry posture.** There are deliberately **no registry entries** for
-  the pack's names: entries must scope to a registered printer model, and
-  there is no Sovol Zero model to scope them to. Thanks to printer-scoped
-  classification, a Zero's listing shows the pack's macros as defined by the
-  printer's own config — never with the ZMod descriptions their names happen
-  to share. If a Sovol Zero model is ever registered, this audit's inventory
-  is the evidence base for scoped entries.
+- **Registry posture.** The Zero is registered now, and this audit's
+  inventory was the evidence base for scoped entries, as planned: the
+  **stock** firmware's `START_PRINT` and `END_PRINT` now have entries scoped
+  to `sovol.zero`, describing the stock macros. The optional pack's own
+  names still have **no entries**: the pack replaces the stock start, end
+  and cancel behavior, so on a pack printer those names do what the pack
+  says — a listing classifies by name and scope, and cannot tell a stock
+  `START_PRINT` from the pack's replacement. Read a Zero's known-macro
+  descriptions as stock-firmware descriptions, and check for the pack's
+  gates (above) when a print behaves unexpectedly. Thanks to printer-scoped
+  classification, a Zero's listing never borrows the ZMod descriptions its
+  macro names happen to share.
 
 ## Where the knowledge lives
 
 - The **printer** is the authority on which macros exist — that is what
   `/print-macros` reads, live.
-- The **registry** (`firmware/commands.toml`) is the descriptive layer: it
+- The **registry** (the per-firmware files under `firmware/commands/`) is the descriptive layer: it
   says what a known macro does and what to be careful about. It is advisory
   reference data, also used by `/print-lookup`; the lookup, troubleshooting
   and macro-listing code never sends an entry to a printer. The only send

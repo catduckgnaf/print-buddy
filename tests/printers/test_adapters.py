@@ -240,7 +240,7 @@ class ContractTests(unittest.TestCase):
                 self.assertEqual((status["state"], status["filename"], status["hotend_c"]), ("standby", "a.gcode", 21.5))
                 self.assertEqual(a.normalize_status({})["state"], "unknown")
 
-    def test_default_model_is_the_ad5x_and_current_returns_it(self):
+    def test_home_config_model_is_the_ad5x_and_current_returns_it(self):
         home = settings.load(local=False, environ={})
         self.assertEqual(home["printer"]["model"], AD5X)
         self.assertEqual(printers.current(home).key, AD5X)

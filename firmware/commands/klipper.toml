@@ -1,0 +1,232 @@
+# Stock Klipper command and macro registry. See firmware/README.md for the schema.
+#
+# Covers stock Klipper plus the client-config macro set shared across Klipper
+# printers (the Mainsail client config and ZMod's base config define the same
+# pause/resume layer-pause wrappers; each entry's notes name its sources).
+# ZMod-specific macros do not live here -- ZMod is its own family in zmod.toml,
+# because its macro set and authority rules differ from stock Klipper.
+#
+# Every entry is advisory reference data for lookups (issue #169). An entry is never
+# sent to a printer by the lookup or troubleshooting code; sending anything stays
+# behind the existing guarded print-control flows and their confirmation buttons.
+#
+# kind is one of: command, macro, error.
+# printers lists the registered printer model keys (printers/registry/) the entry
+# is known to apply to, or ["*"] when it applies to every printer on that firmware.
+# pack is optional: it names a macro pack that rides on this firmware (absent = the
+# firmware's stock set). No entry carries one yet; see firmware/README.md.
+
+[[entry]]
+id = "klipper.print-start"
+name = "PRINT_START"
+aliases = ["print start", "klipper start macro"]
+firmware = "klipper"
+kind = "macro"
+printers = ["klipper.generic", "sovol.sv06", "sovol.m1d", "sovol.sv01", "sovol.sv01_pro", "sovol.sv02", "sovol.sv03", "sovol.sv04", "sovol.sv05", "sovol.sv06_ace", "sovol.sv06_plus", "sovol.sv06_plus_ace", "sovol.sv07", "sovol.sv07_plus", "sovol.sv08", "sovol.sv08_max", "sovol.zero"]
+command = "PRINT_START BED=<bed C> HOTEND=<nozzle C>"
+description = "Stock Klipper start macro name Print Handy's generic Klipper and Sovol profiles expect the printer to provide. The installed macro owns heating, homing and mesh loading for the job."
+safety = "Heats and moves. Runs only as part of a confirmed print start."
+notes = "Sovol scope: Print Handy's Orca-derived templates emit this name (PRINT_START BED=... HOTEND=... / PRINT_END) for every Sovol Klipper model (print_handy/templates/orca/sovol_*); the templates are generic and not checked on hardware. Stock firmware naming differs on some models - the Sovol SV08 and Zero stock configs name their own start macro START_PRINT (see klipper.sovol-start-print)."
+[[entry]]
+id = "klipper.print-end"
+name = "PRINT_END"
+aliases = ["print end", "klipper end macro"]
+firmware = "klipper"
+kind = "macro"
+printers = ["klipper.generic", "sovol.sv06", "sovol.m1d", "sovol.sv01", "sovol.sv01_pro", "sovol.sv02", "sovol.sv03", "sovol.sv04", "sovol.sv05", "sovol.sv06_ace", "sovol.sv06_plus", "sovol.sv06_plus_ace", "sovol.sv07", "sovol.sv07_plus", "sovol.sv08", "sovol.sv08_max", "sovol.zero"]
+command = "PRINT_END"
+description = "Stock Klipper end macro name for the generic Klipper and Sovol profiles: heaters off and park at the end of a job."
+safety = "Runs only as the tail of a sliced job."
+notes = "Sovol scope: Print Handy's Orca-derived templates emit this name (PRINT_START BED=... HOTEND=... / PRINT_END) for every Sovol Klipper model (print_handy/templates/orca/sovol_*); the templates are generic and not checked on hardware. Stock firmware naming differs on some models - the Sovol SV08 and Zero stock configs name their own start macro START_PRINT (see klipper.sovol-start-print)."
+[[entry]]
+id = "klipper.pause"
+name = "PAUSE"
+aliases = ["pause print klipper", "klipper pause macro"]
+firmware = "klipper"
+kind = "macro"
+printers = ["klipper.generic", "sovol.sv06", "flashforge.ad5x", "flashforge.ad5m", "flashforge.ad5m_pro"]
+command = "PAUSE"
+description = "Pauses the running print. Klipper itself provides PAUSE as a built-in command when the [pause_resume] section is configured — that built-in is not a gcode_macro and never appears in a macro listing. The PAUSE a macro listing discovers is a config-defined wrapper (Mainsail's client config ships one; ZMod ships its own) that adds toolhead parking, a small retract and heater-state bookkeeping around the built-in, driven by the config's client variables."
+safety = "The nozzle stays at printing temperature while parked over or beside the print. A pause is not a state to leave unattended for hours; resume or cancel deliberately."
+notes = "Sources: mainsail-crew/mainsail-config@ff3869a621db17ce3ef660adbbd3fa321995ac42 (mainsail.cfg), klipper3d/klipper@ee2c6fb6b00b2b5d097ef70d0868df7d74943b51 (docs/G-Codes.md [pause_resume]), and ghzserg/zmod_ff5x@5409ffe7ffee572219837fbd0d7de381469537f6 (en/client.cfg) for the AD5X. Generic firmware knowledge, not verified on a Print Handy printer. Scope extended to the AD5M models, which ship the same zmod_ff5x client.cfg / base.cfg."
+[[entry]]
+id = "klipper.resume"
+name = "RESUME"
+aliases = ["resume print klipper", "klipper resume macro"]
+firmware = "klipper"
+kind = "macro"
+printers = ["klipper.generic", "sovol.sv06", "flashforge.ad5x", "flashforge.ad5m", "flashforge.ad5m_pro"]
+command = "RESUME"
+description = "Resumes a paused print, returning the toolhead to the position PAUSE captured. Klipper's built-in RESUME exists under the same [pause_resume] conditions as PAUSE; the macro a listing discovers is the config-defined wrapper (Mainsail client config; ZMod), which also restores the heater targets and speed PAUSE recorded. The Mainsail wrapper refuses to resume when its configured runout sensor reports no filament."
+safety = "The toolhead moves back to the captured position, possibly over the print. Make sure nothing (hands, tools, a removed part) is in its path and the part is still on the bed."
+notes = "Sources: mainsail-crew/mainsail-config@ff3869a621db17ce3ef660adbbd3fa321995ac42 (mainsail.cfg), klipper3d/klipper@ee2c6fb6b00b2b5d097ef70d0868df7d74943b51 (docs/G-Codes.md [pause_resume]), and ghzserg/zmod_ff5x@5409ffe7ffee572219837fbd0d7de381469537f6 (en/client.cfg) for the AD5X. Generic firmware knowledge, not verified on a Print Handy printer. Scope extended to the AD5M models, which ship the same zmod_ff5x client.cfg / base.cfg."
+[[entry]]
+id = "klipper.cancel-print"
+name = "CANCEL_PRINT"
+aliases = ["cancel print klipper", "abort print klipper", "klipper cancel macro"]
+firmware = "klipper"
+kind = "macro"
+printers = ["klipper.generic", "sovol.sv06", "flashforge.ad5x", "flashforge.ad5m", "flashforge.ad5m_pro"]
+command = "CANCEL_PRINT"
+description = "Cancels the running print. Klipper has a built-in of this name under [pause_resume] / [virtual_sdcard]; the macro a listing discovers is the config-defined wrapper (Mainsail client config; ZMod), which retracts, can park the toolhead first if the config's park_at_cancel is enabled, and runs the config's cancel handling around the built-in."
+safety = "The job is gone: cancelling cannot be resumed. What happens to the heaters afterwards follows the installed config, so check the printer instead of assuming it cooled down."
+notes = "Sources: mainsail-crew/mainsail-config@ff3869a621db17ce3ef660adbbd3fa321995ac42 (mainsail.cfg), klipper3d/klipper@ee2c6fb6b00b2b5d097ef70d0868df7d74943b51 (docs/G-Codes.md [pause_resume]), and ghzserg/zmod_ff5x@5409ffe7ffee572219837fbd0d7de381469537f6 (en/client.cfg) for the AD5X. Generic firmware knowledge, not verified on a Print Handy printer. Scope extended to the AD5M models, which ship the same zmod_ff5x client.cfg / base.cfg."
+[[entry]]
+id = "klipper.set-pause-next-layer"
+name = "SET_PAUSE_NEXT_LAYER"
+aliases = ["pause next layer", "pause at next layer"]
+firmware = "klipper"
+kind = "macro"
+printers = ["klipper.generic", "sovol.sv06", "flashforge.ad5x", "flashforge.ad5m", "flashforge.ad5m_pro"]
+command = "SET_PAUSE_NEXT_LAYER ENABLE=<0|1>"
+description = "Arms a pause when the next layer change begins (ENABLE=0 disarms it). It only records the request in the SET_PRINT_STATS_INFO macro state: the pause fires if the job's G-code feeds layer counters through SET_PRINT_STATS_INFO, and it calls PAUSE unless a different MACRO= was recorded. Defined by Mainsail's client config; ZMod's base config defines the same macro."
+safety = "No motion by itself. The pause it arms stops the job mid-print at temperature, so arm it only when someone will attend to it."
+notes = "Sources: mainsail-crew/mainsail-config@ff3869a621db17ce3ef660adbbd3fa321995ac42 (mainsail.cfg) and ghzserg/zmod_ff5x@5409ffe7ffee572219837fbd0d7de381469537f6 (en/base.cfg) for the AD5X. Generic firmware knowledge, not verified on a Print Handy printer. Scope extended to the AD5M models, which ship the same zmod_ff5x client.cfg / base.cfg."
+[[entry]]
+id = "klipper.set-pause-at-layer"
+name = "SET_PAUSE_AT_LAYER"
+aliases = ["pause at layer", "pause on layer number"]
+firmware = "klipper"
+kind = "macro"
+printers = ["klipper.generic", "sovol.sv06", "flashforge.ad5x", "flashforge.ad5m", "flashforge.ad5m_pro"]
+command = "SET_PAUSE_AT_LAYER LAYER=<layer number>"
+description = "Arms a pause when the job reaches the given layer number (ENABLE=0 disarms it), through the same SET_PRINT_STATS_INFO state and conditions as SET_PAUSE_NEXT_LAYER. Layer numbers are the slicer's count, starting where the job's own layer-change G-code starts counting. Defined by Mainsail's client config; ZMod's base config defines the same macro."
+safety = "No motion by itself. A wrong layer number parks the job mid-print at temperature at the wrong moment, or never; check it against the sliced job's layer count."
+notes = "Sources: mainsail-crew/mainsail-config@ff3869a621db17ce3ef660adbbd3fa321995ac42 (mainsail.cfg) and ghzserg/zmod_ff5x@5409ffe7ffee572219837fbd0d7de381469537f6 (en/base.cfg) for the AD5X. Generic firmware knowledge, not verified on a Print Handy printer. Scope extended to the AD5M models, which ship the same zmod_ff5x client.cfg / base.cfg."
+[[entry]]
+id = "klipper.set-print-stats-info"
+name = "SET_PRINT_STATS_INFO"
+aliases = ["set print stats info", "layer counter macro"]
+firmware = "klipper"
+kind = "macro"
+printers = ["klipper.generic", "sovol.sv06", "flashforge.ad5x", "flashforge.ad5m", "flashforge.ad5m_pro", "flashforge.creator5", "flashforge.creator5_pro"]
+command = "SET_PRINT_STATS_INFO TOTAL_LAYER=<count> CURRENT_LAYER=<count>"
+description = "The support macro the layer-pause features hang off. Slicer start and layer-change G-code calls it with the job's layer counters; the config-defined version (Mainsail client config; ZMod base config) checks the armed SET_PAUSE_NEXT_LAYER / SET_PAUSE_AT_LAYER state and fires the recorded pause call, then passes through to Klipper's built-in. It is plumbing the slicer drives, not an operator control."
+safety = "Calling it by hand with invented counters makes layer pauses fire at the wrong layer, or not at all, on the running job."
+notes = "Sources: mainsail-crew/mainsail-config@ff3869a621db17ce3ef660adbbd3fa321995ac42 (mainsail.cfg) and ghzserg/zmod_ff5x@5409ffe7ffee572219837fbd0d7de381469537f6 (en/base.cfg) for the AD5X. Generic firmware knowledge, not verified on a Print Handy printer. Scope extended to the AD5M models, which ship the same zmod_ff5x client.cfg / base.cfg. Creator 5 scope: Print Handy's Creator 5 templates emit SET_PRINT_STATS_INFO TOTAL_LAYER=... in the start sequence, so the name is expected on those ZMod installs too."
+[[entry]]
+id = "klipper.bed-mesh-calibrate"
+name = "BED_MESH_CALIBRATE"
+aliases = ["bed mesh calibrate", "mesh calibrate", "probe mesh", "g29 klipper"]
+firmware = "klipper"
+kind = "command"
+printers = ["*"]
+command = "BED_MESH_CALIBRATE"
+description = "Probes the bed and builds a new mesh. Klipper has no G29; this is the mesh routine. A mesh is not applied automatically after homing: the start macro or BED_MESH_PROFILE LOAD must load it."
+safety = "Long probing move over the whole bed; the call blocks until it finishes. Keep the bed clear and hands away."
+[[entry]]
+id = "klipper.bed-mesh-profile-load"
+name = "BED_MESH_PROFILE LOAD"
+aliases = ["load mesh", "bed mesh profile load", "mesh load"]
+firmware = "klipper"
+kind = "command"
+printers = ["*"]
+command = "BED_MESH_PROFILE LOAD=default"
+description = "Loads a saved bed mesh profile (default shown). Check the start G-code actually loads the intended profile when a mesh seems ignored."
+safety = "No motion by itself, but it changes which mesh the next moves use."
+[[entry]]
+id = "klipper.probe-calibrate"
+name = "PROBE_CALIBRATE"
+aliases = ["probe calibrate", "z probe calibration", "probe offset calibrate"]
+firmware = "klipper"
+kind = "command"
+printers = ["*"]
+command = "PROBE_CALIBRATE"
+description = "Interactive Klipper routine for setting the probe Z offset: probes the bed, then walks the operator through paper-test moves (TESTZ) before ACCEPT and SAVE_CONFIG."
+safety = "Moves the nozzle toward the bed in small steps. One wrong step can drive the nozzle into the bed; follow the prompts and be ready to power off."
+[[entry]]
+id = "klipper.screws-tilt-calculate"
+name = "SCREWS_TILT_CALCULATE"
+aliases = ["screws tilt", "tram klipper", "bed tramming klipper"]
+firmware = "klipper"
+kind = "command"
+printers = ["*"]
+command = "SCREWS_TILT_CALCULATE"
+description = "Probes over each bed screw and reports how far to turn each one to tram the bed. Requires a [screws_tilt_adjust] section in the printer config."
+safety = "Probes over the bed; keep hands clear while it runs, turn screws only while it is stopped between probes."
+[[entry]]
+id = "klipper.save-config"
+name = "SAVE_CONFIG"
+aliases = ["save config", "persist calibration"]
+firmware = "klipper"
+kind = "command"
+printers = ["*"]
+command = "SAVE_CONFIG"
+description = "Persists calibration values Klipper is holding (probe offset, mesh, PID) into printer.cfg and restarts the firmware. Values from a calibration routine are lost on restart until this runs."
+safety = "Restarts the Klipper firmware. Never run it mid-print."
+[[entry]]
+id = "klipper.move-out-of-range"
+name = "Move out of range"
+aliases = ["move out of range", "out of range error"]
+firmware = "klipper"
+kind = "error"
+printers = ["*"]
+command = ""
+description = "Klipper refused a move outside the axis limits in printer.cfg. Usual causes: a job sliced for a bigger bed, a start macro that parks off-bed, or wrong axis limits after a config change. Compare the job's printer profile with the configured model before changing limits."
+safety = "Do not widen axis limits just to make the error go away; that can drive the toolhead into the frame."
+[[entry]]
+id = "klipper.creality-start-print"
+name = "START_PRINT"
+aliases = ["creality start print", "k1 start macro", "ender v3 start macro"]
+firmware = "klipper"
+kind = "macro"
+printers = ["creality.ender3v3", "creality.ender3v3ke", "creality.ender3v3plus", "creality.k1", "creality.k1c", "creality.k1max"]
+command = "START_PRINT BED_TEMP=<bed C> EXTRUDER_TEMP=<nozzle C>"
+description = "The Creality Klipper (Creality OS) stock start macro, defined in the printer's gcode_macro.cfg. It runs the family's own preparation - homing, leveling calibration and nozzle cleaning through its CX_ helper macros - with the job temperatures passed as arguments. Print Handy's Creality profiles open with this macro; on the Ender-3 V3 KE a profile may instead run the whole sequence inline, in which case no macro call appears in the file even though the firmware defines the macro."
+safety = "Heats the nozzle and bed and moves the toolhead. Only ever runs as part of a confirmed print start, never from a lookup."
+notes = "Sources: print_handy/printers/creality/adapter.py and guard.py in this repository (the profiles open with the printer's own START_PRINT macro; PRINT_START is a foreign marker on this family), and the stock [gcode_macro START_PRINT] in gcode_macro.cfg quoted on the Creality community forum for the K1 series (forum.creality.com, K1C START_PRINT thread). Generic firmware knowledge from those sources, not verified on a Print Handy printer."
+[[entry]]
+id = "klipper.creality-end-print"
+name = "END_PRINT"
+aliases = ["creality end print", "k1 end macro"]
+firmware = "klipper"
+kind = "macro"
+printers = ["creality.ender3v3", "creality.ender3v3ke", "creality.ender3v3plus", "creality.k1", "creality.k1c", "creality.k1max"]
+command = "END_PRINT"
+description = "The Creality Klipper (Creality OS) stock end macro from gcode_macro.cfg: turns the heaters off, presents the print and runs the family's cooldown helpers (the WAIT_TEMP pair on the K1 series). The tail of a Creality job, the counterpart of START_PRINT."
+safety = "Runs only as the tail of a sliced job. The cooldown fans can keep running after the macro returns; that is the firmware's own routine, not a stuck print."
+notes = "Sources: the stock [gcode_macro END_PRINT] body quoted on the Creality community forum for the K1 series (forum.creality.com, K1 Max END_PRINT thread), and print_handy/printers/creality in this repository for the family's start/end posture. Generic firmware knowledge, not verified on a Print Handy printer."
+[[entry]]
+id = "klipper.qidi-print-start"
+name = "PRINT_START"
+aliases = ["qidi print start", "qidi start macro"]
+firmware = "klipper"
+kind = "macro"
+printers = ["qidi.q1pro", "qidi.xmax3", "qidi.xplus3", "qidi.xplus4", "qidi.xsmart3"]
+command = "PRINT_START BED=<bed C> HOTEND=<nozzle C> CHAMBER=<chamber C>"
+description = "Qidi's stock Klipper start macro. Qidi's own Orca profiles open with it - the Q1 Pro passes BED, HOTEND and CHAMBER - and the macro owns the printer's preparation (heating including the chamber, homing, leveling) before the profile's inline sequence continues. There is no matching PRINT_END entry: Qidi's profiles store their end sequence inline, not as a macro call."
+safety = "Heats the nozzle, bed and chamber and moves the toolhead. Only ever runs as part of a confirmed print start, never from a lookup."
+notes = "Sources: print_handy/printers/qidi/profiles.py and adapter.py in this repository (Qidi's profiles open with the printer's PRINT_START macro; the Q1 Pro passes BED/HOTEND/CHAMBER), and the Qidi community Plus4 wiki's OrcaSlicer template (PRINT_START BED= HOTEND= CHAMBER=). Generic firmware knowledge from those sources, not verified on a Print Handy printer."
+[[entry]]
+id = "klipper.sovol-start-print"
+name = "START_PRINT"
+aliases = ["sovol start print", "sv08 start macro", "sovol zero start macro"]
+firmware = "klipper"
+kind = "macro"
+printers = ["sovol.sv08", "sovol.sv08_max", "sovol.zero"]
+command = "START_PRINT"
+description = "The start macro name Sovol's own Klipper firmware uses on the SV08 line and the Zero, where other Sovol models follow the PRINT_START convention Print Handy emits. On the SV08 stock config (Macro.cfg) START_PRINT takes no temperature arguments: it reads the temperatures from the heater targets the slicer set first, with its calibration behavior held in the config's _global_var variables. On the Zero's stock firmware (1.3.7 and 1.4.x) the profiles call START_PRINT bare the same way, the job temperatures riding on the M140 / M190 / M104 / M109 heater lines. A listing that discovers START_PRINT on one of these models is seeing the stock firmware macro, not a ZMod or Creality one - the descriptions are deliberately separate entries."
+safety = "Heats the nozzle and bed and moves the toolhead, including the SV08's calibration routine. Only ever runs as part of a confirmed print start, never from a lookup."
+notes = "Sources: the SV08 stock Macro.cfg [gcode_macro START_PRINT] and _global_var variables quoted in the Klipper Discourse SV08 thread, and rpcyan586/svzero-profiles@eb38beb for the Zero's stock naming (release v2.1.2; GPL-3.0 - facts only, nothing copied; the full audit is issue #612 in this repository). The SV08 Max is scoped with the SV08 because it ships the same Sovol Klipper firmware family. Generic firmware knowledge from those sources, not verified on a Print Handy printer."
+[[entry]]
+id = "klipper.sovol-zero-end-print"
+name = "END_PRINT"
+aliases = ["sovol zero end print", "zero end macro"]
+firmware = "klipper"
+kind = "macro"
+printers = ["sovol.zero"]
+command = "END_PRINT"
+description = "The Sovol Zero stock end macro, the counterpart of its stock START_PRINT: both firmwares the svzero-profiles project documents (1.3.7 and 1.4.x) ship it, and the optional community macro pack replaces it along with START_PRINT. Scoped to the Zero only: the SV08's stock end name was not verified from a citable source, so no SV08 entry claims it."
+safety = "Runs only as the tail of a sliced job. With the community macro pack installed, its post-print cooldown timers can keep fans and the bed target changing after the job ends; that is the pack working as designed."
+notes = "Source: rpcyan586/svzero-profiles@eb38beb (release v2.1.2; GPL-3.0 - facts only, nothing copied; the full audit is issue #612 in this repository). Generic firmware knowledge, not verified on a Print Handy printer."
+[[entry]]
+id = "klipper.sovol-sv08-clean-nozzle"
+name = "CLEAN_NOZZLE"
+aliases = ["sv08 clean nozzle", "sovol nozzle cleaning", "clean nozzle sv08"]
+firmware = "klipper"
+kind = "macro"
+printers = ["sovol.sv08"]
+command = "CLEAN_NOZZLE"
+description = "The SV08 stock nozzle-cleaning macro from the firmware's Macro.cfg: it runs the toolhead through the cleaning routine at the printer's cleaning block as part of print preparation. Sovol's eddy-current sensor upgrade kit ships a revised version of the same macro, so what a given SV08's CLEAN_NOZZLE does follows the firmware and kit it runs. Scoped to the SV08 only; the SV08 Max's stock cleaning name was not verified from a citable source."
+safety = "Heats the nozzle and moves the toolhead against the cleaning block. Keep the block area clear and hands away while it runs."
+notes = "Source: community documentation of the SV08 stock Macro.cfg, which names the original START_PRINT and CLEAN_NOZZLE macros in that file (the GP3D macro additions for the SV08). Generic firmware knowledge, not verified on a Print Handy printer."

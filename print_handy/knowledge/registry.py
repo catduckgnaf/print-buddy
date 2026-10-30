@@ -5,8 +5,11 @@ repo can find it without knowing the package layout:
 
     knowledge/symptoms.toml         what users report, and the flow that works it
     knowledge/troubleshooting.toml  the guided flows (see flows.py)
-    firmware/commands.toml          commands, macros and errors per firmware family
-    printers/registry.toml          one entry per registered printer model
+    firmware/commands/              one file per firmware family (zmod.toml,
+                                    klipper.toml, marlin.toml): commands, macros
+                                    and errors for that family
+    printers/registry/<vendor>.toml  one entry per registered printer model,
+                                    one file per vendor package
 
 This module is read-only. It opens no socket, imports no printer adapter and can
 never turn a lookup into a printer action; a lookup returns registry text, and
@@ -47,6 +50,9 @@ class FirmwareEntry:
     description: str
     safety: str
     notes: str = ""
+    # Optional macro pack that rides on the firmware (issue #644); "" is the
+    # firmware's stock set. No shipped entry carries a pack yet.
+    pack: str = ""
 
 
 @dataclass(frozen=True)
@@ -139,6 +145,25 @@ def _load(path):
         raise RegistryError(f"registry file {path.name} does not parse: {exc}") from None
 
 
+def _load_printers(root):
+    """Every raw printer entry, paired with the vendor file it came from.
+
+    The printer registry is one ``<vendor>.toml`` per vendor package under
+    ``printers/registry/``; the files are merged in sorted filename order into
+    one logical registry. A missing or empty directory is an error, never a
+    silently empty registry.
+    """
+    registry_dir = root / "printers" / "registry"
+    files = sorted(registry_dir.glob("*.toml")) if registry_dir.is_dir() else []
+    if not files:
+        raise RegistryError(f"printer registry missing or empty: {registry_dir}")
+    raws = []
+    for path in files:
+        for raw in _load(path).get("printer", []):
+            raws.append((raw, path.stem))
+    return raws
+
+
 def _strings(value):
     return tuple(str(v).strip() for v in (value or ()) if str(v).strip())
 
@@ -168,11 +193,13 @@ class Registry:
         hit = self._by_id.get(str(flow_id or "").strip())
         return hit[1] if hit and hit[0] == "flow" else None
 
-    def lookup(self, query, *, firmware=None, printer=None, limit=5):
+    def lookup(self, query, *, firmware=None, printer=None, pack=None, limit=5):
         """Ranked matches across all registries.
 
         `firmware` restricts firmware entries to one family; `printer` keeps only
-        firmware entries known to apply to that printer model (plus "*" entries).
+        firmware entries known to apply to that printer model (plus "*" entries);
+        `pack` keeps only firmware entries belonging to that macro pack (entries
+        without a pack are the firmware's stock set, so pack="" keeps only those).
         Symptoms, flows and printers are never filtered out: a symptom report
         should find its flow whatever the machine is.
         """
@@ -180,11 +207,14 @@ class Registry:
         if firmware and firmware not in FIRMWARES:
             raise RegistryError(f"firmware must be one of {', '.join(FIRMWARES)}, got {firmware!r}")
         printer = str(printer or "").strip() or None
+        pack = _norm(pack).replace(" ", "-") if pack is not None else None
         scored: list[Match] = []
         for entry in self.firmware_entries:
             if firmware and entry.firmware != firmware:
                 continue
             if printer and "*" not in entry.printers and printer not in entry.printers:
+                continue
+            if pack is not None and entry.pack != pack:
                 continue
             score = _score(query, (entry.name, entry.id, *entry.aliases))
             if score:
@@ -207,39 +237,92 @@ class Registry:
         return scored[:limit]
 
 
+PACK_SLUG = re.compile(r"[a-z0-9][a-z0-9-]*")
+
+
+def _firmware_entry(raw, file_firmware, problems):
+    """Build one FirmwareEntry, appending schema problems found.
+
+    `file_firmware` is the firmware the file the entry sits in is named for
+    (firmware/commands/<firmware>.toml): an entry whose firmware field
+    disagrees with its file is a problem, so the per-firmware partition the
+    files claim is the partition the loader enforces (issue #644).
+    """
+    entry = FirmwareEntry(
+        id=str(raw.get("id", "")).strip(), name=str(raw.get("name", "")).strip(),
+        aliases=_strings(raw.get("aliases")), firmware=str(raw.get("firmware", "")).strip(),
+        kind=str(raw.get("kind", "")).strip(), printers=_strings(raw.get("printers")),
+        command=str(raw.get("command", "")).strip(), description=str(raw.get("description", "")).strip(),
+        safety=str(raw.get("safety", "")).strip(), notes=str(raw.get("notes", "")).strip(),
+        pack=str(raw.get("pack", "") or "").strip())
+    where = f"firmware entry {entry.id or '?'}"
+    if entry.firmware not in FIRMWARES:
+        problems.append(f"{where}: firmware must be one of {FIRMWARES}")
+    elif entry.firmware != file_firmware:
+        problems.append(f"{where}: firmware {entry.firmware!r} disagrees with the file it sits in "
+                        f"(firmware/commands/{file_firmware}.toml); move it to its own firmware's file")
+    if entry.kind not in ENTRY_KINDS:
+        problems.append(f"{where}: kind must be one of {ENTRY_KINDS}")
+    if not entry.id.startswith(entry.firmware + "."):
+        problems.append(f"{where}: id must start with '{entry.firmware}.'")
+    if not entry.name or not entry.description or not entry.safety or not entry.printers:
+        problems.append(f"{where}: name, description, safety and printers are required")
+    if entry.kind != "error" and not entry.command:
+        problems.append(f"{where}: a {entry.kind} entry needs its command line")
+    if entry.pack and not PACK_SLUG.fullmatch(entry.pack):
+        problems.append(f"{where}: pack must be a lowercase slug (letters, digits, hyphens), got {entry.pack!r}")
+    return entry
+
+
+def _load_firmware_entries(root, problems):
+    """Load every firmware/commands/*.toml and merge, family files first.
+
+    Files are read in FIRMWARES order (any further *.toml files after them,
+    in sorted filename order), which reproduces the family sequence the
+    single firmware/commands.toml used. That order is observable: the macro
+    name index keeps the first entry that claims a name, and a bare
+    START_PRINT must keep resolving to the ZMod entry it resolved to when
+    the registry was one file (the #645 Creality/Sovol START_PRINT entries
+    are reached through their printer scopes, not the unscoped name).
+
+    The merged entries are the same logical registry the single
+    firmware/commands.toml used to hold (issue #644); duplicate ids are
+    rejected across files exactly as they were within the one file, by the
+    caller's shared seen-ids pass.
+    """
+    commands_dir = root / "firmware" / "commands"
+    if not commands_dir.is_dir():
+        raise RegistryError(f"registry file missing: {commands_dir}")
+    by_name = {path.stem: path for path in commands_dir.glob("*.toml")}
+    paths = [by_name.pop(family) for family in FIRMWARES if family in by_name]
+    paths += [by_name[name] for name in sorted(by_name)]
+    if not paths:
+        raise RegistryError(f"registry file missing: no *.toml files in {commands_dir}")
+    entries: list[FirmwareEntry] = []
+    for path in paths:
+        doc = _load(path)
+        for raw in doc.get("entry", []):
+            entries.append(_firmware_entry(raw, path.stem, problems))
+    return entries
+
+
 def load_registry(root=ROOT) -> Registry:
     """Load and validate every registry. Raises RegistryError listing every problem found."""
     root = Path(root)
     problems: list[str] = []
 
-    firmware_doc = _load(root / "firmware" / "commands.toml")
+    firmware_entries = _load_firmware_entries(root, problems)
     symptoms_doc = _load(root / "knowledge" / "symptoms.toml")
     flows_doc = _load(root / "knowledge" / "troubleshooting.toml")
-    printers_doc = _load(root / "printers" / "registry.toml")
+    printer_raws = _load_printers(root)
 
     entries: list[FirmwareEntry] = []
     seen_ids: set[str] = set()
-    for raw in firmware_doc.get("entry", []):
-        entry = FirmwareEntry(
-            id=str(raw.get("id", "")).strip(), name=str(raw.get("name", "")).strip(),
-            aliases=_strings(raw.get("aliases")), firmware=str(raw.get("firmware", "")).strip(),
-            kind=str(raw.get("kind", "")).strip(), printers=_strings(raw.get("printers")),
-            command=str(raw.get("command", "")).strip(), description=str(raw.get("description", "")).strip(),
-            safety=str(raw.get("safety", "")).strip(), notes=str(raw.get("notes", "")).strip())
+    for entry in firmware_entries:
         where = f"firmware entry {entry.id or '?'}"
         if not entry.id or entry.id in seen_ids:
             problems.append(f"{where}: id missing or duplicated")
         seen_ids.add(entry.id)
-        if entry.firmware not in FIRMWARES:
-            problems.append(f"{where}: firmware must be one of {FIRMWARES}")
-        if entry.kind not in ENTRY_KINDS:
-            problems.append(f"{where}: kind must be one of {ENTRY_KINDS}")
-        if not entry.id.startswith(entry.firmware + "."):
-            problems.append(f"{where}: id must start with '{entry.firmware}.'")
-        if not entry.name or not entry.description or not entry.safety or not entry.printers:
-            problems.append(f"{where}: name, description, safety and printers are required")
-        if entry.kind != "error" and not entry.command:
-            problems.append(f"{where}: a {entry.kind} entry needs its command line")
         entries.append(entry)
     entry_ids = {e.id for e in entries}
 
@@ -301,7 +384,7 @@ def load_registry(root=ROOT) -> Registry:
         symptoms.append(symptom)
 
     printers: list[PrinterEntry] = []
-    for raw in printers_doc.get("printer", []):
+    for raw, vendor_file in printer_raws:
         bed = raw.get("bed_mm") or (0, 0)
         printer = PrinterEntry(
             key=str(raw.get("key", "")).strip(), label=str(raw.get("label", "")).strip(),
@@ -314,6 +397,9 @@ def load_registry(root=ROOT) -> Registry:
             profile=str(raw.get("profile", "")).strip(), notes=str(raw.get("notes", "")).strip(),
             color_system=str(raw.get("color_system", "")).strip())
         where = f"printer {printer.key or '?'}"
+        if printer.key.split(".", 1)[0] != vendor_file or printer.vendor != vendor_file:
+            problems.append(f"{where}: filed in printers/registry/{vendor_file}.toml, but the "
+                            f"key prefix and vendor field must both be '{vendor_file}'")
         if printer.firmware_family not in (*FIRMWARES, "none"):
             problems.append(f"{where}: firmware_family must be one of {FIRMWARES} or 'none'")
         if printer.color_system not in COLOR_SYSTEMS:
@@ -335,7 +421,7 @@ def load_registry(root=ROOT) -> Registry:
     for entry in entries:
         for key in entry.printers:
             if key != "*" and key not in printer_keys:
-                problems.append(f"firmware entry {entry.id}: printer {key!r} is not in printers/registry.toml")
+                problems.append(f"firmware entry {entry.id}: printer {key!r} is not in the printer registry (printers/registry/)")
 
     if problems:
         raise RegistryError("invalid registries:\n- " + "\n- ".join(problems))

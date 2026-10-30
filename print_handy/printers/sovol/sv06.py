@@ -1,7 +1,8 @@
 """Sovol SV06 on stock Klipper: single extruder, PRINT_START/PRINT_END macros, no vendor API.
 
-Quirks: multi-color and multi-plate sources are refused. The bed and height below are the values the SV06
-has always sliced with here (they match templates/orca/sovol_sv06/machine.json). Templates: templates/orca/sovol_sv06.
+Quirks: multi-color and multi-plate sources are refused. The bed and height below are the SV06's real
+build volume, 220 x 220 x 250 mm, matching templates/orca/sovol_sv06/machine.json and the sovol_marlin.sv06
+entry. Templates: templates/orca/sovol_sv06.
 """
 from ..base import PrinterModel
 from . import VENDOR
@@ -21,7 +22,7 @@ MODEL = PrinterModel(
         "printer": {
             "name": "Sovol SV06",
             "bed_mm": [220.0, 220.0],
-            "max_print_height_mm": 220.0,
+            "max_print_height_mm": 250.0,
             "nozzle_diameter_mm": 0.4,
             "ifs_slots": 1,
         },

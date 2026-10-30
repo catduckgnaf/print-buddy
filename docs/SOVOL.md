@@ -23,10 +23,10 @@ Stock Marlin, also listed under Klipper for a converted machine:
 | SV03 | 360 x 360 | 410 |
 | SV04 | 300 x 300 | 400 |
 | SV05 | 220 x 220 | 300 |
-| SV06 | 220 x 220 | 250 on `sovol_marlin.sv06` |
+| SV06 | 220 x 220 | 250 |
 | SV06 Plus | 300 x 300 | 340 |
 
-`sovol.sv06` keeps the height this project already sliced with (220 mm). Do not treat that as the Orca 250 mm figure.
+Both SV06 keys (`sovol.sv06` and `sovol_marlin.sv06`) use the machine's real 250 mm height, matching the OrcaSlicer profile and the shipped templates.
 
 Factory Klipper (Klipper key only):
 

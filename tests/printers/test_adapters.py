@@ -156,6 +156,19 @@ class ContractTests(unittest.TestCase):
             self.assertEqual(shipped.is_dir(), not model.generated_templates, key)
             self.assertTrue(issubclass(model.adapter, PrinterAdapter))
 
+    def test_shipped_template_height_matches_model_height(self):
+        # A model whose guards refuse above max_print_height_mm must not ship a
+        # template that slices taller (#661: klipper.generic and sovol.sv06 said
+        # 220 in the model and registry while their templates sliced 250).
+        for key, model in printers.MODELS.items():
+            if model.generated_templates:
+                continue  # generated from the operator's slicer; nothing shipped to compare
+            machine = json.loads((settings.ROOT / "print_handy" / "templates" / "orca"
+                                  / model.templates / "machine.json").read_text())
+            with self.subTest(model=key):
+                self.assertEqual(float(machine["printable_height"]),
+                                 float(model.defaults()["printer"]["max_print_height_mm"]))
+
     def test_every_family_has_an_adapter(self):
         for family in MODELS:
             with self.subTest(family=family):

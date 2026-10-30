@@ -140,10 +140,12 @@ class SettingsParityTests(unittest.TestCase):
         environ = {}
         for line in ENV_EXAMPLE.splitlines():
             match = re.match(r"^#? ?(PRINT_HANDY__[A-Z0-9_]+)=(.+)$", line)
-            # The model line and the delivery list are per-printer: the delivery example is written for
-            # bambulab.a1 (tests/test_settings.py loads it there), docker.yaml selects klipper.generic.
+            # The model line, the delivery list and the ZMod delivery format are per-printer: the delivery
+            # example is written for bambulab.a1 (tests/test_settings.py loads it there), the format only
+            # applies to Flashforge/ZMod models, and docker.yaml selects klipper.generic.
             if match and "example" not in match.group(2) and match.group(1) not in ("PRINT_HANDY__PRINTER__MODEL",
-                                                                                 "PRINT_HANDY__DELIVERY__METHODS"):
+                                                                                 "PRINT_HANDY__DELIVERY__METHODS",
+                                                                                 "PRINT_HANDY__PRINTER__ZMOD_DELIVERY_FORMAT"):
                 environ[match.group(1)] = match.group(2)
         self.assertGreater(len(environ), 40)
         data = settings.load(local=ROOT / "config" / "docker.yaml", environ=environ)

@@ -200,3 +200,18 @@ def test_slice_cli_direct_slots_no_handwritten_json(tmp_path):
         z.writestr('changed', 'new bytes')
     with pytest.raises(ValueError, match='SHA256'):
         job.intake_color_choices(jp, state())
+
+
+def test_bambu_ams_job_still_refuses_source_color_choices(tmp_path):
+    # #671: a Bambu AMS model is multi_slot by class, but its filament slots are
+    # the sliced file's own — matched to the printer's reported AMS trays at
+    # print start — not the record-bound slots the intake questions are built
+    # from. A source needing color choices is refused at intake exactly as it
+    # was while the model was classified "single"; nothing is asked or sliced.
+    src = assembly(tmp_path)
+    jp = tmp_path / 'JOB.json'
+    jp.write_text(json.dumps({'downloaded_file': str(src), 'audit': {'plates': 1},
+                              'printer_model': 'bambulab.p1s'}))
+    from print_handy.printers.base import MultiColorUnsupported
+    with pytest.raises(MultiColorUnsupported, match='single extruder'):
+        job.intake_color_choices(jp, {})

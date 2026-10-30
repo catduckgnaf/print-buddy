@@ -80,7 +80,8 @@ def test_model_registration_defaults_and_p1s_specific_hardware(p1s_profiles):
     a = adapter_for()
     assert printers.MODELS[P1S] == MODEL and MODEL.vendor is VENDOR is printers.VENDORS["bambulab"]
     assert isinstance(a, P1SAdapter) and isinstance(a, BambuOfflineAdapter)
-    assert (a.connection, a.slot_count, a.multi_slot) == ("bambulab_lan", 1, False)
+    # The AMS is the P1S's slot system (#671): multi_slot, four slots.
+    assert (a.connection, a.slot_count, a.multi_slot) == ("bambulab_lan", 4, True)
     volume = a.build_volume()
     assert volume.bed_mm == (256.0, 256.0) and volume.max_height_mm == 256.0
     assert a.supported_nozzle_sizes == (0.4,)
@@ -95,7 +96,8 @@ def test_p1s_defaults_to_bambu_studio_and_orca_can_be_selected(p1s_profiles):
     assert config_for(slicer="orca")["printer"]["slicer"] == "orca"
     assert config_for()["printer"]["bed_mm"] == [256.0, 256.0]
     assert config_for()["printer"]["max_print_height_mm"] == 256.0
-    assert config_for()["printer"]["filament_slots"] == 1
+    # The P1S's own AMS count is the default since #671 (multi_slot).
+    assert config_for()["printer"]["filament_slots"] == 4
     with pytest.raises(settings.SettingsError, match="not supported by model 'bambulab.p1s'"):
         config_for(nozzle_diameter_mm=0.6)
 

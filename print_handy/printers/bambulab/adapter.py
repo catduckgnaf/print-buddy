@@ -44,6 +44,14 @@ class BambuAdapter(PrinterAdapter):
 
     @property
     def slot_count(self):
+        # The AMS is this printer's slot system (#671): one extruder fed by the
+        # AMS unit's slots, counted per unit from the model's facts (every AMS
+        # variant — AMS, AMS Lite, AMS 2 Pro — carries four trays per unit).
+        # The dual-nozzle models stay at 1: two independent extruders are not a
+        # slot system (their profiles record why), and their trays are resolved
+        # per filament slot at print start (ams_mapping.py), not counted here.
+        if self.multi_slot:
+            return int(self.fact("ams")[1])
         return 1
 
     @property

@@ -248,6 +248,11 @@ def push_screen(slot: int, material: str, hex_code: str, *, mr: Client = moonrak
     if not printer.multi_slot:
         return "unsupported"  # stock Klipper has no screen to tell
     command = screen_command(slot, material, hex_code, adapter=printer)
+    if command is None:
+        # A multi_slot adapter with no screen sync (Bambu AMS, #671): the class
+        # alone no longer implies a screen, so say "unsupported" instead of
+        # queueing or sending an empty command.
+        return "unsupported"
     pending = Path(pending_path or PENDING_SCREEN)
     if printer_state(mr) in ("printing", "unknown"):
         queued = _read_json(pending)

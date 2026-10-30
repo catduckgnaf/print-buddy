@@ -1,5 +1,7 @@
 """Bambu Lab H2D Pro (inherits bambulab VENDOR). The H2D's pro variant: same dual-nozzle toolhead, 350 x 320 mm bed and 325 mm height as the H2D, with its own Orca profiles and identity (#308).
 
+Color architecture (#671): classified "single" deliberately. Two independent extruders, each fed by its own AMS, are neither the one-extruder multi_slot shape nor the multi_tool tool-changer contract (identity tool mapping, tool-shaped intake), so neither class is claimed; the slicer assigns filaments to extruders in the file itself, and print starts resolve AMS trays per filament slot (ams_mapping.py), outside the class machinery.
+
 Sourced values: facts.py (H2DPRO); docs/BAMBU-LAB.md. Templates: generated on the operator's
 machine from their own OrcaSlicer into <state>/orca-profiles/bambulab_h2dpro (profiles.py); none are shipped.
 """

@@ -1,5 +1,7 @@
 """Bambu Lab H2D (inherits bambulab VENDOR). The H2D is the dual-nozzle flagship: a 350 x 320 mm bed (305 mm wide for a single tool, 350 mm across both) and 325 mm height, a 350 C hotend, and no bed exclusion. Its two extruders are described by facts ("extruders": 2); print starts resolve AMS trays per filament slot through ams_mapping.py (#308). One recorded state loadout, like every Bambu model here.
 
+Color architecture (#671): classified "single" deliberately. Two independent extruders, each fed by its own AMS, are neither the one-extruder multi_slot shape nor the multi_tool tool-changer contract (identity tool mapping, tool-shaped intake), so neither class is claimed; the slicer assigns filaments to extruders in the file itself, and print starts resolve AMS trays per filament slot (ams_mapping.py), outside the class machinery.
+
 Sourced values: facts.py (H2D); docs/BAMBU-LAB.md. Templates: generated on the operator's
 machine from their own OrcaSlicer into <state>/orca-profiles/bambulab_h2d (profiles.py); none are shipped.
 """

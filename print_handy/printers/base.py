@@ -37,10 +37,14 @@ Settings merge, later wins key by key: vendor defaults, printer defaults, YAML h
 config/home.yaml picks the model with printer.model: flashforge.ad5x.
 
 Color architecture (issue #656): every MODEL names color_system, one of "single", "multi_slot"
-(one extruder fed by several IFS-style slots; only the two AD5X profiles), or "multi_tool"
-(independent toolheads, each with its own extruder and filament; the Creator pair and, since
-#670, the Prusa XL). Every other model is "single" — including the Bambu AMS models, whose slot
-unification is follow-up work.
+(one extruder fed by several IFS-style slots; the two AD5X profiles and, since #671, the
+single-nozzle Bambu AMS models), or "multi_tool" (independent toolheads, each with its own
+extruder and filament; the Creator pair and, since #670, the Prusa XL). Every other model is
+"single" — including the dual-nozzle Bambu models (H2D/H2C family): two independent extruders,
+each AMS-fed, are neither the one-extruder multi_slot shape nor the multi_tool tool-changer
+contract, so they stay "single" with the reason recorded on their profiles (#671); their AMS
+trays are resolved per filament slot at print start (bambulab/ams_mapping.py), outside the
+class machinery.
 The class is the authority: PrinterAdapter.multi_slot / multi_tool derive from it, the settings
 validation for filament_slots and tool_count reads it, and a model whose settings contradict its
 class (filament_slots above 1 outside multi_slot, tool_count above 1 outside multi_tool) is refused
@@ -93,8 +97,11 @@ Runtime decisions that follow the adapter (core/model_job, printer_state, orca_a
     [printer] model. A job without the field is a flashforge.ad5x job.
 
 Still AD5X-coupled code in shared modules, reached only when multi_slot / has_native_screen. It is mixed
-with printer-neutral logic (Spoolman, Discord, plate handling), so it stays until a second multi-slot model
-exists to show the seam:
+with printer-neutral logic (Spoolman, Discord, plate handling), so it stays until the follow-up
+refactor: the second multi-slot family now exists (the Bambu AMS models, #671), and that PR's seam
+report records, module by module, which of these the Bambu classification reaches and which it
+cannot reach (the Bambu print, slice and readiness paths dispatch by connection/transport first,
+and its slots are printer-reported rather than record-bound — see PrinterAdapter.slots_bound_by_record):
   - core/model_job: IFS selection and filament readiness, mapped-native launch (print_mapped_native), the
     zmod_color / display_off telemetry read, thin delegators to zmod.stock
   - core/prepared_intake, core/plate_merge, core/color_geometry, core/source_colors: filament_slots bounds, the
@@ -134,7 +141,8 @@ CONNECTIONS = ("moonraker", "octoprint", "offline", "bambulab_lan", "flashforge_
 # authority the adapter properties (multi_slot, multi_tool) and the settings validation read, so the
 # architecture is never re-inferred from filament_slots or adapter flags:
 #   single      one extruder, one filament position (the large majority of models)
-#   multi_slot  one extruder fed by several filament slots (an IFS-style feeder; the AD5X pair)
+#   multi_slot  one extruder fed by several filament slots (an IFS-style feeder; the AD5X pair
+#               and the single-nozzle Bambu AMS models)
 #   multi_tool  several independent toolheads, each with its own extruder and filament (the Creator pair)
 COLOR_SYSTEMS = ("single", "multi_slot", "multi_tool")
 # Start G-code families. Each printer runs only its own; see start_code_problems.
@@ -319,6 +327,15 @@ class PrinterAdapter(ABC):
 
     # ZMod-style native screen: display_off modes, saved/screen Z offset authority, MD5 gcode, stock /detail.
     has_native_screen: bool = False
+    # True when this printer's filament slots are bound to spools in the hardware record's
+    # slot map (the IFS shape: the spool lifecycle writes the map, and intake, slicing and
+    # print-now validate selections against it). A multi_slot printer whose feeder reports
+    # its own contents instead (Bambu AMS: trays decoded from the printer's status, matched
+    # to a job's filament slots at print start) leaves this False: its slots are real slots
+    # for counting and readiness, but Print Handy does not slice per record-bound slot for
+    # it, and the record's single spool stays the slot-1 offer (#263). Only the AD5X
+    # families (ZMod and stock Flashforge) bind slots in the record.
+    slots_bound_by_record: bool = False
     # (xmin, ymin, xmax, ymax) when vendor start/end G-code moves off the bed; None holds every move to the bed.
     motion_envelope_mm: tuple[float, float, float, float] | None = None
     # Slicers ([printer] slicer values) whose output this printer's guards have been checked against; None trusts
@@ -389,6 +406,20 @@ class PrinterAdapter(ABC):
     def native(self):
         """ZMod/native helpers (printers.flashforge.zmod); stock Klipper has none."""
         raise MultiColorUnsupported(f"{self.label} has no ZMod/native support")
+
+    @property
+    def native_or_none(self):
+        """The native (ZMod) contract, or None when this adapter has none.
+
+        Shared code that consults the native mapping only where an adapter offers
+        it (a start record, a preparation message) uses this instead of keying on
+        multi_slot alone: since #671 a multi_slot adapter may have no native
+        contract at all (Bambu AMS), and the stock AD5X never had one either.
+        """
+        try:
+            return self.native
+        except MultiColorUnsupported:
+            return None
 
     @property
     def supported_nozzle_sizes(self) -> tuple[float, ...]:

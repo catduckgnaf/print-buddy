@@ -60,7 +60,8 @@ def test_model_registration_and_defaults(key):
     assert model.baseline == f"protected-settings-baseline.{key}.json"
     a = adapter_for(key)
     assert isinstance(a, BambuAdapter)
-    assert (a.connection, a.slot_count, a.multi_slot) == ("bambulab_lan", 1, False)
+    # Every Stage 1 model is single-nozzle with an AMS: multi_slot, four slots (#671).
+    assert (a.connection, a.slot_count, a.multi_slot) == ("bambulab_lan", 4, True)
     f = model_facts(key)
     volume = a.build_volume()
     assert volume.bed_mm == tuple(float(v) for v in f["bed_mm"].value)
@@ -160,7 +161,11 @@ def test_356_model_registration_and_defaults(key):
     assert model.baseline == f"protected-settings-baseline.{key}.json"
     a = adapter_for(key)
     assert isinstance(a, BambuAdapter)
-    assert (a.connection, a.slot_count, a.multi_slot) == ("bambulab_lan", 1, False)
+    # The A2L is single-nozzle with an AMS Lite: multi_slot, four slots (#671). The
+    # H2C is dual-nozzle and stays single by the #671 treatment (two independent
+    # extruders are neither the multi_slot shape nor the multi_tool contract).
+    expected = (4, True) if key == "bambulab.a2l" else (1, False)
+    assert (a.connection, a.slot_count, a.multi_slot) == ("bambulab_lan", *expected)
     f = facts_356(key)
     assert a.build_volume().bed_mm == tuple(float(v) for v in f["bed_mm"].value)
 

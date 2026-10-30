@@ -194,7 +194,7 @@ def _same_type(expected, value):
 def _unknown(source, section, key):
     hint = ""
     if (section, key) == ("printer", "family"):
-        hint = ' ([printer] family was replaced by model, e.g. model = "flashforge.ad5x"; see README "Printer models")'
+        hint = ' ([printer] family was replaced by model, e.g. model = "klipper.generic"; see README "Printer models")'
     return SettingsError(f"{source}: unknown setting [{section}] {key}{hint}")
 
 

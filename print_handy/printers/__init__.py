@@ -2,7 +2,7 @@
 
     from print_handy import printers
     printers.current().build_volume()
-    printers.MODELS["flashforge.ad5x"].defaults()
+    printers.MODELS["klipper.generic"].defaults()
     printers.VENDORS["bambulab"].delivery
 
 Every vendor package (flashforge/, klipper/, sovol/, octoprint/, bambulab/) is scanned. Its __init__ defines
@@ -18,8 +18,12 @@ from dataclasses import replace
 
 from .base import MultiColorUnsupported, PrinterAdapter, PrinterModel, VendorProfile
 
-# Jobs written before the model was recorded were sliced for the AD5X.
-DEFAULT_MODEL = "flashforge.ad5x"
+# Legacy-job provenance only — NOT an install default. Jobs written before the
+# model was recorded were sliced for the AD5X (the only printer supported then),
+# so a job that records no model reads as an AD5X job. The default model for an
+# install that names none lives in the shipped config trees (config/home.yaml,
+# config/docker.yaml); see #649.
+LEGACY_JOB_MODEL = "flashforge.ad5x"
 
 
 # Other spellings of a vendor key that config may use. "bambu" reads as "bambulab".
@@ -137,8 +141,8 @@ LEGACY_FAMILY = {"flashforge_zmod": "flashforge.ad5x", "sovol_klipper": "sovol.s
 def job_model(job):
     """Model a JOB.json was prepared for. Jobs older than either field are flashforge.ad5x."""
     if not isinstance(job, dict):
-        return DEFAULT_MODEL
-    return job.get("printer_model") or LEGACY_FAMILY.get(job.get("printer_family")) or DEFAULT_MODEL
+        return LEGACY_JOB_MODEL
+    return job.get("printer_model") or LEGACY_FAMILY.get(job.get("printer_family")) or LEGACY_JOB_MODEL
 
 
 def check_job_model(job, config=None):

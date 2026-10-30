@@ -100,8 +100,9 @@ def _semantic_lookup(query, registry, *, firmware=None, printer=None, pack=None)
     registries' own public entries (id + the display text a person would
     type), filtered exactly as ``Registry.lookup`` filters them; per-install
     data such as print-history titles is never a candidate. Returns Match
-    objects in the endpoint's order, scores rescaled to the local 0–100
-    display scale. Any failure or an unset URL returns [].
+    objects in the client's enforced score order (best first), scores
+    rescaled to the local 0–100 display scale. Any failure or an unset
+    URL returns [].
     """
     from ..core import fuzzy_semantic
 

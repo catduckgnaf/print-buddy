@@ -10,12 +10,14 @@ point to and that ask for their own confirmation.
 """
 from __future__ import annotations
 
-import re
 from dataclasses import dataclass, field
+
+from ..core import fuzzy
 
 
 def _norm(text):
-    return re.sub(r"[^a-z0-9]+", " ", str(text or "").casefold()).strip()
+    """The shared fold — ``core.fuzzy.norm`` is the one implementation."""
+    return fuzzy.norm(text)
 
 
 @dataclass(frozen=True)

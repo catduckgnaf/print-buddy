@@ -41,7 +41,10 @@ def test_fuzzy_never_reaches_exact_100():
     # Identical strings are the caller's exact tier; through the fuzzy lens
     # they cap at 99 so a fuzzy contribution can never impersonate exact.
     assert fuzzy.fuzzy_score("adhesion", "adhesion") == 99
-    assert fuzzy.fuzzy_score("nozzle", "nozzles") == 92
+    # Singular/plural are canonical variants (hardening pass), so this pair
+    # now folds together and caps at 99 like an identical pair — before the
+    # canonical fold it scored 92 on the raw ratio.
+    assert fuzzy.fuzzy_score("nozzle", "nozzles") == 99
 
 
 def test_normalization_is_applied_to_both_sides():

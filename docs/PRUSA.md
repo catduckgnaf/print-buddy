@@ -8,7 +8,7 @@ Print Handy supports Prusa's current Buddy-firmware printers through **PrusaLink
 |---|---|---|---|---|
 | MK4S | `prusa.mk4s` | 250 × 210 | 220 | Single tool |
 | CORE One | `prusa.coreone` | 250 × 220 | 270 | Enclosed CoreXY; chamber not driven |
-| XL (5-tool) | `prusa.xl` | 360 × 360 | 360 | Five toolheads; Print Handy slices **single-tool (tool 0) jobs only** |
+| XL (5-tool) | `prusa.xl` | 360 × 360 | 360 | Five toolheads, driven as a multi-tool model (T0–T4; see below) |
 | MINI+ | `prusa.miniplus` | 180 × 180 | 180 | Runs Orca's MINI profiles (`printer_model` is `Prusa MINI`) |
 
 Select one with `printer.model: prusa.mk4s` (etc.). The MK3.9S/MK3.5S upgrade paths and the CORE One L are follow-up profiles on #242: same vendor and client, added once their Orca identities are pinned.
@@ -42,7 +42,7 @@ delivery:
   methods: [printer, discord]
 ```
 
-The print path then runs the usual sequence: readiness from a live snapshot → offline G-code verification (right model, single tool, temperatures within the model's published limits, no foreign start code) → launch lease → bed-clear approval inside the lease → a second snapshot → upload (`PUT /api/v1/files/<storage>/<file>`, USB storage preferred, with the size read back and required to match before anything starts) → start (`POST` on the uploaded file) → confirmation from a fresh snapshot. An unconfirmed start is recorded as uncertain and is never resubmitted. Pause/resume/stop map to `PUT /api/v1/job/<id>/pause`, `PUT .../resume` and `DELETE /api/v1/job/<id>`.
+The print path then runs the usual sequence: readiness from a live snapshot → offline G-code verification (right model, tools within the model's toolheads, temperatures within the model's published limits, no foreign start code) → launch lease → bed-clear approval inside the lease → a second snapshot → upload (`PUT /api/v1/files/<storage>/<file>`, USB storage preferred, with the size read back and required to match before anything starts) → start (`POST` on the uploaded file) → confirmation from a fresh snapshot. An unconfirmed start is recorded as uncertain and is never resubmitted. Pause/resume/stop map to `PUT /api/v1/job/<id>/pause`, `PUT .../resume` and `DELETE /api/v1/job/<id>`.
 
 Both `.gcode` and the binary `.bgcode` form are accepted file types; what OrcaSlicer produces here is `.gcode`. `services.moonraker_url` and `services.octoprint_url` must stay empty for a Prusa model; settings refuse to load otherwise.
 
@@ -50,9 +50,15 @@ There is no PrusaLink listener, so a print Print Handy launches is followed by a
 
 In the combined Docker container the supervisor honours that (#256): for a Prusa model it does not start the Moonraker listener at all, and the healthcheck does not require one, so the container starts, stays up and reports healthy with just the bot (with a token) and the bundled Spoolman — see [Which processes run](DOCKER.md#which-processes-run).
 
+## The XL's toolheads
+
+The XL is a **multi-tool** model (#670), like the Flashforge Creator pair: a job's colors are answered per toolhead, each toolhead binds its own Spoolman spool, and the file is sliced with one filament profile per toolhead through the XL's own 5-extruder profiles. Slicer tool *i* always prints with toolhead *i* (T0–T4) — the mapping is identity-only, and a remap or a sixth tool is refused with the reason named. PrusaLink starts a file and takes no tool parameter, so tool changes are the sliced file's own `T` lines, executed by the firmware; the offline guard accepts T0–T4 for the XL and still refuses a tool beyond its toolheads (and still refuses any `T1`+ for the other, single-tool Prusa models). Split (non-merged) plates stay refused, as on the Creator pair: they are IFS-shaped.
+
+One limit is Prusa's, not Print Handy's: the published PrusaLink API reports a single nozzle temperature and no per-toolhead state (evidence on #670), so readiness and status for the XL are printer-level — there are no per-toolhead temperature or loaded-filament checks, and none are invented. The file itself is fully verified offline before upload, and the firmware cross-checks each used tool's nozzle at print start via the file's own `M862.1` lines.
+
 ## What is not supported
 
 - PrusaConnect cloud (any model) — LAN only, the same decision as Bambu Lab in #187.
-- Multi-tool / MMU slicing, including on the XL: jobs are single-tool; a `T1`+ tool change in a file is refused by the guard.
+- MMU slicing, and multi-tool slicing on the single-tool models (MK4S, CORE One, MINI+): jobs there are single-tool; a `T1`+ tool change in a file is refused by the guard. The XL is the exception — see above.
 - Input Shaper tuning, chamber control, live camera streaming, firmware updates. (Timelapse stills from a PrusaLink-registered camera are supported — see above.)
 - Any claim of a successful print on real hardware.

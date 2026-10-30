@@ -45,10 +45,10 @@ connection = "prusalink"
 kinematics = "CoreXY"
 bed_mm = [360.0, 360.0]
 max_height_mm = 360.0
-filament_slots = 1
-color_system = "single"
+tools = 5
+color_system = "multi_tool"
 profile = "print_handy/printers/prusa/xl.py"
-notes = "Five toolheads; Print Handy slices single-tool (tool 0) jobs only. PrusaLink as the other Prusa models."
+notes = "Five toolheads (T0-T4), a multi_tool model like the Creator pair: slicer tool i prints with toolhead i, identity mapping only. PrusaLink as the other Prusa models; PrusaLink publishes no per-toolhead telemetry, so readiness and status are printer-level. Not tested on hardware."
 
 [[printer]]
 key = "prusa.miniplus"

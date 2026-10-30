@@ -49,7 +49,10 @@ def test_model_registration_and_defaults(key):
     assert model.generated_templates is True
     a = adapter_for(key)
     assert isinstance(a, PrusaAdapter)
-    assert (a.connection, a.transport, a.slot_count, a.multi_slot) == ("prusalink", "prusalink", 1, False)
+    assert (a.connection, a.transport, a.multi_slot) == ("prusalink", "prusalink", False)
+    # The XL's positions are its five toolheads (#670); the other Prusa models have one path.
+    assert a.slot_count == (5 if key == "prusa.xl" else 1)
+    assert a.multi_tool == (key == "prusa.xl")
     f = model_facts(key)
     volume = a.build_volume()
     assert volume.bed_mm == tuple(float(v) for v in f["bed_mm"].value)
@@ -279,6 +282,55 @@ def test_guard_refusals_and_acceptance():
     assert any("single-tool" in p for p in a.gcode_problems(good + "T1\n"))
     assert any("exceeds" in p for p in a.gcode_problems(good + "M104 S300\n"))
     assert any("nozzle" in p for p in a.gcode_problems(good.replace("= 0.4", "= 0.6")))
+
+
+# --------------------------------------------------------------------------- #670: the XL as multi_tool
+
+def test_xl_tool_mapping_is_identity_only():
+    from print_handy.printers.base import MultiColorUnsupported
+    a = adapter_for("prusa.xl")
+    assert a.tool_count == 5 and a.slot_count == 5 and a.multi_tool is True
+    assert a.normalize_tool_mapping({}, None) == {"0": 1}
+    assert a.normalize_tool_mapping({"0": 1, "2": 3, "4": 5}, None) == {"0": 1, "2": 3, "4": 5}
+    with pytest.raises(MultiColorUnsupported, match="always prints with toolhead 2"):
+        a.normalize_tool_mapping({"1": 1}, None)  # a remap cannot be represented
+    with pytest.raises(MultiColorUnsupported, match="has 5 toolheads"):
+        a.normalize_tool_mapping({"5": 6}, None)  # a sixth tool does not exist
+    with pytest.raises(MultiColorUnsupported, match="not a tool number"):
+        a.normalize_tool_mapping({"x": 1}, None)
+    # The single-tool models keep the refusal they have always had.
+    mk4s = adapter_for("prusa.mk4s")
+    assert mk4s.normalize_tool_mapping({"0": 1}, None) == {"0": 1}
+    with pytest.raises(MultiColorUnsupported, match="multi-tool jobs are not supported"):
+        mk4s.normalize_tool_mapping({"1": 2}, None)
+
+
+def test_xl_guard_accepts_five_tools_and_refuses_a_sixth():
+    a = adapter_for("prusa.xl")
+    # A multi-tool XL file as Orca writes it: per-toolhead nozzle list in the
+    # footer, per-tool temperatures, bare T picks with the changer's parameters.
+    good = ("; printer_model = Prusa XL 5T\n; nozzle_diameter = 0.4,0.4,0.4,0.4,0.4\n"
+            "M140 S60\nM104 S215 T0\nM104 S220 T3\nG28\nT0 S1 L0 D0\nG1 X10 Y10 E1\n"
+            "T3 S1 L0 D0\nG1 X20 Y20 E1\nM104 S0 T0\nM104 S0 T3\n")
+    assert a.gcode_problems(good) == []
+    assert any("has 5 toolheads" in p for p in a.gcode_problems(good + "T5\n"))
+    assert any("nozzle" in p for p in a.gcode_problems(good.replace("0.4,0.4,0.4,0.4,0.4", "0.4,0.6,0.4,0.4,0.4")))
+    # A single-tool XL job still verifies, and the MK4S still refuses any T1+.
+    assert a.gcode_problems(good.replace("0.4,0.4,0.4,0.4,0.4", "0.4").replace("T3 S1 L0 D0\n", "")) == []
+    mk4s = adapter_for("prusa.mk4s")
+    assert any("single-tool" in p for p in mk4s.gcode_problems(
+        "; printer_model = Prusa MK4S\n; nozzle_diameter = 0.4\nT4\n"))
+
+
+def test_xl_tool_count_flows_through_settings():
+    cfg = config_for("prusa.xl")
+    assert cfg["printer"]["tool_count"] == 5 and cfg["printer"]["filament_slots"] == 1
+    # tool_count is a real setting on the multi_tool class (the Creator surface):
+    # an operator value within the class loads; the same key on a single-tool
+    # Prusa model is refused by the class validation.
+    assert config_for("prusa.xl", tool_count=5)["printer"]["tool_count"] == 5
+    with pytest.raises(settings.SettingsError):
+        config_for("prusa.mk4s", tool_count=5)
 
 
 # --- #391 stage 2: timeout mid-upload ---------------------------------------

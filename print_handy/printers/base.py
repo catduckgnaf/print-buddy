@@ -38,9 +38,9 @@ config/home.yaml picks the model with printer.model: flashforge.ad5x.
 
 Color architecture (issue #656): every MODEL names color_system, one of "single", "multi_slot"
 (one extruder fed by several IFS-style slots; only the two AD5X profiles), or "multi_tool"
-(independent toolheads, each with its own extruder and filament; only the Creator pair). Every
-other model is "single" in this stage — including the Prusa XL, whose other toolheads the
-adapter does not drive yet, and the Bambu AMS models, whose slot unification is follow-up work.
+(independent toolheads, each with its own extruder and filament; the Creator pair and, since
+#670, the Prusa XL). Every other model is "single" — including the Bambu AMS models, whose slot
+unification is follow-up work.
 The class is the authority: PrinterAdapter.multi_slot / multi_tool derive from it, the settings
 validation for filament_slots and tool_count reads it, and a model whose settings contradict its
 class (filament_slots above 1 outside multi_slot, tool_count above 1 outside multi_tool) is refused
@@ -70,10 +70,12 @@ Runtime decisions that follow the adapter (core/model_job, printer_state, orca_a
   - multi_slot False (generic/sovol): no IFS selection or spool-slot validation, no multicolor finalization,
     no native_startup/native_idle, no mapped-native launch; slicing refuses multicolor and multi-plate sources
     with MultiColorUnsupported (a REFUSED line).
-  - multi_tool True (flashforge.creator5, creator5_pro): filament_slots stays 1, so every multi_slot gate above
+  - multi_tool True (flashforge.creator5, creator5_pro, prusa.xl): filament_slots stays 1, so every multi_slot gate above
     stays off; the tools live at the adapter contract instead — normalize_tool_mapping accepts only the
     identity tool -> toolhead map for T0..T{tool_count-1} and refuses anything else, readiness and status
-    are per-toolhead (extruder..extruder3, zmod_color.active_tool_id), and a job's G-code tool changes are
+    are per-toolhead where the connection publishes them (extruder..extruder3, zmod_color.active_tool_id
+    on the Creator pair; PrusaLink publishes no per-toolhead telemetry, so the XL's stay printer-level —
+    evidence on #670), and a job's G-code tool changes are
     the sliced file's own T lines. The colour-question seam in core is tool-shaped for these models (#346):
     prepared_intake, discord_color_intake and link_intake ask one question per colour with toolhead
     labels (model_job.build_tool_labels), a toolhead already assigned a different source colour is not

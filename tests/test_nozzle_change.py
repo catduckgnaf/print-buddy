@@ -274,3 +274,117 @@ def test_commands_table_registers_nozzle():
     assert cmd is not None and cmd.usage == "/nozzle change"
     assert llm.allowed_command("/nozzle change") == "/nozzle change"
     assert "/nozzle change" in commands.help_text()
+
+
+# ------------------------------------------- #679 multi-extruder, no reader
+
+class _FakePrinter:
+    """Stands in for print_control._send: records queries and gcode, models heaters."""
+
+    def __init__(self, heaters, objects_list=None):
+        self.heaters = {h: {"temperature": 200.0, "target": 200.0} for h in heaters}
+        self.objects_list = objects_list
+        self.queries, self.scripts = [], []
+
+    def __call__(self, path, method="GET", data=None, timeout=10, printer_id=None):
+        if path.startswith("/printer/objects/list"):
+            if self.objects_list is None:
+                raise OSError("no list")
+            return {"result": {"objects": self.objects_list}}
+        if path == "/printer/gcode/script":
+            script = data["script"]
+            self.scripts.append(script)
+            if script == "M104 S0":
+                self.heaters["extruder"].update(temperature=30.0, target=0.0)
+            elif script.startswith("SET_HEATER_TEMPERATURE HEATER="):
+                name = script.split("HEATER=")[1].split()[0]
+                self.heaters[name].update(temperature=30.0, target=0.0)
+            return {}
+        self.queries.append(path)
+        wanted = path.split("?", 1)[1].split("&")
+        status = {"print_stats": {"state": "standby"}, "webhooks": {"state": "ready"}}
+        for name in wanted:
+            if name in self.heaters:  # only objects the query names are reported
+                status[name] = dict(self.heaters[name])
+        return {"result": {"status": status}}
+
+
+def _fake_adapter(monkeypatch, objects):
+    class _Adapter:
+        def moonraker_objects(self):
+            return objects
+    from print_handy.hermes import print_control as pc
+    monkeypatch.setattr(pc, "_adapter_for", lambda printer_id=None: _Adapter())
+
+
+CREATOR_OBJECTS = ["webhooks", "print_stats", "virtual_sdcard", "extruder", "extruder1",
+                   "extruder2", "extruder3", "heater_bed", "zmod_color"]
+
+
+def test_cooldown_without_reader_sees_hot_extruder1(monkeypatch):
+    from print_handy.hermes import print_control as pc
+    fake = _FakePrinter(["extruder", "extruder1", "extruder2", "extruder3"])
+
+    def stubborn(path, **kw):
+        out = fake(path, **kw)
+        # T1 stays hot; only a query that names extruder1 can see it.
+        if path.startswith("/printer/objects/query") and "extruder1" in path:
+            out["result"]["status"]["extruder1"] = {"temperature": 180.0, "target": 0.0}
+        return out
+    monkeypatch.setattr(pc, "_send", stubborn)
+    _fake_adapter(monkeypatch, CREATOR_OBJECTS)
+    ok, detail = nc.cooldown(timeout_s=0.05, poll_s=0.01)
+    assert not ok and "still hot" in detail and "extruder1" in detail
+    assert all("extruder1" in q and "extruder3" in q for q in fake.queries)
+
+
+def test_cooldown_turns_off_every_heater(monkeypatch):
+    from print_handy.hermes import print_control as pc
+    fake = _FakePrinter(["extruder", "extruder1", "extruder2", "extruder3"])
+    monkeypatch.setattr(pc, "_send", fake)
+    _fake_adapter(monkeypatch, CREATOR_OBJECTS)
+    ok, detail = nc.cooldown(timeout_s=5, poll_s=0.01)
+    assert ok and "extruder3" in detail
+    assert fake.scripts == ["M104 S0",
+                            "SET_HEATER_TEMPERATURE HEATER=extruder1 TARGET=0",
+                            "SET_HEATER_TEMPERATURE HEATER=extruder2 TARGET=0",
+                            "SET_HEATER_TEMPERATURE HEATER=extruder3 TARGET=0"]
+
+
+def test_cooldown_single_extruder_unchanged(monkeypatch):
+    from print_handy.hermes import print_control as pc
+    fake = _FakePrinter(["extruder"])
+    monkeypatch.setattr(pc, "_send", fake)
+    _fake_adapter(monkeypatch, ["webhooks", "print_stats", "virtual_sdcard", "extruder", "heater_bed"])
+    ok, detail = nc.cooldown(timeout_s=5, poll_s=0.01)
+    assert ok and fake.scripts == ["M104 S0"]
+    assert fake.queries == ["/printer/objects/query?print_stats&extruder&webhooks"]
+
+
+def test_extruder_names_fall_back_to_moonraker_object_list(monkeypatch):
+    from print_handy.hermes import print_control as pc
+
+    def no_adapter(printer_id=None):
+        raise RuntimeError("no adapter")
+    monkeypatch.setattr(pc, "_adapter_for", no_adapter)
+    fake = _FakePrinter(["extruder", "extruder1"],
+                        objects_list=["heater_bed", "extruder1", "extruder", "extruder_stepper x",
+                                      "extruder10", "fan"])
+    monkeypatch.setattr(pc, "_send", fake)
+    assert nc._extruder_names(None) == ["extruder", "extruder1", "extruder10"]
+    fake.objects_list = None  # list endpoint fails: plain extruder only
+    assert nc._extruder_names(None) == ["extruder"]
+
+
+def test_heat_for_loosen_failure_path_turns_off_every_heater(monkeypatch):
+    from print_handy.hermes import print_control as pc
+    fake = _FakePrinter(["extruder", "extruder1"])
+    for h in fake.heaters.values():
+        h.update(temperature=25.0, target=0.0)
+    monkeypatch.setattr(pc, "_send", fake)
+    _fake_adapter(monkeypatch, ["extruder", "extruder1"])
+    ok, detail = nc.heat_for_loosen(confirmed_at=time.time(), wait_timeout_s=0.05, poll_s=0.01)
+    assert not ok and "Heater turned off" in detail
+    assert fake.scripts[0] == "M104 S250"
+    assert fake.scripts[-2:] == ["M104 S0", "SET_HEATER_TEMPERATURE HEATER=extruder1 TARGET=0"]
+    assert all("extruder1" in q for q in fake.queries)

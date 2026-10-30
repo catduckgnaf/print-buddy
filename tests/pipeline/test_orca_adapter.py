@@ -285,3 +285,22 @@ def test_designer_support_placement_keys_carry_over_the_template(tmp_path, monke
     assert seen['support_filament'] == template['support_filament']
     assert seen['support_top_z_distance'] == template['support_top_z_distance']
     assert provenance['author_process']['support_threshold_angle'] == '35'
+
+
+def test_bambu_fallback_timeout_keeps_the_orca_context_and_stays_retryable(tmp_path, monkeypatch):
+    from print_handy.core import slice_failure
+    _allow_post(monkeypatch)
+
+    def run(command, **_kwargs):
+        if 'com.orcaslicer.OrcaSlicer' in command:
+            return type('R', (), {'returncode': 18, 'stdout': '', 'stderr': 'Orca exploded'})()
+        raise adapter.subprocess.TimeoutExpired(command, 600)
+
+    monkeypatch.setattr(adapter, '_spawn_slicer', run)
+    with pytest.raises(adapter.SliceFailure) as caught:
+        adapter.slice_model(_source(tmp_path), tmp_path / 'out', _state())
+    exc = caught.value
+    assert exc.kind == 'timeout'
+    assert exc.slicer == 'OrcaSlicer and Bambu Studio'
+    assert 'Orca slicing failed (18)' in str(exc) and 'Bambu Studio fallback failed to start' in str(exc)
+    assert slice_failure.explain(exc).retryable is True

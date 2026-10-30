@@ -6,7 +6,7 @@ never stderr, exception text, paths or model names supplied by a slicer.
 from dataclasses import dataclass
 import subprocess
 
-from .. import diagnostics
+from .. import diagnostics, logs
 
 
 class SliceFailure(RuntimeError):
@@ -39,6 +39,21 @@ class Explanation:
     plain: str
     next_step: str
     retryable: bool = False
+
+
+GUARD_PREFIX = 'Pre-slice guard blocked:'
+GUARD_REASON_LIMIT = 200
+
+
+def guard_reason(exc):
+    """The guard's own one-line reason, redacted and capped, or '' when there is none."""
+    text = str(exc).strip()
+    if text.startswith(GUARD_PREFIX):
+        text = text[len(GUARD_PREFIX):]
+    text = logs.redact(' '.join(text.split()))
+    if len(text) > GUARD_REASON_LIMIT:
+        text = text[:GUARD_REASON_LIMIT - 3].rstrip() + '...'
+    return text
 
 
 BUNDLE = 'Run `/print-handy bundle` and attach the diagnostics bundle to a bug report.'
@@ -75,7 +90,9 @@ def explain(exc):
         return Explanation('The requested copies could not be placed on the printer bed.',
                            'Prepare the saved model again with fewer copies. ' + BUNDLE)
     if kind == 'guard':
-        return Explanation('A safety check rejected the slicing settings or generated G-code.',
+        reason = guard_reason(exc)
+        return Explanation('A safety check rejected the slicing settings or generated G-code'
+                           + (f': {reason}' if reason else '.'),
                            BUNDLE + ' Review the reported guard failure before trying again; do not bypass it.')
     if kind == 'output':
         return Explanation(f'{name} produced G-code whose generator could not be verified.', BUNDLE)

@@ -16,7 +16,7 @@ from print_handy.core.slice_refusal import unconfirmed_slot_color
     (subprocess.TimeoutExpired(['secret-command'], 600), 'transient', 'time limit'),
     (ResourceLimitError('container is at its process limit SECRET'), 'configuration', 'process limit'),
     (TypeError('SECRET implementation detail'), 'programming', 'internal error'),
-    (slice_failure.SliceFailure('SECRET stderr', kind='guard'), 'configuration', 'safety check'),
+    (slice_failure.SliceFailure('Pre-slice guard blocked: nozzle too hot', kind='guard'), 'configuration', 'safety check'),
     (slice_failure.SliceFailure('SECRET stderr', kind='engine', slicer='OrcaSlicer'), 'unknown', 'OrcaSlicer'),
     (RuntimeError('SECRET unknown'), 'unknown', 'could not identify the cause'),
 ])
@@ -151,3 +151,26 @@ def test_timeout_log_write_failure_does_not_replace_original_cause(monkeypatch, 
     with pytest.raises(slice_failure.SliceFailure) as info:
         orca_adapter._run_slicer(['secret'], 'OrcaSlicer', tmp_path)
     assert info.value.kind == 'timeout'
+
+
+def test_guard_failure_shows_its_reason_in_chat():
+    exc = slice_failure.SliceFailure('Pre-slice guard blocked: bed temperature 400 exceeds the 300 limit',
+                                     kind='guard')
+    post = slice_failure.post(exc)
+    assert 'bed temperature 400 exceeds the 300 limit' in post
+    assert 'Pre-slice guard blocked' not in post
+
+
+def test_guard_reason_is_one_line_redacted_and_capped():
+    secret = 'Bearer abcdefghijklmnopqrstuvwxyz123456'
+    exc = slice_failure.SliceFailure(
+        f'Pre-slice guard blocked: first {secret}\nsecond line; ' + 'x' * 500, kind='guard')
+    reason = slice_failure.guard_reason(exc)
+    assert '\n' not in reason and 'abcdefghijklmnopqrstuvwxyz123456' not in reason
+    assert len(reason) <= slice_failure.GUARD_REASON_LIMIT and reason.endswith('...')
+    assert '\n' not in slice_failure.explain(exc).plain
+
+
+def test_guard_failure_without_a_reason_keeps_the_generic_text():
+    exc = slice_failure.SliceFailure('Pre-slice guard blocked:', kind='guard')
+    assert slice_failure.explain(exc).plain == 'A safety check rejected the slicing settings or generated G-code.'

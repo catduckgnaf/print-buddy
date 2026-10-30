@@ -91,6 +91,31 @@ class PostReleaseSurfacesWorkflowContract(unittest.TestCase):
         self.assertIn('select(.status == "removed")', run)
         self.assertIn("PAGE REMOVAL", run)
 
+    def test_issue_numbers_in_subjects_are_skipped_not_fatal(self):
+        run = run_block()
+        # A trailing "(#NNN)" in a commit subject can be an issue number
+        # carried by a direct-to-main commit, not a PR (in the 2.2.1
+        # range, #619-#622 were issues). Its pulls lookup 404s, and under
+        # "set -euo pipefail" that must not abort the step before the
+        # checklist issue is created. The lookup is guarded and the
+        # number is skipped with a log line.
+        self.assertIn('if ! gh api "repos/$repo/pulls/$n" > pr.json; then', run)
+        self.assertIn(
+            "#$n is not a pull request (issue reference or direct commit)"
+            " — skipped",
+            run,
+        )
+        self.assertIn("continue", run)
+        # Title and labels are read from the guarded fetch, so a bogus
+        # number cannot kill the step at a second unguarded pulls lookup.
+        self.assertIn("jq -r .title pr.json", run)
+        self.assertNotIn('gh api "repos/$repo/pulls/$n" --jq', run)
+        # The skip happens before the per-PR files fetch, which only
+        # runs for numbers that passed the lookup.
+        self.assertLess(
+            run.index("is not a pull request"), run.index("pulls/$n/files")
+        )
+
     def test_every_surface_needs_a_decision(self):
         run = run_block()
         for surface in (

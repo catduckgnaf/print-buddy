@@ -78,19 +78,41 @@ def test_archive_paths_stay_inside_the_named_plate(tmp_path):
         "title": "Duplo swing",
         "gcode": "plate_1.gcode",
     }), encoding="utf-8")
-    assert layers.resolve_plate(tmp_path, "job-1", "plate_1.gcode") == (job / "plate_1.gcode").resolve()
-    assert layers.resolve_plate(tmp_path, "job-1", "note.gcode") is None
+    assert layers.resolve_plate(tmp_path, "job-1", "0") == (job / "plate_1.gcode").resolve()
+    assert layers.resolve_plate(tmp_path, "job-1", "1") is None
+    assert layers.resolve_plate(tmp_path, "job-1", "plate_1.gcode") is None
     assert layers.resolve_plate(tmp_path, "job-1", "../secret.gcode") is None
-    assert layers.resolve_plate(tmp_path, "..", "secret.gcode") is None
+    assert layers.resolve_plate(tmp_path, "..", "0") is None
     rows = layers.list_plates(tmp_path)
-    assert rows == [{"job_id": "job-1", "file": "plate_1.gcode", "title": "Duplo swing"}]
+    assert rows == [{"job_id": "job-1", "index": 0, "file": "plate_1.gcode", "title": "Duplo swing"}]
     code, _ctype, body = layers.respond(tmp_path, "job-1/note.gcode", "0")
     assert code == 404
-    code, ctype, page = layers.respond(tmp_path, "job-1/plate_1.gcode", "0")
+    code, ctype, page = layers.respond(tmp_path, "job-1/0", "0")
     assert code == 200 and ctype.startswith("text/html")
     assert "Layer 1 of 2" in page and "#3d8bfd" in page
     code, _ctype, bad = layers.respond(tmp_path, "", "0")
     assert code == 200 and "Duplo swing" in bad
+
+
+def test_every_plate_of_a_job_is_listed_and_opens_by_position(tmp_path):
+    # Each plate is plate_1.gcode in its own folder, so the name cannot tell them apart.
+    job = tmp_path / "job-1"
+    for name in ("a", "b", "c"):
+        (job / name).mkdir(parents=True)
+        (job / name / "plate_1.gcode").write_text(PLATE, encoding="utf-8")
+    (job / "a" / "plate_1.gcode").write_text(PLATE + "G1 X9 Y9 E1\n", encoding="utf-8")
+    (job / "JOB.json").write_text(json.dumps({
+        "title": "Trio", "gcode": "a/plate_1.gcode",
+        "derived_plates": [{"gcode": "b/plate_1.gcode"}, {"gcode": "c/plate_1.gcode"},
+                           {"gcode": "../outside/plate_1.gcode"}]}), encoding="utf-8")
+    rows = layers.list_plates(tmp_path)
+    assert [(r["index"], r["file"]) for r in rows] == [
+        (0, "a/plate_1.gcode"), (1, "b/plate_1.gcode"), (2, "c/plate_1.gcode")]
+    for row in rows:
+        assert layers.resolve_plate(tmp_path, "job-1", str(row["index"])) == (job / row["file"]).resolve()
+    assert layers.resolve_plate(tmp_path, "job-1", "3") is None
+    page = layers.respond(tmp_path, "", "0")[2]
+    assert "/layers/job-1/0" in page and "/layers/job-1/1" in page and "/layers/job-1/2" in page
 
 
 def test_server_serves_layers_and_a_disabled_webui_does_not_start(tmp_path):
@@ -132,7 +154,7 @@ def test_server_serves_layers_and_a_disabled_webui_does_not_start(tmp_path):
         assert status == 200 and 'href="/layers"' in body
         status, body = _get(port, "/layers")
         assert status == 200 and "Duplo swing" in body and "plate_1.gcode" in body
-        status, body = _get(port, "/layers/job-1/plate_1.gcode?layer=5")
+        status, body = _get(port, "/layers/job-1/0?layer=5")
         assert status == 200 and "Layer 2 of 2" in body and "<svg" in body
         status, body = _get(port, "/layers/job-1/../secret.gcode")
         assert status == 404

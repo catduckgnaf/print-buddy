@@ -120,7 +120,11 @@ When that G-code contains `EXCLUDE_OBJECT_DEFINE` names, the Moonraker
 start post lists them (`Objects still printing: ...`) and offers a cancel
 control. Choosing one object asks once. Confirm sends one Moonraker
 `EXCLUDE_OBJECT NAME=...` script for that name. The last remaining object
-uses the existing `/print-stop` confirm instead of an exclude. A file
+uses the existing `/print-stop` confirm instead of an exclude. Objects
+Klipper already excluded count as gone, so after one exclude the other
+of two is the last. Just before the send the printer is read again: the
+same file must still be printing or paused, or nothing is sent and the
+reply says the print changed. If that read fails, nothing is sent. A file
 without that metadata does not offer the control. A failed exclude is
 reported and is not described as cancelled. The camera watchdog does not
 exclude or stop a print. Bambu, Prusa, OctoPrint, and stock Flashforge

@@ -2889,6 +2889,8 @@ class Listener:
         No camera, a dark frame, or no queued plate: no offer and no invented bed.
         """
         from . import next_plate_offer
+        if self.state not in _AUTO_LIGHT_IDLE_STATES:
+            return
         if not next_plate_offer.due():
             return
         if not _vision_ready():

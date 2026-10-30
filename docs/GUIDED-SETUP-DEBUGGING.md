@@ -90,7 +90,10 @@ until `apply` at the review step.
    serial and the LAN-mode choice; a PrusaLink host; an Elegoo SDCP host (with the note that
    SDCP has no authentication at all); an OctoPrint URL; or a stock FlashForge host. Leaving
    the address blank (or choosing no LAN connection) adds the printer as an offline entry.
-4. **Secrets are never collected in chat.** Where the connection needs one, the step names
+4. **Secrets are never collected in chat.** (The one deliberate exception is a model-site login
+   token the operator chooses to paste; see
+   [Connecting a login-token site from chat](PROJECT-REFERENCE.md#connecting-a-login-token-site-from-chat).)
+   Where the connection needs one, the step names
    the environment variable to store it in — a per-printer name for Bambu Lab
    (`BAMBU_LAN_PASSWORD_<ID>`) and PrusaLink (`PRUSA_LINK_API_KEY_<ID>`), so each printer
    keeps its own secret — and you reply `stored` when it is saved in the `.env`, exactly

@@ -6,7 +6,8 @@ and it does not touch the chat confirm card. A file that is not G-code, or
 that has no extrusion, is an error and no drawing.
 
 Only a plate named by a job's own JOB.json, inside the archive, can be
-opened. Stage 2 overrides and a remote slicer desktop are out of scope.
+opened, addressed by its position in that job (0 is ``gcode``, then each
+derived plate), since every plate file has the same name. Stage 2 overrides and a remote slicer desktop are out of scope.
 """
 from __future__ import annotations
 
@@ -263,7 +264,7 @@ def render_list(rows) -> str:
         return _page("layers", "".join(parts))
     body = "".join(
         "<tr>"
-        f'<td><a href="/layers/{_esc(row["job_id"])}/{_esc(row["file"])}">{_esc(row["title"])}</a></td>'
+        f'<td><a href="/layers/{_esc(row["job_id"])}/{int(row["index"])}">{_esc(row["title"])}</a></td>'
         f"<td>{_esc(row['file'])}</td>"
         "</tr>"
         for row in rows)
@@ -319,14 +320,25 @@ def list_plates(archive: Path) -> list:
         if not isinstance(payload, dict):
             continue
         title = str(payload.get("title") or job_id)
-        names = []
-        for candidate in [payload.get("gcode")] + [row.get("gcode") for row in payload.get("derived_plates") or [] if isinstance(row, dict)]:
+        seen = set()
+        for index, candidate in enumerate(_candidates(payload)):
             path = _plate_path(job, candidate)
-            if path is None or path.name in names:
+            if path is None or path in seen:
                 continue
-            names.append(path.name)
-            rows.append({"job_id": job_id, "file": path.name, "title": title})
+            seen.add(path)
+            rows.append({"job_id": job_id, "index": index, "file": str(path.relative_to(job.parent.resolve())),
+                         "title": title})
     return rows
+
+
+def _candidates(payload) -> list:
+    """A job's plate G-code entries in order: ``gcode``, then each derived plate's.
+
+    A plate's position here is its address: every plate is named plate_1.gcode
+    in its own folder, so names do not tell plates apart.
+    """
+    return [payload.get("gcode")] + [row.get("gcode") for row in payload.get("derived_plates") or []
+                                     if isinstance(row, dict)]
 
 
 def _plate_path(job: Path, gcode) -> Path | None:
@@ -347,9 +359,9 @@ def _plate_path(job: Path, gcode) -> Path | None:
     return path
 
 
-def resolve_plate(archive: Path, job_id: str, filename: str) -> Path | None:
-    """The plate file, or None when the path is not that job's own G-code."""
-    if not _safe_job(job_id) or not _PLATE_NAME.fullmatch(str(filename or "")):
+def resolve_plate(archive: Path, job_id: str, index) -> Path | None:
+    """The job's ``index``-th plate file, or None when it is not that job's own G-code."""
+    if not _safe_job(job_id) or not re.fullmatch(r"[0-9]{1,4}", str(index or "")):
         return None
     root = Path(archive).resolve()
     job = (root / job_id / "JOB.json")
@@ -365,15 +377,10 @@ def resolve_plate(archive: Path, job_id: str, filename: str) -> Path | None:
         return None
     if not isinstance(payload, dict):
         return None
-    candidates = [payload.get("gcode")]
-    for row in payload.get("derived_plates") or []:
-        if isinstance(row, dict):
-            candidates.append(row.get("gcode"))
-    for candidate in candidates:
-        path = _plate_path(job, candidate)
-        if path is not None and path.name == filename:
-            return path
-    return None
+    candidates = _candidates(payload)
+    if int(index) >= len(candidates):
+        return None
+    return _plate_path(job, candidates[int(index)])
 
 
 def load_plate(path: Path) -> dict:
@@ -388,7 +395,7 @@ def load_plate(path: Path) -> dict:
 
 
 def respond(archive: Path, rest: str, layer) -> tuple:
-    """``(status, content_type, body)`` for ``GET /layers`` and ``GET /layers/<job>/<file>``."""
+    """``(status, content_type, body)`` for ``GET /layers`` and ``GET /layers/<job>/<n>``."""
     if not rest:
         return 200, "text/html; charset=utf-8", render_list(list_plates(archive))
     segments = [segment for segment in rest.split("/") if segment != ""]

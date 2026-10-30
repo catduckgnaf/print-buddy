@@ -29,7 +29,7 @@ GOOD = {
     'thingiverse': 'a1b2c3d4e5f60718293a4b5c6d7e8f90',
     'cults3d': 'Penguin:abcdef0123456789abcdef',
     'crealitycloud': '1234567890:4f2a9c8b7d6e5f40312a',
-    'thangs': 'tok-' + 'b' * 30,
+    'thangs': 'eyJhbGciOiJIUzI1NiJ9.' + 'b' * 30 + '.sig',
     'nexprint': 'tok-' + 'c' * 30,
     'myminifactory': 'mmf-' + 'd' * 30,
 }
@@ -83,7 +83,7 @@ def test_crealitycloud_one_cookie_alone_is_refused():
 
 
 def test_single_cookie_sites_accept_a_cookie_string():
-    assert accept_pasted('thangs', 'accessToken=' + 'x' * 30)[0] == 'x' * 30
+    assert accept_pasted('thangs', 'accessToken=' + GOOD['thangs'])[0] == GOOD['thangs']
     assert accept_pasted('nexprint', 'Cookie: auth_token=' + 'y' * 30 + '; theme=dark')[0] == 'y' * 30
     assert accept_pasted('makerworld', 'token=' + GOOD['makerworld'])[0] == GOOD['makerworld']
 
@@ -93,6 +93,35 @@ def test_nexprint_account_info_json_and_mmf_redirect_url():
     assert accept_pasted('nexprint', info) == ('n' * 30, '')
     url = 'https://github.com/catduckgnaf/print-handy#access_token=' + 'm' * 30 + '&token_type=bearer'
     assert accept_pasted('myminifactory', url) == ('m' * 30, '')
+
+
+@pytest.mark.parametrize('site', sorted(GOOD))
+@pytest.mark.parametrize('text', [
+    'https://thangs.com/designer/foo/3d-model/bar-12345',
+    'www.makerworld.com.example.org',
+    '/home/user/models/benchy-final-v2.stl',
+    'C:\\Users\\me\\models\\benchy-final-v2.stl',
+    'please print the thing from https://makerworld.com/en/models/1234',
+])
+def test_a_link_or_path_is_never_taken_for_a_token(site, text):
+    token, problem = accept_pasted(site, text)
+    assert token == '' and 'Nothing was saved' in problem
+
+
+@pytest.mark.parametrize('site', sorted(GOOD))
+def test_the_connect_reply_refuses_a_link_and_writes_nothing(home, site):
+    parse = prepared_intake._connect_reply(site)
+    for text in ('https://thangs.com/designer/foo/3d-model/bar-12345',
+                 'can you print the model I posted earlier please', '/tmp/some/long/path/model.stl'):
+        with pytest.raises(ValueError):
+            parse(text)
+    assert not token_path(site).exists()
+    assert link_intake.take_secret_reply() is False
+
+
+def test_thangs_wants_a_jwt():
+    assert accept_pasted('thangs', 'tok-' + 'c' * 30)[0] == ''
+    assert accept_pasted('thangs', 'api.thangs.com.example.org.au')[0] == ''
 
 
 def test_cults_and_thingiverse_shapes():

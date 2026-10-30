@@ -136,7 +136,9 @@ Two boundaries to know:
   not written back to Spoolman. Spoolman keeps the mapping confirmed in
   chat, and the confirm card says so when this job will be sent as
   `.gcode.3mf`. A plain `.gcode` card does not get that line. `auto` with
-  an unknown ZMod version stays on `.gcode`, so it does not either.
+  an unknown ZMod version stays on `.gcode`, so it does not either. With
+  `auto`, the card reads the ZMod version the way delivery does, so ZMod
+  1.7.5 or newer gets the line. A failed read counts as unknown.
   No recorded fixture shows Moonraker or Klipper reporting the slot map
   the job used after start. `zmod_color` is slot presence, and `SET_ZCOLOR`
   is the start command, not a read-back. This confirm sentence is the whole

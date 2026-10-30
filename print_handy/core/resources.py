@@ -82,7 +82,7 @@ def thread_budget(environ=None, root=None):
     quota = cgroup_cpu_quota(root)
     if quota is None:
         return None
-    return max(1, math.ceil(quota))
+    return max(1, min(math.ceil(quota), len(affinity_cpus())))
 
 
 def affinity_cpus():

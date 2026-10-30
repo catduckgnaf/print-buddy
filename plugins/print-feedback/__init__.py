@@ -7,6 +7,7 @@ the Print Handy package: print_handy.hermes (listener helpers, print control) an
 import asyncio
 import contextlib
 import copy
+import functools
 import json
 import logging
 import os
@@ -3581,8 +3582,14 @@ async def exclude_dispatch(event, gateway, **kwargs):
     _seen[key] = time.monotonic()
     live_key = gateway._session_key_for_source(source)
     try:
-        st = await asyncio.to_thread(print_stop.status, **_pkw(pid))
-        if st.get('state') not in print_stop.ACTIVE:
+        live = functools.partial(exclude_chat.read_live, pid)
+        try:
+            st = await asyncio.to_thread(live)
+        except Exception:
+            st = None
+        if st is None:
+            message = 'Could not check the printer, so no exclude was offered. Nothing sent.'
+        elif st.get('state') not in print_stop.ACTIVE:
             message = f"Nothing to exclude: printer is {st.get('state')}. Nothing sent."
         else:
             _job, plate = await asyncio.to_thread(summary.find_job, st.get('filename') or '')
@@ -3592,7 +3599,8 @@ async def exclude_dispatch(event, gateway, **kwargs):
             except OSError:
                 gcode = ''
             names = object_names(gcode)
-            plan = exclude_plan(names, target, confirmed=False)
+            left = exclude_chat.still_printing(names, st)
+            plan = exclude_plan(names, target, confirmed=False, remaining=left)
             if plan['action'] == 'refuse' or not names:
                 message = plan['reason'] + ' Nothing sent.'
             elif plan['action'] == 'cancel_print':
@@ -3619,7 +3627,8 @@ async def exclude_dispatch(event, gateway, **kwargs):
                                  timeout=30, **_pkw(pid))
                     result = await asyncio.to_thread(
                         exclude_chat.confirm_send,
-                        {'kind': 'exclude-go', 'name': target, 'names': names}, sender)
+                        {'kind': 'exclude-go', 'name': target, 'names': names,
+                         'filename': st.get('filename') or ''}, sender, live)
                     message = result['text']
     except Exception as exc:
         logger.exception('exclude failed')
@@ -3700,7 +3709,7 @@ async def print_stop_dispatch(event, gateway, **kwargs):
         else:
             from print_handy.core.prompts import gateway as _prompts
             cm = _prompts()
-            name = summary.format_event('started', st['filename']).splitlines()[0].split(': ', 1)[-1]
+            name = summary.format_event('started', st['filename'], emit=False).splitlines()[0].split(': ', 1)[-1]
             where = print_stop.where_text(st)
             question = f"Stop {name} ({st['state']}{', ' + where if where else ''})? This cancels the print."
             choices = [print_stop.STOP_LABEL, print_stop.KEEP_LABEL]
@@ -3828,7 +3837,7 @@ async def print_resume_dispatch(event, gateway, **kwargs):
         if not pc.resumable(st):
             message = pc.not_resumable_text(st)
         else:
-            name = summary.format_event('started', st['filename']).splitlines()[0].split(': ', 1)[-1]
+            name = summary.format_event('started', st['filename'], emit=False).splitlines()[0].split(': ', 1)[-1]
             where = pc.where_text(st)
             answer = await _confirm(adapter, source, metadata, 'print-resume',
                                     f"Resume {name}{' (' + where + ')' if where else ''}? Make sure nothing is in the way.",
@@ -5047,6 +5056,9 @@ def alert_button_handlers(bot, adapter):
         if not alert:
             await interaction.response.send_message('That offer is old or was already used. Nothing started.', ephemeral=True)
             return
+        from print_handy.hermes import next_plate_offer
+        with contextlib.suppress(Exception):
+            await asyncio.to_thread(next_plate_offer.clear)
         await interaction.response.edit_message(content='Left the queue alone. Nothing started.', view=None)
 
     async def handle_plate_go(interaction, aid):
@@ -5164,16 +5176,22 @@ def alert_button_handlers(bot, adapter):
         timeout = (globals().get('_config').safety_confirm_timeout_s() if globals().get('_config') else 600)
         if action == 'pick':
             alert = await asyncio.to_thread(pab.peek, aid)
+            if not isinstance(alert, dict):
+                await interaction.response.send_message('That object list is old or was already used. Nothing sent.', ephemeral=True)
+                return
             try:
                 index = (getattr(interaction, 'data', {}) or {}).get('values', [None])[0]
             except (TypeError, AttributeError):
                 index = None
-            step = exclude_chat.prepare(alert, index)
+            # The live read is two printer calls: acknowledge first, inside Discord's 3 s window.
+            await interaction.response.defer()
+            step = await asyncio.to_thread(
+                exclude_chat.prepare, alert, index, functools.partial(exclude_chat.read_live, alert.get('printer_id') or None))
             if step['step'] in ('stale', 'refuse'):
-                await interaction.response.send_message(step['text'], ephemeral=True)
+                await interaction.followup.send(step['text'], ephemeral=True)
                 return
             if not await asyncio.to_thread(pab.take, aid):
-                await interaction.response.send_message('That object list is old or was already used. Nothing sent.', ephemeral=True)
+                await interaction.followup.send('That object list is old or was already used. Nothing sent.', ephemeral=True)
                 return
             if step['step'] == 'cancel_print':
                 new_id = await asyncio.to_thread(
@@ -5190,7 +5208,7 @@ def alert_button_handlers(bot, adapter):
             for label, act, style in labels:
                 view.add_item(discord.ui.Button(
                     label=label[:80], style=style, custom_id=f'{exclude_chat.PREFIX}:{act}:{new_id}'))
-            await interaction.response.edit_message(content=step['text'], view=view)
+            await interaction.edit_original_response(content=step['text'], view=view)
             return
         alert = await asyncio.to_thread(pab.take, aid)
         if not alert:
@@ -5204,12 +5222,13 @@ def alert_button_handlers(bot, adapter):
             if alert.get('kind') != 'exclude-cancel':
                 await interaction.response.edit_message(content='That confirm is not a stop. Nothing sent.', view=None)
                 return
+            await interaction.response.defer()
             try:
                 _sent, message = await asyncio.to_thread(print_stop.cancel, alert.get('filename') or '', printer_id=printer_id)
             except Exception as exc:
                 logger.exception('exclude stop failed')
                 message = f'Stop was not sent. The print was not cancelled. {exc}'
-            await interaction.response.edit_message(content=message, view=None)
+            await interaction.edit_original_response(content=message, view=None)
             return
         if action != 'go' or alert.get('kind') != 'exclude-go':
             await interaction.response.edit_message(content='That confirm is not an exclude. Nothing sent.', view=None)
@@ -5218,8 +5237,10 @@ def alert_button_handlers(bot, adapter):
         def sender(script):
             pc._send('/printer/gcode/script', method='POST', data={'script': script},
                      timeout=30, printer_id=printer_id)
-        result = await asyncio.to_thread(exclude_chat.confirm_send, alert, sender)
-        await interaction.response.edit_message(content=result['text'], view=None)
+        await interaction.response.defer()
+        result = await asyncio.to_thread(
+            exclude_chat.confirm_send, alert, sender, functools.partial(exclude_chat.read_live, printer_id))
+        await interaction.edit_original_response(content=result['text'], view=None)
 
     async def on_interaction(interaction):
         data = getattr(interaction, 'data', None) or {}

@@ -53,11 +53,11 @@ def test_printer_registry_matches_code_profiles(registry):
         assert entry.max_height_mm == float(defaults["max_print_height_mm"])
         if entry.tools:
             # Toolhead machines record tools, not IFS slots: the model's tool_count
-            # is the authority and its ifs_slots stays 1 (see #301 stage 2).
+            # is the authority and its filament_slots stays 1 (see #301 stage 2).
             assert entry.tools == int(defaults["tool_count"])
             assert entry.filament_slots == 0
         else:
-            assert entry.filament_slots == int(defaults["ifs_slots"])
+            assert entry.filament_slots == int(defaults["filament_slots"])
         # The color architecture (issue #656): registry and MODEL agree, and the
         # recorded counts match the class.
         assert entry.color_system == model.color_system

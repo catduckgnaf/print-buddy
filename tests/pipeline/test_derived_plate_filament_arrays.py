@@ -34,7 +34,7 @@ def export(tmp_path, extruder, slot_colors):
     source_with_arrays(source)
     state = json.loads(STATE.read_text())
     manifest = source_colors.inventory(source)
-    white = model_job.resolve_filament_selection(state, dict(state["ifs_slots"]["1"], slot=1))
+    white = model_job.resolve_filament_selection(state, dict(state["filament_slots"]["1"], slot=1))
     decisions = {"schema": "part_slots_v1", "mode": "per_part", "source_sha256": manifest["source_sha256"],
                  "choices": {row["key"]: white for row in source_colors.canonical_prompts(manifest)}}
     keys = [p["key"] for p in manifest["parts"] if p["source_extruder"] == extruder]
@@ -48,7 +48,7 @@ def export(tmp_path, extruder, slot_colors):
 @pytest.mark.parametrize("colored", [True, False])
 def test_every_per_filament_array_matches_the_one_filament_the_plate_uses(tmp_path, extruder, colored):
     state = json.loads(STATE.read_text())
-    project = export(tmp_path, extruder, state["ifs_slots"] if colored else None)
+    project = export(tmp_path, extruder, state["filament_slots"] if colored else None)
     assert len(project["filament_colour"]) == 1
     for key in ("filament_type", "filament_is_support", "filament_settings_id", "nozzle_temperature"):
         assert len(project[key]) == 1, key

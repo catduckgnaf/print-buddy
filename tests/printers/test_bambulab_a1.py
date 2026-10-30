@@ -61,7 +61,7 @@ def template(key, name="machine"):
 
 def state():
     st = copy.deepcopy(json.loads(STATE.read_text()))
-    st.update(printer="Bambu Lab A1", moonraker_url="", ifs_slots={}, bed_mm=[256, 256], max_print_height_mm=256)
+    st.update(printer="Bambu Lab A1", moonraker_url="", filament_slots={}, bed_mm=[256, 256], max_print_height_mm=256)
     st["nozzle"]["type"] = "stainless_steel"
     return st
 
@@ -175,8 +175,8 @@ def test_settings_follow_the_vendor_and_the_printer():
         config_for(A1, nozzle_diameter_mm=0.6)
     with pytest.raises(settings.SettingsError, match="nozzle_type 'brass' is not supported"):
         config_for(A1, nozzle_type="brass")
-    with pytest.raises(settings.SettingsError, match="ifs_slots must be 1"):
-        config_for(A1, ifs_slots=4)
+    with pytest.raises(settings.SettingsError, match="filament_slots must be 1"):
+        config_for(A1, filament_slots=4)
     with pytest.raises(settings.SettingsError, match="must be empty for model 'bambulab.a1'"):
         settings.load(local=False, environ={"PRINT_HANDY__PRINTER__MODEL": A1,
                                            "PRINT_HANDY__SERVICES__MOONRAKER_URL": "http://printer.test:7125"})
@@ -499,9 +499,9 @@ def test_unsafe_or_ambiguous_toolpath_motion_is_refused(body, message):
 def test_other_printers_keep_the_whole_file_bounds_check(tmp_path):
     text = tmp_path / "plate_1.gcode"
     text.write_text(a1_gcode())
-    r = slice_guard.post_slice(text, tool_slots={0: 1}, ifs_slots=1, bed=(256, 256), templates=adapter_for(A1).templates_dir())
+    r = slice_guard.post_slice(text, tool_slots={0: 1}, filament_slots=1, bed=(256, 256), templates=adapter_for(A1).templates_dir())
     assert any("off the 256x256 mm bed at X-" in b for b in r.blocked)  # no envelope: old behaviour
-    r = slice_guard.post_slice(text, tool_slots={0: 1}, ifs_slots=1, bed=(256, 256), templates=adapter_for(A1).templates_dir(),
+    r = slice_guard.post_slice(text, tool_slots={0: 1}, filament_slots=1, bed=(256, 256), templates=adapter_for(A1).templates_dir(),
                                envelope=adapter_for(A1).motion_envelope_mm)
     assert r.status == "ok", r.as_dict()
 

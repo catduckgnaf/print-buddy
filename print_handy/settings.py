@@ -8,6 +8,9 @@ Load order, later wins key by key:
   4. Environment: PRINT_HANDY__SECTION__KEY, or a legacy name from LEGACY_ENV. Lists stay file-only
      except ENV_LISTS, which take a comma- or space-separated value (#270).
 
+Renamed keys (KEY_ALIASES, #672) accept their old spelling in every layer — file and
+environment — and are stored under the current name; the old spelling is deprecated.
+
 The model comes from environment, selected local configuration, then home configuration. [printer] model
 is the full "vendor.printer" key, as every existing config has it, or the printer part with [printer]
 vendor (printers.resolve_key); either way it is stored as the full key.
@@ -85,6 +88,30 @@ LEGACY_ENV = {
     "PRINT_HANDY_ARCHIVE": ("paths", "archive"),
     "PRINT_RECORDS_VAULT": ("paths", "records_vault"),
 }
+# Setting keys renamed since installs in the wild were written (#672). The loader
+# accepts the old spelling — in a config file and as PRINT_HANDY__SECTION__KEY —
+# and stores the value under the current name; within one layer the current name
+# wins when both are set. The old spelling is a deprecated alias, not a second
+# variable: it never enters the defaults tree or OPTIONAL_KEYS. ifs_slots became
+# filament_slots once color_system (#656) carried the meaning the IFS name
+# implied; the printer registry had always called the same fact filament_slots.
+KEY_ALIASES = {("printer", "ifs_slots"): ("printer", "filament_slots")}
+
+
+def _apply_key_aliases(layer):
+    """Fold deprecated key spellings in one parsed config layer into their current names."""
+    for (old_section, old_key), (new_section, new_key) in KEY_ALIASES.items():
+        values = layer.get(old_section)
+        if not isinstance(values, dict) or old_key not in values:
+            continue
+        target = layer.setdefault(new_section, {})
+        if new_key in target:
+            del values[old_key]  # both spellings in one layer: the current name wins
+        else:
+            target[new_key] = values.pop(old_key)
+    return layer
+
+
 # Sections whose keys are names you choose, not a fixed set.
 OPEN_SECTIONS = {"cold_pull", "nozzle_temp_offsets", "material_temps"}
 # Keys that can be optionally specified even if absent from base home.toml.
@@ -262,6 +289,15 @@ def _split_list(raw):
 
 def _from_env(home, environ, declared=None):
     out = {}
+    # Deprecated environment spellings (#672, KEY_ALIASES): when both spellings of
+    # a renamed key are set, the current name wins, so the old one is dropped
+    # before anything reads it. The surviving old spelling is folded onto the
+    # current key where PRINT_HANDY__ names are parsed below.
+    for (old_section, old_key), (new_section, new_key) in KEY_ALIASES.items():
+        old_name = f"PRINT_HANDY__{old_section.upper()}__{old_key.upper()}"
+        new_name = f"PRINT_HANDY__{new_section.upper()}__{new_key.upper()}"
+        if old_name in environ and new_name in environ:
+            environ = {name: raw for name, raw in environ.items() if name != old_name}
     # Indexed [[printers]] overrides (#333): `declared` is the roster the config files declare.
     # The environment may retarget scalar keys of a declared entry, never create one — the same
     # refusal _from_env gives an unknown section/key, applied to entry ids.
@@ -294,6 +330,7 @@ def _from_env(home, environ, declared=None):
             if len(parts) != 2:
                 raise SettingsError(f"${name} must look like PRINT_HANDY__SECTION__KEY")
             section, key = parts
+            section, key = KEY_ALIASES.get((section, key), (section, key))
         elif name in LEGACY_ENV:
             section, key = LEGACY_ENV[name]
         else:
@@ -1410,7 +1447,7 @@ def validate(data):
     data["printer"]["bed_mm"] = [float(v) for v in bed]
     for key in ("max_print_height_mm", "nozzle_diameter_mm"):
         data["printer"][key] = _positive(data, "printer", key)
-    data["printer"]["ifs_slots"] = _positive(data, "printer", "ifs_slots", int)
+    data["printer"]["filament_slots"] = _positive(data, "printer", "filament_slots", int)
     for name, raw_offset in data.get("nozzle_temp_offsets", {}).items():
         if name not in ("brass", "hardened_steel", "stainless_steel", "ruby", "tungsten_carbide", "diamond"):
             raise SettingsError(f"[nozzle_temp_offsets] unknown nozzle type {name!r}")
@@ -1435,15 +1472,15 @@ def validate(data):
             supported_types = ", ".join(sorted(model.supported_nozzle_types))
             raise SettingsError(f"[printer] nozzle_type {nozzle_type!r} is not supported by model {key!r} (supported: {supported_types})")
         data["printer"]["nozzle_type"] = norm_type
-    if model.color_system != "multi_slot" and data["printer"]["ifs_slots"] != 1:
+    if model.color_system != "multi_slot" and data["printer"]["filament_slots"] != 1:
         # The class carries this now: both AD5X profiles are multi_slot (one tool,
         # several IFS bays), so no per-model exception is needed here. Stock
         # Flashforge keeps one tool and still has four physical IFS bays;
         # occupancy is checked at print start; this is not a multicolor profile.
-        raise SettingsError(f"[printer] ifs_slots must be 1 for model {key!r} (single extruder)")
+        raise SettingsError(f"[printer] filament_slots must be 1 for model {key!r} (single extruder)")
     if "tool_count" in data["printer"]:
         # Independent toolheads (a tool changer) are tools, not IFS slots: the count
-        # is only meaningful on a multi-tool model, where ifs_slots still stays 1.
+        # is only meaningful on a multi-tool model, where filament_slots still stays 1.
         data["printer"]["tool_count"] = _positive(data, "printer", "tool_count", int)
         if data["printer"]["tool_count"] != 1 and model.color_system != "multi_tool":
             raise SettingsError(f"[printer] tool_count must be 1 for model {key!r} (single tool)")
@@ -1530,7 +1567,7 @@ def load(home=None, local=None, environ=None):
     environ = os.environ if environ is None else environ
     if home is None:
         home = HOME if HOME.is_file() else LEGACY_HOME
-    home_data = _read(home)
+    home_data = _apply_key_aliases(_read(home))
     if local is None:
         env = environ.get("PRINT_HANDY_CONFIG")
         if env:
@@ -1541,7 +1578,7 @@ def load(home=None, local=None, environ=None):
             local = LOCAL
         elif LEGACY_LOCAL.is_file():
             local = LEGACY_LOCAL
-    extra = _read(local) if local else {}
+    extra = _apply_key_aliases(_read(local)) if local else {}
     declared = _merge(home_data, extra).get("printers")
     if declared is not None:
         # A declared roster replaces the legacy per-printer locations; setting both is refused

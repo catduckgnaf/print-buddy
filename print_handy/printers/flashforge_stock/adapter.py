@@ -24,7 +24,7 @@ class StockFlashforgeAdapter(PrinterAdapter):
 
     @property
     def slot_count(self):
-        return int(self.config["printer"]["ifs_slots"])
+        return int(self.config["printer"]["filament_slots"])
 
     def client(self):
         """The LAN client. Missing host or credentials raise before any socket opens."""

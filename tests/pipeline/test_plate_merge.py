@@ -45,7 +45,7 @@ def _source(path, sizes, plates, notes=None):
 def _job(tmp_path, source, plate_mode=None):
     state = json.loads(STATE.read_text())
     manifest = source_colors.inventory(source)
-    white = model_job.resolve_filament_selection(state, dict(state['ifs_slots']['1'], slot=1))
+    white = model_job.resolve_filament_selection(state, dict(state['filament_slots']['1'], slot=1))
     job = {'downloaded_file': str(source), 'audit': {'plates': len(set(re.findall(r'plate_(\d+)\.png', ' '.join(zipfile.ZipFile(source).namelist()))))},
            'color_decisions': {'schema': 'part_slots_v1', 'mode': 'single_color', 'source_sha256': manifest['source_sha256'], 'selection': white}}
     if plate_mode:
@@ -64,7 +64,7 @@ def _fake_slice(estimate='2h 10m 0s'):
         with zipfile.ZipFile(source) as archive:
             model = archive.read('3D/3dmodel.model').decode()
         printable = re.findall(r'<item objectid="(\d+)"[^>]*printable="1"', model)
-        slot = state['ifs_slots'][str(filament_slot)]
+        slot = state['filament_slots'][str(filament_slot)]
         out = folder / 'plate_1.gcode'
         labels = ''.join(f'; printing object Part {o} id:{i} copy 0\n' for i, o in enumerate(printable))
         out.write_text(f'; filament_colour = {slot["hex"]}\n; nozzle_diameter = 0.4\n; estimated printing time (normal mode) = {estimate}\n'
@@ -189,7 +189,7 @@ def test_missing_object_in_merged_output_is_refused(tmp_path, monkeypatch):
 def _two_slot_decisions(manifest):
     """Parts 1 and 3 print in slot 1, part 2 in slot 2 (a real multi-slot source)."""
     state = json.loads(STATE.read_text())
-    sel = {s: model_job.resolve_filament_selection(state, dict(state['ifs_slots'][s], slot=int(s))) for s in ('1', '2')}
+    sel = {s: model_job.resolve_filament_selection(state, dict(state['filament_slots'][s], slot=int(s))) for s in ('1', '2')}
     choices = {}
     for part in manifest['parts']:
         choices['part:' + part['key']] = sel['2'] if part['object_id'] == '2' else sel['1']
@@ -686,7 +686,7 @@ def test_multi_slot_yawed_merge_slices_with_the_recorded_turn(tmp_path, monkeypa
         out = folder / 'plate_1.gcode'
         labels = ''.join(f'; printing object Part {p["object_id"]} id:{i} copy 0\n'
                          for i, p in enumerate(manifest['parts']))
-        slot = state['ifs_slots']['1']
+        slot = state['filament_slots']['1']
         out.write_text(f'; filament_colour = {slot["hex"]}\n; nozzle_diameter = 0.4\n'
                        '; estimated printing time (normal mode) = 2h 0m 0s\n'
                        f'M190 S{state["temps_c"]["bed"]}\nM104 S{state["temps_c"]["nozzle"]} T0\n'

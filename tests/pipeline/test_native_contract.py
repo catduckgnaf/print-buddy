@@ -77,7 +77,7 @@ def test_derived_plate_uses_named_slot_not_loaded_spool(tmp_path):
         archive.writestr('3D/3dmodel.model', '<model/>')
     st = state()
     import io, urllib.request
-    spool = io.BytesIO(json.dumps({'archived': False, 'filament': {'material': st['ifs_slots']['1']['material']}}).encode())
+    spool = io.BytesIO(json.dumps({'archived': False, 'filament': {'material': st['filament_slots']['1']['material']}}).encode())
     with patch.object(adapter.subprocess, 'run', side_effect=fake_slice), \
          patch.object(urllib.request, 'urlopen', return_value=spool):
         adapter.slice_model(source, tmp_path / 'out', st, preserve_layout=True, filament_slot=1)
@@ -92,7 +92,7 @@ def test_derived_plate_records_explicit_t0_slot(tmp_path):
         archive.writestr('Metadata/project_settings.config', '{\n  "filament_colour": [\n    "#FFFFFF"\n  ]\n}\n')
         archive.writestr('3D/3dmodel.model', '<model/>')
     st = state()
-    slot = st['ifs_slots']['2']
+    slot = st['filament_slots']['2']
     import io, urllib.request
     spool = io.BytesIO(json.dumps({'archived': False, 'filament': {'material': slot['material']}}).encode())
     with patch.object(adapter.subprocess, 'run', side_effect=fake_slice), \

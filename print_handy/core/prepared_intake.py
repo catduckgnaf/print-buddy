@@ -24,7 +24,7 @@ from .. import diagnostics, logs, printers, settings
 from . import _external, delivery, owned_worker, split_fit
 
 BED = settings.current()['printer']['bed_mm']
-IFS_SLOTS = settings.current()['printer']['ifs_slots']
+FILAMENT_SLOTS = settings.current()['printer']['filament_slots']
 print_summary = _external.lazy('discord_print_summary')
 print_next = _external.lazy('print_next')
 from .link_intake import ask, model_link, has_duration_question  # noqa: E402

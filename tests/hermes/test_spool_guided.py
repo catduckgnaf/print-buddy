@@ -41,7 +41,7 @@ SPOOLS = [
     {"id": 12, "remaining_weight": 1000.0, "location": "IFS Slot 2",
      "filament": {"name": "Red", "material": "PETG"}},
 ]
-STATE = {"ifs_slots": {"2": {"spoolman_id": 12, "name": "Red PETG"}}}
+STATE = {"filament_slots": {"2": {"spoolman_id": 12, "name": "Red PETG"}}}
 
 
 class FakeSpoolman:
@@ -93,7 +93,7 @@ def _bind_harness(tmp_path):
     state = tmp_path / "hw.json"
     state.write_text(json.dumps({
         "spool": {"spoolman_id": 3, "name": "Pink PLA", "material": "PLA", "density": 1.24, "diameter_mm": 1.75},
-        "ifs_slots": {"2": {"spoolman_id": 3, "material": "PLA", "color": "pink"}}}))
+        "filament_slots": {"2": {"spoolman_id": 3, "material": "PLA", "color": "pink"}}}))
     spools = {
         3: {"id": 3, "location": "IFS Slot 2", "filament": {"name": "Pink PLA", "material": "PLA", "color_hex": "F95D73"}},
         7: {"id": 7, "location": "Shelf", "filament": {"name": "Coffee PLA+", "material": "PLA+", "color_hex": "6F4E37"}},

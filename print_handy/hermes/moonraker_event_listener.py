@@ -557,7 +557,7 @@ def recovery_slot(filename):
         state = json.loads(HARDWARE_STATE.read_text())
     except (OSError, ValueError):
         return None, None
-    slots = state.get("ifs_slots") or {}
+    slots = state.get("filament_slots") or {}
     active = state.get("active_slot")
     slot = active if active in (1, 2, 3, 4) else None
     record = slots.get(str(slot)) if slot else None
@@ -2200,7 +2200,7 @@ def _mapped_spool(slot):
         state = json.loads(HARDWARE_STATE.read_text())
     except (OSError, ValueError):
         return None
-    return ((state.get("ifs_slots") or {}).get(str(slot)) or {}).get("spoolman_id")
+    return ((state.get("filament_slots") or {}).get(str(slot)) or {}).get("spoolman_id")
 
 
 def _maintenance_history_totals():
@@ -2334,7 +2334,7 @@ class Listener:
         if self.display_off == 1:
             return None, zmod_slot_presence(status)
         detail = await asyncio.to_thread(model_job.read_stock_detail, printer_state.load())
-        return detail, model_job.read_stock_ifs_slots_from_detail(detail)
+        return detail, model_job.read_stock_filament_slots_from_detail(detail)
 
     async def open_question(self, slot, cause):
         """Stop charging every spool, remember the question, and ask once. Nag loop repeats it."""

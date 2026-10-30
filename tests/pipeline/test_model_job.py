@@ -299,7 +299,7 @@ class SliceVerificationTests(unittest.TestCase):
             "z_offset_mm": 1.5,
             "bed_mm": [220, 220],
             "max_print_height_mm": 250,
-            "ifs_slots": {},
+            "filament_slots": {},
         }
         decisions = {"mode": "single_color", "schema": "part_slots_v1", "source_sha256": "0" * 64,
                      "selection": {"slot": 1, "color": "Black", "material": "PLA", "spoolman_id": 1}}
@@ -1246,7 +1246,7 @@ class EnglishAndPrintNowTests(unittest.TestCase):
                   "zmod_ifs": {"Ports": [False]},
                   "filament_switch_sensor head_switch_sensor": {"filament_detected": False}}
         with mock.patch.object(model_job, "request_json", return_value={"result": {"status": status}}), \
-             mock.patch.object(model_job, "read_stock_ifs_slots", side_effect=FileNotFoundError("404")):
+             mock.patch.object(model_job, "read_stock_filament_slots", side_effect=FileNotFoundError("404")):
             result = model_job.read_filament_telemetry({"moonraker_url": "http://test"})
         self.assertEqual(result["printer_mode"], "native")
         self.assertFalse(result["stock_detail_authoritative"])
@@ -1261,7 +1261,7 @@ class EnglishAndPrintNowTests(unittest.TestCase):
                   "print_stats": {"state": "standby"},
                   "filament_switch_sensor head_switch_sensor": {"filament_detected": False, "enabled": True}}
         with mock.patch.object(model_job, "request_json", return_value={"result": {"status": status}}), \
-             mock.patch.object(model_job, "read_stock_ifs_slots", return_value={1: True}):
+             mock.patch.object(model_job, "read_stock_filament_slots", return_value={1: True}):
             result = model_job.read_filament_telemetry({"moonraker_url": "http://test"})
         self.assertTrue(result["stock_detail_authoritative"])
         self.assertEqual(result["feeder_slots"][0]["hasFilament"], "true")
@@ -1284,7 +1284,7 @@ class EnglishAndPrintNowTests(unittest.TestCase):
         status = {"save_variables": {"variables": {"display_off": 1}},
                   "zmod_color": {"slots": [{"ID": "1", "hasFilament": False}]}}
         with mock.patch.object(model_job, "request_json", return_value={"result": {"status": status}}), \
-             mock.patch.object(model_job, "read_stock_ifs_slots") as stock:
+             mock.patch.object(model_job, "read_stock_filament_slots") as stock:
             result = model_job.read_filament_telemetry({"moonraker_url": "http://test"})
         stock.assert_not_called()
         self.assertEqual(result["printer_mode"], "screenless")
@@ -1648,7 +1648,7 @@ class StockIfsPresenceTests(unittest.TestCase):
 
     def _read(self, reply):
         with mock.patch.object(stock, "_stock_credentials", return_value=("SN", "CC")):
-            return model_job.read_stock_ifs_slots(self.STATE, post=lambda url, body: reply)
+            return model_job.read_stock_filament_slots(self.STATE, post=lambda url, body: reply)
 
     def test_stock_presence_overrides_hardcoded_false(self):
         stock = self._read(self._reply([{"slotId": 1, "hasFilament": True}, {"slotId": 2, "hasFilament": False},
@@ -1912,7 +1912,7 @@ class TaskT0b676477Tests(unittest.TestCase):
                  "extruder": {"temperature": 30.0}, "heater_bed": {"temperature": 22.0}}}}), \
              mock.patch.object(model_job, "read_filament_telemetry", return_value={"configured_palette": [
                  {"ID": "1", "Color": "white", "Material": "PLA"}, {"ID": "2", "Color": "pink", "Material": "PLA"}]}), \
-             mock.patch.object(model_job, "read_stock_ifs_slots", return_value={1: True, 2: False}):
+             mock.patch.object(model_job, "read_stock_filament_slots", return_value={1: True, 2: False}):
             snap = model_job.live_snapshot(st)
         self.assertEqual((snap["nozzle_c"], snap["bed_c"]), (30.0, 22.0))
         self.assertEqual([s["loaded"] for s in snap["slots"]], [True, False])
@@ -1941,7 +1941,7 @@ class TaskT0b676477Tests(unittest.TestCase):
 
 class SelectionConsistencyTests(unittest.TestCase):
     def state(self):
-        return {"spool": {"spoolman_id": 10}, "ifs_slots": {
+        return {"spool": {"spoolman_id": 10}, "filament_slots": {
             "1": {"spoolman_id": 10, "color": "white", "material": "PLA"},
             "2": {"spoolman_id": 11, "color": "pink", "material": "PLA"}}}
 
@@ -1982,7 +1982,7 @@ class SelectionConsistencyTests(unittest.TestCase):
 
     def verified_state(self):
         st = self.state()
-        for slot in st["ifs_slots"].values():
+        for slot in st["filament_slots"].values():
             slot["physical_color_verified"] = True
         return st
 
@@ -2146,7 +2146,7 @@ class AnnouncePrintNameTests(unittest.TestCase):
         self.assertEqual(http.call_args.kwargs["data"], {"script": 'SET_DISPLAY_TEXT MSG="Build Plate Cleaner"'})
 
     def test_appends_slot_colors(self):
-        st = {"moonraker_url": "http://m", "ifs_slots": {"1": {"color": "white"}, "4": {"color": "dark green"}}}
+        st = {"moonraker_url": "http://m", "filament_slots": {"1": {"color": "white"}, "4": {"color": "dark green"}}}
         with mock.patch.object(model_job, "request_json"):
             self.assertEqual(model_job._announce_print_name(st, {"title": "Cleaner"}, [4, 1]),
                              "Cleaner (Dark Green + White)")
@@ -2159,7 +2159,7 @@ class AnnouncePrintNameTests(unittest.TestCase):
             self.assertIsNone(model_job._announce_print_name({"moonraker_url": "http://m"}, {"title": "X"}))
 
     def test_numbers_multi_plate_parts(self):
-        st = {"moonraker_url": "http://m", "ifs_slots": {"2": {"color": "pink"}}}
+        st = {"moonraker_url": "http://m", "filament_slots": {"2": {"color": "pink"}}}
         job = {"title": "Holder", "derived_plates": [{"gcode": "/a/p1.gcode"}, {"gcode": "/b/p1.gcode"}]}
         with mock.patch.object(model_job, "request_json"):
             self.assertEqual(model_job._announce_print_name(st, job, [2], Path("/b/p1.gcode")), "Holder 2/2 (Pink)")

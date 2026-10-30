@@ -129,7 +129,7 @@ def test_slice_succeeds_with_spoolman_timeout(tmp_path, monkeypatch, capsys):
 
 def _sync_state():
     st = copy.deepcopy(model_job.printer_state.load())
-    for slot in st["ifs_slots"].values():
+    for slot in st["filament_slots"].values():
         slot["physical_color_verified"] = True
     return st
 
@@ -164,7 +164,7 @@ def test_print_start_with_spoolman_down_proceeds_and_records_pending(monkeypatch
     assert active[0] == 11  # the Moonraker accounting pointer still moved
     assert ("/server/spoolman/spool_id", {"spool_id": 11}) in calls
     assert saved["spool"]["spoolman_id"] == 11
-    assert saved["spool"]["material"] == st["ifs_slots"]["2"]["material"]  # slot record, not Spoolman
+    assert saved["spool"]["material"] == st["filament_slots"]["2"]["material"]  # slot record, not Spoolman
     assert capsys.readouterr().out.count(spoolman_client.UNAVAILABLE_NOTICE) == 1
 
 

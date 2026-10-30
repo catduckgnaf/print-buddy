@@ -15,7 +15,7 @@ class SpoolLifecycleReplacementTests(unittest.TestCase):
     def setUp(self):
         self.state = {
             "spoolman_url": "http://spoolman.test:7912",
-            "ifs_slots": {
+            "filament_slots": {
                 "1": {"slot": 1, "material": "PLA", "color": "white", "hex": "FFFFFF", "spoolman_id": 10, "physical_color_verified": True, "physical_loading_verified": True},
                 "2": {"slot": 2, "material": "PLA", "color": "pink", "hex": "FF69B4", "spoolman_id": 11, "physical_color_verified": True, "physical_loading_verified": True},
                 "3": {"slot": 3, "material": "PLA", "color": "black", "hex": "000000", "spoolman_id": 8, "physical_color_verified": True, "physical_loading_verified": True},
@@ -51,7 +51,7 @@ class SpoolLifecycleReplacementTests(unittest.TestCase):
         self.assertFalse(res["historical_mutation"])
         self.assertTrue(res["four_slot_boundary_enforced"])
 
-        slot3 = st["ifs_slots"]["3"]
+        slot3 = st["filament_slots"]["3"]
         self.assertEqual(slot3["slot"], 3)
         self.assertEqual(slot3["material"], "PLA")
         self.assertEqual(slot3["color"], "black")
@@ -62,9 +62,9 @@ class SpoolLifecycleReplacementTests(unittest.TestCase):
         self.assertEqual(slot3["weight_confidence"], "unknown")
 
         # Slots 1, 2, and 4 are untouched
-        self.assertEqual(st["ifs_slots"]["1"]["spoolman_id"], 10)
-        self.assertEqual(st["ifs_slots"]["2"]["spoolman_id"], 11)
-        self.assertEqual(st["ifs_slots"]["4"]["spoolman_id"], 12)
+        self.assertEqual(st["filament_slots"]["1"]["spoolman_id"], 10)
+        self.assertEqual(st["filament_slots"]["2"]["spoolman_id"], 11)
+        self.assertEqual(st["filament_slots"]["4"]["spoolman_id"], 12)
 
     def test_replaces_slot_with_grams_and_full_options(self):
         """Supports user estimate in grams or full assumed with nominal grams."""
@@ -81,7 +81,7 @@ class SpoolLifecycleReplacementTests(unittest.TestCase):
         )
         self.assertEqual(res_grams["remaining_grams"], 450.5)
         self.assertEqual(res_grams["quantity_status"], "user_estimate")
-        self.assertEqual(st["ifs_slots"]["1"]["weight_confidence"], "user_estimate")
+        self.assertEqual(st["filament_slots"]["1"]["weight_confidence"], "user_estimate")
 
         res_full_nominal = sl.replace_slot_spool(
             st,
@@ -110,7 +110,7 @@ class SpoolLifecycleReplacementTests(unittest.TestCase):
         )
         self.assertIsNone(res_full_omitted["remaining_grams"])
         self.assertEqual(res_full_omitted["quantity_status"], "unknown")
-        self.assertEqual(st["ifs_slots"]["2"]["weight_confidence"], "unknown")
+        self.assertEqual(st["filament_slots"]["2"]["weight_confidence"], "unknown")
 
     def test_rejects_out_of_bounds_slots(self):
         """Four-slot boundary strictly rejects slots not in 1..4."""
@@ -172,7 +172,7 @@ class SpoolLifecycleReconciliationTests(unittest.TestCase):
     def setUp(self):
         self.state = {
             "spoolman_url": "http://spoolman.test:7912",
-            "ifs_slots": {
+            "filament_slots": {
                 "1": {"slot": 1, "material": "PLA", "color": "white", "hex": "FFFFFF", "spoolman_id": 10, "physical_loading_verified": True},
                 "2": {"slot": 2, "material": "PLA", "color": "pink", "hex": "FF69B4", "spoolman_id": 11, "physical_loading_verified": True},
                 "3": {"slot": 3, "material": "PLA", "color": "black", "hex": "000000", "spoolman_id": 8, "physical_loading_verified": True},
@@ -287,7 +287,7 @@ class SpoolLifecycleReconciliationTests(unittest.TestCase):
     def test_reconcile_detects_out_of_range_and_unmapped_active_spool(self):
         """Detects legacy slot 5 definition and active spool unmapped to any 1-4 physical slot."""
         st = copy.deepcopy(self.state)
-        st["ifs_slots"]["5"] = {"slot": 5, "material": "PETG", "color": "blue", "spoolman_id": 99}
+        st["filament_slots"]["5"] = {"slot": 5, "material": "PETG", "color": "blue", "spoolman_id": 99}
         report = sl.reconcile_four_slot_state(
             st,
             moonraker_spool_id=99,
@@ -303,7 +303,7 @@ class SpoolLifecycleReconciliationTests(unittest.TestCase):
 class JobAccountingReceiptTests(unittest.TestCase):
     def setUp(self):
         self.state = {
-            "ifs_slots": {
+            "filament_slots": {
                 "1": {"slot": 1, "material": "PLA", "color": "white", "hex": "FFFFFF", "spoolman_id": 10, "name": "White PLA", "remaining_grams": None, "quantity_status": "unknown"},
                 "2": {"slot": 2, "material": "PLA", "color": "pink", "hex": "FF69B4", "spoolman_id": 11, "name": "Pink PLA", "remaining_grams": 500.0, "quantity_status": "user_estimate", "weight_confidence": "user_estimate"},
                 "3": {"slot": 3, "material": "PLA", "color": "black", "hex": "000000", "spoolman_id": 8, "name": "Black PLA", "remaining_grams": None, "quantity_status": "unknown"},
@@ -395,7 +395,7 @@ class JobAccountingReceiptTests(unittest.TestCase):
 
     def test_receipt_with_unmapped_tool_does_not_fabricate_slot(self):
         """When tool mapping is unknown, receipt reflects unknown status without fabricating slot 1."""
-        empty_state = {"ifs_slots": {}, "spool": {}}
+        empty_state = {"filament_slots": {}, "spool": {}}
         sample_gcode = "; total filament used [g] = 12.0\n"
         receipt = sl.generate_job_accounting_receipt(
             gcode_text=sample_gcode,
@@ -413,7 +413,7 @@ class SpoolLifecycleCLITests(unittest.TestCase):
     def setUp(self):
         self.state = {
             "spoolman_url": "http://spoolman.test:7912",
-            "ifs_slots": {
+            "filament_slots": {
                 "1": {"slot": 1, "material": "PLA", "color": "white", "hex": "FFFFFF", "spoolman_id": 10},
                 "2": {"slot": 2, "material": "PLA", "color": "pink", "hex": "FF69B4", "spoolman_id": 11},
                 "3": {"slot": 3, "material": "PLA", "color": "black", "hex": "000000", "spoolman_id": 8},
@@ -542,7 +542,7 @@ class ParseSlicerMetadataBambuTests(unittest.TestCase):
 
     def test_bambu_receipt_uses_header_totals(self):
         state = {
-            "ifs_slots": {
+            "filament_slots": {
                 "3": {"slot": 3, "material": "PLA", "color": "black", "hex": "000000", "spoolman_id": 8, "name": "Black PLA", "remaining_grams": None, "quantity_status": "unknown"},
             },
             "spool": {"spoolman_id": 8, "name": "Black PLA", "material": "PLA", "diameter_mm": 1.75, "density": 1.24},

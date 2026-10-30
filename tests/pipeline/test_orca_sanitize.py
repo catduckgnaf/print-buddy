@@ -109,7 +109,7 @@ def test_known_auto_sentinels_are_normalized_before_first_orca_attempt(tmp_path,
     monkeypatch.setattr(adapter, 'finalize_zmod', lambda *_args: None)
     state = model_job.printer_state.load()
     state = {**state, 'spool': {**state['spool'], 'color_code': 'F7E6DE'}}
-    state['ifs_slots'] = {'1': {'spoolman_id': state['spool']['spoolman_id'], 'material': state['spool']['material'], 'physical_color_verified': True}}
+    state['filament_slots'] = {'1': {'spoolman_id': state['spool']['spoolman_id'], 'material': state['spool']['material'], 'physical_color_verified': True}}
     out, provenance, _ = adapter.slice_model(
         source, tmp_path / 'out', state, preserve_layout=True)
 
@@ -135,7 +135,7 @@ def test_failure_includes_orca_result_json_details(tmp_path, monkeypatch):
     monkeypatch.setattr(adapter.subprocess, 'run', run)
     state = model_job.printer_state.load()
     state = {**state, 'spool': {**state['spool'], 'color_code': 'F7E6DE'}}
-    state['ifs_slots'] = {'1': {'spoolman_id': state['spool']['spoolman_id'], 'material': state['spool']['material'], 'physical_color_verified': True}}
+    state['filament_slots'] = {'1': {'spoolman_id': state['spool']['spoolman_id'], 'material': state['spool']['material'], 'physical_color_verified': True}}
     try:
         adapter.slice_model(source, outdir, state, preserve_layout=True)
     except RuntimeError as exc:
@@ -158,7 +158,7 @@ def test_real_sticker_buddy_slices(tmp_path):
     shutil.copy(REAL, src)
     before = src.read_bytes()
     out, prov, _ = adapter.slice_model(src, tmp_path / 'out', state, preserve_layout=True,
-                                       filament_slot=next(k for k, s in state['ifs_slots'].items()
+                                       filament_slot=next(k for k, s in state['filament_slots'].items()
                                                           if s.get('spoolman_id') == state['spool'].get('spoolman_id')))
     assert out.stat().st_size > 0
     assert prov['sanitized_author_settings'] == {

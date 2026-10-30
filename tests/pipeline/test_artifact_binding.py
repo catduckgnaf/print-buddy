@@ -11,7 +11,7 @@ from print_handy.core.discord_color_intake import collect
 
 def setup_job(tmp_path, monkeypatch):
     st=state(); st.update(bed_mm=[220,220],max_print_height_mm=220,moonraker_url='offline://fake')
-    for slot in st['ifs_slots'].values():
+    for slot in st['filament_slots'].values():
         slot['physical_color_verified']=True
     p=source(tmp_path); jp=tmp_path/'JOB.json'
     jp.write_text(json.dumps({'downloaded_file':str(p),'audit':{'plates':1,'size_x':40,'size_y':10,'size_z':1}}))

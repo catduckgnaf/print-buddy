@@ -101,7 +101,7 @@ class RunoutIntakeTest(unittest.TestCase):
         self.tmp = tempfile.TemporaryDirectory()
         self.pause = Path(self.tmp.name) / "runout.json"
         self.hardware = Path(self.tmp.name) / "hardware.json"
-        self.hardware.write_text(json.dumps({"active_slot": 1, "ifs_slots": {
+        self.hardware.write_text(json.dumps({"active_slot": 1, "filament_slots": {
             "1": {"spoolman_id": 10, "material": "PLA", "color": "white"}}}))
         self.old_pause = mel.RUNOUT_PAUSE_STATE
         self.old_hardware = mel.HARDWARE_STATE

@@ -195,6 +195,24 @@ def test_hardware_record_adoption_and_isolation(hardware, tmp_path):
     assert printer_state.load()["marker"] == "legacy"  # the no-printer path is byte-for-byte the old one
 
 
+def test_hardware_record_written_with_the_old_slots_key_is_adopted(hardware):
+    # #672: a record written before the rename names the loaded-spool map
+    # ifs_slots; loading adopts it under filament_slots, contents intact.
+    hardware.write_text(json.dumps({"spool": {}, "ifs_slots": {"1": {"spoolman_id": 7}}}))
+    state = printer_state.load()
+    assert state["filament_slots"]["1"]["spoolman_id"] == 7
+    assert "ifs_slots" not in state
+
+
+def test_hardware_record_with_both_slots_keys_keeps_the_current_one(hardware):
+    hardware.write_text(json.dumps({"spool": {},
+                                    "ifs_slots": {"1": {"spoolman_id": 7}},
+                                    "filament_slots": {"2": {"spoolman_id": 9}}}))
+    state = printer_state.load()
+    assert set(state["filament_slots"]) == {"2"}
+    assert "ifs_slots" not in state
+
+
 def test_check_names_the_printer_in_its_facts():
     fake = SimpleNamespace(connection="offline", transport=None,
                            readiness_problems=lambda st, snap: [])
@@ -232,18 +250,18 @@ _MR = lambda method, path, body=None: {"result": "ok"}
 
 def test_the_same_spool_cannot_be_loaded_on_two_printers(tmp_path):
     a_record = tmp_path / "printer_hardware.json"
-    a_record.write_text(json.dumps({"spool": {}, "ifs_slots": {"1": {"spoolman_id": 7}}}))
+    a_record.write_text(json.dumps({"spool": {}, "filament_slots": {"1": {"spoolman_id": 7}}}))
     b_dir = tmp_path / "printers" / "printer-b"
     b_dir.mkdir(parents=True)
     b_record = b_dir / "printer_hardware.json"
-    b_record.write_text(json.dumps({"spool": {}, "ifs_slots": {}}))
+    b_record.write_text(json.dumps({"spool": {}, "filament_slots": {}}))
     with pytest.raises(spool_sync.SpoolError, match="already loaded on the default printer"):
         spool_sync.bind_slot(1, 7, client=_spool_client, mr=_MR, state_path=b_record,
                              push_screen_update=False)
     out = spool_sync.bind_slot(1, 9, client=_spool_client, mr=_MR, state_path=b_record,
                                push_screen_update=False)
     assert out["spool_id"] == 9
-    assert json.loads(b_record.read_text())["ifs_slots"]["1"]["spoolman_id"] == 9
+    assert json.loads(b_record.read_text())["filament_slots"]["1"]["spoolman_id"] == 9
     # Rebinding a spool on the printer that already loads it is not a cross-printer conflict.
     out = spool_sync.bind_slot(1, 7, client=_spool_client, mr=_MR, state_path=a_record,
                                push_screen_update=False)

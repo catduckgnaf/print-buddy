@@ -74,7 +74,7 @@ The filament system is where they part:
   toolheads (T0–T3, Klipper `extruder`…`extruder3`), each with its own filament,
   changed by the sliced file's bare `T` lines — a tool changer, not a feeder.
   Print Handy models them as **tools**, not IFS slots (`[printer] tool_count`,
-  `ifs_slots` stays 1): slicer tool *i* always prints with toolhead *i*, readiness
+  `filament_slots` stays 1): slicer tool *i* always prints with toolhead *i*, readiness
   and status are per toolhead, and Spoolman spools bind per toolhead — the
   toolhead is the identity unit, never an IFS slot. A job that asks for a tool remapped to another head, or a fifth
   tool, is refused rather than approximated. Multi-colour slicing uses the

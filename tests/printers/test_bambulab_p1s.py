@@ -46,7 +46,7 @@ def template(name="machine", key=P1S):
 
 def state():
     st = copy.deepcopy(json.loads(STATE.read_text()))
-    st.update(printer="Bambu Lab P1S", moonraker_url="", ifs_slots={}, bed_mm=[256, 256], max_print_height_mm=256)
+    st.update(printer="Bambu Lab P1S", moonraker_url="", filament_slots={}, bed_mm=[256, 256], max_print_height_mm=256)
     st["nozzle"]["type"] = "stainless_steel"
     return st
 
@@ -95,7 +95,7 @@ def test_p1s_defaults_to_bambu_studio_and_orca_can_be_selected(p1s_profiles):
     assert config_for(slicer="orca")["printer"]["slicer"] == "orca"
     assert config_for()["printer"]["bed_mm"] == [256.0, 256.0]
     assert config_for()["printer"]["max_print_height_mm"] == 256.0
-    assert config_for()["printer"]["ifs_slots"] == 1
+    assert config_for()["printer"]["filament_slots"] == 1
     with pytest.raises(settings.SettingsError, match="not supported by model 'bambulab.p1s'"):
         config_for(nozzle_diameter_mm=0.6)
 

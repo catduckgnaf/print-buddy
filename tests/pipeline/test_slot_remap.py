@@ -18,7 +18,7 @@ def _state():
         "display_off": 0,
         "nozzle": {"diameter_mm": 0.4},
         "spool": {"spoolman_id": 10, "material": "PLA", "name": "White PLA"},
-        "ifs_slots": {
+        "filament_slots": {
             "1": {"spoolman_id": 10, "material": "PLA", "color": "White PLA", "hex": "#FFFFFF", "physical_color_verified": True},
             "2": {"spoolman_id": 11, "material": "PLA", "color": "Pink PLA", "hex": "#F95D73", "physical_color_verified": True},
             "3": {"spoolman_id": 8, "material": "PLA", "color": "Black PLA", "hex": "#161616", "physical_color_verified": True},

@@ -208,6 +208,21 @@ def printer_slot_hexes(zmod_color: Any) -> dict[str, str]:
     return out
 
 
+def adopt_renamed_slots_key(state):
+    """Adopt a hardware record written before the #672 rename. Mutates ``state``.
+
+    Records used to name the loaded-spool map ``ifs_slots``; the same map is
+    ``filament_slots`` now, matching the renamed setting. Both state loaders
+    call this right after parsing, so an existing record keeps its loaded
+    spools and the next save writes only the current name. The current name
+    wins when a record somehow carries both.
+    """
+    if isinstance(state, dict) and "ifs_slots" in state:
+        legacy = state.pop("ifs_slots")
+        state.setdefault("filament_slots", legacy)
+    return state
+
+
 def fill_missing_slot_hexes(state: dict[str, Any], *,
                             spoolman_hexes: Mapping[Any, Any] | None = None,
                             printer_hexes: Mapping[Any, Any] | None = None) -> list[dict[str, Any]]:
@@ -232,7 +247,7 @@ def fill_missing_slot_hexes(state: dict[str, Any], *,
     Returns one change per filled slot: slot, hex, source, previous hex.
     """
     changes: list[dict[str, Any]] = []
-    slots = state.get("ifs_slots") if isinstance(state, dict) else None
+    slots = state.get("filament_slots") if isinstance(state, dict) else None
     if not isinstance(slots, dict):
         return changes
     spoolman_hexes = spoolman_hexes or {}
@@ -324,7 +339,7 @@ def chat_notes(state: Mapping[str, Any] | None, slots: Iterable[Any] | None = No
     is an honest reading of what the operator typed. ``slots`` limits the
     notes to the slots a job uses.
     """
-    records = (state or {}).get("ifs_slots") or {}
+    records = (state or {}).get("filament_slots") or {}
     wanted = {str(s) for s in slots} if slots is not None else None
     notes = []
     for key in sorted(records, key=lambda k: str(k)):

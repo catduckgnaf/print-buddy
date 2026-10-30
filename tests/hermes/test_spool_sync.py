@@ -9,6 +9,16 @@ from print_handy.hermes.moonraker_event_listener import MidPrintSlotTracker, loa
 from print_handy.hermes.print_next import NextPlateError
 
 
+def test_load_state_adopts_the_pre_rename_slots_key(tmp_path):
+    # #672: a hardware record written before the rename names the slot map
+    # ifs_slots; the spool_sync loader adopts it, like printer_state.load.
+    path = tmp_path / "printer_hardware.json"
+    path.write_text(json.dumps({"spool": {}, "ifs_slots": {"1": {"spoolman_id": 7}}}))
+    state = spool_sync.load_state(path)
+    assert state["filament_slots"]["1"]["spoolman_id"] == 7
+    assert "ifs_slots" not in state
+
+
 def test_slot_record_strips_repeated_trailing_material_case_insensitively():
     spool = {"id": 14, "filament": {"name": "Pink PLA", "material": "PLA", "color_hex": "F95D73"}}
     record = spool_sync._slot_record(2, spool, None, "test")
@@ -101,7 +111,7 @@ def test_slot_record_missing_color_never_reuses_cached_screen_color():
 
 def test_list_text_shelf_names_the_material_once(tmp_path):
     state = tmp_path / "printer_hardware.json"
-    state.write_text(json.dumps({"ifs_slots": {}}))
+    state.write_text(json.dumps({"filament_slots": {}}))
     client = lambda method, path, body=None: [
         {"id": 21, "remaining_weight": 800, "filament": {"name": "Coffee PLA+", "material": "PLA+"}}]
     text = spool_sync.list_text(client=client, state_path=state)

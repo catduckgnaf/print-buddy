@@ -2,7 +2,7 @@
 
 Each channel is off unless its own switch is on: MQTT needs [notify]
 mqtt_enabled true and mqtt_host set; ntfy needs ntfy_enabled true and an
-ntfy_url (validation refuses enabled-without-URL at load). Neither
+ntfy_url and a topic (validation refuses enabled-without-URL or -topic at load). Neither
 channel's credential is a setting: the MQTT password is MQTT_PASSWORD
 and the ntfy access token is NTFY_ACCESS_TOKEN, both from the
 environment only. A delivery failure is logged and does not raise, so

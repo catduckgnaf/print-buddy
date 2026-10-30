@@ -63,7 +63,8 @@ spool:
   prompt_brand: false
 timelapse:
   # Mode (#246/#295): rendered, container or off. Empty derives: rendered
-  # when a Moonraker URL is configured, else off.
+  # when a Moonraker URL is configured, else container when capture_enabled
+  # is true, else off.
   mode: ""
 webui:
   # Optional Web UI (#286): off by default; nothing listens while disabled.

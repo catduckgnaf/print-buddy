@@ -362,6 +362,12 @@ def run(out=sys.stdout):
             shared = f"could not compare tokens: {exc}"
         print(f"WARN  bot token: {shared}" if shared else "ok    bot token: not shared with a Hermes profile", file=out)
     try:
+        model_warning = settings.defaulted_model_warning(data)
+    except Exception as exc:  # a state problem is a warning here, never a failed check
+        model_warning = f"could not check: {exc}"
+    if model_warning:
+        print(f"WARN  default model: {model_warning}", file=out)
+    try:
         pids = check_pids(data)
     except Exception as exc:  # an unreadable cgroup is a warning here, never a failed check
         pids = (f"could not check: {exc}", True)

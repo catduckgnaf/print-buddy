@@ -370,6 +370,19 @@ class OverrideTests(unittest.TestCase):
             settings.load(local=self.toml('[printer]\nmodel = "klipper.generic"\nifs_slots = 2\n'),
                           environ={})
 
+    def test_generic_klipper_slot_error_hints_at_the_ad5x_model(self):
+        """#678: an AD5X owner moved to the new Docker default gets the fix in the error."""
+        with self.assertRaisesRegex(settings.SettingsError,
+                                    r"filament_slots must be 1 for model 'klipper\.generic' \(single extruder\); "
+                                    r"if this is a Flashforge AD5X, set PRINT_HANDY__PRINTER__MODEL=flashforge\.ad5x"):
+            settings.load(local=settings.ROOT / "config" / "docker.yaml",
+                          environ={"PRINT_HANDY__PRINTER__IFS_SLOTS": "4"})
+
+    def test_other_single_extruder_models_get_no_ad5x_hint(self):
+        with self.assertRaises(settings.SettingsError) as raised:
+            settings.load(local=self.toml('[printer]\nmodel = "sovol.sv06"\nfilament_slots = 2\n'), environ={})
+        self.assertNotIn("AD5X", str(raised.exception))
+
     def test_env_var_points_at_another_file(self):
         path = self.toml("[layout]\nmulti_copy_edge_mm = 5\n", "docker.toml")
         with mock.patch.dict(os.environ, {"PRINT_HANDY_CONFIG": str(path)}):
@@ -655,12 +668,26 @@ class NotifySettingsTests(unittest.TestCase):
     def test_env_override_loads(self):
         data = self.load_local("visual_watch:\n  sensitivity: 3\n",
                                environ={"PRINT_HANDY__NOTIFY__NTFY_ENABLED": "true",
-                                        "PRINT_HANDY__NOTIFY__NTFY_URL": "https://ntfy.sh"})
+                                        "PRINT_HANDY__NOTIFY__NTFY_URL": "https://ntfy.sh",
+                                        "PRINT_HANDY__NOTIFY__NTFY_TOPIC": "my-prints"})
         self.assertIs(data["notify"]["ntfy_enabled"], True)
 
     def test_ntfy_enabled_without_a_url_is_refused(self):
         with self.assertRaisesRegex(settings.SettingsError, "ntfy_enabled is true but ntfy_url is empty"):
             self.load_local("notify:\n  ntfy_enabled: true\n")
+
+    def test_ntfy_enabled_without_a_topic_is_refused(self):
+        for text in ("notify:\n  ntfy_enabled: true\n  ntfy_url: https://ntfy.sh\n",
+                     "notify:\n  ntfy_enabled: true\n  ntfy_url: https://ntfy.sh/\n  ntfy_topic: '  '\n"):
+            with self.subTest(text=text):
+                with self.assertRaisesRegex(settings.SettingsError, "no ntfy topic is set"):
+                    self.load_local(text)
+
+    def test_ntfy_topic_in_the_url_or_the_key_is_accepted(self):
+        for text in ("notify:\n  ntfy_enabled: true\n  ntfy_url: https://ntfy.sh/my-topic\n",
+                     "notify:\n  ntfy_enabled: true\n  ntfy_url: https://ntfy.sh\n  ntfy_topic: my-topic\n"):
+            with self.subTest(text=text):
+                self.assertIs(self.load_local(text)["notify"]["ntfy_enabled"], True)
 
     def test_bad_values_are_refused(self):
         for text in ("notify:\n  mqtt_enabled: sometimes\n",
@@ -732,3 +759,54 @@ class LiveStreamSettingsTests(unittest.TestCase):
                     settings.load(local=local, environ={})
         with self.assertRaisesRegex(settings.SettingsError, "encoder"):
             settings.load(local=False, environ={"PRINT_HANDY__LIVE_STREAM__ENCODER": "vp9"})
+
+
+class DefaultedModelWarningTests(unittest.TestCase):
+    """#678: warn when a Docker install got Generic Klipper only from the shipped default."""
+
+    DOCKER = settings.ROOT / "config" / "docker.yaml"
+    AD5X_RECORD = {"active_slot": 1, "ifs_slots": {str(n): {"spoolman_id": n} for n in (1, 2, 3, 4)}}
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.dir = Path(self.tmp.name)
+
+    def load(self, record=AD5X_RECORD, local=DOCKER, **env):
+        environ = {"PRINT_HANDY__PATHS__HERMES_HOME": str(self.dir), **env}
+        data = settings.load(local=local, environ=environ)
+        if record is not None:
+            state = settings.state_dir(data)
+            state.mkdir(parents=True, exist_ok=True)
+            (state / "printer_hardware.json").write_text(json.dumps(record))
+        return data
+
+    def test_default_model_with_a_multi_slot_record_warns(self):
+        warning = settings.defaulted_model_warning(self.load())
+        self.assertIn("PRINT_HANDY__PRINTER__MODEL=flashforge.ad5x", warning)
+
+    def test_current_key_record_warns_too(self):
+        data = self.load(record={"filament_slots": {"1": {}, "2": {}}})
+        self.assertIsNotNone(settings.defaulted_model_warning(data))
+
+    def test_zmod_entry_in_the_record_warns(self):
+        data = self.load(record={"zmod_color": {"active": 1}})
+        self.assertIsNotNone(settings.defaulted_model_warning(data))
+
+    def test_single_slot_or_missing_record_is_quiet(self):
+        self.assertIsNone(settings.defaulted_model_warning(self.load(record={"filament_slots": {"1": {}}})))
+        data = self.load(record=None)
+        self.assertIsNone(settings.defaulted_model_warning(data))
+
+    def test_explicit_model_is_quiet(self):
+        data = self.load(PRINT_HANDY__PRINTER__MODEL="klipper.generic")
+        self.assertIsNone(settings.defaulted_model_warning(data))
+
+    def test_operator_file_setting_the_model_is_quiet(self):
+        mine = self.dir / "mine.yaml"
+        mine.write_text("printer:\n  model: klipper.generic\n")
+        self.assertIsNone(settings.defaulted_model_warning(self.load(local=mine)))
+
+    def test_another_default_model_is_quiet(self):
+        data = self.load(PRINT_HANDY__PRINTER__MODEL="flashforge.ad5x")
+        self.assertIsNone(settings.defaulted_model_warning(data))

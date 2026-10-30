@@ -30,6 +30,7 @@ takes injectable sender/reader callables so tests never contact a printer.
 from __future__ import annotations
 
 import datetime
+import re
 import threading
 import time
 from typing import Any, Callable
@@ -102,14 +103,69 @@ def manual_heat_instructions(temp_c: int = LOOSEN_TEMP_C) -> str:
             "prompts still apply.")
 
 
+_EXTRUDER_NAME = re.compile(r"^extruder\d*$")
+
+
+def _extruder_sort_key(name: str) -> int:
+    return int(name[8:]) if name[8:].isdigit() else 0
+
+
+def _extruder_names(printer_id: str | None, *, offline: bool = False) -> list[str]:
+    """Every extruder heater object the printer has, primary first.
+
+    Prefers the printer adapter's ``moonraker_objects()`` (the Creator 5 / 5 Pro
+    adapters list ``extruder..extruder{n-1}``). With no usable adapter it asks
+    Moonraker's ``/printer/objects/list`` and keeps ``extruder`` plus
+    ``extruder<digits>``, and finally falls back to plain ``extruder``.
+    ``offline`` skips the network lookup (injected readers/senders in tests).
+    """
+    try:
+        from . import print_control as pc
+        names = [n for n in pc._adapter_for(printer_id).moonraker_objects()
+                 if isinstance(n, str) and _EXTRUDER_NAME.match(n)]
+    except Exception:
+        names = []
+    if not names and not offline:
+        try:
+            from . import print_control as pc
+            data = pc._send("/printer/objects/list", printer_id=printer_id)
+            listed = (data.get("result") or {}).get("objects") or []
+            names = [n for n in listed if isinstance(n, str) and _EXTRUDER_NAME.match(n)]
+        except Exception:
+            names = []
+    return sorted(dict.fromkeys(names), key=_extruder_sort_key) or ["extruder"]
+
+
 def _state_view(reader: Callable[[], dict[str, Any]] | None,
-                printer_id: str | None) -> dict[str, Any]:
+                printer_id: str | None,
+                extruders: list[str] | tuple[str, ...] | None = None) -> dict[str, Any]:
     if reader is not None:
         return reader() or {}
     from . import print_control as pc
-    data = pc._send("/printer/objects/query?print_stats&extruder&webhooks",
-                    printer_id=printer_id)
+    names = list(extruders) if extruders else _extruder_names(printer_id)
+    query = "&".join(["print_stats", *names, "webhooks"])
+    data = pc._send(f"/printer/objects/query?{query}", printer_id=printer_id)
     return ((data.get("result") or {}).get("status") or {})
+
+
+def _heaters_off(printer_id: str | None, sender: Callable[[str], Any] | None,
+                 extruders: list[str] | tuple[str, ...] | None = None) -> None:
+    """Turn off every known extruder heater; ``M104 S0`` covers the primary.
+
+    Every heater is attempted even if one command fails; the first error is
+    raised afterwards so callers still report a failed heater-off.
+    """
+    names = list(extruders) if extruders else _extruder_names(
+        printer_id, offline=sender is not None)
+    errors: list[Exception] = []
+    for script in ["M104 S0", *[f"SET_HEATER_TEMPERATURE HEATER={n} TARGET=0"
+                                for n in names if n != "extruder"]]:
+        try:
+            _send_gcode(script, printer_id, sender)
+        except Exception as exc:
+            errors.append(exc)
+    if errors:
+        raise errors[0]
 
 
 def _send_gcode(script: str, printer_id: str | None,
@@ -176,8 +232,9 @@ def heat_for_loosen(*, confirmed_at: float, temp_c: int = LOOSEN_TEMP_C,
     if not _CONTROL_LOCK.acquire(blocking=False):
         return False, "Refused: another nozzle-change action is in flight. Nothing sent."
     try:
+        names = _extruder_names(printer_id, offline=reader is not None or gcode_sender is not None)
         try:
-            st = _state_view(reader, printer_id)
+            st = _state_view(reader, printer_id, names)
         except Exception as exc:
             return False, f"Refused: printer state could not be read ({type(exc).__name__}). Nothing sent."
         job_state = _job_state(st)
@@ -193,7 +250,7 @@ def heat_for_loosen(*, confirmed_at: float, temp_c: int = LOOSEN_TEMP_C,
         last = None
         while True:
             try:
-                st = _state_view(reader, printer_id)
+                st = _state_view(reader, printer_id, names)
             except Exception:
                 st = {}
             ext = _extruder(st)
@@ -209,7 +266,7 @@ def heat_for_loosen(*, confirmed_at: float, temp_c: int = LOOSEN_TEMP_C,
             time.sleep(poll_s)
         # Never leave a heater running unattended behind a failed step.
         try:
-            _send_gcode("M104 S0", printer_id, gcode_sender)
+            _heaters_off(printer_id, gcode_sender, names)
         except Exception:
             pass
         return False, (f"Hotend did not reach {temp_c} °C within {wait_timeout_s:.0f}s "
@@ -222,7 +279,7 @@ def heater_off(*, gcode_sender: Callable[[str], Any] | None = None,
                printer_id: str | None = None) -> tuple[bool, str]:
     """Best-effort heater off for a cancelled flow. No waiting, no recording."""
     try:
-        _send_gcode("M104 S0", printer_id, gcode_sender)
+        _heaters_off(printer_id, gcode_sender)
     except Exception as exc:
         return False, f"Heater-off command failed ({type(exc).__name__}). Turn the heater off on the printer screen NOW."
     return True, "Heater turned off. Nothing was recorded."
@@ -241,15 +298,16 @@ def cooldown(*, gcode_sender: Callable[[str], Any] | None = None,
     if not _CONTROL_LOCK.acquire(blocking=False):
         return False, "Refused: another nozzle-change action is in flight. Nothing sent."
     try:
+        names = _extruder_names(printer_id, offline=reader is not None or gcode_sender is not None)
         try:
-            _send_gcode("M104 S0", printer_id, gcode_sender)
+            _heaters_off(printer_id, gcode_sender, names)
         except Exception as exc:
             return False, f"Heater-off command failed ({type(exc).__name__}). Turn the heater off on the printer screen."
         deadline = time.monotonic() + timeout_s
         last = None
         while True:
             try:
-                st = _state_view(reader, printer_id)
+                st = _state_view(reader, printer_id, names)
             except Exception:
                 st = {}
             all_ext = _extruders(st)
@@ -388,7 +446,7 @@ def run_bed_mesh(*, confirmed_at: float,
         return False, "Refused: another nozzle-change action is in flight. Nothing sent."
     try:
         try:
-            st = _state_view(reader, printer_id)
+            st = _state_view(reader, printer_id, ("extruder",))
         except Exception as exc:
             return False, f"Refused: printer state could not be read ({type(exc).__name__}). Nothing sent."
         job_state = _job_state(st)

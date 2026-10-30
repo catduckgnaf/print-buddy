@@ -168,6 +168,14 @@ class GeneratorBodyContract(unittest.TestCase):
         self.assertEqual((self.title, self.body), again)
 
 
+class GeneratorNullLabels(unittest.TestCase):
+    def test_null_labels_render_as_no_labels(self):
+        data = sample_range()
+        data["prs"][0]["labels"] = None
+        _, body = checklist.build_checklist(data)
+        self.assertIn("#655", body)
+
+
 class GeneratorClassification(unittest.TestCase):
     def setUp(self):
         _, self.body = checklist.build_checklist(sample_range())

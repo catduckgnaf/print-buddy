@@ -1452,6 +1452,12 @@ def slice_model(source, folder, state, brim=None, first_layer=False, color_decis
         ]
         try:
             bambu_result = _run_slicer(bambu_command, 'Bambu Studio', folder)
+        except SliceFailure as exc:
+            # _run_slicer wraps a timeout or launch error as a SliceFailure (#665). Keep its kind, so a
+            # timeout stays retryable and a launch failure does not, and say why the fallback ran.
+            raise SliceFailure(f'{orca_failure}; {bambu_role} failed to start: {exc}', kind=exc.kind,
+                               slicer='Bambu Studio' if primary == 'bambu_studio' else 'OrcaSlicer and Bambu Studio',
+                               returncode=exc.returncode) from exc
         except (subprocess.TimeoutExpired, OSError) as exc:
             raise RuntimeError(f'{orca_failure}; {bambu_role} failed to start: {exc}') from exc
         (folder / 'bambu.log').write_text(bambu_result.stdout + bambu_result.stderr)

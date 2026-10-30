@@ -214,7 +214,8 @@ visual_watch:
 timelapse:
   # Mode (#246/#295): rendered = the printer renders it (moonraker-timelapse),
   # container = Print Handy captures and encodes it in-container, off = none.
-  # Empty derives: rendered when a Moonraker URL is configured, else off.
+  # Empty derives: rendered when a Moonraker URL is configured, else container
+  # when capture_enabled is true, else off.
   mode: ''
   archive_host: ''
   archive_dir: ''

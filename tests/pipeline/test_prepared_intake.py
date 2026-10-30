@@ -1613,6 +1613,8 @@ def test_slice_failure_journey_reports_cause_and_remedy(env, monkeypatch, copies
     calls = []
     error = (ResourceLimitError('container is at its process limit SECRET') if kind == 'pid' else
              RuntimeError('SECRET unknown') if kind == 'unknown' else
+             slice_failure.SliceFailure('Pre-slice guard blocked: nozzle temperature too high', kind=kind)
+             if kind == 'guard' else
              slice_failure.SliceFailure('SECRET raw detail', kind=kind, slicer='OrcaSlicer'))
 
     def fail(job_path, copies=None, **kwargs):
@@ -1637,6 +1639,7 @@ def test_slice_failure_journey_reports_cause_and_remedy(env, monkeypatch, copies
               'engine': '/print-handy bundle', 'timeout': '/print-handy bundle',
               'unknown': '/print-handy bundle'}[kind]
     assert remedy in posts
+    assert (kind == 'guard') == ('nozzle temperature too high' in posts)
     retry_questions = [q for q in adapter.questions if q['choices'][0] == 'Retry slice once (no print)']
     assert bool(retry_questions) is retryable
     assert calls == [copies] and env.starts == []

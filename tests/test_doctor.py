@@ -127,6 +127,13 @@ class DoctorTests(unittest.TestCase):
         self.assertEqual(code, 0, text)
         self.assertIn("ok    zmod version: 1.7.5", text)
 
+    def test_doctor_shows_the_default_model_warning_row(self):
+        """#678: the settings layer decides (see DefaultedModelWarningTests); doctor only shows it."""
+        with mock.patch.object(settings, "defaulted_model_warning", return_value="set PRINT_HANDY__PRINTER__MODEL"):
+            code, text = self.run_doctor()
+        self.assertIn("WARN  default model: set PRINT_HANDY__PRINTER__MODEL", text)
+        self.assertNotIn("default model", self.run_doctor()[1])
+
     def test_missing_orca_binary_fails(self):
         code, text = self.run_doctor('[orca]\ncommand = ["definitely-not-orca-xyz"]\n')
         self.assertEqual(code, 1)

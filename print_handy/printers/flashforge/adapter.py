@@ -196,7 +196,8 @@ class ZmodMultiToolAdapter(ZmodSingleExtruderAdapter):
         out = basic_status(raw)
         raw = raw if isinstance(raw, dict) else {}
         out["toolheads"] = [
-            {"tool": tool, "temperature": (raw.get(self._extruder_name(tool)) or {}).get("temperature")}
+            {"tool": tool, "name": self._extruder_name(tool),
+             "temperature": (raw.get(self._extruder_name(tool)) or {}).get("temperature")}
             for tool in range(self.tool_count)]
         color = raw.get("zmod_color")
         out["active_tool"] = color.get("active_tool_id") if isinstance(color, dict) else None

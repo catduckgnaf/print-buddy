@@ -668,12 +668,26 @@ class NotifySettingsTests(unittest.TestCase):
     def test_env_override_loads(self):
         data = self.load_local("visual_watch:\n  sensitivity: 3\n",
                                environ={"PRINT_HANDY__NOTIFY__NTFY_ENABLED": "true",
-                                        "PRINT_HANDY__NOTIFY__NTFY_URL": "https://ntfy.sh"})
+                                        "PRINT_HANDY__NOTIFY__NTFY_URL": "https://ntfy.sh",
+                                        "PRINT_HANDY__NOTIFY__NTFY_TOPIC": "my-prints"})
         self.assertIs(data["notify"]["ntfy_enabled"], True)
 
     def test_ntfy_enabled_without_a_url_is_refused(self):
         with self.assertRaisesRegex(settings.SettingsError, "ntfy_enabled is true but ntfy_url is empty"):
             self.load_local("notify:\n  ntfy_enabled: true\n")
+
+    def test_ntfy_enabled_without_a_topic_is_refused(self):
+        for text in ("notify:\n  ntfy_enabled: true\n  ntfy_url: https://ntfy.sh\n",
+                     "notify:\n  ntfy_enabled: true\n  ntfy_url: https://ntfy.sh/\n  ntfy_topic: '  '\n"):
+            with self.subTest(text=text):
+                with self.assertRaisesRegex(settings.SettingsError, "no ntfy topic is set"):
+                    self.load_local(text)
+
+    def test_ntfy_topic_in_the_url_or_the_key_is_accepted(self):
+        for text in ("notify:\n  ntfy_enabled: true\n  ntfy_url: https://ntfy.sh/my-topic\n",
+                     "notify:\n  ntfy_enabled: true\n  ntfy_url: https://ntfy.sh\n  ntfy_topic: my-topic\n"):
+            with self.subTest(text=text):
+                self.assertIs(self.load_local(text)["notify"]["ntfy_enabled"], True)
 
     def test_bad_values_are_refused(self):
         for text in ("notify:\n  mqtt_enabled: sometimes\n",

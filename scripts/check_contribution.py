@@ -18,7 +18,7 @@ def meaningful(text):
 
 
 def field(text, name):
-    match = re.search(r"^" + re.escape(name) + r":\s*(.+)$", text, re.M | re.I)
+    match = re.search(r"^" + re.escape(name) + r":[ \t]*(.+)$", text, re.M | re.I)
     return match.group(1).strip() if match else ""
 
 

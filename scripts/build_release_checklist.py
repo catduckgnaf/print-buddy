@@ -277,7 +277,7 @@ def build_checklist(data):
             if gone:
                 hints.append("PAGE REMOVAL: " + ", ".join(gone))
                 removed_pages.extend(gone)
-            labels = ", ".join(pr.get("labels", [])) or "—"
+            labels = ", ".join(pr.get("labels") or []) or "—"
             pr_title = (pr.get("title") or "").replace("|", " ")
             lines.append(
                 f"| #{pr['number']} | {pr_title} | {labels} | "

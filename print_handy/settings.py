@@ -24,6 +24,7 @@ import math
 import os
 import re
 import tomllib
+from urllib.parse import urlsplit
 
 try:  # PyYAML preferred; the Hermes plugin runtime ships ruamel.yaml instead (#170)
     import yaml
@@ -1264,6 +1265,10 @@ def _validate_notify(data):
     if notify["ntfy_enabled"] and not url:
         raise SettingsError("[notify] ntfy_enabled is true but ntfy_url is empty; "
                             "set the ntfy server (for example https://ntfy.sh) or turn ntfy off")
+    if notify["ntfy_enabled"] and not notify["ntfy_topic"] and not urlsplit(url).path.strip("/"):
+        raise SettingsError("[notify] ntfy_enabled is true but no ntfy topic is set; "
+                            "set ntfy_topic, or include the topic in ntfy_url "
+                            "(for example https://ntfy.sh/my-topic), or turn ntfy off")
 
 
 def _validate_spool(data):

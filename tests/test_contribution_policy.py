@@ -55,6 +55,25 @@ Variables reason: The new option was checked on every surface: defaults tree, en
     def test_placeholder_rejected(self):
         self.assertTrue(self.policy.check_pr(self.body().replace("Reason: New configuration option documented in docs/CONFIGURATION-YAML.md.", "Reason: TODO"), ["docs/README.md"]))
 
+    def test_empty_reason_does_not_capture_the_next_line(self):
+        body = self.body().replace("Reason: New configuration option documented in docs/CONFIGURATION-YAML.md.", "Reason:")
+        errors = self.policy.check_pr(body, ["docs/README.md"])
+        self.assertTrue(any(error.startswith("Reason:") for error in errors))
+        self.assertEqual("", self.policy.field("Reason:\nWiki: not applicable", "Reason"))
+
+    def test_unfilled_template_is_rejected_and_filled_template_passes(self):
+        template = (Path(__file__).resolve().parents[1] / ".github/PULL_REQUEST_TEMPLATE.md").read_text()
+        self.assertTrue(self.policy.check_pr(template, ["docs/README.md"]))
+        filled = (template.replace("Documentation: updated | not needed", "Documentation: updated")
+                  .replace("Reason:\n", "Reason: Settings reference updated for the new option.\n")
+                  .replace("Wiki: updated | not applicable | deferred", "Wiki: not applicable")
+                  .replace("Wiki reason:\n", "Wiki reason: Versioned docs are authoritative for this change.\n")
+                  .replace("Variables: checked | not applicable", "Variables: not applicable")
+                  .replace("Variables reason:\n", "Variables reason: This change adds or changes no variables at all.\n"))
+        filled = filled.replace("## Summary and user impact\n", "## Summary and user impact\nA new option for operators.\n")
+        filled = filled.replace("## Verification and test results\n", "## Verification and test results\nRan the focused offline tests: 4 passed.\n")
+        self.assertEqual([], self.policy.check_pr(filled, ["docs/README.md"]))
+
     def test_missing_verification_rejected(self):
         self.assertTrue(self.policy.check_pr(self.body().replace("Ran the focused offline tests: 4 passed.", ""), ["docs/README.md"]))
 

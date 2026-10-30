@@ -2,6 +2,13 @@
 
 # Unreleased
 
+Nothing yet.
+
+# Version 2.2.1
+
+**Release Date:** 2026-10-30
+**Still owed:** the first live print from chat on a screenless ZMod AD5X (new in 2.2.0); the Sovol profiles, MQTT, exclude-object and the next-plate offer are offline-tested only.
+
 **What users can do now:**
 - Pick a Sovol by firmware (#638): Sovol (Klipper) and Sovol (Marlin/OctoPrint) are separate brands, like Flashforge. SV01, SV01 Pro, SV02, SV03, SV04, SV05, SV06 and SV06 Plus are in both; SV06 ACE, SV06 Plus ACE, SV07, SV07 Plus, SV08, SV08 Max, Zero and M1D are Klipper only. Volumes come from OrcaSlicer's 0.4 mm profiles (SV03, SV04 and M1D from Sovol's firmware or single-mode figures); the templates are generic and not checked on hardware. A bare `model: sv06` still means `sovol.sv06`.
 - Web UI `/config`: every dropdown is A to Z; one Printer URL field for the selected model's connection (a Moonraker or OctoPrint URL, which may be another computer, or a hostname for Bambu, Prusa, stock Flashforge and Elegoo SDCP), with the other connections' addresses kept on save; an RTSP stream URL (`timelapse.capture_source_url`) for go2rtc; ZMod delivery format shown only for Flashforge ZMod. First-boot setup asks for the same Printer URL and writes the field the model uses.

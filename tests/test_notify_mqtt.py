@@ -89,6 +89,15 @@ def test_recorded_pause_notifies_once_and_the_chat_post_still_returns(monkeypatc
         calls.append((kind, text))
         return True
 
+    class _Now:
+        """Runs the publish where the test can see it; production starts a daemon thread."""
+        def __init__(self, target, args=(), daemon=None):
+            self.run = lambda: target(*args)
+
+        def start(self):
+            self.run()
+
+    monkeypatch.setattr(summary.threading, "Thread", _Now)
     monkeypatch.setattr("print_handy.notify.emit", capture)
     message = summary.format_event("paused", "plate.gcode")
     assert message.startswith("Print paused")
@@ -100,3 +109,46 @@ def test_recorded_pause_notifies_once_and_the_chat_post_still_returns(monkeypatc
     monkeypatch.setattr("print_handy.notify.emit", refuse)
     again = summary.format_event("paused", "plate.gcode")
     assert again.startswith("Print paused")
+
+
+def test_name_lookup_never_publishes_and_a_publish_never_blocks_the_caller(monkeypatch):
+    import threading
+    import print_handy.hermes.discord_print_summary as summary
+    monkeypatch.setattr(summary, "find_job", lambda *args, **kwargs: (None, None))
+    gate = threading.Event()
+    calls = []
+
+    def slow(kind, text, **kwargs):
+        gate.wait(5)
+        calls.append(kind)
+        return True
+
+    monkeypatch.setattr("print_handy.notify.emit", slow)
+    summary.format_event("started", "plate.gcode", emit=False)
+    summary.format_event("started", "plate.gcode")  # returns while the publish is still waiting
+    assert calls == []
+    gate.set()
+    for thread in threading.enumerate():
+        if thread is not threading.current_thread() and thread.daemon:
+            thread.join(2)
+    assert calls == ["print_started"]
+
+
+def test_connack_refusal_is_reported_and_client_ids_differ(monkeypatch):
+    class Broker(_Sock):
+        def __init__(self, reply):
+            super().__init__()
+            self.reply = reply
+
+        def recv(self, n):
+            return self.reply
+
+    monkeypatch.setattr("print_handy.notify._settings", lambda: {
+        "mqtt_enabled": True, "mqtt_host": "broker.local", "mqtt_topic": "print-handy"})
+    ok, refused, silent = Broker(b"\x20\x02\x00\x00"), Broker(b"\x20\x02\x00\x05"), Broker(b"")
+    assert emit("complete", "done", connector=lambda *_: ok) is True
+    assert emit("complete", "done", connector=lambda *_: refused) is False
+    assert emit("complete", "done", connector=lambda *_: silent) is False
+    other = Broker(b"\x20\x02\x00\x00")
+    emit("complete", "done", connector=lambda *_: other)
+    assert ok.sent[:30] != other.sent[:30]

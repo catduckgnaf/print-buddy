@@ -8,6 +8,7 @@ import hashlib
 import json
 import os
 import re
+import threading
 from datetime import datetime, timedelta
 from pathlib import Path
 
@@ -347,8 +348,12 @@ def format_started(job, plate=None, now=None):
         printer_name=announcement_printer_name(job))
 
 
-def format_event(kind, filename, now=None, archive=None, context_path=None, extra=None):
-    """Message for a Moonraker event on `filename`. Falls back to a scrubbed file label."""
+def format_event(kind, filename, now=None, archive=None, context_path=None, extra=None, emit=True):
+    """Message for a Moonraker event on `filename`. Falls back to a scrubbed file label.
+
+    ``emit`` publishes the MQTT event in a background thread. A caller that
+    only wants the name or text passes ``emit=False`` so no event is invented.
+    """
     job, plate = find_job(filename, archive, context_path)
     printer_name = announcement_printer_name(job)
     if not job:
@@ -368,13 +373,14 @@ def format_event(kind, filename, now=None, archive=None, context_path=None, extr
     if extra:
         message += "\n" + scrub(extra)
     message = scrub(message)
-    try:
-        from ..notify import emit, event_for
-        name = event_for(kind, extra)
-        if name:
-            emit(name, message)
-    except Exception:
-        pass
+    if emit:
+        try:
+            from ..notify import emit as publish, event_for
+            name = event_for(kind, extra)
+            if name:
+                threading.Thread(target=publish, args=(name, message), daemon=True).start()
+        except Exception:
+            pass
     return message
 
 

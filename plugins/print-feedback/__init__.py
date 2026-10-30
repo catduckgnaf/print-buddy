@@ -3709,7 +3709,7 @@ async def print_stop_dispatch(event, gateway, **kwargs):
         else:
             from print_handy.core.prompts import gateway as _prompts
             cm = _prompts()
-            name = summary.format_event('started', st['filename']).splitlines()[0].split(': ', 1)[-1]
+            name = summary.format_event('started', st['filename'], emit=False).splitlines()[0].split(': ', 1)[-1]
             where = print_stop.where_text(st)
             question = f"Stop {name} ({st['state']}{', ' + where if where else ''})? This cancels the print."
             choices = [print_stop.STOP_LABEL, print_stop.KEEP_LABEL]
@@ -3837,7 +3837,7 @@ async def print_resume_dispatch(event, gateway, **kwargs):
         if not pc.resumable(st):
             message = pc.not_resumable_text(st)
         else:
-            name = summary.format_event('started', st['filename']).splitlines()[0].split(': ', 1)[-1]
+            name = summary.format_event('started', st['filename'], emit=False).splitlines()[0].split(': ', 1)[-1]
             where = pc.where_text(st)
             answer = await _confirm(adapter, source, metadata, 'print-resume',
                                     f"Resume {name}{' (' + where + ')' if where else ''}? Make sure nothing is in the way.",

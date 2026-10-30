@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import logging
 import os
+import secrets
 import socket
 
 log = logging.getLogger("print_handy.notify")
@@ -62,6 +63,12 @@ def _emit(kind, summary, *, printer_id, connector) -> bool:
     topic_root = str(cfg.get("mqtt_topic") or "print-handy").strip("/") or "print-handy"
     topic = f"{topic_root}/{kind}"
     payload = str(summary or "").splitlines()[0][:240]
+    if not printer_id:
+        try:
+            from . import listeners
+            printer_id = listeners.instance_printer_id() or ""
+        except Exception:
+            printer_id = ""
     if printer_id:
         payload = f"{printer_id}: {payload}"
     username = str(cfg.get("mqtt_username") or "")
@@ -71,11 +78,24 @@ def _emit(kind, summary, *, printer_id, connector) -> bool:
     sock = opener(host, port)
     try:
         sock.sendall(packet)
+        recv = getattr(sock, "recv", None)
+        if recv:
+            code = _connack(recv(4))
+            if code != 0:
+                log.warning("mqtt broker refused the connection (%s)", "no CONNACK" if code is None else f"code {code}")
+                return False
     finally:
         closer = getattr(sock, "close", None)
         if closer:
             closer()
     return True
+
+
+def _connack(data):
+    """The CONNACK return code, or None when the broker sent no valid CONNACK."""
+    if len(data or b"") == 4 and data[0] == 0x20 and data[1] == 2:
+        return data[3]
+    return None
 
 
 def _encode(text: str) -> bytes:
@@ -102,7 +122,7 @@ def _publish_packet(topic, payload, *, username="", password="") -> bytes:
         flags |= 0x80
         if password:
             flags |= 0x40
-    variable = _encode("MQTT") + bytes([4, flags]) + (60).to_bytes(2, "big") + _encode("print-handy")
+    variable = _encode("MQTT") + bytes([4, flags]) + (60).to_bytes(2, "big") + _encode(f"print-handy-{secrets.token_hex(4)}")
     if username:
         variable += _encode(username)
         if password:

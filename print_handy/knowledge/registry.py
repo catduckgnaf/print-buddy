@@ -17,6 +17,7 @@ physical actions stay behind the existing guarded print-control flows.
 """
 from __future__ import annotations
 
+import re
 import tomllib
 from dataclasses import dataclass, field
 from pathlib import Path

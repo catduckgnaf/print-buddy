@@ -42,7 +42,7 @@ def tool_state():
             'temps_c': {'nozzle': 220, 'bed': 60},
             'spool': {'material': 'PLA', 'spoolman_id': 10, 'name': 'white', 'color': 'white',
                       'density': 1.24, 'diameter_mm': 1.75},
-            'ifs_slots': {'1': {'color': 'white', 'material': 'PLA', 'spoolman_id': 10, 'hex': 'FFFFFF',
+            'filament_slots': {'1': {'color': 'white', 'material': 'PLA', 'spoolman_id': 10, 'hex': 'FFFFFF',
                                 'physical_color_verified': True},
                           '2': {'color': 'black', 'material': 'PLA', 'spoolman_id': 11, 'hex': '000000',
                                 'physical_color_verified': True},
@@ -184,7 +184,7 @@ def test_collect_refuses_five_colours(creator, tmp_path):
 def test_duplicate_spool_colours_are_labelled_by_toolhead(creator, tmp_path):
     from print_handy.core.discord_color_intake import collect
     state = tool_state()
-    state['ifs_slots']['3'] = {'color': 'black', 'material': 'PLA', 'spoolman_id': 12, 'hex': '111111',
+    state['filament_slots']['3'] = {'color': 'black', 'material': 'PLA', 'spoolman_id': 12, 'hex': '111111',
                                'physical_color_verified': True}
     src = source(tmp_path)
     jp = write_job(tmp_path, src, creator)
@@ -380,7 +380,7 @@ def four_colour_decisions(tmp_path, picks):
     state = tool_state()
     choices = {}
     for row, slot in zip(source_colors.canonical_prompts(manifest), picks):
-        record = state['ifs_slots'][str(slot)]
+        record = state['filament_slots'][str(slot)]
         choices[row['key']] = {'slot': slot, 'color': record['color'], 'material': 'PLA',
                                'spoolman_id': record['spoolman_id']}
     return {'source_sha256': manifest['source_sha256'], 'mode': 'per_part',

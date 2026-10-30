@@ -40,7 +40,7 @@ def test_new_spool_lands_on_the_shelf_and_reuses_its_filament_type():
 def hardware_record(tmp_path):
     """Every working install has this record; printer_state owns it and spool_sync updates slots in it."""
     path = tmp_path / "printer_hardware.json"
-    path.write_text(json.dumps({"ifs_slots": {}}))
+    path.write_text(json.dumps({"filament_slots": {}}))
     return path
 
 

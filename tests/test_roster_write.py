@@ -234,7 +234,7 @@ def test_seed_hardware_record_creates_a_minimal_truthful_record(tmp_path, monkey
     assert record["printer"] == "Bench P1"
     assert record["nozzle"] == {"diameter_mm": 0.4, "type": "stock",
                                 "installed": record["nozzle"]["installed"]}
-    assert record["spool"] == {} and record["ifs_slots"] == {}
+    assert record["spool"] == {} and record["filament_slots"] == {}
     assert record["temps_c"] == {"nozzle": 210, "bed": 60}
     assert (tmp_path / "printers" / "bench-p1" / "printer_hardware.json").is_file()
     # Never overwritten once it exists.

@@ -35,6 +35,12 @@ two discord keys (kept so existing configs still load), and "PR #655" is the
 settings-wiring fix that gives services.camera_source a consumer and the
 [notify] MQTT keys their Web UI fields. Exemptions resolved by that merged
 change have been removed; the stale-entry check remains enforced.
+
+#672 renamed printer.ifs_slots to printer.filament_slots (the exemption row
+below follows the rename). The old spelling survives only as a loader alias
+(settings.KEY_ALIASES): it is not in the defaults tree or OPTIONAL_KEYS, so
+it never enters this inventory — the alias is not a phantom second variable,
+and filament_slots is judged on its own surfaces like every other variable.
 """
 import re
 import unittest
@@ -109,7 +115,7 @@ EXEMPTIONS = {
     ("printer", "bed_mm"): (frozenset({"webui"}), "#657"),
     ("printer", "end_macro"): (frozenset({"webui"}), "#657"),
     ("printer", "firmware"): (frozenset({"webui"}), "#657"),
-    ("printer", "ifs_slots"): (frozenset({"webui"}), "#657"),
+    ("printer", "filament_slots"): (frozenset({"webui"}), "#657"),
     ("printer", "max_print_height_mm"): (frozenset({"webui"}), "#657"),
     ("printer", "name"): (frozenset({"webui"}), "#657"),
     ("printer", "nozzle_diameter_mm"): (frozenset({"webui"}), "#657"),

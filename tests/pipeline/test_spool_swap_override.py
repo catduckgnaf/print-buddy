@@ -14,7 +14,7 @@ from print_handy.printers.flashforge.zmod import multicolor_contract as contract
 
 
 def _state():
-    return {"ifs_slots": {"2": {"spoolman_id": 7, "material": "PLA+", "physical_color_verified": True}}}
+    return {"filament_slots": {"2": {"spoolman_id": 7, "material": "PLA+", "physical_color_verified": True}}}
 
 
 def test_swapped_spool_is_refused_without_confirmation(monkeypatch):
@@ -31,7 +31,7 @@ def test_confirmed_swap_is_accepted(monkeypatch):
 def test_confirmation_does_not_waive_unverified_slot(monkeypatch):
     monkeypatch.setenv("PRINT_ACCEPT_SPOOL_CHANGE", "1")
     state = copy.deepcopy(_state())
-    state["ifs_slots"]["2"]["physical_color_verified"] = False
+    state["filament_slots"]["2"]["physical_color_verified"] = False
     with pytest.raises(RuntimeError, match="unknown or unverified"):
         contract.normalize_mapping({"0": {"physical_slot": 2, "spoolman_id": 3}}, state)
 

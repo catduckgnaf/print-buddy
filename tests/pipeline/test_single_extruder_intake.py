@@ -1,7 +1,7 @@
 """#263: a single-extruder printer with no slot map offers its configured spool as slot 1.
 
 The hardware record of an offline Bambu Lab A1 has a spool (material, density, `spoolman_id: null`) and no
-`ifs_slots`. Discord intake used to stop before the color question with "requires one to four distinct
+`filament_slots`. Discord intake used to stop before the color question with "requires one to four distinct
 configured slots". Offline: the fake Discord adapter from test_prepared_intake answers buttons, slicing
 is stubbed, and nothing contacts a printer, Discord or Spoolman.
 """
@@ -30,10 +30,10 @@ def use_model(monkeypatch, key):
 
 
 def a1_state(spoolman_id=None):
-    """The issue's record: nozzle, spool and temperatures, no ifs_slots, no Spoolman binding."""
+    """The issue's record: nozzle, spool and temperatures, no filament_slots, no Spoolman binding."""
     st = copy.deepcopy(json.loads(FIXTURE.read_text()))
     st.update(printer="Bambu Lab A1", moonraker_url="", bed_mm=[256, 256], max_print_height_mm=256)
-    st.pop("ifs_slots")
+    st.pop("filament_slots")
     st.pop("spoolman_url")
     st["nozzle"]["type"] = "stainless_steel"
     st["spool"]["spoolman_id"] = spoolman_id
@@ -97,8 +97,8 @@ def test_single_extruder_slot_one_is_the_configured_spool(monkeypatch):
     assert model_job.configured_slots(a1_state()) == {"1": {"color": "white", "material": "PLA",
                                                              "spoolman_id": None}}
     # A recorded slot map is used as is; nothing is derived over it.
-    recorded = {**a1_state(), "ifs_slots": {"1": {"color": "black", "material": "PETG", "spoolman_id": 4}}}
-    assert model_job.configured_slots(recorded) == recorded["ifs_slots"]
+    recorded = {**a1_state(), "filament_slots": {"1": {"color": "black", "material": "PETG", "spoolman_id": 4}}}
+    assert model_job.configured_slots(recorded) == recorded["filament_slots"]
     # A spool with no color name is offered by its material; no color is invented for it.
     unnamed = a1_state()
     unnamed["spool"].pop("name")
@@ -111,7 +111,7 @@ def test_single_extruder_slot_one_is_the_configured_spool(monkeypatch):
 
 
 def test_multi_slot_printers_still_require_their_configured_slots(env, monkeypatch):  # noqa: F811
-    st = {**ad5x_state(), "ifs_slots": {}}
+    st = {**ad5x_state(), "filament_slots": {}}
     assert printers.current().multi_slot
     assert model_job.configured_slots(st) == {}
     adapter, result, receipt = run_a1_flow(env, [1, 0, 1], st)
@@ -144,7 +144,7 @@ def test_bound_spool_keeps_the_existing_spoolman_id_rules(monkeypatch):
 
 
 def test_multi_slot_still_requires_a_spoolman_id(monkeypatch):
-    unmapped = {**ad5x_state(), "ifs_slots": {"1": {"color": "white", "material": "PLA"}}}
+    unmapped = {**ad5x_state(), "filament_slots": {"1": {"color": "white", "material": "PLA"}}}
     with pytest.raises(ValueError, match="requires an explicit Spoolman spool ID"):
         model_job.resolve_filament_selection(unmapped, {"slot": 1})
     with pytest.raises(ValueError, match="positive Spoolman spool ID"):

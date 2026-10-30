@@ -20,7 +20,7 @@ class HomeSettingsTests(unittest.TestCase):
     def test_home_file_is_the_ad5x(self):
         printer = self.home["printer"]
         self.assertEqual(printer["bed_mm"], [220.0, 220.0])
-        self.assertEqual(printer["ifs_slots"], 4)
+        self.assertEqual(printer["filament_slots"], 4)
         self.assertEqual(printer["nozzle_diameter_mm"], 0.4)
         self.assertEqual(self.home["orca"]["command"], ["flatpak", "run", "com.orcaslicer.OrcaSlicer"])
         self.assertTrue(self.home["visual_watch"]["enabled"])
@@ -60,7 +60,7 @@ class HomeSettingsTests(unittest.TestCase):
         current = settings.current()
         self.assertEqual(orca_adapter.BED, current["printer"]["bed_mm"])
         self.assertEqual(orca_adapter.SINGLE_COPY_EDGE_MM, current["layout"]["single_copy_edge_mm"])
-        self.assertEqual(plate_merge.IFS_SLOTS, current["printer"]["ifs_slots"])
+        self.assertEqual(plate_merge.FILAMENT_SLOTS, current["printer"]["filament_slots"])
         self.assertTrue(slice_guard.pre_slice(bounds=(0, 0, 219, 219), tool_slots={0: 1}).ok)
         self.assertEqual(orca_adapter.ORCA_COMMAND, current["orca"]["command"])
 
@@ -79,9 +79,9 @@ class OverrideTests(unittest.TestCase):
         return path
 
     def test_yaml_local_file_overrides_key_by_key(self):
-        path = self.toml("printer:\n  ifs_slots: 2\nlayout:\n  multi_copy_edge_mm: 4\n", "local.yaml")
+        path = self.toml("printer:\n  filament_slots: 2\nlayout:\n  multi_copy_edge_mm: 4\n", "local.yaml")
         data = settings.load(local=path, environ={})
-        self.assertEqual(data["printer"]["ifs_slots"], 2)
+        self.assertEqual(data["printer"]["filament_slots"], 2)
         self.assertEqual(data["layout"]["multi_copy_edge_mm"], 4)
         self.assertEqual(data["layout"]["single_copy_edge_mm"], 1)
 
@@ -184,7 +184,7 @@ class OverrideTests(unittest.TestCase):
         inventory = settings.load(home=settings.HOME, local=False, environ={})
         expected = {
             "printer": {"name", "firmware", "start_macro", "end_macro", "bed_mm",
-                        "max_print_height_mm", "nozzle_diameter_mm", "ifs_slots", "model", "vendor", "slicer",
+                        "max_print_height_mm", "nozzle_diameter_mm", "filament_slots", "model", "vendor", "slicer",
                         "zmod_delivery_format"},
             "layout": {"spacing", "single_copy_edge_mm", "multi_copy_edge_mm", "arrange_gap_mm", "arrange_edge_mm",
                        "merge_edge_margin_mm", "merge_spacing_mm", "max_merged_hours"},
@@ -339,9 +339,36 @@ class OverrideTests(unittest.TestCase):
         self.assertIn("config/local.toml", result.stdout)
 
     def test_local_file_overrides_key_by_key(self):
-        data = settings.load(local=self.toml("[printer]\nifs_slots = 1\n"))
-        self.assertEqual(data["printer"]["ifs_slots"], 1)
+        data = settings.load(local=self.toml("[printer]\nfilament_slots = 1\n"))
+        self.assertEqual(data["printer"]["filament_slots"], 1)
         self.assertEqual(data["printer"]["bed_mm"], [220.0, 220.0])
+
+    def test_ifs_slots_alias_in_local_file_loads_as_filament_slots(self):
+        # #672: the pre-rename key is a deprecated alias, not an unknown setting,
+        # and the loaded value is the one the old name produced before the rename.
+        data = settings.load(local=self.toml("[printer]\nifs_slots = 3\n"), environ={})
+        self.assertEqual(data["printer"]["filament_slots"], 3)
+        self.assertNotIn("ifs_slots", data["printer"])
+
+    def test_filament_slots_wins_when_both_spellings_are_in_one_file(self):
+        data = settings.load(local=self.toml("[printer]\nifs_slots = 3\nfilament_slots = 2\n"), environ={})
+        self.assertEqual(data["printer"]["filament_slots"], 2)
+
+    def test_ifs_slots_alias_in_environment(self):
+        data = settings.load(local=False, environ={"PRINT_HANDY__PRINTER__IFS_SLOTS": "3"})
+        self.assertEqual(data["printer"]["filament_slots"], 3)
+        self.assertNotIn("ifs_slots", data["printer"])
+
+    def test_filament_slots_environment_wins_over_ifs_slots(self):
+        environ = {"PRINT_HANDY__PRINTER__IFS_SLOTS": "3",
+                   "PRINT_HANDY__PRINTER__FILAMENT_SLOTS": "2"}
+        data = settings.load(local=False, environ=environ)
+        self.assertEqual(data["printer"]["filament_slots"], 2)
+
+    def test_ifs_slots_alias_value_is_validated_under_the_new_name(self):
+        with self.assertRaisesRegex(settings.SettingsError, "filament_slots must be 1"):
+            settings.load(local=self.toml('[printer]\nmodel = "klipper.generic"\nifs_slots = 2\n'),
+                          environ={})
 
     def test_env_var_points_at_another_file(self):
         path = self.toml("[layout]\nmulti_copy_edge_mm = 5\n", "docker.toml")
@@ -357,12 +384,12 @@ class OverrideTests(unittest.TestCase):
         from print_handy.settings import validate
         for text, message in [("[printer]\nbed_mm = [220]\n", "bed_mm"),
                               ("[printer]\nbed_mm = [220, -1]\n", "bed_mm"),
-                              ("[printer]\nifs_slots = 2.5\n", "whole number"),
+                              ("[printer]\nfilament_slots = 2.5\n", "whole number"),
                               ("[printer]\nnozzle_diameter_mm = true\n", "should be like 0.4"),
                               ("[layout]\nmulti_copy_edge_mm = 0\n", "positive number"),
                               ('[orca]\ncommand = "flatpak run orca"\n', "should be like"),
                               ("[printer]\nbed_size = 220\n", "unknown setting \\[printer\\] bed_size"),
-                              ("[pritner]\nifs_slots = 1\n", "unknown section"),
+                              ("[pritner]\nfilament_slots = 1\n", "unknown section"),
                               ('[services]\nspoolman_url = "spoolman.lan"\n', "must be a URL"),
                               ("[nozzle_temp_offsets]\nbrass = 16\n", "between -10 and \\+15"),
                               ("[nozzle_temp_offsets]\nmystery = 2\n", "unknown nozzle type"),

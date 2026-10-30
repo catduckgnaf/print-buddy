@@ -15,7 +15,7 @@ def test_spool_change_refreshes_the_active_spool_name(tmp_path):
     state = tmp_path / "hw.json"
     state.write_text(json.dumps({
         "spool": {"spoolman_id": 3, "name": "Pink PLA", "material": "PLA", "density": 1.24, "diameter_mm": 1.75},
-        "ifs_slots": {"2": {"spoolman_id": 3, "material": "PLA", "color": "pink"}}}))
+        "filament_slots": {"2": {"spoolman_id": 3, "material": "PLA", "color": "pink"}}}))
     spools = {3: _spool(3, "Pink PLA"), 7: _spool(7, "Coffee PLA+", "PLA+")}
 
     def client(method, path, body=None):

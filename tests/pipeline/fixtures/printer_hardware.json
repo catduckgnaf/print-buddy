@@ -9,7 +9,7 @@
   "z_offset_verified": true,
   "temps_c": {"nozzle": 210, "bed": 60},
   "spool": {"spoolman_id": 10, "name": "white", "material": "PLA", "density": 1.24, "diameter_mm": 1.75, "color_code": "FFFFFF"},
-  "ifs_slots": {
+  "filament_slots": {
     "1": {"spoolman_id": 10, "color": "white", "material": "PLA", "hex": "FFFFFF", "physical_color_verified": true},
     "2": {"spoolman_id": 11, "color": "pink", "material": "PLA", "hex": "FF00FF", "physical_color_verified": true},
     "3": {"spoolman_id": 13, "color": "black", "material": "PLA", "hex": "000000", "physical_color_verified": true},

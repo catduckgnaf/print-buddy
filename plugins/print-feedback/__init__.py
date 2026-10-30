@@ -2105,7 +2105,7 @@ def _answer_spool_question(listener, spool_sync, context, choice):
     created = ''
     if choice['status'] == 'new':
         state = spool_sync.load_state()
-        previous_slot = (state.get('ifs_slots') or {}).get(str(slot)) or {}
+        previous_slot = (state.get('filament_slots') or {}).get(str(slot)) or {}
         # The color code: a picked swatch, else the color name read against
         # the named-color table, else (only then) the slot's previous swatch.
         from print_handy.core import filament_color
@@ -2275,7 +2275,7 @@ def _spool_spec_text(spec):
 
 async def _spool_slot_ask(adapter, source, metadata, gateway, spool_sync, state, lead):
     """Ask which slot, showing what each slot holds. (slot, None) or (None, final message)."""
-    slots = (state or {}).get('ifs_slots') or {}
+    slots = (state or {}).get('filament_slots') or {}
     lines = [lead]
     for slot in spool_sync.SLOTS:
         rec = slots.get(str(slot)) or {}
@@ -2439,12 +2439,12 @@ async def _spool_guided_new(adapter, source, metadata, gateway, spool_sync, pid,
                                           f"Which slot should spool #{made_id} go into?")
     if slot is None:
         return made_id, f"{message} Nothing was loaded; no slot changed."
-    old_id = ((state.get('ifs_slots') or {}).get(str(slot)) or {}).get('spoolman_id')
+    old_id = ((state.get('filament_slots') or {}).get(str(slot)) or {}).get('spoolman_id')
     disposition = 'shelf'
     if old_id and int(old_id) != made_id:
         disposition, problem = await _spool_disposition_ask(
             adapter, source, metadata, gateway, slot, old_id,
-            ((state.get('ifs_slots') or {}).get(str(slot)) or {}).get('remaining_grams'))
+            ((state.get('filament_slots') or {}).get(str(slot)) or {}).get('remaining_grams'))
         if disposition is None:
             return made_id, f"{message} Nothing was loaded; slot {slot} is unchanged."
     result = await asyncio.to_thread(spool_sync.bind_slot, slot, made_id,
@@ -2462,7 +2462,7 @@ async def _spool_guided_change(adapter, source, metadata, gateway, spool_sync, p
                                           'Which slot are you changing?')
     if slot is None:
         return problem
-    old_id = ((state.get('ifs_slots') or {}).get(str(slot)) or {}).get('spoolman_id')
+    old_id = ((state.get('filament_slots') or {}).get(str(slot)) or {}).get('spoolman_id')
     shelf = await asyncio.to_thread(spool_sync.shelf_spools, **_pkw(pid))
     listed = shelf[:12]
     lines = [f"Which spool goes into slot {slot}? Pick one from the shelf, or choose Add a new spool."]
@@ -2511,7 +2511,7 @@ async def _spool_guided_change(adapter, source, metadata, gateway, spool_sync, p
     if old_id:
         disposition, problem = await _spool_disposition_ask(
             adapter, source, metadata, gateway, slot, old_id,
-            ((state.get('ifs_slots') or {}).get(str(slot)) or {}).get('remaining_grams'))
+            ((state.get('filament_slots') or {}).get(str(slot)) or {}).get('remaining_grams'))
         if disposition is None:
             return (f"{created_note}The change was cancelled; slot {slot} is unchanged."
                     if created_note else problem)
@@ -4457,8 +4457,8 @@ def alert_button_handlers(bot, adapter):
             await interaction.response.send_message('That insertion prompt is invalid. Nothing changed.', ephemeral=True)
             return
         state = await asyncio.to_thread(spool_sync.load_state)
-        mapped = (state.get('ifs_slots') or {}).get(str(slot)) or {}
-        loaded_ids = {int(record.get('spoolman_id')) for key, record in (state.get('ifs_slots') or {}).items()
+        mapped = (state.get('filament_slots') or {}).get(str(slot)) or {}
+        loaded_ids = {int(record.get('spoolman_id')) for key, record in (state.get('filament_slots') or {}).items()
                       if str(key) != str(slot) and isinstance(record, dict) and record.get('spoolman_id') is not None}
         try:
             spools = await asyncio.to_thread(spool_sync.spoolman, 'GET', '/api/v1/spool?allow_archived=false', None)
@@ -4528,7 +4528,7 @@ def alert_button_handlers(bot, adapter):
         if origin == 'insertion':
             try:
                 state_now = await asyncio.to_thread(spool_sync.load_state)
-                record = (state_now.get('ifs_slots') or {}).get(str(slot)) or {}
+                record = (state_now.get('filament_slots') or {}).get(str(slot)) or {}
                 old_spool_id = record.get('spoolman_id')
                 old_remaining = record.get('remaining_grams')
             except Exception:
@@ -4783,8 +4783,8 @@ def alert_button_handlers(bot, adapter):
             await interaction.response.send_message('That spool question has no usable slot. Nothing changed.', ephemeral=True)
             return
         state = await asyncio.to_thread(spool_sync.load_state)
-        mapped = (state.get('ifs_slots') or {}).get(str(slot)) or {}
-        loaded_ids = {int(record.get('spoolman_id')) for key, record in (state.get('ifs_slots') or {}).items()
+        mapped = (state.get('filament_slots') or {}).get(str(slot)) or {}
+        loaded_ids = {int(record.get('spoolman_id')) for key, record in (state.get('filament_slots') or {}).items()
                       if str(key) != str(slot) and isinstance(record, dict) and record.get('spoolman_id') is not None}
         try:
             spools = await asyncio.to_thread(spool_sync.spoolman, 'GET', '/api/v1/spool?allow_archived=false', None)
@@ -5007,7 +5007,7 @@ def alert_button_handlers(bot, adapter):
             await interaction.response.send_message('That slot choice is not usable. Nothing changed.', ephemeral=True)
             return
         state = await asyncio.to_thread(spool_sync.load_state)
-        old_id = ((state.get('ifs_slots') or {}).get(str(slot)) or {}).get('spoolman_id')
+        old_id = ((state.get('filament_slots') or {}).get(str(slot)) or {}).get('spoolman_id')
         if old_id and int(old_id) == int(spool_id):
             await interaction.response.edit_message(
                 content=f'Slot {slot} already holds spool {label}. Nothing changed.', view=None)

@@ -32,7 +32,7 @@ from . import spoolman_client
 
 LOCAL_TZ = ZoneInfo(settings.current()["discord"]["timezone"])
 
-VALID_IFS_SLOTS = tuple(range(1, settings.current()["printer"]["ifs_slots"] + 1))
+VALID_FILAMENT_SLOTS = tuple(range(1, settings.current()["printer"]["filament_slots"] + 1))
 
 
 def now_iso() -> str:
@@ -46,8 +46,8 @@ def validate_ifs_slot(slot: int | str) -> int:
         slot_int = int(slot)
     except (TypeError, ValueError) as exc:
         raise ValueError(f"Invalid IFS slot {slot!r}; must be integer 1, 2, 3, or 4") from exc
-    if slot_int not in VALID_IFS_SLOTS:
-        raise ValueError(f"IFS slot {slot_int} out of bounds; physical IFS has slots {', '.join(map(str, VALID_IFS_SLOTS))} only")
+    if slot_int not in VALID_FILAMENT_SLOTS:
+        raise ValueError(f"IFS slot {slot_int} out of bounds; physical IFS has slots {', '.join(map(str, VALID_FILAMENT_SLOTS))} only")
     return slot_int
 
 
@@ -203,9 +203,9 @@ def replace_slot_spool(
             except ValueError:
                 pass
 
-    ifs_slots = state.setdefault("ifs_slots", {})
+    filament_slots = state.setdefault("filament_slots", {})
     slot_key = str(slot_num)
-    old_slot = copy.deepcopy(ifs_slots.get(slot_key))
+    old_slot = copy.deepcopy(filament_slots.get(slot_key))
 
     updated_slot = {
         "slot": slot_num,
@@ -224,7 +224,7 @@ def replace_slot_spool(
     }
 
     # Only the target slot is updated; other slots are untouched.
-    ifs_slots[slot_key] = updated_slot
+    filament_slots[slot_key] = updated_slot
 
     if persist:
         from . import printer_state
@@ -258,13 +258,13 @@ def reconcile_four_slot_state(
     """
     drifts: list[dict[str, Any]] = []
     slot_reports: dict[str, Any] = {}
-    ifs_slots = state.get("ifs_slots") or {}
+    filament_slots = state.get("filament_slots") or {}
 
     # Audit physical four-slot boundary: detect legacy or out-of-range slots in config
-    for raw_slot_key, raw_cfg in ifs_slots.items():
+    for raw_slot_key, raw_cfg in filament_slots.items():
         try:
             slot_int = int(raw_slot_key)
-            if slot_int in VALID_IFS_SLOTS:
+            if slot_int in VALID_FILAMENT_SLOTS:
                 continue
         except (ValueError, TypeError):
             pass
@@ -281,8 +281,8 @@ def reconcile_four_slot_state(
     detail_slots: dict[int, bool | None] = {}
     if detail_data is not None:
         try:
-            from .model_job import read_stock_ifs_slots_from_detail
-            detail_slots = read_stock_ifs_slots_from_detail(detail_data)
+            from .model_job import read_stock_filament_slots_from_detail
+            detail_slots = read_stock_filament_slots_from_detail(detail_data)
         except Exception as exc:
             drifts.append({
                 "category": "native_detail_unreadable",
@@ -303,9 +303,9 @@ def reconcile_four_slot_state(
                 continue
 
     # Reconcile each of the 4 authoritative physical slots
-    for slot_id in VALID_IFS_SLOTS:
+    for slot_id in VALID_FILAMENT_SLOTS:
         s_key = str(slot_id)
-        cfg = ifs_slots.get(s_key) or {}
+        cfg = filament_slots.get(s_key) or {}
         has_cfg = bool(cfg)
 
         detail_presence = detail_slots.get(slot_id)
@@ -456,9 +456,9 @@ def reconcile_four_slot_state(
 
         # Check if active pointer corresponds to any configured physical slot (1-4 only)
         mapped_sids = {}
-        for slot_id in VALID_IFS_SLOTS:
+        for slot_id in VALID_FILAMENT_SLOTS:
             s_key = str(slot_id)
-            cfg = ifs_slots.get(s_key) or ifs_slots.get(slot_id)
+            cfg = filament_slots.get(s_key) or filament_slots.get(slot_id)
             if isinstance(cfg, dict) and cfg.get("spoolman_id"):
                 mapped_sids[cfg["spoolman_id"]] = slot_id
 
@@ -592,7 +592,7 @@ def generate_job_accounting_receipt(
     """
     manifest = job_manifest or {}
     st = state or {}
-    ifs_slots = st.get("ifs_slots") or {}
+    filament_slots = st.get("filament_slots") or {}
 
     raw_gcode = gcode_text
     if raw_gcode is None and gcode_path is not None:
@@ -617,7 +617,7 @@ def generate_job_accounting_receipt(
             # Fallback to active spool slot ONLY if mapped to a valid physical IFS slot (1-4)
             active_sid = (st.get("spool") or {}).get("spoolman_id")
             if active_sid is not None:
-                for s_str, slot_data in ifs_slots.items():
+                for s_str, slot_data in filament_slots.items():
                     try:
                         s_int = validate_ifs_slot(s_str)
                     except (ValueError, TypeError):
@@ -654,7 +654,7 @@ def generate_job_accounting_receipt(
         for idx, tool in enumerate(tools_sorted):
             slot_num = validate_ifs_slot(tool_map[tool])
             s_key = str(slot_num)
-            slot_cfg = ifs_slots.get(s_key) or {}
+            slot_cfg = filament_slots.get(s_key) or {}
 
             sid = slot_cfg.get("spoolman_id")
             spool_rec = spoolman_spools.get(sid) if (spoolman_spools and sid) else None
@@ -868,7 +868,7 @@ def main():
 
     # replace
     p_rep = sub.add_parser("replace", help="Record physical spool replacement in an IFS slot")
-    p_rep.add_argument("--slot", type=int, required=True, choices=list(VALID_IFS_SLOTS), help=f"Target IFS slot (1-{VALID_IFS_SLOTS[-1]})")
+    p_rep.add_argument("--slot", type=int, required=True, choices=list(VALID_FILAMENT_SLOTS), help=f"Target IFS slot (1-{VALID_FILAMENT_SLOTS[-1]})")
     p_rep.add_argument("--material", required=True, help="Filament material (e.g. PLA, PETG)")
     p_rep.add_argument("--color", required=True, help="Filament color name")
     p_rep.add_argument("--spoolman-id", type=int, required=True, help="Non-archived Spoolman spool ID")

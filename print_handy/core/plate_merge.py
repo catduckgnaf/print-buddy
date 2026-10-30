@@ -42,7 +42,7 @@ SPACING_MM = _S['layout']['merge_spacing_mm']
 TOWER_MM = _S['prime_tower']['size_mm']
 TOWER_CLEARANCE_MM = _S['prime_tower']['part_clearance_mm']
 TOWER_SLACK_MM = _S['prime_tower']['merge_slack_mm']
-IFS_SLOTS = _S['printer']['ifs_slots']
+FILAMENT_SLOTS = _S['printer']['filament_slots']
 
 SEPARATE_RE = re.compile(
     r"(print(?:ed)?\s+(?:\w+\s+){0,3}(?:separately|individually|one\s+(?:plate\s+)?at\s+a\s+time|one\s+by\s+one)"
@@ -753,10 +753,10 @@ def plan(source, manifest, plates, slots, state, bed=None, spacing=None, job=Non
         out['reason'] = f'author notes ask for separate printing ("{hint}")'
         return out
     used = sorted(set(slots.values()))
-    if len(used) > IFS_SLOTS:
-        out['reason'] = f'needs {len(used)} filament slots; one IFS job has {IFS_SLOTS}'
+    if len(used) > FILAMENT_SLOTS:
+        out['reason'] = f'needs {len(used)} filament slots; one IFS job has {FILAMENT_SLOTS}'
         return out
-    materials = {(state.get('ifs_slots') or {}).get(str(s), {}).get('material') for s in used}
+    materials = {(state.get('filament_slots') or {}).get(str(s), {}).get('material') for s in used}
     if len(used) > 1 and len(materials) > 1:
         out['reason'] = 'mixed materials across slots cannot share one IFS job'
         return out

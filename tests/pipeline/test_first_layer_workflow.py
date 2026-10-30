@@ -17,7 +17,7 @@ def offline_hardware(monkeypatch):
         'temps_c': {'nozzle': 220, 'bed': 60},
         'spool': {'spoolman_id': 10, 'material': 'PLA', 'name': 'white',
                   'density': 1.24, 'color_code': 'FFFFFF'},
-        'ifs_slots': {'1': {'spoolman_id': 10, 'color': 'white', 'material': 'PLA',
+        'filament_slots': {'1': {'spoolman_id': 10, 'color': 'white', 'material': 'PLA',
                             'hex': 'FFFFFF', 'physical_color_verified': True}},
         'axis_limits_mm': {'x': [0, 223], 'y': [0, 223], 'z': [0, 250]},
         'calibration_baseline': {'native_mesh': 'auto'},

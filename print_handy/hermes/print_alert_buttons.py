@@ -430,7 +430,7 @@ def post_new_spool(token: str, channel_id: str, content: str, spool_id: int, lab
 
 def new_spool_slot_options(state: dict[str, Any] | None) -> list[dict[str, str]]:
     """Select options for the new-spool load step: every slot, with what it holds now."""
-    slots = (state or {}).get("ifs_slots") or {}
+    slots = (state or {}).get("filament_slots") or {}
     options = []
     for slot in (1, 2, 3, 4):
         rec = slots.get(str(slot)) or {}

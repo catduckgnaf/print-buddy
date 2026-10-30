@@ -52,7 +52,7 @@ def capture(name, case, tmp_path, monkeypatch, **kw):
 
     monkeypatch.setattr(orca_adapter.subprocess, "run", run)
     state = copy.deepcopy(json.loads(STATE.read_text()))
-    state["ifs_slots"] = {"1": {"slot": 1, "spoolman_id": 10, "material": "PLA", "physical_color_verified": True,
+    state["filament_slots"] = {"1": {"slot": 1, "spoolman_id": 10, "material": "PLA", "physical_color_verified": True,
                                 "hex": "FFFFFF"}}
     folder = tmp_path / name
     adapter = adapter_for(name)

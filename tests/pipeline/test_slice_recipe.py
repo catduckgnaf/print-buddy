@@ -85,8 +85,8 @@ def _hardware(**change):
 @pytest.mark.parametrize('path,value', [
     ('nozzle.diameter_mm', 0.6),
     ('nozzle.type', 'hardened'),
-    ('ifs_slots.1.material', 'PETG'),
-    ('ifs_slots.1.hex', '000000'),
+    ('filament_slots.1.material', 'PETG'),
+    ('filament_slots.1.hex', '000000'),
 ])
 def test_printer_material_and_nozzle_state_change_the_binding(monkeypatch, path, value):
     monkeypatch.setattr(printer_state, 'load', _hardware)
@@ -178,7 +178,7 @@ def test_worker_accepts_the_recipe_intake_bound_before_the_first_slice(tmp_path,
     from .test_color_intake import source, state
     from print_handy.core import slice_recipe
     st = state(); st.update(bed_mm=[220, 220], max_print_height_mm=220, moonraker_url='offline://fake')
-    for slot in st['ifs_slots'].values():
+    for slot in st['filament_slots'].values():
         slot['physical_color_verified'] = True
     jp = tmp_path / 'JOB.json'
     jp.write_text(json.dumps({'downloaded_file': str(source(tmp_path)),
@@ -210,7 +210,7 @@ def test_spacing_and_prime_tower_settings_are_recipe_inputs(monkeypatch):
     # change the recipe: an old slice is never reused under new spacing.
     from print_handy import settings
     job = {'title': 't'}
-    state = {'nozzle': {'diameter_mm': 0.4}, 'ifs_slots': {}}
+    state = {'nozzle': {'diameter_mm': 0.4}, 'filament_slots': {}}
     before = recipe_module.slice_recipe(job, 'a' * 64, state)
     assert before['layout']['spacing']['layout.merge_edge_margin_mm'] is not None
     assert 'size_mm' in before['layout']['prime_tower']

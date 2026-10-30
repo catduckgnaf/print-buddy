@@ -53,7 +53,7 @@ What a vendor package like Qidi contains:
 | File | What it does |
 |---|---|
 | `__init__.py` | `VENDOR = VendorProfile(...)`: connection (`moonraker`), start-code family, allowed slicers, file formats, and shared setting defaults such as the start and end macro names. |
-| `q1pro.py` (one per model) | `MODEL = PrinterModel(key="qidi.q1pro", ...)`: label, adapter class, template folder name, supported nozzle sizes and types, and the `printer` defaults (name, `bed_mm`, `max_print_height_mm`, nozzle, `ifs_slots`). The key must be `<vendor package>.<module name>`. |
+| `q1pro.py` (one per model) | `MODEL = PrinterModel(key="qidi.q1pro", ...)`: label, adapter class, template folder name, supported nozzle sizes and types, and the `printer` defaults (name, `bed_mm`, `max_print_height_mm`, nozzle, `filament_slots`). The key must be `<vendor package>.<module name>`. |
 | `adapter.py` | The vendor adapter. For Qidi it subclasses the Klipper adapter and uses the template's own start sequence. |
 | `facts.py` | Sourced facts per model: bed, height, exclusion zones, nozzle sizes, temperature ceilings and the checked slicer profile identities. Each is a `Fact` that records its source. |
 | `guard.py` | Offline checks on sliced G-code: another ecosystem's start code, a file sliced for a different model, temperatures over the model's limits, nozzle sizes with no template. |

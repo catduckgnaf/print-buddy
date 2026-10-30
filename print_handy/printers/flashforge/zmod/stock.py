@@ -12,7 +12,7 @@ STOCK_CRED_KEYS = ("AD5X_SERIAL", "AD5X_CHECK_CODE")
 
 
 def _slots():
-    return settings.current()["printer"]["ifs_slots"]
+    return settings.current()["printer"]["filament_slots"]
 
 
 def _request_json(*args, **kwargs):
@@ -77,7 +77,7 @@ def validate_native_start(detail, selection):
 
 
 def read_zmod_color_slots(status):
-    """{slot: bool | None} from Klipper's zmod_color, the shape read_stock_ifs_slots_from_detail returns.
+    """{slot: bool | None} from Klipper's zmod_color, the shape read_stock_filament_slots_from_detail returns.
 
     In screenless mode (display_off=1) the stock firmware is not running, so its
     /detail API refuses and ZMod's zmod_color.slots[].hasFilament (1-based IDs)
@@ -97,7 +97,7 @@ def read_zmod_color_slots(status):
     return result
 
 
-def read_stock_ifs_slots_from_detail(detail):
+def read_stock_filament_slots_from_detail(detail):
     """Extract native slot presence from one already-fetched authenticated detail sample."""
     if detail.get("hasMatlStation") is not True:
         raise RuntimeError("stock firmware does not report an attached IFS")
@@ -119,9 +119,9 @@ def read_stock_ifs_slots_from_detail(detail):
     return result
 
 
-def read_stock_ifs_slots(state, *, post=None):
+def read_stock_filament_slots(state, *, post=None):
     """Native presence, not the screen-mode hardcoded zmod_color flags."""
-    return read_stock_ifs_slots_from_detail(read_stock_detail(state, post=post))
+    return read_stock_filament_slots_from_detail(read_stock_detail(state, post=post))
 
 
 def apply_stock_presence(status, stock):

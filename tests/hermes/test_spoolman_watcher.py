@@ -280,7 +280,7 @@ def test_new_spool_custom_ids_parse():
 
 
 def test_new_spool_slot_options_name_current_contents():
-    state = {"ifs_slots": {"2": {"spoolman_id": 12, "name": "Red PETG"}}}
+    state = {"filament_slots": {"2": {"spoolman_id": 12, "name": "Red PETG"}}}
     options = pab.new_spool_slot_options(state)
     assert [option["value"] for option in options] == ["1", "2", "3", "4"]
     assert options[0]["description"] == "Now holds empty"
@@ -380,7 +380,7 @@ def test_load_path_walks_slot_disposition_confirm_and_binds(click_harness, monke
         return {"record": {"spoolman_id": spool_id}}
 
     monkeypatch.setattr(spool_sync, "load_state",
-                        lambda *a, **kw: {"ifs_slots": {"3": {"spoolman_id": 9, "name": "Old PLA"}}})
+                        lambda *a, **kw: {"filament_slots": {"3": {"spoolman_id": 9, "name": "Old PLA"}}})
     monkeypatch.setattr(spool_sync, "bind_slot", fake_bind)
     monkeypatch.setattr(spool_sync, "bind_text", lambda result: "Slot 3 → spool #21. Bound.")
 
@@ -418,7 +418,7 @@ def test_load_path_walks_slot_disposition_confirm_and_binds(click_harness, monke
 def test_load_into_empty_slot_skips_the_disposition_step(click_harness, monkeypatch):
     on_interaction = click_harness
     binds = []
-    monkeypatch.setattr(spool_sync, "load_state", lambda *a, **kw: {"ifs_slots": {}})
+    monkeypatch.setattr(spool_sync, "load_state", lambda *a, **kw: {"filament_slots": {}})
     monkeypatch.setattr(spool_sync, "bind_slot",
                         lambda slot, spool_id, **kw: binds.append((slot, spool_id, kw)) or {"record": {}})
     monkeypatch.setattr(spool_sync, "bind_text", lambda result: "Bound.")

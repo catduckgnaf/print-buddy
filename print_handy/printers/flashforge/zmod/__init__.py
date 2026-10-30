@@ -29,13 +29,13 @@ require_idle_screenless = _forward(native_idle, "require_idle_screenless")
 read_zmod_color_slots = _forward(stock, "read_zmod_color_slots")
 native_startup_valid = _forward(native_startup, "valid", "native_startup_valid")
 read_stock_detail = _forward(stock, "read_stock_detail")
-read_stock_ifs_slots = _forward(stock, "read_stock_ifs_slots")
-read_stock_ifs_slots_from_detail = _forward(stock, "read_stock_ifs_slots_from_detail")
+read_stock_filament_slots = _forward(stock, "read_stock_filament_slots")
+read_stock_filament_slots_from_detail = _forward(stock, "read_stock_filament_slots_from_detail")
 validate_native_start = _forward(stock, "validate_native_start")
 apply_stock_presence = _forward(stock, "apply_stock_presence")
 
 __all__ = ["apply_stock_presence", "describe_mapping", "embedded_mapping", "finalize", "multicolor_contract",
            "native_idle", "native_startup", "native_startup_valid", "normalize_mapping", "read_stock_detail",
-           "read_stock_ifs_slots", "read_stock_ifs_slots_from_detail", "read_zmod_color_slots",
+           "read_stock_filament_slots", "read_stock_filament_slots_from_detail", "read_zmod_color_slots",
            "require_idle_screenless", "require_idle_settled", "screen",
            "stock", "validate_materials", "validate_native_start"]

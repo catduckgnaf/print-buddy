@@ -112,10 +112,10 @@ class MigrateNamesTests(unittest.TestCase):
         self.assertLess(out.index("user.moonraker.conf"), out.index("ENABLE_PLUGIN name=print-handy"))
 
     def test_printer_family_becomes_model(self):
-        self.config.write_text('[printer]\nfamily = "sovol_klipper"\nifs_slots = 1\n')
+        self.config.write_text('[printer]\nfamily = "sovol_klipper"\nfilament_slots = 1\n')
         self.run_script()
-        self.assertEqual('[printer]\nmodel = "sovol.sv06"\nifs_slots = 1\n', self.config.read_text())
-        self.assertEqual('[printer]\nfamily = "sovol_klipper"\nifs_slots = 1\n',
+        self.assertEqual('[printer]\nmodel = "sovol.sv06"\nfilament_slots = 1\n', self.config.read_text())
+        self.assertEqual('[printer]\nfamily = "sovol_klipper"\nfilament_slots = 1\n',
                          Path(f"{self.config}.pre-model").read_text())
 
 

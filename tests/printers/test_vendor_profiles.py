@@ -267,7 +267,7 @@ def dropped_in_bambu_printer(tmp_path, monkeypatch):
         "MODEL = PrinterModel(key='bambulab.zz_test_printer', label='Test Bambu', adapter=KlipperAdapter,\n"
         "    templates='klipper_generic', supported_nozzle_sizes=(0.4,),\n"
         "    settings={'printer': {'name': 'Test Bambu', 'bed_mm': [256.0, 256.0], 'max_print_height_mm': 256.0,\n"
-        "                          'nozzle_diameter_mm': 0.4, 'ifs_slots': 1}})\n")
+        "                          'nozzle_diameter_mm': 0.4, 'filament_slots': 1}})\n")
     package = sys.modules["print_handy.printers.bambulab"]
     monkeypatch.setattr(package, "__path__", [*package.__path__, str(tmp_path)])
     vendors, models = printers._discover()

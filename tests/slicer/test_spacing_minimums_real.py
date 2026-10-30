@@ -45,7 +45,7 @@ def _source(path, shapes, filaments=2):
 
 
 def _decisions(state, manifest, second_slot_object=None):
-    sel = {s: model_job.resolve_filament_selection(state, dict(state["ifs_slots"][str(s)], slot=s)) for s in (1, 2)}
+    sel = {s: model_job.resolve_filament_selection(state, dict(state["filament_slots"][str(s)], slot=s)) for s in (1, 2)}
     choices = {}
     for part in manifest["parts"]:
         choices["part:" + part["key"]] = sel[2 if str(part["object_id"]) == str(second_slot_object) else 1]

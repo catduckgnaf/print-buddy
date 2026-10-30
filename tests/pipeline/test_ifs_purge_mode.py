@@ -60,7 +60,7 @@ def slice_ad5x(tmp_path, monkeypatch, picks, slicer=None):
     manifest = source_colors.inventory(SOURCE)
     choices = {}
     for row, slot in zip(source_colors.canonical_prompts(manifest), picks):
-        record = state['ifs_slots'][str(slot)]
+        record = state['filament_slots'][str(slot)]
         choices[row['key']] = {'slot': slot, 'color': record['color'], 'material': 'PLA',
                                'spoolman_id': record['spoolman_id']}
     decisions = {'source_sha256': manifest['source_sha256'], 'mode': 'per_part',

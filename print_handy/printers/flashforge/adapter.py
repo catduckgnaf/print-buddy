@@ -12,7 +12,7 @@ class ZmodAdapter(PrinterAdapter):
 
     @property
     def slot_count(self):
-        return int(self.config["printer"]["ifs_slots"])
+        return int(self.config["printer"]["filament_slots"])
 
     @property
     def native(self):
@@ -120,7 +120,7 @@ class ZmodMultiToolAdapter(ZmodSingleExtruderAdapter):
 
     Four toolheads, each with its own extruder and filament, selected by the
     sliced file's bare T0-T3 lines — a tool changer, not a feeder. The tools
-    are modelled as tools: [printer] tool_count names them and ifs_slots
+    are modelled as tools: [printer] tool_count names them and filament_slots
     stays 1, so no IFS behaviour in core (feeder slot questions, spool-switch
     claims, the AD5X PRINT_HANDY macro) switches on. Slicer tool i always
     prints with toolhead i (Klipper objects extruder..extruder3); a mapping

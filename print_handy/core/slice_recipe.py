@@ -69,7 +69,7 @@ def slice_recipe(job, source_sha256, state=None, *, copies=None, scale=None, bri
     decisions = job.get('color_decisions') or {}
     nozzle = state.get('nozzle') or {}
     tuned = get_tuned_nozzle_profile(nozzle['diameter_mm']) if nozzle.get('diameter_mm') else None
-    slots = state.get('ifs_slots') or {}
+    slots = state.get('filament_slots') or {}
     current = settings.current()
     return {
         'recipe_version': RECIPE_VERSION,

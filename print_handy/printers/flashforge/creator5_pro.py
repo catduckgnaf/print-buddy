@@ -30,9 +30,9 @@ MODEL = PrinterModel(
             "max_print_height_mm": 256.0,
             # Orca templates are tuned for this nozzle. Slicing refuses any other size.
             "nozzle_diameter_mm": 0.4,
-            # Four independent toolheads (tools, not IFS slots): ifs_slots stays 1
+            # Four independent toolheads (tools, not IFS slots): filament_slots stays 1
             # so no IFS behaviour in core switches on; tool_count names the heads.
-            "ifs_slots": 1,
+            "filament_slots": 1,
             "tool_count": 4,
         },
     },

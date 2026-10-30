@@ -199,7 +199,7 @@ def _stock_print(monkeypatch, tmp_path, details, *, slot=1, after=None):
     gcode.write_text("G1 X1\n")
     fake = _FakeStock(details)
     adapter = StockFlashforgeAdapter({
-        "printer": {"model": "flashforge_stock.ad5x", "ifs_slots": 4,
+        "printer": {"model": "flashforge_stock.ad5x", "filament_slots": 4,
                     "bed_mm": [220.0, 220.0], "max_print_height_mm": 220.0},
         "layout": {"single_copy_edge_mm": 5, "multi_copy_edge_mm": 5},
         "flashforge_stock": {"host": "192.0.2.10"},
@@ -233,7 +233,7 @@ def test_stock_print_refuses_an_empty_slot_before_upload(monkeypatch, tmp_path):
     gcode.write_text("G1 X1\n")
     fake = _FakeStock([_bays({1})])
     adapter = StockFlashforgeAdapter({
-        "printer": {"model": "flashforge_stock.ad5x", "ifs_slots": 4,
+        "printer": {"model": "flashforge_stock.ad5x", "filament_slots": 4,
                     "bed_mm": [220.0, 220.0], "max_print_height_mm": 220.0},
         "layout": {"single_copy_edge_mm": 5, "multi_copy_edge_mm": 5},
         "flashforge_stock": {"host": "192.0.2.10"},
@@ -254,7 +254,7 @@ def test_stock_print_refuses_start_print_before_upload(monkeypatch, tmp_path):
     gcode.write_text("START_PRINT BED_TEMP=60 EXTRUDER_TEMP=215 MESH=auto\\n")
     fake = _FakeStock([_bays({1})])
     adapter = StockFlashforgeAdapter({
-        "printer": {"model": "flashforge_stock.ad5x", "ifs_slots": 4,
+        "printer": {"model": "flashforge_stock.ad5x", "filament_slots": 4,
                     "bed_mm": [220.0, 220.0], "max_print_height_mm": 220.0},
         "layout": {"single_copy_edge_mm": 5, "multi_copy_edge_mm": 5},
         "flashforge_stock": {"host": "192.0.2.10"},

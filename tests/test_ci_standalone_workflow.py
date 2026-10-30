@@ -1,0 +1,92 @@
+"""Contract tests for the standalone and offline CI legs (.github/workflows/ci.yml).
+
+The standalone-no-hermes job (#73) proves the bot installs from
+requirements.txt alone and passes `bot check` with no Hermes module loaded.
+Discord was its only platform for a long time, but Telegram and Matrix
+(#164 stages 2-3) are standalone platforms too and stdlib-only by design:
+these tests pin a clean-venv `bot check` step for each of them, so a stray
+non-runtime import in their paths fails CI instead of a real install.
+
+The offline-tests job pins two smaller things: jq is installed, because
+bin/moonrakerctl is a shipped CLI that parses Moonraker JSON with it and
+tests/pipeline/test_shell_cli.py skips without it; and pytest runs with
+-rs, because a plain -q run reports a skip count with no names or reasons,
+which made a 76-skip CI run impossible to attribute.
+"""
+
+import pathlib
+import unittest
+
+import yaml
+
+ROOT = pathlib.Path(__file__).resolve().parents[1]
+WORKFLOW_PATH = ROOT / ".github" / "workflows" / "ci.yml"
+
+
+def load_workflow():
+    return yaml.load(WORKFLOW_PATH.read_text(), Loader=yaml.BaseLoader)
+
+
+def steps_by_name(job):
+    return {step.get("name"): step for step in job["steps"]}
+
+
+class StandaloneWorkflowContract(unittest.TestCase):
+    def test_job_builds_one_clean_venv_from_runtime_requirements_only(self):
+        job = load_workflow()["jobs"]["standalone-no-hermes"]
+        runs = "\n".join(step.get("run", "") for step in job["steps"])
+        self.assertIn('python -m venv "/tmp/clean"', runs)
+        self.assertIn('"/tmp/clean/bin/python" -m pip install -r requirements.txt', runs)
+        self.assertNotIn("requirements-test.txt", runs)
+
+    def test_bot_check_runs_for_discord(self):
+        step = steps_by_name(load_workflow()["jobs"]["standalone-no-hermes"])[
+            "Standalone bot setup check"]
+        self.assertEqual(step["env"]["PRINT_HANDY__BOT__MODE"], "standalone")
+        self.assertNotIn("PRINT_HANDY__BOT__PLATFORM", step["env"])
+        self.assertIn("DISCORD_BOT_TOKEN", step["env"])
+        self.assertIn('"/tmp/clean/bin/python" -m print_handy.bot check', step["run"])
+
+    def test_bot_check_runs_for_telegram(self):
+        step = steps_by_name(load_workflow()["jobs"]["standalone-no-hermes"])[
+            "Standalone bot setup check (Telegram)"]
+        self.assertEqual(step["env"]["PRINT_HANDY__BOT__MODE"], "standalone")
+        self.assertEqual(step["env"]["PRINT_HANDY__BOT__PLATFORM"], "telegram")
+        # [telegram] token_env defaults to TELEGRAM_BOT_TOKEN, the chat ID is
+        # a signed group ID and allowed users are numeric Telegram IDs.
+        self.assertIn("TELEGRAM_BOT_TOKEN", step["env"])
+        self.assertRegex(step["env"]["PRINT_HANDY__TELEGRAM__CHAT_ID"], r"^-\d+$")
+        self.assertRegex(step["env"]["PRINT_HANDY__TELEGRAM__ALLOWED_USER_IDS"], r"^\d+$")
+        self.assertIn('"/tmp/clean/bin/python" -m print_handy.bot check', step["run"])
+
+    def test_bot_check_runs_for_matrix(self):
+        step = steps_by_name(load_workflow()["jobs"]["standalone-no-hermes"])[
+            "Standalone bot setup check (Matrix)"]
+        self.assertEqual(step["env"]["PRINT_HANDY__BOT__MODE"], "standalone")
+        self.assertEqual(step["env"]["PRINT_HANDY__BOT__PLATFORM"], "matrix")
+        # [matrix] access_token_env defaults to MATRIX_ACCESS_TOKEN, the
+        # room ID starts with "!" and allowed users are full @user:server IDs.
+        self.assertIn("MATRIX_ACCESS_TOKEN", step["env"])
+        self.assertTrue(
+            step["env"]["PRINT_HANDY__MATRIX__HOMESERVER_URL"].startswith("https://"))
+        self.assertTrue(step["env"]["PRINT_HANDY__MATRIX__ROOM_ID"].startswith("!"))
+        self.assertRegex(step["env"]["PRINT_HANDY__MATRIX__ALLOWED_USER_IDS"],
+                         r"^@[^:]+:[^:]+$")
+        self.assertIn('"/tmp/clean/bin/python" -m print_handy.bot check', step["run"])
+
+
+class OfflineTestsWorkflowContract(unittest.TestCase):
+    def test_jq_is_installed_so_the_shell_cli_tests_execute(self):
+        job = load_workflow()["jobs"]["offline-tests"]
+        runs = "\n".join(step.get("run", "") for step in job["steps"])
+        self.assertIn("apt-get install -y -q jq", runs)
+
+    def test_skip_reasons_are_reported(self):
+        job = load_workflow()["jobs"]["offline-tests"]
+        runs = [step.get("run", "") for step in job["steps"]]
+        offline = next(run for run in runs if "pytest" in run)
+        self.assertIn("-rs", offline)
+
+
+if __name__ == "__main__":
+    unittest.main()

@@ -1072,14 +1072,14 @@ def _dark_capture(job_key):
     """The #476 camera-dark capture outcome for a job (a manifest dict), or None.
 
     The manifest of a finished in-container capture that kept no frames
-    because every frame was completely dark. Gated on capture_enabled
+    because every frame was completely dark. Gated on capture_active
     exactly like _captured_timelapse's lookup: with capture off there is
     no dark outcome to name, and the delivery thread does no extra work.
     Never raises.
     """
     try:
         data = _config.cfg()
-        if not go2rtc.capture_enabled(data):
+        if not go2rtc.capture_active(data):
             return None
         return timelapse_encode.dark_capture(job_key, data=data)
     except Exception as exc:
@@ -1096,10 +1096,17 @@ def _capture_outcome_text():
     assembly no encoder could complete (the capture and encode layers log
     their own specifics, like a dead source, when they happen). The
     printer-rendered archive states are reported separately and never in
-    these terms.
+    these terms. [timelapse] mode is named when it is the reason (2.2.2:
+    mode=off disables capture whatever capture_enabled says).
     """
     try:
-        if not go2rtc.capture_enabled(_config.cfg()):
+        data = _config.cfg()
+        mode = go2rtc.timelapse_mode(data)
+        if mode == "off":
+            return "timelapse mode is off (timelapse.mode is off)"
+        if mode == "container":
+            return "in-container capture produced no video for this job"
+        if not go2rtc.capture_enabled(data):
             return "in-container capture is disabled (timelapse.capture_enabled is off)"
     except Exception:
         pass
@@ -1131,6 +1138,18 @@ def _plan_timelapse_post(job_key, completion_message, tl_plan):
             captured = _captured_timelapse(job_key)
             if captured is not None:
                 clip = plan_timelapse.add_clip(plan, order, captured)
+            elif not go2rtc.rendered_active(_config.cfg()):
+                # [timelapse] mode closes the printer-rendered path for
+                # plan plates too (2.2.2): no archive lookup happens, and
+                # the plate simply contributes no clip.
+                dark = _dark_capture(job_key)
+                if dark:
+                    log(f"timelapse capture for {job_key!r} kept no frames: all "
+                        f"{dark.get('dark_frames')} frame(s) were completely dark (#476)")
+                else:
+                    log(f"plan timelapse clip for {job_key!r} unavailable: timelapse mode is "
+                        f"{go2rtc.timelapse_mode(_config.cfg())}; the printer-rendered "
+                        "path is off in this mode")
             else:
                 outcome = announcer.archive_completed_timelapse(job_key)
                 if outcome.state == announcer.ARCHIVED and outcome.path:
@@ -1210,6 +1229,29 @@ def _timelapse_post(job_key, completion_message):
                 log(f"captured timelapse attach failed for {job_key!r}; posting text only")
                 _post_completion(f"{completion_message}\n{_timelapse_fallback_text(message, captured.name)}",
                                  completion_message)
+            return
+        if not go2rtc.rendered_active(_config.cfg()):
+            # [timelapse] mode closes the printer-rendered path (2.2.2):
+            # "off" disables timelapses outright — the bare completion
+            # post is the configured behavior, like the archive-off case
+            # below — and "container" chose the in-container capture,
+            # whose absence is named rather than waited out on a render
+            # the mode says not to use. A dark capture still names
+            # itself first, as below.
+            dark = _dark_capture(job_key)
+            if dark:
+                _post_completion(
+                    f"{completion_message}\n{timelapse_capture.dark_outcome_text(dark.get('dark_frames') or 0)}",
+                    completion_message)
+                return
+            if go2rtc.timelapse_mode(_config.cfg()) == "off":
+                log(f"no timelapse for {job_key!r}: timelapse mode is off")
+                _post_completion(completion_message, completion_message)
+            else:
+                log(f"no timelapse for {job_key!r}: {_capture_outcome_text()}; "
+                    "printer-rendered path is off in container mode")
+                _post_completion(f"{completion_message}\nTimelapse not attached: "
+                                 f"{_capture_outcome_text()}.", completion_message)
             return
         outcome = announcer.archive_completed_timelapse(job_key)
         archived = outcome.path if outcome.state == announcer.ARCHIVED else None
@@ -1906,8 +1948,31 @@ def _camera_snapshot_bytes():
     exactly as before. A failed fan-out fetch falls back to the direct
     URL once — sequentially, never in parallel — so a broken stream can
     never degrade the watchdog (#311's fail-soft rule).
+
+    The [services] camera_source pin narrows the choice (2.2.2; before,
+    nothing read it): "none" raises — camera images are off, and every
+    caller here already degrades a snapshot failure to a logged skip;
+    "moonraker" uses the direct URL only; "go2rtc" uses the fan-out
+    only and names it when it is not running; "bambu" names the
+    mismatch — this listener serves Moonraker printers, which have no
+    Bambu camera source.
     """
+    pin = go2rtc.camera_source(_config.cfg())
+    if pin == "none":
+        raise ValueError("camera images are off (services.camera_source is none)")
+    if pin == "bambu":
+        raise ValueError("services.camera_source is bambu, but this printer's camera "
+                         "is the Moonraker webcam; no Bambu camera source exists here")
     direct = _camera_url()
+    if pin == "moonraker":
+        return _fetch_snapshot(direct)
+    if pin == "go2rtc":
+        fanout = go2rtc.fanout_frame_url(_config.cfg())
+        if not fanout:
+            raise ValueError("services.camera_source is go2rtc, but the go2rtc fan-out "
+                             "is not running (it needs timelapse capture or live "
+                             "viewing on, the bundled binary and a resolvable source)")
+        return _fetch_snapshot(fanout)
     try:
         fanout = go2rtc.fanout_frame_url(_config.cfg())
     except Exception:

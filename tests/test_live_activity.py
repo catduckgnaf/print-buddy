@@ -353,6 +353,42 @@ def test_feed_proxy_relays_the_handshake_and_frames(feed_server):
     assert b"Cookie" not in upstream.request_head
 
 
+def test_transcoded_stream_name_drives_the_page_default_and_the_proxy():
+    # 2.2.2: when a [live_stream] transcode value is set, go2rtc
+    # publishes the transcoded stream under its own name and the
+    # Activity server is started with that name: the page asks for it
+    # by default and the proxy serves only it — the raw name is refused.
+    upstream = FakeGo2rtc()
+    upstream.start()
+    instance = la.make_server("127.0.0.1", 0, transport=FakeTransport(),
+                              allowlist=ALLOWLIST, secret=SECRET,
+                              feed_upstream=("127.0.0.1", upstream.port),
+                              stream_name="camera-live")
+    thread = threading.Thread(target=instance.serve_forever, daemon=True)
+    thread.start()
+    try:
+        cookie = _session_cookie(instance)
+        status, _, page = _request(instance, "GET", "/",
+                                   headers={"Cookie": cookie})
+        assert status == 200
+        assert '|| "camera-live"' in page.decode()
+        connection, head, _ = _ws_handshake(instance, "/api/ws?src=camera", cookie=cookie)
+        assert b"404" in head.split(b"\r\n", 1)[0]
+        connection.close()
+        connection, head, rest = _ws_handshake(instance, "/api/ws?src=camera-live",
+                                               cookie=cookie)
+        try:
+            assert b"101" in head.split(b"\r\n", 1)[0]
+            assert (rest or connection.recv(4096)) == b"\x82\x03fmp"
+        finally:
+            connection.close()
+        assert b"GET /api/ws?src=camera-live" in upstream.request_head
+    finally:
+        instance.shutdown()
+        instance.server_close()
+        upstream.join(timeout=5)
+
+
 def test_feed_proxy_reports_a_dead_upstream_as_502():
     instance = la.make_server("127.0.0.1", 0, transport=FakeTransport(),
                               allowlist=ALLOWLIST, secret=SECRET,

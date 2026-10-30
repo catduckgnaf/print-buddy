@@ -68,13 +68,15 @@ class Field:
 
 
 # Page groups for the stage 3 /config page, keyed by field id. The page
-# renders them in this order: printer, platform, services, timelapse,
-# images, live, slicing, logging, webui (pages.GROUPS carries the titles).
+# renders them in this order: printer, platform, services, endpoints,
+# timelapse, images, live, slicing, logging, webui (pages.GROUPS
+# carries the titles).
 GROUP_OF = {
     "printer.model": "printer",
     "printer.slicer": "slicing",
     "printer.zmod_delivery_format": "printer",
     "delivery.methods": "slicing",
+    "layout.spacing": "slicing",
     "bot.mode": "platform",
     "bot.platform": "platform",
     "discord.chat_id": "platform",
@@ -94,11 +96,26 @@ GROUP_OF = {
     "services.moonraker_url": "services",
     "services.octoprint_url": "services",
     "bambu.lan_host": "services",
+    "bambu.lan_serial": "services",
     "prusa.link_host": "services",
     "flashforge_stock.host": "services",
     "elegoo_sdcp.host": "services",
     "services.spoolman_url": "services",
     "spool.prompt_brand": "services",
+    "notify.mqtt_enabled": "services",
+    "notify.mqtt_host": "services",
+    "notify.mqtt_port": "services",
+    "notify.mqtt_topic": "services",
+    "notify.mqtt_username": "services",
+    "notify.ntfy_enabled": "services",
+    "notify.ntfy_url": "services",
+    "notify.ntfy_topic": "services",
+    "llm.chat_url": "endpoints",
+    "llm.model": "endpoints",
+    "design.chat_url": "endpoints",
+    "design.model": "endpoints",
+    "agent.chat_url": "endpoints",
+    "agent.model": "endpoints",
     "services.camera_source": "images",
     "services.camera_snapshot_url": "images",
     "timelapse.capture_source_url": "images",
@@ -112,6 +129,7 @@ GROUP_OF = {
     "vision.light_object": "images",
     "visual_watch.enabled": "images",
     "visual_watch.sensitivity": "images",
+    "timelapse.capture_enabled": "timelapse",
     "timelapse.mode": "timelapse",
     "timelapse.render_wait_s": "timelapse",
     "timelapse.render_poll_s": "timelapse",
@@ -155,6 +173,11 @@ CATALOG = (
     _field("delivery", "methods", "Delivery methods", "picker",
            "Post-slice options offered, as a list; only the ones the printer's vendor profile offers.",
            choices_source=SOURCE_VENDOR_DELIVERY, validator="settings vendor choices"),
+    _field("layout", "spacing", "Plate spacing", "picker",
+           "How much room auto-layout leaves between parts it arranges on a plate: "
+           "minimum, low, medium or high. A gap named explicitly in the settings "
+           "file wins over the preset for that gap.",
+           choices=tuple(settings.SPACING_PRESETS), validator="settings layout check"),
     _field("printer", "zmod_delivery_format", "ZMod delivery format", "picker",
            "Flashforge/ZMod printers only: auto sends the sliced .gcode.3mf when the printer "
            "reports ZMod 1.7.5+ and plain .gcode otherwise; gcode always sends .gcode; "
@@ -235,6 +258,11 @@ CATALOG = (
     _field("bambu", "lan_host", "Printer URL", "host",
            "Bambu Lab LAN hostname or IP. Not a full URL. Empty means no LAN connection.",
            validator="settings bambu check"),
+    _field("bambu", "lan_serial", "Printer serial", "text",
+           "Bambu Lab printer serial number. The LAN connection needs the host and "
+           "the serial together — settings validation refuses one without the other. "
+           "The LAN access code itself stays in the environment, never here.",
+           validator="settings bambu check"),
     _field("prusa", "link_host", "Printer URL", "host",
            "PrusaLink hostname or IP. Not a full URL. Empty means no LAN connection.",
            validator="settings prusa check"),
@@ -253,16 +281,79 @@ CATALOG = (
            "and the spool is created without one; on inserts the brand step "
            "for operators who track brands.",
            validator="settings spool check"),
+    # Event notifications (#622): print events out of chat, over MQTT
+    # and/or ntfy. Neither channel's credential is a field: the MQTT
+    # password is MQTT_PASSWORD and the ntfy access token is
+    # NTFY_ACCESS_TOKEN, both environment only — the help texts say so,
+    # matching the catalog's no-secrets rule.
+    _field("notify", "mqtt_enabled", "MQTT events", "toggle",
+           "Publish print events (started, paused, runout, complete, failed) to "
+           "an MQTT broker (#622). Off by default; a failed publish never "
+           "blocks chat or a print.",
+           validator="settings notify check"),
+    _field("notify", "mqtt_host", "MQTT broker host", "host",
+           "MQTT broker hostname or IP; empty keeps MQTT off even with the "
+           "switch on.",
+           validator="settings notify check"),
+    _field("notify", "mqtt_port", "MQTT broker port", "number",
+           "MQTT broker port; 0 uses the default 1883.",
+           validator="settings notify check", minimum=0, maximum=65535),
+    _field("notify", "mqtt_topic", "MQTT topic root", "text",
+           "Topic root each event is published under, as <topic root>/<event> — "
+           "for example print-handy/print_started.",
+           validator="settings notify check"),
+    _field("notify", "mqtt_username", "MQTT username", "text",
+           "MQTT broker username; empty connects anonymously. The password is "
+           "MQTT_PASSWORD in the environment — it is never a setting and has "
+           "no field here.",
+           validator="settings notify check"),
+    _field("notify", "ntfy_enabled", "ntfy events", "toggle",
+           "Publish the same print events to an ntfy topic (#622). Off by "
+           "default; a failed publish never blocks chat or a print.",
+           validator="settings notify check"),
+    _field("notify", "ntfy_url", "ntfy server URL", "url",
+           "ntfy server URL, for example https://ntfy.sh. The topic below is "
+           "appended to it, or name the topic in the URL itself and leave "
+           "the topic empty.",
+           validator="settings notify check"),
+    _field("notify", "ntfy_topic", "ntfy topic", "text",
+           "ntfy topic the events are published to. A protected topic's access "
+           "token is NTFY_ACCESS_TOKEN in the environment — never a setting.",
+           validator="settings notify check"),
+    # Model endpoints: the OpenAI-compatible chat endpoints. Only URLs
+    # and model names are fields — an endpoint's API key stays in the
+    # environment, like every other secret.
+    _field("llm", "chat_url", "Chat endpoint URL", "url",
+           "OpenAI-compatible chat endpoint for plain-language replies; empty "
+           "leaves the chat lane off. Its API key stays in the environment.",
+           validator="settings llm check"),
+    _field("llm", "model", "Chat model", "text",
+           "Model the chat endpoint uses."),
+    _field("design", "chat_url", "Design endpoint URL", "url",
+           "OpenAI-compatible endpoint /print-design uses when it differs from "
+           "the chat endpoint; empty reuses the chat endpoint. Its API key "
+           "stays in the environment.",
+           validator="settings design check"),
+    _field("design", "model", "Design model", "text",
+           "Model the design endpoint uses."),
+    _field("agent", "chat_url", "Agent endpoint URL", "url",
+           "OpenAI-compatible endpoint for the agent lane; empty leaves the "
+           "agent lane unconfigured. Its API key stays in the environment.",
+           validator="settings agent check"),
+    _field("agent", "model", "Agent model", "text",
+           "Model the agent endpoint uses."),
     # Images (the camera source type, the snapshot URL and the vision
     # endpoint the watchdog uses; visual_watch itself is the next group.
     # API keys stay in the environment: vision_chat_url names no secret,
     # and there is no key field.)
     _field("services", "camera_source", "Camera source", "picker",
            "Which camera still images come from (#294): auto follows the configured "
-           "printer vendor's rule, or pin one source — the Moonraker webcam snapshot, "
-           "the Bambu camera (LAN stills / RTSPS via go2rtc), a go2rtc stream "
-           "(put the camera's rtsp:// address in RTSP stream URL), "
-           "or none for no camera images.",
+           "printer vendor's rule, or pin one source — moonraker = the Moonraker "
+           "webcam snapshot only, bambu = the printer's own Bambu camera, go2rtc = "
+           "the go2rtc fan-out only (put the camera's rtsp:// address in RTSP "
+           "stream URL), none = no camera images anywhere. The watchdog stills, "
+           "the timelapse capture source and the Bambu camera paths all honor "
+           "the pin and name it when they refuse.",
            choices=tuple(settings.CAMERA_SOURCES), validator="settings camera source check"),
     _field("services", "camera_snapshot_url", "Camera snapshot URL", "url",
            "Camera snapshot URL for status images and the camera watchdog; empty derives "
@@ -331,11 +422,21 @@ CATALOG = (
     # and the SSH archive target). ssh_key is a filesystem *path* — the
     # same plain string the YAML already stores — never key contents, so
     # it is a text field like any other path and no secret value is involved.
+    _field("timelapse", "capture_enabled", "In-container capture", "toggle",
+           "Print Handy captures the timelapse itself, polling camera frames "
+           "in-container (#246). In rendered mode a finished capture is "
+           "preferred over the printer-rendered clip; in container mode "
+           "capture is the timelapse; mode off stops capture whatever "
+           "this says.",
+           validator="settings timelapse check"),
     _field("timelapse", "mode", "Timelapse mode", "picker",
            "How timelapses are made (#246/#295): rendered = the printer renders it "
-           "(moonraker-timelapse); container = Print Handy captures and encodes it "
-           "in-container; off = no timelapses. A file value left empty derives "
-           "rendered when a Moonraker URL is configured, else off.",
+           "(moonraker-timelapse), with in-container capture preferred when on; "
+           "container = the in-container capture is the timelapse and the "
+           "printer-rendered path is not used; off = no timelapses — capture "
+           "and the rendered path both stop. A file value left empty derives "
+           "rendered when a Moonraker URL is configured, else container when "
+           "in-container capture is on, else off.",
            choices=tuple(settings.TIMELAPSE_MODES), validator="settings timelapse check"),
     _field("timelapse", "render_wait_s", "Timelapse render wait", "number",
            "How long to wait for a printer-rendered timelapse to appear after a print "
@@ -401,17 +502,26 @@ CATALOG = (
            "timeout below.",
            validator="settings live_stream check"),
     _field("live_stream", "max_height", "Live feed height", "number",
-           "Live feed height cap in pixels; width follows the camera's aspect.",
+           "Live feed height cap in pixels; width follows the camera's aspect. "
+           "While all four feed values (height, frame rate, bitrate cap, "
+           "encoder) hold their defaults the live view is the camera stream "
+           "relayed as it arrives; changing any one makes the live view a "
+           "transcoded feed with all four applied. Timelapse capture keeps "
+           "the camera's own stream either way.",
            validator="settings live_stream check", minimum=144, maximum=2160),
     _field("live_stream", "fps", "Live feed frame rate", "number",
-           "Live feed frame-rate cap, in frames per second.",
+           "Live feed frame-rate cap, in frames per second; applied by the "
+           "live transcode described under Live feed height.",
            validator="settings live_stream check", minimum=1, maximum=60),
     _field("live_stream", "max_bitrate_kbps", "Live feed bitrate cap", "number",
-           "Live feed bitrate cap in kbit/s.",
+           "Live feed bitrate cap in kbit/s; applied by the live transcode "
+           "described under Live feed height.",
            validator="settings live_stream check", minimum=100, maximum=20000),
     _field("live_stream", "encoder", "Live feed encoder", "picker",
-           "Encoder preference for the live feed (the plan in "
-           "print_handy/live_stream.py).",
+           "Encoder preference for the live feed's transcode: auto picks the "
+           "best encoder the machine's ffmpeg reports (hardware first, CPU "
+           "last); a named encoder is preferred and falls back in that order "
+           "when it is unavailable.",
            choices=tuple(settings.LIVE_STREAM_ENCODERS),
            validator="settings live_stream check"),
     _field("live_stream", "empty_timeout_s", "Live empty timeout", "number",
@@ -517,6 +627,11 @@ def config_page_visible(field, data) -> bool:
     model = _configured_model(data)
     if field.id == "printer.zmod_delivery_format":
         return bool(model and model.vendor.key == "flashforge")
+    if field.id == "bambu.lan_serial":
+        # The serial belongs with the Bambu LAN address: it follows the
+        # same per-model visibility as bambu.lan_host, so the pair the
+        # validator requires is always shown (or hidden) together.
+        return config_page_visible("bambu.lan_host", data)
     if field.id in PRINTER_URL_BY_CONNECTION.values():
         if model is None:
             return field.id == "services.moonraker_url"

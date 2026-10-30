@@ -146,15 +146,103 @@ class CatalogTests(unittest.TestCase):
 
     def test_catalog_groups_cover_every_field_and_pin_the_slicing_group(self):
         # Stage 3 renders the catalog by group: every field has exactly one,
-        # and the slicing group is exactly the vendor-choice pair.
+        # and the slicing group is exactly the vendor-choice pair plus the
+        # layout spacing preset (2.2.2 settings-surface fix).
         for field in CATALOG:
             with self.subTest(field=field.id):
                 self.assertTrue(field.group)
         slicing = {field.id for field in CATALOG if field.group == "slicing"}
-        self.assertEqual(slicing, {"printer.slicer", "delivery.methods"})
+        self.assertEqual(slicing, {"printer.slicer", "delivery.methods", "layout.spacing"})
         self.assertEqual(field_by_id("timelapse.mode").group, "timelapse")
         self.assertEqual(field_by_id("services.camera_source").group, "images")
         self.assertEqual(field_by_id("printer.model").group, "printer")
+
+    def test_settings_surface_fix_fields_are_in_the_catalog(self):
+        # The 2.2.2 settings-surface fix: every consumed, user-facing
+        # setting the 2.2.1 audit found missing from the catalog is now
+        # offered, in its group, with the kind its value needs.
+        expected = {
+            "bambu.lan_serial": ("services", "text"),
+            "timelapse.capture_enabled": ("timelapse", "toggle"),
+            "layout.spacing": ("slicing", "picker"),
+            "notify.mqtt_enabled": ("services", "toggle"),
+            "notify.mqtt_host": ("services", "host"),
+            "notify.mqtt_port": ("services", "number"),
+            "notify.mqtt_topic": ("services", "text"),
+            "notify.mqtt_username": ("services", "text"),
+            "notify.ntfy_enabled": ("services", "toggle"),
+            "notify.ntfy_url": ("services", "url"),
+            "notify.ntfy_topic": ("services", "text"),
+            "llm.chat_url": ("endpoints", "url"),
+            "llm.model": ("endpoints", "text"),
+            "design.chat_url": ("endpoints", "url"),
+            "design.model": ("endpoints", "text"),
+            "agent.chat_url": ("endpoints", "url"),
+            "agent.model": ("endpoints", "text"),
+        }
+        for field_id, (group, kind) in expected.items():
+            with self.subTest(field=field_id):
+                field = field_by_id(field_id)
+                self.assertIsNotNone(field)
+                self.assertEqual(field.group, group)
+                self.assertEqual(field.kind, kind)
+        spacing = field_by_id("layout.spacing")
+        self.assertEqual(choices_for(spacing), tuple(settings.SPACING_PRESETS))
+        mqtt_port = field_by_id("notify.mqtt_port")
+        self.assertEqual((mqtt_port.minimum, mqtt_port.maximum), (0, 65535))
+
+    def test_wired_catalog_fields_change_their_production_consumers(self):
+        # Regression guard for the 2.2.1 audit's six dead options: every
+        # one of them is in the catalog AND changes a production
+        # consumer's behavior. If a future change unwires a field —
+        # drops the consumer call, not just the field — this fails even
+        # though the field is still offered.
+        from print_handy import go2rtc, live_stream
+
+        def data(services=None, timelapse=None, live=None):
+            return {
+                "services": {"camera_snapshot_url":
+                             "http://printer.example/webcam/?action=snapshot",
+                             **(services or {})},
+                "timelapse": {"capture_enabled": False, "capture_source_url": "",
+                              **(timelapse or {})},
+                "live_stream": {"enabled": True, "max_height": 720, "fps": 15,
+                                "max_bitrate_kbps": 2500, "encoder": "auto",
+                                **(live or {})},
+                "paths": {"cache": "/data/cache", "ffmpeg": "/nonexistent/ffmpeg"},
+            }
+
+        for field_id in ("services.camera_source", "timelapse.mode",
+                         "live_stream.max_height", "live_stream.fps",
+                         "live_stream.max_bitrate_kbps", "live_stream.encoder"):
+            self.assertIsNotNone(field_by_id(field_id), field_id)
+        # services.camera_source: "none" resolves no fan-out source,
+        # "auto" resolves the derived one.
+        self.assertIsNone(go2rtc.resolve_source(data(services={"camera_source": "none"})))
+        self.assertIsNotNone(go2rtc.resolve_source(data(services={"camera_source": "auto"})))
+        # timelapse.mode: off vetoes an enabled capture; container opens
+        # a disabled one; the rendered path follows the mode too.
+        self.assertFalse(go2rtc.capture_active(
+            data(timelapse={"mode": "off", "capture_enabled": True})))
+        self.assertTrue(go2rtc.capture_active(data(timelapse={"mode": "container"})))
+        self.assertFalse(go2rtc.rendered_active(data(timelapse={"mode": "container"})))
+        # live_stream four: any one away from its default engages the
+        # transcode, renames the feed the Activity plays, and lands in
+        # the generated go2rtc config as an ffmpeg exec stream.
+        for changed in ({"max_height": 1080}, {"fps": 30},
+                        {"max_bitrate_kbps": 6000}, {"encoder": "cpu"}):
+            with self.subTest(changed=changed):
+                tuned = data(live=changed)
+                self.assertTrue(live_stream.transcode_engaged(tuned["live_stream"]))
+                self.assertEqual(live_stream.feed_stream_name(tuned["live_stream"]),
+                                 "camera-live")
+                plan = go2rtc.transcode_plan(tuned)
+                config = go2rtc.render_config(go2rtc.resolve_source(tuned), transcode=plan)
+                self.assertIn("camera-live:", config)
+                self.assertIn("exec:ffmpeg", config)
+        default_config = go2rtc.render_config(
+            go2rtc.resolve_source(data()), transcode=go2rtc.transcode_plan(data()))
+        self.assertNotIn("camera-live", default_config)
 
     def test_no_secret_or_env_name_fields_in_the_catalog(self):
         for field in CATALOG:

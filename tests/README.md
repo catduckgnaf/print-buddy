@@ -33,7 +33,7 @@ this file when a suite is added, moved, or starts/stops pinning an area.
 | Web UI (status, config, login, roster) | `tests/test_webui_*.py` |
 | Doctor / bot check surfaces | `tests/test_doctor.py`, `tests/bot/test_health_and_transport.py` |
 | Settings / config loading | `tests/test_settings.py`, `tests/test_print_handy_cfg.py`, `tests/test_webui_config*.py` |
-| Docs / contribution policy / post-release surfaces | `tests/test_docs_index_contract.py`, `tests/test_contribution_policy.py`, `tests/test_post_release_surfaces_workflow.py` |
+| Docs / contribution policy / post-release surfaces / pre-release checklist | `tests/test_docs_index_contract.py`, `tests/test_contribution_policy.py`, `tests/test_post_release_surfaces_workflow.py`, `tests/test_pre_release_checklist.py` |
 | Knowledge, macros, live stream | `tests/test_knowledge.py`, `tests/test_macros.py`, `tests/test_live_*.py` |
 
 ## #391 regression inventory (stage 1, 2026-10-26)

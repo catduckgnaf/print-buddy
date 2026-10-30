@@ -324,6 +324,42 @@ def test_delivery_falls_back_to_printer_rendered(monkeypatch, tmp_path, delivery
     assert delivery == [f"Print complete\nMEDIA:{rendered}"]
 
 
+def _mode_config(monkeypatch, mode):
+    cfg = {"timelapse": {"mode": mode, "capture_enabled": False},
+           "services": {"moonraker_url": "http://printer.test:7125"}}
+    monkeypatch.setattr(mel, "_config", type("Cfg", (), {"cfg": staticmethod(lambda: cfg)})())
+
+
+def test_mode_off_posts_the_completion_alone_and_never_asks_the_archive(
+        monkeypatch, tmp_path, delivery):
+    # 2.2.2 wiring: mode was a dead option — "off" stopped nothing. Now
+    # the rendered lookup does not even run, and the bare completion
+    # post is the configured behavior.
+    _mode_config(monkeypatch, "off")
+    monkeypatch.setattr(mel, "_captured_timelapse", lambda key: None)
+    monkeypatch.setattr(mel, "_dark_capture", lambda key: None)
+
+    def forbidden(key):
+        raise AssertionError("the rendered path must not run in mode off")
+    monkeypatch.setattr(mel.announcer, "archive_completed_timelapse", forbidden)
+    mel._timelapse_post("benchy.gcode", "Print complete")
+    assert delivery == ["Print complete"]
+
+
+def test_mode_container_names_the_missing_capture_and_skips_the_archive(
+        monkeypatch, tmp_path, delivery):
+    _mode_config(monkeypatch, "container")
+    monkeypatch.setattr(mel, "_captured_timelapse", lambda key: None)
+    monkeypatch.setattr(mel, "_dark_capture", lambda key: None)
+
+    def forbidden(key):
+        raise AssertionError("the rendered path must not run in container mode")
+    monkeypatch.setattr(mel.announcer, "archive_completed_timelapse", forbidden)
+    mel._timelapse_post("benchy.gcode", "Print complete")
+    assert delivery == ["Print complete\nTimelapse not attached: "
+                        "in-container capture produced no video for this job."]
+
+
 # --------------------------------------------------------------- plan combine seam
 
 def test_combine_reencode_retries_cpu_when_hardware_fails(monkeypatch, tmp_path):

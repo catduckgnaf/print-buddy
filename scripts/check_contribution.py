@@ -49,6 +49,12 @@ def check_pr(body, files):
         errors.append("Link the updated wiki page in Documentation impact.")
     if wiki == "deferred" and not re.search(r"https://github\.com/[^/\s]+/[^/\s]+/issues/\d+", docs):
         errors.append("Link the tracking issue for deferred wiki work in Documentation impact.")
+    surfaces = section(body, "Surfaces and variables")
+    variables = field(surfaces, "Variables").casefold()
+    if variables not in {"checked", "not applicable"}:
+        errors.append("Variables: must be 'checked' or 'not applicable'.")
+    if not meaningful(field(surfaces, "Variables reason")):
+        errors.append("Variables reason: state which variables were checked per surface, or why this PR adds or changes none.")
     return errors
 
 

@@ -213,25 +213,31 @@ def resolve_material_temperatures(material, filament, config=None):
     return family, result, sources
 
 
-def slice_temperatures(state, filament=None, fetch_filament=None):
+def slice_temperatures(state, filament=None, fetch_filament=None, stored_ok=True):
     """Nozzle/bed targets for slicing the job's selected spool, resolved from that spool.
 
     The stored temps_c is a printer-wide record: `set --spool` writes it, but slot
     selection, active-spool sync and Spoolman slot sync change the spool without it.
-    So it is used only when its temperature_resolution names this exact spool and
-    material; otherwise the targets are resolved again from the material defaults, the
-    variant adjustment (#512) and the spool's Spoolman temperatures. ``filament`` is the
-    spool's Spoolman filament when the caller already has it; ``fetch_filament`` is
+    It is used when its temperature_resolution names this exact spool and material, or
+    when the record has no resolution at all (explicit legacy temperatures, kept as
+    _material_temperature_contract always has; the spool-sync paths mark the record
+    stale instead of leaving it bare). A resolution for another spool, or an older one
+    that names only a family, is resolved again from the material defaults, the
+    variant adjustment (#512) and the spool's Spoolman temperatures. ``filament`` is
+    the spool's Spoolman filament when the caller already has it; ``fetch_filament`` is
     called for it only when needed (Spoolman is advisory: None means defaults).
+    ``stored_ok=False`` always resolves (a slot spool other than the active one).
     Returns (temps_c, temperature_resolution). Unknown materials raise; no PLA fallback.
     """
     spool = state.get("spool") or {}
     material = spool.get("material")
-    if not material:
-        raise RuntimeError("selected spool has no material; cannot determine safe temperatures")
     stored, resolution = state.get("temps_c"), state.get("temperature_resolution") or {}
-    if (filament is None and stored and resolution.get("material") == material
-            and resolution.get("spoolman_id") == spool.get("spoolman_id")):
+    if not material:
+        if stored:
+            return dict(stored), resolution  # _material_temperature_contract reports the missing material
+        raise RuntimeError("selected spool has no material; cannot determine safe temperatures")
+    if filament is None and stored_ok and stored and (not resolution or (
+            resolution.get("material") == material and resolution.get("spoolman_id") == spool.get("spoolman_id"))):
         return dict(stored), resolution
     if filament is None and fetch_filament is not None and spool.get("spoolman_id") is not None:
         try:
@@ -240,7 +246,10 @@ def slice_temperatures(state, filament=None, fetch_filament=None):
             filament = None
         if filament is not None and not same_material(filament.get("material"), material):
             filament = None  # a different material on file: the slot record decides, at its defaults
-    family, targets, sources = resolve_material_temperatures(material, filament or {})
+    try:
+        family, targets, sources = resolve_material_temperatures(material, filament or {})
+    except ValueError as exc:
+        raise RuntimeError(str(exc)) from exc
     return ({"nozzle": targets["nozzle"], "bed": targets["bed"]},
             {"material_family": family, "material": material, "spoolman_id": spool.get("spoolman_id"),
              "sources": sources,
@@ -254,6 +263,15 @@ def slice_temperatures(state, filament=None, fetch_filament=None):
 # resolve to nozzle targets further apart than this is refused on a printer with one heater.
 # The bed is one plate for the whole job, so its slots must agree on the same bound.
 MULTICOLOR_TEMPERATURE_TOLERANCE_C = 10
+
+
+def _is_active_spool(state, record):
+    """True when a slot record is the active spool itself (same spool and material): only then does the
+    printer-wide temps_c describe it. Any other slot spool is resolved from its own filament."""
+    spool = state.get("spool") or {}
+    norm = lambda m: " ".join(str(m or "").split()).casefold()  # noqa: E731
+    return (record.get("spoolman_id") == spool.get("spoolman_id")
+            and norm(record.get("material")) == norm(spool.get("material")))
 
 
 def multicolor_slot_temperatures(state, slots, fetch_filament=None, *, shared_heater=True, label="slot",
@@ -281,7 +299,8 @@ def multicolor_slot_temperatures(state, slots, fetch_filament=None, *, shared_he
     for record in records:
         slot_state = {**state, "spool": {**spool, "spoolman_id": record.get("spoolman_id"),
                                          "material": record.get("material"), "name": record.get("name")}}
-        out.append(slice_temperatures(slot_state, None, fetch_filament))
+        out.append(slice_temperatures(slot_state, None, fetch_filament,
+                                      stored_ok=_is_active_spool(state, record)))
     for key, shared, noun in (("nozzle", shared_heater, "nozzle"), ("bed", True, "bed")):
         if not shared:
             continue
@@ -338,7 +357,9 @@ def gcode_tool_temperatures(state, materials, text, fetch_filament=None):
                    or [rec for rec in slots if same_material(rec.get("material"), label)])
         ids = sorted({rec.get("spoolman_id") for rec in holders}, key=str) or [spool.get("spoolman_id")]
         options = [slice_temperatures({**state, "spool": {**spool, "spoolman_id": sid, "material": label}},
-                                      None, fetch_filament)[0] for sid in ids]
+                                      None, fetch_filament,
+                                      stored_ok=_is_active_spool(state, {"spoolman_id": sid, "material": label}))[0]
+                   for sid in ids]
         if not any(abs(float(o["nozzle"]) - (shown - offset)) <= 1e-3 for o in options):
             raise RuntimeError(f"G-code tool T{tool} ({label}) is set to {shown:g} C but its spool resolves to "
                                + " or ".join(f"{float(o['nozzle']) + offset:g} C" for o in options))
@@ -362,14 +383,19 @@ def gcode_temperatures(state, materials, fetch_filament=None, text=None):
         per_tool = gcode_tool_temperatures(state, [m for m in materials if str(m).strip()], text, fetch_filament)
         if per_tool is not None:
             return per_tool
-    if len(labels) != 1 or labels == {" ".join(str(spool.get("material") or "").split())}:
+    if len(labels) != 1:
         return slice_temperatures(state, None, fetch_filament)[0]
     label = labels.pop()
     ids = sorted({rec.get("spoolman_id") for rec in (state.get("filament_slots") or {}).values()
                   if isinstance(rec, dict) and " ".join(str(rec.get("material") or "").split()).casefold()
-                  == label.casefold()}, key=str) or [None]
+                  == label.casefold()}, key=str)
+    if not ids or spool.get("spoolman_id") in ids:
+        # The active spool holds it, or no slot does (a single-spool printer): slice_model sliced
+        # the active spool, so resolve the same way.
+        return slice_temperatures(state, None, fetch_filament)[0]
+    # Another slot's spool: slice_model swapped to it and resolved its own targets.
     resolved = [slice_temperatures({**state, "spool": {**spool, "spoolman_id": sid, "material": label}},
-                                   None, fetch_filament)[0] for sid in ids]
+                                   None, fetch_filament, stored_ok=False)[0] for sid in ids]
     if any(r != resolved[0] for r in resolved):
         raise RuntimeError(f"slots holding {label} resolve to different temperatures; reslice from one slot")
     return resolved[0]

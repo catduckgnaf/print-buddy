@@ -208,6 +208,40 @@ def gcode_at(tmp_path, nozzle, material="Silk PLA"):
     return path
 
 
+def operator_record():
+    """The AD5X record as it was on 2026-10-31: no temperature_resolution at all, an active
+    spool with no Spoolman id whose material is Silk PLA, temps_c 210/60, and Silk PLA spool 17
+    in IFS slot 2. Slicing swapped to slot 2; verification must agree with that slice."""
+    state = copy.deepcopy(json.loads(STATE.read_text()))
+    state.pop("temperature_resolution", None)
+    state["temps_c"] = {"nozzle": 210, "bed": 60}
+    state["spool"] = {**state["spool"], "spoolman_id": None, "name": "Rose red blue green", "material": "Silk PLA"}
+    state["filament_slots"] = {"1": {"spoolman_id": 16, "material": "Pla", "hex": "FFFFFF", "physical_color_verified": True},
+                               "2": {"spoolman_id": 17, "material": "Silk PLA", "hex": "0C6283", "physical_color_verified": True},
+                               "3": {"spoolman_id": 15, "material": "PLA+", "hex": "161616", "physical_color_verified": True},
+                               "4": {"spoolman_id": 12, "material": "PLA", "hex": "067749", "physical_color_verified": True}}
+    return state
+
+
+def test_the_operator_record_slices_slot_2_silk_at_220_and_verifies_it(slice_inputs, tmp_path, monkeypatch):
+    from print_handy.core import model_job, printer_state
+    slice_inputs.spools[17] = {"id": 17, "filament": {"material": "Silk PLA", "settings_extruder_temp": None,
+                                                      "settings_bed_temp": None}}
+    state = operator_record()
+    nozzle, bed, _ = slice_inputs.slice("flashforge.ad5x", state, filament_slot=2)
+    assert (nozzle, bed) == (nozzle_effective("flashforge.ad5x", 220), 60)
+    assert printer_state.gcode_temperatures(state, ["Silk PLA"]) == {"nozzle": 220, "bed": 60}
+    monkeypatch.setattr(model_job.printers, "current", lambda: adapter_for("flashforge.ad5x"))
+    state["nozzle"] = {**state.get("nozzle", {}), "type": "brass", "diameter_mm": 0.4}
+    for gcode_nozzle, ok in ((220, True), (210, False)):
+        try:
+            model_job.verify_gcode_offline(gcode_at(tmp_path, gcode_nozzle), state)
+            message = ""
+        except RuntimeError as exc:
+            message = str(exc)
+        assert ("START_PRINT matching" not in message) is ok, (gcode_nozzle, message)
+
+
 @pytest.mark.parametrize("nozzle,ok", [(220, True), (210, False)])
 def test_offline_verification_checks_the_slot_job_at_its_own_temperature(tmp_path, monkeypatch, nozzle, ok):
     from print_handy.core import model_job

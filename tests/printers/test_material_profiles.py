@@ -248,12 +248,13 @@ def test_ad5x_slots_use_their_own_spoolman_temperatures(multicolor):
 
 
 def test_ad5x_refuses_nozzle_targets_further_apart_than_one_heater_can_follow(multicolor):
-    multicolor.spools[10] = {"id": 10, "filament": {"material": "PLA", "settings_extruder_temp": 200}}
-    multicolor.spools[11] = {"id": 11, "filament": {"material": "PLA", "settings_extruder_temp": 215}}
-    with pytest.raises(RuntimeError, match=r"nozzle temperatures of this job's spools differ by more than 10 C.*slot 1 PLA 200 C"):
+    # Slot 1 is the active spool: the record's stored 210 describes it. Slot 2 resolves from its own Spoolman filament.
+    multicolor.spools[11] = {"id": 11, "filament": {"material": "PLA", "settings_extruder_temp": 225}}
+    with pytest.raises(RuntimeError, match=r"nozzle temperatures of this job's spools differ by more than 10 C.*slot 1 PLA 210 C"):
         multicolor.slice(ad5x_state(["PLA", "PLA"]))
-    multicolor.spools[11]["filament"]["settings_extruder_temp"] = 210  # 10 C apart is within the tolerance
-    assert multicolor.slice(ad5x_state(["PLA", "PLA"]), "within").profiles[1]["nozzle_temperature"] == [str(nozzle_effective(AD5X, 210))]
+    multicolor.spools[11]["filament"]["settings_extruder_temp"] = 220  # 10 C apart is within the tolerance
+    assert multicolor.slice(ad5x_state(["PLA", "PLA"]), "within").profiles[1]["nozzle_temperature"] == [
+        str(nozzle_effective(AD5X, 220))]
 
 
 def test_ad5x_refuses_a_different_material_family(multicolor):
@@ -414,7 +415,7 @@ def test_prusalink_and_sdcp_verification_goes_through_the_record_checks(tmp_path
             model_job._verify_offline(bad, state)
         assert "G-code filament_type 'PETG' != loaded 'PLA'" in str(refused.value)
         assert "G-code nozzle 0.6 mm != installed 0.4 mm" in str(refused.value)
-        assert "nozzle temperature 235 C != recorded 240 C" in str(refused.value)  # PETG's default, its own spool's
+        assert "nozzle temperature 235 C != recorded 210 C" in str(refused.value)  # no slot holds PETG: the active spool's
 
 
 @pytest.mark.parametrize("model", GUARD_MODELS)
@@ -426,3 +427,28 @@ def test_a_multi_filament_file_is_checked_against_its_config_block(model):
     assert adapter.gcode_problems(text.replace("M104 S215", "M104 S220"), guard_state()) == []
     wrong = text.replace("= 215,220", "= 225,230")
     assert any("nozzle temperature 225 C != recorded 215 C" in p for p in adapter.gcode_problems(wrong, guard_state()))
+
+
+# ---------------------------------------------------------------- the operator record: no temperature_resolution
+
+def test_operator_record_resolves_each_slot_from_its_own_spool():
+    """Stored temps_c (210) describes no slot here: the active spool has no id, so every slot spool is resolved."""
+    from .test_slice_temperatures import operator_record
+    state = operator_record()
+    slots = [state["filament_slots"]["2"], state["filament_slots"]["4"]]  # Silk PLA #17, PLA #12
+    temps = printer_state.multicolor_slot_temperatures(state, slots, None, shared_heater=True)
+    assert [t["nozzle"] for t, _ in temps] == [220, 210]
+
+
+def test_operator_record_per_tool_check_accepts_220_for_the_silk_tool_and_refuses_210():
+    from .test_slice_temperatures import operator_record
+    state = operator_record()
+    materials = ["Silk PLA", "PLA"]
+    def header(first, second):
+        return f"T0\nT1\n; nozzle_temperature_initial_layer = {first},{second}\n"
+    assert printer_state.gcode_temperatures(state, materials, None, header(220, 210)) == {"nozzle": 220, "bed": 60}
+    with pytest.raises(RuntimeError, match=r"tool T0 \(Silk PLA\) is set to 210 C but its spool resolves to 220 C"):
+        printer_state.gcode_temperatures(state, materials, None, header(210, 210))
+    # Exact label first: the PLA slots (210) do not make 210 acceptable for the Silk PLA tool.
+    with pytest.raises(RuntimeError, match=r"tool T1 \(PLA\)"):
+        printer_state.gcode_temperatures(state, materials, None, header(220, 220))

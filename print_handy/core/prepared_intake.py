@@ -1145,6 +1145,11 @@ def _refusal_text(tail):
     if slot:
         return (f"Didn't start: {slot.group(1)}. Fix the slot on the printer or the spool in Spoolman, "
                 "then press Retry.")
+    held = re.match(r'REFUSED: an earlier start on this printer is uncertain \(job .*?, file (.+?), since ', raw)
+    if held:
+        return (f"Didn't start: an earlier start ({held.group(1)}) was never confirmed, so nothing new "
+                "starts until it is settled. It clears by itself once the printer reports that file; "
+                "if it never printed, run `reconcile-launch --not-started`, then press Retry.")
     targets = {name.casefold(): float(value) for name, value in _HEATER_TARGET.findall(raw) if float(value) > 0}
     if targets:
         heaters = []

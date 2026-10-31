@@ -367,15 +367,132 @@ def slice_temperatures(state, filament=None, fetch_filament=None, stored_ok=True
              else "material default / Spoolman filament"})
 
 
-def gcode_temperatures(state, materials, fetch_filament=None):
+# One filament profile per slot of a multicolor job. Orca emits an M104 for each tool change (the
+# wipe tower / filament-change sequence sets the new filament's nozzle_temperature), so a single
+# heater follows the slots, but it cannot wait for a large swing mid-print: a job whose slots
+# resolve to nozzle targets further apart than this is refused on a printer with one heater.
+# The bed is one plate for the whole job, so its slots must agree on the same bound.
+MULTICOLOR_TEMPERATURE_TOLERANCE_C = 10
+
+
+def _is_active_spool(state, record):
+    """True when a slot record is the active spool itself (same spool and material): only then does the
+    printer-wide temps_c describe it. Any other slot spool is resolved from its own filament."""
+    spool = state.get("spool") or {}
+    norm = lambda m: " ".join(str(m or "").split()).casefold()  # noqa: E731
+    return (record.get("spoolman_id") == spool.get("spoolman_id")
+            and norm(record.get("material")) == norm(spool.get("material")))
+
+
+def multicolor_slot_temperatures(state, slots, fetch_filament=None, *, shared_heater=True, label="slot",
+                                 reference_material=None):
+    """Per-slot temperatures for one multicolor job, under the one rule every multi-filament printer follows.
+
+    ``slots`` is the job's slot records (material, spoolman_id) in tool order. Rule: the job's spools
+    must all be the same material family (PLA + Silk PLA + PLA+ is allowed, PLA + PETG is not), and
+    each slot is sliced at its own spool's temperatures (slice_temperatures with that slot's spool).
+    On a printer with one heater (``shared_heater``) the nozzle targets may differ by at most
+    MULTICOLOR_TEMPERATURE_TOLERANCE_C; the bed is shared by every printer, so its targets must agree
+    within the same bound. ``reference_material`` (the active spool) must be of that family too.
+    Returns [(temps_c, resolution)] in slot order; raises RuntimeError otherwise.
+    """
+    records = [dict(slot) for slot in slots]
+    labels = [str(r.get("material") or "") for r in records]
+    families = {material_family(m) for m in labels + ([str(reference_material)] if reference_material else [])}
+    if len(families) > 1:
+        raise RuntimeError("mixed materials in one job: " +
+                           ", ".join(dict.fromkeys(labels + ([str(reference_material)] if reference_material else []))) +
+                           ". Only finishes of one material family (PLA with Silk PLA or PLA+) can share a "
+                           "job; slice each material separately")
+    spool = state.get("spool") or {}
+    out = []
+    for record in records:
+        slot_state = {**state, "spool": {**spool, "spoolman_id": record.get("spoolman_id"),
+                                         "material": record.get("material"), "name": record.get("name")}}
+        out.append(slice_temperatures(slot_state, None, fetch_filament,
+                                      stored_ok=_is_active_spool(state, record)))
+    for key, shared, noun in (("nozzle", shared_heater, "nozzle"), ("bed", True, "bed")):
+        if not shared:
+            continue
+        values = [float(temps[key]) for temps, _ in out]
+        if max(values) - min(values) > MULTICOLOR_TEMPERATURE_TOLERANCE_C:
+            detail = ", ".join(f"{label} {i} {r.get('material')} {temps[key]:g} C"
+                               for i, (r, (temps, _)) in enumerate(zip(records, out), 1))
+            raise RuntimeError(
+                f"the {noun} temperatures of this job's spools differ by more than "
+                f"{MULTICOLOR_TEMPERATURE_TOLERANCE_C} C ({detail}); {'one heater' if key == 'nozzle' else 'one bed'} "
+                "cannot follow that safely. Use spools with closer temperatures, or slice them separately")
+    return out
+
+
+def recorded_nozzle_type(state):
+    return (state.get("nozzle") or {}).get("type") or settings.current().get("printer", {}).get("nozzle_type") or "hardened_steel"
+
+
+def _header_numbers(text, key):
+    """The numbers of an Orca config line (`; nozzle_temperature = 220,210`), or [] when absent or not numeric."""
+    match = re.search(rf"^; {re.escape(key)} = (.+)$", text or "", re.M)
+    try:
+        return [float(piece) for piece in match.group(1).split(",")] if match else []
+    except ValueError:
+        return []
+
+
+def gcode_tool_temperatures(state, materials, text, fetch_filament=None):
+    """Temperatures a multi-filament G-code must carry, checked per tool against its own header, or None.
+
+    The header lists each filament's nozzle target (already raised by the nozzle-type offset). Every
+    tool the file uses must carry what a slot spool holding that material resolves to, and the
+    filament that heats the nozzle at the start (the first T command, else T0) sets the job's
+    nozzle temperature. None when the header does not list one target per filament (not Orca output): the
+    caller then keeps the active spool's targets.
+    """
+    from .nozzle import effective_nozzle_temperature
+    listed = [" ".join(str(m).split()) for m in materials]
+    header = _header_numbers(text, "nozzle_temperature_initial_layer") or _header_numbers(text, "nozzle_temperature")
+    if len(header) != len(listed):
+        return None
+    tools = [int(n) for n in re.findall(r"^[ \t]*T(\d+)\b", text or "", re.M)]
+    start = min(tools[0] if tools else 0, len(listed) - 1)
+    used = {t for t in tools if t < len(listed)} | {start}
+    offset = effective_nozzle_temperature(recorded_nozzle_type(state), 200.0) - 200.0
+    slots = [rec for rec in (state.get("filament_slots") or {}).values() if isinstance(rec, dict)]
+    spool = state.get("spool") or {}
+    resolved = {}
+    for tool in sorted(used):
+        label, shown = listed[tool], header[tool]
+        norm = lambda m: " ".join(str(m or "").split()).casefold()  # noqa: E731
+        # The slot spools holding exactly this label decide; the family only when no slot holds it.
+        holders = ([rec for rec in slots if norm(rec.get("material")) == norm(label)]
+                   or [rec for rec in slots if same_material(rec.get("material"), label)])
+        ids = sorted({rec.get("spoolman_id") for rec in holders}, key=str) or [spool.get("spoolman_id")]
+        options = [slice_temperatures({**state, "spool": {**spool, "spoolman_id": sid, "material": label}},
+                                      None, fetch_filament,
+                                      stored_ok=_is_active_spool(state, {"spoolman_id": sid, "material": label}))[0]
+                   for sid in ids]
+        if not any(abs(float(o["nozzle"]) - (shown - offset)) <= 1e-3 for o in options):
+            raise RuntimeError(f"G-code tool T{tool} ({label}) is set to {shown:g} C but its spool resolves to "
+                               + " or ".join(f"{float(o['nozzle']) + offset:g} C" for o in options))
+        resolved[tool] = {"nozzle": shown - offset, "bed": options[0]["bed"]}
+    nozzle = resolved[start]["nozzle"]
+    # One plate heats the whole job: its target is the lowest-numbered tool's, the one orca_adapter sliced the bed at.
+    return {"nozzle": int(nozzle) if float(nozzle).is_integer() else nozzle, "bed": resolved[min(resolved)]["bed"]}
+
+
+def gcode_temperatures(state, materials, fetch_filament=None, text=None):
     """The temperatures a G-code sliced for ``materials`` (its filament_type list) must carry,
     resolved for the same spool slice_temperatures used: the active spool when its material is
     the G-code's, else the one slot spool holding that material, else the material defaults.
-    Mixed labels (a multicolor job) keep the active spool's targets. Two slot spools with that
-    material and different targets are ambiguous and refuse.
+    A multi-filament G-code (``text`` given) is checked per tool against its own header instead
+    (gcode_tool_temperatures). Two slot spools with that material and different targets are
+    ambiguous and refuse.
     """
     labels = {" ".join(str(m).split()) for m in materials or () if str(m).strip()}
     spool = state.get("spool") or {}
+    if text is not None and len([m for m in materials or () if str(m).strip()]) > 1:
+        per_tool = gcode_tool_temperatures(state, [m for m in materials if str(m).strip()], text, fetch_filament)
+        if per_tool is not None:
+            return per_tool
     if len(labels) != 1:
         return slice_temperatures(state, None, fetch_filament)[0]
     label = labels.pop()

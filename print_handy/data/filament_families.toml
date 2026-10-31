@@ -1,0 +1,201 @@
+# Per-material-family filament settings for the slicer (Orca filament profile keys).
+#
+# Why: the in-repo and generated printer templates each ship ONE filament profile, a PLA one (100 %
+# part-cooling fan, 12-25 mm3/s, 190-230 C). Slicing ABS, ASA, PETG, TPU or nylon with it means full
+# fan on a material that warps under it and PLA flow limits on a material that jams above 3 mm3/s.
+# print_handy.core.filament_families applies the row of the job's material family on top of the
+# template for every printer that has no vendor filament profile per material (Bambu Lab keeps its
+# checked vendor profiles and never reads this file).
+#
+# Source: OrcaSlicer 2.4.2 system profiles, resources/profiles/OrcaFilamentLibrary/filament/
+# "Generic <family> @System" (resolved through fdm_filament_common / fdm_filament_<family>).
+# Values are copied unrounded from those profiles. Orca's Generic set has no ABS-CF/GF, ASA-CF/GF,
+# PC-CF/GF, PA-GF or PETG-GF profile, so those (and any other reinforced label) use the base family
+# row below. The reinforced rows PLA-CF, PETG-CF and PA-CF come from Orca's Generic PLA-CF, PETG-CF
+# and PA-CF, which differ from their base only for PETG-CF.
+#
+# Keys that Orca's Generic profiles leave unset take Orca's own built-in defaults here instead of the
+# printer template's PLA value: additional_cooling_fan_speed 0 (aux fan off) and
+# support_material_interface_fan_speed -1 (follow the filament fan). Only TPU and PLA set the aux fan.
+#
+# Not here, on purpose: nozzle and bed temperatures, flow, density and colour. Print Handy resolves
+# those per spool (printer_state.slice_temperatures, nozzle.py) and they always win. The bed plate
+# temperatures Orca's profiles carry per plate are replaced by that resolved bed temperature on all
+# four plates, so they would never reach the slicer. nozzle_temperature_range_low/high are only a
+# slicer sanity range; they are widened to include the resolved temperature.
+#
+# Retraction: Orca's Generic profiles set a filament retraction only for TPU (0.4 mm); every other
+# family leaves it to the printer ("nil"), so no other row carries one.
+#
+# A template of the job's own family keeps its tuned values (a Flashforge PLA at 25 mm3/s stays);
+# its row only fills keys the template lacks.
+
+[families.PLA]
+fan_min_speed = 100
+fan_max_speed = 100
+overhang_fan_speed = 100
+overhang_fan_threshold = "50%"
+close_fan_the_first_x_layers = 1
+full_fan_speed_layer = 0
+additional_cooling_fan_speed = 70
+fan_cooling_layer_time = 100
+slow_down_layer_time = 4
+slow_down_min_speed = 10
+filament_max_volumetric_speed = 12
+nozzle_temperature_range_low = 190
+nozzle_temperature_range_high = 240
+temperature_vitrification = 45
+
+[families.PETG]
+fan_min_speed = 20
+fan_max_speed = 100
+overhang_fan_speed = 100
+overhang_fan_threshold = "95%"
+close_fan_the_first_x_layers = 3
+full_fan_speed_layer = 0
+additional_cooling_fan_speed = 0
+support_material_interface_fan_speed = -1
+fan_cooling_layer_time = 20
+slow_down_layer_time = 8
+slow_down_min_speed = 10
+filament_max_volumetric_speed = 10
+nozzle_temperature_range_low = 220
+nozzle_temperature_range_high = 260
+temperature_vitrification = 70
+
+[families.ABS]
+fan_min_speed = 10
+fan_max_speed = 80
+overhang_fan_speed = 80
+overhang_fan_threshold = "25%"
+close_fan_the_first_x_layers = 3
+full_fan_speed_layer = 0
+additional_cooling_fan_speed = 0
+support_material_interface_fan_speed = -1
+fan_cooling_layer_time = 30
+slow_down_layer_time = 3
+slow_down_min_speed = 10
+filament_max_volumetric_speed = 12
+nozzle_temperature_range_low = 240
+nozzle_temperature_range_high = 280
+temperature_vitrification = 110
+
+[families.ASA]
+fan_min_speed = 10
+fan_max_speed = 80
+overhang_fan_speed = 80
+overhang_fan_threshold = "25%"
+close_fan_the_first_x_layers = 3
+full_fan_speed_layer = 0
+additional_cooling_fan_speed = 0
+support_material_interface_fan_speed = -1
+fan_cooling_layer_time = 35
+slow_down_layer_time = 3
+slow_down_min_speed = 10
+filament_max_volumetric_speed = 12
+nozzle_temperature_range_low = 240
+nozzle_temperature_range_high = 280
+temperature_vitrification = 110
+
+[families.TPU]
+fan_min_speed = 100
+fan_max_speed = 100
+overhang_fan_speed = 100
+overhang_fan_threshold = "95%"
+close_fan_the_first_x_layers = 1
+full_fan_speed_layer = 0
+additional_cooling_fan_speed = 70
+fan_cooling_layer_time = 100
+slow_down_layer_time = 8
+slow_down_min_speed = 10
+filament_max_volumetric_speed = 3.2
+filament_retraction_length = 0.4
+nozzle_temperature_range_low = 200
+nozzle_temperature_range_high = 250
+temperature_vitrification = 30
+
+[families.PA]
+fan_min_speed = 0
+fan_max_speed = 60
+overhang_fan_speed = 30
+overhang_fan_threshold = "95%"
+close_fan_the_first_x_layers = 3
+full_fan_speed_layer = 0
+additional_cooling_fan_speed = 0
+support_material_interface_fan_speed = -1
+fan_cooling_layer_time = 4
+slow_down_layer_time = 2
+slow_down_min_speed = 10
+filament_max_volumetric_speed = 8
+nozzle_temperature_range_low = 260
+nozzle_temperature_range_high = 300
+temperature_vitrification = 108
+
+[families.PC]
+fan_min_speed = 10
+fan_max_speed = 60
+overhang_fan_speed = 60
+overhang_fan_threshold = "25%"
+close_fan_the_first_x_layers = 3
+full_fan_speed_layer = 0
+additional_cooling_fan_speed = 0
+support_material_interface_fan_speed = -1
+fan_cooling_layer_time = 30
+slow_down_layer_time = 2
+slow_down_min_speed = 10
+filament_max_volumetric_speed = 12
+nozzle_temperature_range_low = 260
+nozzle_temperature_range_high = 290
+temperature_vitrification = 120
+
+# Reinforced rows. A reinforced label with no row here uses its base family's row.
+
+[families.PLA-CF]
+fan_min_speed = 100
+fan_max_speed = 100
+overhang_fan_speed = 100
+overhang_fan_threshold = "50%"
+close_fan_the_first_x_layers = 1
+full_fan_speed_layer = 0
+additional_cooling_fan_speed = 70
+fan_cooling_layer_time = 100
+slow_down_layer_time = 4
+slow_down_min_speed = 10
+filament_max_volumetric_speed = 12
+nozzle_temperature_range_low = 190
+nozzle_temperature_range_high = 240
+temperature_vitrification = 45
+
+[families.PETG-CF]
+fan_min_speed = 5
+fan_max_speed = 40
+overhang_fan_speed = 100
+overhang_fan_threshold = "95%"
+close_fan_the_first_x_layers = 3
+full_fan_speed_layer = 0
+additional_cooling_fan_speed = 0
+support_material_interface_fan_speed = -1
+fan_cooling_layer_time = 30
+slow_down_layer_time = 8
+slow_down_min_speed = 10
+filament_max_volumetric_speed = 11.5
+nozzle_temperature_range_low = 220
+nozzle_temperature_range_high = 260
+temperature_vitrification = 70
+
+[families.PA-CF]
+fan_min_speed = 0
+fan_max_speed = 60
+overhang_fan_speed = 30
+overhang_fan_threshold = "95%"
+close_fan_the_first_x_layers = 3
+full_fan_speed_layer = 0
+additional_cooling_fan_speed = 0
+support_material_interface_fan_speed = -1
+fan_cooling_layer_time = 4
+slow_down_layer_time = 2
+slow_down_min_speed = 10
+filament_max_volumetric_speed = 8
+nozzle_temperature_range_low = 260
+nozzle_temperature_range_high = 300
+temperature_vitrification = 108

@@ -2583,7 +2583,7 @@ def _with_gcode_temperatures(state, text):
         record = spoolman_client.get_spool(spool_id, base_url=printer_state.spoolman_url(state))
         return None if not record or record.get('archived') else record.get('filament')
     try:
-        temps = printer_state.gcode_temperatures(state, materials, fetch)
+        temps = printer_state.gcode_temperatures(state, materials, fetch, text)
     except (RuntimeError, ValueError) as exc:
         raise RuntimeError(f"G-code temperature check failed: {exc}") from exc
     return {**state, 'temps_c': temps}

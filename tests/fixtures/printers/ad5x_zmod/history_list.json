@@ -1,0 +1,312 @@
+{
+  "result": {
+    "count": 5,
+    "jobs": [
+      {
+        "job_id": "000058",
+        "user": "No User",
+        "filename": "3mf_print/Replay-Part-1_plate_1_d8fe2b0618a5670a3c5f603e22be6d68598cdf41c1191a897eadfeedb88b19e0.gcode",
+        "status": "in_progress",
+        "start_time": 1793448774.8750408,
+        "end_time": null,
+        "print_duration": 0.0,
+        "total_duration": 0.14061816700268537,
+        "filament_used": 0.0,
+        "metadata": {
+          "size": 8971942,
+          "modified": 1793448532.918874,
+          "file_processors": [],
+          "slicer": "OrcaSlicer",
+          "slicer_version": "2.5.0-beta",
+          "gcode_start_byte": 623,
+          "gcode_end_byte": 8948138,
+          "layer_count": 583,
+          "object_height": 139.92,
+          "estimated_time": 5071,
+          "nozzle_diameter": 0.4,
+          "layer_height": 0.24,
+          "first_layer_height": 0.24,
+          "first_layer_extr_temp": 210.0,
+          "first_layer_bed_temp": 60.0,
+          "chamber_temp": 0.0,
+          "filament_name": "Flashforge Generic PLA",
+          "filament_type": "Silk PLA",
+          "filament_colors": [
+            "#0C6283"
+          ],
+          "extruder_colors": [
+            "#0C6283"
+          ],
+          "filament_temps": [
+            210
+          ],
+          "referenced_tools": [],
+          "mmu_print": 0,
+          "filament_total": 15676.65,
+          "filament_weight_total": 46.76,
+          "filament_weights": [
+            46.76
+          ],
+          "printer_model": "Flashforge AD5X",
+          "printer_variant": "0.4"
+        },
+        "auxiliary_data": [
+          {
+            "provider": "spoolman",
+            "name": "spool_ids",
+            "value": [
+              17
+            ],
+            "description": "Spool IDs used",
+            "units": null
+          }
+        ],
+        "exists": true
+      },
+      {
+        "job_id": "000057",
+        "user": "No User",
+        "filename": "3mf_print/Replay-Part-2_plate_1_55ff1d033efa98fbb617917d71db261524a00d67aaaf7d4947088acf7ae4e03f.gcode",
+        "status": "completed",
+        "start_time": 1793402682.676732,
+        "end_time": 1793407034.5351405,
+        "print_duration": 4238.141666854004,
+        "total_duration": 4351.852001407999,
+        "filament_used": 8870.616689999613,
+        "metadata": {
+          "size": 5390528,
+          "modified": 1793402500.6188521,
+          "file_processors": [],
+          "slicer": "OrcaSlicer",
+          "slicer_version": "2.5.0-beta",
+          "gcode_start_byte": 616,
+          "gcode_end_byte": 5366732,
+          "layer_count": 47,
+          "object_height": 11.28,
+          "estimated_time": 4198,
+          "nozzle_diameter": 0.4,
+          "layer_height": 0.24,
+          "first_layer_height": 0.24,
+          "first_layer_extr_temp": 210.0,
+          "first_layer_bed_temp": 60.0,
+          "chamber_temp": 0.0,
+          "filament_name": "Flashforge Generic PLA",
+          "filament_type": "PLA",
+          "filament_colors": [
+            "#067749"
+          ],
+          "extruder_colors": [
+            "#067749"
+          ],
+          "filament_temps": [
+            210
+          ],
+          "referenced_tools": [],
+          "mmu_print": 0,
+          "filament_total": 8831.42,
+          "filament_weight_total": 26.34,
+          "filament_weights": [
+            26.34
+          ],
+          "printer_model": "Flashforge AD5X",
+          "printer_variant": "0.4"
+        },
+        "auxiliary_data": [
+          {
+            "provider": "spoolman",
+            "name": "spool_ids",
+            "value": [
+              12
+            ],
+            "description": "Spool IDs used",
+            "units": null
+          }
+        ],
+        "exists": true
+      },
+      {
+        "job_id": "000056",
+        "user": "No User",
+        "filename": "Replay-Part-3_plate_1_df2ebaed6c7d2570f317f8fb9c04acf981b0fbf1290e64f7ab98bfeb8ba0d40f.gcode",
+        "status": "completed",
+        "start_time": 1793169145.3445406,
+        "end_time": 1793186479.5376625,
+        "print_duration": 17312.569112088997,
+        "total_duration": 17334.06777726498,
+        "filament_used": 47365.36282004479,
+        "metadata": {
+          "size": 40635368,
+          "modified": 1793168738.501491,
+          "file_processors": [],
+          "slicer": "OrcaSlicer",
+          "slicer_version": "2.5.0-alpha",
+          "gcode_start_byte": 618,
+          "gcode_end_byte": 40611800,
+          "layer_count": 386,
+          "object_height": 92.64,
+          "estimated_time": 16383,
+          "nozzle_diameter": 0.4,
+          "layer_height": 0.24,
+          "first_layer_height": 0.24,
+          "first_layer_extr_temp": 210.0,
+          "first_layer_bed_temp": 60.0,
+          "chamber_temp": 0.0,
+          "filament_name": "Flashforge Generic PLA",
+          "filament_type": "PLA",
+          "filament_colors": [
+            "#067749"
+          ],
+          "extruder_colors": [
+            "#067749"
+          ],
+          "filament_temps": [
+            210
+          ],
+          "referenced_tools": [],
+          "mmu_print": 0,
+          "filament_total": 47322.17,
+          "filament_weight_total": 141.14,
+          "filament_weights": [
+            141.14
+          ],
+          "printer_model": "Flashforge AD5X",
+          "printer_variant": "0.4"
+        },
+        "auxiliary_data": [
+          {
+            "provider": "spoolman",
+            "name": "spool_ids",
+            "value": [
+              12
+            ],
+            "description": "Spool IDs used",
+            "units": null
+          }
+        ],
+        "exists": true
+      },
+      {
+        "job_id": "000055",
+        "user": "No User",
+        "filename": "Replay-Part-4_plate_1_2c92ed139e8c4e1e37a35df4e4e67823af3e7d118d162be6ca8a81296f42c439.gcode",
+        "status": "completed",
+        "start_time": 1793148574.8727996,
+        "end_time": 1793148804.6441903,
+        "print_duration": 223.91626093999366,
+        "total_duration": 229.7618176100077,
+        "filament_used": 195.7654100006621,
+        "metadata": {
+          "size": 178766,
+          "modified": 1793148284.5514812,
+          "file_processors": [],
+          "slicer": "OrcaSlicer",
+          "slicer_version": "2.5.0-alpha",
+          "gcode_start_byte": 616,
+          "gcode_end_byte": 155211,
+          "layer_count": 29,
+          "object_height": 6.96,
+          "estimated_time": 186,
+          "nozzle_diameter": 0.4,
+          "layer_height": 0.24,
+          "first_layer_height": 0.24,
+          "first_layer_extr_temp": 210.0,
+          "first_layer_bed_temp": 60.0,
+          "chamber_temp": 0.0,
+          "filament_name": "Flashforge Generic PLA",
+          "filament_type": "PLA",
+          "filament_colors": [
+            "#067749"
+          ],
+          "extruder_colors": [
+            "#067749"
+          ],
+          "filament_temps": [
+            210
+          ],
+          "referenced_tools": [],
+          "mmu_print": 0,
+          "filament_total": 152.57,
+          "filament_weight_total": 0.46,
+          "filament_weights": [
+            0.46
+          ],
+          "printer_model": "Flashforge AD5X",
+          "printer_variant": "0.4"
+        },
+        "auxiliary_data": [
+          {
+            "provider": "spoolman",
+            "name": "spool_ids",
+            "value": [
+              12
+            ],
+            "description": "Spool IDs used",
+            "units": null
+          }
+        ],
+        "exists": true
+      },
+      {
+        "job_id": "000054",
+        "user": "No User",
+        "filename": "Replay-Part-5_plate_1_1d67307847139fb72a698270ae2573ef434768269ff5abb8608571af11484bbd.gcode",
+        "status": "completed",
+        "start_time": 1793142221.3100643,
+        "end_time": 1793144080.1032786,
+        "print_duration": 1852.502690549998,
+        "total_duration": 1858.7878080530209,
+        "filament_used": 6584.981829996206,
+        "metadata": {
+          "size": 1506743,
+          "modified": 1793141928.581478,
+          "file_processors": [],
+          "slicer": "OrcaSlicer",
+          "slicer_version": "2.5.0-alpha",
+          "gcode_start_byte": 616,
+          "gcode_end_byte": 1483182,
+          "layer_count": 30,
+          "object_height": 7.2,
+          "estimated_time": 1765,
+          "nozzle_diameter": 0.4,
+          "layer_height": 0.24,
+          "first_layer_height": 0.24,
+          "first_layer_extr_temp": 210.0,
+          "first_layer_bed_temp": 60.0,
+          "chamber_temp": 0.0,
+          "filament_name": "Flashforge Generic PLA",
+          "filament_type": "PLA",
+          "filament_colors": [
+            "#067749"
+          ],
+          "extruder_colors": [
+            "#067749"
+          ],
+          "filament_temps": [
+            210
+          ],
+          "referenced_tools": [],
+          "mmu_print": 0,
+          "filament_total": 6541.78,
+          "filament_weight_total": 19.51,
+          "filament_weights": [
+            19.51
+          ],
+          "printer_model": "Flashforge AD5X",
+          "printer_variant": "0.4"
+        },
+        "auxiliary_data": [
+          {
+            "provider": "spoolman",
+            "name": "spool_ids",
+            "value": [
+              12
+            ],
+            "description": "Spool IDs used",
+            "units": null
+          }
+        ],
+        "exists": true
+      }
+    ]
+  }
+}

@@ -1,0 +1,16 @@
+{
+  "result": {
+    "state": "ready",
+    "state_message": "Printer is ready",
+    "hostname": "flashforge",
+    "klipper_path": "/usr/prog/klipper",
+    "python_path": "/usr/prog/Python-3.8.2/bin/python3",
+    "process_id": 1674,
+    "user_id": 0,
+    "group_id": 0,
+    "log_file": "/usr/data/logs/printer.log",
+    "config_file": "/usr/data/config/printer.cfg",
+    "software_version": "?",
+    "cpu_info": "2 core ?"
+  }
+}

@@ -1,0 +1,23 @@
+{
+  "id": 17,
+  "filament": {
+    "id": 15,
+    "name": "Rose red blue green",
+    "material": "Silk PLA",
+    "density": 1.24,
+    "diameter": 1.75,
+    "weight": 500.0,
+    "color_hex": "0C6283",
+    "extra": {},
+    "tags": []
+  },
+  "remaining_weight": 473.58005101646125,
+  "initial_weight": 500.0,
+  "used_weight": 26.41994898353876,
+  "remaining_length": 158783.63358837506,
+  "used_length": 8858.176120007141,
+  "location": "IFS Slot 2",
+  "archived": false,
+  "extra": {},
+  "tags": []
+}

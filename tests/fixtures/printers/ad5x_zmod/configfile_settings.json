@@ -1,0 +1,22 @@
+{
+  "result": {
+    "eventtime": 220956.36053686,
+    "status": {
+      "configfile": {
+        "settings": {
+          "extruder": {
+            "nozzle_diameter": 0.4,
+            "filament_diameter": 1.75,
+            "pressure_advance": 0.065,
+            "pressure_advance_smooth_time": 0.04,
+            "max_temp": 350.0,
+            "min_temp": -100.0
+          },
+          "probe": {
+            "z_offset": -0.25
+          }
+        }
+      }
+    }
+  }
+}

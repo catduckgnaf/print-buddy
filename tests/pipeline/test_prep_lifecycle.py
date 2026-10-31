@@ -256,3 +256,14 @@ def test_slice_only_then_start_button_lifecycle(env, monkeypatch):
     assert sum(PREP_TEXT in m for m in adapter.log) == 1
     assert not any(m.startswith(PREP_TEXT) and 'Uploading' not in m for m in adapter.log)
     assert any(m.startswith('Print started:') for m in adapter.log)
+
+
+def test_slot_mismatch_refusal_names_the_slot_and_both_labels():
+    tail = ("REFUSED: printer slot 2 is labeled PETG but Spoolman has Silk PLA there (T0). "
+            "Nothing uploaded or started.")
+
+    message = prepared_intake._refusal_text(tail)
+
+    assert message == ("Didn't start: printer slot 2 is labeled PETG but Spoolman has Silk PLA there. "
+                       "Fix the slot on the printer or the spool in Spoolman, then press Retry.")
+    assert prepared_intake._safe_preupload_refusal(tail)

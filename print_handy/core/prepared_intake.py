@@ -1141,6 +1141,10 @@ def _safe_preupload_refusal(tail):
 def _refusal_text(tail):
     """Return plain user-facing guidance; raw internals remain in the receipt and job log."""
     raw = _raw_preupload_refusal(tail)
+    slot = re.match(r'REFUSED: (printer slot \d+ .+?) \(T\d+\)\.', raw)
+    if slot:
+        return (f"Didn't start: {slot.group(1)}. Fix the slot on the printer or the spool in Spoolman, "
+                "then press Retry.")
     targets = {name.casefold(): float(value) for name, value in _HEATER_TARGET.findall(raw) if float(value) > 0}
     if targets:
         heaters = []

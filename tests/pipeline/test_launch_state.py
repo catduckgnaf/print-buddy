@@ -14,6 +14,7 @@ from unittest import mock
 import pytest
 
 from print_handy.core import model_job
+from print_handy.printers.flashforge.zmod import screen as zmod_screen
 
 PRINTER = "http://m"  # the moonraker_url the mocked hardware record reports
 
@@ -361,6 +362,7 @@ def test_octoprint_unconfirmed_start_is_uncertain_until_the_printer_reports_it(o
 from print_handy.printers.flashforge.zmod import native_idle  # noqa: E402
 
 mapped_presence = [True]  # zmod_color hasFilament for slot 1 in the mapped fixture
+mapped_label = ["PLA"]  # zmod_color Material for slot 1 in the mapped fixture
 
 @pytest.fixture
 def mapped(tmp_path):
@@ -370,9 +372,11 @@ def mapped(tmp_path):
     native.require_idle_screenless.side_effect = native_idle.require_idle_screenless
     native.read_zmod_color_slots.side_effect = lambda status: {
         int(item["ID"]): item.get("hasFilament") for item in status["zmod_color"]["slots"]}
+    native.screen_label_matches.side_effect = zmod_screen.label_matches
     adapter = mock.Mock(native=native)
     scripts = []
     mapped_presence[0] = True
+    mapped_label[0] = "PLA"
 
     def fake_mr(st, path, data=None, timeout=30):
         if path == "/printer/gcode/script":
@@ -381,7 +385,7 @@ def mapped(tmp_path):
         return {"result": {"status": {
             "webhooks": {"state": "ready"}, "print_stats": {"state": "standby", "filename": ""},
             "extruder": {"target": 0}, "heater_bed": {"target": 0},
-            "zmod_color": {"slots": [{"ID": 1, "Material": "PLA", "HEX": "000000",
+            "zmod_color": {"slots": [{"ID": 1, "Material": mapped_label[0], "HEX": "000000",
                                       "hasFilament": mapped_presence[0]}]},
             "filament_switch_sensor head_switch_sensor": {"enabled": True}}}}
 
@@ -620,3 +624,28 @@ def test_operator_can_clear_a_lease_left_by_another_host_but_not_a_live_local_on
     assert launch_state.resolve(PRINTER, "not_started")["remote"] == "a.gcode"
     lease.release()  # a stale token changes nothing
     assert leases() == []
+
+
+@pytest.mark.parametrize("label,material", [("SILK", "Silk PLA"), ("PLA", "Silk PLA"), ("PLA", "PLA+"),
+                                            ("silk", "PLA Silk")])
+def test_mapped_launch_accepts_the_screen_label_print_handy_writes(mapped, label, material):
+    """CHANGE_ZCOLOR writes SILK for Silk PLA; the printer reports SILK back (2026-10-31
+    can holder refused as a live material mismatch on its own label)."""
+    mapped_label[0] = label
+    mapped.st["filament_slots"]["1"]["material"] = material
+    jp, g = make_job(mapped.root, "a")
+    job = json.loads(jp.read_text())
+    out = model_job.print_mapped_native(g, mapped.st, {"display_off": 1}, {"0": 1}, job, jp, 0, False)
+    assert out["submission_count"] == 1 and len(uploads(mapped.run)) == 1
+
+
+@pytest.mark.parametrize("label,material", [("SILK", "PETG"), ("PETG", "Silk PLA"), ("PLA", "PLA-CF"),
+                                            ("?", "PLA"), ("", "PLA")])
+def test_mapped_launch_refuses_a_slot_label_that_disagrees_before_upload(mapped, label, material):
+    mapped_label[0] = label
+    mapped.st["filament_slots"]["1"]["material"] = material
+    jp, g = make_job(mapped.root, "a")
+    job = json.loads(jp.read_text())
+    with pytest.raises(SystemExit, match=r"REFUSED: printer slot 1 is labeled .* but Spoolman has .*Nothing uploaded"):
+        model_job.print_mapped_native(g, mapped.st, {"display_off": 1}, {"0": 1}, job, jp, 0, False)
+    assert uploads(mapped.run) == [] and mapped.scripts == [] and leases() == []

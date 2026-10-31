@@ -13,7 +13,7 @@ from unittest import mock
 
 import pytest
 
-from print_handy.core import model_job
+from print_handy.core import launch_state, model_job
 from print_handy.printers.flashforge.zmod import screen as zmod_screen
 
 PRINTER = "http://m"  # the moonraker_url the mocked hardware record reports
@@ -363,6 +363,7 @@ from print_handy.printers.flashforge.zmod import native_idle  # noqa: E402
 
 mapped_presence = [True]  # zmod_color hasFilament for slot 1 in the mapped fixture
 mapped_label = ["PLA"]  # zmod_color Material for slot 1 in the mapped fixture
+mapped_history = []  # Moonraker /server/history/list jobs in the mapped fixture
 
 @pytest.fixture
 def mapped(tmp_path):
@@ -377,11 +378,14 @@ def mapped(tmp_path):
     scripts = []
     mapped_presence[0] = True
     mapped_label[0] = "PLA"
+    mapped_history.clear()
 
     def fake_mr(st, path, data=None, timeout=30):
         if path == "/printer/gcode/script":
             scripts.append(data["script"])
             return {"result": "ok"}
+        if path.startswith("/server/history/list"):
+            return {"result": {"count": len(mapped_history), "jobs": list(mapped_history)}}
         return {"result": {"status": {
             "webhooks": {"state": "ready"}, "print_stats": {"state": "standby", "filename": ""},
             "extruder": {"target": 0}, "heater_bed": {"target": 0},
@@ -649,3 +653,72 @@ def test_mapped_launch_refuses_a_slot_label_that_disagrees_before_upload(mapped,
     with pytest.raises(SystemExit, match=r"REFUSED: printer slot 1 is labeled .* but Spoolman has .*Nothing uploaded"):
         model_job.print_mapped_native(g, mapped.st, {"display_off": 1}, {"0": 1}, job, jp, 0, False)
     assert uploads(mapped.run) == [] and mapped.scripts == [] and leases() == []
+# An uncertain start settles from the printer's own record of that exact file (2026-10-30
+# Bag Clip: uploaded as X.gcode.3mf, reported as 3mf_print/X.gcode, finished before the next
+# launch, and blocked every later job until a manual reconcile-launch).
+
+HELD = "Bag-Clip_plate_1_bf4e.gcode.3mf"
+
+
+def held_row(leased_at="2026-10-30T19:21:32-0400"):
+    return {"remote": HELD, "leased_at": leased_at}
+
+
+def epoch(text):
+    from datetime import datetime
+    return datetime.strptime(text, "%Y-%m-%dT%H:%M:%S%z").timestamp()
+
+
+@pytest.mark.parametrize("reported", ["3mf_print/Bag-Clip_plate_1_bf4e.gcode", "Bag-Clip_plate_1_bf4e.gcode",
+                                      "/gcodes/Bag-Clip_plate_1_bf4e.gcode", HELD])
+def test_the_current_file_settles_its_3mf_upload_by_any_documented_path(reported):
+    assert launch_state.reached_printer(held_row(), reported)
+
+
+def test_history_settles_a_start_only_after_the_lease_and_only_for_that_file():
+    started = epoch("2026-10-30T19:24:41-0400")
+    assert launch_state.reached_printer(held_row(), "", [("3mf_print/Bag-Clip_plate_1_bf4e.gcode", started)])
+    # A reprint: the same file ran an hour before this lease. It says nothing about this start.
+    assert not launch_state.reached_printer(held_row(), "", [("3mf_print/Bag-Clip_plate_1_bf4e.gcode",
+                                                              started - 3600)])
+    assert not launch_state.reached_printer(held_row(), "", [("3mf_print/Other_plate_1.gcode", started)])
+    assert not launch_state.reached_printer(held_row(), "", [])
+    assert not launch_state.reached_printer({"remote": None, "leased_at": "x"}, "", [("x", started)])
+
+
+def test_history_is_read_only_when_the_current_file_does_not_settle_it():
+    read = mock.Mock(side_effect=AssertionError("history read"))
+    assert launch_state.reached_printer(held_row(), "3mf_print/Bag-Clip_plate_1_bf4e.gcode", read)
+    broken = mock.Mock(side_effect=OSError("moonraker down"))
+    assert not launch_state.reached_printer(held_row(), "", broken)
+
+
+def hold_uncertain(key, remote):
+    lease = launch_state.acquire(key, job_json="/archive/earlier/JOB.json", gcode_sha256="e" * 64, remote=remote)
+    lease.uncertain("start request did not complete: TimeoutError('timed out')")
+    simulate_restart()
+
+
+def test_mapped_launch_settles_a_finished_uncertain_start_from_history(mapped):
+    jp, g = make_job(mapped.root, "a")
+    job = json.loads(jp.read_text())
+    hold_uncertain(model_job._printer_key(mapped.st, job), HELD)
+    import time
+    mapped_history.append({"filename": "3mf_print/Bag-Clip_plate_1_bf4e.gcode", "start_time": time.time(),
+                           "status": "completed"})
+    out = model_job.print_mapped_native(g, mapped.st, {"display_off": 1}, {"0": 1}, job, jp, 0, False)
+    assert out["submission_count"] == 1 and len(uploads(mapped.run)) == 1
+    assert all(row["job_json"] != "/archive/earlier/JOB.json" for row in leases())  # the held start is settled
+
+
+def test_mapped_launch_stays_refused_when_history_does_not_show_the_held_file(mapped):
+    jp, g = make_job(mapped.root, "a")
+    job = json.loads(jp.read_text())
+    hold_uncertain(model_job._printer_key(mapped.st, job), HELD)
+    import time
+    mapped_history.append({"filename": "3mf_print/Bag-Clip_plate_1_bf4e.gcode", "start_time": time.time() - 3600,
+                           "status": "completed"})
+    with pytest.raises(SystemExit, match="REFUSED: an earlier start on this printer is uncertain"):
+        model_job.print_mapped_native(g, mapped.st, {"display_off": 1}, {"0": 1}, job, jp, 0, False)
+    assert uploads(mapped.run) == [] and mapped.scripts == []
+    assert [row["phase"] for row in leases()] == ["uncertain"]

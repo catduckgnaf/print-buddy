@@ -1035,6 +1035,7 @@ def slice_model(source, folder, state, brim=None, first_layer=False, color_decis
     adj = get_nozzle_type_adjustments(nozzle_type)
     machine['nozzle_temperature_range_high'] = [str(int(adj['max_temperature_c']))]
     slots = state.get('filament_slots') or {}
+    spool_filament = None  # the selected spool's Spoolman filament, when this slice fetches it
     if filament_slot is not None:
         slot = slots.get(str(filament_slot)) or slots.get(filament_slot)
         if not isinstance(slot, dict):
@@ -1058,6 +1059,7 @@ def slice_model(source, folder, state, brim=None, first_layer=False, color_decis
             from .printer_state import same_material, spoolman_url
             from . import spoolman_client
             spool = spoolman_client.get_spool(slot['spoolman_id'], base_url=spoolman_url(state))
+            spool_filament = {}  # this slot's spool, fetched: never the stored record of another spool
             if spool is None:
                 spoolman_client.note_unavailable_once()
             elif spool.get('archived'):
@@ -1067,6 +1069,8 @@ def slice_model(source, folder, state, brim=None, first_layer=False, color_decis
                 print(f"WARNING: Spoolman spool #{slot['spoolman_id']} material "
                       f"{spool.get('filament', {}).get('material')!r} differs from slot {filament_slot}'s "
                       f"recorded {slot['material']!r}; slicing on the slot record", flush=True)
+            else:
+                spool_filament = spool.get('filament') or {}
         color_slot, color_row = filament_slot, slot
     else:
         matching = [(k, s) for k, s in slots.items() if s.get('spoolman_id') == state['spool'].get('spoolman_id')]
@@ -1093,11 +1097,23 @@ def slice_model(source, folder, state, brim=None, first_layer=False, color_decis
     # neutral default, with a WARNING) instead of killing the slice.
     from .filament_color import slot_hex
     color = slot_hex(color_slot, color_row) if color_row is not None else None
-    from .printer_state import _material_temperature_contract
-    _material_temperature_contract(state)
     # The printer picks the filament profile for the job's material (Bambu Lab: its checked vendor profile for that
     # base polymer, refused when there is none); the hardware record then sets type, density and temperatures.
     filament_template = printer.filament_template(templates, state['spool']['material'])
+    # The job's spool sets its temperatures on every slice (2026-10-31: Silk PLA in IFS
+    # slot 2 sliced at the printer-wide 210 °C left by an earlier PLA spool, not 220 °C).
+    from .printer_state import slice_temperatures, spoolman_url as _spoolman_url
+    from . import spoolman_client as _spoolman
+
+    def _fetch_filament(spool_id):
+        record = _spoolman.get_spool(spool_id, base_url=_spoolman_url(state))
+        return None if not record or record.get('archived') else record.get('filament')
+    temps_c, resolution = slice_temperatures(state, spool_filament, _fetch_filament)
+    state = {**state, 'temps_c': temps_c, 'temperature_resolution': resolution}
+    from .printer_state import _material_temperature_contract
+    _material_temperature_contract(state)  # a legacy record's stored temperatures still need a known material
+    print(f"SLICE TEMPERATURES: {state['spool']['material']} nozzle {temps_c['nozzle']} °C, "
+          f"bed {temps_c['bed']} °C ({resolution.get('source')})", flush=True)
     filament = json.loads(Path(filament_template).read_text())
     from .nozzle import effective_nozzle_temperature
     base_nozzle_temp = float(state['temps_c']['nozzle'])

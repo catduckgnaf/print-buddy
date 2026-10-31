@@ -28,6 +28,7 @@ this file when a suite is added, moved, or starts/stops pinning an area.
 | Real Bambu Studio slicing (CI `Slicer test (bambu)` leg) | `tests/slicer/test_bambu_real_a1.py`; job contract in `tests/test_ci_bambu_workflow.py` |
 | Spoolman best-effort contract (#387, #235) | `tests/core/test_spoolman_client.py`, `tests/pipeline/test_spoolman_best_effort.py`, `test_spoolman_wrapper_contract.py`, `test_spoolman_warning*.py` |
 | Printers: roster, per-printer state, leases (#333–#337) | `tests/test_printers_roster.py`, `tests/test_per_printer_state.py`, `tests/test_multi_printer_walkthrough.py`, `tests/printers/` |
+| Printer replay (#616, #689-#693): the real print-now, verify and launch-lease code over HTTP against a fake Moonraker that serves responses recorded from an AD5X on ZMod, including a POST held past a real socket timeout | `tests/replay/`, `tests/fixtures/printers/ad5x_zmod/README.md` |
 | Fail-soft state files (corrupt / partial) | `tests/test_state_file_failure_paths.py`, `tests/test_state_files.py`, `tests/test_live_gate.py` |
 | Docker image, release contracts, supervisor, healthcheck | `tests/test_docker_release*.py`, `tests/docker/`, `tests/test_combined_supervisor.py`, `tests/test_go2rtc_container.py`, `tests/test_native_release_acceptance.py` |
 | Web UI (status, config, login, roster) | `tests/test_webui_*.py` |

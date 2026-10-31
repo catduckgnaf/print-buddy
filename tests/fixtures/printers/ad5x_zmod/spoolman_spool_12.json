@@ -1,0 +1,25 @@
+{
+  "id": 12,
+  "filament": {
+    "id": 11,
+    "name": "Dark Green PLA",
+    "material": "PLA",
+    "density": 1.24,
+    "diameter": 1.75,
+    "weight": 1000.0,
+    "settings_extruder_temp": 210,
+    "settings_bed_temp": 60,
+    "color_hex": "067749",
+    "extra": {},
+    "tags": []
+  },
+  "remaining_weight": 165.43393464427095,
+  "initial_weight": 1000.0,
+  "used_weight": 834.566065355729,
+  "remaining_length": 55467.28838188761,
+  "used_length": 279816.3310348768,
+  "location": "IFS Slot 4",
+  "archived": false,
+  "extra": {},
+  "tags": []
+}

@@ -1,0 +1,40 @@
+{
+  "result": [
+    {
+      "path": "Replay-Part-6_plate_1_e639e3da824af0361e6da2b230e0df5bba5eb58bb578d09ae3266a5bb72d2cf3.gcode",
+      "modified": 1716087682.0,
+      "size": 2834123,
+      "permissions": "rw"
+    },
+    {
+      "path": "Replay-File-7.3mf",
+      "modified": 1707523474.0,
+      "size": 778665,
+      "permissions": "rw"
+    },
+    {
+      "path": "3mf_print/Replay-Part-2_plate_1_55ff1d033efa98fbb617917d71db261524a00d67aaaf7d4947088acf7ae4e03f.gcode",
+      "modified": 1793402500.6188521,
+      "size": 5390528,
+      "permissions": "rw"
+    },
+    {
+      "path": "3mf_print/Replay-Part-1_plate_1_d8fe2b0618a5670a3c5f603e22be6d68598cdf41c1191a897eadfeedb88b19e0.gcode",
+      "modified": 1793448532.918874,
+      "size": 8971942,
+      "permissions": "rw"
+    },
+    {
+      "path": "Replay-File-8.gcode",
+      "modified": 1712261620.0,
+      "size": 8778,
+      "permissions": "rw"
+    },
+    {
+      "path": "Replay-File-9.gcode.3mf",
+      "modified": 1707527904.0,
+      "size": 81112,
+      "permissions": "rw"
+    }
+  ]
+}

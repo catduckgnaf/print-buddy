@@ -1,0 +1,14 @@
+{
+  "result": {
+    "eventtime": 221057.295240741,
+    "status": {
+      "bed_mesh": {
+        "profiles": {
+          "MESH_DATA": {},
+          "auto": {},
+          "default": {}
+        }
+      }
+    }
+  }
+}

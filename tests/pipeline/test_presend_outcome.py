@@ -46,3 +46,14 @@ def test_refusals_and_successes_pass_through_unchanged():
 def test_each_run_starts_unsubmitted():
     launch_state._SUBMITTED = True  # left over from an earlier in-process run
     assert run_cli(RuntimeError("boom")).startswith("REFUSED: boom")
+
+
+def test_the_lease_keeps_its_whole_lifecycle(tmp_path, monkeypatch):
+    """Every phase a transport uses must exist on the lease (a misplaced block once dropped two)."""
+    monkeypatch.setenv("PRINT_HANDY_LAUNCH_DB", str(tmp_path / "launch.db"))
+    for finish in ("release", "uncertain"):
+        lease = launch_state.acquire(f"p-{finish}", job_json="j", gcode_sha256="s", remote="r.gcode")
+        lease.submitting()
+        getattr(lease, finish)(*(["lost"] if finish == "uncertain" else []))
+    assert {r["phase"] for r in launch_state.pending("p-uncertain")} == {"uncertain"}
+    assert launch_state.pending("p-release") == []

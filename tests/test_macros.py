@@ -192,6 +192,18 @@ def test_every_moonraker_model_has_macro_coverage_except_the_inline_verdicts(reg
             assert ids, key
 
 
+def test_snapmaker_u1_macro_scope_is_exactly_the_print_start_pair(registry):
+    # The exact assertion for the klipper.print-start / print-end scope
+    # widening (the two entries sit in the widened set in
+    # tests/test_knowledge.py, where their printers/notes fields are set
+    # aside): the U1 gains exactly that pair and nothing else.
+    assert _applicable_macro_ids(registry, "snapmaker.u1") == {
+        "klipper.print-start", "klipper.print-end"}
+    for entry in registry.firmware_entries:
+        if entry.id in ("klipper.print-start", "klipper.print-end"):
+            assert "snapmaker.u1" in entry.printers
+
+
 def test_classify_scoped_describes_each_familys_own_start_macro(registry):
     cases = [
         ("creality.k1", "START_PRINT", "klipper.creality-start-print"),
@@ -205,6 +217,8 @@ def test_classify_scoped_describes_each_familys_own_start_macro(registry):
         ("flashforge.ad5m_pro", "START_PRINT", "zmod.start-print"),
         ("flashforge.creator5", "SET_PRINT_STATS_INFO", "klipper.set-print-stats-info"),
         ("flashforge.creator5_pro", "END_PRINT", "zmod.end-print"),
+        ("snapmaker.u1", "PRINT_START", "klipper.print-start"),
+        ("snapmaker.u1", "PRINT_END", "klipper.print-end"),
     ]
     for model_key, name, entry_id in cases:
         listing = macros.classify([name], registry=registry, printer=model_key)

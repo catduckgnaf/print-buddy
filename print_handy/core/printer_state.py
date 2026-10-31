@@ -332,7 +332,10 @@ def gcode_tool_temperatures(state, materials, text, fetch_filament=None):
     resolved = {}
     for tool in sorted(used):
         label, shown = listed[tool], header[tool]
-        holders = [rec for rec in slots if same_material(rec.get("material"), label)]
+        norm = lambda m: " ".join(str(m or "").split()).casefold()  # noqa: E731
+        # The slot spools holding exactly this label decide; the family only when no slot holds it.
+        holders = ([rec for rec in slots if norm(rec.get("material")) == norm(label)]
+                   or [rec for rec in slots if same_material(rec.get("material"), label)])
         ids = sorted({rec.get("spoolman_id") for rec in holders}, key=str) or [spool.get("spoolman_id")]
         options = [slice_temperatures({**state, "spool": {**spool, "spoolman_id": sid, "material": label}},
                                       None, fetch_filament)[0] for sid in ids]

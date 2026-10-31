@@ -5857,14 +5857,15 @@ def _moonraker_started_files(st):
         return []
 
 
-def _read_start_readback(st, remote):
+def _read_start_readback(st, remote, *, native=True):
     """(readable, readback): one status read after a start request that did not answer cleanly.
 
     The readback is classified only when print_stats names this exact upload (never another job's);
     it is None when the printer shows a different file, and `readable` is False when it could not be read.
     """
     try:
-        snap = _mr(st, "/printer/objects/query?print_stats&extruder&heater_bed&virtual_sdcard&idle_timeout&webhooks&toolhead&zmod_ifs")
+        query = "/printer/objects/query?print_stats&extruder&heater_bed&virtual_sdcard&idle_timeout&webhooks&toolhead"
+        snap = _mr(st, query + ("&zmod_ifs" if native else ""))  # generic Klipper has no ZMod objects
         ps = (snap.get("result", {}).get("status", {}) or {}).get("print_stats") or {}
         if not _native_file_matches(ps.get("filename"), remote):
             return True, None
@@ -5878,7 +5879,7 @@ def _reconcile_native_submission(st, remote):
     return _read_start_readback(st, remote)[1]
 
 
-def _reconcile_lost_start(st, remote, *, heaters_were_off=True):
+def _reconcile_lost_start(st, remote, *, heaters_were_off=True, native=True):
     """What the printer says about one start request whose response was lost or rejected.
 
     Shared by the mapped native path (#688) and the generic Moonraker path. Evidence, in order: the printer
@@ -5890,7 +5891,7 @@ def _reconcile_lost_start(st, remote, *, heaters_were_off=True):
     True only when the printer was readable, does not report this file and has no heater target, which is
     what lets an HTTP 4xx answer be treated as "definitely not started".
     """
-    readable, readback = _read_start_readback(st, remote)
+    readable, readback = _read_start_readback(st, remote, native=native)
     heating = _preparation_evidence(st) if readback is None else None
     quiet = readable and readback is None and heating is False
     if readback is None and heaters_were_off and heating is True:
@@ -5935,7 +5936,7 @@ def _start_rejection(exc):
     return f"HTTP {exc.code}: {' '.join(str(detail or exc.reason or 'rejected').split())}"[:300]
 
 
-def _settle_lost_start(lease, st, remote, exc, *, base, heaters_were_off, first_command=True):
+def _settle_lost_start(lease, st, remote, exc, *, base, heaters_were_off, first_command=True, native=True):
     """Settle a start request that raised `exc`: returns (out, rejection).
 
     Anything but a clean 4xx on the first command leaves the lease uncertain (never released by guessing)
@@ -5949,7 +5950,8 @@ def _settle_lost_start(lease, st, remote, exc, *, base, heaters_were_off, first_
         lease.uncertain(f'start request response lost: {exc!r}')
     # Moonraker answers 400 when a macro errors partway, heaters left on: after a rejection only a
     # readback naming this exact file may say started; heater targets alone are never evidence.
-    verdict = _reconcile_lost_start(st, remote, heaters_were_off=heaters_were_off and rejection is None)
+    verdict = _reconcile_lost_start(st, remote, heaters_were_off=heaters_were_off and rejection is None,
+                                    native=native)
     quiet = verdict.pop('quiet')
     if rejection is not None:
         if quiet:
@@ -7050,7 +7052,7 @@ def _confirm_generic_start(st, remote, wait_s, lease):
     settles it as uncertain.
     """
     state = _wait_printing(st, remote, wait_s)
-    readable, readback = _read_start_readback(st, remote)
+    readable, readback = _read_start_readback(st, remote, native=False)
     if state == "printing" or (readback and readback.outcome == "printing"):
         return None, readback, state
     if readback and readback.outcome == "preparing":
@@ -7267,7 +7269,7 @@ def print_now(target, wait_s=25, accept_default_z_offset=False, reprint=False, r
         # reconcile from the printer (exact file, else heater evidence, else pending). An HTTP 4xx
         # answer to the first command is a refusal and ends as REFUSED with the printer's message.
         out, rejection = _settle_lost_start(lease, st, remote, exc, heaters_were_off=heaters_were_off,
-                                            first_command=sent == 0,
+                                            first_command=sent == 0, native=False,
                                             base={"file": remote, "method": "print/start"})
         if out is None:
             raise SystemExit(_rejected_start_message(rejection)) from exc

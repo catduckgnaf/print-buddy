@@ -2717,6 +2717,14 @@ def verify_gcode(gcode_path):
             errors.append(str(exc))
     else:
         _refuse_multicolor(text)
+        from .orca_config import split_config_list
+        try:
+            # Orca quotes a material with a space: `"Silk PLA"` is the material Silk PLA.
+            listed = split_config_list(material)
+        except ValueError:
+            listed = []
+        if len(listed) == 1:
+            material = listed[0]
         if not printer_state.same_material(material, st["spool"]["material"]):
             errors.append(f"G-code filament_type {material!r} != loaded {st['spool']['material']!r}")
     hotend,bed=effective_hotend,st["temps_c"]["bed"]

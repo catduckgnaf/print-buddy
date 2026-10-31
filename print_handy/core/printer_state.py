@@ -132,7 +132,21 @@ def material_family(material):
             return base
     if m in {"FLEXIBLE", "NYLON", "POLYAMIDE"}:
         return {"FLEXIBLE": "TPU", "NYLON": "PA", "POLYAMIDE": "PA"}[m]
+    # Fallback for labels the rules above do not resolve: drop finish and speed
+    # words around one polymer token ("Shiny Silk PLA", "PLA (Silk)", "PLA
+    # Basic"). Only an exact known base survives, so blends ("PLA/PHA"),
+    # speed/flow grades and unknown names stay refused rather than guessed.
+    if "/" not in str(material or ""):
+        words = [w for w in re.findall(r"[A-Z0-9]+", str(material or "").upper()) if w not in _FINISH_WORDS]
+        if len(words) == 1 and words[0] in _FAMILY_BASES:
+            return words[0]
     return m
+
+
+# Surface-finish descriptors that do not change the thermal family (#512 covers the
+# adjustments that matter: Silk, Matte, PLA+). Speed/flow grades (HS, HF) print hotter and
+# reinforcement (CF/GF) is abrasive, so both stay distinct families, never folded in here.
+_FINISH_WORDS = frozenset({"SILK", "MATTE", "SHINY", "GLOSSY", "SATIN", "BASIC", "PRO", "PLUS", "TOUGH"})
 
 
 _DISPLAY_ACRONYMS = frozenset({"PLA", "PETG", "PET", "PCTG", "ABS", "ASA", "TPU", "TPE", "PA", "PA6", "PA11",

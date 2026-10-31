@@ -149,6 +149,18 @@ def test_generic_verify_gcode_needs_its_own_start_macro(monkeypatch, rig):
     assert not [r for r in fake.requests if ZMOD_STEPS.search(json.dumps(r))]
 
 
+def test_generic_verify_gcode_reads_a_quoted_material(monkeypatch, rig):
+    # Orca quotes a material with a space. Unquoted, \"Silk PLA\" is family PLA and
+    # matches the loaded PLA spool; read raw it was \"SILKPLA and refused (2026-10-30).
+    use_model(monkeypatch, "klipper.generic")
+    fake, gcode = rig
+    gcode.write_text(GCODE.replace("; filament_type = PLA", '; filament_type = "Silk PLA"'))
+    assert model_job.verify_gcode(gcode) is True
+    gcode.write_text(GCODE.replace("; filament_type = PLA", '; filament_type = "Silk PETG"'))
+    with pytest.raises(RuntimeError, match="G-code filament_type"):
+        model_job.verify_gcode(gcode)
+
+
 # A job sliced by the Sovol Zero profiles (issue #612, rpcyan586/svzero-profiles):
 # a bare START_PRINT whose temperatures ride on the heater lines, END_PRINT at
 # the tail. The stock variant is what the same profiles emit on stock firmware

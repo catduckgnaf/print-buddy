@@ -363,6 +363,7 @@ from print_handy.printers.flashforge.zmod import native_idle  # noqa: E402
 
 mapped_presence = [True]  # zmod_color hasFilament for slot 1 in the mapped fixture
 mapped_label = ["PLA"]  # zmod_color Material for slot 1 in the mapped fixture
+mapped_hex = ["000000"]  # zmod_color HEX for slot 1 in the mapped fixture
 mapped_history = []  # Moonraker /server/history/list jobs in the mapped fixture
 
 @pytest.fixture
@@ -378,6 +379,7 @@ def mapped(tmp_path):
     scripts = []
     mapped_presence[0] = True
     mapped_label[0] = "PLA"
+    mapped_hex[0] = "000000"
     mapped_history.clear()
 
     def fake_mr(st, path, data=None, timeout=30):
@@ -389,7 +391,7 @@ def mapped(tmp_path):
         return {"result": {"status": {
             "webhooks": {"state": "ready"}, "print_stats": {"state": "standby", "filename": ""},
             "extruder": {"target": 0}, "heater_bed": {"target": 0},
-            "zmod_color": {"slots": [{"ID": 1, "Material": mapped_label[0], "HEX": "000000",
+            "zmod_color": {"slots": [{"ID": 1, "Material": mapped_label[0], "HEX": mapped_hex[0],
                                       "hasFilament": mapped_presence[0]}]},
             "filament_switch_sensor head_switch_sensor": {"enabled": True}}}}
 
@@ -722,3 +724,62 @@ def test_mapped_launch_stays_refused_when_history_does_not_show_the_held_file(ma
         model_job.print_mapped_native(g, mapped.st, {"display_off": 1}, {"0": 1}, job, jp, 0, False)
     assert uploads(mapped.run) == [] and mapped.scripts == []
     assert [row["phase"] for row in leases()] == ["uncertain"]
+
+
+# Mapped launch color check (bug 1): compared as colors, refused only on a clear difference.
+
+def launch_mapped_screenless(m, record, printer_hex):
+    """Run a screenless mapped launch with slot 1's record and the printer's HEX as given."""
+    m.st["filament_slots"]["1"] = dict(record)
+    mapped_hex[0] = printer_hex
+    jp, g = make_job(m.root, "color")
+    job = json.loads(jp.read_text())
+    return lambda: model_job.print_mapped_native(g, m.st, {"display_off": 1}, {"0": 1}, job, jp, 0, False)
+
+
+@pytest.mark.parametrize("record_hex, printer_hex", [
+    ("FFFFFF", "FAFAFA"), ("FAFAFA", "FFFFFF"), ("0C6283FF", "0C6283"), ("0C6283", "0C6283FF"),
+    ("FFF", "FFFFFF"), ("#fff", "ffffff"), ("0x0C6283", "0C6283"), ("FF0000,00FF00", "FF0000"),
+])
+def test_mapped_launch_proceeds_silently_on_the_same_color_in_another_spelling(mapped, capsys, record_hex, printer_hex):
+    launch = launch_mapped_screenless(mapped, {"material": "PLA", "hex": record_hex, "hex_source": "spoolman"}, printer_hex)
+    launch()
+    assert len(uploads(mapped.run)) == 1 and len(mapped.scripts) == 1
+    assert "WARNING" not in capsys.readouterr().out
+
+
+@pytest.mark.parametrize("record, printer_hex, shown", [
+    ({"material": "PLA"}, "FFFFFF", "no color code"),  # the record has no hex at all (was a KeyError)
+    ({"material": "PLA", "hex": None}, "FFFFFF", "no color code"),  # None (was an AttributeError)
+    ({"material": "PLA", "hex": "teal"}, "FFFFFF", "no color code"),
+    ({"material": "PLA", "hex": "FFFFFF"}, "", "blank"),  # the printer reports no color
+])
+def test_mapped_launch_warns_and_proceeds_when_a_color_cannot_be_compared(mapped, capsys, record, printer_hex, shown):
+    launch_mapped_screenless(mapped, record, printer_hex)()
+    out = capsys.readouterr().out
+    assert len(uploads(mapped.run)) == 1 and len(mapped.scripts) == 1
+    assert "WARNING: printer slot 1" in out and shown in out and "could not be compared" in out
+
+
+def test_mapped_launch_warns_naming_both_values_when_the_colors_are_close(mapped, capsys):
+    launch_mapped_screenless(mapped, {"material": "PLA", "hex": "161616", "hex_source": "spoolman"}, "000000")()
+    out = capsys.readouterr().out
+    assert len(uploads(mapped.run)) == 1
+    assert "WARNING" in out and "#000000" in out and "#161616" in out and "close but not identical" in out
+
+
+@pytest.mark.parametrize("record_hex, printer_hex", [("0C6283", "067749"), ("FFFFFF", "000000"), ("FF0000FF", "00FF00")])
+def test_mapped_launch_refuses_clearly_different_colors_before_upload(mapped, record_hex, printer_hex):
+    launch = launch_mapped_screenless(mapped, {"material": "PLA", "hex": record_hex, "hex_source": "spoolman"}, printer_hex)
+    with pytest.raises(SystemExit, match=rf"REFUSED: printer slot 1 color is #{printer_hex} but Spoolman has "
+                                         rf"#{record_hex[:6]} there \(T0\). Nothing uploaded or started."):
+        launch()
+    assert uploads(mapped.run) == [] and mapped.scripts == [] and leases() == []
+
+
+@pytest.mark.parametrize("source", ["name", "default"])
+def test_mapped_launch_warns_instead_of_refusing_over_a_hex_the_system_guessed(mapped, capsys, source):
+    launch_mapped_screenless(mapped, {"material": "PLA", "hex": "0C6283", "hex_source": source}, "067749")()
+    out = capsys.readouterr().out
+    assert len(uploads(mapped.run)) == 1 and len(mapped.scripts) == 1
+    assert "WARNING" in out and "#067749" in out and "#0C6283" in out and "worked out from the spool name" in out

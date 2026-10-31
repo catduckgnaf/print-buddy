@@ -282,3 +282,29 @@ def test_check_is_quiet_when_the_active_tray_agrees_with_the_record(monkeypatch)
     assert (ok, probs) == (True, [])
     assert not [w for w in facts["warnings"] if "active Bambu tray" in w]
     assert facts["bambu"]["ams"]["active_tray"] == 1  # the decoded state itself is surfaced
+
+
+def test_check_warns_when_the_recorded_hex_disagrees_even_though_the_color_field_is_a_name(monkeypatch):
+    # The record's color is a name; its hex is what the printer's hex must be compared with.
+    snap = _snap_with_active("PETG", "00FF00FF")
+    ok, probs, facts = _check_with_snapshot(monkeypatch, snap, _record(material="PETG", color="red", hex="FF0000"))
+    assert (ok, probs) == (True, [])
+    ams_warnings = [w for w in facts["warnings"] if "active Bambu tray" in w]
+    assert len(ams_warnings) == 1 and "#00FF00" in ams_warnings[0] and "#FF0000" in ams_warnings[0]
+
+
+def test_check_is_quiet_when_the_recorded_hex_is_the_same_color_in_another_spelling(monkeypatch):
+    for tray, recorded in (("FFFFFFFF", "FAFAFA"), ("00FF00FF", "#0f0"), ("00FF00FF", "00FF00FF")):
+        snap = _snap_with_active("PETG", tray)
+        ok, probs, facts = _check_with_snapshot(monkeypatch, snap, _record(material="PETG", color="green", hex=recorded)
+                                                if tray != "FFFFFFFF" else
+                                                _record(material="PETG", color="white", hex=recorded))
+        assert (ok, probs) == (True, [])
+        assert not [w for w in facts["warnings"] if "active Bambu tray" in w], (tray, recorded)
+
+
+def test_check_compares_a_black_tray_against_the_record(monkeypatch):
+    snap = _snap_with_active("PETG", "000000FF")  # genuine black, not an empty tray
+    ok, probs, facts = _check_with_snapshot(monkeypatch, snap, _record(material="PETG", color="white", hex="FFFFFF"))
+    ams_warnings = [w for w in facts["warnings"] if "active Bambu tray" in w]
+    assert len(ams_warnings) == 1 and "#000000" in ams_warnings[0]

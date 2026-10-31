@@ -50,7 +50,7 @@ def test_screen_material_coercion():
 def test_screen_hex_format():
     assert spool_sync.screen_hex("#ff00aa") == "FF00AA"
     assert spool_sync.screen_hex("112233") == "112233"
-    assert spool_sync.screen_hex("bad") is None
+    assert spool_sync.screen_hex("nope") is None
     assert spool_sync.screen_hex(None) is None
 
 

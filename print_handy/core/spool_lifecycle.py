@@ -52,12 +52,15 @@ def validate_ifs_slot(slot: int | str) -> int:
 
 
 def normalize_hex_color(hex_code: str | None) -> str | None:
-    """Validate and normalize a 6-digit RGB hex code without leading hash."""
+    """Validate a hex code the user typed (any filament_color.parse_hex form) and return RRGGBB.
+
+    Raises only for an explicit value that is not a hex color; None stays None.
+    """
     if hex_code is None:
         return None
-    cleaned = hex_code.strip().lstrip("#").upper()
-    if not re.fullmatch(r"[0-9A-F]{6}", cleaned):
-        raise ValueError(f"Invalid hex color {hex_code!r}; must be a 6-character hex code")
+    cleaned = filament_color.normalize_hex(hex_code)
+    if cleaned is None:
+        raise ValueError(f"Invalid hex color {hex_code!r}; must be a hex code such as 0C6283, #0C6283 or #FFF")
     return cleaned
 
 
@@ -194,24 +197,29 @@ def replace_slot_spool(
         filament = spool_record.get("filament") or {}
         resolved_name = filament.get("name") or spool_record.get("name") or f"{color_clean.title()} {material_clean}"
 
-    if hex_clean is None:
-        filament = spool_record.get("filament") or {}
-        spool_hex = filament.get("color_hex")
-        if spool_hex:
-            try:
-                hex_clean = normalize_hex_color(spool_hex)
-            except ValueError:
-                pass
-
     filament_slots = state.setdefault("filament_slots", {})
     slot_key = str(slot_num)
     old_slot = copy.deepcopy(filament_slots.get(slot_key))
+
+    # The same fallback order as every binder: the typed hex, Spoolman's color_hex,
+    # its multi_color_hexes, then the name, then a loudly reported neutral default.
+    filament = spool_record.get("filament") or {}
+    hex_final, hex_source = filament_color.resolve(
+        {"hex": hex_clean, "name": filament.get("name")}, spoolman_hex=filament.get("color_hex"),
+        spoolman_multi=filament.get("multi_color_hexes"), name=color_clean, material=material_clean,
+        warn_label=f"Slot {slot_num}")
+    if (hex_source in filament_color.DERIVED_SOURCES and old_slot and old_slot.get("spoolman_id") == spoolman_id
+            and filament_color.normalize_hex(old_slot.get("hex"))
+            and old_slot.get("hex_source") not in filament_color.DERIVED_SOURCES):
+        # Re-binding the same spool: keep the code it already had over a guess.
+        hex_final, hex_source = filament_color.normalize_hex(old_slot["hex"]), old_slot.get("hex_source") or "slot"
 
     updated_slot = {
         "slot": slot_num,
         "material": material_clean,
         "color": color_clean.lower(),
-        "hex": hex_clean or (old_slot.get("hex") if old_slot else "FFFFFF"),
+        "hex": hex_final,
+        "hex_source": hex_source,
         "spoolman_id": spoolman_id,
         "name": resolved_name,
         "remaining_grams": qty_grams,

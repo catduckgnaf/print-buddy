@@ -32,6 +32,8 @@ jobs:
           chown -R "$(id -u):$(id -g)" "$GITHUB_WORKSPACE"
           git rev-parse --is-inside-work-tree
       - run: python -m pip install -r requirements-test.txt
+      - name: Ruff (syntax and undefined names, whole tree)
+        run: python -m ruff check .
       - name: Install ffmpeg for the timelapse tests
         # ffmpeg is a shipped runtime dependency (the image's runtime stage
         # installs it); the offline legs install it too, so the timelapse
@@ -79,6 +81,23 @@ jobs:
         with:
           name: discord-timing
           path: timing/
+
+  dependency-audit:
+    # Known-vulnerability check of the requirement files. It does not upgrade anything.
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: |
+            requirements.txt
+            requirements-test.txt
+      - run: python -m pip install -r requirements.txt -r requirements-test.txt
+      - name: pip-audit
+        run: python -m pip_audit -r requirements.txt -r requirements-test.txt
 
   standalone-no-hermes:
     # #73: the standalone bot installs from requirements.txt alone, loads every handler and imports no Hermes module.

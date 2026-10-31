@@ -1,0 +1,13 @@
+{
+  "type": "machine",
+  "name": "Snapmaker U1 0.4 nozzle",
+  "from": "system",
+  "instantiation": "true",
+  "gcode_flavor": "klipper",
+  "printer_model": "Snapmaker U1",
+  "printable_area": ["0x0", "270x0", "270x270", "0x270"],
+  "printable_height": "270",
+  "nozzle_diameter": ["0.4", "0.4", "0.4", "0.4"],
+  "machine_start_gcode": "PRINT_START BED=[bed_temperature_initial_layer_single] HOTEND=[nozzle_temperature_initial_layer]",
+  "machine_end_gcode": "PRINT_END"
+}

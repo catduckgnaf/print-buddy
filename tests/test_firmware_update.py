@@ -445,7 +445,7 @@ def test_eligibility_comes_from_the_registry_profile():
     assert fw.is_apply_eligible(entry("sovol.sv06"))
     # Vendor Klipper forks: Moonraker printers, refused by vendor/family.
     for key in ("elegoo.neptune4", "elegoo.neptune4pro", "creality.k1", "creality.ender3v3",
-                "qidi.q1pro", "anycubic.kobra2"):
+                "qidi.q1pro", "anycubic.kobra2", "snapmaker.u1"):
         assert not fw.is_apply_eligible(entry(key)), key
         assert "vendor" in fw.apply_block_reason(entry(key)).casefold(), key
     # Non-Moonraker families: refused as non-Moonraker.
@@ -710,6 +710,7 @@ def test_guidance_covers_each_stage_4_family_with_steps_and_a_reason():
         "creality.k1": ("USB", "vendor"),
         "qidi.q1pro": ("USB", "eMMC"),
         "anycubic.kobra2": ("update.swu", "responsible apply path"),
+        "snapmaker.u1": ("printer's screen", "vendor fork"),
         "flashforge_stock.ad5x": ("Firmware Update", "stock LAN API"),
         "bambulab.a1": ("SD card", "LAN protocol"),
         "prusa.mk4s": (".bbf", "PrusaLink API"),

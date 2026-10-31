@@ -22,22 +22,22 @@ name = "PRINT_START"
 aliases = ["print start", "klipper start macro"]
 firmware = "klipper"
 kind = "macro"
-printers = ["klipper.generic", "sovol.sv06", "sovol.m1d", "sovol.sv01", "sovol.sv01_pro", "sovol.sv02", "sovol.sv03", "sovol.sv04", "sovol.sv05", "sovol.sv06_ace", "sovol.sv06_plus", "sovol.sv06_plus_ace", "sovol.sv07", "sovol.sv07_plus", "sovol.sv08", "sovol.sv08_max", "sovol.zero"]
+printers = ["klipper.generic", "sovol.sv06", "sovol.m1d", "sovol.sv01", "sovol.sv01_pro", "sovol.sv02", "sovol.sv03", "sovol.sv04", "sovol.sv05", "sovol.sv06_ace", "sovol.sv06_plus", "sovol.sv06_plus_ace", "sovol.sv07", "sovol.sv07_plus", "sovol.sv08", "sovol.sv08_max", "sovol.zero", "snapmaker.u1"]
 command = "PRINT_START BED=<bed C> HOTEND=<nozzle C>"
 description = "Stock Klipper start macro name Print Handy's generic Klipper and Sovol profiles expect the printer to provide. The installed macro owns heating, homing and mesh loading for the job."
 safety = "Heats and moves. Runs only as part of a confirmed print start."
-notes = "Sovol scope: Print Handy's Orca-derived templates emit this name (PRINT_START BED=... HOTEND=... / PRINT_END) for every Sovol Klipper model (print_handy/templates/orca/sovol_*); the templates are generic and not checked on hardware. Stock firmware naming differs on some models - the Sovol SV08 and Zero stock configs name their own start macro START_PRINT (see klipper.sovol-start-print)."
+notes = "Sovol scope: Print Handy's Orca-derived templates emit this name (PRINT_START BED=... HOTEND=... / PRINT_END) for every Sovol Klipper model (print_handy/templates/orca/sovol_*); the templates are generic and not checked on hardware. Snapmaker U1 scope: Print Handy's U1 templates emit the same pair (print_handy/templates/orca/snapmaker_u1), on the same generic-template basis; the U1's own start sequence is not confirmed on hardware. Stock firmware naming differs on some models - the Sovol SV08 and Zero stock configs name their own start macro START_PRINT (see klipper.sovol-start-print)."
 [[entry]]
 id = "klipper.print-end"
 name = "PRINT_END"
 aliases = ["print end", "klipper end macro"]
 firmware = "klipper"
 kind = "macro"
-printers = ["klipper.generic", "sovol.sv06", "sovol.m1d", "sovol.sv01", "sovol.sv01_pro", "sovol.sv02", "sovol.sv03", "sovol.sv04", "sovol.sv05", "sovol.sv06_ace", "sovol.sv06_plus", "sovol.sv06_plus_ace", "sovol.sv07", "sovol.sv07_plus", "sovol.sv08", "sovol.sv08_max", "sovol.zero"]
+printers = ["klipper.generic", "sovol.sv06", "sovol.m1d", "sovol.sv01", "sovol.sv01_pro", "sovol.sv02", "sovol.sv03", "sovol.sv04", "sovol.sv05", "sovol.sv06_ace", "sovol.sv06_plus", "sovol.sv06_plus_ace", "sovol.sv07", "sovol.sv07_plus", "sovol.sv08", "sovol.sv08_max", "sovol.zero", "snapmaker.u1"]
 command = "PRINT_END"
 description = "Stock Klipper end macro name for the generic Klipper and Sovol profiles: heaters off and park at the end of a job."
 safety = "Runs only as the tail of a sliced job."
-notes = "Sovol scope: Print Handy's Orca-derived templates emit this name (PRINT_START BED=... HOTEND=... / PRINT_END) for every Sovol Klipper model (print_handy/templates/orca/sovol_*); the templates are generic and not checked on hardware. Stock firmware naming differs on some models - the Sovol SV08 and Zero stock configs name their own start macro START_PRINT (see klipper.sovol-start-print)."
+notes = "Sovol scope: Print Handy's Orca-derived templates emit this name (PRINT_START BED=... HOTEND=... / PRINT_END) for every Sovol Klipper model (print_handy/templates/orca/sovol_*); the templates are generic and not checked on hardware. Snapmaker U1 scope: Print Handy's U1 templates emit the same pair (print_handy/templates/orca/snapmaker_u1), on the same generic-template basis; the U1's own start sequence is not confirmed on hardware. Stock firmware naming differs on some models - the Sovol SV08 and Zero stock configs name their own start macro START_PRINT (see klipper.sovol-start-print)."
 [[entry]]
 id = "klipper.pause"
 name = "PAUSE"

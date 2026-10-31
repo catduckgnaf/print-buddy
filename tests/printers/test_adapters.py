@@ -139,6 +139,7 @@ class ContractTests(unittest.TestCase):
                                        "octoprint.ender3v3se",
                                        "anycubic.kobra2", "anycubic.kobra2neo", "anycubic.kobra2pro",
                                        "anycubic.kobra2plus", "anycubic.kobra2max",
+                                       "snapmaker.u1",
                                        "octoprint.i3megas", "octoprint.vyper", "octoprint.chiron",
                                        "octoprint.maxpro2", "octoprint.kobra", "octoprint.kobraneo",
                                        "octoprint.kobraplus", "octoprint.kobramax",

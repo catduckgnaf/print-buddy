@@ -71,7 +71,7 @@ BUSY_STATES = frozenset({"printing", "paused"})
 # Elegoo/Creality/QIDI/Anycubic Moonraker model is refused by the same
 # rule until per-vendor evidence clears that vendor.
 ELIGIBLE_FAMILIES = frozenset({"zmod", "klipper"})
-FORK_VENDORS = frozenset({"elegoo", "creality", "qidi", "anycubic"})
+FORK_VENDORS = frozenset({"elegoo", "creality", "qidi", "anycubic", "snapmaker"})
 
 
 class FirmwareError(RuntimeError):
@@ -826,6 +826,15 @@ GUIDANCE = {
         why_no_apply=("Neither stock (no endpoint to ask) nor community installs "
                       "(unknown update remotes) give Print Handy a responsible apply "
                       "path.")),
+    "snapmaker_u1": FamilyGuidance(
+        title="Snapmaker U1 (vendor Klipper fork)",
+        can_report=("the versions its Moonraker endpoint reports — Snapmaker's fork's "
+                    "own versions, for information only"),
+        manual_steps=("Snapmaker's own firmware package for the U1, installed from the "
+                      "printer's screen or Snapmaker's instructions. Do not point the "
+                      "printer at an upstream Klipper release."),
+        why_no_apply=("The U1 runs Snapmaker's own Klipper-based firmware, a vendor "
+                      "fork. " + _FORK_WHY)),
     "flashforge_stock": FamilyGuidance(
         title="Flashforge stock firmware (AD5X)",
         can_report=("nothing programmatic: the stock LAN API Print Handy uses carries "
@@ -899,6 +908,8 @@ def guidance_for(entry) -> FamilyGuidance | None:
         return GUIDANCE["qidi_klipper"]
     if entry.vendor == "anycubic":
         return GUIDANCE["anycubic_kobra2"]
+    if entry.vendor == "snapmaker":
+        return GUIDANCE["snapmaker_u1"]
     if entry.vendor == "flashforge_stock":
         return GUIDANCE["flashforge_stock"]
     if entry.vendor == "bambulab":

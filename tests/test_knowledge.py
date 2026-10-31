@@ -97,13 +97,18 @@ def _entry_block(path, entry_id):
     raise AssertionError(f"{entry_id} not in {path}")
 
 
-# The seven Marlin entries issue #647 deliberately changed after the split:
-# their scopes were widened from the generic preset to every registered
-# Marlin model, and each gained its source note. Everything else in the
-# pre-split set is still pinned field for field below.
+# The entries deliberately scope-widened after the split, compared below
+# with only the printers and notes fields set aside; each widening is
+# asserted exactly in its own tests. Issue #647 widened the seven Marlin
+# entries from the generic preset to every registered Marlin model, each
+# with its source note. The Snapmaker U1 change widened the two generic
+# Klipper start/end entries to snapmaker.u1 (its templates emit that
+# pair), asserted exactly in tests/test_macros.py. Everything else in
+# the pre-split set is still pinned field for field below.
 SPLIT_FIXTURE_WIDENED_BY_647 = {
     "marlin.g28", "marlin.g29", "marlin.m420", "marlin.m851", "marlin.m600",
     "marlin.m500", "marlin.heating-failed",
+    "klipper.print-start", "klipper.print-end",
 }
 
 

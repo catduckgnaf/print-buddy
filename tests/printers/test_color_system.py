@@ -32,17 +32,18 @@ EXPECTED = {
     "bambulab.x1c": "multi_slot",
     "bambulab.x1e": "multi_slot",
     "prusa.xl": "multi_tool",
+    "snapmaker.u1": "multi_tool",
 }
 
 
 def test_every_model_names_its_class():
-    assert len(printers.MODELS) == 83
+    assert len(printers.MODELS) == 84
     for key, model in printers.MODELS.items():
         assert model.color_system in COLOR_SYSTEMS, key
         assert model.color_system == EXPECTED.get(key, "single"), key
     counts = {name: sum(1 for m in printers.MODELS.values() if m.color_system == name)
               for name in COLOR_SYSTEMS}
-    assert counts == {"single": 68, "multi_slot": 12, "multi_tool": 3}
+    assert counts == {"single": 68, "multi_slot": 12, "multi_tool": 4}
 
 
 def test_class_agrees_with_the_model_counts():

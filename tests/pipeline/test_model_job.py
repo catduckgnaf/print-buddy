@@ -887,9 +887,13 @@ class EnglishAndPrintNowTests(unittest.TestCase):
                 model_job.print_now(self._gcode(d))
         # One start POST, then the #84 status readback. Not a second start.
         # (_zmod_version pinned unknown: this choreography is the plain .gcode path's.)
-        self.assertEqual(mr.call_count, 2)
-        self.assertEqual(mr.call_args_list[0].args[1], "/printer/print/start")
-        self.assertIn("/printer/objects/query", mr.call_args_list[1].args[1])
+        # A read-only heater baseline before the start (evidence for a lost response), exactly one start POST, then the readback.
+        paths = [c.args[1] for c in mr.call_args_list]
+        self.assertEqual(paths.count("/printer/print/start"), 1)
+        self.assertEqual(len(paths), 3)
+        self.assertIn("extruder=target", paths[0])
+        self.assertEqual(paths[1], "/printer/print/start")
+        self.assertIn("/printer/objects/query", paths[2])
 
     def test_printer_phase_accepts_print_start_preparation_signals(self):
         payload = {'result': {'status': {
@@ -921,9 +925,13 @@ class EnglishAndPrintNowTests(unittest.TestCase):
                 self.assertEqual(out['phase'], 'awaiting_confirmation')
                 self.assertEqual(out['message'], 'submitted, awaiting confirmation')
                 # One start POST, then the #84 status readback. Not a second start.
-                self.assertEqual(mr.call_count, 2)
-                self.assertEqual(mr.call_args_list[0].args[1], "/printer/print/start")
-                self.assertIn("/printer/objects/query", mr.call_args_list[1].args[1])
+                # A read-only heater baseline before the start (evidence for a lost response), exactly one start POST, then the readback.
+                paths = [c.args[1] for c in mr.call_args_list]
+                self.assertEqual(paths.count("/printer/print/start"), 1)
+                self.assertEqual(len(paths), 3)
+                self.assertIn("extruder=target", paths[0])
+                self.assertEqual(paths[1], "/printer/print/start")
+                self.assertIn("/printer/objects/query", paths[2])
 
     def test_z_offset_notice_only_when_start_print_lacks_z_offset(self):
         plain = "START_PRINT EXTRUDER_TEMP=220 BED_TEMP=60\n"
@@ -1051,8 +1059,9 @@ class EnglishAndPrintNowTests(unittest.TestCase):
                 start_calls = [c for c in mock_mr.call_args_list if c.args[1] == "/printer/print/start"]
                 self.assertEqual(len(start_calls), 1)
                 self.assertEqual(start_calls[0], mock.call(mock.ANY, "/printer/print/start", data={"filename": expected_remote}))
+                # The heater baseline before the start, then the one readback.
                 query_calls = [c for c in mock_mr.call_args_list if "/printer/objects/query" in c.args[1]]
-                self.assertEqual(len(query_calls), 1)
+                self.assertEqual(len(query_calls), 2)
                 self.assertEqual(out["file"], expected_remote)
 
     def test_print_now_rejects_upload_target_mismatch(self):
@@ -1390,9 +1399,13 @@ class EnglishAndPrintNowTests(unittest.TestCase):
                 model_job.print_now(self._gcode(d))
         # One start POST, then the #84 status readback. Not a second start.
         # (_zmod_version pinned unknown: this choreography is the plain .gcode path's.)
-        self.assertEqual(mr.call_count, 2)
-        self.assertEqual(mr.call_args_list[0].args[1], "/printer/print/start")
-        self.assertIn("/printer/objects/query", mr.call_args_list[1].args[1])
+        # A read-only heater baseline before the start (evidence for a lost response), exactly one start POST, then the readback.
+        paths = [c.args[1] for c in mr.call_args_list]
+        self.assertEqual(paths.count("/printer/print/start"), 1)
+        self.assertEqual(len(paths), 3)
+        self.assertIn("extruder=target", paths[0])
+        self.assertEqual(paths[1], "/printer/print/start")
+        self.assertIn("/printer/objects/query", paths[2])
 
     def test_fetch_print_now_without_filament_selection_fails_closed_naming_command(self):
         source_job = {"slug": "offline-test", "site": "makerworld", "model_id": "123", "title": "Offline Test", "sources": [{"filename": "test.3mf", "title": "Test source", "site_nozzle_mm": 0.4, "plates": [], "materials": ["PLA"]}]}

@@ -152,7 +152,8 @@ def test_public_prepare_verify_launch(tmp_path, n, mapping, bare_upload, source)
         for tool,slot in mapping.items():
             assert f'T{tool}={slot}' in command
         assert 'AUTO_ASSIGN=0' in command and 'LEVELING=0' in command
-        with pytest.raises(RuntimeError,match='checkpoint exists'):
+        # A replay is refused before anything is sent (#693): a clean REFUSED line, not a traceback.
+        with pytest.raises(SystemExit,match='REFUSED: mapped submission checkpoint exists.*Nothing started'):
             cli(['print-now',str(path)])
         assert len(submissions)==1
 

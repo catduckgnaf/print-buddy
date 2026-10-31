@@ -139,15 +139,15 @@ Today Print Handy's readiness check does not say whether a given print will
 use KAMP or the saved `auto` mesh. Keep the full mesh current anyway: it is
 the fallback and the reference for how flat the bed is.
 
-## Purge mode and multicolour
+## Purge mode and multicolor
 
-ZMod's saved variable `use_trash_on_print` decides where colour-change purge
+ZMod's saved variable `use_trash_on_print` decides where color-change purge
 goes. Print Handy reads it live and slices to match.
 
 | Value | ZMod behaviour | Print Handy |
 | --- | --- | --- |
-| `1` (default) | Purges into the trash chute on every colour change | Slices as before: the prime tower only primes |
-| `0` (Nopoop) | No chute purge; the slicer purges into the prime tower | Slices with purge in the prime tower: tower type 2, by-layer sequence, no ramming, nozzle volume 144 mm³, 424 mm³ flush per colour change. OrcaSlicer only |
+| `1` (default) | Purges into the trash chute on every color change | Slices as before: the prime tower only primes |
+| `0` (Nopoop) | No chute purge; the slicer purges into the prime tower | Slices with purge in the prime tower: tower type 2, by-layer sequence, no ramming, nozzle volume 144 mm³, 424 mm³ flush per color change. OrcaSlicer only |
 | `2` | Slicer-controlled purge at the chute, from ZMod's own Orca profiles | Refused: Print Handy has no profile for it |
 
 An unreadable or missing value is treated as `1`.
@@ -158,7 +158,7 @@ Nopoop is core ZMod. No plugin is needed. Switch with:
 SAVE_ZMOD_DATA USE_TRASH_ON_PRINT=0
 ```
 
-Then slice the next multicolour job through Print Handy. A file sliced
+Then slice the next multicolor job through Print Handy. A file sliced
 before the switch still carries the old purge plan. Reslice it.
 
 ## QuickSwap
@@ -169,15 +169,15 @@ the safe order to try it in, not a supported configuration.
 Recommended order:
 
 1. Switch to Nopoop (`USE_TRASH_ON_PRINT=0`), above.
-2. Print one two-colour job sliced by Print Handy and check the colours
+2. Print one two-color job sliced by Print Handy and check the colors
    are clean.
 3. Only then install QuickSwap.
-4. Test a single colour change before any long multicolour print.
+4. Test a single color change before any long multicolor print.
 
 Known risks:
 
 - Upstream QuickSwap recommends Klipper 12. Klipper 13 is untested there.
-- It replaces ZMod's colour-change routine. Print Handy's IFS handling
+- It replaces ZMod's color-change routine. Print Handy's IFS handling
   relies on `SET_ZCOLOR` / `CHANGE_ZCOLOR` and the slot mapping. Re-check
   slot mapping and runout handling after installing.
 - It wants `[zmod_ifs] next_cmd_delay: 0.02`. ZMod's default is `0.2`.
@@ -231,8 +231,25 @@ lasts for the print.
 | Z offset sync with `LOAD_ZOFFSET_NATIVE`, screenless store loaded at print start | Verified on 2026-10-28 |
 | Full mesh run (`AUTO_FULL_BED_LEVEL` 220/60), saved to `auto`, persisted points match the probe | Verified on 2026-10-28 |
 | Screenless IFS slot presence read from `zmod_color` | Verified on 2026-10-28 (read only) |
-| Nopoop multicolour print sliced by Print Handy | Not verified |
+| Nopoop multicolor print sliced by Print Handy | Not verified |
 | QuickSwap with Print Handy | Not verified |
 | `.gcode.3mf` live print on ZMod 1.7.5 | Not verified |
 | Starting a slot-bound print screenless (`display_off=1`) from chat | Not verified (offline-tested only, 2.2.0) |
 | `/print-calibration mesh` from chat (the table's mesh row used the `mesh-run` script path) | Not verified |
+
+
+## Start status after a lost Moonraker response
+
+A timeout while submitting a native `SET_ZCOLOR` start does not prove that
+the printer rejected the job: Moonraker may have accepted it before the
+response was lost. Print Handy now checks read-only printer status for the
+exact uploaded file (including the documented `.gcode.3mf` unpacked names)
+before classifying the start. A matching preparing or printing state is
+reported as such; absent, unrelated or unreadable status remains unresolved.
+An unresolved start is not retried automatically. Check printer status before
+taking further action.
+
+This is an offline-tested software behavior, not a live AD5X start test.
+Preparation evidence is not proof of a completed print, and a timeout followed
+by inconclusive status cannot safely distinguish rejection from delayed
+acceptance. Do not manually resubmit while the original result is uncertain.

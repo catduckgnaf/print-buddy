@@ -1733,74 +1733,72 @@ class SpoolmanNewSpoolWatcher:
 
 class FilamentInsertionMonitor:
     """Stable native slot presence detector. Sends text only, never edits inventory."""
+    # After a reboot or reconnect ZMod can report placeholder presence for a while
+    # (2026-10-30: four false insertion prompts 20 s after klippy ready). Readings that
+    # disagree with the persisted edges are held for this long before being adopted.
+    SETTLE_SECONDS = 120
+
     def __init__(self, edge_path=IFS_EDGE_STATE, pending_path=IFS_PENDING_STATE):
         self.edge_path = Path(edge_path)
         self.pending_path = Path(pending_path)
-        self.baselined = False
-        self.last_sample = {}
-        self.stable_counts = {}
-        self.transition_from = {}
-        self.baseline_candidate = None
-        self.baseline_count = 0
-        self.baseline_since = None
+        self.reset_baseline()
 
     def reset_baseline(self):
-        """Require a fresh stable idle snapshot after startup or Klippy recovery."""
+        """Forget in-memory arming; the persisted edges stay the physical reference."""
         self.baselined = False
         self.last_sample = {}
         self.stable_counts = {}
         self.transition_from = {}
-        self.baseline_candidate = None
-        self.baseline_count = 0
-        self.baseline_since = None
+        self.settling_since = None
+
+    def _armed(self, current):
+        self.last_sample = current
+        self.stable_counts = {slot: 2 for slot in current}
+        self.transition_from = {}
+        self.settling_since = None
+        self.baselined = True
 
     def observe(self, slots, *, idle, connected=True):
         """Return newly confirmed slots; startup/reconnect samples only establish baseline."""
         if not connected or not idle or not isinstance(slots, dict):
             self.reset_baseline()
             return []
-        current = {str(slot): value for slot, value in slots.items()
-                   if str(slot) in {"1", "2", "3", "4"} and isinstance(value, bool)}
-        # A baseline is meaningful only when every IFS slot has a known reading.
-        # Partial zmod_color startup snapshots must not arm insertion detection.
-        if len(current) != 4:
+        wanted = {str(slot): value for slot, value in slots.items() if str(slot) in {"1", "2", "3", "4"}}
+        if any(not isinstance(value, bool) for value in wanted.values()):
+            # An unknown slot reading is not a physical state: never arm or emit on it.
             self.reset_baseline()
             return []
-        if not self.baselined:
-            if self.baseline_since is None:
-                self.baseline_since = time.monotonic()
-            if current == self.baseline_candidate:
-                self.baseline_count += 1
+        current = wanted
+        edges = read_json_object(self.edge_path)
+        if self.settling_since is not None:
+            # Rebaseline after reset: a reboot is not a user action, so readings returning
+            # to the persisted edges prompt nothing, and a disagreement is adopted silently
+            # only once it has held for SETTLE_SECONDS.
+            if all(edges.get(slot) == present for slot, present in current.items()):
+                self._armed(current)
+            elif (current == self.last_sample
+                    and time.monotonic() - self.settling_since >= self.SETTLE_SECONDS):
+                edges.update(current)
+                atomic_write_json(self.edge_path, edges)
+                self._armed(current)
             else:
-                self.baseline_candidate = current
-                self.baseline_count = 1
-            if self.baseline_count < 2:
+                self.last_sample = current
+            return []
+        if not self.baselined:
+            known = {slot: present for slot, present in current.items() if slot in edges}
+            if any(edges[slot] != present for slot, present in known.items()):
+                self.settling_since = time.monotonic()
+                self.last_sample = current
+                self.baselined = True
                 return []
-            edges = read_json_object(self.edge_path)
-            # A complete but all-false ZMod snapshot may be a placeholder for
-            # minutes. Retain the last known baseline during a bounded warmup;
-            # never infer a physical insertion from its eventual recovery.
-            if edges and current != edges:
-                now = time.monotonic()
-                if self.baseline_since is None:
-                    self.baseline_since = now
-                if now - self.baseline_since < 120:
-                    return []
             self.last_sample = current
-            self.stable_counts = {slot: 2 for slot in current}
-            updated = False
-            for slot, present in current.items():
-                if edges.get(slot) != present:
-                    edges[slot] = present
-                    updated = True
-            if updated:
+            self.stable_counts = {slot: 1 for slot in current}
+            if any(slot not in edges for slot in current):
+                edges.update(current)
                 atomic_write_json(self.edge_path, edges)
             self.baselined = True
-            self.baseline_candidate = None
-            self.baseline_count = 0
             return []
         stable = []
-        edges = read_json_object(self.edge_path)
         pending = read_json_object(self.pending_path)
         changed = False
         for slot, present in current.items():

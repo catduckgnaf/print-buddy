@@ -2987,7 +2987,9 @@ def validate_saved_mesh_start(text, mesh):
     if (not expected or args.get('MESH') != expected or 'Z_OFFSET' in args or
             args.get('FORCE_LEVELING', 'false').lower() not in ('false', '0') or
             args.get('FORCE_KAMP', 'false').lower() not in ('false', '0')):
-        raise RuntimeError(f'saved-mesh flow requires START_PRINT MESH={expected}, no explicit Z_OFFSET and no forced leveling')
+        raise RuntimeError(f'saved-mesh flow requires START_PRINT MESH={expected}, no explicit Z_OFFSET and no forced leveling'
+                           f' (this file has MESH={args.get("MESH")}; it was sliced for a different screen mode'
+                           ' or calibration, so prepare it again)')
 
 
 Z_OFFSET_NOTICE = ("Z offset: no explicit START_PRINT Z_OFFSET; effective offset depends on the "
@@ -5966,7 +5968,14 @@ def print_mapped_native(g, st, mesh, mapping, job, job_path, wait_s, reprint):
         # Reconcile by this exact submitted file only; heater targets alone may belong
         # to unrelated work and are never attribution evidence.
         readback = _reconcile_native_submission(st, remote)
-        if readback is None:
+        if readback is None and _preparation_evidence(st) is True:
+            # The idle guard proved every heater target was 0 before this one submission,
+            # so targets set now are this job's preparation (2026-10-30: the screenless
+            # SET_ZCOLOR POST held open through warmup and timed out after 30 s).
+            out = {**checkpoint_data, 'phase': 'preparing', 'outcome': 'preparing',
+                   'accepted': True, 'started': True, 'preparation_evidence': True,
+                   'message': 'start response was lost; the printer is heating for this job'}
+        elif readback is None:
             out = {**checkpoint_data, 'phase': 'preparing_or_unresolved', 'outcome': 'unknown',
                    'accepted': False, 'started': False,
                    'message': 'start response was lost; printer status does not yet identify this file; do not resubmit'}
@@ -5993,6 +6002,9 @@ def print_mapped_native(g, st, mesh, mapping, job, job_path, wait_s, reprint):
             checkpoint.write_text(json.dumps(out, indent=2) + '\n')
         else:
             lease.uncertain(out['message'])
+            # Nobody has announced this start, so let the listener post the
+            # "Print started" card when print_stats reaches this file.
+            release_start_announcement(remote)
         print('MAPPED START READBACK ' + json.dumps(out), flush=True)
         return out
     _timing(job_path, 'start_submitted')
@@ -6019,15 +6031,16 @@ def print_mapped_native(g, st, mesh, mapping, job, job_path, wait_s, reprint):
     except Exception:
         pass
 
-    if readback and readback.outcome == 'printing':
+    if state == 'printing' or (readback and readback.outcome == 'printing'):
         out.update(accepted=True, started=True, phase='executing', moonraker_state='printing',
                    outcome='printing', message=(readback.message if readback else 'printing'),
                    extrusion_confirmed=bool(readback and (readback.evidence or {}).get('extrusion_confirmed')))
     else:
-        # Only exact-file readback can attribute preparation to this submission.
-        # Heater targets alone may belong to unrelated work.
-        preparing = bool(readback and readback.outcome == 'preparing')
-        is_prep = preparing
+        # The AD5X native route heats and loads the IFS slot for several minutes before
+        # print_stats reports printing (2026-10-16: ~7 min). The idle guard proved heaters
+        # were off before this one submission, so targets set now prove acceptance.
+        preparing = _preparation_evidence(st)
+        is_prep = preparing is True or bool(readback and readback.outcome == 'preparing')
         outcome_val = 'preparing' if is_prep else (readback.outcome if readback else 'unconfirmed')
         msg = readback.message if readback else 'submitted, awaiting confirmation'
         out.update(accepted=is_prep, started=is_prep, moonraker_state=state,
@@ -6038,6 +6051,7 @@ def print_mapped_native(g, st, mesh, mapping, job, job_path, wait_s, reprint):
         lease.release()  # accepted; the busy printer now refuses another start
     else:
         lease.uncertain(out['message'])  # reconciled when the printer reports this file
+        release_start_announcement(remote)  # unannounced: the listener posts the start card
     checkpoint.write_text(json.dumps(out, indent=2) + '\n')
     print('MAPPED START READBACK ' + json.dumps(out), flush=True)
     return out

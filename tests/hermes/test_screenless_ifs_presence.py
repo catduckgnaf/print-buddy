@@ -96,7 +96,7 @@ class ScreenlessReadTests(ListenerCase):
 
     async def test_idle_screenless_insertion_prompts(self):
         lis = self.listener("standby")
-        replies = [zmod_status(1, (True, False, True, True))] * 2 + [zmod_status(1, (True,) * 4)] * 4
+        replies = [zmod_status(1, (True, False, True, True))] * 2 + [zmod_status(1, (True,) * 4)] * 2
         with mock.patch.object(print_control, "_call", side_effect=replies), \
                 mock.patch.object(mel, "post_insertion_confirmation") as prompt, mock.patch.object(mel, "log"):
             for _ in replies:
@@ -185,7 +185,10 @@ class IdleInsertionBaselineTests(unittest.TestCase):
         return mel.FilamentInsertionMonitor(root / "edges.json", root / "pending.json")
 
     def test_startup_presence_warming_does_not_prompt_for_unchanged_spools(self):
+        # 2026-10-30 reboot: four loaded spools persisted, ZMod first reported
+        # them absent, then present. That is a reboot, not four insertions.
         with tempfile.TemporaryDirectory() as tmp:
+            (Path(tmp) / 'edges.json').write_text(json.dumps({str(i): True for i in range(1, 5)}))
             monitor = self.monitor(Path(tmp))
             self.assertEqual(monitor.observe({i: False for i in range(1, 5)}, idle=True), [])
             # ZMod may first report absent before its real IFS readings arrive.

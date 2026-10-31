@@ -2476,7 +2476,9 @@ async def prepare_link(event, adapter, state, root, timeout=None, reuse=None, pr
         # only that start defers its roast (#374).
         remote = print_next.started_file(tail) if warming else None
         if unknown:
-            message = 'The start may have been submitted, but its status is not yet confirmed. Check printer status before doing anything else; do not retry.'
+            message = ('Start sent, but the printer has not confirmed it yet. It is probably still heating '
+                       'and preparing, which can take several minutes. I will post here when it starts '
+                       'printing. Do not send it again.')
         elif ok or pending:
             message = print_summary.format_started(exact_job, exact_plate) + later
             if remote is None:

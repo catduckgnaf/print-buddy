@@ -413,7 +413,7 @@ def launch_mapped(m, name):
 def test_mapped_launch_reconciles_lost_post_response_by_exact_file(mapped, monkeypatch, foreign):
     jp, g = make_job(mapped.root, "timeout-start")
     job = json.loads(jp.read_text())
-    original = model_job._mr
+    original = model_job._mr.side_effect  # the mapped fixture owns the patch
     post_count = 0
 
     def lose_post(st, path, data=None, timeout=30):
@@ -438,7 +438,7 @@ def test_mapped_launch_reconciles_lost_post_response_by_exact_file(mapped, monke
                 "virtual_sdcard": {"is_active": True}, "webhooks": {"state": "ready"}}}}
         return original(st, path, data=data, timeout=timeout)
 
-    monkeypatch.setattr(model_job, "_mr", lose_post)
+    model_job._mr.side_effect = lose_post
     out = model_job.print_mapped_native(g, mapped.st, {"display_off": 1}, {"0": 1}, job, jp, 0, False)
     assert out["phase"] == ("preparing_or_unresolved" if foreign else "executing")
     assert post_count == 1 and len(mapped.scripts) == 1
@@ -519,11 +519,49 @@ def test_screenless_idle_guard_needs_every_moonraker_predicate(moonraker, reason
             native_idle.require_idle_screenless(lambda: moonraker)
 
 
+@pytest.mark.parametrize("heating", [True, False])
+def test_screenless_set_zcolor_timeout_during_warmup_is_not_a_refusal(mapped, monkeypatch, heating):
+    """2026-10-30 19:22 ET regression (#616 routed screenless starts through SET_ZCOLOR):
+    the POST stayed open through warmup, timed out after 30 s, and the chat said the
+    start was refused while the AD5X began printing 2.5 minutes later."""
+    jp, g = make_job(mapped.root, "warmup-timeout")
+    job = json.loads(jp.read_text())
+    original = model_job._mr.side_effect  # the mapped fixture owns the patch
+
+    def held_open(st, path, data=None, timeout=30):
+        if path.startswith("/printer/gcode/script"):
+            mapped.scripts.append(data["script"])
+            raise TimeoutError("timed out")
+        if mapped.scripts and "print_stats&extruder" in path:
+            # Still preparing: Klipper has not opened the file yet.
+            return {"result": {"status": {
+                "print_stats": {"state": "standby", "filename": ""},
+                "virtual_sdcard": {"is_active": False}, "webhooks": {"state": "ready"},
+                "extruder": {"target": 0}, "heater_bed": {"target": 0}}}}
+        return original(st, path, data=data, timeout=timeout)
+
+    model_job._mr.side_effect = held_open
+    model_job._preparation_evidence.return_value = heating
+    out = model_job.print_mapped_native(g, mapped.st, {"display_off": 1}, {"0": 1}, job, jp, 0, False)
+    assert len(mapped.scripts) == 1  # never resubmitted
+    claims = model_job._read_claims()
+    if heating:
+        assert out["phase"] == "preparing" and out["accepted"] is True and out["started"] is True
+        assert claims  # the intake announces this start; the listener must not post a second card
+    else:
+        assert out["phase"] == "preparing_or_unresolved" and out["accepted"] is False
+        assert claims == {}  # unannounced: the listener posts "Print started" when it begins
+    assert any(row["phase"] == "uncertain" for row in leases())  # duplicate guard holds either way
+
+
 def test_mapped_unresolved_start_is_uncertain_and_blocks_the_next_job(mapped):
     _, launch_a = launch_mapped(mapped, "a")
     out = launch_a()
     assert out["phase"] == "preparing_or_unresolved" and len(mapped.scripts) == 1
     assert [r["phase"] for r in leases()] == ["uncertain"]
+    # 2026-10-30: the intake did not announce this start, so the listener must
+    # still be free to post "Print started" once the printer reaches it.
+    assert model_job._read_claims() == {}
     _, launch_b = launch_mapped(mapped, "b")
     with pytest.raises(SystemExit, match="uncertain"):
         launch_b()

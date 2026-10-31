@@ -198,11 +198,8 @@ def _read_json(path: Path) -> dict[str, Any]:
 # ---------------------------------------------------------------- mapping
 
 def screen_hex(value: Any) -> str | None:
-    text = str(value or "").strip().lstrip("#").upper()
-    text = str(value or "").strip().lstrip("#").upper()
-    if "," in text:
-        return None
-    return text if re.fullmatch(r"[0-9A-F]{6}", text) else None
+    """``RRGGBB`` for one hex color in any form filament_color.parse_hex reads, else None."""
+    return filament_color.normalize_hex(value)
 
 
 def screen_command(slot: int, material: str, hex_code: str, adapter=None) -> str:
@@ -333,9 +330,12 @@ def _slot_record(slot: int, spool: dict[str, Any], old: dict[str, Any] | None, n
     # swatch), else its color name, else the neutral default — which
     # hex_source records and chat says out loud. A slot is never left without
     # a code: slicing used to die on exactly that.
-    spoolman_hex = filament.get("color_hex") or (raw_multi if isinstance(raw_multi, str) else None)
+    # An invalid color_hex ("0C6283FF" was one, "#abc" still is not six digits
+    # to old readers) must not hide a valid multi_color_hexes: resolve() takes
+    # them as separate candidates.
     hex_code, hex_source = filament_color.resolve(
-        None, spoolman_hex=spoolman_hex, name=raw_name, material=material)
+        None, spoolman_hex=filament.get("color_hex"), spoolman_multi=raw_multi,
+        name=raw_name, material=material, warn_label=f"Spool #{spool.get('id')}")
     return {
         "slot": slot,
         "material": material,
@@ -519,7 +519,8 @@ def backfill_slot_colors(*, client: Client = spoolman, mr: Client = moonraker,
         # startup, possibly mid-print, and is not a screen-sync point, so it
         # sends nothing: it flags the slot for the existing screen sync
         # (/spool sync, or the next bind), which defers while printing.
-        change["screen"] = "matches" if printer_hexes.get(change["slot"]) == change["hex"] else "needs_sync"
+        change["screen"] = ("matches" if filament_color.same_color(printer_hexes.get(change["slot"]), change["hex"])
+                            else "needs_sync")
     for change in changes:
         rec = slots.get(change["slot"]) or {}
         filament = filaments.get(rec.get("spoolman_id"))
@@ -677,7 +678,7 @@ def parse_new(text: str) -> dict[str, Any]:
         raise SpoolError("material, color, and a positive full starting weight in grams are required")
     hx = screen_hex(parts[4]) if len(parts) > 4 else None
     if len(parts) > 4 and parts[4] and hx is None:
-        raise SpoolError(f"{parts[4]!r} is not a 6-digit hex color")
+        raise SpoolError(f"{parts[4]!r} is not a hex color (e.g. 0C6283, #0C6283 or #FFF)")
     return {"brand": brand or None, "material": material, "color": color, "grams": round(g, 1), "hex": hx}
 
 

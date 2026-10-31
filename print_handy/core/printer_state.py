@@ -24,7 +24,7 @@ import argparse, datetime, json, os, re, sys, urllib.request
 from pathlib import Path
 
 from .. import printers, settings
-from . import spoolman_client
+from . import filament_color, spoolman_client
 
 STATE = str(settings.state_dir() / "printer_hardware.json")
 
@@ -785,15 +785,6 @@ def spoolman_url(st=None):
     return ""
 
 
-def _hex_color(value):
-    """A colour value canonicalised to 6-digit upper-case hex, or None when it is not
-    hex at all (a colour name, an empty value, a non-string)."""
-    if not isinstance(value, str):
-        return None
-    text = value.strip().lstrip("#").upper()
-    return text if re.fullmatch(r"[0-9A-F]{6}", text) else None
-
-
 def _ams_disagreements(st, facts):
     """The Bambu printer's own AMS report (#307) against the configured spool record.
 
@@ -801,9 +792,10 @@ def _ams_disagreements(st, facts):
     facts["bambu"]["ams"]) is an additional source next to the record, never a
     replacement for it — the configured record stays authoritative, so a disagreement
     is appended to facts["warnings"] to be shown, never silently resolved, and never
-    a readiness problem. Colour is compared only when both sides are 6-digit hex:
-    the record usually carries a colour name while the printer reports hex only, and
-    comparing those would warn on every check.
+    a readiness problem. Colour is compared only when both sides are hex, and only a
+    clear difference warns (filament_color.same_color), so FFFFFF against FAFAFA is quiet.
+    The record side is the spool's hex, else its colour field when that is itself hex;
+    a colour name is never compared against the printer's hex.
     """
     decoded = (facts.get("bambu") or {}).get("ams") or {}
     active = None
@@ -824,8 +816,9 @@ def _ams_disagreements(st, facts):
         warnings.append(f"the printer reports its active Bambu tray holds {live_material}, "
                         f"but the recorded spool is {recorded_material}; the record is kept — "
                         "check what is loaded before printing")
-    live_color, recorded_color = _hex_color(active.get("color")), _hex_color(spool.get("color"))
-    if live_color and recorded_color and live_color != recorded_color:
+    live_color = filament_color.first_hex(active.get("color"))
+    recorded_color = filament_color.first_hex(spool.get("hex")) or filament_color.first_hex(spool.get("color"))
+    if filament_color.same_color(live_color, recorded_color) is False:
         warnings.append(f"the printer reports its active Bambu tray colour is #{live_color}, "
                         f"but the recorded spool colour is #{recorded_color}; the record is kept")
 
@@ -1087,6 +1080,9 @@ def main():
         f = sp["filament"]
         st["spool"] = {"spoolman_id": a.spool, "name": f["name"], "material": f.get("material"),
                        "diameter_mm": f.get("diameter", 1.75), "density": f.get("density", 1.24)}
+        spool_hex = filament_color.first_hex(f.get("color_hex")) or filament_color.first_hex(f.get("multi_color_hexes"))
+        if spool_hex:
+            st["spool"]["hex"] = spool_hex
         family, targets, sources = resolve_material_temperatures(f.get("material"), f)
         from .nozzle import effective_nozzle_temperature, recorded_nozzle_type
         nozzle_type = recorded_nozzle_type((st.get("nozzle") or {}).get("type"), _model_nozzle_default())

@@ -33,6 +33,7 @@ the #298 Stage 0 audit, rows 3–5):
   printer itself reports, never the configured model's name — an A1 can carry a
   regular AMS. Without version info in the snapshot the kind is None, not a guess.
 """
+from ...core.filament_color import parse_hex
 
 # get_version module-name prefix -> (kind, unit-id offset in the ams block). AMS HT
 # units are addressed 128–135 in the report; their module names index from 0.
@@ -67,15 +68,12 @@ def _remaining(value):
 
 
 def _colour(value):
-    """RRGGBBAA (or RRGGBB) hex -> upper-case RRGGBB. Empty / all-zero / malformed -> None."""
-    if not isinstance(value, str):
-        return None
-    text = value.strip().upper()
-    if len(text) == 8:
-        text = text[:6]
-    if len(text) != 6 or text == "000000" or any(c not in "0123456789ABCDEF" for c in text):
-        return None
-    return text
+    """RRGGBBAA (or RRGGBB, #RGB) hex -> upper-case RRGGBB. Malformed or alpha 00 -> None.
+
+    An empty tray reports 00000000 (fully transparent); 000000FF is a genuine black spool.
+    """
+    parsed = parse_hex(value)
+    return None if parsed is None or parsed[1] == 0 else parsed[0]
 
 
 def _text(value):

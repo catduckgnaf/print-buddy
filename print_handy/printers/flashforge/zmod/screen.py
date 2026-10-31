@@ -51,5 +51,5 @@ def screen_command(slot, material, hex_code):
     if stype is None:
         raise SpoolError(f"the printer screen has no type for {material!r}; screen left unchanged")
     if hx is None:
-        raise SpoolError(f"spool color {hex_code!r} is not a 6-digit hex; screen left unchanged")
+        raise SpoolError(f"spool color {hex_code!r} is not a hex color; screen left unchanged")
     return f"CHANGE_ZCOLOR SLOT={slot} TYPE={stype} HEX={hx}"

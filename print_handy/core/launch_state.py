@@ -194,7 +194,10 @@ class Lease:
 
     def submitting(self):
         """Persist before the external start request: from here a crash is uncertain, not retried."""
+        global _SUBMITTED
         self._set("submitting")
+        _SUBMITTED = True
+
 
     def uncertain(self, detail):
         self._set("uncertain", str(detail)[-500:])
@@ -202,6 +205,20 @@ class Lease:
     def release(self):
         with transaction(self.printer) as con:
             con.execute("DELETE FROM leases WHERE printer=? AND token=?", (self.printer, self.token))
+
+
+# Whether this process has reached any lease's submitting() (print-now runs one launch per
+# process). Before it, nothing was asked of the printer, so a failure is a clean refusal.
+_SUBMITTED = False
+
+
+def submitted():
+    return _SUBMITTED
+
+
+def reset_submitted():
+    global _SUBMITTED
+    _SUBMITTED = False
 
 
 def acquire(printer, *, job_json=None, gcode_sha256=None, remote=None, observed_file=None, started_files=()):

@@ -438,6 +438,33 @@ REAL_AWAITING = ('START REQUEST ACCEPTED {"file": "ghost_plate_1_abc.gcode", "pr
                  '"file": "ghost_plate_1_abc.gcode", "message": "submitted, awaiting confirmation"}')
 
 
+async def _test_unknown_start(target, env):
+    env.starts.append(target)
+    return True, 'MAPPED START READBACK {"phase":"preparing_or_unresolved","outcome":"unknown","file":"ghost.gcode"}'
+
+
+def test_uncertain_subprocess_exit_is_not_a_refusal(env, monkeypatch):
+    async def start(target):
+        env.starts.append(target)
+        return False, 'UNCERTAIN: print-now timed out. The plate may already have started. Not retrying.'
+    monkeypatch.setattr(print_next, 'start', start)
+    adapter, result, receipt = run_flow(env, [1, 0, 0], mid='uncertain-process')
+    assert receipt['status'] == 'START_PENDING'
+    assert receipt['started'] is None
+
+
+def test_uncertain_submission_is_not_a_started_print_or_refusal(env, monkeypatch):
+    async def start(target):
+        return await _test_unknown_start(target, env)
+    monkeypatch.setattr(print_next, 'start', start)
+    adapter, result, receipt = run_flow(env, [1, 0, 0], mid='uncertain-submission')
+    assert receipt['status'] == 'START_PENDING'
+    assert receipt['started'] is None
+    assert len(env.starts) == 1
+    assert 'not yet confirmed' in adapter.sent[-1]
+    assert 'do not retry' in adapter.sent[-1]
+
+
 def test_intake_recognizes_real_print_now_output():
     assert print_next.still_preparing(REAL_AWAITING)
     assert print_next.still_preparing('START ACCEPTED; PREPARATION STILL RUNNING {"started": false}')

@@ -1740,20 +1740,54 @@ class FilamentInsertionMonitor:
         self.last_sample = {}
         self.stable_counts = {}
         self.transition_from = {}
+        self.baseline_candidate = None
+        self.baseline_count = 0
+        self.baseline_since = None
+
+    def reset_baseline(self):
+        """Require a fresh stable idle snapshot after startup or Klippy recovery."""
+        self.baselined = False
+        self.last_sample = {}
+        self.stable_counts = {}
+        self.transition_from = {}
+        self.baseline_candidate = None
+        self.baseline_count = 0
+        self.baseline_since = None
 
     def observe(self, slots, *, idle, connected=True):
         """Return newly confirmed slots; startup/reconnect samples only establish baseline."""
         if not connected or not idle or not isinstance(slots, dict):
-            self.last_sample = {}
-            self.stable_counts = {}
-            self.transition_from = {}
-            self.baselined = False
+            self.reset_baseline()
             return []
-        current = {str(slot): value for slot, value in slots.items() if str(slot) in {"1", "2", "3", "4"} and isinstance(value, bool)}
+        current = {str(slot): value for slot, value in slots.items()
+                   if str(slot) in {"1", "2", "3", "4"} and isinstance(value, bool)}
+        # A baseline is meaningful only when every IFS slot has a known reading.
+        # Partial zmod_color startup snapshots must not arm insertion detection.
+        if len(current) != 4:
+            self.reset_baseline()
+            return []
         if not self.baselined:
-            self.last_sample = current
-            self.stable_counts = {slot: 1 for slot in current}
+            if self.baseline_since is None:
+                self.baseline_since = time.monotonic()
+            if current == self.baseline_candidate:
+                self.baseline_count += 1
+            else:
+                self.baseline_candidate = current
+                self.baseline_count = 1
+            if self.baseline_count < 2:
+                return []
             edges = read_json_object(self.edge_path)
+            # A complete but all-false ZMod snapshot may be a placeholder for
+            # minutes. Retain the last known baseline during a bounded warmup;
+            # never infer a physical insertion from its eventual recovery.
+            if edges and current != edges:
+                now = time.monotonic()
+                if self.baseline_since is None:
+                    self.baseline_since = now
+                if now - self.baseline_since < 120:
+                    return []
+            self.last_sample = current
+            self.stable_counts = {slot: 2 for slot in current}
             updated = False
             for slot, present in current.items():
                 if edges.get(slot) != present:
@@ -1762,6 +1796,8 @@ class FilamentInsertionMonitor:
             if updated:
                 atomic_write_json(self.edge_path, edges)
             self.baselined = True
+            self.baseline_candidate = None
+            self.baseline_count = 0
             return []
         stable = []
         edges = read_json_object(self.edge_path)
@@ -3017,10 +3053,7 @@ class Listener:
             log(f"timelapse capture tick failed file={self.filename!r}: {exc!r}")
 
     async def session(self):
-        self.ifs_monitor.baselined = False
-        self.ifs_monitor.last_sample = {}
-        self.ifs_monitor.stable_counts = {}
-        self.ifs_monitor.transition_from = {}
+        self.ifs_monitor.reset_baseline()
         async with websockets.connect(WS_URL, ping_interval=20, ping_timeout=20, max_size=2**22) as ws:
             self.moonraker_connected = True
             await ws.send(SUBSCRIBE)
@@ -3056,6 +3089,7 @@ class Listener:
                                 log(f"no bed mesh at print start: {self.filename!r}")
                                 await asyncio.to_thread(post, f"{NO_MESH_ALERT}\nPrint: {print_summary.safe_label(self.filename)}")
                     elif method in ("notify_klippy_disconnected", "notify_klippy_shutdown"):
+                        self.ifs_monitor.reset_baseline()
                         log(f"{method} while state={self.state}")
                         if self.state in ("printing", "paused"):
                             if getattr(self, "shutdown_alerted", None) != self.filename:
@@ -3068,6 +3102,7 @@ class Listener:
                             # is not a terminal transition: clean up here.
                             await self._print_ended("error")
                     elif method == "notify_klippy_ready":
+                        self.ifs_monitor.reset_baseline()
                         log("klippy ready; resubscribing")
                         await ws.send(SUBSCRIBE)
                 if time.monotonic() - self.last_native_poll >= NATIVE_POLL_SECONDS:

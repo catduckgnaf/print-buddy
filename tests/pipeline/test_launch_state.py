@@ -409,6 +409,54 @@ def launch_mapped(m, name):
     return jp, lambda: model_job.print_mapped_native(g, m.st, {"display_off": 0}, {"0": 1}, job, jp, 0, False)
 
 
+@pytest.mark.parametrize("foreign", [False, True])
+def test_mapped_launch_reconciles_lost_post_response_by_exact_file(mapped, monkeypatch, foreign):
+    jp, g = make_job(mapped.root, "timeout-start")
+    job = json.loads(jp.read_text())
+    original = model_job._mr
+    post_count = 0
+
+    def lose_post(st, path, data=None, timeout=30):
+        nonlocal post_count
+        if path.startswith("/printer/gcode/script"):
+            post_count += 1
+            mapped.scripts.append(data["script"])
+            submitted = data["script"].split("FILENAME=", 1)[1].split()[0]
+            mapped.reported_file = "gcodes/" + submitted
+            raise TimeoutError("response lost after Moonraker accepted command")
+        if "zmod_color" in path:
+            status = {
+                "print_stats": {"state": "standby", "filename": ""},
+                "virtual_sdcard": {"is_active": False}, "webhooks": {"state": "ready"},
+                "extruder": {"target": 0}, "heater_bed": {"target": 0},
+                "zmod_color": {"slots": [{"ID": 1, "Material": "PLA", "HEX": "000000", "hasFilament": True}]},
+                "filament_switch_sensor head_switch_sensor": {"enabled": True}}
+            return {"result": {"status": status}}
+        if "print_stats&extruder" in path:
+            return {"result": {"status": {
+                "print_stats": {"state": "printing", "filename": "3mf_print/" + ("x.gcode" if foreign else mapped.reported_file.removeprefix("gcodes/")), "filament_used": 4},
+                "virtual_sdcard": {"is_active": True}, "webhooks": {"state": "ready"}}}}
+        return original(st, path, data=data, timeout=timeout)
+
+    monkeypatch.setattr(model_job, "_mr", lose_post)
+    out = model_job.print_mapped_native(g, mapped.st, {"display_off": 1}, {"0": 1}, job, jp, 0, False)
+    assert out["phase"] == ("preparing_or_unresolved" if foreign else "executing")
+    assert post_count == 1 and len(mapped.scripts) == 1
+    assert len(uploads(mapped.run)) == 1
+    if not foreign:
+        assert any(row['phase'] == 'uncertain' for row in leases())
+    if foreign:
+        with pytest.raises((RuntimeError, SystemExit)):
+            model_job.print_mapped_native(g, mapped.st, {"display_off": 1}, {"0": 1}, job, jp, 0, False)
+        assert post_count == 1
+
+
+def test_native_file_identity_accepts_only_exact_3mf_conversion():
+    assert model_job._native_file_matches('3mf_print/part_abc.gcode', 'part_abc.gcode.3mf')
+    assert not model_job._native_file_matches('3mf_print/part_def.gcode', 'part_abc.gcode.3mf')
+    assert not model_job._native_file_matches('other/part_abc.gcode', 'part_abc.gcode.3mf')
+
+
 def test_mapped_launch_rechecks_idle_inside_the_lease(mapped):
     jp, launch = launch_mapped(mapped, "a")
     mapped.native.require_idle_settled.side_effect = [True, RuntimeError("REFUSED: idle guard failed: Moonraker reports active execution")]

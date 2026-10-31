@@ -5805,6 +5805,32 @@ def _require_idle_before_mapped_launch(require_idle_settled, read_moonraker, rea
         raise SystemExit(message + ". Nothing uploaded or started.") from None
 
 
+def _native_file_matches(reported, remote):
+    """Match only documented Klipper paths for this upload, including ZMod's 3MF unpack path."""
+    reported = str(reported or "").replace("\\\\", "/").lstrip("/")
+    remote = str(remote or "").replace("\\\\", "/").lstrip("/")
+    expected = {remote}
+    if remote.endswith(".gcode.3mf"):
+        unpacked = remote[:-4]
+        expected.update({unpacked, "3mf_print/" + unpacked, "gcodes/" + unpacked})
+    elif remote.endswith(".gcode"):
+        expected.update({"gcodes/" + remote, "3mf_print/" + remote})
+    return reported in expected
+
+
+def _reconcile_native_submission(st, remote):
+    """Read status once after lost POST response; never attribute heaters alone to this job."""
+    try:
+        snap = _mr(st, "/printer/objects/query?print_stats&extruder&heater_bed&virtual_sdcard&idle_timeout&webhooks&toolhead&zmod_ifs")
+        status = snap.get("result", {}).get("status", {})
+        ps = status.get("print_stats") or {}
+        if not _native_file_matches(ps.get("filename"), remote):
+            return None
+        return classify_start_readback(snap)
+    except Exception:
+        return None
+
+
 def print_mapped_native(g, st, mesh, mapping, job, job_path, wait_s, reprint):
     """Native explicit mapping route; exactly one SET_ZCOLOR submission, no fallback."""
     adapter = _job_adapter(job)
@@ -5917,7 +5943,10 @@ def print_mapped_native(g, st, mesh, mapping, job, job_path, wait_s, reprint):
         checkpoint = g.with_suffix('.launch.json')
         if checkpoint.exists():
             raise RuntimeError('mapped submission checkpoint exists; reconcile instead of replaying')
-        checkpoint.write_text(json.dumps({'phase': 'submission_pending', 'command': command, 'sha256': sha}) + '\n')
+        checkpoint_data = {'phase': 'submission_pending', 'command': command, 'sha256': sha,
+                           'file': remote, 'artifact': str(g), 'submission_count': 1,
+                           'accepted': False, 'started': False}
+        checkpoint.write_text(json.dumps(checkpoint_data, indent=2) + '\n')
         # This path posts its own start card, so the listener must not post a second one
         # when native preparation (heating, leveling) finishes minutes later (2026-10-11 duplicate).
         try: claim_start_announcement(remote)
@@ -5930,10 +5959,42 @@ def print_mapped_native(g, st, mesh, mapping, job, job_path, wait_s, reprint):
     lease.submitting()
     try:
         receipt = _mr(st, '/printer/gcode/script', data={'script': command})
-    except BaseException as exc:
-        release_start_announcement(remote)
-        lease.uncertain(f'start request did not complete: {exc!r}')
-        raise
+    except Exception as exc:
+        lease.uncertain(f'start request response lost: {exc!r}')
+        _timing(job_path, 'start_response_lost', detail=type(exc).__name__)
+        # A synchronous POST can time out after Moonraker accepted SET_ZCOLOR.
+        # Reconcile by this exact submitted file only; heater targets alone may belong
+        # to unrelated work and are never attribution evidence.
+        readback = _reconcile_native_submission(st, remote)
+        if readback is None:
+            out = {**checkpoint_data, 'phase': 'preparing_or_unresolved', 'outcome': 'unknown',
+                   'accepted': False, 'started': False,
+                   'message': 'start response was lost; printer status does not yet identify this file; do not resubmit'}
+        elif readback.outcome == 'printing':
+            out = {**checkpoint_data, 'phase': 'executing', 'outcome': 'printing',
+                   'accepted': True, 'started': True, 'readback': readback._asdict(),
+                   'message': readback.message}
+        elif readback.outcome == 'preparing':
+            out = {**checkpoint_data, 'phase': 'preparing', 'outcome': 'preparing',
+                   'accepted': True, 'started': True, 'readback': readback._asdict(),
+                   'message': readback.message}
+        else:
+            out = {**checkpoint_data, 'phase': 'preparing_or_unresolved', 'outcome': 'unknown',
+                   'accepted': False, 'started': False, 'readback': readback._asdict(),
+                   'message': 'the submitted file is visible but start progress is unresolved; do not resubmit'}
+        checkpoint.write_text(json.dumps(out, indent=2) + '\n')
+        if out['accepted']:
+            # The POST response was lost: preserve the duplicate guard until
+            # explicit reconciliation, even if a matching readback is active.
+            try:
+                out['record_path'] = str(record_start(g, remote))
+            except Exception as record_exc:
+                logger.warning('start record failed after reconciled submission: %s', record_exc)
+            checkpoint.write_text(json.dumps(out, indent=2) + '\n')
+        else:
+            lease.uncertain(out['message'])
+        print('MAPPED START READBACK ' + json.dumps(out), flush=True)
+        return out
     _timing(job_path, 'start_submitted')
     # Number at submission, not at "printing": native preparation can outlast the readback
     # and the listener's completion card only reads the registry (2026-10-14: 6 unnumbered).
@@ -5952,20 +6013,21 @@ def print_mapped_native(g, st, mesh, mapping, job, job_path, wait_s, reprint):
     readback = None
     try:
         snap = _mr(st, "/printer/objects/query?print_stats&extruder&heater_bed&virtual_sdcard&idle_timeout&webhooks&toolhead")
-        readback = classify_start_readback(snap)
+        ps = snap.get('result', {}).get('status', {}).get('print_stats', {})
+        if _native_file_matches(ps.get('filename'), remote):
+            readback = classify_start_readback(snap)
     except Exception:
         pass
 
-    if state == 'printing' or (readback and readback.outcome == 'printing'):
+    if readback and readback.outcome == 'printing':
         out.update(accepted=True, started=True, phase='executing', moonraker_state='printing',
                    outcome='printing', message=(readback.message if readback else 'printing'),
                    extrusion_confirmed=bool(readback and (readback.evidence or {}).get('extrusion_confirmed')))
     else:
-        # The AD5X native route heats and loads the IFS slot for several minutes before
-        # print_stats reports printing (2026-10-16: ~7 min). Heater targets set by that
-        # preparation prove acceptance; report preparing, never a failure, never retry.
-        preparing = _preparation_evidence(st)
-        is_prep = preparing is True or (readback and readback.outcome == 'preparing')
+        # Only exact-file readback can attribute preparation to this submission.
+        # Heater targets alone may belong to unrelated work.
+        preparing = bool(readback and readback.outcome == 'preparing')
+        is_prep = preparing
         outcome_val = 'preparing' if is_prep else (readback.outcome if readback else 'unconfirmed')
         msg = readback.message if readback else 'submitted, awaiting confirmation'
         out.update(accepted=is_prep, started=is_prep, moonraker_state=state,

@@ -116,3 +116,17 @@ def test_list_text_shelf_names_the_material_once(tmp_path):
         {"id": 21, "remaining_weight": 800, "filament": {"name": "Coffee PLA+", "material": "PLA+"}}]
     text = spool_sync.list_text(client=client, state_path=state)
     assert "#21 Coffee PLA+, 800 g" in text and "PLA+ PLA+" not in text
+
+
+def test_screen_label_matches_the_type_print_handy_writes():
+    from print_handy.printers.flashforge.zmod import screen
+    for material in ("Silk PLA", "PLA Silk", "Shiny Silk PLA"):
+        assert screen.screen_type(material) == "SILK"
+        assert screen.label_matches("SILK", material)
+    assert screen.label_matches("PLA", "PLA+")
+    assert screen.label_matches("PLA-CF", "PLA-CF")
+    assert not screen.label_matches("SILK", "PLA")  # a plain spool in a slot marked silk
+    assert not screen.label_matches("SILK", "PETG")
+    assert not screen.label_matches("PLA", "PLA-CF")
+    assert not screen.label_matches("?", "PLA")
+    assert not screen.label_matches(None, "PLA")

@@ -5889,16 +5889,24 @@ def print_mapped_native(g, st, mesh, mapping, job, job_path, wait_s, reprint):
     else:
         occupancy = read_stock_filament_slots_from_detail(read_native())
     normalize_mapping = adapter.native.normalize_mapping
+    label_matches = adapter.native.screen_label_matches
     mapped = normalize_mapping(mapping, st)
     for tool, slot in mapped.items():
         expected = st['filament_slots'][str(slot)]
         matches = [item for item in configured if str(item.get('ID')) == str(slot)]
-        # Family match (PLA == PLA+): the native slot label is coarser than Spoolman's material,
-        # so an exact compare refused a correctly loaded PLA+ spool.
-        if len(matches) != 1 or not printer_state.same_material(matches[0].get('Material'), expected['material']):
-            raise RuntimeError(f'T{tool} slot {slot} live material mapping mismatch or unknown')
-        if str(matches[0].get('HEX', '')).lstrip('#').upper() != expected['hex'].lstrip('#').upper():
-            raise RuntimeError(f'T{tool} slot {slot} live RGB mapping mismatch or unknown')
+        # The native slot label is coarser than Spoolman's material: family match
+        # (PLA == PLA+), or the screen's own type for it (SILK for Silk PLA).
+        if len(matches) != 1:
+            raise SystemExit(f"REFUSED: printer slot {slot} is missing from the printer's slot list (T{tool}). "
+                             "Nothing uploaded or started.")
+        label = matches[0].get('Material')
+        if not label_matches(label, expected['material']):
+            raise SystemExit(f"REFUSED: printer slot {slot} is labeled {label or 'blank'} but Spoolman has "
+                             f"{expected['material']} there (T{tool}). Nothing uploaded or started.")
+        live_hex = str(matches[0].get('HEX', '')).lstrip('#').upper()
+        if live_hex != expected['hex'].lstrip('#').upper():
+            raise SystemExit(f"REFUSED: printer slot {slot} color is #{live_hex or 'blank'} but Spoolman has "
+                             f"#{expected['hex'].lstrip('#').upper()} there (T{tool}). Nothing uploaded or started.")
         if occupancy.get(slot) is not True:
             # Operator-confirmed loaded feeders supersede idle false occupancy,
             # never unknown telemetry or an actual native error/activity.

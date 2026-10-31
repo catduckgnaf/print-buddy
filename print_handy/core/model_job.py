@@ -2507,6 +2507,8 @@ def _sync_active_spool(st, slot):
                       'material': filament.get('material') or configured.get('material'),
                       'diameter_mm': filament.get('diameter', recorded.get('diameter_mm', 1.75)),
                       'density': filament.get('density', recorded.get('density', 1.24))}
+    # temps_c belonged to the previous spool: mark it so slicing resolves this one's (#692).
+    fresh['temperature_resolution'] = {'source': 'spool changed by launch sync; resolved per slice'}
     printer_state.save(fresh)
     st['spool'] = dict(fresh['spool'])
     print(f'ACTIVE SPOOL SYNCED: #{current} -> #{sid} (slot {slot})', flush=True)

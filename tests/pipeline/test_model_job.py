@@ -17,7 +17,7 @@ from unittest import mock
 
 from print_handy import settings
 from print_handy.printers.flashforge.zmod import stock
-from print_handy.core import _external, model_job
+from print_handy.core import _external, launch_state, model_job
 
 from .helpers import external
 
@@ -883,8 +883,8 @@ class EnglishAndPrintNowTests(unittest.TestCase):
              mock.patch.object(model_job, "_mr") as mr, \
              mock.patch.object(model_job, "_wait_printing", return_value="standby"), \
              mock.patch.object(model_job, "record_start"):
-            with self.assertRaisesRegex(SystemExit, "The printer did not start the print, and it was not retried"):
-                model_job.print_now(self._gcode(d))
+            out = model_job.print_now(self._gcode(d))
+            self.assertEqual(out["phase"], "awaiting_confirmation")  # never "failed" without this file saying so
         # One start POST, then the #84 status readback. Not a second start.
         # (_zmod_version pinned unknown: this choreography is the plain .gcode path's.)
         # A read-only heater baseline before the start (evidence for a lost response), exactly one start POST, then the readback.
@@ -1027,9 +1027,12 @@ class EnglishAndPrintNowTests(unittest.TestCase):
             g = self._gcode(d)
             sha = model_job.file_sha256(g)
             expected_remote = f"{g.stem}_{sha}{g.suffix}"
-            with self.assertRaisesRegex(SystemExit, "The printer did not start the print"):
-                model_job.print_now(g)
+            # An idle printer that still shows a previous file is not proof the accepted start failed: the
+            # lease stays uncertain, and the claim is freed so the listener can post the start.
+            out = model_job.print_now(g)
+            self.assertEqual(out["phase"], "awaiting_confirmation")
             self.assertNotIn(expected_remote, json.loads((Path(d) / "claims.json").read_text()))
+            self.assertEqual([r["phase"] for r in launch_state.pending()], ["uncertain"])
 
     def test_print_now_artifact_identity_and_readback_hash_success(self):
         with tempfile.TemporaryDirectory() as d, \
@@ -1395,8 +1398,8 @@ class EnglishAndPrintNowTests(unittest.TestCase):
              mock.patch.object(model_job.subprocess, "run", side_effect=mock_upload_run), \
              mock.patch.object(model_job, "_mr") as mr, \
              mock.patch.object(model_job, "_wait_printing", return_value="standby"):
-            with self.assertRaisesRegex(SystemExit, "The printer did not start the print"):
-                model_job.print_now(self._gcode(d))
+            out = model_job.print_now(self._gcode(d))
+            self.assertEqual(out["phase"], "awaiting_confirmation")
         # One start POST, then the #84 status readback. Not a second start.
         # (_zmod_version pinned unknown: this choreography is the plain .gcode path's.)
         # A read-only heater baseline before the start (evidence for a lost response), exactly one start POST, then the readback.
@@ -2199,7 +2202,7 @@ def test_assign_print_number_appends_once_and_ignores_scratch_jobs(tmp_path, mon
 
 def test_shared_extruder_total_is_split_across_parts_and_checked_against_model_page():
     """Valentines stand regression: 5 parts on one guessed extruder showed 5 x 247.8 g = 1,239 g."""
-    from print_handy.core import model_job as mj
+    from print_handy.core import launch_state, model_job as mj
     parts = [{'key': f'p{i}', 'source_extruder': 1, 'volume_mm3': v} for i, v in enumerate([10, 10, 30, 50, 100])]
     manifest = {'parts': parts, 'filament_stats': {'total_g': 247.8, 'extruders': {1: {'g': 247.8}}, 'estimated': True}}
     pick = {'slot': 1, 'color': 'white', 'material': 'PLA', 'spoolman_id': 13}

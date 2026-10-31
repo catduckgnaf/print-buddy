@@ -1156,7 +1156,8 @@ def classify_start(ok, tail):
     """
     outcome = print_next.start_outcome(tail)
     phase = str(outcome.get('phase') or '')
-    unknown = print_next.start_unresolved(outcome) or (not ok and not _safe_preupload_refusal(tail))
+    unknown = (print_next.start_unresolved(outcome) or print_next.outcome_unreadable(tail)
+               or (not ok and not _safe_preupload_refusal(tail)))
     pending = unknown or phase in ('preparing', 'executing')
     return StartClass('START_PENDING' if unknown else 'STARTED' if ok or pending else 'START_REFUSED',
                       None if unknown else bool(ok or pending), 'unknown' if unknown else phase or None,

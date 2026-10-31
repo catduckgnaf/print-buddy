@@ -194,6 +194,24 @@ def start_outcome(detail: str) -> dict[str, Any]:
     return {}
 
 
+def outcome_unreadable(detail: str) -> bool:
+    """Whether the output carries a START READBACK fragment that does not parse (a cut-off or damaged line).
+
+    The intake treats that as unresolved, never as started: the line existed, so a phase was reported.
+    """
+    for line in reversed(str(detail or "").splitlines()):
+        if "READBACK" not in line:
+            continue
+        at = line.find("{")
+        if at < 0:
+            return True
+        try:
+            return not isinstance(json.loads(line[at:]), dict)
+        except ValueError:
+            return True
+    return False
+
+
 def start_unresolved(outcome: Mapping[str, Any]) -> bool:
     """Whether a parsed outcome says the start was sent but is not confirmed (awaiting_confirmation,
     preparing_or_unresolved). The phase decides; without one, an unknown/unconfirmed outcome does."""

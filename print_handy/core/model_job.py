@@ -5741,7 +5741,7 @@ def _wait_printing(st, remote, wait_s, prep_check=None):
             except Exception: pass
         if time.monotonic()-t0 > 20 and busy != "Printing": return state  # settled, not printing
         time.sleep(1)
-    return state
+    return "busy" if state == "printing" else state  # printing some other file is not this start
 
 
 def live_snapshot(st):
@@ -5947,7 +5947,9 @@ def _settle_lost_start(lease, st, remote, exc, *, base, heaters_were_off, first_
     rejection = _start_rejection(exc) if first_command else None
     if rejection is None:
         lease.uncertain(f'start request response lost: {exc!r}')
-    verdict = _reconcile_lost_start(st, remote, heaters_were_off=heaters_were_off)
+    # Moonraker answers 400 when a macro errors partway, heaters left on: after a rejection only a
+    # readback naming this exact file may say started; heater targets alone are never evidence.
+    verdict = _reconcile_lost_start(st, remote, heaters_were_off=heaters_were_off and rejection is None)
     quiet = verdict.pop('quiet')
     if rejection is not None:
         if quiet:
@@ -5978,8 +5980,18 @@ def _emit_start_outcome(out, mark=START_OUTCOME_MARK, compact=True):
 
     prepared_intake and print_next read the phase from it to tell a confirmed start from an unresolved one.
     """
-    line = {k: out[k] for k in _OUTCOME_KEYS if k in out} if compact else out
+    line = {k: out[k] for k in _OUTCOME_KEYS if k in out} if compact else dict(out)
+    if isinstance(line.get('message'), str):
+        line['message'] = line['message'][:200]
     print(mark + json.dumps(line, default=str), flush=True)
+
+
+def _emit_mapped_outcome(out):
+    """The mapped route's outcome: the bulky record on an earlier `MAPPED START DETAIL` line (the checkpoint
+    file holds it too), then the compact `MAPPED START READBACK` line last. print_next keeps only the last
+    1500 characters of output, so the line the intake parses must stay short."""
+    print('MAPPED START DETAIL ' + json.dumps(out, default=str), flush=True)
+    _emit_start_outcome(out, mark='MAPPED START READBACK ')
 
 
 def _uncertain_after_submission(lease, remote, exc, *, method, phase='awaiting_confirmation', extra=None,
@@ -6000,7 +6012,9 @@ def _uncertain_after_submission(lease, remote, exc, *, method, phase='awaiting_c
     out = {**(extra or {}), 'started': False, 'accepted': False, 'file': remote, 'method': method,
            'phase': phase, 'outcome': 'unknown', 'message': message}
     print('UNCERTAIN: ' + message, flush=True)
-    _emit_start_outcome(out, mark=mark, compact=extra is None)
+    if extra is not None:
+        print(mark.replace('READBACK', 'DETAIL') + json.dumps(out, default=str), flush=True)
+    _emit_start_outcome(out, mark=mark)
     return out
 
 
@@ -6281,6 +6295,7 @@ def print_mapped_native(g, st, mesh, mapping, job, job_path, wait_s, reprint):
         _publish_job_card(st, job, remote, g.read_text(errors="ignore"))
     except BaseException:
         lease.release()  # nothing was sent to start
+        release_start_announcement(remote)  # the claim was taken in the block above
         if checkpoint_data is not None:
             _write_checkpoint(checkpoint, {**checkpoint_data, 'phase': 'not_submitted'})
         raise
@@ -6305,7 +6320,7 @@ def print_mapped_native(g, st, mesh, mapping, job, job_path, wait_s, reprint):
             except Exception as record_exc:
                 logger.warning('start record failed after reconciled submission: %s', record_exc)
         _write_checkpoint(checkpoint, out)
-        print('MAPPED START READBACK ' + json.dumps(out), flush=True)
+        _emit_mapped_outcome(out)
         return out
     _timing(job_path, 'start_submitted')
     out = {'accepted': False, 'started': False, 'phase': 'submitted_unconfirmed',
@@ -6373,7 +6388,7 @@ def _confirm_mapped_start(st, g, lease, remote, wait_s, out, checkpoint, job_pat
     else:
         lease.uncertain(out['message'])  # reconciled when the printer reports this file
         release_start_announcement(remote)  # unannounced: the listener posts the start card
-    print('MAPPED START READBACK ' + json.dumps(out), flush=True)
+    _emit_mapped_outcome(out)
     return out
 
 
@@ -7004,46 +7019,30 @@ def _require_idle(st):
 def _confirm_generic_start(st, remote, wait_s, lease):
     """Wait for the one accepted start to show as printing: (out, readback, state).
 
-    `out` is a terminal outcome dict when the print is not (yet) printing: preparing (lease released, claim
-    kept: the start card is posted) or awaiting confirmation (lease uncertain, claim freed for the listener).
-    It is None when printing. Raises SystemExit when the printer reports the start failed. Any readback
-    exception propagates to the caller, which settles it as uncertain.
+    Only a readback naming THIS file counts (launch_state.same_remote): printing, or preparing (lease
+    released, claim kept: the start card is posted), or failed/cancelled (lease released, REFUSED-style
+    SystemExit). Anything else, including a still-idle printer, a stale previous filename or an unreadable
+    status, leaves the lease uncertain and frees the claim for the listener: after a 200 the printer may
+    still be starting. `out` is None when printing. A readback exception propagates to the caller, which
+    settles it as uncertain.
     """
     state = _wait_printing(st, remote, wait_s)
-    readback = None
-    try:
-        snap = _mr(st, "/printer/objects/query?print_stats&extruder&heater_bed&virtual_sdcard&idle_timeout&webhooks&toolhead")
-        readback = classify_start_readback(snap)
-    except Exception:
-        pass
+    readable, readback = _read_start_readback(st, remote)
     if state == "printing" or (readback and readback.outcome == "printing"):
         return None, readback, state
     if readback and readback.outcome == "preparing":
         lease.release()  # accepted; the busy printer now refuses another start
         return {"started": True, "accepted": True, "phase": "preparing", "outcome": "preparing", "file": remote,
                 "method": "print/start", "message": readback.message}, readback, state
-    # Do not retry a still-running preparation sequence or call it a failure.
-    pending_state, pending_file, pending_busy = _printer_phase(st)
-    if pending_busy == "Printing" and pending_state not in ("error", "cancelled"):
-        # Keep the claim: the start card is already posted and the listener would
-        # otherwise post a duplicate when preparation reaches "printing".
-        lease.release()
-        return {"started": True, "accepted": True, "phase": "preparing", "outcome": "preparing", "file": remote,
-                "method": "print/start",
-                "message": "printer accepted the job and is preparing (heating/loading); not a failure; do not resubmit"}, readback, state
-    # An unreadable/ambiguous delayed readback after the one start request is not evidence of rejection.
-    # Report uncertainty, and free the claim: nobody announced this start, and the chat is told it will
-    # be posted when the printer reaches the file.
-    if pending_state not in ("error", "cancelled") and pending_file in (None, ""):
-        lease.uncertain("submitted, awaiting confirmation")  # reconciled when the printer reports this file
+    if readback and readback.outcome == "failed":
         release_start_announcement(remote)
-        return {"started": False, "accepted": True, "phase": "awaiting_confirmation", "outcome": "unconfirmed",
-                "file": remote, "method": "print/start", "message": "submitted, awaiting confirmation"}, readback, state
+        lease.release()  # the printer reports this file's start failed
+        raise SystemExit("The printer did not start the print, and it was not retried. "
+                         "Check the printer screen before trying again." + _detail_tail(readback.message))
+    lease.uncertain("submitted, awaiting confirmation")  # reconciled when the printer reports this file
     release_start_announcement(remote)
-    lease.release()  # the printer reports the start failed
-    fail_msg = readback.message if (readback and readback.outcome == "failed") else f"printer state is {state!r} after print/start"
-    raise SystemExit("The printer did not start the print, and it was not retried. "
-                     "Check the printer screen before trying again." + _detail_tail(fail_msg))
+    return {"started": False, "accepted": True, "phase": "awaiting_confirmation", "outcome": "unconfirmed",
+            "file": remote, "method": "print/start", "message": "submitted, awaiting confirmation"}, readback, state
 
 
 def print_now(target, wait_s=25, accept_default_z_offset=False, reprint=False, remap_slot_num=None):
@@ -7225,6 +7224,7 @@ def print_now(target, wait_s=25, accept_default_z_offset=False, reprint=False, r
         _publish_job_card(st, job, remote, text)
     except BaseException:
         lease.release()  # nothing was sent to start
+        release_start_announcement(remote)  # the claim was taken in the block above
         raise
     # Baseline for the lost-response reconcile: heater targets seen later prove this start only if every
     # heater was off before it. Read-only; unreadable counts as not proven.

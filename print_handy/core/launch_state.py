@@ -127,9 +127,12 @@ LEASED_TTL_S = 15 * 60
 
 
 def _leased_abandoned(row, unknown=True, now=None):
-    """Whether a ``leased`` row can be released: its owner is gone, or it outlived LEASED_TTL_S."""
+    """Whether a ``leased`` row can be released: its owner is gone, or it cannot be checked (another
+    host or container) and outlived LEASED_TTL_S. A live process on this host never expires."""
     if not _owner_alive(row, unknown):
         return True
+    if row["host"] == socket.gethostname():
+        return False  # a live process on this host is the owner, however long it has been
     try:
         updated = datetime.strptime(row["updated_at"] or row["leased_at"], "%Y-%m-%dT%H:%M:%S%z").timestamp()
     except (TypeError, ValueError):
@@ -211,15 +214,17 @@ class Lease:
     def __init__(self, printer, token):
         self.printer, self.token = printer, token
 
-    def _set(self, phase, detail=None):
+    def _set(self, phase, detail=None, required=False):
         with transaction(self.printer) as con:
-            con.execute("UPDATE leases SET phase=?, detail=?, updated_at=? WHERE printer=? AND token=?",
-                        (phase, detail, _now(), self.printer, self.token))
+            changed = con.execute("UPDATE leases SET phase=?, detail=?, updated_at=? WHERE printer=? AND token=?",
+                                  (phase, detail, _now(), self.printer, self.token)).rowcount
+        if required and not changed:
+            raise SystemExit("REFUSED: this launch lost its printer lease before sending; nothing started.")
 
     def submitting(self):
         """Persist before the external start request: from here a crash is uncertain, not retried."""
         global _SUBMITTED
-        self._set("submitting")
+        self._set("submitting", required=True)  # a stolen lease must stop the launch before the request
         _SUBMITTED = True
 
 

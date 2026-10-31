@@ -358,12 +358,7 @@ class MoonrakerScript:
         self.printer, self.start, self.after = printer, start, after or (lambda remote: QUIET)
         self.started, self.posts = False, 0
         printer.mr.side_effect = self.mr
-        if phase_raises is not None:
-            def phase(st):
-                if self.posts:
-                    raise phase_raises
-                return ("standby", "", "Ready")
-            printer.phase.side_effect = phase
+        self.wait_raises = phase_raises  # what reading the printer back raises after the start
 
     def remote(self):
         found = uploads(self.printer.run)
@@ -411,8 +406,16 @@ GENERIC_CASES = {
                                    True, ["uncertain"], "executing", "STARTED"),
     "readback_phase_raises": (lambda: dict(phase_raises=http_error(503, "Service Unavailable")),
                               True, ["uncertain"], "awaiting_confirmation", "START_PENDING"),
-    "readback_still_heating": (lambda: dict(after=lambda r: moonraker_status(target=215)),
-                               True, [], "preparing", "STARTED"),
+    # Heaters on and nothing naming this file: unrelated work looks the same, so the accepted start stays uncertain.
+    "readback_heating_without_this_file": (lambda: dict(after=lambda r: moonraker_status(target=215)),
+                                           True, ["uncertain"], "awaiting_confirmation", "START_PENDING"),
+    "readback_stale_previous_file": (lambda: dict(after=lambda r: moonraker_status(filename="previous-job.gcode")),
+                                     True, ["uncertain"], "awaiting_confirmation", "START_PENDING"),
+    "readback_this_file_preparing": (lambda: dict(after=lambda r: moonraker_status(filename=r, target=215)),
+                                     True, [], "preparing", "STARTED"),
+    "start_4xx_with_heaters_on_and_no_file": (lambda: dict(start=raises(http_error(400, "macro failed")),
+                                                           after=lambda r: moonraker_status(target=215)),
+                                              True, ["uncertain"], "preparing_or_unresolved", "START_PENDING"),
     "readback_printing": (lambda: dict(after=lambda r: moonraker_status(filename=r, state="printing")),
                           True, [], "executing", "STARTED"),
 }
@@ -422,7 +425,8 @@ GENERIC_CASES = {
 def test_generic_moonraker_failure_table(case, printer, monkeypatch, capsys, patch):
     build, want_ok, want_leases, want_phase, want_status = GENERIC_CASES[case]
     script = MoonrakerScript(printer, **build())
-    patch(model_job, "_wait_printing", lambda *a, **k: "standby")
+    patch(model_job, "_wait_printing",
+          mock.Mock(side_effect=script.wait_raises) if script.wait_raises else (lambda *a, **k: "standby"))
     jp, _ = make_job(printer.root, "a")
     ok, tail, full = run_cli(monkeypatch, capsys, lambda: REAL_PRINT_NOW(jp))
     assert ok is want_ok, tail
@@ -441,8 +445,8 @@ REAL_PRINT_NOW = model_job.print_now
 
 
 def test_item5_generic_readback_error_after_the_start_is_a_clean_uncertain_line(printer, monkeypatch, capsys, patch):
-    MoonrakerScript(printer, phase_raises=http_error(503, "Service Unavailable"))
-    patch(model_job, "_wait_printing", REAL_WAIT_PRINTING)
+    MoonrakerScript(printer)
+    patch(model_job, "_wait_printing", mock.Mock(side_effect=http_error(503, "Service Unavailable")))
     jp, _ = make_job(printer.root, "a")
     out = model_job.print_now(jp, wait_s=0)
     text = capsys.readouterr().out
@@ -514,6 +518,8 @@ MAPPED_CASES = {
                   True, ["uncertain"], "preparing_or_unresolved", "START_PENDING"),
     "start_4xx_must_home": (lambda m: dict(post=raises(http_error(400, "Must home axis first"))),
                             False, [], None, "START_REFUSED"),
+    "start_4xx_with_heaters_on_and_no_file": (lambda m: dict(post=raises(http_error(400, "macro failed")), heating=True),
+                                              True, ["uncertain"], "preparing_or_unresolved", "START_PENDING"),
     "start_404": (lambda m: dict(post=raises(http_error(404, "File not found"))),
                   False, [], None, "START_REFUSED"),
     "readback_wait_raises": (lambda m: dict(wait=http_error(503, "Service Unavailable")),
@@ -559,6 +565,9 @@ def test_mapped_native_failure_table(case, mapped, monkeypatch, capsys, patch):
     status, message = intake_view(ok, tail)
     assert status == want_status, tail
     assert len(uploads(mapped.run)) == 1 and len(posts) == 1  # one upload, one SET_ZCOLOR, ever
+    if "MAPPED START READBACK " in full:  # print_next keeps the last 1500 characters: the line must stay short
+        line = [ln for ln in full.splitlines() if "MAPPED START READBACK " in ln][-1]
+        assert len(line) < 700, len(line)
     checkpoint = json.loads(g.with_suffix(".launch.json").read_text())
     assert checkpoint["lease_token"]
     if status == "START_REFUSED":
@@ -672,22 +681,53 @@ def age(minutes, **columns):
     con.close()
 
 
-def test_item7_a_leased_row_left_by_a_container_restart_expires():
-    launch_state.acquire("p1", job_json="old", gcode_sha256="s", remote="a.gcode")  # this PID is alive
-    with pytest.raises(SystemExit, match="another launch on this printer is in progress"):
-        launch_state.acquire("p1", remote="b.gcode")
-    age(30)  # a recycled PID answers kill(pid, 0), so only age proves it is abandoned
+def test_item7_a_leased_row_of_an_unreachable_owner_expires_after_the_ttl():
+    launch_state.acquire("p1", remote="a.gcode")
+    age(1, host="the-old-container")
+    with pytest.raises(SystemExit, match="in progress"):
+        launch_state.acquire("p1", remote="b.gcode")  # another container, young: cannot be checked, still alive
+    age(30, host="the-old-container")
     lease = launch_state.acquire("p1", remote="b.gcode")
     assert phases() == ["leased"] and lease.token == leases()[0]["token"]
 
 
-def test_item7_a_foreign_host_leased_row_expires_too():
-    launch_state.acquire("p1", remote="a.gcode")
-    age(1, host="the-old-container")
-    with pytest.raises(SystemExit, match="in progress"):
-        launch_state.acquire("p1", remote="b.gcode")  # unknown host, young: still treated as alive
-    age(16, host="the-old-container")
-    launch_state.acquire("p1", remote="b.gcode")
+def test_item7_a_live_owner_on_this_host_is_never_stolen_however_old_the_row():
+    held = launch_state.acquire("p1", job_json="old", gcode_sha256="s", remote="a.gcode")  # this PID is alive
+    age(24 * 60)
+    with pytest.raises(SystemExit, match="another launch on this printer is in progress"):
+        launch_state.acquire("p1", remote="b.gcode")
+    held.submitting()  # and its owner can still go on
+    assert phases() == ["submitting"]
+
+
+def test_item7_a_stolen_lease_refuses_to_submit_before_any_request():
+    first = launch_state.acquire("p1", remote="a.gcode")
+    age(30, host="the-old-container")
+    second = launch_state.acquire("p1", remote="b.gcode")  # the TTL released the first launch's row
+    launch_state.reset_submitted()
+    with pytest.raises(SystemExit, match="lost its printer lease before sending; nothing started"):
+        first.submitting()
+    assert launch_state.submitted() is False
+    assert [r["token"] for r in leases()] == [second.token]
+    first.uncertain("late")  # a stale owner cannot change the thief's row
+    first.release()
+    assert [r["phase"] for r in leases()] == ["leased"]
+
+
+def test_item1_a_launch_function_stops_when_its_lease_was_stolen(rig, monkeypatch):
+    client = ScriptedClient(post=[printing])
+    real = launch_state.Lease.submitting
+
+    def stolen(self):
+        age(30, host="the-old-container")
+        launch_state.acquire("p1", remote="thief.gcode")
+        launch_state.Lease._set(self, "leased")  # no-op for the stolen row
+        return real(self)
+    monkeypatch.setattr(launch_state.Lease, "submitting", stolen)
+    monkeypatch.setattr(model_job, "_printer_key", lambda *a, **k: "p1")
+    with pytest.raises(SystemExit, match="lost its printer lease"):
+        launch("prusa", rig, client)
+    assert client.uploads == [] and client.starts == []
 
 
 @pytest.mark.parametrize("phase", ["submitting", "uncertain"])
@@ -706,7 +746,7 @@ def test_item7_the_operator_can_clear_an_expired_leased_row():
     launch_state.acquire("p1", remote="a.gcode")
     with pytest.raises(SystemExit, match="still running"):
         launch_state.resolve("p1", "not_started")
-    age(20)
+    age(20, host="the-old-container")
     assert launch_state.resolve("p1", "not_started")["reconciled"] == "not_started"
 
 
@@ -725,3 +765,63 @@ def test_item9_the_mapped_fixture_native_mock_rejects_attributes_the_module_lack
     assert callable(mapped.native.require_idle_screenless)
     with pytest.raises(AttributeError):
         mapped.native.require_idle_screenles  # a typo the bare Mock() used to accept
+
+
+# --------------------------------------------------------------------------- review follow-ups
+
+def test_item3_another_files_printing_is_not_this_start():
+    with mock.patch.object(model_job, "_printer_phase",
+                           return_value=("printing", "someone-elses.gcode", "Moonraker reports active execution")), \
+            mock.patch.object(model_job.time, "sleep"):
+        assert REAL_WAIT_PRINTING({}, "mine.gcode", 0.05) == "busy"
+    with mock.patch.object(model_job, "_printer_phase", return_value=("printing", "mine.gcode", "x")):
+        assert REAL_WAIT_PRINTING({}, "mine.gcode", 0.05) == "printing"
+
+
+def test_item4_a_cut_off_outcome_line_is_pending_not_started():
+    whole = 'START READBACK ' + json.dumps({"phase": "executing", "started": True, "file": "a.gcode"})
+    assert prepared_intake.classify_start(True, whole).status == "STARTED"
+    for cut in (whole[:40], whole[:-1], 'START READBACK {"phase": "exec', "READBACK"):
+        verdict = prepared_intake.classify_start(True, "PRINT STARTED {}\n" + cut)
+        assert verdict.status == "START_PENDING" and verdict.started is None, cut
+    assert print_next.outcome_unreadable('MAPPED START READBACK {"phase": "x"') is True
+    assert print_next.outcome_unreadable("no outcome line at all") is False
+
+
+def test_item4_the_mapped_detail_goes_on_its_own_earlier_line(mapped, patch, capsys):
+    patch(model_job, "_wait_printing", lambda *a, **k: "printing")
+    jp, g = make_job(mapped.root, "a")
+    model_job.print_mapped_native(g, mapped.st, {"display_off": 1}, {"0": 1}, json.loads(jp.read_text()), jp, 0, False)
+    lines = capsys.readouterr().out.splitlines()
+    detail = [i for i, ln in enumerate(lines) if ln.startswith("MAPPED START DETAIL ")]
+    final = [i for i, ln in enumerate(lines) if ln.startswith("MAPPED START READBACK ")]
+    assert detail and final and detail[-1] < final[-1] == len(lines) - 1
+    assert len(lines[final[-1]]) < 700 and "command" not in lines[final[-1]]
+
+
+def test_item5_a_failure_before_submitting_releases_the_start_claim_on_the_mapped_path(mapped):
+    seen = []
+
+    def card(*a, **k):
+        seen.append(bool(model_job._read_claims()))
+        raise RuntimeError("job card failed")
+    model_job._publish_job_card.side_effect = card
+    jp, g = make_job(mapped.root, "a")
+    with pytest.raises(RuntimeError, match="job card failed"):
+        model_job.print_mapped_native(g, mapped.st, {"display_off": 1}, {"0": 1}, json.loads(jp.read_text()), jp, 0, False)
+    assert seen == [True]  # the claim was held when it failed
+    assert model_job._read_claims() == {} and phases() == []
+    assert json.loads(g.with_suffix(".launch.json").read_text())["phase"] == "not_submitted"
+
+
+def test_item5_a_failure_before_submitting_releases_the_start_claim_on_the_generic_path(printer):
+    seen = []
+
+    def card(*a, **k):
+        seen.append(bool(model_job._read_claims()))
+        raise RuntimeError("job card failed")
+    model_job._publish_job_card.side_effect = card
+    jp, _ = make_job(printer.root, "a")
+    with pytest.raises(RuntimeError, match="job card failed"):
+        model_job.print_now(jp)
+    assert seen == [True] and model_job._read_claims() == {} and phases() == []

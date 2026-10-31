@@ -437,6 +437,8 @@ def bind_slot(slot: int, spool_id: int, *, client: Client = spoolman, mr: Client
                           "material": filament.get("material") or old_spool.get("material"),
                           "density": filament.get("density") or old_spool.get("density"),
                           "diameter_mm": filament.get("diameter") or old_spool.get("diameter_mm")}
+        # temps_c belonged to the previous spool: mark it so slicing resolves this one's (#692).
+        state["temperature_resolution"] = {"source": "spool changed by slot sync; resolved per slice"}
     save_state(state, state_path, printer_id=printer_id)
     usage = "unchanged"
     try:

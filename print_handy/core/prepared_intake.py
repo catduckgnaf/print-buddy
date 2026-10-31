@@ -1141,6 +1141,11 @@ def _safe_preupload_refusal(tail):
 def _refusal_text(tail):
     """Return plain user-facing guidance; raw internals remain in the receipt and job log."""
     raw = _raw_preupload_refusal(tail)
+    held = re.match(r'REFUSED: an earlier start on this printer is uncertain \(job .*?, file (.+?), since ', raw)
+    if held:
+        return (f"Didn't start: an earlier start ({held.group(1)}) was never confirmed, so nothing new "
+                "starts until it is settled. It clears by itself once the printer reports that file; "
+                "if it never printed, run `reconcile-launch --not-started`, then press Retry.")
     targets = {name.casefold(): float(value) for name, value in _HEATER_TARGET.findall(raw) if float(value) > 0}
     if targets:
         heaters = []

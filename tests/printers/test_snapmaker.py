@@ -66,7 +66,7 @@ def test_u1_is_in_the_web_ui_printer_picker_and_matches_the_registry_label():
 def test_doubled_hash_color_matches_a_plain_hex():
     assert normalize_hex("##aabbcc") == "AABBCC"
     assert normalize_hex("#AABBCC") == normalize_hex("aabbcc")
-    assert normalize_hex("#abc") is None
+    assert normalize_hex("#abc") == "AABBCC"  # #RGB is a hex color now
 
 
 def test_spool_remain_reads_a_present_number_and_ignores_absence():

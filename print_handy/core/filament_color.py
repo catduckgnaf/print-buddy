@@ -126,7 +126,7 @@ class Guess:
         return len(self.multi_hexes) > 1
 
 
-_HEX_FORM = re.compile(r"(?:#|0x)?([0-9a-f]{3}|[0-9a-f]{6}|[0-9a-f]{8})", re.IGNORECASE)
+_HEX_FORM = re.compile(r"(?:#+|0x)?([0-9a-f]{3}|[0-9a-f]{6}|[0-9a-f]{8})", re.IGNORECASE)
 
 #: CIE76 distance up to which two codes are the same color to a person
 #: (FFFFFF / FAFAFA / EEEEEE), and from which they plainly are not (0C6283

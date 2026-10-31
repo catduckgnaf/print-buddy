@@ -2,6 +2,8 @@
 import re
 from pathlib import Path
 
+import pytest
+
 from print_handy import printers
 from print_handy.core.filament_color import normalize_hex
 from print_handy.printers.base import MultiColorUnsupported
@@ -32,18 +34,10 @@ def test_tool_mapping_keeps_each_tool_on_its_own_head():
     assert (adapter.slot_count, adapter.multi_slot) == (4, False)
     assert adapter.normalize_tool_mapping({"0": 1, "1": 2, "2": 3, "3": 4}, {}) == {
         "0": 1, "1": 2, "2": 3, "3": 4}
-    try:
+    with pytest.raises(MultiColorUnsupported, match="toolhead 1"):
         adapter.normalize_tool_mapping({"0": 2}, {})
-    except MultiColorUnsupported as exc:
-        assert "toolhead 1" in str(exc)
-    else:
-        raise AssertionError("a remapped tool was accepted")
-    try:
+    with pytest.raises(MultiColorUnsupported, match="T4"):
         adapter.normalize_tool_mapping({"4": 5}, {})
-    except MultiColorUnsupported as exc:
-        assert "T4" in str(exc)
-    else:
-        raise AssertionError("a fifth tool was accepted")
 
 
 def test_guard_refuses_foreign_start_and_over_limit_heat():
@@ -54,6 +48,21 @@ def test_guard_refuses_foreign_start_and_over_limit_heat():
     hot = adapter.gcode_problems("M104 S310\nM140 S110\n")
     assert any("M104" in line for line in hot)
     assert any("M140" in line for line in hot)
+
+
+def test_guard_treats_bed_mesh_commands_as_foreign_like_the_other_klipper_family_guards():
+    # Consistency, not a claim about Klipper: qidi, creality and elegoo refuse the same markers.
+    from print_handy.printers.qidi import guard as qidi_guard
+    from print_handy.printers.snapmaker import guard
+    assert {"BED_MESH_CALIBRATE", "BED_MESH_PROFILE"} <= set(guard.FOREIGN_MARKERS)
+    assert set(guard.FOREIGN_MARKERS) <= set(qidi_guard.FOREIGN_MARKERS) | {"PRINT_START"}
+    adapter = adapter_for("snapmaker.u1")
+    assert any("BED_MESH_CALIBRATE" in p for p in adapter.gcode_problems("BED_MESH_CALIBRATE\n"))
+
+
+def test_u1_is_in_the_web_ui_printer_picker_and_matches_the_registry_label():
+    from print_handy.webui.catalog import choices_for, field_by_id
+    assert "snapmaker.u1" in choices_for(field_by_id("printer.model"))
 
 
 def test_doubled_hash_color_matches_a_plain_hex():

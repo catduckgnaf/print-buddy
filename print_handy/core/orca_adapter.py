@@ -544,6 +544,9 @@ def place_stl(source, target, scale=1.0, rotation=None, bed=None):
 # Thin, print-in-place prints (flexy rings, articulated toys): per the AD5X Flexy Ring guide,
 # Arachne walls, 2 walls, 15% line infill, 0.20 mm first layer at 20 mm/s, moderate wall speeds,
 # and nothing that can fuse moving gaps (brim, supports, ironing, fuzzy skin).
+# OrcaSlicer's built-in outer_wall_speed (mm/s), used when a process template does not set one (the Snapmaker U1's
+# only sets layer_height). Read from the `; outer_wall_speed` line of an Orca 2.4.2 slice of a template without one.
+ORCA_DEFAULT_OUTER_WALL_SPEED = 60.0
 FLEX_PROFILE = {
     'wall_generator': 'arachne', 'wall_loops': '2',
     'sparse_infill_density': '15%', 'sparse_infill_pattern': 'line',
@@ -1112,35 +1115,68 @@ def slice_model(source, folder, state, brim=None, first_layer=False, color_decis
     # The printer picks the filament profile for the job's material (Bambu Lab: its checked vendor profile for that
     # base polymer, refused when there is none); the hardware record then sets type, density and temperatures.
     filament_template = printer.filament_template(templates, state['spool']['material'])
-    filament = json.loads(Path(filament_template).read_text())
+    template_filament = json.loads(Path(filament_template).read_text())
     from .nozzle import effective_nozzle_temperature
-    base_nozzle_temp = float(state['temps_c']['nozzle'])
-    effective_nozzle_temp = effective_nozzle_temperature(nozzle_type, base_nozzle_temp)
-    filament.update({'filament_type': [state['spool']['material']], 'filament_density': [str(state['spool']['density'])],
-                     'filament_colour': [color or filament['filament_colour'][0]],
-                     'nozzle_temperature': [str(int(effective_nozzle_temp))],
-                     'nozzle_temperature_initial_layer': [str(int(effective_nozzle_temp))]})
-    if 'filament_flow_ratio' in filament and filament['filament_flow_ratio']:
+    from .filament_families import apply_family_overrides
+    from .filament_color import slot_hex
+    from .printer_state import material_adjustments, multicolor_slot_temperatures
+
+    def job_filament(material, density, temps_c, colour, bed_c=None):
+        """(filament profile Orca receives for one spool, its effective nozzle target, family note).
+
+        A printer with a vendor profile per material (Bambu Lab) already returned that profile as the template.
+        Every other printer has one PLA template, so the material family's settings (fan, volumetric speed,
+        retraction, ranges: filament_families.toml) go on it first; the spool's own type, density, colour,
+        temperatures and flow are applied after that and win.
+        """
+        import copy
+        nozzle_temp = effective_nozzle_temperature(nozzle_type, float(temps_c['nozzle']))
+        if printer.vendor_material_profiles:
+            data, note = copy.deepcopy(template_filament), 'vendor filament profile'
+        else:
+            data, note = apply_family_overrides(template_filament, material, nozzle_temp)
+        data.update({'filament_type': [material], 'filament_density': [str(density)],
+                     'filament_colour': [colour or data['filament_colour'][0]],
+                     'nozzle_temperature': [str(int(nozzle_temp))],
+                     'nozzle_temperature_initial_layer': [str(int(nozzle_temp))]})
+        if 'filament_flow_ratio' in data and data['filament_flow_ratio']:
+            try:
+                data['filament_flow_ratio'] = [str(round(float(data['filament_flow_ratio'][0]) * adj['flow_multiplier'], 4))]
+            except (ValueError, TypeError):
+                pass
+        bed = str(temps_c['bed'] if bed_c is None else bed_c)
+        for key in ('cool_plate_temp', 'eng_plate_temp', 'hot_plate_temp', 'textured_plate_temp'):
+            data[key] = data[key + '_initial_layer'] = [bed]
+        return data, nozzle_temp, note
+
+    filament, effective_nozzle_temp, family_note = job_filament(
+        state['spool']['material'], state['spool']['density'], state['temps_c'], color)
+    gate_nozzle_temp = effective_nozzle_temp  # the hottest nozzle target of the job, for the pre-slice limits
+    if not printer.vendor_material_profiles:
+        print(f"FILAMENT PROFILE: {family_note}", flush=True)
+        # The imported-project sanitizer pins a project's filament_* settings to the job's profile, so it gets
+        # the family-adjusted template (without the spool's own values), not the PLA one.
+        filament_template = folder / 'filament_template.json'
+        filament_template.write_text(json.dumps(
+            apply_family_overrides(template_filament, state['spool']['material'], effective_nozzle_temp)[0],
+            indent=2) + '\n')
+    # Material-variant process adjustments (#512): a variant like Silk PLA needs slower outer walls than its
+    # family's plain profile. The factor scales the process profile's outer-wall speed; the slowest finish
+    # among the job's spools decides. A process template that sets none (the Snapmaker U1's) is scaled from
+    # Orca's built-in default instead, so the factor never silently does nothing.
+    job_materials = [state['spool']['material']] + [
+        (state.get('filament_slots') or {}).get(str(position), {}).get('material') for position in (mapping or {}).values()]
+    factor = min(material_adjustments(m)['outer_wall_speed_factor'] for m in job_materials if m)
+    if factor != 1.0:
         try:
-            base_flow = float(filament['filament_flow_ratio'][0])
-            adj_flow = round(base_flow * adj['flow_multiplier'], 4)
-            filament['filament_flow_ratio'] = [str(adj_flow)]
-        except (ValueError, TypeError):
-            pass
-    # Material-variant process adjustments (#512): a variant like Silk PLA
-    # needs slower outer walls than its family's plain profile. The factor
-    # scales the process profile's authored outer-wall speed when it has
-    # one; it never invents a speed for a profile that does not set one.
-    from .printer_state import material_adjustments
-    _variant = material_adjustments(state['spool']['material'])
-    if _variant['outer_wall_speed_factor'] != 1.0 and process.get('outer_wall_speed'):
-        try:
-            process['outer_wall_speed'] = str(round(
-                float(process['outer_wall_speed']) * _variant['outer_wall_speed_factor'], 1))
-        except (ValueError, TypeError):
-            pass
-    for key in ('cool_plate_temp', 'eng_plate_temp', 'hot_plate_temp', 'textured_plate_temp'):
-        filament[key] = filament[key + '_initial_layer'] = [str(state['temps_c']['bed'])]
+            authored = float(process['outer_wall_speed'])
+        except (KeyError, ValueError, TypeError):
+            authored = None
+        if authored is None:
+            authored = ORCA_DEFAULT_OUTER_WALL_SPEED
+            print(f"OUTER WALL SPEED: the process template sets none; scaling Orca's default "
+                  f"{authored:g} mm/s by {factor:g} for the slowest finish in this job", flush=True)
+        process['outer_wall_speed'] = str(round(authored * factor, 1))
     configs = []
     for name, data in zip(('machine', 'process', 'filament'), (machine, process, filament)):
         path = folder / f'{name}.json'
@@ -1149,36 +1185,39 @@ def slice_model(source, folder, state, brim=None, first_layer=False, color_decis
     filament_paths = [configs[2]]
     if mapping and multi_tool:
         import copy
-        from .printer_state import same_material
-        # One filament profile per toolhead, in toolhead order: Orca's
-        # multi-extruder templates pair filament i with extruder i, and the
-        # identity mapping means filament i must describe toolhead i+1's
-        # recorded spool. Unused toolheads keep the base profile. The machine
-        # and process templates are the model's own (already multi-extruder):
-        # no single-extruder-multi-material flip and no forced prime tower.
+        # One filament profile per toolhead, in toolhead order: Orca's multi-extruder templates pair filament i
+        # with extruder i, and the identity mapping means filament i must describe toolhead i+1's recorded spool.
+        # Each used toolhead is sliced at its own spool's temperatures and type (every toolhead has its own
+        # heater, so they may differ; the bed is shared). Unused toolheads keep the base profile. The machine
+        # and process templates are the model's own (already multi-extruder): no single-extruder-multi-material
+        # flip and no forced prime tower.
         used = {int(tool): int(position) for tool, position in mapping.items()}
-        materials = []
-        active_material = (state.get('spool') or {}).get('material')
+        order = sorted(used)
+        records = [state['filament_slots'][str(used[tool])] for tool in order]
+        slot_temps = dict(zip(order, multicolor_slot_temperatures(
+            state, records, _fetch_filament, shared_heater=False, label='toolhead',
+            reference_material=(state.get('spool') or {}).get('material'))))
+        job_bed = slot_temps[order[0]][0]['bed']
         filament_paths = []
         for tool in range(int(printer.tool_count)):
-            data = copy.deepcopy(filament)
             position = tool + 1
             if tool in used:
                 record = state['filament_slots'][str(position)]
-                if active_material is not None and not same_material(record['material'], active_material):
-                    raise RuntimeError('mixed material requires independently calibrated per-toolhead temperatures/density')
-                materials.append(record['material'])
-                from .filament_color import slot_hex
+                temps, resolution = slot_temps[tool]
+                data, tool_nozzle, _note = job_filament(
+                    record['material'], record.get('density', state['spool']['density']), temps,
+                    slot_hex(position, record) if record.get('hex') else filament['filament_colour'][0], bed_c=job_bed)
+                gate_nozzle_temp = max(gate_nozzle_temp, tool_nozzle)
+                print(f"SLICE TEMPERATURES: toolhead {position} {record['material']} nozzle {temps['nozzle']} °C, "
+                      f"bed {job_bed} °C ({resolution.get('source')})", flush=True)
                 data.update({'name': f"Hermes toolhead {position} {record['material']}",
                              'filament_settings_id': [f"Hermes toolhead {position} {record['material']}"],
-                             'filament_colour': [slot_hex(position, record)] if record.get('hex')
-                                                else filament['filament_colour'],
                              'filament_is_support': ['0']})
+            else:
+                data = copy.deepcopy(filament)
             path = folder / f'filament_tool_{tool}.json'
             path.write_text(json.dumps(data, indent=2) + '\n')
             filament_paths.append(path)
-        if len({str(m).strip().casefold() for m in materials}) > 1:
-            raise RuntimeError('mixed material requires independently calibrated per-toolhead temperatures/density')
         configs.extend(filament_paths)
         mapped_profile = True
     elif mapping:
@@ -1196,16 +1235,25 @@ def slice_model(source, folder, state, brim=None, first_layer=False, color_decis
         configs[0].write_text(json.dumps(machine, indent=2) + '\n')
         configs[1].write_text(json.dumps(process, indent=2) + '\n')
         filament_paths = []
-        from .filament_color import slot_hex
-        for tool, physical_slot in mapping.items():
-            slot = state['filament_slots'][str(physical_slot)]
-            from .printer_state import same_material
-            if not same_material(slot['material'], state['spool']['material']):
-                raise RuntimeError('mixed material requires independently calibrated per-slot temperatures/density')
-            data = copy.deepcopy(filament)
-            data.update({'name': f"Hermes slot {physical_slot} {slot['material']}",
-                         'filament_settings_id': [f"Hermes slot {physical_slot} {slot['material']}"],
-                         'filament_colour': [slot_hex(physical_slot, slot)],
+        # One heater serves every slot: each slot is sliced at its own spool's temperatures and type, Orca emits
+        # the M104 for the new filament at each change, and a job whose spools' nozzle targets are further apart
+        # than printer_state.MULTICOLOR_TEMPERATURE_TOLERANCE_C is refused rather than sliced at one of them.
+        order = sorted(mapping, key=int)
+        records = [state['filament_slots'][str(mapping[tool])] for tool in order]
+        slot_temps = multicolor_slot_temperatures(
+            state, records, _fetch_filament, shared_heater=True, label='slot',
+            reference_material=(state.get('spool') or {}).get('material'))
+        job_bed = slot_temps[0][0]['bed']
+        for tool, record, (temps, resolution) in zip(order, records, slot_temps):
+            physical_slot = mapping[tool]
+            data, tool_nozzle, _note = job_filament(
+                record['material'], record.get('density', state['spool']['density']), temps,
+                slot_hex(physical_slot, record), bed_c=job_bed)
+            gate_nozzle_temp = max(gate_nozzle_temp, tool_nozzle)
+            print(f"SLICE TEMPERATURES: slot {physical_slot} {record['material']} nozzle {temps['nozzle']} °C, "
+                  f"bed {job_bed} °C ({resolution.get('source')})", flush=True)
+            data.update({'name': f"Hermes slot {physical_slot} {record['material']}",
+                         'filament_settings_id': [f"Hermes slot {physical_slot} {record['material']}"],
                          'filament_is_support': ['0']})
             path = folder / f'filament_tool_{tool}.json'
             path.write_text(json.dumps(data, indent=2) + '\n')
@@ -1310,7 +1358,7 @@ def slice_model(source, folder, state, brim=None, first_layer=False, color_decis
                      before_profile=None, filaments=len(filament_paths),
                      filament_slots=(int(printer.slot_count) if multi_tool else FILAMENT_SLOTS), tool_slots=tool_slots,
                      nozzle_type=nozzle_type, materials=used_materials,
-                     nozzle_temp=effective_nozzle_temp, nozzle_temp_is_effective=True)
+                     nozzle_temp=gate_nozzle_temp, nozzle_temp_is_effective=True)
     if gate.status == 'blocked':
         raise SliceFailure('Pre-slice guard blocked: ' + '; '.join(gate.blocked), kind='guard')
     # Unknown placement is advisory, never a false block.

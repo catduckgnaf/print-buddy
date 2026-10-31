@@ -12,6 +12,8 @@ from __future__ import annotations
 import math
 import re
 
+from .. import job_checks
+
 FOREIGN_MARKERS = ("START_PRINT", "CHANGE_ZCOLOR", "LOAD_ZOFFSET", "BED_MESH_CALIBRATE",
                    "BED_MESH_PROFILE", "SAVE_VARIABLE", "project_file")
 
@@ -50,4 +52,6 @@ def gcode_problems(text, adapter, state=None):
             if not any(math.isclose(nozzle_mm, s, abs_tol=1e-3) for s in adapter.supported_nozzle_sizes):
                 problems.append(f"nozzle {nozzle_mm:g} mm has no {name} template here (supported: "
                                 f"{', '.join(f'{s:g}' for s in adapter.supported_nozzle_sizes)})")
+    # The loaded material, installed nozzle and heater targets (job_checks, shared with the other guards).
+    problems += job_checks.recorded_job_problems(text, adapter, state)
     return problems

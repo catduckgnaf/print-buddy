@@ -38,6 +38,7 @@ class BambuAdapter(PrinterAdapter):
     # Slicers this printer's guard accepts. Bambu Studio is the Bambu Lab default (owner decision); every line
     # of its output still passes the same guard, which refuses anything that is not plain G/M/T code.
     verified_slicers = ("bambu_studio", "orca")
+    vendor_material_profiles = True  # filament_template() returns the checked vendor profile of the material
 
     def fact(self, name):
         return self.facts[name].value

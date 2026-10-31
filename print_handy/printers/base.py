@@ -336,6 +336,9 @@ class PrinterAdapter(ABC):
     # it, and the record's single spool stays the slot-1 offer (#263). Only the AD5X
     # families (ZMod and stock Flashforge) bind slots in the record.
     slots_bound_by_record: bool = False
+    # True when filament_template() selects a checked vendor profile per material (Bambu Lab). Every other
+    # printer has one PLA template per model, so core.filament_families puts the job's material family on it.
+    vendor_material_profiles: bool = False
     # (xmin, ymin, xmax, ymax) when vendor start/end G-code moves off the bed; None holds every move to the bed.
     motion_envelope_mm: tuple[float, float, float, float] | None = None
     # Slicers ([printer] slicer values) whose output this printer's guards have been checked against; None trusts

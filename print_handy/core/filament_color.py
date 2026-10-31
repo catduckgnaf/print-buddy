@@ -126,7 +126,7 @@ class Guess:
         return len(self.multi_hexes) > 1
 
 
-_HEX_FORM = re.compile(r"(?:#+|0x)?([0-9a-f]{3}|[0-9a-f]{6}|[0-9a-f]{8})", re.IGNORECASE)
+_HEX_FORM = re.compile(r"(#+|0x)?([0-9a-f]{3}|[0-9a-f]{6}|[0-9a-f]{8})", re.IGNORECASE)
 
 #: CIE76 distance up to which two codes are the same color to a person
 #: (FFFFFF / FAFAFA / EEEEEE), and from which they plainly are not (0C6283
@@ -138,8 +138,8 @@ DIFFERENT_DELTA_E = 20.0
 def parse_hex(value: Any) -> tuple[str, int | None] | None:
     """``(RRGGBB, alpha)`` from any hex text, else None. The one reader of hex.
 
-    Accepts ``#RGB``, ``RRGGBB`` and ``RRGGBBAA`` with an optional ``#`` or
-    ``0x``, any case and surrounding whitespace; a comma list gives its first
+    Accepts ``#RGB`` (the prefix is required, so words like ``bad`` stay
+    names), ``RRGGBB`` and ``RRGGBBAA`` with an optional ``#`` or ``0x``, any case and surrounding whitespace; a comma list gives its first
     valid entry. ``alpha`` is 0-255 when the text carried one, else None.
     Names, empty values and non-strings give None.
     """
@@ -149,8 +149,10 @@ def parse_hex(value: Any) -> tuple[str, int | None] | None:
         match = _HEX_FORM.fullmatch(part.strip())
         if not match:
             continue
-        digits = match.group(1).upper()
+        prefix, digits = match.group(1), match.group(2).upper()
         if len(digits) == 3:
+            if not prefix:
+                continue  # bare "bad", "fed", "ace" are words, not colors
             digits = "".join(c * 2 for c in digits)
         return digits[:6], (int(digits[6:], 16) if len(digits) == 8 else None)
     return None

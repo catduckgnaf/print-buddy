@@ -739,7 +739,7 @@ def launch_mapped_screenless(m, record, printer_hex):
 
 @pytest.mark.parametrize("record_hex, printer_hex", [
     ("FFFFFF", "FAFAFA"), ("FAFAFA", "FFFFFF"), ("0C6283FF", "0C6283"), ("0C6283", "0C6283FF"),
-    ("FFF", "FFFFFF"), ("#fff", "ffffff"), ("0x0C6283", "0C6283"), ("FF0000,00FF00", "FF0000"),
+    ("#FFF", "FFFFFF"), ("#fff", "ffffff"), ("0x0C6283", "0C6283"), ("FF0000,00FF00", "FF0000"),
 ])
 def test_mapped_launch_proceeds_silently_on_the_same_color_in_another_spelling(mapped, capsys, record_hex, printer_hex):
     launch = launch_mapped_screenless(mapped, {"material": "PLA", "hex": record_hex, "hex_source": "spoolman"}, printer_hex)

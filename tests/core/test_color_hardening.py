@@ -26,7 +26,9 @@ from print_handy.printers.flashforge.zmod import screen
     ("  0x0c6283 ", ("0C6283", None)),
     ("0X0C6283", ("0C6283", None)),
     ("#abc", ("AABBCC", None)),
-    ("FFF", ("FFFFFF", None)),
+    ("#fff", ("FFFFFF", None)),
+    ("#ace", ("AACCEE", None)),
+    ("0xace", ("AACCEE", None)),
     ("0C6283FF", ("0C6283", 255)),
     ("#0c628300", ("0C6283", 0)),
     ("0C6283,FFFFFF", ("0C6283", None)),
@@ -36,7 +38,8 @@ def test_parse_hex_reads_every_form(text, expected):
     assert fc.parse_hex(text) == expected
 
 
-@pytest.mark.parametrize("value", [None, "", "  ", "red", "matte white", "12345", "#GGGGGG", 0xFFFFFF, ["FFFFFF"], "1234567"])
+@pytest.mark.parametrize("value", [None, "", "  ", "red", "matte white", "12345", "#GGGGGG", 0xFFFFFF, ["FFFFFF"], "1234567",
+                                   "bad", "fed", "ACE", "bed", "fab", "add", "cab", "FFF"])
 def test_parse_hex_gives_none_for_names_empties_and_junk(value):
     assert fc.parse_hex(value) is None
 
@@ -53,7 +56,7 @@ def test_normalize_hex_is_a_thin_wrapper_that_still_refuses_a_list():
 
 @pytest.mark.parametrize("a, b", [
     ("FFFFFF", "FAFAFA"), ("FFFFFF", "EEEEEE"), ("FAFAFA", "EEEEEE"),
-    ("0C6283", "0C6283FF"), ("FFF", "FFFFFF"), ("#0c6283", "0X0C6283"),
+    ("0C6283", "0C6283FF"), ("#FFF", "FFFFFF"), ("#0c6283", "0X0C6283"),
 ])
 def test_same_color_calibration_same(a, b):
     assert fc.same_color(a, b) is True

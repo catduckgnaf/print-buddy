@@ -2449,8 +2449,22 @@ async def prepare_link(event, adapter, state, root, timeout=None, reuse=None, pr
                                     print_next.start(target), allow_stop=True,
                                     refusal_context=start_context)
         mj._timing(jp, 'intake_start_returned', ok=bool(ok))
-        receipt.update(status='STARTED' if ok else 'START_REFUSED', started=bool(ok))
-        if not ok:
+        phase = ''
+        for line in reversed(str(tail).splitlines()):
+            if 'MAPPED START READBACK ' not in line:
+                continue
+            try:
+                phase = str(json.loads(line.split('MAPPED START READBACK ', 1)[1]).get('phase') or '')
+            except (ValueError, AttributeError):
+                pass
+            break
+        unknown = (phase in ('preparing_or_unresolved', 'awaiting_confirmation')
+                   or (not ok and not _safe_preupload_refusal(tail)))
+        pending = unknown or phase in ('preparing', 'executing')
+        receipt.update(status=('START_PENDING' if unknown else 'STARTED' if ok or pending else 'START_REFUSED'),
+                       started=None if unknown else bool(ok or pending),
+                       start_outcome='unknown' if unknown else phase or None)
+        if not ok and not pending:
             raw = _raw_preupload_refusal(tail)
             logger.warning('print start refused detail=%s', logs.redact(raw or str(tail)))
             receipt.update(start_refusal_detail=str(tail), uploaded=False if raw else None,
@@ -2461,7 +2475,11 @@ async def prepare_link(event, adapter, state, root, timeout=None, reuse=None, pr
         # warming start with a known file can be edited by the listener later, so
         # only that start defers its roast (#374).
         remote = print_next.started_file(tail) if warming else None
-        if ok:
+        if unknown:
+            message = ('Start sent, but the printer has not confirmed it yet. It is probably still heating '
+                       'and preparing, which can take several minutes. I will post here when it starts '
+                       'printing. Do not send it again.')
+        elif ok or pending:
             message = print_summary.format_started(exact_job, exact_plate) + later
             if remote is None:
                 # Already printing (or warmup cannot be tracked for an edit): this

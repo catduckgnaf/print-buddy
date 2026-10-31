@@ -894,6 +894,23 @@ def ifs_purge_settings(printer, state, tools):
     return 'unknown', {}, {'purge_in_prime_tower': '0'}
 
 
+def start_mesh_profile(state):
+    """The START_PRINT MESH= name for the calibration mode this printer is held to.
+
+    Same rule as model_job.mesh_readiness: only the native screen uses the native
+    baseline mesh; screenless ZMod uses the saved 'auto' mesh. The launch check
+    requires live display_off to match calibration_authority.mode, so slicing by that
+    mode is what the launch will accept (2026-10-30: a screenless slice wrote
+    MESH=MESH_DATA from the native-era baseline and the start refused it).
+    """
+    if (state.get('calibration_authority') or {}).get('mode') == 'screenless':
+        return 'auto'
+    mesh = (state.get('calibration_baseline') or {}).get('native_mesh', 'auto')
+    if not isinstance(mesh, str) or not re.fullmatch(r'[A-Za-z0-9_]+', mesh):
+        raise RuntimeError('invalid calibration baseline mesh')
+    return mesh
+
+
 def slice_model(source, folder, state, brim=None, first_layer=False, color_decisions=None, preserve_layout=False, filament_slot=None, item_shifts=None, fit_by_object=None, copies=None, scale=None, rotation=None, supports=None, object_ids=None, adapter=None, brim_policy=None):
     source, folder = Path(source), Path(folder)
     # An explicit adapter (a job prepared for another model) brings its own templates; the default keeps TEMPLATES.
@@ -983,10 +1000,7 @@ def slice_model(source, folder, state, brim=None, first_layer=False, color_decis
         process.update({'layer_height': '0.2', 'initial_layer_print_height': '0.2', 'wall_loops': '2',
                         'brim_width': '0', 'brim_type': 'no_brim', 'initial_layer_speed': '20',
                         'initial_layer_infill_speed': '20', 'enable_support': '0'})
-    baseline = state.get('calibration_baseline') or {}
-    mesh = baseline.get('native_mesh', 'auto')
-    if not isinstance(mesh, str) or not re.fullmatch(r'[A-Za-z0-9_]+', mesh):
-        raise RuntimeError('invalid calibration baseline mesh')
+    mesh = start_mesh_profile(state)
     machine['machine_start_gcode'] = printer.machine_start_gcode(machine['machine_start_gcode'], mesh)
     machine['machine_end_gcode'] = printer.machine_end_gcode(machine.get('machine_end_gcode', ''))
     machine['default_print_profile'] = process['name']

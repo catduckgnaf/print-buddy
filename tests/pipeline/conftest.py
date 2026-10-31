@@ -89,6 +89,7 @@ def _scratch_state(tmp_path, monkeypatch):
     from print_handy.core import model_job
     root = tmp_path / "pipeline-state"
     root.mkdir()
+    monkeypatch.setenv("PRINT_HANDY_LAUNCH_DB", str(root / "launch-state.db"))
     monkeypatch.setattr(model_job, "ARCHIVE", root / "archive")
     monkeypatch.setattr(model_job, "START_CLAIMS", root / "claims.json")
     monkeypatch.setattr(model_job, "CONTEXT", root / "context.json")

@@ -438,6 +438,72 @@ REAL_AWAITING = ('START REQUEST ACCEPTED {"file": "ghost_plate_1_abc.gcode", "pr
                  '"file": "ghost_plate_1_abc.gcode", "message": "submitted, awaiting confirmation"}')
 
 
+async def _test_unknown_start(target, env):
+    env.starts.append(target)
+    return True, 'MAPPED START READBACK {"phase":"preparing_or_unresolved","outcome":"unknown","file":"ghost.gcode"}'
+
+
+def test_uncertain_subprocess_exit_is_not_a_refusal(env, monkeypatch):
+    async def start(target):
+        env.starts.append(target)
+        return False, 'UNCERTAIN: print-now timed out. The plate may already have started. Not retrying.'
+    monkeypatch.setattr(print_next, 'start', start)
+    adapter, result, receipt = run_flow(env, [1, 0, 0], mid='uncertain-process')
+    assert receipt['status'] == 'START_PENDING'
+    assert receipt['started'] is None
+
+
+def test_uncertain_submission_is_not_a_started_print_or_refusal(env, monkeypatch):
+    async def start(target):
+        return await _test_unknown_start(target, env)
+    monkeypatch.setattr(print_next, 'start', start)
+    adapter, result, receipt = run_flow(env, [1, 0, 0], mid='uncertain-submission')
+    assert receipt['status'] == 'START_PENDING'
+    assert receipt['started'] is None
+    assert len(env.starts) == 1
+    assert 'has not confirmed it yet' in adapter.sent[-1]
+    assert 'Do not send it again' in adapter.sent[-1]
+    assert "Didn't start" not in adapter.sent[-1]
+
+
+# Representative tails of a start request whose response was lost, one per adapter
+# family's transport. The 2026-10-30 AD5X incident (Moonraker SET_ZCOLOR held open
+# through warmup) was reported as "Didn't start" while the printer began printing.
+LOST_START_TAILS = {
+    'moonraker (klipper, flashforge zmod, creality, elegoo, qidi, sovol, anycubic)':
+        'Traceback (most recent call last):\n  File "/app/print_handy/core/model_job.py", line 5936, '
+        'in print_mapped_native\nTimeoutError: timed out',
+    'prusa (PrusaLink)': "requests.exceptions.ReadTimeout: HTTPConnectionPool(host='prusa', port=80): Read timed out.",
+    'octoprint': 'urllib.error.URLError: <urlopen error timed out>',
+    'bambulab (MQTT)': 'TimeoutError: print command publish was not acknowledged',
+    'elegoo_sdcp': 'TimeoutError: SDCP start acknowledgement not received within 15 s',
+    'flashforge_stock (HTTP)': 'socket.timeout: timed out',
+    'sovol_marlin (serial)': 'serial.serialutil.SerialTimeoutException: Write timeout',
+}
+
+
+@pytest.mark.parametrize('family', sorted(LOST_START_TAILS))
+def test_lost_start_response_is_pending_for_every_printer_family(env, monkeypatch, family):
+    async def start(target):
+        env.starts.append(target)
+        return False, LOST_START_TAILS[family]
+    monkeypatch.setattr(print_next, 'start', start)
+    adapter, result, receipt = run_flow(env, [1, 0, 0], mid='lost-' + family.split()[0])
+    assert receipt['status'] == 'START_PENDING' and receipt['started'] is None
+    assert len(env.starts) == 1  # never resubmitted
+    assert "Didn't start" not in adapter.sent[-1]
+    assert 'Do not send it again' in adapter.sent[-1]
+
+
+def test_explicit_preupload_refusal_is_still_a_refusal(env, monkeypatch):
+    async def start(target):
+        env.starts.append(target)
+        return False, 'REFUSED: idle guard failed: print.state is printing. Nothing uploaded or started.'
+    monkeypatch.setattr(print_next, 'start', start)
+    adapter, result, receipt = run_flow(env, [1, 0, 0], mid='explicit-refusal')
+    assert receipt['status'] == 'START_REFUSED' and receipt['started'] is False
+
+
 def test_intake_recognizes_real_print_now_output():
     assert print_next.still_preparing(REAL_AWAITING)
     assert print_next.still_preparing('START ACCEPTED; PREPARATION STILL RUNNING {"started": false}')

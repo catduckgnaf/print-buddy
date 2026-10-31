@@ -180,6 +180,75 @@ class NeverLoadedSlotTests(ListenerCase):
         self.assertEqual(tracker.empty_slots({1: False, 4: False}), [1])
 
 
+class IdleInsertionBaselineTests(unittest.TestCase):
+    def monitor(self, root):
+        return mel.FilamentInsertionMonitor(root / "edges.json", root / "pending.json")
+
+    def test_startup_presence_warming_does_not_prompt_for_unchanged_spools(self):
+        # 2026-10-30 reboot: four loaded spools persisted, ZMod first reported
+        # them absent, then present. That is a reboot, not four insertions.
+        with tempfile.TemporaryDirectory() as tmp:
+            (Path(tmp) / 'edges.json').write_text(json.dumps({str(i): True for i in range(1, 5)}))
+            monitor = self.monitor(Path(tmp))
+            self.assertEqual(monitor.observe({i: False for i in range(1, 5)}, idle=True), [])
+            # ZMod may first report absent before its real IFS readings arrive.
+            self.assertEqual(monitor.observe({i: True for i in range(1, 5)}, idle=True), [])
+            self.assertEqual(monitor.observe({i: True for i in range(1, 5)}, idle=True), [])
+            self.assertEqual(json.loads((Path(tmp) / "edges.json").read_text()),
+                             {str(i): True for i in range(1, 5)})
+
+    def test_delayed_initialization_multiple_absent_samples_does_not_prompt(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / 'edges.json').write_text(json.dumps({str(i): True for i in range(1, 5)}))
+            monitor = self.monitor(root)
+            for _ in range(4):
+                self.assertEqual(monitor.observe({i: False for i in range(1, 5)}, idle=True), [])
+            for _ in range(4):
+                self.assertEqual(monitor.observe({i: True for i in range(1, 5)}, idle=True), [])
+
+    def test_empty_slots_eventually_become_a_valid_baseline(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / 'edges.json').write_text(json.dumps({str(i): True for i in range(1, 5)}))
+            with mock.patch.object(mel.time, 'monotonic', return_value=100.0) as clock:
+                monitor = self.monitor(root)
+                empty = {i: False for i in range(1, 5)}
+                monitor.observe(empty, idle=True)
+                clock.return_value = 221.0
+                monitor.observe(empty, idle=True)
+                self.assertEqual(json.loads((root / 'edges.json').read_text()),
+                                 {str(i): False for i in range(1, 5)})
+
+    def test_unknown_or_partial_readings_do_not_arm_or_emit_prompts(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            monitor = self.monitor(Path(tmp))
+            self.assertEqual(monitor.observe({1: False, 2: False, 3: None}, idle=True), [])
+            self.assertEqual(monitor.observe({i: True for i in range(1, 5)}, idle=True), [])
+            self.assertEqual(monitor.observe({1: True, 2: True, 3: None, 4: True}, idle=True), [])
+            self.assertEqual(monitor.observe({i: True for i in range(1, 5)}, idle=True), [])
+
+    def test_reconnect_rebaselines_but_later_real_slot_reinsert_prompts_once(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            monitor = self.monitor(root)
+            full = {i: True for i in range(1, 5)}
+            monitor.observe(full, idle=True)
+            monitor.observe(full, idle=True)  # stable initial baseline
+            # A Klippy reconnect must invalidate in-memory arming without deleting edges.
+            monitor.observe({}, idle=False)
+            self.assertEqual(monitor.observe({i: False for i in range(1, 5)}, idle=True), [])
+            self.assertEqual(monitor.observe(full, idle=True), [])
+            self.assertEqual(monitor.observe(full, idle=True), [])
+            # Once re-armed, an actual settled removal and reinsertion is still detected.
+            removed = {1: True, 2: False, 3: True, 4: True}
+            self.assertEqual(monitor.observe(removed, idle=True), [])
+            self.assertEqual(monitor.observe(removed, idle=True), [])
+            self.assertEqual(monitor.observe(full, idle=True), [])
+            self.assertEqual(monitor.observe(full, idle=True), [2])
+            self.assertEqual(monitor.observe(full, idle=True), [])
+
+
 class PendingPromptTests(unittest.TestCase):
     def test_answered_or_emptied_prompts_are_cleared(self):
         with tempfile.TemporaryDirectory() as tmp:

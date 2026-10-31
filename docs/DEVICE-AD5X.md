@@ -236,3 +236,35 @@ lasts for the print.
 | `.gcode.3mf` live print on ZMod 1.7.5 | Not verified |
 | Starting a slot-bound print screenless (`display_off=1`) from chat | Not verified (offline-tested only, 2.2.0) |
 | `/print-calibration mesh` from chat (the table's mesh row used the `mesh-run` script path) | Not verified |
+
+
+## Screenless (Helix) starts and lost start responses
+
+In screenless mode (`display_off=1`) the mapped `SET_ZCOLOR` start can keep
+Moonraker's HTTP request open while the printer heats and loads the IFS slot,
+which outlasts Print Handy's 30 second request timeout. A timeout therefore does
+not mean the printer rejected the job. After a lost response Print Handy reads
+printer status once, read-only, and never submits again:
+
+| What the printer reports | Chat says | Duplicate guard |
+| --- | --- | --- |
+| This exact file printing or preparing (including the `.gcode.3mf` unpacked names) | Print started | Held until reconciled |
+| Heater targets set (the idle guard proved they were off before the one submission) | Print started, warming up | Held until reconciled |
+| Nothing attributable yet | Start sent, not confirmed yet; Print Handy posts when printing begins; do not send it again | Held until reconciled |
+
+An explicit `REFUSED:` before upload is still reported as a refusal.
+
+## Switching between the native screen and screenless mode
+
+The calibration record's `calibration_authority.mode` decides which offset and
+mesh a job may use, and the live `display_off` must match it before any start.
+Slicing follows the same mode: screenless jobs use `START_PRINT MESH=auto`;
+native-screen jobs use the recorded `native_mesh`. After switching modes,
+confirm the Z offset for the new mode with `/calibration`. Until then Print
+Handy refuses the job before slicing and says which mode needs confirming; it
+never borrows the other mode's offset. A file sliced before the switch is
+refused at start with the mesh it carries and must be prepared again.
+
+These behaviors are offline tested (tests/pipeline/test_launch_state.py,
+tests/pipeline/test_screen_mode_migration.py); the first live screenless start
+after this change is the hardware check.

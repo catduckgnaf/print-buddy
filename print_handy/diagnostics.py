@@ -272,6 +272,22 @@ def known_cause(exc: BaseException) -> KnownCause | None:
                 f"Set up the {credential} — see \"{section}\" in "
                 "docs/PROJECT-REFERENCE.md. Until it is in place, "
                 f"{site} links cannot be fetched.")
+    if "screenless user offset has no verified matching authority" in low:
+        return KnownCause(
+            Category.CONFIGURATION,
+            "The printer is running screenless (no native screen, for example Helix), but "
+            "Print Handy's confirmed Z offset is from the native screen or no longer matches "
+            "the offset the printer reports. It will not borrow the other mode's offset.",
+            "Confirm the current screenless Z offset with /calibration, then send the print "
+            "again. Retrying the slice will not help.")
+    if "native calibration authority is not operator confirmed" in low or (
+            "native zprobeoffset" in low and "operator-confirmed baseline" in low):
+        return KnownCause(
+            Category.CONFIGURATION,
+            "The printer is using its native screen, but Print Handy's confirmed calibration is "
+            "for screenless mode or no longer matches the screen's Z offset.",
+            "Confirm the native screen's Z offset with /calibration, then send the print "
+            "again. Retrying the slice will not help.")
     if error_type == "SpoolmanUnavailable":
         if "not configured" in low:
             return KnownCause(

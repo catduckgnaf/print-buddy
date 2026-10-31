@@ -1733,38 +1733,72 @@ class SpoolmanNewSpoolWatcher:
 
 class FilamentInsertionMonitor:
     """Stable native slot presence detector. Sends text only, never edits inventory."""
+    # After a reboot or reconnect ZMod can report placeholder presence for a while
+    # (2026-10-30: four false insertion prompts 20 s after klippy ready). Readings that
+    # disagree with the persisted edges are held for this long before being adopted.
+    SETTLE_SECONDS = 120
+
     def __init__(self, edge_path=IFS_EDGE_STATE, pending_path=IFS_PENDING_STATE):
         self.edge_path = Path(edge_path)
         self.pending_path = Path(pending_path)
+        self.reset_baseline()
+
+    def reset_baseline(self):
+        """Forget in-memory arming; the persisted edges stay the physical reference."""
         self.baselined = False
         self.last_sample = {}
         self.stable_counts = {}
         self.transition_from = {}
+        self.settling_since = None
+
+    def _armed(self, current):
+        self.last_sample = current
+        self.stable_counts = {slot: 2 for slot in current}
+        self.transition_from = {}
+        self.settling_since = None
+        self.baselined = True
 
     def observe(self, slots, *, idle, connected=True):
         """Return newly confirmed slots; startup/reconnect samples only establish baseline."""
         if not connected or not idle or not isinstance(slots, dict):
-            self.last_sample = {}
-            self.stable_counts = {}
-            self.transition_from = {}
-            self.baselined = False
+            self.reset_baseline()
             return []
-        current = {str(slot): value for slot, value in slots.items() if str(slot) in {"1", "2", "3", "4"} and isinstance(value, bool)}
+        wanted = {str(slot): value for slot, value in slots.items() if str(slot) in {"1", "2", "3", "4"}}
+        if any(not isinstance(value, bool) for value in wanted.values()):
+            # An unknown slot reading is not a physical state: never arm or emit on it.
+            self.reset_baseline()
+            return []
+        current = wanted
+        edges = read_json_object(self.edge_path)
+        if self.settling_since is not None:
+            # Rebaseline after reset: a reboot is not a user action, so readings returning
+            # to the persisted edges prompt nothing, and a disagreement is adopted silently
+            # only once it has held for SETTLE_SECONDS.
+            if all(edges.get(slot) == present for slot, present in current.items()):
+                self._armed(current)
+            elif (current == self.last_sample
+                    and time.monotonic() - self.settling_since >= self.SETTLE_SECONDS):
+                edges.update(current)
+                atomic_write_json(self.edge_path, edges)
+                self._armed(current)
+            else:
+                self.last_sample = current
+            return []
         if not self.baselined:
+            known = {slot: present for slot, present in current.items() if slot in edges}
+            if any(edges[slot] != present for slot, present in known.items()):
+                self.settling_since = time.monotonic()
+                self.last_sample = current
+                self.baselined = True
+                return []
             self.last_sample = current
             self.stable_counts = {slot: 1 for slot in current}
-            edges = read_json_object(self.edge_path)
-            updated = False
-            for slot, present in current.items():
-                if edges.get(slot) != present:
-                    edges[slot] = present
-                    updated = True
-            if updated:
+            if any(slot not in edges for slot in current):
+                edges.update(current)
                 atomic_write_json(self.edge_path, edges)
             self.baselined = True
             return []
         stable = []
-        edges = read_json_object(self.edge_path)
         pending = read_json_object(self.pending_path)
         changed = False
         for slot, present in current.items():
@@ -3017,10 +3051,7 @@ class Listener:
             log(f"timelapse capture tick failed file={self.filename!r}: {exc!r}")
 
     async def session(self):
-        self.ifs_monitor.baselined = False
-        self.ifs_monitor.last_sample = {}
-        self.ifs_monitor.stable_counts = {}
-        self.ifs_monitor.transition_from = {}
+        self.ifs_monitor.reset_baseline()
         async with websockets.connect(WS_URL, ping_interval=20, ping_timeout=20, max_size=2**22) as ws:
             self.moonraker_connected = True
             await ws.send(SUBSCRIBE)
@@ -3056,6 +3087,7 @@ class Listener:
                                 log(f"no bed mesh at print start: {self.filename!r}")
                                 await asyncio.to_thread(post, f"{NO_MESH_ALERT}\nPrint: {print_summary.safe_label(self.filename)}")
                     elif method in ("notify_klippy_disconnected", "notify_klippy_shutdown"):
+                        self.ifs_monitor.reset_baseline()
                         log(f"{method} while state={self.state}")
                         if self.state in ("printing", "paused"):
                             if getattr(self, "shutdown_alerted", None) != self.filename:
@@ -3068,6 +3100,7 @@ class Listener:
                             # is not a terminal transition: clean up here.
                             await self._print_ended("error")
                     elif method == "notify_klippy_ready":
+                        self.ifs_monitor.reset_baseline()
                         log("klippy ready; resubscribing")
                         await ws.send(SUBSCRIBE)
                 if time.monotonic() - self.last_native_poll >= NATIVE_POLL_SECONDS:

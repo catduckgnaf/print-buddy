@@ -18,7 +18,7 @@ Set `services.moonraker_url` to the printer's Moonraker endpoint (for example `h
 
 Published limits, used by the guard and not confirmed on a machine: 300 °C nozzle, 100 °C bed, stock 0.4 mm stainless steel nozzle. The guard also refuses start markers that belong to other ecosystems (`START_PRINT`, ZMod color commands). It does not claim the rest of a file is a valid U1 start.
 
-If a status sample already includes `filament_remaining_g` or `spool_remain_g` on a toolhead object, Print Handy can read that number. A missing field is not treated as an empty spool. The U1's real object names have not been confirmed.
+The adapter has an unwired helper (`spool_remain_g`) that reads `filament_remaining_g` or `spool_remain_g` from a toolhead object in a status sample when one carries it. Nothing in the status, intake or low-filament paths calls it yet, so Print Handy does not currently report or act on U1 spool remain. A missing field would not be treated as an empty spool. Those field names are guesses and the U1's real object names have not been confirmed.
 
 ## What is not supported
 

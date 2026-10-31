@@ -1097,6 +1097,9 @@ def slice_model(source, folder, state, brim=None, first_layer=False, color_decis
     # neutral default, with a WARNING) instead of killing the slice.
     from .filament_color import slot_hex
     color = slot_hex(color_slot, color_row) if color_row is not None else None
+    # The printer picks the filament profile for the job's material (Bambu Lab: its checked vendor profile for that
+    # base polymer, refused when there is none); the hardware record then sets type, density and temperatures.
+    filament_template = printer.filament_template(templates, state['spool']['material'])
     # The job's spool sets its temperatures on every slice (2026-10-31: Silk PLA in IFS
     # slot 2 sliced at the printer-wide 210 °C left by an earlier PLA spool, not 220 °C).
     from .printer_state import slice_temperatures, spoolman_url as _spoolman_url
@@ -1107,11 +1110,10 @@ def slice_model(source, folder, state, brim=None, first_layer=False, color_decis
         return None if not record or record.get('archived') else record.get('filament')
     temps_c, resolution = slice_temperatures(state, spool_filament, _fetch_filament)
     state = {**state, 'temps_c': temps_c, 'temperature_resolution': resolution}
+    from .printer_state import _material_temperature_contract
+    _material_temperature_contract(state)  # a legacy record's stored temperatures still need a known material
     print(f"SLICE TEMPERATURES: {state['spool']['material']} nozzle {temps_c['nozzle']} °C, "
           f"bed {temps_c['bed']} °C ({resolution.get('source')})", flush=True)
-    # The printer picks the filament profile for the job's material (Bambu Lab: its checked vendor profile for that
-    # base polymer, refused when there is none); the hardware record then sets type, density and temperatures.
-    filament_template = printer.filament_template(templates, state['spool']['material'])
     filament = json.loads(Path(filament_template).read_text())
     from .nozzle import effective_nozzle_temperature
     base_nozzle_temp = float(state['temps_c']['nozzle'])
